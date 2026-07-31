@@ -13,6 +13,208 @@ struct CourseProjectEntryPresentation: Identifiable, Equatable {
     let intent: CourseProjectEntryIntent
 }
 
+struct CourseManagementPresentation: Identifiable, Equatable {
+    let courseID: UUID
+    var id: UUID { courseID }
+}
+
+struct CourseManagementSheet: View {
+    @EnvironmentObject private var store: WorkspaceStore
+    @Environment(\.dismiss) private var dismiss
+    let courseID: UUID
+
+    @State private var trashConfirmationPresented = false
+    @State private var isWorking = false
+    @State private var errorMessage: String?
+
+    private var course: Course? {
+        store.course(withID: courseID)
+    }
+
+    private var rootURL: URL? {
+        store.courseRootURL(for: courseID)
+    }
+
+    private var rootUnavailableReason: String? {
+        store.courseRootUnavailableReason(for: courseID)
+    }
+
+    private var canUseCourseFolder: Bool {
+        rootURL != nil
+            && rootUnavailableReason == nil
+            && !isWorking
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            VStack(alignment: .leading, spacing: 5) {
+                Text(store.ui("课程设置", "Course Settings"))
+                    .font(WeiBeiTypography.brandFont(
+                        language: store.interfaceLanguage,
+                        size: 21,
+                        weight: .semibold
+                    ))
+                if let course {
+                    Text(course.title)
+                        .font(.system(size: 12.5, weight: .medium))
+                        .foregroundStyle(WeiBeiTheme.secondaryInk)
+                }
+            }
+
+            if let rootURL {
+                VStack(alignment: .leading, spacing: 7) {
+                    Text(store.ui("课程文件夹", "Course Folder"))
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(WeiBeiTheme.tertiaryInk)
+                    Text(rootURL.path)
+                        .font(.system(size: 11.5, design: .monospaced))
+                        .foregroundStyle(WeiBeiTheme.secondaryInk)
+                        .textSelection(.enabled)
+                        .lineLimit(3)
+                        .truncationMode(.middle)
+                        .help(rootURL.path)
+                    Button(
+                        store.ui(
+                            "在 Finder 中显示",
+                            "Show in Finder"
+                        )
+                    ) {
+                        store.revealCourseRoot(courseID)
+                    }
+                    .buttonStyle(WeiBeiTextActionButtonStyle())
+                    .disabled(!canUseCourseFolder)
+                }
+            }
+            if let rootUnavailableReason {
+                Label(
+                    rootUnavailableReason,
+                    systemImage: "folder.badge.questionmark"
+                )
+                .font(.system(size: 11.5))
+                .foregroundStyle(WeiBeiTheme.secondaryInk)
+                .fixedSize(horizontal: false, vertical: true)
+            } else if rootURL == nil {
+                Label(
+                    store.ui(
+                        "课程文件夹当前不可用。",
+                        "The course folder is unavailable."
+                    ),
+                    systemImage: "folder.badge.questionmark"
+                )
+                .font(.system(size: 11.5))
+                .foregroundStyle(WeiBeiTheme.secondaryInk)
+            }
+
+            Divider()
+
+            VStack(alignment: .leading, spacing: 9) {
+                Text(store.ui("危险操作", "Danger Zone"))
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(WeiBeiTheme.cinnabar)
+                Text(store.ui(
+                    "这会把整个真实课程文件夹及其中内容移到 macOS 废纸篓。只有移动成功后，课程才会从魏碑移除。",
+                    "This moves the entire real course folder to the macOS Trash. WeiBei removes the course only after the move succeeds."
+                ))
+                .font(.system(size: 11.5))
+                .foregroundStyle(WeiBeiTheme.secondaryInk)
+                .fixedSize(horizontal: false, vertical: true)
+
+                Button(
+                    store.ui(
+                        "将课程文件夹移到废纸篓…",
+                        "Move Course Folder to Trash…"
+                    ),
+                    role: .destructive
+                ) {
+                    trashConfirmationPresented = true
+                }
+                .disabled(!canUseCourseFolder)
+            }
+
+            if isWorking {
+                HStack(spacing: 8) {
+                    ProgressView()
+                        .controlSize(.small)
+                    Text(store.ui(
+                        "正在安全移动课程文件夹…",
+                        "Moving the course folder safely…"
+                    ))
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(WeiBeiTheme.secondaryInk)
+                }
+                .accessibilityElement(children: .combine)
+            }
+
+            if let errorMessage {
+                Label(
+                    errorMessage,
+                    systemImage: "exclamationmark.triangle"
+                )
+                .font(.system(size: 11.5))
+                .foregroundStyle(WeiBeiTheme.cinnabar)
+                .fixedSize(horizontal: false, vertical: true)
+            }
+
+            HStack {
+                Spacer()
+                Button(store.ui("完成", "Done")) {
+                    dismiss()
+                }
+                .keyboardShortcut(.cancelAction)
+                .disabled(isWorking)
+            }
+        }
+        .padding(22)
+        .frame(width: 460)
+        .background(WeiBeiTheme.paper)
+        .foregroundStyle(WeiBeiTheme.ink)
+        .interactiveDismissDisabled(isWorking)
+        .confirmationDialog(
+            store.ui(
+                "将真实课程文件夹移到废纸篓？",
+                "Move the real course folder to Trash?"
+            ),
+            isPresented: $trashConfirmationPresented,
+            titleVisibility: .visible,
+            presenting: rootURL
+        ) { _ in
+            Button(
+                store.ui("移到废纸篓", "Move to Trash"),
+                role: .destructive
+            ) {
+                moveToTrash()
+            }
+            .disabled(!canUseCourseFolder)
+            Button(
+                store.ui("取消", "Cancel"),
+                role: .cancel
+            ) {}
+        } message: { rootURL in
+            Text(store.ui(
+                "将移动整个文件夹：\n\(rootURL.path)\n\n执行前魏碑会再次核验课程身份和路径。",
+                "The entire folder will be moved:\n\(rootURL.path)\n\nWeiBei will verify its identity and path again before moving it."
+            ))
+        }
+    }
+
+    private func moveToTrash() {
+        guard canUseCourseFolder else { return }
+        isWorking = true
+        errorMessage = nil
+        Task { @MainActor in
+            do {
+                _ = try await store.moveCourseFolderToTrash(
+                    courseID
+                )
+                dismiss()
+            } catch {
+                errorMessage = error.localizedDescription
+                isWorking = false
+            }
+        }
+    }
+}
+
 struct CourseProjectEntrySheet: View {
     @EnvironmentObject private var store: WorkspaceStore
     let cancel: () -> Void

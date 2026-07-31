@@ -409,6 +409,35 @@ enum CourseOwnedFileError: LocalizedError {
     }
 }
 
+enum CourseRemovalError: LocalizedError {
+    case courseNotFound
+    case courseBusy
+    case latestStateNotSaved
+    case courseRootUnavailable
+    case courseRootChanged
+    case workspaceSaveFailed
+    case workspaceSaveFailedAfterTrash(URL)
+
+    var errorDescription: String? {
+        switch self {
+        case .courseNotFound:
+            "找不到这门课程。"
+        case .courseBusy:
+            "课程仍有正在进行的写入或操作，魏碑没有移除这门课。请稍后重试。"
+        case .latestStateNotSaved:
+            "课程最新状态尚未安全写入课程文件夹，魏碑没有移除这门课。"
+        case .courseRootUnavailable:
+            "课程文件夹当前不可访问，不能移到废纸篓。"
+        case .courseRootChanged:
+            "课程文件夹已发生变化，魏碑已停止操作。"
+        case .workspaceSaveFailed:
+            "魏碑没有保存移除结果，课程仍保持登记。"
+        case .workspaceSaveFailedAfterTrash(let trashURL):
+            "课程文件夹已移到废纸篓，但魏碑没有保存取消登记结果。课程仍会显示为不可用：\(trashURL.path)"
+        }
+    }
+}
+
 /// Isolated chrome state for the course drawer.
 /// Kept off `WorkspaceStore`'s `@Published` surface so opening/closing the drawer
 /// does not invalidate reader/agent/notes bodies (that was the multi-second pre-slide lag).
@@ -584,6 +613,7 @@ final class WorkspaceStore: ObservableObject {
     private let workspaceDirectory: URL
     private let storageURL: URL
     private let notebookRenameJournalURL: URL
+    private let courseRemovalJournalURL: URL
     private let importedFileIdentityResolver: (URL) -> ImportedFileIdentity?
     private let courseRootBookmarkMaker: (URL) -> Data?
     private let courseRootBookmarkResolver: (Data) -> CourseProjectResolvedBookmark?
@@ -671,6 +701,14 @@ final class WorkspaceStore: ObservableObject {
     private var activeCourseSecurityScopes: [String: URL] = [:]
     private var activeCourseSecurityScopeOwnerTokens: [String: UUID] = [:]
     private var activeCourseRebindTokens: [UUID: UUID] = [:]
+    private var activeCourseRemovalTokens: [UUID: UUID] = [:]
+    private var activeCourseRemovalTransactionID: UUID?
+    private var activeCourseFileMutationCounts: [UUID: Int] = [:]
+    private var workspacePersistenceRemovingCourseID: UUID?
+    private var workspaceRemovalCommitObserved = false
+    private var usesBackgroundWorkspacePersistenceForSelfCheck = false
+    private var pendingCourseRemovalRecovery:
+        PendingCourseRemovalJournal?
     private var resolvedCourseRootURLs: [UUID: URL] = [:]
     private var courseRootUnavailableReasons: [UUID: String] = [:]
     private let courseProjectFileWorker = CourseProjectFileWorker()
@@ -805,6 +843,26 @@ final class WorkspaceStore: ObservableObject {
         var retitledMarkdown: String
         var originalContentDigest: String
         var retitledContentDigest: String
+    }
+
+    private struct PendingCourseRemovalJournal: Codable {
+        enum Stage: String, Codable {
+            case prepared
+            case isolated
+            case trashed
+            case workspaceCommitted
+        }
+
+        var transactionID: UUID
+        var courseID: UUID
+        var expectedCourse: Course
+        var rootPath: String
+        var rootIdentity: ImportedFileIdentity
+        var sessionIDs: [UUID]
+        var isolationPath: String?
+        var trashBookmarkData: Data?
+        var trashPath: String?
+        var stage: Stage
     }
 
     private struct PendingCourseFileTransactionJournal: Codable, Sendable {
@@ -1001,6 +1059,9 @@ final class WorkspaceStore: ObservableObject {
         workspaceDirectory = folder.standardizedFileURL
         storageURL = folder.appendingPathComponent("workspace.json")
         notebookRenameJournalURL = folder.appendingPathComponent("pending-notebook-rename.json")
+        courseRemovalJournalURL = folder.appendingPathComponent(
+            "pending-course-removal.json"
+        )
         self.importedFileIdentityResolver = importedFileIdentityResolver
         self.courseRootBookmarkMaker = courseRootBookmarkMaker
         self.courseRootBookmarkResolver = courseRootBookmarkResolver
@@ -1025,6 +1086,8 @@ final class WorkspaceStore: ObservableObject {
         loadLegacySelectionAskThreadsIfWorkspaceFieldMissing()
         let restoredCourseProjectRoots = restoreCourseProjectRoots()
         let restoredPortableCourseStates = restorePortableCourseStates()
+        let recoveredPendingCourseRemoval =
+            recoverPendingCourseRemovalIfNeeded()
         if ProcessInfo.processInfo.arguments.contains("--self-check-course-project-root") {
             recoverPendingCourseFileTransactions()
         }
@@ -1061,6 +1124,7 @@ final class WorkspaceStore: ObservableObject {
                     || sanitizedCourseResumePoints
                     || restoredCourseProjectRoots
                     || restoredPortableCourseStates
+                    || recoveredPendingCourseRemoval
                     || needsPortableCourseStateBootstrap
                     || recoveredInterruptedAgentReply
                     || needsSelectionAskThreadsWorkspaceMigration {
@@ -1229,7 +1293,8 @@ final class WorkspaceStore: ObservableObject {
         chatID forcedChatID: UUID? = nil,
         noteItemID forcedNoteItemID: String? = nil
     ) -> Bool {
-        guard !isRestoringCourseResumePoint,
+        guard activeCourseRemovalTokens[courseID] == nil,
+              !isRestoringCourseResumePoint,
               courses.contains(where: { $0.id == courseID }) else {
             return false
         }
@@ -2007,7 +2072,8 @@ final class WorkspaceStore: ObservableObject {
         at canonicalRoot: URL,
         identity: ImportedFileIdentity
     ) async throws -> UUID {
-        guard activeCourseRebindTokens[existing.id] == nil else {
+        guard activeCourseRebindTokens[existing.id] == nil,
+              activeCourseRemovalTokens[existing.id] == nil else {
             throw CoursePortableExportError.unstableCourseState
         }
         guard let courseIndex = courses.firstIndex(where: { $0.id == existing.id }) else {
@@ -2164,10 +2230,43 @@ final class WorkspaceStore: ObservableObject {
     }
 
     private func courseHasUnstableState(_ courseID: UUID) -> Bool {
+        activeCourseRemovalTokens[courseID] != nil
+            || courseHasPendingWork(courseID)
+    }
+
+    private func itemIsInRemovingCourse(_ itemID: String) -> Bool {
+        if importedItems.first(where: { $0.id == itemID }).map({
+            if case .courseOwned(let courseID) = $0.storage {
+                return activeCourseRemovalTokens[courseID] != nil
+            }
+            return false
+        }) == true {
+            return true
+        }
+        return courseItemMemberships.contains {
+            $0.itemID == itemID
+                && activeCourseRemovalTokens[$0.courseID] != nil
+        }
+    }
+
+    private func courseHasPendingWork(_ courseID: UUID) -> Bool {
+        if activeCourseFileMutationCounts[
+            courseID,
+            default: 0
+        ] > 0 {
+            return true
+        }
         let sessionIDs = Set(
             studySessions.lazy.filter {
                 $0.courseID == courseID
             }.map(\.id)
+        )
+        let actionIDs = Set(
+            studySessions.lazy.filter {
+                $0.courseID == courseID
+            }.flatMap {
+                $0.messages.flatMap(\.actions).map(\.id)
+            }
         )
         let noteItemIDs = Set(
             courseItemMemberships.lazy.filter {
@@ -2190,7 +2289,9 @@ final class WorkspaceStore: ObservableObject {
             isAskingAgent
                 && activeAgentReplyChatID.map(sessionIDs.contains)
                     == true
-        )
+        ) || agentReplyActionIDsInFlight.contains {
+            actionIDs.contains($0)
+        }
     }
 
     private func evaluatedCourseRebindState(
@@ -3173,7 +3274,8 @@ final class WorkspaceStore: ObservableObject {
             sourceIdentity: sourceInfo.identity,
             generatedData: nil,
             conflictResolution: conflictResolution,
-            preservingItemID: itemID
+            preservingItemID: itemID,
+            additionalCourseIDs: [ownerCourseID]
         )
     }
 
@@ -3182,6 +3284,9 @@ final class WorkspaceStore: ObservableObject {
         withCourseID addedCourseID: UUID,
         conflictResolution: CourseFileConflictResolution = .cancel
     ) async throws {
+        guard activeCourseRemovalTokens[addedCourseID] == nil else {
+            throw CoursePortableExportError.unstableCourseState
+        }
         guard conflictResolution != .replace else {
             throw CourseOwnedFileError.replacementTargetIsShared
         }
@@ -3198,6 +3303,7 @@ final class WorkspaceStore: ObservableObject {
             return
         }
         guard case .courseOwned(let ownerCourseID) = importedItems[itemIndex].storage,
+              activeCourseRemovalTokens[ownerCourseID] == nil,
               ownerCourseID != addedCourseID,
               let ownerRoot = courseRootURL(for: ownerCourseID),
               let addedRoot = courseRootURL(for: addedCourseID),
@@ -3213,6 +3319,14 @@ final class WorkspaceStore: ObservableObject {
               ),
               let libraryRoot = courseLibraryRootURL else {
             throw CourseOwnedFileError.courseRootUnavailable
+        }
+        let affectedCourseIDs: Set<UUID> = [
+            ownerCourseID,
+            addedCourseID,
+        ]
+        try beginCourseFileMutation(courseIDs: affectedCourseIDs)
+        defer {
+            finishCourseFileMutation(courseIDs: affectedCourseIDs)
         }
         let sourceInfo = try await courseProjectFileWorker.validatedRegularSource(sourceURL)
         let sourceSnapshot = try await courseProjectFileWorker.stableSnapshot(
@@ -3621,6 +3735,11 @@ final class WorkspaceStore: ObservableObject {
         toCourseID courseID: UUID,
         conflictResolution: CourseFileConflictResolution
     ) async throws {
+        let affectedCourseIDs: Set<UUID> = [courseID]
+        try beginCourseFileMutation(courseIDs: affectedCourseIDs)
+        defer {
+            finishCourseFileMutation(courseIDs: affectedCourseIDs)
+        }
         guard conflictResolution != .replace else {
             throw CourseOwnedFileError.replacementTargetIsShared
         }
@@ -4053,10 +4172,13 @@ final class WorkspaceStore: ObservableObject {
         sourceIdentity: ImportedFileIdentity?,
         generatedData: Data?,
         conflictResolution: CourseFileConflictResolution = .cancel,
-        preservingItemID: String? = nil
+        preservingItemID: String? = nil,
+        additionalCourseIDs: Set<UUID> = []
     ) async throws -> CourseOwnedFileImportResult {
-        guard courses.contains(where: { $0.id == courseID }) else {
-            throw CourseOwnedFileError.courseNotFound
+        let affectedCourseIDs = additionalCourseIDs.union([courseID])
+        try beginCourseFileMutation(courseIDs: affectedCourseIDs)
+        defer {
+            finishCourseFileMutation(courseIDs: affectedCourseIDs)
         }
         guard let root = courseRootURL(for: courseID),
               let canonicalRoot = try? CourseProjectPathPolicy.existingDirectory(root),
@@ -7881,7 +8003,8 @@ final class WorkspaceStore: ObservableObject {
 
     func renameCourse(_ courseID: UUID, title rawTitle: String) {
         let title = rawTitle.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !title.isEmpty,
+        guard activeCourseRemovalTokens[courseID] == nil,
+              !title.isEmpty,
               let index = courses.firstIndex(where: { $0.id == courseID }),
               courses[index].title != title else { return }
         courses[index].title = title
@@ -7889,32 +8012,1264 @@ final class WorkspaceStore: ObservableObject {
         save()
     }
 
-    func deleteCourse(_ courseID: UUID) {
-        guard courses.contains(where: { $0.id == courseID }) else { return }
-        cancelAgentRequestIfRunning(in: courseID)
-        let scopeKey = "course:\(courseID.uuidString)"
-        activeCourseSecurityScopeOwnerTokens.removeValue(forKey: scopeKey)
-        if let scopedURL = activeCourseSecurityScopes.removeValue(forKey: scopeKey) {
-            courseSecurityScopeStopper(scopedURL)
+    func removeCourseFromWeiBei(_ courseID: UUID) async throws {
+        let transactionID = try beginCourseRemovalTransaction()
+        defer { finishCourseRemovalTransaction(transactionID) }
+        let prepared = try await prepareCourseRemoval(
+            courseID,
+            token: transactionID,
+            requiresAvailableRoot: false
+        )
+        let shouldDismissCourseWorkspace =
+            courseWorkspacePresented
+                && courseWorkspaceCourseID == courseID
+        guard await persistWorkspaceRemovingCourse(courseID) else {
+            finishCourseRemovalAttempt(
+                courseID,
+                token: prepared.token,
+                succeeded: false
+            )
+            throw CourseRemovalError.workspaceSaveFailed
         }
+        removeCourseLocalRegistration(courseID)
+        if shouldDismissCourseWorkspace {
+            courseWorkspacePresented = false
+        }
+        finishCourseRemovalAttempt(
+            courseID,
+            token: prepared.token,
+            succeeded: true
+        )
+        await deleteCoursePiSessions(prepared.sessionIDs)
+    }
+
+    @discardableResult
+    func moveCourseFolderToTrash(_ courseID: UUID) async throws -> URL {
+        let transactionID = try beginCourseRemovalTransaction()
+        defer { finishCourseRemovalTransaction(transactionID) }
+        let prepared = try await prepareCourseRemoval(
+            courseID,
+            token: transactionID,
+            requiresAvailableRoot: true
+        )
+        let shouldDismissCourseWorkspace =
+            courseWorkspacePresented
+                && courseWorkspaceCourseID == courseID
+        guard let root = prepared.root,
+              let rootIdentity = prepared.rootIdentity else {
+            finishCourseRemovalAttempt(
+                courseID,
+                token: prepared.token,
+                succeeded: false
+            )
+            throw CourseRemovalError.courseRootUnavailable
+        }
+
+        var journal = PendingCourseRemovalJournal(
+            transactionID: transactionID,
+            courseID: courseID,
+            expectedCourse: prepared.course,
+            rootPath: root.path,
+            rootIdentity: rootIdentity,
+            sessionIDs: prepared.sessionIDs,
+            isolationPath: root.deletingLastPathComponent()
+                .appendingPathComponent(
+                    ".weibei-course-removal-\(transactionID.uuidString.lowercased())",
+                    isDirectory: true
+                )
+                .appendingPathComponent(
+                    root.lastPathComponent,
+                    isDirectory: true
+                ).path,
+            trashBookmarkData: nil,
+            trashPath: nil,
+            stage: .prepared
+        )
+        do {
+            try writePendingCourseRemovalJournal(journal)
+            try courseProjectMutationHook(.beforeCourseRootTrashMove)
+            guard course(withID: courseID) == prepared.course,
+                  activeCourseRemovalTokens[courseID] == prepared.token,
+                  !courseHasPendingWork(courseID),
+                  coursePortableStateMatchesLastSaved(courseID),
+                  let currentRoot = courseRootURL(for: courseID),
+                  CourseProjectPathPolicy.isSame(currentRoot, root),
+                  importedFileIdentityResolver(currentRoot)
+                    == rootIdentity else {
+                throw CourseRemovalError.courseRootChanged
+            }
+            let selfCheckDestination = workspaceDirectory
+                .appendingPathComponent(
+                    "SelfCheckTrash",
+                    isDirectory: true
+                )
+                .appendingPathComponent(
+                    journal.transactionID.uuidString,
+                    isDirectory: true
+                )
+            let isolation = try await courseProjectFileWorker
+                .isolateCourseRootForTrash(
+                    at: currentRoot,
+                    expectedIdentity: rootIdentity,
+                    expectedCourseID: courseID,
+                    transactionID: transactionID,
+                    beforeIsolation: {
+                        try self.courseProjectMutationHook(
+                            .beforeCourseRootTrashIsolation
+                        )
+                    }
+                )
+            try courseProjectMutationHook(
+                .afterCourseRootTrashIsolationBeforeJournal
+            )
+            journal.isolationPath = isolation.isolatedURL.path
+            guard let trashBookmarkData =
+                    courseRootBookmarkMaker(
+                        isolation.isolatedURL
+                    ) else {
+                throw CourseProjectFileWorkerError
+                    .verificationFailed
+            }
+            journal.trashBookmarkData = trashBookmarkData
+            journal.stage = .isolated
+            try writePendingCourseRemovalJournal(journal)
+            let trashedRoot = try await courseProjectFileWorker
+                .moveIsolatedCourseRootToTrash(
+                    isolation,
+                    expectedCourseID: courseID,
+                    selfCheckDestination: selfCheckDestination
+                )
+            try courseProjectMutationHook(
+                .afterCourseRootTrashMoveBeforeJournal
+            )
+            journal.trashPath = trashedRoot.path
+            journal.stage = .trashed
+            try writePendingCourseRemovalJournal(journal)
+            try courseProjectMutationHook(
+                .afterCourseRootTrashJournalBeforeWorkspaceSave
+            )
+
+            guard await persistWorkspaceRemovingCourse(courseID) else {
+                courseRootUnavailableReasons[courseID] =
+                    CourseRemovalError.workspaceSaveFailedAfterTrash(
+                        trashedRoot
+                    ).localizedDescription
+                finishCourseRemovalAttempt(
+                    courseID,
+                    token: prepared.token,
+                    succeeded: false
+                )
+                throw CourseRemovalError.workspaceSaveFailedAfterTrash(
+                    trashedRoot
+                )
+            }
+
+            removeCourseLocalRegistration(courseID)
+            journal.stage = .workspaceCommitted
+            try? writePendingCourseRemovalJournal(journal)
+            removePendingCourseRemovalJournal()
+            if shouldDismissCourseWorkspace {
+                courseWorkspacePresented = false
+            }
+            finishCourseRemovalAttempt(
+                courseID,
+                token: prepared.token,
+                succeeded: true
+            )
+            await deleteCoursePiSessions(prepared.sessionIDs)
+            return trashedRoot
+        } catch {
+            if importedFileIdentityResolver(root) == rootIdentity {
+                removePendingCourseRemovalJournal()
+            } else {
+                courseRootUnavailableReasons[courseID] =
+                    error.localizedDescription
+            }
+            finishCourseRemovalAttempt(
+                courseID,
+                token: prepared.token,
+                succeeded: false
+            )
+            throw error
+        }
+    }
+
+    func revealCourseRoot(_ courseID: UUID) {
+        guard let root = courseRootURL(for: courseID) else { return }
+        NSWorkspace.shared.activateFileViewerSelecting([root])
+    }
+
+    func removeCourseFromWeiBeiForSelfCheck(
+        _ courseID: UUID
+    ) throws {
+        precondition(
+            ProcessInfo.processInfo.arguments.contains(
+                "--self-check-course-project-root"
+            )
+        )
+        try waitForCourseFileOperation {
+            try await self.removeCourseFromWeiBei(courseID)
+        }
+    }
+
+    func verifyCourseRemovalPersistenceRaceForSelfCheck(
+        removing courseID: UUID,
+        retaining retainedCourseID: UUID
+    ) throws -> Bool {
+        precondition(
+            ProcessInfo.processInfo.arguments.contains(
+                "--self-check-course-project-root"
+            )
+        )
+        return try waitForCourseFileOperation {
+            let transactionID = try self.beginCourseRemovalTransaction()
+            defer {
+                self.finishCourseRemovalTransaction(transactionID)
+                self.usesBackgroundWorkspacePersistenceForSelfCheck = false
+            }
+            let prepared = try await self.prepareCourseRemoval(
+                courseID,
+                token: transactionID,
+                requiresAvailableRoot: false
+            )
+            var removalSucceeded = false
+            defer {
+                self.finishCourseRemovalAttempt(
+                    courseID,
+                    token: prepared.token,
+                    succeeded: removalSucceeded
+                )
+            }
+
+            self.usesBackgroundWorkspacePersistenceForSelfCheck = true
+            let firstGeneration = self.workspaceSaveGeneration &+ 1
+            await self.courseProjectFileWorker
+                .prepareWorkspacePersistenceGateForSelfCheck(
+                    generation: firstGeneration
+                )
+            let removal = Task { @MainActor in
+                await self.persistWorkspaceRemovingCourse(courseID)
+            }
+            await self.courseProjectFileWorker
+                .waitUntilWorkspacePersistenceEnteredForSelfCheck(
+                    generation: firstGeneration
+                )
+
+            guard let retainedIndex = self.courses.firstIndex(where: {
+                $0.id == retainedCourseID
+            }) else {
+                await self.courseProjectFileWorker
+                    .releaseWorkspacePersistenceForSelfCheck(
+                        generation: firstGeneration
+                    )
+                _ = await removal.value
+                return false
+            }
+            self.courses[retainedIndex].title = "保留课程（第二代）"
+            self.courses[retainedIndex].updatedAt = Date()
+            self.modelName = "课程移除第二代全局状态"
+            self.workspaceSaveGeneration &+= 1
+            let failingGeneration = self.workspaceSaveGeneration
+            await self.courseProjectFileWorker
+                .failWorkspacePersistenceForSelfCheck(
+                    generation: failingGeneration
+                )
+            await self.courseProjectFileWorker
+                .releaseWorkspacePersistenceForSelfCheck(
+                    generation: firstGeneration
+                )
+            guard await removal.value,
+                  self.workspaceSaveError != nil else {
+                return false
+            }
+
+            let firstCommitted = try JSONDecoder().decode(
+                PersistedWorkspace.self,
+                from: Data(contentsOf: self.storageURL)
+            )
+            guard firstCommitted.courses?.contains(where: {
+                $0.id == courseID
+            }) != true else {
+                return false
+            }
+            self.removeCourseLocalRegistration(courseID)
+            removalSucceeded = true
+            self.usesBackgroundWorkspacePersistenceForSelfCheck = false
+            guard self.flushPendingWorkspaceSave() else { return false }
+
+            let compensated = try JSONDecoder().decode(
+                PersistedWorkspace.self,
+                from: Data(contentsOf: self.storageURL)
+            )
+            return self.course(withID: courseID) == nil
+                && self.course(withID: retainedCourseID)?.title
+                    == "保留课程（第二代）"
+                && self.modelName == "课程移除第二代全局状态"
+                && compensated.courses?.contains(where: {
+                    $0.id == courseID
+                }) != true
+                && compensated.courses?.first(where: {
+                    $0.id == retainedCourseID
+                })?.title == "保留课程（第二代）"
+                && compensated.modelName
+                    == "课程移除第二代全局状态"
+        }
+    }
+
+    @discardableResult
+    func moveCourseFolderToTrashForSelfCheck(
+        _ courseID: UUID
+    ) throws -> URL {
+        precondition(
+            ProcessInfo.processInfo.arguments.contains(
+                "--self-check-course-project-root"
+            )
+        )
+        return try waitForCourseFileOperation {
+            try await self.moveCourseFolderToTrash(courseID)
+        }
+    }
+
+    func finishPendingCourseRemovalRecoveryForSelfCheck()
+        throws {
+        precondition(
+            ProcessInfo.processInfo.arguments.contains(
+                "--self-check-course-project-root"
+            )
+        )
+        try waitForCourseFileOperation {
+            await self
+                .finishPendingCourseRemovalRecoveryIfNeeded()
+        }
+    }
+
+    func installCourseRemovalStateForSelfCheck(
+        courseID: UUID,
+        materialItemID: String,
+        noteItemID: String,
+        messageText: String,
+        memoryText: String,
+        globalMemoryText: String
+    ) throws -> UUID {
+        precondition(
+            ProcessInfo.processInfo.arguments.contains(
+                "--self-check-course-project-root"
+            )
+        )
+        guard let material = importedItems.first(where: {
+            $0.id == materialItemID
+        }),
+        let session = createStudySession(courseID: courseID) else {
+            throw CourseRemovalError.courseNotFound
+        }
+        let message = AgentMessage(
+            role: .user,
+            text: messageText,
+            source: nil
+        )
+        guard let sessionIndex = studySessions.firstIndex(where: {
+            $0.id == session.id
+        }) else {
+            throw CourseRemovalError.courseNotFound
+        }
+        studySessions[sessionIndex].messages = [message]
+        messages = [message]
+        let memory = LearningMemoryEntry(
+            kind: .progress,
+            text: memoryText,
+            evidence: "A0c 自检",
+            origin: .agentInference,
+            sessionID: session.id,
+            messageID: message.id
+        )
+        learningMemoryStates.removeAll {
+            $0.scope == .course(courseID)
+        }
+        learningMemoryStates.append(
+            ScopedLearningMemoryState(
+                scope: .course(courseID),
+                revision: 1,
+                entries: [memory]
+            )
+        )
+        learningMemoryStates.removeAll { $0.scope == .global }
+        learningMemoryStates.append(
+            ScopedLearningMemoryState(
+                scope: .global,
+                revision: 1,
+                entries: [
+                    LearningMemoryEntry(
+                        kind: .preference,
+                        text: globalMemoryText,
+                        evidence: "A0c 全局隔离自检",
+                        origin: .userStatement
+                    ),
+                ]
+            )
+        )
+        let location = StudyLocation(
+            itemID: materialItemID,
+            itemTitle: material.title,
+            locationID: "a0c-removal",
+            locationTitle: "A0c 自检位置",
+            pageIndex: 2,
+            lastStudiedAt: Date(),
+            visitCount: 1
+        )
+        studyLocationsByCourseID[
+            courseID.uuidString,
+            default: [:]
+        ][materialItemID] = location
+        courseResumePoints.removeAll { $0.courseID == courseID }
+        courseResumePoints.append(
+            CourseResumePoint(
+                courseID: courseID,
+                materialLocation: location,
+                chatID: session.id,
+                noteItemID: noteItemID
+            )
+        )
+        return session.id
+    }
+
+    func removeCourseRegistrationImmediatelyForSelfCheck(
+        _ courseID: UUID
+    ) {
+        precondition(
+            ProcessInfo.processInfo.arguments.contains(
+                "--self-check-course-project-root"
+            )
+                || ProcessInfo.processInfo.arguments.contains(
+                    "--self-check-imported-identity"
+                )
+        )
+        guard courses.contains(where: { $0.id == courseID }) else {
+            return
+        }
+        removeCourseLocalRegistration(courseID)
         resolvedCourseRootURLs.removeValue(forKey: courseID)
         courseRootUnavailableReasons.removeValue(forKey: courseID)
-        studyLocationsByCourseID.removeValue(forKey: courseID.uuidString)
-        courses.removeAll { $0.id == courseID }
-        for index in studySessions.indices where studySessions[index].courseID == courseID {
-            studySessions[index].courseID = nil
-            studySessions[index].scopeNeedsReview = true
+        courseDocumentSearchIndex.synchronize(allItems)
+        invalidateAgentContext()
+    }
+
+    private func prepareCourseRemoval(
+        _ courseID: UUID,
+        token: UUID,
+        requiresAvailableRoot: Bool
+    ) async throws -> (
+        course: Course,
+        root: URL?,
+        rootIdentity: ImportedFileIdentity?,
+        sessionIDs: [UUID],
+        token: UUID
+    ) {
+        guard let expectedCourse = course(withID: courseID) else {
+            throw CourseRemovalError.courseNotFound
         }
-        var memberships = courseMembershipIndex
-        memberships.removeCourse(courseID)
-        courseItemMemberships = memberships.values
+        guard activeCourseRemovalTransactionID == token,
+              activeCourseRemovalTokens[courseID] == nil,
+              activeCourseRebindTokens[courseID] == nil else {
+            throw CourseRemovalError.courseBusy
+        }
+
+        let noteItemIDs = Set(
+            courseItemMemberships.lazy.filter {
+                $0.courseID == courseID
+            }.map(\.itemID)
+        )
+        if let stagedNoteDraft,
+           noteItemIDs.contains(stagedNoteDraft.itemID) {
+            self.stagedNoteDraft = nil
+            updateNote(
+                stagedNoteDraft.value,
+                for: stagedNoteDraft.itemID
+            )
+        }
+        for itemID in noteItemIDs {
+            flushPendingNotePersistence(for: itemID)
+        }
+        for itemID in noteItemIDs {
+            while let task = courseNoteWriteTasksByItemID[itemID] {
+                await task.value
+            }
+        }
+
+        guard course(withID: courseID) == expectedCourse,
+              activeCourseRemovalTransactionID == token,
+              activeCourseRemovalTokens[courseID] == nil,
+              activeCourseRebindTokens[courseID] == nil else {
+            throw CourseRemovalError.courseBusy
+        }
+        activeCourseRemovalTokens[courseID] = token
+        do {
+            while activeCourseFileMutationCounts[courseID, default: 0] > 0 {
+                await Task.yield()
+            }
+            cancelAgentRequestIfRunning(in: courseID)
+            await agentStopTask?.value
+
+            let reconciliationTask = courseReconciliationTask
+            courseReconciliationTask?.cancel()
+            courseReconciliationTask = nil
+            await reconciliationTask?.value
+
+            guard course(withID: courseID) == expectedCourse,
+                  activeCourseRemovalTransactionID == token,
+                  activeCourseRemovalTokens[courseID] == token,
+                  activeCourseFileMutationCounts[
+                    courseID,
+                    default: 0
+                  ] == 0,
+                  !courseHasPendingWork(courseID) else {
+                throw CourseRemovalError.courseBusy
+            }
+
+            syncActiveStudySession()
+            let root = courseRootURL(for: courseID)
+            let rootIdentity = root.flatMap(
+                importedFileIdentityResolver
+            )
+            if requiresAvailableRoot {
+                guard let root,
+                      let expectedIdentity =
+                        expectedCourse.sourceRootIdentity,
+                      rootIdentity == expectedIdentity else {
+                    throw CourseRemovalError.courseRootUnavailable
+                }
+                try await validateRestoredCourseRootAsync(
+                    root,
+                    course: expectedCourse,
+                    mustBeInsideLibrary:
+                        expectedCourse.sourceRootRelativePath != nil
+                )
+            }
+
+            if root != nil {
+                guard await persistWorkspaceNow(),
+                      !dirtyPortableCourseIDs.contains(courseID),
+                      !blockedPortableCourseIDs.contains(courseID),
+                      !oversizedPortableCourseIDs.contains(courseID),
+                      coursePortableStateRevisions[courseID] != nil,
+                      coursePortableStateDigests[courseID] != nil,
+                      coursePortableStateMatchesLastSaved(
+                        courseID
+                      ) else {
+                    throw CourseRemovalError.latestStateNotSaved
+                }
+            } else {
+                guard !requiresAvailableRoot,
+                      !dirtyPortableCourseIDs.contains(courseID),
+                      !blockedPortableCourseIDs.contains(courseID),
+                      !oversizedPortableCourseIDs.contains(courseID),
+                      coursePortableStateRevisions[courseID] != nil,
+                      coursePortableStateDigests[courseID] != nil,
+                      coursePortableStateMatchesLastSaved(
+                        courseID
+                      ) else {
+                    throw CourseRemovalError.latestStateNotSaved
+                }
+            }
+
+            return (
+                expectedCourse,
+                root,
+                rootIdentity,
+                studySessions.filter {
+                    $0.courseID == courseID
+                }.map(\.id),
+                token
+            )
+        } catch {
+            finishCourseRemovalAttempt(
+                courseID,
+                token: token,
+                succeeded: false
+            )
+            throw error
+        }
+    }
+
+    private func coursePortableStateMatchesLastSaved(
+        _ courseID: UUID
+    ) -> Bool {
+        guard let revision =
+                coursePortableStateRevisions[courseID],
+              let expectedDigest =
+                coursePortableStateDigests[courseID],
+              let state = try? makeCoursePortableState(
+                courseID: courseID,
+                revision: revision,
+                savedAt: Date(timeIntervalSince1970: 0)
+              ),
+              let digest = try? coursePortableStatePayloadDigest(
+                state
+              ) else {
+            return false
+        }
+        return digest == expectedDigest
+    }
+
+    private func removeCourseLocalRegistration(_ courseID: UUID) {
+        let removingActiveSession = activeStudySession?.courseID
+            == courseID
+        let removedSessions = studySessions.filter {
+            $0.courseID == courseID
+        }
+        let removedSessionIDs = Set(removedSessions.map(\.id))
+        let removedMessageIDs = Set(
+            removedSessions.flatMap {
+                $0.messages.map(\.id)
+            }
+        )
+        let removedItemIDs = Set(
+            importedItems.compactMap { item -> String? in
+                guard case .courseOwned(let ownerCourseID) = item.storage,
+                      ownerCourseID == courseID else {
+                    return nil
+                }
+                return item.id
+            }
+        )
+
+        for itemID in removedItemIDs {
+            pendingNotePersistenceTasks
+                .removeValue(forKey: itemID)?.cancel()
+            courseNoteLoadTasksByItemID
+                .removeValue(forKey: itemID)?.cancel()
+            courseNoteWriteTasksByItemID
+                .removeValue(forKey: itemID)?.cancel()
+            pendingNotePersistenceByItemID.removeValue(forKey: itemID)
+            courseNoteLoadGenerationByItemID.removeValue(forKey: itemID)
+            courseNoteWritesInFlight.remove(itemID)
+            notesByItemID.removeValue(forKey: itemID)
+            pendingNoteWritesByItemID.removeValue(forKey: itemID)
+            noteBackingContentDigestsByItemID.removeValue(forKey: itemID)
+            loadedCourseNoteTextByItemID.removeValue(forKey: itemID)
+            studyLocationsByItemID.removeValue(forKey: itemID)
+        }
+
+        importedItems.removeAll {
+            removedItemIDs.contains($0.id)
+        }
+        courseItemMemberships.removeAll {
+            $0.courseID == courseID
+        }
+        noteSourceLinks.removeAll {
+            removedItemIDs.contains($0.noteItemID)
+                || removedItemIDs.contains($0.sourceItemID)
+        }
+        studyLocationsByCourseID.removeValue(
+            forKey: courseID.uuidString
+        )
+        courseResumePoints.removeAll { $0.courseID == courseID }
+        learningMemoryStates.removeAll {
+            $0.scope == .course(courseID)
+        }
+        courses.removeAll { $0.id == courseID }
+
+        studySessions.removeAll { $0.courseID == courseID }
+        for sessionID in removedSessionIDs {
+            agentDraftsBySessionID.removeValue(forKey: sessionID)
+        }
+        if freshlyCreatedEmptyStudySessionID.map(
+            removedSessionIDs.contains
+        ) == true {
+            freshlyCreatedEmptyStudySessionID = nil
+        }
+        if pendingAgentSwitchTargetID.map(
+            removedSessionIDs.contains
+        ) == true {
+            dismissAgentSwitchConfirmation()
+        }
+
+        selectionAskThreads = selectionAskThreads.compactMap {
+            thread -> SelectionAskThread? in
+            if thread.itemID.map(removedItemIDs.contains) == true {
+                return nil
+            }
+            var retained = thread
+            let originallyHadMessages =
+                !retained.messageIDs.isEmpty
+            retained.messageIDs.removeAll {
+                removedMessageIDs.contains($0)
+            }
+            if originallyHadMessages
+                && retained.messageIDs.isEmpty {
+                return nil
+            }
+            return retained
+        }
+        if activeSelectionAskThreadID.map({ id in
+            !selectionAskThreads.contains { $0.id == id }
+        }) == true {
+            activeSelectionAskThreadID = nil
+        }
+        if selectionContext?.itemID.map(
+            removedItemIDs.contains
+        ) == true {
+            selectionContext = nil
+        }
+        selectionAttachments.removeAll {
+            $0.itemID.map(removedItemIDs.contains) == true
+        }
+        backNavigationStack.removeAll {
+            $0.selectedItemID.map(removedItemIDs.contains) == true
+                || $0.activeNotebookItemID.map(
+                    removedItemIDs.contains
+                ) == true
+        }
+        forwardNavigationStack.removeAll {
+            $0.selectedItemID.map(removedItemIDs.contains) == true
+                || $0.activeNotebookItemID.map(
+                    removedItemIDs.contains
+                ) == true
+        }
+
+        if selectedItemID.map(removedItemIDs.contains) == true {
+            selectedItemID = importedItems.first?.id
+                ?? sampleItems.first?.id
+        }
+        if activeNotebookItemID.map(
+            removedItemIDs.contains
+        ) == true {
+            activeNotebookItemID = importedItems.first(
+                where: \.isNotebookNote
+            )?.id
+        }
+        noteText = noteText(for: activeNoteItem)
+
         if activeCourseID == courseID {
             activeCourseID = courses.first?.id
         }
         if courseWorkspaceCourseID == courseID {
-            courseWorkspaceCourseID = courses.first?.id
+            courseWorkspaceCourseID = nil
+            courseWorkspaceDestination = .hub
+            courseWorkspaceTargetItemID = nil
         }
-        save()
+
+        if activeStudySessionID.map(
+            removedSessionIDs.contains
+        ) == true {
+            activeStudySessionID = nil
+        }
+        ensureActiveStudySession()
+        if let activeStudySessionID {
+            restoreAgentDraft(for: activeStudySessionID)
+        }
+        if let activeStudySession {
+            messages = activeStudySession.messages
+            restoreAgentReplyState(from: activeStudySession)
+        }
+
+        if removingActiveSession {
+            pendingSelectionAttachmentTask?.cancel()
+            pendingSelectionAttachmentTask = nil
+            selectionContext = nil
+            selectionAttachments = []
+            selectionAnchor = nil
+            activeSelectionAskThreadID = nil
+            keepFloatingSelectionForAnswer = false
+            pinnedFloatingAgent = false
+            if agentSurface == .selectionFloat {
+                agentSurface = .hidden
+            }
+            latestAgentNoteProposal = nil
+            latestAgentLearningUpdate = nil
+            lastFailedAgentQuestion = nil
+            lastAgentFailureKind = nil
+            validatedAgentReplySourceIDs = []
+            lastAgentReplyContextRevision = nil
+            latestAgentLearningUpdateQuestion = nil
+        }
+
+        coursePortableStateRevisions.removeValue(forKey: courseID)
+        coursePortableStateDigests.removeValue(forKey: courseID)
+        dirtyPortableCourseIDs.remove(courseID)
+        blockedPortableCourseIDs.remove(courseID)
+        oversizedPortableCourseIDs.remove(courseID)
+    }
+
+    private func finishCourseRemovalAttempt(
+        _ courseID: UUID,
+        token: UUID,
+        succeeded: Bool,
+        restartMaintenance: Bool = true
+    ) {
+        guard activeCourseRemovalTokens[courseID] == token else {
+            return
+        }
+        activeCourseRemovalTokens.removeValue(forKey: courseID)
+        if succeeded {
+            let scopeKey = "course:\(courseID.uuidString)"
+            activeCourseSecurityScopeOwnerTokens.removeValue(
+                forKey: scopeKey
+            )
+            if let scopedURL = activeCourseSecurityScopes.removeValue(
+                forKey: scopeKey
+            ) {
+                courseSecurityScopeStopper(scopedURL)
+            }
+            resolvedCourseRootURLs.removeValue(forKey: courseID)
+            courseRootUnavailableReasons.removeValue(forKey: courseID)
+            courseDocumentSearchIndex.synchronize(allItems)
+            invalidateAgentContext()
+        }
+        if restartMaintenance,
+           !ProcessInfo.processInfo.arguments.contains(
+            "--self-check-course-project-root"
+        ) {
+            startCourseFileMaintenance()
+        }
+    }
+
+    private func beginCourseRemovalTransaction(
+        resumesPendingRecovery: Bool = false
+    ) throws -> UUID {
+        if !resumesPendingRecovery {
+            clearResolvedPreparedCourseRemovalJournalIfSafe()
+        }
+        guard activeCourseRemovalTransactionID == nil,
+              resumesPendingRecovery
+                || (
+                    pendingCourseRemovalRecovery == nil
+                        && !FileManager.default.fileExists(
+                            atPath: courseRemovalJournalURL.path
+                        )
+                ) else {
+            throw CourseRemovalError.courseBusy
+        }
+        let transactionID = UUID()
+        activeCourseRemovalTransactionID = transactionID
+        return transactionID
+    }
+
+    private func clearResolvedPreparedCourseRemovalJournalIfSafe() {
+        guard pendingCourseRemovalRecovery == nil,
+              let data = try? Data(
+                contentsOf: courseRemovalJournalURL
+              ),
+              let journal = try? JSONDecoder().decode(
+                PendingCourseRemovalJournal.self,
+                from: data
+              ),
+              journal.stage == .prepared,
+              course(withID: journal.courseID)
+                == journal.expectedCourse,
+              importedFileIdentityResolver(
+                URL(
+                    fileURLWithPath: journal.rootPath,
+                    isDirectory: true
+                )
+              ) == journal.rootIdentity else {
+            return
+        }
+        removePendingCourseRemovalJournal()
+    }
+
+    private func finishCourseRemovalTransaction(
+        _ transactionID: UUID
+    ) {
+        guard activeCourseRemovalTransactionID == transactionID else {
+            return
+        }
+        activeCourseRemovalTransactionID = nil
+    }
+
+    private func beginCourseFileMutation(
+        courseIDs: Set<UUID>
+    ) throws {
+        guard !courseIDs.isEmpty,
+              courseIDs.allSatisfy({ courseID in
+                courses.contains(where: { $0.id == courseID })
+              }) else {
+            throw CourseOwnedFileError.courseNotFound
+        }
+        guard courseIDs.allSatisfy({
+            activeCourseRemovalTokens[$0] == nil
+        }) else {
+            throw CoursePortableExportError.unstableCourseState
+        }
+        for courseID in courseIDs {
+            activeCourseFileMutationCounts[courseID, default: 0] += 1
+        }
+    }
+
+    private func finishCourseFileMutation(
+        courseIDs: Set<UUID>
+    ) {
+        for courseID in courseIDs {
+            let count = activeCourseFileMutationCounts[
+                courseID,
+                default: 0
+            ]
+            if count <= 1 {
+                activeCourseFileMutationCounts.removeValue(
+                    forKey: courseID
+                )
+            } else {
+                activeCourseFileMutationCounts[courseID] = count - 1
+            }
+        }
+    }
+
+    private func deleteCoursePiSessions(
+        _ sessionIDs: [UUID]
+    ) async {
+        for sessionID in sessionIDs {
+            do {
+                try await piRuntime.deleteSession(sessionID)
+            } catch {
+                workspaceSaveError = ui(
+                    "课程已移除，但本机 Pi 会话缓存清理失败：\(error.localizedDescription)",
+                    "The course was removed, but a local Pi session cache could not be deleted: \(error.localizedDescription)"
+                )
+            }
+        }
+    }
+
+    private func writePendingCourseRemovalJournal(
+        _ journal: PendingCourseRemovalJournal
+    ) throws {
+        let data = try JSONEncoder().encode(journal)
+        try data.write(
+            to: courseRemovalJournalURL,
+            options: [.atomic]
+        )
+    }
+
+    private func removePendingCourseRemovalJournal() {
+        try? FileManager.default.removeItem(
+            at: courseRemovalJournalURL
+        )
+    }
+
+    private func recoverPendingCourseRemovalIfNeeded() -> Bool {
+        guard let data = try? Data(
+            contentsOf: courseRemovalJournalURL
+        ),
+        let journal = try? JSONDecoder().decode(
+            PendingCourseRemovalJournal.self,
+            from: data
+        ) else {
+            return false
+        }
+        guard let currentCourse = course(withID: journal.courseID) else {
+            if journal.stage == .trashed
+                || journal.stage == .workspaceCommitted {
+                removePendingCourseRemovalJournal()
+            }
+            return false
+        }
+        guard currentCourse == journal.expectedCourse else {
+            courseRootUnavailableReasons[journal.courseID] = ui(
+                "发现未完成的课程移除记录，但课程登记已经变化；魏碑没有继续处理。",
+                "WeiBei found an unfinished course removal, but the course registration changed, so it stopped."
+            )
+            return false
+        }
+
+        switch journal.stage {
+        case .prepared:
+            let originalRoot = URL(
+                fileURLWithPath: journal.rootPath,
+                isDirectory: true
+            )
+            if importedFileIdentityResolver(originalRoot)
+                == journal.rootIdentity {
+                removePendingCourseRemovalJournal()
+            } else if let isolationPath = journal.isolationPath {
+                let isolatedURL = URL(
+                    fileURLWithPath: isolationPath,
+                    isDirectory: true
+                )
+                guard importedFileIdentityResolver(isolatedURL)
+                        == journal.rootIdentity else {
+                    courseRootUnavailableReasons[journal.courseID] =
+                        ui(
+                            "课程文件夹移动后，魏碑尚未确认新位置。课程登记和恢复记录都已保留。",
+                            "The course folder moved before WeiBei recorded its new location. The registration and recovery record were preserved."
+                        )
+                    return false
+                }
+                var isolatedJournal = journal
+                isolatedJournal.stage = .isolated
+                isolatedJournal.trashBookmarkData =
+                    courseRootBookmarkMaker(isolatedURL)
+                do {
+                    try writePendingCourseRemovalJournal(
+                        isolatedJournal
+                    )
+                    pendingCourseRemovalRecovery =
+                        isolatedJournal
+                } catch {
+                    courseRootUnavailableReasons[journal.courseID] =
+                        error.localizedDescription
+                }
+            } else {
+                courseRootUnavailableReasons[journal.courseID] = ui(
+                    "课程文件夹移动后，魏碑尚未确认新位置。课程登记和恢复记录都已保留。",
+                    "The course folder moved before WeiBei recorded its new location. The registration and recovery record were preserved."
+                )
+            }
+            return false
+        case .isolated:
+            if journal.isolationPath == nil
+                && journal.trashBookmarkData == nil {
+                courseRootUnavailableReasons[journal.courseID] = ui(
+                    "课程移除恢复记录不完整，魏碑没有继续移动或取消登记。",
+                    "The course removal recovery record is incomplete, so WeiBei did not continue moving it or remove its registration."
+                )
+                return false
+            }
+            pendingCourseRemovalRecovery = journal
+            return false
+        case .trashed:
+            guard let trashPath = journal.trashPath else {
+                return false
+            }
+            let trashedRoot = URL(
+                fileURLWithPath: trashPath,
+                isDirectory: true
+            )
+            guard importedFileIdentityResolver(trashedRoot)
+                    == journal.rootIdentity else {
+                courseRootUnavailableReasons[journal.courseID] = ui(
+                    "废纸篓中的课程文件夹无法再次核验，魏碑没有取消本机登记。",
+                    "WeiBei could not verify the course folder in Trash, so it kept the local registration."
+                )
+                return false
+            }
+            removeCourseLocalRegistration(journal.courseID)
+            resolvedCourseRootURLs.removeValue(
+                forKey: journal.courseID
+            )
+            courseRootUnavailableReasons.removeValue(
+                forKey: journal.courseID
+            )
+            pendingCourseRemovalRecovery = journal
+            return true
+        case .workspaceCommitted:
+            removePendingCourseRemovalJournal()
+            return false
+        }
+    }
+
+    private func finishPendingCourseRemovalRecoveryIfNeeded()
+        async {
+        guard var journal = pendingCourseRemovalRecovery else {
+            return
+        }
+        if let currentCourse = course(withID: journal.courseID),
+           currentCourse != journal.expectedCourse {
+            return
+        }
+        if journal.stage == .isolated,
+           course(withID: journal.courseID) == nil {
+            return
+        }
+        let transactionID: UUID
+        do {
+            transactionID = try beginCourseRemovalTransaction(
+                resumesPendingRecovery: true
+            )
+        } catch {
+            return
+        }
+        defer { finishCourseRemovalTransaction(transactionID) }
+        activeCourseRemovalTokens[journal.courseID] =
+            transactionID
+        defer {
+            finishCourseRemovalAttempt(
+                journal.courseID,
+                token: transactionID,
+                succeeded: false,
+                restartMaintenance: false
+            )
+        }
+
+        if journal.stage == .isolated {
+            let isolatedURL = journal.isolationPath.map {
+                URL(
+                    fileURLWithPath: $0,
+                    isDirectory: true
+                )
+            }
+            if let isolatedURL,
+               importedFileIdentityResolver(isolatedURL)
+                    == journal.rootIdentity {
+                if journal.trashBookmarkData == nil {
+                    journal.trashBookmarkData =
+                        courseRootBookmarkMaker(isolatedURL)
+                }
+                do {
+                    journal.stage = .isolated
+                    try writePendingCourseRemovalJournal(journal)
+                } catch {
+                    courseRootUnavailableReasons[journal.courseID] =
+                        error.localizedDescription
+                    return
+                }
+                let transactionDirectory =
+                    isolatedURL.deletingLastPathComponent()
+                guard let transactionDirectoryIdentity =
+                        importedFileIdentityResolver(
+                            transactionDirectory
+                        ) else {
+                    return
+                }
+                let isolation = CourseRootTrashIsolation(
+                    originalURL: URL(
+                        fileURLWithPath: journal.rootPath,
+                        isDirectory: true
+                    ),
+                    transactionDirectory: transactionDirectory,
+                    transactionDirectoryIdentity:
+                        transactionDirectoryIdentity,
+                    isolatedURL: isolatedURL,
+                    identity: journal.rootIdentity
+                )
+                let selfCheckDestination = workspaceDirectory
+                    .appendingPathComponent(
+                        "SelfCheckTrash",
+                        isDirectory: true
+                    )
+                    .appendingPathComponent(
+                        journal.transactionID.uuidString,
+                        isDirectory: true
+                    )
+                do {
+                    let trashURL = try await courseProjectFileWorker
+                        .moveIsolatedCourseRootToTrash(
+                            isolation,
+                            expectedCourseID: journal.courseID,
+                            selfCheckDestination:
+                                selfCheckDestination
+                        )
+                    try courseProjectMutationHook(
+                        .afterCourseRootTrashMoveBeforeJournal
+                    )
+                    journal.trashPath = trashURL.path
+                    journal.stage = .trashed
+                    try writePendingCourseRemovalJournal(journal)
+                } catch {
+                    courseRootUnavailableReasons[journal.courseID] =
+                        error.localizedDescription
+                    return
+                }
+            } else {
+                var searchDirectories = FileManager.default.urls(
+                    for: .trashDirectory,
+                    in: .userDomainMask
+                )
+                if ProcessInfo.processInfo.arguments.contains(
+                    "--self-check-course-project-root"
+                ) {
+                    searchDirectories.append(
+                        workspaceDirectory.appendingPathComponent(
+                            "SelfCheckTrash",
+                            isDirectory: true
+                        )
+                    )
+                }
+                var locatedTrashRoot: URL?
+                if let bookmarkData = journal.trashBookmarkData,
+                   let resolved = courseRootBookmarkResolver(
+                    bookmarkData
+                   ),
+                   searchDirectories.contains(where: {
+                       CourseProjectPathPolicy.contains(
+                        $0,
+                        resolved.url,
+                        includingRoot: false
+                       )
+                   }) {
+                    let startedScope =
+                        courseSecurityScopeStarter(resolved.url)
+                    let bookmarkVerified: Bool
+                    if startedScope {
+                        bookmarkVerified =
+                            await courseProjectFileWorker
+                                .verifiedCourseRoot(
+                                    at: resolved.url,
+                                    expectedIdentity:
+                                        journal.rootIdentity,
+                                    expectedCourseID:
+                                        journal.courseID
+                                )
+                        courseSecurityScopeStopper(resolved.url)
+                    } else {
+                        bookmarkVerified =
+                            await courseProjectFileWorker
+                                .verifiedCourseRoot(
+                                    at: resolved.url,
+                                    expectedIdentity:
+                                        journal.rootIdentity,
+                                    expectedCourseID:
+                                        journal.courseID
+                                )
+                    }
+                    if bookmarkVerified {
+                        locatedTrashRoot = resolved.url
+                    }
+                }
+                if locatedTrashRoot == nil {
+                    locatedTrashRoot =
+                        await courseProjectFileWorker
+                            .findVerifiedCourseRoot(
+                                in: searchDirectories,
+                                expectedIdentity:
+                                    journal.rootIdentity,
+                                expectedCourseID:
+                                    journal.courseID
+                            )
+                }
+                guard let locatedTrashRoot else {
+                    courseRootUnavailableReasons[journal.courseID] =
+                        ui(
+                            "课程文件夹已经离开原位置，但魏碑尚未在废纸篓中重新核验到它；课程登记和恢复记录都已保留。",
+                            "The course folder left its original location, but WeiBei has not reverified it in Trash. The registration and recovery record were preserved."
+                        )
+                    return
+                }
+                journal.trashPath =
+                    locatedTrashRoot.standardizedFileURL.path
+                journal.stage = .trashed
+                do {
+                    try writePendingCourseRemovalJournal(journal)
+                } catch {
+                    return
+                }
+            }
+        }
+        guard journal.stage == .trashed,
+              let trashPath = journal.trashPath,
+              importedFileIdentityResolver(
+                URL(
+                    fileURLWithPath: trashPath,
+                    isDirectory: true
+                )
+              ) == journal.rootIdentity else {
+            return
+        }
+        if course(withID: journal.courseID) != nil {
+            removeCourseLocalRegistration(journal.courseID)
+        }
+        guard await persistWorkspaceNow() else {
+            pendingCourseRemovalRecovery = journal
+            return
+        }
+        journal.stage = .workspaceCommitted
+        try? writePendingCourseRemovalJournal(journal)
+        removePendingCourseRemovalJournal()
+        pendingCourseRemovalRecovery = nil
+        finishCourseRemovalAttempt(
+            journal.courseID,
+            token: transactionID,
+            succeeded: true,
+            restartMaintenance: false
+        )
+        await deleteCoursePiSessions(journal.sessionIDs)
     }
 
     func setCourseIDs(_ courseIDs: Set<UUID>, for itemID: String) {
@@ -7922,6 +9277,11 @@ final class WorkspaceStore: ObservableObject {
         let validCourseIDs = Set(courses.map(\.id))
         let requested = courseIDs.intersection(validCourseIDs)
         let current = Set(self.courseIDs(for: itemID))
+        guard requested.union(current).allSatisfy({
+            activeCourseRemovalTokens[$0] == nil
+        }) else {
+            return
+        }
         guard requested != current else { return }
         let added = requested.subtracting(current)
         let removed = current.subtracting(requested)
@@ -8078,6 +9438,11 @@ final class WorkspaceStore: ObservableObject {
         itemID: String,
         fromCourseID courseID: UUID
     ) async throws {
+        let affectedCourseIDs: Set<UUID> = [courseID]
+        try beginCourseFileMutation(courseIDs: affectedCourseIDs)
+        defer {
+            finishCourseFileMutation(courseIDs: affectedCourseIDs)
+        }
         guard let item = importedItems.first(where: { $0.id == itemID }),
               case .shared(let sharedRelativePath) = item.storage,
               let sharedURL = item.url,
@@ -8626,7 +9991,12 @@ final class WorkspaceStore: ObservableObject {
 
     @discardableResult
     func createStudySession(courseID: UUID?) -> StudySession? {
-        guard courseID == nil || courses.contains(where: { $0.id == courseID }) else {
+        guard courseID.map({
+            activeCourseRemovalTokens[$0] == nil
+        }) ?? true,
+        courseID == nil || courses.contains(where: {
+            $0.id == courseID
+        }) else {
             return nil
         }
         dismissAgentSwitchConfirmation()
@@ -8690,7 +10060,11 @@ final class WorkspaceStore: ObservableObject {
 
     @discardableResult
     func classifyStudySession(_ id: UUID, as courseID: UUID?) -> Bool {
-        guard courseID == nil || courses.contains(where: { $0.id == courseID }),
+        guard courseID.map({
+            activeCourseRemovalTokens[$0] == nil
+        }) ?? true,
+              courseID == nil
+                || courses.contains(where: { $0.id == courseID }),
               let index = studySessions.firstIndex(where: {
                   $0.id == id && $0.scopeNeedsReview == true
               }) else {
@@ -8719,7 +10093,14 @@ final class WorkspaceStore: ObservableObject {
 
     func deleteStudySession(_ id: UUID) {
         guard studySessions.count > 1,
-              let index = studySessions.firstIndex(where: { $0.id == id }) else { return }
+              let index = studySessions.firstIndex(where: {
+                $0.id == id
+              }),
+              studySessions[index].courseID.map({
+                activeCourseRemovalTokens[$0] == nil
+              }) ?? true else {
+            return
+        }
         let deletingActiveSession = activeStudySessionID == id
         if activeAgentReplyChatID == id {
             cancelAgentRequest(restoreDraft: false)
@@ -8937,6 +10318,9 @@ final class WorkspaceStore: ObservableObject {
         guard agentReplyActionIDsInFlight.insert(actionID).inserted else { return }
         defer { agentReplyActionIDsInFlight.remove(actionID) }
         guard let snapshot = agentReplyAction(messageID: messageID, actionID: actionID),
+              snapshot.courseID.map({
+                  activeCourseRemovalTokens[$0] == nil
+              }) ?? true,
               snapshot.action.state == .pending || snapshot.action.state == .failed else {
             return
         }
@@ -8956,6 +10340,9 @@ final class WorkspaceStore: ObservableObject {
         guard agentReplyActionIDsInFlight.insert(actionID).inserted else { return }
         defer { agentReplyActionIDsInFlight.remove(actionID) }
         guard let snapshot = agentReplyAction(messageID: messageID, actionID: actionID),
+              snapshot.courseID.map({
+                  activeCourseRemovalTokens[$0] == nil
+              }) ?? true,
               snapshot.action.state == .executed
                 || (snapshot.action.state == .failed
                     && (snapshot.action.resultContentDigest != nil
@@ -10675,6 +12062,10 @@ final class WorkspaceStore: ObservableObject {
 
     func updateNote(_ value: String) {
         guard noteText != value else { return }
+        if let itemID = activeNoteItem?.id,
+           itemIsInRemovingCourse(itemID) {
+            return
+        }
         invalidateAgentContext()
         noteText = value
         clearGeneratedQuietInsight()
@@ -10686,7 +12077,10 @@ final class WorkspaceStore: ObservableObject {
     }
 
     func stageNoteDraft(_ value: String, for itemID: String?) {
-        guard let itemID else { return }
+        guard let itemID,
+              !itemIsInRemovingCourse(itemID) else {
+            return
+        }
         if stagedNoteDraft?.itemID != itemID || stagedNoteDraft?.value != value {
             invalidateAgentContext()
         }
@@ -10721,7 +12115,10 @@ final class WorkspaceStore: ObservableObject {
 
     /// Persist a draft for a note that is no longer active (does not mutate active `noteText`).
     private func commitInactiveNoteDraft(_ value: String, itemID: String) {
-        guard let item = allItems.first(where: { $0.id == itemID }) else { return }
+        guard !itemIsInRemovingCourse(itemID),
+              let item = allItems.first(where: { $0.id == itemID }) else {
+            return
+        }
         if !item.editsBackingMarkdownFile {
             notesByItemID[item.id] = value
         }
@@ -11150,7 +12547,12 @@ final class WorkspaceStore: ObservableObject {
     }
 
     private func recordCurrentStudyLocation(incrementVisit: Bool) {
-        guard let item = selectedMaterialItem else { return }
+        guard activeCourseID.map({
+            activeCourseRemovalTokens[$0] == nil
+        }) ?? true,
+        let item = selectedMaterialItem else {
+            return
+        }
         let previous = studyLocation(for: item.id, in: activeCourseID)
         let itemTitle = sourceReferenceBaseTitle(for: item)
         let locationID = item.kind == .html ? readerLocationID : nil
@@ -15375,7 +16777,10 @@ final class WorkspaceStore: ObservableObject {
             latestAgentLearningUpdate = nil
         }
         let scope = learningMemoryScope(courseID: target.courseID)
-        guard let update,
+        guard scope.courseID.map({
+            activeCourseRemovalTokens[$0] == nil
+        }) ?? true,
+        let update,
               update.contextRevision == expectedContextRevision,
               update.memoryRevision == expectedMemoryRevision,
               learningMemoryRevision(in: scope) == expectedMemoryRevision,
@@ -15669,7 +17074,10 @@ final class WorkspaceStore: ObservableObject {
         text rawText: String
     ) -> Bool {
         let text = rawText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty,
+        guard scope.courseID.map({
+            activeCourseRemovalTokens[$0] == nil
+        }) ?? true,
+        !text.isEmpty,
               text.count <= 500,
               let stateIndex = learningMemoryStateIndex(for: scope, createIfMissing: false),
               let entryIndex = learningMemoryStates[stateIndex].entries.firstIndex(where: {
@@ -15732,7 +17140,10 @@ final class WorkspaceStore: ObservableObject {
         status: LearningMemoryStatus,
         resolutionEvidence: String?
     ) {
-        guard let stateIndex = learningMemoryStateIndex(for: scope, createIfMissing: false),
+        guard scope.courseID.map({
+            activeCourseRemovalTokens[$0] == nil
+        }) ?? true,
+        let stateIndex = learningMemoryStateIndex(for: scope, createIfMissing: false),
               let entryIndex = learningMemoryStates[stateIndex].entries.firstIndex(where: {
                   $0.id == memoryID && $0.status != status
               }) else { return }
@@ -19704,7 +21115,8 @@ final class WorkspaceStore: ObservableObject {
             )
         }
         if let courseID = session.courseID {
-            guard let course = course(withID: courseID),
+            guard activeCourseRemovalTokens[courseID] == nil,
+                  let course = course(withID: courseID),
                   let expectedIdentity = course.sourceRootIdentity,
                   let root = courseRootURL(for: courseID),
                   let resolvedRoot = try? CourseProjectPathPolicy.existingDirectory(root),
@@ -21009,9 +22421,17 @@ final class WorkspaceStore: ObservableObject {
         }
         let courseIDs = requestedCourseID.map { [$0] } ?? courses.map(\.id)
         for courseID in courseIDs {
-            guard let root = courseRootURL(for: courseID) else { continue }
+            guard activeCourseRemovalTokens[courseID] == nil,
+                  let root = courseRootURL(for: courseID) else {
+                continue
+            }
             do {
                 let snapshot = try await courseProjectFileWorker.scanCourse(at: root)
+                guard activeCourseRemovalTokens[courseID] == nil,
+                      courses.contains(where: { $0.id == courseID }),
+                      courseRootURL(for: courseID) == root else {
+                    continue
+                }
                 var changed = await applyCourseFileObservations(
                     snapshot,
                     courseID: courseID,
@@ -21612,6 +23032,7 @@ final class WorkspaceStore: ObservableObject {
         courseReconciliationTask?.cancel()
         courseReconciliationTask = Task { @MainActor [weak self] in
             guard let self else { return }
+            await finishPendingCourseRemovalRecoveryIfNeeded()
             await recoverPendingCourseFileTransactionsInBackground()
             await reconcileCourseFilesNow()
             while !Task.isCancelled {
@@ -22473,6 +23894,7 @@ final class WorkspaceStore: ObservableObject {
     ) async throws -> CourseMarkdownWriteTransaction {
         guard item.isNotebookNote,
               case .courseOwned(let courseID) = item.storage,
+              activeCourseRemovalTokens[courseID] == nil,
               let targetURL = item.url,
               let targetIdentity = item.importedFileIdentity,
               let root = courseRootURL(for: courseID),
@@ -24369,6 +25791,125 @@ final class WorkspaceStore: ObservableObject {
         )
     }
 
+    private func removingCourse(
+        _ courseID: UUID,
+        from source: PersistedWorkspace
+    ) -> PersistedWorkspace {
+        var workspace = source
+        let removedItemIDs = Set(
+            workspace.importedItems.compactMap { item -> String? in
+                guard case .courseOwned(let ownerCourseID) = item.storage,
+                      ownerCourseID == courseID else {
+                    return nil
+                }
+                return item.id
+            }
+        )
+        let removedSessions = (workspace.studySessions ?? []).filter {
+            $0.courseID == courseID
+        }
+        let removedSessionIDs = Set(removedSessions.map(\.id))
+        let removedMessageIDs = Set(
+            removedSessions.flatMap {
+                $0.messages.map(\.id)
+            }
+        )
+
+        workspace.importedItems.removeAll {
+            removedItemIDs.contains($0.id)
+        }
+        workspace.notesByItemID = workspace.notesByItemID.filter {
+            !removedItemIDs.contains($0.key)
+        }
+        workspace.pendingNoteWritesByItemID =
+            workspace.pendingNoteWritesByItemID?.filter {
+                !removedItemIDs.contains($0.key)
+            }
+        workspace.noteBackingContentDigestsByItemID =
+            workspace.noteBackingContentDigestsByItemID?.filter {
+                !removedItemIDs.contains($0.key)
+            }
+        if workspace.selectedItemID.map(
+            removedItemIDs.contains
+        ) == true {
+            workspace.selectedItemID =
+                workspace.importedItems.first?.id
+        }
+        if workspace.activeNotebookItemID.map(
+            removedItemIDs.contains
+        ) == true {
+            workspace.activeNotebookItemID =
+                workspace.importedItems.first(
+                    where: \.isNotebookNote
+                )?.id
+        }
+
+        workspace.courses?.removeAll { $0.id == courseID }
+        workspace.courseItemMemberships?.removeAll {
+            $0.courseID == courseID
+        }
+        if workspace.activeCourseID == courseID {
+            workspace.activeCourseID = workspace.courses?.first?.id
+        }
+        workspace.noteSourceLinks?.removeAll {
+            removedItemIDs.contains($0.noteItemID)
+                || removedItemIDs.contains($0.sourceItemID)
+        }
+        workspace.studyLocationsByItemID =
+            workspace.studyLocationsByItemID?.filter {
+                !removedItemIDs.contains($0.key)
+            }
+        workspace.studyLocationsByCourseID?.removeValue(
+            forKey: courseID.uuidString
+        )
+        workspace.courseResumePoints?.removeAll {
+            $0.courseID == courseID
+        }
+        let portableKey = courseID.uuidString.lowercased()
+        workspace.coursePortableStateRevisions?.removeValue(
+            forKey: portableKey
+        )
+        workspace.coursePortableStateDigests?.removeValue(
+            forKey: portableKey
+        )
+        workspace.dirtyPortableCourseIDs?.removeAll {
+            $0 == courseID
+        }
+        workspace.learningMemoryStates?.removeAll {
+            $0.scope == .course(courseID)
+        }
+        workspace.studySessions?.removeAll {
+            $0.courseID == courseID
+        }
+        if workspace.activeStudySessionID.map(
+            removedSessionIDs.contains
+        ) == true {
+            workspace.activeStudySessionID =
+                workspace.studySessions?.first?.id
+        }
+        workspace.selectionAskThreads =
+            workspace.selectionAskThreads?.compactMap {
+                thread -> SelectionAskThread? in
+                if thread.itemID.map(
+                    removedItemIDs.contains
+                ) == true {
+                    return nil
+                }
+                var retained = thread
+                let originallyHadMessages =
+                    !retained.messageIDs.isEmpty
+                retained.messageIDs.removeAll {
+                    removedMessageIDs.contains($0)
+                }
+                if originallyHadMessages
+                    && retained.messageIDs.isEmpty {
+                    return nil
+                }
+                return retained
+            }
+        return workspace
+    }
+
     private func makeWorkspacePersistenceRequest(
         generation: UInt64,
         skippingPortableCourseIDs: Set<UUID>
@@ -24376,10 +25917,23 @@ final class WorkspaceStore: ObservableObject {
         request: WorkspacePersistenceRequest,
         resumePoints: [CourseResumePoint]
     ) {
-        let persisted = makePersistedWorkspaceSnapshot()
-        let requestedCourseIDs = persistedWorkspaceCourseIDs
+        var persisted = makePersistedWorkspaceSnapshot()
+        if let removingCourseID =
+                workspacePersistenceRemovingCourseID {
+            persisted.snapshot = removingCourse(
+                removingCourseID,
+                from: persisted.snapshot
+            )
+            persisted.resumePoints =
+                persisted.snapshot.courseResumePoints ?? []
+        }
+        var requestedCourseIDs = persistedWorkspaceCourseIDs
             .intersection(Set(courses.map(\.id)))
             .subtracting(skippingPortableCourseIDs)
+        if let removingCourseID =
+                workspacePersistenceRemovingCourseID {
+            requestedCourseIDs.remove(removingCourseID)
+        }
         let inputs = courses.compactMap {
             course -> CoursePortableStateSaveInput? in
             guard requestedCourseIDs.contains(course.id) else { return nil }
@@ -24390,15 +25944,22 @@ final class WorkspaceStore: ObservableObject {
                 knownDigest: coursePortableStateDigests[course.id]
             )
         }
+        let removingCourseIDs = workspacePersistenceRemovingCourseID
+            .map { Set([$0]) } ?? []
         return (
             WorkspacePersistenceRequest(
                 generation: generation,
                 workspace: persisted.snapshot,
                 storageURL: storageURL,
                 portableInputs: inputs,
-                blockedPortableCourseIDs: blockedPortableCourseIDs,
+                blockedPortableCourseIDs:
+                    blockedPortableCourseIDs.subtracting(
+                        removingCourseIDs
+                    ),
                 oversizedPortableCourseIDs:
-                    oversizedPortableCourseIDs,
+                    oversizedPortableCourseIDs.subtracting(
+                        removingCourseIDs
+                    ),
                 needsPortableBootstrap: needsPortableCourseStateBootstrap
             ),
             persisted.resumePoints
@@ -24445,13 +26006,105 @@ final class WorkspaceStore: ObservableObject {
         workspaceSaveGeneration &+= 1
         workspacePersistenceSkippingCourseIDs =
             skippingPortableCourseIDs
-        if Self.mustSaveImmediately {
+        if Self.mustSaveImmediately
+            && !usesBackgroundWorkspacePersistenceForSelfCheck {
             return performSaveNow(
                 skippingPortableCourseIDs:
                     skippingPortableCourseIDs
             )
         }
         return await startWorkspacePersistenceLoop().value
+    }
+
+    private func persistWorkspaceRemovingCourse(
+        _ courseID: UUID
+    ) async -> Bool {
+        guard workspacePersistenceRemovingCourseID == nil else {
+            return false
+        }
+        if Self.mustSaveImmediately
+            && !usesBackgroundWorkspacePersistenceForSelfCheck {
+            do {
+                let persisted = removingCourse(
+                    courseID,
+                    from: makePersistedWorkspaceSnapshot().snapshot
+                )
+                try workspaceSnapshotWriter(
+                    JSONEncoder().encode(persisted),
+                    storageURL
+                )
+                coursePortableStateRevisions.removeValue(
+                    forKey: courseID
+                )
+                coursePortableStateDigests.removeValue(
+                    forKey: courseID
+                )
+                dirtyPortableCourseIDs.remove(courseID)
+                blockedPortableCourseIDs.remove(courseID)
+                oversizedPortableCourseIDs.remove(courseID)
+                persistedWorkspaceCourseIDs = Set(
+                    persisted.courses?.map(\.id) ?? []
+                )
+                courseResumePoints =
+                    persisted.courseResumePoints ?? []
+                workspaceSaveError = nil
+                return true
+            } catch {
+                workspaceSaveError = ui(
+                    "课程更改尚未写入磁盘：\(error.localizedDescription)",
+                    "Course changes were not saved to disk: \(error.localizedDescription)"
+                )
+                return false
+            }
+        }
+        let previousRevision =
+            coursePortableStateRevisions[courseID]
+        let previousDigest =
+            coursePortableStateDigests[courseID]
+        let wasDirty = dirtyPortableCourseIDs.contains(courseID)
+        let wasBlocked = blockedPortableCourseIDs.contains(courseID)
+        let wasOversized =
+            oversizedPortableCourseIDs.contains(courseID)
+        let wasPersisted =
+            persistedWorkspaceCourseIDs.contains(courseID)
+        workspacePersistenceRemovingCourseID = courseID
+        workspaceRemovalCommitObserved = false
+        defer {
+            workspacePersistenceRemovingCourseID = nil
+            workspaceRemovalCommitObserved = false
+        }
+        guard await persistWorkspaceNow() else {
+            if workspaceRemovalCommitObserved {
+                scheduleDebouncedWorkspaceSave()
+                return true
+            }
+            coursePortableStateRevisions[courseID] =
+                previousRevision
+            coursePortableStateDigests[courseID] =
+                previousDigest
+            if wasDirty {
+                dirtyPortableCourseIDs.insert(courseID)
+            } else {
+                dirtyPortableCourseIDs.remove(courseID)
+            }
+            if wasBlocked {
+                blockedPortableCourseIDs.insert(courseID)
+            } else {
+                blockedPortableCourseIDs.remove(courseID)
+            }
+            if wasOversized {
+                oversizedPortableCourseIDs.insert(courseID)
+            } else {
+                oversizedPortableCourseIDs.remove(courseID)
+            }
+            if wasPersisted {
+                persistedWorkspaceCourseIDs.insert(courseID)
+            } else {
+                persistedWorkspaceCourseIDs.remove(courseID)
+            }
+            return false
+        }
+        return true
     }
 
     private static var mustSaveImmediately: Bool {
@@ -24529,6 +26182,14 @@ final class WorkspaceStore: ObservableObject {
         let result = await courseProjectFileWorker.persistWorkspace(
             prepared.request
         )
+        if result.failure == nil,
+           let removingCourseID =
+                workspacePersistenceRemovingCourseID,
+           prepared.request.workspace.courses?.contains(
+            where: { $0.id == removingCourseID }
+           ) != true {
+            workspaceRemovalCommitObserved = true
+        }
         lastWorkspacePersistenceRanOnMainThread = result.ranOnMainThread
         if case .stale? = result.failure {
             return true

@@ -511,7 +511,9 @@ enum ImportedIdentitySelfCheck {
                 && degraded.courseResumePoint(for: courseB.id) != nil,
             "课程 A 的无效现场没有清理，或误删了课程 B 的现场"
         )
-        degraded.deleteCourse(courseB.id)
+        degraded.removeCourseRegistrationImmediatelyForSelfCheck(
+            courseB.id
+        )
         try check(
             degraded.courseResumePoint(for: courseB.id) == nil,
             "删除课程后仍残留课程学习现场"
@@ -977,22 +979,21 @@ enum ImportedIdentitySelfCheck {
                 && reopened.activeStudySession?.scopeNeedsReview == false,
             "显式新建全局 Chat 时传播了待归类状态"
         )
-        reopened.deleteCourse(courseA.id)
+        reopened.removeCourseRegistrationImmediatelyForSelfCheck(
+            courseA.id
+        )
         for sessionID in [uniqueSession.id, courseSessionID].compactMap({ $0 }) {
-            let retained = try require(
-                reopened.studySessions.first { $0.id == sessionID },
-                "删除课程时误删了所属 Chat"
-            )
             try check(
-                retained.courseID == nil && retained.scopeNeedsReview == true,
-                "删除课程后所属 Chat 没有安全保留为待归类"
+                !reopened.studySessions.contains {
+                    $0.id == sessionID
+                },
+                "从魏碑移除课程后仍残留所属 Chat"
             )
         }
-        reopened.deleteStudySession(uniqueSession.id)
         try check(
             reopened.learningMemoryEntries(in: .course(courseA.id))
-                .contains { $0.id == courseLearningMemory.id },
-            "删除 Chat 时误删了课程共享的学习记忆"
+                .isEmpty,
+            "从魏碑移除课程后仍残留课程学习记忆"
         )
     }
 

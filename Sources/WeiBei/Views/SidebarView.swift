@@ -7,7 +7,10 @@ struct SidebarView: View {
     @State private var courseEntryPresentation: CourseProjectEntryPresentation?
     @State private var courseToRename: Course?
     @State private var renameCourseTitle = ""
-    @State private var coursePendingDeletion: Course?
+    @State private var coursePendingRemoval: Course?
+    @State private var courseManagementPresentation:
+        CourseManagementPresentation?
+    @State private var courseRemovalError: String?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -109,24 +112,52 @@ struct SidebarView: View {
             )
             .environmentObject(store)
         }
+        .sheet(item: $courseManagementPresentation) {
+            presentation in
+            CourseManagementSheet(
+                courseID: presentation.courseID
+            )
+            .environmentObject(store)
+        }
         .confirmationDialog(
-            store.ui("删除课程？", "Delete course?"),
+            store.ui(
+                "从魏碑移除这门课程？",
+                "Remove this course from WeiBei?"
+            ),
             isPresented: Binding(
-                get: { coursePendingDeletion != nil },
-                set: { if !$0 { coursePendingDeletion = nil } }
+                get: { coursePendingRemoval != nil },
+                set: { if !$0 { coursePendingRemoval = nil } }
             ),
             titleVisibility: .visible,
-            presenting: coursePendingDeletion
+            presenting: coursePendingRemoval
         ) { course in
-            Button(store.ui("删除“\(course.title)”", "Delete “\(course.title)”"), role: .destructive) {
-                store.deleteCourse(course.id)
-                coursePendingDeletion = nil
+            Button(store.ui(
+                "从魏碑移除“\(course.title)”",
+                "Remove “\(course.title)” from WeiBei"
+            )) {
+                removeCourseFromWeiBei(course)
             }
             Button(store.ui("取消", "Cancel"), role: .cancel) {
-                coursePendingDeletion = nil
+                coursePendingRemoval = nil
             }
         } message: { _ in
-            Text(store.ui("原文件不会删除，只会回到未归属状态。", "Files remain intact and become unassigned."))
+            Text(store.ui(
+                "只会让这门课从魏碑中移除。魏碑会先保存最新学习状态，真实课程文件夹和其中内容会完整保留；以后重新纳入这个文件夹即可恢复。",
+                "This only removes the course from WeiBei. WeiBei first saves the latest learning state, keeps the real course folder and its contents intact, and can restore them when the folder is adopted again."
+            ))
+        }
+        .alert(
+            store.ui("无法移除课程", "Could Not Remove Course"),
+            isPresented: Binding(
+                get: { courseRemovalError != nil },
+                set: {
+                    if !$0 { courseRemovalError = nil }
+                }
+            )
+        ) {
+            Button(store.ui("好", "OK"), role: .cancel) {}
+        } message: {
+            Text(courseRemovalError ?? "")
         }
     }
 
@@ -222,8 +253,15 @@ struct SidebarView: View {
                                 renameCourseTitle = course.title
                                 courseToRename = course
                             }
-                            Button(store.ui("删除课程", "Delete course"), role: .destructive) {
-                                coursePendingDeletion = course
+                            Divider()
+                            Button(store.ui("课程设置…", "Course Settings…")) {
+                                courseManagementPresentation =
+                                    CourseManagementPresentation(
+                                        courseID: course.id
+                                    )
+                            }
+                            Button(store.ui("从魏碑移除…", "Remove from WeiBei…")) {
+                                coursePendingRemoval = course
                             }
                         }
 
@@ -270,6 +308,17 @@ struct SidebarView: View {
         .padding(.trailing, 2)
         .padding(.top, 3)
         .padding(.bottom, 9)
+    }
+
+    private func removeCourseFromWeiBei(_ course: Course) {
+        coursePendingRemoval = nil
+        Task { @MainActor in
+            do {
+                try await store.removeCourseFromWeiBei(course.id)
+            } catch {
+                courseRemovalError = error.localizedDescription
+            }
+        }
     }
 
     private func courseItemGroup(
