@@ -406,6 +406,20 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         return view
     }
 
+    /// Chat/notes send publishes WorkspaceStore and remasures every markdown WKWebView.
+    /// Accept the SwiftUI proposal so AppKit never walks WebKit Auto Layout fittingSize
+    /// (cpu_resource + sample 2026-08-01: PlatformView.sizeThatFits freeze on send).
+    func sizeThatFits(
+        _ proposal: ProposedViewSize,
+        nsView: WKWebView,
+        context: Context
+    ) -> CGSize? {
+        let fallback = nsView.bounds.size
+        let width = proposal.width ?? (fallback.width > 1 ? fallback.width : 1)
+        let height = proposal.height ?? (fallback.height > 1 ? fallback.height : 1)
+        return CGSize(width: max(width, 1), height: max(height, 1))
+    }
+
     func updateNSView(_ view: WKWebView, context: Context) {
         (view as? MarkdownWebView)?.passesVerticalScrollToSuperview = isCompactPreview
         Self.applyWebAppearance(to: view, appearanceMode: appearanceMode)

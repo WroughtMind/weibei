@@ -4693,7 +4693,10 @@ private struct AgentMessageMarkdownText: View {
         })
         .popover(
             isPresented: Binding(
-                get: { expandedSources.isEmpty == false },
+                // Only the selected URL should drive presentation. Evaluating
+                // expandedSources here rebuilt source presentations for every
+                // message on every WorkspaceStore publish (send-path freeze sample).
+                get: { expandedSourceURL != nil },
                 set: { if !$0 { expandedSourceURL = nil } }
             ),
             arrowEdge: .bottom
@@ -4998,6 +5001,15 @@ private struct AgentThinkingOrbitHost: NSViewRepresentable {
             appearanceMode: appearanceMode
         )
         return view
+    }
+
+    /// Fixed orbit size — never ask AppKit for fittingSize during agent-send layout storms.
+    func sizeThatFits(
+        _ proposal: ProposedViewSize,
+        nsView: AgentThinkingOrbitNSView,
+        context: Context
+    ) -> CGSize? {
+        CGSize(width: max(orbitWidth, 1), height: max(pathHeight, 1))
     }
 
     func updateNSView(_ nsView: AgentThinkingOrbitNSView, context: Context) {

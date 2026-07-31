@@ -21578,13 +21578,13 @@ final class WorkspaceStore: ObservableObject {
             latestAgentNoteProposal = nil
             latestAgentLearningUpdate = nil
             if !sentSelectionIDs.isEmpty {
-                withAnimation(WeiBeiMotion.panel) {
-                    cancelPendingSelectionAttachment()
-                    selectionAttachments.removeAll { sentSelectionIDs.contains($0.id) }
-                    if selectionAttachments.isEmpty {
-                        lastSelectionAttachmentDate = nil
-                        lastSelectionUpdateDate = nil
-                    }
+                // No withAnimation here: animating attachment chrome while chat
+                // PlatformViews remasure was part of the send-path main-thread freeze.
+                cancelPendingSelectionAttachment()
+                selectionAttachments.removeAll { sentSelectionIDs.contains($0.id) }
+                if selectionAttachments.isEmpty {
+                    lastSelectionAttachmentDate = nil
+                    lastSelectionUpdateDate = nil
                 }
             }
             // Keep the floating selection agent open while answering — do not dismiss it mid-stream.
