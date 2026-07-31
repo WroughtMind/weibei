@@ -378,7 +378,12 @@ const slashCommands = [
 const slashRuntime = { provider: null, view: null, context: null, commands: [], activeIndex: 0, dismissedContext: '', activationContext: '', tableOpen: false, tableFocus: 'rows', tableRows: 3, tableColumns: 3, error: '' };
 const slashExcludedAncestors = new Set(['list_item', 'task_list_item', 'table', 'table_row', 'table_header_row', 'table_cell', 'table_header', 'code_block', 'math_block']);
 
-/** Returns slash context only where a block replacement is schema-safe. */
+/**
+ * Returns slash context only when `/` begins an otherwise blank editable line.
+ *
+ * Zero-width placeholders are tolerated because ProseMirror can retain them in
+ * a visually blank paragraph while a composition session finishes.
+ */
 const slashContextForView = (view) => {
   if (!isEditable || view.composing) return null;
   const { selection } = view.state;
@@ -387,7 +392,7 @@ const slashContextForView = (view) => {
   if ($from.parent.type.name !== 'paragraph' || $from.parentOffset !== $from.parent.content.size) return null;
   for (let depth = $from.depth; depth > 0; depth -= 1) if (slashExcludedAncestors.has($from.node(depth).type.name)) return null;
   const source = $from.parent.textContent || '';
-  const match = source.match(/^\/([^\s/]*)$/u);
+  const match = source.match(/^[\u200B\uFEFF]*\/([^\s/]*)$/u);
   if (!match) return null;
   const depth = $from.depth;
   return { query: match[1] || '', source, blockFrom: $from.before(depth), blockTo: $from.after(depth), index: $from.index(depth - 1), container: $from.node(depth - 1), key: `${$from.before(depth)}:${source}` };

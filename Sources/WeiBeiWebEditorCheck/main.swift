@@ -1374,6 +1374,7 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
         (() => {
           const open = (text) => { window.WeiBeiEditor.setMarkdown(text); return window.WeiBeiEditor.openSlashMenuForCheck(); };
           if (!open('/')) throw new Error('slash menu did not open');
+          if (!open('\\u200B/')) throw new Error('slash menu did not open from a blank-line placeholder');
           let state = window.WeiBeiEditor.slashStateForCheck();
           if (state.commands.length !== 13 || state.groups.join('|') !== '结构|列表|内容|丰富内容') throw new Error('slash commands or groups invalid: ' + JSON.stringify(state));
           for (const [query, expected] of [['/h2', '二级标题'], ['/dmk', '代码块'], ['/yxlb', '有序列表'], ['/代码块', '代码块']]) { open(query); state = window.WeiBeiEditor.slashStateForCheck(); if (state.commands.length !== 1 || state.commands[0] !== expected) throw new Error('alias failed: ' + query + JSON.stringify(state)); }

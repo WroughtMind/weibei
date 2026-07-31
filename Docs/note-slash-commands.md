@@ -1,6 +1,6 @@
 # 笔记 Slash 命令
 
-在可编辑的普通段落或 schema 允许的引用块末尾输入 `/`，可使用 13 个块命令：`/h1`、`/h2`、`/h3`、`/bullet_list`、`/ordered_list`、`/task_list`、`/quote`、`/callout`、`/code`、`/divider`、`/table`、`/image` 和 `/mermaid`。中文名称与拼音缩写同样可以筛选。
+在每个可编辑普通空白行的行首输入 `/`，可使用 13 个块命令：`/h1`、`/h2`、`/h3`、`/bullet_list`、`/ordered_list`、`/task_list`、`/quote`、`/callout`、`/code`、`/divider`、`/table`、`/image` 和 `/mermaid`。schema 允许的引用块空白行同样可用；已有文字、列表、表格、代码块和公式块不会触发。中文名称与拼音缩写同样可以筛选。
 
 别名是单个 token；例如 `/code block` 与 `/ordered list` 不受支持。表格默认 3×3，行数范围为 1–20、列数范围为 1–12。每次命令替换是一次撤销操作。
 
