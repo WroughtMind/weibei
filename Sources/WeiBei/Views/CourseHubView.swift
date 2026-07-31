@@ -20,6 +20,8 @@ struct CourseHubView: View {
     @State private var showsAllContent = false
     @State private var searchResults: [CourseHomeSearchResult] = []
     @State private var isSearching = false
+    @State private var searchAvailability: CourseDocumentIndexAvailability = .ready
+    @State private var searchRetryToken = 0
     @State private var isMaterialDropTargeted = false
     @State private var isNoteDropTargeted = false
     @State private var courseEntryPresentation: CourseProjectEntryPresentation?
@@ -60,7 +62,11 @@ struct CourseHubView: View {
     }
 
     private var searchTaskID: CourseHomeSearchTaskID {
-        CourseHomeSearchTaskID(courseID: courseID, query: cleanedSearch)
+        CourseHomeSearchTaskID(
+            courseID: courseID,
+            query: cleanedSearch,
+            retryToken: searchRetryToken
+        )
     }
 
     private var continueReading: (item: StudyItem, location: StudyLocation?)? {
@@ -629,16 +635,44 @@ struct CourseHubView: View {
                     .foregroundStyle(WeiBeiTheme.secondaryInk)
             }
             .frame(minHeight: 62)
-        } else if searchResults.isEmpty {
-            Text(store.ui(
-                "没有找到与“\(cleanedSearch)”相关的课程内容。",
-                "No course content matched “\(cleanedSearch)”."
-            ))
-            .font(.system(size: 12.5))
-            .foregroundStyle(WeiBeiTheme.secondaryInk)
-            .frame(maxWidth: .infinity, minHeight: 72, alignment: .leading)
         } else {
             VStack(spacing: 0) {
+                if searchAvailability != .ready {
+                    HStack(spacing: 10) {
+                        Text(searchAvailability == .indexing
+                             ? store.ui(
+                                "课程资料仍在建立搜索索引，结果可能尚未完整。",
+                                "Course materials are still being indexed, so results may be incomplete."
+                             )
+                             : store.ui(
+                                "部分课程资料无法读取或建立搜索索引，请检查课程文件夹后重试。",
+                                "Some course materials could not be read or indexed. Check the course folder and retry."
+                             ))
+                            .font(.system(size: 12.5))
+                            .foregroundStyle(WeiBeiTheme.secondaryInk)
+
+                        Spacer(minLength: 8)
+
+                        Button(store.ui("重试", "Retry")) {
+                            searchRetryToken += 1
+                        }
+                        .buttonStyle(WeiBeiTextActionButtonStyle())
+                    }
+                    .frame(minHeight: 62)
+
+                    if !searchResults.isEmpty {
+                        CourseHairline()
+                    }
+                } else if searchResults.isEmpty {
+                    Text(store.ui(
+                        "没有找到与“\(cleanedSearch)”相关的课程内容。",
+                        "No course content matched “\(cleanedSearch)”."
+                    ))
+                    .font(.system(size: 12.5))
+                    .foregroundStyle(WeiBeiTheme.secondaryInk)
+                    .frame(maxWidth: .infinity, minHeight: 72, alignment: .leading)
+                }
+
                 ForEach(searchResults) { result in
                     CourseHubContentRow(
                         icon: searchResultIcon(result),
@@ -756,12 +790,13 @@ struct CourseHubView: View {
     private func refreshSearch(for request: CourseHomeSearchTaskID) async {
         searchResults = []
         isSearching = false
+        searchAvailability = .ready
         guard let courseID = request.courseID, !request.query.isEmpty else {
             return
         }
 
         isSearching = true
-        let results = await store.searchCourseHome(
+        let outcome = await store.searchCourseHome(
             courseID: courseID,
             query: request.query
         )
@@ -770,7 +805,8 @@ struct CourseHubView: View {
               store.courseWorkspaceCourseID == courseID else {
             return
         }
-        searchResults = results
+        searchResults = outcome.results
+        searchAvailability = outcome.availability
         isSearching = false
     }
 
@@ -949,6 +985,7 @@ struct CourseHubView: View {
 private struct CourseHomeSearchTaskID: Equatable {
     let courseID: UUID?
     let query: String
+    let retryToken: Int
 }
 
 private struct CourseHomeEntry: Identifiable {

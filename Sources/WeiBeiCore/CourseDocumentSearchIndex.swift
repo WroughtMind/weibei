@@ -19,12 +19,25 @@ public struct CourseDocumentIndexResult: Sendable {
     public var text: String?
     public var isTruncated: Bool
     public var rank: Double?
+    public var availability: CourseDocumentIndexAvailability
 
-    public init(text: String?, isTruncated: Bool, rank: Double? = nil) {
+    public init(
+        text: String?,
+        isTruncated: Bool,
+        rank: Double? = nil,
+        availability: CourseDocumentIndexAvailability = .ready
+    ) {
         self.text = text
         self.isTruncated = isTruncated
         self.rank = rank
+        self.availability = availability
     }
+}
+
+public enum CourseDocumentIndexAvailability: Sendable, Equatable {
+    case ready
+    case indexing
+    case unavailable
 }
 
 public typealias CourseNativePDFTextLoader = @Sendable (
@@ -41,6 +54,7 @@ public final class CourseDocumentSearchIndex: @unchecked Sendable {
     private static let minimumWriteReserveBytes: UInt64 = 1 * 1_024 * 1_024
     private static let maximumImmediateRefreshItems = 24
     private static let maximumImmediateRefreshSeconds: TimeInterval = 4
+    private static let maximumInitialIndexWaitSeconds: TimeInterval = 4
     private static let maximumTextSourceBytes: UInt64 = 32 * 1_024 * 1_024
     private static let maximumForegroundPDFPages = 32
     private static let maximumNativePDFPagesPerWorker = 8
@@ -143,6 +157,7 @@ public final class CourseDocumentSearchIndex: @unchecked Sendable {
     private let databaseWriteLock = NSLock()
     private let itemIndexLockRegistryLock = NSLock()
     private var scheduledSignatures: Set<String> = []
+    private var initialIndexCompletions: [String: DispatchGroup] = [:]
     private var expectedSignaturesByStorageID: [String: String] = [:]
     private var itemIndexLocks: [String: NSLock] = [:]
     private let transientDestructor = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
@@ -297,7 +312,9 @@ public final class CourseDocumentSearchIndex: @unchecked Sendable {
         query: String,
         maximumCharactersPerItem: Int = 24_000
     ) -> [String: CourseDocumentIndexResult] {
+        let scheduledItems = items.compactMap(Self.scheduledItem)
         refreshChangedItemsForLookup(items)
+        waitForInitialIndexing(scheduledItems)
         guard !Task.isCancelled else { return [:] }
         guard let database = openDatabase() else { return [:] }
         defer { sqlite3_close(database) }
@@ -331,6 +348,7 @@ public final class CourseDocumentSearchIndex: @unchecked Sendable {
         )
         schedulingLock.lock()
         let expectedSignatures = expectedSignaturesByStorageID
+        let activeScheduleKeys = scheduledSignatures
         schedulingLock.unlock()
         let states = fileStates(in: database)
         let validStates = itemMappings.reduce(into: [String: FileState]()) { result, mapping in
@@ -410,13 +428,26 @@ public final class CourseDocumentSearchIndex: @unchecked Sendable {
             let state = validStates[mapping.storageID]
             let chunks = (rankedByStorageID[mapping.storageID] ?? []).sorted { $0.sortOrder < $1.sortOrder }
             let joined = chunks.map(\.text).joined(separator: "\n\n")
+            let expectedSignature = expectedSignatures[mapping.storageID]
+            let scheduleKey = expectedSignature.map {
+                "\(mapping.storageID)#\($0)"
+            }
+            let availability: CourseDocumentIndexAvailability
+            if state?.isComplete == true {
+                availability = .ready
+            } else if scheduleKey.map(activeScheduleKeys.contains) == true {
+                availability = .indexing
+            } else {
+                availability = .unavailable
+            }
             result[mapping.itemID] = CourseDocumentIndexResult(
                 text: joined.isEmpty ? nil : String(joined.prefix(characterLimit)),
                 isTruncated: state?.isComplete != true
                     || state?.hasPartialExtraction == true
                     || (state?.chunkCount ?? 0) > chunks.count
                     || joined.count > characterLimit,
-                rank: chunks.map(\.rank).min()
+                rank: chunks.map(\.rank).min(),
+                availability: availability
             )
         }
     }
@@ -434,24 +465,46 @@ public final class CourseDocumentSearchIndex: @unchecked Sendable {
                 items: [item],
                 query: trimmedQuery,
                 maximumCharactersPerItem: maximumCharacters
-            )[item.id] ?? CourseDocumentIndexResult(text: nil, isTruncated: false)
+            )[item.id] ?? CourseDocumentIndexResult(
+                text: nil,
+                isTruncated: false,
+                availability: .unavailable
+            )
         }
 
+        guard let scheduled = Self.scheduledItem(item) else {
+            return CourseDocumentIndexResult(
+                text: nil,
+                isTruncated: false,
+                availability: .unavailable
+            )
+        }
         refreshChangedItemsForLookup([item])
+        waitForInitialIndexing([scheduled])
         guard !Task.isCancelled,
-              let scheduled = Self.scheduledItem(item),
               let database = openDatabase() else {
-            return CourseDocumentIndexResult(text: nil, isTruncated: false)
+            return CourseDocumentIndexResult(
+                text: nil,
+                isTruncated: false,
+                availability: .unavailable
+            )
         }
         defer { sqlite3_close(database) }
         schedulingLock.lock()
         let expectedSignature = expectedSignaturesByStorageID[scheduled.storageID]
+        let isScheduled = scheduledSignatures.contains(
+            "\(scheduled.storageID)#\(scheduled.signature)"
+        )
         schedulingLock.unlock()
         guard expectedSignature == scheduled.signature,
               Self.fileSignature(for: item) == scheduled.signature,
               let state = fileState(for: scheduled.storageID, in: database),
               state.signature == scheduled.signature else {
-            return CourseDocumentIndexResult(text: nil, isTruncated: false)
+            return CourseDocumentIndexResult(
+                text: nil,
+                isTruncated: false,
+                availability: isScheduled ? .indexing : .unavailable
+            )
         }
 
         let hasLocation = !(trimmedLocation ?? "").isEmpty
@@ -471,7 +524,11 @@ public final class CourseDocumentSearchIndex: @unchecked Sendable {
               LIMIT 24
               """
         guard let statement = prepare(sql, in: database) else {
-            return CourseDocumentIndexResult(text: nil, isTruncated: false)
+            return CourseDocumentIndexResult(
+                text: nil,
+                isTruncated: false,
+                availability: .unavailable
+            )
         }
         defer { sqlite3_finalize(statement) }
         bind(scheduled.storageID, at: 1, in: statement)
@@ -501,7 +558,10 @@ public final class CourseDocumentSearchIndex: @unchecked Sendable {
             isTruncated: state.isComplete != true
                 || state.hasPartialExtraction
                 || state.chunkCount > chunks.count
-                || characterCount >= characterLimit
+                || characterCount >= characterLimit,
+            availability: state.isComplete
+                ? .ready
+                : (isScheduled ? .indexing : .unavailable)
         )
     }
 
@@ -515,16 +575,23 @@ public final class CourseDocumentSearchIndex: @unchecked Sendable {
         let scheduleKey = "\(scheduled.storageID)#\(scheduled.signature)"
         schedulingLock.lock()
         let inserted = scheduledSignatures.insert(scheduleKey).inserted
+        if inserted {
+            let completion = DispatchGroup()
+            completion.enter()
+            initialIndexCompletions[scheduleKey] = completion
+        }
         schedulingLock.unlock()
         guard inserted else { return }
 
         indexingQueue.async { [weak self] in
             guard let self else { return }
-            if self.index(
+            let needsBackgroundCompletion = self.index(
                 scheduled.item,
                 storageID: scheduled.storageID,
                 signature: scheduled.signature
-            ) {
+            )
+            if needsBackgroundCompletion {
+                self.finishInitialIndexing(scheduleKey)
                 self.ocrQueue.async { [weak self] in
                     guard let self else { return }
                     self.finishPDFOCR(
@@ -544,14 +611,41 @@ public final class CourseDocumentSearchIndex: @unchecked Sendable {
                 }
             } else {
                 self.clearScheduledSignature(scheduleKey)
+                self.finishInitialIndexing(scheduleKey)
             }
         }
+    }
+
+    private func finishInitialIndexing(_ scheduleKey: String) {
+        schedulingLock.lock()
+        let completion = initialIndexCompletions.removeValue(forKey: scheduleKey)
+        completion?.leave()
+        schedulingLock.unlock()
     }
 
     private func clearScheduledSignature(_ signature: String) {
         schedulingLock.lock()
         scheduledSignatures.remove(signature)
         schedulingLock.unlock()
+    }
+
+    private func waitForInitialIndexing(_ items: [ScheduledItem]) {
+        let deadline = Date().addingTimeInterval(Self.maximumInitialIndexWaitSeconds)
+        for item in items {
+            let scheduleKey = "\(item.storageID)#\(item.signature)"
+            while !Task.isCancelled {
+                let remaining = deadline.timeIntervalSinceNow
+                guard remaining > 0 else { return }
+                schedulingLock.lock()
+                let completion = initialIndexCompletions[scheduleKey]
+                schedulingLock.unlock()
+                guard let completion else { break }
+                if completion.wait(timeout: .now() + min(0.05, remaining))
+                    == .success {
+                    break
+                }
+            }
+        }
     }
 
     private func invalidate(storageID: String) {
