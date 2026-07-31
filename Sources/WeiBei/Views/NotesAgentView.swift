@@ -1697,11 +1697,9 @@ private struct AgentRailTurn {
 /// Critical: content width must always fit the measured pane. Never invent a floor larger
 /// than `availableWidth`, or multi-pane text centers as if the strip were full-window wide.
 private enum AgentChatLayoutMetrics {
-    /// Codex-like centered column: scales with the window in every layout.
-    /// Floor keeps narrow windows readable; cap keeps ultra-wide line length in check.
-    static let wideMinWidth: CGFloat = 920
-    static let wideMaxWidth: CGFloat = 1520
-    static let wideWidthRatio: CGFloat = 0.78
+    /// ChatGPT-like fixed comfortable column in every layout: narrow panes fill
+    /// outright, wide windows cap at a readable CJK line length (~50 chars at 16px).
+    static let wideMaxWidth: CGFloat = 820
     /// Content columns at least this wide read with the immersive typography tier,
     /// regardless of which layout hosts the chat pane.
     static let wideTypographyMinContentWidth: CGFloat = 620
@@ -1723,11 +1721,10 @@ private enum AgentChatLayoutMetrics {
     static func contentWidth(availableWidth: CGFloat, wide: Bool) -> CGFloat {
         let gutter = (wide ? wideSideGutter : compactSideGutter) * 2
         let usable = max(availableWidth - gutter, 1)
-        // Codex-like in every layout: fill narrow panes outright, grow with the
-        // window (78%, floored at 920) on wide ones, cap at 1520 for line length.
-        // The layout enum no longer picks a different ceiling — a full-window
-        // chat tab must read as wide as immersive conversation.
-        return min(usable, wideMaxWidth, max(wideMinWidth, usable * wideWidthRatio))
+        // ChatGPT-like in every layout: fill narrow panes outright, cap wide
+        // windows at one fixed readable column. The layout enum no longer picks
+        // a different ceiling — a full-window chat tab reads like immersive.
+        return min(usable, wideMaxWidth)
     }
 
     static func composerHeight(wide: Bool) -> CGFloat {
@@ -1808,6 +1805,8 @@ struct AgentPaneView: View {
             availableWidth: availableWidth,
             wide: wide
         )
+        let comfy = wide
+            || contentWidth >= AgentChatLayoutMetrics.wideTypographyMinContentWidth
         let geometryWidth = availableWidth
         let headerHeight: CGFloat = showsPaneHeader
             ? (availableWidth < 420 ? 44 : 54)
@@ -1837,7 +1836,7 @@ struct AgentPaneView: View {
                         // while dragging the chat scroller and froze the UI (build 664).
                         // Long histories fold behind a reveal button instead — unrendered
                         // rows cost nothing; keep full Markdown rendering for visible ones.
-                        VStack(alignment: .leading, spacing: wide ? 22 : 12) {
+                        VStack(alignment: .leading, spacing: comfy ? 22 : 12) {
                             if hiddenAgentHistoryCount > 0 {
                                 agentHistoryRevealButton(proxy: proxy)
                             }
@@ -2304,12 +2303,19 @@ struct AgentPaneView: View {
         agentInputMaxWidth
     }
 
+    /// Composer and rhythm follow the real column width, not the layout enum —
+    /// a full-window chat tab deserves the same roomy composer as immersive.
+    private var usesComfortableChatMetrics: Bool {
+        usesWideChatLayout
+            || (agentInputMaxWidth ?? 0) >= AgentChatLayoutMetrics.wideTypographyMinContentWidth
+    }
+
     private var composerFieldHeight: CGFloat {
-        AgentChatLayoutMetrics.composerHeight(wide: usesWideChatLayout)
+        AgentChatLayoutMetrics.composerHeight(wide: usesComfortableChatMetrics)
     }
 
     private var composerFontSize: CGFloat {
-        AgentChatLayoutMetrics.composerFontSize(wide: usesWideChatLayout)
+        AgentChatLayoutMetrics.composerFontSize(wide: usesComfortableChatMetrics)
     }
 
     private var agentScrollBottomInset: CGFloat {
