@@ -4799,8 +4799,10 @@ private struct AgentMessageMarkdownText: View {
             .foregroundStyle(WeiBeiTheme.ink)
             .multilineTextAlignment(.leading)
             .fixedSize(horizontal: false, vertical: true)
-            // Selectable chat text — wheel still reaches ScrollView via Text's default handling.
-            .textSelection(.enabled)
+            // NEVER enable SwiftUI textSelection here. Sample 2026-08-01: SelectionOverlay
+            // updateNSView + LazyVStack sizeThatFits spun the main thread at 100% after a
+            // few HTML reader scrolls (store publish fanout). KaTeX WKWebView still selects.
+            .textSelection(.disabled)
     }
 
     private var renderedText: AttributedString {

@@ -583,7 +583,21 @@ final class WorkspaceStore: ObservableObject {
     @Published var pinnedFloatingAgent = false
     @Published var selectionContext: SelectionContext?
     @Published var selectionAttachments: [SelectionContext] = []
-    @Published var selectionAnchor: CGPoint?
+    /// Selection capsule position. Anchor-only drag/scroll updates must not
+    /// `@Published`-fanout into agent chat (SelectionOverlay remasure freeze).
+    private var selectionAnchorValue: CGPoint?
+    private var suppressSelectionAnchorPublish = false
+    private var lastSelectionAnchorPublishAt: CFAbsoluteTime = 0
+    var selectionAnchor: CGPoint? {
+        get { selectionAnchorValue }
+        set {
+            guard !Self.anchorsApproximatelyEqual(selectionAnchorValue, newValue) else { return }
+            if !suppressSelectionAnchorPublish {
+                objectWillChange.send()
+            }
+            selectionAnchorValue = newValue
+        }
+    }
     /// Durable selection→chat threads (underline marks + reopen floating Q&A).
     @Published var selectionAskThreads: [SelectionAskThread] = []
     /// Thread currently shown in the floating selection agent (full answer surface).
@@ -14781,7 +14795,7 @@ final class WorkspaceStore: ObservableObject {
 
         // Drag stream: same text, only anchor moves — no spring, no new SelectionContext id.
         if contentMatches {
-            let anchorUnchanged = Self.anchorsApproximatelyEqual(selectionAnchor, anchor)
+            let anchorUnchanged = Self.anchorsApproximatelyEqual(selectionAnchor, anchor, epsilon: 8)
             let surfaceAlreadyCorrect = shouldRevealSelectionPrompt
                 ? agentSurface == .selectionFloat
                 : agentSurface != .selectionFloat
@@ -14789,7 +14803,18 @@ final class WorkspaceStore: ObservableObject {
                 return
             }
             if !anchorUnchanged {
+                // Silent write first so we never assign @Published every pixel.
+                // Throttle a real publish so the floating capsule can track ~20fps
+                // without remasuring agent chat SelectionOverlay every frame.
+                suppressSelectionAnchorPublish = true
                 selectionAnchor = anchor
+                suppressSelectionAnchorPublish = false
+                let now = CFAbsoluteTimeGetCurrent()
+                if agentSurface == .selectionFloat,
+                   now - lastSelectionAnchorPublishAt >= 0.05 {
+                    lastSelectionAnchorPublishAt = now
+                    objectWillChange.send()
+                }
             }
             // Never clear pin while the user locked the float (or mid selection-answer).
             cancelPendingSelectionAttachment()
@@ -23704,13 +23729,26 @@ final class WorkspaceStore: ObservableObject {
             return
         }
         if !keepContext {
+            // Empty selectionchange / pointerdown spam must not re-assign @Published
+            // nils and fan out into agent chat remasure (scroll-only hang sample).
+            let alreadyClear = selectionContext == nil
+                && selectionAnchor == nil
+                && !pinnedFloatingAgent
+                && agentSurface != .selectionFloat
+            if alreadyClear {
+                cancelPendingSelectionAttachment()
+                return
+            }
             if invalidatesAgentContext, selectionContext != nil {
                 invalidateAgentContext()
             }
             cancelPendingSelectionAttachment()
             selectionContext = nil
             selectionAnchor = nil
-            floatingSelectionPrompt = ui("当前选区", "Current selection")
+            let clearedPrompt = ui("当前选区", "Current selection")
+            if floatingSelectionPrompt != clearedPrompt {
+                floatingSelectionPrompt = clearedPrompt
+            }
             pinnedFloatingAgent = false
             if agentSurface == .selectionFloat {
                 agentSurface = .hidden
@@ -23718,6 +23756,9 @@ final class WorkspaceStore: ObservableObject {
             return
         }
         guard !pinnedFloatingAgent else { return }
+        if selectionAnchor == nil, agentSurface != .selectionFloat {
+            return
+        }
         selectionAnchor = nil
         if agentSurface == .selectionFloat {
             agentSurface = .hidden

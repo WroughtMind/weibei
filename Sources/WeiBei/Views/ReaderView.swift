@@ -2435,11 +2435,25 @@ struct WebReaderRepresentable: NSViewRepresentable {
     (() => {
       let frame = 0;
       let lastPayload = { text: "", x: null, y: null };
+      // Scroll must not stream selection → WorkspaceStore. Sample 2026-08-01:
+      // selectionchange during HTML scroll published selectionAnchor and froze
+      // the agent pane in SelectionOverlay / LazyVStack remasure.
+      let scrollQuietUntil = 0;
+      let scrollQuietTimer = 0;
+
+      function markScrollQuiet() {
+        scrollQuietUntil = Date.now() + 220;
+        window.clearTimeout(scrollQuietTimer);
+        scrollQuietTimer = window.setTimeout(() => {
+          scrollQuietUntil = 0;
+        }, 240);
+      }
 
       function reportSelection() {
         window.cancelAnimationFrame(frame);
         frame = window.requestAnimationFrame(() => {
           if (window.weiBeiSuppressSelectionReport) return;
+          if (Date.now() < scrollQuietUntil) return;
           const selection = window.getSelection();
           const text = selection ? selection.toString().trim() : "";
           const range = selection && selection.rangeCount ? selection.getRangeAt(0) : null;
@@ -2472,6 +2486,9 @@ struct WebReaderRepresentable: NSViewRepresentable {
       document.addEventListener("mouseup", reportSelection);
       document.addEventListener("keyup", reportSelection);
       document.addEventListener("touchend", reportSelection);
+      window.addEventListener("wheel", markScrollQuiet, { passive: true });
+      window.addEventListener("scroll", markScrollQuiet, { passive: true });
+      window.addEventListener("touchmove", markScrollQuiet, { passive: true });
 
       // Underline spans for selection-ask history; click reopens floating Q&A.
       window.WeiBeiSelectionAskMarks = {

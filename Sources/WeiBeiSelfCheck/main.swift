@@ -2597,6 +2597,14 @@ expect(readerViewSource.contains("NEVER put GeometryReader as an ancestor of WKW
 expect(readerViewSource.contains("now <= state.userScrollUntil ? \"scroll\"")
     && !readerViewSource.contains("jumpUntil")
     && readerViewSource.contains("postMessage({ id, reason: \"jump\" })"), "html reader treats only the explicit target acknowledgement as a jump and lets real user scrolling take priority")
+expect(readerViewSource.contains("scrollQuietUntil")
+    && readerViewSource.contains("markScrollQuiet")
+    && readerViewSource.contains("window.addEventListener(\"scroll\", markScrollQuiet")
+    && readerViewSource.contains("if (Date.now() < scrollQuietUntil) return;"), "html reader suppresses selection reports while scrolling so WorkspaceStore is not published every frame")
+expect(workspaceStoreSource.contains("suppressSelectionAnchorPublish")
+    && workspaceStoreSource.contains("var selectionAnchor: CGPoint?")
+    && workspaceStoreSource.contains("anchorsApproximatelyEqual(selectionAnchor, anchor, epsilon: 8)")
+    && workspaceStoreSource.contains("lastSelectionAnchorPublishAt"), "selection anchor drag updates are silent/throttled instead of full @Published fanout")
 expect(readerViewSource.contains("guard !textView.attributedString().isEqual(to: attributed) else { return }")
     && readerViewSource.contains("coordinator.withoutSelectionReports")
     && readerViewSource.contains("func withoutSelectionReports"),
@@ -3892,14 +3900,15 @@ expect(workspaceStoreSource.contains("private var quietInsightReferenceTitle: St
     && workspaceStoreSource.contains("currentSourceReferenceTitle")
     && workspaceStoreSource.contains("Quiet insight generation disabled for 1.0"), "quiet insight reference title remains available while generation stays disabled for 1.0")
 expect(workspaceStoreSource.contains("private func clearUnpinnedFloatingSelection(keepContext: Bool = true, invalidatesAgentContext: Bool = true)")
+    && workspaceStoreSource.contains("let alreadyClear = selectionContext == nil")
     && workspaceStoreSource.contains("if invalidatesAgentContext, selectionContext != nil")
     && workspaceStoreSource.contains("selectionContext = nil")
     && workspaceStoreSource.contains("selectionAnchor = nil")
-    && workspaceStoreSource.contains("floatingSelectionPrompt = ui(\"当前选区\"")
+    && workspaceStoreSource.contains("let clearedPrompt = ui(\"当前选区\"")
     && workspaceStoreSource.contains("pinnedFloatingAgent = false")
     && workspaceStoreSource.contains("if agentSurface == .selectionFloat {\n                agentSurface = .hidden\n            }\n            return")
     && workspaceStoreSource.contains("guard !pinnedFloatingAgent else { return }")
-    && workspaceStoreSource.contains("if agentSurface == .selectionFloat"), "cleared selections remove stale context badges before preserving any pinned floating window")
+    && workspaceStoreSource.contains("if agentSurface == .selectionFloat"), "cleared selections remove stale context badges before preserving any pinned floating window; already-clear no-ops avoid publish spam")
 if let dismissFloatingStart = workspaceStoreSource.range(of: "func dismissFloatingSelectionAgent()")?.lowerBound,
    let setNoteRenderModeStart = workspaceStoreSource.range(of: "func setNoteRenderMode")?.lowerBound {
     let dismissFloatingSource = String(workspaceStoreSource[dismissFloatingStart..<setNoteRenderModeStart])
@@ -3923,6 +3932,7 @@ if let updateSelectionStart = workspaceStoreSource.range(of: "func updateSelecti
         && liveSelectionUpdateSource.contains("cancelPendingSelectionAttachment()")
         && liveSelectionUpdateSource.contains("if shouldRevealSelectionPrompt {")
         && liveSelectionUpdateSource.contains("anchorsApproximatelyEqual")
+        && liveSelectionUpdateSource.contains("suppressSelectionAnchorPublish")
         && !liveSelectionUpdateSource.contains("withAnimation(WeiBeiMotion.panel) {\n            selectionContext = nextSelection")
         && !liveSelectionUpdateSource.contains("withAnimation(WeiBeiMotion.panel) {\n            selectionContext = nextSelection\n            selectionAnchor = anchor"), "pinned/answer-locked floats survive new selections; continuous selection fields update without a panel spring, and only surface show/hide may animate")
 } else {
@@ -4817,8 +4827,9 @@ if let messageTextStart = notesAgentSource.range(of: "private struct AgentMessag
         && messageTextSource.contains("NEVER wire onContentHeightChange to scrollAgentToBottom")
         && messageTextSource.contains("AttributedString(markdown:")
         && messageTextSource.contains("RichAnswerDisplayText.normalizedInlineMath")
-        && messageTextSource.contains(".textSelection(.enabled)")
-        && !messageTextSource.contains("onContentHeightChange: onMarkdownHeightChange"), "agent chat uses finalized KaTeX with width-aware height and selectable native text")
+        && messageTextSource.contains(".textSelection(.disabled)")
+        && messageTextSource.contains("NEVER enable SwiftUI textSelection here")
+        && !messageTextSource.contains("onContentHeightChange: onMarkdownHeightChange"), "agent chat uses finalized KaTeX with width-aware height; native text disables SelectionOverlay to avoid scroll remasure freeze")
 } else {
     expect(false, "agent message text source is inspectable")
 }
