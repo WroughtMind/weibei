@@ -534,6 +534,7 @@ final class WorkspaceStore: ObservableObject {
     @Published private(set) var courseFileOperationProgress: CourseFileOperationProgress?
     @Published var notebookCreationDraft: NotebookCreationDraft?
     @Published var notebookRenameDraft: NotebookRenameDraft?
+    private var notebookRenameInFlight = false
     @Published var modelName: String = ProcessInfo.processInfo.environment["WEIBEI_OPENAI_MODEL"] ?? "gpt-5.5"
     @Published var agentProviderID: AgentProviderID = .openai
     @Published var agentBaseURL: String = ""
@@ -12669,7 +12670,10 @@ final class WorkspaceStore: ObservableObject {
     }
 
     func renameNotebookNote(itemID: String, to rawTitle: String) {
+        guard !notebookRenameInFlight else { return }
+        notebookRenameInFlight = true
         if Self.mustSaveImmediately {
+            defer { notebookRenameInFlight = false }
             _ = try? waitForCourseFileOperation {
                 await self.renameNotebookNoteInTransaction(
                     itemID: itemID,
@@ -12679,7 +12683,9 @@ final class WorkspaceStore: ObservableObject {
             return
         }
         Task { @MainActor [weak self] in
-            await self?.renameNotebookNoteInTransaction(
+            guard let self else { return }
+            defer { self.notebookRenameInFlight = false }
+            await self.renameNotebookNoteInTransaction(
                 itemID: itemID,
                 to: rawTitle
             )
@@ -12771,11 +12777,19 @@ final class WorkspaceStore: ObservableObject {
             originalContentDigest: originalContentDigest,
             retitledContentDigest: expectedOutputDigest
         )
-        guard await persistWorkspaceNow() else {
-            noteFileError = ui(
+        let markInitialSaveFailure = {
+            self.noteFileError = self.ui(
                 "无法重命名笔记：当前课程状态尚未安全保存，文件和关系均未改动。",
                 "Could not rename the note because the current course state was not safely saved. The file and relationships were not changed."
             )
+        }
+        if Self.mustSaveImmediately {
+            guard save() else {
+                markInitialSaveFailure()
+                return
+            }
+        } else if !(await persistWorkspaceNow()) {
+            markInitialSaveFailure()
             return
         }
         removePendingNotebookRenameJournal()
