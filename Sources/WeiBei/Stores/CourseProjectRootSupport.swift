@@ -159,6 +159,11 @@ struct CoursePortableAdoptionSnapshot: Sendable {
     var completionData: Data?
 }
 
+struct CourseDirectorySearchResult: Sendable {
+    var url: URL?
+    var ranOnMainThread: Bool
+}
+
 enum CoursePortableExportError: LocalizedError {
     case unstableCourseState
     case invalidSourceEntry(path: String, reason: String)
@@ -166,7 +171,7 @@ enum CoursePortableExportError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .unstableCourseState:
-            return "这门课程仍有回答或动作正在生成。请先等待完成或中断，再导出可携带副本。"
+            return "这门课程仍有回答、笔记或动作尚未保存。请先等待完成或中断，再继续。"
         case let .invalidSourceEntry(path, reason):
             return "课程内容“\(path)”无法安全导出：\(reason)"
         }
@@ -444,6 +449,48 @@ actor CourseProjectFileWorker {
         at url: URL
     ) throws -> (snapshot: CourseFileSnapshot, ranOnMainThread: Bool) {
         (try Self.snapshotFile(at: url), Thread.isMainThread)
+    }
+
+    func findDirectory(
+        with identity: ImportedFileIdentity,
+        inside libraryRoot: URL
+    ) -> CourseDirectorySearchResult {
+        let ranOnMainThread = Thread.isMainThread
+        let keys: Set<URLResourceKey> = [
+            .isDirectoryKey,
+            .isSymbolicLinkKey,
+        ]
+        guard let enumerator = fileManager.enumerator(
+            at: libraryRoot,
+            includingPropertiesForKeys: Array(keys),
+            options: [.skipsHiddenFiles],
+            errorHandler: { _, _ in true }
+        ) else {
+            return CourseDirectorySearchResult(
+                url: nil,
+                ranOnMainThread: ranOnMainThread
+            )
+        }
+        for case let candidate as URL in enumerator {
+            let values = try? candidate.resourceValues(forKeys: keys)
+            guard values?.isDirectory == true else { continue }
+            if values?.isSymbolicLink == true {
+                enumerator.skipDescendants()
+                continue
+            }
+            let canonical = candidate.resolvingSymlinksInPath()
+                .standardizedFileURL
+            if Self.identity(at: canonical) == identity {
+                return CourseDirectorySearchResult(
+                    url: canonical,
+                    ranOnMainThread: ranOnMainThread
+                )
+            }
+        }
+        return CourseDirectorySearchResult(
+            url: nil,
+            ranOnMainThread: ranOnMainThread
+        )
     }
 
     func adoptionSnapshot(
