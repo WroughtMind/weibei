@@ -1698,8 +1698,9 @@ private struct AgentRailTurn {
 /// than `availableWidth`, or multi-pane text centers as if the strip were full-window wide.
 private enum AgentChatLayoutMetrics {
     /// ChatGPT-like fixed comfortable column in every layout: narrow panes fill
-    /// outright, wide windows cap at a readable CJK line length (~50 chars at 16px).
-    static let wideMaxWidth: CGFloat = 820
+    /// outright, wide windows cap at ChatGPT's measured column (~960pt, 65% of a
+    /// 1470pt window) — user-calibrated against side-by-side screenshots.
+    static let wideMaxWidth: CGFloat = 960
     /// Content columns at least this wide read with the immersive typography tier,
     /// regardless of which layout hosts the chat pane.
     static let wideTypographyMinContentWidth: CGFloat = 620
