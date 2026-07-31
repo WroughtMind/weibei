@@ -515,9 +515,44 @@ final class WorkspaceStore: ObservableObject {
         }
     }
     @Published var showReaderSearch = false
-    @Published var readerLocationID: String?
-    @Published var readerLocationTitle: String?
-    @Published var readerPageIndex = 0
+    /// Reader viewport (HTML section / PDF page). Scroll commits must not
+    /// auto-publish — every EnvironmentObject consumer (agent chat WKWebView
+    /// rows) would remasure and freeze the main thread (sample 2026-08-01).
+    private var suppressReaderViewportPublish = false
+    private var readerLocationIDValue: String?
+    private var readerLocationTitleValue: String?
+    private var readerPageIndexValue = 0
+    var readerLocationID: String? {
+        get { readerLocationIDValue }
+        set {
+            guard readerLocationIDValue != newValue else { return }
+            if !suppressReaderViewportPublish {
+                objectWillChange.send()
+            }
+            readerLocationIDValue = newValue
+        }
+    }
+    var readerLocationTitle: String? {
+        get { readerLocationTitleValue }
+        set {
+            guard readerLocationTitleValue != newValue else { return }
+            if !suppressReaderViewportPublish {
+                objectWillChange.send()
+            }
+            readerLocationTitleValue = newValue
+        }
+    }
+    var readerPageIndex: Int {
+        get { readerPageIndexValue }
+        set {
+            let next = max(newValue, 0)
+            guard readerPageIndexValue != next else { return }
+            if !suppressReaderViewportPublish {
+                objectWillChange.send()
+            }
+            readerPageIndexValue = next
+        }
+    }
     @Published var readerTargetPageIndex: Int?
     @Published private(set) var readerTargetPageRequestID = UUID()
     @Published private(set) var readerTargetPageRecordsLocation = false
@@ -12531,8 +12566,18 @@ final class WorkspaceStore: ObservableObject {
         }
         guard readerLocationID != nextID || readerLocationTitle != nextTitle else { return }
         PaneToggleContinuityVerifier.recordHTMLLocationCommit(reason: reason)
-        readerLocationID = nextID
-        readerLocationTitle = nextTitle
+        // Scroll: persist silently. ReaderView already mirrors the active section in
+        // @State; publishing here rebuilds agent chat PlatformViews and freezes UI.
+        let publish = reason != "scroll"
+        if publish {
+            readerLocationID = nextID
+            readerLocationTitle = nextTitle
+        } else {
+            suppressReaderViewportPublish = true
+            readerLocationID = nextID
+            readerLocationTitle = nextTitle
+            suppressReaderViewportPublish = false
+        }
         recordCurrentStudyLocation(incrementVisit: false)
     }
 
@@ -12560,10 +12605,18 @@ final class WorkspaceStore: ObservableObject {
         readerTargetPageRecordsLocation = false
     }
 
-    func updateReaderPageIndex(_ index: Int) {
+    func updateReaderPageIndex(_ index: Int, publishesUI: Bool = false) {
         let nextIndex = max(index, 0)
         guard readerPageIndex != nextIndex else { return }
-        readerPageIndex = nextIndex
+        // Continuous PDF scroll uses publishesUI=false so agent chat WKWebViews
+        // are not remasured on every page crossing (same hang class as HTML scroll).
+        if publishesUI {
+            readerPageIndex = nextIndex
+        } else {
+            suppressReaderViewportPublish = true
+            readerPageIndex = nextIndex
+            suppressReaderViewportPublish = false
+        }
         recordCurrentStudyLocation(incrementVisit: false)
     }
 

@@ -163,6 +163,7 @@ struct ReaderView: View {
     @State private var htmlContentRailActiveID: String?
     @State private var htmlContentRailTarget: WebReaderContentRailTarget?
     @State private var pendingHTMLLocationCommit: Task<Void, Never>?
+    @State private var pendingHTMLContentRailActiveCommit: Task<Void, Never>?
     @State private var pendingPDFLocationCommit: Task<Void, Never>?
     /// Live pane size from a background probe. Zero until first real measurement.
     @State private var measuredPaneSize: CGSize = .zero
@@ -264,6 +265,8 @@ struct ReaderView: View {
         .onChange(of: store.selectedItemID) { _, _ in
             pendingHTMLLocationCommit?.cancel()
             pendingHTMLLocationCommit = nil
+            pendingHTMLContentRailActiveCommit?.cancel()
+            pendingHTMLContentRailActiveCommit = nil
             pendingPDFLocationCommit?.cancel()
             pendingPDFLocationCommit = nil
             pdfPageIndex = 0
@@ -480,7 +483,15 @@ struct ReaderView: View {
             id: id,
             reason: change.reason.rawValue
         )
-        if htmlContentRailActiveID != id {
+        // Jump must update the rail highlight immediately. Scroll updates are
+        // coalesced so fast section crossings do not re-enter WebReader updateNSView.
+        if change.reason == .jump {
+            if htmlContentRailActiveID != id {
+                htmlContentRailActiveID = id
+            }
+        } else if change.reason == .scroll {
+            scheduleHTMLContentRailActiveID(id)
+        } else if htmlContentRailActiveID != id {
             htmlContentRailActiveID = id
         }
         guard change.reason == .scroll || change.reason == .jump else { return }
@@ -488,6 +499,19 @@ struct ReaderView: View {
             htmlContentRailItems.first(where: { $0.id == activeID })?.title
         }
         scheduleHTMLLocationCommit(id: id, title: title, reason: change.reason)
+    }
+
+    private func scheduleHTMLContentRailActiveID(_ id: String?) {
+        guard htmlContentRailActiveID != id else { return }
+        pendingHTMLContentRailActiveCommit?.cancel()
+        pendingHTMLContentRailActiveCommit = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 120_000_000)
+            guard !Task.isCancelled else { return }
+            pendingHTMLContentRailActiveCommit = nil
+            if htmlContentRailActiveID != id {
+                htmlContentRailActiveID = id
+            }
+        }
     }
 
     private func scheduleHTMLLocationCommit(
