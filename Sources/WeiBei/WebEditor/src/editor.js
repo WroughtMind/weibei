@@ -541,6 +541,7 @@ const renderSlashMenu = () => {
     }
     slashMenuElement.appendChild(section);
   }
+  slashMenuElement.querySelector('.weibei-slash-command.is-active')?.scrollIntoView({ block: 'nearest' });
   syncSlashAccessibility();
 };
 

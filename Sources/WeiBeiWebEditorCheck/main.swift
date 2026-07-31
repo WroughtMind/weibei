@@ -1422,6 +1422,7 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
           for (const [query, expected] of [['/h2', '二级标题'], ['/dmk', '代码块'], ['/yxlb', '有序列表'], ['/代码块', '代码块']]) { open(query); state = window.WeiBeiEditor.slashStateForCheck(); if (state.commands.length !== 1 || state.commands[0] !== expected) throw new Error('alias failed: ' + query + JSON.stringify(state)); }
           for (const query of ['/code block', '/ordered list']) { if (open(query)) throw new Error('space alias matched: ' + query); }
           open('/'); window.WeiBeiEditor.pressKeyForCheck('ArrowDown'); state = window.WeiBeiEditor.slashStateForCheck(); if (state.activeDescendant !== 'weibei-slash-command-heading2' || !state.announcement.includes('二级标题')) throw new Error('accessibility did not update: ' + JSON.stringify(state));
+          const menu = document.querySelector('.weibei-slash-menu'); menu.style.maxHeight = '90px'; menu.style.scrollBehavior = 'auto'; open('/'); for (let index = 0; index < 12; index += 1) window.WeiBeiEditor.pressKeyForCheck('ArrowDown'); if (menu.scrollTop <= 0) throw new Error('arrow navigation did not scroll the slash menu'); menu.style.maxHeight = '';
           window.WeiBeiEditor.pressKeyForCheck('Escape'); if (!window.WeiBeiEditor.getMarkdown().includes('/')) throw new Error('escape removed slash text');
           open('/table'); window.WeiBeiEditor.executeSlashCommandForCheck('table');
           return { markdown: window.WeiBeiEditor.getMarkdown(), state: window.WeiBeiEditor.slashStateForCheck() };
