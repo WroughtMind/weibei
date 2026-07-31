@@ -131,6 +131,20 @@ final class MarkdownWebView: WKWebView {
         removeScrollWheelMonitor()
     }
 
+    /// Compact agent/chat previews use a fixed SwiftUI frame. Never answer
+    /// Auto Layout with WebKit's systemLayoutSizeFittingSize — that path
+    /// dominated hang samples (build 662) while LazyVStack remasured rows.
+    override var fittingSize: NSSize {
+        guard passesVerticalScrollToSuperview else { return super.fittingSize }
+        let size = bounds.size
+        return NSSize(width: max(size.width, 1), height: max(size.height, 1))
+    }
+
+    override var intrinsicContentSize: NSSize {
+        guard passesVerticalScrollToSuperview else { return super.intrinsicContentSize }
+        return fittingSize
+    }
+
     /// Compact agent previews must not steal keyboard focus from the composer.
     override var acceptsFirstResponder: Bool {
         passesVerticalScrollToSuperview ? false : super.acceptsFirstResponder

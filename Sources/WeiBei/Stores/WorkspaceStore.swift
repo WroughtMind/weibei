@@ -12582,17 +12582,20 @@ final class WorkspaceStore: ObservableObject {
         PaneToggleContinuityVerifier.recordHTMLLocationCommit(reason: reason)
         // Scroll: persist silently. ReaderView already mirrors the active section in
         // @State; publishing here rebuilds agent chat PlatformViews and freezes UI.
+        // Also skip study-progress save — successful saves assigned workspaceSaveError=nil
+        // and fan out objectWillChange into the chat LazyVStack remasure loop.
         let publish = reason != "scroll"
         if publish {
             readerLocationID = nextID
             readerLocationTitle = nextTitle
+            recordCurrentStudyLocation(incrementVisit: false)
         } else {
             suppressReaderViewportPublish = true
             readerLocationID = nextID
             readerLocationTitle = nextTitle
             suppressReaderViewportPublish = false
+            recordCurrentStudyLocation(incrementVisit: false, schedulesSave: false)
         }
-        recordCurrentStudyLocation(incrementVisit: false)
     }
 
     private func requestReaderHTMLLocation(id: String?, title: String?) {
@@ -12626,15 +12629,16 @@ final class WorkspaceStore: ObservableObject {
         // are not remasured on every page crossing (same hang class as HTML scroll).
         if publishesUI {
             readerPageIndex = nextIndex
+            recordCurrentStudyLocation(incrementVisit: false)
         } else {
             suppressReaderViewportPublish = true
             readerPageIndex = nextIndex
             suppressReaderViewportPublish = false
+            recordCurrentStudyLocation(incrementVisit: false, schedulesSave: false)
         }
-        recordCurrentStudyLocation(incrementVisit: false)
     }
 
-    private func recordCurrentStudyLocation(incrementVisit: Bool) {
+    private func recordCurrentStudyLocation(incrementVisit: Bool, schedulesSave: Bool = true) {
         guard activeCourseID.map({
             activeCourseRemovalTokens[$0] == nil
         }) ?? true,
@@ -12682,6 +12686,7 @@ final class WorkspaceStore: ObservableObject {
                     = location
             }
         }
+        guard schedulesSave else { return }
         studyProgressSaveTask?.cancel()
         let delay = studyProgressSaveDelay
         studyProgressSaveTask = Task { @MainActor [weak self] in
@@ -26245,7 +26250,9 @@ final class WorkspaceStore: ObservableObject {
                 )
                 courseResumePoints =
                     persisted.courseResumePoints ?? []
-                workspaceSaveError = nil
+                if workspaceSaveError != nil {
+                    workspaceSaveError = nil
+                }
                 return true
             } catch {
                 workspaceSaveError = ui(
@@ -26547,7 +26554,9 @@ final class WorkspaceStore: ObservableObject {
                 "The workspace was saved, but a portable course state exceeds 32 MB. The state in the course folder was left unchanged. Reduce course chats or pending drafts, then retry."
             )
         } else if blockedPortableCourseIDs.isEmpty {
-            workspaceSaveError = nil
+            if workspaceSaveError != nil {
+                workspaceSaveError = nil
+            }
         } else {
             workspaceSaveError = ui(
                 "有课程状态存在冲突或损坏，原文件与本机缓存均已保留；魏碑不会自动覆盖。",
@@ -26724,7 +26733,9 @@ final class WorkspaceStore: ObservableObject {
                         "The workspace was saved, but a portable course state exceeds 32 MB. The state in the course folder was left unchanged. Reduce course chats or pending drafts, then retry."
                     )
                 } else if blockedPortableCourseIDs.isEmpty {
-                    workspaceSaveError = nil
+                    if workspaceSaveError != nil {
+                        workspaceSaveError = nil
+                    }
                 } else {
                     workspaceSaveError = ui(
                         "有课程状态存在冲突或损坏，原文件与本机缓存均已保留；魏碑不会自动覆盖。",

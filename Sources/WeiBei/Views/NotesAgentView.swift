@@ -396,6 +396,18 @@ private struct AccessibilityFrameProbe: NSViewRepresentable {
     func updateNSView(_ nsView: NSView, context: Context) {
         nsView.setAccessibilityIdentifier(identifier)
     }
+
+    /// Never ask Auto Layout for an empty probe's fittingSize during pane remasure storms.
+    func sizeThatFits(
+        _ proposal: ProposedViewSize,
+        nsView: NSView,
+        context: Context
+    ) -> CGSize? {
+        CGSize(
+            width: max(proposal.width ?? nsView.bounds.width, 1),
+            height: max(proposal.height ?? nsView.bounds.height, 1)
+        )
+    }
 }
 
 struct NotePaneView: View {
@@ -1532,8 +1544,9 @@ struct MarkdownPreviewView: View {
     var freezeHeightAfterMeasure = false
     /// Seed from a session cache so recycled rows do not collapse then grow.
     var seedContentHeight: CGFloat? = nil
-    /// Exact point-rounded layout width. Every real 1pt change unfreezes the
-    /// existing WebView; the coarser cache bucket is only a first-frame seed.
+    /// Exact point-rounded layout width kept for diagnostics only. Unfreeze uses
+    /// the 24pt bucket — 1pt key changes caused scrollbar/layout jitter to
+    /// unfreeze every KaTeX row and spin sizeThatFits at 100% CPU (sample 662).
     var layoutWidthKey: Int = 0
     var onWikiLink: (String) -> Void = { _ in }
     var onSourceReference: (String) -> Void = { _ in }
@@ -1638,9 +1651,16 @@ struct MarkdownPreviewView: View {
         }
         .onChange(of: layoutWidthKey) { _, widthKey in
             guard widthKey != lastLayoutWidthKey else { return }
+            // Only unfreeze across coarse width buckets. Sub-bucket jitter from
+            // scrollbar / split remasure must not restart every chat WKWebView.
+            let previousBucket = AgentFinalizedMarkdownHeightCache.widthBucket(
+                CGFloat(lastLayoutWidthKey)
+            )
+            let nextBucket = AgentFinalizedMarkdownHeightCache.widthBucket(
+                CGFloat(widthKey)
+            )
             lastLayoutWidthKey = widthKey
-            // Keep this WKWebView alive; ResizeObserver will report the new
-            // height after every real 1pt window / selection-float resize.
+            guard previousBucket != nextBucket else { return }
             heightFrozen = false
         }
         .onChange(of: markdown) { _, _ in
@@ -1961,7 +1981,7 @@ struct AgentPaneView: View {
                 return
             }
         }
-        guard abs(measuredPaneWidth - width) > 0.5 else { return }
+        guard abs(measuredPaneWidth - width) > 2 else { return }
         measuredPaneWidth = width
     }
 
@@ -4665,13 +4685,9 @@ private struct AgentMessageMarkdownText: View {
         AgentCitationParser.parse(sourcePresentation.markdown).displayText
     }
 
-    /// Coarse cache bucket only; exactLayoutWidthKey below controls remeasurement.
+    /// Coarse cache bucket — also drives MarkdownPreviewView freeze width.
     private var layoutWidthBucket: Int {
         AgentFinalizedMarkdownHeightCache.widthBucket(layoutWidth)
-    }
-
-    private var exactLayoutWidthKey: Int {
-        max(Int(layoutWidth.rounded()), 0)
     }
 
     private var shouldUseFinalizedMarkdown: Bool {
@@ -4763,7 +4779,7 @@ private struct AgentMessageMarkdownText: View {
                     fitsContentHeight: true,
                     freezeHeightAfterMeasure: true,
                     seedContentHeight: cachedFinalizedHeight,
-                    layoutWidthKey: exactLayoutWidthKey,
+                    layoutWidthKey: layoutWidthBucket,
                     onWikiLink: { title in store.openOrCreateWikiNote(title: title) },
                     onSourceReference: { reference in
                         if let url = URL(string: reference),
