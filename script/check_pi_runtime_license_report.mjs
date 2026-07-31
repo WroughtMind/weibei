@@ -35,6 +35,54 @@ const assertEqual = (actual, expected, label) => {
     throw new Error(`${label}: expected ${expected}, got ${actual}`);
   }
 };
+const verifyReportInventory = (reportText, expectedPackages) => {
+  const inventoryHeading = "## 完整 npm 锁定依赖清单";
+  const inventoryIndex = reportText.indexOf(inventoryHeading);
+  if (inventoryIndex === -1) {
+    throw new Error("report is missing the complete npm inventory");
+  }
+
+  let currentLicense;
+  const declaredCounts = new Map();
+  const listedPackages = new Map();
+  for (const line of reportText.slice(inventoryIndex).split("\n")) {
+    const heading = line.match(/^### (.+)（(\d+)）$/);
+    if (heading) {
+      currentLicense = heading[1];
+      declaredCounts.set(currentLicense, Number(heading[2]));
+      continue;
+    }
+    const bullet = line.match(/^- `([^`]+@[^`]+)`/);
+    if (!currentLicense || !bullet) {
+      continue;
+    }
+    if (listedPackages.has(bullet[1])) {
+      throw new Error(`duplicate report package: ${bullet[1]}`);
+    }
+    listedPackages.set(bullet[1], currentLicense);
+  }
+
+  const expectedKeys = new Set();
+  const actualCounts = new Map();
+  for (const entry of expectedPackages) {
+    const key = `${entry.name}@${entry.version}`;
+    if (expectedKeys.has(key)) {
+      throw new Error(`ambiguous locked package: ${key}`);
+    }
+    expectedKeys.add(key);
+    const listed = listedPackages.get(key);
+    if (!listed) {
+      throw new Error(`report is missing ${key}`);
+    }
+    assertEqual(listed, entry.license, `report license for ${key}`);
+    actualCounts.set(entry.license, (actualCounts.get(entry.license) ?? 0) + 1);
+  }
+  assertEqual(listedPackages.size, expectedKeys.size, "report package count");
+  for (const [license, count] of actualCounts) {
+    assertEqual(declaredCounts.get(license), count, `report ${license} heading count`);
+  }
+  assertEqual(declaredCounts.size, actualCounts.size, "report license section count");
+};
 
 if (inputs.reviewStatus !== "blocked") {
   throw new Error("license review must remain blocked until external obligations are closed");
@@ -46,8 +94,10 @@ for (const architecture of ["darwin-arm64", "darwin-x64"]) {
   if (!artifact?.archive || !/^[a-f0-9]{64}$/.test(artifact.sha256)) {
     throw new Error(`invalid ${architecture} artifact lock`);
   }
-  if (!report.includes(artifact.sha256)) {
-    throw new Error(`report is missing ${architecture} artifact hash`);
+  for (const value of [artifact.archive, artifact.sha256]) {
+    if (!report.includes(value)) {
+      throw new Error(`report is missing ${architecture} artifact lock: ${value}`);
+    }
   }
 }
 
@@ -69,15 +119,28 @@ for (const entry of packages) {
     throw new Error(`incomplete package entry: ${JSON.stringify(entry)}`);
   }
   licenseCounts[entry.license] = (licenseCounts[entry.license] ?? 0) + 1;
-  if (!report.includes(`\`${entry.name}@${entry.version}\``)) {
-    throw new Error(`report is missing ${entry.name}@${entry.version}`);
-  }
 }
 assertEqual(
   JSON.stringify(Object.fromEntries(Object.entries(licenseCounts).sort())),
   JSON.stringify(Object.fromEntries(Object.entries(inputs.pi.installLock.licenseCounts).sort())),
   "Pi license counts",
 );
+verifyReportInventory(report, packages);
+
+if (args.includes("--self-check")) {
+  let rejectedDuplicate = false;
+  try {
+    verifyReportInventory(
+      "## 完整 npm 锁定依赖清单\n### MIT（2）\n- `demo@1.0.0`\n- `demo@1.0.0`\n",
+      [{ name: "demo", version: "1.0.0", license: "MIT" }],
+    );
+  } catch {
+    rejectedDuplicate = true;
+  }
+  if (!rejectedDuplicate) {
+    throw new Error("negative self-check failed to reject a duplicate report package");
+  }
+}
 
 const bunLicenseBytes = readFileSync(valueAfter("--bun-license"));
 assertEqual(sha256(bunLicenseBytes), inputs.bun.license.sha256, "Bun license hash");
@@ -107,3 +170,6 @@ console.log(`pi_version=${inputs.pi.version}`);
 console.log(`pi_locked_packages=${packages.length}`);
 console.log(`pi_license_counts=${JSON.stringify(licenseCounts)}`);
 console.log(`bun_version=${inputs.bun.version}`);
+if (args.includes("--self-check")) {
+  console.log("negative_self_check=passed");
+}
