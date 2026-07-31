@@ -946,6 +946,8 @@ const syncEditableState = () => {
     input.readOnly = !isEditable;
     input.tabIndex = isEditable ? 0 : -1;
     input.setAttribute('aria-readonly', input.readOnly ? 'true' : 'false');
+    input.setAttribute('aria-label', editorLabel('codeLanguage'));
+    input.placeholder = editorLabel('codeLanguagePlaceholder');
   });
 };
 
@@ -1307,25 +1309,77 @@ const decorateCodeBlock = (decorations, node, pos) => {
   }
 };
 
-/** Adds a generation-scoped language input so a stale DOM control cannot edit another note. */
-const decorateCodeLanguageEditor = (decorations, node, pos) => {
-  const language = String(node.attrs.language || '');
+/**
+ * Creates a code block NodeView whose `<code>` child is ProseMirror's only contentDOM.
+ *
+ * The language control stays in the `<pre>` shell, preventing it from becoming a
+ * text decoration inside the editable code content.
+ */
+const createCodeBlockNodeView = (node, view, getPos) => {
+  const pre = document.createElement('pre');
+  pre.className = 'weibei-code-block';
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.className = 'weibei-code-language-input';
+  input.maxLength = 32;
+  input.setAttribute('autocomplete', 'off');
+  input.setAttribute('autocapitalize', 'none');
+  input.setAttribute('spellcheck', 'false');
+  const code = document.createElement('code');
+  pre.append(input, code);
+  let language = String(node.attrs.language || '');
   const documentID = currentDocumentID;
   const documentGeneration = currentDocumentGeneration;
   const contentGeneration = currentContentGeneration;
-  decorations.push(Decoration.widget(pos + 1, () => {
-    const input = document.createElement('input');
-    input.type = 'text'; input.className = 'weibei-code-language-input'; input.value = language; input.placeholder = editorLabel('codeLanguagePlaceholder'); input.maxLength = 32;
-    input.readOnly = !isEditable; input.tabIndex = isEditable ? 0 : -1; input.setAttribute('aria-readonly', input.readOnly ? 'true' : 'false'); input.setAttribute('aria-label', editorLabel('codeLanguage')); input.setAttribute('autocomplete', 'off'); input.setAttribute('spellcheck', 'false');
-    const commit = () => {
-      const next = input.value.trim().split(/\s+/u)[0]?.slice(0, 32) || ''; input.value = next;
-      if (!isEditable || !editor || next === language || documentID !== currentDocumentID || documentGeneration !== currentDocumentGeneration || contentGeneration !== currentContentGeneration) { input.value = language; return; }
-      editor.action((ctx) => { const view = ctx.get(editorViewCtx); const current = view.state.doc.nodeAt(pos); if (current?.type.name !== 'code_block' || String(current.attrs.language || '') !== language) return; view.dispatch(view.state.tr.setNodeMarkup(pos, undefined, { ...current.attrs, language: next })); });
-    };
-    input.addEventListener('change', commit); input.addEventListener('blur', commit);
-    input.addEventListener('keydown', (event) => { if (event.key === 'Escape') { input.value = language; input.blur(); } if (event.key === 'Enter') { event.preventDefault(); commit(); input.blur(); } });
-    return input;
-  }, { side: -1, key: `weibei-code-language:${documentGeneration}:${contentGeneration}:${pos}:${language}`, stopEvent: (event) => event.target instanceof HTMLInputElement }));
+  const syncControl = () => {
+    pre.dataset.language = language;
+    input.value = language;
+    input.placeholder = editorLabel('codeLanguagePlaceholder');
+    input.setAttribute('aria-label', editorLabel('codeLanguage'));
+    input.readOnly = !isEditable;
+    input.tabIndex = isEditable ? 0 : -1;
+    input.setAttribute('aria-readonly', input.readOnly ? 'true' : 'false');
+  };
+  const commit = () => {
+    const next = input.value.trim().split(/\s+/u)[0]?.slice(0, 32) || '';
+    input.value = next;
+    if (!isEditable || next === language || documentID !== currentDocumentID || documentGeneration !== currentDocumentGeneration || contentGeneration !== currentContentGeneration) { input.value = language; return; }
+    const position = getPos();
+    const current = view.state.doc.nodeAt(position);
+    if (current?.type.name !== 'code_block' || String(current.attrs.language || '') !== language) { input.value = language; return; }
+    view.dispatch(view.state.tr.setNodeMarkup(position, undefined, { ...current.attrs, language: next }));
+  };
+  const onKeyDown = (event) => {
+    if (event.key === 'Escape') { input.value = language; input.blur(); return; }
+    if (event.key !== 'Enter') return;
+    event.preventDefault();
+    commit();
+    input.blur();
+    view.focus();
+  };
+  input.addEventListener('change', commit);
+  input.addEventListener('blur', commit);
+  input.addEventListener('keydown', onKeyDown);
+  syncControl();
+  return {
+    dom: pre,
+    contentDOM: code,
+    update(nextNode) {
+      if (nextNode.type.name !== 'code_block') return false;
+      // A document replacement must not reuse a control that captured an older generation.
+      if (documentID !== currentDocumentID || documentGeneration !== currentDocumentGeneration || contentGeneration !== currentContentGeneration) return false;
+      language = String(nextNode.attrs.language || '');
+      syncControl();
+      return true;
+    },
+    stopEvent(event) { return event.target === input || (event.target instanceof Node && input.contains(event.target)); },
+    ignoreMutation(mutation) { return mutation.target === input || input.contains(mutation.target); },
+    destroy() {
+      input.removeEventListener('change', commit);
+      input.removeEventListener('blur', commit);
+      input.removeEventListener('keydown', onKeyDown);
+    },
+  };
 };
 
 const wikiTitleAtSelection = () => {
@@ -1707,7 +1761,6 @@ const weiBeiDialectPlugin = $prose(() => new Plugin({
         }
 
         if (typeName === 'code_block') {
-          decorateCodeLanguageEditor(decorations, node, pos);
           if (decorateMermaidBlock(decorations, node, pos)) return false;
           decorations.push(Decoration.node(pos, pos + node.nodeSize, {
             class: 'weibei-code-block',
@@ -2024,6 +2077,7 @@ window.WeiBeiEditor = {
     currentLanguage = normalizeInterfaceLanguage(next);
     document.documentElement.dataset.weibeiLanguage = currentLanguage;
     syncFrontmatterPanel();
+    syncEditableState();
     if (slashMenuElement.dataset.show === 'true') renderSlashMenu();
     if (!editor) return;
     editor.action((ctx) => {
@@ -2044,6 +2098,10 @@ if (window.weiBeiEditorCheckMode) {
   window.WeiBeiEditor.executeSlashCommandForCheck = (id) => executeSlashCommand(id);
   window.WeiBeiEditor.pendingImagePickerIDsForCheck = () => Array.from(pendingImagePickers.keys());
   window.WeiBeiEditor.undoForCheck = () => editor.action((ctx) => undo(ctx.get(editorViewCtx).state, ctx.get(editorViewCtx).dispatch));
+  window.WeiBeiEditor.selectionForCheck = () => editor.action((ctx) => {
+    const selection = ctx.get(editorViewCtx).state.selection;
+    return { from: selection.from, to: selection.to };
+  });
 }
 
 const initialDocument = splitFrontmatter(window.initialMarkdown || '');
@@ -2058,6 +2116,7 @@ Editor
     ctx.set(defaultValueCtx, initialDocument.body);
     ctx.set(editorViewOptionsCtx, {
       editable: () => isEditable,
+      nodeViews: { code_block: createCodeBlockNodeView },
     });
     ctx.set(uploadConfig.key, {
       uploader: localImageUploader,

@@ -1450,6 +1450,33 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
         webView.evaluateJavaScript(script) { [weak self] value, error in
             guard let self else { return }
             guard error == nil, value as? Bool == true, self.imagePickerRequests >= 2 else { self.fail("slash image lifecycle failed: \(String(describing: error)); requests=\(self.imagePickerRequests)"); return }
+            self.validateSlashCodeBlockTypingStability()
+        }
+    }
+
+    private func validateSlashCodeBlockTypingStability() {
+        let script = """
+        (() => {
+          window.WeiBeiEditor.setDocumentID('slash-code-typing'); window.WeiBeiEditor.setMarkdown('/code'); window.WeiBeiEditor.openSlashMenuForCheck(); window.WeiBeiEditor.executeSlashCommandForCheck('code');
+          const pre = document.querySelector('.ProseMirror pre'); const input = pre?.querySelector('.weibei-code-language-input'); const code = pre?.querySelector('code'); const initialHeight = pre?.getBoundingClientRect().height;
+          if (!pre || !input || !code || input.parentElement !== pre || code.contains(input)) throw new Error('code NodeView shell is invalid');
+          let previous = window.WeiBeiEditor.selectionForCheck().from;
+          for (const character of ['a', 'b', 'c']) {
+            if (!window.WeiBeiEditor.typeTextForCheck(character)) throw new Error('cannot type code character');
+            const selection = window.WeiBeiEditor.selectionForCheck(); const markdown = window.WeiBeiEditor.getMarkdown();
+            if (!markdown.includes('```\\n' + ['a', 'ab', 'abc'][character.charCodeAt(0) - 97] + '\\n```') || selection.from !== previous + 1 || input !== pre.querySelector('.weibei-code-language-input') || document.activeElement !== document.querySelector('.ProseMirror') || pre.getBoundingClientRect().height !== initialHeight || code.querySelectorAll('br.ProseMirror-trailingBreak').length > 1) throw new Error('code typing became unstable: ' + markdown);
+            previous = selection.from;
+          }
+          input.value = 'rust'; input.dispatchEvent(new Event('change', { bubbles: true }));
+          if (!window.WeiBeiEditor.getMarkdown().includes('```rust\\nabc\\n```')) throw new Error('code language did not update through NodeView');
+          window.WeiBeiEditor.undoForCheck(); if (window.WeiBeiEditor.getMarkdown().includes('```rust')) throw new Error('undo did not revert code language');
+          window.WeiBeiEditor.setMarkdown('```mermaid\\ngraph TD\\n```'); if (!window.WeiBeiEditor.typeTextForCheck('x') || !window.WeiBeiEditor.getMarkdown().includes('graph TDx')) throw new Error('Mermaid NodeView did not accept text');
+          return true;
+        })();
+        """
+        webView.evaluateJavaScript(script) { [weak self] value, error in
+            guard let self else { return }
+            guard error == nil, value as? Bool == true else { self.fail("slash code typing stability failed: \(String(describing: error))"); return }
             self.validateCodeLanguageDocumentIsolation()
         }
     }
