@@ -48,6 +48,10 @@ struct CourseWorkspaceView: View {
     @State private var newNoteTitle = ""
     @State private var newNoteError: String?
     @State private var showsNewNotePrompt = false
+    @State private var courseManagementPresentation:
+        CourseManagementPresentation?
+    @State private var coursePendingRemoval: Course?
+    @State private var courseRemovalError: String?
     @FocusState private var searchFocused: Bool
 
     var body: some View {
@@ -69,7 +73,10 @@ struct CourseWorkspaceView: View {
                             courseID: store.courseWorkspaceCourseID
                         )
                     },
-                    createNote: promptForNewNote
+                    createNote: promptForNewNote,
+                    manageCourse: presentCourseSettings,
+                    requestCourseRemoval:
+                        presentCourseRemovalConfirmation
                 )
 
                 Rectangle()
@@ -107,6 +114,58 @@ struct CourseWorkspaceView: View {
                 create: createNewNote
             )
             .environmentObject(store)
+        }
+        .sheet(item: $courseManagementPresentation) {
+            presentation in
+            CourseManagementSheet(
+                courseID: presentation.courseID
+            )
+            .environmentObject(store)
+        }
+        .confirmationDialog(
+            store.ui(
+                "从魏碑移除这门课程？",
+                "Remove this course from WeiBei?"
+            ),
+            isPresented: Binding(
+                get: { coursePendingRemoval != nil },
+                set: {
+                    if !$0 { coursePendingRemoval = nil }
+                }
+            ),
+            titleVisibility: .visible,
+            presenting: coursePendingRemoval
+        ) { course in
+            Button(store.ui(
+                "从魏碑移除“\(course.title)”",
+                "Remove “\(course.title)” from WeiBei"
+            )) {
+                removeCourseFromWeiBei(course)
+            }
+            Button(
+                store.ui("取消", "Cancel"),
+                role: .cancel
+            ) {
+                coursePendingRemoval = nil
+            }
+        } message: { _ in
+            Text(store.ui(
+                "只会让这门课从魏碑中移除。魏碑会先保存最新学习状态，真实课程文件夹和其中内容会完整保留；以后重新纳入这个文件夹即可恢复。",
+                "This only removes the course from WeiBei. WeiBei first saves the latest learning state, keeps the real course folder and its contents intact, and can restore them when the folder is adopted again."
+            ))
+        }
+        .alert(
+            store.ui("无法移除课程", "Could Not Remove Course"),
+            isPresented: Binding(
+                get: { courseRemovalError != nil },
+                set: {
+                    if !$0 { courseRemovalError = nil }
+                }
+            )
+        ) {
+            Button(store.ui("好", "OK"), role: .cancel) {}
+        } message: {
+            Text(courseRemovalError ?? "")
         }
     }
 
@@ -160,6 +219,29 @@ struct CourseWorkspaceView: View {
         newNoteError = nil
         store.noteFileError = nil
         showsNewNotePrompt = true
+    }
+
+    private func presentCourseSettings() {
+        guard let courseID = store.courseWorkspaceCourseID else {
+            return
+        }
+        courseManagementPresentation =
+            CourseManagementPresentation(courseID: courseID)
+    }
+
+    private func presentCourseRemovalConfirmation() {
+        coursePendingRemoval = store.courseWorkspaceCourse
+    }
+
+    private func removeCourseFromWeiBei(_ course: Course) {
+        coursePendingRemoval = nil
+        Task { @MainActor in
+            do {
+                try await store.removeCourseFromWeiBei(course.id)
+            } catch {
+                courseRemovalError = error.localizedDescription
+            }
+        }
     }
 
     private func createNewNote() {
@@ -275,6 +357,8 @@ struct CourseWorkspaceHeader: View {
     let importMaterials: () -> Void
     let importNotes: () -> Void
     let createNote: () -> Void
+    let manageCourse: () -> Void
+    let requestCourseRemoval: () -> Void
 
     var body: some View {
         HStack(spacing: 14) {
@@ -403,6 +487,23 @@ struct CourseWorkspaceHeader: View {
                     }
                 }
             }
+            if store.courseWorkspaceCourse != nil {
+                Divider()
+                Button(
+                    store.ui(
+                        "课程设置…",
+                        "Course Settings…"
+                    ),
+                    action: manageCourse
+                )
+                Button(
+                    store.ui(
+                        "从魏碑移除…",
+                        "Remove from WeiBei…"
+                    ),
+                    action: requestCourseRemoval
+                )
+            }
         } label: {
             HStack(spacing: 6) {
                 Text(hubCourseTitle)
@@ -417,8 +518,14 @@ struct CourseWorkspaceHeader: View {
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden) // system pull-down chevron + our own would double up
-        .help(store.ui("选择课程", "Select course"))
-        .accessibilityLabel(Text(store.ui("选择课程", "Select course")))
+        .help(store.ui(
+            "选择或管理课程",
+            "Choose or manage a course"
+        ))
+        .accessibilityLabel(Text(store.ui(
+            "课程菜单",
+            "Course menu"
+        )))
     }
 
     private var hubCourseTitle: String {

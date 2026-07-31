@@ -36,6 +36,15 @@ enum CourseProjectRootSelfCheck {
         try step("课程可携带状态恢复") {
             try portableCourseStateIsScopedAtomicAndRestorable()
         }
+        try step("课程移除与废纸篓恢复") {
+            try courseRemovalPreservesStateAndTrashesOnlyVerifiedRoot()
+        }
+        try step("课程移除连续崩溃恢复") {
+            try courseRemovalDoubleCrashRecoveryIsIdempotent()
+        }
+        try step("课程移除两代保存竞态") {
+            try courseRemovalSurvivesLaterGenerationSaveFailure()
+        }
         try step("课程可携带副本导出") {
             try portableCourseExportCopiesWholeTreeAndFailsClosed()
         }
@@ -116,6 +125,454 @@ enum CourseProjectRootSelfCheck {
                     $0.id == courseID
                 })?.title == "后台保存课程（第二代）",
             "后台保存返回后，重开没有读到最新版工作区"
+        )
+    }
+
+    @MainActor
+    private static func
+        courseRemovalSurvivesLaterGenerationSaveFailure() throws {
+        let fixture = try Fixture(
+            name: "course-removal-generation-failure"
+        )
+        defer { fixture.remove() }
+        let library = try fixture.makeDirectory("课程资料库")
+        let store = makeStore(fixture: fixture)
+        try store.configureCourseLibrary(at: library)
+        let removedCourseID = try store.createCourseInLibrary(
+            title: "待移除课程"
+        )
+        let retainedCourseID = try store.createCourseInLibrary(
+            title: "保留课程（第一代）"
+        )
+        try check(
+            store.flushPendingWorkspaceSave(),
+            "两代保存竞态样本没有完成初始保存"
+        )
+        try check(
+            try store.verifyCourseRemovalPersistenceRaceForSelfCheck(
+                removing: removedCourseID,
+                retaining: retainedCourseID
+            ),
+            "第一代移除已提交、第二代保存失败后课程移除或补偿保存不正确"
+        )
+
+        let reopened = makeStore(fixture: fixture)
+        try check(
+            reopened.course(withID: removedCourseID) == nil
+                && reopened.course(withID: retainedCourseID)?.title
+                    == "保留课程（第二代）"
+                && reopened.modelName
+                    == "课程移除第二代全局状态",
+            "补偿保存后重开复活了已移除课程或丢失了第二代状态"
+        )
+    }
+
+    @MainActor
+    private static func
+        courseRemovalPreservesStateAndTrashesOnlyVerifiedRoot() throws {
+        let fixture = try Fixture(name: "course-removal")
+        defer { fixture.remove() }
+        let library = try fixture.makeDirectory("课程资料库")
+        let imports = try fixture.makeDirectory("待导入")
+
+        var swapRootBeforeTrash = false
+        var crashAfterTrashMove = false
+        var courseARootForHook: URL?
+        var displacedCourseRoot: URL?
+        let lureName = "DO_NOT_TRASH.txt"
+        var store: WorkspaceStore? = makeStore(
+            fixture: fixture,
+            mutationHook: { stage in
+                if swapRootBeforeTrash,
+                   stage == .beforeCourseRootTrashIsolation,
+                   let courseARootForHook {
+                    swapRootBeforeTrash = false
+                    let displaced = courseARootForHook
+                        .deletingLastPathComponent()
+                        .appendingPathComponent(
+                            "课程甲-真实目录暂存",
+                            isDirectory: true
+                        )
+                    try FileManager.default.moveItem(
+                        at: courseARootForHook,
+                        to: displaced
+                    )
+                    try FileManager.default.createDirectory(
+                        at: courseARootForHook,
+                        withIntermediateDirectories: true
+                    )
+                    try Data("DO_NOT_TRASH".utf8).write(
+                        to: courseARootForHook
+                            .appendingPathComponent(lureName)
+                    )
+                    displacedCourseRoot = displaced
+                }
+                if crashAfterTrashMove,
+                   stage
+                    == .afterCourseRootTrashMoveBeforeJournal {
+                    crashAfterTrashMove = false
+                    throw CourseProjectSimulatedCrash()
+                }
+            }
+        )
+        let activeStore = try require(store, "无法创建课程移除样本")
+        try activeStore.configureCourseLibrary(at: library)
+        let courseA = try activeStore.createCourseInLibrary(
+            title: "课程甲"
+        )
+        let courseB = try activeStore.createCourseInLibrary(
+            title: "课程乙"
+        )
+        let sharedSource = imports.appendingPathComponent(
+            "共享原件.txt"
+        )
+        let ownedSource = imports.appendingPathComponent(
+            "课程甲自有文稿.txt"
+        )
+        try Data("SHARED_ORIGINAL".utf8).write(to: sharedSource)
+        try Data("COURSE_A_OWNED".utf8).write(to: ownedSource)
+        let sharedItem = try activeStore
+            .importFileIntoCourseForSelfCheck(
+                sharedSource,
+                courseID: courseA,
+                role: .material
+            ).item
+        try activeStore.shareCourseOwnedItemForSelfCheck(
+            itemID: sharedItem.id,
+            withCourseID: courseB
+        )
+        let ownedItem = try activeStore
+            .importFileIntoCourseForSelfCheck(
+                ownedSource,
+                courseID: courseA,
+                role: .material
+            ).item
+        let noteID = try require(
+            activeStore.createCourseNotebookNoteForSelfCheck(
+                courseID: courseA,
+                title: "课程甲笔记"
+            ),
+            "无法创建课程移除笔记"
+        )
+        let chatToken = "A0C_GHOST_CHAT_TOKEN"
+        let memoryToken = "A0C_COURSE_MEMORY_TOKEN"
+        let globalMemoryToken = "A0C_GLOBAL_MEMORY_TOKEN"
+        _ = try activeStore.installCourseRemovalStateForSelfCheck(
+            courseID: courseA,
+            materialItemID: ownedItem.id,
+            noteItemID: noteID,
+            messageText: chatToken,
+            memoryText: memoryToken,
+            globalMemoryText: globalMemoryToken
+        )
+        try check(
+            activeStore.flushPendingWorkspaceSave(),
+            "课程移除样本无法写入课程状态"
+        )
+
+        let rootA = try require(
+            activeStore.courseRootURL(for: courseA),
+            "课程甲根目录缺失"
+        )
+        let rootB = try require(
+            activeStore.courseRootURL(for: courseB),
+            "课程乙根目录缺失"
+        )
+        courseARootForHook = rootA
+        let rootAIdentity = try require(
+            CourseProjectFileWorker.identity(at: rootA),
+            "课程甲根身份缺失"
+        )
+        let rootBIdentity = try require(
+            CourseProjectFileWorker.identity(at: rootB),
+            "课程乙根身份缺失"
+        )
+        let visibleA = try rootA.visibleFileSnapshot()
+        let manifestA = try Data(
+            contentsOf: rootA.appendingPathComponent(
+                ".weibei/course.json"
+            )
+        )
+        let sharedURL = try require(
+            activeStore.item(withID: sharedItem.id)?.url,
+            "共享原件路径缺失"
+        )
+        let sharedIdentity = try require(
+            CourseProjectFileWorker.identity(at: sharedURL),
+            "共享原件身份缺失"
+        )
+        let sharedData = try Data(contentsOf: sharedURL)
+
+        try activeStore.removeCourseFromWeiBeiForSelfCheck(
+            courseA
+        )
+        try check(
+            activeStore.course(withID: courseA) == nil
+                && !activeStore.studySessions.contains {
+                    $0.courseID == courseA
+                        || $0.messages.contains {
+                            $0.text == chatToken
+                        }
+                }
+                && activeStore.courseIDs(for: sharedItem.id)
+                    == [courseB]
+                && activeStore.item(withID: sharedItem.id) != nil
+                && activeStore.item(withID: ownedItem.id) == nil
+                && activeStore.learningMemoryEntries(
+                    in: .course(courseA)
+                ).isEmpty
+                && activeStore.learningMemoryEntries(in: .global)
+                    .contains {
+                        $0.text == globalMemoryToken
+                    }
+                && activeStore.courseResumePoint(
+                    for: courseA
+                ) == nil,
+            "普通移除残留课程本机状态、误删共享资料或污染全局状态"
+        )
+        let visibleAfterRemoval = try rootA.visibleFileSnapshot()
+        let manifestAfterRemoval = try Data(
+            contentsOf: rootA.appendingPathComponent(
+                ".weibei/course.json"
+            )
+        )
+        let sharedDataAfterRemoval = try Data(
+            contentsOf: sharedURL
+        )
+        try check(
+            CourseProjectFileWorker.identity(at: rootA)
+                == rootAIdentity
+                && visibleAfterRemoval == visibleA
+                && manifestAfterRemoval == manifestA
+                && CourseProjectFileWorker.identity(at: rootB)
+                    == rootBIdentity
+                && CourseProjectFileWorker.identity(at: sharedURL)
+                    == sharedIdentity
+                && sharedDataAfterRemoval == sharedData,
+            "普通移除改动了真实课程内容、其他课程或共享原件"
+        )
+
+        let reopenedCourseID = try activeStore.adoptCourseFolder(
+            at: rootA,
+            title: "不应覆盖课程名"
+        )
+        try check(
+            reopenedCourseID == courseA
+                && activeStore.studySessions.filter {
+                    $0.courseID == courseA
+                        && $0.messages.contains {
+                            $0.text == chatToken
+                        }
+                }.count == 1
+                && activeStore.learningMemoryEntries(
+                    in: .course(courseA)
+                ).contains {
+                    $0.text == memoryToken
+                }
+                && activeStore.courseResumePoint(
+                    for: courseA
+                ) != nil,
+            "重新纳入课程没有按同一身份恢复 Chat、记忆和学习现场，或产生重复 Chat"
+        )
+
+        swapRootBeforeTrash = true
+        try expectFailure("确认后根目录身份变化") {
+            _ = try activeStore
+                .moveCourseFolderToTrashForSelfCheck(courseA)
+        }
+        let displacedRoot = try require(
+            displacedCourseRoot,
+            "没有建立根目录替换样本"
+        )
+        let lureSurvived =
+            rootA.appendingPathComponent(lureName).exists
+        let realRootSurvived =
+            CourseProjectFileWorker.identity(
+                at: displacedRoot
+            ) == rootAIdentity
+        let registrationSurvived =
+            activeStore.course(withID: courseA) != nil
+        try check(
+            lureSurvived
+                && realRootSurvived
+                && registrationSurvived,
+            "课程根被替换后的安全状态不正确：诱饵=\(lureSurvived)，真实目录=\(realRootSurvived)，课程登记=\(registrationSurvived)"
+        )
+        try FileManager.default.removeItem(at: rootA)
+        try FileManager.default.moveItem(
+            at: displacedRoot,
+            to: rootA
+        )
+
+        crashAfterTrashMove = true
+        try expectFailure("废纸篓移动后崩溃") {
+            _ = try activeStore
+                .moveCourseFolderToTrashForSelfCheck(courseA)
+        }
+        let selfCheckTrash = fixture.workspaceDirectory
+            .appendingPathComponent(
+                "SelfCheckTrash",
+                isDirectory: true
+            )
+        let trashedNames = try FileManager.default
+            .contentsOfDirectory(atPath: selfCheckTrash.path)
+        let trashedRoot = try require(
+            trashedNames.first.map {
+                selfCheckTrash.appendingPathComponent(
+                    $0,
+                    isDirectory: true
+                )
+            },
+            "废纸篓崩溃样本没有保留课程目录"
+        )
+        let sharedDataAfterTrash = try Data(
+            contentsOf: sharedURL
+        )
+        try check(
+            !rootA.exists
+                && CourseProjectFileWorker.identity(at: trashedRoot)
+                    == rootAIdentity
+                && CourseProjectFileWorker.identity(at: rootB)
+                    == rootBIdentity
+                && CourseProjectFileWorker.identity(at: sharedURL)
+                    == sharedIdentity
+                && sharedDataAfterTrash == sharedData,
+            "废纸篓崩溃窗口损坏了课程、其他课程或共享原件"
+        )
+        try expectFailure("未完成恢复期间拒绝第二门课移除") {
+            try activeStore.removeCourseFromWeiBeiForSelfCheck(
+                courseB
+            )
+        }
+        try check(
+            activeStore.course(withID: courseB) != nil,
+            "未完成的课程移除恢复被另一门课覆盖"
+        )
+
+        store = nil
+        let recovered = makeStore(fixture: fixture)
+        try recovered
+            .finishPendingCourseRemovalRecoveryForSelfCheck()
+        let journalURL = fixture.workspaceDirectory
+            .appendingPathComponent(
+                "pending-course-removal.json"
+            )
+        try check(
+            recovered.course(withID: courseA) == nil
+                && !recovered.studySessions.contains {
+                    $0.courseID == courseA
+                        || $0.messages.contains {
+                            $0.text == chatToken
+                        }
+                }
+                && recovered.course(withID: courseB) != nil
+                && recovered.item(withID: sharedItem.id) != nil
+                && !journalURL.exists,
+            "重开没有幂等完成废纸篓后的本机注销"
+        )
+        let recoveredAgain = makeStore(fixture: fixture)
+        try check(
+            recoveredAgain.course(withID: courseA) == nil
+                && recoveredAgain.course(withID: courseB) != nil
+                && CourseProjectFileWorker.identity(at: trashedRoot)
+                    == rootAIdentity,
+            "第二次重开让已移除课程复活或改动了废纸篓目录"
+        )
+    }
+
+    @MainActor
+    private static func
+        courseRemovalDoubleCrashRecoveryIsIdempotent() throws {
+        let fixture = try Fixture(
+            name: "course-removal-double-crash"
+        )
+        defer { fixture.remove() }
+        let library = try fixture.makeDirectory("课程资料库")
+
+        var firstCrash = true
+        var firstStore: WorkspaceStore? = makeStore(
+            fixture: fixture,
+            mutationHook: { stage in
+                if firstCrash,
+                   stage
+                    == .afterCourseRootTrashIsolationBeforeJournal {
+                    firstCrash = false
+                    throw CourseProjectSimulatedCrash()
+                }
+            }
+        )
+        let originalStore = try require(
+            firstStore,
+            "无法建立第一次崩溃样本"
+        )
+        try originalStore.configureCourseLibrary(at: library)
+        let courseID = try originalStore.createCourseInLibrary(
+            title: "连续崩溃课程"
+        )
+        let root = try require(
+            originalStore.courseRootURL(for: courseID),
+            "连续崩溃课程根缺失"
+        )
+        let rootIdentity = try require(
+            CourseProjectFileWorker.identity(at: root),
+            "连续崩溃课程身份缺失"
+        )
+        try check(
+            originalStore.flushPendingWorkspaceSave(),
+            "连续崩溃课程初始状态未保存"
+        )
+        try expectFailure("隔离后写恢复记录前第一次崩溃") {
+            _ = try originalStore
+                .moveCourseFolderToTrashForSelfCheck(courseID)
+        }
+        firstStore = nil
+
+        var secondCrash = true
+        var secondStore: WorkspaceStore? = makeStore(
+            fixture: fixture,
+            mutationHook: { stage in
+                if secondCrash,
+                   stage
+                    == .afterCourseRootTrashMoveBeforeJournal {
+                    secondCrash = false
+                    throw CourseProjectSimulatedCrash()
+                }
+            }
+        )
+        let recoveringStore = try require(
+            secondStore,
+            "无法建立第二次崩溃恢复样本"
+        )
+        try recoveringStore
+            .finishPendingCourseRemovalRecoveryForSelfCheck()
+        secondStore = nil
+
+        let recovered = makeStore(fixture: fixture)
+        try recovered
+            .finishPendingCourseRemovalRecoveryForSelfCheck()
+        let journalURL = fixture.workspaceDirectory
+            .appendingPathComponent(
+                "pending-course-removal.json"
+            )
+        let selfCheckTrash = fixture.workspaceDirectory
+            .appendingPathComponent(
+                "SelfCheckTrash",
+                isDirectory: true
+            )
+        let trashedEntries = (
+            try? FileManager.default.contentsOfDirectory(
+                at: selfCheckTrash,
+                includingPropertiesForKeys: nil
+            )
+        ) ?? []
+        try check(
+            recovered.course(withID: courseID) == nil
+                && !journalURL.exists
+                && trashedEntries.contains {
+                    CourseProjectFileWorker.identity(at: $0)
+                        == rootIdentity
+                },
+            "连续两次崩溃后课程复活、恢复记录丢失或课程根未保留"
         )
     }
 
@@ -1322,7 +1779,10 @@ enum CourseProjectRootSelfCheck {
                         return
                     }
                     deleteDuringNormalization = false
-                    storeReference?.deleteCourse(targetCourseID)
+                    storeReference?
+                        .removeCourseRegistrationImmediatelyForSelfCheck(
+                            targetCourseID
+                        )
                 }
             )
             storeReference = store

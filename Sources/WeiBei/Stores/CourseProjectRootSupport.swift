@@ -196,6 +196,14 @@ struct WorkspacePersistenceResult: Sendable {
     var ranOnMainThread: Bool
 }
 
+struct CourseRootTrashIsolation: Sendable {
+    var originalURL: URL
+    var transactionDirectory: URL
+    var transactionDirectoryIdentity: ImportedFileIdentity
+    var isolatedURL: URL
+    var identity: ImportedFileIdentity
+}
+
 struct CourseDirectorySearchResult: Sendable {
     var url: URL?
     var ranOnMainThread: Bool
@@ -226,6 +234,7 @@ actor CourseProjectFileWorker {
         [CheckedContinuation<Void, Never>] = []
     private var selfCheckWorkspaceRelease:
         CheckedContinuation<Void, Never>?
+    private var selfCheckFailingWorkspaceGeneration: UInt64?
 
     func prepareWorkspacePersistenceGateForSelfCheck(
         generation: UInt64
@@ -256,6 +265,76 @@ actor CourseProjectFileWorker {
         }
         selfCheckWorkspaceRelease?.resume()
         selfCheckWorkspaceRelease = nil
+    }
+
+    func failWorkspacePersistenceForSelfCheck(
+        generation: UInt64
+    ) {
+        selfCheckFailingWorkspaceGeneration = generation
+    }
+
+    func verifiedCourseRoot(
+        at rawURL: URL,
+        expectedIdentity: ImportedFileIdentity,
+        expectedCourseID: UUID
+    ) -> Bool {
+        guard let root = try? CourseProjectPathPolicy.existingDirectory(
+            rawURL
+        ),
+        CourseProjectPathPolicy.isSame(rawURL, root),
+        Self.identity(at: root) == expectedIdentity,
+        let data = try? Self.readBoundedRegularFile(
+            at: root
+                .appendingPathComponent(".weibei", isDirectory: true)
+                .appendingPathComponent("course.json"),
+            maximumByteCount: 1_048_576
+        ),
+        let manifest = try? JSONDecoder().decode(
+            CourseProjectManifest.self,
+            from: data
+        ) else {
+            return false
+        }
+        return manifest.courseID == expectedCourseID
+            && manifest.schemaVersion
+                == CourseProjectManifest.currentSchemaVersion
+    }
+
+    func findVerifiedCourseRoot(
+        in directories: [URL],
+        expectedIdentity: ImportedFileIdentity,
+        expectedCourseID: UUID,
+        maximumEntryCount: Int = 10_000
+    ) -> URL? {
+        var inspected = 0
+        for directory in directories {
+            guard let entries = try? fileManager
+                .contentsOfDirectory(
+                    at: directory,
+                    includingPropertiesForKeys: [
+                        .isDirectoryKey,
+                        .isSymbolicLinkKey,
+                    ],
+                    options: [.skipsHiddenFiles]
+                ) else {
+                continue
+            }
+            for entry in entries {
+                inspected += 1
+                guard inspected <= maximumEntryCount else {
+                    return nil
+                }
+                if Self.identity(at: entry) == expectedIdentity,
+                   verifiedCourseRoot(
+                    at: entry,
+                    expectedIdentity: expectedIdentity,
+                    expectedCourseID: expectedCourseID
+                   ) {
+                    return entry.standardizedFileURL
+                }
+            }
+        }
+        return nil
     }
 
     func persistWorkspace(
@@ -473,6 +552,23 @@ actor CourseProjectFileWorker {
         )
         workspace.dirtyPortableCourseIDs = dirty.sorted {
             $0.uuidString < $1.uuidString
+        }
+        if selfCheckFailingWorkspaceGeneration == request.generation {
+            selfCheckFailingWorkspaceGeneration = nil
+            let rollbackFailed = Self.rollbackPortableWrites(committedWrites)
+            return persistenceResult(
+                request: request,
+                failure: rollbackFailed
+                    ? .rollbackConflict
+                    : .workspace("测试注入失败"),
+                revisions: previousRevisions,
+                digests: previousDigests,
+                dirty: previousDirty,
+                blocked: previousBlocked,
+                oversized: previousOversized,
+                needsBootstrap: previousNeedsBootstrap,
+                ranOnMainThread: ranOnMainThread
+            )
         }
         do {
             let data = try JSONEncoder().encode(workspace)
@@ -1829,6 +1925,222 @@ actor CourseProjectFileWorker {
         return (resultingURL as URL).standardizedFileURL
     }
 
+    func isolateCourseRootForTrash(
+        at rawRoot: URL,
+        expectedIdentity: ImportedFileIdentity,
+        expectedCourseID: UUID,
+        transactionID: UUID,
+        beforeIsolation: () throws -> Void = {}
+    ) throws -> CourseRootTrashIsolation {
+        let root = try CourseProjectPathPolicy.existingDirectory(rawRoot)
+        let metadata = root.appendingPathComponent(
+            ".weibei",
+            isDirectory: true
+        )
+        let metadataValues = try metadata.resourceValues(forKeys: [
+            .isDirectoryKey,
+            .isSymbolicLinkKey,
+            .isAliasFileKey,
+        ])
+        guard CourseProjectPathPolicy.isSame(rawRoot, root),
+              Self.identity(at: root) == expectedIdentity,
+              metadataValues.isDirectory == true,
+              metadataValues.isSymbolicLink != true,
+              metadataValues.isAliasFile != true,
+              CourseProjectPathPolicy.isSame(
+                metadata,
+                metadata.resolvingSymlinksInPath()
+              ),
+              CourseProjectPathPolicy.contains(
+                root,
+                metadata,
+                includingRoot: false
+              ) else {
+            throw CourseProjectFileWorkerError.unsafePath
+        }
+        let manifestData = try Self.readBoundedRegularFile(
+            at: metadata.appendingPathComponent("course.json"),
+            maximumByteCount: 1_048_576
+        )
+        let manifest = try JSONDecoder().decode(
+            CourseProjectManifest.self,
+            from: manifestData
+        )
+        guard manifest.courseID == expectedCourseID,
+              manifest.schemaVersion
+                == CourseProjectManifest.currentSchemaVersion,
+              Self.identity(at: root) == expectedIdentity else {
+            throw CourseProjectFileWorkerError.verificationFailed
+        }
+
+        let transactionDirectory = root.deletingLastPathComponent()
+            .appendingPathComponent(
+                ".weibei-course-removal-\(transactionID.uuidString.lowercased())",
+                isDirectory: true
+            )
+        guard !fileManager.fileExists(
+            atPath: transactionDirectory.path
+        ) else {
+            throw CourseProjectFileWorkerError.targetExists
+        }
+        try fileManager.createDirectory(
+            at: transactionDirectory,
+            withIntermediateDirectories: false
+        )
+        guard let transactionDirectoryIdentity =
+                Self.identity(at: transactionDirectory),
+              CourseProjectPathPolicy.isSame(
+                transactionDirectory,
+                transactionDirectory.resolvingSymlinksInPath()
+              ) else {
+            throw CourseProjectFileWorkerError.unsafePath
+        }
+        let isolatedRoot = transactionDirectory.appendingPathComponent(
+            root.lastPathComponent,
+            isDirectory: true
+        )
+        do {
+            _ = try Self.renameWithoutReplacementAnchored(
+                from: root,
+                to: isolatedRoot,
+                expectedSourceIdentity: expectedIdentity,
+                expectedDestinationDirectoryIdentity:
+                    transactionDirectoryIdentity,
+                beforeRename: beforeIsolation
+            )
+            let isolatedMetadata = isolatedRoot.appendingPathComponent(
+                ".weibei",
+                isDirectory: true
+            )
+            let isolatedManifestData = try Self.readBoundedRegularFile(
+                at: isolatedMetadata.appendingPathComponent(
+                    "course.json"
+                ),
+                maximumByteCount: 1_048_576
+            )
+            let isolatedManifest = try JSONDecoder().decode(
+                CourseProjectManifest.self,
+                from: isolatedManifestData
+            )
+            guard Self.identity(at: isolatedRoot) == expectedIdentity,
+                  isolatedManifest.courseID == expectedCourseID,
+                  isolatedManifest.schemaVersion
+                    == CourseProjectManifest.currentSchemaVersion else {
+                throw CourseProjectFileWorkerError.verificationFailed
+            }
+            return CourseRootTrashIsolation(
+                originalURL: root,
+                transactionDirectory: transactionDirectory,
+                transactionDirectoryIdentity:
+                    transactionDirectoryIdentity,
+                isolatedURL: isolatedRoot,
+                identity: expectedIdentity
+            )
+        } catch {
+            if Self.identity(at: isolatedRoot) == expectedIdentity,
+               !fileManager.fileExists(atPath: root.path) {
+                _ = Self.renameWithoutReplacement(
+                    from: isolatedRoot,
+                    to: root
+                )
+            }
+            if !fileManager.fileExists(atPath: isolatedRoot.path) {
+                removeEmptyDirectory(
+                    transactionDirectory,
+                    expectedIdentity:
+                        transactionDirectoryIdentity
+                )
+            }
+            throw error
+        }
+    }
+
+    func moveIsolatedCourseRootToTrash(
+        _ isolation: CourseRootTrashIsolation,
+        expectedCourseID: UUID,
+        selfCheckDestination: URL
+    ) throws -> URL {
+        let isolatedRoot = try CourseProjectPathPolicy.existingDirectory(
+            isolation.isolatedURL
+        )
+        let manifestData = try Self.readBoundedRegularFile(
+            at: isolatedRoot
+                .appendingPathComponent(".weibei", isDirectory: true)
+                .appendingPathComponent("course.json"),
+            maximumByteCount: 1_048_576
+        )
+        let manifest = try JSONDecoder().decode(
+            CourseProjectManifest.self,
+            from: manifestData
+        )
+        guard CourseProjectPathPolicy.isSame(
+                isolatedRoot,
+                isolation.isolatedURL
+              ),
+              Self.identity(at: isolatedRoot) == isolation.identity,
+              manifest.courseID == expectedCourseID,
+              manifest.schemaVersion
+                == CourseProjectManifest.currentSchemaVersion else {
+            throw CourseProjectFileWorkerError.verificationFailed
+        }
+
+        let movedRoot: URL
+        if ProcessInfo.processInfo.arguments.contains(
+            "--self-check-course-project-root"
+        ) {
+            try fileManager.createDirectory(
+                at: selfCheckDestination.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            guard !fileManager.fileExists(
+                atPath: selfCheckDestination.path
+            ),
+            Self.renameWithoutReplacement(
+                from: isolatedRoot,
+                to: selfCheckDestination
+            ) else {
+                throw POSIXError(
+                    POSIXErrorCode(rawValue: errno) ?? .EIO
+                )
+            }
+            movedRoot = selfCheckDestination
+        } else {
+            var resultingURL: NSURL?
+            try fileManager.trashItem(
+                at: isolatedRoot,
+                resultingItemURL: &resultingURL
+            )
+            guard let resultingURL else {
+                throw CourseProjectFileWorkerError.verificationFailed
+            }
+            movedRoot = (resultingURL as URL).standardizedFileURL
+        }
+        guard Self.identity(at: isolation.originalURL)
+                != isolation.identity,
+              Self.identity(at: movedRoot) == isolation.identity else {
+            throw CourseProjectFileWorkerError.verificationFailed
+        }
+        removeEmptyDirectory(
+            isolation.transactionDirectory,
+            expectedIdentity:
+                isolation.transactionDirectoryIdentity
+        )
+        return movedRoot
+    }
+
+    private func removeEmptyDirectory(
+        _ url: URL,
+        expectedIdentity: ImportedFileIdentity
+    ) {
+        guard Self.identity(at: url) == expectedIdentity else {
+            return
+        }
+        _ = url.withUnsafeFileSystemRepresentation { path in
+            guard let path else { return Int32(-1) }
+            return Darwin.rmdir(path)
+        }
+    }
+
     func createVerifiedRollbackCopy(
         from source: URL,
         to destination: URL,
@@ -2962,7 +3274,15 @@ actor CourseProjectFileWorker {
         try beforeRename()
         guard identity(at: sourceDirectory) == sourceDirectoryIdentity,
               identity(at: destinationDirectory)
-                == expectedDestinationDirectoryIdentity else {
+                == expectedDestinationDirectoryIdentity,
+              identity(
+                named: sourceName,
+                relativeTo: sourceDescriptor
+              ) == expectedSourceIdentity,
+              identity(
+                named: destinationName,
+                relativeTo: destinationDescriptor
+              ) == nil else {
             throw CourseProjectFileWorkerError.unsafePath
         }
 
@@ -4315,6 +4635,11 @@ enum CourseProjectMutationStage: String, CaseIterable {
     case beforeCourseFileSourceRemoval
     case beforeCoursePortableStateCASPlacement
     case afterAdoptionWorkspaceSaveBeforeManifestNormalization
+    case beforeCourseRootTrashMove
+    case beforeCourseRootTrashIsolation
+    case afterCourseRootTrashIsolationBeforeJournal
+    case afterCourseRootTrashMoveBeforeJournal
+    case afterCourseRootTrashJournalBeforeWorkspaceSave
 }
 
 struct CourseProjectSimulatedCrash: Error {}
