@@ -371,8 +371,8 @@
 
     .ProseMirror h1 { font-size: 1.85rem; }
     .ProseMirror h2 { font-size: 1.42rem; }
-    .ProseMirror h3 { font-size: 1.16rem; }
-    .ProseMirror h4 { font-size: 1.05em; font-weight: 650; margin: 1em 0 .45em; }
+    .ProseMirror h3 { font-size: 1.22rem; }
+    .ProseMirror h4 { font-size: 1.12em; font-weight: 650; margin: 1em 0 .45em; }
     .ProseMirror h5 {
       font-size: .95em;
       font-weight: 650;
@@ -489,40 +489,34 @@
 
     .ProseMirror table {
       width: 100%;
-      margin: 1.05em 0;
+      margin: 1.1em 0;
       border-collapse: collapse;
       table-layout: fixed;
       font-size: .96em;
-      background: rgba(251, 245, 234, .52);
-    }
-
-    :root[data-weibei-theme="inkstone"] .ProseMirror table,
-    :root[data-weibei-theme="stele"] .ProseMirror table {
-      background: rgba(255, 255, 255, .02);
+      background: transparent;
     }
 
     .ProseMirror th,
     .ProseMirror td {
-      border: 1px solid var(--line);
-      padding: .4em .6em;
+      border: 0;
+      border-bottom: 1px solid color-mix(in srgb, var(--line) 62%, transparent);
+      padding: .5em .7em;
+      text-align: left;
       vertical-align: top;
     }
 
     .ProseMirror th {
       color: var(--ink);
-      background: rgba(92, 70, 46, .075);
+      background: transparent;
       font-weight: 650;
-      border-bottom-width: 1.5px;
-    }
-
-    .ProseMirror tbody tr:nth-child(even) td {
-      background: color-mix(in srgb, var(--paper-raised) 42%, transparent);
+      letter-spacing: .01em;
+      border-bottom: 1.5px solid var(--line);
     }
 
     :root[data-weibei-theme="inkstone"] .ProseMirror th,
     :root[data-weibei-theme="stele"] .ProseMirror th {
       color: var(--blue-ink);
-      background: rgba(200, 185, 138, .08);
+      background: transparent;
     }
 
     .ProseMirror td > p,
