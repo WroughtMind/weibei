@@ -86,6 +86,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        // Keep a final fallback for termination paths that bypassed the
+        // asynchronous applicationShouldTerminate handshake.
+        if !terminationApproved {
+            sharedWorkspaceStore.flushPendingNotePersistence()
+        }
         sharedWorkspaceStore.shutdownAgentRuntime()
         resignFlushTask?.cancel()
         resignFlushTask = nil
