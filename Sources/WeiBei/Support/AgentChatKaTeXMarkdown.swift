@@ -10,8 +10,45 @@ enum AgentChatKaTeXMarkdown {
     static func prepare(_ raw: String) -> String {
         var text = raw
         text = convertBracketDisplayMath(in: text)
+        text = expandSingleLineDisplayMath(in: text)
         text = fixHatArguments(in: text)
         return text
+    }
+
+    /// `$$x$$` on one line parses as INLINE math (micromark math flow needs the
+    /// fences on their own lines), so block formulas stayed left-aligned at
+    /// text size. Models emit the one-line form constantly — expand it so the
+    /// editor produces a real math_block and the displayMode upgrade applies.
+    static func expandSingleLineDisplayMath(in text: String) -> String {
+        #if DEBUG
+        assert(displayMathExpansionSelfCheckPassed, "single-line $$ expansion self-check failed")
+        #endif
+        guard text.contains("$$") else { return text }
+        return expandSingleLineDisplayMathUnchecked(text)
+    }
+
+    #if DEBUG
+    private static let displayMathExpansionSelfCheckPassed: Bool = {
+        let expanded = expandSingleLineDisplayMathUnchecked("前文\n\n$$a + b$$\n\n后文 $c$ 与 $$d$$ 行内混排")
+        return expanded.contains("$$\na + b\n$$")
+            && expanded.contains("与 $$d$$ 行内混排")
+    }()
+    #endif
+
+    private static func expandSingleLineDisplayMathUnchecked(_ text: String) -> String {
+        guard let pattern = try? NSRegularExpression(
+            pattern: #"^[ \t]*\$\$([^$\n]+)\$\$[ \t]*$"#,
+            options: [.anchorsMatchLines]
+        ) else { return text }
+        let fullRange = NSRange(text.startIndex..<text.endIndex, in: text)
+        var result = text
+        for match in pattern.matches(in: text, range: fullRange).reversed() {
+            guard let matchRange = Range(match.range, in: result),
+                  let contentRange = Range(match.range(at: 1), in: text) else { continue }
+            let content = String(text[contentRange]).trimmingCharacters(in: .whitespaces)
+            result.replaceSubrange(matchRange, with: "$$\n\(content)\n$$")
+        }
+        return result
     }
 
     /// Keep ordinary one-paragraph / inline Markdown on native SwiftUI text.
