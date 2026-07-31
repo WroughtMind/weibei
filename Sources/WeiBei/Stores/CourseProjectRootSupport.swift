@@ -159,6 +159,43 @@ struct CoursePortableAdoptionSnapshot: Sendable {
     var completionData: Data?
 }
 
+struct CoursePortableStateSaveInput: Sendable {
+    var courseID: UUID
+    var rootURL: URL?
+    var knownRevision: UInt64?
+    var knownDigest: String?
+}
+
+struct WorkspacePersistenceRequest: Sendable {
+    var generation: UInt64
+    var workspace: PersistedWorkspace
+    var storageURL: URL
+    var portableInputs: [CoursePortableStateSaveInput]
+    var blockedPortableCourseIDs: Set<UUID>
+    var oversizedPortableCourseIDs: Set<UUID>
+    var needsPortableBootstrap: Bool
+}
+
+enum WorkspacePersistenceFailure: Sendable {
+    case portableState(String)
+    case workspace(String)
+    case rollbackConflict
+    case stale
+}
+
+struct WorkspacePersistenceResult: Sendable {
+    var generation: UInt64
+    var failure: WorkspacePersistenceFailure?
+    var portableStateRevisions: [UUID: UInt64]
+    var portableStateDigests: [UUID: String]
+    var dirtyPortableCourseIDs: Set<UUID>
+    var blockedPortableCourseIDs: Set<UUID>
+    var oversizedPortableCourseIDs: Set<UUID>
+    var needsPortableBootstrap: Bool
+    var persistedCourseIDs: Set<UUID>
+    var ranOnMainThread: Bool
+}
+
 struct CourseDirectorySearchResult: Sendable {
     var url: URL?
     var ranOnMainThread: Bool
@@ -182,6 +219,752 @@ actor CourseProjectFileWorker {
     nonisolated static let portableStateMaximumByteCount = 32 * 1024 * 1024
 
     private let fileManager = FileManager.default
+    private var highestWorkspaceSaveGeneration: UInt64 = 0
+    private var selfCheckGatedWorkspaceGeneration: UInt64?
+    private var selfCheckWorkspaceGenerationEntered = false
+    private var selfCheckWorkspaceEntryWaiters:
+        [CheckedContinuation<Void, Never>] = []
+    private var selfCheckWorkspaceRelease:
+        CheckedContinuation<Void, Never>?
+
+    func prepareWorkspacePersistenceGateForSelfCheck(
+        generation: UInt64
+    ) {
+        selfCheckGatedWorkspaceGeneration = generation
+        selfCheckWorkspaceGenerationEntered = false
+        selfCheckWorkspaceEntryWaiters = []
+        selfCheckWorkspaceRelease = nil
+    }
+
+    func waitUntilWorkspacePersistenceEnteredForSelfCheck(
+        generation: UInt64
+    ) async {
+        guard selfCheckGatedWorkspaceGeneration == generation,
+              !selfCheckWorkspaceGenerationEntered else {
+            return
+        }
+        await withCheckedContinuation { continuation in
+            selfCheckWorkspaceEntryWaiters.append(continuation)
+        }
+    }
+
+    func releaseWorkspacePersistenceForSelfCheck(
+        generation: UInt64
+    ) {
+        guard selfCheckGatedWorkspaceGeneration == generation else {
+            return
+        }
+        selfCheckWorkspaceRelease?.resume()
+        selfCheckWorkspaceRelease = nil
+    }
+
+    func persistWorkspace(
+        _ request: WorkspacePersistenceRequest
+    ) async -> WorkspacePersistenceResult {
+        let ranOnMainThread = pthread_main_np() != 0
+        guard request.generation > highestWorkspaceSaveGeneration else {
+            return persistenceResult(
+                request: request,
+                failure: .stale,
+                revisions: decodedRevisions(request.workspace),
+                digests: decodedDigests(request.workspace),
+                dirty: Set(request.workspace.dirtyPortableCourseIDs ?? []),
+                blocked: request.blockedPortableCourseIDs,
+                oversized: request.oversizedPortableCourseIDs,
+                needsBootstrap: request.needsPortableBootstrap,
+                ranOnMainThread: ranOnMainThread
+            )
+        }
+        highestWorkspaceSaveGeneration = request.generation
+        await pauseWorkspacePersistenceForSelfCheck(
+            generation: request.generation
+        )
+
+        var revisions = decodedRevisions(request.workspace)
+        var digests = decodedDigests(request.workspace)
+        var dirty = Set(request.workspace.dirtyPortableCourseIDs ?? [])
+        var blocked = request.blockedPortableCourseIDs
+        var oversized = request.oversizedPortableCourseIDs
+        let previousRevisions = revisions
+        let previousDigests = digests
+        let previousDirty = dirty
+        let previousBlocked = blocked
+        let previousOversized = oversized
+        let previousNeedsBootstrap = request.needsPortableBootstrap
+        var needsBootstrap = request.needsPortableBootstrap
+        var committedWrites: [PortableWorkspaceWrite] = []
+        var conflictedCourseID: UUID?
+
+        do {
+            for input in request.portableInputs {
+                let courseID = input.courseID
+                let currentRevision = revisions[courseID] ?? 0
+                let knownRevision = input.knownRevision
+                let knownDigest = input.knownDigest
+                let stateURL = portableStateURL(rootURL: input.rootURL)
+                let hasPortableHistory =
+                    knownRevision != nil
+                    || knownDigest != nil
+                    || dirty.contains(courseID)
+                    || blocked.contains(courseID)
+                guard stateURL != nil || hasPortableHistory else {
+                    continue
+                }
+
+                var candidate: CoursePortableState
+                do {
+                    candidate = try Self.makePortableState(
+                        courseID: courseID,
+                        revision: currentRevision,
+                        savedAt: Date(timeIntervalSince1970: 0),
+                        workspace: request.workspace
+                    )
+                } catch {
+                    guard stateURL == nil, hasPortableHistory else {
+                        throw error
+                    }
+                    dirty.insert(courseID)
+                    blocked.insert(courseID)
+                    continue
+                }
+                candidate.revision = currentRevision
+                candidate.savedAt = Date(timeIntervalSince1970: 0)
+                var committed = candidate
+                committed.revision = currentRevision &+ 1
+                committed.savedAt = Date()
+                let committedData = try Self.encodedPortableState(committed)
+                if committedData.count > Self.portableStateMaximumByteCount {
+                    dirty.insert(courseID)
+                    blocked.insert(courseID)
+                    oversized.insert(courseID)
+                    needsBootstrap = true
+                    continue
+                }
+                let payloadDigest = try Self.portablePayloadDigest(candidate)
+                guard let stateURL else {
+                    oversized.remove(courseID)
+                    if knownDigest != payloadDigest {
+                        dirty.insert(courseID)
+                    }
+                    continue
+                }
+
+                let stateExists = fileManager.fileExists(atPath: stateURL.path)
+                guard let directoryIdentity = Self.identity(
+                    at: stateURL.deletingLastPathComponent()
+                ) else {
+                    throw CourseProjectFileWorkerError.unsafePath
+                }
+                if oversized.remove(courseID) != nil {
+                    blocked.remove(courseID)
+                }
+                if blocked.contains(courseID) {
+                    if knownDigest != payloadDigest {
+                        dirty.insert(courseID)
+                    }
+                    continue
+                }
+                if knownDigest == payloadDigest, stateExists {
+                    dirty.remove(courseID)
+                    continue
+                }
+                if stateExists {
+                    guard let knownDigest,
+                          let diskState = try? Self.readValidatedPortableState(
+                            at: stateURL,
+                            expectedDirectoryIdentity: directoryIdentity,
+                            expectedCourseID: courseID
+                          ),
+                          diskState.revision == currentRevision,
+                          (try? Self.portablePayloadDigest(diskState))
+                            == knownDigest else {
+                        dirty.insert(courseID)
+                        blocked.insert(courseID)
+                        continue
+                    }
+                }
+                let previousData = stateExists
+                    ? try Self.readPortableState(
+                        at: stateURL,
+                        expectedDirectoryIdentity: directoryIdentity
+                    )
+                    : nil
+                do {
+                    try Self.writePortableState(
+                        committedData,
+                        to: stateURL,
+                        expectedDirectoryIdentity: directoryIdentity,
+                        expectedPreviousData: previousData,
+                        beforeCommit: {}
+                    )
+                    let verified = try Self.readValidatedPortableState(
+                        at: stateURL,
+                        expectedDirectoryIdentity: directoryIdentity,
+                        expectedCourseID: courseID
+                    )
+                    guard verified.revision == committed.revision,
+                          try Self.portablePayloadDigest(verified)
+                            == payloadDigest else {
+                        throw CourseProjectFileWorkerError.verificationFailed
+                    }
+                } catch CourseProjectFileWorkerError.contentConflict {
+                    conflictedCourseID = courseID
+                    throw CourseProjectFileWorkerError.contentConflict
+                } catch {
+                    try Self.restorePortableState(
+                        at: stateURL,
+                        previousData: previousData,
+                        attemptedData: committedData,
+                        expectedDirectoryIdentity: directoryIdentity
+                    )
+                    throw error
+                }
+                committedWrites.append(
+                    PortableWorkspaceWrite(
+                        url: stateURL,
+                        previousData: previousData,
+                        committedData: committedData,
+                        expectedDirectoryIdentity: directoryIdentity
+                    )
+                )
+                revisions[courseID] = committed.revision
+                digests[courseID] = payloadDigest
+                dirty.remove(courseID)
+            }
+        } catch {
+            let rollbackFailed = Self.rollbackPortableWrites(committedWrites)
+            revisions = previousRevisions
+            digests = previousDigests
+            dirty = previousDirty
+            blocked = previousBlocked
+            oversized = previousOversized
+            needsBootstrap = previousNeedsBootstrap
+            if let conflictedCourseID {
+                dirty.insert(conflictedCourseID)
+                blocked.insert(conflictedCourseID)
+                needsBootstrap = true
+            }
+            return persistenceResult(
+                request: request,
+                failure: rollbackFailed
+                    ? .rollbackConflict
+                    : .portableState(error.localizedDescription),
+                revisions: revisions,
+                digests: digests,
+                dirty: dirty,
+                blocked: blocked,
+                oversized: oversized,
+                needsBootstrap: needsBootstrap,
+                ranOnMainThread: ranOnMainThread
+            )
+        }
+
+        needsBootstrap = !dirty.isEmpty
+        var workspace = request.workspace
+        workspace.coursePortableStateRevisions = Dictionary(
+            uniqueKeysWithValues: revisions.map {
+                ($0.key.uuidString.lowercased(), $0.value)
+            }
+        )
+        workspace.coursePortableStateDigests = Dictionary(
+            uniqueKeysWithValues: digests.map {
+                ($0.key.uuidString.lowercased(), $0.value)
+            }
+        )
+        workspace.dirtyPortableCourseIDs = dirty.sorted {
+            $0.uuidString < $1.uuidString
+        }
+        do {
+            let data = try JSONEncoder().encode(workspace)
+            try data.write(to: request.storageURL, options: [.atomic])
+            let verified = try Data(contentsOf: request.storageURL)
+            guard verified == data else {
+                throw CourseProjectFileWorkerError.verificationFailed
+            }
+        } catch {
+            let rollbackFailed = Self.rollbackPortableWrites(committedWrites)
+            return persistenceResult(
+                request: request,
+                failure: rollbackFailed
+                    ? .rollbackConflict
+                    : .workspace(error.localizedDescription),
+                revisions: previousRevisions,
+                digests: previousDigests,
+                dirty: previousDirty,
+                blocked: previousBlocked,
+                oversized: previousOversized,
+                needsBootstrap: previousNeedsBootstrap,
+                ranOnMainThread: ranOnMainThread
+            )
+        }
+        return persistenceResult(
+            request: request,
+            failure: nil,
+            revisions: revisions,
+            digests: digests,
+            dirty: dirty,
+            blocked: blocked,
+            oversized: oversized,
+            needsBootstrap: needsBootstrap,
+            ranOnMainThread: ranOnMainThread
+        )
+    }
+
+    private func pauseWorkspacePersistenceForSelfCheck(
+        generation: UInt64
+    ) async {
+        guard selfCheckGatedWorkspaceGeneration == generation else {
+            return
+        }
+        selfCheckWorkspaceGenerationEntered = true
+        let waiters = selfCheckWorkspaceEntryWaiters
+        selfCheckWorkspaceEntryWaiters = []
+        for waiter in waiters {
+            waiter.resume()
+        }
+        await withCheckedContinuation { continuation in
+            selfCheckWorkspaceRelease = continuation
+        }
+        selfCheckGatedWorkspaceGeneration = nil
+        selfCheckWorkspaceGenerationEntered = false
+    }
+
+    private struct PortableWorkspaceWrite {
+        var url: URL
+        var previousData: Data?
+        var committedData: Data
+        var expectedDirectoryIdentity: ImportedFileIdentity
+    }
+
+    private func persistenceResult(
+        request: WorkspacePersistenceRequest,
+        failure: WorkspacePersistenceFailure?,
+        revisions: [UUID: UInt64],
+        digests: [UUID: String],
+        dirty: Set<UUID>,
+        blocked: Set<UUID>,
+        oversized: Set<UUID>,
+        needsBootstrap: Bool,
+        ranOnMainThread: Bool
+    ) -> WorkspacePersistenceResult {
+        WorkspacePersistenceResult(
+            generation: request.generation,
+            failure: failure,
+            portableStateRevisions: revisions,
+            portableStateDigests: digests,
+            dirtyPortableCourseIDs: dirty,
+            blockedPortableCourseIDs: blocked,
+            oversizedPortableCourseIDs: oversized,
+            needsPortableBootstrap: needsBootstrap,
+            persistedCourseIDs: Set(request.workspace.courses?.map(\.id) ?? []),
+            ranOnMainThread: ranOnMainThread
+        )
+    }
+
+    private func decodedRevisions(
+        _ workspace: PersistedWorkspace
+    ) -> [UUID: UInt64] {
+        Dictionary(
+            uniqueKeysWithValues: (workspace.coursePortableStateRevisions ?? [:])
+                .compactMap { key, value in
+                    UUID(uuidString: key).map { ($0, value) }
+                }
+        )
+    }
+
+    private func decodedDigests(
+        _ workspace: PersistedWorkspace
+    ) -> [UUID: String] {
+        Dictionary(
+            uniqueKeysWithValues: (workspace.coursePortableStateDigests ?? [:])
+                .compactMap { key, value in
+                    UUID(uuidString: key).map { ($0, value) }
+                }
+        )
+    }
+
+    private func portableStateURL(rootURL: URL?) -> URL? {
+        guard let rootURL else { return nil }
+        guard let root = try? CourseProjectPathPolicy.existingDirectory(
+            rootURL
+        ),
+        let metadata = try? CourseProjectPathPolicy.existingDirectory(
+            root.appendingPathComponent(".weibei", isDirectory: true)
+        ),
+        CourseProjectPathPolicy.contains(
+            root,
+            metadata,
+            includingRoot: false
+        ),
+        CourseProjectPathPolicy.isSame(
+            metadata,
+            metadata.resolvingSymlinksInPath()
+        ) else {
+            return nil
+        }
+        return metadata.appendingPathComponent(
+            "course-state.json",
+            isDirectory: false
+        )
+    }
+
+    nonisolated static func makePortableState(
+        courseID: UUID,
+        revision: UInt64,
+        savedAt: Date,
+        workspace: PersistedWorkspace
+    ) throws -> CoursePortableState {
+        guard let course = workspace.courses?.first(where: {
+            $0.id == courseID
+        }) else {
+            throw CoursePortableStateError.courseIdentityMismatch
+        }
+        let memberships = (workspace.courseItemMemberships ?? [])
+            .filter { $0.courseID == courseID }
+            .sorted {
+                ($0.courseRelativePath ?? "").localizedStandardCompare(
+                    $1.courseRelativePath ?? ""
+                ) == .orderedAscending
+            }
+        var importedItemsByID: [String: StudyItem] = [:]
+        for item in workspace.importedItems
+        where importedItemsByID[item.id] == nil {
+            importedItemsByID[item.id] = item
+        }
+        var portableItems: [CoursePortableItem] = []
+        for membership in memberships {
+            guard let relativePath = membership.courseRelativePath else {
+                throw CoursePortableStateError.missingCourseItem
+            }
+            guard let item = importedItemsByID[membership.itemID] else {
+                throw CoursePortableStateError.missingCourseItem
+            }
+            let storage: CoursePortableItemStorage
+            switch item.storage {
+            case .courseOwned(let ownerCourseID)
+                where ownerCourseID == courseID:
+                storage = .courseOwned
+            case let .shared(sharedRelativePath):
+                storage = .sharedReference(
+                    sharedRelativePath: sharedRelativePath,
+                    expectedContentDigest: item.contentDigest
+                )
+            default:
+                throw CoursePortableStateError.invalidItemStorage
+            }
+            portableItems.append(
+                CoursePortableItem(
+                    itemID: item.id,
+                    title: item.title,
+                    kind: item.kind,
+                    isNotebookNote: item.isNotebookNote,
+                    courseRelativePath: relativePath,
+                    storage: storage,
+                    contentRevision: item.contentRevision,
+                    contentDigest: item.contentDigest,
+                    fileByteCount: item.fileByteCount,
+                    fileModificationTimeNanoseconds:
+                        item.fileModificationTimeNanoseconds,
+                    membershipCreatedAt: membership.createdAt
+                )
+            )
+        }
+
+        let portableItemIDs = Set(portableItems.map(\.itemID))
+        let noteItemIDs = Set(
+            portableItems.lazy.filter(\.isNotebookNote).map(\.itemID)
+        )
+        let materialItemIDs = portableItemIDs.subtracting(noteItemIDs)
+        let rawMemoryState = workspace.learningMemoryStates?.first {
+            $0.scope == .course(courseID)
+        }
+        let memoryIDs = Set(rawMemoryState?.entries.map(\.id) ?? [])
+        let relations = (workspace.noteSourceLinks ?? []).filter {
+            noteItemIDs.contains($0.noteItemID)
+                && materialItemIDs.contains($0.sourceItemID)
+        }
+        .sorted {
+            $0.createdAt == $1.createdAt
+                ? $0.id.uuidString < $1.id.uuidString
+                : $0.createdAt < $1.createdAt
+        }
+        let relationIDs = Set(relations.map(\.id))
+        var relationsByID: [UUID: NoteSourceLink] = [:]
+        for relation in relations {
+            relationsByID[relation.id] = relation
+        }
+        let sessions = (workspace.studySessions ?? []).compactMap {
+            current -> StudySession? in
+            guard current.courseID == courseID,
+                  current.scopeNeedsReview == false else {
+                return nil
+            }
+            var portable = current
+            portable.focusItemIDs = portable.focusItemIDs.filter(
+                portableItemIDs.contains
+            )
+            if let materialItemID = portable.materialItemID,
+               !materialItemIDs.contains(materialItemID) {
+                portable.materialItemID = nil
+            }
+            for index in portable.messages.indices {
+                portable.messages[index].toolTrace = []
+                portable.messages[index].sources =
+                    portable.messages[index].sources.filter { source in
+                        guard let itemID = source.itemID else {
+                            return source.courseID.map {
+                                $0 == courseID
+                            } ?? true
+                        }
+                        guard portableItemIDs.contains(itemID),
+                              source.courseID.map({
+                                  $0 == courseID
+                              }) ?? true else {
+                            return false
+                        }
+                        switch source.kind {
+                        case .material:
+                            return materialItemIDs.contains(itemID)
+                        case .note:
+                            return noteItemIDs.contains(itemID)
+                        case .selection:
+                            return true
+                        }
+                    }
+                portable.messages[index].actions =
+                    portable.messages[index].actions.filter { action in
+                        guard action.targetItemID.map(
+                            portableItemIDs.contains
+                        ) ?? true,
+                        action.sourceItemID.map(
+                            portableItemIDs.contains
+                        ) ?? true else {
+                            return false
+                        }
+                        switch action.kind {
+                        case .writeNote:
+                            let hasValidTarget = action.targetItemID.map(
+                                noteItemIDs.contains
+                            ) ?? true
+                            return hasValidTarget
+                                && action.createdRelationID == nil
+                        case .createRelation:
+                            let hasValidTarget = action.targetItemID.map(
+                                noteItemIDs.contains
+                            ) ?? true
+                            let hasValidSource = action.sourceItemID.map(
+                                materialItemIDs.contains
+                            ) ?? true
+                            let hasValidCreatedRelation =
+                                action.createdRelationID.map {
+                                    relationID in
+                                    guard relationIDs.contains(relationID),
+                                          let relation =
+                                            relationsByID[relationID],
+                                          let targetItemID =
+                                            action.targetItemID,
+                                          let sourceItemID =
+                                            action.sourceItemID else {
+                                        return false
+                                    }
+                                    return relation.noteItemID
+                                        == targetItemID
+                                        && relation.sourceItemID
+                                            == sourceItemID
+                                } ?? true
+                            return hasValidTarget
+                                && hasValidSource
+                                && hasValidCreatedRelation
+                        }
+                    }
+                if var memoryUpdate =
+                    portable.messages[index].memoryUpdate {
+                    memoryUpdate.memoryIDs =
+                        memoryUpdate.memoryIDs.filter(
+                            memoryIDs.contains
+                        )
+                    portable.messages[index].memoryUpdate =
+                        memoryUpdate.memoryIDs.isEmpty
+                            ? nil
+                            : memoryUpdate
+                }
+                if let origin = portable.messages[index].origin,
+                   origin.courseID != courseID
+                    || origin.chatID != portable.id {
+                    portable.messages[index].origin = nil
+                }
+            }
+            return portable
+        }
+        .sorted { $0.createdAt < $1.createdAt }
+        let messageIDsBySessionID = Dictionary(
+            uniqueKeysWithValues: sessions.map {
+                ($0.id, Set($0.messages.map(\.id)))
+            }
+        )
+        func sanitizedMemoryProvenance(
+            sessionID: UUID?,
+            messageID: UUID?
+        ) -> (sessionID: UUID?, messageID: UUID?) {
+            guard let sessionID,
+                  let liveMessageIDs =
+                    messageIDsBySessionID[sessionID] else {
+                return (nil, nil)
+            }
+            guard let messageID else {
+                return (sessionID, nil)
+            }
+            return liveMessageIDs.contains(messageID)
+                ? (sessionID, messageID)
+                : (sessionID, nil)
+        }
+        var memoryState = rawMemoryState
+        if var sanitizedMemoryState = memoryState {
+            for entryIndex in sanitizedMemoryState.entries.indices {
+                var entry = sanitizedMemoryState.entries[entryIndex]
+                let provenance = sanitizedMemoryProvenance(
+                    sessionID: entry.sessionID,
+                    messageID: entry.messageID
+                )
+                entry.sessionID = provenance.sessionID
+                entry.messageID = provenance.messageID
+                if var revisions = entry.revisions {
+                    for revisionIndex in revisions.indices {
+                        let revisionProvenance =
+                            sanitizedMemoryProvenance(
+                                sessionID:
+                                    revisions[revisionIndex].sessionID,
+                                messageID:
+                                    revisions[revisionIndex].messageID
+                            )
+                        revisions[revisionIndex].sessionID =
+                            revisionProvenance.sessionID
+                        revisions[revisionIndex].messageID =
+                            revisionProvenance.messageID
+                    }
+                    entry.revisions = revisions
+                }
+                sanitizedMemoryState.entries[entryIndex] = entry
+            }
+            memoryState = sanitizedMemoryState
+        }
+
+        let membershipsByItemID = Dictionary(
+            grouping: workspace.courseItemMemberships ?? [],
+            by: \.itemID
+        )
+        let resumePoint = workspace.courseResumePoints?
+            .filter { $0.courseID == courseID }
+            .sorted { $0.savedAt > $1.savedAt }
+            .first
+        var locations: [String: StudyLocation] = [:]
+        for itemID in materialItemIDs.sorted() {
+            let scoped =
+                workspace.studyLocationsByCourseID?[
+                    courseID.uuidString
+                ]?[itemID]
+                ?? (
+                    resumePoint?.materialLocation?.itemID == itemID
+                        ? resumePoint?.materialLocation
+                        : nil
+                )
+                ?? (
+                    (membershipsByItemID[itemID]?.count ?? 0) > 1
+                        ? nil
+                        : workspace.studyLocationsByItemID?[itemID]
+                )
+            if var scoped {
+                scoped.itemID = itemID
+                locations[itemID] = scoped
+            }
+        }
+        let drafts = noteItemIDs.sorted().compactMap {
+            itemID -> CoursePortableNoteDraft? in
+            guard let pending =
+                    workspace.pendingNoteWritesByItemID?[itemID],
+                  let markdown = workspace.notesByItemID[itemID] else {
+                return nil
+            }
+            return CoursePortableNoteDraft(
+                itemID: itemID,
+                markdown: markdown,
+                baselineContentDigest: pending.baselineContentDigest
+            )
+        }
+        return try CoursePortableState(
+            courseID: courseID,
+            revision: revision,
+            savedAt: savedAt,
+            metadata: CoursePortableMetadata(
+                title: course.title,
+                colorIndex: course.colorIndex,
+                createdAt: course.createdAt,
+                updatedAt: course.updatedAt
+            ),
+            items: portableItems,
+            studySessions: sessions,
+            learningMemoryState: memoryState,
+            noteSourceLinks: relations,
+            studyLocationsByItemID: locations,
+            resumePoint: resumePoint,
+            pendingNoteDrafts: drafts
+        ).validated(expectedCourseID: courseID)
+    }
+
+    nonisolated private static func encodedPortableState(
+        _ state: CoursePortableState
+    ) throws -> Data {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        return try encoder.encode(state)
+    }
+
+    nonisolated private static func portablePayloadDigest(
+        _ state: CoursePortableState
+    ) throws -> String {
+        var normalized = state
+        normalized.revision = 0
+        normalized.savedAt = Date(timeIntervalSince1970: 0)
+        return SHA256.hash(data: try encodedPortableState(normalized))
+            .map { String(format: "%02x", $0) }
+            .joined()
+    }
+
+    nonisolated private static func readValidatedPortableState(
+        at url: URL,
+        expectedDirectoryIdentity: ImportedFileIdentity,
+        expectedCourseID: UUID
+    ) throws -> CoursePortableState {
+        try JSONDecoder()
+            .decode(
+                CoursePortableState.self,
+                from: readPortableState(
+                    at: url,
+                    expectedDirectoryIdentity: expectedDirectoryIdentity
+                )
+            )
+            .validated(expectedCourseID: expectedCourseID)
+    }
+
+    nonisolated private static func rollbackPortableWrites(
+        _ writes: [PortableWorkspaceWrite]
+    ) -> Bool {
+        var failed = false
+        for write in writes.reversed() {
+            do {
+                try restorePortableState(
+                    at: write.url,
+                    previousData: write.previousData,
+                    attemptedData: write.committedData,
+                    expectedDirectoryIdentity:
+                        write.expectedDirectoryIdentity
+                )
+            } catch {
+                failed = true
+            }
+        }
+        return failed
+    }
 
     func exportPortableCourse(
         _ request: CoursePortableExportRequest,

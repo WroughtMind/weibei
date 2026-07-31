@@ -18,6 +18,7 @@ enum ImportedIdentitySelfCheck {
         try temporarilyUnavailableNoteRetainsLatestEdit()
         try offlineLaunchNoteRetainsEditWhenFileReturns()
         try inactiveQueuedDraftBlocksRenameWhenExternalChanged()
+        try reentrantNotebookRenameKeepsOneRecoveryTransaction()
         try renameRejectsChangedFileGeneration()
         try activeRenameWriteFailureIsTransactional()
         try inactiveRenameReadFailureIsTransactional()
@@ -26,6 +27,68 @@ enum ImportedIdentitySelfCheck {
         try failedWorkspaceSaveRecoversRenameOnRestart()
         try duplicateLegacyIdentityMigratesInOneLaunch()
         try replacedAndCrossVolumeFilesReceiveNewIdentities()
+    }
+
+    @MainActor
+    private static func reentrantNotebookRenameKeepsOneRecoveryTransaction()
+        throws {
+        let fixture = try WorkspaceFixture(name: "reentrant-note-rename")
+        defer { fixture.remove() }
+
+        let noteURL = fixture.importsDirectory
+            .appendingPathComponent("并发重命名笔记.md")
+        try Data("# 并发重命名笔记\n\n正文".utf8).write(to: noteURL)
+        let note = StudyItem(
+            id: "reentrant-note-rename",
+            title: "并发重命名笔记",
+            subtitle: noteURL.lastPathComponent,
+            kind: .markdown,
+            urlPath: noteURL.path,
+            isSample: false,
+            isNotebookNote: true
+        )
+        try fixture.write(
+            PersistedWorkspace(
+                importedItems: [note],
+                activeNotebookItemID: note.id
+            )
+        )
+        var store: WorkspaceStore?
+        let noteID = note.id
+        var moveCount = 0
+        store = WorkspaceStore(
+            workspaceDirectory: fixture.workspaceDirectory,
+            notebookFileMover: { source, target in
+                moveCount += 1
+                if moveCount == 1 {
+                    store?.renameNotebookNote(
+                        itemID: noteID,
+                        to: "第二个重命名不应进入"
+                    )
+                }
+                try FileManager.default.moveItem(
+                    at: source,
+                    to: target
+                )
+            },
+            selectionAskThreadDefaults:
+                fixture.selectionAskThreadDefaults
+        )
+
+        store?.renameNotebookNote(
+            itemID: note.id,
+            to: "唯一完成的重命名"
+        )
+        try check(
+            moveCount == 1,
+            "连续确认启动了多个笔记重命名事务；移动次数=\(moveCount)，错误=\(store?.noteFileError ?? "nil")"
+        )
+        try check(
+            store?.courseNotebookItems.first(where: {
+                $0.id == note.id
+            })?.urlPath?.hasSuffix("唯一完成的重命名.md") == true,
+            "笔记重命名串行守卫没有保留唯一事务结果"
+        )
     }
 
     @MainActor

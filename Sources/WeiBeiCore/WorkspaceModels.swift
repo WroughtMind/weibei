@@ -86,7 +86,7 @@ public enum PaneFocus: String, Codable, Hashable {
     case agent
 }
 
-public enum WorkspacePaneRole: String, Codable, CaseIterable, Identifiable, Hashable {
+public enum WorkspacePaneRole: String, Codable, CaseIterable, Identifiable, Hashable, Sendable {
     case reader
     case agent
     case notes
@@ -385,7 +385,7 @@ public enum SourceReferenceTitle {
     }
 }
 
-public enum WorkspaceLayout: String, Codable, CaseIterable, Identifiable {
+public enum WorkspaceLayout: String, Codable, CaseIterable, Identifiable, Sendable {
     case documentAgentNotes
     case documentNotesAgent
     case documentNotesSplit
@@ -822,7 +822,7 @@ public enum AgentProviderID: String, Codable, CaseIterable, Identifiable, Sendab
     }
 }
 
-public enum AgentSurface: String, Codable, CaseIterable, Identifiable {
+public enum AgentSurface: String, Codable, CaseIterable, Identifiable, Sendable {
     case selectionFloat
     case hidden
 
@@ -859,7 +859,7 @@ public enum AgentSurface: String, Codable, CaseIterable, Identifiable {
     }
 }
 
-public enum NoteRenderMode: String, Codable, CaseIterable, Identifiable {
+public enum NoteRenderMode: String, Codable, CaseIterable, Identifiable, Sendable {
     case rich
     case split
     case source
@@ -1831,7 +1831,7 @@ public struct PendingNoteWriteState: Codable, Hashable, Sendable {
     }
 }
 
-public struct PersistedWorkspace: Codable {
+public struct PersistedWorkspace: Codable, Sendable {
     public var importedItems: [StudyItem]
     public var notesByItemID: [String: String]
     public var pendingNoteWritesByItemID: [String: PendingNoteWriteState]?

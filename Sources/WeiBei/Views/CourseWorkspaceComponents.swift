@@ -368,7 +368,7 @@ struct CourseProjectEntrySheet: View {
         panel.canCreateDirectories = true
         guard panel.runModal() == .OK, let url = panel.url else { return }
         perform {
-            try store.configureCourseLibrary(at: url)
+            try await store.configureCourseLibraryAsync(at: url)
             configuredLibraryThisTime = true
             updateFocus()
         }
@@ -411,7 +411,9 @@ struct CourseProjectEntrySheet: View {
 
     private func createCourse() {
         perform {
-            let courseID = try store.createCourseInLibrary(title: cleanedTitle)
+            let courseID = try await store.createCourseInLibraryAsync(
+                title: cleanedTitle
+            )
             openCourse(courseID)
         }
     }
@@ -419,7 +421,7 @@ struct CourseProjectEntrySheet: View {
     private func adoptCourse() {
         guard let selectedFolder else { return }
         perform {
-            let outcome = try store.adoptCourseFolderOrProposeRebind(
+            let outcome = try await store.adoptCourseFolderOrProposeRebindAsync(
                 at: selectedFolder,
                 title: cleanedTitle
             )
@@ -436,7 +438,7 @@ struct CourseProjectEntrySheet: View {
     private func confirmRebind() {
         guard let rebindProposal else { return }
         perform {
-            let courseID = try store.confirmCourseProjectRebind(
+            let courseID = try await store.confirmCourseProjectRebindAsync(
                 rebindProposal
             )
             self.rebindProposal = nil
@@ -444,14 +446,16 @@ struct CourseProjectEntrySheet: View {
         }
     }
 
-    private func perform(_ action: @escaping () throws -> Void) {
+    private func perform(
+        _ action: @escaping @MainActor () async throws -> Void
+    ) {
         guard !isWorking else { return }
         isWorking = true
         errorMessage = nil
         Task { @MainActor in
             await Task.yield()
             do {
-                try action()
+                try await action()
             } catch {
                 errorMessage = error.localizedDescription
                 announceError(error.localizedDescription)
