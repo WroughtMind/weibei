@@ -777,21 +777,6 @@
       border: 0 !important;
     }
 
-    .ProseMirror pre[data-language]::before {
-      content: attr(data-language);
-      position: absolute;
-      top: 6px;
-      right: 10px;
-      color: var(--faint);
-      font: 10px/1.4 "SF Mono", Menlo, ui-monospace, monospace;
-      text-transform: uppercase;
-      letter-spacing: 0;
-    }
-
-    .ProseMirror pre[data-language=""]::before {
-      content: none;
-    }
-
     .ProseMirror pre code {
       display: block;
       padding: 0;

@@ -1460,9 +1460,9 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
           const oldInput = document.querySelector('.weibei-code-language-input'); if (!oldInput) throw new Error('missing code language input'); oldInput.value = 'rust';
           window.WeiBeiEditor.setDocumentID('note-b'); window.WeiBeiEditor.setMarkdown('```swift\\nlet value = 2\\n```');
           oldInput.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); oldInput.dispatchEvent(new Event('blur', { bubbles: true }));
-          const newInput = document.querySelector('.weibei-code-language-input'); const markdown = window.WeiBeiEditor.getMarkdown(); window.WeiBeiEditor.setEditable(false);
+          const newInput = document.querySelector('.weibei-code-language-input'); const codeBlock = document.querySelector('.ProseMirror pre[data-language]'); const markdown = window.WeiBeiEditor.getMarkdown(); window.WeiBeiEditor.setEditable(false);
           const readonly = document.querySelector('.weibei-code-language-input'); const readonlyOK = readonly?.readOnly && readonly?.tabIndex === -1 && readonly?.getAttribute('aria-readonly') === 'true'; window.WeiBeiEditor.setEditable(true);
-          if (markdown.includes('rust') || oldInput === newInput || !readonlyOK) throw new Error('code language document isolation failed: ' + JSON.stringify({ markdown, sameInput: oldInput === newInput, readonlyOK, input: !!newInput }));
+          if (markdown.includes('rust') || oldInput === newInput || !readonlyOK || getComputedStyle(codeBlock, '::before').content !== 'none') throw new Error('code language document isolation failed: ' + JSON.stringify({ markdown, sameInput: oldInput === newInput, readonlyOK, input: !!newInput, pseudoContent: getComputedStyle(codeBlock, '::before').content }));
           return true;
         })();
         """
