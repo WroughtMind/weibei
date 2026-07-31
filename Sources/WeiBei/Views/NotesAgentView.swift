@@ -1803,9 +1803,11 @@ struct AgentPaneView: View {
                     }
 
                     ScrollView(showsIndicators: true) {
-                        // No scrollTargetLayout / scrollPosition / minHeight:viewport /
-                        // GeometryReader parent — all thrash sizeThatFits on LazyVStack.
-                        LazyVStack(alignment: .leading, spacing: wide ? 22 : 12) {
+                        // Eager VStack (not LazyVStack): each finalized turn may host
+                        // Milkdown/KaTeX WKWebView. Lazy recycle remounted PlatformViews
+                        // while dragging the chat scroller and froze the UI (build 664).
+                        // Study chats stay modest in length; keep full Markdown rendering.
+                        VStack(alignment: .leading, spacing: wide ? 22 : 12) {
                             ForEach(store.messages) { message in
                                 agentMessageRow(
                                     message: message,
