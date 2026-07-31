@@ -52,6 +52,7 @@ struct CourseWorkspaceView: View {
         CourseManagementPresentation?
     @State private var coursePendingRemoval: Course?
     @State private var courseRemovalError: String?
+    @State private var didRunPerformanceSearchSequence = false
     @FocusState private var searchFocused: Bool
 
     var body: some View {
@@ -98,6 +99,9 @@ struct CourseWorkspaceView: View {
             }
         }
         .onAppear(perform: prepareInitialRoute)
+        .task {
+            await runPerformanceSearchSequenceIfRequested()
+        }
         .onChange(of: page) { _, _ in
             search = ""
         }
@@ -166,6 +170,27 @@ struct CourseWorkspaceView: View {
             Button(store.ui("好", "OK"), role: .cancel) {}
         } message: {
             Text(courseRemovalError ?? "")
+        }
+    }
+
+    private func runPerformanceSearchSequenceIfRequested() async {
+        let environment = ProcessInfo.processInfo.environment
+        guard WeiBeiPerf.isEnabled,
+              environment["WEIBEI_SUPPRESS_ACTIVATION"] == "1",
+              let rawCount =
+                environment["WEIBEI_PERF_SEARCH_UI_REPETITIONS"],
+              let count = Int(rawCount),
+              count > 0,
+              !didRunPerformanceSearchSequence else {
+            return
+        }
+        didRunPerformanceSearchSequence = true
+        for index in 0..<count {
+            guard !Task.isCancelled else { return }
+            search = index.isMultiple(of: 2)
+                ? "公开市场操作"
+                : "通货膨胀"
+            try? await Task.sleep(nanoseconds: 180_000_000)
         }
     }
 

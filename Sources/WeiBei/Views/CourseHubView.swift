@@ -816,10 +816,16 @@ struct CourseHubView: View {
         searchAvailability = outcome.availability
         isSearching = false
         await Task.yield()
+        let inputMode =
+            ProcessInfo.processInfo.environment[
+                "WEIBEI_PERF_SEARCH_UI_REPETITIONS"
+            ] == nil
+                ? "manual_ui"
+                : "verification_ui_state"
         WeiBeiPerf.end(
             span,
             extra:
-                "outcome=completed endpoint=next_main_commit results=\(outcome.results.count)"
+                "outcome=completed endpoint=next_main_commit input=\(inputMode) results=\(outcome.results.count)"
         )
     }
 

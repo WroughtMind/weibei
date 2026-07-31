@@ -2,24 +2,24 @@
 set -euo pipefail
 
 usage() {
-  echo "usage: $0 <perf-log> <metric-name> [minimum-samples]" >&2
+  echo "usage: $0 <perf-log> <metric-name> [minimum-samples] [warmup-samples]" >&2
   echo "       $0 --self-check" >&2
 }
 
 if [[ "${1:-}" == "--self-check" ]]; then
   fixture="$(mktemp "${TMPDIR:-/tmp}/weibei-perf-p95.XXXXXX")"
   trap 'rm -f "$fixture"' EXIT
-  for value in $(seq 1 100); do
+  for value in $(seq 1 110); do
     printf '[PERF-weibei-2] scenario=self-check sample=%03d name=fixture.metric ms=%d.000 main=0 outcome=completed\n' \
       "$value" "$value" >>"$fixture"
   done
-  result="$("$0" "$fixture" fixture.metric 100)"
-  [[ "$result" == *"samples=100"* && "$result" == *"p95_ms=95.000"* ]]
+  result="$("$0" "$fixture" fixture.metric 100 10)"
+  [[ "$result" == *"samples=100"* && "$result" == *"p95_ms=105.000"* ]]
   echo "WeiBei performance p95 parser self-check passed"
   exit 0
 fi
 
-if [[ $# -lt 2 || $# -gt 3 ]]; then
+if [[ $# -lt 2 || $# -gt 4 ]]; then
   usage
   exit 2
 fi
@@ -27,7 +27,10 @@ fi
 log_path="$1"
 metric_name="$2"
 minimum_samples="${3:-1}"
-if [[ ! -f "$log_path" || ! "$minimum_samples" =~ ^[0-9]+$ ]]; then
+warmup_samples="${4:-0}"
+if [[ ! -f "$log_path"
+    || ! "$minimum_samples" =~ ^[0-9]+$
+    || ! "$warmup_samples" =~ ^[0-9]+$ ]]; then
   usage
   exit 2
 fi
@@ -54,7 +57,7 @@ awk -v target="$metric_name" -v scenarios="$scenarios_file" '
       if (scenario != "") print scenario > scenarios
     }
   }
-' "$log_path" | sort -n >"$values_file"
+' "$log_path" | tail -n "+$((warmup_samples + 1))" | sort -n >"$values_file"
 
 sample_count="$(wc -l <"$values_file" | tr -d ' ')"
 if (( sample_count < minimum_samples )); then
