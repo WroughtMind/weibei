@@ -131,6 +131,7 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
     private var failure: String?
     private var activatedWikiTitle: String?
     private var attachmentRequests = 0
+    private var imagePickerRequests = 0
 
     override init() {
         let configuration = WKWebViewConfiguration()
@@ -147,7 +148,7 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
         configuration.userContentController = controller
         webView = WKWebView(frame: CGRect(x: 0, y: 0, width: 960, height: 720), configuration: configuration)
         super.init()
-        for name in ["editorReady", "markdownChanged", "selectionChanged", "askAgentWithSelection", "wikiLinkActivated", "imageAttachmentRequested"] {
+        for name in ["editorReady", "markdownChanged", "selectionChanged", "askAgentWithSelection", "wikiLinkActivated", "imageAttachmentRequested", "imagePickerRequested"] {
             controller.add(self, name: name)
         }
     }
@@ -181,6 +182,8 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
             activatedWikiTitle = (message.body as? [String: Any])?["title"] as? String
         case "imageAttachmentRequested":
             attachmentRequests += 1
+        case "imagePickerRequested":
+            imagePickerRequests += 1
         default:
             break
         }
@@ -1362,6 +1365,67 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
                 self.fail("block Enter exit check did not finish all isolated cases: \(markdown)")
                 return
             }
+            self.validateSlashCommands()
+        }
+    }
+
+    private func validateSlashCommands() {
+        let script = """
+        (() => {
+          const open = (text) => { window.WeiBeiEditor.setMarkdown(text); return window.WeiBeiEditor.openSlashMenuForCheck(); };
+          if (!open('/')) throw new Error('slash menu did not open');
+          let state = window.WeiBeiEditor.slashStateForCheck();
+          if (state.commands.length !== 13 || state.groups.join('|') !== '结构|列表|内容|丰富内容') throw new Error('slash commands or groups invalid: ' + JSON.stringify(state));
+          for (const [query, expected] of [['/h2', '二级标题'], ['/dmk', '代码块'], ['/yxlb', '有序列表'], ['/代码块', '代码块']]) { open(query); state = window.WeiBeiEditor.slashStateForCheck(); if (state.commands.length !== 1 || state.commands[0] !== expected) throw new Error('alias failed: ' + query + JSON.stringify(state)); }
+          for (const query of ['/code block', '/ordered list']) { if (open(query)) throw new Error('space alias matched: ' + query); }
+          open('/'); window.WeiBeiEditor.pressKeyForCheck('ArrowDown'); state = window.WeiBeiEditor.slashStateForCheck(); if (state.activeDescendant !== 'weibei-slash-command-heading2' || !state.announcement.includes('二级标题')) throw new Error('accessibility did not update: ' + JSON.stringify(state));
+          window.WeiBeiEditor.pressKeyForCheck('Escape'); if (!window.WeiBeiEditor.getMarkdown().includes('/')) throw new Error('escape removed slash text');
+          open('/table'); window.WeiBeiEditor.executeSlashCommandForCheck('table');
+          return { markdown: window.WeiBeiEditor.getMarkdown(), state: window.WeiBeiEditor.slashStateForCheck() };
+        })();
+        """
+        webView.evaluateJavaScript(script) { [weak self] value, error in
+            guard let self else { return }
+            guard error == nil, let result = value as? [String: Any], let markdown = result["markdown"] as? String, markdown.contains("|") else { self.fail("slash command check failed: \(String(describing: error)); \(String(describing: value))"); return }
+            self.validateSlashImageLifecycle()
+        }
+    }
+
+    private func validateSlashImageLifecycle() {
+        let script = """
+        (() => {
+          window.WeiBeiEditor.setDocumentID('slash-image-a'); window.WeiBeiEditor.setMarkdown('/image'); window.WeiBeiEditor.openSlashMenuForCheck(); window.WeiBeiEditor.executeSlashCommandForCheck('image');
+          const id = window.WeiBeiEditor.pendingImagePickerIDsForCheck()[0]; if (!id) throw new Error('missing picker request');
+          window.WeiBeiEditor.resolveImagePicker(id, '.weibei-assets/example.png', 'example');
+          const inserted = window.WeiBeiEditor.getMarkdown(); window.WeiBeiEditor.undoForCheck(); const undone = window.WeiBeiEditor.getMarkdown();
+          window.WeiBeiEditor.setMarkdown('/image'); window.WeiBeiEditor.openSlashMenuForCheck(); window.WeiBeiEditor.executeSlashCommandForCheck('image'); const stale = window.WeiBeiEditor.pendingImagePickerIDsForCheck()[0]; window.WeiBeiEditor.setDocumentID('slash-image-b'); window.WeiBeiEditor.setMarkdown('/image'); window.WeiBeiEditor.cancelImagePicker(stale);
+          if (!inserted.includes('.weibei-assets/example.png') || !undone.includes('/image') || !window.WeiBeiEditor.getMarkdown().includes('/image')) throw new Error('image lifecycle invalid');
+          return true;
+        })();
+        """
+        webView.evaluateJavaScript(script) { [weak self] value, error in
+            guard let self else { return }
+            guard error == nil, value as? Bool == true, self.imagePickerRequests >= 2 else { self.fail("slash image lifecycle failed: \(String(describing: error)); requests=\(self.imagePickerRequests)"); return }
+            self.validateCodeLanguageDocumentIsolation()
+        }
+    }
+
+    private func validateCodeLanguageDocumentIsolation() {
+        let script = """
+        (() => {
+          window.WeiBeiEditor.setDocumentID('note-a'); window.WeiBeiEditor.setMarkdown('```swift\\nlet value = 1\\n```');
+          const oldInput = document.querySelector('.weibei-code-language-input'); if (!oldInput) throw new Error('missing code language input'); oldInput.value = 'rust';
+          window.WeiBeiEditor.setDocumentID('note-b'); window.WeiBeiEditor.setMarkdown('```swift\\nlet value = 2\\n```');
+          oldInput.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); oldInput.dispatchEvent(new Event('blur', { bubbles: true }));
+          const newInput = document.querySelector('.weibei-code-language-input'); const markdown = window.WeiBeiEditor.getMarkdown(); window.WeiBeiEditor.setEditable(false);
+          const readonly = document.querySelector('.weibei-code-language-input'); const readonlyOK = readonly?.readOnly && readonly?.tabIndex === -1 && readonly?.getAttribute('aria-readonly') === 'true'; window.WeiBeiEditor.setEditable(true);
+          if (markdown.includes('rust') || oldInput === newInput || !readonlyOK) throw new Error('code language document isolation failed: ' + JSON.stringify({ markdown, sameInput: oldInput === newInput, readonlyOK, input: !!newInput }));
+          return true;
+        })();
+        """
+        webView.evaluateJavaScript(script) { [weak self] value, error in
+            guard let self else { return }
+            guard error == nil, value as? Bool == true else { self.fail("code language isolation failed: \(String(describing: error))"); return }
             self.isDone = true
         }
     }

@@ -530,6 +530,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         "sourceReferenceActivated",
         "editorFailure",
         "imageAttachmentRequested",
+        "imagePickerRequested",
         "contentHeightChanged",
         "activeHeadingChanged",
         "compactPreviewWheel",
@@ -866,6 +867,11 @@ struct RichMarkdownEditorView: NSViewRepresentable {
                 } else {
                     evaluate("window.WeiBeiEditor?.rejectAttachment(\(Self.json(id)), \(Self.json(interfaceLanguage.text("图片无法写入本地附件目录", "Image could not be written to the local attachments folder")))")
                 }
+            case "imagePickerRequested":
+                guard isEditable,
+                      let body = message.body as? [String: Any],
+                      let id = body["id"] as? String else { return }
+                presentImagePicker(requestID: id, documentID: documentID)
             case "appShortcut":
                 guard let body = message.body as? [String: Any],
                       let key = body["key"] as? String else { return }
@@ -1056,6 +1062,64 @@ struct RichMarkdownEditorView: NSViewRepresentable {
                 attachmentDirectory: attachmentDirectory,
                 markdownBaseURLString: markdownBaseURLString
             )
+        }
+
+        /**
+         * Presents the native single-image picker for a slash image command.
+         *
+         * @param requestID - JavaScript request identifier
+         * @param documentID - Document identity captured when the command was issued
+         */
+        private func presentImagePicker(requestID: String, documentID requestedDocumentID: String) {
+            guard let window = webView?.window else {
+                evaluate("window.WeiBeiEditor?.rejectImagePicker(\(Self.json(requestID)), \(Self.json(interfaceLanguage.text("无法打开图片选择器", "Image picker could not be opened"))))")
+                return
+            }
+            let panel = NSOpenPanel()
+            panel.title = interfaceLanguage.text("插入图片", "Insert Image")
+            panel.prompt = interfaceLanguage.text("插入", "Insert")
+            panel.allowedContentTypes = [.png, .jpeg, .gif, .webP, .tiff, .heic]
+            panel.allowsMultipleSelection = false
+            panel.canChooseDirectories = false
+            panel.canChooseFiles = true
+            panel.beginSheetModal(for: window) { [weak self] response in
+                guard let self else { return }
+                guard self.documentID == requestedDocumentID else {
+                    self.evaluate("window.WeiBeiEditor?.discardImagePicker(\(Self.json(requestID)))")
+                    return
+                }
+                guard response == .OK else {
+                    self.evaluate("window.WeiBeiEditor?.cancelImagePicker(\(Self.json(requestID)))")
+                    return
+                }
+                guard let fileURL = panel.url, let attachmentDirectory = self.attachmentDirectory else {
+                    self.evaluate("window.WeiBeiEditor?.rejectImagePicker(\(Self.json(requestID)), \(Self.json(self.interfaceLanguage.text("图片无法写入本地附件目录", "Image could not be written to the local attachments folder"))))")
+                    return
+                }
+                let markdownBaseURLString = self.markdownBaseURLString
+                let failureMessage = self.interfaceLanguage.text("图片读取或写入失败，请检查文件与附件目录权限", "Image could not be read or saved. Check the file and attachments folder permissions.")
+                DispatchQueue.global(qos: .userInitiated).async {
+                    let result = Result { try Self.saveImageAttachment(fromFileURL: fileURL, attachmentDirectory: attachmentDirectory, markdownBaseURLString: markdownBaseURLString) }
+                    DispatchQueue.main.async { [weak self] in
+                        guard let self else { return }
+                        guard self.documentID == requestedDocumentID else {
+                            self.evaluate("window.WeiBeiEditor?.discardImagePicker(\(Self.json(requestID)))")
+                            return
+                        }
+                        switch result {
+                        case let .success(attachment):
+                            self.evaluate("window.WeiBeiEditor?.resolveImagePicker(\(Self.json(requestID)), \(Self.json(attachment.src)), \(Self.json(attachment.alt)))")
+                        case .failure:
+                            self.evaluate("window.WeiBeiEditor?.rejectImagePicker(\(Self.json(requestID)), \(Self.json(failureMessage)))")
+                        }
+                    }
+                }
+            }
+        }
+
+        /** Reads and saves a picker image on a background queue. */
+        private static func saveImageAttachment(fromFileURL fileURL: URL, attachmentDirectory: URL, markdownBaseURLString: String) throws -> MarkdownAttachment {
+            try MarkdownAttachmentStore.save(data: Data(contentsOf: fileURL, options: [.mappedIfSafe]), originalName: fileURL.lastPathComponent, mime: MarkdownAttachmentStore.mimeType(forFileExtension: fileURL.pathExtension), attachmentDirectory: attachmentDirectory, markdownBaseURLString: markdownBaseURLString)
         }
 
         private func anchor(from rect: [String: Any]?) -> CGPoint? {

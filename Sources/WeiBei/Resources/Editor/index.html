@@ -732,7 +732,7 @@
     .ProseMirror pre {
       position: relative;
       margin: .95em 0;
-      padding: .95em 1.1em;
+      padding: 29px 1.1em .95em;
       border: 0;
       border-radius: 8px;
       background: var(--code-paper);
@@ -743,6 +743,38 @@
     :root[data-weibei-theme="inkstone"] .ProseMirror pre,
     :root[data-weibei-theme="stele"] .ProseMirror pre {
       box-shadow: none;
+    }
+
+    .weibei-code-language-input {
+      position: absolute;
+      top: 6px;
+      right: 8px;
+      width: 82px;
+      height: 20px;
+      box-sizing: border-box;
+      padding: 1px 5px;
+      color: var(--faint);
+      background: transparent;
+      border: 0;
+      border-radius: 4px;
+      outline: none;
+      caret-color: var(--cinnabar);
+      font: 10px/1.4 "SF Mono", Menlo, ui-monospace, monospace;
+      text-align: right;
+    }
+
+    body[data-editable="false"] .weibei-code-language-input { pointer-events: none; }
+
+    .weibei-visually-hidden {
+      position: fixed !important;
+      width: 1px !important;
+      height: 1px !important;
+      padding: 0 !important;
+      margin: -1px !important;
+      overflow: hidden !important;
+      clip: rect(0, 0, 0, 0) !important;
+      white-space: nowrap !important;
+      border: 0 !important;
     }
 
     .ProseMirror pre[data-language]::before {
@@ -1250,6 +1282,21 @@
     :root[data-weibei-theme="stele"] .weibei-uploading {
       background: rgba(255, 255, 255, .035);
     }
+
+    .weibei-slash-menu { z-index: 120; width: 224px; max-height: min(420px, calc(100vh - 16px)); overflow: auto; padding: 5px; color: var(--ink); background: color-mix(in srgb, var(--paper-raised) 96%, transparent); border: 1px solid var(--line); border-radius: 9px; box-shadow: 0 14px 34px rgba(35, 26, 19, .18), 0 2px 8px rgba(35, 26, 19, .10); backdrop-filter: blur(16px); }
+    .weibei-slash-menu[data-show="false"] { display: none; }
+    .weibei-slash-section + .weibei-slash-section { margin-top: 3px; padding-top: 3px; border-top: 1px solid var(--line); }
+    .weibei-slash-group { padding: 4px 8px 3px; color: var(--faint); font-size: 10px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; user-select: none; }
+    .weibei-slash-command { border-radius: 6px; }
+    .weibei-slash-command-button { display: flex; width: 100%; height: 31px; align-items: center; box-sizing: border-box; padding: 0 9px; color: var(--ink); background: transparent; border: 0; border-radius: 6px; font: 500 13px/1 -apple-system, BlinkMacSystemFont, "Songti SC", serif; text-align: left; cursor: default; }
+    .weibei-slash-command.is-active > .weibei-slash-command-button { color: var(--cinnabar); background: var(--cinnabar-soft); }
+    .weibei-slash-empty { padding: 13px 10px; color: var(--faint); font-size: 12px; }
+    .weibei-slash-error { margin: 3px 4px 5px; padding: 6px 7px; color: var(--cinnabar); background: var(--cinnabar-soft); border-radius: 5px; font-size: 11px; }
+    .weibei-slash-table-panel { position: fixed; z-index: 121; width: 178px; box-sizing: border-box; padding: 8px; color: var(--ink); background: var(--paper-raised); border: 1px solid var(--line); border-radius: 9px; box-shadow: 0 14px 34px rgba(35, 26, 19, .18); }
+    .weibei-slash-stepper { display: flex; align-items: center; justify-content: flex-end; gap: 6px; min-height: 34px; padding: 0 6px; color: var(--muted); font-size: 12px; border-radius: 6px; }
+    .weibei-slash-stepper.is-focused { background: var(--cinnabar-soft); }
+    .weibei-slash-stepper button, .weibei-slash-table-insert { color: var(--muted); background: transparent; border: 1px solid var(--line); border-radius: 4px; }
+    .weibei-slash-table-insert { width: 100%; margin-top: 7px; padding: 6px; color: var(--ink); }
 
     .ProseMirror-focused {
       outline: none;
