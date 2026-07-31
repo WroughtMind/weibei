@@ -2,6 +2,7 @@ import Foundation
 import WeiBeiCore
 
 func runPiAgentSelfChecks() throws {
+    try checkCourseDocumentSearchReadiness()
     try checkPiProviderConfiguration()
     try checkJSONLFraming()
     try checkRPCDecoding()

@@ -72,6 +72,11 @@ struct CourseHomeSearchResult: Identifiable, Sendable {
     let matchedText: String?
 }
 
+struct CourseHomeSearchOutcome: Sendable {
+    let results: [CourseHomeSearchResult]
+    let availability: CourseDocumentIndexAvailability
+}
+
 enum CourseProjectRebindImpact: Equatable {
     case unchanged
     case useNewerCandidate
@@ -8214,11 +8219,11 @@ final class WorkspaceStore: ObservableObject {
     func searchCourseHome(
         courseID: UUID,
         query rawQuery: String
-    ) async -> [CourseHomeSearchResult] {
+    ) async -> CourseHomeSearchOutcome {
         let query = rawQuery.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !query.isEmpty,
               courses.contains(where: { $0.id == courseID }) else {
-            return []
+            return CourseHomeSearchOutcome(results: [], availability: .ready)
         }
         let itemInputs = courseItems(in: courseID).map { item in
             (
@@ -8237,11 +8242,27 @@ final class WorkspaceStore: ObservableObject {
         let chatDetail = ui("%d 条消息", "%d messages")
         let searchTask = Task.detached(priority: .userInitiated) {
             let ranOnMainThread = pthread_main_np() != 0
+            let indexedItems = itemInputs.compactMap {
+                $0.memoryText == nil ? $0.item : nil
+            }
             let indexed = searchIndex.lookup(
-                items: itemInputs.map(\.item),
+                items: indexedItems,
                 query: query,
                 maximumCharactersPerItem: 1_200
             )
+            let availability: CourseDocumentIndexAvailability
+            if indexedItems.contains(where: {
+                indexed[$0.id]?.availability == .unavailable
+                    || indexed[$0.id] == nil
+            }) {
+                availability = .unavailable
+            } else if indexedItems.contains(where: {
+                indexed[$0.id]?.availability == .indexing
+            }) {
+                availability = .indexing
+            } else {
+                availability = .ready
+            }
             func snippet(_ text: String?) -> String? {
                 guard let text else { return nil }
                 let compact = text
@@ -8254,7 +8275,11 @@ final class WorkspaceStore: ObservableObject {
             var scored: [(score: Int, result: CourseHomeSearchResult)] = []
             for input in itemInputs {
                 guard !Task.isCancelled else {
-                    return (results: [CourseHomeSearchResult](), ranOnMainThread: ranOnMainThread)
+                    return (
+                        results: [CourseHomeSearchResult](),
+                        availability: CourseDocumentIndexAvailability.ready,
+                        ranOnMainThread: ranOnMainThread
+                    )
                 }
                 let titleMatches = input.title.localizedCaseInsensitiveContains(query)
                 let detailMatches = input.detail.localizedCaseInsensitiveContains(query)
@@ -8286,7 +8311,11 @@ final class WorkspaceStore: ObservableObject {
 
             for session in sessions {
                 guard !Task.isCancelled else {
-                    return (results: [CourseHomeSearchResult](), ranOnMainThread: ranOnMainThread)
+                    return (
+                        results: [CourseHomeSearchResult](),
+                        availability: CourseDocumentIndexAvailability.ready,
+                        ranOnMainThread: ranOnMainThread
+                    )
                 }
                 let titleMatches = session.title.localizedCaseInsensitiveContains(query)
                 let summaryMatches = session.summary.localizedCaseInsensitiveContains(query)
@@ -8320,6 +8349,7 @@ final class WorkspaceStore: ObservableObject {
                 }
                 .prefix(50)
                 .map(\.result),
+                availability: availability,
                 ranOnMainThread: ranOnMainThread
             )
         }
@@ -8328,9 +8358,14 @@ final class WorkspaceStore: ObservableObject {
         } onCancel: {
             searchTask.cancel()
         }
-        guard !Task.isCancelled else { return [] }
+        guard !Task.isCancelled else {
+            return CourseHomeSearchOutcome(results: [], availability: .ready)
+        }
         lastCourseHomeSearchRanOnMainThread = search.ranOnMainThread
-        return search.results
+        return CourseHomeSearchOutcome(
+            results: search.results,
+            availability: search.availability
+        )
     }
 
     /// Sessions that reference a specific material (and optionally other focus items).
@@ -16740,19 +16775,19 @@ final class WorkspaceStore: ObservableObject {
             let documentSearch = await searchCourseHome(
                 courseID: courseA.id,
                 query: "公开市场操作"
-            )
+            ).results
             let chatSearch = await searchCourseHome(
                 courseID: courseA.id,
                 query: "通货膨胀"
-            )
+            ).results
             let noteSearch = await searchCourseHome(
                 courseID: courseA.id,
                 query: "收益率曲线困惑"
-            )
+            ).results
             let deletedNoteSearch = await searchCourseHome(
                 courseID: courseA.id,
                 query: "核心要点"
-            )
+            ).results
             recordVerificationStage("course-home:search-done")
             let materialSearchPassed = documentSearch.contains {
                 $0.kind == .material && $0.itemID == materialB.id
