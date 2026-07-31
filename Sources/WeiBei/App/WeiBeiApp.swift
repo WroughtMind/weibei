@@ -12,13 +12,17 @@ private let runsBackgroundWorkspaceSaveSelfCheck = ProcessInfo.processInfo.argum
 private let importedIdentitySelfCheckBootstrapDirectory = FileManager.default.temporaryDirectory
     .appendingPathComponent("weibei-imported-identity-bootstrap-\(ProcessInfo.processInfo.processIdentifier)", isDirectory: true)
 
-@MainActor private let sharedWorkspaceStore = (
-    runsImportedIdentitySelfCheck
+@MainActor private let sharedWorkspaceStore: WorkspaceStore = {
+    WeiBeiPerf.beginLaunch()
+    if runsImportedIdentitySelfCheck
         || runsCourseProjectRootSelfCheck
-        || runsBackgroundWorkspaceSaveSelfCheck
-)
-    ? WorkspaceStore(workspaceDirectory: importedIdentitySelfCheckBootstrapDirectory)
-    : WorkspaceStore()
+        || runsBackgroundWorkspaceSaveSelfCheck {
+        return WorkspaceStore(
+            workspaceDirectory: importedIdentitySelfCheckBootstrapDirectory
+        )
+    }
+    return WorkspaceStore()
+}()
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {

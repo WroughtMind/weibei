@@ -392,6 +392,11 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         }
         view.navigationDelegate = context.coordinator
         context.coordinator.webView = view
+        WeiBeiPerf.event(
+            "webview.markdown_create",
+            extra:
+                "instance=\(context.coordinator.performanceInstanceID.uuidString.lowercased())"
+        )
         if let url = WeiBeiResources.bundle.url(forResource: "index", withExtension: "html") {
             let editorDirectory = url.deletingLastPathComponent()
             view.loadFileURL(url, allowingReadAccessTo: editorDirectory.deletingLastPathComponent())
@@ -468,6 +473,11 @@ struct RichMarkdownEditorView: NSViewRepresentable {
     }
 
     static func dismantleNSView(_ view: WKWebView, coordinator: Coordinator) {
+        WeiBeiPerf.event(
+            "webview.markdown_destroy",
+            extra:
+                "instance=\(coordinator.performanceInstanceID.uuidString.lowercased())"
+        )
         view.navigationDelegate = nil
         for name in scriptMessageNames {
             view.configuration.userContentController.removeScriptMessageHandler(forName: name)
@@ -619,6 +629,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         var webMarkdown = ""
         var pendingExternalMarkdown: String?
         var lastCommandID: UUID?
+        let performanceInstanceID = UUID()
         fileprivate let imageSchemeHandler = MarkdownImageSchemeHandler()
         private var lastAppliedSearchQuery = ""
         private var lastAppliedFocusRequest = -1
@@ -823,6 +834,11 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             case "contentHeightChanged":
                 guard let body = message.body as? [String: Any],
                       let height = body["height"] as? Double else { return }
+                WeiBeiPerf.event(
+                    "webview.markdown_height_received",
+                    extra:
+                        "instance=\(performanceInstanceID.uuidString.lowercased())"
+                )
                 onContentHeightChange(CGFloat(height))
             case "editorFailure":
                 reportRenderFailure()

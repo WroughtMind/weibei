@@ -688,6 +688,7 @@ final class WorkspaceStore: ObservableObject {
     private var workspacePersistenceSkippingCourseIDs = Set<UUID>()
     private var workspaceSaveGeneration: UInt64 = 0
     private var lastWorkspacePersistenceRanOnMainThread: Bool?
+    private var courseHomePerformanceNavigationSpan: WeiBeiPerf.Span?
     private let workspaceSaveDebounceNanoseconds: UInt64 = 280_000_000
     private var noteSourceLinksMigrationVersion = 0
     private var studySessionScopeMigrationVersion = 0
@@ -11575,6 +11576,17 @@ final class WorkspaceStore: ObservableObject {
         selecting itemID: String? = nil,
         courseID: UUID? = nil
     ) {
+        if destination == .hub {
+            if let courseHomePerformanceNavigationSpan {
+                WeiBeiPerf.end(
+                    courseHomePerformanceNavigationSpan,
+                    extra: "outcome=superseded"
+                )
+            }
+            courseHomePerformanceNavigationSpan = WeiBeiPerf.begin(
+                "navigation.course_home_to_next_commit"
+            )
+        }
         persistCurrentNote()
         let requestedCourseID = courseID
             ?? courseWorkspaceCourseID
@@ -11585,6 +11597,15 @@ final class WorkspaceStore: ObservableObject {
         courseWorkspaceDestination = destination
         courseWorkspaceTargetItemID = itemID
         courseWorkspacePresented = true
+    }
+
+    func finishCourseHomePerformanceNavigation() {
+        guard let courseHomePerformanceNavigationSpan else { return }
+        self.courseHomePerformanceNavigationSpan = nil
+        WeiBeiPerf.end(
+            courseHomePerformanceNavigationSpan,
+            extra: "outcome=completed endpoint=next_main_commit"
+        )
     }
 
     /// Sidebar / create-course entry into the course hub for a specific course.
@@ -21905,6 +21926,7 @@ final class WorkspaceStore: ObservableObject {
     }
 
     func shutdownAgentRuntime() {
+        let span = WeiBeiPerf.begin("pi.shutdown")
         agentRequestTask?.cancel()
         agentStopTask?.cancel()
         quietInsightTask?.cancel()
@@ -21914,7 +21936,13 @@ final class WorkspaceStore: ObservableObject {
             await runtime.shutdown()
             completion.signal()
         }
-        _ = completion.wait(timeout: .now() + 1)
+        let result = completion.wait(timeout: .now() + 1)
+        WeiBeiPerf.end(
+            span,
+            extra: result == .success
+                ? "outcome=completed"
+                : "outcome=timeout"
+        )
     }
 
     private func applyAgentProgress(
@@ -26162,16 +26190,38 @@ final class WorkspaceStore: ObservableObject {
         generation: UInt64,
         skippingPortableCourseIDs: Set<UUID> = []
     ) async -> Bool {
+        let publishSpan = WeiBeiPerf.begin(
+            "workspace.save_transaction_to_ui_publish"
+        )
+        var publishOutcome = "failed"
+        defer {
+            WeiBeiPerf.end(
+                publishSpan,
+                extra:
+                    "outcome=\(publishOutcome) generation=\(generation)"
+            )
+        }
         let prepared: (
             request: WorkspacePersistenceRequest,
             resumePoints: [CourseResumePoint]
+        )
+        let snapshotSpan = WeiBeiPerf.begin(
+            "workspace.save_snapshot"
         )
         do {
             prepared = try makeWorkspacePersistenceRequest(
                 generation: generation,
                 skippingPortableCourseIDs: skippingPortableCourseIDs
             )
+            WeiBeiPerf.end(
+                snapshotSpan,
+                extra: "outcome=completed generation=\(generation)"
+            )
         } catch {
+            WeiBeiPerf.end(
+                snapshotSpan,
+                extra: "outcome=failed generation=\(generation)"
+            )
             guard workspaceSaveGeneration == generation else { return true }
             workspaceSaveError = ui(
                 "课程可携带状态没有成功保存：\(error.localizedDescription)",
@@ -26192,6 +26242,7 @@ final class WorkspaceStore: ObservableObject {
         }
         lastWorkspacePersistenceRanOnMainThread = result.ranOnMainThread
         if case .stale? = result.failure {
+            publishOutcome = "superseded"
             return true
         }
         let hasNewerGeneration =
@@ -26293,6 +26344,7 @@ final class WorkspaceStore: ObservableObject {
             persistedWorkspaceCourseIDs = result.persistedCourseIDs
         }
         guard workspaceSaveGeneration == generation else {
+            publishOutcome = "superseded"
             return true
         }
         if let failure = result.failure {
@@ -26313,6 +26365,7 @@ final class WorkspaceStore: ObservableObject {
                     "The course state commit failed during a concurrent change. WeiBei stopped overwriting and preserved the files for recovery."
                 )
             case .stale:
+                publishOutcome = "superseded"
                 return true
             }
             return false
@@ -26339,6 +26392,7 @@ final class WorkspaceStore: ObservableObject {
             )
             shouldRemoveLegacySelectionAskThreadsAfterSave = false
         }
+        publishOutcome = "completed"
         return true
     }
 

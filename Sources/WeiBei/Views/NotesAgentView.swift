@@ -346,6 +346,16 @@ private struct AgentComposerField: View {
         .onTapGesture {
             focused.wrappedValue = true
         }
+        .onChange(of: store.agentDraft) { _, _ in
+            guard focused.wrappedValue else { return }
+            let span = WeiBeiPerf.begin("input.agent_to_next_commit")
+            DispatchQueue.main.async {
+                WeiBeiPerf.end(
+                    span,
+                    extra: "outcome=completed endpoint=next_main_commit"
+                )
+            }
+        }
         .animation(WeiBeiMotion.micro, value: showsControl)
         .accessibilityIdentifier(isWideComposer ? "agent-composer-codex" : "agent-composer-compact")
     }
@@ -1548,10 +1558,22 @@ struct MarkdownPreviewView: View {
             onSelectionChange: onSelectionChange,
             onAskAgentWithSelection: onSelectionChange,
             onContentHeightChange: { height in
-                guard compact && fitsContentHeight else { return }
+                guard compact && fitsContentHeight else {
+                    WeiBeiPerf.event(
+                        "webview.markdown_height_ignored",
+                        extra: "reason=surface"
+                    )
+                    return
+                }
                 guard height.isFinite,
                       height > 0,
-                      height <= Self.compactPreviewMaximumHeight else { return }
+                      height <= Self.compactPreviewMaximumHeight else {
+                    WeiBeiPerf.event(
+                        "webview.markdown_height_ignored",
+                        extra: "reason=invalid"
+                    )
+                    return
+                }
                 let measuredHeight = ceil(height)
                 let nextFrameHeight = max(measuredHeight, Self.compactPreviewLoadingHeight)
                 // A frozen row ignores same-height/sub-2pt jitter and all
@@ -1561,6 +1583,10 @@ struct MarkdownPreviewView: View {
                 if freezeHeightAfterMeasure,
                    heightFrozen,
                    nextFrameHeight < contentHeight + 2 {
+                    WeiBeiPerf.event(
+                        "webview.markdown_height_ignored",
+                        extra: "reason=frozen"
+                    )
                     return
                 }
                 // This callback only receives a real JS measurement. Keep its
@@ -1573,12 +1599,19 @@ struct MarkdownPreviewView: View {
                     if freezeHeightAfterMeasure {
                         heightFrozen = true
                     }
+                    WeiBeiPerf.event(
+                        "webview.markdown_height_ignored",
+                        extra: "reason=jitter"
+                    )
                     return
                 }
                 contentHeight = nextFrameHeight
                 if freezeHeightAfterMeasure {
                     heightFrozen = true
                 }
+                WeiBeiPerf.event(
+                    "webview.markdown_height_accepted"
+                )
                 onContentHeightChange()
             },
             onWikiLink: onWikiLink,

@@ -107,6 +107,9 @@ struct ContentView: View {
         }
         .onAppear {
             focusedPane = store.focusedPane
+            DispatchQueue.main.async {
+                WeiBeiPerf.finishLaunch()
+            }
         }
         // Theme animation is owned by `setAppearanceMode` (single transaction).
         // A second root `.animation(value: appearanceMode)` desynced chrome vs paper.

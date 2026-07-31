@@ -164,6 +164,11 @@ struct CourseHubView: View {
             await refreshSearch(for: searchTaskID)
         }
         .onAppear(perform: ensureMaterialSelection)
+        .onAppear {
+            DispatchQueue.main.async {
+                store.finishCourseHomePerformanceNavigation()
+            }
+        }
         .onChange(of: courseID) { _, _ in
             showsAllContent = false
             courseQuestion = ""
@@ -795,6 +800,7 @@ struct CourseHubView: View {
             return
         }
 
+        let span = WeiBeiPerf.begin("course.search_to_first_results_commit")
         isSearching = true
         let outcome = await store.searchCourseHome(
             courseID: courseID,
@@ -803,11 +809,18 @@ struct CourseHubView: View {
         guard !Task.isCancelled,
               request == searchTaskID,
               store.courseWorkspaceCourseID == courseID else {
+            WeiBeiPerf.end(span, extra: "outcome=superseded")
             return
         }
         searchResults = outcome.results
         searchAvailability = outcome.availability
         isSearching = false
+        await Task.yield()
+        WeiBeiPerf.end(
+            span,
+            extra:
+                "outcome=completed endpoint=next_main_commit results=\(outcome.results.count)"
+        )
     }
 
     private func open(_ entry: CourseHomeEntry) {
