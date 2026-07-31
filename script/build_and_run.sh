@@ -56,11 +56,12 @@ APP_MACOS="$APP_CONTENTS/MacOS"
 APP_HELPERS="$APP_CONTENTS/Helpers"
 APP_RESOURCES="$APP_CONTENTS/Resources"
 APP_ICON_SOURCE="$ROOT_DIR/DesignSystem/assets/app-icon/AppIcon.icns"
+# Current pre-release packages ship only active legal notices. Future release
+# plans such as Docs/releases/v1.0.0.md stay in the repo and are not packaged.
 LEGAL_SOURCE_FILES=(
   "$ROOT_DIR/PRIVACY.md"
   "$ROOT_DIR/THIRD_PARTY_NOTICES.md"
   "$ROOT_DIR/ASSET_ATTRIBUTIONS.md"
-  "$ROOT_DIR/Docs/releases/v1.0.0.md"
 )
 APP_BINARY="$APP_MACOS/$PRODUCT_NAME"
 FINAL_AUDIT_DIR="$DIST_DIR/final-audit"
