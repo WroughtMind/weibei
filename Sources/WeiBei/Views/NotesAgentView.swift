@@ -1594,13 +1594,11 @@ struct MarkdownPreviewView: View {
                 }
                 let measuredHeight = ceil(height)
                 let nextFrameHeight = max(measuredHeight, Self.compactPreviewLoadingHeight)
-                // A frozen row ignores same-height/sub-2pt jitter and all
-                // shrink reports, but a late image/diagram may still grow it.
-                // Width changes explicitly unfreeze below, so their legitimate
-                // smaller reflow measurement remains accepted.
-                if freezeHeightAfterMeasure,
-                   heightFrozen,
-                   nextFrameHeight < contentHeight + 2 {
+                // Once frozen, never change the SwiftUI frame — LazyVStack recycle
+                // during chat scroller drags (sample build 663, NSScroller.trackKnob)
+                // was accepting late ResizeObserver growth and remasuring every row.
+                if freezeHeightAfterMeasure, heightFrozen {
+                    onMeasuredHeight(measuredHeight)
                     WeiBeiPerf.event(
                         "webview.markdown_height_ignored",
                         extra: "reason=frozen"
@@ -1644,9 +1642,13 @@ struct MarkdownPreviewView: View {
             lastLayoutWidthKey = layoutWidthKey
             if let seed = seedContentHeight, seed.isFinite, seed > 0 {
                 contentHeight = max(ceil(seed), Self.compactPreviewLoadingHeight)
+                // Keep frozen across LazyVStack recycle. Unfreezing here forced
+                // every chat KaTeX row to remasure while scrolling (build 663).
+                if freezeHeightAfterMeasure {
+                    heightFrozen = true
+                    return
+                }
             }
-            // A 24pt-bucket cache value is only a visual seed. The current
-            // point-exact width must still produce its own real measurement.
             heightFrozen = false
         }
         .onChange(of: layoutWidthKey) { _, widthKey in

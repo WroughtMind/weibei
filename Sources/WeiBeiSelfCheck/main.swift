@@ -4767,6 +4767,8 @@ expect(notesAgentSource.contains("private var isCredentialNotice: Bool")
     // Hang-proof agent chat: finalized KaTeX with frozen height; streaming stays native.
     && notesAgentSource.contains("usesFinalizedKaTeX")
     && notesAgentSource.contains("freezeHeightAfterMeasure")
+    && notesAgentSource.contains("Keep frozen across LazyVStack recycle")
+    && notesAgentSource.contains("if freezeHeightAfterMeasure, heightFrozen {")
     && notesAgentSource.contains("get: { expandedSourceURL != nil }")
     && !notesAgentSource.contains("get: { expandedSources.isEmpty == false }")
     && notesAgentSource.contains("Fixed orbit size — never ask AppKit for fittingSize")
