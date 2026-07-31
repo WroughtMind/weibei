@@ -1698,13 +1698,11 @@ final class WorkspaceStore: ObservableObject {
                 throw CourseProjectRootError.metadataConflict
             }
             do {
-                let snapshot = try waitForCourseFileOperation {
-                    try await self.courseProjectFileWorker
-                        .adoptionSnapshot(
-                            at: canonicalRoot,
-                            expectedRootIdentity: identity
-                        )
-                }
+                let snapshot = try await courseProjectFileWorker
+                    .adoptionSnapshot(
+                        at: canonicalRoot,
+                        expectedRootIdentity: identity
+                    )
                 adoptionSnapshot = snapshot
                 courseID = snapshot.manifest.courseID
             } catch {
@@ -1724,7 +1722,7 @@ final class WorkspaceStore: ObservableObject {
                     guard let adoptionSnapshot else {
                         throw CourseProjectRootError.manifestMismatch
                     }
-                    let proposal = try makeCourseProjectRebindProposal(
+                    let proposal = try await makeCourseProjectRebindProposal(
                         existing: existing,
                         candidateRoot: canonicalRoot,
                         candidateRootIdentity: identity,
@@ -1909,14 +1907,11 @@ final class WorkspaceStore: ObservableObject {
         if let adoptionSnapshot,
            adoptionSnapshot.manifest.portableExport != nil {
             do {
-                let confirmedSnapshot =
-                    try waitForCourseFileOperation {
-                        try await self.courseProjectFileWorker
-                            .adoptionSnapshot(
-                                at: canonicalRoot,
-                                expectedRootIdentity: identity
-                            )
-                    }
+                let confirmedSnapshot = try await courseProjectFileWorker
+                    .adoptionSnapshot(
+                        at: canonicalRoot,
+                        expectedRootIdentity: identity
+                    )
                 guard confirmedSnapshot.metadataIdentity
                         == adoptionSnapshot.metadataIdentity,
                       confirmedSnapshot.manifestData
@@ -1931,17 +1926,15 @@ final class WorkspaceStore: ObservableObject {
                 let normalizedData = try CourseProjectManifest(
                     courseID: courseID
                 ).encoded()
-                try waitForCourseFileOperation {
-                    try await self.courseProjectFileWorker
-                        .normalizePortableCourseManifest(
-                            with: normalizedData,
-                            at: manifestURL,
-                            expectedDirectoryIdentity:
-                                confirmedSnapshot.metadataIdentity,
-                            expectedPreviousData:
-                                confirmedSnapshot.manifestData
-                        )
-                }
+                try await courseProjectFileWorker
+                    .normalizePortableCourseManifest(
+                        with: normalizedData,
+                        at: manifestURL,
+                        expectedDirectoryIdentity:
+                            confirmedSnapshot.metadataIdentity,
+                        expectedPreviousData:
+                            confirmedSnapshot.manifestData
+                    )
             } catch {
                 let isolatedNoteItemIDs =
                     importedItems.compactMap { item -> String? in
@@ -2057,7 +2050,7 @@ final class WorkspaceStore: ObservableObject {
         }
 
         do {
-            try validateRestoredCourseRoot(
+            try await validateRestoredCourseRootAsync(
                 resolvedRoot,
                 course: existing,
                 mustBeInsideLibrary: libraryRelativePath != nil
@@ -2142,11 +2135,11 @@ final class WorkspaceStore: ObservableObject {
         candidateRoot: URL,
         candidateRootIdentity: ImportedFileIdentity,
         snapshot: CoursePortableAdoptionSnapshot
-    ) throws -> CourseProjectRebindProposal {
+    ) async throws -> CourseProjectRebindProposal {
         guard !courseHasUnstableState(existing.id) else {
             throw CoursePortableExportError.unstableCourseState
         }
-        guard !(try registeredCourseRootIsAvailable(existing)) else {
+        guard !(try await registeredCourseRootIsAvailable(existing)) else {
             throw CourseProjectRebindError.originalRootStillAvailable
         }
         guard course(withID: existing.id) == existing,
@@ -2342,7 +2335,7 @@ final class WorkspaceStore: ObservableObject {
 
     private func registeredCourseRootIsAvailable(
         _ course: Course
-    ) throws -> Bool {
+    ) async throws -> Bool {
         guard let expectedIdentity = course.sourceRootIdentity else {
             return false
         }
@@ -2384,12 +2377,10 @@ final class WorkspaceStore: ObservableObject {
             ) {
                 candidates.append(expected)
             }
-            let search = try waitForCourseFileOperation {
-                await self.courseProjectFileWorker.findDirectory(
-                    with: expectedIdentity,
-                    inside: libraryRoot
-                )
-            }
+            let search = await courseProjectFileWorker.findDirectory(
+                with: expectedIdentity,
+                inside: libraryRoot
+            )
             guard courseLibraryRootURL == libraryRoot,
                   courseLibraryRootPath == expectedLibraryPath,
                   courseLibraryRootIdentity == expectedLibraryIdentity,
@@ -2488,7 +2479,7 @@ final class WorkspaceStore: ObservableObject {
                 activeCourseRebindTokens.removeValue(forKey: existing.id)
             }
         }
-        guard !(try registeredCourseRootIsAvailable(existing)) else {
+        guard !(try await registeredCourseRootIsAvailable(existing)) else {
             throw CourseProjectRebindError.originalRootStillAvailable
         }
 
@@ -2544,13 +2535,12 @@ final class WorkspaceStore: ObservableObject {
         var shouldStopNewScopeOnFailure = newScopeURL != nil
         let confirmedSnapshot: CoursePortableAdoptionSnapshot
         do {
-            confirmedSnapshot = try waitForCourseFileOperation {
-                try await self.courseProjectFileWorker.adoptionSnapshot(
+            confirmedSnapshot = try await courseProjectFileWorker
+                .adoptionSnapshot(
                     at: resolvedRoot,
                     expectedRootIdentity:
                         proposal.candidateRootIdentity
                 )
-            }
             guard confirmedSnapshot.metadataIdentity
                     == proposal.snapshot.metadataIdentity,
                   confirmedSnapshot.manifestData
@@ -2565,7 +2555,7 @@ final class WorkspaceStore: ObservableObject {
                   !courseHasUnstableState(currentCourse.id) else {
                 throw CourseProjectRebindError.proposalChanged
             }
-            guard !(try registeredCourseRootIsAvailable(currentCourse)) else {
+            guard !(try await registeredCourseRootIsAvailable(currentCourse)) else {
                 throw CourseProjectRebindError.originalRootStillAvailable
             }
             guard course(matching: proposal) == currentCourse,
@@ -2784,15 +2774,12 @@ final class WorkspaceStore: ObservableObject {
             )
             if confirmedSnapshot.manifest.portableExport != nil {
                 do {
-                    let finalSnapshot =
-                        try waitForCourseFileOperation {
-                            try await self.courseProjectFileWorker
-                                .adoptionSnapshot(
-                                    at: resolvedRoot,
-                                    expectedRootIdentity:
-                                        proposal.candidateRootIdentity
-                                )
-                        }
+                    let finalSnapshot = try await courseProjectFileWorker
+                        .adoptionSnapshot(
+                            at: resolvedRoot,
+                            expectedRootIdentity:
+                                proposal.candidateRootIdentity
+                        )
                     guard courseUsesRebindCandidate(
                         proposal,
                         resolvedRoot: resolvedRoot
@@ -2808,21 +2795,19 @@ final class WorkspaceStore: ObservableObject {
                           finalSnapshot.manifest.portableExport != nil else {
                         throw CourseProjectRebindError.proposalChanged
                     }
-                    try waitForCourseFileOperation {
-                        try await self.courseProjectFileWorker
-                            .normalizePortableCourseManifest(
-                                with: CourseProjectManifest(
-                                    courseID: proposal.courseID
-                                ).encoded(),
-                                at: resolvedRoot.appendingPathComponent(
-                                    ".weibei/course.json"
-                                ),
-                                expectedDirectoryIdentity:
-                                    finalSnapshot.metadataIdentity,
-                                expectedPreviousData:
-                                    finalSnapshot.manifestData
-                            )
-                    }
+                    try await courseProjectFileWorker
+                        .normalizePortableCourseManifest(
+                            with: CourseProjectManifest(
+                                courseID: proposal.courseID
+                            ).encoded(),
+                            at: resolvedRoot.appendingPathComponent(
+                                ".weibei/course.json"
+                            ),
+                            expectedDirectoryIdentity:
+                                finalSnapshot.metadataIdentity,
+                            expectedPreviousData:
+                                finalSnapshot.manifestData
+                        )
                     guard courseUsesRebindCandidate(
                         proposal,
                         resolvedRoot: resolvedRoot
@@ -7797,6 +7782,20 @@ final class WorkspaceStore: ObservableObject {
         course: Course,
         mustBeInsideLibrary: Bool
     ) throws {
+        try waitForCourseFileOperation {
+            try await self.validateRestoredCourseRootAsync(
+                root,
+                course: course,
+                mustBeInsideLibrary: mustBeInsideLibrary
+            )
+        }
+    }
+
+    private func validateRestoredCourseRootAsync(
+        _ root: URL,
+        course: Course,
+        mustBeInsideLibrary: Bool
+    ) async throws {
         try validateCourseProjectRoot(
             root,
             identity: course.sourceRootIdentity,
@@ -7825,13 +7824,11 @@ final class WorkspaceStore: ObservableObject {
             throw CourseProjectRootError.manifestMismatch
         }
         if manifest.portableExport != nil {
-            let evidence = try waitForCourseFileOperation {
-                try await self.courseProjectFileWorker
-                    .adoptionSnapshotWithThreadEvidence(
-                        at: root,
-                        expectedRootIdentity: expectedIdentity
-                    )
-            }
+            let evidence = try await courseProjectFileWorker
+                .adoptionSnapshotWithThreadEvidence(
+                    at: root,
+                    expectedRootIdentity: expectedIdentity
+                )
             lastPortableAdoptionReadRanOnMainThread =
                 evidence.ranOnMainThread
             let snapshot = evidence.snapshot
@@ -7840,19 +7837,17 @@ final class WorkspaceStore: ObservableObject {
                   snapshot.manifestData == manifestData else {
                 throw CourseProjectRootError.manifestMismatch
             }
-            try waitForCourseFileOperation {
-                try await self.courseProjectFileWorker
-                    .normalizePortableCourseManifest(
-                        with: CourseProjectManifest(
-                            courseID: course.id
-                        ).encoded(),
-                        at: manifestURL,
-                        expectedDirectoryIdentity:
-                            snapshot.metadataIdentity,
-                        expectedPreviousData:
-                            snapshot.manifestData
-                    )
-            }
+            try await courseProjectFileWorker
+                .normalizePortableCourseManifest(
+                    with: CourseProjectManifest(
+                        courseID: course.id
+                    ).encoded(),
+                    at: manifestURL,
+                    expectedDirectoryIdentity:
+                        snapshot.metadataIdentity,
+                    expectedPreviousData:
+                        snapshot.manifestData
+                )
         }
     }
 
