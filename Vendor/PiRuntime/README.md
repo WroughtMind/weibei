@@ -1,22 +1,46 @@
-# WeiBei embedded Pi runtime
+# WeiBei embedded Pi runtime (Node path)
 
-WeiBei owns the runtime boundary. The app package contains a pinned standalone Pi
-executable and starts only that copy. It never searches the user's PATH, Node,
-NVM, Bun, or global Pi installation.
+WeiBei owns the runtime boundary. The app package embeds:
 
-`manifest.json` is the source of truth for the Pi version, source commit, release
-artifacts, and archive digests. `script/prepare_pi_runtime.sh` downloads the
-matching macOS artifact, verifies SHA-256 before extraction, and keeps only the
-files needed by WeiBei RPC mode.
+1. A pinned **official Node.js** binary (`node/bin/node`)
+2. A production install of **`@earendil-works/pi-coding-agent`** (`agent/`)
+3. A thin launcher **`bin/pi`** that runs `node …/dist/cli.js`
 
-WeiBei-specific behavior is deliberately outside the upstream CLI surface:
+The app never searches the user's PATH, NVM, Bun, or a global Pi install.
 
-- Swift owns current material, selection, notes, cancellation, fallback, and write-back.
-- `AgentResources/extension.ts` owns the allowlisted course, memory, note, and rich-answer tools.
-- `AgentResources/skills/` contains only the on-demand rich-answer guidance.
-- Pi runs without built-in tools, sessions, global extensions, or global skills.
+`manifest.json` is the source of truth for:
 
-To maintain a deeper Pi fork, publish a standalone artifact from the fork, update
-the repository, commit, version, filenames, and digests in `manifest.json`, then
-run the same self-contained package and live-evaluation checks. The Swift/RPC
-contract does not need to change unless the fork intentionally changes protocol.
+- Pi npm package version and source commit
+- Node version and official tarball digests
+- `runtimeKind: "node"` (Bun single-file artifacts are not used)
+
+`script/prepare_pi_runtime.sh` downloads Node, verifies SHA-256, installs the
+npm package with `--omit=dev`, writes the launcher, ad-hoc signs the Node
+binary, and records integrity files:
+
+- `binary.sha256` — digest of `node/bin/node`
+- `artifact.sha256` — Node tarball digest + generated `package-lock.json` digest
+
+## Why Node instead of Bun compile
+
+Upstream standalone `pi` macOS builds are produced with `bun build --compile`,
+which statically links Bun components (including LGPL-licensed JavaScriptCore).
+WeiBei ships the official **npm/JS** form under Node so installers do not
+redistribute that Bun-compiled binary.
+
+## WeiBei-specific behavior
+
+Still outside the upstream CLI surface:
+
+- Swift owns material, selection, notes, cancellation, fallback, and write-back
+- `AgentResources/extension.ts` owns allowlisted course / memory / note / rich-answer tools
+- Pi runs with `--mode rpc` and without unrestricted built-in tools
+
+## Maintainers
+
+To bump Pi or Node:
+
+1. Update `Vendor/PiRuntime/manifest.json` (versions + Node digests from nodejs.org `SHASUMS256.txt`)
+2. Refresh `THIRD_PARTY_NOTICES.md` if the redistribution story changes
+3. Delete `.build/pi-runtime` and run `./script/prepare_pi_runtime.sh`
+4. Run package + `WeiBeiPiCheck` / self-check

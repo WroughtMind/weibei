@@ -92,10 +92,18 @@ public struct PiRuntimeManifest: Decodable, Equatable, Sendable {
     public var sourceRepository: String
     public var sourceCommit: String
     public var license: String
+    /// `"node"` for official Node + npm package; omitted/legacy for fixture Mach-O stubs.
+    public var runtimeKind: String?
+    public var npmPackage: String?
+
+    public var usesNodeRuntime: Bool {
+        (runtimeKind ?? "").lowercased() == "node"
+    }
 }
 
 public enum PiBundledRuntime {
     public static let requiredVersion = "0.82.1"
+    public static let requiredNpmPackage = "@earendil-works/pi-coding-agent"
 
     private struct PackageMetadata: Decodable {
         var version: String
@@ -112,8 +120,7 @@ public enum PiBundledRuntime {
         let manifestURL = runtimeURL.appendingPathComponent("manifest.json")
         let integrityURL = runtimeURL.appendingPathComponent("binary.sha256")
         let packageURL = binURL.appendingPathComponent("package.json")
-        let requiredFiles = [
-            executableURL,
+        let commonRequired = [
             packageURL,
             binURL.appendingPathComponent("theme/dark.json"),
             binURL.appendingPathComponent("theme/light.json"),
@@ -123,25 +130,61 @@ public enum PiBundledRuntime {
             integrityURL,
         ]
         guard fileManager.isExecutableFile(atPath: executableURL.path),
-              requiredFiles.dropFirst().allSatisfy({ fileManager.fileExists(atPath: $0.path) }),
+              commonRequired.allSatisfy({ fileManager.fileExists(atPath: $0.path) }),
               let data = try? Data(contentsOf: manifestURL),
               let manifest = try? JSONDecoder().decode(PiRuntimeManifest.self, from: data),
               let packageData = try? Data(contentsOf: packageURL),
               let package = try? JSONDecoder().decode(PackageMetadata.self, from: packageData),
-              let expectedHash = try? String(contentsOf: integrityURL, encoding: .utf8)
-                .trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
-              manifest.schemaVersion == 1,
+              let expectedHashRaw = try? String(contentsOf: integrityURL, encoding: .utf8),
+              let expectedHash = expectedHashRaw
+                .split(whereSeparator: { $0.isWhitespace || $0.isNewline })
+                .first
+                .map({ String($0).lowercased() }),
               manifest.piVersion == requiredVersion,
               package.version == requiredVersion,
               manifest.license == "MIT",
               !manifest.sourceRepository.isEmpty,
               manifest.sourceCommit.count == 40,
               expectedHash.count == 64,
-              expectedHash.allSatisfy({ $0.isHexDigit }),
-              (try? sha256(of: executableURL)) == expectedHash,
-              hasExpectedArchitecture(executableURL),
-              hasValidCodeSignature(executableURL) else {
+              expectedHash.allSatisfy(\.isHexDigit)
+        else {
             throw PiAgentRuntimeError.resourcesMissing(runtimeURL.path)
+        }
+
+        if manifest.usesNodeRuntime {
+            guard manifest.schemaVersion == 2,
+                  (manifest.npmPackage ?? requiredNpmPackage) == requiredNpmPackage
+            else {
+                throw PiAgentRuntimeError.resourcesMissing(runtimeURL.path)
+            }
+            let nodeURL = runtimeURL.appendingPathComponent("node/bin/node")
+            let agentCLI = runtimeURL.appendingPathComponent(
+                "agent/node_modules/@earendil-works/pi-coding-agent/dist/cli.js"
+            )
+            let agentPackageURL = runtimeURL.appendingPathComponent(
+                "agent/node_modules/@earendil-works/pi-coding-agent/package.json"
+            )
+            guard fileManager.isExecutableFile(atPath: nodeURL.path),
+                  fileManager.fileExists(atPath: agentCLI.path),
+                  fileManager.fileExists(atPath: agentPackageURL.path),
+                  let agentPackageData = try? Data(contentsOf: agentPackageURL),
+                  let agentPackage = try? JSONDecoder().decode(PackageMetadata.self, from: agentPackageData),
+                  agentPackage.version == requiredVersion,
+                  (try? sha256(of: nodeURL)) == expectedHash,
+                  hasExpectedArchitecture(nodeURL),
+                  hasValidCodeSignature(nodeURL)
+            else {
+                throw PiAgentRuntimeError.resourcesMissing(runtimeURL.path)
+            }
+        } else {
+            // Legacy / self-check fixture: Mach-O `bin/pi` with schemaVersion 1.
+            guard manifest.schemaVersion == 1,
+                  (try? sha256(of: executableURL)) == expectedHash,
+                  hasExpectedArchitecture(executableURL),
+                  hasValidCodeSignature(executableURL)
+            else {
+                throw PiAgentRuntimeError.resourcesMissing(runtimeURL.path)
+            }
         }
 
         let defaultAppURL = Bundle.main.bundleURL.pathExtension == "app" ? Bundle.main.bundleURL : nil
@@ -714,14 +757,16 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         let outputPipe = Pipe()
         let errorPipe = Pipe()
 
-        process.executableURL = executableURL
+        let launch = Self.resolveLaunch(executableURL: executableURL)
+        process.executableURL = launch.executableURL
         process.currentDirectoryURL = binding.workingDirectory
         process.standardInput = inputPipe
         process.standardOutput = outputPipe
         process.standardError = errorPipe
-        process.arguments = launchArguments(resources: resources, binding: binding)
+        process.arguments = launch.argumentPrefix + launchArguments(resources: resources, binding: binding)
         process.environment = launchEnvironment(
             executableURL: executableURL,
+            packageDirectoryURL: launch.packageDirectoryURL,
             contextURL: contextURL,
             piConfigurationURL: piConfigurationURL,
             sessionDirectory: binding.sessionDirectory
@@ -1500,13 +1545,48 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         }
     }
 
+    private struct ResolvedLaunch {
+        var executableURL: URL
+        var argumentPrefix: [String]
+        var packageDirectoryURL: URL
+    }
+
+    /// Node layout launches `node …/dist/cli.js …`; legacy Mach-O launches `bin/pi` directly.
+    private static func resolveLaunch(executableURL: URL) -> ResolvedLaunch {
+        let binURL = executableURL.deletingLastPathComponent()
+        let runtimeURL = binURL.deletingLastPathComponent()
+        let nodeURL = runtimeURL.appendingPathComponent("node/bin/node")
+        let cliURL = runtimeURL.appendingPathComponent(
+            "agent/node_modules/@earendil-works/pi-coding-agent/dist/cli.js"
+        )
+        let packageURL = runtimeURL.appendingPathComponent(
+            "agent/node_modules/@earendil-works/pi-coding-agent"
+        )
+        let fileManager = FileManager.default
+        if fileManager.isExecutableFile(atPath: nodeURL.path),
+           fileManager.fileExists(atPath: cliURL.path) {
+            return ResolvedLaunch(
+                executableURL: nodeURL,
+                argumentPrefix: [cliURL.path],
+                packageDirectoryURL: packageURL
+            )
+        }
+        return ResolvedLaunch(
+            executableURL: executableURL,
+            argumentPrefix: [],
+            packageDirectoryURL: binURL
+        )
+    }
+
     private func launchEnvironment(
         executableURL: URL,
+        packageDirectoryURL: URL,
         contextURL: URL,
         piConfigurationURL: URL,
         sessionDirectory: URL
     ) -> [String: String] {
         let executableDirectory = executableURL.deletingLastPathComponent().path
+        let packageDirectory = packageDirectoryURL.path
         var environment = [
             "HOME": FileManager.default.homeDirectoryForCurrentUser.path,
             "PATH": "\(executableDirectory):/usr/bin:/bin:/usr/sbin:/sbin",
@@ -1515,7 +1595,7 @@ public actor PiAgentRuntime: StudyAgentRuntime {
             "PI_OFFLINE": "1",
             "PI_SKIP_VERSION_CHECK": "1",
             "PI_ZH_AUTO_UPDATE": "0",
-            "PI_PACKAGE_DIR": executableDirectory,
+            "PI_PACKAGE_DIR": packageDirectory,
             "PI_CODING_AGENT_DIR": piConfigurationURL.path,
             "PI_CODING_AGENT_SESSION_DIR": sessionDirectory.path,
             "WEIBEI_AGENT_CONTEXT_FILE": contextURL.path,

@@ -4,11 +4,12 @@ WeiBei includes and builds upon third-party open-source software. Those
 components remain under their original licenses; the project's MIT License
 does not replace them.
 
-## Pi coding agent
+## Pi coding agent and Node.js
 
-WeiBei downloads and packages a pinned standalone Pi coding agent runtime.
-Version, source commit, artifact digests, MIT license, and notices are recorded
-under [`Vendor/PiRuntime/`](Vendor/PiRuntime/).
+WeiBei embeds a pinned **Node.js** binary and the official
+`@earendil-works/pi-coding-agent` npm package for Agent RPC mode. It does not
+ship the Bun-compiled single-file `pi` binary. Versions, digests, licenses, and
+notices are recorded under [`Vendor/PiRuntime/`](Vendor/PiRuntime/).
 
 ## JavaScript components
 
