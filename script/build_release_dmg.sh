@@ -59,6 +59,12 @@ if [[ "$PACKAGE_VERSION" != "$APP_VERSION" ]]; then
   echo "release failed: package.json version $PACKAGE_VERSION does not match VERSION $APP_VERSION" >&2
   exit 16
 fi
+# Community and notarized packages both redistribute the bundled Pi/Bun runtime.
+# G0.4 review must be recorded before either release route can package.
+if [[ "${WEIBEI_PI_REDISTRIBUTION_REVIEWED:-}" != "1" ]]; then
+  echo "release failed: Pi/Bun redistribution review is not recorded" >&2
+  exit 11
+fi
 if [[ -n "$(git -C "$ROOT_DIR" status --porcelain=v1 --untracked-files=normal)" ]]; then
   echo "release failed: package must come from a clean worktree" >&2
   exit 6
@@ -91,10 +97,6 @@ if [[ "$MODE" == "notarized" ]]; then
   if [[ "${WEIBEI_NOTARIZED_RELEASE_APPROVED:-}" != "1" ]]; then
     echo "release failed: notarized publication requires WEIBEI_NOTARIZED_RELEASE_APPROVED=1" >&2
     exit 10
-  fi
-  if [[ "${WEIBEI_PI_REDISTRIBUTION_REVIEWED:-}" != "1" ]]; then
-    echo "release failed: Pi/Bun redistribution review is not recorded" >&2
-    exit 11
   fi
   TIMESTAMP_ARGUMENT=(--timestamp)
 else

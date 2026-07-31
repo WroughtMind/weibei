@@ -49,12 +49,17 @@ if [[ ! -f "$INFO_PLIST" || ! -x "$APP_BINARY" || ! -f "$APP_ICON" ]]; then
   echo "metadata check failed: incomplete app bundle at $APP_BUNDLE" >&2
   exit 4
 fi
-for legal_file in PRIVACY.md THIRD_PARTY_NOTICES.md ASSET_ATTRIBUTIONS.md v1.0.0.md; do
+for legal_file in PRIVACY.md THIRD_PARTY_NOTICES.md ASSET_ATTRIBUTIONS.md; do
   if [[ ! -s "$LEGAL_DIR/$legal_file" ]]; then
     echo "metadata check failed: missing packaged notice $legal_file" >&2
     exit 10
   fi
 done
+# Pre-1.0 packages must not ship future 1.0.0 release-plan prose as if it were current legal copy.
+if [[ -e "$LEGAL_DIR/v1.0.0.md" ]]; then
+  echo "metadata check failed: packaged Legal must not include future v1.0.0 release notes" >&2
+  exit 11
+fi
 if [[ "$(git -C "$ROOT_DIR" rev-parse --is-shallow-repository)" == "true" ]]; then
   echo "metadata check failed: full Git history is required for a stable build number" >&2
   exit 5

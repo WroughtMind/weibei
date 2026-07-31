@@ -32,7 +32,7 @@ I built WeiBei so the material, the question, its evidence, and the resulting no
 - Searches the current course locally and returns citations that can jump to the exact file, PDF page, HTML section, or note.
 - Opens a persistent question thread from a selected passage. The passage keeps a visible cinnabar underline that can reopen the related conversation later.
 - Links notes and source materials through real many-to-many course relationships.
-- Lets the Agent propose learning-state and note updates, while the learner decides what is written.
+- Saves meaningful learning-memory updates automatically, while formal note and relationship writes still require a light confirmation card.
 - Can render source-bound interactive explanations through a constrained generative UI protocol. Plain text remains the default and the fallback.
 
 ## OpenAI Build Week scope
@@ -134,7 +134,7 @@ Live-provider checks require valid local credentials and are not silently replac
 
 - WeiBei currently supports macOS 14 and later. Windows and web versions are future work.
 - Course files and indexes are local-first, but live model responses may require a network connection.
-- The Agent proposes note and learning-state changes. The learner must approve the final write.
+- Learning memory is written automatically into the Chat's global or course scope and shown with a light end-of-answer notice. Formal notes and relationships still use a confirmation card.
 - Large or difficult source files may be reported as partially indexed or incomplete.
 - The repository version is `0.1.0` and remains a pre-release candidate, not a signed and notarized 1.0 release.
 

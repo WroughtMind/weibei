@@ -743,6 +743,74 @@ expect(inspirationSources.contains("a133647a8695cd06d0f5c6215d66e0b8b8d93d56")
 let runScriptURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
     .appendingPathComponent("script/build_and_run.sh")
 let runScript = (try? String(contentsOf: runScriptURL, encoding: .utf8)) ?? ""
+let releaseScriptURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+    .appendingPathComponent("script/build_release_dmg.sh")
+let releaseScript = (try? String(contentsOf: releaseScriptURL, encoding: .utf8)) ?? ""
+let releaseMetadataScriptURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+    .appendingPathComponent("script/verify_release_metadata.sh")
+let releaseMetadataScript = (try? String(contentsOf: releaseMetadataScriptURL, encoding: .utf8)) ?? ""
+let appBuildInfoSourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+    .appendingPathComponent("Sources/WeiBeiCore/WeiBeiAppBuildInfo.swift")
+let appBuildInfoSource = (try? String(contentsOf: appBuildInfoSourceURL, encoding: .utf8)) ?? ""
+let readmeSourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+    .appendingPathComponent("README.md")
+let readmeSource = (try? String(contentsOf: readmeSourceURL, encoding: .utf8)) ?? ""
+
+// F0: community and notarized packages both require recorded Pi/Bun redistribution review.
+let piReviewGateMarker = "if [[ \"${WEIBEI_PI_REDISTRIBUTION_REVIEWED:-}\" != \"1\" ]]; then"
+let piReviewGateIndex = releaseScript.range(of: piReviewGateMarker)?.lowerBound
+let notarizedModeIndex = releaseScript.range(of: "if [[ \"$MODE\" == \"notarized\" ]]; then")?.lowerBound
+expect(releaseScript.contains(piReviewGateMarker)
+    && releaseScript.contains("release failed: Pi/Bun redistribution review is not recorded")
+    && releaseScript.components(separatedBy: "WEIBEI_PI_REDISTRIBUTION_REVIEWED").count == 2
+    && piReviewGateIndex != nil
+    && notarizedModeIndex != nil
+    && piReviewGateIndex! < notarizedModeIndex!,
+    "release packaging requires Pi/Bun redistribution review for community and notarized packages")
+
+// F0: isolation-only candidate update manifest entry.
+expect(appBuildInfoSource.contains("candidateManifestURLEnvironmentKey = \"WEIBEI_UPDATE_MANIFEST_URL\"")
+    && appBuildInfoSource.contains("suppressActivationEnvironmentKey = \"WEIBEI_SUPPRESS_ACTIVATION\"")
+    && appBuildInfoSource.contains("func resolvedManifestURL(")
+    && appBuildInfoSource.contains("environment[suppressActivationEnvironmentKey] == \"1\"")
+    && appBuildInfoSource.contains("manifestURL: URL? = nil")
+    && appBuildInfoSource.contains("let resolvedURL = manifestURL ?? resolvedManifestURL()"),
+    "update checker exposes an isolation-only candidate manifest override")
+expect(
+    WeiBeiUpdateChecker.resolvedManifestURL(environment: [:]) == WeiBeiUpdateChecker.defaultManifestURL
+        && WeiBeiUpdateChecker.resolvedManifestURL(environment: [
+            "WEIBEI_UPDATE_MANIFEST_URL": "https://example.invalid/candidate.json"
+        ]) == WeiBeiUpdateChecker.defaultManifestURL
+        && WeiBeiUpdateChecker.resolvedManifestURL(environment: [
+            "WEIBEI_SUPPRESS_ACTIVATION": "1",
+            "WEIBEI_UPDATE_MANIFEST_URL": "https://example.invalid/candidate.json"
+        ]).absoluteString == "https://example.invalid/candidate.json"
+        && WeiBeiUpdateChecker.resolvedManifestURL(environment: [
+            "WEIBEI_SUPPRESS_ACTIVATION": "1",
+            "WEIBEI_UPDATE_MANIFEST_URL": "file:///tmp/candidate-latest.json"
+        ]).absoluteString == "file:///tmp/candidate-latest.json",
+    "candidate update manifest URL only applies under verification isolation"
+)
+
+// F0: current 0.1.x packages do not ship future v1.0.0 release-plan prose.
+expect(runScript.contains("\"$ROOT_DIR/PRIVACY.md\"")
+    && runScript.contains("\"$ROOT_DIR/THIRD_PARTY_NOTICES.md\"")
+    && runScript.contains("\"$ROOT_DIR/ASSET_ATTRIBUTIONS.md\"")
+    && !runScript.contains("\"$ROOT_DIR/Docs/releases/v1.0.0.md\""),
+    "app packaging no longer embeds future v1.0.0 release notes as Legal copy")
+expect(releaseMetadataScript.contains("for legal_file in PRIVACY.md THIRD_PARTY_NOTICES.md ASSET_ATTRIBUTIONS.md;")
+    && releaseMetadataScript.contains("packaged Legal must not include future v1.0.0 release notes")
+    && releaseMetadataScript.contains("LEGAL_DIR/v1.0.0.md"),
+    "release metadata rejects packages that still ship future v1.0.0 notes")
+
+// F0: README matches learning-memory auto-write and formal-note confirmation.
+expect(readmeSource.contains("Saves meaningful learning-memory updates automatically")
+    && readmeSource.contains("formal note and relationship writes still require a light confirmation card")
+    && readmeSource.contains("Learning memory is written automatically into the Chat's global or course scope")
+    && !readmeSource.contains("The Agent proposes note and learning-state changes. The learner must approve the final write.")
+    && !readmeSource.contains("Lets the Agent propose learning-state and note updates, while the learner decides what is written."),
+    "README distinguishes automatic learning-memory writes from formal note confirmation")
+
 expect(runScript.contains("BUILD_CONFIGURATION=\"release\"")
     && runScript.contains("BUILD_CONFIGURATION=\"debug\"")
     && runScript.contains("swift build -c \"$BUILD_CONFIGURATION\"")
