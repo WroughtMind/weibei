@@ -22394,7 +22394,11 @@ final class WorkspaceStore: ObservableObject {
         persistNote(noteText, for: item)
     }
 
-    func flushPendingNotePersistence(flushWorkspace: Bool = true) {
+    func flushPendingNotePersistence() {
+        flushPendingNotePersistence(flushWorkspace: true)
+    }
+
+    func flushPendingNotePersistence(flushWorkspace: Bool) {
         let itemIDs = Array(pendingNotePersistenceByItemID.keys)
         itemIDs.forEach { flushPendingNotePersistence(for: $0) }
         studyProgressSaveTask?.cancel()
