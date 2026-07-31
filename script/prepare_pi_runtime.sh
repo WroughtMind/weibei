@@ -159,9 +159,10 @@ cat >"$STAGING_DIR/PiRuntime/agent/package.json" <<EOF
   }
 }
 EOF
+# Keep stdout reserved for the final runtime path consumed by build_and_run.sh.
 (
   cd "$STAGING_DIR/PiRuntime/agent"
-  npm install --omit=dev --no-audit --no-fund --ignore-scripts
+  npm install --omit=dev --no-audit --no-fund --ignore-scripts >&2
 )
 
 AGENT_PKG="$STAGING_DIR/PiRuntime/agent/node_modules/@earendil-works/pi-coding-agent"
