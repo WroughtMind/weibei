@@ -651,7 +651,12 @@ final class WorkspaceStore: ObservableObject {
     private let studyProgressSaveDelay: UInt64 = 900_000_000
     /// Coalesce the 70+ main-thread full-workspace JSON saves that fire on every UI toggle.
     private var pendingWorkspaceSaveTask: Task<Void, Never>?
+    /// Owns the single capture → file-worker → apply loop. New generations
+    /// join this task instead of capturing an obsolete CAS baseline in parallel.
+    private var workspacePersistenceTask: Task<Bool, Never>?
+    private var workspacePersistenceSkippingCourseIDs = Set<UUID>()
     private var workspaceSaveGeneration: UInt64 = 0
+    private var lastWorkspacePersistenceRanOnMainThread: Bool?
     private let workspaceSaveDebounceNanoseconds: UInt64 = 280_000_000
     private var noteSourceLinksMigrationVersion = 0
     private var studySessionScopeMigrationVersion = 0
@@ -1294,6 +1299,13 @@ final class WorkspaceStore: ObservableObject {
 
     @discardableResult
     func createCourseInLibrary(title rawTitle: String) throws -> UUID {
+        try waitForCourseFileOperation {
+            try await self.createCourseInLibraryAsync(title: rawTitle)
+        }
+    }
+
+    @discardableResult
+    func createCourseInLibraryAsync(title rawTitle: String) async throws -> UUID {
         let title = rawTitle.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !title.isEmpty else { throw CourseProjectRootError.emptyTitle }
         guard let libraryRoot = courseLibraryRootURL else {
@@ -1312,7 +1324,7 @@ final class WorkspaceStore: ObservableObject {
         guard !directoryName.isEmpty else {
             throw CourseProjectRootError.invalidDirectoryName
         }
-        return try createCourse(
+        return try await createCourseAsync(
             title: title,
             at: libraryRoot.appendingPathComponent(directoryName, isDirectory: true)
         )
@@ -1320,6 +1332,16 @@ final class WorkspaceStore: ObservableObject {
 
     @discardableResult
     func createCourse(title rawTitle: String, at rootURL: URL) throws -> UUID {
+        try waitForCourseFileOperation {
+            try await self.createCourseAsync(title: rawTitle, at: rootURL)
+        }
+    }
+
+    @discardableResult
+    private func createCourseAsync(
+        title rawTitle: String,
+        at rootURL: URL
+    ) async throws -> UUID {
         let title = rawTitle.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !title.isEmpty else { throw CourseProjectRootError.emptyTitle }
         guard let libraryRoot = courseLibraryRootURL else {
@@ -1425,15 +1447,15 @@ final class WorkspaceStore: ObservableObject {
             activeCourseID = course.id
             resolvedCourseRootURLs[course.id] = canonicalRoot
             courseRootUnavailableReasons.removeValue(forKey: course.id)
-            guard performSaveNow() else {
+            guard await persistWorkspaceNow() else {
                 throw CourseProjectRootError.workspaceSaveFailed
             }
-            do {
-                try persistCoursePortableStates(courseIDs: [course.id])
-            } catch {
+            // The first commit registers the new course in workspace.json.
+            // Only then may the next generation include its portable state.
+            if !(await persistWorkspaceNow()) {
                 workspaceSaveError = ui(
-                    "课程已创建，但可携带状态尚未写入：\(error.localizedDescription)",
-                    "The course was created, but its portable state has not been written yet: \(error.localizedDescription)"
+                    "课程已创建，但可携带状态尚未写入。",
+                    "The course was created, but its portable state has not been written yet."
                 )
             }
             return course.id
@@ -1453,6 +1475,12 @@ final class WorkspaceStore: ObservableObject {
     }
 
     func configureCourseLibrary(at rootURL: URL) throws {
+        try waitForCourseFileOperation {
+            try await self.configureCourseLibraryAsync(at: rootURL)
+        }
+    }
+
+    func configureCourseLibraryAsync(at rootURL: URL) async throws {
         let canonicalRoot = try CourseProjectPathPolicy.existingDirectory(rootURL)
         try validateLibraryRoot(canonicalRoot)
         guard let identity = importedFileIdentityResolver(canonicalRoot) else {
@@ -1507,7 +1535,7 @@ final class WorkspaceStore: ObservableObject {
         for course in courses where resolvedCourseRootURLs[course.id] != nil {
             _ = resolveCourseOwnedItems(for: course.id)
         }
-        guard performSaveNow() else {
+        guard await persistWorkspaceNow() else {
             courseSecurityScopeStopper(scopedURL)
             if let previousScope {
                 activeCourseSecurityScopes[ownerKey] = previousScope
@@ -1556,7 +1584,20 @@ final class WorkspaceStore: ObservableObject {
 
     @discardableResult
     func adoptCourseFolder(at rootURL: URL, title rawTitle: String) throws -> UUID {
-        switch try adoptCourseFolderOrProposeRebind(
+        try waitForCourseFileOperation {
+            try await self.adoptCourseFolderAsync(
+                at: rootURL,
+                title: rawTitle
+            )
+        }
+    }
+
+    @discardableResult
+    func adoptCourseFolderAsync(
+        at rootURL: URL,
+        title rawTitle: String
+    ) async throws -> UUID {
+        switch try await adoptCourseFolderOrProposeRebindAsync(
             at: rootURL,
             title: rawTitle
         ) {
@@ -1571,6 +1612,18 @@ final class WorkspaceStore: ObservableObject {
         at rootURL: URL,
         title rawTitle: String
     ) throws -> CourseFolderAdoptionOutcome {
+        try waitForCourseFileOperation {
+            try await self.adoptCourseFolderOrProposeRebindAsync(
+                at: rootURL,
+                title: rawTitle
+            )
+        }
+    }
+
+    func adoptCourseFolderOrProposeRebindAsync(
+        at rootURL: URL,
+        title rawTitle: String
+    ) async throws -> CourseFolderAdoptionOutcome {
         let title = rawTitle.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !title.isEmpty else { throw CourseProjectRootError.emptyTitle }
         let canonicalRoot = try CourseProjectPathPolicy.existingDirectory(rootURL)
@@ -1579,7 +1632,7 @@ final class WorkspaceStore: ObservableObject {
         }
         if let existing = existingCourse(at: canonicalRoot, identity: identity) {
             return .opened(
-                try refreshAdoptedCourse(
+                try await refreshAdoptedCourse(
                     existing,
                     at: canonicalRoot,
                     identity: identity
@@ -1806,7 +1859,7 @@ final class WorkspaceStore: ObservableObject {
             } else {
                 needsPortableCourseStateBootstrap = true
             }
-            guard performSaveNow() else {
+            guard await persistWorkspaceNow() else {
                 throw CourseProjectRootError.workspaceSaveFailed
             }
         } catch {
@@ -1940,12 +1993,10 @@ final class WorkspaceStore: ObservableObject {
                 throw error
             }
         }
-        do {
-            try persistCoursePortableStates(courseIDs: [course.id])
-        } catch {
+        if !(await persistWorkspaceNow()) {
             workspaceSaveError = ui(
-                "课程已登记，但可携带状态尚未写入：\(error.localizedDescription)",
-                "The course was registered, but its portable state has not been written yet: \(error.localizedDescription)"
+                "课程已登记，但可携带状态尚未写入。",
+                "The course was registered, but its portable state has not been written yet."
             )
         }
         if !ProcessInfo.processInfo.arguments.contains("--self-check-course-project-root") {
@@ -1961,7 +2012,7 @@ final class WorkspaceStore: ObservableObject {
         _ existing: Course,
         at canonicalRoot: URL,
         identity: ImportedFileIdentity
-    ) throws -> UUID {
+    ) async throws -> UUID {
         guard activeCourseRebindTokens[existing.id] == nil else {
             throw CoursePortableExportError.unstableCourseState
         }
@@ -2040,7 +2091,7 @@ final class WorkspaceStore: ObservableObject {
         }
         _ = resolveCourseOwnedItems(for: existing.id)
 
-        guard performSaveNow() else {
+        guard await persistWorkspaceNow() else {
             courses[courseIndex] = previousCourse
             if let previousResolvedRoot {
                 resolvedCourseRootURLs[existing.id] = previousResolvedRoot
@@ -2411,6 +2462,15 @@ final class WorkspaceStore: ObservableObject {
     func confirmCourseProjectRebind(
         _ proposal: CourseProjectRebindProposal
     ) throws -> UUID {
+        try waitForCourseFileOperation {
+            try await self.confirmCourseProjectRebindAsync(proposal)
+        }
+    }
+
+    @discardableResult
+    func confirmCourseProjectRebindAsync(
+        _ proposal: CourseProjectRebindProposal
+    ) async throws -> UUID {
         guard let existing = course(matching: proposal) else {
             throw CourseProjectRebindError.proposalChanged
         }
@@ -2645,7 +2705,7 @@ final class WorkspaceStore: ObservableObject {
                 oversizedPortableCourseIDs.remove(proposal.courseID)
                 needsPortableCourseStateBootstrap =
                     !dirtyPortableCourseIDs.isEmpty
-                guard performSaveNow(
+                guard await persistWorkspaceNow(
                     skippingPortableCourseIDs: [proposal.courseID]
                 ) else {
                     throw CourseProjectRootError.workspaceSaveFailed
@@ -3436,7 +3496,7 @@ final class WorkspaceStore: ObservableObject {
                     documentIdentifier: nil
                 )
             )
-            guard performSaveNow() else {
+            guard await persistWorkspaceNow() else {
                 throw CourseOwnedFileError.workspaceSaveFailed
             }
             journal.stage = .workspaceCommitted
@@ -3693,7 +3753,7 @@ final class WorkspaceStore: ObservableObject {
                     entryIdentity: linkIdentity
                 )
             )
-            guard performSaveNow() else {
+            guard await persistWorkspaceNow() else {
                 throw CourseOwnedFileError.workspaceSaveFailed
             }
             journal.stage = .workspaceCommitted
@@ -4354,7 +4414,7 @@ final class WorkspaceStore: ObservableObject {
                 expectedIdentity: targetIdentity,
                 expectedSnapshot: sourceSnapshot
             )
-            guard performSaveNow() else {
+            guard await persistWorkspaceNow() else {
                 throw CourseOwnedFileError.workspaceSaveFailed
             }
             workspaceCommitted = true
@@ -5329,7 +5389,7 @@ final class WorkspaceStore: ObservableObject {
                     journal.sourceSnapshot.sha256
             }
         }
-        guard performSaveNow() else {
+        guard await persistWorkspaceNow() else {
             self.importedItems = previousItems
             courseItemMemberships = previousMemberships
             noteBackingContentDigestsByItemID = previousBackingDigests
@@ -8111,7 +8171,7 @@ final class WorkspaceStore: ObservableObject {
         courseItemMemberships.removeAll {
             $0.courseID == courseID && $0.itemID == itemID
         }
-        guard performSaveNow() else {
+        guard await persistWorkspaceNow() else {
             courseItemMemberships = previous
             if CourseProjectFileWorker.identity(at: linkURL) == nil {
                 _ = await courseProjectFileWorker.restoreIsolatedFile(
@@ -8152,7 +8212,7 @@ final class WorkspaceStore: ObservableObject {
                 throw error
             }
             courseItemMemberships = previous
-            if performSaveNow(),
+            if await persistWorkspaceNow(),
                CourseProjectFileWorker.identity(at: linkURL) == nil {
                 _ = await courseProjectFileWorker.restoreIsolatedFile(
                     from: isolatedLinkURL,
@@ -12609,6 +12669,27 @@ final class WorkspaceStore: ObservableObject {
     }
 
     func renameNotebookNote(itemID: String, to rawTitle: String) {
+        if Self.mustSaveImmediately {
+            _ = try? waitForCourseFileOperation {
+                await self.renameNotebookNoteInTransaction(
+                    itemID: itemID,
+                    to: rawTitle
+                )
+            }
+            return
+        }
+        Task { @MainActor [weak self] in
+            await self?.renameNotebookNoteInTransaction(
+                itemID: itemID,
+                to: rawTitle
+            )
+        }
+    }
+
+    private func renameNotebookNoteInTransaction(
+        itemID: String,
+        to rawTitle: String
+    ) async {
         let title = rawTitle.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !title.isEmpty else {
             noteFileError = ui("笔记名不能为空。", "Note name cannot be empty.")
@@ -12690,7 +12771,7 @@ final class WorkspaceStore: ObservableObject {
             originalContentDigest: originalContentDigest,
             retitledContentDigest: expectedOutputDigest
         )
-        guard save() else {
+        guard await persistWorkspaceNow() else {
             noteFileError = ui(
                 "无法重命名笔记：当前课程状态尚未安全保存，文件和关系均未改动。",
                 "Could not rename the note because the current course state was not safely saved. The file and relationships were not changed."
@@ -12863,7 +12944,7 @@ final class WorkspaceStore: ObservableObject {
             }
             noteBackingContentDigestsByItemID[replacementItemID] = finalContentDigest
             courseDocumentSearchIndex.synchronize(allItems)
-            guard save() else {
+            guard await persistWorkspaceNow() else {
                 notebookRenameDraft = NotebookRenameDraft(itemID: replacementItemID, title: newTitle)
                 noteFileError = ui(
                     "文件已重命名，但课程状态尚未写入磁盘；恢复记录已保留，重启后会自动接回。",
@@ -12951,7 +13032,7 @@ final class WorkspaceStore: ObservableObject {
                         noteText = sourceMarkdown
                     }
                     courseDocumentSearchIndex.synchronize(allItems)
-                    let savedRecovery = save()
+                    let savedRecovery = await persistWorkspaceNow()
                     if savedRecovery { removePendingNotebookRenameJournal() }
                     noteFileError = ui(
                         "无法重命名笔记：\(error.localizedDescription) 原关系和最新正文已保留，请重新定位文件。",
@@ -12990,7 +13071,7 @@ final class WorkspaceStore: ObservableObject {
                 "无法重命名笔记：\(error.localizedDescription) \(recovery)",
                 "Could not rename the note: \(error.localizedDescription) \(recovery)"
             )
-            let savedRecovery = save()
+            let savedRecovery = await persistWorkspaceNow()
             if savedRecovery { removePendingNotebookRenameJournal() }
         }
     }
@@ -20913,7 +20994,7 @@ final class WorkspaceStore: ObservableObject {
         courseReconciliationInFlight = true
         defer { courseReconciliationInFlight = false }
         if await reconcileSharedFilesNow() {
-            _ = performSaveNow()
+            _ = await persistWorkspaceNow()
             courseDocumentSearchIndex.synchronize(allItems)
             invalidateAgentContext()
         }
@@ -20948,7 +21029,7 @@ final class WorkspaceStore: ObservableObject {
                     }
                 }
                 if changed {
-                    _ = performSaveNow()
+                    _ = await persistWorkspaceNow()
                     courseDocumentSearchIndex.synchronize(allItems)
                     invalidateAgentContext()
                 }
@@ -22313,14 +22394,16 @@ final class WorkspaceStore: ObservableObject {
         persistNote(noteText, for: item)
     }
 
-    func flushPendingNotePersistence() {
+    func flushPendingNotePersistence(flushWorkspace: Bool = true) {
         let itemIDs = Array(pendingNotePersistenceByItemID.keys)
         itemIDs.forEach { flushPendingNotePersistence(for: $0) }
         studyProgressSaveTask?.cancel()
         studyProgressSaveTask = nil
         syncActiveStudySession()
         // Note flush is a durability boundary: write the workspace now, not after debounce.
-        _ = flushPendingWorkspaceSave()
+        if flushWorkspace {
+            _ = flushPendingWorkspaceSave()
+        }
     }
 
     private func scheduleNotePersistence(_ markdown: String, for item: StudyItem) {
@@ -22673,14 +22756,28 @@ final class WorkspaceStore: ObservableObject {
             itemID: itemID,
             fallbackURL: nil
         )
-        guard performSaveNow() else {
-            noteFileError = ui(
-                "最新编辑尚未安全保存到工作区，暂不写回原 Markdown。",
-                "The latest edit is not yet safely stored in the workspace, so the original Markdown was not changed."
-            )
+        if Self.mustSaveImmediately {
+            guard performSaveNow() else {
+                noteFileError = ui(
+                    "最新编辑尚未安全保存到工作区，暂不写回原 Markdown。",
+                    "The latest edit is not yet safely stored in the workspace, so the original Markdown was not changed."
+                )
+                return
+            }
+            startCourseOwnedNoteWriteIfNeeded(itemID: itemID)
             return
         }
-        startCourseOwnedNoteWriteIfNeeded(itemID: itemID)
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            guard await self.persistWorkspaceNow() else {
+                self.noteFileError = self.ui(
+                    "最新编辑尚未安全保存到工作区，暂不写回原 Markdown。",
+                    "The latest edit is not yet safely stored in the workspace, so the original Markdown was not changed."
+                )
+                return
+            }
+            self.startCourseOwnedNoteWriteIfNeeded(itemID: itemID)
+        }
     }
 
     private func startCourseOwnedNoteWriteIfNeeded(itemID: String) {
@@ -22740,7 +22837,7 @@ final class WorkspaceStore: ObservableObject {
                         baselineContentDigest: result.snapshot.sha256
                     )
                 }
-                guard performSaveNow() else {
+                guard await persistWorkspaceNow() else {
                     importedItems = previousItems
                     courseItemMemberships = previousMemberships
                     noteBackingContentDigestsByItemID =
@@ -24191,7 +24288,112 @@ final class WorkspaceStore: ObservableObject {
             .replacingOccurrences(of: "\n- <br />", with: "")
     }
 
-    /// Schedule a coalesced workspace snapshot write. Verification and explicit flushes write immediately.
+    private func makePersistedWorkspaceSnapshot()
+        -> (snapshot: PersistedWorkspace, resumePoints: [CourseResumePoint]) {
+        let resumePoints = sanitizedCourseResumePoints()
+        return (
+            PersistedWorkspace(
+                importedItems: importedItems,
+                notesByItemID: notesByItemID,
+                pendingNoteWritesByItemID: pendingNoteWritesByItemID,
+                noteBackingContentDigestsByItemID:
+                    noteBackingContentDigestsByItemID,
+                selectedItemID: selectedItemID,
+                activeNotebookItemID: activeNotebookItemID,
+                courses: courses,
+                courseItemMemberships: courseItemMemberships,
+                activeCourseID: activeCourseID,
+                courseLibraryRootPath: courseLibraryRootPath,
+                courseLibraryRootIdentity: courseLibraryRootIdentity,
+                courseLibraryRootBookmarkData:
+                    courseLibraryRootBookmarkData,
+                noteSourceLinks: noteSourceLinks,
+                noteSourceLinksMigrationVersion:
+                    noteSourceLinksMigrationVersion,
+                studyLocationsByItemID: studyLocationsByItemID,
+                studyLocationsByCourseID: studyLocationsByCourseID,
+                courseResumePoints: resumePoints,
+                coursePortableStateRevisions: Dictionary(
+                    uniqueKeysWithValues: coursePortableStateRevisions.map {
+                        ($0.key.uuidString.lowercased(), $0.value)
+                    }
+                ),
+                coursePortableStateDigests: Dictionary(
+                    uniqueKeysWithValues: coursePortableStateDigests.map {
+                        ($0.key.uuidString.lowercased(), $0.value)
+                    }
+                ),
+                dirtyPortableCourseIDs: dirtyPortableCourseIDs.sorted {
+                    $0.uuidString < $1.uuidString
+                },
+                learningMemoryStates: learningMemoryStates,
+                learningMemoryScopeMigrationVersion:
+                    learningMemoryScopeMigrationVersion,
+                studySessions: studySessions,
+                studySessionScopeMigrationVersion:
+                    studySessionScopeMigrationVersion,
+                activeStudySessionID: activeStudySessionID,
+                selectionAskThreads: selectionAskThreads,
+                modelName: modelName,
+                agentProviderID: agentProviderID.rawValue,
+                agentBaseURL: agentBaseURL.isEmpty ? nil : agentBaseURL,
+                workspaceLayout: layout,
+                threePaneOrder: normalizedThreePaneOrder,
+                agentSurface:
+                    agentSurface == .selectionFloat ? .hidden : agentSurface,
+                noteRenderMode: noteRenderMode,
+                showLibrary: nil,
+                showReader: showReader,
+                showAgent: showAgent,
+                showNotes: showNotes,
+                showRightPane: showRightPane,
+                showDailyInspiration: showDailyInspiration,
+                appearanceModeRaw: appearanceMode.rawValue,
+                adaptImportedDocumentColors: adaptImportedDocumentColors,
+                interfaceLanguageRaw: interfaceLanguage.rawValue
+            ),
+            resumePoints
+        )
+    }
+
+    private func makeWorkspacePersistenceRequest(
+        generation: UInt64,
+        skippingPortableCourseIDs: Set<UUID>
+    ) throws -> (
+        request: WorkspacePersistenceRequest,
+        resumePoints: [CourseResumePoint]
+    ) {
+        let persisted = makePersistedWorkspaceSnapshot()
+        let requestedCourseIDs = persistedWorkspaceCourseIDs
+            .intersection(Set(courses.map(\.id)))
+            .subtracting(skippingPortableCourseIDs)
+        let inputs = courses.compactMap {
+            course -> CoursePortableStateSaveInput? in
+            guard requestedCourseIDs.contains(course.id) else { return nil }
+            return CoursePortableStateSaveInput(
+                courseID: course.id,
+                rootURL: resolvedCourseRootURLs[course.id],
+                knownRevision: coursePortableStateRevisions[course.id],
+                knownDigest: coursePortableStateDigests[course.id]
+            )
+        }
+        return (
+            WorkspacePersistenceRequest(
+                generation: generation,
+                workspace: persisted.snapshot,
+                storageURL: storageURL,
+                portableInputs: inputs,
+                blockedPortableCourseIDs: blockedPortableCourseIDs,
+                oversizedPortableCourseIDs:
+                    oversizedPortableCourseIDs,
+                needsPortableBootstrap: needsPortableCourseStateBootstrap
+            ),
+            persisted.resumePoints
+        )
+    }
+
+    /// Schedule a coalesced workspace snapshot write. Verification keeps the
+    /// legacy synchronous path; production saves use the file worker actor.
     @discardableResult
     private func save() -> Bool {
         if Self.mustSaveImmediately {
@@ -24207,7 +24409,36 @@ final class WorkspaceStore: ObservableObject {
         pendingWorkspaceSaveTask?.cancel()
         pendingWorkspaceSaveTask = nil
         workspaceSaveGeneration &+= 1
-        return performSaveNow()
+        workspacePersistenceSkippingCourseIDs = []
+        if Self.mustSaveImmediately {
+            return performSaveNow()
+        }
+        return (try? waitForCourseFileOperation {
+            await self.startWorkspacePersistenceLoop().value
+        }) ?? false
+    }
+
+    @discardableResult
+    func flushPendingWorkspaceSaveAsync() async -> Bool {
+        await persistWorkspaceNow()
+    }
+
+    @discardableResult
+    private func persistWorkspaceNow(
+        skippingPortableCourseIDs: Set<UUID> = []
+    ) async -> Bool {
+        pendingWorkspaceSaveTask?.cancel()
+        pendingWorkspaceSaveTask = nil
+        workspaceSaveGeneration &+= 1
+        workspacePersistenceSkippingCourseIDs =
+            skippingPortableCourseIDs
+        if Self.mustSaveImmediately {
+            return performSaveNow(
+                skippingPortableCourseIDs:
+                    skippingPortableCourseIDs
+            )
+        }
+        return await startWorkspacePersistenceLoop().value
     }
 
     private static var mustSaveImmediately: Bool {
@@ -24217,17 +24448,296 @@ final class WorkspaceStore: ObservableObject {
         if environment["WEIBEI_FORCE_IMMEDIATE_SAVE"] == "1" { return true }
         if ProcessInfo.processInfo.arguments.contains("--self-check-imported-identity") { return true }
         if ProcessInfo.processInfo.arguments.contains("--self-check-course-project-root") { return true }
+        if ProcessInfo.processInfo.arguments.contains("--self-check-background-workspace-save") { return true }
         return false
     }
 
     private func scheduleDebouncedWorkspaceSave() {
         workspaceSaveGeneration &+= 1
+        workspacePersistenceSkippingCourseIDs = []
         let generation = workspaceSaveGeneration
         pendingWorkspaceSaveTask?.cancel()
         pendingWorkspaceSaveTask = Task { @MainActor [weak self] in
             try? await Task.sleep(nanoseconds: self?.workspaceSaveDebounceNanoseconds ?? 280_000_000)
             guard let self, !Task.isCancelled, self.workspaceSaveGeneration == generation else { return }
-            _ = self.performSaveNow()
+            _ = await self.startWorkspacePersistenceLoop().value
+        }
+    }
+
+    private func startWorkspacePersistenceLoop() -> Task<Bool, Never> {
+        if let workspacePersistenceTask {
+            return workspacePersistenceTask
+        }
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return false }
+            defer { self.workspacePersistenceTask = nil }
+            var saved = true
+            while true {
+                let generation = self.workspaceSaveGeneration
+                let skippingPortableCourseIDs =
+                    self.workspacePersistenceSkippingCourseIDs
+                saved = await self.performWorkspacePersistence(
+                    generation: generation,
+                    skippingPortableCourseIDs:
+                        skippingPortableCourseIDs
+                )
+                guard self.workspaceSaveGeneration != generation else {
+                    return saved
+                }
+                self.pendingWorkspaceSaveTask?.cancel()
+                self.pendingWorkspaceSaveTask = nil
+            }
+        }
+        workspacePersistenceTask = task
+        return task
+    }
+
+    private func performWorkspacePersistence(
+        generation: UInt64,
+        skippingPortableCourseIDs: Set<UUID> = []
+    ) async -> Bool {
+        let prepared: (
+            request: WorkspacePersistenceRequest,
+            resumePoints: [CourseResumePoint]
+        )
+        do {
+            prepared = try makeWorkspacePersistenceRequest(
+                generation: generation,
+                skippingPortableCourseIDs: skippingPortableCourseIDs
+            )
+        } catch {
+            guard workspaceSaveGeneration == generation else { return true }
+            workspaceSaveError = ui(
+                "课程可携带状态没有成功保存：\(error.localizedDescription)",
+                "Portable course state was not saved: \(error.localizedDescription)"
+            )
+            return false
+        }
+        let result = await courseProjectFileWorker.persistWorkspace(
+            prepared.request
+        )
+        lastWorkspacePersistenceRanOnMainThread = result.ranOnMainThread
+        if case .stale? = result.failure {
+            return true
+        }
+        let hasNewerGeneration =
+            workspaceSaveGeneration != generation
+        let requestedRevisions = Dictionary(
+            uniqueKeysWithValues:
+                (
+                    prepared.request.workspace
+                        .coursePortableStateRevisions ?? [:]
+                ).compactMap { key, value in
+                    UUID(uuidString: key).map { ($0, value) }
+                }
+        )
+        let requestedDigests = Dictionary(
+            uniqueKeysWithValues:
+                (
+                    prepared.request.workspace
+                        .coursePortableStateDigests ?? [:]
+                ).compactMap { key, value in
+                    UUID(uuidString: key).map { ($0, value) }
+                }
+        )
+        let requestedDirty = Set(
+            prepared.request.workspace.dirtyPortableCourseIDs ?? []
+        )
+        func mergingSet(
+            _ committed: Set<UUID>,
+            requested: Set<UUID>,
+            live: Set<UUID>
+        ) -> Set<UUID> {
+            let changed = requested.symmetricDifference(live)
+            return committed.subtracting(changed)
+                .union(live.intersection(changed))
+        }
+        func mergingDictionary<Value: Equatable>(
+            _ committed: [UUID: Value],
+            requested: [UUID: Value],
+            live: [UUID: Value]
+        ) -> [UUID: Value] {
+            var merged = committed
+            for key in Set(requested.keys).union(live.keys)
+            where requested[key] != live[key] {
+                merged[key] = live[key]
+            }
+            return merged
+        }
+        // A newer in-memory generation may arrive while this transaction is
+        // on disk. Keep the committed CAS baseline before building that next
+        // generation; otherwise it would compare against an obsolete revision
+        // and falsely report a conflict.
+        if hasNewerGeneration {
+            coursePortableStateRevisions = mergingDictionary(
+                result.portableStateRevisions,
+                requested: requestedRevisions,
+                live: coursePortableStateRevisions
+            )
+            coursePortableStateDigests = mergingDictionary(
+                result.portableStateDigests,
+                requested: requestedDigests,
+                live: coursePortableStateDigests
+            )
+            dirtyPortableCourseIDs = mergingSet(
+                result.dirtyPortableCourseIDs,
+                requested: requestedDirty,
+                live: dirtyPortableCourseIDs
+            )
+            blockedPortableCourseIDs = mergingSet(
+                result.blockedPortableCourseIDs,
+                requested:
+                    prepared.request.blockedPortableCourseIDs,
+                live: blockedPortableCourseIDs
+            )
+            oversizedPortableCourseIDs = mergingSet(
+                result.oversizedPortableCourseIDs,
+                requested:
+                    prepared.request.oversizedPortableCourseIDs,
+                live: oversizedPortableCourseIDs
+            )
+            if needsPortableCourseStateBootstrap
+                == prepared.request.needsPortableBootstrap {
+                needsPortableCourseStateBootstrap =
+                    result.needsPortableBootstrap
+            }
+        } else {
+            coursePortableStateRevisions =
+                result.portableStateRevisions
+            coursePortableStateDigests =
+                result.portableStateDigests
+            dirtyPortableCourseIDs =
+                result.dirtyPortableCourseIDs
+            blockedPortableCourseIDs =
+                result.blockedPortableCourseIDs
+            oversizedPortableCourseIDs =
+                result.oversizedPortableCourseIDs
+            needsPortableCourseStateBootstrap =
+                result.needsPortableBootstrap
+        }
+        if result.failure == nil {
+            persistedWorkspaceCourseIDs = result.persistedCourseIDs
+        }
+        guard workspaceSaveGeneration == generation else {
+            return true
+        }
+        if let failure = result.failure {
+            switch failure {
+            case .portableState(let detail):
+                workspaceSaveError = ui(
+                    "课程可携带状态没有成功保存：\(detail)",
+                    "Portable course state was not saved: \(detail)"
+                )
+            case .workspace(let detail):
+                workspaceSaveError = ui(
+                    "课程更改尚未写入磁盘：\(detail)",
+                    "Course changes were not saved to disk: \(detail)"
+                )
+            case .rollbackConflict:
+                workspaceSaveError = ui(
+                    "课程状态提交失败且检测到并发变更，魏碑已停止覆盖并保留现场。",
+                    "The course state commit failed during a concurrent change. WeiBei stopped overwriting and preserved the files for recovery."
+                )
+            case .stale:
+                return true
+            }
+            return false
+        }
+        courseResumePoints = prepared.resumePoints
+        if !oversizedPortableCourseIDs.isEmpty {
+            workspaceSaveError = ui(
+                "工作区内容已保存，但有课程的可携带状态超过 32 MB；课程文件夹中的原状态保持不变。请精简课程 Chat 或未写入草稿后重试。",
+                "The workspace was saved, but a portable course state exceeds 32 MB. The state in the course folder was left unchanged. Reduce course chats or pending drafts, then retry."
+            )
+        } else if blockedPortableCourseIDs.isEmpty {
+            workspaceSaveError = nil
+        } else {
+            workspaceSaveError = ui(
+                "有课程状态存在冲突或损坏，原文件与本机缓存均已保留；魏碑不会自动覆盖。",
+                "A course state is conflicted or damaged. Both the original file and local cache were preserved, and WeiBei will not overwrite either automatically."
+            )
+        }
+        needsSelectionAskThreadsWorkspaceMigration = false
+        loadedSelectionAskThreadsFromWorkspaceSnapshot = true
+        if shouldRemoveLegacySelectionAskThreadsAfterSave {
+            selectionAskThreadDefaults.removeObject(
+                forKey: Self.legacySelectionAskThreadsDefaultsKey
+            )
+            shouldRemoveLegacySelectionAskThreadsAfterSave = false
+        }
+        return true
+    }
+
+    func verifyBackgroundWorkspacePersistenceForSelfCheck(
+        courseID: UUID
+    ) throws -> Bool {
+        precondition(
+            ProcessInfo.processInfo.arguments.contains(
+                "--self-check-course-project-root"
+            )
+                || ProcessInfo.processInfo.arguments.contains(
+                    "--self-check-background-workspace-save"
+                )
+        )
+        return try waitForCourseFileOperation {
+            let initialRevision =
+                self.coursePortableStateRevisions[courseID]
+            guard let courseIndex = self.courses.firstIndex(where: {
+                $0.id == courseID
+            }) else {
+                return false
+            }
+            let untouchedCourseID = UUID()
+            self.blockedPortableCourseIDs.insert(untouchedCourseID)
+            self.oversizedPortableCourseIDs.insert(untouchedCourseID)
+            self.courses[courseIndex].title =
+                "后台保存课程（第一代）"
+            self.courses[courseIndex].updatedAt = Date()
+            self.modelName = "background-save-generation-one"
+            self.workspaceSaveGeneration &+= 1
+            let firstGeneration = self.workspaceSaveGeneration
+            await self.courseProjectFileWorker
+                .prepareWorkspacePersistenceGateForSelfCheck(
+                    generation: firstGeneration
+                )
+            let persistenceLoop = self.startWorkspacePersistenceLoop()
+            await self.courseProjectFileWorker
+                .waitUntilWorkspacePersistenceEnteredForSelfCheck(
+                    generation: firstGeneration
+                )
+
+            self.courses[courseIndex].title =
+                "后台保存课程（第二代）"
+            self.courses[courseIndex].updatedAt = Date()
+            self.modelName = "background-save-generation-two"
+            self.workspaceSaveGeneration &+= 1
+            let joinedPersistenceLoop =
+                self.startWorkspacePersistenceLoop()
+            await self.courseProjectFileWorker
+                .releaseWorkspacePersistenceForSelfCheck(
+                    generation: firstGeneration
+                )
+            guard await joinedPersistenceLoop.value,
+                  await persistenceLoop.value else {
+                return false
+            }
+            let persistedData = try Data(contentsOf: self.storageURL)
+            let persisted = try JSONDecoder().decode(
+                PersistedWorkspace.self,
+                from: persistedData
+            )
+            return self.lastWorkspacePersistenceRanOnMainThread == false
+                && persisted.modelName
+                    == "background-save-generation-two"
+                && persisted.courses?.first(where: {
+                    $0.id == courseID
+                })?.title == "后台保存课程（第二代）"
+                && self.coursePortableStateRevisions[courseID]
+                    == (initialRevision ?? 0) + 2
+                && self.blockedPortableCourseIDs
+                    .contains(untouchedCourseID)
+                && self.oversizedPortableCourseIDs
+                    .contains(untouchedCourseID)
         }
     }
 

@@ -3,6 +3,11 @@ import WeiBeiCore
 
 enum CourseProjectRootSelfCheck {
     @MainActor
+    static func runBackgroundWorkspacePersistenceOnly() throws {
+        try backgroundWorkspacePersistenceIsOrderedAndDurable()
+    }
+
+    @MainActor
     static func run() throws {
         func step(
             _ name: String,
@@ -64,6 +69,7 @@ enum CourseProjectRootSelfCheck {
         try courseRootRefreshRebindsOwnedItemsAndRollsBackTogether()
         try courseOwnedAndGlobalNotesStaySeparated()
         try largeFileWorkStaysOffMainThread()
+        try backgroundWorkspacePersistenceIsOrderedAndDurable()
         try courseMarkdownConditionalWritePreservesFinderContentAndRecovers()
         try courseMarkdownPostPlacementReplacementPreservesAllContent()
         try firstScanAndFinderReconciliationPreserveIdentity()
@@ -83,6 +89,34 @@ enum CourseProjectRootSelfCheck {
         try sharedRemovalCrashRecoversCommittedMembership()
         try sharedLinkRecoveryIsIdempotent()
         try legacyCourseSnapshotStillDecodes()
+    }
+
+    @MainActor
+    private static func backgroundWorkspacePersistenceIsOrderedAndDurable()
+        throws {
+        let fixture = try Fixture(name: "background-workspace-save")
+        defer { fixture.remove() }
+        let library = try fixture.makeDirectory("课程资料库")
+        let store = makeStore(fixture: fixture)
+        try store.configureCourseLibrary(at: library)
+        let courseID = try store.createCourseInLibrary(
+            title: "后台保存课程"
+        )
+        try check(
+            try store.verifyBackgroundWorkspacePersistenceForSelfCheck(
+                courseID: courseID
+            ),
+            "后台保存没有离开主线程、按代提交并读回最新版"
+        )
+
+        let reopened = makeStore(fixture: fixture)
+        try check(
+            reopened.modelName == "background-save-generation-two"
+                && reopened.courses.first(where: {
+                    $0.id == courseID
+                })?.title == "后台保存课程（第二代）",
+            "后台保存返回后，重开没有读到最新版工作区"
+        )
     }
 
     @MainActor

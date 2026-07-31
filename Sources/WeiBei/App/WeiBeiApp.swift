@@ -6,16 +6,26 @@ import WeiBeiCore
 
 private let runsImportedIdentitySelfCheck = ProcessInfo.processInfo.arguments.contains("--self-check-imported-identity")
 private let runsCourseProjectRootSelfCheck = ProcessInfo.processInfo.arguments.contains("--self-check-course-project-root")
+private let runsBackgroundWorkspaceSaveSelfCheck = ProcessInfo.processInfo.arguments.contains(
+    "--self-check-background-workspace-save"
+)
 private let importedIdentitySelfCheckBootstrapDirectory = FileManager.default.temporaryDirectory
     .appendingPathComponent("weibei-imported-identity-bootstrap-\(ProcessInfo.processInfo.processIdentifier)", isDirectory: true)
 
-@MainActor private let sharedWorkspaceStore = (runsImportedIdentitySelfCheck || runsCourseProjectRootSelfCheck)
+@MainActor private let sharedWorkspaceStore = (
+    runsImportedIdentitySelfCheck
+        || runsCourseProjectRootSelfCheck
+        || runsBackgroundWorkspaceSaveSelfCheck
+)
     ? WorkspaceStore(workspaceDirectory: importedIdentitySelfCheckBootstrapDirectory)
     : WorkspaceStore()
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var shortcutMonitor: Any?
+    private var resignFlushTask: Task<Void, Never>?
+    private var terminationSaveInFlight = false
+    private var terminationApproved = false
     var reopenMainWindow: (() -> Void)?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -46,10 +56,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return false
     }
 
+    func applicationShouldTerminate(
+        _ sender: NSApplication
+    ) -> NSApplication.TerminateReply {
+        if terminationApproved {
+            return .terminateNow
+        }
+        guard !terminationSaveInFlight else {
+            return .terminateLater
+        }
+        terminationSaveInFlight = true
+        resignFlushTask?.cancel()
+        resignFlushTask = nil
+        sharedWorkspaceStore.flushPendingNotePersistence(
+            flushWorkspace: false
+        )
+        Task { @MainActor [weak self] in
+            let saved =
+                await sharedWorkspaceStore.flushPendingWorkspaceSaveAsync()
+            guard let self else {
+                sender.reply(toApplicationShouldTerminate: false)
+                return
+            }
+            self.terminationSaveInFlight = false
+            self.terminationApproved = saved
+            sender.reply(toApplicationShouldTerminate: saved)
+        }
+        return .terminateLater
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
-        sharedWorkspaceStore.flushPendingNotePersistence()
-        sharedWorkspaceStore.flushPendingWorkspaceSave()
         sharedWorkspaceStore.shutdownAgentRuntime()
+        resignFlushTask?.cancel()
+        resignFlushTask = nil
         if let shortcutMonitor {
             NSEvent.removeMonitor(shortcutMonitor)
         }
@@ -57,8 +96,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidResignActive(_ notification: Notification) {
         // Durability + less work at quit: flush pending note/workspace saves on focus loss.
-        sharedWorkspaceStore.flushPendingNotePersistence()
-        sharedWorkspaceStore.flushPendingWorkspaceSave()
+        guard !terminationSaveInFlight else { return }
+        sharedWorkspaceStore.flushPendingNotePersistence(
+            flushWorkspace: false
+        )
+        resignFlushTask?.cancel()
+        resignFlushTask = Task { @MainActor in
+            _ = await sharedWorkspaceStore.flushPendingWorkspaceSaveAsync()
+        }
     }
 
     private var shouldActivateOnLaunch: Bool {
@@ -72,6 +117,18 @@ struct WeiBeiApp: App {
     @StateObject private var store = sharedWorkspaceStore
 
     init() {
+        if runsBackgroundWorkspaceSaveSelfCheck {
+            defer { try? FileManager.default.removeItem(at: importedIdentitySelfCheckBootstrapDirectory) }
+            do {
+                try CourseProjectRootSelfCheck
+                    .runBackgroundWorkspacePersistenceOnly()
+                print("WeiBei background workspace save self-check passed")
+                exit(EXIT_SUCCESS)
+            } catch {
+                fputs("WeiBei background workspace save self-check failed: \(error.localizedDescription)\n", stderr)
+                exit(EXIT_FAILURE)
+            }
+        }
         if runsCourseProjectRootSelfCheck {
             defer { try? FileManager.default.removeItem(at: importedIdentitySelfCheckBootstrapDirectory) }
             do {
