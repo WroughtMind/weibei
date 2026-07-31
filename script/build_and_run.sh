@@ -198,16 +198,14 @@ if [[ "$CHECK_ONLY" != true ]]; then
     cp -R "$resource_bundle" "$APP_RESOURCES/"
   done
   PACKAGED_PI_ROOT="$APP_RESOURCES/PiRuntime"
-  mkdir -p "$PACKAGED_PI_ROOT/bin"
-  cp "$PI_RUNTIME_DIR/bin/pi" "$PACKAGED_PI_ROOT/bin/pi"
-  cp "$PI_RUNTIME_DIR/bin/package.json" "$PACKAGED_PI_ROOT/bin/package.json"
-  cp -R "$PI_RUNTIME_DIR/bin/theme" "$PACKAGED_PI_ROOT/bin/theme"
+  # Node path: copy the full prepared tree (node binary + agent install + launcher).
+  rm -rf "$PACKAGED_PI_ROOT"
+  /usr/bin/ditto --norsrc --noextattr "$PI_RUNTIME_DIR" "$PACKAGED_PI_ROOT"
   for pi_metadata in manifest.json LICENSE THIRD_PARTY_NOTICES.md artifact.sha256 binary.sha256; do
-    if [[ ! -f "$PI_RUNTIME_DIR/$pi_metadata" ]]; then
+    if [[ ! -f "$PACKAGED_PI_ROOT/$pi_metadata" ]]; then
       echo "package failed: embedded PI runtime is missing $pi_metadata" >&2
       exit 23
     fi
-    cp "$PI_RUNTIME_DIR/$pi_metadata" "$PACKAGED_PI_ROOT/$pi_metadata"
   done
   cp "$APP_ICON_SOURCE" "$APP_RESOURCES/AppIcon.icns"
   mkdir -p "$APP_RESOURCES/Legal"
@@ -219,21 +217,25 @@ if [[ "$CHECK_ONLY" != true ]]; then
     cp "$legal_source" "$APP_RESOURCES/Legal/$(basename "$legal_source")"
   done
   # Clear inherited provenance/quarantine metadata before executing the copied
-  # Bun-based Pi binary. Downloaded DMGs receive a fresh quarantine marker on
+  # Node-based Pi runtime. Downloaded DMGs receive a fresh quarantine marker on
   # the user's Mac; README documents the separate first-launch approval flow.
   /usr/bin/xattr -cr "$APP_BUNDLE"
 
   PACKAGED_PI="$APP_RESOURCES/PiRuntime/bin/pi"
-  # Re-seal the copied executable at its final path. On macOS, a freshly copied
+  PACKAGED_NODE="$APP_RESOURCES/PiRuntime/node/bin/node"
+  PACKAGED_AGENT_CLI="$APP_RESOURCES/PiRuntime/agent/node_modules/@earendil-works/pi-coding-agent/dist/cli.js"
+  # Re-seal the Node binary at its final path. On macOS, a freshly copied
   # ad-hoc binary can otherwise be killed by policy evaluation on its first launch.
-  /usr/bin/codesign --force --sign - --timestamp=none "$PACKAGED_PI" >/dev/null
+  /usr/bin/codesign --force --sign - --timestamp=none "$PACKAGED_NODE" >/dev/null
   if [[ ! -x "$PACKAGED_PI" ]] \
+    || [[ ! -x "$PACKAGED_NODE" ]] \
+    || [[ ! -f "$PACKAGED_AGENT_CLI" ]] \
     || [[ ! -f "$APP_RESOURCES/PiRuntime/manifest.json" ]] \
     || [[ ! -f "$APP_RESOURCES/PiRuntime/LICENSE" ]] \
     || [[ ! -f "$APP_RESOURCES/PiRuntime/THIRD_PARTY_NOTICES.md" ]] \
     || [[ ! -f "$APP_RESOURCES/PiRuntime/binary.sha256" ]] \
-    || ! /usr/bin/codesign --verify --strict "$PACKAGED_PI" >/dev/null 2>&1 \
-    || [[ "$(/usr/bin/shasum -a 256 "$PACKAGED_PI" | /usr/bin/awk '{print $1}')" != "$(<"$APP_RESOURCES/PiRuntime/binary.sha256")" ]] \
+    || ! /usr/bin/codesign --verify --strict "$PACKAGED_NODE" >/dev/null 2>&1 \
+    || [[ "$(/usr/bin/shasum -a 256 "$PACKAGED_NODE" | /usr/bin/awk '{print $1}')" != "$(<"$APP_RESOURCES/PiRuntime/binary.sha256")" ]] \
     || ! pi_reports_expected_version "$PACKAGED_PI"; then
     echo "package failed: embedded PI runtime is incomplete" >&2
     exit 9
@@ -308,7 +310,7 @@ PLIST
       # Documents may stamp FinderInfo onto the published copy; re-seal in place
       # after stripping attrs so release consumers still get a verifiable dist/.
       /usr/bin/xattr -cr "$FINAL_APP_BUNDLE" 2>/dev/null || true
-      /usr/bin/codesign --force --sign - --timestamp=none "$FINAL_APP_BUNDLE/Contents/Resources/PiRuntime/bin/pi" >/dev/null 2>&1 || true
+      /usr/bin/codesign --force --sign - --timestamp=none "$FINAL_APP_BUNDLE/Contents/Resources/PiRuntime/node/bin/node" >/dev/null 2>&1 || true
       /usr/bin/codesign --force --sign - --timestamp=none "$FINAL_APP_BUNDLE/Contents/Helpers/$PDF_TEXT_WORKER_NAME" >/dev/null 2>&1 || true
       /usr/bin/codesign --force --sign - --timestamp=none "$FINAL_APP_BUNDLE" >/dev/null
     fi
