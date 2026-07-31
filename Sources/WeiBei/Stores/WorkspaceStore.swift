@@ -15436,10 +15436,37 @@ final class WorkspaceStore: ObservableObject {
         return changed
     }
 
+    /// Current reader/note focus for this Chat. Global Chat may use any open material
+    /// (including legacyExternal). Course Chat only auto-includes items that belong
+    /// to that course. This is independent of project-file grants used by course tools.
+    private func agentFocusMaterialItem(
+        for target: AgentConversationTarget
+    ) -> StudyItem? {
+        guard let item = selectedMaterialItem else { return nil }
+        if let courseID = target.courseID {
+            let courseItemIDs = Set(courseItems(in: courseID).map(\.id))
+            guard courseItemIDs.contains(item.id) else { return nil }
+        }
+        return item
+    }
+
+    private func agentFocusNoteItem(
+        for target: AgentConversationTarget
+    ) -> StudyItem? {
+        guard let item = activeNoteItem, item.isNotebookNote else { return nil }
+        if let courseID = target.courseID {
+            let courseItemIDs = Set(courseItems(in: courseID).map(\.id))
+            guard courseItemIDs.contains(item.id) else { return nil }
+        }
+        return item
+    }
+
     private func makeCourseContext(
         query: String,
         courseID: UUID?,
-        access: AgentProjectAccessSnapshot
+        access: AgentProjectAccessSnapshot,
+        focusMaterialItem: StudyItem? = nil,
+        focusNoteItem: StudyItem? = nil
     ) async throws -> CourseContextBuildResult {
         let candidates = access.sources.compactMap { source -> CourseIndexCandidate? in
             guard source.grants.contains(where: Self.agentFileGrantIsValid) else {
@@ -15461,13 +15488,17 @@ final class WorkspaceStore: ObservableObject {
             scopedItemIDs.contains($0.noteItemID)
                 && scopedItemIDs.contains($0.sourceItemID)
         }
-        let currentMaterialItem = selectedMaterialItem.flatMap {
-            scopedItemIDs.contains($0.id) ? $0 : nil
-        }
+        // Focus package is independent of tool grants so global Chat still sees
+        // the open reader document (e.g. legacyExternal HTML on the Desktop).
+        let currentMaterialItem = focusMaterialItem
         let currentMaterialID = currentMaterialItem?.id
-        let currentNoteID = activeNoteItem.flatMap {
-            $0.isNotebookNote && scopedItemIDs.contains($0.id) ? $0.id : nil
-        }
+        let currentMaterialTitle = currentMaterialItem.map(displayTitle)
+        let currentMaterialSubtitle = currentMaterialItem.map(displaySubtitle(for:))
+        let currentNoteItem = focusNoteItem
+        let currentNoteID = currentNoteItem?.id
+        let currentNoteTitle = currentNoteItem.map(displayTitle)
+        let currentNoteSubtitle = currentNoteItem.map(displaySubtitle(for:))
+        let currentNoteMemoryText = currentNoteItem.flatMap { loadedAgentNoteText(for: $0) }
         let searchIndex = courseDocumentSearchIndex
         let indexingTask = Task.detached(priority: .userInitiated) {
             let indexedByItemID = searchIndex.lookup(
@@ -15479,20 +15510,18 @@ final class WorkspaceStore: ObservableObject {
             let selectedMaterialIndex = currentMaterialItem.map {
                 searchIndex.read(item: $0, query: "", location: nil)
             }
-            let selectedNoteIndex = currentNoteID
-                .flatMap { noteID in
-                    candidates.first { $0.item.id == noteID }
+            let selectedNoteIndex: CourseDocumentIndexResult? = {
+                guard let note = currentNoteItem else { return nil }
+                if currentNoteMemoryText != nil { return nil }
+                if let candidate = candidates.first(where: { $0.item.id == note.id }),
+                   candidate.memoryText != nil {
+                    return nil
                 }
-                .flatMap { candidate -> CourseDocumentIndexResult? in
-                    guard candidate.memoryText == nil else { return nil }
-                    return searchIndex.read(
-                        item: candidate.item,
-                        query: "",
-                        location: nil
-                    )
-                }
+                return searchIndex.read(item: note, query: "", location: nil)
+            }()
             var sources: [CourseKnowledgeSource] = []
-            sources.reserveCapacity(candidates.count)
+            sources.reserveCapacity(candidates.count + 2)
+            var includedIDs = Set<String>()
             for candidate in candidates {
                 try Task.checkCancellation()
                 guard candidate.grants.contains(where: Self.agentFileGrantIsValid) else {
@@ -15522,6 +15551,39 @@ final class WorkspaceStore: ObservableObject {
                         isTruncated: isTruncated
                     )
                 )
+                includedIDs.insert(candidate.item.id)
+            }
+            // Ensure open focus appears in catalog/currentItems even without grants.
+            if let material = currentMaterialItem, !includedIDs.contains(material.id) {
+                let text = selectedMaterialIndex?.text ?? ""
+                sources.append(
+                    CourseKnowledgeSource(
+                        id: material.id,
+                        title: currentMaterialTitle ?? material.title,
+                        subtitle: currentMaterialSubtitle ?? material.subtitle,
+                        kind: material.kind.rawValue,
+                        role: "material",
+                        text: text,
+                        isTruncated: selectedMaterialIndex?.isTruncated ?? false
+                    )
+                )
+                includedIDs.insert(material.id)
+            }
+            if let note = currentNoteItem, !includedIDs.contains(note.id) {
+                let text = currentNoteMemoryText
+                    ?? selectedNoteIndex?.text
+                    ?? ""
+                sources.append(
+                    CourseKnowledgeSource(
+                        id: note.id,
+                        title: currentNoteTitle ?? note.title,
+                        subtitle: currentNoteSubtitle ?? note.subtitle,
+                        kind: note.kind.rawValue,
+                        role: "note",
+                        text: text,
+                        isTruncated: selectedNoteIndex?.isTruncated ?? false
+                    )
+                )
             }
             let selectedSourceText = currentMaterialID.flatMap { id in
                 sources.first(where: { $0.id == id })?.text
@@ -15536,6 +15598,19 @@ final class WorkspaceStore: ObservableObject {
                 }
                 return nil
             }()
+            let resolvedSelectedNoteText: String? = {
+                if let text = currentNoteMemoryText,
+                   !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    return text
+                }
+                if let text = selectedNoteIndex?.text,
+                   !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    return text
+                }
+                return currentNoteID.flatMap { id in
+                    sources.first(where: { $0.id == id })?.text
+                }
+            }()
             return CourseContextBuildResult(
                 context: CourseKnowledgeIndex.build(
                     title: title,
@@ -15548,9 +15623,7 @@ final class WorkspaceStore: ObservableObject {
                 selectedMaterialText: resolvedSelectedText,
                 selectedMaterialIsTruncated: selectedMaterialIndex?.isTruncated
                     ?? ((selectedSourceText?.count ?? 0) > 24_000),
-                selectedNoteText: currentNoteID.flatMap { id in
-                    sources.first(where: { $0.id == id })?.text
-                }
+                selectedNoteText: resolvedSelectedNoteText
             )
         }
         return try await withTaskCancellationHandler {
@@ -21332,7 +21405,13 @@ final class WorkspaceStore: ObservableObject {
         }
         let projectAccess = makeAgentProjectAccessSnapshot(target: target)
         let allowedItemIDs = Set(projectAccess.sources.map(\.item.id))
-        let sentSelections = currentAgentSelections(allowedItemIDs: allowedItemIDs)
+        // Focus materials/notes do not require project-file grants (legacyExternal etc.).
+        let sentMaterialItem = agentFocusMaterialItem(for: target)
+        let sentNoteItem = agentFocusNoteItem(for: target)
+        let focusAllowedItemIDs = allowedItemIDs.union(
+            [sentMaterialItem?.id, sentNoteItem?.id].compactMap { $0 }
+        )
+        let sentSelections = currentAgentSelections(allowedItemIDs: focusAllowedItemIDs)
         let sentSelectionTitle = agentSelectionTitle(from: sentSelections)
         let sentSelectionText = agentSelectionText(from: sentSelections)
         let sentSelectionSources = agentSelectionSources(from: sentSelections)
@@ -21341,14 +21420,6 @@ final class WorkspaceStore: ObservableObject {
             $0.id == selectionContext?.id && $0.source == .document
         }
         let recentMessages = Array(messages.suffix(20))
-        let sentMaterialItem: StudyItem? = selectedMaterialItem.flatMap { item in
-            guard allowedItemIDs.contains(item.id) else { return nil }
-            return item
-        }
-        let sentNoteItem: StudyItem? = activeNoteItem.flatMap { item in
-            guard allowedItemIDs.contains(item.id) else { return nil }
-            return item
-        }
         let sourceTitle = sentMaterialItem != nil
             ? currentSourceReferenceTitle
             : sentNoteItem.map(displayTitle)
@@ -21365,6 +21436,7 @@ final class WorkspaceStore: ObservableObject {
             : agentNoteTitle
         let sentNoteText = sentNoteItem.flatMap { note in
             projectAccess.sources.first(where: { $0.item.id == note.id })?.memoryText
+                ?? loadedAgentNoteText(for: note)
         } ?? ""
         let sentNoteItemID = sentNoteItem?.id
         let sentLearningContext = makeLearningContext(target: target)
@@ -21484,7 +21556,9 @@ final class WorkspaceStore: ObservableObject {
             let courseBuild = try await makeCourseContext(
                 query: courseQuery,
                 courseID: target.courseID,
-                access: projectAccess
+                access: projectAccess,
+                focusMaterialItem: sentMaterialItem,
+                focusNoteItem: sentNoteItem
             )
             guard activeAgentRequestID == requestID else { return }
             try validateAgentConversationTarget(target, mustBeActive: false)
