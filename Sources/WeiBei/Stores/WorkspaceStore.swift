@@ -21407,7 +21407,9 @@ final class WorkspaceStore: ObservableObject {
                     chatID: target.sessionID
                 )
             }
-            guard flushPendingWorkspaceSave() else {
+            // Must not call flushPendingWorkspaceSave() here: that spins RunLoop on the
+            // MainActor while waiting for another MainActor Task, which deadlocks UI.
+            guard await flushPendingWorkspaceSaveAsync() else {
                 throw AgentConversationTargetError(
                     message: workspaceSaveError
                         ?? ui(
@@ -21434,7 +21436,7 @@ final class WorkspaceStore: ObservableObject {
             activeAgentReplyChatID = target.sessionID
             appendAgentMessage(assistantMessage)
             appendMessageToActiveSelectionAskThread(assistantMessage.id)
-            guard flushPendingWorkspaceSave() else {
+            guard await flushPendingWorkspaceSaveAsync() else {
                 throw AgentConversationTargetError(
                     message: workspaceSaveError
                         ?? ui(
@@ -21603,7 +21605,7 @@ final class WorkspaceStore: ObservableObject {
             }
             // The visible reply is durable before this request is considered finished.
             // A save error must not replace or hide the answer that already arrived.
-            _ = flushPendingWorkspaceSave()
+            _ = await flushPendingWorkspaceSaveAsync()
         } catch PiAgentRuntimeError.cancelled, is CancellationError {
             guard activeAgentRequestID == requestID else { return }
             if let replyMessageID {
@@ -21666,7 +21668,7 @@ final class WorkspaceStore: ObservableObject {
                     )
                 )
             }
-            _ = flushPendingWorkspaceSave()
+            _ = await flushPendingWorkspaceSaveAsync()
         }
 
     }
