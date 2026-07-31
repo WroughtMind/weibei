@@ -1548,6 +1548,7 @@ struct MarkdownPreviewView: View {
     /// the 24pt bucket — 1pt key changes caused scrollbar/layout jitter to
     /// unfreeze every KaTeX row and spin sizeThatFits at 100% CPU (sample 662).
     var layoutWidthKey: Int = 0
+    var isChatWideTypography = false
     var onWikiLink: (String) -> Void = { _ in }
     var onSourceReference: (String) -> Void = { _ in }
     var onAppShortcut: (String, NSEvent.ModifierFlags) -> Bool = { _, _ in false }
@@ -1563,6 +1564,7 @@ struct MarkdownPreviewView: View {
     @State private var contentHeight: CGFloat = Self.compactPreviewLoadingHeight
     @State private var heightFrozen = false
     @State private var lastLayoutWidthKey = 0
+    @State private var lastChatWideTypography = false
 
     var body: some View {
         RichMarkdownEditorView(
@@ -1573,6 +1575,7 @@ struct MarkdownPreviewView: View {
             appearanceMode: appearanceMode,
             interfaceLanguage: interfaceLanguage,
             isCompactPreview: compact,
+            isChatWideTypography: isChatWideTypography,
             onSelectionChange: onSelectionChange,
             onAskAgentWithSelection: onSelectionChange,
             onContentHeightChange: { height in
@@ -1640,6 +1643,7 @@ struct MarkdownPreviewView: View {
         .frame(height: compact && fitsContentHeight ? max(contentHeight, Self.compactPreviewLoadingHeight) : nil)
         .onAppear {
             lastLayoutWidthKey = layoutWidthKey
+            lastChatWideTypography = isChatWideTypography
             if let seed = seedContentHeight, seed.isFinite, seed > 0 {
                 contentHeight = max(ceil(seed), Self.compactPreviewLoadingHeight)
                 // Keep frozen across LazyVStack recycle. Unfreezing here forced
@@ -1663,6 +1667,11 @@ struct MarkdownPreviewView: View {
             )
             lastLayoutWidthKey = widthKey
             guard previousBucket != nextBucket else { return }
+            heightFrozen = false
+        }
+        .onChange(of: isChatWideTypography) { _, wideTypography in
+            guard wideTypography != lastChatWideTypography else { return }
+            lastChatWideTypography = wideTypography
             heightFrozen = false
         }
         .onChange(of: markdown) { _, _ in
@@ -2049,6 +2058,7 @@ struct AgentPaneView: View {
         ) {
             AgentBubble(
                 message: message,
+                isChatWideTypography: wide,
                 openGlobalMemory: {
                     globalMemoryPanelPresented = true
                 }
@@ -3149,6 +3159,7 @@ struct FloatingSelectionAgentView: View {
                     text: text,
                     rendersRichMarkdown: !isUser,
                     compact: true,
+                    isChatWideTypography: false,
                     usesFinalizedKaTeX: !isUser,
                     messageID: messageID
                 )
@@ -3315,6 +3326,7 @@ private struct AgentBubble: View {
     @EnvironmentObject private var store: WorkspaceStore
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     var message: AgentMessage
+    var isChatWideTypography = false
     var openGlobalMemory: () -> Void
     @State private var hovering = false
 
@@ -3437,6 +3449,7 @@ private struct AgentBubble: View {
                 AgentMessageMarkdownText(
                     text: message.text,
                     rendersRichMarkdown: true,
+                    isChatWideTypography: isChatWideTypography,
                     usesFinalizedKaTeX: !isFailureMessage,
                     messageID: message.id,
                     sources: availableSources,
@@ -3450,6 +3463,7 @@ private struct AgentBubble: View {
                 AgentMessageMarkdownText(
                     text: citationParse.displayText,
                     rendersRichMarkdown: true,
+                    isChatWideTypography: isChatWideTypography,
                     usesFinalizedKaTeX: !isFailureMessage,
                     messageID: message.id
                 )
@@ -4701,10 +4715,11 @@ private enum AgentFinalizedMarkdownHeightCache {
         values[key] = height
     }
 
-    static func cacheKey(messageID: UUID?, text: String, widthBucket: Int) -> String {
+    static func cacheKey(messageID: UUID?, text: String, widthBucket: Int, wideTypography: Bool) -> String {
         let id = messageID?.uuidString ?? "anon"
         let prefix = text.prefix(64)
-        return "\(id):\(text.count):\(prefix):w\(widthBucket)"
+        let tier = wideTypography ? "wide" : "compact"
+        return "\(id):\(text.count):\(prefix):w\(widthBucket):\(tier)"
     }
 
     static func widthBucket(_ width: CGFloat) -> Int {
@@ -4733,6 +4748,8 @@ private struct AgentMessageMarkdownText: View {
     var rendersRichMarkdown: Bool
     /// Selection-float / narrow surfaces: smaller type, still fills available width.
     var compact: Bool = false
+    /// Immersive conversation typography tier for finalized WebKit markdown.
+    var isChatWideTypography: Bool = false
     /// Completed assistant turns only — never streaming, user, or failure bubbles.
     var usesFinalizedKaTeX: Bool = false
     var messageID: UUID? = nil
@@ -4820,7 +4837,8 @@ private struct AgentMessageMarkdownText: View {
         AgentFinalizedMarkdownHeightCache.cacheKey(
             messageID: messageID,
             text: finalizedMarkdown,
-            widthBucket: layoutWidthBucket
+            widthBucket: layoutWidthBucket,
+            wideTypography: isChatWideTypography
         )
     }
 
@@ -4848,6 +4866,7 @@ private struct AgentMessageMarkdownText: View {
                     freezeHeightAfterMeasure: true,
                     seedContentHeight: cachedFinalizedHeight,
                     layoutWidthKey: layoutWidthBucket,
+                    isChatWideTypography: isChatWideTypography,
                     onWikiLink: { title in store.openOrCreateWikiNote(title: title) },
                     onSourceReference: { reference in
                         if let url = URL(string: reference),
