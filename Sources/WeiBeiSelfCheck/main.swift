@@ -4798,6 +4798,12 @@ expect(notesAgentSource.contains("private var isCredentialNotice: Bool")
     && notesAgentSource.contains("private var userBubbleStroke: Color")
     && notesAgentSource.contains("RoundedRectangle(cornerRadius: 9, style: .continuous)")
     && notesAgentSource.contains("strokeBorder(userBubbleStroke, lineWidth: 1)"), "main agent conversation keeps assistant text open without a cinnabar mark while user turns use a quiet paper bubble")
+expect(notesAgentSource.contains("agentVisibleMessageLimit")
+    && notesAgentSource.contains("visibleAgentMessages")
+    && notesAgentSource.contains("ForEach(visibleAgentMessages)")
+    && notesAgentSource.contains("查看更早的")
+    && notesAgentSource.contains("The limit only grows in-session")
+    && notesAgentSource.contains("revealAgentHistory(throughMessageID: turn.startMessageID)"), "long chat history folds behind a reveal button instead of mounting every KaTeX WKWebView on open; the fold window never shrinks mid-session and rail navigation reveals folded turns")
 if let userTurnStart = notesAgentSource.range(of: "private var userTurn: some View")?.lowerBound,
    let assistantTurnStart = notesAgentSource[userTurnStart...].range(of: "private var assistantTurn: some View")?.lowerBound {
     let userTurnSource = String(notesAgentSource[userTurnStart..<assistantTurnStart])

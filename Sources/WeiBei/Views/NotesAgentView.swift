@@ -1741,8 +1741,22 @@ struct AgentPaneView: View {
     @State private var globalMemoryPanelPresented = false
     /// Live pane width from a background probe. 0 until first real measurement.
     @State private var measuredPaneWidth: CGFloat = 0
+    /// Fold long history on open: only the newest page mounts KaTeX WKWebViews.
+    /// The limit only grows in-session — never unmount a mounted row, or scrolling
+    /// back re-enters the LazyVStack remount storm this pane was cured of.
+    @State private var agentVisibleMessageLimit = AgentPaneView.agentHistoryPageSize
+
+    private static let agentHistoryPageSize = 30
 
     private let agentBottomAnchorID = "agentConversationBottom"
+
+    private var hiddenAgentHistoryCount: Int {
+        max(store.messages.count - agentVisibleMessageLimit, 0)
+    }
+
+    private var visibleAgentMessages: ArraySlice<AgentMessage> {
+        store.messages.suffix(max(agentVisibleMessageLimit, 0))
+    }
 
     private var isImmersiveConversation: Bool {
         store.layout == .immersiveConversation
@@ -1803,12 +1817,18 @@ struct AgentPaneView: View {
                     }
 
                     ScrollView(showsIndicators: true) {
+                        // No scrollTargetLayout / scrollPosition / minHeight:viewport /
+                        // GeometryReader parent — all thrash sizeThatFits on the chat stack.
                         // Eager VStack (not LazyVStack): each finalized turn may host
                         // Milkdown/KaTeX WKWebView. Lazy recycle remounted PlatformViews
                         // while dragging the chat scroller and froze the UI (build 664).
-                        // Study chats stay modest in length; keep full Markdown rendering.
+                        // Long histories fold behind a reveal button instead — unrendered
+                        // rows cost nothing; keep full Markdown rendering for visible ones.
                         VStack(alignment: .leading, spacing: wide ? 22 : 12) {
-                            ForEach(store.messages) { message in
+                            if hiddenAgentHistoryCount > 0 {
+                                agentHistoryRevealButton(proxy: proxy)
+                            }
+                            ForEach(visibleAgentMessages) { message in
                                 agentMessageRow(
                                     message: message,
                                     geometryWidth: geometryWidth,
@@ -1886,11 +1906,21 @@ struct AgentPaneView: View {
                     .zIndex(4)
                 }
             }
-            .onChange(of: store.messages.count) { _, _ in
+            .onChange(of: store.messages.count) { oldCount, newCount in
+                // Appends widen the fold window so already-mounted rows never fold
+                // away mid-session; shrink/replace means a session swap — refold.
+                if newCount > oldCount {
+                    agentVisibleMessageLimit += newCount - oldCount
+                } else if newCount < oldCount {
+                    agentVisibleMessageLimit = Self.agentHistoryPageSize
+                }
                 if showsContentRail, let lastID = store.messages.last?.id {
                     updateAgentRailPosition(for: lastID)
                 }
                 scrollAgentToBottom(proxy)
+            }
+            .onChange(of: store.activeStudySessionID) { _, _ in
+                agentVisibleMessageLimit = Self.agentHistoryPageSize
             }
             .onRichAnswerVerificationStage { stage in
                 handleRichAnswerVerificationStage(stage, proxy: proxy)
@@ -2103,6 +2133,8 @@ struct AgentPaneView: View {
         guard let turn = agentRailTurns.first(where: { "chat-turn-\($0.id.uuidString)" == item.id }) else { return }
         activeAgentRailID = item.id
         agentFollowsLatest = false
+        // Folded turns must mount before scrollTo can find their row.
+        revealAgentHistory(throughMessageID: turn.startMessageID)
         let navigate = {
             withAnimation(WeiBeiMotion.panel) {
                 proxy.scrollTo(turn.startMessageID, anchor: .center)
@@ -2123,6 +2155,41 @@ struct AgentPaneView: View {
         if let turn = agentRailTurns.last(where: { $0.startIndex <= visibleIndex }) {
             activeAgentRailID = "chat-turn-\(turn.id.uuidString)"
         }
+    }
+
+    private func revealAgentHistory(throughMessageID messageID: UUID) {
+        guard let index = store.messages.firstIndex(where: { $0.id == messageID }) else { return }
+        let needed = store.messages.count - index
+        if needed > agentVisibleMessageLimit {
+            agentVisibleMessageLimit = needed
+        }
+    }
+
+    private func revealEarlierAgentHistory(proxy: ScrollViewProxy) {
+        let anchorID = visibleAgentMessages.first?.id
+        agentFollowsLatest = false
+        agentVisibleMessageLimit += Self.agentHistoryPageSize
+        // Newly mounted rows land above; re-anchor the reader's previous top row.
+        if let anchorID {
+            DispatchQueue.main.async {
+                proxy.scrollTo(anchorID, anchor: .top)
+            }
+        }
+    }
+
+    private func agentHistoryRevealButton(proxy: ScrollViewProxy) -> some View {
+        let revealCount = min(Self.agentHistoryPageSize, hiddenAgentHistoryCount)
+        return Button {
+            revealEarlierAgentHistory(proxy: proxy)
+        } label: {
+            Text(store.ui("查看更早的 \(revealCount) 条消息", "Show \(revealCount) earlier messages"))
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(WeiBeiTheme.link)
+                .padding(.vertical, 6)
+                .padding(.horizontal, 12)
+        }
+        .buttonStyle(.plain)
+        .frame(maxWidth: .infinity, alignment: .center)
     }
 
     private func railText(_ value: String, fallback: String) -> String {
