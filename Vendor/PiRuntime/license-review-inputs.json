@@ -1,0 +1,37 @@
+{
+  "schemaVersion": 1,
+  "reviewStatus": "blocked",
+  "pi": {
+    "version": "0.82.1",
+    "sourceCommit": "b4f293684bba718d59cc1157679bcf6157b3a7f5",
+    "sourceArchive": {
+      "url": "https://github.com/earendil-works/pi/releases/download/v0.82.1/pi-0.82.1-source.tar.gz",
+      "sha256": "e7edfba89bc4b31683f79209b59a01b9d627302d69ff2df8bdeea8f5f63ced73"
+    },
+    "installPackage": {
+      "url": "https://github.com/earendil-works/pi/releases/download/v0.82.1/pi-coding-agent-install-package.json",
+      "sha256": "4d02564a2c23805b16e71fbd2f00ad906fd3a456b78e7a7a5cc0c188777ca693"
+    },
+    "installLock": {
+      "url": "https://github.com/earendil-works/pi/releases/download/v0.82.1/pi-coding-agent-install-package-lock.json",
+      "sha256": "470bf10eda4804a371ecdab3d38af85eff72633cfd8b4a6d302af7ea6a609953",
+      "packageCount": 140,
+      "licenseCounts": {
+        "0BSD": 1,
+        "Apache-2.0": 46,
+        "BSD-3-Clause": 13,
+        "BlueOak-1.0.0": 5,
+        "ISC": 8,
+        "MIT": 67
+      }
+    }
+  },
+  "bun": {
+    "version": "1.3.14",
+    "sourceTag": "bun-v1.3.14",
+    "license": {
+      "url": "https://raw.githubusercontent.com/oven-sh/bun/bun-v1.3.14/LICENSE.md",
+      "sha256": "2c6160ec8fb853f7e8f97d9b249e756c9b0ac44860a68b6bf4f1b0bcbc5c3741"
+    }
+  }
+}
