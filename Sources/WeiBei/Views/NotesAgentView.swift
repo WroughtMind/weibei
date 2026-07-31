@@ -1688,17 +1688,19 @@ private struct AgentRailTurn {
 /// Critical: content width must always fit the measured pane. Never invent a floor larger
 /// than `availableWidth`, or multi-pane text centers as if the strip were full-window wide.
 private enum AgentChatLayoutMetrics {
-    static let compactMaxWidth: CGFloat = 560
+    static let compactMaxWidth: CGFloat = 760
     /// Immersive conversation: Codex-like centered column that still scales with the window.
-    /// Cap keeps line length readable on ultra-wide; floor is handled by usable width.
-    static let wideMaxWidth: CGFloat = 920
+    /// Floor keeps narrow windows readable; cap keeps ultra-wide line length in check.
+    static let wideMinWidth: CGFloat = 920
+    static let wideMaxWidth: CGFloat = 1180
+    static let wideWidthRatio: CGFloat = 0.78
     static let compactSideGutter: CGFloat = 12
     /// Codex-style: modest side margin; column grows/shrinks with the window.
     static let wideSideGutter: CGFloat = 28
     static let compactComposerHeight: CGFloat = 52
     /// Immersive min height — grows with typed lines; never a giant empty white void.
     static let wideComposerMinHeight: CGFloat = 108
-    static let wideComposerMaxHeight: CGFloat = 220
+    static let wideComposerMaxHeight: CGFloat = 340
     static let compactFontSize: CGFloat = 14.5
     static let wideFontSize: CGFloat = 16
 
@@ -1710,9 +1712,9 @@ private enum AgentChatLayoutMetrics {
     static func contentWidth(availableWidth: CGFloat, wide: Bool) -> CGFloat {
         let gutter = (wide ? wideSideGutter : compactSideGutter) * 2
         let usable = max(availableWidth - gutter, 1)
-        // Wide: track the window, capped for readability (Codex ~720–920pt column).
+        // Wide: grow with the window (78%), floored at 920, capped at 1180 for readability.
         if wide {
-            return min(usable, wideMaxWidth)
+            return min(usable, wideMaxWidth, max(wideMinWidth, usable * wideWidthRatio))
         }
         return min(usable, compactMaxWidth)
     }
