@@ -36,25 +36,21 @@ if [[ ! -f "$log_path"
 fi
 
 values_file="$(mktemp "${TMPDIR:-/tmp}/weibei-perf-values.XXXXXX")"
-scenarios_file="$(mktemp "${TMPDIR:-/tmp}/weibei-perf-scenarios.XXXXXX")"
-trap 'rm -f "$values_file" "$scenarios_file"' EXIT
+trap 'rm -f "$values_file"' EXIT
 
-awk -v target="$metric_name" -v scenarios="$scenarios_file" '
+awk -v target="$metric_name" '
   /^\[PERF-weibei-2\]/ {
     name = ""
     milliseconds = ""
-    scenario = ""
     outcome = ""
     for (field_index = 1; field_index <= NF; field_index += 1) {
       split($field_index, pair, "=")
       if (pair[1] == "name") name = pair[2]
       if (pair[1] == "ms") milliseconds = pair[2]
-      if (pair[1] == "scenario") scenario = pair[2]
       if (pair[1] == "outcome") outcome = pair[2]
     }
     if (name == target && milliseconds != "" && (outcome == "" || outcome == "completed")) {
       print milliseconds
-      if (scenario != "") print scenario > scenarios
     }
   }
 ' "$log_path" | tail -n "+$((warmup_samples + 1))" | sort -n >"$values_file"
@@ -67,6 +63,5 @@ fi
 
 rank=$(( (sample_count * 95 + 99) / 100 ))
 p95_ms="$(sed -n "${rank}p" "$values_file")"
-scenario_count="$(sort -u "$scenarios_file" | awk 'NF { count += 1 } END { print count + 0 }')"
-printf 'metric=%s samples=%s p95_ms=%s scenarios=%s\n' \
-  "$metric_name" "$sample_count" "$p95_ms" "$scenario_count"
+printf 'metric=%s samples=%s p95_ms=%s\n' \
+  "$metric_name" "$sample_count" "$p95_ms"

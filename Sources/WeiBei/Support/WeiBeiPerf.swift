@@ -26,7 +26,7 @@ enum WeiBeiPerf {
 
     @MainActor
     static func beginLaunch() {
-        launchSpan = begin("app.restore_to_main_workspace_commit")
+        launchSpan = begin("app.restore_to_next_main_queue_proxy")
     }
 
     @MainActor
@@ -35,7 +35,7 @@ enum WeiBeiPerf {
         self.launchSpan = nil
         end(
             launchSpan,
-            extra: "outcome=completed endpoint=next_main_commit"
+            extra: "outcome=completed endpoint=next_main_queue_proxy"
         )
     }
 

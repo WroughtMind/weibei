@@ -348,11 +348,16 @@ private struct AgentComposerField: View {
         }
         .onChange(of: store.agentDraft) { _, _ in
             guard focused.wrappedValue else { return }
-            let span = WeiBeiPerf.begin("input.agent_to_next_commit")
+            guard let span = WeiBeiPerf.begin(
+                "input.agent_to_next_main_queue_proxy"
+            ) else {
+                return
+            }
             DispatchQueue.main.async {
                 WeiBeiPerf.end(
                     span,
-                    extra: "outcome=completed endpoint=next_main_commit"
+                    extra:
+                        "outcome=completed endpoint=next_main_queue_proxy"
                 )
             }
         }

@@ -165,6 +165,7 @@ struct CourseHubView: View {
         }
         .onAppear(perform: ensureMaterialSelection)
         .onAppear {
+            guard WeiBeiPerf.isEnabled else { return }
             DispatchQueue.main.async {
                 store.finishCourseHomePerformanceNavigation()
             }
@@ -800,7 +801,7 @@ struct CourseHubView: View {
             return
         }
 
-        let span = WeiBeiPerf.begin("course.search_to_first_results_commit")
+        let span = WeiBeiPerf.begin("course.search_to_next_main_queue_proxy")
         isSearching = true
         let outcome = await store.searchCourseHome(
             courseID: courseID,
@@ -815,18 +816,24 @@ struct CourseHubView: View {
         searchResults = outcome.results
         searchAvailability = outcome.availability
         isSearching = false
-        await Task.yield()
+        guard let span else { return }
         let inputMode =
             ProcessInfo.processInfo.environment[
                 "WEIBEI_PERF_SEARCH_UI_REPETITIONS"
             ] == nil
                 ? "manual_ui"
                 : "verification_ui_state"
-        WeiBeiPerf.end(
-            span,
-            extra:
-                "outcome=completed endpoint=next_main_commit input=\(inputMode) results=\(outcome.results.count)"
-        )
+        await withCheckedContinuation {
+            (continuation: CheckedContinuation<Void, Never>) in
+            DispatchQueue.main.async {
+                WeiBeiPerf.end(
+                    span,
+                    extra:
+                        "outcome=completed endpoint=next_main_queue_proxy input=\(inputMode) results=\(outcome.results.count)"
+                )
+                continuation.resume()
+            }
+        }
     }
 
     private func open(_ entry: CourseHomeEntry) {

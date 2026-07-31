@@ -11584,7 +11584,7 @@ final class WorkspaceStore: ObservableObject {
                 )
             }
             courseHomePerformanceNavigationSpan = WeiBeiPerf.begin(
-                "navigation.course_home_to_next_commit"
+                "navigation.course_home_to_next_main_queue_proxy"
             )
         }
         persistCurrentNote()
@@ -11604,7 +11604,7 @@ final class WorkspaceStore: ObservableObject {
         self.courseHomePerformanceNavigationSpan = nil
         WeiBeiPerf.end(
             courseHomePerformanceNavigationSpan,
-            extra: "outcome=completed endpoint=next_main_commit"
+            extra: "outcome=completed endpoint=next_main_queue_proxy"
         )
     }
 
