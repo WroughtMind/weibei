@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 /**
- * Validate Vendor/PiRuntime pins for the Node-based embedded Pi runtime.
- * Does not download archives; does not set WEIBEI_PI_REDISTRIBUTION_REVIEWED.
+ * Validate Vendor/PiRuntime pins and disclosure files for Bun-compiled Pi embed.
+ * Does not set WEIBEI_PI_REDISTRIBUTION_REVIEWED.
  */
 import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -19,6 +19,7 @@ const notice = readFileSync(
   resolve(root, "Vendor/PiRuntime/THIRD_PARTY_NOTICES.md"),
   "utf8",
 );
+const bunLicensePath = resolve(root, "Vendor/PiRuntime/BUN_LICENSE.md");
 
 const sha256 = (bytes) => createHash("sha256").update(bytes).digest("hex");
 const assertEqual = (actual, expected, label) => {
@@ -27,50 +28,54 @@ const assertEqual = (actual, expected, label) => {
   }
 };
 
-if (inputs.runtimeKind !== "node" || inputs.reviewStatus !== "node-runtime") {
-  throw new Error("license review inputs must describe the Node runtime path");
+if (inputs.reviewStatus !== "disclosure-ready" || inputs.runtimeKind !== "bun-compile") {
+  throw new Error("license-review-inputs must be disclosure-ready bun-compile");
 }
-assertEqual(manifest.runtimeKind, "node", "manifest runtimeKind");
-assertEqual(manifest.schemaVersion, 2, "manifest schemaVersion");
+if (manifest.runtimeKind === "node") {
+  throw new Error("manifest still points at node runtime; expected Bun standalone pins");
+}
+assertEqual(manifest.schemaVersion, 1, "manifest schemaVersion");
 assertEqual(manifest.piVersion, inputs.pi.version, "Pi version");
-assertEqual(manifest.npmPackage, inputs.pi.npmPackage, "npm package");
 assertEqual(manifest.sourceCommit, inputs.pi.sourceCommit, "Pi source commit");
-assertEqual(manifest.node?.version, inputs.node.version, "Node version");
 
 for (const architecture of ["darwin-arm64", "darwin-x64"]) {
-  const fromManifest = manifest.node.artifacts[architecture];
-  const fromInputs = inputs.node.artifacts[architecture];
-  assertEqual(fromManifest.archive, fromInputs.archive, `${architecture} archive`);
-  assertEqual(fromManifest.sha256, fromInputs.sha256, `${architecture} sha256`);
-  assertEqual(fromManifest.url, fromInputs.url, `${architecture} url`);
-  if (!/^[a-f0-9]{64}$/.test(fromManifest.sha256)) {
-    throw new Error(`invalid ${architecture} node sha256`);
+  const artifact = manifest.artifacts[architecture];
+  if (!artifact?.archive || !/^[a-f0-9]{64}$/.test(artifact.sha256)) {
+    throw new Error(`invalid ${architecture} artifact lock`);
+  }
+}
+
+if (!existsSync(bunLicensePath)) {
+  throw new Error("missing Vendor/PiRuntime/BUN_LICENSE.md");
+}
+const bunLicenseBytes = readFileSync(bunLicensePath);
+assertEqual(sha256(bunLicenseBytes), inputs.bun.license.sha256, "Bun license hash");
+const bunLicense = bunLicenseBytes.toString("utf8");
+for (const required of ["JavaScriptCore", "LGPL-2", "tinycc", "LGPL v2.1", "make jsc", "zig build"]) {
+  if (!bunLicense.includes(required)) {
+    throw new Error(`Bun license is missing ${required}`);
   }
 }
 
 for (const required of [
-  "Node.js",
-  "@earendil-works/pi-coding-agent",
-  "does **not** embed the Bun-compiled",
+  "Bun `build --compile`",
+  "BUN_LICENSE.md",
+  "LGPL-2",
+  "tinycc",
+  "earendil-works/pi",
   "0.82.1",
-  "22.19.0",
+  "WEIBEI_PI_REDISTRIBUTION_REVIEWED",
+  "engineering release gate",
+  "Relink / rebuild narrative",
 ]) {
   if (!notice.includes(required)) {
-    throw new Error(`Pi notice is missing required text: ${required}`);
+    throw new Error(`THIRD_PARTY_NOTICES.md missing required text: ${required}`);
   }
 }
 
-// Negative self-check: ensure we still refuse the old Bun single-file story as "complete".
-if (notice.includes("Bun-compiled single-file") && notice.includes("does **not** embed")) {
-  // ok
-} else {
-  throw new Error("notice must explicitly reject Bun single-file redistribution");
-}
-
 console.log(`review_status=${inputs.reviewStatus}`);
-console.log(`runtime_kind=${manifest.runtimeKind}`);
+console.log(`runtime_kind=${inputs.runtimeKind}`);
 console.log(`pi_version=${manifest.piVersion}`);
-console.log(`npm_package=${manifest.npmPackage}`);
-console.log(`node_version=${manifest.node.version}`);
-console.log(`node_sha256_arm64=${manifest.node.artifacts["darwin-arm64"].sha256}`);
+console.log(`bun_version=${inputs.bun.version}`);
+console.log(`bun_license_sha256=${inputs.bun.license.sha256}`);
 console.log("check_pi_runtime_license_report=passed");

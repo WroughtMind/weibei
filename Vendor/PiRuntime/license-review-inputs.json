@@ -1,34 +1,44 @@
 {
   "schemaVersion": 2,
-  "reviewStatus": "node-runtime",
-  "runtimeKind": "node",
+  "reviewStatus": "disclosure-ready",
+  "runtimeKind": "bun-compile",
   "pi": {
     "version": "0.82.1",
-    "npmPackage": "@earendil-works/pi-coding-agent",
     "sourceCommit": "b4f293684bba718d59cc1157679bcf6157b3a7f5",
     "sourceArchive": {
       "url": "https://github.com/earendil-works/pi/releases/download/v0.82.1/pi-0.82.1-source.tar.gz",
       "sha256": "e7edfba89bc4b31683f79209b59a01b9d627302d69ff2df8bdeea8f5f63ced73"
-    }
-  },
-  "node": {
-    "version": "22.19.0",
-    "artifacts": {
-      "darwin-arm64": {
-        "archive": "node-v22.19.0-darwin-arm64.tar.gz",
-        "sha256": "c59006db713c770d6ec63ae16cb3edc11f49ee093b5c415d667bb4f436c6526d",
-        "url": "https://nodejs.org/dist/v22.19.0/node-v22.19.0-darwin-arm64.tar.gz"
-      },
-      "darwin-x64": {
-        "archive": "node-v22.19.0-darwin-x64.tar.gz",
-        "sha256": "3cfed4795cd97277559763c5f56e711852d2cc2420bda1cea30c8aa9ac77ce0c",
-        "url": "https://nodejs.org/dist/v22.19.0/node-v22.19.0-darwin-x64.tar.gz"
+    },
+    "installPackage": {
+      "url": "https://github.com/earendil-works/pi/releases/download/v0.82.1/pi-coding-agent-install-package.json",
+      "sha256": "4d02564a2c23805b16e71fbd2f00ad906fd3a456b78e7a7a5cc0c188777ca693"
+    },
+    "installLock": {
+      "url": "https://github.com/earendil-works/pi/releases/download/v0.82.1/pi-coding-agent-install-package-lock.json",
+      "sha256": "470bf10eda4804a371ecdab3d38af85eff72633cfd8b4a6d302af7ea6a609953",
+      "packageCount": 140,
+      "licenseCounts": {
+        "0BSD": 1,
+        "Apache-2.0": 46,
+        "BSD-3-Clause": 13,
+        "BlueOak-1.0.0": 5,
+        "ISC": 8,
+        "MIT": 67
       }
     }
   },
+  "bun": {
+    "version": "1.3.14",
+    "sourceTag": "bun-v1.3.14",
+    "license": {
+      "url": "https://raw.githubusercontent.com/oven-sh/bun/bun-v1.3.14/LICENSE.md",
+      "sha256": "2c6160ec8fb853f7e8f97d9b249e756c9b0ac44860a68b6bf4f1b0bcbc5c3741",
+      "packagedAs": "Vendor/PiRuntime/BUN_LICENSE.md"
+    }
+  },
   "notes": [
-    "WeiBei no longer redistributes the Bun-compiled single-file pi binary.",
-    "Installer redistribution review focuses on Node.js + npm production dependencies.",
-    "WEIBEI_PI_REDISTRIBUTION_REVIEWED=1 still requires a human release owner after notices are reviewed."
+    "Default installer embeds upstream Bun-compiled standalone pi (not the Node+npm layout).",
+    "Notices document Pi MIT, Bun license text, LGPL static-link components, and public rebuild/relink paths.",
+    "WEIBEI_PI_REDISTRIBUTION_REVIEWED=1 is an engineering gate after a human has reviewed these notices; it is not a legal certification."
   ]
 }

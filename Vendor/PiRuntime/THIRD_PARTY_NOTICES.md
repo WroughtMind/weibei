@@ -1,37 +1,84 @@
 # Third-party notices (embedded Agent runtime)
 
-WeiBei embeds a **Node.js** runtime and the official **Pi coding agent** npm package
-for RPC mode. It does **not** embed the Bun-compiled single-file `pi` binary.
+WeiBei embeds a **standalone Pi coding agent** binary produced by the upstream
+project with **Bun `build --compile`**. WeiBei application source remains MIT
+(see the repository root `LICENSE`). This notice describes third-party material
+**inside the packaged runtime**, not a claim that the entire app bundle is
+“MIT-only”.
 
 ## Pi coding agent
 
-- Package: `@earendil-works/pi-coding-agent@0.82.1`
-- Source: https://github.com/earendil-works/pi
-- Pinned commit: `b4f293684bba718d59cc1157679bcf6157b3a7f5`
-- License: MIT
-- Copyright: 2025 Mario Zechner
+- Project: Pi coding agent  
+- Version: **0.82.1** (see `manifest.json` → `piVersion`)  
+- Source repository: https://github.com/earendil-works/pi  
+- Pinned commit: `b4f293684bba718d59cc1157679bcf6157b3a7f5`  
+- License: **MIT** (full text: `LICENSE` in this directory)  
+- Copyright: 2025 Mario Zechner  
 
-Pi's runtime dependency licenses are declared in the locked install graph for this
-exact version (see the package's published lock / the generated
-`agent/package-lock.json` inside the prepared runtime). WeiBei keeps only the
-production install needed to run `dist/cli.js` in `--mode rpc`.
+Upstream also publishes the JS package `@earendil-works/pi-coding-agent` and
+install lockfiles for the same release. Anyone may obtain Pi source, inspect it,
+and rebuild.
 
-## Node.js
+## How this binary is built
 
-- Distribution: official Node.js binary from https://nodejs.org
-- Pinned version: see `manifest.json` → `node.version` (currently 22.19.0)
-- License: Node.js is released under the MIT License; it bundles additional
-  third-party components under their own terms. Full texts ship with the
-  official Node tarball (`LICENSE` and related notices) and are retained under
-  `PiRuntime/node/` when the runtime is prepared.
+The macOS `bin/pi` shipped here is the upstream **single-file executable** for
+the pinned release (archive names and SHA-256 digests are locked in
+`manifest.json`). Upstream builds it with Bun’s documented production path
+`bun build --compile` (see Bun’s “Single-file executable” documentation).
 
-## What this package deliberately avoids
+WeiBei does **not** use Bun’s `--bytecode` option for this embed.
 
-The previous Bun `build --compile` single-file `pi` statically linked components
-such as JavaScriptCore / WebKit (LGPL-2) via Bun. WeiBei no longer redistributes
-that Bun-compiled artifact. Redistribution review for installers should focus on
-**Node + npm production dependencies**, not Bun static-link object materials.
+## Bun runtime inside the compiled binary
 
-## WeiBei-authored code
+The standalone executable is produced with **Bun 1.3.14** tooling. Bun itself is
+MIT-licensed. Bun **statically links** additional libraries, including:
 
-WeiBei application source remains under the MIT License at the repository root.
+- JavaScriptCore / WebKit / WebCore — **LGPL-2**  
+- tinycc — **LGPL v2.1**  
+- and other libraries listed in Bun’s license file  
+
+The complete Bun license text for the pinned tag is shipped next to this file as
+**`BUN_LICENSE.md`** (source:
+https://raw.githubusercontent.com/oven-sh/bun/bun-v1.3.14/LICENSE.md ).
+
+Bun’s license states that for LGPL static linking, recipients must be able to
+modify the LGPL library and relink. Bun documents a rebuild path for Bun with a
+modified JavaScriptCore (patched WebKit at https://github.com/oven-sh/webkit ,
+then `make jsc` and `zig build` as described in `BUN_LICENSE.md`).
+
+### Relink / rebuild narrative for this product
+
+Because **Pi application source is MIT and public**, and **Bun source plus
+relink instructions are public**, a recipient who wants to modify an LGPL
+component and produce an equivalent agent binary can, in principle:
+
+1. Obtain Bun source and follow `BUN_LICENSE.md` to rebuild Bun with a modified
+   JavaScriptCore (or other LGPL component as applicable);  
+2. Obtain Pi source at the pinned commit (or a chosen revision);  
+3. Rebuild a standalone `pi` with `bun build --compile` using that toolchain;  
+4. Substitute the resulting binary for the copy embedded in WeiBei (subject to
+   WeiBei’s own MIT terms for host code).
+
+WeiBei therefore ships:
+
+- the pinned `pi` binary and its integrity digests;  
+- Pi’s MIT license;  
+- Bun’s full license text and static-link disclosures;  
+- pointers to public source and rebuild/relink documentation.
+
+This is a **source-available rebuild path** aligned with open distribution of
+Bun-compiled tools; it is **not** a claim of a turnkey one-click object-file
+SDK for every static dependency.
+
+## What WeiBei source covers
+
+- WeiBei-authored Swift/app code: MIT (repository root).  
+- WeiBei-authored Agent resources (prompts, extension, skills): as in-tree.  
+- Brand, fonts (OFL), and other carve-outs: see `LICENSING.md`.
+
+## Release process note
+
+Packaging a community or notarized DMG via `script/build_release_dmg.sh`
+requires the environment variable `WEIBEI_PI_REDISTRIBUTION_REVIEWED=1`. That
+flag is an **engineering release gate** (a human confirmed these notices and
+pins). It is **not** a legal opinion or third-party certification.
