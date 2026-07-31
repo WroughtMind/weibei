@@ -1370,6 +1370,48 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
     }
 
     private func validateSlashCommands() {
+        let triggerScript = """
+        window.WeiBeiEditor.setMarkdown('');
+        window.WeiBeiEditor.insertMarkdown('{{WEIBEI_CURSOR}}');
+        window.WeiBeiEditor.typeTextForCheck('/');
+        """
+        webView.evaluateJavaScript(triggerScript) { [weak self] _, error in
+            guard let self else { return }
+            guard error == nil else { self.fail("automatic slash trigger setup failed: \(error!.localizedDescription)"); return }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                self.validateAutomaticSlashMenu()
+            }
+        }
+    }
+
+    private func validateAutomaticSlashMenu() {
+        let script = """
+        (() => {
+          const menu = document.querySelector('.weibei-slash-menu');
+          const style = menu && getComputedStyle(menu);
+          const rect = menu?.getBoundingClientRect();
+          return {
+            show: menu?.dataset.show === 'true',
+            position: style?.position || '',
+            visible: !!rect && rect.width > 0 && rect.height > 0 && rect.left >= 0 && rect.top >= 0 && rect.right <= innerWidth && rect.bottom <= innerHeight
+          };
+        })();
+        """
+        webView.evaluateJavaScript(script) { [weak self] value, error in
+            guard let self else { return }
+            guard error == nil,
+                  let state = value as? [String: Any],
+                  state["show"] as? Bool == true,
+                  state["position"] as? String == "absolute",
+                  state["visible"] as? Bool == true else {
+                self.fail("automatic slash menu was not visible in the viewport: \(String(describing: error)); \(String(describing: value))")
+                return
+            }
+            self.validateSlashCommandContents()
+        }
+    }
+
+    private func validateSlashCommandContents() {
         let script = """
         (() => {
           const open = (text) => { window.WeiBeiEditor.setMarkdown(text); return window.WeiBeiEditor.openSlashMenuForCheck(); };
