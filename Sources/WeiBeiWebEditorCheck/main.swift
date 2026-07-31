@@ -1801,8 +1801,173 @@ private func verifyAgentChatMarkdownSourceContract() {
     )
 }
 
+final class UTF8HTMLFixtureSchemeHandler: NSObject, WKURLSchemeHandler {
+    var rootDirectory: URL?
+
+    func webView(_ webView: WKWebView, start urlSchemeTask: WKURLSchemeTask) {
+        guard let rootDirectory,
+              let requestURL = urlSchemeTask.request.url,
+              requestURL.host == "fixture" else {
+            urlSchemeTask.didFailWithError(NSError(domain: "WeiBei.HTMLFixture", code: 1))
+            return
+        }
+        let fileURL = requestURL.path
+            .split(separator: "/", omittingEmptySubsequences: true)
+            .reduce(rootDirectory) { $0.appendingPathComponent(String($1)) }
+        guard let data = try? Data(contentsOf: fileURL) else {
+            urlSchemeTask.didFailWithError(NSError(domain: "WeiBei.HTMLFixture", code: 2))
+            return
+        }
+        let mimeType = fileURL.pathExtension == "css" ? "text/css" : "image/svg+xml"
+        urlSchemeTask.didReceive(URLResponse(
+            url: requestURL,
+            mimeType: mimeType,
+            expectedContentLength: data.count,
+            textEncodingName: "utf-8"
+        ))
+        urlSchemeTask.didReceive(data)
+        urlSchemeTask.didFinish()
+    }
+
+    func webView(_ webView: WKWebView, stop urlSchemeTask: WKURLSchemeTask) {}
+}
+
+final class UTF8HTMLReaderHarness: NSObject, WKNavigationDelegate {
+    private let resourceSchemeHandler: UTF8HTMLFixtureSchemeHandler
+    private let webView: WKWebView
+    private var isDone = false
+    private var failure: String?
+    private var expectedNavigation: WKNavigation?
+
+    override init() {
+        let resourceSchemeHandler = UTF8HTMLFixtureSchemeHandler()
+        let configuration = WKWebViewConfiguration()
+        configuration.setURLSchemeHandler(resourceSchemeHandler, forURLScheme: "weibeihtmlfixture")
+        self.resourceSchemeHandler = resourceSchemeHandler
+        webView = WKWebView(
+            frame: CGRect(x: 0, y: 0, width: 640, height: 480),
+            configuration: configuration
+        )
+        super.init()
+        webView.navigationDelegate = self
+    }
+
+    func run() {
+        let fixtureRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("weibei-html-reader-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: fixtureRoot) }
+        do {
+            try FileManager.default.createDirectory(at: fixtureRoot, withIntermediateDirectories: true)
+            try Data("body { color: rgb(12, 34, 56); }".utf8)
+                .write(to: fixtureRoot.appendingPathComponent("reader.css"), options: .atomic)
+            try Data("""
+            <svg xmlns="http://www.w3.org/2000/svg" width="2" height="2">
+              <rect width="2" height="2" fill="#9f3b2f"/>
+            </svg>
+            """.utf8).write(to: fixtureRoot.appendingPathComponent("marker.svg"), options: .atomic)
+        } catch {
+            expect(false, "could not create UTF-8 HTML reader fixture: \(error.localizedDescription)")
+        }
+        resourceSchemeHandler.rootDirectory = fixtureRoot
+
+        let staleHTML = Data(("<h1>旧文稿</h1>" + String(repeating: "旧", count: 100_000)).utf8)
+        webView.load(staleHTML, mimeType: "text/html", characterEncodingName: "utf-8", baseURL: fixtureRoot)
+        webView.stopLoading()
+
+        let html = Data("""
+        <!doctype html>
+        <link rel="stylesheet" href="reader.css">
+        <h1>利率基础</h1>
+        <p>名义利率与实际利率。</p>
+        <img id="relative-image" src="marker.svg" alt="同目录图片">
+        """.utf8)
+        expectedNavigation = webView.load(
+            html,
+            mimeType: "text/html",
+            characterEncodingName: "utf-8",
+            baseURL: URL(string: "weibeihtmlfixture://fixture/")!
+        )
+
+        let timeout = Date().addingTimeInterval(5)
+        while !isDone && Date() < timeout {
+            RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.05))
+        }
+        expect(failure == nil, failure ?? "")
+        expect(isDone, "UTF-8 HTML reader fixture did not finish")
+    }
+
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        guard navigation === expectedNavigation else { return }
+        validateLoadedHTML(until: Date().addingTimeInterval(3))
+    }
+
+    private func validateLoadedHTML(until deadline: Date) {
+        webView.evaluateJavaScript("""
+        (() => {
+          const image = document.getElementById('relative-image');
+          return {
+            text: document.body.innerText,
+            color: getComputedStyle(document.body).color,
+            imageWidth: image?.naturalWidth || 0
+          };
+        })();
+        """) { [weak self] value, error in
+            guard let self else { return }
+            guard error == nil, let result = value as? [String: Any] else {
+                failure = "UTF-8 HTML reader JavaScript failed: \(String(describing: error))"
+                isDone = true
+                return
+            }
+            guard
+                  let text = result["text"] as? String,
+                  text.contains("利率基础"),
+                  text.contains("名义利率与实际利率"),
+                  !text.contains("旧文稿") else {
+                failure = "UTF-8 HTML or stale-navigation cancellation failed: \(String(describing: value)); error=\(String(describing: error))"
+                isDone = true
+                return
+            }
+            if result["color"] as? String == "rgb(12, 34, 56)",
+               result["imageWidth"] as? Int == 2 {
+                isDone = true
+                return
+            }
+            if Date() >= deadline {
+                failure = "same-directory HTML resources did not load: \(String(describing: value))"
+                isDone = true
+                return
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                self.validateLoadedHTML(until: deadline)
+            }
+        }
+    }
+
+    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+        guard navigation === expectedNavigation else { return }
+        failure = error.localizedDescription
+        isDone = true
+    }
+
+    func webView(
+        _ webView: WKWebView,
+        didFailProvisionalNavigation navigation: WKNavigation!,
+        withError error: Error
+    ) {
+        guard navigation === expectedNavigation else { return }
+        failure = error.localizedDescription
+        isDone = true
+    }
+}
+
 NSApplication.shared.setActivationPolicy(.prohibited)
+if ProcessInfo.processInfo.environment["WEIBEI_HTML_READER_SELF_CHECK_ONLY"] == "1" {
+    UTF8HTMLReaderHarness().run()
+    print("WeiBei HTML reader check passed")
+    exit(0)
+}
 verifyAgentChatMarkdownSourceContract()
+UTF8HTMLReaderHarness().run()
 EditorHarness().run()
 FinalizedAgentMarkdownHarness().run()
 print("WeiBei web editor check passed")
