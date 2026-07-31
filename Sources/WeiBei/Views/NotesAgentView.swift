@@ -1703,6 +1703,9 @@ private enum AgentChatLayoutMetrics {
     static let wideMinWidth: CGFloat = 920
     static let wideMaxWidth: CGFloat = 1180
     static let wideWidthRatio: CGFloat = 0.78
+    /// Content columns at least this wide read with the immersive typography tier,
+    /// regardless of which layout hosts the chat pane.
+    static let wideTypographyMinContentWidth: CGFloat = 620
     static let compactSideGutter: CGFloat = 12
     /// Codex-style: modest side margin; column grows/shrinks with the window.
     static let wideSideGutter: CGFloat = 28
@@ -2058,7 +2061,10 @@ struct AgentPaneView: View {
         ) {
             AgentBubble(
                 message: message,
-                isChatWideTypography: wide,
+                // Typography follows the real column width, not the layout enum —
+                // a full-window chat tab is not .immersiveConversation but reads wide.
+                isChatWideTypography: wide
+                    || contentWidth >= AgentChatLayoutMetrics.wideTypographyMinContentWidth,
                 openGlobalMemory: {
                     globalMemoryPanelPresented = true
                 }
@@ -2081,13 +2087,10 @@ struct AgentPaneView: View {
     ) -> some View {
         let readingWidth: CGFloat = {
             let paneLimit = max(geometryWidth - (wideLayout ? 32 : 16), 1)
-            if wideLayout {
-                // Rich-answer canvas can use a slightly wider band inside the same axis.
-                let limit = canvasWide ? min(contentWidth + 40, paneLimit) : contentWidth
-                return min(min(contentWidth, limit), paneLimit)
-            }
-            let limit: CGFloat = canvasWide ? 540 : 500
-            // contentWidth already fits the strip; never force a design ceiling wider than the pane.
+            // Both tiers read the full content column. The old non-wide branch
+            // pinned messages at 500pt, so widening compactMaxWidth never reached
+            // the actual bubbles (composer grew, messages did not).
+            let limit = canvasWide ? min(contentWidth + 40, paneLimit) : contentWidth
             return min(min(max(contentWidth, 1), limit), paneLimit)
         }()
         let readingLeadingInset = max((geometryWidth - readingWidth) / 2, 0)
