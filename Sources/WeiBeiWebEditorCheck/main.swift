@@ -1801,13 +1801,53 @@ private func verifyAgentChatMarkdownSourceContract() {
     )
 }
 
+final class UTF8HTMLFixtureSchemeHandler: NSObject, WKURLSchemeHandler {
+    var rootDirectory: URL?
+
+    func webView(_ webView: WKWebView, start urlSchemeTask: WKURLSchemeTask) {
+        guard let rootDirectory,
+              let requestURL = urlSchemeTask.request.url,
+              requestURL.host == "fixture" else {
+            urlSchemeTask.didFailWithError(NSError(domain: "WeiBei.HTMLFixture", code: 1))
+            return
+        }
+        let fileURL = requestURL.path
+            .split(separator: "/", omittingEmptySubsequences: true)
+            .reduce(rootDirectory) { $0.appendingPathComponent(String($1)) }
+        guard let data = try? Data(contentsOf: fileURL) else {
+            urlSchemeTask.didFailWithError(NSError(domain: "WeiBei.HTMLFixture", code: 2))
+            return
+        }
+        let mimeType = fileURL.pathExtension == "css" ? "text/css" : "image/svg+xml"
+        urlSchemeTask.didReceive(URLResponse(
+            url: requestURL,
+            mimeType: mimeType,
+            expectedContentLength: data.count,
+            textEncodingName: "utf-8"
+        ))
+        urlSchemeTask.didReceive(data)
+        urlSchemeTask.didFinish()
+    }
+
+    func webView(_ webView: WKWebView, stop urlSchemeTask: WKURLSchemeTask) {}
+}
+
 final class UTF8HTMLReaderHarness: NSObject, WKNavigationDelegate {
-    private let webView = WKWebView(frame: CGRect(x: 0, y: 0, width: 640, height: 480))
+    private let resourceSchemeHandler: UTF8HTMLFixtureSchemeHandler
+    private let webView: WKWebView
     private var isDone = false
     private var failure: String?
     private var expectedNavigation: WKNavigation?
 
     override init() {
+        let resourceSchemeHandler = UTF8HTMLFixtureSchemeHandler()
+        let configuration = WKWebViewConfiguration()
+        configuration.setURLSchemeHandler(resourceSchemeHandler, forURLScheme: "weibeihtmlfixture")
+        self.resourceSchemeHandler = resourceSchemeHandler
+        webView = WKWebView(
+            frame: CGRect(x: 0, y: 0, width: 640, height: 480),
+            configuration: configuration
+        )
         super.init()
         webView.navigationDelegate = self
     }
@@ -1828,6 +1868,7 @@ final class UTF8HTMLReaderHarness: NSObject, WKNavigationDelegate {
         } catch {
             expect(false, "could not create UTF-8 HTML reader fixture: \(error.localizedDescription)")
         }
+        resourceSchemeHandler.rootDirectory = fixtureRoot
 
         let staleHTML = Data(("<h1>旧文稿</h1>" + String(repeating: "旧", count: 100_000)).utf8)
         webView.load(staleHTML, mimeType: "text/html", characterEncodingName: "utf-8", baseURL: fixtureRoot)
@@ -1844,7 +1885,7 @@ final class UTF8HTMLReaderHarness: NSObject, WKNavigationDelegate {
             html,
             mimeType: "text/html",
             characterEncodingName: "utf-8",
-            baseURL: fixtureRoot
+            baseURL: URL(string: "weibeihtmlfixture://fixture/")!
         )
 
         let timeout = Date().addingTimeInterval(5)

@@ -1,6 +1,7 @@
 import Foundation
 import PDFKit
 import SwiftUI
+import UniformTypeIdentifiers
 import WeiBeiCore
 import WebKit
 
@@ -1983,6 +1984,139 @@ private final class PDFOCRLineTextView: ReaderSelectableTextView, NSTextViewDele
     }
 }
 
+private final class WebReaderResourceSchemeHandler: NSObject, WKURLSchemeHandler {
+    static let scheme = "weibeihtml"
+
+    private let lock = NSLock()
+    private var scopeID = ""
+    private var rootDirectory: URL?
+    private var activeRequests: Set<ObjectIdentifier> = []
+
+    func activate(rootDirectory: URL) -> URL? {
+        let scopeID = UUID().uuidString.lowercased()
+        guard let root = try? CourseProjectPathPolicy.existingDirectory(rootDirectory),
+              let baseURL = URL(string: "\(Self.scheme)://\(scopeID)/") else {
+            deactivate()
+            return nil
+        }
+        lock.lock()
+        self.scopeID = scopeID
+        self.rootDirectory = root
+        activeRequests.removeAll()
+        lock.unlock()
+        return baseURL
+    }
+
+    func deactivate() {
+        lock.lock()
+        scopeID = ""
+        rootDirectory = nil
+        activeRequests.removeAll()
+        lock.unlock()
+    }
+
+    func webView(_ webView: WKWebView, start urlSchemeTask: WKURLSchemeTask) {
+        let key = ObjectIdentifier(urlSchemeTask as AnyObject)
+        guard let requestURL = urlSchemeTask.request.url,
+              let requestScope = requestURL.host?.lowercased(),
+              let root = beginRequest(key, scopeID: requestScope) else {
+            urlSchemeTask.didFailWithError(Self.unreadableResourceError)
+            return
+        }
+        guard let fileURL = fileURL(for: requestURL, within: root) else {
+            cancelRequest(key)
+            urlSchemeTask.didFailWithError(Self.unreadableResourceError)
+            return
+        }
+
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let result: Result<(Data, URLResponse), Error>
+            do {
+                let values = try fileURL.resourceValues(forKeys: [.isRegularFileKey])
+                guard values.isRegularFile == true else {
+                    throw Self.unreadableResourceError
+                }
+                let data = try Data(contentsOf: fileURL)
+                let response = URLResponse(
+                    url: requestURL,
+                    mimeType: Self.mimeType(for: fileURL),
+                    expectedContentLength: data.count,
+                    textEncodingName: Self.textEncodingName(for: fileURL)
+                )
+                result = .success((data, response))
+            } catch {
+                result = .failure(error)
+            }
+            DispatchQueue.main.async {
+                guard self?.finishRequest(key, scopeID: requestScope) == true else { return }
+                switch result {
+                case let .success((data, response)):
+                    urlSchemeTask.didReceive(response)
+                    urlSchemeTask.didReceive(data)
+                    urlSchemeTask.didFinish()
+                case let .failure(error):
+                    urlSchemeTask.didFailWithError(error)
+                }
+            }
+        }
+    }
+
+    func webView(_ webView: WKWebView, stop urlSchemeTask: WKURLSchemeTask) {
+        let key = ObjectIdentifier(urlSchemeTask as AnyObject)
+        cancelRequest(key)
+    }
+
+    private func cancelRequest(_ key: ObjectIdentifier) {
+        lock.lock()
+        activeRequests.remove(key)
+        lock.unlock()
+    }
+
+    private func beginRequest(_ key: ObjectIdentifier, scopeID requestScope: String) -> URL? {
+        lock.lock()
+        defer { lock.unlock() }
+        guard requestScope == scopeID, let rootDirectory else { return nil }
+        activeRequests.insert(key)
+        return rootDirectory
+    }
+
+    private func finishRequest(_ key: ObjectIdentifier, scopeID requestScope: String) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        guard requestScope == scopeID, activeRequests.remove(key) != nil else { return false }
+        return true
+    }
+
+    private func fileURL(for requestURL: URL, within root: URL) -> URL? {
+        let components = requestURL.path.split(separator: "/", omittingEmptySubsequences: true)
+        guard !components.isEmpty, !components.contains(where: { $0 == "." || $0 == ".." }) else {
+            return nil
+        }
+        let candidate = components.reduce(root) { url, component in
+            url.appendingPathComponent(String(component))
+        }
+        let resolved = candidate.resolvingSymlinksInPath().standardizedFileURL
+        guard CourseProjectPathPolicy.contains(root, resolved, includingRoot: false) else { return nil }
+        return resolved
+    }
+
+    private static func mimeType(for url: URL) -> String {
+        UTType(filenameExtension: url.pathExtension)?.preferredMIMEType ?? "application/octet-stream"
+    }
+
+    private static func textEncodingName(for url: URL) -> String? {
+        ["css", "htm", "html", "js", "json", "mjs", "svg", "xml"].contains(url.pathExtension.lowercased())
+            ? "utf-8"
+            : nil
+    }
+
+    private static let unreadableResourceError = NSError(
+        domain: "WeiBei.WebReaderResource",
+        code: 1,
+        userInfo: [NSLocalizedDescriptionKey: "HTML resource is outside the active document directory."]
+    )
+}
+
 struct WebReaderRepresentable: NSViewRepresentable {
     var html: String?
     var url: URL?
@@ -2101,6 +2235,10 @@ struct WebReaderRepresentable: NSViewRepresentable {
             forMainFrameOnly: true
         ))
         configuration.userContentController = controller
+        configuration.setURLSchemeHandler(
+            context.coordinator.htmlResourceSchemeHandler,
+            forURLScheme: WebReaderResourceSchemeHandler.scheme
+        )
 
         let view = WKWebView(frame: .zero, configuration: configuration)
         view.setValue(false, forKey: "drawsBackground")
@@ -2672,6 +2810,7 @@ struct WebReaderRepresentable: NSViewRepresentable {
         var htmlReadTask: Task<Data?, Never>?
         var htmlLoadTask: Task<Void, Never>?
         var htmlLoadRequestID: UUID?
+        fileprivate let htmlResourceSchemeHandler = WebReaderResourceSchemeHandler()
         private var lastAppliedSearchQuery = ""
         var lastAppliedSelectionAskMarks = ""
         private var lastAppliedContentRailTargetRequestID: UUID?
@@ -2729,11 +2868,17 @@ struct WebReaderRepresentable: NSViewRepresentable {
                     view.loadFileURL(url, allowingReadAccessTo: url.deletingLastPathComponent())
                     return
                 }
+                guard let baseURL = htmlResourceSchemeHandler.activate(
+                    rootDirectory: url.deletingLastPathComponent()
+                ) else {
+                    view.loadFileURL(url, allowingReadAccessTo: url.deletingLastPathComponent())
+                    return
+                }
                 view.load(
                     data,
                     mimeType: "text/html",
                     characterEncodingName: "utf-8",
-                    baseURL: url.deletingLastPathComponent()
+                    baseURL: baseURL
                 )
             }
         }
@@ -2744,6 +2889,7 @@ struct WebReaderRepresentable: NSViewRepresentable {
             htmlReadTask = nil
             htmlLoadTask = nil
             htmlLoadRequestID = nil
+            htmlResourceSchemeHandler.deactivate()
         }
 
         func applySelectionAskMarksIfNeeded() {
