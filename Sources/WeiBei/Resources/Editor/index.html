@@ -434,7 +434,14 @@
       max-width: 100%;
       height: auto;
       margin: 1.1em 0;
-      border: 1px solid var(--line);
+      border: 0;
+      border-radius: 8px;
+      box-shadow: 0 1px 4px rgba(60, 45, 30, .14);
+    }
+
+    :root[data-weibei-theme="inkstone"] .ProseMirror img,
+    :root[data-weibei-theme="stele"] .ProseMirror img {
+      box-shadow: 0 1px 4px rgba(0, 0, 0, .38);
     }
 
     .ProseMirror ul, .ProseMirror ol {
@@ -445,6 +452,11 @@
     .ProseMirror li {
       margin: .18em 0;
       padding-left: .1em;
+    }
+
+    .ProseMirror ul li::marker,
+    .ProseMirror ol li::marker {
+      color: var(--faint);
     }
 
     :root[data-weibei-compact-preview="true"] .ProseMirror li {
@@ -527,22 +539,22 @@
 
     .ProseMirror hr {
       border: 0;
-      border-top: 1px solid var(--line);
-      margin: 1.4em 0;
+      border-top: 1px solid color-mix(in srgb, var(--line) 72%, transparent);
+      margin: 1.7em 0;
     }
 
     .ProseMirror blockquote {
       margin: 1em 0;
-      padding: .55em .9em;
+      padding: .1em 0 .1em 1em;
       border-left: 3px solid var(--cinnabar-line);
-      background: rgba(251, 245, 234, .48);
+      background: transparent;
       color: var(--muted);
     }
 
     :root[data-weibei-theme="inkstone"] .ProseMirror blockquote,
     :root[data-weibei-theme="stele"] .ProseMirror blockquote {
       border-left-color: var(--cinnabar-line);
-      background: rgba(166, 54, 43, .08);
+      background: transparent;
       color: var(--muted);
     }
 
@@ -705,22 +717,20 @@
     .ProseMirror code {
       font-family: "SF Mono", Menlo, ui-monospace, monospace;
       background: var(--code);
-      border: 1px solid var(--line);
-      border-radius: 4px;
-      padding: 1px 5px;
-      font-size: .92em;
+      border-radius: 5px;
+      padding: .12em .4em;
+      font-size: .9em;
     }
 
     .ProseMirror pre {
       position: relative;
-      margin: .85em 0;
-      padding: .85em 1em;
-      border: 1px solid var(--line);
-      border-radius: 6px;
+      margin: .95em 0;
+      padding: .95em 1.1em;
+      border: 0;
+      border-radius: 8px;
       background: var(--code-paper);
       overflow-x: auto;
       line-height: 1.62;
-      box-shadow: inset 0 1px 0 rgba(255, 255, 255, .30);
     }
 
     :root[data-weibei-theme="inkstone"] .ProseMirror pre,
