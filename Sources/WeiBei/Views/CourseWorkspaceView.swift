@@ -99,8 +99,8 @@ struct CourseWorkspaceView: View {
             }
         }
         .onAppear(perform: prepareInitialRoute)
-        .task {
-            await runPerformanceSearchSequenceIfRequested()
+        .onAppear {
+            startPerformanceSearchSequenceIfRequested()
         }
         .onChange(of: page) { _, _ in
             search = ""
@@ -173,10 +173,16 @@ struct CourseWorkspaceView: View {
         }
     }
 
+    private func startPerformanceSearchSequenceIfRequested() {
+        guard WeiBeiPerf.isEnabled else { return }
+        Task {
+            await runPerformanceSearchSequenceIfRequested()
+        }
+    }
+
     private func runPerformanceSearchSequenceIfRequested() async {
         let environment = ProcessInfo.processInfo.environment
-        guard WeiBeiPerf.isEnabled,
-              environment["WEIBEI_SUPPRESS_ACTIVATION"] == "1",
+        guard environment["WEIBEI_SUPPRESS_ACTIVATION"] == "1",
               let rawCount =
                 environment["WEIBEI_PERF_SEARCH_UI_REPETITIONS"],
               let count = Int(rawCount),

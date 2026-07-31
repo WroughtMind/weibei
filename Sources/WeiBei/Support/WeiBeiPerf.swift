@@ -10,9 +10,8 @@ enum WeiBeiPerf {
         fileprivate let startedAtNanoseconds: UInt64
     }
 
-    static var isEnabled: Bool {
+    static let isEnabled =
         ProcessInfo.processInfo.environment["WEIBEI_PERF"] == "1"
-    }
 
     static var scenarioID: String {
         let environment = ProcessInfo.processInfo.environment
