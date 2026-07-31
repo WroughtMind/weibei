@@ -131,6 +131,20 @@ final class MarkdownWebView: WKWebView {
         removeScrollWheelMonitor()
     }
 
+    /// Compact agent/chat previews use a fixed SwiftUI frame. Never answer
+    /// Auto Layout with WebKit's systemLayoutSizeFittingSize — that path
+    /// dominated hang samples (build 662) while LazyVStack remasured rows.
+    override var fittingSize: NSSize {
+        guard passesVerticalScrollToSuperview else { return super.fittingSize }
+        let size = bounds.size
+        return NSSize(width: max(size.width, 1), height: max(size.height, 1))
+    }
+
+    override var intrinsicContentSize: NSSize {
+        guard passesVerticalScrollToSuperview else { return super.intrinsicContentSize }
+        return fittingSize
+    }
+
     /// Compact agent previews must not steal keyboard focus from the composer.
     override var acceptsFirstResponder: Bool {
         passesVerticalScrollToSuperview ? false : super.acceptsFirstResponder
@@ -404,6 +418,20 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             view.loadHTMLString("<p>\(interfaceLanguage.text("编辑器资源缺失。", "Editor resources are missing."))</p>", baseURL: nil)
         }
         return view
+    }
+
+    /// Chat/notes send publishes WorkspaceStore and remasures every markdown WKWebView.
+    /// Accept the SwiftUI proposal so AppKit never walks WebKit Auto Layout fittingSize
+    /// (cpu_resource + sample 2026-08-01: PlatformView.sizeThatFits freeze on send).
+    func sizeThatFits(
+        _ proposal: ProposedViewSize,
+        nsView: WKWebView,
+        context: Context
+    ) -> CGSize? {
+        let fallback = nsView.bounds.size
+        let width = proposal.width ?? (fallback.width > 1 ? fallback.width : 1)
+        let height = proposal.height ?? (fallback.height > 1 ? fallback.height : 1)
+        return CGSize(width: max(width, 1), height: max(height, 1))
     }
 
     func updateNSView(_ view: WKWebView, context: Context) {

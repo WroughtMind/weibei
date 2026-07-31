@@ -1774,8 +1774,9 @@ private func verifyAgentChatMarkdownSourceContract() {
         "finalized Agent Markdown classifier lost Setext or general HTML-block routing checks"
     )
     expect(
-        chat.contains("layoutWidthKey: exactLayoutWidthKey")
-            && chat.contains("max(Int(layoutWidth.rounded()), 0)")
+        chat.contains("layoutWidthKey: layoutWidthBucket")
+            && chat.contains("AgentFinalizedMarkdownHeightCache.widthBucket(layoutWidth)")
+            && chat.contains("guard previousBucket != nextBucket else { return }")
             && !chat.contains(".id(\"\\(messageID?.uuidString ?? \"msg\")-\\(widthBucket)\")"),
         "finalized Agent Markdown width changes must remeasure without rebuilding WKWebView"
     )
@@ -1783,7 +1784,7 @@ private func verifyAgentChatMarkdownSourceContract() {
         chat.contains("onMeasuredHeight(measuredHeight)")
             && chat.contains("let nextFrameHeight = max(measuredHeight, Self.compactPreviewLoadingHeight)")
             && chat.contains("guard height.isFinite, height > 0 else { return }")
-            && chat.contains("nextFrameHeight < contentHeight + 2")
+            && chat.contains("abs(contentHeight - nextFrameHeight) < 2")
             && !chat.contains("if freezeHeightAfterMeasure, heightFrozen { return }"),
         "real short-block measurement must be independent from the 44pt minimum frame"
     )

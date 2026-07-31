@@ -163,62 +163,89 @@ struct ReaderView: View {
     @State private var htmlContentRailActiveID: String?
     @State private var htmlContentRailTarget: WebReaderContentRailTarget?
     @State private var pendingHTMLLocationCommit: Task<Void, Never>?
+    @State private var pendingHTMLContentRailActiveCommit: Task<Void, Never>?
     @State private var pendingPDFLocationCommit: Task<Void, Never>?
+    /// Live pane size from a background probe. Zero until first real measurement.
+    @State private var measuredPaneSize: CGSize = .zero
 
     var body: some View {
-        GeometryReader { geometry in
-            let railOnly = ContentRailMetrics.isRailOnly(
-                availableWidth: geometry.size.width,
-                allowed: supportsContentRail && !isImmersive
-            )
-            ZStack(alignment: .bottomTrailing) {
-                VStack(spacing: 0) {
-                    readerBody
-                }
-                .opacity(railOnly ? 0 : 1)
-                .allowsHitTesting(!railOnly)
-
-                if !railOnly, store.selectedMaterialItem?.kind == .pdf {
-                    pdfFloatingControls
-                        .padding(.trailing, isImmersive ? 18 : 10)
-                        .padding(.bottom, isImmersive ? 18 : 12)
-                        .transition(WeiBeiTransition.floating)
-                }
-
-                if !railOnly, pdfHasSelectableText == false {
-                    pdfTextLayerNotice
-                        .padding(.leading, isImmersive ? 18 : 14)
-                        .padding(.bottom, isImmersive ? 18 : 14)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
-                        .transition(WeiBeiTransition.floating)
-                }
+        // Hang-proof structure:
+        // NEVER put GeometryReader as an ancestor of WKWebView / PDFView.
+        // Hang report 2026-08-01: GeometryReaderLayout → PlatformView.sizeThatFits →
+        // Auto Layout systemLayoutSizeFittingSize blocked the main thread for ~30s when
+        // global chat publish refreshed the open HTML reader. Measure pane size only via
+        // background preference (sibling, not parent), matching AgentPaneView.
+        let availableWidth = max(measuredPaneSize.width, 1)
+        let availableHeight = max(measuredPaneSize.height, 1)
+        let railOnly = ContentRailMetrics.isRailOnly(
+            availableWidth: availableWidth,
+            allowed: supportsContentRail && !isImmersive
+        )
+        ZStack(alignment: .bottomTrailing) {
+            VStack(spacing: 0) {
+                readerBody
             }
-            .overlay(alignment: .leading) {
-                if supportsContentRail {
-                    contentRail(isRailOnly: railOnly, availableWidth: geometry.size.width)
-                        .frame(
-                            width: railOnly ? min(ContentRailMetrics.railOnlyWidth, geometry.size.width) : geometry.size.width,
-                            height: geometry.size.height,
-                            alignment: .leading
-                        )
-                        .zIndex(6)
-                }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .opacity(railOnly ? 0 : 1)
+            .allowsHitTesting(!railOnly)
+
+            if !railOnly, store.selectedMaterialItem?.kind == .pdf {
+                pdfFloatingControls
+                    .padding(.trailing, isImmersive ? 18 : 10)
+                    .padding(.bottom, isImmersive ? 18 : 12)
+                    .transition(WeiBeiTransition.floating)
             }
-            .overlay(alignment: .top) {
-                if !railOnly, showsFloatingTitle {
-                    // Mask switch lives only on this hover DOC tab — not pinned, not main top bar.
-                    ImmersiveHoverTitleView(
-                        mark: "DOC",
-                        title: floatingTitle,
-                        appearanceMode: store.appearanceMode,
-                        reorderRole: floatingTitleReorderRole
-                    ) {
-                        HStack(spacing: 8) {
-                            selectionAskThreadsMenu
-                            importedDocumentAdaptationControl
-                        }
+
+            if !railOnly, pdfHasSelectableText == false {
+                pdfTextLayerNotice
+                    .padding(.leading, isImmersive ? 18 : 14)
+                    .padding(.bottom, isImmersive ? 18 : 14)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
+                    .transition(WeiBeiTransition.floating)
+            }
+        }
+        .overlay(alignment: .leading) {
+            if supportsContentRail {
+                contentRail(isRailOnly: railOnly, availableWidth: availableWidth)
+                    .frame(
+                        width: railOnly ? min(ContentRailMetrics.railOnlyWidth, availableWidth) : availableWidth,
+                        height: availableHeight,
+                        alignment: .leading
+                    )
+                    .zIndex(6)
+            }
+        }
+        .overlay(alignment: .top) {
+            if !railOnly, showsFloatingTitle {
+                // Mask switch lives only on this hover DOC tab — not pinned, not main top bar.
+                ImmersiveHoverTitleView(
+                    mark: "DOC",
+                    title: floatingTitle,
+                    appearanceMode: store.appearanceMode,
+                    reorderRole: floatingTitleReorderRole
+                ) {
+                    HStack(spacing: 8) {
+                        selectionAskThreadsMenu
+                        importedDocumentAdaptationControl
                     }
                 }
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        // Width/height probe as background sibling — never parent of WKWebView/PDFView.
+        .background {
+            GeometryReader { geo in
+                Color.clear.preference(
+                    key: ReaderPaneSizeKey.self,
+                    value: geo.size
+                )
+            }
+        }
+        .onPreferenceChange(ReaderPaneSizeKey.self) { size in
+            guard size.width > 1, size.height > 1 else { return }
+            if abs(measuredPaneSize.width - size.width) > 0.5
+                || abs(measuredPaneSize.height - size.height) > 0.5 {
+                measuredPaneSize = size
             }
         }
         // Bind paper fill to the live mode so empty reader / page chrome tracks theme switches.
@@ -238,6 +265,8 @@ struct ReaderView: View {
         .onChange(of: store.selectedItemID) { _, _ in
             pendingHTMLLocationCommit?.cancel()
             pendingHTMLLocationCommit = nil
+            pendingHTMLContentRailActiveCommit?.cancel()
+            pendingHTMLContentRailActiveCommit = nil
             pendingPDFLocationCommit?.cancel()
             pendingPDFLocationCommit = nil
             pdfPageIndex = 0
@@ -454,7 +483,15 @@ struct ReaderView: View {
             id: id,
             reason: change.reason.rawValue
         )
-        if htmlContentRailActiveID != id {
+        // Jump must update the rail highlight immediately. Scroll updates are
+        // coalesced so fast section crossings do not re-enter WebReader updateNSView.
+        if change.reason == .jump {
+            if htmlContentRailActiveID != id {
+                htmlContentRailActiveID = id
+            }
+        } else if change.reason == .scroll {
+            scheduleHTMLContentRailActiveID(id)
+        } else if htmlContentRailActiveID != id {
             htmlContentRailActiveID = id
         }
         guard change.reason == .scroll || change.reason == .jump else { return }
@@ -462,6 +499,19 @@ struct ReaderView: View {
             htmlContentRailItems.first(where: { $0.id == activeID })?.title
         }
         scheduleHTMLLocationCommit(id: id, title: title, reason: change.reason)
+    }
+
+    private func scheduleHTMLContentRailActiveID(_ id: String?) {
+        guard htmlContentRailActiveID != id else { return }
+        pendingHTMLContentRailActiveCommit?.cancel()
+        pendingHTMLContentRailActiveCommit = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 120_000_000)
+            guard !Task.isCancelled else { return }
+            pendingHTMLContentRailActiveCommit = nil
+            if htmlContentRailActiveID != id {
+                htmlContentRailActiveID = id
+            }
+        }
     }
 
     private func scheduleHTMLLocationCommit(
@@ -1091,6 +1141,30 @@ private enum PDFBrowseMode: String, CaseIterable, Identifiable {
     }
 }
 
+private struct ReaderPaneSizeKey: PreferenceKey {
+    static var defaultValue: CGSize = .zero
+
+    static func reduce(value: inout CGSize, nextValue: () -> CGSize) {
+        let next = nextValue()
+        if next.width > 1, next.height > 1 {
+            value = next
+        }
+    }
+}
+
+private enum ReaderPlatformViewSizing {
+    /// Prefer the SwiftUI proposal so AppKit never walks WKWebView/PDFView Auto Layout
+    /// for intrinsic fitting size (that path froze the main thread in production hangs).
+    static func proposedReaderSize(
+        _ proposal: ProposedViewSize,
+        fallback: CGSize
+    ) -> CGSize {
+        let width = proposal.width ?? (fallback.width > 1 ? fallback.width : 1)
+        let height = proposal.height ?? (fallback.height > 1 ? fallback.height : 1)
+        return CGSize(width: max(width, 1), height: max(height, 1))
+    }
+}
+
 private struct PDFReaderRepresentable: NSViewRepresentable {
     var url: URL
     var browseMode: PDFBrowseMode
@@ -1149,6 +1223,16 @@ private struct PDFReaderRepresentable: NSViewRepresentable {
             return coordinator?.handleAskUnderlineClick(at: point, in: view) ?? false
         }
         return view
+    }
+
+    /// Accept the SwiftUI proposal instead of Auto Layout fittingSize on PDFKit.
+    /// Same hang class as HTML WKWebView: GeometryReader → PlatformView.sizeThatFits.
+    func sizeThatFits(
+        _ proposal: ProposedViewSize,
+        nsView: ReaderPDFView,
+        context: Context
+    ) -> CGSize? {
+        ReaderPlatformViewSizing.proposedReaderSize(proposal, fallback: nsView.bounds.size)
     }
 
     func updateNSView(_ view: ReaderPDFView, context: Context) {
@@ -2248,6 +2332,17 @@ struct WebReaderRepresentable: NSViewRepresentable {
         return view
     }
 
+    /// Accept the SwiftUI proposal instead of measuring WKWebView via Auto Layout.
+    /// Hang report 2026-08-01: systemLayoutSizeFittingSize on the HTML reader blocked
+    /// the main thread for ~30s after global chat published WorkspaceStore updates.
+    func sizeThatFits(
+        _ proposal: ProposedViewSize,
+        nsView: WKWebView,
+        context: Context
+    ) -> CGSize? {
+        ReaderPlatformViewSizing.proposedReaderSize(proposal, fallback: nsView.bounds.size)
+    }
+
     func updateNSView(_ view: WKWebView, context: Context) {
         context.coordinator.searchQuery = searchQuery
         context.coordinator.onAppShortcut = onAppShortcut
@@ -2340,11 +2435,25 @@ struct WebReaderRepresentable: NSViewRepresentable {
     (() => {
       let frame = 0;
       let lastPayload = { text: "", x: null, y: null };
+      // Scroll must not stream selection → WorkspaceStore. Sample 2026-08-01:
+      // selectionchange during HTML scroll published selectionAnchor and froze
+      // the agent pane in SelectionOverlay / LazyVStack remasure.
+      let scrollQuietUntil = 0;
+      let scrollQuietTimer = 0;
+
+      function markScrollQuiet() {
+        scrollQuietUntil = Date.now() + 220;
+        window.clearTimeout(scrollQuietTimer);
+        scrollQuietTimer = window.setTimeout(() => {
+          scrollQuietUntil = 0;
+        }, 240);
+      }
 
       function reportSelection() {
         window.cancelAnimationFrame(frame);
         frame = window.requestAnimationFrame(() => {
           if (window.weiBeiSuppressSelectionReport) return;
+          if (Date.now() < scrollQuietUntil) return;
           const selection = window.getSelection();
           const text = selection ? selection.toString().trim() : "";
           const range = selection && selection.rangeCount ? selection.getRangeAt(0) : null;
@@ -2377,6 +2486,9 @@ struct WebReaderRepresentable: NSViewRepresentable {
       document.addEventListener("mouseup", reportSelection);
       document.addEventListener("keyup", reportSelection);
       document.addEventListener("touchend", reportSelection);
+      window.addEventListener("wheel", markScrollQuiet, { passive: true });
+      window.addEventListener("scroll", markScrollQuiet, { passive: true });
+      window.addEventListener("touchmove", markScrollQuiet, { passive: true });
 
       // Underline spans for selection-ask history; click reopens floating Q&A.
       window.WeiBeiSelectionAskMarks = {

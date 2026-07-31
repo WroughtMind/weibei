@@ -515,9 +515,44 @@ final class WorkspaceStore: ObservableObject {
         }
     }
     @Published var showReaderSearch = false
-    @Published var readerLocationID: String?
-    @Published var readerLocationTitle: String?
-    @Published var readerPageIndex = 0
+    /// Reader viewport (HTML section / PDF page). Scroll commits must not
+    /// auto-publish — every EnvironmentObject consumer (agent chat WKWebView
+    /// rows) would remasure and freeze the main thread (sample 2026-08-01).
+    private var suppressReaderViewportPublish = false
+    private var readerLocationIDValue: String?
+    private var readerLocationTitleValue: String?
+    private var readerPageIndexValue = 0
+    var readerLocationID: String? {
+        get { readerLocationIDValue }
+        set {
+            guard readerLocationIDValue != newValue else { return }
+            if !suppressReaderViewportPublish {
+                objectWillChange.send()
+            }
+            readerLocationIDValue = newValue
+        }
+    }
+    var readerLocationTitle: String? {
+        get { readerLocationTitleValue }
+        set {
+            guard readerLocationTitleValue != newValue else { return }
+            if !suppressReaderViewportPublish {
+                objectWillChange.send()
+            }
+            readerLocationTitleValue = newValue
+        }
+    }
+    var readerPageIndex: Int {
+        get { readerPageIndexValue }
+        set {
+            let next = max(newValue, 0)
+            guard readerPageIndexValue != next else { return }
+            if !suppressReaderViewportPublish {
+                objectWillChange.send()
+            }
+            readerPageIndexValue = next
+        }
+    }
     @Published var readerTargetPageIndex: Int?
     @Published private(set) var readerTargetPageRequestID = UUID()
     @Published private(set) var readerTargetPageRecordsLocation = false
@@ -548,7 +583,21 @@ final class WorkspaceStore: ObservableObject {
     @Published var pinnedFloatingAgent = false
     @Published var selectionContext: SelectionContext?
     @Published var selectionAttachments: [SelectionContext] = []
-    @Published var selectionAnchor: CGPoint?
+    /// Selection capsule position. Anchor-only drag/scroll updates must not
+    /// `@Published`-fanout into agent chat (SelectionOverlay remasure freeze).
+    private var selectionAnchorValue: CGPoint?
+    private var suppressSelectionAnchorPublish = false
+    private var lastSelectionAnchorPublishAt: CFAbsoluteTime = 0
+    var selectionAnchor: CGPoint? {
+        get { selectionAnchorValue }
+        set {
+            guard !Self.anchorsApproximatelyEqual(selectionAnchorValue, newValue) else { return }
+            if !suppressSelectionAnchorPublish {
+                objectWillChange.send()
+            }
+            selectionAnchorValue = newValue
+        }
+    }
     /// Durable selection→chat threads (underline marks + reopen floating Q&A).
     @Published var selectionAskThreads: [SelectionAskThread] = []
     /// Thread currently shown in the floating selection agent (full answer surface).
@@ -12531,9 +12580,22 @@ final class WorkspaceStore: ObservableObject {
         }
         guard readerLocationID != nextID || readerLocationTitle != nextTitle else { return }
         PaneToggleContinuityVerifier.recordHTMLLocationCommit(reason: reason)
-        readerLocationID = nextID
-        readerLocationTitle = nextTitle
-        recordCurrentStudyLocation(incrementVisit: false)
+        // Scroll: persist silently. ReaderView already mirrors the active section in
+        // @State; publishing here rebuilds agent chat PlatformViews and freezes UI.
+        // Also skip study-progress save — successful saves assigned workspaceSaveError=nil
+        // and fan out objectWillChange into the chat LazyVStack remasure loop.
+        let publish = reason != "scroll"
+        if publish {
+            readerLocationID = nextID
+            readerLocationTitle = nextTitle
+            recordCurrentStudyLocation(incrementVisit: false)
+        } else {
+            suppressReaderViewportPublish = true
+            readerLocationID = nextID
+            readerLocationTitle = nextTitle
+            suppressReaderViewportPublish = false
+            recordCurrentStudyLocation(incrementVisit: false, schedulesSave: false)
+        }
     }
 
     private func requestReaderHTMLLocation(id: String?, title: String?) {
@@ -12560,14 +12622,23 @@ final class WorkspaceStore: ObservableObject {
         readerTargetPageRecordsLocation = false
     }
 
-    func updateReaderPageIndex(_ index: Int) {
+    func updateReaderPageIndex(_ index: Int, publishesUI: Bool = false) {
         let nextIndex = max(index, 0)
         guard readerPageIndex != nextIndex else { return }
-        readerPageIndex = nextIndex
-        recordCurrentStudyLocation(incrementVisit: false)
+        // Continuous PDF scroll uses publishesUI=false so agent chat WKWebViews
+        // are not remasured on every page crossing (same hang class as HTML scroll).
+        if publishesUI {
+            readerPageIndex = nextIndex
+            recordCurrentStudyLocation(incrementVisit: false)
+        } else {
+            suppressReaderViewportPublish = true
+            readerPageIndex = nextIndex
+            suppressReaderViewportPublish = false
+            recordCurrentStudyLocation(incrementVisit: false, schedulesSave: false)
+        }
     }
 
-    private func recordCurrentStudyLocation(incrementVisit: Bool) {
+    private func recordCurrentStudyLocation(incrementVisit: Bool, schedulesSave: Bool = true) {
         guard activeCourseID.map({
             activeCourseRemovalTokens[$0] == nil
         }) ?? true,
@@ -12615,6 +12686,7 @@ final class WorkspaceStore: ObservableObject {
                     = location
             }
         }
+        guard schedulesSave else { return }
         studyProgressSaveTask?.cancel()
         let delay = studyProgressSaveDelay
         studyProgressSaveTask = Task { @MainActor [weak self] in
@@ -14728,7 +14800,7 @@ final class WorkspaceStore: ObservableObject {
 
         // Drag stream: same text, only anchor moves — no spring, no new SelectionContext id.
         if contentMatches {
-            let anchorUnchanged = Self.anchorsApproximatelyEqual(selectionAnchor, anchor)
+            let anchorUnchanged = Self.anchorsApproximatelyEqual(selectionAnchor, anchor, epsilon: 8)
             let surfaceAlreadyCorrect = shouldRevealSelectionPrompt
                 ? agentSurface == .selectionFloat
                 : agentSurface != .selectionFloat
@@ -14736,7 +14808,18 @@ final class WorkspaceStore: ObservableObject {
                 return
             }
             if !anchorUnchanged {
+                // Silent write first so we never assign @Published every pixel.
+                // Throttle a real publish so the floating capsule can track ~20fps
+                // without remasuring agent chat SelectionOverlay every frame.
+                suppressSelectionAnchorPublish = true
                 selectionAnchor = anchor
+                suppressSelectionAnchorPublish = false
+                let now = CFAbsoluteTimeGetCurrent()
+                if agentSurface == .selectionFloat,
+                   now - lastSelectionAnchorPublishAt >= 0.05 {
+                    lastSelectionAnchorPublishAt = now
+                    objectWillChange.send()
+                }
             }
             // Never clear pin while the user locked the float (or mid selection-answer).
             cancelPendingSelectionAttachment()
@@ -15436,10 +15519,37 @@ final class WorkspaceStore: ObservableObject {
         return changed
     }
 
+    /// Current reader/note focus for this Chat. Global Chat may use any open material
+    /// (including legacyExternal). Course Chat only auto-includes items that belong
+    /// to that course. This is independent of project-file grants used by course tools.
+    private func agentFocusMaterialItem(
+        for target: AgentConversationTarget
+    ) -> StudyItem? {
+        guard let item = selectedMaterialItem else { return nil }
+        if let courseID = target.courseID {
+            let courseItemIDs = Set(courseItems(in: courseID).map(\.id))
+            guard courseItemIDs.contains(item.id) else { return nil }
+        }
+        return item
+    }
+
+    private func agentFocusNoteItem(
+        for target: AgentConversationTarget
+    ) -> StudyItem? {
+        guard let item = activeNoteItem, item.isNotebookNote else { return nil }
+        if let courseID = target.courseID {
+            let courseItemIDs = Set(courseItems(in: courseID).map(\.id))
+            guard courseItemIDs.contains(item.id) else { return nil }
+        }
+        return item
+    }
+
     private func makeCourseContext(
         query: String,
         courseID: UUID?,
-        access: AgentProjectAccessSnapshot
+        access: AgentProjectAccessSnapshot,
+        focusMaterialItem: StudyItem? = nil,
+        focusNoteItem: StudyItem? = nil
     ) async throws -> CourseContextBuildResult {
         let candidates = access.sources.compactMap { source -> CourseIndexCandidate? in
             guard source.grants.contains(where: Self.agentFileGrantIsValid) else {
@@ -15461,13 +15571,17 @@ final class WorkspaceStore: ObservableObject {
             scopedItemIDs.contains($0.noteItemID)
                 && scopedItemIDs.contains($0.sourceItemID)
         }
-        let currentMaterialItem = selectedMaterialItem.flatMap {
-            scopedItemIDs.contains($0.id) ? $0 : nil
-        }
+        // Focus package is independent of tool grants so global Chat still sees
+        // the open reader document (e.g. legacyExternal HTML on the Desktop).
+        let currentMaterialItem = focusMaterialItem
         let currentMaterialID = currentMaterialItem?.id
-        let currentNoteID = activeNoteItem.flatMap {
-            $0.isNotebookNote && scopedItemIDs.contains($0.id) ? $0.id : nil
-        }
+        let currentMaterialTitle = currentMaterialItem.map(displayTitle)
+        let currentMaterialSubtitle = currentMaterialItem.map(displaySubtitle(for:))
+        let currentNoteItem = focusNoteItem
+        let currentNoteID = currentNoteItem?.id
+        let currentNoteTitle = currentNoteItem.map(displayTitle)
+        let currentNoteSubtitle = currentNoteItem.map(displaySubtitle(for:))
+        let currentNoteMemoryText = currentNoteItem.flatMap { loadedAgentNoteText(for: $0) }
         let searchIndex = courseDocumentSearchIndex
         let indexingTask = Task.detached(priority: .userInitiated) {
             let indexedByItemID = searchIndex.lookup(
@@ -15479,20 +15593,18 @@ final class WorkspaceStore: ObservableObject {
             let selectedMaterialIndex = currentMaterialItem.map {
                 searchIndex.read(item: $0, query: "", location: nil)
             }
-            let selectedNoteIndex = currentNoteID
-                .flatMap { noteID in
-                    candidates.first { $0.item.id == noteID }
+            let selectedNoteIndex: CourseDocumentIndexResult? = {
+                guard let note = currentNoteItem else { return nil }
+                if currentNoteMemoryText != nil { return nil }
+                if let candidate = candidates.first(where: { $0.item.id == note.id }),
+                   candidate.memoryText != nil {
+                    return nil
                 }
-                .flatMap { candidate -> CourseDocumentIndexResult? in
-                    guard candidate.memoryText == nil else { return nil }
-                    return searchIndex.read(
-                        item: candidate.item,
-                        query: "",
-                        location: nil
-                    )
-                }
+                return searchIndex.read(item: note, query: "", location: nil)
+            }()
             var sources: [CourseKnowledgeSource] = []
-            sources.reserveCapacity(candidates.count)
+            sources.reserveCapacity(candidates.count + 2)
+            var includedIDs = Set<String>()
             for candidate in candidates {
                 try Task.checkCancellation()
                 guard candidate.grants.contains(where: Self.agentFileGrantIsValid) else {
@@ -15522,6 +15634,39 @@ final class WorkspaceStore: ObservableObject {
                         isTruncated: isTruncated
                     )
                 )
+                includedIDs.insert(candidate.item.id)
+            }
+            // Ensure open focus appears in catalog/currentItems even without grants.
+            if let material = currentMaterialItem, !includedIDs.contains(material.id) {
+                let text = selectedMaterialIndex?.text ?? ""
+                sources.append(
+                    CourseKnowledgeSource(
+                        id: material.id,
+                        title: currentMaterialTitle ?? material.title,
+                        subtitle: currentMaterialSubtitle ?? material.subtitle,
+                        kind: material.kind.rawValue,
+                        role: "material",
+                        text: text,
+                        isTruncated: selectedMaterialIndex?.isTruncated ?? false
+                    )
+                )
+                includedIDs.insert(material.id)
+            }
+            if let note = currentNoteItem, !includedIDs.contains(note.id) {
+                let text = currentNoteMemoryText
+                    ?? selectedNoteIndex?.text
+                    ?? ""
+                sources.append(
+                    CourseKnowledgeSource(
+                        id: note.id,
+                        title: currentNoteTitle ?? note.title,
+                        subtitle: currentNoteSubtitle ?? note.subtitle,
+                        kind: note.kind.rawValue,
+                        role: "note",
+                        text: text,
+                        isTruncated: selectedNoteIndex?.isTruncated ?? false
+                    )
+                )
             }
             let selectedSourceText = currentMaterialID.flatMap { id in
                 sources.first(where: { $0.id == id })?.text
@@ -15536,6 +15681,19 @@ final class WorkspaceStore: ObservableObject {
                 }
                 return nil
             }()
+            let resolvedSelectedNoteText: String? = {
+                if let text = currentNoteMemoryText,
+                   !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    return text
+                }
+                if let text = selectedNoteIndex?.text,
+                   !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    return text
+                }
+                return currentNoteID.flatMap { id in
+                    sources.first(where: { $0.id == id })?.text
+                }
+            }()
             return CourseContextBuildResult(
                 context: CourseKnowledgeIndex.build(
                     title: title,
@@ -15548,9 +15706,7 @@ final class WorkspaceStore: ObservableObject {
                 selectedMaterialText: resolvedSelectedText,
                 selectedMaterialIsTruncated: selectedMaterialIndex?.isTruncated
                     ?? ((selectedSourceText?.count ?? 0) > 24_000),
-                selectedNoteText: currentNoteID.flatMap { id in
-                    sources.first(where: { $0.id == id })?.text
-                }
+                selectedNoteText: resolvedSelectedNoteText
             )
         }
         return try await withTaskCancellationHandler {
@@ -21332,7 +21488,13 @@ final class WorkspaceStore: ObservableObject {
         }
         let projectAccess = makeAgentProjectAccessSnapshot(target: target)
         let allowedItemIDs = Set(projectAccess.sources.map(\.item.id))
-        let sentSelections = currentAgentSelections(allowedItemIDs: allowedItemIDs)
+        // Focus materials/notes do not require project-file grants (legacyExternal etc.).
+        let sentMaterialItem = agentFocusMaterialItem(for: target)
+        let sentNoteItem = agentFocusNoteItem(for: target)
+        let focusAllowedItemIDs = allowedItemIDs.union(
+            [sentMaterialItem?.id, sentNoteItem?.id].compactMap { $0 }
+        )
+        let sentSelections = currentAgentSelections(allowedItemIDs: focusAllowedItemIDs)
         let sentSelectionTitle = agentSelectionTitle(from: sentSelections)
         let sentSelectionText = agentSelectionText(from: sentSelections)
         let sentSelectionSources = agentSelectionSources(from: sentSelections)
@@ -21341,14 +21503,6 @@ final class WorkspaceStore: ObservableObject {
             $0.id == selectionContext?.id && $0.source == .document
         }
         let recentMessages = Array(messages.suffix(20))
-        let sentMaterialItem: StudyItem? = selectedMaterialItem.flatMap { item in
-            guard allowedItemIDs.contains(item.id) else { return nil }
-            return item
-        }
-        let sentNoteItem: StudyItem? = activeNoteItem.flatMap { item in
-            guard allowedItemIDs.contains(item.id) else { return nil }
-            return item
-        }
         let sourceTitle = sentMaterialItem != nil
             ? currentSourceReferenceTitle
             : sentNoteItem.map(displayTitle)
@@ -21365,6 +21519,7 @@ final class WorkspaceStore: ObservableObject {
             : agentNoteTitle
         let sentNoteText = sentNoteItem.flatMap { note in
             projectAccess.sources.first(where: { $0.item.id == note.id })?.memoryText
+                ?? loadedAgentNoteText(for: note)
         } ?? ""
         let sentNoteItemID = sentNoteItem?.id
         let sentLearningContext = makeLearningContext(target: target)
@@ -21407,7 +21562,9 @@ final class WorkspaceStore: ObservableObject {
                     chatID: target.sessionID
                 )
             }
-            guard flushPendingWorkspaceSave() else {
+            // Must not call flushPendingWorkspaceSave() here: that spins RunLoop on the
+            // MainActor while waiting for another MainActor Task, which deadlocks UI.
+            guard await flushPendingWorkspaceSaveAsync() else {
                 throw AgentConversationTargetError(
                     message: workspaceSaveError
                         ?? ui(
@@ -21434,7 +21591,7 @@ final class WorkspaceStore: ObservableObject {
             activeAgentReplyChatID = target.sessionID
             appendAgentMessage(assistantMessage)
             appendMessageToActiveSelectionAskThread(assistantMessage.id)
-            guard flushPendingWorkspaceSave() else {
+            guard await flushPendingWorkspaceSaveAsync() else {
                 throw AgentConversationTargetError(
                     message: workspaceSaveError
                         ?? ui(
@@ -21451,13 +21608,13 @@ final class WorkspaceStore: ObservableObject {
             latestAgentNoteProposal = nil
             latestAgentLearningUpdate = nil
             if !sentSelectionIDs.isEmpty {
-                withAnimation(WeiBeiMotion.panel) {
-                    cancelPendingSelectionAttachment()
-                    selectionAttachments.removeAll { sentSelectionIDs.contains($0.id) }
-                    if selectionAttachments.isEmpty {
-                        lastSelectionAttachmentDate = nil
-                        lastSelectionUpdateDate = nil
-                    }
+                // No withAnimation here: animating attachment chrome while chat
+                // PlatformViews remasure was part of the send-path main-thread freeze.
+                cancelPendingSelectionAttachment()
+                selectionAttachments.removeAll { sentSelectionIDs.contains($0.id) }
+                if selectionAttachments.isEmpty {
+                    lastSelectionAttachmentDate = nil
+                    lastSelectionUpdateDate = nil
                 }
             }
             // Keep the floating selection agent open while answering — do not dismiss it mid-stream.
@@ -21482,7 +21639,9 @@ final class WorkspaceStore: ObservableObject {
             let courseBuild = try await makeCourseContext(
                 query: courseQuery,
                 courseID: target.courseID,
-                access: projectAccess
+                access: projectAccess,
+                focusMaterialItem: sentMaterialItem,
+                focusNoteItem: sentNoteItem
             )
             guard activeAgentRequestID == requestID else { return }
             try validateAgentConversationTarget(target, mustBeActive: false)
@@ -21603,7 +21762,7 @@ final class WorkspaceStore: ObservableObject {
             }
             // The visible reply is durable before this request is considered finished.
             // A save error must not replace or hide the answer that already arrived.
-            _ = flushPendingWorkspaceSave()
+            _ = await flushPendingWorkspaceSaveAsync()
         } catch PiAgentRuntimeError.cancelled, is CancellationError {
             guard activeAgentRequestID == requestID else { return }
             if let replyMessageID {
@@ -21666,7 +21825,7 @@ final class WorkspaceStore: ObservableObject {
                     )
                 )
             }
-            _ = flushPendingWorkspaceSave()
+            _ = await flushPendingWorkspaceSaveAsync()
         }
 
     }
@@ -23575,13 +23734,26 @@ final class WorkspaceStore: ObservableObject {
             return
         }
         if !keepContext {
+            // Empty selectionchange / pointerdown spam must not re-assign @Published
+            // nils and fan out into agent chat remasure (scroll-only hang sample).
+            let alreadyClear = selectionContext == nil
+                && selectionAnchor == nil
+                && !pinnedFloatingAgent
+                && agentSurface != .selectionFloat
+            if alreadyClear {
+                cancelPendingSelectionAttachment()
+                return
+            }
             if invalidatesAgentContext, selectionContext != nil {
                 invalidateAgentContext()
             }
             cancelPendingSelectionAttachment()
             selectionContext = nil
             selectionAnchor = nil
-            floatingSelectionPrompt = ui("当前选区", "Current selection")
+            let clearedPrompt = ui("当前选区", "Current selection")
+            if floatingSelectionPrompt != clearedPrompt {
+                floatingSelectionPrompt = clearedPrompt
+            }
             pinnedFloatingAgent = false
             if agentSurface == .selectionFloat {
                 agentSurface = .hidden
@@ -23589,6 +23761,9 @@ final class WorkspaceStore: ObservableObject {
             return
         }
         guard !pinnedFloatingAgent else { return }
+        if selectionAnchor == nil, agentSurface != .selectionFloat {
+            return
+        }
         selectionAnchor = nil
         if agentSurface == .selectionFloat {
             agentSurface = .hidden
@@ -26075,7 +26250,9 @@ final class WorkspaceStore: ObservableObject {
                 )
                 courseResumePoints =
                     persisted.courseResumePoints ?? []
-                workspaceSaveError = nil
+                if workspaceSaveError != nil {
+                    workspaceSaveError = nil
+                }
                 return true
             } catch {
                 workspaceSaveError = ui(
@@ -26377,7 +26554,9 @@ final class WorkspaceStore: ObservableObject {
                 "The workspace was saved, but a portable course state exceeds 32 MB. The state in the course folder was left unchanged. Reduce course chats or pending drafts, then retry."
             )
         } else if blockedPortableCourseIDs.isEmpty {
-            workspaceSaveError = nil
+            if workspaceSaveError != nil {
+                workspaceSaveError = nil
+            }
         } else {
             workspaceSaveError = ui(
                 "有课程状态存在冲突或损坏，原文件与本机缓存均已保留；魏碑不会自动覆盖。",
@@ -26554,7 +26733,9 @@ final class WorkspaceStore: ObservableObject {
                         "The workspace was saved, but a portable course state exceeds 32 MB. The state in the course folder was left unchanged. Reduce course chats or pending drafts, then retry."
                     )
                 } else if blockedPortableCourseIDs.isEmpty {
-                    workspaceSaveError = nil
+                    if workspaceSaveError != nil {
+                        workspaceSaveError = nil
+                    }
                 } else {
                     workspaceSaveError = ui(
                         "有课程状态存在冲突或损坏，原文件与本机缓存均已保留；魏碑不会自动覆盖。",
