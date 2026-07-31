@@ -1567,6 +1567,7 @@ struct MarkdownPreviewView: View {
     @State private var command: NoteEditorCommand?
     @State private var contentHeight: CGFloat = Self.compactPreviewLoadingHeight
     @State private var heightFrozen = false
+    @State private var acceptedMeasureCount = 0
     @State private var lastLayoutWidthKey = 0
     @State private var lastChatWideTypography = false
 
@@ -1629,7 +1630,12 @@ struct MarkdownPreviewView: View {
                     return
                 }
                 contentHeight = nextFrameHeight
-                if freezeHeightAfterMeasure {
+                // Do NOT freeze on a fresh accept: KaTeX displayMode re-layout
+                // and font loading can still grow the content. Freeze happens
+                // in the jitter branch above once two consecutive measures
+                // agree (<2pt), or at the accept cap below (storm backstop).
+                acceptedMeasureCount += 1
+                if freezeHeightAfterMeasure && acceptedMeasureCount >= 6 {
                     heightFrozen = true
                 }
                 WeiBeiPerf.event(
@@ -1681,6 +1687,7 @@ struct MarkdownPreviewView: View {
         .onChange(of: markdown) { _, _ in
             guard compact && fitsContentHeight else { return }
             heightFrozen = false
+            acceptedMeasureCount = 0
             if preservesHeightAcrossMarkdownChanges { return }
             contentHeight = Self.compactPreviewLoadingHeight
             onContentHeightChange()
@@ -3343,6 +3350,17 @@ private struct AgentBubble: View {
     var isChatWideTypography = false
     var openGlobalMemory: () -> Void
     @State private var hovering = false
+    /// True only if this bubble streamed in the current session — history rows
+    /// mount straight into the finalized renderer with no handoff.
+    @State private var sawStreamingThisSession = false
+    @State private var finalizedRendererWarm = false
+
+    private var streamingHandoffActive: Bool {
+        sawStreamingThisSession
+            && !finalizedRendererWarm
+            && !(message.richAnswer?.mode == .rich && message.richAnswer?.scenes.isEmpty == false)
+            && !isFailureMessage
+    }
 
     var body: some View {
         Group {
@@ -3444,11 +3462,45 @@ private struct AgentBubble: View {
         return VStack(alignment: .leading, spacing: 8) {
             messageMetadata
 
-            if message.completionState == .generating {
-                if message.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    AgentThinkingIndicator()
-                } else {
-                    AgentStreamingResponse(text: message.text)
+            if message.completionState == .generating
+                && message.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                AgentThinkingIndicator()
+            } else if message.completionState == .generating || streamingHandoffActive {
+                // Seamless finalize: the streaming subtree keeps its identity
+                // across completion while the finalized WebView warms hidden
+                // underneath; destroying it at completion flashed the whole
+                // answer as raw text until the new WebView measured.
+                ZStack(alignment: .topLeading) {
+                    if message.completionState != .generating {
+                        if !availableSources.isEmpty {
+                            AgentMessageMarkdownText(
+                                text: message.text,
+                                rendersRichMarkdown: true,
+                                isChatWideTypography: isChatWideTypography,
+                                usesFinalizedKaTeX: true,
+                                messageID: message.id,
+                                sources: availableSources,
+                                onActivateSource: { source in
+                                    activateSource(source)
+                                },
+                                suppressesLoadingOverlay: true,
+                                onFinalizedRenderReady: { finalizedRendererWarm = true }
+                            )
+                        } else {
+                            AgentMessageMarkdownText(
+                                text: citationParse.displayText,
+                                rendersRichMarkdown: true,
+                                isChatWideTypography: isChatWideTypography,
+                                usesFinalizedKaTeX: true,
+                                messageID: message.id,
+                                suppressesLoadingOverlay: true,
+                                onFinalizedRenderReady: { finalizedRendererWarm = true }
+                            )
+                        }
+                    }
+                    AgentStreamingResponse(text: message.text, showsBrandHeader: false)
+                        .onAppear { sawStreamingThisSession = true }
+                        .allowsHitTesting(message.completionState == .generating)
                 }
             } else if let richAnswer = message.richAnswer,
                richAnswer.mode == .rich,
@@ -4767,6 +4819,12 @@ private struct AgentMessageMarkdownText: View {
     var messageID: UUID? = nil
     var sources: [AgentReplySource] = []
     var onActivateSource: (AgentReplySource) -> Void = { _ in }
+    /// Streaming handoff: caller keeps the streaming view on top, so skip the
+    /// raw-text loading overlay (it flashed the whole answer unrendered).
+    var suppressesLoadingOverlay = false
+    /// Fires once the finalized renderer can take over (real measure, native
+    /// fallback, or render failure) — the caller drops its streaming overlay.
+    var onFinalizedRenderReady: () -> Void = {}
     @State private var finalizedRendererReady = false
     @State private var finalizedRendererFailed = false
     @State private var expandedSourceURL: String?
@@ -4803,6 +4861,7 @@ private struct AgentMessageMarkdownText: View {
                 finalizedMarkdownBody
             } else {
                 nativeBody
+                    .onAppear { onFinalizedRenderReady() }
             }
         }
         .modifier(AgentMessageTextWidthModifier(fillsReadingColumn: rendersRichMarkdown || compact))
@@ -4894,11 +4953,13 @@ private struct AgentMessageMarkdownText: View {
                     onRenderFailure: {
                         finalizedRendererReady = false
                         finalizedRendererFailed = true
+                        onFinalizedRenderReady()
                     },
                     onMeasuredHeight: { height in
                         AgentFinalizedMarkdownHeightCache.store(height, for: cacheKey)
                         if !finalizedRendererReady {
                             finalizedRendererReady = true
+                            onFinalizedRenderReady()
                         }
                     }
                 )
@@ -4909,7 +4970,9 @@ private struct AgentMessageMarkdownText: View {
             }
             // Overlay only — never remove this node when ready flips, or LazyVStack
             // remasures the row and re-enters PlatformView sizeThatFits.
-            if !finalizedRendererReady {
+            // Suppressed during streaming handoff (caller overlays the live
+            // streaming view instead), except when WebKit failed outright.
+            if !finalizedRendererReady && (!suppressesLoadingOverlay || finalizedRendererFailed) {
                 nativeBody
                     .background(WeiBeiTheme.paper)
                     .allowsHitTesting(false)
@@ -5602,9 +5665,13 @@ private extension CGPath {
 private struct AgentStreamingResponse: View {
     @EnvironmentObject private var store: WorkspaceStore
     var text: String
+    /// Bubble rows already carry the WeiBei metadata line — never draw a
+    /// second brand mark inside the same bubble (user-reported duplication).
+    var showsBrandHeader = true
 
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
+            if showsBrandHeader {
             HStack(spacing: 6) {
                 Text("WeiBei")
                     .font(WeiBeiTypography.englishBrandFont(size: 9.8, weight: .semibold))
@@ -5621,6 +5688,7 @@ private struct AgentStreamingResponse: View {
                         .lineLimit(1)
                         .padding(.leading, 2)
                 }
+            }
             }
             // Completed blocks render through the real Milkdown/KaTeX pipeline as
             // they close; only the still-growing tail stays native (typewriter).
