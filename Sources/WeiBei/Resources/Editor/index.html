@@ -343,9 +343,26 @@
       line-height: 1.8;
     }
 
-    .ProseMirror::selection,
-    .ProseMirror ::selection {
+    .ProseMirror *::selection {
       background: var(--selection);
+    }
+
+    .ProseMirror .ProseMirror-safari-ime-span {
+      display: inline !important;
+      width: 0 !important;
+      height: 0 !important;
+      overflow: hidden !important;
+      font-size: 0 !important;
+      line-height: 0 !important;
+    }
+
+    .ProseMirror p:has(.ProseMirror-safari-ime-span) > br,
+    .ProseMirror h1:has(.ProseMirror-safari-ime-span) > br,
+    .ProseMirror h2:has(.ProseMirror-safari-ime-span) > br,
+    .ProseMirror h3:has(.ProseMirror-safari-ime-span) > br,
+    .ProseMirror h4:has(.ProseMirror-safari-ime-span) > br,
+    .ProseMirror pre:has(.ProseMirror-safari-ime-span) br {
+      display: none !important;
     }
 
     .ProseMirror h1,
@@ -436,7 +453,7 @@
       padding: 1px 5px;
     }
 
-    .ProseMirror img {
+    .ProseMirror img:not(.ProseMirror-separator) {
       display: block;
       max-width: 100%;
       height: auto;
@@ -449,6 +466,15 @@
     :root[data-weibei-theme="inkstone"] .ProseMirror img,
     :root[data-weibei-theme="stele"] .ProseMirror img {
       box-shadow: 0 1px 4px rgba(0, 0, 0, .38);
+    }
+
+    .ProseMirror img.ProseMirror-separator {
+      display: inline !important;
+      width: 0 !important;
+      height: 0 !important;
+      margin: 0 !important;
+      padding: 0 !important;
+      border: 0 !important;
     }
 
     .ProseMirror ul, .ProseMirror ol {
@@ -782,6 +808,7 @@
       position: relative;
       z-index: 1;
       display: block;
+      tab-size: 4;
       padding: 0;
       background: transparent;
       border: 0;
@@ -1218,13 +1245,16 @@
 
     .weibei-mermaid-block {
       opacity: .72;
+      margin-bottom: 0;
     }
 
     .weibei-mermaid-render {
-      margin: .9em 0;
+      margin: 0 0 1em;
       padding: 12px;
       background: var(--paper-raised);
       border: 1px solid var(--line);
+      border-top: 0;
+      opacity: .72;
       overflow-x: auto;
     }
 
@@ -1271,7 +1301,7 @@
       background: rgba(255, 255, 255, .035);
     }
 
-    .weibei-slash-menu { position: absolute; z-index: 120; width: 224px; max-height: min(420px, calc(100vh - 16px)); overflow: auto; padding: 5px; color: var(--ink); background: color-mix(in srgb, var(--paper-raised) 96%, transparent); border: 1px solid var(--line); border-radius: 9px; box-shadow: 0 14px 34px rgba(35, 26, 19, .18), 0 2px 8px rgba(35, 26, 19, .10); backdrop-filter: blur(16px); }
+    .weibei-slash-menu { position: absolute; z-index: 120; width: 204px; max-height: min(420px, calc(100vh - 16px)); overflow: auto; box-sizing: border-box; padding: 5px; color: var(--ink); background: color-mix(in srgb, var(--paper-raised) 96%, transparent); border: 1px solid var(--line); border-radius: 9px; box-shadow: 0 14px 34px rgba(35, 26, 19, .18), 0 2px 8px rgba(35, 26, 19, .10); backdrop-filter: blur(16px); }
     .weibei-slash-menu[data-show="false"] { display: none; }
     .weibei-slash-section + .weibei-slash-section { margin-top: 3px; padding-top: 3px; border-top: 1px solid var(--line); }
     .weibei-slash-group { padding: 4px 8px 3px; color: var(--faint); font-size: 10px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; user-select: none; }
@@ -1280,10 +1310,15 @@
     .weibei-slash-command.is-active > .weibei-slash-command-button { color: var(--cinnabar); background: var(--cinnabar-soft); }
     .weibei-slash-empty { padding: 13px 10px; color: var(--faint); font-size: 12px; }
     .weibei-slash-error { margin: 3px 4px 5px; padding: 6px 7px; color: var(--cinnabar); background: var(--cinnabar-soft); border-radius: 5px; font-size: 11px; }
-    .weibei-slash-table-panel { position: fixed; z-index: 121; width: 178px; box-sizing: border-box; padding: 8px; color: var(--ink); background: var(--paper-raised); border: 1px solid var(--line); border-radius: 9px; box-shadow: 0 14px 34px rgba(35, 26, 19, .18); }
-    .weibei-slash-stepper { display: flex; align-items: center; justify-content: flex-end; gap: 6px; min-height: 34px; padding: 0 6px; color: var(--muted); font-size: 12px; border-radius: 6px; }
+    .weibei-slash-table-panel { position: fixed; z-index: 121; width: 164px; box-sizing: border-box; padding: 8px; color: var(--ink); background: var(--paper-raised); border: 1px solid var(--line); border-radius: 9px; box-shadow: 0 14px 34px rgba(35, 26, 19, .18); }
+    .weibei-slash-stepper { display: grid; grid-template-columns: minmax(24px, 1fr) 28px 38px 28px; align-items: center; gap: 4px; width: 100%; min-height: 34px; box-sizing: border-box; padding: 0 4px; color: var(--muted); font-size: 12px; border-radius: 6px; }
     .weibei-slash-stepper.is-focused { background: var(--cinnabar-soft); }
+    .weibei-slash-stepper-label { min-width: 0; }
     .weibei-slash-stepper button, .weibei-slash-table-insert { color: var(--muted); background: transparent; border: 1px solid var(--line); border-radius: 4px; }
+    .weibei-slash-stepper button { width: 28px; height: 27px; padding: 0; }
+    .weibei-slash-stepper-input { width: 38px; height: 27px; box-sizing: border-box; padding: 0 2px; color: var(--ink); background: rgba(255, 255, 255, .18); border: 1px solid var(--line); border-radius: 4px; font: inherit; text-align: center; outline: none; appearance: textfield; }
+    .weibei-slash-stepper-input:focus { border-color: var(--cinnabar-line); background: var(--paper-raised); }
+    .weibei-slash-stepper-input::-webkit-inner-spin-button, .weibei-slash-stepper-input::-webkit-outer-spin-button { margin: 0; -webkit-appearance: none; }
     .weibei-slash-table-insert { width: 100%; margin-top: 7px; padding: 6px; color: var(--ink); }
 
     .ProseMirror-focused {

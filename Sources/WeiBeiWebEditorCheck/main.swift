@@ -132,6 +132,7 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
     private var activatedWikiTitle: String?
     private var attachmentRequests = 0
     private var imagePickerRequests = 0
+    private var markdownChanges: [String] = []
 
     override init() {
         let configuration = WKWebViewConfiguration()
@@ -184,6 +185,10 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
             attachmentRequests += 1
         case "imagePickerRequested":
             imagePickerRequests += 1
+        case "markdownChanged":
+            if let markdown = (message.body as? [String: Any])?["markdown"] as? String {
+                markdownChanges.append(markdown)
+            }
         default:
             break
         }
@@ -1424,14 +1429,123 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
           open('/'); window.WeiBeiEditor.pressKeyForCheck('ArrowDown'); state = window.WeiBeiEditor.slashStateForCheck(); if (state.activeDescendant !== 'weibei-slash-command-heading2' || !state.announcement.includes('二级标题')) throw new Error('accessibility did not update: ' + JSON.stringify(state));
           const menu = document.querySelector('.weibei-slash-menu'); menu.style.maxHeight = '90px'; menu.style.scrollBehavior = 'auto'; open('/'); for (let index = 0; index < 12; index += 1) window.WeiBeiEditor.pressKeyForCheck('ArrowDown'); if (menu.scrollTop <= 0) throw new Error('arrow navigation did not scroll the slash menu'); menu.style.maxHeight = '';
           window.WeiBeiEditor.pressKeyForCheck('Escape'); if (!window.WeiBeiEditor.getMarkdown().includes('/')) throw new Error('escape removed slash text');
-          open('/table'); window.WeiBeiEditor.executeSlashCommandForCheck('table');
+          open('/h1'); window.WeiBeiEditor.executeSlashCommandForCheck('heading1'); window.WeiBeiEditor.typeTextForCheck('一级标题'); window.WeiBeiEditor.pressKeyForCheck('Enter'); window.WeiBeiEditor.typeTextForCheck('/h2'); window.WeiBeiEditor.openSlashMenuForCheck(); window.WeiBeiEditor.executeSlashCommandForCheck('heading2'); window.WeiBeiEditor.typeTextForCheck('二级标题'); window.WeiBeiEditor.pressKeyForCheck('Enter'); window.WeiBeiEditor.typeTextForCheck('/'); window.WeiBeiEditor.openSlashMenuForCheck();
+          const headingMarkdown = window.WeiBeiEditor.getMarkdown(); const editorSelection = window.WeiBeiEditor.selectionForCheck(); const domSelection = window.getSelection(); const rootSelectionBackground = getComputedStyle(document.querySelector('.ProseMirror'), '::selection').backgroundColor;
+          if (headingMarkdown !== '# 一级标题\\n\\n## 二级标题\\n\\n/\\n' || editorSelection.from !== editorSelection.to || !domSelection?.isCollapsed || !['rgba(0, 0, 0, 0)', 'transparent'].includes(rootSelectionBackground)) throw new Error('heading typing created blank lines or a root selection fill: ' + JSON.stringify({ headingMarkdown, editorSelection, domSelectionCollapsed: domSelection?.isCollapsed, rootSelectionBackground }));
+          window.WeiBeiEditor.setDocumentID('slash-table-menu'); open('/table');
+          const tableButton = document.querySelector('#weibei-slash-command-table .weibei-slash-command-button');
+          if (!tableButton || document.querySelector('.weibei-slash-table-panel')) throw new Error('table submenu opened without an activation');
+          tableButton.dispatchEvent(new MouseEvent('pointermove', { bubbles: true })); tableButton.click();
+          window.WeiBeiEditor.pressKeyForCheck('ArrowDown'); window.WeiBeiEditor.pressKeyForCheck('Tab'); state = window.WeiBeiEditor.slashStateForCheck();
+          if (state.tableOpen || document.querySelector('.weibei-slash-table-panel')) throw new Error('stationary pointer, click, ArrowDown, or Tab opened the table submenu: ' + JSON.stringify(state));
+          window.WeiBeiEditor.pressKeyForCheck('ArrowRight'); state = window.WeiBeiEditor.slashStateForCheck();
+          let tablePanel = document.querySelector('.weibei-slash-table-panel'); const tableSteppers = Array.from(tablePanel?.querySelectorAll('.weibei-slash-stepper') || []); const menuRect = menu.getBoundingClientRect(); let panelRect = tablePanel?.getBoundingClientRect();
+          if (!state.tableOpen || !tablePanel || tableSteppers.length !== 2 || !panelRect) throw new Error('ArrowRight did not open the table submenu');
+          if ((state.tableSide === 'right' && panelRect.left < menuRect.right) || (state.tableSide === 'left' && panelRect.right > menuRect.left)) throw new Error('table submenu overlaps its primary menu: ' + JSON.stringify({ side: state.tableSide, menuRect, panelRect }));
+          const rowChildren = Array.from(tableSteppers[0].children).map((element) => element.tagName); const rowInput = tableSteppers[0].querySelector('input');
+          if (rowChildren.join('|') !== 'SPAN|BUTTON|INPUT|BUTTON' || !rowInput || Math.abs(tableSteppers[0].getBoundingClientRect().width - (tablePanel.clientWidth - 16)) > 1) throw new Error('table dimension row layout invalid: ' + JSON.stringify({ rowChildren, rowWidth: tableSteppers[0].getBoundingClientRect().width, panelWidth: tablePanel.clientWidth }));
+          rowInput.value = '5'; rowInput.dispatchEvent(new Event('input', { bubbles: true })); state = window.WeiBeiEditor.slashStateForCheck(); if (state.rows !== 5) throw new Error('editable row count did not update: ' + JSON.stringify(state));
+          const originalMenuLeft = menu.style.left; menu.style.left = `${innerWidth - menu.offsetWidth - 8}px`; window.WeiBeiEditor.renderSlashMenuForCheck(); tablePanel = document.querySelector('.weibei-slash-table-panel'); panelRect = tablePanel?.getBoundingClientRect(); const rightMenuRect = menu.getBoundingClientRect();
+          if (tablePanel?.dataset.side !== 'left' || !panelRect || panelRect.right > rightMenuRect.left) throw new Error('table submenu did not flip to the left: ' + JSON.stringify({ side: tablePanel?.dataset.side, rightMenuRect, panelRect }));
+          menu.style.left = originalMenuLeft; window.WeiBeiEditor.renderSlashMenuForCheck();
+          window.WeiBeiEditor.setDocumentID('slash-table-hover'); open('/table'); const hoverButton = document.querySelector('#weibei-slash-command-table .weibei-slash-command-button'); const hoverEvent = new Event('pointermove', { bubbles: true }); Object.defineProperties(hoverEvent, { movementX: { value: 1 }, movementY: { value: 0 } }); hoverButton?.dispatchEvent(hoverEvent); state = window.WeiBeiEditor.slashStateForCheck(); if (!state.tableOpen) throw new Error('real pointer movement did not open the table submenu');
+          window.WeiBeiEditor.executeSlashCommandForCheck('table');
           return { markdown: window.WeiBeiEditor.getMarkdown(), state: window.WeiBeiEditor.slashStateForCheck() };
         })();
         """
         webView.evaluateJavaScript(script) { [weak self] value, error in
             guard let self else { return }
             guard error == nil, let result = value as? [String: Any], let markdown = result["markdown"] as? String, markdown.contains("|") else { self.fail("slash command check failed: \(String(describing: error)); \(String(describing: value))"); return }
-            self.validateSlashImageLifecycle()
+            self.validateIMECompositionBridge()
+        }
+    }
+
+    /// Verifies that transient IME snapshots never round-trip through SwiftUI.
+    private func validateIMECompositionBridge() {
+        let initialChangeCount = markdownChanges.count
+        let script = """
+        (() => {
+          window.WeiBeiEditor.setDocumentID('ime-composition'); window.WeiBeiEditor.setMarkdown('/h1'); window.WeiBeiEditor.openSlashMenuForCheck(); window.WeiBeiEditor.executeSlashCommandForCheck('heading1');
+          const root = document.querySelector('.ProseMirror'); root.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true })); window.WeiBeiEditor.typeTextForCheck('中文标题');
+          return { markdown: window.WeiBeiEditor.getMarkdown(), childCount: root.children.length };
+        })();
+        """
+        webView.evaluateJavaScript(script) { [weak self] value, error in
+            guard let self else { return }
+            guard error == nil else { self.fail("IME composition setup failed: \(error!.localizedDescription)"); return }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                guard self.markdownChanges.count == initialChangeCount else {
+                    self.fail("IME transient markdown escaped to Swift: \(self.markdownChanges.count - initialChangeCount) updates; \(String(describing: value))")
+                    return
+                }
+                self.webView.evaluateJavaScript("window.WeiBeiEditor.compositionStateForCheck()") { stateValue, stateError in
+                    guard stateError == nil,
+                          let state = stateValue as? [String: Any],
+                          state["start"] as? String == "#\n",
+                          state["composing"] as? Bool == true else {
+                        self.fail("IME composition state was not retained: \(String(describing: stateError)); \(String(describing: stateValue))")
+                        return
+                    }
+                    self.webView.evaluateJavaScript("const heading = document.querySelector('.ProseMirror h1'); for (let index = 0; index < 3; index += 1) heading.appendChild(document.createElement('br')); document.querySelector('.ProseMirror').dispatchEvent(new CompositionEvent('compositionend', { bubbles: true, data: '中文标题' }));") { _, compositionError in
+                        guard compositionError == nil else { self.fail("IME composition end failed: \(compositionError!.localizedDescription)"); return }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                        self.webView.evaluateJavaScript("({ markdown: window.WeiBeiEditor.getMarkdown(), childCount: document.querySelector('.ProseMirror').children.length, breakCount: document.querySelectorAll('.ProseMirror h1 br').length, composition: window.WeiBeiEditor.compositionStateForCheck() })") { finalValue, finalError in
+                            guard finalError == nil,
+                                  let result = finalValue as? [String: Any],
+                                  result["markdown"] as? String == "# 中文标题\n",
+                                  result["childCount"] as? Int == 1,
+                                  result["breakCount"] as? Int == 0,
+                                  self.markdownChanges.count == initialChangeCount + 1,
+                                  self.markdownChanges.last == "# 中文标题\n" else {
+                                self.fail("IME final markdown was not published exactly once: \(String(describing: finalError)); \(String(describing: finalValue)); changes=\(self.markdownChanges.count - initialChangeCount)")
+                                return
+                            }
+                            self.validateIMEQuoteComposition()
+                        }
+                    }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Verifies that IME submission removes WebKit line-break artifacts inside a new quote.
+    private func validateIMEQuoteComposition() {
+        let initialChangeCount = markdownChanges.count
+        let setupScript = """
+        (() => {
+          window.WeiBeiEditor.setDocumentID('ime-quote'); window.WeiBeiEditor.setMarkdown('/quote'); window.WeiBeiEditor.openSlashMenuForCheck(); window.WeiBeiEditor.executeSlashCommandForCheck('quote');
+          const root = document.querySelector('.ProseMirror'); window.WeiBeiIMEQuoteInitialHeight = document.querySelector('.ProseMirror blockquote').getBoundingClientRect().height; root.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true })); window.WeiBeiEditor.typeTextForCheck('引用内容');
+          return window.WeiBeiEditor.getMarkdown();
+        })();
+        """
+        webView.evaluateJavaScript(setupScript) { [weak self] value, error in
+            guard let self else { return }
+            guard error == nil else { self.fail("IME quote setup failed: \(error!.localizedDescription)"); return }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                guard self.markdownChanges.count == initialChangeCount else {
+                    self.fail("IME quote transient markdown escaped to Swift: \(self.markdownChanges.count - initialChangeCount) updates; \(String(describing: value))")
+                    return
+                }
+                let completeScript = "const quote = document.querySelector('.ProseMirror blockquote'); const paragraph = quote.querySelector('p'); const marker = paragraph.querySelector('.ProseMirror-safari-ime-span'); if (!marker) throw new Error('missing Safari IME composition marker'); const beforeBreakHeight = quote.getBoundingClientRect().height; for (let index = 0; index < 3; index += 1) paragraph.appendChild(document.createElement('br')); const composingHeight = quote.getBoundingClientRect().height; if (composingHeight > window.WeiBeiIMEQuoteInitialHeight + 1) throw new Error('IME line breaks changed quote height: ' + window.WeiBeiIMEQuoteInitialHeight + ' -> ' + beforeBreakHeight + ' -> ' + composingHeight + '; html=' + paragraph.innerHTML + '; displays=' + Array.from(paragraph.querySelectorAll('br')).map((node) => getComputedStyle(node).display).join(',')); document.querySelector('.ProseMirror').dispatchEvent(new CompositionEvent('compositionend', { bubbles: true, data: '引用内容' }));"
+                self.webView.evaluateJavaScript(completeScript) { _, completionError in
+                    guard completionError == nil else { self.fail("IME quote completion failed: \(String(describing: completionError))"); return }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                        self.webView.evaluateJavaScript("({ markdown: window.WeiBeiEditor.getMarkdown(), breakCount: document.querySelectorAll('.ProseMirror blockquote p br').length })") { finalValue, finalError in
+                            guard finalError == nil,
+                                  let result = finalValue as? [String: Any],
+                                  result["markdown"] as? String == "> 引用内容\n",
+                                  result["breakCount"] as? Int == 0,
+                                  self.markdownChanges.count == initialChangeCount + 1,
+                                  self.markdownChanges.last == "> 引用内容\n" else {
+                                self.fail("IME quote line breaks were not normalized: \(String(describing: finalError)); \(String(describing: finalValue)); changes=\(self.markdownChanges.count - initialChangeCount)")
+                                return
+                            }
+                            self.validateSlashImageLifecycle()
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -1459,7 +1573,7 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
         (() => {
           window.WeiBeiEditor.setDocumentID('slash-code-typing'); window.WeiBeiEditor.setMarkdown('/code'); window.WeiBeiEditor.openSlashMenuForCheck(); window.WeiBeiEditor.executeSlashCommandForCheck('code');
           const pre = document.querySelector('.ProseMirror pre'); const input = pre?.querySelector('.weibei-code-language-input'); const code = pre?.querySelector('code'); const initialHeight = pre?.getBoundingClientRect().height;
-          if (!pre || !input || !code || input.parentElement !== pre || code.contains(input)) throw new Error('code NodeView shell is invalid');
+          if (!pre || !input || !code || input.parentElement !== pre || code.contains(input) || getComputedStyle(code).tabSize !== '4') throw new Error('code NodeView shell or tab size is invalid');
           let previous = window.WeiBeiEditor.selectionForCheck().from;
           for (const character of ['a', 'b', 'c']) {
             if (!window.WeiBeiEditor.typeTextForCheck(character)) throw new Error('cannot type code character');
@@ -1470,7 +1584,18 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
           input.value = 'rust'; input.dispatchEvent(new Event('change', { bubbles: true }));
           if (!window.WeiBeiEditor.getMarkdown().includes('```rust\\nabc\\n```')) throw new Error('code language did not update through NodeView');
           window.WeiBeiEditor.undoForCheck(); if (window.WeiBeiEditor.getMarkdown().includes('```rust')) throw new Error('undo did not revert code language');
-          window.WeiBeiEditor.setMarkdown('```mermaid\\ngraph TD\\n```'); if (!window.WeiBeiEditor.typeTextForCheck('x') || !window.WeiBeiEditor.getMarkdown().includes('graph TDx')) throw new Error('Mermaid NodeView did not accept text');
+          window.WeiBeiEditor.setDocumentID('code-tab'); window.WeiBeiEditor.setMarkdown('```swift\\nlet value =\\n```\\n\\nafter'); window.WeiBeiEditor.selectFirstCodeBlockEndForCheck(); const editorElement = document.querySelector('.ProseMirror'); if (editorElement?.getAttribute('autocapitalize') !== 'none') throw new Error('code block did not disable autocapitalize'); window.WeiBeiEditor.pressKeyForCheck('Tab'); window.WeiBeiEditor.typeTextForCheck('1'); const tabMarkdown = window.WeiBeiEditor.getMarkdown(); if (!tabMarkdown.includes('let value =\\t1') || document.activeElement !== editorElement) throw new Error('Tab did not insert code indentation: ' + JSON.stringify({ tabMarkdown, activeElement: document.activeElement?.className || document.activeElement?.tagName })); window.WeiBeiEditor.selectDocumentEndForCheck(); if (editorElement?.getAttribute('autocapitalize') === 'none') throw new Error('autocapitalize remained disabled outside code block');
+          window.WeiBeiEditor.setDocumentID('slash-mermaid-default'); window.WeiBeiEditor.setMarkdown('/mermaid'); window.WeiBeiEditor.openSlashMenuForCheck(); const mermaidButton = document.querySelector('#weibei-slash-command-mermaid .weibei-slash-command-button'); mermaidButton?.focus(); mermaidButton?.click();
+          const mermaidSource = 'graph TD\\n\tA --> B'; const mermaidSelection = window.WeiBeiEditor.selectionForCheck(); const mermaidMarkdown = window.WeiBeiEditor.getMarkdown();
+          if (mermaidMarkdown !== '```mermaid\\n' + mermaidSource + '\\n```\\n' || mermaidSelection.parent !== 'code_block' || mermaidSelection.parentOffset !== mermaidSource.length || document.activeElement !== document.querySelector('.ProseMirror')) throw new Error('Mermaid slash default or initial focus invalid: ' + JSON.stringify({ mermaidMarkdown, mermaidSelection, activeElement: document.activeElement?.className || document.activeElement?.tagName }));
+          const defaultMermaidPre = document.querySelector('.weibei-mermaid-block'); const defaultMermaidCode = defaultMermaidPre?.querySelector('code'); const defaultMermaidPreview = document.querySelector('.weibei-mermaid-render'); const initialMermaidSourceHeight = defaultMermaidCode?.getBoundingClientRect().height || 0; if (!defaultMermaidPre || !defaultMermaidCode || !defaultMermaidPreview || defaultMermaidPre.contains(defaultMermaidPreview) || defaultMermaidPreview.parentElement !== editorElement) throw new Error('Mermaid preview remained inside editable source');
+          window.WeiBeiEditor.typeTextForCheck('\\n'); const firstEnterHeight = defaultMermaidCode.getBoundingClientRect().height; const firstEnterSelection = window.WeiBeiEditor.selectionForCheck(); if (defaultMermaidCode.textContent !== mermaidSource + '\\n' || firstEnterSelection.parentOffset !== mermaidSource.length + 1 || firstEnterHeight <= initialMermaidSourceHeight || !defaultMermaidCode.querySelector('br.ProseMirror-trailingBreak') || document.querySelector('.weibei-mermaid-render') !== defaultMermaidPreview) throw new Error('first Mermaid Enter was not immediately visible: ' + JSON.stringify({ source: defaultMermaidCode.textContent, firstEnterSelection, initialMermaidSourceHeight, firstEnterHeight }));
+          window.WeiBeiEditor.typeTextForCheck('\\n'); const secondEnterHeight = defaultMermaidCode.getBoundingClientRect().height; if (defaultMermaidCode.textContent !== mermaidSource + '\\n\\n' || secondEnterHeight <= firstEnterHeight) throw new Error('second Mermaid Enter did not add exactly the next source line'); window.WeiBeiEditor.pressKeyForCheck('Tab'); const tabbedMermaidHeight = defaultMermaidCode.getBoundingClientRect().height; const tabbedMermaidMarkdown = window.WeiBeiEditor.getMarkdown(); if (defaultMermaidCode.textContent !== mermaidSource + '\\n\\n\\t' || tabbedMermaidHeight !== secondEnterHeight || tabbedMermaidMarkdown !== '```mermaid\\n' + mermaidSource + '\\n\\n\\t\\n```\\n' || document.querySelector('.weibei-mermaid-render') !== defaultMermaidPreview) throw new Error('Mermaid Tab revealed deferred blank lines: ' + JSON.stringify({ source: defaultMermaidCode.textContent, tabbedMermaidMarkdown, firstEnterHeight, secondEnterHeight, tabbedMermaidHeight }));
+          window.WeiBeiEditor.setMarkdown('```mermaid\\ngraph TD\\n```\\n\\nafter'); window.WeiBeiEditor.selectFirstCodeBlockEndForCheck(); const previewBeforeTyping = document.querySelector('.weibei-mermaid-render'); if (!window.WeiBeiEditor.typeTextForCheck('x') || !window.WeiBeiEditor.getMarkdown().includes('graph TDx')) throw new Error('Mermaid NodeView did not accept text');
+          const previewDuringTyping = document.querySelector('.weibei-mermaid-render'); if (!previewBeforeTyping || previewDuringTyping !== previewBeforeTyping) throw new Error('Mermaid preview rerendered while source retained focus');
+          document.querySelector('.weibei-code-language-input')?.focus(); const previewAfterBlur = document.querySelector('.weibei-mermaid-render'); if (!previewAfterBlur || previewAfterBlur === previewDuringTyping) throw new Error('Mermaid preview did not rerender after source focus left');
+          if (!window.WeiBeiEditor.typeTextForCheck('y')) throw new Error('Mermaid source could not regain focus'); const previewDuringSecondEdit = document.querySelector('.weibei-mermaid-render'); if (previewDuringSecondEdit !== previewAfterBlur) throw new Error('Mermaid preview rerendered during the second edit');
+          window.WeiBeiEditor.selectDocumentEndForCheck(); const previewAfterBlockExit = document.querySelector('.weibei-mermaid-render'); const selectionAfterBlockExit = window.WeiBeiEditor.selectionForCheck(); if (!previewAfterBlockExit || previewAfterBlockExit === previewDuringSecondEdit || selectionAfterBlockExit.parent === 'code_block') throw new Error('Mermaid preview did not rerender after selection left its source block: ' + JSON.stringify({ hasPreview: !!previewAfterBlockExit, samePreview: previewAfterBlockExit === previewDuringSecondEdit, selectionAfterBlockExit }));
           return true;
         })();
         """
