@@ -496,17 +496,23 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             }
         }
 
-        if context.coordinator.isReady, context.coordinator.webMarkdown != markdown {
-            // Read-only chat previews stream append-only markdown; inserting
-            // just the delta leaves rendered blocks untouched (no raw flash).
-            if isCompactPreview, !isEditable,
-               !context.coordinator.webMarkdown.isEmpty,
-               markdown.hasPrefix(context.coordinator.webMarkdown) {
-                context.coordinator.appendMarkdown(
-                    String(markdown.dropFirst(context.coordinator.webMarkdown.count)),
-                    fullMarkdown: markdown
-                )
-            } else {
+        if context.coordinator.isReady {
+            if isCompactPreview, !isEditable {
+                // Read-only chat previews stream append-only markdown. Deltas
+                // are measured against what Swift itself pushed — never the JS
+                // echo (serializer normalization shifts offsets).
+                let baseline = context.coordinator.pushedMarkdownBaseline
+                if markdown != baseline {
+                    if !baseline.isEmpty, markdown.hasPrefix(baseline) {
+                        context.coordinator.appendMarkdown(
+                            String(markdown.dropFirst(baseline.count)),
+                            fullMarkdown: markdown
+                        )
+                    } else {
+                        context.coordinator.setMarkdown(markdown)
+                    }
+                }
+            } else if context.coordinator.webMarkdown != markdown {
                 context.coordinator.setMarkdown(markdown)
             }
         }
@@ -677,6 +683,11 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         var interfaceLanguage: WeiBeiInterfaceLanguage
         var webMarkdown = ""
         var pendingExternalMarkdown: String?
+        /// Authoritative append baseline: exactly what Swift last pushed.
+        /// NEVER synced from the JS markdownChanged echo — the serializer
+        /// normalizes markup, so echo lengths misalign delta offsets and
+        /// shredded streamed paragraphs into word-sized fragments.
+        var pushedMarkdownBaseline = ""
         var lastCommandID: UUID?
         let performanceInstanceID = UUID()
         fileprivate let imageSchemeHandler = MarkdownImageSchemeHandler()
@@ -932,12 +943,14 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         func setMarkdown(_ text: String) {
             pendingExternalMarkdown = text
             webMarkdown = text
+            pushedMarkdownBaseline = text
             evaluate("window.WeiBeiEditor?.setMarkdown(\(Self.json(text)))")
         }
 
         func appendMarkdown(_ delta: String, fullMarkdown: String) {
             pendingExternalMarkdown = fullMarkdown
             webMarkdown = fullMarkdown
+            pushedMarkdownBaseline = fullMarkdown
             evaluate("window.WeiBeiEditor?.appendMarkdown(\(Self.json(delta)))")
         }
 
