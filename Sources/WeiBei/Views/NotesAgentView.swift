@@ -1571,6 +1571,7 @@ struct MarkdownPreviewView: View {
     @State private var contentHeight: CGFloat = Self.compactPreviewLoadingHeight
     @State private var heightFrozen = false
     @State private var acceptedMeasureCount = 0
+    @State private var maxObservedMeasuredHeight: CGFloat = 0
     @State private var lastLayoutWidthKey = 0
     @State private var lastChatWideTypography = false
 
@@ -1605,6 +1606,7 @@ struct MarkdownPreviewView: View {
                 }
                 let measuredHeight = ceil(height)
                 let nextFrameHeight = max(measuredHeight, Self.compactPreviewLoadingHeight)
+                maxObservedMeasuredHeight = max(maxObservedMeasuredHeight, nextFrameHeight)
                 // Once frozen, never change the SwiftUI frame — LazyVStack recycle
                 // during chat scroller drags (sample build 663, NSScroller.trackKnob)
                 // was accepting late ResizeObserver growth and remasuring every row.
@@ -1636,9 +1638,13 @@ struct MarkdownPreviewView: View {
                 // Do NOT freeze on a fresh accept: KaTeX displayMode re-layout
                 // and font loading can still grow the content. Freeze happens
                 // in the jitter branch above once two consecutive measures
-                // agree (<2pt), or at the accept cap below (storm backstop).
+                // agree (<2pt). The storm backstop below is deliberately loose
+                // AND freezes at the MAX height ever observed — freezing at a
+                // partial-layout height clipped long answers mid-line
+                // (user report 2026-08-01 23:46).
                 acceptedMeasureCount += 1
-                if freezeHeightAfterMeasure && acceptedMeasureCount >= 6 {
+                if freezeHeightAfterMeasure && acceptedMeasureCount >= 12 {
+                    contentHeight = max(nextFrameHeight, maxObservedMeasuredHeight)
                     heightFrozen = true
                 }
                 WeiBeiPerf.event(
@@ -1691,6 +1697,7 @@ struct MarkdownPreviewView: View {
             guard compact && fitsContentHeight else { return }
             heightFrozen = false
             acceptedMeasureCount = 0
+            maxObservedMeasuredHeight = 0
             if preservesHeightAcrossMarkdownChanges { return }
             contentHeight = Self.compactPreviewLoadingHeight
             onContentHeightChange()
