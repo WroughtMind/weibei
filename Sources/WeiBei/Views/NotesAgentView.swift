@@ -275,7 +275,7 @@ private struct AgentComposerField: View {
 
     var body: some View {
         // Compact: fixed short field. Wide: min height, grow with lines up to maxHeight.
-        let corner: CGFloat = isWideComposer ? 14 : WeiBeiMetric.controlRadius
+        let corner: CGFloat = isWideComposer ? 24 : WeiBeiMetric.controlRadius
         VStack(alignment: .leading, spacing: 0) {
             ZStack(alignment: .topLeading) {
                 TextField(
@@ -331,17 +331,20 @@ private struct AgentComposerField: View {
         }
         .frame(maxWidth: .infinity, minHeight: height, maxHeight: maxHeight, alignment: .topLeading)
         .background {
-            RoundedRectangle(cornerRadius: corner)
-                .fill(WeiBeiTheme.paperRaised.opacity(focused.wrappedValue ? 0.78 : 0.64))
+            // ChatGPT-like: same paper as the thread, lifted only by a soft
+            // border and a whisper of shadow — no fill-color seam.
+            RoundedRectangle(cornerRadius: corner, style: .continuous)
+                .fill(WeiBeiTheme.paperRaised.opacity(store.appearanceMode.isDark ? 0.34 : 0.5))
         }
-        .clipShape(RoundedRectangle(cornerRadius: corner))
+        .clipShape(RoundedRectangle(cornerRadius: corner, style: .continuous))
         .overlay {
-            RoundedRectangle(cornerRadius: corner)
+            RoundedRectangle(cornerRadius: corner, style: .continuous)
                 .stroke(
-                    focused.wrappedValue ? WeiBeiTheme.link.opacity(0.36) : WeiBeiTheme.hairline.opacity(0.54),
+                    focused.wrappedValue ? WeiBeiTheme.hairline.opacity(0.9) : WeiBeiTheme.hairline.opacity(0.55),
                     lineWidth: 1
                 )
         }
+        .shadow(color: WeiBeiTheme.ink.opacity(0.05), radius: 10, y: 3)
         .contentShape(Rectangle())
         .onTapGesture {
             focused.wrappedValue = true
@@ -1764,6 +1767,9 @@ struct AgentPaneView: View {
     @State private var globalMemoryPanelPresented = false
     /// Live pane width from a background probe. 0 until first real measurement.
     @State private var measuredPaneWidth: CGFloat = 0
+    /// Driven by the AppKit scroll probe — true when the viewport sits well
+    /// above the newest message, revealing the jump-to-latest pill.
+    @State private var showsJumpToLatest = false
     /// Fold long history on open: only the newest page mounts KaTeX WKWebViews.
     /// The limit only grows in-session — never unmount a mounted row, or scrolling
     /// back re-enters the LazyVStack remount storm this pane was cured of.
@@ -1897,6 +1903,11 @@ struct AgentPaneView: View {
                             Color.clear
                                 .frame(height: agentScrollBottomInset)
                                 .id(agentBottomAnchorID)
+                                .background {
+                                    AgentScrollDistanceProbe { distance in
+                                        handleScrollDistance(distance)
+                                    }
+                                }
                         }
                         .padding(.horizontal, wide ? 8 : 10)
                         .padding(.vertical, wide ? 14 : 10)
@@ -1912,6 +1923,13 @@ struct AgentPaneView: View {
                         .zIndex(1)
                         .animation(WeiBeiMotion.panel, value: store.layout)
                         .animation(WeiBeiMotion.panel, value: wide)
+                }
+                .overlay(alignment: .bottom) {
+                    if showsJumpToLatest {
+                        jumpToLatestButton(proxy: proxy)
+                            .padding(.bottom, composerFieldHeight + (wide ? 46 : 34))
+                            .transition(.opacity.combined(with: .scale(scale: 0.92)))
+                    }
                 }
                 .opacity(railOnly ? 0 : 1)
                 .allowsHitTesting(!railOnly)
@@ -2183,6 +2201,41 @@ struct AgentPaneView: View {
         }
     }
 
+    private func handleScrollDistance(_ distance: CGFloat) {
+        // Hysteresis: reveal well above the bottom, hide near it — a boolean
+        // flip at 8pt deadband keeps SwiftUI updates off the scroll hot path.
+        let shouldShow = distance > 160
+        if shouldShow != showsJumpToLatest {
+            withAnimation(WeiBeiMotion.reveal) {
+                showsJumpToLatest = shouldShow
+            }
+        }
+        if distance < 40 {
+            agentFollowsLatest = true
+        } else if distance > 160 {
+            agentFollowsLatest = false
+        }
+    }
+
+    private func jumpToLatestButton(proxy: ScrollViewProxy) -> some View {
+        Button {
+            agentFollowsLatest = true
+            withAnimation(WeiBeiMotion.panel) {
+                proxy.scrollTo(agentBottomAnchorID, anchor: .bottom)
+            }
+        } label: {
+            Image(systemName: "arrow.down")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(WeiBeiTheme.ink.opacity(0.85))
+                .frame(width: 34, height: 34)
+                .background(Circle().fill(WeiBeiTheme.paperRaised))
+                .overlay(Circle().stroke(WeiBeiTheme.hairline.opacity(0.6), lineWidth: 1))
+                .shadow(color: WeiBeiTheme.ink.opacity(0.14), radius: 9, y: 2)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(store.ui("回到最新消息", "Jump to latest"))
+    }
+
     private func revealAgentHistory(throughMessageID messageID: UUID) {
         guard let index = store.messages.firstIndex(where: { $0.id == messageID }) else { return }
         let needed = store.messages.count - index
@@ -2234,20 +2287,10 @@ struct AgentPaneView: View {
         let minHeight = AgentChatLayoutMetrics.composerHeight(wide: wide)
         let maxHeight = AgentChatLayoutMetrics.composerMaxHeight(wide: wide)
         let fontSize = AgentChatLayoutMetrics.composerFontSize(wide: wide)
-        // Codex-like: modest min height, grow with content, leave message area the majority of the pane.
+        // ChatGPT-like: the tray shares the exact conversation paper — no
+        // gradient strip, no glass seam, no divider. The rounded field alone
+        // separates input from messages.
         return VStack(spacing: 0) {
-            LinearGradient(
-                colors: [
-                    .clear,
-                    WeiBeiTheme.paper.opacity(0.22),
-                    WeiBeiTheme.glassTint.opacity(0.40)
-                ],
-                startPoint: .top,
-                endPoint: .bottom
-            )
-            .frame(height: wide ? 16 : 18)
-            .allowsHitTesting(false)
-
             VStack(alignment: .leading, spacing: wide ? 8 : 8) {
                 if store.hasSelectionAttachments {
                     AgentSelectionAttachmentPill()
@@ -2286,23 +2329,10 @@ struct AgentPaneView: View {
             .padding(.top, wide ? 6 : 4)
             .padding(.bottom, wide ? 16 : 12)
             .frame(maxWidth: .infinity)
-            .background(WeiBeiTheme.paper)
             .animation(WeiBeiMotion.reveal, value: store.agentDraft)
             .accessibilityIdentifier(wide ? "agent-input-tray-wide" : "agent-input-tray-compact")
         }
-        .background(alignment: .bottom) {
-            WeiBeiGlassHeaderBackground(
-                paperOpacity: showsPaneHeader ? 0.34 : 0.14,
-                materialOpacity: showsPaneHeader ? 0.04 : 0.02
-            )
-            .mask(
-                LinearGradient(
-                    colors: [.clear, WeiBeiTheme.ink.opacity(0.42), WeiBeiTheme.ink.opacity(0.78)],
-                    startPoint: .top,
-                    endPoint: .bottom
-                )
-            )
-        }
+        .background(WeiBeiTheme.paper)
     }
 
     private var agentInputMaxWidth: CGFloat? {
@@ -4802,6 +4832,66 @@ private extension EnvironmentValues {
     }
 }
 
+/// AppKit-side scroll probe: observes the enclosing NSScrollView's clip-view
+/// bounds and reports the distance from the viewport to the document bottom.
+/// Deliberately NOT SwiftUI geometry — GeometryReader/preference feedback on
+/// the chat scroll view re-entered sizeThatFits storms (contract-banned).
+private struct AgentScrollDistanceProbe: NSViewRepresentable {
+    var onChange: (CGFloat) -> Void
+
+    func makeNSView(context: Context) -> ProbeView {
+        let view = ProbeView()
+        view.onChange = onChange
+        return view
+    }
+
+    func updateNSView(_ nsView: ProbeView, context: Context) {
+        nsView.onChange = onChange
+    }
+
+    final class ProbeView: NSView {
+        var onChange: ((CGFloat) -> Void)?
+        private var observer: NSObjectProtocol?
+        private var lastReported: CGFloat = -1
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            if let observer {
+                NotificationCenter.default.removeObserver(observer)
+                self.observer = nil
+            }
+            guard let clipView = enclosingScrollView?.contentView else { return }
+            clipView.postsBoundsChangedNotifications = true
+            observer = NotificationCenter.default.addObserver(
+                forName: NSView.boundsDidChangeNotification,
+                object: clipView,
+                queue: .main
+            ) { [weak self] _ in
+                self?.report()
+            }
+            report()
+        }
+
+        private func report() {
+            guard let scrollView = enclosingScrollView,
+                  let documentView = scrollView.documentView else { return }
+            let visible = scrollView.documentVisibleRect
+            let distance: CGFloat = documentView.isFlipped
+                ? max(documentView.bounds.height - visible.maxY, 0)
+                : max(visible.minY, 0)
+            guard abs(distance - lastReported) > 8 else { return }
+            lastReported = distance
+            onChange?(distance)
+        }
+
+        deinit {
+            if let observer {
+                NotificationCenter.default.removeObserver(observer)
+            }
+        }
+    }
+}
+
 /// Agent chat markdown — shared by immersive conversation and selection float.
 /// - Finalized assistant turns: full `MarkdownPreviewView` with width-aware frozen height.
 /// - Streaming, user turns, failures, and renderer fallback: native `AttributedString`.
@@ -5693,9 +5783,13 @@ private struct AgentStreamingResponse: View {
             // Completed blocks render through the real Milkdown/KaTeX pipeline as
             // they close; only the still-growing tail stays native (typewriter).
             let split = AgentStreamingBlockSplitter.split(text)
-            if !split.stablePrefix.isEmpty {
-                AgentStreamingRenderedPrefix(markdown: split.stablePrefix)
-            }
+            // Always mounted: the WebView warms up (editor.js + KaTeX load)
+            // before the first block closes, so the first rendered blocks do
+            // not pop out of a blank box. Appends go through appendMarkdown.
+            AgentStreamingRenderedPrefix(markdown: split.stablePrefix)
+                .frame(height: split.stablePrefix.isEmpty ? 0 : nil)
+                .clipped()
+                .opacity(split.stablePrefix.isEmpty ? 0 : 1)
             if !split.tail.isEmpty {
                 AgentStreamingMarkdownText(text: split.tail, compact: false)
             }

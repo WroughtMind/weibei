@@ -497,7 +497,18 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         }
 
         if context.coordinator.isReady, context.coordinator.webMarkdown != markdown {
-            context.coordinator.setMarkdown(markdown)
+            // Read-only chat previews stream append-only markdown; inserting
+            // just the delta leaves rendered blocks untouched (no raw flash).
+            if isCompactPreview, !isEditable,
+               !context.coordinator.webMarkdown.isEmpty,
+               markdown.hasPrefix(context.coordinator.webMarkdown) {
+                context.coordinator.appendMarkdown(
+                    String(markdown.dropFirst(context.coordinator.webMarkdown.count)),
+                    fullMarkdown: markdown
+                )
+            } else {
+                context.coordinator.setMarkdown(markdown)
+            }
         }
 
         if context.coordinator.isReady {
@@ -922,6 +933,12 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             pendingExternalMarkdown = text
             webMarkdown = text
             evaluate("window.WeiBeiEditor?.setMarkdown(\(Self.json(text)))")
+        }
+
+        func appendMarkdown(_ delta: String, fullMarkdown: String) {
+            pendingExternalMarkdown = fullMarkdown
+            webMarkdown = fullMarkdown
+            evaluate("window.WeiBeiEditor?.appendMarkdown(\(Self.json(delta)))")
         }
 
         func setEditable(_ editable: Bool) {
