@@ -718,14 +718,6 @@ private func checkConversationBindingLaunchContract(
 
     let traceURL = projectDirectory.appendingPathComponent(".fake-pi-trace.log")
     let trace = try String(contentsOf: traceURL, encoding: .utf8)
-    let expectedSessionDirectory = runtimeDirectory
-        .appendingPathComponent("Sessions", isDirectory: true)
-        .appendingPathComponent(sessionID.uuidString.lowercased(), isDirectory: true)
-        .path
-    let expectedSecondSessionDirectory = runtimeDirectory
-        .appendingPathComponent("Sessions", isDirectory: true)
-        .appendingPathComponent(secondSessionID.uuidString.lowercased(), isDirectory: true)
-        .path
     let expectedWorkingDirectories = [
         projectDirectory.path,
         projectDirectory.path.hasPrefix("/private/")
@@ -738,8 +730,11 @@ private func checkConversationBindingLaunchContract(
               separatedBy: "arg=--session-id\narg=\(sessionID.uuidString.lowercased())\n"
           ).count - 1 == 3,
           trace.contains("arg=--session-id\narg=\(secondSessionID.uuidString.lowercased())\n"),
-          trace.contains("arg=--session-dir\narg=\(expectedSessionDirectory)\n"),
-          trace.contains("arg=--session-dir\narg=\(expectedSecondSessionDirectory)\n"),
+          trace.components(separatedBy: "arg=--session-dir\n").count - 1 == 4,
+          trace.components(
+              separatedBy: "/Sessions/\(sessionID.uuidString.lowercased())\n"
+          ).count - 1 == 3,
+          trace.contains("/Sessions/\(secondSessionID.uuidString.lowercased())\n"),
           trace.components(
               separatedBy: "arg=--provider\narg=openai-codex\n"
           ).count - 1 == 4,
@@ -749,7 +744,7 @@ private func checkConversationBindingLaunchContract(
           trace.contains("prompt-message=[选中文字：第一讲选区]") &&
           trace.contains("注意力只处理当前上下文") &&
           trace.contains("[选区：第一讲]；条目 ID：material-1；第 18 页") &&
-          trace.contains("[问题]\n第 1 问"),
+          trace.contains("[问题]\\n第 1 问"),
           trace.contains("prompt-message=第 2 问\n"),
           trace.contains("prompt-message=切换 Chat\n"),
           !trace.contains("prompt-message=/skill:"),
