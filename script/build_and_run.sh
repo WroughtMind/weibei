@@ -841,12 +841,53 @@ verify_pane_layout_stability() {
     return 1
   fi
 
+  local pane_performance
+  pane_performance="$(/usr/bin/jq -s '
+    def role_visibility($role):
+      [.[] | .roles[] | select(.role == $role) | .slotHasVisibleArea];
+    def changed($role):
+      role_visibility($role) as $values
+      | (($values | first) != ($values | last));
+    def ever_visible($role):
+      any(.[]; any(.roles[]; .role == $role and .slotHasVisibleArea));
+    def max_gap_ms:
+      [.[].timestamp] as $timestamps
+      | (([range(1; $timestamps | length) | (($timestamps[.] - $timestamps[.-1]) * 1000)] | max) // 0);
+    sort_by(.transition, .frame)
+    | group_by(.transition)
+    | if length > 8 then .[-8:] else . end
+    | map({
+        transition: .[0].transition,
+        chatChanged: changed("agent"),
+        neighborChanged: (changed("reader") or changed("notes")),
+        agentEverVisible: ever_visible("agent"),
+        maxGapMs: max_gap_ms
+      })
+    | {
+        chatMaxGapMs: ([.[] | select(.chatChanged) | .maxGapMs] | max),
+        neighborMaxGapMs: ([.[] | select(.neighborChanged and .agentEverVisible and (.chatChanged | not)) | .maxGapMs] | max),
+        measuredTransitions: length
+      }
+  ' "${trace_files[@]}")"
+  if ! /usr/bin/jq -e '
+    .measuredTransitions == 8
+    and .chatMaxGapMs != null
+    and .neighborMaxGapMs != null
+    and .chatMaxGapMs < 50
+    and .chatMaxGapMs <= (.neighborMaxGapMs * 1.5)
+  ' <<<"$pane_performance" >/dev/null; then
+    echo "verify failed: rich-history Chat pane transitions missed the responsiveness gate." >&2
+    /usr/bin/jq . <<<"$pane_performance" >&2
+    return 1
+  fi
+
   local transition_count
   transition_count="$(/usr/bin/jq -s '[.[].transition] | unique | length' "${trace_files[@]}")"
   echo "pane_trace_samples=${#trace_files[@]}"
   echo "pane_trace_transitions=$transition_count"
   echo "pane_host_and_parent_identity=stable"
   echo "pane_visible_slots=nonblank"
+  /usr/bin/jq -r '"pane_chat_max_gap_ms=\(.chatMaxGapMs)\npane_neighbor_max_gap_ms=\(.neighborMaxGapMs)"' <<<"$pane_performance"
 }
 
 verify_pane_reorder_width() {

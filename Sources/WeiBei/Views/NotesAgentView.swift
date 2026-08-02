@@ -1776,6 +1776,7 @@ private enum AgentChatLayoutMetrics {
 
 struct AgentPaneView: View {
     @EnvironmentObject private var store: WorkspaceStore
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     var showsPaneHeader = true
     var reorderRole: WorkspacePaneRole? = nil
     @FocusState private var draftFocused: Bool
@@ -1799,7 +1800,7 @@ struct AgentPaneView: View {
     @State private var isRevealingEarlierAgentHistory = false
 
     private static let agentHistoryPageSize = 30
-    private static let paneStructureTransitionDuration: TimeInterval = 0.30
+    private static let paneStructureTransitionDuration: TimeInterval = 0.24
     private static let historyTopRevealThreshold: CGFloat = 10
     private static let historyRevealResetDistance: CGFloat = 24
 
@@ -2019,7 +2020,7 @@ struct AgentPaneView: View {
         .onPreferenceChange(AgentPaneWidthKey.self) { width in
             applyMeasuredPaneWidth(width)
         }
-        .onChange(of: store.visibleDocumentPaneOrder) { _, _ in
+        .onChange(of: Set(store.visibleDocumentPaneOrder)) { _, _ in
             beginPaneStructureTransition()
         }
         .onChange(of: store.layout) { _, layout in
@@ -2109,6 +2110,15 @@ struct AgentPaneView: View {
 
     private func beginPaneStructureTransition() {
         paneStructureTransitionSequence &+= 1
+        if reduceMotion {
+            let finalWidth = pendingMeasuredPaneWidth
+            pendingMeasuredPaneWidth = nil
+            heldPaneLayoutWidth = nil
+            if store.isPaneVisible(.agent), let finalWidth {
+                applyMeasuredPaneWidth(finalWidth)
+            }
+            return
+        }
         let sequence = paneStructureTransitionSequence
         if heldPaneLayoutWidth == nil {
             // A never-opened resident Agent host measures 0pt while hidden; use
@@ -2117,14 +2127,18 @@ struct AgentPaneView: View {
             pendingMeasuredPaneWidth = nil
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + Self.paneStructureTransitionDuration) {
-            guard sequence == paneStructureTransitionSequence else { return }
-            let finalWidth = pendingMeasuredPaneWidth
-            pendingMeasuredPaneWidth = nil
-            heldPaneLayoutWidth = nil
-            // Closing Agent ends at 0pt. Retain its last readable width so the
-            // next opening starts stable instead of seeding from a collapsed frame.
-            guard store.isPaneVisible(.agent), let finalWidth else { return }
-            applyMeasuredPaneWidth(finalWidth)
+            // AppKit's completion handler shares the same 0.24s deadline. One
+            // additional main turn lets it land before the single final reflow.
+            DispatchQueue.main.async {
+                guard sequence == paneStructureTransitionSequence else { return }
+                let finalWidth = pendingMeasuredPaneWidth
+                pendingMeasuredPaneWidth = nil
+                heldPaneLayoutWidth = nil
+                // Closing Agent ends at 0pt. Retain its last readable width so the
+                // next opening starts stable instead of seeding from a collapsed frame.
+                guard store.isPaneVisible(.agent), let finalWidth else { return }
+                applyMeasuredPaneWidth(finalWidth)
+            }
         }
     }
 
@@ -4994,8 +5008,8 @@ private struct AgentScrollDistanceProbe: NSViewRepresentable {
                 ? max(visible.minY - documentView.bounds.minY, 0)
                 : max(documentView.bounds.maxY - visible.maxY, 0)
             let distanceFromBottom: CGFloat = documentView.isFlipped
-                ? max(documentView.bounds.height - visible.maxY, 0)
-                : max(visible.minY, 0)
+                ? max(documentView.bounds.maxY - visible.maxY, 0)
+                : max(visible.minY - documentView.bounds.minY, 0)
             let metrics = AgentScrollMetrics(
                 distanceFromTop: distanceFromTop,
                 distanceFromBottom: distanceFromBottom,

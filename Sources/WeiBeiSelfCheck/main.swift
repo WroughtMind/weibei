@@ -4825,8 +4825,10 @@ expect(notesAgentSource.contains("private struct AgentScrollMetrics")
 expect(notesAgentSource.contains("heldPaneLayoutWidth")
     && notesAgentSource.contains("pendingMeasuredPaneWidth")
     && notesAgentSource.contains("beginPaneStructureTransition()")
-    && notesAgentSource.contains("store.visibleDocumentPaneOrder")
+    && notesAgentSource.contains("Set(store.visibleDocumentPaneOrder)")
+    && notesAgentSource.contains("paneStructureTransitionDuration: TimeInterval = 0.24")
     && notesAgentSource.contains("if heldPaneLayoutWidth != nil")
+    && notesAgentSource.contains("if reduceMotion")
     && notesAgentSource.contains(".frame(width: availableWidth, alignment: .topLeading)"), "chat keeps its actual inner reading width stable while the resident AppKit pane structure animates, then accepts one final measure")
 if let userTurnStart = notesAgentSource.range(of: "private var userTurn: some View")?.lowerBound,
    let assistantTurnStart = notesAgentSource[userTurnStart...].range(of: "private var assistantTurn: some View")?.lowerBound {
