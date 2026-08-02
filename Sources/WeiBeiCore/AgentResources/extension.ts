@@ -1688,6 +1688,7 @@ function readHostCourseItem(
   value: unknown,
   field: string,
   snapshot: ContextSnapshotV2,
+  maximumSearchText = LIMITS.courseSearchText * 2,
 ): CourseItemSnapshot {
   const wrapper = requireRecord(value, field);
   const item = requireRecord(wrapper.item, `${field}.item`);
@@ -1749,7 +1750,7 @@ function readHostCourseItem(
     ),
     searchText: truncate(
       requireString(item.searchText, `${field}.item.searchText`),
-      LIMITS.courseSearchText * 2,
+      maximumSearchText,
     ),
     isTruncated: requireBoolean(item.isTruncated, `${field}.item.isTruncated`),
     relativePath,
@@ -1842,7 +1843,12 @@ async function queryCourseIndex(
   return payload.items
     .slice(0, LIMITS.projectSearchItems)
     .map((item, index) =>
-      readHostCourseItem(item, `hostToolResponse.payload.items[${index}]`, snapshot)
+      readHostCourseItem(
+        item,
+        `hostToolResponse.payload.items[${index}]`,
+        snapshot,
+        toolName === COURSE_READ_TOOL ? 24_000 : LIMITS.courseSearchText * 2,
+      )
     );
 }
 
@@ -9561,7 +9567,7 @@ export default function weibeiExtension(pi: ExtensionAPI) {
     name: COURSE_READ_TOOL,
     label: "读取课程资料正文",
     description:
-      "按课程搜索返回的稳定资料 ID 读取真实索引正文；可指定新的搜索词或精确页/章节位置。课程 Chat 只读本课，全局 Chat 可读搜索结果但会保留课程身份。",
+      "按本轮课程现场、课程目录或搜索结果中的临时资料 ID 读取真实索引正文；可指定新的搜索词或精确页/章节位置。课程 Chat 只读本课，全局 Chat 可读搜索结果但会保留课程身份。",
     promptSnippet: "按资料 ID 和页或章节继续读取真实正文",
     parameters: Type.Object(
       {
@@ -10956,7 +10962,7 @@ export default function weibeiExtension(pi: ExtensionAPI) {
           : "本轮 answerFormPolicy=automatic：结合用户意图和学习收益自行判断回答形态；不要用关键词路由，也不要为了展示能力硬做富回答。";
 
     const sourceAvailabilityInstruction = selectionLabel
-      ? `用户问题已附带选中文字 ${selectionLabel}；材料和笔记正文仍须通过现有读取工具取得。`
+      ? `用户问题已附带选中文字 ${selectionLabel}；若追问它在全文中的作用或上下文，先用本轮现场 location.materialItemID 调用 ${COURSE_READ_TOOL}；需要联系其他知识点时再调用 ${COURSE_SEARCH_TOOL} 或 ${COURSE_MAP_TOOL}。`
       : "材料和笔记正文没有自动附带；问题确实依赖课程内容时，使用现有搜索或读取工具，不得假装读过未读取的内容。";
 
     const turnContract = [

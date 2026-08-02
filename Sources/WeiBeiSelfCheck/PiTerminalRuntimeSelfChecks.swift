@@ -145,10 +145,21 @@ private func checkHostCourseToolBridge(
     let request = StudyAgentRequest(
         purpose: .conversation,
         question: "查找利率",
-        materialTitle: "",
+        materialTitle: "利率的含义",
         materialText: "",
         noteTitle: "",
         noteText: "",
+        selectionTitle: "利率选区",
+        selectionText: "利率是资金的价格。",
+        selectionSources: [
+            AgentReplySource(
+                itemID: "persistent-material",
+                kind: .selection,
+                title: "利率的含义",
+                label: "[选区：利率的含义]",
+                excerpt: "利率是资金的价格。"
+            ),
+        ],
         courseContext: StudyAgentCourseContext(
             title: "测试课程",
             catalog: [
@@ -173,7 +184,12 @@ private func checkHostCourseToolBridge(
         sessionID: UUID(),
         workingDirectory: try fixture.workingDirectory(named: "BridgeProject"),
         hostToolHandler: { toolRequest in
-            guard toolRequest == .courseSearch(query: "利率", limit: 3) else {
+            guard toolRequest == .courseRead(
+                itemID: "persistent-material",
+                query: "",
+                location: nil,
+                limit: 5
+            ) else {
                 throw PiTerminalRuntimeSelfCheckError.failed("PI host bridge received invalid arguments")
             }
             return StudyAgentHostToolResult(
@@ -186,7 +202,7 @@ private func checkHostCourseToolBridge(
                             subtitle: "测试文稿",
                             kind: "markdown",
                             role: "material",
-                            searchText: "利率是资金的价格。"
+                            searchText: "利率是资金的价格。FULL_ARTICLE_TAIL_TOKEN"
                         )
                     ),
                 ]
@@ -195,7 +211,7 @@ private func checkHostCourseToolBridge(
         progress: nil
     )
     await runtime.shutdown()
-    guard reply.text == "宿主课程工具桥可用。",
+    guard reply.text == "宿主课程全文读取可用。",
           reply.sources.isEmpty else {
         throw PiTerminalRuntimeSelfCheckError.failed(
             "PI host tool bridge returned an invalid reply or attached an uncited source"
@@ -665,6 +681,19 @@ private func checkConversationBindingLaunchContract(
                     ),
                 ]
                 : [],
+            courseContext: StudyAgentCourseContext(
+                title: "测试课程",
+                catalog: [
+                    StudyAgentCourseCatalogItem(
+                        id: "material-1",
+                        title: "第一讲",
+                        subtitle: "测试文稿",
+                        kind: "markdown",
+                        role: "material",
+                        isCurrentMaterial: true
+                    ),
+                ]
+            ),
             contextRevision: "session-\(turn)"
         )
         let reply = try await runtime.respond(
@@ -743,7 +772,7 @@ private func checkConversationBindingLaunchContract(
           ).count - 1 == 4,
           trace.contains("prompt-message=[选中文字：第一讲选区]") &&
           trace.contains("注意力只处理当前上下文") &&
-          trace.contains("[选区：第一讲]；条目 ID：material-1；第 18 页") &&
+          trace.contains("[选区：第一讲]；条目 ID：course-item-1；第 18 页") &&
           trace.contains("[问题]\\n第 1 问"),
           trace.contains("prompt-message=第 2 问\n"),
           trace.contains("prompt-message=切换 Chat\n"),
@@ -1244,14 +1273,14 @@ static void start_emitter(void) {
             json_value(context, "requestID", request_id, sizeof(request_id));
             free(context);
         }
-        printf("{\"type\":\"tool_execution_start\",\"toolCallId\":\"bridge-search\",\"toolName\":\"weibei_course_search\",\"args\":{\"query\":\"利率\",\"limit\":3}}\n");
+        printf("{\"type\":\"tool_execution_start\",\"toolCallId\":\"bridge-read\",\"toolName\":\"weibei_course_read\",\"args\":{\"itemID\":\"course-item-1\",\"query\":\"\",\"limit\":5}}\n");
         fflush(stdout);
         const char *response_root = getenv("WEIBEI_AGENT_TOOL_RESPONSE_DIR");
         char response_path[PATH_MAX];
         snprintf(
             response_path,
             sizeof(response_path),
-            "%s/%s/1fdef2b47c9435b713031024ad45758e11d78563def9d62dd9d1157bd89776f1.json",
+            "%s/%s/d1c5a80cf77478cb5f65bc199c19d5a52ff009dbfd8ad53ec443b5b55e7c6c3e.json",
             response_root == NULL ? "" : response_root,
             request_id
         );
@@ -1264,14 +1293,15 @@ static void start_emitter(void) {
                 fclose(response);
                 buffer[length] = '\0';
                 ready = strstr(buffer, "\"success\":true") != NULL
-                    && strstr(buffer, "\"toolCallID\":\"bridge-search\"") != NULL
-                    && strstr(buffer, "\"id\":\"course-item-1\"") != NULL;
+                    && strstr(buffer, "\"toolCallID\":\"bridge-read\"") != NULL
+                    && strstr(buffer, "\"id\":\"course-item-1\"") != NULL
+                    && strstr(buffer, "FULL_ARTICLE_TAIL_TOKEN") != NULL;
                 break;
             }
             usleep(20000);
         }
-        printf("{\"type\":\"tool_execution_end\",\"toolCallId\":\"bridge-search\",\"toolName\":\"weibei_course_search\",\"isError\":false,\"result\":{\"details\":{\"kind\":\"course_search\",\"contextRevision\":\"%s\",\"results\":[{\"id\":\"persistent-material\",\"title\":\"利率的含义\",\"role\":\"material\",\"searchText\":\"利率是资金的价格。\"}],\"evidenceLabels\":[\"[材料：利率的含义]\"],\"jumpEvidence\":{}}}}\n", revision);
-        printf("{\"type\":\"agent_end\",\"messages\":[{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"%s\"}],\"stopReason\":\"stop\"}]}\n", ready ? "宿主课程工具桥可用。" : "宿主课程工具桥缺失。");
+        printf("{\"type\":\"tool_execution_end\",\"toolCallId\":\"bridge-read\",\"toolName\":\"weibei_course_read\",\"isError\":false,\"result\":{\"details\":{\"kind\":\"course_read\",\"contextRevision\":\"%s\",\"results\":[{\"id\":\"course-item-1\",\"title\":\"利率的含义\",\"role\":\"material\",\"searchText\":\"利率是资金的价格。FULL_ARTICLE_TAIL_TOKEN\"}],\"evidenceLabels\":[\"[材料：利率的含义]\"],\"jumpEvidence\":{}}}}\n", revision);
+        printf("{\"type\":\"agent_end\",\"messages\":[{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"%s\"}],\"stopReason\":\"stop\"}]}\n", ready ? "宿主课程全文读取可用。" : "宿主课程全文读取缺失。");
         fflush(stdout);
         _exit(0);
     }

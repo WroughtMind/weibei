@@ -624,7 +624,10 @@ enum CourseProjectRootSelfCheck {
         )
 
         let ownedURL = imports.appendingPathComponent("课程自有.txt")
-        try Data("OWNED_AGENT_TOKEN".utf8).write(to: ownedURL)
+        let ownedArticle = "OWNED_AGENT_TOKEN\n\n"
+            + String(repeating: "这是用于验证全文读取的文章上下文。\n\n", count: 180)
+            + "FULL_ARTICLE_TAIL_TOKEN"
+        try Data(ownedArticle.utf8).write(to: ownedURL)
         let ownedItem = try store.importFileIntoCourseForSelfCheck(
             ownedURL,
             courseID: courseA,
@@ -634,9 +637,15 @@ enum CourseProjectRootSelfCheck {
             courseID: courseA,
             query: "OWNED_AGENT_TOKEN"
         )
+        let ownedRead = try store.agentHostReadForSelfCheck(
+            courseID: courseA,
+            itemID: ownedItem.id
+        )
         try check(
-            ownedSearch.items.contains(where: { $0.item.id == ownedItem.id }),
-            "课程 Agent 搜索没有读取已核验的课程自有资料"
+            ownedSearch.items.contains(where: { $0.item.id == ownedItem.id })
+                && ownedRead.items.first(where: { $0.item.id == ownedItem.id })?
+                    .item.searchText.contains("FULL_ARTICLE_TAIL_TOKEN") == true,
+            "课程 Agent 没有读取已核验课程自有资料的完整文章正文"
         )
 
         let noteID = try require(

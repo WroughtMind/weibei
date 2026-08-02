@@ -16841,9 +16841,12 @@ final class WorkspaceStore: ObservableObject {
             )
             return StudyAgentHostToolResult(
                 query: query,
-                items: context.items.map {
-                    StudyAgentHostToolItem(
-                        item: $0,
+                items: context.items.map { item in
+                    var item = item
+                    item.searchText = text
+                    item.isTruncated = indexed.isTruncated
+                    return StudyAgentHostToolItem(
+                        item: item,
                         relativePath: source.relativePath,
                         courseIDs: source.courseIDs,
                         courseTitles: source.courseTitles

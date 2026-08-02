@@ -556,6 +556,10 @@ public actor PiAgentRuntime: StudyAgentRuntime {
 
         let currentJumpEvidence = currentJumpEvidence(in: context)
         let currentSourceLabels = currentSourceLabels(request: request, context: context)
+        let persistentAssetIDsByContextID = persistentAssetIDsByContextID(
+            request: request,
+            context: context
+        )
         activeRun = ActiveRun(
             id: request.id,
             contextRevision: request.contextRevision,
@@ -575,10 +579,7 @@ public actor PiAgentRuntime: StudyAgentRuntime {
             }),
             allowedSourceLabels: currentSourceLabels,
             allowedAssetIDs: currentAssetIDs(in: context),
-            persistentAssetIDsByContextID: persistentAssetIDsByContextID(
-                request: request,
-                context: context
-            ),
+            persistentAssetIDsByContextID: persistentAssetIDsByContextID,
             allowedJumpReferences: Set(currentJumpEvidence.keys),
             jumpEvidenceLabels: currentJumpEvidence,
             lastLocationSourceLabel: context.learning.lastLocation.map { "[材料：\($0.itemTitle)]" },
@@ -600,7 +601,12 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         do {
             _ = try await sendCommand(
                 type: "prompt",
-                fields: ["message": piPrompt(for: request)],
+                fields: [
+                    "message": piPrompt(
+                        for: request,
+                        persistentAssetIDsByContextID: persistentAssetIDsByContextID
+                    ),
+                ],
                 timeoutSeconds: 3
             )
         } catch {
@@ -991,7 +997,10 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         return arguments
     }
 
-    private func piPrompt(for request: StudyAgentRequest) -> String {
+    private func piPrompt(
+        for request: StudyAgentRequest,
+        persistentAssetIDsByContextID: [String: String]
+    ) -> String {
         guard let selection = request.selectionText?.trimmingCharacters(in: .whitespacesAndNewlines),
               !selection.isEmpty else {
             return request.question
@@ -1001,10 +1010,19 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         let selectionTitle = title.flatMap { $0.isEmpty ? nil : $0 }
             ?? request.language.text("当前选区", "Current selection")
         let separator = request.language.text("；", "; ")
+        let contextItemIDsByPersistentID = Dictionary(
+            uniqueKeysWithValues: persistentAssetIDsByContextID.map { ($0.value, $0.key) }
+        )
         let sources = request.selectionSources.map { source in
             var parts = [source.label]
-            if let itemID = source.itemID, !itemID.isEmpty {
-                parts.append(request.language.text("条目 ID：\(itemID)", "Item ID: \(itemID)"))
+            if let itemID = source.itemID,
+               let contextItemID = contextItemIDsByPersistentID[itemID] {
+                parts.append(
+                    request.language.text(
+                        "条目 ID：\(contextItemID)",
+                        "Item ID: \(contextItemID)"
+                    )
+                )
             }
             if let position = source.positionLabel(language: request.language) {
                 parts.append(position)

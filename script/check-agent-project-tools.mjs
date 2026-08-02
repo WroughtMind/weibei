@@ -9,6 +9,7 @@ import {
   symlink,
   writeFile,
 } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -190,10 +191,10 @@ try {
   await writeFile(contextFile, JSON.stringify(hookEnvelope));
   process.env.WEIBEI_AGENT_CONTEXT_FILE = contextFile;
   const eventHandlers = new Map();
-  const registeredTools = [];
+  const registeredTools = new Map();
   extension.default({
     registerTool(tool) {
-      registeredTools.push(tool.name);
+      registeredTools.set(tool.name, tool);
     },
     on(name, handler) {
       eventHandlers.set(name, handler);
@@ -206,11 +207,15 @@ try {
   const beforeResult = await beforeAgentStart({ systemPrompt: "base" });
   requireValue(
       beforeResult.message === undefined &&
-      beforeResult.systemPrompt.includes("直接回答用户的问题"),
+      beforeResult.systemPrompt.includes("直接回答用户的问题") &&
+      beforeResult.systemPrompt.includes("location.materialItemID") &&
+      beforeResult.systemPrompt.includes("weibei_course_read") &&
+      beforeResult.systemPrompt.includes("weibei_course_search") &&
+      beforeResult.systemPrompt.includes("weibei_course_map"),
     "本轮现场仍被写成持久消息，或本轮规则没有交给 Pi",
   );
   requireValue(
-    !registeredTools.includes("weibei_context"),
+    !registeredTools.has("weibei_context"),
     "魏碑仍注册了需要模型主动读取的上下文工具",
   );
   const contextHook = requireValue(
@@ -278,6 +283,57 @@ try {
   }
   requireValue(brokenContextRejected, "回合中的损坏上下文快照被静默忽略");
   await writeFile(contextFile, JSON.stringify(hookEnvelope));
+
+  const fullArticle = `${"完整文章上下文。".repeat(700)}FULL_ARTICLE_TAIL_TOKEN`;
+  const toolCallID = "course-read-full-article";
+  const toolResponseRoot = join(temporaryRoot, "tool-responses");
+  await mkdir(toolResponseRoot, { recursive: true });
+  const canonicalToolResponseRoot = await realpath(toolResponseRoot);
+  const toolResponseDirectory = join(canonicalToolResponseRoot, hookEnvelope.requestID);
+  await mkdir(toolResponseDirectory);
+  process.env.WEIBEI_AGENT_TOOL_RESPONSE_DIR = canonicalToolResponseRoot;
+  await writeFile(
+    join(
+      toolResponseDirectory,
+      `${createHash("sha256").update(toolCallID, "utf8").digest("hex")}.json`,
+    ),
+    JSON.stringify({
+      schemaVersion: 1,
+      requestID: hookEnvelope.requestID,
+      contextRevision: hookEnvelope.contextRevision,
+      toolCallID,
+      toolName: "weibei_course_read",
+      success: true,
+      payload: {
+        query: "",
+        items: [{
+          item: {
+            ...hookEnvelope.course.items[0],
+            searchText: fullArticle,
+          },
+          relativePath: "文稿/第一讲.txt",
+          courseIDs: ["course-a"],
+          courseTitles: ["课程甲"],
+        }],
+      },
+    }),
+  );
+  const courseReadTool = requireValue(
+    registeredTools.get("weibei_course_read"),
+    "真实扩展没有注册课程正文读取工具",
+  );
+  requireValue(
+    courseReadTool.description.includes("临时资料 ID"),
+    "课程正文读取工具没有告诉模型使用本轮临时资料 ID",
+  );
+  const courseReadResult = await courseReadTool.execute(
+    toolCallID,
+    { itemID: "material-1" },
+  );
+  requireValue(
+    courseReadResult.content[0]?.text.includes("FULL_ARTICLE_TAIL_TOKEN"),
+    "课程正文读取工具在交给模型前截掉了完整文章尾部",
+  );
 
   const normalRead = await extension.readApprovedProjectFile(snapshot, item);
   requireValue(
