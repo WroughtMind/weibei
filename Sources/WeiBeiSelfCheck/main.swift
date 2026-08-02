@@ -556,30 +556,42 @@ expect(EmptyWorkspaceDayPeriod.morning.greeting(language: .chinese).contains("æ—
 expect(!AgentHistoryRevealPolicy.shouldRevealEarlierPage(
         distanceFromTop: 0,
         isUserScrolling: false,
+        isScrollingTowardTop: true,
         hiddenMessageCount: 30,
         revealInFlight: false
     )
     && AgentHistoryRevealPolicy.shouldRevealEarlierPage(
         distanceFromTop: 0,
         isUserScrolling: true,
+        isScrollingTowardTop: true,
         hiddenMessageCount: 30,
         revealInFlight: false
     )
     && !AgentHistoryRevealPolicy.shouldRevealEarlierPage(
         distanceFromTop: 0,
         isUserScrolling: true,
+        isScrollingTowardTop: true,
         hiddenMessageCount: 30,
         revealInFlight: true
     )
     && !AgentHistoryRevealPolicy.shouldRevealEarlierPage(
         distanceFromTop: 0,
         isUserScrolling: true,
+        isScrollingTowardTop: true,
         hiddenMessageCount: 0,
+        revealInFlight: false
+    )
+    && !AgentHistoryRevealPolicy.shouldRevealEarlierPage(
+        distanceFromTop: 0,
+        isUserScrolling: true,
+        isScrollingTowardTop: false,
+        hiddenMessageCount: 30,
         revealInFlight: false
     )
     && AgentHistoryRevealPolicy.expandedVisibleLimit(currentLimit: 30, totalMessageCount: 95) == 60
     && AgentHistoryRevealPolicy.expandedVisibleLimit(currentLimit: 90, totalMessageCount: 95) == 95
-    && AgentHistoryRevealPolicy.shouldReleaseRevealLock(distanceFromTop: 30, isUserScrolling: true), "agent history paging requires live user intent, expands exactly one bounded page, and releases its re-entry lock after re-anchoring")
+    && !AgentHistoryRevealPolicy.shouldReleaseRevealLock(isUserScrolling: true)
+    && AgentHistoryRevealPolicy.shouldReleaseRevealLock(isUserScrolling: false), "agent history paging requires an upward live-scroll gesture, expands exactly one bounded page, and keeps its re-entry lock until that gesture ends")
 
 let inspirationItems = EmptyWorkspaceInspirationCatalog.items
 expect(inspirationItems.count >= 6
@@ -4847,17 +4859,22 @@ expect(notesAgentSource.contains("private struct AgentScrollMetrics")
     && notesAgentSource.contains("distanceFromTop")
     && notesAgentSource.contains("distanceFromBottom")
     && notesAgentSource.contains("isUserScrolling")
+    && notesAgentSource.contains("isScrollingTowardTop")
     && notesAgentSource.contains("AgentHistoryRevealPolicy.shouldRevealEarlierPage(")
     && notesAgentSource.contains("revealEarlierAgentHistory(proxy: proxy)")
     && notesAgentSource.contains("proxy.scrollTo(anchorID, anchor: .top)"), "live user scrolling to the folded history boundary reveals one earlier page and restores the previous top anchor without treating initial or programmatic positioning as user intent")
 expect(notesAgentSource.contains("heldPaneLayoutWidth")
-    && notesAgentSource.contains("pendingMeasuredPaneWidth")
+    && notesAgentSource.contains("lastReadablePaneWidth")
+    && notesAgentSource.contains("markdownContentWidth")
     && notesAgentSource.contains("beginPaneStructureTransition()")
     && notesAgentSource.contains("Set(store.visibleDocumentPaneOrder)")
     && notesAgentSource.contains("paneStructureTransitionDuration: TimeInterval = 0.24")
-    && notesAgentSource.contains("if heldPaneLayoutWidth != nil")
     && notesAgentSource.contains("if reduceMotion")
-    && notesAgentSource.contains(".frame(width: availableWidth, alignment: .topLeading)"), "chat keeps its actual inner reading width stable while the resident AppKit pane structure animates, then accepts one final measure")
+    && notesAgentSource.contains("if !usesWideChatLayout,")
+    && notesAgentSource.contains(".environment(\\.agentChatLayoutWidth, markdownContentWidth)")
+    && notesAgentSource.contains(".frame(width: max(layoutWidth, 1), alignment: .leading)")
+    && notesAgentSource.contains(".modifier(AgentMessageTextWidthModifier(fillsReadingColumn: rendersRichMarkdown || compact))\n        .clipped()")
+    && !notesAgentSource.contains(".frame(width: availableWidth, alignment: .topLeading)"), "chat follows the live pane width while only finalized Markdown holds one layout width during the AppKit structure animation")
 if let userTurnStart = notesAgentSource.range(of: "private var userTurn: some View")?.lowerBound,
    let assistantTurnStart = notesAgentSource[userTurnStart...].range(of: "private var assistantTurn: some View")?.lowerBound {
     let userTurnSource = String(notesAgentSource[userTurnStart..<assistantTurnStart])
