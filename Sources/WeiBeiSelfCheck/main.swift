@@ -4968,6 +4968,8 @@ expect(notesAgentSource.contains("var showsBrandHeader = true")
     && notesAgentSource.contains("acceptedMeasureCount >= 12"), "bubble streaming shows one brand mark, finalize hands off seamlessly, and height freezes only after stability")
 expect(notesAgentSource.contains("maxObservedMeasuredHeight = max(maxObservedMeasuredHeight, nextFrameHeight)")
     && notesAgentSource.contains("contentHeight = max(nextFrameHeight, maxObservedMeasuredHeight)"), "backstop freeze adopts the max observed height so long answers can never clip mid-line")
+expect(notesAgentSource.components(separatedBy: "prefersIncrementalAppends: true").count == 2
+    && notesAgentSource.contains(".task(id: message.completionState)"), "appendMarkdown is exclusive to the streaming prefix and the finalize handoff has a timeout failsafe")
 expect(workspaceStoreSource.contains("case let .usingTool(name, detail):")
     && workspaceStoreSource.contains("agentActivityText = base + ui(\"：\", \": \") + detail"), "tool status surfaces the argument excerpt (search query / file title)")
 expect(notesAgentSource.contains("private let agentBottomAnchorID = \"agentConversationBottom\"")

@@ -268,6 +268,12 @@ struct RichMarkdownEditorView: NSViewRepresentable {
     var interfaceLanguage: WeiBeiInterfaceLanguage = .chinese
     var isCompactPreview = false
     var isChatWideTypography = false
+    /// ONLY the streaming prefix (append-only by construction) may stream
+    /// deltas via appendMarkdown. Finalized messages can be rewritten by late
+    /// stream events token-by-token — appending those shredded paragraphs
+    /// into word fragments (user reports 2026-08-01/02). Everyone else gets a
+    /// full setMarkdown.
+    var prefersIncrementalAppends = false
     var onSelectionChange: (String, CGPoint?) -> Void
     var onAskAgentWithSelection: (String, CGPoint?) -> Void
     var onContentHeightChange: (CGFloat) -> Void = { _ in }
@@ -497,10 +503,10 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         }
 
         if context.coordinator.isReady {
-            if isCompactPreview, !isEditable {
-                // Read-only chat previews stream append-only markdown. Deltas
-                // are measured against what Swift itself pushed — never the JS
-                // echo (serializer normalization shifts offsets).
+            if prefersIncrementalAppends, isCompactPreview, !isEditable {
+                // Streaming prefix only. Deltas are measured against what
+                // Swift itself pushed — never the JS echo (serializer
+                // normalization shifts offsets).
                 let baseline = context.coordinator.pushedMarkdownBaseline
                 if markdown != baseline {
                     if !baseline.isEmpty, markdown.hasPrefix(baseline) {

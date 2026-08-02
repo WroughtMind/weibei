@@ -1556,6 +1556,8 @@ struct MarkdownPreviewView: View {
     /// frame height until the next real measurement instead of collapsing to
     /// the 44pt loading height on every append (which strobed the chat).
     var preservesHeightAcrossMarkdownChanges = false
+    /// Pass-through to RichMarkdownEditorView — streaming prefix only.
+    var prefersIncrementalAppends = false
     var onWikiLink: (String) -> Void = { _ in }
     var onSourceReference: (String) -> Void = { _ in }
     var onAppShortcut: (String, NSEvent.ModifierFlags) -> Bool = { _, _ in false }
@@ -1585,6 +1587,7 @@ struct MarkdownPreviewView: View {
             interfaceLanguage: interfaceLanguage,
             isCompactPreview: compact,
             isChatWideTypography: isChatWideTypography,
+            prefersIncrementalAppends: prefersIncrementalAppends,
             onSelectionChange: onSelectionChange,
             onAskAgentWithSelection: onSelectionChange,
             onContentHeightChange: { height in
@@ -3538,6 +3541,17 @@ private struct AgentBubble: View {
                     AgentStreamingResponse(text: message.text, showsBrandHeader: false)
                         .onAppear { sawStreamingThisSession = true }
                         .allowsHitTesting(message.completionState == .generating)
+                }
+                .task(id: message.completionState) {
+                    // Handoff failsafe: if the finalized WebView never reports
+                    // (process pressure, missed measure), fall back to the
+                    // normal finalized presentation instead of pinning the
+                    // streaming view forever.
+                    guard message.completionState != .generating else { return }
+                    try? await Task.sleep(nanoseconds: 2_500_000_000)
+                    if !finalizedRendererWarm {
+                        finalizedRendererWarm = true
+                    }
                 }
             } else if let richAnswer = message.richAnswer,
                richAnswer.mode == .rich,
@@ -5827,7 +5841,8 @@ private struct AgentStreamingRenderedPrefix: View {
             fitsContentHeight: true,
             freezeHeightAfterMeasure: false,
             isChatWideTypography: layoutWidth >= AgentChatLayoutMetrics.wideTypographyMinContentWidth,
-            preservesHeightAcrossMarkdownChanges: true
+            preservesHeightAcrossMarkdownChanges: true,
+            prefersIncrementalAppends: true
         )
     }
 }
