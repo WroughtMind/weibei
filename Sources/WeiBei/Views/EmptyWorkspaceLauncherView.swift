@@ -242,7 +242,6 @@ private struct EmptyWorkspacePaperField: View {
         let paper = EmptyWorkspaceResolvedColor.paper(mode)
         let raised = EmptyWorkspaceResolvedColor.paperRaised(mode)
         let ink = EmptyWorkspaceResolvedColor.ink(mode)
-        let hairline = EmptyWorkspaceResolvedColor.hairline(mode)
 
         return ZStack {
             paper
@@ -267,11 +266,6 @@ private struct EmptyWorkspacePaperField: View {
                 endPoint: .bottomTrailing
             )
 
-            Rectangle()
-                .fill(hairline.opacity(mode.isDark ? 0.40 : 0.30))
-                .frame(width: 1, height: compact ? 24 : 48)
-                .frame(maxHeight: .infinity, alignment: .top)
-                .padding(.top, compact ? 14 : 24)
         }
         .allowsHitTesting(false)
         .accessibilityHidden(true)

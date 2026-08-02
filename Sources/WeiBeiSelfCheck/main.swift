@@ -2124,6 +2124,14 @@ expect(emptyWorkspaceSource.contains("TimelineView(.periodic(from: .now, by: 60)
     && emptyWorkspaceSource.contains("onChange(of: store.appearanceMode)")
     && emptyWorkspaceSource.contains("appearanceEpoch")
     && !emptyWorkspaceSource.contains("WeiBeiThemeRuntime.didChangeNotification"), "empty workspace greeting updates with time; paper field rebuilds once on appearanceMode change")
+if let paperFieldStart = emptyWorkspaceSource.range(of: "private struct EmptyWorkspacePaperField")?.lowerBound,
+   let entryRowStart = emptyWorkspaceSource[paperFieldStart...].range(of: "private struct EmptyWorkspaceEntryRow")?.lowerBound {
+    let paperFieldSource = String(emptyWorkspaceSource[paperFieldStart..<entryRowStart])
+    expect(!paperFieldSource.contains("Rectangle()")
+        && !paperFieldSource.contains("let hairline ="), "empty workspace paper field no longer draws the centered 1pt top rail")
+} else {
+    expect(false, "empty workspace paper field source is inspectable")
+}
 expect(emptyWorkspaceSource.contains("selectedInspirationID")
     && emptyWorkspaceSource.contains("randomItem(excludingID: currentID")
     && emptyWorkspaceSource.contains("static let entryCenterRatio: CGFloat = 0.402")
@@ -4808,6 +4816,18 @@ expect(notesAgentSource.contains("agentVisibleMessageLimit")
     && notesAgentSource.contains("查看更早的")
     && notesAgentSource.contains("The limit only grows in-session")
     && notesAgentSource.contains("revealAgentHistory(throughMessageID: turn.startMessageID)"), "long chat history folds behind a reveal button instead of mounting every KaTeX WKWebView on open; the fold window never shrinks mid-session and rail navigation reveals folded turns")
+expect(notesAgentSource.contains("private struct AgentScrollMetrics")
+    && notesAgentSource.contains("distanceFromTop")
+    && notesAgentSource.contains("distanceFromBottom")
+    && notesAgentSource.contains("isUserScrolling")
+    && notesAgentSource.contains("metrics.isUserScrolling")
+    && notesAgentSource.contains("revealEarlierAgentHistory(proxy: proxy)"), "live user scrolling to the folded history boundary reveals one earlier page without treating initial or programmatic positioning as user intent")
+expect(notesAgentSource.contains("heldPaneLayoutWidth")
+    && notesAgentSource.contains("pendingMeasuredPaneWidth")
+    && notesAgentSource.contains("beginPaneStructureTransition()")
+    && notesAgentSource.contains("store.visibleDocumentPaneOrder")
+    && notesAgentSource.contains("if heldPaneLayoutWidth != nil")
+    && notesAgentSource.contains(".frame(width: availableWidth, alignment: .topLeading)"), "chat keeps its actual inner reading width stable while the resident AppKit pane structure animates, then accepts one final measure")
 if let userTurnStart = notesAgentSource.range(of: "private var userTurn: some View")?.lowerBound,
    let assistantTurnStart = notesAgentSource[userTurnStart...].range(of: "private var assistantTurn: some View")?.lowerBound {
     let userTurnSource = String(notesAgentSource[userTurnStart..<assistantTurnStart])
