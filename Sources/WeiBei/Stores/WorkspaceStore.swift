@@ -11944,9 +11944,6 @@ final class WorkspaceStore: ObservableObject {
                 return
             }
             activeCourseID = requestedCourseID
-        } else if let activeCourseID,
-                  !courseMembershipIndex.itemIDs(in: activeCourseID).contains(itemID) {
-            return
         }
         dismissCourseWorkspace(restoringFocus: false)
         showLibrary = false
@@ -24031,8 +24028,15 @@ final class WorkspaceStore: ObservableObject {
 
     private func persistCurrentNote() {
         guard let item = activeNoteItem else { return }
-        cancelPendingNotePersistence(for: item.id)
-        persistNote(noteText, for: item)
+        if let stagedNoteDraft, stagedNoteDraft.itemID == item.id {
+            self.stagedNoteDraft = nil
+            updateNote(stagedNoteDraft.value, for: item.id)
+        }
+        if pendingNotePersistenceByItemID[item.id] != nil {
+            flushPendingNotePersistence(for: item.id)
+        } else if pendingNoteWritesByItemID[item.id] != nil {
+            persistNote(noteText, for: item)
+        }
     }
 
     func flushPendingNotePersistence() {
@@ -24458,6 +24462,11 @@ final class WorkspaceStore: ObservableObject {
                         transactionDirectory:
                             transaction.transactionDirectory
                     )
+                    courseNoteWritesInFlight.remove(itemID)
+                    courseNoteWriteTasksByItemID[itemID] = nil
+                    if pendingNoteWritesByItemID[itemID] != nil {
+                        startCourseOwnedNoteWriteIfNeeded(itemID: itemID)
+                    }
                     return
                 }
                 let result = transaction.result

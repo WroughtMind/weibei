@@ -5863,9 +5863,26 @@ enum CourseProjectRootSelfCheck {
         let fixture = try Fixture(name: "owned-note-separation")
         defer { fixture.remove() }
         let library = try fixture.makeDirectory("课程资料库")
-        let store = makeStore(fixture: fixture)
+        var reopenNoteDuringWrite = false
+        var raceCourseID: UUID?
+        var raceNoteID: String?
+        var store: WorkspaceStore!
+        store = makeStore(
+            fixture: fixture,
+            mutationHook: { stage in
+                guard reopenNoteDuringWrite,
+                      stage == .beforeCourseMarkdownTargetIsolation,
+                      let courseID = raceCourseID,
+                      let noteID = raceNoteID else {
+                    return
+                }
+                reopenNoteDuringWrite = false
+                store.openCourseNote(noteID, in: courseID)
+            }
+        )
         try store.configureCourseLibrary(at: library)
         let courseID = try store.createCourseInLibrary(title: "笔记归属")
+        raceCourseID = courseID
         store.activateCourse(courseID)
         let courseRoot = try require(store.courseRootURL(for: courseID), "没有笔记测试课程根")
         let courseNoteID = try require(
@@ -5891,6 +5908,15 @@ enum CourseProjectRootSelfCheck {
             "课程笔记缺少课程相对路径"
         )
         let updatedMarkdown = "# 课程笔记\n\n已经写回课程目录。\n"
+        store.openCourseNote(courseNoteID, in: courseID)
+        try check(
+            store.pendingCourseMarkdownDraftForSelfCheck(
+                itemID: courseNoteID
+            ) == nil,
+            "重新打开未修改课程笔记却启动了写回"
+        )
+        raceNoteID = courseNoteID
+        reopenNoteDuringWrite = true
         store.updateNote(updatedMarkdown, for: courseNoteID)
         store.flushPendingNotePersistence()
         try store.waitForCourseNoteWritesForSelfCheck()
@@ -5926,6 +5952,13 @@ enum CourseProjectRootSelfCheck {
                 fixture.workspaceDirectory.appendingPathComponent("Files/Notes").path
             ) == true,
             "全局笔记没有写入独立的 App 管理目录"
+        )
+        store.openCourseNote(courseNoteID, in: courseID)
+        store.openCourseNote(globalNoteID)
+        try check(
+            store.activeNotebookItemID == globalNoteID
+                && store.activeCourseID == courseID,
+            "课程激活时静默拒绝打开独立笔记"
         )
     }
 
