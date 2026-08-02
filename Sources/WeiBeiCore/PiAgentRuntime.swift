@@ -282,6 +282,25 @@ public enum PiAgentDiagnosticSanitizer {
 }
 
 public actor PiAgentRuntime: StudyAgentRuntime {
+    /// Best-effort excerpt of the most user-meaningful string argument, for the
+    /// chat status line ("正在搜索：泰勒展开"). Never fails a run.
+    static func toolActivityDetail(argumentsJSON: Data?) -> String? {
+        guard let data = argumentsJSON,
+              let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
+            return nil
+        }
+        for key in ["query", "q", "keyword", "title", "path", "file", "file_path", "pattern", "section", "note", "topic", "name"] {
+            guard let value = object[key] as? String else { continue }
+            var trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmed.contains("/") {
+                trimmed = (trimmed as NSString).lastPathComponent
+            }
+            guard !trimmed.isEmpty else { continue }
+            return trimmed.count > 42 ? String(trimmed.prefix(42)) + "…" : trimmed
+        }
+        return nil
+    }
+
     private static let processReadinessTimeoutSeconds: UInt64 = 12
     private static let sharedToolNames = [
         "weibei_context",
@@ -1925,7 +1944,7 @@ public actor PiAgentRuntime: StudyAgentRuntime {
                 )
             }
             refreshRunWatchdog()
-            run.progressDelivery?.yield(.usingTool(name))
+            run.progressDelivery?.yield(.usingTool(name, Self.toolActivityDetail(argumentsJSON: argumentsJSON)))
 
         case let .contextRead(_, contextRevision):
             guard var run = activeRun else { return }

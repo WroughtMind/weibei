@@ -616,7 +616,9 @@ public struct StudyAgentReply: Equatable, Sendable {
 
 public enum StudyAgentProgress: Equatable, Sendable {
     case preparing
-    case usingTool(String)
+    /// Tool name plus an optional human-readable argument excerpt
+    /// (search query, file title…) surfaced in the chat status line.
+    case usingTool(String, String?)
     case text(String)
 }
 

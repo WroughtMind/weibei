@@ -5022,9 +5022,11 @@ private struct AgentThinkingIndicator: View {
     @State private var cachedTextWidth: CGFloat = 1
     @State private var motionEpoch = Date()
 
-    private static let statusFontSize: CGFloat = 12
+    /// 14.5pt — user feedback: the 12pt status read as an afterthought; the
+    /// status line is the primary signal of what the agent is doing.
+    private static let statusFontSize: CGFloat = 14.5
     /// Clear gap from line-box edge → stroke centerline (all four sides).
-    private static let orbitPadding: CGFloat = 5.5
+    private static let orbitPadding: CGFloat = 6.5
     private static let lineWidth: CGFloat = 1.25
     /// Line box height matches the font’s typographic bounds so top/bottom pad stay equal.
     private static var textLineHeight: CGFloat {
@@ -5585,6 +5587,15 @@ private struct AgentStreamingResponse: View {
                 Text("PI")
                     .font(.system(size: 9.5, weight: .semibold))
                     .foregroundStyle(WeiBeiTheme.secondaryInk)
+                // Status stays visible while tokens stream ("正在读取：…"),
+                // plain text only — WP9 forbids loading-card chrome here.
+                if let activity = store.agentActivityText {
+                    Text(activity)
+                        .font(.system(size: 11, weight: .regular))
+                        .foregroundStyle(WeiBeiTheme.secondaryInk.opacity(0.82))
+                        .lineLimit(1)
+                        .padding(.leading, 2)
+                }
             }
             // Streaming stays native + throttled — KaTeX only after the turn finalizes.
             AgentStreamingMarkdownText(text: text, compact: false)
