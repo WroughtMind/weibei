@@ -268,6 +268,12 @@ struct RichMarkdownEditorView: NSViewRepresentable {
     var interfaceLanguage: WeiBeiInterfaceLanguage = .chinese
     var isCompactPreview = false
     var isChatWideTypography = false
+    /// ONLY the streaming prefix (append-only by construction) may stream
+    /// deltas via appendMarkdown. Finalized messages can be rewritten by late
+    /// stream events token-by-token — appending those shredded paragraphs
+    /// into word fragments (user reports 2026-08-01/02). Everyone else gets a
+    /// full setMarkdown.
+    var prefersIncrementalAppends = false
     var onSelectionChange: (String, CGPoint?) -> Void
     var onAskAgentWithSelection: (String, CGPoint?) -> Void
     var onContentHeightChange: (CGFloat) -> Void = { _ in }
@@ -496,8 +502,25 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             }
         }
 
-        if context.coordinator.isReady, context.coordinator.webMarkdown != markdown {
-            context.coordinator.setMarkdown(markdown)
+        if context.coordinator.isReady {
+            if prefersIncrementalAppends, isCompactPreview, !isEditable {
+                // Streaming prefix only. Deltas are measured against what
+                // Swift itself pushed — never the JS echo (serializer
+                // normalization shifts offsets).
+                let baseline = context.coordinator.pushedMarkdownBaseline
+                if markdown != baseline {
+                    if !baseline.isEmpty, markdown.hasPrefix(baseline) {
+                        context.coordinator.appendMarkdown(
+                            String(markdown.dropFirst(baseline.count)),
+                            fullMarkdown: markdown
+                        )
+                    } else {
+                        context.coordinator.setMarkdown(markdown)
+                    }
+                }
+            } else if context.coordinator.webMarkdown != markdown {
+                context.coordinator.setMarkdown(markdown)
+            }
         }
 
         if context.coordinator.isReady {
@@ -666,6 +689,11 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         var interfaceLanguage: WeiBeiInterfaceLanguage
         var webMarkdown = ""
         var pendingExternalMarkdown: String?
+        /// Authoritative append baseline: exactly what Swift last pushed.
+        /// NEVER synced from the JS markdownChanged echo — the serializer
+        /// normalizes markup, so echo lengths misalign delta offsets and
+        /// shredded streamed paragraphs into word-sized fragments.
+        var pushedMarkdownBaseline = ""
         var lastCommandID: UUID?
         let performanceInstanceID = UUID()
         fileprivate let imageSchemeHandler = MarkdownImageSchemeHandler()
@@ -921,7 +949,15 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         func setMarkdown(_ text: String) {
             pendingExternalMarkdown = text
             webMarkdown = text
+            pushedMarkdownBaseline = text
             evaluate("window.WeiBeiEditor?.setMarkdown(\(Self.json(text)))")
+        }
+
+        func appendMarkdown(_ delta: String, fullMarkdown: String) {
+            pendingExternalMarkdown = fullMarkdown
+            webMarkdown = fullMarkdown
+            pushedMarkdownBaseline = fullMarkdown
+            evaluate("window.WeiBeiEditor?.appendMarkdown(\(Self.json(delta)))")
         }
 
         func setEditable(_ editable: Bool) {

@@ -11264,12 +11264,9 @@ final class WorkspaceStore: ObservableObject {
     }
 
     var agentInputPrompt: String {
-        if hasSelectionAttachments {
-            return ui("输入问题", "Ask a question")
-        }
-        return hasSelectedMaterial
-            ? ui("问当前课程或材料", "Ask the course or current material")
-            : ui("问当前课程或笔记", "Ask the course or current note")
+        // Neutral, ChatGPT-like. Never steer toward a surface — the agent
+        // already knows what is open; the placeholder should not lecture.
+        ui("问点什么…", "Ask anything")
     }
 
     var selectionPromptScope: String {

@@ -600,7 +600,62 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
                 self.fail("inline code should not receive WeiBei Markdown syntax decorations")
                 return
             }
-            self.validateFrontmatterLanguageCycle(completion: completion)
+            self.validateStreamingAppendIntegrity {
+                self.validateFrontmatterLanguageCycle(completion: completion)
+            }
+        }
+    }
+
+    /// Regression: streamed chat prefixes append via appendMarkdown; a delta
+    /// misalignment once shredded paragraphs into word-sized fragments
+    /// (2026-08-01 user report). Drive the real pipeline and count blocks.
+    private func validateStreamingAppendIntegrity(completion: @escaping () -> Void) {
+        let script = """
+        (() => {
+          window.WeiBeiEditor.setMarkdown("第一段落完整内容。\\n\\n");
+          window.WeiBeiEditor.appendMarkdown("第二段带 **加粗** 与 $a+b$ 内容。\\n\\n");
+          window.WeiBeiEditor.appendMarkdown("- 列表甲\\n- 列表乙\\n\\n");
+          window.WeiBeiEditor.appendMarkdown("收尾一段。\\n\\n");
+          const root = document.querySelector('.ProseMirror');
+          const blocks = root ? Array.from(root.children).filter((node) => !node.classList.contains('ProseMirror-trailingBreak')) : [];
+          return JSON.stringify({
+            blockCount: blocks.length,
+            text: (root?.textContent || '').replace(/\\s+/g, ''),
+            markdown: window.WeiBeiEditor.getMarkdown()
+          });
+        })();
+        """
+        webView.evaluateJavaScript(script) { [weak self] value, error in
+            guard let self else { return }
+            if let error {
+                self.fail("streaming append check threw \(error.localizedDescription)")
+                return
+            }
+            guard let raw = value as? String,
+                  let data = raw.data(using: .utf8),
+                  let result = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                self.fail("streaming append check returned no result")
+                return
+            }
+            let blockCount = result["blockCount"] as? Int ?? -1
+            let text = result["text"] as? String ?? ""
+            // 3 paragraphs + 1 list = 4 top-level blocks; fragmentation inflates this.
+            guard blockCount == 4 else {
+                self.fail("appendMarkdown fragmented streamed blocks: expected 4 top-level blocks, got \(blockCount)")
+                return
+            }
+            guard text.contains("第二段带") else {
+                self.fail("appendMarkdown lost streamed content: \(text)")
+                return
+            }
+            guard text.contains("收尾一段。"), text.contains("列表甲"), text.contains("列表乙") else {
+                self.fail("appendMarkdown dropped appended blocks: \(text)")
+                return
+            }
+            // Restore the fixture document for the checks that follow.
+            self.webView.evaluateJavaScript("window.WeiBeiEditor.setMarkdown(\(json(sampleMarkdown)))") { _, _ in
+                completion()
+            }
         }
     }
 
