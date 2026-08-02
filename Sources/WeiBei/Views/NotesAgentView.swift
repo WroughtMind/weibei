@@ -1858,7 +1858,6 @@ struct AgentPaneView: View {
         )
         let comfy = wide
             || contentWidth >= AgentChatLayoutMetrics.wideTypographyMinContentWidth
-        let geometryWidth = availableWidth
         let headerHeight: CGFloat = showsPaneHeader
             ? (availableWidth < 420 ? 44 : 54)
             : 0
@@ -1894,7 +1893,6 @@ struct AgentPaneView: View {
                             ForEach(visibleAgentMessages) { message in
                                 agentMessageRow(
                                     message: message,
-                                    geometryWidth: geometryWidth,
                                     contentWidth: contentWidth,
                                     wide: wide
                                 )
@@ -1903,9 +1901,6 @@ struct AgentPaneView: View {
                                 && !store.hasPersistedGeneratingAgentReply
                                 && !store.agentStreamingText.isEmpty {
                                 agentReadingColumn(
-                                    geometryWidth: geometryWidth,
-                                    contentWidth: contentWidth,
-                                    wideLayout: wide,
                                     alignment: .leading
                                 ) {
                                     AgentStreamingResponse(text: store.agentStreamingText)
@@ -1917,9 +1912,6 @@ struct AgentPaneView: View {
                                 && !store.hasPersistedGeneratingAgentReply
                                 && store.agentStreamingText.isEmpty {
                                 agentReadingColumn(
-                                    geometryWidth: geometryWidth,
-                                    contentWidth: contentWidth,
-                                    wideLayout: wide,
                                     alignment: .leading
                                 ) {
                                     AgentThinkingIndicator()
@@ -1944,7 +1936,6 @@ struct AgentPaneView: View {
                         .padding(.horizontal, wide ? 8 : 10)
                         .padding(.vertical, wide ? 14 : 10)
                         .environment(\.agentChatLayoutWidth, markdownContentWidth)
-                        .environment(\.agentChatVisualWidth, contentWidth)
                         .environment(\.agentChatPaneStructureTransitionActive, isPaneStructureTransitionActive)
                         .padding(.top, store.messages.isEmpty ? 22 : 0)
                         .frame(maxWidth: .infinity, alignment: .topLeading)
@@ -1953,7 +1944,7 @@ struct AgentPaneView: View {
                     .clipped()
                     .zIndex(0)
 
-                    agentInputTray(wide: wide, contentWidth: contentWidth)
+                    agentInputTray(wide: wide)
                         .zIndex(1)
                         .animation(WeiBeiMotion.panel, value: store.layout)
                         .animation(WeiBeiMotion.panel, value: wide)
@@ -2146,7 +2137,6 @@ struct AgentPaneView: View {
 
     private func agentMessageRow(
         message: AgentMessage,
-        geometryWidth: CGFloat,
         contentWidth: CGFloat,
         wide: Bool
     ) -> some View {
@@ -2164,9 +2154,6 @@ struct AgentPaneView: View {
 
         // Native text rows: no per-message WKWebView height callbacks that thrash scroll.
         return agentReadingColumn(
-            geometryWidth: geometryWidth,
-            contentWidth: contentWidth,
-            wideLayout: wide,
             canvasWide: needsWideCanvas,
             alignment: isUser ? .trailing : .leading
         ) {
@@ -2186,29 +2173,17 @@ struct AgentPaneView: View {
     }
 
     /// One centered reading column for messages, streaming, and loading.
-    /// `geometryWidth` must be the live measured pane width — a stale full-window value
-    /// mis-centers multi-pane text (the PreferenceKey bug we fixed above).
+    /// The parent proposal is the source of truth: it shrinks this flexible cap
+    /// with the real pane instead of applying an offset derived from sampled width.
     private func agentReadingColumn<Content: View>(
-        geometryWidth: CGFloat,
-        contentWidth: CGFloat,
-        wideLayout: Bool,
         canvasWide: Bool = false,
         alignment: HorizontalAlignment,
         @ViewBuilder content: () -> Content
     ) -> some View {
-        let readingWidth: CGFloat = {
-            let paneLimit = max(geometryWidth - (wideLayout ? 32 : 16), 1)
-            // Both tiers read the full content column. The old non-wide branch
-            // pinned messages at 500pt, so widening compactMaxWidth never reached
-            // the actual bubbles (composer grew, messages did not).
-            let limit = canvasWide ? min(contentWidth + 40, paneLimit) : contentWidth
-            return min(min(max(contentWidth, 1), limit), paneLimit)
-        }()
-        let readingLeadingInset = max((geometryWidth - readingWidth) / 2, 0)
+        let readingWidth = AgentChatLayoutMetrics.wideMaxWidth + (canvasWide ? 40 : 0)
         return content()
             .frame(maxWidth: readingWidth, alignment: Alignment(horizontal: alignment, vertical: .center))
-            .padding(.leading, readingLeadingInset)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .frame(maxWidth: .infinity, alignment: .center)
     }
 
     private var agentRailTurns: [AgentRailTurn] {
@@ -2389,7 +2364,7 @@ struct AgentPaneView: View {
         store.agentInputPrompt
     }
 
-    private func agentInputTray(wide: Bool, contentWidth: CGFloat) -> some View {
+    private func agentInputTray(wide: Bool) -> some View {
         let minHeight = AgentChatLayoutMetrics.composerHeight(wide: wide)
         let maxHeight = AgentChatLayoutMetrics.composerMaxHeight(wide: wide)
         let fontSize = AgentChatLayoutMetrics.composerFontSize(wide: wide)
@@ -2431,7 +2406,7 @@ struct AgentPaneView: View {
                 }
             }
             .font(.system(size: fontSize))
-            .frame(width: contentWidth, alignment: .bottom)
+            .frame(maxWidth: AgentChatLayoutMetrics.wideMaxWidth, alignment: .bottom)
             .padding(.top, wide ? 6 : 4)
             .padding(.bottom, wide ? 16 : 12)
             .frame(maxWidth: .infinity)
@@ -4942,10 +4917,6 @@ private struct AgentChatLayoutWidthKey: EnvironmentKey {
     static let defaultValue: CGFloat = 0
 }
 
-private struct AgentChatVisualWidthKey: EnvironmentKey {
-    static let defaultValue: CGFloat = 0
-}
-
 private struct AgentChatPaneStructureTransitionKey: EnvironmentKey {
     static let defaultValue = false
 }
@@ -4954,11 +4925,6 @@ private extension EnvironmentValues {
     var agentChatLayoutWidth: CGFloat {
         get { self[AgentChatLayoutWidthKey.self] }
         set { self[AgentChatLayoutWidthKey.self] = newValue }
-    }
-
-    var agentChatVisualWidth: CGFloat {
-        get { self[AgentChatVisualWidthKey.self] }
-        set { self[AgentChatVisualWidthKey.self] = newValue }
     }
 
     var agentChatPaneStructureTransitionActive: Bool {
@@ -5008,10 +4974,16 @@ private struct AgentScrollViewportVisibilityProbe: NSViewRepresentable {
         }
 
         fileprivate func report() {
-            let visible = window != nil
-                && !visibleRect.isEmpty
-                && visibleRect.width > 1
-                && visibleRect.height > 1
+            let visible: Bool
+            if let clipView = enclosingScrollView?.contentView, window != nil {
+                let frameInClip = convert(bounds, to: clipView)
+                let intersection = frameInClip.intersection(clipView.bounds)
+                visible = !intersection.isNull
+                    && intersection.width > 1
+                    && intersection.height > 1
+            } else {
+                visible = false
+            }
             guard visible != lastReported else { return }
             lastReported = visible
             DispatchQueue.main.async { [weak self] in
@@ -5159,7 +5131,6 @@ private struct AgentScrollDistanceProbe: NSViewRepresentable {
 private struct AgentMessageMarkdownText: View {
     @EnvironmentObject private var store: WorkspaceStore
     @Environment(\.agentChatLayoutWidth) private var layoutWidth
-    @Environment(\.agentChatVisualWidth) private var visualWidth
     @Environment(\.agentChatPaneStructureTransitionActive) private var paneStructureTransitionActive
     var text: String
     var rendersRichMarkdown: Bool
@@ -5180,7 +5151,9 @@ private struct AgentMessageMarkdownText: View {
     var onFinalizedRenderReady: () -> Void = {}
     @State private var finalizedRendererReady = false
     @State private var finalizedRendererFailed = false
-    @State private var isInScrollViewport = false
+    /// nil = newly mounted and not classified yet. Treat unknown as visible so
+    /// an on-screen row never flashes the held offscreen width before the probe.
+    @State private var isInScrollViewport: Bool?
     @State private var expandedSourceURL: String?
 
     private var sourcePresentation: AgentReplySourceInlinePresentation {
@@ -5209,11 +5182,11 @@ private struct AgentMessageMarkdownText: View {
             && AgentChatKaTeXMarkdown.requiresWebRenderer(finalizedMarkdown)
     }
 
-    private var finalizedRendererWidth: CGFloat {
-        if paneStructureTransitionActive && !isInScrollViewport {
+    private var heldOffscreenRendererWidth: CGFloat? {
+        if paneStructureTransitionActive && isInScrollViewport == false {
             return max(layoutWidth, 1)
         }
-        return max(visualWidth > 1 ? visualWidth : layoutWidth, 1)
+        return nil
     }
 
     var body: some View {
@@ -5324,7 +5297,13 @@ private struct AgentMessageMarkdownText: View {
                         }
                     }
                 )
-                .frame(width: finalizedRendererWidth, alignment: .leading)
+                // The renderer itself must accept the live reading-column
+                // proposal. A flexible outer row alone leaves WKWebView at its
+                // previous intrinsic width after the chat pane resizes.
+                .frame(maxWidth: .infinity, alignment: .leading)
+                // A visible row takes the real parent proposal (nil width), so
+                // it cannot feed a stale cached width back into the chat pane.
+                .frame(width: heldOffscreenRendererWidth, alignment: .leading)
                 .allowsHitTesting(finalizedRendererReady)
                 .accessibilityHidden(!finalizedRendererReady)
                 .opacity(finalizedRendererReady ? 1 : 0.01)
@@ -5344,7 +5323,7 @@ private struct AgentMessageMarkdownText: View {
         .clipped()
         .background {
             AgentScrollViewportVisibilityProbe { visible in
-                if isInScrollViewport != visible {
+                if isInScrollViewport != Optional(visible) {
                     isInScrollViewport = visible
                 }
             }
