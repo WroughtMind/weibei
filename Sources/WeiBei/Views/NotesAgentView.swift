@@ -1785,10 +1785,11 @@ struct AgentPaneView: View {
     @State private var globalMemoryPanelPresented = false
     /// Live pane width from a background probe. 0 until first real measurement.
     @State private var measuredPaneWidth: CGFloat = 0
-    /// Structural pane show/hide animates the AppKit slot every frame. Keep only
-    /// finalized Markdown at one layout width so its web views reflow once; the
-    /// surrounding chat still follows the pane continuously.
+    /// Structural pane show/hide animates the AppKit slot every frame. Visible
+    /// finalized Markdown follows the live column; offscreen web views hold one
+    /// width and settle once at the destination instead of all reflowing per frame.
     @State private var heldPaneLayoutWidth: CGFloat?
+    @State private var isPaneStructureTransitionActive = false
     @State private var lastReadablePaneWidth: CGFloat = 360
     @State private var paneStructureTransitionSequence = 0
     /// Driven by the AppKit scroll probe — true when the viewport sits well
@@ -1943,6 +1944,8 @@ struct AgentPaneView: View {
                         .padding(.horizontal, wide ? 8 : 10)
                         .padding(.vertical, wide ? 14 : 10)
                         .environment(\.agentChatLayoutWidth, markdownContentWidth)
+                        .environment(\.agentChatVisualWidth, contentWidth)
+                        .environment(\.agentChatPaneStructureTransitionActive, isPaneStructureTransitionActive)
                         .padding(.top, store.messages.isEmpty ? 22 : 0)
                         .frame(maxWidth: .infinity, alignment: .topLeading)
                     }
@@ -2111,12 +2114,14 @@ struct AgentPaneView: View {
         paneStructureTransitionSequence &+= 1
         if reduceMotion {
             heldPaneLayoutWidth = nil
+            isPaneStructureTransitionActive = false
             if !store.isPaneVisible(.agent) {
                 measuredPaneWidth = lastReadablePaneWidth
             }
             return
         }
         let sequence = paneStructureTransitionSequence
+        isPaneStructureTransitionActive = true
         if heldPaneLayoutWidth == nil {
             // A never-opened resident Agent host measures 0pt while hidden; use
             // the existing compact fallback until its first real final width.
@@ -2128,6 +2133,7 @@ struct AgentPaneView: View {
             DispatchQueue.main.async {
                 guard sequence == paneStructureTransitionSequence else { return }
                 heldPaneLayoutWidth = nil
+                isPaneStructureTransitionActive = false
                 // Closing ends at a collapsed resident host. Restore its last
                 // readable seed after it is hidden so the next opening has no
                 // one-frame 2pt layout flash.
@@ -4936,10 +4942,28 @@ private struct AgentChatLayoutWidthKey: EnvironmentKey {
     static let defaultValue: CGFloat = 0
 }
 
+private struct AgentChatVisualWidthKey: EnvironmentKey {
+    static let defaultValue: CGFloat = 0
+}
+
+private struct AgentChatPaneStructureTransitionKey: EnvironmentKey {
+    static let defaultValue = false
+}
+
 private extension EnvironmentValues {
     var agentChatLayoutWidth: CGFloat {
         get { self[AgentChatLayoutWidthKey.self] }
         set { self[AgentChatLayoutWidthKey.self] = newValue }
+    }
+
+    var agentChatVisualWidth: CGFloat {
+        get { self[AgentChatVisualWidthKey.self] }
+        set { self[AgentChatVisualWidthKey.self] = newValue }
+    }
+
+    var agentChatPaneStructureTransitionActive: Bool {
+        get { self[AgentChatPaneStructureTransitionKey.self] }
+        set { self[AgentChatPaneStructureTransitionKey.self] = newValue }
     }
 }
 
@@ -4948,6 +4972,80 @@ private struct AgentScrollMetrics: Equatable {
     let distanceFromBottom: CGFloat
     let isUserScrolling: Bool
     let isScrollingTowardTop: Bool
+}
+
+/// Reports whether one finalized Markdown row intersects the chat viewport.
+/// The boolean changes only at viewport boundaries, keeping offscreen WebKit
+/// frames out of pane-animation reflow without putting SwiftUI geometry inside
+/// the scroll stack.
+private struct AgentScrollViewportVisibilityProbe: NSViewRepresentable {
+    var onChange: (Bool) -> Void
+
+    func makeNSView(context: Context) -> ProbeView {
+        let view = ProbeView()
+        view.onChange = onChange
+        return view
+    }
+
+    func updateNSView(_ nsView: ProbeView, context: Context) {
+        nsView.onChange = onChange
+        nsView.report()
+    }
+
+    final class ProbeView: NSView {
+        var onChange: ((Bool) -> Void)?
+        private var observers: [NSObjectProtocol] = []
+        private var lastReported: Bool?
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            installObservers()
+        }
+
+        override func viewDidMoveToSuperview() {
+            super.viewDidMoveToSuperview()
+            installObservers()
+        }
+
+        fileprivate func report() {
+            let visible = window != nil
+                && !visibleRect.isEmpty
+                && visibleRect.width > 1
+                && visibleRect.height > 1
+            guard visible != lastReported else { return }
+            lastReported = visible
+            DispatchQueue.main.async { [weak self] in
+                self?.onChange?(visible)
+            }
+        }
+
+        private func installObservers() {
+            observers.forEach(NotificationCenter.default.removeObserver)
+            observers.removeAll()
+            guard let clipView = enclosingScrollView?.contentView else {
+                report()
+                return
+            }
+            clipView.postsBoundsChangedNotifications = true
+            clipView.postsFrameChangedNotifications = true
+            let center = NotificationCenter.default
+            observers.append(center.addObserver(
+                forName: NSView.boundsDidChangeNotification,
+                object: clipView,
+                queue: .main
+            ) { [weak self] _ in self?.report() })
+            observers.append(center.addObserver(
+                forName: NSView.frameDidChangeNotification,
+                object: clipView,
+                queue: .main
+            ) { [weak self] _ in self?.report() })
+            report()
+        }
+
+        deinit {
+            observers.forEach(NotificationCenter.default.removeObserver)
+        }
+    }
 }
 
 /// AppKit-side scroll probe: observes the enclosing NSScrollView's clip-view
@@ -5061,6 +5159,8 @@ private struct AgentScrollDistanceProbe: NSViewRepresentable {
 private struct AgentMessageMarkdownText: View {
     @EnvironmentObject private var store: WorkspaceStore
     @Environment(\.agentChatLayoutWidth) private var layoutWidth
+    @Environment(\.agentChatVisualWidth) private var visualWidth
+    @Environment(\.agentChatPaneStructureTransitionActive) private var paneStructureTransitionActive
     var text: String
     var rendersRichMarkdown: Bool
     /// Selection-float / narrow surfaces: smaller type, still fills available width.
@@ -5080,6 +5180,7 @@ private struct AgentMessageMarkdownText: View {
     var onFinalizedRenderReady: () -> Void = {}
     @State private var finalizedRendererReady = false
     @State private var finalizedRendererFailed = false
+    @State private var isInScrollViewport = false
     @State private var expandedSourceURL: String?
 
     private var sourcePresentation: AgentReplySourceInlinePresentation {
@@ -5108,6 +5209,13 @@ private struct AgentMessageMarkdownText: View {
             && AgentChatKaTeXMarkdown.requiresWebRenderer(finalizedMarkdown)
     }
 
+    private var finalizedRendererWidth: CGFloat {
+        if paneStructureTransitionActive && !isInScrollViewport {
+            return max(layoutWidth, 1)
+        }
+        return max(visualWidth > 1 ? visualWidth : layoutWidth, 1)
+    }
+
     var body: some View {
         Group {
             if shouldUseFinalizedMarkdown {
@@ -5118,7 +5226,6 @@ private struct AgentMessageMarkdownText: View {
             }
         }
         .modifier(AgentMessageTextWidthModifier(fillsReadingColumn: rendersRichMarkdown || compact))
-        .clipped()
         .environment(\.openURL, OpenURLAction { url in
             handleSourceURL(url) ? .handled : .systemAction
         })
@@ -5217,13 +5324,12 @@ private struct AgentMessageMarkdownText: View {
                         }
                     }
                 )
+                .frame(width: finalizedRendererWidth, alignment: .leading)
                 .allowsHitTesting(finalizedRendererReady)
                 .accessibilityHidden(!finalizedRendererReady)
                 .opacity(finalizedRendererReady ? 1 : 0.01)
                 .zIndex(0)
             }
-            // Overlay only — never remove this node when ready flips, or LazyVStack
-            // remasures the row and re-enters PlatformView sizeThatFits.
             // Suppressed during streaming handoff (caller overlays the live
             // streaming view instead), except when WebKit failed outright.
             if !finalizedRendererReady && (!suppressesLoadingOverlay || finalizedRendererFailed) {
@@ -5234,10 +5340,15 @@ private struct AgentMessageMarkdownText: View {
                     .zIndex(1)
             }
         }
-        // The outer message column keeps following the pane. Only the completed
-        // WebKit renderer holds this exact width during a structural transition,
-        // then performs one final Markdown/KaTeX reflow at the destination width.
-        .frame(width: max(layoutWidth, 1), alignment: .leading)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .clipped()
+        .background {
+            AgentScrollViewportVisibilityProbe { visible in
+                if isInScrollViewport != visible {
+                    isInScrollViewport = visible
+                }
+            }
+        }
     }
 
     private var nativeBody: some View {
