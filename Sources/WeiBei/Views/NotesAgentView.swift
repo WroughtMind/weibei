@@ -2027,9 +2027,9 @@ struct AgentPaneView: View {
                     measuredPaneWidth = max(measuredPaneWidth, 1100)
                 }
             } else if measuredPaneWidth > 700 {
-                // Drop stale full-window width; real strip measure arrives next frame.
-                measuredPaneWidth = 0
-                lastReadablePaneWidth = 360
+                // Restore the last real compact width; the next probe refines it.
+                // Immersive measurements never overwrite this compact seed.
+                measuredPaneWidth = lastReadablePaneWidth
             }
         }
         .frame(minHeight: 260)
