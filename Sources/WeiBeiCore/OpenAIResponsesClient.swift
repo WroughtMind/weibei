@@ -27,7 +27,6 @@ public struct OpenAIResponsesClient: Sendable {
         noteText: String,
         selectionTitle: String? = nil,
         selectionText: String?,
-        recentMessages: [AgentMessage],
         language: WeiBeiInterfaceLanguage = .chinese
     ) async throws -> String {
         var request = URLRequest(url: URL(string: "https://api.openai.com/v1/responses")!)
@@ -44,7 +43,6 @@ public struct OpenAIResponsesClient: Sendable {
             noteText: noteText,
             selectionTitle: selectionTitle,
             selectionText: selectionText,
-            recentMessages: recentMessages,
             language: language
         )
         let body: [String: Any] = [
@@ -72,7 +70,6 @@ public struct OpenAIResponsesClient: Sendable {
             noteText: request.noteText,
             selectionTitle: request.selectionTitle,
             selectionText: request.selectionText,
-            recentMessages: request.recentMessages,
             language: request.language
         )
     }
@@ -85,7 +82,6 @@ public struct OpenAIResponsesClient: Sendable {
         noteText: String,
         selectionTitle: String? = nil,
         selectionText: String?,
-        recentMessages: [AgentMessage],
         language: WeiBeiInterfaceLanguage = .chinese
     ) -> AgentPromptPayload {
         func label(_ value: String?, fallback: String) -> String {
@@ -121,12 +117,6 @@ public struct OpenAIResponsesClient: Sendable {
         \(language.text("笔记内容", "Note content"))\(headingColon)
         \(trimmedNote.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? language.text("无", "none") : trimmedNote)
         """
-        let dialogue = recentMessages.suffix(20).map { message in
-            let role = message.role == .user ? language.text("用户", "User") : language.text("助手", "Assistant")
-            let source = message.source?.trimmingCharacters(in: .whitespacesAndNewlines)
-            let sourceText = source?.isEmpty == false ? language.text("（来源：\(source!)）", " (source: \(source!))") : ""
-            return "\(role)\(sourceText)\(colon)\(String(message.text.prefix(1_200)))"
-        }.joined(separator: "\n")
         let instructions = language.text(
             "你是魏碑里的学习助手。先直接回答用户；普通问题可以使用通用知识。回答实际依赖当前材料、笔记或选区时，以其内容为准，在相关句子后就近标注真实标题，并明确区分课程原文与通用解释。只有用户要求核对课程特有内容而当前资料不足时，才说明尚未确认。回答用中文，结论先行。",
             "You are the study assistant inside WeiBei. Answer the user directly; general questions may use general knowledge. When an answer actually relies on the current material, note, or selection, use that content as the source, cite its real title next to the relevant sentence, and distinguish course content from general explanation. Only say something is unconfirmed when the user asks to verify course-specific content and the available material is insufficient. Answer in English and lead with the conclusion."
@@ -137,9 +127,6 @@ public struct OpenAIResponsesClient: Sendable {
         \(selectionBlock)
 
         \(noteBlock)
-
-        \(language.text("最近对话", "Recent conversation"))\(headingColon)
-        \(dialogue.isEmpty ? language.text("无", "none") : dialogue)
 
         \(language.text("用户问题", "User question"))\(headingColon)
         \(question)

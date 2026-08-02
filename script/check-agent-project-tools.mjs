@@ -128,7 +128,6 @@ try {
       text: "ORIGINAL_EXTENSION_CONTENT",
       isTruncated: false,
     },
-    recentMessages: [],
     course: {
       title: "课程甲",
       catalog: [{
@@ -191,8 +190,11 @@ try {
   await writeFile(contextFile, JSON.stringify(hookEnvelope));
   process.env.WEIBEI_AGENT_CONTEXT_FILE = contextFile;
   const eventHandlers = new Map();
+  const registeredTools = [];
   extension.default({
-    registerTool() {},
+    registerTool(tool) {
+      registeredTools.push(tool.name);
+    },
     on(name, handler) {
       eventHandlers.set(name, handler);
     },
@@ -203,11 +205,13 @@ try {
   );
   const beforeResult = await beforeAgentStart({ systemPrompt: "base" });
   requireValue(
-      beforeResult.message?.customType === "weibei-current-focus" &&
-      beforeResult.message?.display === false &&
-      beforeResult.message?.content.includes("ORIGINAL_EXTENSION_CONTENT") &&
+      beforeResult.message === undefined &&
       beforeResult.systemPrompt.includes("直接回答用户的问题"),
-    "当前材料、选区和笔记没有作为隐藏本轮焦点自然交给 Pi",
+    "本轮现场仍被写成持久消息，或本轮规则没有交给 Pi",
+  );
+  requireValue(
+    !registeredTools.includes("weibei_context"),
+    "魏碑仍注册了需要模型主动读取的上下文工具",
   );
   const contextHook = requireValue(
     eventHandlers.get("context"),
@@ -216,14 +220,32 @@ try {
   const filteredContext = await contextHook({
     messages: [
       { role: "custom", customType: "weibei-current-focus", content: "old", display: false },
+      {
+        role: "assistant",
+        content: [{ type: "toolCall", id: "legacy-context", name: "weibei_context", arguments: {} }],
+      },
+      {
+        role: "toolResult",
+        toolCallId: "legacy-context",
+        toolName: "weibei_context",
+        content: [{ type: "text", text: "ORIGINAL_EXTENSION_CONTENT" }],
+        details: { kind: "weibei_context", contextRevision: "old" },
+        isError: false,
+      },
       { role: "user", content: "继续" },
-      beforeResult.message,
     ],
   });
+  const transientContext = filteredContext.messages.at(-1);
   requireValue(
     filteredContext.messages.length === 2 &&
-      filteredContext.messages.at(-1)?.content === beforeResult.message.content,
-    "后续回合仍把旧焦点和当前焦点一起交给 Pi",
+      filteredContext.messages[0]?.role === "user" &&
+      transientContext?.role === "custom" &&
+      transientContext.customType === "weibei-current-focus" &&
+      transientContext.display === false &&
+      transientContext.content.includes("revision-a") &&
+      transientContext.content.includes("material-1") &&
+      !transientContext.content.includes("ORIGINAL_EXTENSION_CONTENT"),
+    "当前现场没有只作为无正文的本轮临时消息交给 Pi",
   );
   const emptyFocusEnvelope = {
     ...hookEnvelope,
@@ -236,14 +258,16 @@ try {
   await writeFile(contextFile, JSON.stringify(emptyFocusEnvelope));
   const clearedContext = await contextHook({
     messages: [
-      { role: "custom", customType: "weibei-current-focus", content: beforeResult.message.content, display: false },
+      { role: "custom", customType: "weibei-current-focus", content: "old", display: false },
       { role: "user", content: "现在没有打开资料" },
     ],
   });
   requireValue(
-    clearedContext.messages.length === 1 &&
-      clearedContext.messages[0]?.role === "user",
-    "本轮没有焦点时仍把上一轮焦点交给 Pi",
+    clearedContext.messages.length === 2 &&
+      clearedContext.messages[0]?.role === "user" &&
+      clearedContext.messages[1]?.content.includes("context-empty") &&
+      !clearedContext.messages[1]?.content.includes("ORIGINAL_EXTENSION_CONTENT"),
+    "本轮现场没有替换上一轮现场，或仍携带材料正文",
   );
   await writeFile(contextFile, "{broken");
   let brokenContextRejected = false;

@@ -303,7 +303,6 @@ public actor PiAgentRuntime: StudyAgentRuntime {
 
     private static let processReadinessTimeoutSeconds: UInt64 = 12
     private static let sharedToolNames = [
-        "weibei_context",
         "weibei_course_map",
         "weibei_course_search",
         "weibei_course_read",
@@ -528,44 +527,35 @@ public actor PiAgentRuntime: StudyAgentRuntime {
             workingDirectory: workingDirectory,
             scope: request.projectScope.kind
         )
-        var startupState: PiSessionState?
-        var needsHistoryRecovery = false
         let hadStoredSession = sessionDirectoryHasContents(binding.sessionDirectory)
         do {
-            startupState = try await ensureProcess(binding: binding)
+            _ = try await ensureProcess(binding: binding)
         } catch let failure as PiSessionStateFailure {
             guard failure.repairsEmptySession || hadStoredSession else {
                 throw PiAgentRuntimeError.protocolFailure(failure.message)
             }
             try await resetSession(binding: binding)
-            needsHistoryRecovery = true
+            let rebuiltState: PiSessionState
             do {
-                startupState = try await ensureProcess(binding: binding)
+                rebuiltState = try await ensureProcess(binding: binding)
             } catch let secondFailure as PiSessionStateFailure {
                 throw PiAgentRuntimeError.protocolFailure(secondFailure.message)
             }
-            guard startupState?.messageCount == 0 else {
+            guard rebuiltState.messageCount == 0 else {
                 throw PiAgentRuntimeError.protocolFailure(
                     "rebuilt PI session did not start empty"
                 )
             }
         }
-        if startupState?.messageCount == 0, !request.recentMessages.isEmpty {
-            needsHistoryRecovery = true
-        }
         try requireStartingRun(request.id)
 
-        var contextRequest = request
-        if !needsHistoryRecovery {
-            contextRequest.recentMessages = []
-        }
-        let context = StudyAgentContextEnvelope(request: contextRequest)
+        let context = StudyAgentContextEnvelope(request: request)
         try writeContext(context)
         try prepareHostToolResponseDirectory(for: request.id)
         let progressDelivery = progress.map(ProgressDelivery.init(handler:))
 
         let currentJumpEvidence = currentJumpEvidence(in: context)
-        let currentSourceLabels = currentSourceLabels(in: context)
+        let currentSourceLabels = currentSourceLabels(request: request, context: context)
         activeRun = ActiveRun(
             id: request.id,
             contextRevision: request.contextRevision,
@@ -593,7 +583,7 @@ public actor PiAgentRuntime: StudyAgentRuntime {
             jumpEvidenceLabels: currentJumpEvidence,
             lastLocationSourceLabel: context.learning.lastLocation.map { "[材料：\($0.itemTitle)]" },
             allowedNoteSourceLabels: currentSourceLabels,
-            contextSources: currentReplySources(request: request, context: context),
+            contextSources: request.selectionSources,
             allowedToolNames: Set(Self.allowedToolNames(for: binding.scope)),
             allowsRelationProposal: binding.scope == .course,
             courseCatalogRolesByContextID: context.course.catalog.reduce(into: [:]) {
@@ -700,7 +690,7 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         )
     }
 
-    private func ensureProcess(binding: ProcessBinding) async throws -> PiSessionState? {
+    private func ensureProcess(binding: ProcessBinding) async throws -> PiSessionState {
         if let process, process.isRunning, processBinding == binding {
             return try await readSessionState(binding: binding)
         }
@@ -1002,80 +992,47 @@ public actor PiAgentRuntime: StudyAgentRuntime {
     }
 
     private func piPrompt(for request: StudyAgentRequest) -> String {
-        request.question
+        guard let selection = request.selectionText?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !selection.isEmpty else {
+            return request.question
+        }
+
+        let title = request.selectionTitle?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let selectionTitle = title.flatMap { $0.isEmpty ? nil : $0 }
+            ?? request.language.text("当前选区", "Current selection")
+        let separator = request.language.text("；", "; ")
+        let sources = request.selectionSources.map { source in
+            var parts = [source.label]
+            if let itemID = source.itemID, !itemID.isEmpty {
+                parts.append(request.language.text("条目 ID：\(itemID)", "Item ID: \(itemID)"))
+            }
+            if let position = source.positionLabel(language: request.language) {
+                parts.append(position)
+            }
+            return parts.joined(separator: separator)
+        }
+        let sourceLines = sources.isEmpty ? "[选区：\(selectionTitle)]" : sources.joined(separator: "\n")
+
+        return request.language.text(
+            "[选中文字：\(selectionTitle)]\n\(selection)\n\n[来源]\n\(sourceLines)\n\n[问题]\n\(request.question)",
+            "[Selected text: \(selectionTitle)]\n\(selection)\n\n[Sources]\n\(sourceLines)\n\n[Question]\n\(request.question)"
+        )
     }
 
-    private func currentSourceLabels(in context: StudyAgentContextEnvelope) -> Set<String> {
-        var labels: [String] = []
-        if !context.note.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            labels.append("[笔记：\(context.note.title)]")
-        }
-        if let material = context.material,
-           !material.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            labels.append("[材料：\(material.title)]")
-        }
+    private func currentSourceLabels(
+        request: StudyAgentRequest,
+        context: StudyAgentContextEnvelope
+    ) -> Set<String> {
+        var labels = Set(request.selectionSources.map(\.label))
         if let selection = context.selection,
            !selection.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            labels.append("[选区：\(selection.title)]")
+            labels.insert("[选区：\(selection.title)]")
         }
-        return Set(labels)
+        return labels
     }
 
     private func currentAssetIDs(in context: StudyAgentContextEnvelope) -> Set<String> {
         Set(context.course.catalog.lazy.filter(\.isCurrentMaterial).map(\.id))
-    }
-
-    private func currentReplySources(
-        request: StudyAgentRequest,
-        context: StudyAgentContextEnvelope
-    ) -> [AgentReplySource] {
-        var sources: [AgentReplySource] = []
-        func append(
-            itemID: String?,
-            kind: AgentReplySourceKind,
-            title: String,
-            label: String,
-            text: String
-        ) {
-            let excerpt = text.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !excerpt.isEmpty else { return }
-            let parsed = SourceReferenceTitle.parse(title)
-            sources.append(
-                AgentReplySource(
-                    itemID: itemID,
-                    kind: kind,
-                    title: parsed.title,
-                    label: label,
-                    excerpt: String(excerpt.prefix(400)),
-                    pageIndex: parsed.pageIndex,
-                    sectionTitle: parsed.sectionTitle,
-                    sectionLocationID: parsed.sectionLocationID,
-                    sectionOrdinal: parsed.sectionOrdinal,
-                    courseItemOrdinal: parsed.courseItemOrdinal
-                )
-            )
-        }
-
-        let materialID = context.course.catalog.first(where: \.isCurrentMaterial)?.id
-        if let material = context.material {
-            append(
-                itemID: materialID,
-                kind: .material,
-                title: material.title,
-                label: "[材料：\(material.title)]",
-                text: material.text
-            )
-        }
-        let noteID = context.course.catalog.first(where: \.isCurrentNote)?.id
-        append(
-            itemID: noteID,
-            kind: .note,
-            title: context.note.title,
-            label: "[笔记：\(context.note.title)]",
-            text: context.note.text
-        )
-        sources.append(contentsOf: request.selectionSources)
-        return sources
     }
 
     private func appendSources(_ sources: [AgentReplySource], to run: inout ActiveRun) {
@@ -1114,13 +1071,6 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         func add(_ rawReference: String, label: String) {
             guard let reference = canonicalJumpReference(rawReference) else { return }
             evidence[reference, default: []].insert(label)
-        }
-        if !context.note.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            add("来源：\(context.note.title)", label: "[笔记：\(context.note.title)]")
-        }
-        if let material = context.material,
-           !material.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            add("来源：\(material.title)", label: "[材料：\(material.title)]")
         }
         if let selection = context.selection,
            !selection.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -1945,22 +1895,6 @@ public actor PiAgentRuntime: StudyAgentRuntime {
             }
             refreshRunWatchdog()
             run.progressDelivery?.yield(.usingTool(name, Self.toolActivityDetail(argumentsJSON: argumentsJSON)))
-
-        case let .contextRead(_, contextRevision):
-            guard var run = activeRun else { return }
-            guard contextRevision == run.contextRevision else {
-                recordRejectedAction(
-                    "weibei_context",
-                    reason: "PI read a stale WeiBei context",
-                    run: &run
-                )
-                activeRun = run
-                refreshRunWatchdog()
-                return
-            }
-            activeRun = run
-            trace("context read revision matched")
-            refreshRunWatchdog()
 
         case let .courseSourcesRead(_, contextRevision, labels, assetIDs, jumpEvidence, sources):
             guard var run = activeRun, contextRevision == run.contextRevision else { return }

@@ -86,11 +86,8 @@ private func checkRPCDecoding() throws {
     let rejection = try PiRPCMessageDecoder.decode(Data(#"{"id":"prompt-1","type":"response","command":"prompt","success":false,"error":"busy"}"#.utf8))
     try piRequire(rejection == .response(PiRPCResponse(id: "prompt-1", command: "prompt", success: false, error: "busy")), "PI rejected commands keep their errors")
 
-    let failedTool = try PiRPCMessageDecoder.decode(Data(#"{"type":"tool_execution_end","toolCallId":"tool-2","toolName":"weibei_context","isError":true,"result":{"content":[{"type":"text","text":"stale context"}]}}"#.utf8))
-    try piRequire(failedTool == .toolFailed(id: "tool-2", name: "weibei_context", message: "stale context"), "PI tool failures keep ids and messages")
-
-    let contextRead = try PiRPCMessageDecoder.decode(Data(#"{"type":"tool_execution_end","toolCallId":"tool-context","toolName":"weibei_context","isError":false,"result":{"details":{"kind":"weibei_context","contextRevision":"revision-7"}}}"#.utf8))
-    try piRequire(contextRead == .contextRead(id: "tool-context", contextRevision: "revision-7"), "PI context reads preserve the validated revision")
+    let failedTool = try PiRPCMessageDecoder.decode(Data(#"{"type":"tool_execution_end","toolCallId":"tool-2","toolName":"weibei_course_search","isError":true,"result":{"content":[{"type":"text","text":"stale context"}]}}"#.utf8))
+    try piRequire(failedTool == .toolFailed(id: "tool-2", name: "weibei_course_search", message: "stale context"), "PI tool failures keep ids and messages")
 
     let visualAssetRead = try PiRPCMessageDecoder.decode(Data(#"{"type":"tool_execution_end","toolCallId":"tool-visual","toolName":"weibei_visual_asset","isError":false,"result":{"details":{"kind":"visual_asset_read","contextRevision":"revision-7","assetID":"course-item-1","sha256":"abc123","byteCount":2048}}}"#.utf8))
     try piRequire(
@@ -464,9 +461,6 @@ private func checkRPCDecoding() throws {
 }
 
 private func checkStudyAgentContext() throws {
-    let recentMessages = (0..<24).map { index in
-        AgentMessage(role: index.isMultiple(of: 2) ? .user : .assistant, text: "message-\(index)" + String(repeating: "字", count: 1_300), source: "source-\(index)")
-    }
     let courseItems = (0..<90).map { index in
         StudyAgentCourseItem(
             id: "item-\(index)",
@@ -506,7 +500,6 @@ private func checkStudyAgentContext() throws {
         noteText: String(repeating: "记", count: 6_100),
         selectionTitle: String(repeating: "选", count: 320),
         selectionText: String(repeating: "选", count: 2_100),
-        recentMessages: recentMessages,
         courseContext: StudyAgentCourseContext(
             title: "测试课程",
             items: courseItems,
@@ -566,8 +559,11 @@ private func checkStudyAgentContext() throws {
     try piRequire(envelope.material?.text.count == 18_000 && envelope.note.text.count == 6_000 && envelope.selection?.text.count == 2_000, "study-agent context applies source limits")
     try piRequire(envelope.material?.title.count == 300 && envelope.note.title.count == 300 && envelope.selection?.title.count == 300, "study-agent context bounds source labels consistently")
     try piRequire(envelope.material?.isTruncated == true && envelope.note.isTruncated && envelope.selection?.isTruncated == true, "study-agent context marks every truncated source")
-    try piRequire(envelope.recentMessages.count == 20 && envelope.recentMessages.first?.text.hasPrefix("message-4") == true, "study-agent context keeps the latest twenty messages")
-    try piRequire(envelope.recentMessages.allSatisfy { $0.text.count <= 1_200 }, "study-agent context bounds recent messages")
+    let encodedEnvelope = try JSONEncoder().encode(envelope)
+    try piRequire(
+        !String(decoding: encodedEnvelope, as: UTF8.self).contains("recentMessages"),
+        "study-agent context leaves conversation history to the native PI session"
+    )
     try piRequire(envelope.course.catalog.count == 90 && envelope.course.items.count == 80 && envelope.course.relations.count == 210 && envelope.course.isTruncated, "study-agent context keeps the full catalog while bounding query candidates")
     try piRequire(
         envelope.course.catalog.allSatisfy { $0.id.hasPrefix("course-item-") }
@@ -885,7 +881,6 @@ private func checkBundledAgentResources() throws {
     try piRequire(extensionSource.contains("before_agent_start") && extensionSource.contains("tool_call") && extensionSource.contains("pi.on(\"context\""), "PI extension bundles source, permission, and stale-context hooks")
     try piRequire(
         [
-            "weibei_context",
             "weibei_course_map",
             "weibei_course_search",
             "weibei_learning_memory",
@@ -917,10 +912,10 @@ private func checkBundledAgentResources() throws {
         "PI bundles a fixed isolated Python artifact worker instead of model-authored code"
     )
     try piRequire(
-        extensionSource.contains("contextFileBytes: 4 * 1024 * 1024")
+            extensionSource.contains("contextFileBytes: 4 * 1024 * 1024")
             && extensionSource.contains("courseCatalogItems: 500")
             && extensionSource.contains("courseMapPageItems: 60")
-            && extensionSource.contains("catalogCount: snapshot.course.catalog.length")
+            && extensionSource.contains("const catalog = snapshot.course.catalog.map")
             && extensionSource.contains("const offset = params.offset ?? 0")
             && extensionSource.contains("const limit = params.limit ?? 40")
             && extensionSource.contains("与已有 catalog ID 重复")
@@ -1010,7 +1005,6 @@ private func checkBundledAgentResources() throws {
             && !extensionSource.contains("explicitRichAnswerRequested")
             && extensionSource.contains("answerFormPolicy")
             && extensionSource.contains("activeAnswerFormPolicy === \"textOnly\"")
-            && extensionSource.contains("richAnswerGrounding")
             && extensionSource.contains("sourceBindings: richAnswerSourceBindings")
             && extensionSource.contains("readableSourceLabels")
             && extensionSource.contains("allowedAssetIDs")
@@ -1021,7 +1015,7 @@ private func checkBundledAgentResources() throws {
             && resources.systemPrompt.contains("不能用漂亮图形掩盖知识错误")
             && resources.systemPrompt.contains("材料给出的采样窗口、测量方法")
             && resources.systemPrompt.contains("必须由对应控件和 binding 真实兑现")
-            && resources.systemPrompt.contains("richAnswerGrounding.answerFormPolicy")
+            && resources.systemPrompt.contains("本轮临时现场的 `answerFormPolicy`")
             && resources.systemPrompt.contains("partialRichAllowed")
             && resources.systemPrompt.contains("先由 Agent 判断是否需要富回答")
             && resources.systemPrompt.contains("`remainingAttempts` 仍大于 0 时")
@@ -1041,14 +1035,14 @@ private func checkBundledAgentResources() throws {
     try piRequire(
         resources.systemPrompt.contains("寒暄、创作、常识和不依赖课程资料的问题直接回答")
             && resources.systemPrompt.contains("不要把每轮对话强行套进固定学习模式")
-            && !resources.systemPrompt.contains("每轮必须先调用 `weibei_context`")
+            && !resources.systemPrompt.contains("`weibei_context`")
             && !extensionSource.contains("requiredContextRevision")
             && !extensionSource.contains("lastReadContextRevision")
-            && extensionSource.contains("普通问题无需先调用")
             && extensionSource.contains("不要为走流程而调用工具")
             && extensionSource.contains("customType: \"weibei-current-focus\"")
             && extensionSource.contains("display: false")
-            && extensionSource.contains("latestCurrentFocusIndex")
+            && extensionSource.contains("它只对本轮模型请求有效，不属于会话历史")
+            && !extensionSource.contains("label: \"读取魏碑上下文\"")
             && !extensionSource.contains("explicitRichAnswerRequested"),
         "PI answers first and reads current course context only when the question needs it"
     )

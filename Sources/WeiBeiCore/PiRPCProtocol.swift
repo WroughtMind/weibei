@@ -85,7 +85,6 @@ public enum PiRPCIncomingMessage: Equatable, Sendable {
     case runActivity(PiRPCRunActivity)
     case assistantError(String)
     case toolStarted(id: String, name: String, argumentsJSON: Data?)
-    case contextRead(id: String, contextRevision: String)
     case courseSourcesRead(
         id: String,
         contextRevision: String,
@@ -203,15 +202,6 @@ public enum PiRPCMessageDecoder {
                     id: object["toolCallId"] as? String ?? "",
                     name: name,
                     message: firstText(in: result) ?? "Tool failed"
-                )
-            }
-            if name == "weibei_context",
-               let details = result?["details"] as? [String: Any],
-               details["kind"] as? String == "weibei_context",
-               let revision = details["contextRevision"] as? String {
-                return .contextRead(
-                    id: object["toolCallId"] as? String ?? "",
-                    contextRevision: revision
                 )
             }
             if ["weibei_course_search", "weibei_course_read", "grep", "read"].contains(name),

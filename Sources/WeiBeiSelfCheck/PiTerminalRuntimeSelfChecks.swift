@@ -54,12 +54,12 @@ func runPiTerminalRuntimeSelfChecks() async throws {
     try await checkRejectedRichAnswerKeepsSafeNarrative(fixture)
     try await checkRejectedActionKeepsOrdinaryAnswer(fixture)
     try await checkRelationProposalUsesCurrentCourseCatalog(fixture)
-    try await checkAutomaticFocusSourceAttachesWithoutContextTool(fixture)
+    try await checkPersistedSelectionSourcesAttachWithoutReadTool(fixture)
     try await checkContextSnapshotLivesUntilProcessShutdown(fixture)
     try await checkConversationBindingLaunchContract(fixture)
     try await checkHostCourseToolBridge(fixture)
     try await checkHostCourseToolBridgeRejectsSymlinkRoot(fixture)
-    try await checkMissingSessionRecoversVisibleHistory(fixture)
+    try await checkMissingSessionStartsFreshNativeHistory(fixture)
     try await checkWrongSessionStateRebuildsOnlyRequestedChat(fixture)
     try await checkUnreadableStoredSessionRebuildsOnce(fixture)
     try await checkStandardProxyEnvironmentIsForwarded(fixture)
@@ -533,7 +533,7 @@ private func checkRelationProposalUsesCurrentCourseCatalog(
     }
 }
 
-private func checkAutomaticFocusSourceAttachesWithoutContextTool(
+private func checkPersistedSelectionSourcesAttachWithoutReadTool(
     _ fixture: PiTerminalRuntimeFixture
 ) async throws {
     let runtime = PiAgentRuntime(
@@ -595,15 +595,12 @@ private func checkAutomaticFocusSourceAttachesWithoutContextTool(
     )
     await runtime.shutdown()
 
-    guard reply.text == "[材料：测试材料] [选区：2 个已选文本片段] 当前焦点可直接回答。",
-          reply.sources.count == 3,
-          reply.sources.contains(where: {
-              $0.label == "[材料：测试材料]" && $0.itemID == "persistent-material"
-          }),
+    guard reply.text == "[选区：2 个已选文本片段] 当前选区可直接回答。",
+          reply.sources.count == 2,
           reply.sources.contains(where: { $0.label == "[选区：测试材料]" }),
           reply.sources.contains(where: { $0.label == "[选区：测试笔记]" }) else {
         throw PiTerminalRuntimeSelfCheckError.failed(
-            "PI did not attach the cited automatic-focus source without a context tool call"
+            "PI did not attach the persisted selection sources without reading another source"
         )
     }
 }
@@ -654,18 +651,17 @@ private func checkConversationBindingLaunchContract(
             materialText: "测试正文",
             noteTitle: "测试笔记",
             noteText: "",
-            recentMessages: turn == 2
+            selectionTitle: turn == 1 ? "第一讲选区" : nil,
+            selectionText: turn == 1 ? "注意力只处理当前上下文" : nil,
+            selectionSources: turn == 1
                 ? [
-                    AgentMessage(
-                        role: .assistant,
-                        text: "上一轮可见回答",
-                        source: nil,
-                        backend: .pi
-                    ),
-                    AgentMessage(
-                        role: .assistant,
-                        text: "课程文件夹暂时不可用",
-                        source: nil
+                    AgentReplySource(
+                        itemID: "material-1",
+                        kind: .selection,
+                        title: "第一讲",
+                        label: "[选区：第一讲]",
+                        excerpt: "注意力只处理当前上下文",
+                        pageIndex: 17
                     ),
                 ]
                 : [],
@@ -750,21 +746,24 @@ private func checkConversationBindingLaunchContract(
           trace.components(
               separatedBy: "arg=--model\narg=\(AgentModelListService.codexDefaultModel)\n"
           ).count - 1 == 4,
-          trace.contains("prompt-message=第 1 问\n"),
+          trace.contains("prompt-message=[选中文字：第一讲选区]") &&
+          trace.contains("注意力只处理当前上下文") &&
+          trace.contains("[选区：第一讲]；条目 ID：material-1；第 18 页") &&
+          trace.contains("[问题]\n第 1 问"),
           trace.contains("prompt-message=第 2 问\n"),
           trace.contains("prompt-message=切换 Chat\n"),
           !trace.contains("prompt-message=/skill:"),
           !trace.contains("arg=--no-session\n"),
           !trace.contains("command=new_session\n"),
           trace.components(separatedBy: "command=prompt\n").count - 1 == 4,
-          trace.components(separatedBy: "recent=empty\n").count - 1 == 4 else {
+          trace.components(separatedBy: "recent=absent\n").count - 1 == 4 else {
         throw PiTerminalRuntimeSelfCheckError.failed(
             "Chat 复用、切换隔离或原生历史合同不成立：\n\(trace)"
         )
     }
 }
 
-private func checkMissingSessionRecoversVisibleHistory(
+private func checkMissingSessionStartsFreshNativeHistory(
     _ fixture: PiTerminalRuntimeFixture
 ) async throws {
     let runtimeDirectory = try fixture.workingDirectory(named: "RecoveryRuntime")
@@ -775,15 +774,6 @@ private func checkMissingSessionRecoversVisibleHistory(
         runtimeDirectory: runtimeDirectory,
         runInactivityTimeoutNanoseconds: 2_000_000_000
     )
-    let visibleHistory = [
-        AgentMessage(role: .user, text: "此前问题", source: nil),
-        AgentMessage(
-            role: .assistant,
-            text: "[材料：测试材料] 此前回答",
-            source: nil,
-            backend: .pi
-        ),
-    ]
     let request = StudyAgentRequest(
         purpose: .conversation,
         question: "继续此前对话",
@@ -791,7 +781,6 @@ private func checkMissingSessionRecoversVisibleHistory(
         materialText: "测试正文",
         noteTitle: "测试笔记",
         noteText: "",
-        recentMessages: visibleHistory,
         contextRevision: "recovery-turn"
     )
     _ = try await runtime.respond(
@@ -808,9 +797,9 @@ private func checkMissingSessionRecoversVisibleHistory(
     )
     guard trace.components(separatedBy: "launch\n").count - 1 == 1,
           trace.contains("state-message-count=0\n"),
-          trace.contains("recent=present\n") else {
+          trace.contains("recent=absent\n") else {
         throw PiTerminalRuntimeSelfCheckError.failed(
-            "Pi 会话缺失时没有只在恢复轮注入 App 可见历史：\n\(trace)"
+            "Pi 会话缺失时没有从原生空会话开始：\n\(trace)"
         )
     }
 }
@@ -839,10 +828,6 @@ private func checkWrongSessionStateRebuildsOnlyRequestedChat(
         runtimeDirectory: runtimeDirectory,
         runInactivityTimeoutNanoseconds: 2_000_000_000
     )
-    let visibleHistory = [
-        AgentMessage(role: .user, text: "此前问题", source: nil),
-        AgentMessage(role: .assistant, text: "此前回答", source: nil, backend: .pi),
-    ]
     let request = StudyAgentRequest(
         purpose: .conversation,
         question: "从损坏会话继续",
@@ -850,7 +835,6 @@ private func checkWrongSessionStateRebuildsOnlyRequestedChat(
         materialText: "测试正文",
         noteTitle: "测试笔记",
         noteText: "",
-        recentMessages: visibleHistory,
         contextRevision: "wrong-state-recovery"
     )
     _ = try await runtime.respond(
@@ -869,7 +853,7 @@ private func checkWrongSessionStateRebuildsOnlyRequestedChat(
           trace.contains("state-session=wrong\n"),
           trace.contains("state-session=correct\n"),
           trace.components(separatedBy: "command=prompt\n").count - 1 == 1,
-          trace.contains("recent=present\n"),
+          trace.contains("recent=absent\n"),
           !FileManager.default.fileExists(atPath: corruptMarker.path),
           FileManager.default.fileExists(atPath: siblingMarker.path) else {
         throw PiTerminalRuntimeSelfCheckError.failed(
@@ -903,10 +887,6 @@ private func checkUnreadableStoredSessionRebuildsOnce(
         materialText: "测试正文",
         noteTitle: "测试笔记",
         noteText: "",
-        recentMessages: [
-            AgentMessage(role: .user, text: "此前问题", source: nil),
-            AgentMessage(role: .assistant, text: "此前回答", source: nil, backend: .pi),
-        ],
         contextRevision: "unreadable-state-recovery"
     )
     _ = try await runtime.respond(
@@ -925,9 +905,9 @@ private func checkUnreadableStoredSessionRebuildsOnce(
           trace.contains("state-session=unreadable\n"),
           trace.contains("state-session=correct\n"),
           trace.components(separatedBy: "command=prompt\n").count - 1 == 1,
-          trace.contains("recent=present\n") else {
+          trace.contains("recent=absent\n") else {
         throw PiTerminalRuntimeSelfCheckError.failed(
-            "已有 Pi 会话无法读取时没有只重建一次并恢复可见历史：\n\(trace)"
+            "已有 Pi 会话无法读取时没有只重建一次原生会话：\n\(trace)"
         )
     }
 }
@@ -1176,11 +1156,6 @@ static void terminate_fixture(int signal_number) {
     _exit(0);
 }
 
-static void emit_context(const char *revision) {
-    printf("{\"type\":\"tool_execution_end\",\"toolCallId\":\"ctx\",\"toolName\":\"weibei_context\",\"isError\":false,\"result\":{\"details\":{\"kind\":\"weibei_context\",\"contextRevision\":\"%s\"}}}\n", revision);
-    fflush(stdout);
-}
-
 static void start_emitter(void) {
     if (emitter_pid > 0) return;
     char cwd[PATH_MAX];
@@ -1198,7 +1173,6 @@ static void start_emitter(void) {
     if (emitter_pid != 0) return;
 
     if (error_mode) {
-        emit_context("error-test");
         for (int index = 0; index < 256; index++) {
             printf("{\"type\":\"message_update\",\"assistantMessageEvent\":{\"type\":\"text_delta\",\"delta\":\"临时文本\"}}\n");
         }
@@ -1209,7 +1183,6 @@ static void start_emitter(void) {
     }
 
     if (thinking_mode) {
-        emit_context("thinking-test");
         for (int index = 0; index < 6; index++) {
             if (index == 1 || index == 2) {
                 printf("{\"type\":\"tool_execution_update\",\"toolCallId\":\"tool-long\",\"toolName\":\"weibei_course_search\"}\n");
@@ -1227,7 +1200,6 @@ static void start_emitter(void) {
     }
 
     if (rich_fallback_mode) {
-        emit_context("rich-fallback-test");
         printf("{\"type\":\"tool_execution_end\",\"toolCallId\":\"rich-fallback\",\"toolName\":\"weibei_rich_answer\",\"isError\":false,\"result\":{\"details\":{\"kind\":\"rich_answer\",\"contextRevision\":\"rich-fallback-test\",\"envelope\":{\"schemaVersion\":2,\"contextRevision\":\"rich-fallback-test\",\"narrative\":\"[材料：测试材料] 应保留的正文\",\"expressionPlan\":{\"action\":\"explain\",\"summary\":\"安全降级\",\"families\":[\"textAndAlignment\"],\"preferredSurface\":\"inline\",\"directManipulation\":false},\"scenes\":[{\"id\":\"rejected-scene\",\"title\":\"无效场景\",\"family\":\"textAndAlignment\",\"objects\":[],\"evidenceIDs\":[\"missing-evidence\"]}],\"evidenceLedger\":[],\"fallback\":{\"text\":\"[材料：测试材料] 安全正文\",\"reason\":\"场景被拒绝\"}}}}}\n");
         printf("{\"type\":\"agent_end\",\"messages\":[{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"模型收尾文字\"}],\"stopReason\":\"stop\"}]}\n");
         fflush(stdout);
@@ -1263,7 +1235,7 @@ static void start_emitter(void) {
     }
 
     if (focus_answer_mode) {
-        printf("{\"type\":\"agent_end\",\"messages\":[{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"[材料：测试材料] [选区：2 个已选文本片段] 当前焦点可直接回答。\"}],\"stopReason\":\"stop\"}]}\n");
+        printf("{\"type\":\"agent_end\",\"messages\":[{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"[选区：2 个已选文本片段] 当前选区可直接回答。\"}],\"stopReason\":\"stop\"}]}\n");
         fflush(stdout);
         _exit(0);
     }
@@ -1277,7 +1249,6 @@ static void start_emitter(void) {
             json_value(context, "requestID", request_id, sizeof(request_id));
             free(context);
         }
-        emit_context(revision);
         printf("{\"type\":\"tool_execution_start\",\"toolCallId\":\"bridge-search\",\"toolName\":\"weibei_course_search\",\"args\":{\"query\":\"利率\",\"limit\":3}}\n");
         fflush(stdout);
         const char *response_root = getenv("WEIBEI_AGENT_TOOL_RESPONSE_DIR");
@@ -1310,7 +1281,6 @@ static void start_emitter(void) {
         _exit(0);
     }
 
-    emit_context(cancel_mode ? "cancel-test" : "heartbeat-test");
     for (;;) {
         printf("{\"type\":\"future_event\"}\n");
         fflush(stdout);
@@ -1422,20 +1392,15 @@ int main(int argc, char **argv) {
             if (session_mode) {
                 session_turn += 1;
                 save_session_turn();
-                char revision[64];
                 char *context = NULL;
-                if (!read_context(&context)
-                    || !json_value(context, "contextRevision", revision, sizeof(revision))) {
-                    snprintf(revision, sizeof(revision), "missing-revision");
-                }
+                read_context(&context);
                 trace_line(
                     "recent",
-                    context != NULL && strstr(context, "\"recentMessages\":[]") == NULL
-                        ? "present"
-                        : "empty"
+                    context != NULL && strstr(context, "\"recentMessages\"") == NULL
+                        ? "absent"
+                        : "present"
                 );
                 free(context);
-                emit_context(revision);
                 printf("{\"type\":\"agent_end\",\"messages\":[{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"[材料：测试材料] 第 %d 次回答\"}],\"stopReason\":\"stop\"}]}\n", session_turn);
                 fflush(stdout);
             } else {

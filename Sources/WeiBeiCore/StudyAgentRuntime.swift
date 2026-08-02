@@ -409,7 +409,6 @@ public struct StudyAgentRequest: Sendable {
     public var selectionTitle: String?
     public var selectionText: String?
     public var selectionSources: [AgentReplySource]
-    public var recentMessages: [AgentMessage]
     public var courseContext: StudyAgentCourseContext
     public var projectScope: StudyAgentProjectScope
     public var focus: StudyAgentFocus?
@@ -431,7 +430,6 @@ public struct StudyAgentRequest: Sendable {
         selectionTitle: String? = nil,
         selectionText: String? = nil,
         selectionSources: [AgentReplySource] = [],
-        recentMessages: [AgentMessage] = [],
         courseContext: StudyAgentCourseContext = .empty,
         projectScope: StudyAgentProjectScope = .empty,
         focus: StudyAgentFocus? = nil,
@@ -452,7 +450,6 @@ public struct StudyAgentRequest: Sendable {
         self.selectionTitle = selectionTitle
         self.selectionText = selectionText
         self.selectionSources = selectionSources
-        self.recentMessages = recentMessages
         self.courseContext = courseContext
         self.projectScope = projectScope
         self.focus = focus
@@ -826,18 +823,6 @@ public struct StudyAgentContextEnvelope: Codable, Equatable, Sendable {
         }
     }
 
-    public struct Message: Codable, Equatable, Sendable {
-        public var role: String
-        public var text: String
-        public var source: String?
-
-        public init(role: String, text: String, source: String?) {
-            self.role = role
-            self.text = text
-            self.source = source
-        }
-    }
-
     public var schemaVersion: Int
     public var requestID: String
     public var contextRevision: String
@@ -848,7 +833,6 @@ public struct StudyAgentContextEnvelope: Codable, Equatable, Sendable {
     public var material: Source?
     public var note: Source
     public var selection: Source?
-    public var recentMessages: [Message]
     public var course: StudyAgentCourseContext
     public var project: StudyAgentProjectScope
     public var focus: StudyAgentFocus?
@@ -889,13 +873,6 @@ public struct StudyAgentContextEnvelope: Codable, Equatable, Sendable {
                 isTruncated: (request.selectionText ?? "").count > selectedText.count
             )
 
-        recentMessages = request.recentMessages.suffix(20).map { message in
-            Message(
-                role: message.role.rawValue,
-                text: String(message.text.prefix(1_200)),
-                source: message.source
-            )
-        }
         let boundedCourse = Self.boundedCourseContext(request.courseContext)
         course = boundedCourse.context
         project = Self.boundedProjectScope(

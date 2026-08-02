@@ -401,7 +401,6 @@ func runRichAnswerEmbeddingSelfChecks() {
         && extensionComponentNames == swiftComponentNames, "the model catalog, Web renderer, and native safety validator expose the same open-ended T1 component vocabulary")
     expect(richAnswerExtensionSource.contains("const RICH_ANSWER_CATALOG_TOOL = \"weibei_ui_catalog\"")
         && richAnswerExtensionSource.contains("const VISUAL_ASSET_TOOL = \"weibei_visual_asset\"")
-        && richAnswerExtensionSource.contains("visualInspection:")
         && richAnswerExtensionSource.contains("visualAssetMagicMatches(")
         && richAnswerExtensionSource.contains("const OPENUI_COMPONENT_GROUPS = {")
         && richAnswerExtensionSource.contains("selectedOpenUIComponentGroups(")
@@ -1709,15 +1708,11 @@ let groundedPrompt = OpenAIResponsesClient.composePrompt(
     noteTitle: "利率笔记",
     noteText: "## 摘录\n金融体系和利率相关。",
     selectionTitle: "Mishkin 教材样例，第 1 页选区",
-    selectionText: "储蓄者的资金转移给有投资机会的人",
-    recentMessages: [
-        AgentMessage(role: .user, text: "上一问", source: "利率笔记")
-    ]
+    selectionText: "储蓄者的资金转移给有投资机会的人"
 )
 expect(groundedPrompt.input.contains("当前材料：Mishkin 教材样例"), "agent prompt includes material title")
 expect(groundedPrompt.input.contains("当前笔记：利率笔记"), "agent prompt includes note title")
 expect(groundedPrompt.input.contains("当前选区（来源：Mishkin 教材样例，第 1 页选区）："), "agent prompt includes selection source")
-expect(groundedPrompt.input.contains("用户（来源：利率笔记）：上一问"), "agent prompt keeps recent message source")
 expect(groundedPrompt.instructions.contains("普通问题可以使用通用知识")
     && groundedPrompt.instructions.contains("就近标注真实标题")
     && !groundedPrompt.instructions.contains("回答末尾用“来源依据”"), "agent prompt answers ordinary questions and cites only material actually used")
@@ -1735,33 +1730,18 @@ let multiSelectionPrompt = OpenAIResponsesClient.composePrompt(
 
     片段 2（来源：利率笔记）：
     利率是资金使用价格。
-    """,
-    recentMessages: []
+    """
 )
 expect(multiSelectionPrompt.input.contains("当前选区（来源：2 个已选文本片段）：")
     && multiSelectionPrompt.input.contains("片段 1（来源：Mishkin 教材样例，第 1 页）：")
     && multiSelectionPrompt.input.contains("片段 2（来源：利率笔记）："), "agent prompt can carry multiple selected text attachments with source labels")
-let assistantDialoguePrompt = OpenAIResponsesClient.composePrompt(
-    question: "继续解释",
-    materialTitle: "Mishkin 教材样例",
-    materialText: "金融体系把储蓄者的资金转移给有投资机会的人。",
-    noteTitle: "利率笔记",
-    noteText: "",
-    selectionText: nil,
-    recentMessages: [
-        AgentMessage(role: .assistant, text: "上一答", source: nil)
-    ]
-)
-expect(assistantDialoguePrompt.input.contains("助手：上一答")
-    && !assistantDialoguePrompt.input.contains("Agent：上一答"), "assistant dialogue turns avoid internal agent labels")
 let currentPagePrompt = OpenAIResponsesClient.composePrompt(
     question: "解释当前页",
     materialTitle: "Mishkin 教材样例，第 3 页",
     materialText: "第 1 页\n旧页面内容\n\n第 3 页\n当前页内容\n\n第 4 页\n后续页面内容",
     noteTitle: "利率笔记",
     noteText: "",
-    selectionText: nil,
-    recentMessages: []
+    selectionText: nil
 )
 expect(currentPagePrompt.input.contains("当前材料：Mishkin 教材样例，第 3 页")
     && currentPagePrompt.input.contains("第 3 页\n当前页内容")
@@ -1773,8 +1753,7 @@ let noteOnlyPrompt = OpenAIResponsesClient.composePrompt(
     materialText: "",
     noteTitle: "概念笔记",
     noteText: "实际利率需要区分通胀预期。",
-    selectionText: "实际利率",
-    recentMessages: []
+    selectionText: "实际利率"
 )
 expect(noteOnlyPrompt.input.contains("当前材料：无") && noteOnlyPrompt.input.contains("当前选区（来源：概念笔记）："), "note-only prompt anchors selection to the current note")
 let englishPrompt = OpenAIResponsesClient.composePrompt(
@@ -1785,16 +1764,12 @@ let englishPrompt = OpenAIResponsesClient.composePrompt(
     noteText: "Real interest rates account for expected inflation.",
     selectionTitle: "",
     selectionText: "real interest rates",
-    recentMessages: [
-        AgentMessage(role: .assistant, text: "Earlier answer", source: "Current note")
-    ],
     language: .english
 )
 expect(
     englishPrompt.input.contains("Current material: none")
         && englishPrompt.input.contains("Current note: Current note")
         && englishPrompt.input.contains("Current selection (source: Current note):")
-        && englishPrompt.input.contains("Assistant (source: Current note): Earlier answer")
         && englishPrompt.instructions.contains("Answer in English")
         && englishPrompt.instructions.contains("general questions may use general knowledge")
         && englishPrompt.instructions.contains("cite its real title next to the relevant sentence")
@@ -3761,10 +3736,9 @@ expect(workspaceStoreSource.contains("var readerLocationID: String?")
     && workspaceStoreSource.contains("func updateReaderHTMLLocation")
     && workspaceStoreSource.contains("let publish = reason != \"scroll\"")
     && workspaceStoreSource.contains("var currentReferenceTitle"), "store tracks durable PDF and HTML reader locations; scroll commits do not publish viewport chrome")
-expect(workspaceStoreSource.contains("private func sessionContinuitySummary(for session: StudySession)")
-    && workspaceStoreSource.contains("messages.suffix(20)")
-    && workspaceStoreSource.contains("olderMessages.prefix(4)")
-    && workspaceStoreSource.contains("olderMessages.suffix(8)"), "durable study sessions inject recent turns plus bounded earlier conversation excerpts into each clean PI run")
+expect(workspaceStoreSource.contains("summary: session.summary")
+    && !workspaceStoreSource.contains("sessionContinuitySummary")
+    && !workspaceStoreSource.contains("messages.suffix(20)"), "PI owns conversation continuity without WeiBei rebuilding recent turns or an earlier-message summary")
 expect(workspaceStoreSource.contains("let itemTitle = sourceReferenceBaseTitle(for: item)")
     && workspaceStoreSource.contains("itemTitle: itemTitle")
     && workspaceStoreSource.contains("private func refreshStudyLocationReferenceTitles() -> Bool")
@@ -3861,9 +3835,9 @@ expect(workspaceStoreSource.contains("selectionTitle: sentSelectionTitle")
     && workspaceStoreSource.contains("selectionText: sentSelectionText")
     && workspaceStoreSource.contains("selectionSources: sentSelectionSources")
     && workspaceStoreSource.contains("itemID: source == .note ? activeNotebookItemID : selectedItemID")
-    && piAgentRuntimeSource.contains("sources.append(contentsOf: request.selectionSources)")
+    && piAgentRuntimeSource.contains("contextSources: request.selectionSources")
     && piAgentRuntimeSource.contains("run.persistentAssetIDsByContextID[itemID]")
-    && !workspaceStoreSource.contains("selectionText: selectionContext?.text,\n                recentMessages: recentMessages"), "agent requests capture selection via sentSelectionText (attachments or live fallback), not a raw live-only field")
+    && !workspaceStoreSource.contains("recentMessages"), "agent requests persist sent selections while PI owns conversation history")
 expect(workspaceStoreSource.contains("let sentSelectionTitle = agentSelectionTitle")
     && workspaceStoreSource.contains("let sentSelectionText = agentSelectionText")
     && workspaceStoreSource.contains("selectionAttachments = []")

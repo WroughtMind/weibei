@@ -16887,7 +16887,7 @@ final class WorkspaceStore: ObservableObject {
             StudyAgentSessionSnapshot(
                 id: session.id.uuidString.lowercased(),
                 title: session.title,
-                summary: sessionContinuitySummary(for: session),
+                summary: session.summary,
                 phase: session.flow.phase.rawValue,
                 focusItemIDs: session.focusItemIDs.filter {
                     itemID($0, belongsTo: session)
@@ -16910,30 +16910,6 @@ final class WorkspaceStore: ObservableObject {
         return studyLocationsByItemID.values
             .filter { itemIDs.contains($0.itemID) }
             .max { $0.lastStudiedAt < $1.lastStudiedAt }
-    }
-
-    private func sessionContinuitySummary(for session: StudySession) -> String {
-        let recentMessageLimit = 20
-        let olderMessages = Array(session.messages.dropLast(min(session.messages.count, recentMessageLimit)))
-        let selectedOlderMessages: [AgentMessage]
-        if olderMessages.count <= 12 {
-            selectedOlderMessages = olderMessages
-        } else {
-            selectedOlderMessages = Array(olderMessages.prefix(4)) + Array(olderMessages.suffix(8))
-        }
-        let earlierTranscript = selectedOlderMessages.map { message in
-            let role = message.role == .user ? ui("用户", "User") : ui("助手", "Assistant")
-            let text = message.text
-                .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            return "\(role)：\(String(text.prefix(220)))"
-        }.joined(separator: "\n")
-        let persistedSummary = session.summary.trimmingCharacters(in: .whitespacesAndNewlines)
-        let parts = [
-            persistedSummary,
-            earlierTranscript.isEmpty ? "" : "\(ui("更早对话摘录", "Earlier conversation excerpts"))：\n\(earlierTranscript)",
-        ].filter { !$0.isEmpty }
-        return String(parts.joined(separator: "\n\n").prefix(2_000))
     }
 
     private func applyLearningUpdate(
@@ -21521,7 +21497,6 @@ final class WorkspaceStore: ObservableObject {
         let shouldClearSentDocumentSelection = sentSelections.contains {
             $0.id == selectionContext?.id && $0.source == .document
         }
-        let recentMessages = Array(messages.suffix(20))
         let sourceTitle = sentMaterialItem != nil
             ? currentSourceReferenceTitle
             : sentNoteItem.map(displayTitle)
@@ -21682,7 +21657,6 @@ final class WorkspaceStore: ObservableObject {
                 selectionTitle: sentSelectionTitle,
                 selectionText: sentSelectionText,
                 selectionSources: sentSelectionSources,
-                recentMessages: recentMessages,
                 courseContext: courseBuild.context,
                 projectScope: projectAccess.scope,
                 focus: StudyAgentFocus(
@@ -22142,8 +22116,6 @@ final class WorkspaceStore: ObservableObject {
             guard updatesVisibleChat else { return }
             let base: String
             switch name {
-            case "weibei_context":
-                base = ui("正在核对材料与笔记", "Checking material and notes")
             case "weibei_course_search", "grep", "find":
                 base = ui("正在搜索", "Searching")
             case "weibei_course_read", "read":
