@@ -3,6 +3,11 @@ import QuartzCore
 import SwiftUI
 import WeiBeiCore
 
+extension Notification.Name {
+    static let weiBeiDocumentDividerDragBegan = Notification.Name("WeiBeiDocumentDividerDragBegan")
+    static let weiBeiDocumentDividerDragEnded = Notification.Name("WeiBeiDocumentDividerDragEnded")
+}
+
 struct StableDocumentWorkspace: NSViewRepresentable {
     @EnvironmentObject private var store: WorkspaceStore
     @Binding var firstSplit: CGFloat
@@ -815,6 +820,7 @@ final class StableDocumentSplitCoordinator {
         captureReadableWidths(in: splitView)
         dividerDrag = DividerDrag(index: index, baseWidths: widths)
         isDraggingDivider = true
+        NotificationCenter.default.post(name: .weiBeiDocumentDividerDragBegan, object: splitView)
     }
 
     private func updateDividerDrag(delta: CGFloat, in splitView: StableDocumentSplitView) {
@@ -843,13 +849,19 @@ final class StableDocumentSplitCoordinator {
                 self.persistRatios(in: splitView)
                 self.reportFrames(in: splitView)
                 self.applyPendingWork(in: splitView)
+                self.notifyDividerDragEnded(in: splitView)
             }
         } else {
             captureReadableWidths(in: splitView)
             persistRatios(in: splitView)
             reportFrames(in: splitView)
             applyPendingWork(in: splitView)
+            notifyDividerDragEnded(in: splitView)
         }
+    }
+
+    private func notifyDividerDragEnded(in splitView: StableDocumentSplitView) {
+        NotificationCenter.default.post(name: .weiBeiDocumentDividerDragEnded, object: splitView)
     }
 
     private func snappedWidths(_ widths: [CGFloat]) -> [CGFloat] {

@@ -1616,18 +1616,24 @@ struct MarkdownPreviewView: View {
                 }
                 let measuredHeight = ceil(height)
                 let nextFrameHeight = max(measuredHeight, Self.compactPreviewLoadingHeight)
-                maxObservedMeasuredHeight = max(maxObservedMeasuredHeight, nextFrameHeight)
                 // Once frozen, never change the SwiftUI frame — LazyVStack recycle
                 // during chat scroller drags (sample build 663, NSScroller.trackKnob)
                 // was accepting late ResizeObserver growth and remasuring every row.
                 if freezeHeightAfterMeasure, heightFrozen {
-                    onMeasuredHeight(measuredHeight)
+                    // Report the height the row actually keeps, not a measurement
+                    // produced while its pane is being clipped toward zero width.
+                    // Caching the ignored narrow-width height created giant blank
+                    // regions when the conversation pane was opened again.
+                    onMeasuredHeight(contentHeight)
                     WeiBeiPerf.event(
                         "webview.markdown_height_ignored",
                         extra: "reason=frozen"
                     )
                     return
                 }
+                // Ignored measurements can come from the pane's clipped animation
+                // width. Never let them poison the later stability backstop.
+                maxObservedMeasuredHeight = max(maxObservedMeasuredHeight, nextFrameHeight)
                 // This callback only receives a real JS measurement. Keep its
                 // success separate from the 44pt minimum SwiftUI frame so a
                 // legitimate short quote/list can reveal and freeze too.
@@ -1697,11 +1703,15 @@ struct MarkdownPreviewView: View {
             lastLayoutWidthKey = widthKey
             guard previousBucket != nextBucket else { return }
             heightFrozen = false
+            acceptedMeasureCount = 0
+            maxObservedMeasuredHeight = 0
         }
         .onChange(of: isChatWideTypography) { _, wideTypography in
             guard wideTypography != lastChatWideTypography else { return }
             lastChatWideTypography = wideTypography
             heightFrozen = false
+            acceptedMeasureCount = 0
+            maxObservedMeasuredHeight = 0
         }
         .onChange(of: markdown) { _, _ in
             guard compact && fitsContentHeight else { return }
@@ -1721,6 +1731,18 @@ private struct AgentRailTurn {
     var startIndex: Int
     var question: String
     var answer: String
+}
+
+/// Keeps the last frame-level probe value without invalidating the SwiftUI tree.
+/// The real parent proposal animates content; sampled width commits once at the end.
+private final class AgentPaneWidthRelay {
+    var pendingWidth: CGFloat?
+    var structureTransitionActive = false
+    var dividerDragActive = false
+
+    var isActive: Bool {
+        structureTransitionActive || dividerDragActive
+    }
 }
 
 /// Standard chat column metrics — one centered axis shared by messages and composer.
@@ -1785,11 +1807,12 @@ struct AgentPaneView: View {
     @State private var globalMemoryPanelPresented = false
     /// Live pane width from a background probe. 0 until first real measurement.
     @State private var measuredPaneWidth: CGFloat = 0
+    @State private var paneWidthRelay = AgentPaneWidthRelay()
     /// Structural pane show/hide animates the AppKit slot every frame. Visible
     /// finalized Markdown follows the live column; offscreen web views hold one
     /// width and settle once at the destination instead of all reflowing per frame.
     @State private var heldPaneLayoutWidth: CGFloat?
-    @State private var isPaneStructureTransitionActive = false
+    @State private var isPaneWidthMotionActive = false
     @State private var lastReadablePaneWidth: CGFloat = 360
     @State private var paneStructureTransitionSequence = 0
     /// Driven by the AppKit scroll probe — true when the viewport sits well
@@ -1936,7 +1959,7 @@ struct AgentPaneView: View {
                         .padding(.horizontal, wide ? 8 : 10)
                         .padding(.vertical, wide ? 14 : 10)
                         .environment(\.agentChatLayoutWidth, markdownContentWidth)
-                        .environment(\.agentChatPaneStructureTransitionActive, isPaneStructureTransitionActive)
+                        .environment(\.agentChatPaneStructureTransitionActive, isPaneWidthMotionActive)
                         .padding(.top, store.messages.isEmpty ? 22 : 0)
                         .frame(maxWidth: .infinity, alignment: .topLeading)
                     }
@@ -1976,12 +1999,16 @@ struct AgentPaneView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             .clipped()
-            .onChange(of: store.messages.count) { oldCount, newCount in
-                // Appends widen the fold window so already-mounted rows never fold
-                // away mid-session; shrink/replace means a session swap — refold.
-                if newCount > oldCount {
-                    agentVisibleMessageLimit += newCount - oldCount
-                } else if newCount < oldCount {
+            .onChange(of: store.messages.map(\.id)) { oldIDs, newIDs in
+                // Only a true append to this conversation widens the mounted window.
+                // Initial restore used to look like a 0 -> N append and mounted the
+                // entire rich history, defeating paging and stalling pane toggles.
+                if let appendedCount = AgentHistoryRevealPolicy.appendedMessageCount(
+                    previousMessageIDs: oldIDs,
+                    currentMessageIDs: newIDs
+                ) {
+                    agentVisibleMessageLimit += appendedCount
+                } else {
                     agentVisibleMessageLimit = Self.agentHistoryPageSize
                     isRevealingEarlierAgentHistory = false
                 }
@@ -2009,6 +2036,12 @@ struct AgentPaneView: View {
         }
         .onPreferenceChange(AgentPaneWidthKey.self) { width in
             applyMeasuredPaneWidth(width)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .weiBeiDocumentDividerDragBegan)) { _ in
+            beginPaneDividerDrag()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .weiBeiDocumentDividerDragEnded)) { _ in
+            endPaneDividerDrag()
         }
         .onChange(of: Set(store.visibleDocumentPaneOrder)) { _, _ in
             beginPaneStructureTransition()
@@ -2082,10 +2115,34 @@ struct AgentPaneView: View {
         .accessibilityLabel(Text("agent chat pane"))
     }
 
-    /// Accept real pane measures every frame so native chat layout follows the host.
-    /// Finalized Markdown receives the separately held width through the environment.
+    /// AppKit owns live frames. SwiftUI receives only the final semantic width so
+    /// the eager message tree is not rebuilt for every divider pixel.
     private func applyMeasuredPaneWidth(_ width: CGFloat) {
         guard width > 1 else { return }
+        if paneWidthRelay.isActive {
+            paneWidthRelay.pendingWidth = width
+            return
+        }
+        commitMeasuredPaneWidth(width)
+    }
+
+    private func beginPaneDividerDrag() {
+        guard !paneWidthRelay.dividerDragActive else { return }
+        paneWidthRelay.dividerDragActive = true
+        if !isPaneWidthMotionActive {
+            heldPaneLayoutWidth = agentPaneWidth
+            isPaneWidthMotionActive = true
+        }
+    }
+
+    private func endPaneDividerDrag() {
+        guard paneWidthRelay.dividerDragActive else { return }
+        paneWidthRelay.dividerDragActive = false
+        guard !paneWidthRelay.structureTransitionActive else { return }
+        finishPaneWidthMotion()
+    }
+
+    private func commitMeasuredPaneWidth(_ width: CGFloat) {
         if usesWideChatLayout {
             // PersistentPaneHost re-attach can briefly report the old strip width — do not keep it.
             if width < 520, measuredPaneWidth >= 700 {
@@ -2103,35 +2160,44 @@ struct AgentPaneView: View {
 
     private func beginPaneStructureTransition() {
         paneStructureTransitionSequence &+= 1
+        paneWidthRelay.structureTransitionActive = true
+        paneWidthRelay.pendingWidth = nil
+        if !isPaneWidthMotionActive {
+            heldPaneLayoutWidth = agentPaneWidth
+            isPaneWidthMotionActive = true
+        }
         if reduceMotion {
-            heldPaneLayoutWidth = nil
-            isPaneStructureTransitionActive = false
-            if !store.isPaneVisible(.agent) {
-                measuredPaneWidth = lastReadablePaneWidth
+            paneWidthRelay.structureTransitionActive = false
+            if !paneWidthRelay.dividerDragActive {
+                finishPaneWidthMotion()
             }
             return
         }
         let sequence = paneStructureTransitionSequence
-        isPaneStructureTransitionActive = true
-        if heldPaneLayoutWidth == nil {
-            // A never-opened resident Agent host measures 0pt while hidden; use
-            // the existing compact fallback until its first real final width.
-            heldPaneLayoutWidth = agentPaneWidth
-        }
         DispatchQueue.main.asyncAfter(deadline: .now() + Self.paneStructureTransitionDuration) {
             // AppKit's completion handler shares the same 0.24s deadline. One
             // additional main turn lets it land before the single final reflow.
             DispatchQueue.main.async {
                 guard sequence == paneStructureTransitionSequence else { return }
-                heldPaneLayoutWidth = nil
-                isPaneStructureTransitionActive = false
-                // Closing ends at a collapsed resident host. Restore its last
-                // readable seed after it is hidden so the next opening has no
-                // one-frame 2pt layout flash.
-                if !store.isPaneVisible(.agent) {
-                    measuredPaneWidth = lastReadablePaneWidth
+                paneWidthRelay.structureTransitionActive = false
+                if !paneWidthRelay.dividerDragActive {
+                    finishPaneWidthMotion()
                 }
             }
+        }
+    }
+
+    private func finishPaneWidthMotion() {
+        let finalWidth = paneWidthRelay.pendingWidth
+        paneWidthRelay.pendingWidth = nil
+        heldPaneLayoutWidth = nil
+        isPaneWidthMotionActive = false
+        // Closing ends at a collapsed resident host. Restore its last readable
+        // seed after it is hidden so the next opening has no 2pt layout flash.
+        if !store.isPaneVisible(.agent) {
+            measuredPaneWidth = lastReadablePaneWidth
+        } else if let finalWidth {
+            commitMeasuredPaneWidth(finalWidth)
         }
     }
 
@@ -5047,8 +5113,17 @@ private struct AgentScrollDistanceProbe: NSViewRepresentable {
 
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
+            installObservers()
+        }
+
+        override func viewDidMoveToSuperview() {
+            super.viewDidMoveToSuperview()
+            installObservers()
+        }
+
+        private func installObservers() {
             removeObservers()
-            guard let scrollView = enclosingScrollView else { return }
+            guard window != nil, let scrollView = enclosingScrollView else { return }
             let clipView = scrollView.contentView
             clipView.postsBoundsChangedNotifications = true
             observers.append(NotificationCenter.default.addObserver(
@@ -5072,14 +5147,17 @@ private struct AgentScrollDistanceProbe: NSViewRepresentable {
                 object: scrollView,
                 queue: .main
             ) { [weak self] _ in
+                // The clip view may stop sending bounds changes exactly at its
+                // top edge. Flush that final user-directed position first.
+                self?.report(force: true)
                 self?.isUserScrolling = false
                 self?.isScrollingTowardTop = false
-                self?.report()
+                self?.report(force: true)
             })
             report()
         }
 
-        private func report() {
+        private func report(force: Bool = false) {
             guard let scrollView = enclosingScrollView,
                   let documentView = scrollView.documentView else { return }
             let visible = scrollView.documentVisibleRect
@@ -5100,7 +5178,7 @@ private struct AgentScrollDistanceProbe: NSViewRepresentable {
                 isUserScrolling: isUserScrolling,
                 isScrollingTowardTop: isScrollingTowardTop
             )
-            if let lastReported,
+            if !force, let lastReported,
                abs(metrics.distanceFromTop - lastReported.distanceFromTop) <= 8,
                abs(metrics.distanceFromBottom - lastReported.distanceFromBottom) <= 8,
                metrics.isUserScrolling == lastReported.isUserScrolling,
@@ -5117,6 +5195,7 @@ private struct AgentScrollDistanceProbe: NSViewRepresentable {
             isUserScrolling = false
             isScrollingTowardTop = false
             previousDistanceFromTop = nil
+            lastReported = nil
         }
 
         deinit {
@@ -5301,6 +5380,16 @@ private struct AgentMessageMarkdownText: View {
                 // proposal. A flexible outer row alone leaves WKWebView at its
                 // previous intrinsic width after the chat pane resizes.
                 .frame(maxWidth: .infinity, alignment: .leading)
+                // During a structural close/open, stop only at the existing
+                // readable floor. The outer pane keeps clipping smoothly, while
+                // WebKit never lays Markdown out at pathological 1-38pt widths.
+                .frame(
+                    minWidth: paneStructureTransitionActive
+                        ? ContentRailMetrics.readableWidth
+                        : nil,
+                    maxWidth: .infinity,
+                    alignment: .leading
+                )
                 // A visible row takes the real parent proposal (nil width), so
                 // it cannot feed a stale cached width back into the chat pane.
                 .frame(width: heldOffscreenRendererWidth, alignment: .leading)

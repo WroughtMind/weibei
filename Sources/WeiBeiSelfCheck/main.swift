@@ -592,6 +592,19 @@ expect(!AgentHistoryRevealPolicy.shouldRevealEarlierPage(
     && AgentHistoryRevealPolicy.expandedVisibleLimit(currentLimit: 90, totalMessageCount: 95) == 95
     && !AgentHistoryRevealPolicy.shouldReleaseRevealLock(isUserScrolling: true)
     && AgentHistoryRevealPolicy.shouldReleaseRevealLock(isUserScrolling: false), "agent history paging requires an upward live-scroll gesture, expands exactly one bounded page, and keeps its re-entry lock until that gesture ends")
+let historyMessageIDs = [UUID(), UUID(), UUID()]
+expect(AgentHistoryRevealPolicy.appendedMessageCount(
+        previousMessageIDs: Array(historyMessageIDs.prefix(2)),
+        currentMessageIDs: historyMessageIDs
+    ) == 1
+    && AgentHistoryRevealPolicy.appendedMessageCount(
+        previousMessageIDs: [],
+        currentMessageIDs: historyMessageIDs
+    ) == nil
+    && AgentHistoryRevealPolicy.appendedMessageCount(
+        previousMessageIDs: Array(historyMessageIDs.prefix(2)),
+        currentMessageIDs: Array(historyMessageIDs.suffix(2))
+    ) == nil, "agent history distinguishes a same-session append from initial restore or replacement")
 
 let inspirationItems = EmptyWorkspaceInspirationCatalog.items
 expect(inspirationItems.count >= 6
@@ -2098,6 +2111,8 @@ expect(stableDocumentSource.contains("WorkspacePaneRole.allCases.map")
     && stableDocumentSource.contains("let appearanceMode: WeiBeiAppearanceMode")
     && stableDocumentSource.contains("applyEmptyBoardPaper(to: splitView, mode: appearanceMode)")
     && stableDocumentSource.contains("emptyHost?.layer?.backgroundColor = cgPaper")
+    && stableDocumentSource.contains("NotificationCenter.default.post(name: .weiBeiDocumentDividerDragBegan")
+    && stableDocumentSource.contains("NotificationCenter.default.post(name: .weiBeiDocumentDividerDragEnded")
     && !stableDocumentSource.contains("removeFromSuperview()")
     && !stableDocumentSource.contains("rootView ="), "document pane hosts remain under one AppKit parent while frames animate; empty board paper syncs via layer + explicit appearanceMode")
 expect(stableDocumentSource.contains("recordContinuityTransition(duration: layoutAnimationDuration)")
@@ -4855,6 +4870,7 @@ expect(notesAgentSource.contains("agentVisibleMessageLimit")
     && notesAgentSource.contains("ForEach(visibleAgentMessages)")
     && notesAgentSource.contains("查看更早的")
     && notesAgentSource.contains("The limit only grows in-session")
+    && notesAgentSource.contains("AgentHistoryRevealPolicy.appendedMessageCount(")
     && notesAgentSource.contains("revealAgentHistory(throughMessageID: turn.startMessageID)"), "long chat history folds behind a reveal button instead of mounting every KaTeX WKWebView on open; the fold window never shrinks mid-session and rail navigation reveals folded turns")
 expect(notesAgentSource.contains("private struct AgentScrollMetrics")
     && notesAgentSource.contains("distanceFromTop")
@@ -4866,6 +4882,7 @@ expect(notesAgentSource.contains("private struct AgentScrollMetrics")
     && notesAgentSource.contains("proxy.scrollTo(anchorID, anchor: .top)"), "live user scrolling to the folded history boundary reveals one earlier page and restores the previous top anchor without treating initial or programmatic positioning as user intent")
 expect(notesAgentSource.contains("heldPaneLayoutWidth")
     && notesAgentSource.contains("lastReadablePaneWidth")
+    && notesAgentSource.contains("paneWidthRelay.pendingWidth")
     && notesAgentSource.contains("markdownContentWidth")
     && notesAgentSource.contains("beginPaneStructureTransition()")
     && notesAgentSource.contains("Set(store.visibleDocumentPaneOrder)")
@@ -4878,6 +4895,8 @@ expect(notesAgentSource.contains("heldPaneLayoutWidth")
     && notesAgentSource.contains("agentChatPaneStructureTransitionActive")
     && notesAgentSource.contains("@State private var isInScrollViewport: Bool?")
     && notesAgentSource.contains("paneStructureTransitionActive && isInScrollViewport == false")
+    && notesAgentSource.contains("onMeasuredHeight(contentHeight)")
+    && notesAgentSource.contains("ContentRailMetrics.readableWidth")
     && notesAgentSource.contains(".frame(width: heldOffscreenRendererWidth, alignment: .leading)")
     && notesAgentSource.contains("The renderer itself must accept the live reading-column")
     && notesAgentSource.contains("return nil")
@@ -4888,6 +4907,19 @@ expect(notesAgentSource.contains("heldPaneLayoutWidth")
     && notesAgentSource.contains("The parent proposal is the source of truth")
     && notesAgentSource.contains(".frame(maxWidth: AgentChatLayoutMetrics.wideMaxWidth, alignment: .bottom)")
     && !notesAgentSource.contains(".frame(width: availableWidth, alignment: .topLeading)"), "visible finalized Markdown follows the live chat width while offscreen web views settle once at the AppKit animation destination")
+if let applyWidthStart = notesAgentSource.range(of: "private func applyMeasuredPaneWidth")?.lowerBound,
+   let commitWidthStart = notesAgentSource[applyWidthStart...].range(of: "private func commitMeasuredPaneWidth")?.lowerBound {
+    let applyWidthSource = String(notesAgentSource[applyWidthStart..<commitWidthStart])
+    expect(applyWidthSource.contains("if paneWidthRelay.isActive")
+        && applyWidthSource.contains("paneWidthRelay.pendingWidth = width")
+        && applyWidthSource.contains("commitMeasuredPaneWidth(width)")
+        && applyWidthSource.contains("beginPaneDividerDrag()")
+        && applyWidthSource.contains("endPaneDividerDrag()")
+        && !applyWidthSource.contains("settleWorkItem"),
+        "the AppKit divider lifecycle holds semantic chat width during motion and commits once at its real endpoint")
+} else {
+    expect(false, "agent pane width application source is inspectable")
+}
 if let userTurnStart = notesAgentSource.range(of: "private var userTurn: some View")?.lowerBound,
    let assistantTurnStart = notesAgentSource[userTurnStart...].range(of: "private var assistantTurn: some View")?.lowerBound {
     let userTurnSource = String(notesAgentSource[userTurnStart..<assistantTurnStart])
@@ -5048,6 +5080,20 @@ expect(notesAgentSource.contains("var showsBrandHeader = true")
     && notesAgentSource.contains("acceptedMeasureCount >= 12"), "bubble streaming shows one brand mark, finalize hands off seamlessly, and height freezes only after stability")
 expect(notesAgentSource.contains("maxObservedMeasuredHeight = max(maxObservedMeasuredHeight, nextFrameHeight)")
     && notesAgentSource.contains("contentHeight = max(nextFrameHeight, maxObservedMeasuredHeight)"), "backstop freeze adopts the max observed height so long answers can never clip mid-line")
+if let previewStart = notesAgentSource.range(of: "struct MarkdownPreviewView: View")?.lowerBound,
+   let previewEnd = notesAgentSource[previewStart...].range(of: "private struct AgentRailTurn")?.lowerBound {
+    let previewSource = String(notesAgentSource[previewStart..<previewEnd])
+    if let frozenGuard = previewSource.range(of: "if freezeHeightAfterMeasure, heightFrozen {")?.lowerBound,
+       let observedMaximum = previewSource.range(of: "maxObservedMeasuredHeight = max(maxObservedMeasuredHeight, nextFrameHeight)")?.lowerBound {
+        expect(frozenGuard < observedMaximum
+            && previewSource.components(separatedBy: "maxObservedMeasuredHeight = 0").count >= 4,
+            "ignored clipped-width measurements never poison a later width bucket")
+    } else {
+        expect(false, "Markdown preview height guards are inspectable")
+    }
+} else {
+    expect(false, "Markdown preview source is inspectable")
+}
 expect(notesAgentSource.components(separatedBy: "prefersIncrementalAppends: true").count == 2
     && notesAgentSource.contains(".task(id: message.completionState)"), "appendMarkdown is exclusive to the streaming prefix and the finalize handoff has a timeout failsafe")
 expect(workspaceStoreSource.contains("case let .usingTool(name, detail):")
@@ -5079,7 +5125,7 @@ expect(notesAgentSource.contains("ScrollView(showsIndicators: true)")
     // not via per-message WKWebView height measurement or GeometryReader parent thrash.
     && notesAgentSource.contains("scrollAgentToBottom(proxy)")
     && notesAgentSource.contains("guard agentFollowsLatest else { return }")
-    && notesAgentSource.contains("onChange(of: store.messages.count)")
+    && notesAgentSource.contains("onChange(of: store.messages.map(\\.id))")
     && notesAgentSource.contains("AgentPaneWidthKey")
     && !notesAgentSource.contains("GeometryReader { paneGeometry in")
     && !notesAgentSource.contains("onMarkdownHeightChange: message.id == store.messages.last?.id"), "agent conversation keeps a light scroll affordance and follows the latest turn without WebView height thrash")
