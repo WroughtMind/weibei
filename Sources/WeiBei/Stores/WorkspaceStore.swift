@@ -19432,7 +19432,7 @@ final class WorkspaceStore: ObservableObject {
                     | P | 本金 |
                     | r | 每期利率 |
 
-                    `A = P(1 + r)^n`
+                    \\(A = P(1 + r)^n\\)
 
                     $$A = P(1 + r)^n$$
                     """,

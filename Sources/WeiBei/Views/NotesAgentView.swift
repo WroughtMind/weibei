@@ -1799,10 +1799,8 @@ struct AgentPaneView: View {
     @State private var agentVisibleMessageLimit = AgentPaneView.agentHistoryPageSize
     @State private var isRevealingEarlierAgentHistory = false
 
-    private static let agentHistoryPageSize = 30
+    private static let agentHistoryPageSize = AgentHistoryRevealPolicy.pageSize
     private static let paneStructureTransitionDuration: TimeInterval = 0.24
-    private static let historyTopRevealThreshold: CGFloat = 10
-    private static let historyRevealResetDistance: CGFloat = 24
 
     private let agentBottomAnchorID = "agentConversationBottom"
 
@@ -2297,15 +2295,20 @@ struct AgentPaneView: View {
         }
 
         if isRevealingEarlierAgentHistory {
-            if !metrics.isUserScrolling
-                || metrics.distanceFromTop > Self.historyRevealResetDistance {
+            if AgentHistoryRevealPolicy.shouldReleaseRevealLock(
+                distanceFromTop: metrics.distanceFromTop,
+                isUserScrolling: metrics.isUserScrolling
+            ) {
                 isRevealingEarlierAgentHistory = false
             }
             return
         }
-        guard metrics.isUserScrolling,
-              metrics.distanceFromTop < Self.historyTopRevealThreshold,
-              hiddenAgentHistoryCount > 0 else { return }
+        guard AgentHistoryRevealPolicy.shouldRevealEarlierPage(
+            distanceFromTop: metrics.distanceFromTop,
+            isUserScrolling: metrics.isUserScrolling,
+            hiddenMessageCount: hiddenAgentHistoryCount,
+            revealInFlight: isRevealingEarlierAgentHistory
+        ) else { return }
         revealEarlierAgentHistory(proxy: proxy)
     }
 
@@ -2341,7 +2344,10 @@ struct AgentPaneView: View {
         let anchorID = visibleAgentMessages.first?.id
         isRevealingEarlierAgentHistory = true
         agentFollowsLatest = false
-        agentVisibleMessageLimit += Self.agentHistoryPageSize
+        agentVisibleMessageLimit = AgentHistoryRevealPolicy.expandedVisibleLimit(
+            currentLimit: agentVisibleMessageLimit,
+            totalMessageCount: store.messages.count
+        )
         // Newly mounted rows land above; re-anchor the reader's previous top row.
         if let anchorID {
             DispatchQueue.main.async {

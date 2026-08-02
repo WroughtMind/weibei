@@ -553,6 +553,33 @@ expect(EmptyWorkspaceDayPeriod.morning.greeting(language: .chinese).contains("�
     && EmptyWorkspaceDayPeriod.evening.greeting(language: .chinese).contains("晚安")
     && EmptyWorkspaceDayPeriod.lateNight.greeting(language: .chinese).contains("夜深")
     && !EmptyWorkspaceDayPeriod.morning.greeting(language: .english).isEmpty, "empty workspace greetings stay localized and non-empty")
+expect(!AgentHistoryRevealPolicy.shouldRevealEarlierPage(
+        distanceFromTop: 0,
+        isUserScrolling: false,
+        hiddenMessageCount: 30,
+        revealInFlight: false
+    )
+    && AgentHistoryRevealPolicy.shouldRevealEarlierPage(
+        distanceFromTop: 0,
+        isUserScrolling: true,
+        hiddenMessageCount: 30,
+        revealInFlight: false
+    )
+    && !AgentHistoryRevealPolicy.shouldRevealEarlierPage(
+        distanceFromTop: 0,
+        isUserScrolling: true,
+        hiddenMessageCount: 30,
+        revealInFlight: true
+    )
+    && !AgentHistoryRevealPolicy.shouldRevealEarlierPage(
+        distanceFromTop: 0,
+        isUserScrolling: true,
+        hiddenMessageCount: 0,
+        revealInFlight: false
+    )
+    && AgentHistoryRevealPolicy.expandedVisibleLimit(currentLimit: 30, totalMessageCount: 95) == 60
+    && AgentHistoryRevealPolicy.expandedVisibleLimit(currentLimit: 90, totalMessageCount: 95) == 95
+    && AgentHistoryRevealPolicy.shouldReleaseRevealLock(distanceFromTop: 30, isUserScrolling: true), "agent history paging requires live user intent, expands exactly one bounded page, and releases its re-entry lock after re-anchoring")
 
 let inspirationItems = EmptyWorkspaceInspirationCatalog.items
 expect(inspirationItems.count >= 6
@@ -4820,8 +4847,9 @@ expect(notesAgentSource.contains("private struct AgentScrollMetrics")
     && notesAgentSource.contains("distanceFromTop")
     && notesAgentSource.contains("distanceFromBottom")
     && notesAgentSource.contains("isUserScrolling")
-    && notesAgentSource.contains("metrics.isUserScrolling")
-    && notesAgentSource.contains("revealEarlierAgentHistory(proxy: proxy)"), "live user scrolling to the folded history boundary reveals one earlier page without treating initial or programmatic positioning as user intent")
+    && notesAgentSource.contains("AgentHistoryRevealPolicy.shouldRevealEarlierPage(")
+    && notesAgentSource.contains("revealEarlierAgentHistory(proxy: proxy)")
+    && notesAgentSource.contains("proxy.scrollTo(anchorID, anchor: .top)"), "live user scrolling to the folded history boundary reveals one earlier page and restores the previous top anchor without treating initial or programmatic positioning as user intent")
 expect(notesAgentSource.contains("heldPaneLayoutWidth")
     && notesAgentSource.contains("pendingMeasuredPaneWidth")
     && notesAgentSource.contains("beginPaneStructureTransition()")

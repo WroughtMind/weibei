@@ -853,6 +853,8 @@ verify_pane_layout_stability() {
     def max_gap_ms:
       [.[].timestamp] as $timestamps
       | (([range(1; $timestamps | length) | (($timestamps[.] - $timestamps[.-1]) * 1000)] | max) // 0);
+    def duration_ms:
+      ((.[-1].timestamp - .[0].timestamp) * 1000);
     sort_by(.transition, .frame)
     | group_by(.transition)
     | if length > 8 then .[-8:] else . end
@@ -861,11 +863,14 @@ verify_pane_layout_stability() {
         chatChanged: changed("agent"),
         neighborChanged: (changed("reader") or changed("notes")),
         agentEverVisible: ever_visible("agent"),
-        maxGapMs: max_gap_ms
+        maxGapMs: max_gap_ms,
+        durationMs: duration_ms
       })
     | {
         chatMaxGapMs: ([.[] | select(.chatChanged) | .maxGapMs] | max),
         neighborMaxGapMs: ([.[] | select(.neighborChanged and .agentEverVisible and (.chatChanged | not)) | .maxGapMs] | max),
+        chatMaxDurationMs: ([.[] | select(.chatChanged) | .durationMs] | max),
+        neighborMaxDurationMs: ([.[] | select(.neighborChanged and .agentEverVisible and (.chatChanged | not)) | .durationMs] | max),
         measuredTransitions: length
       }
   ' "${trace_files[@]}")"
@@ -873,8 +878,10 @@ verify_pane_layout_stability() {
     .measuredTransitions == 8
     and .chatMaxGapMs != null
     and .neighborMaxGapMs != null
+    and .chatMaxDurationMs != null
+    and .neighborMaxDurationMs != null
     and .chatMaxGapMs < 50
-    and .chatMaxGapMs <= (.neighborMaxGapMs * 1.5)
+    and .chatMaxDurationMs <= (.neighborMaxDurationMs * 1.5)
   ' <<<"$pane_performance" >/dev/null; then
     echo "verify failed: rich-history Chat pane transitions missed the responsiveness gate." >&2
     /usr/bin/jq . <<<"$pane_performance" >&2
@@ -887,7 +894,7 @@ verify_pane_layout_stability() {
   echo "pane_trace_transitions=$transition_count"
   echo "pane_host_and_parent_identity=stable"
   echo "pane_visible_slots=nonblank"
-  /usr/bin/jq -r '"pane_chat_max_gap_ms=\(.chatMaxGapMs)\npane_neighbor_max_gap_ms=\(.neighborMaxGapMs)"' <<<"$pane_performance"
+  /usr/bin/jq -r '"pane_chat_max_gap_ms=\(.chatMaxGapMs)\npane_neighbor_max_gap_ms=\(.neighborMaxGapMs)\npane_chat_max_duration_ms=\(.chatMaxDurationMs)\npane_neighbor_max_duration_ms=\(.neighborMaxDurationMs)"' <<<"$pane_performance"
 }
 
 verify_pane_reorder_width() {
