@@ -277,7 +277,7 @@ private struct AgentComposerField: View {
         // Compact: fixed short field. Wide: min height, grow with lines up to maxHeight.
         let corner: CGFloat = isWideComposer ? 24 : WeiBeiMetric.controlRadius
         VStack(alignment: .leading, spacing: 0) {
-            ZStack(alignment: .topLeading) {
+            ZStack(alignment: isWideComposer ? .leading : .topLeading) {
                 TextField(
                     "",
                     text: $store.agentDraft,
@@ -296,7 +296,10 @@ private struct AgentComposerField: View {
                 .padding(.top, verticalPadding)
                 .padding(.bottom, showsModelFooter ? 6 : verticalPadding)
                 .padding(.trailing, showsModelFooter ? 0 : (showsControl ? trailingPadding : 0))
-                .frame(maxWidth: .infinity, alignment: .topLeading)
+                // ChatGPT-like: a single line (and its placeholder) sits
+                // vertically centered in the collapsed pill; extra lines grow
+                // the card upward toward maxHeight.
+                .frame(maxWidth: .infinity, alignment: isWideComposer ? .leading : .topLeading)
                 .padding(.horizontal, horizontalPadding)
 
                 if showsControl && !showsModelFooter {
@@ -311,7 +314,11 @@ private struct AgentComposerField: View {
                     }
                 }
             }
-            .frame(maxWidth: .infinity, alignment: .topLeading)
+            .frame(
+                maxWidth: .infinity,
+                maxHeight: isWideComposer ? .infinity : nil,
+                alignment: isWideComposer ? .leading : .topLeading
+            )
 
             if showsModelFooter {
                 HStack(spacing: 10) {
@@ -1734,10 +1741,10 @@ private enum AgentChatLayoutMetrics {
     static let wideSideGutter: CGFloat = 28
     static let compactComposerHeight: CGFloat = 52
     /// Immersive min height — grows with typed lines; never a giant empty white void.
-    static let wideComposerMinHeight: CGFloat = 108
+    static let wideComposerMinHeight: CGFloat = 88
     static let wideComposerMaxHeight: CGFloat = 340
     static let compactFontSize: CGFloat = 14.5
-    static let wideFontSize: CGFloat = 16
+    static let wideFontSize: CGFloat = 16.5
 
     static func isWide(layout: WorkspaceLayout) -> Bool {
         // Immersive conversation only — document multi-pane keeps compact strip metrics.
