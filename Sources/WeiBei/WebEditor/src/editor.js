@@ -1633,7 +1633,10 @@ const scrollToHeadingInternal = (rawIndex) => {
 
 window.WeiBeiEditor = {
   getMarkdown: getMarkdownInternal,
-  setMarkdown: setMarkdownInternal,
+  setMarkdown: (markdown) => {
+    setMarkdownInternal(markdown);
+    post('markdownChanged', { markdown: String(markdown || '') });
+  },
   // Streaming prefix appends: parse the new blocks standalone and insert at
   // the end of the doc. Existing nodes are never rebuilt, so already-rendered
   // formulas/tables cannot flash back to raw text mid-stream.

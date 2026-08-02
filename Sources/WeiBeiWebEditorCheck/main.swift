@@ -131,6 +131,7 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
     private var failure: String?
     private var activatedWikiTitle: String?
     private var attachmentRequests = 0
+    private var markdownChanges: [(documentID: String, markdown: String)] = []
 
     override init() {
         let configuration = WKWebViewConfiguration()
@@ -181,6 +182,14 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
             activatedWikiTitle = (message.body as? [String: Any])?["title"] as? String
         case "imageAttachmentRequested":
             attachmentRequests += 1
+        case "markdownChanged":
+            guard let body = message.body as? [String: Any],
+                  let documentID = body["documentID"] as? String,
+                  let markdown = body["markdown"] as? String else {
+                fail("markdownChanged did not include document identity and Markdown")
+                return
+            }
+            markdownChanges.append((documentID, markdown))
         default:
             break
         }
@@ -1417,7 +1426,32 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
                 self.fail("block Enter exit check did not finish all isolated cases: \(markdown)")
                 return
             }
-            self.isDone = true
+            self.validateExternalMarkdownAcknowledgement()
+        }
+    }
+
+    private func validateExternalMarkdownAcknowledgement() {
+        let documentID = "note-switch-target"
+        let markdown = "# 切换后的笔记\n\n"
+        markdownChanges.removeAll()
+        webView.evaluateJavaScript("""
+        window.WeiBeiEditor.setDocumentID(\(json(documentID)));
+        window.WeiBeiEditor.setMarkdown(\(json(markdown)));
+        """) { [weak self] _, error in
+            guard let self else { return }
+            if let error {
+                self.fail("external Markdown acknowledgement setup threw \(error.localizedDescription)")
+                return
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                guard self.markdownChanges.contains(where: {
+                    $0.documentID == documentID && $0.markdown == markdown
+                }) else {
+                    self.fail("setMarkdown did not acknowledge the switched document before user editing")
+                    return
+                }
+                self.isDone = true
+            }
         }
     }
 
