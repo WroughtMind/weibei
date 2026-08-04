@@ -885,8 +885,18 @@ final class StableDocumentSplitCoordinator {
 
     private func applyVisibleWidthsImmediately(_ widths: [CGFloat], in splitView: StableDocumentSplitView) {
         let frames = visibleFrames(order: displayedVisibleOrder, widths: widths, size: splitView.bounds.size)
+        let agentWidthChanged = frames[.agent].map { frame in
+            guard let host = splitView.roleHosts[.agent] else { return false }
+            return abs(host.frame.width - frame.width) > 0.5
+        } ?? false
         for (role, frame) in frames {
             splitView.roleHosts[role]?.frame = frame
+        }
+        // Direct frame changes happen inside the divider mouse event. AppKit may
+        // defer NSHostingView's SwiftUI layout; widening hides that delay, while
+        // shrinking clips the old chat width. Flush only the resized chat host.
+        if agentWidthChanged, let agentHost = splitView.roleHosts[.agent] {
+            agentHost.layoutSubtreeIfNeeded()
         }
         let dividers = dividerFramesForOrder(displayedVisibleOrder, visibleFrames: frames, size: splitView.bounds.size)
         updateDividerFrames(dividers, animated: false, in: splitView)

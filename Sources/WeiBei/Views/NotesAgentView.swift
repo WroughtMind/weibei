@@ -5029,6 +5029,7 @@ private struct AgentScrollViewportVisibilityProbe: NSViewRepresentable {
 
     func updateNSView(_ nsView: ProbeView, context: Context) {
         nsView.onChange = onChange
+        nsView.ensureObserversInstalled()
         nsView.report()
     }
 
@@ -5036,15 +5037,25 @@ private struct AgentScrollViewportVisibilityProbe: NSViewRepresentable {
         var onChange: ((Bool) -> Void)?
         private var observers: [NSObjectProtocol] = []
         private var lastReported: Bool?
+        private weak var observedClipView: NSClipView?
+
+        override func layout() {
+            super.layout()
+            // A representable can enter the SwiftUI hierarchy before its outer
+            // ScrollView exists. The first real layout is the reliable point to
+            // attach, so the first divider drag never uses stale visibility.
+            ensureObserversInstalled()
+            report()
+        }
 
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
-            installObservers()
+            ensureObserversInstalled()
         }
 
         override func viewDidMoveToSuperview() {
             super.viewDidMoveToSuperview()
-            installObservers()
+            ensureObserversInstalled()
         }
 
         fileprivate func report() {
@@ -5067,10 +5078,12 @@ private struct AgentScrollViewportVisibilityProbe: NSViewRepresentable {
             }
         }
 
-        private func installObservers() {
+        fileprivate func ensureObserversInstalled() {
+            guard let clipView = enclosingScrollView?.contentView else { return }
+            guard observedClipView !== clipView else { return }
             observers.forEach(NotificationCenter.default.removeObserver)
             observers.removeAll()
-            guard let clipView = enclosingScrollView?.contentView else { return }
+            observedClipView = clipView
             clipView.postsBoundsChangedNotifications = true
             clipView.postsFrameChangedNotifications = true
             let center = NotificationCenter.default
