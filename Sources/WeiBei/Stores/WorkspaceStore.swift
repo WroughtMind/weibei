@@ -19408,15 +19408,39 @@ final class WorkspaceStore: ObservableObject {
 
         let noteMarker = "# Pane ownership marker\n\nUnsaved note input must survive stable slot animations.\n"
         let draftMarker = "Unsent agent draft must survive stable slot animations."
-        let messageMarker = AgentMessage(
-            role: .assistant,
-            text: "Stable parent conversation marker",
-            source: "verification",
-            backend: .offline
-        )
+        let richConversation = (0..<15).flatMap { turn in
+            [
+                AgentMessage(
+                    role: .user,
+                    text: "第 \(turn + 1) 轮：解释复利如何累积。",
+                    source: "verification",
+                    backend: .offline
+                ),
+                AgentMessage(
+                    role: .assistant,
+                    text: """
+                    ## 第 \(turn + 1) 轮复利说明
+
+                    - 本金先产生利息
+                    - 下一期利息继续进入本金
+
+                    | 变量 | 含义 |
+                    | --- | --- |
+                    | P | 本金 |
+                    | r | 每期利率 |
+
+                    \\(A = P(1 + r)^n\\)
+
+                    $$A = P(1 + r)^n$$
+                    """,
+                    source: "verification",
+                    backend: .offline
+                ),
+            ]
+        }
         updateNote(noteMarker)
         agentDraft = draftMarker
-        messages = [messageMarker]
+        messages = richConversation
         try? await Task.sleep(nanoseconds: 700_000_000)
 
         let itemID = selectedMaterialItem?.id
@@ -19450,7 +19474,7 @@ final class WorkspaceStore: ObservableObject {
             && showNotes
             && noteText == noteMarker
             && agentDraft == draftMarker
-            && messages == [messageMarker]
+            && messages == richConversation
             && normalizedThreePaneOrder == baselineOrder
             && finalLocation == baselineLocation
             && revisionDelta == 0
@@ -19474,7 +19498,8 @@ final class WorkspaceStore: ObservableObject {
             "note_editor_dismantle=\(PaneToggleContinuityVerifier.noteEditorDismantleCount)",
             "note_preserved=\(noteText == noteMarker)",
             "agent_draft_preserved=\(agentDraft == draftMarker)",
-            "conversation_preserved=\(messages == [messageMarker])",
+            "conversation_preserved=\(messages == richConversation)",
+            "conversation_count=\(messages.count)",
             "pane_order_preserved=\(normalizedThreePaneOrder == baselineOrder)",
         ].joined(separator: "\n") + "\n"
         PaneToggleContinuityVerifier.endMeasurement()
