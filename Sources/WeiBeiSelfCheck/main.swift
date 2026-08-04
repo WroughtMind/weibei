@@ -3615,12 +3615,26 @@ expect(readerViewSource.contains("var isEnabled = true")
     && readerViewSource.contains("hasModalWindow: NSApp.modalWindow != nil")
     && courseWorkspaceSource.contains("isEnabled: !showsNewNotePrompt")
     && !courseWorkspaceSource.contains("courseFolderImportDraft"), "escape dismisses only the active course surface and leaves sheets or file panels in control")
-expect(workspaceStoreSource.contains("DocumentTextExtractor.cachedText(for: item)")
-    && workspaceStoreSource.contains("let indexingTask = Task.detached(priority: .userInitiated)")
-    && workspaceStoreSource.contains("let indexedByItemID = searchIndex.lookup(")
-    && workspaceStoreSource.contains("searchIndex.read(item: $0, query: \"\", location: nil)")
-    && !workspaceStoreSource.contains("DocumentTextExtractor.indexText(for: candidate.item")
-    && !workspaceStoreSource.contains("if let text = DocumentTextExtractor.text(for: item)"), "main-actor workspace reads only cached document text; cold current-material reads use the verified course index inside the detached task")
+if let courseContextStart = workspaceStoreSource.range(
+    of: "private func makeCourseContext("
+)?.lowerBound,
+   let projectAccessStart = workspaceStoreSource.range(
+    of: "private func makeAgentProjectAccessSnapshot(",
+    range: courseContextStart..<workspaceStoreSource.endIndex
+   )?.lowerBound {
+    let courseContextSource = String(
+        workspaceStoreSource[courseContextStart..<projectAccessStart]
+    )
+    expect(courseContextSource.contains("text: \"\"")
+        && courseContextSource.contains("selectedMaterialText: nil")
+        && courseContextSource.contains("selectedNoteText: nil")
+        && !courseContextSource.contains("Task.detached")
+        && !courseContextSource.contains("searchIndex.lookup")
+        && !courseContextSource.contains("searchIndex.read"),
+        "each Agent turn builds metadata-only course context without pre-reading material or note text")
+} else {
+    expect(false, "course context builder source is readable")
+}
 expect(workspaceStoreSource.contains("@Published var showDailyInspiration = true")
     && workspaceStoreSource.contains("func setDailyInspirationEnabled(_ enabled: Bool)")
     && workspaceStoreSource.contains("showDailyInspiration = snapshot.showDailyInspiration ?? true")
