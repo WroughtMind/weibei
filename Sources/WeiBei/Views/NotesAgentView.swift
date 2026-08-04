@@ -5048,16 +5048,18 @@ private struct AgentScrollViewportVisibilityProbe: NSViewRepresentable {
         }
 
         fileprivate func report() {
-            let visible: Bool
-            if let clipView = enclosingScrollView?.contentView, window != nil {
-                let frameInClip = convert(bounds, to: clipView)
-                let intersection = frameInClip.intersection(clipView.bounds)
-                visible = !intersection.isNull
-                    && intersection.width > 1
-                    && intersection.height > 1
-            } else {
-                visible = false
-            }
+            // Before AppKit attaches and lays out the row, visibility is unknown.
+            // Reporting false here held the old Markdown width on the first drag,
+            // so a fast shrink clipped content until the divider was released.
+            guard let clipView = enclosingScrollView?.contentView,
+                  window != nil,
+                  bounds.width > 1,
+                  bounds.height > 1 else { return }
+            let frameInClip = convert(bounds, to: clipView)
+            let intersection = frameInClip.intersection(clipView.bounds)
+            let visible = !intersection.isNull
+                && intersection.width > 1
+                && intersection.height > 1
             guard visible != lastReported else { return }
             lastReported = visible
             DispatchQueue.main.async { [weak self] in
@@ -5068,10 +5070,7 @@ private struct AgentScrollViewportVisibilityProbe: NSViewRepresentable {
         private func installObservers() {
             observers.forEach(NotificationCenter.default.removeObserver)
             observers.removeAll()
-            guard let clipView = enclosingScrollView?.contentView else {
-                report()
-                return
-            }
+            guard let clipView = enclosingScrollView?.contentView else { return }
             clipView.postsBoundsChangedNotifications = true
             clipView.postsFrameChangedNotifications = true
             let center = NotificationCenter.default

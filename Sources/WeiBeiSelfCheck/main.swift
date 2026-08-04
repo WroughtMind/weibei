@@ -4914,6 +4914,17 @@ expect(notesAgentSource.contains("heldPaneLayoutWidth")
     && notesAgentSource.contains("The parent proposal is the source of truth")
     && notesAgentSource.contains(".frame(maxWidth: AgentChatLayoutMetrics.wideMaxWidth, alignment: .bottom)")
     && !notesAgentSource.contains(".frame(width: availableWidth, alignment: .topLeading)"), "visible finalized Markdown follows the live chat width while offscreen web views settle once at the AppKit animation destination")
+if let viewportProbeStart = notesAgentSource.range(of: "private struct AgentScrollViewportVisibilityProbe")?.lowerBound,
+   let scrollProbeStart = notesAgentSource[viewportProbeStart...].range(of: "private struct AgentScrollDistanceProbe")?.lowerBound {
+    let viewportProbeSource = String(notesAgentSource[viewportProbeStart..<scrollProbeStart])
+    expect(viewportProbeSource.contains("guard let clipView = enclosingScrollView?.contentView,")
+        && viewportProbeSource.contains("bounds.width > 1,")
+        && viewportProbeSource.contains("bounds.height > 1 else { return }")
+        && !viewportProbeSource.contains("visible = false"),
+        "an unattached or zero-size Markdown row stays visibility-unknown so the first narrowing drag uses the live parent width")
+} else {
+    expect(false, "agent viewport visibility probe source is inspectable")
+}
 if let applyWidthStart = notesAgentSource.range(of: "private func applyMeasuredPaneWidth")?.lowerBound,
    let commitWidthStart = notesAgentSource[applyWidthStart...].range(of: "private func commitMeasuredPaneWidth")?.lowerBound {
     let applyWidthSource = String(notesAgentSource[applyWidthStart..<commitWidthStart])
