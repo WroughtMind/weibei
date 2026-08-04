@@ -855,6 +855,7 @@ final class WorkspaceStore: ObservableObject {
         var sessionID: UUID
         var workingDirectory: URL
         var courseID: UUID?
+        var courseRootURL: URL? = nil
         var courseRootIdentity: ImportedFileIdentity?
     }
 
@@ -15590,7 +15591,7 @@ final class WorkspaceStore: ObservableObject {
         focusNoteItem: StudyItem? = nil
     ) async throws -> CourseContextBuildResult {
         let candidates = access.sources.compactMap { source -> CourseIndexCandidate? in
-            guard source.grants.contains(where: Self.agentFileGrantIsValid) else {
+            guard Self.agentHostToolSourceIsValid(source) else {
                 return nil
             }
             return CourseIndexCandidate(
@@ -15682,7 +15683,8 @@ final class WorkspaceStore: ObservableObject {
                 ?? self.courseMembershipIndex.courseIDs(for: item.id)
         }
         let sources = scopedItems.compactMap { item -> AgentHostToolSource? in
-            let grants = requestedCourseIDs(item).compactMap { courseID in
+            let itemCourseIDs = requestedCourseIDs(item)
+            let grants = itemCourseIDs.compactMap { courseID in
                 self.makeAgentFileGrant(
                     item: item,
                     courseID: courseID,
@@ -15690,16 +15692,19 @@ final class WorkspaceStore: ObservableObject {
                     target: target
                 )
             }
-            guard let primaryGrant = grants.first else { return nil }
+            guard !grants.isEmpty || Self.agentDirectSourceIsValid(item) else {
+                return nil
+            }
+            let primaryGrant = grants.first
             let isCourseScope = target.courseID != nil
-            let courseIDs = grants.map { $0.courseID.uuidString.lowercased() }
-            let courseTitles = grants.map(\.courseTitle)
+            let courseIDs = itemCourseIDs.map { $0.uuidString.lowercased() }
+            let courseTitles = itemCourseIDs.compactMap { coursesByID[$0] }
             let baseSubtitle = displaySubtitle(for: item)
             let memoryText = loadedAgentNoteText(for: item)
             let sourceRevision = memoryText.map(
                 CourseDocumentSearchIndex.sourceRevision(forMarkdown:)
             ) ?? CourseDocumentSearchIndex.sourceRevision(for: item)
-            let subtitle = isCourseScope
+            let subtitle = isCourseScope || courseTitles.isEmpty
                 ? baseSubtitle
                 : ui(
                     "课程：\(courseTitles.joined(separator: "、")) · \(baseSubtitle)",
@@ -15710,15 +15715,15 @@ final class WorkspaceStore: ObservableObject {
                 title: displayTitle(for: item),
                 kind: item.kind.rawValue,
                 role: item.isNotebookNote ? "note" : "material",
-                relativePath: isCourseScope ? primaryGrant.relativePath : "",
-                resolvedPath: isCourseScope ? primaryGrant.targetURL.path : "",
+                relativePath: isCourseScope ? primaryGrant?.relativePath ?? "" : "",
+                resolvedPath: isCourseScope ? primaryGrant?.targetURL.path ?? "" : "",
                 entryIdentity: isCourseScope
-                    ? StudyAgentFileIdentity(primaryGrant.entryIdentity)
+                    ? primaryGrant.map { StudyAgentFileIdentity($0.entryIdentity) }
                     : nil,
                 targetIdentity: isCourseScope
-                    ? StudyAgentFileIdentity(primaryGrant.targetIdentity)
+                    ? primaryGrant.map { StudyAgentFileIdentity($0.targetIdentity) }
                     : nil,
-                isShared: isCourseScope && primaryGrant.isShared,
+                isShared: isCourseScope && (primaryGrant?.isShared == true),
                 courseIDs: courseIDs,
                 courseTitles: courseTitles,
                 sourceRevision: sourceRevision
@@ -15731,7 +15736,7 @@ final class WorkspaceStore: ObservableObject {
                 kind: item.kind.rawValue,
                 role: item.isNotebookNote ? "note" : "material",
                 memoryText: memoryText,
-                relativePath: isCourseScope ? primaryGrant.relativePath : nil,
+                relativePath: isCourseScope ? primaryGrant?.relativePath : nil,
                 courseIDs: courseIDs,
                 courseTitles: courseTitles,
                 grants: grants
@@ -15748,7 +15753,7 @@ final class WorkspaceStore: ObservableObject {
                 chatID: target.sessionID.uuidString.lowercased(),
                 courseID: target.courseID?.uuidString.lowercased(),
                 courseTitle: selectedCourse?.title,
-                rootPath: target.courseID == nil ? nil : target.workingDirectory.path,
+                rootPath: target.courseRootURL?.path,
                 rootIdentity: target.courseRootIdentity.map(StudyAgentFileIdentity.init),
                 items: projectItems,
                 isTruncated: sources.count > projectItems.count
@@ -15766,8 +15771,9 @@ final class WorkspaceStore: ObservableObject {
         let rootURL: URL
         let rootIdentity: ImportedFileIdentity
         if target.courseID == courseID,
+           let scopedRoot = target.courseRootURL,
            let expectedIdentity = target.courseRootIdentity {
-            rootURL = target.workingDirectory
+            rootURL = scopedRoot
             rootIdentity = expectedIdentity
         } else {
             guard let course = course(withID: courseID),
@@ -16553,6 +16559,7 @@ final class WorkspaceStore: ObservableObject {
             sessionID: session.id,
             workingDirectory: target.workingDirectory,
             courseID: target.courseID,
+            courseRootURL: target.courseRootURL,
             courseRootIdentity: target.courseRootIdentity
         )
         try waitForCourseFileOperation {
@@ -16572,33 +16579,9 @@ final class WorkspaceStore: ObservableObject {
     private func agentConversationTargetForSelfCheck(
         courseID: UUID?
     ) throws -> AgentConversationTarget {
-        if let courseID,
-           let course = course(withID: courseID),
-           let rootIdentity = course.sourceRootIdentity,
-           let root = courseRootURL(for: courseID),
-           let resolvedRoot = try? CourseProjectPathPolicy.existingDirectory(root),
-           CourseProjectFileWorker.identity(at: resolvedRoot) == rootIdentity {
-            return AgentConversationTarget(
-                sessionID: UUID(),
-                workingDirectory: resolvedRoot,
-                courseID: courseID,
-                courseRootIdentity: rootIdentity
-            )
-        }
-        guard courseID == nil else {
-            throw AgentConversationTargetError(message: "课程根目录不可用")
-        }
-        let directory = workspaceDirectory
-            .appendingPathComponent("AgentRuntime/GlobalWorkspace", isDirectory: true)
-        try FileManager.default.createDirectory(
-            at: directory,
-            withIntermediateDirectories: true
-        )
-        return AgentConversationTarget(
+        try makeAgentConversationTarget(
             sessionID: UUID(),
-            workingDirectory: directory,
-            courseID: nil,
-            courseRootIdentity: nil
+            courseID: courseID
         )
     }
 
@@ -16616,14 +16599,8 @@ final class WorkspaceStore: ObservableObject {
             .flatMap { courseTitlesByID[$0] }
             ?? ui("全部课程", "All Courses")
         let searchIndex = courseDocumentSearchIndex
-        let expectedRootIdentity = target.courseRootIdentity
-        let workingDirectory = target.workingDirectory
 
         return { request in
-            if let expectedRootIdentity,
-               CourseProjectFileWorker.identity(at: workingDirectory) != expectedRootIdentity {
-                throw AgentConversationTargetError(message: "课程根目录在查询期间发生了变化")
-            }
             let task = Task.detached(priority: .userInitiated) {
                 try Self.executeAgentHostTool(
                     request,
@@ -16637,10 +16614,6 @@ final class WorkspaceStore: ObservableObject {
                 try await task.value
             } onCancel: {
                 task.cancel()
-            }
-            if let expectedRootIdentity,
-               CourseProjectFileWorker.identity(at: workingDirectory) != expectedRootIdentity {
-                throw AgentConversationTargetError(message: "课程根目录在查询期间发生了变化")
             }
             return result
         }
@@ -16656,30 +16629,18 @@ final class WorkspaceStore: ObservableObject {
         try Task.checkCancellation()
         switch request {
         case let .courseSearch(query, limit):
-            let approvedSources = sources.compactMap { source -> (
-                source: AgentHostToolSource,
-                grant: AgentFileGrant
-            )? in
-                guard let grant = source.grants.first(where: {
-                    agentFileGrantIsValid($0)
-                }) else {
-                    return nil
-                }
-                return (source, grant)
-            }
+            let approvedSources = sources.filter(agentHostToolSourceIsValid)
             let indexed = searchIndex.lookup(
                 items: approvedSources.compactMap {
-                    $0.source.memoryText == nil ? $0.source.item : nil
+                    $0.memoryText == nil ? $0.item : nil
                 },
                 query: query
             )
-            let matched = approvedSources.compactMap { approved -> (
+            let matched = approvedSources.compactMap { source -> (
                 source: AgentHostToolSource,
-                grant: AgentFileGrant,
                 result: CourseDocumentIndexResult,
                 titleMatched: Bool
             )? in
-                let source = approved.source
                 let titleMatched = source.title.localizedCaseInsensitiveContains(query)
                     || source.subtitle.localizedCaseInsensitiveContains(query)
                     || (
@@ -16709,12 +16670,11 @@ final class WorkspaceStore: ObservableObject {
                 }
                 guard let text = result.text,
                       !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-                      agentFileGrantIsValid(approved.grant) else {
+                      agentHostToolSourceIsValid(source) else {
                     return nil
                 }
                 return (
                     source,
-                    approved.grant,
                     CourseDocumentIndexResult(
                         text: text,
                         isTruncated: result.isTruncated,
@@ -16773,9 +16733,7 @@ final class WorkspaceStore: ObservableObject {
 
         case let .courseRead(itemID, query, location, cursor, maximumCharacters):
             guard let source = sources.first(where: { $0.item.id == itemID }),
-                  let grant = source.grants.first(where: {
-                      agentFileGrantIsValid($0)
-                  }) else {
+                  agentHostToolSourceIsValid(source) else {
                 throw AgentConversationTargetError(message: "这份资料不属于当前 Chat 的查询范围")
             }
             let indexed: CourseDocumentIndexResult
@@ -16798,7 +16756,7 @@ final class WorkspaceStore: ObservableObject {
                 )
             }
             guard let text = indexed.text,
-                  agentFileGrantIsValid(grant) else {
+                  agentHostToolSourceIsValid(source) else {
                 throw AgentConversationTargetError(message: "这份资料在读取期间发生了变化")
             }
             let context = CourseKnowledgeIndex.build(
@@ -16836,6 +16794,37 @@ final class WorkspaceStore: ObservableObject {
                 nextCursor: indexed.nextCursor,
                 sourceRevision: indexed.sourceRevision
             )
+        }
+    }
+
+    nonisolated private static func agentHostToolSourceIsValid(
+        _ source: AgentHostToolSource
+    ) -> Bool {
+        source.grants.contains(where: agentFileGrantIsValid)
+            || agentDirectSourceIsValid(source.item)
+    }
+
+    nonisolated private static func agentDirectSourceIsValid(
+        _ item: StudyItem
+    ) -> Bool {
+        guard let url = item.url?.standardizedFileURL,
+              FileManager.default.isReadableFile(atPath: url.path),
+              CourseProjectPathPolicy.isSame(
+                  url,
+                  url.resolvingSymlinksInPath().standardizedFileURL
+              ) else {
+            return false
+        }
+        switch item.storage {
+        case .legacyExternal:
+            guard let expectedIdentity = item.importedFileIdentity else {
+                return false
+            }
+            return CourseProjectFileWorker.identity(at: url) == expectedIdentity
+        case .bundledSample:
+            return item.isSample
+        case .courseOwned, .shared:
+            return false
         }
     }
 
@@ -20077,6 +20066,7 @@ final class WorkspaceStore: ObservableObject {
         let courseBChatID = UUID(uuidString: "66666666-6666-6666-6666-666666666664")!
         let globalChatID = UUID(uuidString: "66666666-6666-6666-6666-666666666665")!
         let courseASecondChatID = UUID(uuidString: "66666666-6666-6666-6666-666666666669")!
+        let globalSecondChatID = UUID(uuidString: "66666666-6666-6666-6666-66666666666A")!
         let courseAMemoryID = UUID(uuidString: "66666666-6666-6666-6666-666666666666")!
         let courseBMemoryID = UUID(uuidString: "66666666-6666-6666-6666-666666666667")!
         let globalMemoryID = UUID(uuidString: "66666666-6666-6666-6666-666666666668")!
@@ -20133,6 +20123,12 @@ final class WorkspaceStore: ObservableObject {
                 title: "利率练习",
                 messages: [AgentMessage(role: .user, text: "继续练习利率", source: nil)],
                 courseID: courseAID
+            ),
+            StudySession(
+                id: globalSecondChatID,
+                title: "另一条全局计划",
+                messages: [AgentMessage(role: .user, text: "换一条全局对话继续", source: nil)],
+                courseID: nil
             ),
         ]
         activeStudySessionID = courseAChatID
@@ -20511,10 +20507,16 @@ final class WorkspaceStore: ObservableObject {
             messageID: UUID()
         )
         let globalMemoryCreated = globalAttachment?.memoryIDs.first
+        let secondGlobalContext = makeLearningContext(
+            target: target(globalSecondChatID, courseID: nil)
+        )
         let globalScopePassed = globalMemoryCreated.map { memoryID in
             learningMemoryEntries(in: .global).contains(where: {
                 $0.id == memoryID
             })
+                && secondGlobalContext.memories.contains(where: {
+                    $0.id == memoryID
+                })
         } == true
             && learningMemoryRevision(in: .course(courseBID)) == courseBRevisionBefore
 
@@ -20626,6 +20628,7 @@ final class WorkspaceStore: ObservableObject {
         automatic_resolution=\(automaticResolutionPassed)
         invalid_target_rejected=\(invalidTargetRejected)
         global_scope=\(globalScopePassed)
+        global_cross_chat=\(globalScopePassed)
         survives_chat_deletion=\(survivesChatDeletion)
         independent_revisions=\(learningMemoryRevision(in: .course(courseBID)) == courseBRevisionBefore)
         user_history=\(courseAEntry?.revisions?.last?.actor == .user)
@@ -21415,52 +21418,67 @@ final class WorkspaceStore: ObservableObject {
                 )
             )
         }
-        if let courseID = session.courseID {
+        return try makeAgentConversationTarget(
+            sessionID: session.id,
+            courseID: session.courseID
+        )
+    }
+
+    private func makeAgentConversationTarget(
+        sessionID: UUID,
+        courseID: UUID?
+    ) throws -> AgentConversationTarget {
+        let course = courseID.flatMap { self.course(withID: $0) }
+        if let courseID {
             guard activeCourseRemovalTokens[courseID] == nil,
-                  let course = course(withID: courseID),
-                  let expectedIdentity = course.sourceRootIdentity,
-                  let root = courseRootURL(for: courseID),
-                  let resolvedRoot = try? CourseProjectPathPolicy.existingDirectory(root),
-                  importedFileIdentityResolver(resolvedRoot) == expectedIdentity else {
+                  course != nil else {
                 throw AgentConversationTargetError(
                     message: ui(
-                        "这门课程的课程文件夹当前不可用，魏碑没有把问题发送到其他目录。",
-                        "This course folder is unavailable. WeiBei did not send the question elsewhere."
+                        "这门课程已经不存在，魏碑没有把问题发到其他范围。",
+                        "This course no longer exists. WeiBei did not send the question to another scope."
                     )
                 )
             }
-            return AgentConversationTarget(
-                sessionID: session.id,
-                workingDirectory: resolvedRoot,
-                courseID: courseID,
-                courseRootIdentity: expectedIdentity
-            )
         }
-
-        let globalDirectory = workspaceDirectory
-            .appendingPathComponent("AgentRuntime/GlobalWorkspace", isDirectory: true)
+        let runtimeDirectory = workspaceDirectory
+            .appendingPathComponent("AgentRuntime/Chats", isDirectory: true)
+            .appendingPathComponent(sessionID.uuidString.lowercased(), isDirectory: true)
         do {
             try FileManager.default.createDirectory(
-                at: globalDirectory,
+                at: runtimeDirectory,
                 withIntermediateDirectories: true
             )
             try FileManager.default.setAttributes(
                 [.posixPermissions: 0o700],
-                ofItemAtPath: globalDirectory.path
+                ofItemAtPath: runtimeDirectory.path
             )
         } catch {
             throw AgentConversationTargetError(
                 message: ui(
-                    "魏碑无法准备全局 Chat 的本地工作目录：\(error.localizedDescription)",
-                    "WeiBei could not prepare the global Chat workspace: \(error.localizedDescription)"
+                    "魏碑无法准备 Chat 的本地工作目录：\(error.localizedDescription)",
+                    "WeiBei could not prepare the Chat workspace: \(error.localizedDescription)"
                 )
             )
         }
+        let verifiedCourseRoot: URL?
+        let verifiedCourseIdentity: ImportedFileIdentity?
+        if let courseID,
+           let expectedIdentity = course?.sourceRootIdentity,
+           let root = courseRootURL(for: courseID),
+           let resolvedRoot = try? CourseProjectPathPolicy.existingDirectory(root),
+           importedFileIdentityResolver(resolvedRoot) == expectedIdentity {
+            verifiedCourseRoot = resolvedRoot
+            verifiedCourseIdentity = expectedIdentity
+        } else {
+            verifiedCourseRoot = nil
+            verifiedCourseIdentity = nil
+        }
         return AgentConversationTarget(
-            sessionID: session.id,
-            workingDirectory: globalDirectory,
-            courseID: nil,
-            courseRootIdentity: nil
+            sessionID: sessionID,
+            workingDirectory: runtimeDirectory,
+            courseID: courseID,
+            courseRootURL: verifiedCourseRoot,
+            courseRootIdentity: verifiedCourseIdentity
         )
     }
 
@@ -21483,16 +21501,12 @@ final class WorkspaceStore: ObservableObject {
             )
         }
         guard let courseID = target.courseID else { return }
-        guard let expectedIdentity = target.courseRootIdentity,
-              course(withID: courseID)?.sourceRootIdentity == expectedIdentity,
-              let resolvedRoot = try? CourseProjectPathPolicy.existingDirectory(
-                target.workingDirectory
-              ),
-              importedFileIdentityResolver(resolvedRoot) == expectedIdentity else {
+        guard activeCourseRemovalTokens[courseID] == nil,
+              course(withID: courseID) != nil else {
             throw AgentConversationTargetError(
                 message: ui(
-                    "发送前课程文件夹发生了变化，魏碑没有让 Agent 在错误目录工作。",
-                    "The course folder changed before sending. WeiBei did not run the Agent in the wrong directory."
+                    "原课程已不存在，这条回答没有写到其他课程。",
+                    "The original course no longer exists. This reply was not written to another course."
                 )
             )
         }

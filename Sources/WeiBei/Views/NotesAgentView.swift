@@ -1944,13 +1944,6 @@ struct AgentPaneView: View {
                                     .id("agent-thinking")
                                     .transition(WeiBeiTransition.message)
                                 }
-                                if store.messages.isEmpty
-                                    && !(store.isAgentRunningInActiveChat && store.agentStreamingText.isEmpty)
-                                {
-                                    emptyAgentState
-                                        .frame(maxWidth: .infinity, alignment: .leading)
-                                        .transition(WeiBeiTransition.message)
-                                }
                                 Color.clear
                                     .frame(height: agentScrollBottomInset)
                                     .id(agentBottomAnchorID)
@@ -2536,53 +2529,6 @@ struct AgentPaneView: View {
         usesWideChatLayout ? 120 : 100
     }
 
-    private var emptyAgentState: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            LazyVGrid(columns: starterChipColumns, alignment: .leading, spacing: 6) {
-                if store.canResumePreviousStudy {
-                    starterChip(store.ui("继续上次", "Resume"), systemImage: "arrow.uturn.forward", help: store.ui("回顾上次学习位置并继续", "Review the last study location and continue")) {
-                        store.resumePreviousStudy()
-                        askWith(store.ui("上次学到哪了？请结合学习记忆告诉我当时的位置、还没解决的问题和现在最适合的下一步。", "Where did I stop last time? Use my learning memory to give the location, unresolved questions, and the best next step."))
-                    }
-                }
-                if store.allItems.count > 1 {
-                    starterChip(store.ui("关联", "Connections"), systemImage: "point.3.connected.trianglepath.dotted", help: store.ui("查找当前概念在课程里的关联", "Find related course materials and notes")) {
-                        askWith(store.ui("请查找当前材料、选区或笔记在整个课程里的知识关联，说清为什么相关，并给出可跳转的来源。", "Find connections between the current material, selection, or note and the rest of the course. Explain each connection and provide jumpable sources."))
-                    }
-                }
-                if store.hasSelectedMaterial {
-                    starterChip(store.ui("梳理", "Outline"), systemImage: "text.alignleft", help: store.ui("梳理当前材料", "Outline current material")) {
-                        askWith(store.ui("请基于当前材料提炼核心概念、关键公式和需要回看出处的位置。", "Extract the core concepts, key formulas, and places that need source review from the current material."))
-                    }
-                }
-                starterChip(store.ui("整理", "Organize"), systemImage: "list.bullet.rectangle", help: store.ui("整理当前笔记", "Organize current note")) {
-                    store.askToOrganizeNote()
-                }
-                if store.hasSelectedMaterial {
-                    starterChip(store.ui("出题", "Quiz"), systemImage: "questionmark.square", help: store.ui("生成复习题", "Generate review questions")) {
-                        askWith(store.ui("请根据当前材料和笔记生成 5 个复习问题，并标出每题依据。", "Generate 5 review questions from the current material and note, and cite the evidence for each question."))
-                    }
-                }
-            }
-        }
-        .frame(maxWidth: 420, alignment: .leading)
-    }
-
-    private func starterChip(_ title: String, systemImage: String, help: String, action: @escaping () -> Void) -> some View {
-        AgentStarterChip(title: title, systemImage: systemImage, help: help, action: action)
-    }
-
-    private var starterChipColumns: [GridItem] {
-        [GridItem(.adaptive(minimum: 56), spacing: 6, alignment: .leading)]
-    }
-
-    private func askWith(_ prompt: String) {
-        withAnimation(WeiBeiMotion.panel) {
-            store.agentDraft = prompt
-        }
-        store.submitAgentDraft()
-    }
-
     /// Compact catalog for immersive hover tab + pane header.
     private var agentSessionCatalogMenu: some View {
         Menu {
@@ -2780,43 +2726,6 @@ private struct AgentPaneWidthKey: PreferenceKey {
         let next = nextValue()
         if next > 1 {
             value = next
-        }
-    }
-}
-
-private struct AgentStarterChip: View {
-    var title: String
-    var systemImage: String
-    var help: String
-    var action: () -> Void
-    @State private var hovering = false
-
-    var body: some View {
-        Button(action: action) {
-            Label(title, systemImage: systemImage)
-                .labelStyle(.titleAndIcon)
-                .font(.system(size: 11.5, weight: .medium))
-                .symbolRenderingMode(.hierarchical)
-                .lineLimit(1)
-                .fixedSize(horizontal: true, vertical: false)
-                .padding(.horizontal, 8)
-                .frame(height: 26)
-        }
-        .buttonStyle(.plain)
-        .foregroundStyle(hovering ? WeiBeiTheme.ink : WeiBeiTheme.secondaryInk)
-        .background(WeiBeiTheme.paperInset.opacity(hovering ? 0.18 : 0.0))
-        .clipShape(RoundedRectangle(cornerRadius: 5))
-        .overlay {
-            RoundedRectangle(cornerRadius: 5)
-                .stroke(hovering ? WeiBeiTheme.hairline.opacity(0.56) : WeiBeiTheme.hairline.opacity(0.0), lineWidth: 1)
-        }
-        .offset(y: hovering ? -1 : 0)
-        .accessibilityLabel(Text(help))
-        .help(help)
-        .onHover { value in
-            withAnimation(WeiBeiMotion.hover) {
-                hovering = value
-            }
         }
     }
 }

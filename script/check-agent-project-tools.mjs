@@ -291,6 +291,29 @@ try {
       !clearedContext.messages[1]?.content.includes("ORIGINAL_EXTENSION_CONTENT"),
     "本轮现场没有替换上一轮现场，或仍携带材料正文",
   );
+  const rootlessEnvelope = {
+    ...hookEnvelope,
+    contextRevision: "context-rootless-course",
+    project: {
+      ...hookEnvelope.project,
+      rootPath: undefined,
+      rootIdentity: undefined,
+      items: [{
+        ...item,
+        relativePath: "",
+        resolvedPath: "",
+        entryIdentity: undefined,
+        targetIdentity: undefined,
+      }],
+    },
+  };
+  await writeFile(contextFile, JSON.stringify(rootlessEnvelope));
+  const rootlessContext = await contextHook({ messages: [] });
+  requireValue(
+    rootlessContext.messages.at(-1)?.content.includes("context-rootless-course") &&
+      rootlessContext.messages.at(-1)?.content.includes("material-1"),
+    "没有课程文件夹的旧课程无法继续建立本轮课程上下文",
+  );
   await writeFile(contextFile, "{broken");
   let brokenContextRejected = false;
   try {

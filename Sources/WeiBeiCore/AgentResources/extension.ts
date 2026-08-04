@@ -1210,11 +1210,14 @@ function readProject(value: unknown, catalogIDs: Set<string>): ProjectSnapshot {
     project.rootIdentity === undefined || project.rootIdentity === null
       ? undefined
       : readFileIdentity(project.rootIdentity, "project.rootIdentity");
+  if (kind === "course" && !courseID) {
+    throw new Error("课程项目缺少固定的课程 ID");
+  }
   if (
-    kind === "course" &&
-    (!courseID || !rootPath || !isAbsolute(rootPath) || !rootIdentity)
+    (rootPath !== undefined || rootIdentity !== undefined) &&
+    (kind !== "course" || !rootPath || !isAbsolute(rootPath) || !rootIdentity)
   ) {
-    throw new Error("课程项目缺少固定的课程 ID、真实根目录或根身份");
+    throw new Error("课程项目的文件夹授权不完整");
   }
   const items = project.items.slice(0, LIMITS.projectItems).map((entry, index) => {
     const field = `project.items[${index}]`;

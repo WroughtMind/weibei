@@ -24,7 +24,7 @@ enum CourseProjectRootSelfCheck {
         try courseEntryPresentationResetsIntent()
         try escapeBridgeDefersToPresentedSurfaces()
         try libraryGrantPersistsAndBalancesSecurityScope()
-        try unavailableCourseRootBlocksChatWithoutClearingDraft()
+        try unavailableCourseRootKeepsCourseChatAvailable()
         try agentProjectSearchUsesVerifiedCourseGrants()
         try libraryCannotEqualOrSitInsideRegisteredCourse()
         try deniedSecurityScopeKeepsCourseUnavailable()
@@ -611,12 +611,24 @@ enum CourseProjectRootSelfCheck {
             query: "LEGACY_AGENT_SECRET"
         )
         try check(
-            !legacyCourseScope.items.contains(where: { $0.itemID == legacyItem.id })
-                && !legacyCourseSearch.items.contains(where: { $0.item.id == legacyItem.id })
-                && !legacyGlobalSearch.items.contains(where: { $0.item.id == legacyItem.id })
-                && !legacyCourseContext.catalog.contains(where: { $0.id == legacyItem.id })
-                && !legacyCourseContext.items.contains(where: { $0.id == legacyItem.id }),
-            "课程上下文或搜索读取了未迁入课程项目的旧外部资料"
+            legacyCourseScope.items.contains(where: { $0.itemID == legacyItem.id })
+                && legacyCourseSearch.items.contains(where: { $0.item.id == legacyItem.id })
+                && legacyGlobalSearch.items.contains(where: { $0.item.id == legacyItem.id })
+                && legacyCourseContext.catalog.contains(where: { $0.id == legacyItem.id })
+                && legacyCourseContext.items.contains(where: { $0.id == legacyItem.id }),
+            "课程或全局 Agent 无法读取已经导入并归入课程的旧外部资料"
+        )
+        let replacedLegacySearch = try store.agentHostSearchForSelfCheck(
+            courseID: courseA,
+            query: "REPLACED_LEGACY_TOKEN",
+            beforeSearch: {
+                try FileManager.default.removeItem(at: legacyURL)
+                try Data("REPLACED_LEGACY_TOKEN".utf8).write(to: legacyURL)
+            }
+        )
+        try check(
+            !replacedLegacySearch.items.contains(where: { $0.item.id == legacyItem.id }),
+            "课程 Agent 读取了导入后被替换身份的旧外部资料"
         )
         store.removeCourseMembershipForAgentSelfCheck(
             itemID: legacyItem.id,
@@ -878,7 +890,7 @@ enum CourseProjectRootSelfCheck {
     }
 
     @MainActor
-    private static func unavailableCourseRootBlocksChatWithoutClearingDraft() throws {
+    private static func unavailableCourseRootKeepsCourseChatAvailable() throws {
         let fixture = try Fixture(name: "unavailable-course-chat")
         defer { fixture.remove() }
         let library = try fixture.makeDirectory("课程资料库")
@@ -925,16 +937,28 @@ enum CourseProjectRootSelfCheck {
 
         let reopened = makeStore(fixture: fixture)
         try FileManager.default.removeItem(at: courseRoot)
-        let marker = "课程根失效时不要清空这句话"
-        reopened.agentDraft = marker
-        reopened.askAgent()
-
-        try check(reopened.agentDraft == marker, "课程根失效时清空了用户草稿")
-        try check(reopened.lastFailedAgentQuestion == marker, "课程根失效时没有保留精确重试问题")
-        try check(!reopened.isAskingAgent, "课程根失效后仍启动了 Agent 请求")
+        let legacyDirectory = try fixture.makeDirectory("旧外部资料")
+        let legacyURL = legacyDirectory.appendingPathComponent("旧课程文章.txt")
+        try Data("ROOTLESS_COURSE_ARTICLE_TOKEN".utf8).write(to: legacyURL)
+        let legacyItem = try require(
+            reopened.importFiles([legacyURL], selectsFirstImportedItem: false).first,
+            "无法建立旧课程外部资料样本"
+        )
+        reopened.injectLegacyCourseMembershipForAgentSelfCheck(
+            itemID: legacyItem.id,
+            courseID: courseID
+        )
+        let scope = try reopened.agentProjectScopeForSelfCheck(courseID: courseID)
+        let search = try reopened.agentHostSearchForSelfCheck(
+            courseID: courseID,
+            query: "ROOTLESS_COURSE_ARTICLE_TOKEN"
+        )
         try check(
-            reopened.messages.last?.text.contains("课程文件夹") == true,
-            "课程根失效时没有给出明确可见提示"
+            scope.kind == .course
+                && scope.courseID == courseID.uuidString.lowercased()
+                && scope.rootPath == nil
+                && search.items.contains(where: { $0.item.id == legacyItem.id }),
+            "课程文件夹失效后，课程 Chat 没有保留原课程范围或读取已登记资料"
         )
     }
 

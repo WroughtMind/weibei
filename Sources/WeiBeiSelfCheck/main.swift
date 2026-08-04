@@ -2502,13 +2502,6 @@ let paneHeaderReorderSource: String = {
     }
     return String(notesAgentSource[start..<end])
 }()
-let emptyAgentStateSource: String = {
-    guard let start = notesAgentSource.range(of: "private var emptyAgentState: some View")?.lowerBound,
-          let end = notesAgentSource.range(of: "private func starterChip", range: start..<notesAgentSource.endIndex)?.lowerBound else {
-        return ""
-    }
-    return String(notesAgentSource[start..<end])
-}()
 let notebookCreationPanelSource: String = {
     guard let start = notesAgentSource.range(of: "private struct NotebookCreationPanel")?.lowerBound,
           let end = notesAgentSource.range(of: "final class MarkdownSourceTextView", range: start..<notesAgentSource.endIndex)?.lowerBound else {
@@ -4234,7 +4227,8 @@ expect(workspaceStoreSource.contains("private func agentFocusMaterialItem(")
     && workspaceStoreSource.contains("focusNoteItem: StudyItem? = nil")
     && workspaceStoreSource.contains("access: AgentProjectAccessSnapshot")
     && workspaceStoreSource.contains("let candidates = access.sources.compactMap")
-    && workspaceStoreSource.contains("source.grants.contains(where: Self.agentFileGrantIsValid)")
+    && workspaceStoreSource.contains("Self.agentHostToolSourceIsValid(source)")
+    && workspaceStoreSource.contains("Self.agentDirectSourceIsValid(item)")
     && workspaceStoreSource.contains("\"课程：\\(courseTitles.joined(separator: \"、\"))")
     && workspaceStoreSource.contains("scopedItemIDs.contains($0.noteItemID)")
     && workspaceStoreSource.contains("scopedItemIDs.contains($0.sourceItemID)")
@@ -4243,7 +4237,7 @@ expect(workspaceStoreSource.contains("private func agentFocusMaterialItem(")
     && workspaceStoreSource.contains("course-search-v3.sqlite3")
     && workspaceStoreSource.contains("removeLegacyCourseIndex")
     && workspaceStoreSource.contains("let indexed = searchIndex.lookup(")
-    && workspaceStoreSource.contains("$0.source.memoryText == nil ? $0.source.item : nil")
+    && workspaceStoreSource.contains("$0.memoryText == nil ? $0.item : nil")
     && workspaceStoreSource.contains("let task = Task.detached(priority: .userInitiated)")
     && workspaceStoreSource.contains("withTaskCancellationHandler")
     && workspaceStoreSource.contains("migrateNoteSourceLinksFromMarkdown()"), "agent tools query the persistent course index on demand in the background and migrate durable note-source links")
@@ -4762,18 +4756,14 @@ if let noteBridgeStart = notesAgentSource.range(of: "onAskAgentWithSelection: { 
 } else {
     expect(false, "rich markdown selection ask bridge is inspectable")
 }
-expect(!emptyAgentStateSource.isEmpty
-    && !emptyAgentStateSource.contains("noteContextTitle")
-    && !emptyAgentStateSource.contains("Text(store.selectedMaterialItem?.title ?? \"当前笔记\")")
-    && !emptyAgentStateSource.contains(".fill(WeiBeiTheme.cinnabar.opacity(0.34))"), "agent empty state avoids a repeated title card and heavy cinnabar rule")
-expect(notesAgentSource.contains("AgentStarterChip") && notesAgentSource.contains("hovering ? -1 : 0"), "agent starter chips keep subtle hover motion")
-expect(notesAgentSource.contains("if store.hasSelectedMaterial")
-    && notesAgentSource.contains("starterChip(store.ui(\"梳理\", \"Outline\"")
-    && notesAgentSource.contains("help: store.ui(\"梳理当前材料\", \"Outline current material\"")
-    && notesAgentSource.contains("starterChip(store.ui(\"出题\", \"Quiz\"")
-    && notesAgentSource.contains("help: store.ui(\"生成复习题\", \"Generate review questions\"")
-    && !notesAgentSource.contains("starterChip(\"梳理材料\"")
-    && !notesAgentSource.contains("starterChip(\"出复习题\""), "agent starter chips hide material actions without a selected material and avoid clipped long labels")
+expect(!notesAgentSource.contains("emptyAgentState")
+    && !notesAgentSource.contains("AgentStarterChip")
+    && !notesAgentSource.contains("starterChip(store.ui(\"继续上次\"")
+    && !notesAgentSource.contains("starterChip(store.ui(\"关联\"")
+    && !notesAgentSource.contains("starterChip(store.ui(\"梳理\"")
+    && !notesAgentSource.contains("starterChip(store.ui(\"整理\"")
+    && !notesAgentSource.contains("starterChip(store.ui(\"出题\"")
+    && notesAgentSource.contains("agentSessionCatalogMenu"), "empty Chat keeps only the existing conversation catalog and composer")
 expect(notesAgentSource.contains("GeometryReader { paneGeometry in")
     && notesAgentSource.contains("let liveAvailableWidth = max(paneGeometry.size.width, 1)")
     && notesAgentSource.contains("availableWidth: liveAvailableWidth")
@@ -5168,9 +5158,8 @@ expect(!notesAgentSource.contains("RoundedRectangle(cornerRadius: 9)")
     && !notesAgentSource.contains("WeiBeiTheme.paperRaised.opacity(0.46)"), "agent input tray avoids a heavy nested form border")
 expect(!notesAgentSource.contains(".disabled(store.agentDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)") && !notesAgentSource.contains(".disabled(!canSend)") && !notesAgentSource.contains(".disabled(store.isAskingAgent)"), "agent inputs hide unavailable send actions instead of showing disabled buttons")
 expect(!notesAgentSource.contains("agentToolButton(") && !notesAgentSource.contains("help: store.ui(\"整理笔记\""), "main agent header does not become a toolbar")
-expect(notesAgentSource.contains("LazyVGrid(columns: starterChipColumns")
-    && notesAgentSource.contains("GridItem(.adaptive(minimum: 56)")
-    && !notesAgentSource.contains("HStack(spacing: 8) {\n                if store.hasSelectedMaterial {\n                    starterChip(\"梳理材料\""), "agent empty-state starter actions adapt in narrow panes instead of squeezing into one row")
+expect(!notesAgentSource.contains("starterChipColumns")
+    && !notesAgentSource.contains("LazyVGrid(columns: starterChipColumns"), "agent pane does not add starter actions beside the conversation catalog")
 expect(notesAgentSource.contains("private func togglePinnedFloatingAgent()")
     && notesAgentSource.contains("store.pinnedFloatingAgent = next")
     && notesAgentSource.contains("store.keepFloatingSelectionForAnswer = true")
