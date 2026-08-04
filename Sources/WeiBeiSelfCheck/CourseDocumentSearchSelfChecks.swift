@@ -79,6 +79,129 @@ func checkCourseDocumentSearchReadiness() throws {
             == .unavailable,
         "无法读取的资料被伪装成普通空结果"
     )
+
+    let progressiveBody = (0..<18).map { section in
+        "# 第 \(section + 1) 节\n段落-\(section)-" + String(repeating: "课程正文", count: 30)
+    }.joined(separator: "\n\n") + "\n\nFULL_ARTICLE_TAIL_TOKEN"
+    let progressive = try makeSearchItem(
+        "progressive",
+        body: progressiveBody,
+        root: root
+    )
+    var cursor: String?
+    var pages: [String] = []
+    repeat {
+        let page = index.read(
+            item: progressive,
+            query: "",
+            location: nil,
+            cursor: cursor,
+            maximumCharacters: 240
+        )
+        try requireSearchCheck(
+            page.availability == .ready && page.text?.isEmpty == false,
+            "渐进读取没有返回可用正文"
+        )
+        pages.append(page.text ?? "")
+        cursor = page.nextCursor
+        try requireSearchCheck(pages.count < 100, "渐进读取游标没有收敛")
+    } while cursor != nil
+    try requireSearchCheck(
+        pages.count > 1
+            && pages.joined(separator: "").contains("FULL_ARTICLE_TAIL_TOKEN"),
+        "渐进读取无法续读到长文末尾"
+    )
+    let markdownPage = CourseDocumentSearchIndex.readMarkdown(
+        progressiveBody,
+        query: "",
+        location: nil,
+        maximumCharacters: 240
+    )
+    let staleMarkdownPage = CourseDocumentSearchIndex.readMarkdown(
+        progressiveBody + "\n新增内容",
+        query: "",
+        location: nil,
+        cursor: markdownPage.nextCursor,
+        maximumCharacters: 240
+    )
+    try requireSearchCheck(
+        markdownPage.nextCursor != nil && staleMarkdownPage.availability == .unavailable,
+        "正文变化后仍接受旧的渐进读取游标"
+    )
+
+    let courseID = UUID()
+    let now = Date(timeIntervalSince1970: 1_700_000_000)
+    let profile = CourseKnowledgeProfile(
+        courseID: courseID,
+        revision: 2,
+        overview: "这门课讨论货币政策如何传导。",
+        entries: [
+            CourseKnowledgeProfileEntry(
+                kind: .concept,
+                text: "政策利率通过资金价格影响总需求。",
+                sources: [
+                    CourseKnowledgeProfileSource(
+                        itemID: "material-1",
+                        role: .material,
+                        location: "利率渠道",
+                        sourceRevision: "revision-1"
+                    ),
+                ],
+                createdAt: now,
+                updatedAt: now
+            ),
+        ],
+        updatedAt: now
+    )
+    let portable = try CoursePortableState(
+        courseID: courseID,
+        revision: 3,
+        savedAt: now,
+        metadata: CoursePortableMetadata(
+            title: "货币金融学",
+            colorIndex: 0,
+            createdAt: now,
+            updatedAt: now
+        ),
+        items: [
+            CoursePortableItem(
+                itemID: "material-1",
+                title: "政策传导",
+                kind: .markdown,
+                isNotebookNote: false,
+                courseRelativePath: "materials/policy.md",
+                storage: .courseOwned,
+                contentRevision: 1,
+                contentDigest: nil,
+                membershipCreatedAt: now
+            ),
+        ],
+        studySessions: [],
+        learningMemoryState: nil,
+        courseKnowledgeProfile: profile,
+        noteSourceLinks: [],
+        studyLocationsByItemID: [:],
+        resumePoint: nil,
+        pendingNoteDrafts: []
+    ).validated(expectedCourseID: courseID)
+    let roundTripped = try JSONDecoder().decode(
+        CoursePortableState.self,
+        from: JSONEncoder().encode(portable)
+    )
+    try requireSearchCheck(
+        roundTripped.courseKnowledgeProfile == profile,
+        "课程知识档案没有随课程状态完整往返"
+    )
+    let sourceRemoved = profile.retainingAvailableSources(
+        materialItemIDs: [],
+        noteItemIDs: []
+    )
+    try requireSearchCheck(
+        sourceRemoved.entries.isEmpty
+            && sourceRemoved.overview.isEmpty
+            && sourceRemoved.revision == profile.revision + 1,
+        "课程来源移除后仍保留了失效的知识档案条目"
+    )
 }
 
 private func makeSearchItem(

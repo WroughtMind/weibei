@@ -487,6 +487,7 @@ final class WorkspaceStore: ObservableObject {
     private(set) var studyLocationsByCourseID: [String: [String: StudyLocation]] = [:]
     private(set) var courseResumePoints: [CourseResumePoint] = []
     @Published private(set) var learningMemoryStates: [ScopedLearningMemoryState] = []
+    private(set) var courseKnowledgeProfiles: [CourseKnowledgeProfile] = []
     @Published private(set) var studySessions: [StudySession] = []
     @Published private(set) var activeStudySessionID: UUID?
     /// Drawer open flag lives on `libraryDrawer` so toggles only refresh drawer chrome.
@@ -1156,6 +1157,7 @@ final class WorkspaceStore: ObservableObject {
         let migratedStudySessionScopes = migrateLegacyStudySessionScopes()
         let migratedLearningMemoryScopes = migrateLegacyLearningMemoryScopes()
         let sanitizedCourseResumePoints = sanitizeCourseResumePoints()
+        let initializedCourseKnowledgeProfiles = ensureCourseKnowledgeProfiles()
         courseDocumentSearchIndex.synchronize(allItems)
         ensureActiveStudySession()
         let savedInitializationChanges: Bool
@@ -1174,6 +1176,7 @@ final class WorkspaceStore: ObservableObject {
                     || sanitizedCourseResumePoints
                     || restoredCourseProjectRoots
                     || restoredPortableCourseStates
+                    || initializedCourseKnowledgeProfiles
                     || recoveredPendingCourseRemoval
                     || needsPortableCourseStateBootstrap
                     || recoveredInterruptedAgentReply
@@ -1491,6 +1494,7 @@ final class WorkspaceStore: ObservableObject {
         var placedRoot = false
         var ownedTreeFingerprint: TransactionDirectoryFingerprint?
         let previousCourses = courses
+        let previousCourseKnowledgeProfiles = courseKnowledgeProfiles
         let previousActiveCourseID = activeCourseID
 
         do {
@@ -1560,6 +1564,9 @@ final class WorkspaceStore: ObservableObject {
                 sourceRootBookmarkData: nil
             )
             courses.append(course)
+            courseKnowledgeProfiles.append(
+                CourseKnowledgeProfile(courseID: course.id)
+            )
             activeCourseID = course.id
             resolvedCourseRootURLs[course.id] = canonicalRoot
             courseRootUnavailableReasons.removeValue(forKey: course.id)
@@ -1577,6 +1584,7 @@ final class WorkspaceStore: ObservableObject {
             return course.id
         } catch {
             courses = previousCourses
+            courseKnowledgeProfiles = previousCourseKnowledgeProfiles
             activeCourseID = previousActiveCourseID
             resolvedCourseRootURLs.removeValue(forKey: courseID)
             courseRootUnavailableReasons.removeValue(forKey: courseID)
@@ -1923,6 +1931,7 @@ final class WorkspaceStore: ObservableObject {
         let previousCourseStudyLocations = studyLocationsByCourseID
         let previousCourseResumePoints = courseResumePoints
         let previousLearningMemoryStates = learningMemoryStates
+        let previousCourseKnowledgeProfiles = courseKnowledgeProfiles
         let previousStudySessions = studySessions
         let previousActiveStudySessionID = activeStudySessionID
         let previousMessages = messages
@@ -1952,6 +1961,9 @@ final class WorkspaceStore: ObservableObject {
             sourceRootBookmarkData: bookmark
         )
         courses.append(course)
+        courseKnowledgeProfiles.append(
+            CourseKnowledgeProfile(courseID: course.id)
+        )
         activeCourseID = course.id
         resolvedCourseRootURLs[course.id] = resolvedExternalRoot ?? canonicalRoot
         courseRootUnavailableReasons.removeValue(forKey: course.id)
@@ -1985,6 +1997,7 @@ final class WorkspaceStore: ObservableObject {
             studyLocationsByCourseID = previousCourseStudyLocations
             courseResumePoints = previousCourseResumePoints
             learningMemoryStates = previousLearningMemoryStates
+            courseKnowledgeProfiles = previousCourseKnowledgeProfiles
             studySessions = previousStudySessions
             activeStudySessionID = previousActiveStudySessionID
             messages = previousMessages
@@ -2736,6 +2749,7 @@ final class WorkspaceStore: ObservableObject {
             let previousStudyLocations = studyLocationsByCourseID
             let previousResumePoints = courseResumePoints
             let previousLearningMemoryStates = learningMemoryStates
+            let previousCourseKnowledgeProfiles = courseKnowledgeProfiles
             let previousStudySessions = studySessions
             let previousActiveStudySessionID = activeStudySessionID
             let previousMessages = messages
@@ -2860,6 +2874,7 @@ final class WorkspaceStore: ObservableObject {
                 studyLocationsByCourseID = previousStudyLocations
                 courseResumePoints = previousResumePoints
                 learningMemoryStates = previousLearningMemoryStates
+                courseKnowledgeProfiles = previousCourseKnowledgeProfiles
                 studySessions = previousStudySessions
                 activeStudySessionID = previousActiveStudySessionID
                 messages = previousMessages
@@ -8716,6 +8731,7 @@ final class WorkspaceStore: ObservableObject {
         learningMemoryStates.removeAll {
             $0.scope == .course(courseID)
         }
+        courseKnowledgeProfiles.removeAll { $0.courseID == courseID }
         courses.removeAll { $0.id == courseID }
 
         studySessions.removeAll { $0.courseID == courseID }
@@ -15493,6 +15509,34 @@ final class WorkspaceStore: ObservableObject {
         return learningMemoryStates.indices.last
     }
 
+    private func sanitizedCourseKnowledgeProfiles() -> [CourseKnowledgeProfile] {
+        let courseIDs = Set(courses.map(\.id))
+        return courseKnowledgeProfiles.compactMap { profile in
+            guard courseIDs.contains(profile.courseID) else { return nil }
+            let items = courseItems(in: profile.courseID)
+            let noteItemIDs = Set(items.lazy.filter(\.isNotebookNote).map(\.id))
+            return profile.retainingAvailableSources(
+                materialItemIDs: Set(items.map(\.id)).subtracting(noteItemIDs),
+                noteItemIDs: noteItemIDs
+            )
+        }
+    }
+
+    private func ensureCourseKnowledgeProfiles() -> Bool {
+        let courseIDs = Set(courses.map(\.id))
+        var seen = Set<UUID>()
+        var next = sanitizedCourseKnowledgeProfiles().filter {
+            courseIDs.contains($0.courseID) && seen.insert($0.courseID).inserted
+        }
+        for courseID in courseIDs where !seen.contains(courseID) {
+            next.append(CourseKnowledgeProfile(courseID: courseID))
+        }
+        next.sort { $0.courseID.uuidString < $1.courseID.uuidString }
+        guard next != courseKnowledgeProfiles else { return false }
+        courseKnowledgeProfiles = next
+        return true
+    }
+
     private func nextCourseColorIndex() -> Int {
         let used = Set(courses.map(\.colorIndex))
         return (0..<8).first(where: { !used.contains($0) }) ?? (courses.count % 8)
@@ -15575,139 +15619,57 @@ final class WorkspaceStore: ObservableObject {
         let currentNoteID = currentNoteItem?.id
         let currentNoteTitle = currentNoteItem.map(displayTitle)
         let currentNoteSubtitle = currentNoteItem.map(displaySubtitle(for:))
-        let currentNoteMemoryText = currentNoteItem.flatMap { loadedAgentNoteText(for: $0) }
-        let searchIndex = courseDocumentSearchIndex
-        let indexingTask = Task.detached(priority: .userInitiated) {
-            let indexedByItemID = searchIndex.lookup(
-                items: candidates.compactMap {
-                    $0.memoryText == nil ? $0.item : nil
-                },
-                query: query
-            )
-            let selectedMaterialIndex = currentMaterialItem.map {
-                searchIndex.read(item: $0, query: "", location: nil)
-            }
-            let selectedNoteIndex: CourseDocumentIndexResult? = {
-                guard let note = currentNoteItem else { return nil }
-                if currentNoteMemoryText != nil { return nil }
-                if let candidate = candidates.first(where: { $0.item.id == note.id }),
-                   candidate.memoryText != nil {
-                    return nil
-                }
-                return searchIndex.read(item: note, query: "", location: nil)
-            }()
-            var sources: [CourseKnowledgeSource] = []
-            sources.reserveCapacity(candidates.count + 2)
-            var includedIDs = Set<String>()
-            for candidate in candidates {
-                try Task.checkCancellation()
-                guard candidate.grants.contains(where: Self.agentFileGrantIsValid) else {
-                    continue
-                }
-                let indexed = indexedByItemID[candidate.item.id]
-                let focusedIndex = candidate.item.id == currentMaterialID
-                    ? selectedMaterialIndex
-                    : candidate.item.id == currentNoteID
-                        ? selectedNoteIndex
-                        : nil
-                let text = candidate.memoryText
-                    ?? focusedIndex?.text
-                    ?? indexed?.text
-                    ?? ""
-                let isTruncated = focusedIndex?.isTruncated
-                    ?? indexed?.isTruncated
-                    ?? false
-                sources.append(
-                    CourseKnowledgeSource(
-                        id: candidate.item.id,
-                        title: candidate.title,
-                        subtitle: candidate.subtitle,
-                        kind: candidate.item.kind.rawValue,
-                        role: candidate.item.isNotebookNote ? "note" : "material",
-                        text: text,
-                        isTruncated: isTruncated
-                    )
-                )
-                includedIDs.insert(candidate.item.id)
-            }
-            // Ensure open focus appears in catalog/currentItems even without grants.
-            if let material = currentMaterialItem, !includedIDs.contains(material.id) {
-                let text = selectedMaterialIndex?.text ?? ""
-                sources.append(
-                    CourseKnowledgeSource(
-                        id: material.id,
-                        title: currentMaterialTitle ?? material.title,
-                        subtitle: currentMaterialSubtitle ?? material.subtitle,
-                        kind: material.kind.rawValue,
-                        role: "material",
-                        text: text,
-                        isTruncated: selectedMaterialIndex?.isTruncated ?? false
-                    )
-                )
-                includedIDs.insert(material.id)
-            }
-            if let note = currentNoteItem, !includedIDs.contains(note.id) {
-                let text = currentNoteMemoryText
-                    ?? selectedNoteIndex?.text
-                    ?? ""
-                sources.append(
-                    CourseKnowledgeSource(
-                        id: note.id,
-                        title: currentNoteTitle ?? note.title,
-                        subtitle: currentNoteSubtitle ?? note.subtitle,
-                        kind: note.kind.rawValue,
-                        role: "note",
-                        text: text,
-                        isTruncated: selectedNoteIndex?.isTruncated ?? false
-                    )
-                )
-            }
-            let selectedSourceText = currentMaterialID.flatMap { id in
-                sources.first(where: { $0.id == id })?.text
-            }
-            let resolvedSelectedText: String? = {
-                if let text = selectedMaterialIndex?.text,
-                   !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    return text
-                }
-                if let text = selectedSourceText, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    return text
-                }
-                return nil
-            }()
-            let resolvedSelectedNoteText: String? = {
-                if let text = currentNoteMemoryText,
-                   !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    return text
-                }
-                if let text = selectedNoteIndex?.text,
-                   !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    return text
-                }
-                return currentNoteID.flatMap { id in
-                    sources.first(where: { $0.id == id })?.text
-                }
-            }()
-            return CourseContextBuildResult(
-                context: CourseKnowledgeIndex.build(
-                    title: title,
-                    sources: sources,
-                    links: links,
-                    query: query,
-                    currentMaterialID: currentMaterialID,
-                    currentNoteID: currentNoteID
-                ),
-                selectedMaterialText: resolvedSelectedText,
-                selectedMaterialIsTruncated: selectedMaterialIndex?.isTruncated
-                    ?? ((selectedSourceText?.count ?? 0) > 24_000),
-                selectedNoteText: resolvedSelectedNoteText
+        var sources = candidates.map { candidate in
+            CourseKnowledgeSource(
+                id: candidate.item.id,
+                title: candidate.title,
+                subtitle: candidate.subtitle,
+                kind: candidate.item.kind.rawValue,
+                role: candidate.item.isNotebookNote ? "note" : "material",
+                text: "",
+                isTruncated: false
             )
         }
-        return try await withTaskCancellationHandler {
-            try await indexingTask.value
-        } onCancel: {
-            indexingTask.cancel()
+        var includedIDs = Set(sources.map(\.id))
+        if let material = currentMaterialItem, includedIDs.insert(material.id).inserted {
+            sources.append(
+                CourseKnowledgeSource(
+                    id: material.id,
+                    title: currentMaterialTitle ?? material.title,
+                    subtitle: currentMaterialSubtitle ?? material.subtitle,
+                    kind: material.kind.rawValue,
+                    role: "material",
+                    text: "",
+                    isTruncated: false
+                )
+            )
         }
+        if let note = currentNoteItem, includedIDs.insert(note.id).inserted {
+            sources.append(
+                CourseKnowledgeSource(
+                    id: note.id,
+                    title: currentNoteTitle ?? note.title,
+                    subtitle: currentNoteSubtitle ?? note.subtitle,
+                    kind: note.kind.rawValue,
+                    role: "note",
+                    text: "",
+                    isTruncated: false
+                )
+            )
+        }
+        return CourseContextBuildResult(
+            context: CourseKnowledgeIndex.build(
+                title: title,
+                sources: sources,
+                links: links,
+                query: query,
+                currentMaterialID: currentMaterialID,
+                currentNoteID: currentNoteID
+            ),
+            selectedMaterialText: nil,
+            selectedMaterialIsTruncated: false,
+            selectedNoteText: nil
+        )
     }
 
     private func makeAgentProjectAccessSnapshot(
@@ -15733,6 +15695,10 @@ final class WorkspaceStore: ObservableObject {
             let courseIDs = grants.map { $0.courseID.uuidString.lowercased() }
             let courseTitles = grants.map(\.courseTitle)
             let baseSubtitle = displaySubtitle(for: item)
+            let memoryText = loadedAgentNoteText(for: item)
+            let sourceRevision = memoryText.map(
+                CourseDocumentSearchIndex.sourceRevision(forMarkdown:)
+            ) ?? CourseDocumentSearchIndex.sourceRevision(for: item)
             let subtitle = isCourseScope
                 ? baseSubtitle
                 : ui(
@@ -15754,7 +15720,8 @@ final class WorkspaceStore: ObservableObject {
                     : nil,
                 isShared: isCourseScope && primaryGrant.isShared,
                 courseIDs: courseIDs,
-                courseTitles: courseTitles
+                courseTitles: courseTitles,
+                sourceRevision: sourceRevision
             )
             return AgentHostToolSource(
                 item: item,
@@ -15763,7 +15730,7 @@ final class WorkspaceStore: ObservableObject {
                 subtitle: subtitle,
                 kind: item.kind.rawValue,
                 role: item.isNotebookNote ? "note" : "material",
-                memoryText: loadedAgentNoteText(for: item),
+                memoryText: memoryText,
                 relativePath: isCourseScope ? primaryGrant.relativePath : nil,
                 courseIDs: courseIDs,
                 courseTitles: courseTitles,
@@ -16533,7 +16500,8 @@ final class WorkspaceStore: ObservableObject {
                     itemID: itemID,
                     query: query,
                     location: location,
-                    limit: 24_000
+                    cursor: nil,
+                    maximumCharacters: 6_000
                 )
             )
         }
@@ -16750,7 +16718,8 @@ final class WorkspaceStore: ObservableObject {
                     CourseDocumentIndexResult(
                         text: text,
                         isTruncated: result.isTruncated,
-                        rank: result.rank
+                        rank: result.rank,
+                        sourceRevision: result.sourceRevision
                     ),
                     titleMatched
                 )
@@ -16783,6 +16752,11 @@ final class WorkspaceStore: ObservableObject {
             let sourceByID = Dictionary(
                 uniqueKeysWithValues: matched.map { ($0.source.item.id, $0.source) }
             )
+            let sourceRevisionByID = Dictionary(
+                uniqueKeysWithValues: matched.map {
+                    ($0.source.item.id, $0.result.sourceRevision)
+                }
+            )
             return StudyAgentHostToolResult(
                 query: query,
                 items: context.items.prefix(limit).compactMap { item in
@@ -16791,12 +16765,13 @@ final class WorkspaceStore: ObservableObject {
                         item: item,
                         relativePath: source.relativePath,
                         courseIDs: source.courseIDs,
-                        courseTitles: source.courseTitles
+                        courseTitles: source.courseTitles,
+                        sourceRevision: sourceRevisionByID[item.id] ?? nil
                     )
                 }
             )
 
-        case let .courseRead(itemID, query, location, _):
+        case let .courseRead(itemID, query, location, cursor, maximumCharacters):
             guard let source = sources.first(where: { $0.item.id == itemID }),
                   let grant = source.grants.first(where: {
                       agentFileGrantIsValid($0)
@@ -16808,13 +16783,18 @@ final class WorkspaceStore: ObservableObject {
                 indexed = CourseDocumentSearchIndex.readMarkdown(
                     memoryText,
                     query: query,
-                    location: location
+                    location: location,
+                    cursor: cursor,
+                    sourceID: source.item.id,
+                    maximumCharacters: maximumCharacters
                 )
             } else {
                 indexed = searchIndex.read(
                     item: source.item,
                     query: query,
-                    location: location
+                    location: location,
+                    cursor: cursor,
+                    maximumCharacters: maximumCharacters
                 )
             }
             guard let text = indexed.text,
@@ -16849,9 +16829,12 @@ final class WorkspaceStore: ObservableObject {
                         item: item,
                         relativePath: source.relativePath,
                         courseIDs: source.courseIDs,
-                        courseTitles: source.courseTitles
+                        courseTitles: source.courseTitles,
+                        sourceRevision: indexed.sourceRevision
                     )
-                }
+                },
+                nextCursor: indexed.nextCursor,
+                sourceRevision: indexed.sourceRevision
             )
         }
     }
@@ -16904,6 +16887,60 @@ final class WorkspaceStore: ObservableObject {
             lastLocation: lastStudyLocation(in: target.courseID),
             memories: Array(orderedLearningMemoryEntries(in: scope).prefix(200)),
             session: session
+        )
+    }
+
+    private func makeCourseProfileContext(
+        courseID: UUID?,
+        access: AgentProjectAccessSnapshot
+    ) -> StudyAgentCourseProfileContext {
+        guard let courseID,
+              let profileIndex = courseKnowledgeProfiles.firstIndex(where: {
+                  $0.courseID == courseID
+              }) else { return .empty }
+        let sourcesByID = Dictionary(
+            uniqueKeysWithValues: access.sources.map { ($0.item.id, $0) }
+        )
+        let retained = courseKnowledgeProfiles[profileIndex].entries.filter { entry in
+            entry.sources.allSatisfy { reference in
+                guard let source = sourcesByID[reference.itemID],
+                      (source.item.isNotebookNote ? "note" : "material")
+                        == reference.role.rawValue else { return false }
+                let revision = source.memoryText.map(
+                    CourseDocumentSearchIndex.sourceRevision(forMarkdown:)
+                ) ?? CourseDocumentSearchIndex.sourceRevision(for: source.item)
+                return revision == reference.sourceRevision
+            }
+        }
+        if retained != courseKnowledgeProfiles[profileIndex].entries {
+            courseKnowledgeProfiles[profileIndex].entries = retained
+            courseKnowledgeProfiles[profileIndex].overview = retained
+                .filter { $0.kind == .overview }
+                .max(by: { $0.updatedAt < $1.updatedAt })?.text ?? ""
+            courseKnowledgeProfiles[profileIndex].revision &+= 1
+            courseKnowledgeProfiles[profileIndex].updatedAt = Date()
+            dirtyPortableCourseIDs.insert(courseID)
+            _ = save()
+        }
+        let profile = courseKnowledgeProfiles[profileIndex]
+        return StudyAgentCourseProfileContext(
+            revision: profile.revision,
+            overview: profile.overview,
+            entries: profile.entries.map { entry in
+                StudyAgentCourseProfileEntry(
+                    id: entry.id.uuidString.lowercased(),
+                    kind: entry.kind.rawValue,
+                    text: entry.text,
+                    sources: entry.sources.map { source in
+                        StudyAgentCourseProfileSource(
+                            itemID: source.itemID,
+                            role: source.role.rawValue,
+                            location: source.location,
+                            sourceRevision: source.sourceRevision
+                        )
+                    }
+                )
+            }
         )
     }
 
@@ -17189,6 +17226,95 @@ final class WorkspaceStore: ObservableObject {
             )
         )
         entry.revisions = revisions
+    }
+
+    private func applyCourseProfileUpdate(
+        _ update: StudyAgentCourseProfileUpdate?,
+        expectedContextRevision: String,
+        expectedProfileRevision: UInt64,
+        target: AgentConversationTarget
+    ) {
+        guard let courseID = target.courseID,
+              activeCourseRemovalTokens[courseID] == nil,
+              let update,
+              update.contextRevision == expectedContextRevision,
+              update.profileRevision == expectedProfileRevision,
+              let profileIndex = courseKnowledgeProfiles.firstIndex(where: {
+                  $0.courseID == courseID && $0.revision == expectedProfileRevision
+              }) else { return }
+        var profile = courseKnowledgeProfiles[profileIndex]
+        let existingIDs = Set(profile.entries.map(\.id))
+        let removedIDs = Set(update.removedEntryIDs.compactMap(UUID.init(uuidString:)))
+        guard removedIDs.count == update.removedEntryIDs.count,
+              removedIDs.isSubset(of: existingIDs) else { return }
+        let itemsByID = Dictionary(
+            uniqueKeysWithValues: courseItems(in: courseID).map { ($0.id, $0) }
+        )
+
+        var targetIDs = Set<UUID>()
+        var replacements: [(UUID?, CourseKnowledgeProfileEntry)] = []
+        let now = Date()
+        for proposal in update.entries {
+            let entryID = proposal.entryID.flatMap(UUID.init(uuidString:))
+            guard proposal.entryID == nil || entryID != nil,
+                  entryID.map(existingIDs.contains) ?? true,
+                  entryID.map({ targetIDs.insert($0).inserted }) ?? true else { return }
+            var sources: [CourseKnowledgeProfileSource] = []
+            for source in proposal.sources {
+                guard let item = itemsByID[source.itemID],
+                (item.isNotebookNote ? "note" : "material") == source.role else { return }
+                let revision = item.isNotebookNote
+                    ? loadedAgentNoteText(for: item).map(
+                        CourseDocumentSearchIndex.sourceRevision(forMarkdown:)
+                    )
+                    : CourseDocumentSearchIndex.sourceRevision(for: item)
+                guard revision == source.sourceRevision else { return }
+                sources.append(
+                    CourseKnowledgeProfileSource(
+                        itemID: source.itemID,
+                        role: item.isNotebookNote ? .note : .material,
+                        location: source.location,
+                        sourceRevision: source.sourceRevision
+                    )
+                )
+            }
+            guard !sources.isEmpty else { return }
+            let existing = entryID.flatMap { id in
+                profile.entries.first(where: { $0.id == id })
+            }
+            replacements.append(
+                (
+                    entryID,
+                    CourseKnowledgeProfileEntry(
+                        id: entryID ?? UUID(),
+                        kind: proposal.kind,
+                        text: String(proposal.text.prefix(1_200)),
+                        sources: sources,
+                        createdAt: existing?.createdAt ?? now,
+                        updatedAt: now
+                    )
+                )
+            )
+        }
+
+        profile.entries.removeAll { removedIDs.contains($0.id) }
+        for (entryID, replacement) in replacements {
+            if let entryID,
+               let index = profile.entries.firstIndex(where: { $0.id == entryID }) {
+                profile.entries[index] = replacement
+            } else {
+                profile.entries.append(replacement)
+            }
+        }
+        guard profile.entries.count <= 200 else { return }
+        guard profile.entries != courseKnowledgeProfiles[profileIndex].entries else { return }
+        profile.overview = profile.entries
+            .filter { $0.kind == .overview }
+            .max(by: { $0.updatedAt < $1.updatedAt })?.text ?? ""
+        profile.revision &+= 1
+        profile.updatedAt = now
+        courseKnowledgeProfiles[profileIndex] = profile
+        dirtyPortableCourseIDs.insert(courseID)
     }
 
     func isLearningMemoryResolved(
@@ -21520,15 +21646,19 @@ final class WorkspaceStore: ObservableObject {
         } ?? ""
         let sentNoteItemID = sentNoteItem?.id
         let sentLearningContext = makeLearningContext(target: target)
+        let sentCourseProfile = makeCourseProfileContext(
+            courseID: target.courseID,
+            access: projectAccess
+        )
         let sentVisualAssets = await currentVisualAssetsForAgent(access: projectAccess)
         defer { Self.removeAgentVisualSnapshots(sentVisualAssets) }
         let sentLanguage = interfaceLanguage
-        let courseQuery = [question, sentSelectionText ?? "", String(sentNoteText.prefix(2_000))]
+        let courseQuery = [question, sentSelectionText ?? ""]
             .joined(separator: "\n\n")
         isAskingAgent = true
         activeAgentRequestID = requestID
         agentStreamingText = ""
-        agentActivityText = ui("正在整理课程目录", "Indexing course")
+        agentActivityText = ui("正在准备课程现场", "Preparing course context")
         defer {
             if activeAgentRequestID == requestID {
                 activeAgentRequestID = nil
@@ -21678,6 +21808,7 @@ final class WorkspaceStore: ObservableObject {
                 ),
                 visualAssets: sentVisualAssets,
                 learningContext: sentLearningContext,
+                courseProfile: sentCourseProfile,
                 language: sentLanguage,
                 contextRevision: "\(requestWorkspaceRevision):\(requestID.uuidString.lowercased())"
             )
@@ -21704,6 +21835,12 @@ final class WorkspaceStore: ObservableObject {
                 target: target,
                 messageID: assistantMessage.id
             )
+            applyCourseProfileUpdate(
+                reply.courseProfileUpdate,
+                expectedContextRevision: request.contextRevision,
+                expectedProfileRevision: sentCourseProfile.revision,
+                target: target
+            )
             if activeStudySessionID == target.sessionID {
                 lastAgentReplyContextRevision = requestWorkspaceRevision
             }
@@ -21719,7 +21856,7 @@ final class WorkspaceStore: ObservableObject {
                         evidence: proposal.evidence,
                         contextRevision: proposal.contextRevision,
                         baselineContentDigest: Self.noteContentDigest(
-                            Data(resolvedSentNoteText.utf8)
+                            Data(sentNoteText.utf8)
                         )
                     )
                 )
@@ -24929,6 +25066,12 @@ final class WorkspaceStore: ObservableObject {
             items: portableItems,
             studySessions: sessions,
             learningMemoryState: memoryState,
+            courseKnowledgeProfile: courseKnowledgeProfiles.first {
+                $0.courseID == courseID
+            }?.retainingAvailableSources(
+                materialItemIDs: materialItemIDs,
+                noteItemIDs: noteItemIDs
+            ),
             noteSourceLinks: relations,
             studyLocationsByItemID: locations,
             resumePoint: courseResumePoint(for: courseID),
@@ -25495,6 +25638,10 @@ final class WorkspaceStore: ObservableObject {
         if let memoryState = state.learningMemoryState {
             learningMemoryStates.append(memoryState)
         }
+        courseKnowledgeProfiles.removeAll { $0.courseID == courseID }
+        courseKnowledgeProfiles.append(
+            state.courseKnowledgeProfile ?? CourseKnowledgeProfile(courseID: courseID)
+        )
 
         noteSourceLinks.removeAll {
             previousNoteIDs.contains($0.noteItemID)
@@ -25834,6 +25981,7 @@ final class WorkspaceStore: ObservableObject {
         courseResumePoints = snapshot.courseResumePoints ?? []
         migrateCourseStudyLocationsFromLegacyIfNeeded()
         learningMemoryStates = snapshot.learningMemoryStates ?? []
+        courseKnowledgeProfiles = snapshot.courseKnowledgeProfiles ?? []
         learningMemoryScopeMigrationVersion = snapshot.learningMemoryScopeMigrationVersion ?? 0
         legacyLearningMemoryEntries = snapshot.learningMemoryEntries ?? []
         legacyLearningMemoryRevision = snapshot.learningMemoryRevision ?? 0
@@ -25982,6 +26130,7 @@ final class WorkspaceStore: ObservableObject {
                     $0.uuidString < $1.uuidString
                 },
                 learningMemoryStates: learningMemoryStates,
+                courseKnowledgeProfiles: sanitizedCourseKnowledgeProfiles(),
                 learningMemoryScopeMigrationVersion:
                     learningMemoryScopeMigrationVersion,
                 studySessions: studySessions,
@@ -26097,6 +26246,9 @@ final class WorkspaceStore: ObservableObject {
         }
         workspace.learningMemoryStates?.removeAll {
             $0.scope == .course(courseID)
+        }
+        workspace.courseKnowledgeProfiles?.removeAll {
+            $0.courseID == courseID
         }
         workspace.studySessions?.removeAll {
             $0.courseID == courseID
@@ -26717,6 +26869,7 @@ final class WorkspaceStore: ObservableObject {
                     $0.uuidString < $1.uuidString
                 },
                 learningMemoryStates: learningMemoryStates,
+                courseKnowledgeProfiles: sanitizedCourseKnowledgeProfiles(),
                 learningMemoryScopeMigrationVersion: learningMemoryScopeMigrationVersion,
                 studySessions: studySessions,
                 studySessionScopeMigrationVersion: studySessionScopeMigrationVersion,

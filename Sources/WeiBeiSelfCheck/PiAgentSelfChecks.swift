@@ -137,13 +137,22 @@ private func checkRPCDecoding() throws {
         "PI controlled Python results preserve operation, hashes, source run, and duration evidence"
     )
 
-    let courseRead = try PiRPCMessageDecoder.decode(Data(#"{"type":"tool_execution_end","toolCallId":"tool-course","toolName":"weibei_course_search","isError":false,"result":{"details":{"kind":"course_search","contextRevision":"revision-7","results":[{"id":"material-rates","title":"利率","role":"material","searchText":"利率正文"},{"id":"note-rates","title":"课堂笔记","role":"note","searchText":"笔记正文"},{"id":"title-only","title":"只有标题","role":"material","searchText":""}],"evidenceLabels":["[材料：利率，条目：2]","[笔记：课堂笔记]"],"jumpEvidence":{"来源：利率":"[材料：利率，条目：2]","来源：利率，条目：2，第 3 页":"[材料：利率，条目：2]"}}}}"#.utf8))
-    if case let .courseSourcesRead(id, revision, labels, assetIDs, jumpEvidence, sources) = courseRead {
+    let courseRead = try PiRPCMessageDecoder.decode(Data(#"{"type":"tool_execution_end","toolCallId":"tool-course","toolName":"weibei_course_search","isError":false,"result":{"details":{"kind":"course_search","contextRevision":"revision-7","results":[{"id":"material-rates","title":"利率","role":"material","searchText":"利率正文","sourceRevision":"source-revision-1"},{"id":"note-rates","title":"课堂笔记","role":"note","searchText":"笔记正文"},{"id":"title-only","title":"只有标题","role":"material","searchText":""}],"evidenceLabels":["[材料：利率，条目：2]","[笔记：课堂笔记]"],"jumpEvidence":{"来源：利率":"[材料：利率，条目：2]","来源：利率，条目：2，第 3 页":"[材料：利率，条目：2]"}}}}"#.utf8))
+    if case let .courseSourcesRead(
+        id,
+        revision,
+        labels,
+        assetIDs,
+        sourceRevisions,
+        jumpEvidence,
+        sources
+    ) = courseRead {
         try piRequire(
             id == "tool-course"
                 && revision == "revision-7"
                 && labels == ["[材料：利率，条目：2]", "[笔记：课堂笔记]"]
                 && assetIDs == ["material-rates", "note-rates"]
+                && sourceRevisions == ["material-rates": "source-revision-1"]
                 && jumpEvidence == [
                     "来源：利率": "[材料：利率，条目：2]",
                     "来源：利率，条目：2，第 3 页": "[材料：利率，条目：2]",
@@ -157,6 +166,33 @@ private func checkRPCDecoding() throws {
     } else {
         try piRequire(false, "PI course search decodes as a structured source event")
     }
+
+    let profileUpdate = try PiRPCMessageDecoder.decode(Data(#"{"type":"tool_execution_end","toolCallId":"tool-profile","toolName":"weibei_course_profile_update","isError":false,"result":{"details":{"kind":"course_profile_update","contextRevision":"revision-7","profileRevision":2,"checkpoint":"sectionCompleted","entries":[{"kind":"concept","text":"政策利率影响资金价格。","sources":[{"itemID":"material-rates","role":"material","location":"利率渠道","sourceRevision":"source-revision-1"}]}],"removedEntryIDs":[]}}}"#.utf8))
+    try piRequire(
+        profileUpdate == .courseProfileUpdate(
+            id: "tool-profile",
+            StudyAgentCourseProfileUpdate(
+                contextRevision: "revision-7",
+                profileRevision: 2,
+                checkpoint: "sectionCompleted",
+                entries: [
+                    StudyAgentCourseProfileUpdateEntry(
+                        kind: .concept,
+                        text: "政策利率影响资金价格。",
+                        sources: [
+                            StudyAgentCourseProfileSource(
+                                itemID: "material-rates",
+                                role: "material",
+                                location: "利率渠道",
+                                sourceRevision: "source-revision-1"
+                            ),
+                        ]
+                    ),
+                ]
+            )
+        ),
+        "PI course-profile updates preserve checkpoint and actually read source revisions"
+    )
     let mapRead = try PiRPCMessageDecoder.decode(Data(#"{"type":"tool_execution_end","toolCallId":"tool-map","toolName":"weibei_course_map","isError":false,"result":{"details":{"kind":"course_map","catalog":[{"title":"只有目录标题","role":"material"}]}}}"#.utf8))
     try piRequire(
         mapRead == .event("tool_execution_end"),
@@ -878,6 +914,26 @@ private func checkBundledAgentResources() throws {
     try piRequire(resources.systemPrompt.contains("魏碑负责材料、选区、笔记"), "PI system contract is bundled")
     try piRequire(resources.systemPrompt.contains("课程地图") && resources.systemPrompt.contains("学习记忆与会话"), "PI system contract separates course evidence from learning memory")
     let extensionSource = try String(contentsOf: resources.extensionURL, encoding: .utf8)
+    let richAnswerSkillRoot = resources.skillsURL
+        .appendingPathComponent("rich-answer", isDirectory: true)
+    let richAnswerDirectorSource = try String(
+        contentsOf: richAnswerSkillRoot
+            .appendingPathComponent("rich-answer-director", isDirectory: true)
+            .appendingPathComponent("SKILL.md"),
+        encoding: .utf8
+    )
+    let professionalVisualizationSource = try String(
+        contentsOf: richAnswerSkillRoot
+            .appendingPathComponent("professional-visualization", isDirectory: true)
+            .appendingPathComponent("SKILL.md"),
+        encoding: .utf8
+    )
+    let generativeCompositionSource = try String(
+        contentsOf: richAnswerSkillRoot
+            .appendingPathComponent("generative-composition", isDirectory: true)
+            .appendingPathComponent("SKILL.md"),
+        encoding: .utf8
+    )
     try piRequire(extensionSource.contains("before_agent_start") && extensionSource.contains("tool_call") && extensionSource.contains("pi.on(\"context\""), "PI extension bundles source, permission, and stale-context hooks")
     try piRequire(
         [
@@ -1011,25 +1067,13 @@ private func checkBundledAgentResources() throws {
             && extensionSource.contains("解释边界同时写进 narrative 与可见 ui 标签")
             && extensionSource.contains("不要用不相干的通用控件替代")
             && resources.systemPrompt.contains("文本是默认形态")
-            && resources.systemPrompt.contains("富回答先过内容与专业性，再过视觉")
-            && resources.systemPrompt.contains("不能用漂亮图形掩盖知识错误")
-            && resources.systemPrompt.contains("材料给出的采样窗口、测量方法")
-            && resources.systemPrompt.contains("必须由对应控件和 binding 真实兑现")
-            && resources.systemPrompt.contains("本轮临时现场的 `answerFormPolicy`")
-            && resources.systemPrompt.contains("partialRichAllowed")
-            && resources.systemPrompt.contains("先由 Agent 判断是否需要富回答")
-            && resources.systemPrompt.contains("`remainingAttempts` 仍大于 0 时")
-            && resources.systemPrompt.contains("每个 scene 必须且只能选择一条出口")
-            && resources.systemPrompt.contains("`routeRecommendation` 只是")
-            && resources.systemPrompt.contains("不要依赖旧回合或完整组件库记忆")
-            && resources.systemPrompt.contains("不得只把同一段文字改成卡片、时间线或网格")
-            && resources.systemPrompt.contains("默认只提交一个最有帮助的 scene")
-            && resources.systemPrompt.contains("`placement` 与 `preferredSurface` 默认选择 `inline`")
-            && resources.systemPrompt.contains("由魏碑已注册的专业能力负责")
-            && resources.systemPrompt.contains("禁止提交目录未允许的 HTML、CSS、JavaScript、任意 SVG 几何字符串")
-            && resources.systemPrompt.contains("任意颜色、任意字体、像素布局或外部资源")
-            && resources.systemPrompt.contains("`narrative` 就是本次富回答最终显示的完整正文")
-            && resources.systemPrompt.contains("weibei-scene:场景ID"),
+            && resources.systemPrompt.contains("skill://rich-answer-director")
+            && resources.systemPrompt.contains("具体字段、能力、安全边界和修复提示以 Skill")
+            && resources.systemPrompt.utf8.count < 10_000
+            && !resources.systemPrompt.contains("富回答先过内容与专业性，再过视觉")
+            && richAnswerDirectorSource.contains("提交前只检查四件事")
+            && professionalVisualizationSource.contains("不能只凭材料文字猜坐标")
+            && generativeCompositionSource.contains("不生成任意脚本"),
         "PI rich answers stay source-grounded and cannot escape into arbitrary web payloads"
     )
     try piRequire(
@@ -1136,6 +1180,7 @@ private func checkBundledAgentResources() throws {
             && runtimeSource.contains("\"weibei_ui_catalog\"")
             && runtimeSource.contains("\"weibei_compute_artifact\"")
             && runtimeSource.contains("\"weibei_visual_asset\"")
+            && runtimeSource.contains("\"weibei_course_profile_update\"")
             && runtimeSource.contains("Self.allowedToolNames(for: binding.scope).joined(separator: \",\")")
             && runtimeSource.contains("run.allowedToolNames.contains(name)")
             && runtimeSource.contains("verifiedAssetBytesByContextID")

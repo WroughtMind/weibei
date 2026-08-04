@@ -317,7 +317,9 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         "weibei_compute_artifact",
         "weibei_rich_answer",
     ]
-    private static let courseProjectToolNames = ["ls", "find", "grep"]
+    private static let courseProjectToolNames = [
+        "ls", "find", "grep", "weibei_course_profile_update",
+    ]
     private static let hostToolNames: Set<String> = [
         "weibei_course_search",
         "weibei_course_read",
@@ -392,6 +394,7 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         var id: UUID
         var contextRevision: String
         var memoryRevision: UInt64
+        var courseProfileRevision: UInt64
         var userQuestion: String
         var answerFormPolicy: StudyAgentAnswerFormPolicy
         var updatableMemoryIDs: Set<String>
@@ -399,6 +402,7 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         var allowedSourceLabels: Set<String>
         var allowedAssetIDs: Set<String>
         var verifiedAssetBytesByContextID: [String: Int] = [:]
+        var readCourseSourceRevisionsByContextID: [String: String] = [:]
         var persistentAssetIDsByContextID: [String: String]
         var allowedJumpReferences: Set<String>
         var jumpEvidenceLabels: [String: Set<String>]
@@ -413,6 +417,7 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         var richAnswer: RichAnswerPresentation?
         var safeRichAnswerNarrative: String?
         var learningUpdate: StudyAgentLearningUpdate?
+        var courseProfileUpdate: StudyAgentCourseProfileUpdate?
         var loadedSkills: [StudyAgentLoadedSkill] = []
         var toolTrace: [String] = []
         var allowedToolNames: Set<String>
@@ -564,6 +569,7 @@ public actor PiAgentRuntime: StudyAgentRuntime {
             id: request.id,
             contextRevision: request.contextRevision,
             memoryRevision: request.learningContext.memoryRevision,
+            courseProfileRevision: request.courseProfile.revision,
             userQuestion: request.question,
             answerFormPolicy: request.answerFormPolicy,
             updatableMemoryIDs: Set(request.learningContext.memories.compactMap { memory in
@@ -1351,6 +1357,22 @@ public actor PiAgentRuntime: StudyAgentRuntime {
             }
             return value
         }
+        func maximumCharacters() throws -> Int {
+            guard let raw = arguments["maximumCharacters"] else { return 6_000 }
+            guard !(raw is Bool), let number = raw as? NSNumber else {
+                throw PiAgentRuntimeError.protocolFailure(
+                    "课程工具 maximumCharacters 类型无效"
+                )
+            }
+            let value = number.intValue
+            guard number.doubleValue == Double(value),
+                  (1_000...12_000).contains(value) else {
+                throw PiAgentRuntimeError.protocolFailure(
+                    "课程工具 maximumCharacters 超出边界"
+                )
+            }
+            return value
+        }
 
         switch name {
         case "weibei_course_search", "grep":
@@ -1370,7 +1392,8 @@ public actor PiAgentRuntime: StudyAgentRuntime {
                 itemID: persistentItemID,
                 query: try string("query", required: false, maximum: 500) ?? "",
                 location: try string("location", required: false, maximum: 300),
-                limit: try limit(maximum: 8)
+                cursor: try string("cursor", required: false, maximum: 1_024),
+                maximumCharacters: try maximumCharacters()
             )
         default:
             throw PiAgentRuntimeError.protocolFailure("不支持的课程宿主工具 \(name)")
@@ -1399,6 +1422,7 @@ public actor PiAgentRuntime: StudyAgentRuntime {
                 items: result.items.prefix(8).map { hostItem in
                     var item = hostItem.item
                     item.id = contextAssetID(for: item.id, run: &run)
+                    run.courseCatalogRolesByContextID[item.id] = item.role
                     item.linkedItemIDs = item.linkedItemIDs.prefix(24).map {
                         contextAssetID(for: $0, run: &run)
                     }
@@ -1406,9 +1430,12 @@ public actor PiAgentRuntime: StudyAgentRuntime {
                         item: item,
                         relativePath: hostItem.relativePath.map { String($0.prefix(4_096)) },
                         courseIDs: hostItem.courseIDs.prefix(32).map { String($0.prefix(128)) },
-                        courseTitles: hostItem.courseTitles.prefix(32).map { String($0.prefix(300)) }
+                        courseTitles: hostItem.courseTitles.prefix(32).map { String($0.prefix(300)) },
+                        sourceRevision: hostItem.sourceRevision.map { String($0.prefix(500)) }
                     )
-                }
+                },
+                nextCursor: result.nextCursor.map { String($0.prefix(1_024)) },
+                sourceRevision: result.sourceRevision.map { String($0.prefix(500)) }
             )
         }
         activeRun = run
@@ -1914,11 +1941,23 @@ public actor PiAgentRuntime: StudyAgentRuntime {
             refreshRunWatchdog()
             run.progressDelivery?.yield(.usingTool(name, Self.toolActivityDetail(argumentsJSON: argumentsJSON)))
 
-        case let .courseSourcesRead(_, contextRevision, labels, assetIDs, jumpEvidence, sources):
+        case let .courseSourcesRead(
+            _,
+            contextRevision,
+            labels,
+            assetIDs,
+            sourceRevisions,
+            jumpEvidence,
+            sources
+        ):
             guard var run = activeRun, contextRevision == run.contextRevision else { return }
             run.allowedSourceLabels.formUnion(labels)
             run.allowedNoteSourceLabels.formUnion(labels)
             run.allowedAssetIDs.formUnion(assetIDs)
+            run.readCourseSourceRevisionsByContextID.merge(
+                sourceRevisions,
+                uniquingKeysWith: { _, latest in latest }
+            )
             registerJumpEvidence(jumpEvidence, in: &run)
             run.contextSources.append(contentsOf: sources)
             activeRun = run
@@ -2106,6 +2145,60 @@ public actor PiAgentRuntime: StudyAgentRuntime {
             activeRun = run
             refreshRunWatchdog()
 
+        case let .courseProfileUpdate(_, update):
+            guard var run = activeRun,
+                  run.courseProfileUpdate == nil,
+                  update.contextRevision == run.contextRevision,
+                  update.profileRevision == run.courseProfileRevision,
+                  [
+                      "sectionCompleted",
+                      "topicCompleted",
+                      "crossSourceConnection",
+                      "beforeContextSwitch",
+                  ].contains(update.checkpoint),
+                  !update.entries.isEmpty || !update.removedEntryIDs.isEmpty,
+                  update.entries.count <= 12,
+                  update.removedEntryIDs.count <= 12 else { return }
+            var mappedEntries: [StudyAgentCourseProfileUpdateEntry] = []
+            for entry in update.entries {
+                guard !entry.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                      entry.text.count <= 1_200,
+                      !entry.sources.isEmpty,
+                      entry.sources.count <= 8 else { return }
+                var mappedSources: [StudyAgentCourseProfileSource] = []
+                for source in entry.sources {
+                    guard let persistentID = run.persistentAssetIDsByContextID[source.itemID],
+                          run.courseCatalogRolesByContextID[source.itemID] == source.role,
+                          run.readCourseSourceRevisionsByContextID[source.itemID]
+                            == source.sourceRevision else { return }
+                    mappedSources.append(
+                        StudyAgentCourseProfileSource(
+                            itemID: persistentID,
+                            role: source.role,
+                            location: source.location,
+                            sourceRevision: source.sourceRevision
+                        )
+                    )
+                }
+                mappedEntries.append(
+                    StudyAgentCourseProfileUpdateEntry(
+                        entryID: entry.entryID,
+                        kind: entry.kind,
+                        text: entry.text,
+                        sources: mappedSources
+                    )
+                )
+            }
+            run.courseProfileUpdate = StudyAgentCourseProfileUpdate(
+                contextRevision: update.contextRevision,
+                profileRevision: update.profileRevision,
+                checkpoint: update.checkpoint,
+                entries: mappedEntries,
+                removedEntryIDs: update.removedEntryIDs
+            )
+            activeRun = run
+            refreshRunWatchdog()
+
         case let .toolFailed(_, name, message):
             guard var run = activeRun else { return }
             trace("tool failed name=\(name) message=\(sanitizedDiagnostic(message))")
@@ -2159,6 +2252,7 @@ public actor PiAgentRuntime: StudyAgentRuntime {
                 noteProposal: run.proposal,
                 relationProposal: run.relationProposal,
                 learningUpdate: run.learningUpdate,
+                courseProfileUpdate: run.courseProfileUpdate,
                 loadedSkills: run.loadedSkills,
                 toolTrace: replyTrace
             )

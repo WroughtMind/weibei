@@ -202,6 +202,7 @@ public struct StudyAgentProjectItem: Codable, Equatable, Sendable {
     public var isShared: Bool
     public var courseIDs: [String]
     public var courseTitles: [String]
+    public var sourceRevision: String?
 
     public init(
         itemID: String,
@@ -214,7 +215,8 @@ public struct StudyAgentProjectItem: Codable, Equatable, Sendable {
         targetIdentity: StudyAgentFileIdentity?,
         isShared: Bool,
         courseIDs: [String] = [],
-        courseTitles: [String] = []
+        courseTitles: [String] = [],
+        sourceRevision: String? = nil
     ) {
         self.itemID = itemID
         self.title = title
@@ -227,6 +229,7 @@ public struct StudyAgentProjectItem: Codable, Equatable, Sendable {
         self.isShared = isShared
         self.courseIDs = courseIDs
         self.courseTitles = courseTitles
+        self.sourceRevision = sourceRevision
     }
 }
 
@@ -302,7 +305,13 @@ public struct StudyAgentFocus: Codable, Equatable, Sendable {
 
 public enum StudyAgentHostToolRequest: Equatable, Sendable {
     case courseSearch(query: String, limit: Int)
-    case courseRead(itemID: String, query: String, location: String?, limit: Int)
+    case courseRead(
+        itemID: String,
+        query: String,
+        location: String?,
+        cursor: String?,
+        maximumCharacters: Int
+    )
 }
 
 public struct StudyAgentHostToolItem: Codable, Equatable, Sendable {
@@ -310,27 +319,39 @@ public struct StudyAgentHostToolItem: Codable, Equatable, Sendable {
     public var relativePath: String?
     public var courseIDs: [String]
     public var courseTitles: [String]
+    public var sourceRevision: String?
 
     public init(
         item: StudyAgentCourseItem,
         relativePath: String? = nil,
         courseIDs: [String] = [],
-        courseTitles: [String] = []
+        courseTitles: [String] = [],
+        sourceRevision: String? = nil
     ) {
         self.item = item
         self.relativePath = relativePath
         self.courseIDs = courseIDs
         self.courseTitles = courseTitles
+        self.sourceRevision = sourceRevision
     }
 }
 
 public struct StudyAgentHostToolResult: Codable, Equatable, Sendable {
     public var query: String
     public var items: [StudyAgentHostToolItem]
+    public var nextCursor: String?
+    public var sourceRevision: String?
 
-    public init(query: String, items: [StudyAgentHostToolItem]) {
+    public init(
+        query: String,
+        items: [StudyAgentHostToolItem],
+        nextCursor: String? = nil,
+        sourceRevision: String? = nil
+    ) {
         self.query = query
         self.items = items
+        self.nextCursor = nextCursor
+        self.sourceRevision = sourceRevision
     }
 }
 
@@ -396,6 +417,62 @@ public struct StudyAgentLearningContext: Codable, Equatable, Sendable {
     public static let empty = StudyAgentLearningContext()
 }
 
+public struct StudyAgentCourseProfileSource: Codable, Equatable, Sendable {
+    public var itemID: String
+    public var role: String
+    public var location: String?
+    public var sourceRevision: String
+
+    public init(
+        itemID: String,
+        role: String,
+        location: String? = nil,
+        sourceRevision: String
+    ) {
+        self.itemID = itemID
+        self.role = role
+        self.location = location
+        self.sourceRevision = sourceRevision
+    }
+}
+
+public struct StudyAgentCourseProfileEntry: Codable, Equatable, Sendable {
+    public var id: String
+    public var kind: String
+    public var text: String
+    public var sources: [StudyAgentCourseProfileSource]
+
+    public init(
+        id: String,
+        kind: String,
+        text: String,
+        sources: [StudyAgentCourseProfileSource]
+    ) {
+        self.id = id
+        self.kind = kind
+        self.text = text
+        self.sources = sources
+    }
+}
+
+public struct StudyAgentCourseProfileContext: Codable, Equatable, Sendable {
+    public var revision: UInt64
+    public var overview: String
+    public var entries: [StudyAgentCourseProfileEntry]
+
+    public init(
+        revision: UInt64 = 0,
+        overview: String = "",
+        entries: [StudyAgentCourseProfileEntry] = []
+    ) {
+        self.revision = revision
+        self.overview = overview
+        self.entries = entries
+    }
+
+    public static let empty = StudyAgentCourseProfileContext()
+}
+
 public struct StudyAgentRequest: Sendable {
     public var id: UUID
     public var purpose: StudyAgentPurpose
@@ -414,6 +491,7 @@ public struct StudyAgentRequest: Sendable {
     public var focus: StudyAgentFocus?
     public var visualAssets: [StudyAgentVisualAsset]
     public var learningContext: StudyAgentLearningContext
+    public var courseProfile: StudyAgentCourseProfileContext
     public var language: WeiBeiInterfaceLanguage
     public var contextRevision: String
 
@@ -435,6 +513,7 @@ public struct StudyAgentRequest: Sendable {
         focus: StudyAgentFocus? = nil,
         visualAssets: [StudyAgentVisualAsset] = [],
         learningContext: StudyAgentLearningContext = .empty,
+        courseProfile: StudyAgentCourseProfileContext = .empty,
         language: WeiBeiInterfaceLanguage = .chinese,
         contextRevision: String
     ) {
@@ -455,6 +534,7 @@ public struct StudyAgentRequest: Sendable {
         self.focus = focus
         self.visualAssets = visualAssets
         self.learningContext = learningContext
+        self.courseProfile = courseProfile
         self.language = language
         self.contextRevision = contextRevision
     }
@@ -549,6 +629,47 @@ public struct StudyAgentLearningUpdate: Codable, Equatable, Sendable {
     }
 }
 
+public struct StudyAgentCourseProfileUpdateEntry: Codable, Equatable, Sendable {
+    public var entryID: String?
+    public var kind: CourseKnowledgeProfileEntryKind
+    public var text: String
+    public var sources: [StudyAgentCourseProfileSource]
+
+    public init(
+        entryID: String? = nil,
+        kind: CourseKnowledgeProfileEntryKind,
+        text: String,
+        sources: [StudyAgentCourseProfileSource]
+    ) {
+        self.entryID = entryID
+        self.kind = kind
+        self.text = text
+        self.sources = sources
+    }
+}
+
+public struct StudyAgentCourseProfileUpdate: Codable, Equatable, Sendable {
+    public var contextRevision: String
+    public var profileRevision: UInt64
+    public var checkpoint: String
+    public var entries: [StudyAgentCourseProfileUpdateEntry]
+    public var removedEntryIDs: [String]
+
+    public init(
+        contextRevision: String,
+        profileRevision: UInt64,
+        checkpoint: String,
+        entries: [StudyAgentCourseProfileUpdateEntry],
+        removedEntryIDs: [String] = []
+    ) {
+        self.contextRevision = contextRevision
+        self.profileRevision = profileRevision
+        self.checkpoint = checkpoint
+        self.entries = entries
+        self.removedEntryIDs = removedEntryIDs
+    }
+}
+
 public struct StudyAgentLoadedSkill: Codable, Equatable, Sendable {
     public var id: String
     public var name: String
@@ -585,6 +706,7 @@ public struct StudyAgentReply: Equatable, Sendable {
     public var noteProposal: StudyAgentNoteProposal?
     public var relationProposal: StudyAgentRelationProposal?
     public var learningUpdate: StudyAgentLearningUpdate?
+    public var courseProfileUpdate: StudyAgentCourseProfileUpdate?
     public var loadedSkills: [StudyAgentLoadedSkill]
     public var toolTrace: [String]
 
@@ -596,6 +718,7 @@ public struct StudyAgentReply: Equatable, Sendable {
         noteProposal: StudyAgentNoteProposal? = nil,
         relationProposal: StudyAgentRelationProposal? = nil,
         learningUpdate: StudyAgentLearningUpdate? = nil,
+        courseProfileUpdate: StudyAgentCourseProfileUpdate? = nil,
         loadedSkills: [StudyAgentLoadedSkill] = [],
         toolTrace: [String] = []
     ) {
@@ -606,6 +729,7 @@ public struct StudyAgentReply: Equatable, Sendable {
         self.noteProposal = noteProposal
         self.relationProposal = relationProposal
         self.learningUpdate = learningUpdate
+        self.courseProfileUpdate = courseProfileUpdate
         self.loadedSkills = loadedSkills
         self.toolTrace = toolTrace
     }
@@ -838,6 +962,7 @@ public struct StudyAgentContextEnvelope: Codable, Equatable, Sendable {
     public var focus: StudyAgentFocus?
     public var visualAssets: [StudyAgentVisualAsset]
     public var learning: StudyAgentLearningContext
+    public var courseProfile: StudyAgentCourseProfileContext
 
     public init(request: StudyAgentRequest) {
         schemaVersion = 2
@@ -911,6 +1036,10 @@ public struct StudyAgentContextEnvelope: Codable, Equatable, Sendable {
             )
         }
         learning = Self.boundedLearningContext(request.learningContext, itemIDMap: boundedCourse.itemIDMap)
+        courseProfile = Self.boundedCourseProfile(
+            request.courseProfile,
+            itemIDMap: boundedCourse.itemIDMap
+        )
     }
 
     private static func boundedProjectScope(
@@ -931,7 +1060,8 @@ public struct StudyAgentContextEnvelope: Codable, Equatable, Sendable {
                 targetIdentity: item.targetIdentity,
                 isShared: item.isShared,
                 courseIDs: item.courseIDs.prefix(32).map { String($0.prefix(128)) },
-                courseTitles: item.courseTitles.prefix(32).map { String($0.prefix(300)) }
+                courseTitles: item.courseTitles.prefix(32).map { String($0.prefix(300)) },
+                sourceRevision: item.sourceRevision.map { String($0.prefix(500)) }
             )
         }
         return StudyAgentProjectScope(
@@ -1073,6 +1203,35 @@ public struct StudyAgentContextEnvelope: Codable, Equatable, Sendable {
             lastLocation: location,
             memories: memories,
             session: session
+        )
+    }
+
+    private static func boundedCourseProfile(
+        _ profile: StudyAgentCourseProfileContext,
+        itemIDMap: [String: String]
+    ) -> StudyAgentCourseProfileContext {
+        StudyAgentCourseProfileContext(
+            revision: profile.revision,
+            overview: String(profile.overview.prefix(2_000)),
+            entries: profile.entries.prefix(200).compactMap { entry in
+                let sources = entry.sources.prefix(8).compactMap {
+                    source -> StudyAgentCourseProfileSource? in
+                    guard let itemID = itemIDMap[source.itemID] else { return nil }
+                    return StudyAgentCourseProfileSource(
+                        itemID: itemID,
+                        role: String(source.role.prefix(16)),
+                        location: source.location.map { String($0.prefix(500)) },
+                        sourceRevision: String(source.sourceRevision.prefix(500))
+                    )
+                }
+                guard !sources.isEmpty else { return nil }
+                return StudyAgentCourseProfileEntry(
+                    id: String(entry.id.prefix(128)),
+                    kind: String(entry.kind.prefix(32)),
+                    text: String(entry.text.prefix(1_200)),
+                    sources: sources
+                )
+            }
         )
     }
 }

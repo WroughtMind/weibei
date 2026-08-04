@@ -809,6 +809,12 @@ actor CourseProjectFileWorker {
         let rawMemoryState = workspace.learningMemoryStates?.first {
             $0.scope == .course(courseID)
         }
+        let courseKnowledgeProfile = workspace.courseKnowledgeProfiles?.first {
+            $0.courseID == courseID
+        }?.retainingAvailableSources(
+            materialItemIDs: materialItemIDs,
+            noteItemIDs: noteItemIDs
+        )
         let memoryIDs = Set(rawMemoryState?.entries.map(\.id) ?? [])
         let relations = (workspace.noteSourceLinks ?? []).filter {
             noteItemIDs.contains($0.noteItemID)
@@ -1035,6 +1041,7 @@ actor CourseProjectFileWorker {
             items: portableItems,
             studySessions: sessions,
             learningMemoryState: memoryState,
+            courseKnowledgeProfile: courseKnowledgeProfile,
             noteSourceLinks: relations,
             studyLocationsByItemID: locations,
             resumePoint: resumePoint,

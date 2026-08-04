@@ -90,6 +90,7 @@ public enum PiRPCIncomingMessage: Equatable, Sendable {
         contextRevision: String,
         labels: [String],
         assetIDs: [String],
+        sourceRevisions: [String: String],
         jumpEvidence: [String: String],
         sources: [AgentReplySource]
     )
@@ -111,6 +112,7 @@ public enum PiRPCIncomingMessage: Equatable, Sendable {
     case noteProposal(id: String, StudyAgentNoteProposal)
     case relationProposal(id: String, StudyAgentRelationProposal)
     case learningUpdate(id: String, StudyAgentLearningUpdate)
+    case courseProfileUpdate(id: String, StudyAgentCourseProfileUpdate)
     case toolFailed(id: String, name: String, message: String)
     case agentEnded(text: String, stopReason: String?, error: String?, provider: String?, model: String?)
     case extensionError(String)
@@ -268,6 +270,15 @@ public enum PiRPCMessageDecoder {
                         }
                         return id
                     },
+                    sourceRevisions: Dictionary(
+                        uniqueKeysWithValues: readableEntries.compactMap { entry in
+                            guard let id = entry["id"] as? String,
+                                  let revision = entry["sourceRevision"] as? String else {
+                                return nil
+                            }
+                            return (id, revision)
+                        }
+                    ),
                     jumpEvidence: jumpEvidence,
                     sources: sources
                 )
@@ -493,6 +504,68 @@ public enum PiRPCMessageDecoder {
                         suggestedNext: suggestedNext,
                         entries: entries,
                         resolutions: resolutions
+                    )
+                )
+            }
+            if name == "weibei_course_profile_update",
+               let details = result?["details"] as? [String: Any],
+               details["kind"] as? String == "course_profile_update",
+               let revision = details["contextRevision"] as? String,
+               let profileRevision = details["profileRevision"] as? NSNumber,
+               profileRevision.int64Value >= 0,
+               let checkpoint = details["checkpoint"] as? String,
+               let rawEntries = details["entries"] as? [[String: Any]],
+               let removedEntryIDs = details["removedEntryIDs"] as? [String] {
+                var entries: [StudyAgentCourseProfileUpdateEntry] = []
+                for rawEntry in rawEntries {
+                    guard let kindRaw = rawEntry["kind"] as? String,
+                          let kind = CourseKnowledgeProfileEntryKind(rawValue: kindRaw),
+                          let text = rawEntry["text"] as? String,
+                          let rawSources = rawEntry["sources"] as? [[String: Any]] else {
+                        return .event(type)
+                    }
+                    var sources: [StudyAgentCourseProfileSource] = []
+                    for rawSource in rawSources {
+                        guard let itemID = rawSource["itemID"] as? String,
+                              let role = rawSource["role"] as? String,
+                              let sourceRevision = rawSource["sourceRevision"] as? String else {
+                            return .event(type)
+                        }
+                        let location: String?
+                        if let rawLocation = rawSource["location"] {
+                            guard let value = rawLocation as? String else {
+                                return .event(type)
+                            }
+                            location = value
+                        } else {
+                            location = nil
+                        }
+                        sources.append(
+                            StudyAgentCourseProfileSource(
+                                itemID: itemID,
+                                role: role,
+                                location: location,
+                                sourceRevision: sourceRevision
+                            )
+                        )
+                    }
+                    entries.append(
+                        StudyAgentCourseProfileUpdateEntry(
+                            entryID: rawEntry["entryID"] as? String,
+                            kind: kind,
+                            text: text,
+                            sources: sources
+                        )
+                    )
+                }
+                return .courseProfileUpdate(
+                    id: object["toolCallId"] as? String ?? "",
+                    StudyAgentCourseProfileUpdate(
+                        contextRevision: revision,
+                        profileRevision: profileRevision.uint64Value,
+                        checkpoint: checkpoint,
+                        entries: entries,
+                        removedEntryIDs: removedEntryIDs
                     )
                 )
             }

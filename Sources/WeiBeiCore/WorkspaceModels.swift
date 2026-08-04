@@ -1853,6 +1853,7 @@ public struct PersistedWorkspace: Codable, Sendable {
     public var coursePortableStateDigests: [String: String]?
     public var dirtyPortableCourseIDs: [UUID]?
     public var learningMemoryStates: [ScopedLearningMemoryState]?
+    public var courseKnowledgeProfiles: [CourseKnowledgeProfile]?
     public var learningMemoryScopeMigrationVersion: Int?
     /// Legacy flat memory fields. Decode-only after scoped memory migration.
     public var learningMemoryEntries: [LearningMemoryEntry]?
@@ -1900,6 +1901,7 @@ public struct PersistedWorkspace: Codable, Sendable {
         coursePortableStateDigests: [String: String]? = nil,
         dirtyPortableCourseIDs: [UUID]? = nil,
         learningMemoryStates: [ScopedLearningMemoryState]? = nil,
+        courseKnowledgeProfiles: [CourseKnowledgeProfile]? = nil,
         learningMemoryScopeMigrationVersion: Int? = nil,
         learningMemoryEntries: [LearningMemoryEntry]? = nil,
         learningMemoryRevision: UInt64? = nil,
@@ -1945,6 +1947,7 @@ public struct PersistedWorkspace: Codable, Sendable {
         self.coursePortableStateDigests = coursePortableStateDigests
         self.dirtyPortableCourseIDs = dirtyPortableCourseIDs
         self.learningMemoryStates = learningMemoryStates
+        self.courseKnowledgeProfiles = courseKnowledgeProfiles
         self.learningMemoryScopeMigrationVersion = learningMemoryScopeMigrationVersion
         self.learningMemoryEntries = learningMemoryEntries
         self.learningMemoryRevision = learningMemoryRevision

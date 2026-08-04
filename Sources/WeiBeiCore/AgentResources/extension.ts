@@ -18,6 +18,7 @@ const COURSE_READ_TOOL = "weibei_course_read";
 const VISUAL_ASSET_TOOL = "weibei_visual_asset";
 const LEARNING_MEMORY_TOOL = "weibei_learning_memory";
 const LEARNING_UPDATE_TOOL = "weibei_learning_update";
+const COURSE_PROFILE_UPDATE_TOOL = "weibei_course_profile_update";
 const NOTE_PROPOSAL_TOOL = "weibei_note_proposal";
 const RELATION_PROPOSAL_TOOL = "weibei_relation_proposal";
 const READ_TOOL = "read";
@@ -46,6 +47,7 @@ const ALLOWED_TOOLS = new Set([
   VISUAL_ASSET_TOOL,
   LEARNING_MEMORY_TOOL,
   LEARNING_UPDATE_TOOL,
+  COURSE_PROFILE_UPDATE_TOOL,
   NOTE_PROPOSAL_TOOL,
   RELATION_PROPOSAL_TOOL,
   READ_TOOL,
@@ -110,6 +112,18 @@ const RICH_ANSWER_SKILL_BY_PATH = new Map(
     { id: id as RichAnswerSkillID, ...skill },
   ]),
 );
+
+function richAnswerSkillPath(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  if (value.startsWith("skill://")) {
+    const id = value.slice("skill://".length) as RichAnswerSkillID;
+    const skill = RICH_ANSWER_SKILLS[id];
+    return skill
+      ? realpathSync(resolve(fileURLToPath(new URL(`./${skill.relativePath}`, import.meta.url))))
+      : undefined;
+  }
+  return canonicalReadPath(value);
+}
 
 function canonicalReadPath(value: unknown): string | undefined {
   if (typeof value !== "string" || !value.trim()) return undefined;
@@ -427,6 +441,7 @@ interface CourseItemSnapshot extends CourseCatalogItemSnapshot {
   relativePath?: string;
   courseIDs?: string[];
   courseTitles?: string[];
+  sourceRevision?: string;
 }
 
 interface CourseRelationSnapshot {
@@ -466,6 +481,7 @@ interface ProjectItemSnapshot {
   isShared: boolean;
   courseIDs: string[];
   courseTitles: string[];
+  sourceRevision?: string;
 }
 
 interface ProjectSnapshot {
@@ -540,6 +556,28 @@ interface LearningSnapshot {
   session?: SessionSnapshot;
 }
 
+type CourseProfileEntryKind = "overview" | "section" | "concept" | "relation";
+
+interface CourseProfileSourceSnapshot {
+  itemID: string;
+  role: "material" | "note";
+  location?: string;
+  sourceRevision: string;
+}
+
+interface CourseProfileEntrySnapshot {
+  id: string;
+  kind: CourseProfileEntryKind;
+  text: string;
+  sources: CourseProfileSourceSnapshot[];
+}
+
+interface CourseProfileSnapshot {
+  revision: number;
+  overview: string;
+  entries: CourseProfileEntrySnapshot[];
+}
+
 interface ContextSnapshotV2 {
   schemaVersion: 2;
   requestID: string;
@@ -555,6 +593,7 @@ interface ContextSnapshotV2 {
   project: ProjectSnapshot;
   focus?: FocusSnapshot;
   learning: LearningSnapshot;
+  courseProfile: CourseProfileSnapshot;
 }
 
 interface VisualAssetFileSnapshot {
@@ -583,6 +622,7 @@ interface CourseMapToolDetails {
   catalog: Array<CourseCatalogItemSnapshot & { jumpReference: string }>;
   relations: CourseMapRelationSnapshot[];
   isTruncated: boolean;
+  profile: CourseProfileSnapshot;
 }
 
 interface CourseSearchToolDetails {
@@ -604,6 +644,8 @@ interface CourseReadToolDetails {
   evidenceLabels: string[];
   jumpReferences: string[];
   jumpEvidence: Record<string, string>;
+  nextCursor?: string;
+  sourceRevision?: string;
 }
 
 interface LearningMemoryToolDetails {
@@ -634,6 +676,20 @@ interface LearningUpdateDetails {
     text: string;
     evidence: string;
   }>;
+}
+
+interface CourseProfileUpdateDetails {
+  kind: "course_profile_update";
+  contextRevision: string;
+  profileRevision: number;
+  checkpoint: string;
+  entries: Array<{
+    entryID?: string;
+    kind: CourseProfileEntryKind;
+    text: string;
+    sources: CourseProfileSourceSnapshot[];
+  }>;
+  removedEntryIDs: string[];
 }
 
 interface NoteProposalDetails {
@@ -930,6 +986,11 @@ function requireString(value: unknown, field: string): string {
   return value;
 }
 
+function optionalString(value: unknown, field: string, limit: number): string | undefined {
+  if (value === undefined || value === null) return undefined;
+  return truncate(requireString(value, field), limit);
+}
+
 function requireBoolean(value: unknown, field: string): boolean {
   if (typeof value !== "boolean") {
     throw new Error(`魏碑上下文字段 ${field} 必须是布尔值`);
@@ -1143,14 +1204,6 @@ function readProject(value: unknown, catalogIDs: Set<string>): ProjectSnapshot {
   if (!Array.isArray(project.items)) {
     throw new Error("project.items 必须是数组");
   }
-  const optionalString = (
-    raw: unknown,
-    field: string,
-    limit: number,
-  ): string | undefined => {
-    if (raw === undefined || raw === null) return undefined;
-    return truncate(requireString(raw, field), limit);
-  };
   const courseID = optionalString(project.courseID, "project.courseID", 128);
   const rootPath = optionalString(project.rootPath, "project.rootPath", LIMITS.projectPath);
   const rootIdentity =
@@ -1214,6 +1267,7 @@ function readProject(value: unknown, catalogIDs: Set<string>): ProjectSnapshot {
       isShared: requireBoolean(item.isShared, `${field}.isShared`),
       courseIDs: readStringArray(item.courseIDs, `${field}.courseIDs`, 32, 128),
       courseTitles: readStringArray(item.courseTitles, `${field}.courseTitles`, 32, LIMITS.title),
+      sourceRevision: optionalString(item.sourceRevision, `${field}.sourceRevision`, 500),
     } satisfies ProjectItemSnapshot;
   });
   return {
@@ -1376,6 +1430,60 @@ function readLearning(value: unknown): LearningSnapshot {
   };
 }
 
+function readCourseProfile(value: unknown, catalogIDs: Set<string>): CourseProfileSnapshot {
+  const profile = requireRecord(value, "courseProfile");
+  if (!Array.isArray(profile.entries)) {
+    throw new Error("课程知识档案字段 entries 必须是数组");
+  }
+  const kinds = new Set<CourseProfileEntryKind>([
+    "overview",
+    "section",
+    "concept",
+    "relation",
+  ]);
+  const entries = profile.entries.slice(0, 200).map((value, index) => {
+    const field = `courseProfile.entries[${index}]`;
+    const entry = requireRecord(value, field);
+    const kind = requireString(entry.kind, `${field}.kind`) as CourseProfileEntryKind;
+    if (!kinds.has(kind) || !Array.isArray(entry.sources)) {
+      throw new Error(`${field} 无效`);
+    }
+    const sources = entry.sources.slice(0, 8).map((value, sourceIndex) => {
+      const sourceField = `${field}.sources[${sourceIndex}]`;
+      const source = requireRecord(value, sourceField);
+      const itemID = requireIdentifier(source.itemID, `${sourceField}.itemID`);
+      const role = requireString(source.role, `${sourceField}.role`);
+      if (!catalogIDs.has(itemID) || (role !== "material" && role !== "note")) {
+        throw new Error(`${sourceField} 不属于本轮课程`);
+      }
+      return {
+        itemID,
+        role,
+        location: optionalString(source.location, `${sourceField}.location`, 500),
+        sourceRevision: truncate(
+          requireString(source.sourceRevision, `${sourceField}.sourceRevision`),
+          500,
+        ),
+      } satisfies CourseProfileSourceSnapshot;
+    });
+    if (sources.length === 0) throw new Error(`${field} 缺少来源`);
+    return {
+      id: requireIdentifier(entry.id, `${field}.id`),
+      kind,
+      text: truncate(requireString(entry.text, `${field}.text`), 1_200),
+      sources,
+    } satisfies CourseProfileEntrySnapshot;
+  });
+  return {
+    revision: Math.max(
+      0,
+      Math.trunc(requireNumber(profile.revision, "courseProfile.revision")),
+    ),
+    overview: truncate(requireString(profile.overview, "courseProfile.overview"), 2_000),
+    entries,
+  };
+}
+
 async function readContextEnvelope(): Promise<Record<string, unknown>> {
   const contextFile = process.env[CONTEXT_FILE_ENV]?.trim();
   if (!contextFile) {
@@ -1429,6 +1537,7 @@ async function readCurrentSnapshot(): Promise<ContextSnapshotV2> {
     project,
     focus: readFocus(envelope.focus, project, catalogIDs),
     learning: readLearning(envelope.learning),
+    courseProfile: readCourseProfile(envelope.courseProfile, catalogIDs),
   };
 }
 
@@ -1533,7 +1642,12 @@ function currentFocusMessage(snapshot: ContextSnapshotV2): string {
       },
       course: {
         title: snapshot.course.title,
-        catalog,
+        materialCount: catalog.filter((item) => item.role === "material").length,
+        noteCount: catalog.filter((item) => item.role === "note").length,
+        profileRevision: snapshot.courseProfile.revision,
+        understanding: truncate(snapshot.courseProfile.overview, 600),
+        currentMaterial: catalog.find((item) => item.isCurrentMaterial),
+        currentNote: catalog.find((item) => item.isCurrentNote),
       },
       location: focus
         ? {
@@ -1719,6 +1833,12 @@ function readHostCourseItem(
   if (relativePath !== undefined && !safeProjectRelativePath(relativePath)) {
     throw new Error(`${field}.relativePath 越出课程项目`);
   }
+  const sourceRevision = wrapper.sourceRevision === undefined || wrapper.sourceRevision === null
+    ? undefined
+    : truncate(
+        requireString(wrapper.sourceRevision, `${field}.sourceRevision`),
+        500,
+      );
   return {
     id: requireIdentifier(item.id, `${field}.item.id`),
     title: truncate(requireString(item.title, `${field}.item.title`), LIMITS.title),
@@ -1761,6 +1881,7 @@ function readHostCourseItem(
       32,
       LIMITS.title,
     ),
+    sourceRevision,
   };
 }
 
@@ -1769,7 +1890,11 @@ async function queryCourseIndex(
   toolCallID: string,
   toolName: string,
   signal?: AbortSignal,
-): Promise<CourseItemSnapshot[]> {
+): Promise<{
+  items: CourseItemSnapshot[];
+  nextCursor?: string;
+  sourceRevision?: string;
+}> {
   const root = process.env[TOOL_RESPONSE_DIR_ENV]?.trim();
   if (!root || !isAbsolute(root)) {
     throw new Error(`缺少环境变量 ${TOOL_RESPONSE_DIR_ENV}`);
@@ -1840,7 +1965,20 @@ async function queryCourseIndex(
   if (!Array.isArray(payload.items)) {
     throw new Error("课程工具响应 items 必须是数组");
   }
-  return payload.items
+  const nextCursor = payload.nextCursor === undefined || payload.nextCursor === null
+    ? undefined
+    : truncate(
+        requireString(payload.nextCursor, "hostToolResponse.payload.nextCursor"),
+        1_024,
+      );
+  const sourceRevision = payload.sourceRevision === undefined || payload.sourceRevision === null
+    ? undefined
+    : truncate(
+        requireString(payload.sourceRevision, "hostToolResponse.payload.sourceRevision"),
+        LIMITS.identifier,
+      );
+  return {
+    items: payload.items
     .slice(0, LIMITS.projectSearchItems)
     .map((item, index) =>
       readHostCourseItem(
@@ -1849,7 +1987,10 @@ async function queryCourseIndex(
         snapshot,
         toolName === COURSE_READ_TOOL ? 24_000 : LIMITS.courseSearchText * 2,
       )
-    );
+    ),
+    nextCursor,
+    sourceRevision,
+  };
 }
 
 function rememberHostCourseItems(
@@ -3349,6 +3490,9 @@ const RICH_ANSWER_FAMILY_CONTRACT = [
   COMPOSABLE_PRIMITIVE_CATALOG,
 ].join("\n");
 
+const RICH_ANSWER_BRIEF =
+  `文本默认；确需生成式视觉时，先用 read 读取 skill://rich-answer-director，再按它的建议最多读取一个专业 Skill，然后调用 ${RICH_ANSWER_CATALOG_TOOL} 取得本轮真实能力。`;
+
 const richAnswerIdentifierSchema = Type.String({ minLength: 1, maxLength: LIMITS.identifier });
 const richAnswerPointSchema = Type.Object(
   {
@@ -3861,7 +4005,7 @@ const richAnswerUIProgramSchema = Type.Object(
   {
     additionalProperties: false,
     description:
-      `${RICH_ANSWER_FAMILY_CONTRACT}\ngraphics 与 directManipulation 由魏碑根据实际组件自动推导，不要提交。`,
+      `${RICH_ANSWER_BRIEF}\ngraphics 与 directManipulation 由魏碑根据实际组件自动推导，不要提交。`,
   },
 );
 const richAnswerRenderPlanChartSeriesSchema = Type.Object(
@@ -4170,7 +4314,7 @@ const richAnswerSceneSchema = Type.Union(
   [richAnswerT1SceneSchema, richAnswerRenderPlanSceneSchema, richAnswerT2SceneSchema],
   {
     description:
-      `${RICH_ANSWER_FAMILY_CONTRACT}\n场景从输入层三选一：深组件只提交 program，注册专业渲染器只提交 renderPlan，通用原语只提交 ui，不再提交 objects、relations、operations 或 frames。`,
+      `${RICH_ANSWER_BRIEF}\n场景从输入层三选一：深组件只提交 program，注册专业渲染器只提交 renderPlan，通用原语只提交 ui，不再提交 objects、relations、operations 或 frames。`,
   },
 );
 const richAnswerEnvelopeSchema = Type.Object(
@@ -9111,6 +9255,7 @@ const pythonArtifactParametersSchema = Type.Object(
 
 export default function weibeiExtension(pi: ExtensionAPI) {
   let lastReadMemoryRevision: number | undefined;
+  let courseProfileUpdated = false;
   let richAnswerAttemptCount = 0;
   let richAnswerCatalogRevision: string | undefined;
   let richAnswerCatalogSelection: Set<OpenUIComponentName> | undefined;
@@ -9118,6 +9263,7 @@ export default function weibeiExtension(pi: ExtensionAPI) {
   let activeAnswerFormPolicy: AnswerFormPolicy = "automatic";
   const searchedCourseItemIDs = new Set<string>();
   const hostCourseItemIDs = new Set<string>();
+  const readCourseSourceRevisions = new Map<string, string>();
   const verifiedVisualAssetBytes = new Map<string, number>();
 
   pi.registerTool({
@@ -9255,7 +9401,11 @@ export default function weibeiExtension(pi: ExtensionAPI) {
         throw new Error("全局 Chat 不开放课程项目文件工具");
       }
       const query = params.query.trim();
-      let results = await queryCourseIndex(snapshot, toolCallID, GREP_TOOL, signal);
+      const response = await queryCourseIndex(snapshot, toolCallID, GREP_TOOL, signal);
+      let results = response.items;
+      results.forEach((item) => {
+        if (item.sourceRevision) readCourseSourceRevisions.set(item.id, item.sourceRevision);
+      });
       if (params.pattern?.trim()) {
         const pattern = params.pattern.trim();
         if (isAbsolute(pattern) || pattern.split("/").includes("..")) {
@@ -9303,7 +9453,7 @@ export default function weibeiExtension(pi: ExtensionAPI) {
     ),
     executionMode: "sequential",
     async execute(_toolCallID, params) {
-      const normalizedSkillPath = canonicalReadPath(params.path);
+      const normalizedSkillPath = richAnswerSkillPath(params.path);
       const skill = normalizedSkillPath
         ? RICH_ANSWER_SKILL_BY_PATH.get(normalizedSkillPath)
         : undefined;
@@ -9350,9 +9500,13 @@ export default function weibeiExtension(pi: ExtensionAPI) {
         relativePath: item.relativePath,
         courseIDs: item.courseIDs,
         courseTitles: item.courseTitles,
+        sourceRevision: item.sourceRevision,
       } as CourseItemSnapshot;
       const presented = presentCourseResults(snapshot, [result]);
       searchedCourseItemIDs.add(item.itemID);
+      if (item.sourceRevision) {
+        readCourseSourceRevisions.set(item.itemID, item.sourceRevision);
+      }
       return {
         content: [{
           type: "text",
@@ -9497,6 +9651,7 @@ export default function weibeiExtension(pi: ExtensionAPI) {
         catalog,
         relations,
         isTruncated: snapshot.course.isTruncated,
+        profile: snapshot.courseProfile,
       };
       const details: CourseMapToolDetails = {
         kind: "course_map",
@@ -9527,12 +9682,16 @@ export default function weibeiExtension(pi: ExtensionAPI) {
     async execute(toolCallID, params, signal) {
       const snapshot = await readCurrentSnapshot();
       const query = params.query.trim();
-      const results = await queryCourseIndex(
+      const response = await queryCourseIndex(
         snapshot,
         toolCallID,
         COURSE_SEARCH_TOOL,
         signal,
       );
+      const results = response.items;
+      results.forEach((item) => {
+        if (item.sourceRevision) readCourseSourceRevisions.set(item.id, item.sourceRevision);
+      });
       rememberHostCourseItems(hostCourseItemIDs, results);
       results
         .filter((item) => item.searchText.trim().length > 0)
@@ -9567,15 +9726,16 @@ export default function weibeiExtension(pi: ExtensionAPI) {
     name: COURSE_READ_TOOL,
     label: "读取课程资料正文",
     description:
-      "按本轮课程现场、课程目录或搜索结果中的临时资料 ID 读取真实索引正文；可指定新的搜索词或精确页/章节位置。课程 Chat 只读本课，全局 Chat 可读搜索结果但会保留课程身份。",
+      "按临时资料 ID 渐进读取真实正文。先按当前位置、章节或搜索结果读必要片段；返回 nextCursor 时，由你判断是否继续，不要反复从开头读取。课程 Chat 只读本课，全局 Chat 保留课程身份。",
     promptSnippet: "按资料 ID 和页或章节继续读取真实正文",
     parameters: Type.Object(
       {
         itemID: Type.String({ minLength: 1, maxLength: LIMITS.identifier }),
         query: Type.Optional(Type.String({ maxLength: 500 })),
         location: Type.Optional(Type.String({ maxLength: LIMITS.title })),
-        limit: Type.Optional(
-          Type.Integer({ minimum: 1, maximum: LIMITS.projectSearchItems }),
+        cursor: Type.Optional(Type.String({ minLength: 1, maxLength: 1_024 })),
+        maximumCharacters: Type.Optional(
+          Type.Integer({ minimum: 1_000, maximum: 12_000 }),
         ),
       },
       { additionalProperties: false },
@@ -9590,12 +9750,16 @@ export default function weibeiExtension(pi: ExtensionAPI) {
         throw new Error("该资料 ID 不属于本轮查询作用域");
       }
       const query = params.query?.trim() ?? "";
-      const results = await queryCourseIndex(
+      const response = await queryCourseIndex(
         snapshot,
         toolCallID,
         COURSE_READ_TOOL,
         signal,
       );
+      const results = response.items;
+      results.forEach((item) => {
+        if (item.sourceRevision) readCourseSourceRevisions.set(item.id, item.sourceRevision);
+      });
       rememberHostCourseItems(hostCourseItemIDs, results);
       results.forEach((item) => searchedCourseItemIDs.add(item.id));
       const presented = presentCourseResults(snapshot, results);
@@ -9608,12 +9772,120 @@ export default function weibeiExtension(pi: ExtensionAPI) {
         evidenceLabels: presented.evidenceLabels,
         jumpReferences: presented.jumpReferences,
         jumpEvidence: presented.jumpEvidence,
+        nextCursor: response.nextCursor,
+        sourceRevision: response.sourceRevision,
       };
       return {
         content: [{
           type: "text",
-          text: JSON.stringify(presented.presentedResults, null, 2),
+          text: JSON.stringify({
+            results: presented.presentedResults,
+            hasMore: response.nextCursor !== undefined,
+            nextCursor: response.nextCursor,
+            sourceRevision: response.sourceRevision,
+          }, null, 2),
         }],
+        details,
+      };
+    },
+  });
+
+  pi.registerTool({
+    name: COURSE_PROFILE_UPDATE_TOOL,
+    label: "整理课程知识档案",
+    description:
+      "只在完成一节、完成一个主题、确认新的跨来源联系或准备切换上下文时，把本轮真实读到的课程认识批量写入课程知识档案。不要每轮调用。",
+    promptSnippet: "到达明确学习节点时，批量整理本轮已读内容；普通问答不更新",
+    parameters: Type.Object(
+      {
+        contextRevision: Type.String({ minLength: 1, maxLength: LIMITS.identifier }),
+        profileRevision: Type.Integer({ minimum: 0 }),
+        checkpoint: Type.Union([
+          Type.Literal("sectionCompleted"),
+          Type.Literal("topicCompleted"),
+          Type.Literal("crossSourceConnection"),
+          Type.Literal("beforeContextSwitch"),
+        ]),
+        entries: Type.Optional(Type.Array(Type.Object(
+          {
+            entryID: Type.Optional(
+              Type.String({ minLength: 1, maxLength: LIMITS.identifier }),
+            ),
+            kind: Type.Union([
+              Type.Literal("overview"),
+              Type.Literal("section"),
+              Type.Literal("concept"),
+              Type.Literal("relation"),
+            ]),
+            text: Type.String({ minLength: 1, maxLength: 1_200 }),
+            sources: Type.Array(Type.Object(
+              {
+                itemID: Type.String({ minLength: 1, maxLength: LIMITS.identifier }),
+                role: Type.Union([Type.Literal("material"), Type.Literal("note")]),
+                location: Type.Optional(Type.String({ maxLength: 500 })),
+                sourceRevision: Type.String({ minLength: 1, maxLength: 500 }),
+              },
+              { additionalProperties: false },
+            ), { minItems: 1, maxItems: 8 }),
+          },
+          { additionalProperties: false },
+        ), { maxItems: 12 })),
+        removedEntryIDs: Type.Optional(Type.Array(
+          Type.String({ minLength: 1, maxLength: LIMITS.identifier }),
+          { maxItems: 12 },
+        )),
+      },
+      { additionalProperties: false },
+    ),
+    executionMode: "sequential",
+    async execute(_toolCallID, params) {
+      const current = await readCurrentSnapshot();
+      const entries = params.entries ?? [];
+      const removedEntryIDs = params.removedEntryIDs ?? [];
+      if (current.project.kind !== "course" || !current.project.courseID) {
+        throw new Error("只有课程 Chat 可以更新课程知识档案");
+      }
+      if (courseProfileUpdated) throw new Error("本轮已经整理过课程知识档案");
+      if (
+        params.contextRevision !== current.contextRevision ||
+        params.profileRevision !== current.courseProfile.revision
+      ) {
+        throw new Error("课程知识档案版本已变化，请按当前课程地图重新整理");
+      }
+      if (entries.length === 0 && removedEntryIDs.length === 0) {
+        throw new Error("课程知识档案更新不能为空");
+      }
+      const catalogByID = new Map(
+        current.course.catalog.map((item) => [item.id, item] as const),
+      );
+      const existingEntryIDs = new Set(current.courseProfile.entries.map((entry) => entry.id));
+      if (
+        removedEntryIDs.some((id) => !existingEntryIDs.has(id)) ||
+        entries.some((entry) => entry.entryID && !existingEntryIDs.has(entry.entryID))
+      ) {
+        throw new Error("课程知识档案条目已变化，请重新查看课程地图");
+      }
+      for (const entry of entries) {
+        for (const source of entry.sources) {
+          if (
+            catalogByID.get(source.itemID)?.role !== source.role ||
+            readCourseSourceRevisions.get(source.itemID) !== source.sourceRevision
+          ) {
+            throw new Error("课程知识档案只能引用本轮真实读到且版本一致的材料或笔记");
+          }
+        }
+      }
+      courseProfileUpdated = true;
+      const details: CourseProfileUpdateDetails = {
+        kind: "course_profile_update",
+        contextRevision: current.contextRevision,
+        profileRevision: current.courseProfile.revision,
+        checkpoint: params.checkpoint,
+        entries,
+        removedEntryIDs,
+      };
+      return {
+        content: [{ type: "text", text: "本轮阶段性课程认识已提交保存。" }],
         details,
       };
     },
@@ -9963,6 +10235,7 @@ export default function weibeiExtension(pi: ExtensionAPI) {
 
       const result = {
         contextRevision: current.contextRevision,
+        familyContract: RICH_ANSWER_FAMILY_CONTRACT,
         decision: {
           learningAction: params.learningAction,
           knowledgeShapes: params.knowledgeShapes,
@@ -10134,7 +10407,7 @@ export default function weibeiExtension(pi: ExtensionAPI) {
     name: RICH_ANSWER_TOOL,
     label: "插入生成式视觉体验",
     description:
-      `当可视化或直接操作能明显帮助理解时，在 Agent 回答流中插入受控的生成式视觉体验块。提交前必须先调用 ${RICH_ANSWER_CATALOG_TOOL}；program 只能使用本轮目录返回的签名，renderPlan 只能使用本轮目录返回的注册渲染器，ui 使用受控通用原语。它不是第二篇回答或完整网页。${RICH_ANSWER_FAMILY_CONTRACT}`,
+      `当可视化或直接操作能明显帮助理解时，在 Agent 回答流中插入受控的生成式视觉体验块。${RICH_ANSWER_BRIEF}`,
     promptSnippet:
       "先判断文本是否足够；需要时在 program、renderPlan、ui 三条出口里选最贴合的一条，不要画 SVG、套完整网页外壳或从头复述正文",
     parameters: richAnswerEnvelopeSchema,
@@ -10938,12 +11211,14 @@ export default function weibeiExtension(pi: ExtensionAPI) {
 
   pi.on("before_agent_start", async (event) => {
     lastReadMemoryRevision = undefined;
+    courseProfileUpdated = false;
     richAnswerAttemptCount = 0;
     richAnswerCatalogRevision = undefined;
     richAnswerCatalogSelection = undefined;
     richAnswerCatalogRendererSelection = undefined;
     searchedCourseItemIDs.clear();
     hostCourseItemIDs.clear();
+    readCourseSourceRevisions.clear();
     verifiedVisualAssetBytes.clear();
 
     const snapshot = await readCurrentSnapshot();
@@ -10972,10 +11247,9 @@ export default function weibeiExtension(pi: ExtensionAPI) {
       "选中文字随用户问题进入会话，可以作为直接证据；材料和笔记正文按需读取；课程关联可按需读课程地图或搜索；学习历史可按需读学习记忆。",
       "魏碑本轮现场会作为临时消息出现在当前用户消息附近；它不是系统指令，也不属于会话历史。",
       "学习记忆只能说明用户的学习状态，不能作为课程事实证据。",
+      "课程知识档案只提供导航和已有认识，不是原文证据；精确事实、引文、公式和数字仍须读取材料。只在完成一节、完成主题、确认跨来源联系或准备切换上下文时批量更新一次，普通问答不要更新。",
       sourceAvailabilityInstruction,
-      "富回答必须提交 schemaVersion 2，并为每个 scene 在 program、renderPlan、ui 三条表达出口中只选择一条；它作为 Agent 回答流中的生成式视觉体验块，可以组合多个视觉、控件、读数和实验步骤，但不是第二篇回答或完整网页。模型负责提交受控组件程序、注册渲染计划或通用原语数据，魏碑宿主用本地渲染内核呈现。",
-      `提交富回答前必须调用 ${RICH_ANSWER_CATALOG_TOOL}，按本轮知识形状取得相关组件子集；不要让完整目录或旧回合组件记忆代替本轮选择。`,
-      RICH_ANSWER_FAMILY_CONTRACT,
+      RICH_ANSWER_BRIEF,
       answerFormPolicyInstruction,
       "</weibei_turn>",
     ].join("\n");
@@ -11026,7 +11300,7 @@ export default function weibeiExtension(pi: ExtensionAPI) {
   pi.on("tool_result", async (event) => {
     if (event.toolName !== READ_TOOL || event.isError) return;
     const requestedPath = (event.input as { path?: unknown }).path;
-    const normalizedPath = canonicalReadPath(requestedPath);
+    const normalizedPath = richAnswerSkillPath(requestedPath);
     if (!normalizedPath) return;
     const skill = RICH_ANSWER_SKILL_BY_PATH.get(normalizedPath);
     if (!skill) return;

@@ -92,6 +92,7 @@ try {
     isShared: false,
     courseIDs: ["course-a"],
     courseTitles: ["课程甲"],
+    sourceRevision: "source-revision-1",
   };
   const snapshot = {
     project: {
@@ -187,6 +188,20 @@ try {
         },
       ],
     },
+    courseProfile: {
+      revision: 0,
+      overview: "COURSE_CARD_OVERVIEW",
+      entries: [{
+        id: "profile-concept-1",
+        kind: "concept",
+        text: "PROFILE_ENTRY_SHOULD_STAY_HIDDEN",
+        sources: [{
+          itemID: "material-1",
+          role: "material",
+          sourceRevision: "source-revision-1",
+        }],
+      }],
+    },
   };
   await writeFile(contextFile, JSON.stringify(hookEnvelope));
   process.env.WEIBEI_AGENT_CONTEXT_FILE = contextFile;
@@ -249,6 +264,8 @@ try {
       transientContext.display === false &&
       transientContext.content.includes("revision-a") &&
       transientContext.content.includes("material-1") &&
+      transientContext.content.includes("COURSE_CARD_OVERVIEW") &&
+      !transientContext.content.includes("PROFILE_ENTRY_SHOULD_STAY_HIDDEN") &&
       !transientContext.content.includes("ORIGINAL_EXTENSION_CONTENT"),
     "当前现场没有只作为无正文的本轮临时消息交给 Pi",
   );
@@ -284,7 +301,7 @@ try {
   requireValue(brokenContextRejected, "回合中的损坏上下文快照被静默忽略");
   await writeFile(contextFile, JSON.stringify(hookEnvelope));
 
-  const fullArticle = `${"完整文章上下文。".repeat(700)}FULL_ARTICLE_TAIL_TOKEN`;
+  const firstArticlePage = "完整文章上下文。".repeat(700);
   const toolCallID = "course-read-full-article";
   const toolResponseRoot = join(temporaryRoot, "tool-responses");
   await mkdir(toolResponseRoot, { recursive: true });
@@ -309,12 +326,15 @@ try {
         items: [{
           item: {
             ...hookEnvelope.course.items[0],
-            searchText: fullArticle,
+            searchText: firstArticlePage,
           },
           relativePath: "文稿/第一讲.txt",
           courseIDs: ["course-a"],
           courseTitles: ["课程甲"],
+          sourceRevision: "source-revision-1",
         }],
+        nextCursor: "cursor-2",
+        sourceRevision: "source-revision-1",
       },
     }),
   );
@@ -328,11 +348,101 @@ try {
   );
   const courseReadResult = await courseReadTool.execute(
     toolCallID,
-    { itemID: "material-1" },
+    { itemID: "material-1", maximumCharacters: 6_000 },
   );
   requireValue(
-    courseReadResult.content[0]?.text.includes("FULL_ARTICLE_TAIL_TOKEN"),
-    "课程正文读取工具在交给模型前截掉了完整文章尾部",
+    courseReadResult.content[0]?.text.includes('"hasMore": true') &&
+      courseReadResult.content[0]?.text.includes('"nextCursor": "cursor-2"'),
+    "课程正文读取工具没有把续读游标交给模型",
+  );
+
+  const continuationToolCallID = "course-read-continuation";
+  await writeFile(
+    join(
+      toolResponseDirectory,
+      `${createHash("sha256").update(continuationToolCallID, "utf8").digest("hex")}.json`,
+    ),
+    JSON.stringify({
+      schemaVersion: 1,
+      requestID: hookEnvelope.requestID,
+      contextRevision: hookEnvelope.contextRevision,
+      toolCallID: continuationToolCallID,
+      toolName: "weibei_course_read",
+      success: true,
+      payload: {
+        query: "",
+        items: [{
+          item: {
+            ...hookEnvelope.course.items[0],
+            searchText: "FULL_ARTICLE_TAIL_TOKEN",
+          },
+          relativePath: "文稿/第一讲.txt",
+          courseIDs: ["course-a"],
+          courseTitles: ["课程甲"],
+          sourceRevision: "source-revision-1",
+        }],
+        sourceRevision: "source-revision-1",
+      },
+    }),
+  );
+  const continuationResult = await courseReadTool.execute(
+    continuationToolCallID,
+    { itemID: "material-1", cursor: "cursor-2", maximumCharacters: 6_000 },
+  );
+  requireValue(
+    continuationResult.content[0]?.text.includes("FULL_ARTICLE_TAIL_TOKEN") &&
+      continuationResult.content[0]?.text.includes('"hasMore": false'),
+    "课程正文读取工具没有沿游标读到长文末尾",
+  );
+
+  const profileUpdateTool = requireValue(
+    registeredTools.get("weibei_course_profile_update"),
+    "真实扩展没有注册课程知识档案批量更新工具",
+  );
+  const profileUpdate = await profileUpdateTool.execute("profile-update", {
+    contextRevision: hookEnvelope.contextRevision,
+    profileRevision: 0,
+    checkpoint: "sectionCompleted",
+    entries: [{
+      kind: "concept",
+      text: "第一讲建立了课程的基础概念。",
+      sources: [{
+        itemID: "material-1",
+        role: "material",
+        sourceRevision: "source-revision-1",
+      }],
+    }],
+  });
+  requireValue(
+    profileUpdate.details?.kind === "course_profile_update",
+    "课程知识档案没有在阶段性节点接收本轮真实已读来源",
+  );
+
+  const projectReadTool = requireValue(
+    registeredTools.get("read"),
+    "真实扩展没有复用 read 工具加载按需 Skill",
+  );
+  const skillRead = await projectReadTool.execute(
+    "rich-answer-skill-read",
+    { path: "skill://rich-answer-director" },
+  );
+  requireValue(
+    skillRead.content[0]?.text.includes("# 富回答导演"),
+    "read 工具没有按 skill:// 路径加载富回答导演",
+  );
+  const toolResultHook = requireValue(
+    eventHandlers.get("tool_result"),
+    "真实扩展没有记录按需 Skill 读取结果",
+  );
+  const skillMetadata = await toolResultHook({
+    toolName: "read",
+    isError: false,
+    input: { path: "skill://rich-answer-director" },
+  });
+  requireValue(
+    skillMetadata?.details?.kind === "weibei_skill_read" &&
+      skillMetadata.details.loaded.id === "rich-answer-director",
+    "按需 Skill 读取没有留下版本与哈希证据",
   );
 
   const normalRead = await extension.readApprovedProjectFile(snapshot, item);

@@ -188,7 +188,8 @@ private func checkHostCourseToolBridge(
                 itemID: "persistent-material",
                 query: "",
                 location: nil,
-                limit: 5
+                cursor: nil,
+                maximumCharacters: 6_000
             ) else {
                 throw PiTerminalRuntimeSelfCheckError.failed("PI host bridge received invalid arguments")
             }
