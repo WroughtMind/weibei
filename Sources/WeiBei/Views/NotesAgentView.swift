@@ -5343,7 +5343,8 @@ private struct AgentMessageMarkdownText: View {
         // The mature Markdown renderer handles paragraphs, headings, lists, tables,
         // fenced code and KaTeX through one path. Native text stays visible until
         // the first valid measurement and returns immediately if WebKit fails.
-        // Height freezes only after a real measure at the current exact width.
+        // Settled/offscreen height freezes after a real measure; an on-screen
+        // row stays live while its pane is resizing so new wraps are not clipped.
         // The 24pt-bucket cache supplies a first-frame seed, never readiness.
         // NEVER wire onContentHeightChange to scrollAgentToBottom.
         ZStack(alignment: .topLeading) {
@@ -5355,7 +5356,8 @@ private struct AgentMessageMarkdownText: View {
                     interfaceLanguage: store.interfaceLanguage,
                     compact: true,
                     fitsContentHeight: true,
-                    freezeHeightAfterMeasure: true,
+                    freezeHeightAfterMeasure: !paneStructureTransitionActive
+                        || isInScrollViewport == false,
                     seedContentHeight: cachedFinalizedHeight,
                     layoutWidthKey: layoutWidthBucket,
                     isChatWideTypography: isChatWideTypography,
@@ -5377,7 +5379,9 @@ private struct AgentMessageMarkdownText: View {
                         onFinalizedRenderReady()
                     },
                     onMeasuredHeight: { height in
-                        AgentFinalizedMarkdownHeightCache.store(height, for: cacheKey)
+                        if !paneStructureTransitionActive {
+                            AgentFinalizedMarkdownHeightCache.store(height, for: cacheKey)
+                        }
                         if !finalizedRendererReady {
                             finalizedRendererReady = true
                             onFinalizedRenderReady()

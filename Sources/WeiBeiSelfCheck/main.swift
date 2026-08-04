@@ -4954,7 +4954,8 @@ if let messageTextStart = notesAgentSource.range(of: "private struct AgentMessag
     let messageTextSource = String(notesAgentSource[messageTextStart..<thinkingStart])
     expect(messageTextSource.contains("usesFinalizedKaTeX")
         && messageTextSource.contains("MarkdownPreviewView(")
-        && messageTextSource.contains("freezeHeightAfterMeasure: true")
+        && messageTextSource.contains("freezeHeightAfterMeasure: !paneStructureTransitionActive\n                        || isInScrollViewport == false")
+        && messageTextSource.contains("if !paneStructureTransitionActive {\n                            AgentFinalizedMarkdownHeightCache.store(height, for: cacheKey)")
         && messageTextSource.contains("layoutWidthBucket")
         && messageTextSource.contains("AgentChatKaTeXMarkdown")
         && messageTextSource.contains("NEVER wire onContentHeightChange to scrollAgentToBottom")
@@ -4964,7 +4965,7 @@ if let messageTextStart = notesAgentSource.range(of: "private struct AgentMessag
         && messageTextSource.contains("NEVER enable SwiftUI textSelection here")
         && messageTextSource.contains("layoutWidthKey: layoutWidthBucket")
         && !messageTextSource.contains("layoutWidthKey: exactLayoutWidthKey")
-        && !messageTextSource.contains("onContentHeightChange: onMarkdownHeightChange"), "agent chat uses finalized KaTeX with bucket-width frozen height; native text disables SelectionOverlay to avoid scroll remasure freeze")
+        && !messageTextSource.contains("onContentHeightChange: onMarkdownHeightChange"), "agent chat keeps visible finalized KaTeX height live during pane motion, freezes settled/offscreen rows, and disables native SelectionOverlay")
 } else {
     expect(false, "agent message text source is inspectable")
 }
