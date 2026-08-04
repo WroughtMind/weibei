@@ -1733,8 +1733,8 @@ private struct AgentRailTurn {
     var answer: String
 }
 
-/// Keeps the last frame-level probe value without invalidating the SwiftUI tree.
-/// The real parent proposal animates content; sampled width commits once at the end.
+/// Keeps the last frame-level probe value without publishing it through SwiftUI state.
+/// The real parent proposal lays out visible content; sampled width settles render caches.
 private final class AgentPaneWidthRelay {
     var pendingWidth: CGFloat?
     var structureTransitionActive = false
@@ -1805,7 +1805,7 @@ struct AgentPaneView: View {
     @State private var activeAgentRailID: String?
     @State private var agentFollowsLatest = true
     @State private var globalMemoryPanelPresented = false
-    /// Live pane width from a background probe. 0 until first real measurement.
+    /// Settled pane width for renderer caches. 0 until first real measurement.
     @State private var measuredPaneWidth: CGFloat = 0
     @State private var paneWidthRelay = AgentPaneWidthRelay()
     /// Structural pane show/hide animates the AppKit slot every frame. Visible
@@ -1849,190 +1849,198 @@ struct AgentPaneView: View {
         store.messages.flatMap(\.sources)
     }
 
-    /// Prefer the live measured width so the chat visibly follows its host.
+    /// Semantic renderer width; the GeometryReader proposal owns visible layout.
     /// Hidden resident hosts retain their last readable width for the next open.
     private var agentPaneWidth: CGFloat {
-        if measuredPaneWidth > 1 {
+        if measuredPaneWidth > ContentRailMetrics.railOnlyThreshold {
             return measuredPaneWidth
         }
         return usesWideChatLayout ? 1100 : lastReadablePaneWidth
     }
 
     var body: some View {
-        // Hang-proof structure:
-        // NEVER put GeometryReader as an ancestor of ScrollView+LazyVStack.
-        // Sampled freezes were GeometryReaderLayout → ScrollView.sizeThatFits → LazyVStack thrash.
-        // Pane width is measured only via background preference (sibling, not parent).
         let wide = AgentChatLayoutMetrics.isWide(layout: store.layout)
-        let availableWidth = max(agentPaneWidth, 1)
-        let railOnly = ContentRailMetrics.isRailOnly(
-            availableWidth: availableWidth,
-            allowed: store.layout.allowsRailOnlyPanes
-        )
         let showsContentRail = !wide && store.layout.allowsRailOnlyPanes
         let railItems = showsContentRail ? agentRailItems : []
-        let contentWidth = AgentChatLayoutMetrics.contentWidth(
-            availableWidth: availableWidth,
-            wide: wide
-        )
-        let markdownContentWidth = AgentChatLayoutMetrics.contentWidth(
-            availableWidth: heldPaneLayoutWidth ?? availableWidth,
-            wide: wide
-        )
-        let comfy = wide
-            || contentWidth >= AgentChatLayoutMetrics.wideTypographyMinContentWidth
-        let headerHeight: CGFloat = showsPaneHeader
-            ? (availableWidth < 420 ? 44 : 54)
-            : 0
+        // The native split host changes this proposal on every divider frame.
+        // Read it locally so visible content and the rail follow continuously;
+        // never publish those frame-level values into the eager message tree.
+        GeometryReader { paneGeometry in
+            let liveAvailableWidth = max(paneGeometry.size.width, 1)
+            let railOnly = ContentRailMetrics.isRailOnly(
+                availableWidth: liveAvailableWidth,
+                allowed: store.layout.allowsRailOnlyPanes
+            )
+            let contentWidth = AgentChatLayoutMetrics.contentWidth(
+                availableWidth: liveAvailableWidth,
+                wide: wide
+            )
+            let markdownContentWidth = AgentChatLayoutMetrics.contentWidth(
+                availableWidth: heldPaneLayoutWidth ?? agentPaneWidth,
+                wide: wide
+            )
+            let comfy = wide
+                || contentWidth >= AgentChatLayoutMetrics.wideTypographyMinContentWidth
+            let headerHeight: CGFloat = showsPaneHeader
+                ? (liveAvailableWidth < 420 ? 44 : 54)
+                : 0
 
-        ScrollViewReader { proxy in
-            ZStack(alignment: .topLeading) {
-                VStack(spacing: 0) {
-                    if showsPaneHeader {
-                        WeiBeiPaneHeader(
-                            title: store.ui("对话", "Chat"),
-                            latinMark: store.interfaceLanguage == .chinese ? "CHAT" : nil,
-                            subtitle: store.agentConversationSubtitle,
-                            appearanceMode: store.appearanceMode,
-                            reorderRole: reorderRole,
-                            availableWidth: availableWidth
-                        ) {
-                            sessionMenu
+            ScrollViewReader { proxy in
+                ZStack(alignment: .topLeading) {
+                    VStack(spacing: 0) {
+                        if showsPaneHeader {
+                            WeiBeiPaneHeader(
+                                title: store.ui("对话", "Chat"),
+                                latinMark: store.interfaceLanguage == .chinese ? "CHAT" : nil,
+                                subtitle: store.agentConversationSubtitle,
+                                appearanceMode: store.appearanceMode,
+                                reorderRole: reorderRole,
+                                availableWidth: liveAvailableWidth
+                            ) {
+                                sessionMenu
+                            }
                         }
-                    }
 
-                    ScrollView(showsIndicators: true) {
-                        // No scrollTargetLayout / scrollPosition / minHeight:viewport /
-                        // GeometryReader parent — all thrash sizeThatFits on the chat stack.
-                        // Eager VStack (not LazyVStack): each finalized turn may host
-                        // Milkdown/KaTeX WKWebView. Lazy recycle remounted PlatformViews
-                        // while dragging the chat scroller and froze the UI (build 664).
-                        // Long histories fold behind a reveal button instead — unrendered
-                        // rows cost nothing; keep full Markdown rendering for visible ones.
-                        VStack(alignment: .leading, spacing: comfy ? 22 : 12) {
-                            if hiddenAgentHistoryCount > 0 {
-                                agentHistoryRevealButton(proxy: proxy)
-                            }
-                            ForEach(visibleAgentMessages) { message in
-                                agentMessageRow(
-                                    message: message,
-                                    contentWidth: contentWidth,
-                                    wide: wide
-                                )
-                            }
-                            if store.isAgentRunningInActiveChat
-                                && !store.hasPersistedGeneratingAgentReply
-                                && !store.agentStreamingText.isEmpty {
-                                agentReadingColumn(
-                                    alignment: .leading
-                                ) {
-                                    AgentStreamingResponse(text: store.agentStreamingText)
+                        ScrollView(showsIndicators: true) {
+                            // No scrollTargetLayout / scrollPosition / viewport minHeight
+                            // feedback — those all thrash sizeThatFits on the chat stack.
+                            // Eager VStack (not LazyVStack): each finalized turn may host
+                            // Milkdown/KaTeX WKWebView. Lazy recycle remounted PlatformViews
+                            // while dragging the chat scroller and froze the UI (build 664).
+                            // Long histories fold behind a reveal button instead — unrendered
+                            // rows cost nothing; keep full Markdown rendering for visible ones.
+                            VStack(alignment: .leading, spacing: comfy ? 22 : 12) {
+                                if hiddenAgentHistoryCount > 0 {
+                                    agentHistoryRevealButton(proxy: proxy)
                                 }
-                                .id("agent-streaming-response")
-                                .transition(WeiBeiTransition.message)
-                            }
-                            if store.isAgentRunningInActiveChat
-                                && !store.hasPersistedGeneratingAgentReply
-                                && store.agentStreamingText.isEmpty {
-                                agentReadingColumn(
-                                    alignment: .leading
-                                ) {
-                                    AgentThinkingIndicator()
+                                ForEach(visibleAgentMessages) { message in
+                                    agentMessageRow(
+                                        message: message,
+                                        contentWidth: contentWidth,
+                                        wide: wide
+                                    )
                                 }
-                                .id("agent-thinking")
-                                .transition(WeiBeiTransition.message)
-                            }
-                            if store.messages.isEmpty && !(store.isAgentRunningInActiveChat && store.agentStreamingText.isEmpty) {
-                                emptyAgentState
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                                    .transition(WeiBeiTransition.message)
-                            }
-                            Color.clear
-                                .frame(height: agentScrollBottomInset)
-                                .id(agentBottomAnchorID)
-                                .background {
-                                    AgentScrollDistanceProbe { metrics in
-                                        handleScrollMetrics(metrics, proxy: proxy)
+                                if store.isAgentRunningInActiveChat
+                                    && !store.hasPersistedGeneratingAgentReply
+                                    && !store.agentStreamingText.isEmpty
+                                {
+                                    agentReadingColumn(
+                                        alignment: .leading
+                                    ) {
+                                        AgentStreamingResponse(text: store.agentStreamingText)
                                     }
+                                    .id("agent-streaming-response")
+                                    .transition(WeiBeiTransition.message)
                                 }
+                                if store.isAgentRunningInActiveChat
+                                    && !store.hasPersistedGeneratingAgentReply
+                                    && store.agentStreamingText.isEmpty
+                                {
+                                    agentReadingColumn(
+                                        alignment: .leading
+                                    ) {
+                                        AgentThinkingIndicator()
+                                    }
+                                    .id("agent-thinking")
+                                    .transition(WeiBeiTransition.message)
+                                }
+                                if store.messages.isEmpty
+                                    && !(store.isAgentRunningInActiveChat && store.agentStreamingText.isEmpty)
+                                {
+                                    emptyAgentState
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                        .transition(WeiBeiTransition.message)
+                                }
+                                Color.clear
+                                    .frame(height: agentScrollBottomInset)
+                                    .id(agentBottomAnchorID)
+                                    .background {
+                                        AgentScrollDistanceProbe { metrics in
+                                            handleScrollMetrics(metrics, proxy: proxy)
+                                        }
+                                    }
+                            }
+                            .padding(.horizontal, wide ? 8 : 10)
+                            .padding(.vertical, wide ? 14 : 10)
+                            .environment(\.agentChatLayoutWidth, markdownContentWidth)
+                            .environment(\.agentChatPaneStructureTransitionActive, isPaneWidthMotionActive)
+                            .padding(.top, store.messages.isEmpty ? 22 : 0)
+                            .frame(maxWidth: .infinity, alignment: .topLeading)
                         }
-                        .padding(.horizontal, wide ? 8 : 10)
-                        .padding(.vertical, wide ? 14 : 10)
-                        .environment(\.agentChatLayoutWidth, markdownContentWidth)
-                        .environment(\.agentChatPaneStructureTransitionActive, isPaneWidthMotionActive)
-                        .padding(.top, store.messages.isEmpty ? 22 : 0)
-                        .frame(maxWidth: .infinity, alignment: .topLeading)
-                    }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .clipped()
-                    .zIndex(0)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .clipped()
+                        .zIndex(0)
 
-                    agentInputTray(wide: wide)
-                        .zIndex(1)
-                        .animation(WeiBeiMotion.panel, value: store.layout)
-                        .animation(WeiBeiMotion.panel, value: wide)
-                }
-                .overlay(alignment: .bottom) {
-                    if showsJumpToLatest {
-                        jumpToLatestButton(proxy: proxy)
-                            .padding(.bottom, composerFieldHeight + (wide ? 46 : 34))
-                            .transition(.opacity.combined(with: .scale(scale: 0.92)))
+                        agentInputTray(wide: wide)
+                            .zIndex(1)
+                            .animation(WeiBeiMotion.panel, value: store.layout)
+                            .animation(WeiBeiMotion.panel, value: wide)
                     }
-                }
-                .opacity(railOnly ? 0 : 1)
-                .allowsHitTesting(!railOnly)
-
-                if showsContentRail {
-                    ContentRailView(
-                        label: store.ui("对话轨道", "Conversation rail"),
-                        items: railItems,
-                        activeID: activeAgentRailID ?? railItems.first?.id,
-                        appearanceMode: store.appearanceMode,
-                        isRailOnly: railOnly,
-                        availableWidth: availableWidth,
-                        topInset: railOnly ? 0 : headerHeight,
-                        bottomInset: railOnly ? 0 : agentRailBottomInset,
-                        onActivate: { activateAgentRailItem($0, railOnly: railOnly, proxy: proxy) }
+                    .overlay(alignment: .bottom) {
+                        if showsJumpToLatest {
+                            jumpToLatestButton(proxy: proxy)
+                                .padding(.bottom, composerFieldHeight + (wide ? 46 : 34))
+                                .transition(.opacity.combined(with: .scale(scale: 0.92)))
+                        }
+                    }
+                    // Once the rail owns the pane, keep the invisible resident chat
+                    // at one readable proposal instead of laying WebKit out at 1–38pt.
+                    .frame(
+                        minWidth: railOnly ? ContentRailMetrics.readableWidth : nil,
+                        maxWidth: .infinity,
+                        maxHeight: .infinity,
+                        alignment: .topLeading
                     )
-                    .zIndex(4)
+                    .opacity(railOnly ? 0 : 1)
+                    .allowsHitTesting(!railOnly)
+
+                    if showsContentRail {
+                        ContentRailView(
+                            label: store.ui("对话轨道", "Conversation rail"),
+                            items: railItems,
+                            activeID: activeAgentRailID ?? railItems.first?.id,
+                            appearanceMode: store.appearanceMode,
+                            isRailOnly: railOnly,
+                            availableWidth: liveAvailableWidth,
+                            topInset: railOnly ? 0 : headerHeight,
+                            bottomInset: railOnly ? 0 : agentRailBottomInset,
+                            onActivate: { activateAgentRailItem($0, railOnly: railOnly, proxy: proxy) }
+                        )
+                        .zIndex(4)
+                    }
                 }
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            .clipped()
-            .onChange(of: store.messages.map(\.id)) { oldIDs, newIDs in
-                // Only a true append to this conversation widens the mounted window.
-                // Initial restore used to look like a 0 -> N append and mounted the
-                // entire rich history, defeating paging and stalling pane toggles.
-                if let appendedCount = AgentHistoryRevealPolicy.appendedMessageCount(
-                    previousMessageIDs: oldIDs,
-                    currentMessageIDs: newIDs
-                ) {
-                    agentVisibleMessageLimit += appendedCount
-                } else {
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                .clipped()
+                .onChange(of: store.messages.map(\.id)) { oldIDs, newIDs in
+                    // Only a true append to this conversation widens the mounted window.
+                    // Initial restore used to look like a 0 -> N append and mounted the
+                    // entire rich history, defeating paging and stalling pane toggles.
+                    if let appendedCount = AgentHistoryRevealPolicy.appendedMessageCount(
+                        previousMessageIDs: oldIDs,
+                        currentMessageIDs: newIDs
+                    ) {
+                        agentVisibleMessageLimit += appendedCount
+                    } else {
+                        agentVisibleMessageLimit = Self.agentHistoryPageSize
+                        isRevealingEarlierAgentHistory = false
+                    }
+                    if showsContentRail, let lastID = store.messages.last?.id {
+                        updateAgentRailPosition(for: lastID)
+                    }
+                    scrollAgentToBottom(proxy)
+                }
+                .onChange(of: store.activeStudySessionID) { _, _ in
                     agentVisibleMessageLimit = Self.agentHistoryPageSize
                     isRevealingEarlierAgentHistory = false
                 }
-                if showsContentRail, let lastID = store.messages.last?.id {
-                    updateAgentRailPosition(for: lastID)
+                .onRichAnswerVerificationStage { stage in
+                    handleRichAnswerVerificationStage(stage, proxy: proxy)
                 }
-                scrollAgentToBottom(proxy)
             }
-            .onChange(of: store.activeStudySessionID) { _, _ in
-                agentVisibleMessageLimit = Self.agentHistoryPageSize
-                isRevealingEarlierAgentHistory = false
-            }
-            .onRichAnswerVerificationStage { stage in
-                handleRichAnswerVerificationStage(stage, proxy: proxy)
-            }
-        }
-        // Width probe as background sibling — never parent of ScrollView.
-        .background {
-            GeometryReader { geo in
-                Color.clear.preference(
-                    key: AgentPaneWidthKey.self,
-                    value: geo.size.width
-                )
-            }
+            .preference(
+                key: AgentPaneWidthKey.self,
+                value: liveAvailableWidth
+            )
         }
         .onPreferenceChange(AgentPaneWidthKey.self) { width in
             applyMeasuredPaneWidth(width)
@@ -2115,8 +2123,8 @@ struct AgentPaneView: View {
         .accessibilityLabel(Text("agent chat pane"))
     }
 
-    /// AppKit owns live frames. SwiftUI receives only the final semantic width so
-    /// the eager message tree is not rebuilt for every divider pixel.
+    /// AppKit owns live frames. SwiftUI state receives only the final semantic width so
+    /// the eager message tree is not invalidated for every divider pixel.
     private func applyMeasuredPaneWidth(_ width: CGFloat) {
         guard width > 1 else { return }
         if paneWidthRelay.isActive {
@@ -5380,16 +5388,6 @@ private struct AgentMessageMarkdownText: View {
                 // proposal. A flexible outer row alone leaves WKWebView at its
                 // previous intrinsic width after the chat pane resizes.
                 .frame(maxWidth: .infinity, alignment: .leading)
-                // During a structural close/open, stop only at the existing
-                // readable floor. The outer pane keeps clipping smoothly, while
-                // WebKit never lays Markdown out at pathological 1-38pt widths.
-                .frame(
-                    minWidth: paneStructureTransitionActive
-                        ? ContentRailMetrics.readableWidth
-                        : nil,
-                    maxWidth: .infinity,
-                    alignment: .leading
-                )
                 // A visible row takes the real parent proposal (nil width), so
                 // it cannot feed a stale cached width back into the chat pane.
                 .frame(width: heldOffscreenRendererWidth, alignment: .leading)
