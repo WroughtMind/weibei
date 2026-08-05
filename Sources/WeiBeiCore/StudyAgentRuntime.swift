@@ -304,6 +304,7 @@ public struct StudyAgentFocus: Codable, Equatable, Sendable {
 }
 
 public enum StudyAgentHostToolRequest: Equatable, Sendable {
+    case courseMap(itemID: String?, offset: Int, limit: Int)
     case courseSearch(query: String, limit: Int)
     case courseRead(
         itemID: String,
@@ -339,17 +340,20 @@ public struct StudyAgentHostToolItem: Codable, Equatable, Sendable {
 public struct StudyAgentHostToolResult: Codable, Equatable, Sendable {
     public var query: String
     public var items: [StudyAgentHostToolItem]
+    public var total: Int?
     public var nextCursor: String?
     public var sourceRevision: String?
 
     public init(
         query: String,
         items: [StudyAgentHostToolItem],
+        total: Int? = nil,
         nextCursor: String? = nil,
         sourceRevision: String? = nil
     ) {
         self.query = query
         self.items = items
+        self.total = total
         self.nextCursor = nextCursor
         self.sourceRevision = sourceRevision
     }
@@ -708,6 +712,7 @@ public struct StudyAgentReply: Equatable, Sendable {
     public var learningUpdate: StudyAgentLearningUpdate?
     public var courseProfileUpdate: StudyAgentCourseProfileUpdate?
     public var loadedSkills: [StudyAgentLoadedSkill]
+    public var readItemIDs: [String]
     public var toolTrace: [String]
 
     public init(
@@ -720,6 +725,7 @@ public struct StudyAgentReply: Equatable, Sendable {
         learningUpdate: StudyAgentLearningUpdate? = nil,
         courseProfileUpdate: StudyAgentCourseProfileUpdate? = nil,
         loadedSkills: [StudyAgentLoadedSkill] = [],
+        readItemIDs: [String] = [],
         toolTrace: [String] = []
     ) {
         self.text = text
@@ -731,6 +737,7 @@ public struct StudyAgentReply: Equatable, Sendable {
         self.learningUpdate = learningUpdate
         self.courseProfileUpdate = courseProfileUpdate
         self.loadedSkills = loadedSkills
+        self.readItemIDs = readItemIDs
         self.toolTrace = toolTrace
     }
 }

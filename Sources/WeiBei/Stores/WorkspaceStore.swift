@@ -314,6 +314,18 @@ enum CourseOwnedFileRole: String, Codable, Sendable {
         case .note: "笔记"
         }
     }
+
+    var commonDirectoryName: String {
+        switch self {
+        case .material: "通用资料"
+        case .note: "通用笔记"
+        }
+    }
+}
+
+enum ContextualContentKind: Equatable, Sendable {
+    case material
+    case note
 }
 
 enum CourseFileConflictResolution: Equatable, Sendable {
@@ -438,6 +450,26 @@ enum CourseRemovalError: LocalizedError {
     }
 }
 
+enum ContentSourceRemovalError: LocalizedError {
+    case itemUnavailable
+    case sourceChanged
+    case trashMoveFailed
+    case workspaceSaveFailed
+
+    var errorDescription: String? {
+        switch self {
+        case .itemUnavailable:
+            "找不到这份资料或笔记的真实原文件。"
+        case .sourceChanged:
+            "原文件已经发生变化，魏碑没有删除它。"
+        case .trashMoveFailed:
+            "原文件没有成功移到 macOS 废纸篓，课程关系保持不变。"
+        case .workspaceSaveFailed:
+            "魏碑没有保存删除结果，原文件已从废纸篓恢复。"
+        }
+    }
+}
+
 /// Isolated chrome state for the course drawer.
 /// Kept off `WorkspaceStore`'s `@Published` surface so opening/closing the drawer
 /// does not invalidate reader/agent/notes bodies (that was the multi-second pre-slide lag).
@@ -482,6 +514,9 @@ final class WorkspaceStore: ObservableObject {
             noteSourceRelationIndex = NoteSourceRelationIndex(links: noteSourceLinks)
         }
     }
+    @Published private(set) var materialNotePairings: [String: String] = [:]
+    @Published private(set) var noteMaterialPairings: [String: String] = [:]
+    @Published private(set) var blankNoteDraftMaterialID: String?
     @Published var linkedSourcesPresented = false
     private(set) var studyLocationsByItemID: [String: StudyLocation] = [:]
     private(set) var studyLocationsByCourseID: [String: [String: StudyLocation]] = [:]
@@ -655,6 +690,8 @@ final class WorkspaceStore: ObservableObject {
     private var courseNoteLoadGenerationByItemID: [String: UInt64] = [:]
     private var courseNoteWritesInFlight = Set<String>()
     private var courseNoteWriteTasksByItemID: [String: Task<Void, Never>] = [:]
+    private var blankNoteMaterializationTask: Task<Void, Never>?
+    private var pendingBlankNoteText = ""
     private var lastCourseNoteReadRanOnMainThread: Bool?
     private var lastCourseNoteWriteRanOnMainThread: Bool?
     private var lastCourseHomeSearchRanOnMainThread: Bool?
@@ -674,6 +711,7 @@ final class WorkspaceStore: ObservableObject {
     private let notebookMarkdownWriter: (String, URL) throws -> Void
     private let notebookFileMover: (URL, URL) throws -> Void
     private let courseFileSourceRemover: @Sendable (URL) throws -> Void
+    private let contentSourceTrashMover: @Sendable (URL) throws -> URL
     private let workspaceSnapshotWriter: (Data, URL) throws -> Void
     private let coursePortableStateWriter:
         (
@@ -814,9 +852,6 @@ final class WorkspaceStore: ObservableObject {
 
     private struct CourseContextBuildResult: Sendable {
         var context: StudyAgentCourseContext
-        var selectedMaterialText: String?
-        var selectedMaterialIsTruncated: Bool
-        var selectedNoteText: String?
     }
 
     private struct AgentHostToolSource: Sendable {
@@ -1069,6 +1104,13 @@ final class WorkspaceStore: ObservableObject {
         var metadata: CourseFileSourceInfo
     }
 
+    private struct CreatedManagedCourseRoot {
+        var root: URL
+        var relativePath: String
+        var identity: ImportedFileIdentity
+        var fingerprint: TransactionDirectoryFingerprint
+    }
+
     private var lastUsableAgentAnswer: AgentMessage? {
         return messages.last { $0.isUsableAgentAnswer }
     }
@@ -1098,6 +1140,17 @@ final class WorkspaceStore: ObservableObject {
         courseFileSourceRemover: @escaping @Sendable (URL) throws -> Void = {
             try FileManager.default.removeItem(at: $0)
         },
+        contentSourceTrashMover: @escaping @Sendable (URL) throws -> URL = {
+            var trashedURL: NSURL?
+            try FileManager.default.trashItem(
+                at: $0,
+                resultingItemURL: &trashedURL
+            )
+            guard let trashedURL else {
+                throw ContentSourceRemovalError.trashMoveFailed
+            }
+            return trashedURL as URL
+        },
         workspaceSnapshotWriter: @escaping (Data, URL) throws -> Void = WorkspaceStore.writeWorkspaceSnapshot,
         coursePortableStateWriter: @escaping (
             Data,
@@ -1124,6 +1177,7 @@ final class WorkspaceStore: ObservableObject {
         self.notebookMarkdownWriter = notebookMarkdownWriter
         self.notebookFileMover = notebookFileMover
         self.courseFileSourceRemover = courseFileSourceRemover
+        self.contentSourceTrashMover = contentSourceTrashMover
         self.workspaceSnapshotWriter = workspaceSnapshotWriter
         self.coursePortableStateWriter = coursePortableStateWriter
         self.selectionAskThreadDefaults = selectionAskThreadDefaults
@@ -1190,9 +1244,7 @@ final class WorkspaceStore: ObservableObject {
             removePendingNotebookRenameJournal()
         }
         floatingSelectionPrompt = ui("当前选区", "Current selection")
-        if selectedItemID == nil {
-            select(itemID: sampleItems[0].id)
-        } else {
+        if selectedItemID != nil {
             restoreCurrentStudyLocation()
             recordCurrentStudyLocation(incrementVisit: false)
         }
@@ -1360,8 +1412,7 @@ final class WorkspaceStore: ObservableObject {
             return studyLocation(for: item.id, in: courseID)
         }
         let activeChatID: UUID? = activeStudySession.flatMap { session in
-            guard session.courseID == courseID,
-                  session.scopeNeedsReview == false,
+            guard session.relatedCourseIDs.contains(courseID),
                   !session.messages.isEmpty else {
                 return nil
             }
@@ -1470,98 +1521,24 @@ final class WorkspaceStore: ObservableObject {
                 : CourseProjectRootError.unavailableLibrary
         }
 
-        let targetRoot = try CourseProjectPathPolicy.newDirectory(rootURL)
-        try validateCourseProjectRoot(
-            targetRoot,
-            identity: nil,
-            mustBeInsideLibrary: true
-        )
-        guard let relativePath = CourseProjectPathPolicy.relativePath(
-            of: targetRoot,
-            inside: libraryRoot
-        ) else {
-            throw CourseProjectRootError.rootOutsideLibrary
-        }
-
-        let parent = targetRoot.deletingLastPathComponent()
-        guard let parentIdentity = importedFileIdentityResolver(parent) else {
-            throw CourseProjectRootError.rootIdentityUnavailable
-        }
         let courseID = UUID()
-        let stagingRoot = parent.appendingPathComponent(
-            ".weibei-course-staging-\(courseID.uuidString.lowercased())",
-            isDirectory: true
+        let createdRoot = try createManagedCourseRoot(
+            courseID: courseID,
+            at: rootURL,
+            libraryRoot: libraryRoot
         )
-        var placedRoot = false
-        var ownedTreeFingerprint: TransactionDirectoryFingerprint?
         let previousCourses = courses
         let previousCourseKnowledgeProfiles = courseKnowledgeProfiles
         let previousActiveCourseID = activeCourseID
 
         do {
-            try FileManager.default.createDirectory(at: stagingRoot, withIntermediateDirectories: false)
-            guard let createdStagingIdentity = importedFileIdentityResolver(stagingRoot) else {
-                throw CourseProjectRootError.rootIdentityUnavailable
-            }
-            guard let createdFingerprint = transactionDirectoryFingerprint(at: stagingRoot) else {
-                throw CourseProjectRootError.rootIdentityUnavailable
-            }
-            ownedTreeFingerprint = createdFingerprint
-            try courseProjectMutationHook(.afterStagingDirectory)
-            for directoryName in ["文稿", "笔记", ".weibei"] {
-                try FileManager.default.createDirectory(
-                    at: stagingRoot.appendingPathComponent(directoryName, isDirectory: true),
-                    withIntermediateDirectories: false
-                )
-            }
-            guard let preparedFingerprint = transactionDirectoryFingerprint(at: stagingRoot) else {
-                throw CourseProjectRootError.rootIdentityUnavailable
-            }
-            ownedTreeFingerprint = preparedFingerprint
-            try courseProjectMutationHook(.beforeManifestWrite)
-            let stagedManifestURL = stagingRoot.appendingPathComponent(".weibei/course.json")
-            try CourseProjectManifest(courseID: courseID)
-                .encoded()
-                .write(to: stagedManifestURL, options: [.atomic])
-            let stagedManifest = try CourseProjectManifest.read(from: stagedManifestURL)
-            guard stagedManifest.courseID == courseID,
-                  stagedManifest.schemaVersion == CourseProjectManifest.currentSchemaVersion else {
-                throw CourseProjectRootError.manifestMismatch
-            }
-            guard let completeFingerprint = transactionDirectoryFingerprint(at: stagingRoot) else {
-                throw CourseProjectRootError.rootIdentityUnavailable
-            }
-            ownedTreeFingerprint = completeFingerprint
-            try courseProjectMutationHook(.beforeAtomicPlacement)
-            guard importedFileIdentityResolver(parent) == parentIdentity,
-                  !FileManager.default.fileExists(atPath: targetRoot.path) else {
-                throw CourseProjectRootError.overlappingRoot
-            }
-            try validateCourseProjectRoot(
-                targetRoot,
-                identity: nil,
-                mustBeInsideLibrary: true
-            )
-            try FileManager.default.moveItem(at: stagingRoot, to: targetRoot)
-            placedRoot = true
-
-            let canonicalRoot = try CourseProjectPathPolicy.existingDirectory(targetRoot)
-            guard let identity = importedFileIdentityResolver(canonicalRoot),
-                  identity == createdStagingIdentity else {
-                throw CourseProjectRootError.rootIdentityUnavailable
-            }
-            try validateCourseProjectRoot(
-                canonicalRoot,
-                identity: identity,
-                mustBeInsideLibrary: true
-            )
             let course = Course(
                 id: courseID,
                 title: title,
                 colorIndex: nextCourseColorIndex(),
                 sourceRootPath: nil,
-                sourceRootRelativePath: relativePath,
-                sourceRootIdentity: identity,
+                sourceRootRelativePath: createdRoot.relativePath,
+                sourceRootIdentity: createdRoot.identity,
                 sourceRootBookmarkData: nil
             )
             courses.append(course)
@@ -1569,7 +1546,7 @@ final class WorkspaceStore: ObservableObject {
                 CourseKnowledgeProfile(courseID: course.id)
             )
             activeCourseID = course.id
-            resolvedCourseRootURLs[course.id] = canonicalRoot
+            resolvedCourseRootURLs[course.id] = createdRoot.root
             courseRootUnavailableReasons.removeValue(forKey: course.id)
             guard await persistWorkspaceNow() else {
                 throw CourseProjectRootError.workspaceSaveFailed
@@ -1589,10 +1566,126 @@ final class WorkspaceStore: ObservableObject {
             activeCourseID = previousActiveCourseID
             resolvedCourseRootURLs.removeValue(forKey: courseID)
             courseRootUnavailableReasons.removeValue(forKey: courseID)
-            if let ownedTreeFingerprint {
+            safelyRemoveTransactionDirectory(
+                at: createdRoot.root,
+                expected: createdRoot.fingerprint
+            )
+            throw error
+        }
+    }
+
+    private func createManagedCourseRoot(
+        courseID: UUID,
+        at rootURL: URL,
+        libraryRoot: URL
+    ) throws -> CreatedManagedCourseRoot {
+        let targetRoot = try CourseProjectPathPolicy.newDirectory(rootURL)
+        try validateCourseProjectRoot(
+            targetRoot,
+            identity: nil,
+            mustBeInsideLibrary: true
+        )
+        guard let relativePath = CourseProjectPathPolicy.relativePath(
+            of: targetRoot,
+            inside: libraryRoot
+        ) else {
+            throw CourseProjectRootError.rootOutsideLibrary
+        }
+        let parent = targetRoot.deletingLastPathComponent()
+        guard let parentIdentity = importedFileIdentityResolver(parent) else {
+            throw CourseProjectRootError.rootIdentityUnavailable
+        }
+        let stagingRoot = parent.appendingPathComponent(
+            ".weibei-course-staging-\(courseID.uuidString.lowercased())",
+            isDirectory: true
+        )
+        var placedRoot = false
+        var fingerprint: TransactionDirectoryFingerprint?
+        do {
+            try FileManager.default.createDirectory(
+                at: stagingRoot,
+                withIntermediateDirectories: false
+            )
+            guard let stagingIdentity = importedFileIdentityResolver(
+                stagingRoot
+            ),
+            let createdFingerprint = transactionDirectoryFingerprint(
+                at: stagingRoot
+            ) else {
+                throw CourseProjectRootError.rootIdentityUnavailable
+            }
+            fingerprint = createdFingerprint
+            try courseProjectMutationHook(.afterStagingDirectory)
+            for directoryName in ["文稿", "笔记", ".weibei"] {
+                try FileManager.default.createDirectory(
+                    at: stagingRoot.appendingPathComponent(
+                        directoryName,
+                        isDirectory: true
+                    ),
+                    withIntermediateDirectories: false
+                )
+            }
+            guard let preparedFingerprint = transactionDirectoryFingerprint(
+                at: stagingRoot
+            ) else {
+                throw CourseProjectRootError.rootIdentityUnavailable
+            }
+            fingerprint = preparedFingerprint
+            try courseProjectMutationHook(.beforeManifestWrite)
+            let manifestURL = stagingRoot.appendingPathComponent(
+                ".weibei/course.json"
+            )
+            try CourseProjectManifest(courseID: courseID)
+                .encoded()
+                .write(to: manifestURL, options: [.atomic])
+            let manifest = try CourseProjectManifest.read(from: manifestURL)
+            guard manifest.courseID == courseID,
+                  manifest.schemaVersion ==
+                    CourseProjectManifest.currentSchemaVersion,
+                  let completeFingerprint =
+                    transactionDirectoryFingerprint(at: stagingRoot) else {
+                throw CourseProjectRootError.manifestMismatch
+            }
+            fingerprint = completeFingerprint
+            try courseProjectMutationHook(.beforeAtomicPlacement)
+            guard importedFileIdentityResolver(parent) == parentIdentity,
+                  !FileManager.default.fileExists(atPath: targetRoot.path)
+            else {
+                throw CourseProjectRootError.overlappingRoot
+            }
+            try validateCourseProjectRoot(
+                targetRoot,
+                identity: nil,
+                mustBeInsideLibrary: true
+            )
+            try FileManager.default.moveItem(at: stagingRoot, to: targetRoot)
+            placedRoot = true
+            let canonicalRoot = try CourseProjectPathPolicy.existingDirectory(
+                targetRoot
+            )
+            guard let identity = importedFileIdentityResolver(canonicalRoot),
+                  identity == stagingIdentity,
+                  let finalFingerprint = transactionDirectoryFingerprint(
+                    at: canonicalRoot
+                  ) else {
+                throw CourseProjectRootError.rootIdentityUnavailable
+            }
+            try validateCourseProjectRoot(
+                canonicalRoot,
+                identity: identity,
+                mustBeInsideLibrary: true
+            )
+            return CreatedManagedCourseRoot(
+                root: canonicalRoot,
+                relativePath: relativePath,
+                identity: identity,
+                fingerprint: finalFingerprint
+            )
+        } catch {
+            if let fingerprint {
                 safelyRemoveTransactionDirectory(
                     at: placedRoot ? targetRoot : stagingRoot,
-                    expected: ownedTreeFingerprint
+                    expected: fingerprint
                 )
             }
             throw error
@@ -1631,6 +1724,7 @@ final class WorkspaceStore: ObservableObject {
             guard importedFileIdentityResolver(resolvedRoot) == identity else {
                 throw CourseProjectRootError.bookmarkResolutionFailed
             }
+            try await ensureCommonContentDirectories(at: resolvedRoot)
         } catch {
             courseSecurityScopeStopper(scopedURL)
             throw error
@@ -1657,6 +1751,7 @@ final class WorkspaceStore: ObservableObject {
         courseLibraryRootURL = resolvedRoot
         courseLibraryUnavailableReason = nil
         _ = restoreCourseReferencesInsideLibrary()
+        _ = await migrateLegacySharedMaterials(in: resolvedRoot)
         for course in courses where resolvedCourseRootURLs[course.id] != nil {
             _ = resolveCourseOwnedItems(for: course.id)
         }
@@ -1679,6 +1774,15 @@ final class WorkspaceStore: ObservableObject {
             courseItemMemberships = previousMemberships
             noteBackingContentDigestsByItemID = previousNoteBackingDigests
             throw CourseProjectRootError.workspaceSaveFailed
+        }
+        let legacyOrganization = await organizeLegacyCourses(
+            in: resolvedRoot
+        )
+        if !legacyOrganization.errors.isEmpty {
+            noteFileError = ui(
+                "已有 \(legacyOrganization.migrated) 份旧资料完成整理；另有 \(legacyOrganization.errors.count) 份未完成：\(legacyOrganization.errors.first ?? "")",
+                "Organized \(legacyOrganization.migrated) legacy item(s); \(legacyOrganization.errors.count) remain: \(legacyOrganization.errors.first ?? "")"
+            )
         }
         courseDocumentSearchIndex.synchronize(allItems)
         invalidateAgentContext()
@@ -1704,6 +1808,194 @@ final class WorkspaceStore: ObservableObject {
             } else {
                 courseSecurityScopeStopper(previousScope)
             }
+        }
+    }
+
+    private func organizeLegacyCourses(
+        in libraryRoot: URL
+    ) async -> (migrated: Int, errors: [String]) {
+        let rootlessCourseIDs = courses.compactMap { course -> UUID? in
+            guard course.sourceRootPath == nil,
+                  course.sourceRootRelativePath == nil,
+                  course.sourceRootIdentity == nil else {
+                return nil
+            }
+            return course.id
+        }
+        var errors: [String] = []
+        var createdRoots: [CreatedManagedCourseRoot] = []
+        let previousCourses = courses
+        let previousResolvedRoots = resolvedCourseRootURLs
+
+        for courseID in rootlessCourseIDs {
+            guard let index = courses.firstIndex(where: {
+                $0.id == courseID
+            }) else { continue }
+            do {
+                let target = try availableLegacyCourseRoot(
+                    title: courses[index].title,
+                    libraryRoot: libraryRoot
+                )
+                let created = try createManagedCourseRoot(
+                    courseID: courseID,
+                    at: target,
+                    libraryRoot: libraryRoot
+                )
+                createdRoots.append(created)
+                courses[index].sourceRootPath = nil
+                courses[index].sourceRootRelativePath =
+                    created.relativePath
+                courses[index].sourceRootIdentity = created.identity
+                courses[index].sourceRootBookmarkData = nil
+                courses[index].updatedAt = Date()
+                resolvedCourseRootURLs[courseID] = created.root
+                courseRootUnavailableReasons.removeValue(forKey: courseID)
+            } catch {
+                errors.append(
+                    "\(courses[index].title)：\(error.localizedDescription)"
+                )
+            }
+        }
+        if !createdRoots.isEmpty,
+           !(await persistWorkspaceNow()) {
+            courses = previousCourses
+            resolvedCourseRootURLs = previousResolvedRoots
+            for created in createdRoots {
+                safelyRemoveTransactionDirectory(
+                    at: created.root,
+                    expected: created.fingerprint
+                )
+            }
+            return (
+                0,
+                errors + [CourseProjectRootError.workspaceSaveFailed
+                    .localizedDescription]
+            )
+        }
+
+        let membershipsBeforeMigration = courseItemMemberships
+        let legacyItems = importedItems.filter { item in
+            guard case .legacyExternal = item.storage else { return false }
+            return membershipsBeforeMigration.contains {
+                $0.itemID == item.id
+            }
+        }
+        var migrated = 0
+        for item in legacyItems {
+            let relatedCourseIDs = Set(
+                membershipsBeforeMigration.filter {
+                    $0.itemID == item.id
+                }.map(\.courseID).filter {
+                    courseRootURL(for: $0) != nil
+                }
+            )
+            guard !relatedCourseIDs.isEmpty else { continue }
+            do {
+                try await organizeLegacyItem(
+                    item,
+                    courseIDs: relatedCourseIDs
+                )
+                migrated += 1
+            } catch {
+                errors.append(
+                    "\(displayTitle(for: item))：\(error.localizedDescription)"
+                )
+            }
+        }
+        return (migrated, errors)
+    }
+
+    private func availableLegacyCourseRoot(
+        title: String,
+        libraryRoot: URL
+    ) throws -> URL {
+        let rawName = MarkdownAttachmentStore.safeFileStem(
+            title,
+            fallback: "课程",
+            limit: 80
+        ).trimmingCharacters(
+            in: CharacterSet.whitespacesAndNewlines.union(
+                CharacterSet(charactersIn: ".")
+            )
+        )
+        guard !rawName.isEmpty else {
+            throw CourseProjectRootError.invalidDirectoryName
+        }
+        for suffix in 1...9_999 {
+            let name = suffix == 1 ? rawName : "\(rawName) \(suffix)"
+            let candidate = libraryRoot.appendingPathComponent(
+                name,
+                isDirectory: true
+            )
+            guard !FileManager.default.fileExists(atPath: candidate.path)
+            else { continue }
+            if (try? validateCourseProjectRoot(
+                candidate,
+                identity: nil,
+                mustBeInsideLibrary: true
+            )) != nil {
+                return candidate
+            }
+        }
+        throw CourseProjectRootError.invalidDirectoryName
+    }
+
+    private func organizeLegacyItem(
+        _ item: StudyItem,
+        courseIDs: Set<UUID>
+    ) async throws {
+        guard let sourceURL = item.url,
+              let ownerCourseID = courseIDs.sorted(by: {
+                  $0.uuidString < $1.uuidString
+              }).first else {
+            throw CourseOwnedFileError.sourceMustBeRegularFile
+        }
+        let sourceInfo = try await courseProjectFileWorker
+            .validatedRegularSource(sourceURL)
+        let sourceSnapshot = try await courseProjectFileWorker.stableSnapshot(
+            at: sourceInfo.url,
+            expectedIdentity: sourceInfo.identity
+        )
+        let temporaryDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(
+                "WeiBei-Legacy-\(UUID().uuidString.lowercased())",
+                isDirectory: true
+            )
+        try FileManager.default.createDirectory(
+            at: temporaryDirectory,
+            withIntermediateDirectories: false
+        )
+        defer { try? FileManager.default.removeItem(at: temporaryDirectory) }
+        let temporarySource = temporaryDirectory.appendingPathComponent(
+            sourceURL.lastPathComponent
+        )
+        let temporaryIdentity = try await courseProjectFileWorker
+            .copyAndVerify(
+                from: sourceInfo.url,
+                generatedData: nil,
+                to: temporarySource,
+                expectedSnapshot: sourceSnapshot
+            )
+        let role: CourseOwnedFileRole = item.isNotebookNote
+            ? .note
+            : .material
+        _ = try await transactCourseOwnedFile(
+            courseID: ownerCourseID,
+            role: role,
+            fileName: sourceURL.lastPathComponent,
+            sourceURL: temporarySource,
+            sourceIdentity: temporaryIdentity,
+            generatedData: nil,
+            conflictResolution: .keepBoth(preferredFileName: nil),
+            preservingItemID: item.id,
+            additionalCourseIDs: courseIDs
+        )
+        for courseID in courseIDs where courseID != ownerCourseID {
+            try await shareCourseOwnedItem(
+                itemID: item.id,
+                withCourseID: courseID,
+                conflictResolution: .keepBoth(preferredFileName: nil)
+            )
         }
     }
 
@@ -3155,7 +3447,18 @@ final class WorkspaceStore: ObservableObject {
             ) = state.items[index].storage else {
                 continue
             }
+            let role: CourseOwnedFileRole = state.items[index].isNotebookNote
+                ? .note
+                : .material
+            let sharedDirectoryName = sharedRelativePath.split(
+                separator: "/"
+            ).first.map(String.init)
+            let allowedSharedDirectoryNames: Set<String> = role == .note
+                ? [role.commonDirectoryName]
+                : [role.commonDirectoryName, "共享文稿"]
             guard let expectedContentDigest,
+                  let sharedDirectoryName,
+                  allowedSharedDirectoryNames.contains(sharedDirectoryName),
                   let item = itemsByID[state.items[index].itemID],
                   let membership =
                     membershipsByItemID[state.items[index].itemID],
@@ -3178,7 +3481,7 @@ final class WorkspaceStore: ObservableObject {
                   CourseProjectPathPolicy.isSame(
                       expectedSharedURL.deletingLastPathComponent(),
                       libraryRoot.appendingPathComponent(
-                          "共享文稿",
+                          sharedDirectoryName,
                           isDirectory: true
                       )
                       .resolvingSymlinksInPath()
@@ -3227,10 +3530,7 @@ final class WorkspaceStore: ObservableObject {
         state = try state.validated(expectedCourseID: courseID)
         let sharedDirectory = sharedMaterials.isEmpty
             ? nil
-            : courseLibraryRootURL?.appendingPathComponent(
-                "共享文稿",
-                isDirectory: true
-            )
+            : courseLibraryRootURL
         if !sharedMaterials.isEmpty, sharedDirectory == nil {
             throw CourseProjectRootError.unavailableLibrary
         }
@@ -3356,10 +3656,12 @@ final class WorkspaceStore: ObservableObject {
         guard conflictResolution != .replace else {
             throw CourseOwnedFileError.replacementTargetIsShared
         }
-        guard let itemIndex = importedItems.firstIndex(where: { $0.id == itemID }),
-              !importedItems[itemIndex].isNotebookNote else {
+        guard let itemIndex = importedItems.firstIndex(where: { $0.id == itemID }) else {
             throw CourseOwnedFileError.unsupportedFile
         }
+        let role: CourseOwnedFileRole = importedItems[itemIndex].isNotebookNote
+            ? .note
+            : .material
         if case .shared = importedItems[itemIndex].storage {
             try await linkSharedItem(
                 itemID: itemID,
@@ -3380,7 +3682,7 @@ final class WorkspaceStore: ObservableObject {
               let sourceRelativePath = courseItemMemberships[ownerMembershipIndex].courseRelativePath,
               let sourceURL = safeCourseOwnedFileURL(
                 relativePath: sourceRelativePath,
-                role: .material,
+                role: role,
                 inside: ownerRoot
               ),
               let libraryRoot = courseLibraryRootURL else {
@@ -3400,26 +3702,32 @@ final class WorkspaceStore: ObservableObject {
             expectedIdentity: sourceInfo.identity
         )
         let sharedDirectory = try await courseProjectFileWorker.ensureRealDirectory(
-            libraryRoot.appendingPathComponent("共享文稿", isDirectory: true),
+            libraryRoot.appendingPathComponent(
+                role.commonDirectoryName,
+                isDirectory: true
+            ),
             inside: libraryRoot
         )
         let sharedTarget = try resolvedCourseImportTarget(
             fileName: sourceURL.lastPathComponent,
             destinationDirectory: sharedDirectory,
-            role: .material,
+            role: role,
             conflictResolution: conflictResolution
         )
         if FileManager.default.fileExists(atPath: sharedTarget.path) {
             throw CourseOwnedFileError.replacementTargetIsShared
         }
         let addedDirectory = try await courseProjectFileWorker.ensureRealDirectory(
-            addedRoot.appendingPathComponent("文稿", isDirectory: true),
+            addedRoot.appendingPathComponent(
+                role.directoryName,
+                isDirectory: true
+            ),
             inside: addedRoot
         )
         let addedLinkURL = try resolvedCourseImportTarget(
             fileName: sharedTarget.lastPathComponent,
             destinationDirectory: addedDirectory,
-            role: .material,
+            role: role,
             conflictResolution: conflictResolution == .replace ? .cancel : conflictResolution
         )
         let transactionID = UUID()
@@ -3460,11 +3768,11 @@ final class WorkspaceStore: ObservableObject {
         let sharedRelativePath = CourseProjectPathPolicy.relativePath(
             of: sharedTarget,
             inside: libraryRoot
-        ) ?? "共享文稿/\(sharedTarget.lastPathComponent)"
+        ) ?? "\(role.commonDirectoryName)/\(sharedTarget.lastPathComponent)"
         let addedRelativePath = CourseProjectPathPolicy.relativePath(
             of: addedLinkURL,
             inside: addedRoot
-        ) ?? "文稿/\(addedLinkURL.lastPathComponent)"
+        ) ?? "\(role.directoryName)/\(addedLinkURL.lastPathComponent)"
         var journal = PendingSharedFileTransactionJournal(
             transactionID: transactionID,
             transactionDirectoryIdentity: transactionDirectoryIdentity,
@@ -3818,8 +4126,19 @@ final class WorkspaceStore: ObservableObject {
                 sharedRelativePath,
                 inside: libraryRoot
               ),
-              CourseProjectPathPolicy.isSame(expectedSharedURL, sharedURL),
-              sharedRelativePath == "共享文稿/\(expectedSharedURL.lastPathComponent)" else {
+              CourseProjectPathPolicy.isSame(expectedSharedURL, sharedURL) else {
+            throw CourseOwnedFileError.courseRootUnavailable
+        }
+        let role: CourseOwnedFileRole = importedItems[itemIndex].isNotebookNote
+            ? .note
+            : .material
+        let allowedSharedDirectories: Set<Substring> = role == .note
+            ? [Substring(role.commonDirectoryName)]
+            : [Substring(role.commonDirectoryName), "共享文稿"]
+        let sharedComponents = sharedRelativePath.split(separator: "/")
+        guard sharedComponents.count == 2,
+              allowedSharedDirectories.contains(sharedComponents[0]),
+              sharedComponents[1] == Substring(sharedURL.lastPathComponent) else {
             throw CourseOwnedFileError.courseRootUnavailable
         }
         if courseItemMemberships.contains(where: {
@@ -3835,13 +4154,16 @@ final class WorkspaceStore: ObservableObject {
             expectedIdentity: sharedInfo.identity
         )
         let materialDirectory = try await courseProjectFileWorker.ensureRealDirectory(
-            courseRoot.appendingPathComponent("文稿", isDirectory: true),
+            courseRoot.appendingPathComponent(
+                role.directoryName,
+                isDirectory: true
+            ),
             inside: courseRoot
         )
         let linkURL = try resolvedCourseImportTarget(
             fileName: sharedURL.lastPathComponent,
             destinationDirectory: materialDirectory,
-            role: .material,
+            role: role,
             conflictResolution: conflictResolution == .replace ? .cancel : conflictResolution
         )
         guard let linkRelativePath = CourseProjectPathPolicy.relativePath(
@@ -6262,7 +6584,10 @@ final class WorkspaceStore: ObservableObject {
                 journal.sharedRelativePath,
                 inside: libraryRoot
               ),
-              journal.sharedRelativePath == "共享文稿/\(sharedURL.lastPathComponent)",
+              isKnownCommonRelativePath(
+                journal.sharedRelativePath,
+                fileName: sharedURL.lastPathComponent
+              ),
               CourseProjectPathPolicy.isSame(
                 sharedURL,
                 URL(fileURLWithPath: journal.sharedPath).resolvingSymlinksInPath()
@@ -6390,7 +6715,10 @@ final class WorkspaceStore: ObservableObject {
                 URL(fileURLWithPath: journal.sharedPath)
                     .resolvingSymlinksInPath()
             ),
-            journal.sharedRelativePath == "共享文稿/\(sharedURL.lastPathComponent)",
+            isKnownCommonRelativePath(
+                journal.sharedRelativePath,
+                fileName: sharedURL.lastPathComponent
+            ),
             CourseProjectPathPolicy.isSame(
                 linkURL,
                 backgroundCanonicalRawPath(
@@ -6536,7 +6864,10 @@ final class WorkspaceStore: ObservableObject {
                 URL(fileURLWithPath: journal.sharedPath)
                     .resolvingSymlinksInPath()
               ),
-              journal.sharedRelativePath == "共享文稿/\(expectedShared.lastPathComponent)" else {
+              isKnownCommonRelativePath(
+                journal.sharedRelativePath,
+                fileName: expectedShared.lastPathComponent
+              ) else {
             return
         }
         let sourceURL = expectedSource
@@ -6795,6 +7126,17 @@ final class WorkspaceStore: ObservableObject {
                 linkURL.resolvingSymlinksInPath(),
                 destination.resolvingSymlinksInPath()
             )
+    }
+
+    nonisolated private static func isKnownCommonRelativePath(
+        _ relativePath: String,
+        fileName: String
+    ) -> Bool {
+        let components = relativePath.split(separator: "/")
+        return components.count == 2
+            && ["通用资料", "通用笔记", "共享文稿"]
+                .contains(String(components[0]))
+            && components[1] == Substring(fileName)
     }
 
     nonisolated private static func backgroundIsolateAndRemoveMatchingLink(
@@ -7757,12 +8099,20 @@ final class WorkspaceStore: ObservableObject {
                 || CourseProjectPathPolicy.contains(root, libraryRoot, includingRoot: false) {
                 throw CourseProjectRootError.dangerousRoot
             }
-            let sharedDirectory = libraryRoot.appendingPathComponent(
+            for directoryName in [
+                CourseOwnedFileRole.material.commonDirectoryName,
+                CourseOwnedFileRole.note.commonDirectoryName,
                 "共享文稿",
-                isDirectory: true
-            )
-            if CourseProjectPathPolicy.overlaps(root, sharedDirectory) {
-                throw CourseProjectRootError.dangerousRoot
+            ] {
+                if CourseProjectPathPolicy.overlaps(
+                    root,
+                    libraryRoot.appendingPathComponent(
+                        directoryName,
+                        isDirectory: true
+                    )
+                ) {
+                    throw CourseProjectRootError.dangerousRoot
+                }
             }
             if mustBeInsideLibrary,
                !CourseProjectPathPolicy.contains(libraryRoot, root, includingRoot: false) {
@@ -8641,9 +8991,7 @@ final class WorkspaceStore: ObservableObject {
                 expectedCourse,
                 root,
                 rootIdentity,
-                studySessions.filter {
-                    $0.courseID == courseID
-                }.map(\.id),
+                [],
                 token
             )
         } catch {
@@ -8677,17 +9025,6 @@ final class WorkspaceStore: ObservableObject {
     }
 
     private func removeCourseLocalRegistration(_ courseID: UUID) {
-        let removingActiveSession = activeStudySession?.courseID
-            == courseID
-        let removedSessions = studySessions.filter {
-            $0.courseID == courseID
-        }
-        let removedSessionIDs = Set(removedSessions.map(\.id))
-        let removedMessageIDs = Set(
-            removedSessions.flatMap {
-                $0.messages.map(\.id)
-            }
-        )
         let removedItemIDs = Set(
             importedItems.compactMap { item -> String? in
                 guard case .courseOwned(let ownerCourseID) = item.storage,
@@ -8725,6 +9062,14 @@ final class WorkspaceStore: ObservableObject {
             removedItemIDs.contains($0.noteItemID)
                 || removedItemIDs.contains($0.sourceItemID)
         }
+        materialNotePairings = materialNotePairings.filter {
+            !removedItemIDs.contains($0.key)
+                && !removedItemIDs.contains($0.value)
+        }
+        noteMaterialPairings = noteMaterialPairings.filter {
+            !removedItemIDs.contains($0.key)
+                && !removedItemIDs.contains($0.value)
+        }
         studyLocationsByCourseID.removeValue(
             forKey: courseID.uuidString
         )
@@ -8735,19 +9080,18 @@ final class WorkspaceStore: ObservableObject {
         courseKnowledgeProfiles.removeAll { $0.courseID == courseID }
         courses.removeAll { $0.id == courseID }
 
-        studySessions.removeAll { $0.courseID == courseID }
-        for sessionID in removedSessionIDs {
-            agentDraftsBySessionID.removeValue(forKey: sessionID)
-        }
-        if freshlyCreatedEmptyStudySessionID.map(
-            removedSessionIDs.contains
-        ) == true {
-            freshlyCreatedEmptyStudySessionID = nil
-        }
-        if pendingAgentSwitchTargetID.map(
-            removedSessionIDs.contains
-        ) == true {
-            dismissAgentSwitchConfirmation()
+        for index in studySessions.indices {
+            studySessions[index].relatedCourseIDs.removeAll {
+                $0 == courseID
+            }
+            studySessions[index].focusItemIDs.removeAll {
+                removedItemIDs.contains($0)
+            }
+            if studySessions[index].materialItemID.map(
+                removedItemIDs.contains
+            ) == true {
+                studySessions[index].materialItemID = nil
+            }
         }
 
         selectionAskThreads = selectionAskThreads.compactMap {
@@ -8755,17 +9099,7 @@ final class WorkspaceStore: ObservableObject {
             if thread.itemID.map(removedItemIDs.contains) == true {
                 return nil
             }
-            var retained = thread
-            let originallyHadMessages =
-                !retained.messageIDs.isEmpty
-            retained.messageIDs.removeAll {
-                removedMessageIDs.contains($0)
-            }
-            if originallyHadMessages
-                && retained.messageIDs.isEmpty {
-                return nil
-            }
-            return retained
+            return thread
         }
         if activeSelectionAskThreadID.map({ id in
             !selectionAskThreads.contains { $0.id == id }
@@ -8794,8 +9128,9 @@ final class WorkspaceStore: ObservableObject {
         }
 
         if selectedItemID.map(removedItemIDs.contains) == true {
-            selectedItemID = importedItems.first?.id
-                ?? sampleItems.first?.id
+            selectedItemID = importedItems.first(where: {
+                !$0.isNotebookNote
+            })?.id
         }
         if activeNotebookItemID.map(
             removedItemIDs.contains
@@ -8815,11 +9150,6 @@ final class WorkspaceStore: ObservableObject {
             courseWorkspaceTargetItemID = nil
         }
 
-        if activeStudySessionID.map(
-            removedSessionIDs.contains
-        ) == true {
-            activeStudySessionID = nil
-        }
         ensureActiveStudySession()
         if let activeStudySessionID {
             restoreAgentDraft(for: activeStudySessionID)
@@ -8827,27 +9157,6 @@ final class WorkspaceStore: ObservableObject {
         if let activeStudySession {
             messages = activeStudySession.messages
             restoreAgentReplyState(from: activeStudySession)
-        }
-
-        if removingActiveSession {
-            pendingSelectionAttachmentTask?.cancel()
-            pendingSelectionAttachmentTask = nil
-            selectionContext = nil
-            selectionAttachments = []
-            selectionAnchor = nil
-            activeSelectionAskThreadID = nil
-            keepFloatingSelectionForAnswer = false
-            pinnedFloatingAgent = false
-            if agentSurface == .selectionFloat {
-                agentSurface = .hidden
-            }
-            latestAgentNoteProposal = nil
-            latestAgentLearningUpdate = nil
-            lastFailedAgentQuestion = nil
-            lastAgentFailureKind = nil
-            validatedAgentReplySourceIDs = []
-            lastAgentReplyContextRevision = nil
-            latestAgentLearningUpdateQuestion = nil
         }
 
         coursePortableStateRevisions.removeValue(forKey: courseID)
@@ -9339,6 +9648,180 @@ final class WorkspaceStore: ObservableObject {
         await deleteCoursePiSessions(journal.sessionIDs)
     }
 
+    private func promoteCourseOwnedItemToCommon(
+        itemID: String,
+        conflictResolution: CourseFileConflictResolution
+    ) async throws {
+        guard let itemIndex = importedItems.firstIndex(where: {
+            $0.id == itemID
+        }),
+        case .courseOwned(let ownerCourseID) =
+            importedItems[itemIndex].storage,
+        let ownerRoot = courseRootURL(for: ownerCourseID),
+        let membershipIndex = uniqueCourseOwnedMembershipIndex(
+            itemID: itemID,
+            courseID: ownerCourseID
+        ),
+        let relativePath = courseItemMemberships[membershipIndex]
+            .courseRelativePath,
+        let libraryRoot = courseLibraryRootURL else {
+            throw CourseOwnedFileError.courseRootUnavailable
+        }
+        let role: CourseOwnedFileRole = importedItems[itemIndex]
+            .isNotebookNote ? .note : .material
+        guard let sourceURL = safeCourseOwnedFileURL(
+            relativePath: relativePath,
+            role: role,
+            inside: ownerRoot
+        ) else {
+            throw CourseOwnedFileError.verificationFailed
+        }
+
+        try beginCourseFileMutation(courseIDs: [ownerCourseID])
+        defer { finishCourseFileMutation(courseIDs: [ownerCourseID]) }
+
+        let sourceInfo = try await courseProjectFileWorker
+            .validatedRegularSource(sourceURL)
+        let sourceSnapshot = try await courseProjectFileWorker.stableSnapshot(
+            at: sourceURL,
+            expectedIdentity: sourceInfo.identity
+        )
+        let commonDirectory = try await courseProjectFileWorker
+            .ensureRealDirectory(
+                libraryRoot.appendingPathComponent(
+                    role.commonDirectoryName,
+                    isDirectory: true
+                ),
+                inside: libraryRoot
+            )
+        let targetURL = try resolvedCourseImportTarget(
+            fileName: sourceURL.lastPathComponent,
+            destinationDirectory: commonDirectory,
+            role: role,
+            conflictResolution: conflictResolution
+        )
+        guard !FileManager.default.fileExists(atPath: targetURL.path),
+              let commonDirectoryIdentity = importedFileIdentityResolver(
+                commonDirectory
+              ) else {
+            throw CourseOwnedFileError.replacementTargetIsShared
+        }
+        let operationID = UUID()
+        let payloadURL = commonDirectory.appendingPathComponent(
+            ".\(targetURL.lastPathComponent).weibei-promote-\(operationID.uuidString.lowercased())"
+        )
+        let previousItems = importedItems
+        let previousMemberships = courseItemMemberships
+        var sharedIdentity: ImportedFileIdentity?
+        var workspaceCommitted = false
+
+        do {
+            let stagedIdentity = try await courseProjectFileWorker
+                .copyAndVerify(
+                    from: sourceURL,
+                    generatedData: nil,
+                    to: payloadURL,
+                    expectedSnapshot: sourceSnapshot
+                )
+            let placedIdentity = try await courseProjectFileWorker
+                .placeWithoutReplacement(
+                    from: payloadURL,
+                    to: targetURL,
+                    courseRoot: libraryRoot,
+                    destinationDirectory: commonDirectory,
+                    expectedDestinationIdentity: commonDirectoryIdentity,
+                    expectedSnapshot: sourceSnapshot
+                )
+            guard stagedIdentity == placedIdentity else {
+                throw CourseOwnedFileError.verificationFailed
+            }
+            sharedIdentity = placedIdentity
+            let targetInfo = try await courseProjectFileWorker.stableMetadata(
+                at: targetURL,
+                expectedIdentity: placedIdentity,
+                expectedSnapshot: sourceSnapshot
+            )
+            guard let sharedRelativePath = CourseProjectPathPolicy
+                .relativePath(of: targetURL, inside: libraryRoot) else {
+                throw CourseOwnedFileError.unsafeCoursePath
+            }
+
+            importedItems[itemIndex].urlPath = targetURL.path
+            importedItems[itemIndex].importedFileLastKnownPath =
+                targetURL.path
+            importedItems[itemIndex].importedFileIdentity = placedIdentity
+            importedItems[itemIndex].importedFileBookmarkData = nil
+            importedItems[itemIndex].storage = .shared(
+                sharedRelativePath: sharedRelativePath
+            )
+            importedItems[itemIndex].subtitle = targetURL.lastPathComponent
+            importedItems[itemIndex].fileByteCount = targetInfo.byteCount
+            importedItems[itemIndex]
+                .fileModificationTimeNanoseconds =
+                targetInfo.modificationTimeNanoseconds
+            courseItemMemberships.removeAll {
+                $0.itemID == itemID && $0.courseID == ownerCourseID
+            }
+            guard await persistWorkspaceNow() else {
+                throw CourseOwnedFileError.workspaceSaveFailed
+            }
+            workspaceCommitted = true
+
+            let cleanup = await courseProjectFileWorker
+                .isolateAndRemoveVerifiedFile(
+                    at: sourceURL,
+                    quarantineURL: sourceURL.deletingLastPathComponent()
+                        .appendingPathComponent(
+                            ".\(sourceURL.lastPathComponent).weibei-promote-cleanup-\(operationID.uuidString.lowercased())"
+                        ),
+                    expectedIdentity: sourceInfo.identity,
+                    expectedSnapshot: sourceSnapshot,
+                    remover: courseFileSourceRemover
+                )
+            if case .removed = cleanup {
+                noteFileError = nil
+            } else {
+                // ponytail: a crash here can leave one harmless old duplicate;
+                // add a cleanup journal only if this becomes observable in use.
+                noteFileError = ui(
+                    "课程关系已移除，但课程文件夹中的旧副本未能清理。",
+                    "The course relation was removed, but the old course copy could not be cleaned up."
+                )
+            }
+            courseDocumentSearchIndex.schedule([importedItems[itemIndex]])
+            invalidateAgentContext()
+        } catch {
+            if !workspaceCommitted {
+                importedItems = previousItems
+                courseItemMemberships = previousMemberships
+                if let sharedIdentity {
+                    _ = await courseProjectFileWorker
+                        .isolateAndRemoveVerifiedFile(
+                            at: targetURL,
+                            quarantineURL: commonDirectory
+                                .appendingPathComponent(
+                                    ".\(targetURL.lastPathComponent).weibei-promote-rollback-\(operationID.uuidString.lowercased())"
+                                ),
+                            expectedIdentity: sharedIdentity,
+                            expectedSnapshot: sourceSnapshot,
+                            remover: { try FileManager.default.removeItem(at: $0) }
+                        )
+                } else if FileManager.default.fileExists(
+                    atPath: payloadURL.path
+                ) {
+                    try? FileManager.default.removeItem(at: payloadURL)
+                }
+            }
+            throw error
+        }
+    }
+
+    func removeItem(_ itemID: String, fromCourseID courseID: UUID) {
+        var memberships = Set(courseIDs(for: itemID))
+        memberships.remove(courseID)
+        setCourseIDs(memberships, for: itemID)
+    }
+
     func setCourseIDs(_ courseIDs: Set<UUID>, for itemID: String) {
         guard let item = importedItems.first(where: { $0.id == itemID }) else { return }
         let validCourseIDs = Set(courses.map(\.id))
@@ -9387,13 +9870,19 @@ final class WorkspaceStore: ObservableObject {
            let courseID = added.first,
            let sourceURL = item.url {
             let movesOwnership = removed.contains(ownerCourseID)
+            let role: CourseOwnedFileRole = item.isNotebookNote
+                ? .note
+                : .material
             let verb = movesOwnership
                 ? ui("移到另一门课程", "Move to Another Course")
-                : ui("转为共享文稿", "Make Shared")
+                : ui(
+                    "转为\(role.commonDirectoryName)",
+                    "Move to common content"
+                )
             guard confirmManagedCourseMove(
                 sourceURL: sourceURL,
                 courseID: courseID,
-                role: item.isNotebookNote ? .note : .material,
+                role: role,
                 verb: verb
             ) else {
                 return
@@ -9401,12 +9890,15 @@ final class WorkspaceStore: ObservableObject {
             let sharedConflictTarget = movesOwnership
                 ? nil
                 : courseLibraryRootURL?
-                    .appendingPathComponent("共享文稿", isDirectory: true)
+                    .appendingPathComponent(
+                        role.commonDirectoryName,
+                        isDirectory: true
+                    )
                     .appendingPathComponent(sourceURL.lastPathComponent)
             let resolution = courseImportConflictResolution(
                 sourceURL: sourceURL,
                 courseID: courseID,
-                role: item.isNotebookNote ? .note : .material,
+                role: role,
                 allowsReplace: movesOwnership,
                 additionalProtectedTarget: sharedConflictTarget
             )
@@ -9432,19 +9924,58 @@ final class WorkspaceStore: ObservableObject {
             }
             return
         }
+        if case .courseOwned(let ownerCourseID) = item.storage,
+           added.isEmpty,
+           removed == [ownerCourseID],
+           let sourceURL = item.url,
+           let libraryRoot = courseLibraryRootURL {
+            let role: CourseOwnedFileRole = item.isNotebookNote
+                ? .note
+                : .material
+            let commonTarget = libraryRoot
+                .appendingPathComponent(
+                    role.commonDirectoryName,
+                    isDirectory: true
+                )
+                .appendingPathComponent(sourceURL.lastPathComponent)
+            guard confirmPromotionToCommon(
+                sourceURL: sourceURL,
+                targetURL: commonTarget
+            ),
+            let resolution = commonContentConflictResolution(
+                sourceURL: sourceURL,
+                targetURL: commonTarget
+            ) else {
+                return
+            }
+            Task { @MainActor [weak self] in
+                do {
+                    try await self?.promoteCourseOwnedItemToCommon(
+                        itemID: itemID,
+                        conflictResolution: resolution
+                    )
+                } catch {
+                    self?.noteFileError = error.localizedDescription
+                }
+            }
+            return
+        }
         if case .shared = item.storage {
+            let role: CourseOwnedFileRole = item.isNotebookNote
+                ? .note
+                : .material
             if let courseID = added.first,
                let sourceURL = item.url,
                confirmManagedCourseMove(
                 sourceURL: sourceURL,
                 courseID: courseID,
-                role: .material,
+                role: role,
                 verb: ui("加入另一门课程", "Add to Another Course")
                ),
                let resolution = courseImportConflictResolution(
                 sourceURL: sourceURL,
                 courseID: courseID,
-                role: .material,
+                role: role,
                 allowsReplace: false
                ) {
                 Task { @MainActor [weak self] in
@@ -9481,6 +10012,285 @@ final class WorkspaceStore: ObservableObject {
         memberships.replaceCourses(for: itemID, courseIDs: requested)
         courseItemMemberships = memberships.values
         save()
+    }
+
+    private func confirmPromotionToCommon(
+        sourceURL: URL,
+        targetURL: URL
+    ) -> Bool {
+        let alert = NSAlert()
+        alert.messageText = ui(
+            "从本课程移除",
+            "Remove from This Course"
+        )
+        alert.informativeText = ui(
+            "原文件会先复制到通用目录，再解除课程关系。\n来源：\(sourceURL.path)\n目标：\(targetURL.path)",
+            "The source will be copied to common content before its course relation is removed.\nSource: \(sourceURL.path)\nTarget: \(targetURL.path)"
+        )
+        alert.addButton(withTitle: ui("取消", "Cancel"))
+        alert.addButton(withTitle: ui("移除关系", "Remove Relation"))
+        return alert.runModal() == .alertSecondButtonReturn
+    }
+
+    private func commonContentConflictResolution(
+        sourceURL: URL,
+        targetURL: URL
+    ) -> CourseFileConflictResolution? {
+        guard FileManager.default.fileExists(atPath: targetURL.path) else {
+            return .cancel
+        }
+        let suggestedName = CourseKeepBothNaming.suggestedFileName(
+            originalName: sourceURL.lastPathComponent,
+            conflictingTargets: [targetURL]
+        )
+        let alert = NSAlert()
+        alert.messageText = ui(
+            "通用目录中已有同名文件",
+            "A file with this name already exists"
+        )
+        alert.informativeText = "\(ui("冲突目标", "Conflicting target"))：\(targetURL.path)"
+        let nameField = NSTextField(string: suggestedName)
+        nameField.setAccessibilityLabel(ui("新文件名", "New file name"))
+        nameField.widthAnchor.constraint(equalToConstant: 360).isActive = true
+        alert.accessoryView = nameField
+        alert.addButton(withTitle: ui("取消", "Cancel"))
+        alert.addButton(withTitle: ui("保留两份", "Keep Both"))
+        guard alert.runModal() == .alertSecondButtonReturn else {
+            return nil
+        }
+        let preferred = nameField.stringValue.trimmingCharacters(
+            in: .whitespacesAndNewlines
+        )
+        return .keepBoth(
+            preferredFileName: preferred.isEmpty ? suggestedName : preferred
+        )
+    }
+
+    func confirmMoveItemSourceToTrash(_ itemID: String) {
+        guard let item = importedItems.first(where: { $0.id == itemID }),
+              !item.isSample,
+              item.url != nil else {
+            noteFileError = ContentSourceRemovalError.itemUnavailable
+                .localizedDescription
+            return
+        }
+        let affectedCourses = courseIDs(for: itemID).compactMap {
+            course(withID: $0)?.title
+        }
+        let courseSummary = affectedCourses.isEmpty
+            ? ui("没有课程关系", "No course relations")
+            : affectedCourses.joined(separator: "、")
+        let alert = NSAlert()
+        alert.messageText = ui(
+            "将原文件移到废纸篓？",
+            "Move the Source File to Trash?"
+        )
+        alert.informativeText = ui(
+            "这会移动唯一原文件，并从所有课程中移除。受影响课程：\(courseSummary)",
+            "This moves the only source file and removes it from every course. Affected courses: \(courseSummary)"
+        )
+        alert.addButton(withTitle: ui("取消", "Cancel"))
+        alert.addButton(withTitle: ui("移到废纸篓", "Move to Trash"))
+        guard alert.runModal() == .alertSecondButtonReturn else { return }
+        Task { @MainActor [weak self] in
+            do {
+                try await self?.moveItemSourceToTrash(itemID)
+            } catch {
+                self?.noteFileError = error.localizedDescription
+            }
+        }
+    }
+
+    private func moveItemSourceToTrash(_ itemID: String) async throws {
+        if stagedNoteDraft?.itemID == itemID,
+           let draft = stagedNoteDraft {
+            stagedNoteDraft = nil
+            updateNote(draft.value, for: itemID)
+        }
+        flushPendingNotePersistence(for: itemID)
+        while let task = courseNoteWriteTasksByItemID[itemID] {
+            await task.value
+        }
+        guard flushPendingWorkspaceSave(),
+              let itemIndex = importedItems.firstIndex(where: {
+                  $0.id == itemID
+              }) else {
+            throw ContentSourceRemovalError.itemUnavailable
+        }
+        if case .legacyExternal = importedItems[itemIndex].storage {
+            _ = resolveTrackedImportedFile(at: itemIndex)
+        }
+        guard let sourceURL = importedItems[itemIndex].url,
+              let expectedIdentity = importedItems[itemIndex]
+                .importedFileIdentity else {
+            throw ContentSourceRemovalError.itemUnavailable
+        }
+        let affectedCourseIDs = Set(courseIDs(for: itemID))
+        let formerSharedLinks: [(url: URL, identity: ImportedFileIdentity)]
+        if case .shared = importedItems[itemIndex].storage {
+            formerSharedLinks = courseItemMemberships.compactMap {
+                membership in
+                guard membership.itemID == itemID,
+                      let root = courseRootURL(
+                        for: membership.courseID
+                      ),
+                      let relativePath = membership.courseRelativePath,
+                      let linkURL = Self.backgroundRawRelativeURL(
+                        relativePath,
+                        inside: root
+                      ),
+                      let identity = membership.entryIdentity else {
+                    return nil
+                }
+                return (linkURL, identity)
+            }
+        } else {
+            formerSharedLinks = []
+        }
+        try beginCourseFileMutation(courseIDs: affectedCourseIDs)
+        defer { finishCourseFileMutation(courseIDs: affectedCourseIDs) }
+
+        let sourceSnapshot: CourseFileSnapshot
+        do {
+            sourceSnapshot = try await courseProjectFileWorker
+                .stableSnapshot(
+                    at: sourceURL,
+                    expectedIdentity: expectedIdentity
+                )
+        } catch {
+            throw ContentSourceRemovalError.sourceChanged
+        }
+        let trashMover = contentSourceTrashMover
+        var movedTrashURL: URL?
+        do {
+            let trashURL = try await Task.detached(priority: .userInitiated) {
+                try trashMover(sourceURL)
+            }.value
+            movedTrashURL = trashURL
+            _ = try await courseProjectFileWorker.stableSnapshot(
+                at: trashURL,
+                expectedIdentity: expectedIdentity,
+                expectedSnapshot: sourceSnapshot
+            )
+        } catch {
+            if let movedTrashURL {
+                _ = await courseProjectFileWorker.restoreIsolatedFile(
+                    from: movedTrashURL,
+                    to: sourceURL
+                )
+            }
+            throw ContentSourceRemovalError.trashMoveFailed
+        }
+        guard let trashURL = movedTrashURL else {
+            throw ContentSourceRemovalError.trashMoveFailed
+        }
+
+        removeItemRegistration(itemID)
+        guard await persistWorkspaceNow() else {
+            _ = await courseProjectFileWorker.restoreIsolatedFile(
+                from: trashURL,
+                to: sourceURL
+            )
+            load()
+            throw ContentSourceRemovalError.workspaceSaveFailed
+        }
+
+        await removeFormerSharedLinks(
+            sourceURL: sourceURL,
+            links: formerSharedLinks
+        )
+        courseDocumentSearchIndex.synchronize(allItems)
+        invalidateAgentContext()
+        noteFileError = nil
+    }
+
+    private func removeFormerSharedLinks(
+        sourceURL: URL,
+        links: [(url: URL, identity: ImportedFileIdentity)]
+    ) async {
+        for link in links {
+            _ = await courseProjectFileWorker
+                .isolateAndRemoveSymbolicLinkIfMatching(
+                    at: link.url,
+                    quarantineURL: link.url.deletingLastPathComponent()
+                        .appendingPathComponent(
+                            ".weibei-link-cleanup-\(UUID().uuidString.lowercased())"
+                        ),
+                    destinationURL: sourceURL,
+                    expectedIdentity: link.identity
+                )
+        }
+    }
+
+    private func removeItemRegistration(_ itemID: String) {
+        pendingNotePersistenceTasks.removeValue(forKey: itemID)?.cancel()
+        courseNoteLoadTasksByItemID.removeValue(forKey: itemID)?.cancel()
+        courseNoteWriteTasksByItemID.removeValue(forKey: itemID)?.cancel()
+        pendingNotePersistenceByItemID.removeValue(forKey: itemID)
+        courseNoteLoadGenerationByItemID.removeValue(forKey: itemID)
+        courseNoteWritesInFlight.remove(itemID)
+        notesByItemID.removeValue(forKey: itemID)
+        pendingNoteWritesByItemID.removeValue(forKey: itemID)
+        noteBackingContentDigestsByItemID.removeValue(forKey: itemID)
+        loadedCourseNoteTextByItemID.removeValue(forKey: itemID)
+        studyLocationsByItemID.removeValue(forKey: itemID)
+        for courseKey in Array(studyLocationsByCourseID.keys) {
+            studyLocationsByCourseID[courseKey]?.removeValue(
+                forKey: itemID
+            )
+        }
+        importedItems.removeAll { $0.id == itemID }
+        courseItemMemberships.removeAll { $0.itemID == itemID }
+        noteSourceLinks.removeAll {
+            $0.noteItemID == itemID || $0.sourceItemID == itemID
+        }
+        materialNotePairings = materialNotePairings.filter {
+            $0.key != itemID && $0.value != itemID
+        }
+        noteMaterialPairings = noteMaterialPairings.filter {
+            $0.key != itemID && $0.value != itemID
+        }
+        for index in studySessions.indices {
+            studySessions[index].focusItemIDs.removeAll { $0 == itemID }
+            if studySessions[index].materialItemID == itemID {
+                studySessions[index].materialItemID = nil
+            }
+        }
+        for index in courseResumePoints.indices {
+            if courseResumePoints[index].materialLocation?.itemID == itemID {
+                courseResumePoints[index].materialLocation = nil
+            }
+            if courseResumePoints[index].noteItemID == itemID {
+                courseResumePoints[index].noteItemID = nil
+            }
+        }
+        selectionAskThreads.removeAll { $0.itemID == itemID }
+        if activeSelectionAskThreadID.map({ id in
+            !selectionAskThreads.contains { $0.id == id }
+        }) == true {
+            activeSelectionAskThreadID = nil
+        }
+        if selectionContext?.itemID == itemID { selectionContext = nil }
+        selectionAttachments.removeAll { $0.itemID == itemID }
+        backNavigationStack.removeAll {
+            $0.selectedItemID == itemID || $0.activeNotebookItemID == itemID
+        }
+        forwardNavigationStack.removeAll {
+            $0.selectedItemID == itemID || $0.activeNotebookItemID == itemID
+        }
+        if selectedItemID == itemID { selectedItemID = nil }
+        if activeNotebookItemID == itemID {
+            activeNotebookItemID = nil
+            noteText = noteText(for: nil)
+        }
+        if courseWorkspaceTargetItemID == itemID {
+            courseWorkspaceTargetItemID = nil
+        }
+        if stagedNoteDraft?.itemID == itemID { stagedNoteDraft = nil }
+        if blankNoteDraftMaterialID == itemID {
+            blankNoteDraftMaterialID = nil
+            pendingBlankNoteText = ""
+        }
     }
 
     private func confirmManagedCourseMove(
@@ -9672,6 +10482,53 @@ final class WorkspaceStore: ObservableObject {
         }
     }
 
+    func promoteCourseOwnedItemToCommonForSelfCheck(
+        itemID: String,
+        conflictResolution: CourseFileConflictResolution = .cancel
+    ) throws {
+        precondition(
+            ProcessInfo.processInfo.arguments.contains(
+                "--self-check-course-project-root"
+            )
+        )
+        try waitForCourseFileOperation {
+            try await self.promoteCourseOwnedItemToCommon(
+                itemID: itemID,
+                conflictResolution: conflictResolution
+            )
+        }
+    }
+
+    func moveItemSourceToTrashForSelfCheck(_ itemID: String) throws {
+        precondition(
+            ProcessInfo.processInfo.arguments.contains(
+                "--self-check-course-project-root"
+            )
+        )
+        try waitForCourseFileOperation {
+            try await self.moveItemSourceToTrash(itemID)
+        }
+    }
+
+    func installRootlessCourseForSelfCheck(title: String) -> UUID {
+        precondition(
+            ProcessInfo.processInfo.arguments.contains(
+                "--self-check-course-project-root"
+            )
+        )
+        let course = Course(
+            title: title,
+            colorIndex: nextCourseColorIndex()
+        )
+        courses.append(course)
+        courseKnowledgeProfiles.append(
+            CourseKnowledgeProfile(courseID: course.id)
+        )
+        activeCourseID = course.id
+        save()
+        return course.id
+    }
+
     func assignItemIDs(_ itemIDs: Set<String>, to courseID: UUID) {
         guard courses.contains(where: { $0.id == courseID }) else { return }
         let validItemIDs = Set(importedItems.map(\.id))
@@ -9695,12 +10552,11 @@ final class WorkspaceStore: ObservableObject {
         orderedStudySessions.filter { !$0.messages.isEmpty }
     }
 
-    /// Non-empty Chats whose fixed scope is this course.
+    /// Non-empty Chats that have actually used this course.
     func sessionsTouchingCourse(_ courseID: UUID) -> [StudySession] {
         orderedStudySessions.filter {
             !$0.messages.isEmpty
-                && $0.courseID == courseID
-                && $0.scopeNeedsReview == false
+                && $0.relatedCourseIDs.contains(courseID)
         }
     }
 
@@ -9861,8 +10717,7 @@ final class WorkspaceStore: ObservableObject {
         return orderedStudySessions.filter { session in
             guard !session.messages.isEmpty else { return false }
             if let courseID {
-                guard session.courseID == courseID,
-                      session.scopeNeedsReview == false else { return false }
+                guard session.relatedCourseIDs.contains(courseID) else { return false }
             }
             let touches = session.materialItemID == materialID
                 || session.groupingMaterialItemID == materialID
@@ -9871,12 +10726,11 @@ final class WorkspaceStore: ObservableObject {
         }
     }
 
-    /// Exact persisted Chat scope; reading focus and the active course never reclassify it.
+    /// Compatibility for older call sites that need one preferred related course.
     func primaryCourseID(for session: StudySession) -> UUID? {
-        guard session.scopeNeedsReview == false,
-              let courseID = session.courseID,
-              courses.contains(where: { $0.id == courseID }) else { return nil }
-        return courseID
+        session.relatedCourseIDs.first {
+            courseID in courses.contains { $0.id == courseID }
+        }
     }
 
     var activeCourseMemories: [LearningMemoryEntry] {
@@ -9965,6 +10819,190 @@ final class WorkspaceStore: ObservableObject {
         linkedSourcesForActiveNote.count
     }
 
+    func contextualBrowserItems(
+        _ kind: ContextualContentKind,
+        courseID: UUID?
+    ) -> [StudyItem] {
+        allItems.filter { item in
+            guard item.isNotebookNote == (kind == .note) else {
+                return false
+            }
+            if let courseID {
+                return courseMembershipIndex.courseIDs(for: item.id)
+                    .contains(courseID)
+            }
+            switch item.storage {
+            case .shared:
+                return true
+            case .legacyExternal:
+                return courseMembershipIndex.courseIDs(for: item.id).isEmpty
+            case .courseOwned, .bundledSample:
+                return false
+            }
+        }.sorted {
+            displayTitle(for: $0).localizedStandardCompare(
+                displayTitle(for: $1)
+            ) == .orderedAscending
+        }
+    }
+
+    func contextualBrowserCourses(
+        _ kind: ContextualContentKind
+    ) -> [Course] {
+        courses.filter {
+            !contextualBrowserItems(kind, courseID: $0.id).isEmpty
+        }.sorted {
+            $0.title.localizedStandardCompare($1.title) == .orderedAscending
+        }
+    }
+
+    func contextualPreferredItems(
+        _ kind: ContextualContentKind
+    ) -> [StudyItem] {
+        switch kind {
+        case .note:
+            guard let materialID = selectedMaterialItem?.id else { return [] }
+            let ids = linkedNoteIDs(for: materialID)
+            return ids.compactMap { item(withID: $0) }
+        case .material:
+            guard let noteID = activeNoteItem?.id else { return [] }
+            let ids = linkedSourceIDs(for: noteID)
+            if !ids.isEmpty {
+                return ids.compactMap { item(withID: $0) }
+            }
+            let courseIDs = courseMembershipIndex.courseIDs(for: noteID)
+            guard courseIDs.count == 1, let courseID = courseIDs.first else {
+                return []
+            }
+            return contextualBrowserItems(.material, courseID: courseID)
+        }
+    }
+
+    func contextualPreferredCourses(
+        _ kind: ContextualContentKind
+    ) -> [Course] {
+        guard kind == .material,
+              let noteID = activeNoteItem?.id,
+              linkedSourceIDs(for: noteID).isEmpty else {
+            return []
+        }
+        let courseIDs = Set(courseMembershipIndex.courseIDs(for: noteID))
+        guard courseIDs.count > 1 else { return [] }
+        return courses.filter {
+            courseIDs.contains($0.id)
+                && !contextualBrowserItems(.material, courseID: $0.id).isEmpty
+        }.sorted {
+            $0.title.localizedStandardCompare($1.title) == .orderedAscending
+        }
+    }
+
+    func openContextualItem(
+        _ itemID: String,
+        kind: ContextualContentKind
+    ) {
+        guard let item = item(withID: itemID),
+              item.isNotebookNote == (kind == .note) else {
+            return
+        }
+        switch kind {
+        case .material:
+            let noteID = activeNoteItem?.id
+            select(itemID: itemID)
+            showReader = true
+            if let noteID {
+                rememberMaterialNotePair(
+                    materialID: itemID,
+                    noteID: noteID
+                )
+            }
+            focus(.reader)
+        case .note:
+            let materialID = selectedMaterialItem?.id
+            select(itemID: itemID)
+            showNotes = true
+            if let materialID {
+                rememberMaterialNotePair(
+                    materialID: materialID,
+                    noteID: itemID
+                )
+            }
+            focus(.notes)
+        }
+    }
+
+    private func rememberMaterialNotePair(
+        materialID: String,
+        noteID: String
+    ) {
+        guard item(withID: materialID)?.isNotebookNote == false,
+              item(withID: noteID)?.isNotebookNote == true else {
+            return
+        }
+        guard materialNotePairings[materialID] != noteID
+                || noteMaterialPairings[noteID] != materialID else {
+            return
+        }
+        materialNotePairings[materialID] = noteID
+        noteMaterialPairings[noteID] = materialID
+        save()
+    }
+
+    func prepareNoteForOpening() {
+        guard let material = selectedMaterialItem else { return }
+        if let noteID = materialNotePairings[material.id],
+           item(withID: noteID)?.isNotebookNote == true {
+            openContextualItem(noteID, kind: .note)
+            return
+        }
+        let linked = linkedNoteIDs(for: material.id).filter {
+            item(withID: $0)?.isNotebookNote == true
+        }
+        if linked.count == 1, let noteID = linked.first {
+            openContextualItem(noteID, kind: .note)
+        } else if linked.isEmpty {
+            beginBlankNoteDraft(for: material.id)
+        } else {
+            blankNoteDraftMaterialID = nil
+            activeNotebookItemID = nil
+            noteText = ""
+        }
+    }
+
+    func prepareMaterialForOpening() {
+        guard let note = activeNoteItem else { return }
+        if let materialID = noteMaterialPairings[note.id],
+           item(withID: materialID)?.isNotebookNote == false {
+            openContextualItem(materialID, kind: .material)
+            return
+        }
+        let linked = linkedSourceIDs(for: note.id).filter {
+            item(withID: $0)?.isNotebookNote == false
+        }
+        let candidates = linked.isEmpty
+            ? courseMembershipIndex.courseIDs(for: note.id).flatMap { courseID in
+                courseMaterials(in: courseID).map(\.id)
+            }
+            : linked
+        let uniqueCandidates = Array(Set(candidates))
+        if uniqueCandidates.count == 1, let materialID = uniqueCandidates.first {
+            openContextualItem(materialID, kind: .material)
+        } else {
+            selectedItemID = nil
+        }
+    }
+
+    private func beginBlankNoteDraft(for materialID: String) {
+        guard item(withID: materialID)?.isNotebookNote == false else { return }
+        persistCurrentNote()
+        blankNoteMaterializationTask?.cancel()
+        blankNoteMaterializationTask = nil
+        blankNoteDraftMaterialID = materialID
+        pendingBlankNoteText = ""
+        activeNotebookItemID = nil
+        noteText = ""
+        focus(.notes)
+    }
+
     var filteredItems: [StudyItem] {
         let query = librarySearch.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !query.isEmpty else { return allItems }
@@ -9980,20 +11018,22 @@ final class WorkspaceStore: ObservableObject {
         studySessions.sorted { $0.updatedAt > $1.updatedAt }
     }
 
+    var historicalStudySessions: [StudySession] {
+        orderedStudySessions.filter { !$0.messages.isEmpty }
+    }
+
     var globalStudySessions: [StudySession] {
-        orderedStudySessions.filter {
-            $0.courseID == nil && $0.scopeNeedsReview == false
-        }
+        historicalStudySessions
     }
 
     func studySessions(in courseID: UUID) -> [StudySession] {
-        orderedStudySessions.filter {
-            $0.courseID == courseID && $0.scopeNeedsReview == false
+        historicalStudySessions.filter {
+            $0.relatedCourseIDs.contains(courseID)
         }
     }
 
     var unclassifiedStudySessions: [StudySession] {
-        orderedStudySessions.filter { $0.scopeNeedsReview == true }
+        []
     }
 
     func learningMemoryKindLabel(_ kind: LearningMemoryKind) -> String {
@@ -10013,39 +11053,7 @@ final class WorkspaceStore: ObservableObject {
     }
 
     var activeStudySessionScopeTitle: String {
-        guard let session = activeStudySession else {
-            return ui("对话", "Chat")
-        }
-        if session.scopeNeedsReview == true {
-            return ui("待归类", "Needs Course")
-        }
-        guard let courseID = session.courseID else {
-            return ui("全局", "Global")
-        }
-        return course(withID: courseID)?.title ?? ui("待归类", "Needs Course")
-    }
-
-    var canUseSelectedMaterialInActiveChat: Bool {
-        guard let itemID = selectedMaterialItem?.id,
-              let session = activeStudySession,
-              session.scopeNeedsReview == false else {
-            return selectedMaterialItem == nil
-        }
-        guard let courseID = session.courseID else { return true }
-        return courseMembershipIndex.courseIDs(for: itemID).contains(courseID)
-    }
-
-    var agentContextScopeNotice: String? {
-        guard let item = selectedMaterialItem,
-              !canUseSelectedMaterialInActiveChat,
-              let courseID = activeStudySession?.courseID,
-              let course = course(withID: courseID) else {
-            return nil
-        }
-        return ui(
-            "“\(displayTitle(for: item))”不属于“\(course.title)”，不会发送给当前对话。",
-            "\"\(displayTitle(for: item))\" is outside \"\(course.title)\" and will not be sent to this Chat."
-        )
+        activeStudySession?.title ?? ui("新对话", "New Chat")
     }
 
     var lastStudyLocation: StudyLocation? {
@@ -10058,31 +11066,21 @@ final class WorkspaceStore: ObservableObject {
 
     @discardableResult
     func createStudySession(courseID: UUID?) -> StudySession? {
-        guard courseID.map({
-            activeCourseRemovalTokens[$0] == nil
-        }) ?? true,
-        courseID == nil || courses.contains(where: {
-            $0.id == courseID
-        }) else {
-            return nil
+        if let freshlyCreatedEmptyStudySessionID,
+           let session = studySessions.first(where: {
+               $0.id == freshlyCreatedEmptyStudySessionID && $0.messages.isEmpty
+           }) {
+            activeStudySessionID = session.id
+            messages = []
+            agentDraft = ""
+            agentDraftsBySessionID[session.id] = ""
+            return session
         }
         dismissAgentSwitchConfirmation()
         saveActiveAgentDraft()
         syncActiveStudySession()
-        let selectedMaterialID = selectedMaterialItem?.id
-        let materialID = selectedMaterialID.flatMap { itemID in
-            guard let courseID else { return itemID }
-            return courseMembershipIndex.courseIDs(for: itemID).contains(courseID)
-                ? itemID
-                : nil
-        }
         let session = StudySession(
-            title: courseID == nil
-                ? ui("新全局对话", "New Global Chat")
-                : ui("新课程对话", "New Course Chat"),
-            courseID: courseID,
-            focusItemIDs: [materialID].compactMap { $0 },
-            materialItemID: materialID
+            title: ui("新对话", "New Chat")
         )
         studySessions.append(session)
         activeStudySessionID = session.id
@@ -10102,23 +11100,27 @@ final class WorkspaceStore: ObservableObject {
         expectedCourseID: UUID?,
         expectedScopeNeedsReview: Bool
     ) -> Bool {
-        guard let session = studySessions.first(where: { $0.id == id }),
-              session.courseID == expectedCourseID,
-              session.scopeNeedsReview == expectedScopeNeedsReview else {
+        guard let session = studySessions.first(where: { $0.id == id }) else {
             return false
         }
         guard id != activeStudySessionID else { return true }
-        freshlyCreatedEmptyStudySessionID = nil
         dismissAgentSwitchConfirmation()
         saveActiveAgentDraft()
         syncActiveStudySession()
+        if let blankID = freshlyCreatedEmptyStudySessionID,
+           blankID != id,
+           studySessions.first(where: { $0.id == blankID })?.messages.isEmpty == true {
+            studySessions.removeAll { $0.id == blankID }
+            agentDraftsBySessionID.removeValue(forKey: blankID)
+        }
+        freshlyCreatedEmptyStudySessionID = nil
         activeStudySessionID = id
         messages = session.messages
         restoreAgentDraft(for: id)
         restoreAgentReplyState(from: session)
         lastAgentReplyContextRevision = nil
         invalidateAgentContext()
-        if let courseID = session.courseID, !session.messages.isEmpty {
+        for courseID in session.relatedCourseIDs where !session.messages.isEmpty {
             _ = captureCourseResumePoint(courseID: courseID, chatID: id)
         }
         save()
@@ -10127,45 +11129,38 @@ final class WorkspaceStore: ObservableObject {
 
     @discardableResult
     func classifyStudySession(_ id: UUID, as courseID: UUID?) -> Bool {
-        guard courseID.map({
-            activeCourseRemovalTokens[$0] == nil
-        }) ?? true,
-              courseID == nil
-                || courses.contains(where: { $0.id == courseID }),
-              let index = studySessions.firstIndex(where: {
-                  $0.id == id && $0.scopeNeedsReview == true
-              }) else {
+        guard let index = studySessions.firstIndex(where: { $0.id == id }) else {
             return false
         }
-        var session = studySessions[index]
-        session.courseID = courseID
-        session.scopeNeedsReview = false
-        session.focusItemIDs = session.focusItemIDs.filter {
-            itemID($0, belongsTo: session)
-        }
-        if let materialItemID = session.materialItemID,
-           !itemID(materialItemID, belongsTo: session) {
-            session.materialItemID = nil
-        }
-        studySessions[index] = session
-        if freshlyCreatedEmptyStudySessionID == id {
-            freshlyCreatedEmptyStudySessionID = nil
-        }
-        if activeStudySessionID == id {
-            invalidateAgentContext()
+        if let courseID,
+           courses.contains(where: { $0.id == courseID }),
+           !studySessions[index].relatedCourseIDs.contains(courseID) {
+            studySessions[index].relatedCourseIDs.append(courseID)
+            studySessions[index].relatedCourseIDs.sort { $0.uuidString < $1.uuidString }
         }
         save()
         return true
     }
 
+    func associateStudySession(_ id: UUID, with courseIDs: some Sequence<UUID>) {
+        guard let index = studySessions.firstIndex(where: { $0.id == id }) else { return }
+        let validCourseIDs = Set(courses.map(\.id))
+        let additions = Set(courseIDs).intersection(validCourseIDs)
+        let next = Set(studySessions[index].relatedCourseIDs).union(additions)
+        guard next.count != studySessions[index].relatedCourseIDs.count else { return }
+        studySessions[index].relatedCourseIDs = next.sorted { $0.uuidString < $1.uuidString }
+        save()
+    }
+
+    func associateStudySession(_ id: UUID, withItemIDs itemIDs: some Sequence<String>) {
+        associateStudySession(
+            id,
+            with: itemIDs.flatMap { courseMembershipIndex.courseIDs(for: $0) }
+        )
+    }
+
     func deleteStudySession(_ id: UUID) {
-        guard studySessions.count > 1,
-              let index = studySessions.firstIndex(where: {
-                $0.id == id
-              }),
-              studySessions[index].courseID.map({
-                activeCourseRemovalTokens[$0] == nil
-              }) ?? true else {
+        guard let index = studySessions.firstIndex(where: { $0.id == id }) else {
             return
         }
         let deletingActiveSession = activeStudySessionID == id
@@ -10188,11 +11183,17 @@ final class WorkspaceStore: ObservableObject {
                 )
             }
         }
-        if deletingActiveSession, let replacement = orderedStudySessions.first {
-            activeStudySessionID = replacement.id
-            messages = replacement.messages
-            restoreAgentDraft(for: replacement.id)
-            restoreAgentReplyState(from: replacement)
+        if deletingActiveSession {
+            activeStudySessionID = nil
+            messages = []
+            if let replacement = orderedStudySessions.first {
+                activeStudySessionID = replacement.id
+                messages = replacement.messages
+                restoreAgentDraft(for: replacement.id)
+                restoreAgentReplyState(from: replacement)
+            } else {
+                ensureActiveStudySession()
+            }
             lastAgentReplyContextRevision = nil
             invalidateAgentContext(restoreAgentDraft: false)
         }
@@ -10233,6 +11234,7 @@ final class WorkspaceStore: ObservableObject {
         let session = StudySession(title: ui("新学习会话", "New Study Session"))
         studySessions = [session]
         activeStudySessionID = session.id
+        freshlyCreatedEmptyStudySessionID = session.id
         messages = []
         restoreAgentReplyState(from: session)
     }
@@ -10315,10 +11317,12 @@ final class WorkspaceStore: ObservableObject {
                 continue
             }
             guard message.origin?.chatID == nil || message.origin?.chatID == session.id,
-                  message.origin?.courseID == nil || message.origin?.courseID == session.courseID else {
+                  message.origin?.courseID.map(
+                    session.relatedCourseIDs.contains
+                  ) != false else {
                 return nil
             }
-            return (session.id, session.courseID, action)
+            return (session.id, message.origin?.courseID, action)
         }
         return nil
     }
@@ -10931,39 +11935,10 @@ final class WorkspaceStore: ObservableObject {
            studySessions[index].messages.filter({ $0.role == .user }).count == 1 {
             studySessions[index].title = Self.sessionTitle(from: titleSeed)
         }
-        if studySessions[index].scopeNeedsReview == false {
-            var session = studySessions[index]
-            session.focusItemIDs = session.focusItemIDs.filter {
-                itemID($0, belongsTo: session)
-            }
-            if let materialItemID = session.materialItemID,
-               !itemID(materialItemID, belongsTo: session) {
-                session.materialItemID = nil
-            }
-            studySessions[index] = session
-        }
-        if studySessions[index].materialItemID == nil,
-           let materialID = selectedMaterialItem?.id,
-           itemID(materialID, belongsTo: studySessions[index]) {
-            studySessions[index].materialItemID = materialID
-        }
-        let scopedFocusItemIDs = [selectedItemID, activeNoteItemID]
-            .compactMap { $0 }
-            .filter { itemID($0, belongsTo: studySessions[index]) }
-        for itemID in scopedFocusItemIDs {
-            if !studySessions[index].focusItemIDs.contains(itemID) {
-                studySessions[index].focusItemIDs.append(itemID)
-            }
-        }
-        if studySessions[index].focusItemIDs.count > 24 {
-            studySessions[index].focusItemIDs.removeFirst(studySessions[index].focusItemIDs.count - 24)
-        }
     }
 
     private func itemID(_ itemID: String, belongsTo session: StudySession) -> Bool {
-        guard session.scopeNeedsReview == false else { return false }
-        guard let courseID = session.courseID else { return true }
-        return courseMembershipIndex.courseIDs(for: itemID).contains(courseID)
+        allItems.contains { $0.id == itemID }
     }
 
     private static func sessionTitle(from text: String) -> String {
@@ -11527,6 +12502,9 @@ final class WorkspaceStore: ObservableObject {
         }
         if let itemID,
            let item = allItems.first(where: { $0.id == itemID && $0.isNotebookNote }) {
+            blankNoteMaterializationTask?.cancel()
+            blankNoteMaterializationTask = nil
+            blankNoteDraftMaterialID = nil
             activeNotebookItemID = item.id
             noteText = noteText(for: item)
             latestAgentNoteProposal = nil
@@ -11551,6 +12529,12 @@ final class WorkspaceStore: ObservableObject {
             recordNavigationPoint()
         }
         selectedItemID = itemID
+        if let blankMaterialID = blankNoteDraftMaterialID,
+           blankMaterialID != itemID {
+            blankNoteMaterializationTask?.cancel()
+            blankNoteMaterializationTask = nil
+            blankNoteDraftMaterialID = nil
+        }
         if itemChanged {
             clearUnpinnedFloatingSelection(keepContext: false)
             selectionAttachments = []
@@ -12002,19 +12986,13 @@ final class WorkspaceStore: ObservableObject {
         )
         guard !question.isEmpty,
               !isStoppingAgent,
-              let course = course(withID: courseID),
-              let expectedIdentity = course.sourceRootIdentity,
-              let rawRoot = courseRootURL(for: courseID),
-              let root = try? CourseProjectPathPolicy.existingDirectory(rawRoot),
-              importedFileIdentityResolver(root) == expectedIdentity else {
+              course(withID: courseID) != nil else {
             return nil
         }
 
         let reusableSession: StudySession? = {
             guard let session = activeStudySession,
                   session.id == freshlyCreatedEmptyStudySessionID,
-                  session.courseID == courseID,
-                  session.scopeNeedsReview == false,
                   session.messages.isEmpty,
                   agentDraft.trimmingCharacters(
                     in: .whitespacesAndNewlines
@@ -12023,7 +13001,8 @@ final class WorkspaceStore: ObservableObject {
             }
             return session
         }()
-        guard let session = reusableSession ?? createStudySession(courseID: courseID) else {
+        guard let session = reusableSession
+                ?? createStudySession(courseID: nil) else {
             return nil
         }
 
@@ -12059,8 +13038,7 @@ final class WorkspaceStore: ObservableObject {
               let session = studySessions.first(where: {
                   $0.id == chatID
                       && !$0.messages.isEmpty
-                      && $0.scopeNeedsReview == false
-                      && primaryCourseID(for: $0) == courseID
+                      && $0.relatedCourseIDs.contains(courseID)
               }) else {
             return false
         }
@@ -12143,6 +13121,24 @@ final class WorkspaceStore: ObservableObject {
 
     func updateNote(_ value: String) {
         guard noteText != value else { return }
+        if activeNoteItem == nil,
+           let materialID = blankNoteDraftMaterialID {
+            invalidateAgentContext()
+            noteText = value
+            pendingBlankNoteText = value
+            guard !value.trimmingCharacters(
+                in: .whitespacesAndNewlines
+            ).isEmpty,
+            blankNoteMaterializationTask == nil else {
+                return
+            }
+            blankNoteMaterializationTask = Task { @MainActor [weak self] in
+                await self?.materializeBlankNoteDraft(
+                    materialID: materialID
+                )
+            }
+            return
+        }
         if let itemID = activeNoteItem?.id,
            itemIsInRemovingCourse(itemID) {
             return
@@ -12151,10 +13147,71 @@ final class WorkspaceStore: ObservableObject {
         noteText = value
         clearGeneratedQuietInsight()
         guard let item = activeNoteItem else { return }
+        if let materialID = selectedMaterialItem?.id,
+           materialNotePairings[materialID] == item.id,
+           noteMaterialPairings[item.id] == materialID,
+           !noteSourceLinks.contains(where: {
+               $0.noteItemID == item.id
+                   && $0.sourceItemID == materialID
+           }) {
+            addNoteSourceLink(
+                noteItemID: item.id,
+                sourceItemID: materialID
+            )
+        }
         if !item.editsBackingMarkdownFile {
             notesByItemID[item.id] = value
         }
         scheduleNotePersistence(value, for: item)
+    }
+
+    private func materializeBlankNoteDraft(materialID: String) async {
+        defer { blankNoteMaterializationTask = nil }
+        guard blankNoteDraftMaterialID == materialID,
+              let material = item(withID: materialID) else {
+            return
+        }
+        let markdown = noteText
+        guard !markdown.trimmingCharacters(
+            in: .whitespacesAndNewlines
+        ).isEmpty else {
+            return
+        }
+        let title = suggestedNotebookTitle(
+            for: .currentMaterial(material)
+        )
+        let courseIDs = courseMembershipIndex.courseIDs(for: materialID)
+        let noteID: String?
+        if courseIDs.count == 1,
+           let courseID = courseIDs.first,
+           courseRootURL(for: courseID) != nil {
+            noteID = await createCourseNotebookNote(
+                courseID: courseID,
+                title: title,
+                markdown: markdown
+            )
+        } else {
+            noteID = createNotebookNote(
+                seed: .currentMaterial(material),
+                title: title,
+                initialMarkdown: markdown
+            )?.id
+        }
+        guard let noteID else { return }
+        let latestMarkdown = pendingBlankNoteText
+        blankNoteDraftMaterialID = nil
+        pendingBlankNoteText = ""
+        rememberMaterialNotePair(
+            materialID: materialID,
+            noteID: noteID
+        )
+        addNoteSourceLink(
+            noteItemID: noteID,
+            sourceItemID: materialID
+        )
+        if latestMarkdown != markdown {
+            updateNote(latestMarkdown, for: noteID)
+        }
     }
 
     func stageNoteDraft(_ value: String, for itemID: String?) {
@@ -12218,13 +13275,24 @@ final class WorkspaceStore: ObservableObject {
             return nil
         }
         let fileStem = safeFileStem(title)
-        let markdown = defaultNotebookNote(title: fileStem, sourceItem: nil)
+        return await createCourseNotebookNote(
+            courseID: courseID,
+            title: fileStem,
+            markdown: defaultNotebookNote(title: fileStem, sourceItem: nil)
+        )
+    }
+
+    private func createCourseNotebookNote(
+        courseID: UUID,
+        title: String,
+        markdown: String
+    ) async -> String? {
         let data = Data(markdown.utf8)
         do {
             let result = try await transactCourseOwnedFile(
                 courseID: courseID,
                 role: .note,
-                fileName: "\(fileStem).md",
+                fileName: "\(safeFileStem(title)).md",
                 sourceURL: nil,
                 sourceIdentity: nil,
                 generatedData: data
@@ -12405,6 +13473,9 @@ final class WorkspaceStore: ObservableObject {
     }
 
     func toggleReader() {
+        if !showReader {
+            prepareMaterialForOpening()
+        }
         toggleDocumentPane(.reader)
     }
 
@@ -12420,6 +13491,9 @@ final class WorkspaceStore: ObservableObject {
     }
 
     func toggleNotes() {
+        if !showNotes {
+            prepareNoteForOpening()
+        }
         toggleDocumentPane(.notes)
     }
 
@@ -14031,7 +15105,7 @@ final class WorkspaceStore: ObservableObject {
         if roleChanged {
             if let selectedItemID,
                importedItems.first(where: { $0.id == selectedItemID })?.isNotebookNote == true {
-                self.selectedItemID = courseMaterials.first?.id ?? sampleItems.first?.id
+                self.selectedItemID = courseMaterials.first?.id
                 readerLocationTitle = selectedMaterialItem.map(displayTitle)
                 restoreCurrentStudyLocation()
             }
@@ -14595,7 +15669,15 @@ final class WorkspaceStore: ObservableObject {
         let title = WikiLink.targetTitle(from: rawTitle)
         guard !title.isEmpty else { return }
 
-        let notesDirectory = appOwnedFilesDirectory().appendingPathComponent("Notes", isDirectory: true)
+        let commonNotesDirectory = courseLibraryRootURL?.appendingPathComponent(
+            CourseOwnedFileRole.note.commonDirectoryName,
+            isDirectory: true
+        )
+        let notesDirectory = commonNotesDirectory
+            ?? appOwnedFilesDirectory().appendingPathComponent(
+                "Notes",
+                isDirectory: true
+            )
         let fileName = "\(safeFileStem(title)).md"
         let url = notesDirectory.appendingPathComponent(fileName)
         let existingIdentity = importedFileIdentityResolver(url)
@@ -14637,10 +15719,20 @@ final class WorkspaceStore: ObservableObject {
                 kind: .markdown,
                 urlPath: url.path,
                 importedFileIdentity: identity,
-                importedFileBookmarkData: identity.flatMap { _ in Self.makeImportedFileBookmark(for: url) },
+                importedFileBookmarkData: commonNotesDirectory == nil
+                    ? identity.flatMap { _ in
+                        Self.makeImportedFileBookmark(for: url)
+                    }
+                    : nil,
                 importedFileLastKnownPath: url.path,
                 isSample: false,
-                isNotebookNote: true
+                isNotebookNote: true,
+                storage: commonNotesDirectory == nil
+                    ? .legacyExternal
+                    : .shared(
+                        sharedRelativePath:
+                            "\(CourseOwnedFileRole.note.commonDirectoryName)/\(url.lastPathComponent)"
+                    )
             )
             if !importedItems.contains(where: { $0.urlPath == url.path }) {
                 importedItems.append(item)
@@ -14654,7 +15746,11 @@ final class WorkspaceStore: ObservableObject {
     }
 
     @discardableResult
-    private func createNotebookNote(seed: NotebookNoteSeed, title rawTitle: String? = nil) -> StudyItem? {
+    private func createNotebookNote(
+        seed: NotebookNoteSeed,
+        title rawTitle: String? = nil,
+        initialMarkdown: String? = nil
+    ) -> StudyItem? {
         let sourceItem: StudyItem?
         let defaultTitle = suggestedNotebookTitle(for: seed)
         switch seed {
@@ -14670,7 +15766,15 @@ final class WorkspaceStore: ObservableObject {
         }
 
         persistCurrentNote()
-        let notesDirectory = appOwnedFilesDirectory().appendingPathComponent("Notes", isDirectory: true)
+        let commonNotesDirectory = courseLibraryRootURL?.appendingPathComponent(
+            CourseOwnedFileRole.note.commonDirectoryName,
+            isDirectory: true
+        )
+        let notesDirectory = commonNotesDirectory
+            ?? appOwnedFilesDirectory().appendingPathComponent(
+                "Notes",
+                isDirectory: true
+            )
 
         do {
             try FileManager.default.createDirectory(at: notesDirectory, withIntermediateDirectories: true)
@@ -14682,20 +15786,45 @@ final class WorkspaceStore: ObservableObject {
                 kind: .markdown,
                 urlPath: url.path,
                 isSample: false,
-                isNotebookNote: true
+                isNotebookNote: true,
+                storage: commonNotesDirectory == nil
+                    ? .legacyExternal
+                    : .shared(
+                        sharedRelativePath:
+                            "\(CourseOwnedFileRole.note.commonDirectoryName)/\(url.lastPathComponent)"
+                    )
             )
-            let markdown = defaultNotebookNote(title: item.title, sourceItem: sourceItem)
+            let markdown = initialMarkdown
+                ?? defaultNotebookNote(title: item.title, sourceItem: sourceItem)
             try markdown.write(to: url, atomically: true, encoding: .utf8)
             noteBackingContentDigestsByItemID[item.id] = Self.noteContentDigest(Data(markdown.utf8))
             item.importedFileIdentity = importedFileIdentityResolver(url)
-            item.importedFileBookmarkData = item.importedFileIdentity.flatMap { _ in
-                Self.makeImportedFileBookmark(for: url)
-            }
+            item.importedFileBookmarkData = commonNotesDirectory == nil
+                ? item.importedFileIdentity.flatMap { _ in
+                    Self.makeImportedFileBookmark(for: url)
+                }
+                : nil
             item.importedFileLastKnownPath = url.path
             importedItems.append(item)
             courseDocumentSearchIndex.synchronize(allItems)
             if let sourceItem {
                 addNoteSourceLink(noteItemID: item.id, sourceItemID: sourceItem.id)
+                let courseIDs = courseMembershipIndex.courseIDs(
+                    for: sourceItem.id
+                )
+                if case .shared = item.storage, !courseIDs.isEmpty {
+                    Task { @MainActor [weak self] in
+                        for courseID in courseIDs {
+                            try? await self?.linkSharedItem(
+                                itemID: item.id,
+                                toCourseID: courseID,
+                                conflictResolution: .keepBoth(
+                                    preferredFileName: nil
+                                )
+                            )
+                        }
+                    }
+                }
             }
             invalidateAgentContext()
             activeNotebookItemID = item.id
@@ -14757,7 +15886,7 @@ final class WorkspaceStore: ObservableObject {
         removeLinksWhereSourceItemID(importedItems[index].id)
         activeNotebookItemID = importedItems[index].id
         if selectedItemID == importedItems[index].id {
-            self.selectedItemID = sampleItems.first?.id
+            self.selectedItemID = nil
             readerLocationTitle = selectedMaterialItem.map(displayTitle)
         }
         noteText = noteText(for: importedItems[index])
@@ -15271,61 +16400,37 @@ final class WorkspaceStore: ObservableObject {
 
     @discardableResult
     private func migrateLegacyStudySessionScopes() -> Bool {
-        guard studySessionScopeMigrationVersion < 1 else {
-            return sanitizeStudySessionScopes()
-        }
-
+        var changed = sanitizeStudySessionScopes()
+        guard studySessionScopeMigrationVersion < 2 else { return changed }
         let validCourseIDs = Set(courses.map(\.id))
         for index in studySessions.indices
-        where studySessions[index].scopeNeedsReview == nil {
-            let referencedItemIDs = Set(
+        where !studySessions[index].messages.isEmpty {
+            var related = Set(studySessions[index].relatedCourseIDs)
+            let itemIDs = Set(
                 studySessions[index].focusItemIDs
-                    + [
-                        studySessions[index].materialItemID,
-                        studySessions[index].groupingMaterialItemID,
-                    ].compactMap { $0 }
+                    + [studySessions[index].materialItemID].compactMap { $0 }
+                    + studySessions[index].messages.flatMap {
+                        $0.sources.compactMap(\.itemID)
+                    }
             )
-            let isBlank = studySessions[index].messages.isEmpty
-                && studySessions[index].summary
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
-                    .isEmpty
-                && referencedItemIDs.isEmpty
-
-            if isBlank {
-                studySessions[index].courseID = nil
-                studySessions[index].scopeNeedsReview = false
-                continue
-            }
-
-            var resolvedCourseID: UUID?
-            var isAmbiguous = referencedItemIDs.isEmpty
-            for itemID in referencedItemIDs {
-                let itemCourseIDs = Set(
-                    courseMembershipIndex.courseIDs(for: itemID)
-                ).intersection(validCourseIDs)
-                guard itemCourseIDs.count == 1,
-                      let itemCourseID = itemCourseIDs.first else {
-                    isAmbiguous = true
-                    break
+            related.formUnion(
+                itemIDs.flatMap { courseMembershipIndex.courseIDs(for: $0) }
+            )
+            related.formUnion(
+                studySessions[index].messages.flatMap { message in
+                    message.sources.compactMap(\.courseID)
+                        + [message.origin?.courseID].compactMap { $0 }
                 }
-                if let resolvedCourseID,
-                   resolvedCourseID != itemCourseID {
-                    isAmbiguous = true
-                    break
-                }
-                resolvedCourseID = itemCourseID
+            )
+            let migrated = related.intersection(validCourseIDs).sorted {
+                $0.uuidString < $1.uuidString
             }
-
-            if !isAmbiguous, let resolvedCourseID {
-                studySessions[index].courseID = resolvedCourseID
-                studySessions[index].scopeNeedsReview = false
-            } else {
-                studySessions[index].courseID = nil
-                studySessions[index].scopeNeedsReview = true
+            if migrated != studySessions[index].relatedCourseIDs {
+                studySessions[index].relatedCourseIDs = migrated
+                changed = true
             }
         }
-        studySessionScopeMigrationVersion = 1
-        _ = sanitizeStudySessionScopes()
+        studySessionScopeMigrationVersion = 2
         return true
     }
 
@@ -15334,16 +16439,11 @@ final class WorkspaceStore: ObservableObject {
         let validCourseIDs = Set(courses.map(\.id))
         var changed = false
         for index in studySessions.indices {
-            let hasInvalidCourse = studySessions[index].courseID.map {
-                !validCourseIDs.contains($0)
-            } ?? false
-            if hasInvalidCourse || studySessions[index].scopeNeedsReview == nil {
-                studySessions[index].courseID = nil
-                studySessions[index].scopeNeedsReview = true
-                changed = true
-            } else if studySessions[index].scopeNeedsReview == true,
-                      studySessions[index].courseID != nil {
-                studySessions[index].courseID = nil
+            let sanitized = Set(studySessions[index].relatedCourseIDs)
+                .intersection(validCourseIDs)
+                .sorted { $0.uuidString < $1.uuidString }
+            if sanitized != studySessions[index].relatedCourseIDs {
+                studySessions[index].relatedCourseIDs = sanitized
                 changed = true
             }
         }
@@ -15498,6 +16598,24 @@ final class WorkspaceStore: ObservableObject {
         learningMemoryStates.first(where: { $0.scope == scope })?.revision ?? 0
     }
 
+    private func learningMemoryContextScopes(courseID: UUID?) -> [LearningMemoryScope] {
+        courseID.map { [.global, .course($0)] } ?? [.global]
+    }
+
+    private func learningMemoryContextRevision(courseID: UUID?) -> UInt64 {
+        learningMemoryContextScopes(courseID: courseID).reduce(0) { revision, scope in
+            (revision &* 1_000_003) &+ learningMemoryRevision(in: scope) &+ 1
+        }
+    }
+
+    private func learningMemoryScope(
+        for kind: LearningMemoryKind,
+        courseID: UUID?
+    ) -> LearningMemoryScope {
+        if kind == .goal || kind == .preference { return .global }
+        return learningMemoryScope(courseID: courseID)
+    }
+
     private func learningMemoryStateIndex(
         for scope: LearningMemoryScope,
         createIfMissing: Bool
@@ -15558,29 +16676,17 @@ final class WorkspaceStore: ObservableObject {
         return changed
     }
 
-    /// Current reader/note focus for this Chat. Global Chat may use any open material
-    /// (including legacyExternal). Course Chat only auto-includes items that belong
-    /// to that course. This is independent of project-file grants used by course tools.
+    /// Current reader/note focus for this turn. Chat itself is never course-scoped.
     private func agentFocusMaterialItem(
         for target: AgentConversationTarget
     ) -> StudyItem? {
-        guard let item = selectedMaterialItem else { return nil }
-        if let courseID = target.courseID {
-            let courseItemIDs = Set(courseItems(in: courseID).map(\.id))
-            guard courseItemIDs.contains(item.id) else { return nil }
-        }
-        return item
+        selectedMaterialItem
     }
 
     private func agentFocusNoteItem(
         for target: AgentConversationTarget
     ) -> StudyItem? {
-        guard let item = activeNoteItem, item.isNotebookNote else { return nil }
-        if let courseID = target.courseID {
-            let courseItemIDs = Set(courseItems(in: courseID).map(\.id))
-            guard courseItemIDs.contains(item.id) else { return nil }
-        }
-        return item
+        activeNoteItem.flatMap { $0.isNotebookNote ? $0 : nil }
     }
 
     private func makeCourseContext(
@@ -15590,7 +16696,11 @@ final class WorkspaceStore: ObservableObject {
         focusMaterialItem: StudyItem? = nil,
         focusNoteItem: StudyItem? = nil
     ) async throws -> CourseContextBuildResult {
+        let focusItemIDs = Set(
+            [focusMaterialItem?.id, focusNoteItem?.id].compactMap { $0 }
+        )
         let candidates = access.sources.compactMap { source -> CourseIndexCandidate? in
+            guard focusItemIDs.contains(source.item.id) else { return nil }
             guard Self.agentHostToolSourceIsValid(source) else {
                 return nil
             }
@@ -15666,21 +16776,17 @@ final class WorkspaceStore: ObservableObject {
                 query: query,
                 currentMaterialID: currentMaterialID,
                 currentNoteID: currentNoteID
-            ),
-            selectedMaterialText: nil,
-            selectedMaterialIsTruncated: false,
-            selectedNoteText: nil
+            )
         )
     }
 
     private func makeAgentProjectAccessSnapshot(
         target: AgentConversationTarget
     ) -> AgentProjectAccessSnapshot {
-        let scopedItems = target.courseID.map { courseItems(in: $0) } ?? allItems
+        let scopedItems = importedItems
         let coursesByID = Dictionary(uniqueKeysWithValues: courses.map { ($0.id, $0.title) })
         let requestedCourseIDs: (StudyItem) -> [UUID] = { item in
-            target.courseID.map { [$0] }
-                ?? self.courseMembershipIndex.courseIDs(for: item.id)
+            self.courseMembershipIndex.courseIDs(for: item.id)
         }
         let sources = scopedItems.compactMap { item -> AgentHostToolSource? in
             let itemCourseIDs = requestedCourseIDs(item)
@@ -15696,7 +16802,6 @@ final class WorkspaceStore: ObservableObject {
                 return nil
             }
             let primaryGrant = grants.first
-            let isCourseScope = target.courseID != nil
             let courseIDs = itemCourseIDs.map { $0.uuidString.lowercased() }
             let courseTitles = itemCourseIDs.compactMap { coursesByID[$0] }
             let baseSubtitle = displaySubtitle(for: item)
@@ -15704,7 +16809,7 @@ final class WorkspaceStore: ObservableObject {
             let sourceRevision = memoryText.map(
                 CourseDocumentSearchIndex.sourceRevision(forMarkdown:)
             ) ?? CourseDocumentSearchIndex.sourceRevision(for: item)
-            let subtitle = isCourseScope || courseTitles.isEmpty
+            let subtitle = courseTitles.isEmpty
                 ? baseSubtitle
                 : ui(
                     "课程：\(courseTitles.joined(separator: "、")) · \(baseSubtitle)",
@@ -15715,15 +16820,11 @@ final class WorkspaceStore: ObservableObject {
                 title: displayTitle(for: item),
                 kind: item.kind.rawValue,
                 role: item.isNotebookNote ? "note" : "material",
-                relativePath: isCourseScope ? primaryGrant?.relativePath ?? "" : "",
-                resolvedPath: isCourseScope ? primaryGrant?.targetURL.path ?? "" : "",
-                entryIdentity: isCourseScope
-                    ? primaryGrant.map { StudyAgentFileIdentity($0.entryIdentity) }
-                    : nil,
-                targetIdentity: isCourseScope
-                    ? primaryGrant.map { StudyAgentFileIdentity($0.targetIdentity) }
-                    : nil,
-                isShared: isCourseScope && (primaryGrant?.isShared == true),
+                relativePath: primaryGrant?.relativePath ?? "",
+                resolvedPath: primaryGrant?.targetURL.path ?? "",
+                entryIdentity: primaryGrant.map { StudyAgentFileIdentity($0.entryIdentity) },
+                targetIdentity: primaryGrant.map { StudyAgentFileIdentity($0.targetIdentity) },
+                isShared: primaryGrant?.isShared == true,
                 courseIDs: courseIDs,
                 courseTitles: courseTitles,
                 sourceRevision: sourceRevision
@@ -15736,27 +16837,31 @@ final class WorkspaceStore: ObservableObject {
                 kind: item.kind.rawValue,
                 role: item.isNotebookNote ? "note" : "material",
                 memoryText: memoryText,
-                relativePath: isCourseScope ? primaryGrant?.relativePath : nil,
+                relativePath: primaryGrant?.relativePath,
                 courseIDs: courseIDs,
                 courseTitles: courseTitles,
                 grants: grants
             )
         }
-        let maximumItems = 500
-        let projectItems = sources.prefix(maximumItems).map(\.projectItem)
+        let focusItemIDs = Set(
+            [selectedMaterialItem?.id, activeNoteItem?.id].compactMap { $0 }
+        )
+        let projectItems = sources
+            .filter { focusItemIDs.contains($0.item.id) }
+            .map(\.projectItem)
         let selectedCourse = target.courseID.flatMap { courseID in
             self.course(withID: courseID)
         }
         return AgentProjectAccessSnapshot(
             scope: StudyAgentProjectScope(
-                kind: target.courseID == nil ? .global : .course,
+                kind: .global,
                 chatID: target.sessionID.uuidString.lowercased(),
                 courseID: target.courseID?.uuidString.lowercased(),
                 courseTitle: selectedCourse?.title,
-                rootPath: target.courseRootURL?.path,
-                rootIdentity: target.courseRootIdentity.map(StudyAgentFileIdentity.init),
+                rootPath: nil,
+                rootIdentity: nil,
                 items: projectItems,
-                isTruncated: sources.count > projectItems.count
+                isTruncated: false
             ),
             sources: sources
         )
@@ -16230,12 +17335,22 @@ final class WorkspaceStore: ObservableObject {
                 "--self-check-course-project-root"
             )
         )
-        guard let sessionIndex = studySessions.firstIndex(where: {
-            $0.courseID == courseID && $0.scopeNeedsReview == false
-        }) else {
+        let sessionID = studySessions.first(where: {
+            $0.relatedCourseIDs.contains(courseID)
+        })?.id ?? activeStudySessionID
+        guard let sessionID,
+              let sessionIndex = studySessions.firstIndex(where: {
+                  $0.id == sessionID
+              }) else {
             throw AgentConversationTargetError(
-                message: "可携带状态测试缺少课程 Chat"
+                message: "可携带状态测试缺少统一 Chat"
             )
+        }
+        if !studySessions[sessionIndex].relatedCourseIDs.contains(courseID) {
+            studySessions[sessionIndex].relatedCourseIDs.append(courseID)
+            studySessions[sessionIndex].relatedCourseIDs.sort {
+                $0.uuidString < $1.uuidString
+            }
         }
         let message = AgentMessage(
             role: .user,
@@ -16266,7 +17381,7 @@ final class WorkspaceStore: ObservableObject {
             $0.id == materialItemID
         }),
         let session = studySessions.first(where: {
-            $0.courseID == courseID && $0.scopeNeedsReview == false
+            $0.relatedCourseIDs.contains(courseID)
         }),
         let memoryIndex = learningMemoryStates.firstIndex(where: {
             $0.scope == .course(courseID)
@@ -16334,7 +17449,7 @@ final class WorkspaceStore: ObservableObject {
             )
         )
         let hasMessage = studySessions.contains {
-            $0.courseID == courseID
+            $0.relatedCourseIDs.contains(courseID)
                 && $0.messages.contains { $0.text == messageText }
         }
         let hasMemory = learningMemoryStates.first {
@@ -16368,7 +17483,7 @@ final class WorkspaceStore: ObservableObject {
             )
         )
         guard let sessionIndex = studySessions.firstIndex(where: {
-            $0.courseID == courseID && $0.scopeNeedsReview == false
+            $0.relatedCourseIDs.contains(courseID)
         }) else {
             return
         }
@@ -16390,7 +17505,7 @@ final class WorkspaceStore: ObservableObject {
             )
         )
         guard let sessionIndex = studySessions.firstIndex(where: {
-            $0.courseID == courseID && $0.scopeNeedsReview == false
+            $0.relatedCourseIDs.contains(courseID)
         }),
         let messageIndex = studySessions[sessionIndex].messages.lastIndex(
             where: { $0.role == .assistant }
@@ -16490,6 +17605,20 @@ final class WorkspaceStore: ObservableObject {
         }
     }
 
+    func agentHostMapForSelfCheck(
+        courseID: UUID?,
+        itemID: String? = nil,
+        offset: Int = 0
+    ) throws -> StudyAgentHostToolResult {
+        precondition(ProcessInfo.processInfo.arguments.contains("--self-check-course-project-root"))
+        let target = try agentConversationTargetForSelfCheck(courseID: courseID)
+        let access = makeAgentProjectAccessSnapshot(target: target)
+        let handler = makeAgentHostToolHandler(target: target, access: access)
+        return try waitForCourseFileOperation {
+            try await handler(.courseMap(itemID: itemID, offset: offset, limit: 40))
+        }
+    }
+
     func agentHostReadForSelfCheck(
         courseID: UUID?,
         itemID: String,
@@ -16540,8 +17669,13 @@ final class WorkspaceStore: ObservableObject {
             throw AgentConversationTargetError(message: "无法创建课程自检 Chat")
         }
         selectedItemID = materialItemID
-        activeNotebookItemID = noteItemID
+        openCourseNote(noteItemID)
         noteText = "LEGACY_NOTE_REQUEST_SECRET"
+        guard activeNoteItem?.id == noteItemID else {
+            throw AgentConversationTargetError(
+                message: "自检没有建立当前笔记焦点"
+            )
+        }
         selectionAttachments = []
         selectionContext = SelectionContext(
             text: "LEGACY_SELECTION_REQUEST_SECRET",
@@ -16589,7 +17723,13 @@ final class WorkspaceStore: ObservableObject {
         target: AgentConversationTarget,
         access: AgentProjectAccessSnapshot
     ) -> StudyAgentHostToolHandler {
-        let sources = access.sources
+        let preferredCourseID = target.courseID?.uuidString.lowercased()
+        let sources = access.sources.sorted { left, right in
+            let leftPreferred = preferredCourseID.map(left.courseIDs.contains) ?? false
+            let rightPreferred = preferredCourseID.map(right.courseIDs.contains) ?? false
+            if leftPreferred != rightPreferred { return leftPreferred }
+            return left.title.localizedStandardCompare(right.title) == .orderedAscending
+        }
         let scopedIDs = Set(sources.map(\.item.id))
         let courseTitlesByID = Dictionary(uniqueKeysWithValues: courses.map { ($0.id, $0.title) })
         let links = noteSourceLinks.filter {
@@ -16628,6 +17768,54 @@ final class WorkspaceStore: ObservableObject {
     ) throws -> StudyAgentHostToolResult {
         try Task.checkCancellation()
         switch request {
+        case let .courseMap(itemID, offset, limit):
+            let approvedSources = sources.filter(agentHostToolSourceIsValid)
+            let selectedSources: ArraySlice<AgentHostToolSource>
+            let total: Int
+            if let itemID {
+                let matches = approvedSources.filter { $0.item.id == itemID }
+                selectedSources = matches[...]
+                total = matches.count
+            } else {
+                selectedSources = approvedSources.dropFirst(offset).prefix(limit)
+                total = approvedSources.count
+            }
+            let items = selectedSources.map { source in
+                let linkedItemIDs = links.compactMap { link -> String? in
+                    if link.noteItemID == source.item.id { return link.sourceItemID }
+                    if link.sourceItemID == source.item.id { return link.noteItemID }
+                    return nil
+                }
+                return StudyAgentHostToolItem(
+                    item: StudyAgentCourseItem(
+                        id: source.item.id,
+                        title: source.title,
+                        subtitle: source.subtitle,
+                        kind: source.kind,
+                        role: source.role,
+                        linkedItemIDs: linkedItemIDs,
+                        headings: itemID == nil
+                            ? []
+                            : searchIndex.outline(item: source.item),
+                        tags: source.courseTitles,
+                        searchText: "",
+                        isTruncated: false
+                    ),
+                    relativePath: source.relativePath,
+                    courseIDs: source.courseIDs,
+                    courseTitles: source.courseTitles,
+                    sourceRevision: source.projectItem.sourceRevision
+                )
+            }
+            return StudyAgentHostToolResult(
+                query: "",
+                items: items,
+                total: total,
+                nextCursor: offset + items.count < total
+                    ? String(offset + items.count)
+                    : nil
+            )
+
         case let .courseSearch(query, limit):
             let approvedSources = sources.filter(agentHostToolSourceIsValid)
             let indexed = searchIndex.lookup(
@@ -16870,11 +18058,20 @@ final class WorkspaceStore: ObservableObject {
                 turnCount: session.messages.count
             )
         }
-        let scope = learningMemoryScope(courseID: target.courseID)
+        let memories = learningMemoryContextScopes(courseID: target.courseID)
+            .flatMap { scope in
+                orderedLearningMemoryEntries(in: scope).filter { entry in
+                    scope != .global
+                        || target.courseID == nil
+                        || entry.kind == .goal
+                        || entry.kind == .preference
+                }
+            }
+            .sorted { $0.updatedAt > $1.updatedAt }
         return StudyAgentLearningContext(
-            memoryRevision: learningMemoryRevision(in: scope),
+            memoryRevision: learningMemoryContextRevision(courseID: target.courseID),
             lastLocation: lastStudyLocation(in: target.courseID),
-            memories: Array(orderedLearningMemoryEntries(in: scope).prefix(200)),
+            memories: Array(memories.prefix(200)),
             session: session
         )
     }
@@ -16952,22 +18149,32 @@ final class WorkspaceStore: ObservableObject {
         if activeStudySessionID == target.sessionID {
             latestAgentLearningUpdate = nil
         }
-        let scope = learningMemoryScope(courseID: target.courseID)
-        guard scope.courseID.map({
-            activeCourseRemovalTokens[$0] == nil
-        }) ?? true,
-        let update,
+        guard target.courseID.map({ activeCourseRemovalTokens[$0] == nil }) ?? true,
+              let update,
               update.contextRevision == expectedContextRevision,
               update.memoryRevision == expectedMemoryRevision,
-              learningMemoryRevision(in: scope) == expectedMemoryRevision,
+              learningMemoryContextRevision(courseID: target.courseID)
+                == expectedMemoryRevision,
               update.entries.count <= 12,
               update.resolutions.count <= 12 else { return nil }
 
-        var memoryEntries = learningMemoryEntries(in: scope)
-        let nextMemoryRevision = expectedMemoryRevision &+ 1
+        let scopes = learningMemoryContextScopes(courseID: target.courseID)
+        var entriesByScope = Dictionary(
+            uniqueKeysWithValues: scopes.map { ($0, learningMemoryEntries(in: $0)) }
+        )
+        func locatedMemory(_ id: UUID) -> (LearningMemoryScope, Int, LearningMemoryEntry)? {
+            for scope in scopes {
+                if let index = entriesByScope[scope]?.firstIndex(where: { $0.id == id }),
+                   let entry = entriesByScope[scope]?[index] {
+                    return (scope, index, entry)
+                }
+            }
+            return nil
+        }
         var validatedEntries: [(
             proposal: StudyAgentMemoryUpdateEntry,
             memoryID: UUID?,
+            scope: LearningMemoryScope,
             text: String,
             evidence: String,
             origin: LearningMemoryOrigin
@@ -16987,27 +18194,37 @@ final class WorkspaceStore: ObservableObject {
                 guard evidence.hasPrefix("[用户：本轮]") else { return nil }
             }
             let memoryID: UUID?
+            let scope: LearningMemoryScope
             if let rawMemoryID = proposal.memoryID {
                 guard let parsedMemoryID = UUID(uuidString: rawMemoryID),
                       entryTargetIDs.insert(parsedMemoryID).inserted,
-                      let existingMemory = memoryEntries.first(where: {
-                          $0.id == parsedMemoryID && $0.status == .active
-                      }) else {
+                      let located = locatedMemory(parsedMemoryID),
+                      located.2.status == .active,
+                      located.0 == learningMemoryScope(
+                          for: proposal.kind,
+                          courseID: target.courseID
+                      ) else {
                     return nil
                 }
-                if existingMemory.origin == .userStatement,
+                if located.2.origin == .userStatement,
                    !evidence.hasPrefix("[用户：本轮]"),
                    !evidence.hasPrefix("[会话：当前]") {
                     return nil
                 }
                 memoryID = parsedMemoryID
+                scope = located.0
             } else {
                 memoryID = nil
+                scope = learningMemoryScope(
+                    for: proposal.kind,
+                    courseID: target.courseID
+                )
             }
             validatedEntries.append(
                 (
                     proposal,
                     memoryID,
+                    scope,
                     String(text.prefix(500)),
                     String(evidence.prefix(400)),
                     proposal.origin == .observed ? .agentInference : proposal.origin
@@ -17016,8 +18233,8 @@ final class WorkspaceStore: ObservableObject {
         }
 
         var validatedResolutions: [(
-            proposal: StudyAgentMemoryResolution,
             memoryID: UUID,
+            scope: LearningMemoryScope,
             evidence: String
         )] = []
         var resolutionTargetIDs: Set<UUID> = []
@@ -17029,16 +18246,17 @@ final class WorkspaceStore: ObservableObject {
             ),
             let memoryID = UUID(uuidString: proposal.memoryID),
             resolutionTargetIDs.insert(memoryID).inserted,
-            let memory = memoryEntries.first(where: {
-                $0.id == memoryID && $0.status == .active
-            }),
-            memory.kind == .goal || memory.kind == .confusion || memory.kind == .nextStep else {
+            let located = locatedMemory(memoryID),
+            located.2.status == .active,
+            located.2.kind == .goal
+                || located.2.kind == .confusion
+                || located.2.kind == .nextStep else {
                 return nil
             }
             validatedResolutions.append(
                 (
-                    proposal,
                     memoryID,
+                    located.0,
                     String(evidence.prefix(400))
                 )
             )
@@ -17046,9 +18264,11 @@ final class WorkspaceStore: ObservableObject {
 
         var sessionChanged = false
         var changedMemoryIDs: [UUID] = []
+        var changedMemoryIDsByScope: [LearningMemoryScope: Set<UUID>] = [:]
         var acceptedEntries: [StudyAgentMemoryUpdateEntry] = []
         let now = Date()
         for validated in validatedEntries {
+            var memoryEntries = entriesByScope[validated.scope] ?? []
             if let memoryID = validated.memoryID,
                let index = memoryEntries.firstIndex(where: { $0.id == memoryID }) {
                 let origin: LearningMemoryOrigin = validated.evidence
@@ -17069,6 +18289,7 @@ final class WorkspaceStore: ObservableObject {
                 memoryEntries[index].messageID = messageID
                 memoryEntries[index].updatedAt = now
                 changedMemoryIDs.append(memoryID)
+                changedMemoryIDsByScope[validated.scope, default: []].insert(memoryID)
                 acceptedEntries.append(
                     StudyAgentMemoryUpdateEntry(
                         memoryID: memoryID.uuidString.lowercased(),
@@ -17099,6 +18320,7 @@ final class WorkspaceStore: ObservableObject {
                 )
                 memoryEntries.append(entry)
                 changedMemoryIDs.append(entry.id)
+                changedMemoryIDsByScope[validated.scope, default: []].insert(entry.id)
                 acceptedEntries.append(
                     StudyAgentMemoryUpdateEntry(
                         memoryID: entry.id.uuidString.lowercased(),
@@ -17109,9 +18331,11 @@ final class WorkspaceStore: ObservableObject {
                     )
                 )
             }
+            entriesByScope[validated.scope] = memoryEntries
         }
 
         for validated in validatedResolutions {
+            var memoryEntries = entriesByScope[validated.scope] ?? []
             guard let index = memoryEntries.firstIndex(where: {
                 $0.id == validated.memoryID
             }) else { continue }
@@ -17124,18 +18348,33 @@ final class WorkspaceStore: ObservableObject {
             if !changedMemoryIDs.contains(validated.memoryID) {
                 changedMemoryIDs.append(validated.memoryID)
             }
+            changedMemoryIDsByScope[validated.scope, default: []]
+                .insert(validated.memoryID)
+            entriesByScope[validated.scope] = memoryEntries
         }
 
-        for memoryID in changedMemoryIDs {
-            guard let index = memoryEntries.firstIndex(where: {
-                $0.id == memoryID
-            }) else { continue }
-            Self.appendLearningMemoryRevision(
-                to: &memoryEntries[index],
-                revision: nextMemoryRevision,
-                actor: .agent,
-                recordedAt: now
-            )
+        for (scope, memoryIDs) in changedMemoryIDsByScope {
+            var memoryEntries = entriesByScope[scope] ?? []
+            let nextRevision = learningMemoryRevision(in: scope) &+ 1
+            for memoryID in memoryIDs {
+                guard let index = memoryEntries.firstIndex(where: { $0.id == memoryID }) else {
+                    continue
+                }
+                Self.appendLearningMemoryRevision(
+                    to: &memoryEntries[index],
+                    revision: nextRevision,
+                    actor: .agent,
+                    recordedAt: now
+                )
+            }
+            if let stateIndex = learningMemoryStateIndex(
+                for: scope,
+                createIfMissing: true
+            ) {
+                learningMemoryStates[stateIndex].entries = memoryEntries
+                learningMemoryStates[stateIndex].revision = nextRevision
+            }
+            entriesByScope[scope] = memoryEntries
         }
 
         if let index = studySessions.firstIndex(where: { $0.id == target.sessionID }) {
@@ -17165,12 +18404,6 @@ final class WorkspaceStore: ObservableObject {
             }
         }
 
-        let memoryChanged = !changedMemoryIDs.isEmpty
-        if memoryChanged,
-           let stateIndex = learningMemoryStateIndex(for: scope, createIfMissing: true) {
-            learningMemoryStates[stateIndex].entries = memoryEntries
-            learningMemoryStates[stateIndex].revision = nextMemoryRevision
-        }
         var acceptedUpdate = update
         acceptedUpdate.entries = acceptedEntries
         // A5b applies valid resolutions immediately; the persisted reply attachment
@@ -17180,9 +18413,11 @@ final class WorkspaceStore: ObservableObject {
             latestAgentLearningUpdate = acceptedUpdate
             latestAgentLearningUpdateQuestion = expectedUserQuestion
         }
-        guard memoryChanged else { return nil }
+        guard !changedMemoryIDs.isEmpty else { return nil }
         let summary = changedMemoryIDs.compactMap { id in
-            memoryEntries.first(where: { $0.id == id })?.text
+            scopes.lazy.compactMap { scope in
+                entriesByScope[scope]?.first(where: { $0.id == id })?.text
+            }.first
         }.prefix(3).joined(separator: "；")
         return AgentReplyMemoryUpdate(
             memoryIDs: changedMemoryIDs,
@@ -18736,13 +19971,10 @@ final class WorkspaceStore: ObservableObject {
                 expectedCourseID: courseB.id,
                 expectedScopeNeedsReview: false
             )
-            if let staleEmptySession {
-                _ = activateStudySession(
-                    staleEmptySession.id,
-                    expectedCourseID: courseA.id,
-                    expectedScopeNeedsReview: false
-                )
-            }
+            let blankDiscardedOnSwitch = staleEmptySession.map { stale in
+                !studySessions.contains(where: { $0.id == stale.id })
+                    && agentDraftsBySessionID[stale.id] == nil
+            } == true
             let countBeforeStaleQuestion = studySessions.count
             presentCourseWorkspace(.hub, courseID: courseA.id)
             recordVerificationStage("course-home:stale-route-start")
@@ -18752,7 +19984,8 @@ final class WorkspaceStore: ObservableObject {
             )
             await agentRequestTask?.value
             recordVerificationStage("course-home:stale-route-done")
-            let staleEmptyNotReused = staleRouteID != staleEmptySession?.id
+            let staleEmptyNotReused = blankDiscardedOnSwitch
+                && staleRouteID != staleEmptySession?.id
                 && studySessions.count == countBeforeStaleQuestion + 1
 
             let exactResumeMessages = activeSession.messages
@@ -18906,51 +20139,49 @@ final class WorkspaceStore: ObservableObject {
                 ownerTitle: materialC.title,
                 itemID: materialC.id
             )
-            let courseAAllowedIDs = Set(courseItems(in: courseA.id).map(\.id))
-            let selectionIsolated = currentAgentSelections(
-                allowedItemIDs: courseAAllowedIDs
-            ).isEmpty
-            let focusIsolated = activeStudySessionID == courseAChatID
-                && activeStudySession?.courseID == courseA.id
-                && activeStudySession?.focusItemIDs.contains(materialC.id) == false
-                && activeStudySession?.materialItemID != materialC.id
-                && !canUseSelectedMaterialInActiveChat
-                && agentContextScopeNotice != nil
-            let wrongScopeRejected = !activateStudySession(
+            let chatStayedOpen = activeStudySessionID == courseAChatID
+            let focusFollowedVisibleContent =
+                currentAgentFocusCourseID == courseB.id
+                && currentAgentSelections().contains {
+                    $0.itemID == materialC.id
+                }
+            let openingDidNotAssociate = activeStudySession?
+                .relatedCourseIDs.contains(courseB.id) == false
+            let expectedCourseDoesNotBlock = activateStudySession(
                 courseBSession.id,
                 expectedCourseID: courseA.id,
                 expectedScopeNeedsReview: false
             )
-                && activeStudySessionID == courseAChatID
             let explicitCourseChat = createStudySession(courseID: courseA.id)
-            let explicitCourseCreationPassed = explicitCourseChat?.courseID == courseA.id
-                && explicitCourseChat?.scopeNeedsReview == false
-                && explicitCourseChat?.materialItemID == nil
+            let unifiedCreationPassed = explicitCourseChat?.courseID == nil
+                && explicitCourseChat?.relatedCourseIDs.isEmpty == true
             let explicitGlobalChat = createStudySession(courseID: nil)
-            let explicitGlobalCreationPassed = explicitGlobalChat?.courseID == nil
-                && explicitGlobalChat?.scopeNeedsReview == false
-            let restoredCourseChat = activateStudySession(
+            let singleCreationPathPassed = explicitGlobalChat?.id
+                == explicitCourseChat?.id
+            let restoredChat = activateStudySession(
                 courseAChatID,
-                expectedCourseID: courseA.id,
+                expectedCourseID: nil,
                 expectedScopeNeedsReview: false
             )
-            let resultPassed = focusIsolated
-                && selectionIsolated
-                && wrongScopeRejected
-                && explicitCourseCreationPassed
-                && explicitGlobalCreationPassed
-                && restoredCourseChat
+            let resultPassed = chatStayedOpen
+                && focusFollowedVisibleContent
+                && openingDidNotAssociate
+                && expectedCourseDoesNotBlock
+                && unifiedCreationPassed
+                && singleCreationPathPassed
+                && restoredChat
             writeCourseWorkspaceVerificationReport(
                 name: "course-chat-scope-report.json",
                 payload: [
                     "result": resultPassed ? "pass" : "fail",
-                    "focusIsolated": focusIsolated,
-                    "selectionIsolated": selectionIsolated,
-                    "wrongScopeRejected": wrongScopeRejected,
-                    "explicitCourseCreationPassed": explicitCourseCreationPassed,
-                    "explicitGlobalCreationPassed": explicitGlobalCreationPassed,
-                    "restoredCourseChat": restoredCourseChat,
-                    "activeScopeTitle": activeStudySessionScopeTitle,
+                    "chatStayedOpen": chatStayedOpen,
+                    "focusFollowedVisibleContent": focusFollowedVisibleContent,
+                    "openingDidNotAssociate": openingDidNotAssociate,
+                    "expectedCourseDoesNotBlock": expectedCourseDoesNotBlock,
+                    "unifiedCreationPassed": unifiedCreationPassed,
+                    "singleCreationPathPassed": singleCreationPathPassed,
+                    "restoredChat": restoredChat,
+                    "activeChatTitle": activeStudySessionScopeTitle,
                 ]
             )
             save()
@@ -21410,18 +22641,27 @@ final class WorkspaceStore: ObservableObject {
                 )
             )
         }
-        guard session.scopeNeedsReview == false else {
-            throw AgentConversationTargetError(
-                message: ui(
-                    "这个旧 Chat 还没有确认属于哪门课程，请先完成归类。",
-                    "This older Chat still needs a confirmed course scope."
-                )
-            )
-        }
         return try makeAgentConversationTarget(
             sessionID: session.id,
-            courseID: session.courseID
+            courseID: currentAgentFocusCourseID
         )
+    }
+
+    private var currentAgentFocusCourseID: UUID? {
+        let focusedItemIDs = currentAgentSelections().compactMap(\.itemID)
+            + [selectedMaterialItem?.id, activeNoteItem?.id].compactMap { $0 }
+        let focusedCourseIDs = Set(
+            focusedItemIDs.flatMap { courseMembershipIndex.courseIDs(for: $0) }
+        )
+        if let activeCourseID, focusedCourseIDs.contains(activeCourseID) {
+            return activeCourseID
+        }
+        if let first = focusedCourseIDs.sorted(by: { $0.uuidString < $1.uuidString }).first {
+            return first
+        }
+        guard let activeCourseID,
+              courses.contains(where: { $0.id == activeCourseID }) else { return nil }
+        return activeCourseID
     }
 
     private func makeAgentConversationTarget(
@@ -21486,8 +22726,7 @@ final class WorkspaceStore: ObservableObject {
         _ target: AgentConversationTarget,
         mustBeActive: Bool
     ) throws {
-        guard let session = studySessions.first(where: { $0.id == target.sessionID }),
-              session.courseID == target.courseID,
+        guard studySessions.contains(where: { $0.id == target.sessionID }),
               (!mustBeActive || activeStudySessionID == target.sessionID) else {
             throw AgentConversationTargetError(
                 message: ui(
@@ -21557,11 +22796,13 @@ final class WorkspaceStore: ObservableObject {
         guard let item = selectedMaterialItem,
               !item.isNotebookNote,
               let source = access.sources.first(where: { $0.item.id == item.id }),
-              let grant = source.grants.first(where: Self.agentFileGrantIsValid) else {
+              Self.agentHostToolSourceIsValid(source),
+              let sourceURL = source.grants.first(where: Self.agentFileGrantIsValid)?
+                .targetURL ?? source.item.url else {
             return []
         }
         let mediaType: String
-        switch grant.targetURL.pathExtension.lowercased() {
+        switch sourceURL.pathExtension.lowercased() {
         case "jpg", "jpeg":
             mediaType = "image/jpeg"
         case "png":
@@ -21575,7 +22816,7 @@ final class WorkspaceStore: ObservableObject {
         let snapshot = await Task.detached(priority: .userInitiated) {
             searchIndex.verifiedSnapshot(of: source.item, maximumBytes: 6_000_000)
         }.value
-        guard let snapshot, Self.agentFileGrantIsValid(grant) else {
+        guard let snapshot, Self.agentHostToolSourceIsValid(source) else {
             if let snapshot {
                 try? FileManager.default.removeItem(at: snapshot)
             }
@@ -21637,6 +22878,10 @@ final class WorkspaceStore: ObservableObject {
         let sentSelectionText = agentSelectionText(from: sentSelections)
         let sentSelectionSources = agentSelectionSources(from: sentSelections)
         let sentSelectionIDs = Set(sentSelections.map(\.id))
+        associateStudySession(
+            target.sessionID,
+            withItemIDs: sentSelections.compactMap(\.itemID)
+        )
         let shouldClearSentDocumentSelection = sentSelections.contains {
             $0.id == selectionContext?.id && $0.source == .document
         }
@@ -21645,8 +22890,9 @@ final class WorkspaceStore: ObservableObject {
             : sentNoteItem.map(displayTitle)
         let requestID = UUID()
         let requestWorkspaceRevision = agentContextRevision
-        let requestMemoryScope = learningMemoryScope(courseID: target.courseID)
-        let requestMemoryRevision = learningMemoryRevision(in: requestMemoryScope)
+        let requestMemoryRevision = learningMemoryContextRevision(
+            courseID: target.courseID
+        )
         let sentMaterialTitle = sentMaterialItem == nil
             ? ui("未选择材料", "No material selected")
             : currentSourceReferenceTitle
@@ -21659,6 +22905,11 @@ final class WorkspaceStore: ObservableObject {
                 ?? loadedAgentNoteText(for: note)
         } ?? ""
         let sentNoteItemID = sentNoteItem?.id
+        associateStudySession(
+            target.sessionID,
+            withItemIDs: [sentMaterialItemID, sentNoteItemID]
+                .compactMap { $0 }
+        )
         let sentLearningContext = makeLearningContext(target: target)
         let sentCourseProfile = makeCourseProfileContext(
             courseID: target.courseID,
@@ -21786,7 +23037,6 @@ final class WorkspaceStore: ObservableObject {
             )
             guard activeAgentRequestID == requestID else { return }
             try validateAgentConversationTarget(target, mustBeActive: false)
-            let resolvedSentNoteText = courseBuild.selectedNoteText ?? ""
             let hostToolHandler = makeAgentHostToolHandler(
                 target: target,
                 access: projectAccess
@@ -21797,10 +23047,10 @@ final class WorkspaceStore: ObservableObject {
                 purpose: .conversation,
                 question: question,
                 materialTitle: sentMaterialTitle,
-                materialText: courseBuild.selectedMaterialText ?? "",
-                materialIsTruncated: courseBuild.selectedMaterialIsTruncated,
+                materialText: "",
+                materialIsTruncated: false,
                 noteTitle: sentNoteTitle,
-                noteText: resolvedSentNoteText,
+                noteText: "",
                 selectionTitle: sentSelectionTitle,
                 selectionText: sentSelectionText,
                 selectionSources: sentSelectionSources,
@@ -21885,11 +23135,7 @@ final class WorkspaceStore: ObservableObject {
                     )
                 )
             }
-            let sources = reply.sources.map { source in
-                var persisted = source
-                persisted.courseID = target.courseID ?? persisted.courseID
-                return persisted
-            }
+            let sources = reply.sources
             if let messageID = replyMessageID {
                 _ = updateAgentMessage(messageID, in: target.sessionID) {
                     $0.text = Self.mergedAgentReplyText(
@@ -21907,6 +23153,18 @@ final class WorkspaceStore: ObservableObject {
                     $0.toolTrace = reply.toolTrace
                 }
             }
+            associateStudySession(
+                target.sessionID,
+                with: sources.compactMap(\.courseID)
+            )
+            associateStudySession(
+                target.sessionID,
+                withItemIDs: sources.compactMap(\.itemID)
+            )
+            associateStudySession(
+                target.sessionID,
+                withItemIDs: reply.readItemIDs
+            )
             // The visible reply is durable before this request is considered finished.
             // A save error must not replace or hide the answer that already arrived.
             _ = await flushPendingWorkspaceSaveAsync()
@@ -22019,7 +23277,10 @@ final class WorkspaceStore: ObservableObject {
         completion: (@MainActor () -> Void)? = nil
     ) -> Bool {
         guard let runningChatID = activeAgentReplyChatID,
-              studySessions.first(where: { $0.id == runningChatID })?.courseID == courseID else {
+              let messageID = activeAgentReplyMessageID,
+              studySessions.first(where: { $0.id == runningChatID })?
+                .messages.first(where: { $0.id == messageID })?
+                .origin?.courseID == courseID else {
             return false
         }
         stopAgent(restoreDraft: false, completion: completion)
@@ -22270,11 +23531,11 @@ final class WorkspaceStore: ObservableObject {
             guard updatesVisibleChat else { return }
             let base: String
             switch name {
-            case "weibei_course_search", "grep", "find":
+            case "weibei_course_search":
                 base = ui("正在搜索", "Searching")
             case "weibei_course_read", "read":
                 base = ui("正在读取", "Reading")
-            case "weibei_course_map", "ls":
+            case "weibei_course_map":
                 base = ui("正在查找课程关联", "Finding course connections")
             case "weibei_learning_memory":
                 base = ui("正在回顾学习记忆", "Reviewing learning memory")
@@ -22588,14 +23849,22 @@ final class WorkspaceStore: ObservableObject {
                 separator: "/",
                 omittingEmptySubsequences: false
             )
+            let role: CourseOwnedFileRole = importedItems[index].isNotebookNote
+                ? .note
+                : .material
+            let allowedDirectories: Set<Substring> = role == .note
+                ? [Substring(role.commonDirectoryName)]
+                : [Substring(role.commonDirectoryName), "共享文稿"]
             let usesPortableSharedLocation =
-                components.count == 2 && components[0] == "共享文稿"
+                components.count == 2
+                    && allowedDirectories.contains(components[0])
             if usesPortableSharedLocation {
                 guard let expectedDigest = importedItems[index].contentDigest,
                       let resolved = try? resolvedSharedPortableFile(
                           relativePath: sharedRelativePath,
                           expectedDigest: expectedDigest,
-                          expectedKind: importedItems[index].kind
+                          expectedKind: importedItems[index].kind,
+                          isNotebookNote: importedItems[index].isNotebookNote
                       ),
                       importedItems[index].importedFileIdentity.map({
                           $0 == resolved.identity
@@ -22757,7 +24026,14 @@ final class WorkspaceStore: ObservableObject {
         guard !courseReconciliationInFlight else { return }
         courseReconciliationInFlight = true
         defer { courseReconciliationInFlight = false }
-        if await reconcileSharedFilesNow() {
+        var sharedChanged = false
+        if let libraryRoot = courseLibraryRootURL {
+            try? await ensureCommonContentDirectories(at: libraryRoot)
+            sharedChanged = await migrateLegacySharedMaterials(
+                in: libraryRoot
+            )
+        }
+        if await reconcileSharedFilesNow() || sharedChanged {
             _ = await persistWorkspaceNow()
             courseDocumentSearchIndex.synchronize(allItems)
             invalidateAgentContext()
@@ -22781,11 +24057,18 @@ final class WorkspaceStore: ObservableObject {
                     root: root
                 )
                 if let libraryRoot = courseLibraryRootURL {
-                    let sharedDirectory = libraryRoot.appendingPathComponent(
+                    for directoryName in [
+                        CourseOwnedFileRole.material.commonDirectoryName,
+                        CourseOwnedFileRole.note.commonDirectoryName,
                         "共享文稿",
-                        isDirectory: true
-                    )
-                    if FileManager.default.fileExists(atPath: sharedDirectory.path) {
+                    ] {
+                        let sharedDirectory = libraryRoot.appendingPathComponent(
+                            directoryName,
+                            isDirectory: true
+                        )
+                        guard FileManager.default.fileExists(
+                            atPath: sharedDirectory.path
+                        ) else { continue }
                         let sharedObservations = try await courseProjectFileWorker.scanSharedLinks(
                             at: root,
                             sharedDirectory: sharedDirectory
@@ -22832,19 +24115,141 @@ final class WorkspaceStore: ObservableObject {
 
     private func reconcileSharedFilesNow() async -> Bool {
         guard let libraryRoot = courseLibraryRootURL else { return false }
-        let sharedDirectory = libraryRoot.appendingPathComponent(
+        var changed = false
+        for (directoryName, isNote) in [
+            (CourseOwnedFileRole.material.commonDirectoryName, false),
+            (CourseOwnedFileRole.note.commonDirectoryName, true),
+            ("共享文稿", false),
+        ] {
+            if await reconcileSharedFilesNow(
+                libraryRoot: libraryRoot,
+                directoryName: directoryName,
+                isNote: isNote
+            ) {
+                changed = true
+            }
+        }
+        return changed
+    }
+
+    private func ensureCommonContentDirectories(at libraryRoot: URL) async throws {
+        for role in [CourseOwnedFileRole.material, .note] {
+            _ = try await courseProjectFileWorker.ensureRealDirectory(
+                libraryRoot.appendingPathComponent(
+                    role.commonDirectoryName,
+                    isDirectory: true
+                ),
+                inside: libraryRoot
+            )
+        }
+    }
+
+    private func migrateLegacySharedMaterials(
+        in libraryRoot: URL
+    ) async -> Bool {
+        let oldDirectory = libraryRoot.appendingPathComponent(
             "共享文稿",
+            isDirectory: true
+        )
+        guard FileManager.default.fileExists(atPath: oldDirectory.path) else {
+            return false
+        }
+        let newDirectory = libraryRoot.appendingPathComponent(
+            CourseOwnedFileRole.material.commonDirectoryName,
+            isDirectory: true
+        )
+        var changed = false
+        for index in importedItems.indices {
+            guard case .shared(let relativePath) = importedItems[index].storage,
+                  relativePath.hasPrefix("共享文稿/"),
+                  let oldURL = CourseProjectPathPolicy.resolvedRelativePath(
+                    relativePath,
+                    inside: libraryRoot
+                  ),
+                  importedFileIdentityResolver(oldURL)
+                    == importedItems[index].importedFileIdentity else {
+                continue
+            }
+            let newURL = newDirectory.appendingPathComponent(
+                oldURL.lastPathComponent
+            )
+            guard !FileManager.default.fileExists(atPath: newURL.path) else {
+                noteFileError = ui(
+                    "通用资料中已有同名文件“\(newURL.lastPathComponent)”，旧共享文稿已保留。",
+                    "A same-named common material already exists. The legacy shared file was kept."
+                )
+                continue
+            }
+            guard CourseProjectFileWorker.renameWithoutReplacement(
+                from: oldURL,
+                to: newURL
+            ) else {
+                continue
+            }
+            for membership in courseItemMemberships
+            where membership.itemID == importedItems[index].id {
+                guard let root = courseRootURL(for: membership.courseID),
+                      let relativePath = membership.courseRelativePath,
+                      let linkIdentity = membership.entryIdentity,
+                      let linkURL = Self.backgroundRawRelativeURL(
+                        relativePath,
+                        inside: root
+                      ) else {
+                    continue
+                }
+                do {
+                    try await courseProjectFileWorker.repairSharedLink(
+                        at: linkURL,
+                        courseRoot: root,
+                        from: oldURL,
+                        to: newURL,
+                        expectedLinkIdentity: linkIdentity
+                    )
+                } catch {
+                    courseRootUnavailableReasons[membership.courseID] = ui(
+                        "通用资料已迁移，但课程入口暂时无法修复：\(error.localizedDescription)",
+                        "The common material moved, but a course entry could not be repaired."
+                    )
+                }
+            }
+            importedItems[index].storage = .shared(
+                sharedRelativePath:
+                    "\(CourseOwnedFileRole.material.commonDirectoryName)/\(newURL.lastPathComponent)"
+            )
+            importedItems[index].urlPath = newURL.path
+            importedItems[index].importedFileLastKnownPath = newURL.path
+            changed = true
+        }
+        if (try? FileManager.default.contentsOfDirectory(
+            atPath: oldDirectory.path
+        ).isEmpty) == true {
+            try? FileManager.default.removeItem(at: oldDirectory)
+        }
+        return changed
+    }
+
+    private func reconcileSharedFilesNow(
+        libraryRoot: URL,
+        directoryName: String,
+        isNote: Bool
+    ) async -> Bool {
+        let sharedDirectory = libraryRoot.appendingPathComponent(
+            directoryName,
             isDirectory: true
         )
         guard FileManager.default.fileExists(atPath: sharedDirectory.path),
               let snapshot = try? await courseProjectFileWorker
-                .scanSharedOriginals(at: sharedDirectory) else {
+                .scanSharedOriginals(
+                    at: sharedDirectory,
+                    isNote: isNote
+                ) else {
             return false
         }
         var changed = false
         var itemIndexByID: [String: Int] = [:]
         for index in importedItems.indices {
-            if case .shared = importedItems[index].storage {
+            if case .shared(let relativePath) = importedItems[index].storage,
+               relativePath.hasPrefix("\(directoryName)/") {
                 itemIndexByID[importedItems[index].id] = index
             }
         }
@@ -22870,10 +24275,12 @@ final class WorkspaceStore: ObservableObject {
         for itemID in itemIDs {
             guard let itemIndex = itemIndexByID[itemID],
                   case .shared(let relativePath) = importedItems[itemIndex].storage,
-                  relativePath.hasPrefix("共享文稿/") else {
+                  relativePath.hasPrefix("\(directoryName)/") else {
                 continue
             }
-            let fileName = String(relativePath.dropFirst("共享文稿/".count))
+            let fileName = String(
+                relativePath.dropFirst(directoryName.count + 1)
+            )
             guard !fileName.contains("/"),
                   let observationIndex = snapshot.indexByRelativePath[fileName],
                   consumedObservationIndexes.insert(observationIndex).inserted else {
@@ -22979,7 +24386,7 @@ final class WorkspaceStore: ObservableObject {
                 nextItem.importedFileBookmarkData = nil
                 nextItem.storage = .shared(
                     sharedRelativePath:
-                        "共享文稿/\(observation.relativePath)"
+                        "\(directoryName)/\(observation.relativePath)"
                 )
                 nextItem.contentRevision = revision
                 nextItem.contentDigest = digest
@@ -23010,10 +24417,10 @@ final class WorkspaceStore: ObservableObject {
                     importedFileBookmarkData: nil,
                     importedFileLastKnownPath: observation.url.path,
                     isSample: false,
-                    isNotebookNote: false,
+                    isNotebookNote: isNote,
                     storage: .shared(
                         sharedRelativePath:
-                            "共享文稿/\(observation.relativePath)"
+                            "\(directoryName)/\(observation.relativePath)"
                     ),
                     contentRevision: 1,
                     contentDigest: nil,
@@ -23811,6 +25218,16 @@ final class WorkspaceStore: ObservableObject {
         if notebookRenameDraft?.itemID == oldID {
             notebookRenameDraft?.itemID = newID
         }
+        materialNotePairings = replacingItemID(
+            oldID,
+            with: newID,
+            in: materialNotePairings
+        )
+        noteMaterialPairings = replacingItemID(
+            oldID,
+            with: newID,
+            in: noteMaterialPairings
+        )
 
         pendingNotePersistenceTasks.removeValue(forKey: oldID)?.cancel()
         if var pending = pendingNotePersistenceByItemID.removeValue(forKey: oldID) {
@@ -23818,6 +25235,22 @@ final class WorkspaceStore: ObservableObject {
             scheduleNotePersistence(pending.markdown, for: pending.item)
         }
         replaceNavigationItemID(oldID, with: newID)
+    }
+
+    private func replacingItemID(
+        _ oldID: String,
+        with newID: String,
+        in pairings: [String: String]
+    ) -> [String: String] {
+        var result = pairings
+        if let value = result.removeValue(forKey: oldID),
+           result[newID] == nil {
+            result[newID] = value == oldID ? newID : value
+        }
+        for key in Array(result.keys) where result[key] == oldID {
+            result[key] = newID
+        }
+        return result
     }
 
     private func replaceNavigationItemID(_ oldID: String, with newID: String) {
@@ -25078,7 +26511,7 @@ final class WorkspaceStore: ObservableObject {
                 updatedAt: course.updatedAt
             ),
             items: portableItems,
-            studySessions: sessions,
+            studySessions: [],
             learningMemoryState: memoryState,
             courseKnowledgeProfile: courseKnowledgeProfiles.first {
                 $0.courseID == courseID
@@ -25318,7 +26751,8 @@ final class WorkspaceStore: ObservableObject {
     private func resolvedSharedPortableFile(
         relativePath: String,
         expectedDigest: String,
-        expectedKind: StudyItemKind
+        expectedKind: StudyItemKind,
+        isNotebookNote: Bool
     ) throws -> (url: URL, identity: ImportedFileIdentity)? {
         guard let libraryRoot = courseLibraryRootURL else {
             return nil
@@ -25327,8 +26761,12 @@ final class WorkspaceStore: ObservableObject {
             separator: "/",
             omittingEmptySubsequences: false
         )
+        let role: CourseOwnedFileRole = isNotebookNote ? .note : .material
+        let allowedDirectories: Set<Substring> = role == .note
+            ? [Substring(role.commonDirectoryName)]
+            : [Substring(role.commonDirectoryName), "共享文稿"]
         guard components.count == 2,
-              components[0] == "共享文稿",
+              allowedDirectories.contains(components[0]),
               let candidate = CourseProjectPathPolicy.resolvedRelativePath(
                   relativePath,
                   inside: libraryRoot
@@ -25336,7 +26774,7 @@ final class WorkspaceStore: ObservableObject {
               CourseProjectPathPolicy.isSame(
                   candidate.deletingLastPathComponent(),
                   libraryRoot.appendingPathComponent(
-                      "共享文稿",
+                      String(components[0]),
                       isDirectory: true
                   )
                   .resolvingSymlinksInPath()
@@ -25431,16 +26869,6 @@ final class WorkspaceStore: ObservableObject {
                 $0.courseID != courseID
             }.map(\.itemID)
         )
-        let otherChatIDs = Set(
-            studySessions.lazy.filter {
-                $0.courseID != courseID || $0.scopeNeedsReview != false
-            }.map(\.id)
-        )
-        guard otherChatIDs.isDisjoint(
-            with: Set(state.studySessions.map(\.id))
-        ) else {
-            throw CoursePortableStateError.duplicateChatID
-        }
         let previousRelationIDs = Set(
             noteSourceLinks.lazy.filter {
                 previousNoteIDs.contains($0.noteItemID)
@@ -25511,7 +26939,8 @@ final class WorkspaceStore: ObservableObject {
                     try? resolvedSharedPortableFile(
                         relativePath: sharedRelativePath,
                         expectedDigest: existingDigest,
-                        expectedKind: existing.kind
+                        expectedKind: existing.kind,
+                        isNotebookNote: existing.isNotebookNote
                    ),
                    CourseProjectPathPolicy.isSame(
                        currentCanonical.url,
@@ -25541,7 +26970,8 @@ final class WorkspaceStore: ObservableObject {
                     let resolved = try resolvedSharedPortableFile(
                         relativePath: sharedRelativePath,
                         expectedDigest: expectedContentDigest,
-                        expectedKind: portable.kind
+                        expectedKind: portable.kind,
+                        isNotebookNote: portable.isNotebookNote
                     )
                     itemURL = resolved?.url
                     itemIdentity = resolved?.identity
@@ -25635,10 +27065,33 @@ final class WorkspaceStore: ObservableObject {
         restoredCourse.updatedAt = state.metadata.updatedAt
         courses[courseIndex] = restoredCourse
 
-        studySessions.removeAll {
-            $0.courseID == courseID && $0.scopeNeedsReview == false
+        if state.schemaVersion == 1 {
+            for var legacySession in state.studySessions {
+                if let index = studySessions.firstIndex(where: {
+                    $0.id == legacySession.id
+                }) {
+                    let related = Set(studySessions[index].relatedCourseIDs)
+                        .union(legacySession.relatedCourseIDs)
+                        .union([courseID])
+                    studySessions[index].relatedCourseIDs = related.sorted {
+                        $0.uuidString < $1.uuidString
+                    }
+                } else {
+                    legacySession.relatedCourseIDs = Set(
+                        legacySession.relatedCourseIDs + [courseID]
+                    ).sorted { $0.uuidString < $1.uuidString }
+                    studySessions.append(legacySession)
+                }
+            }
         }
-        studySessions.append(contentsOf: state.studySessions)
+        if let chatID = state.resumePoint?.chatID,
+           let index = studySessions.firstIndex(where: { $0.id == chatID }),
+           !studySessions[index].relatedCourseIDs.contains(courseID) {
+            studySessions[index].relatedCourseIDs.append(courseID)
+            studySessions[index].relatedCourseIDs.sort {
+                $0.uuidString < $1.uuidString
+            }
+        }
         if let activeStudySessionID,
            let active = studySessions.first(where: {
                $0.id == activeStudySessionID
@@ -25730,6 +27183,19 @@ final class WorkspaceStore: ObservableObject {
                         savedAt: Date(timeIntervalSince1970: 0)
                     )
                 } catch {
+                    let awaitsLegacyOrganization =
+                        courseItemMemberships.contains { membership in
+                            guard membership.courseID == courseID,
+                                  let item = importedItems.first(where: {
+                                      $0.id == membership.itemID
+                                  }) else {
+                                return false
+                            }
+                            return item.storage == .legacyExternal
+                        }
+                    if awaitsLegacyOrganization {
+                        continue
+                    }
                     guard stateURL == nil, hasPortableHistory else {
                         throw error
                     }
@@ -25990,6 +27456,8 @@ final class WorkspaceStore: ObservableObject {
         courseLibraryRootBookmarkData = snapshot.courseLibraryRootBookmarkData
         noteSourceLinks = snapshot.noteSourceLinks ?? []
         noteSourceLinksMigrationVersion = snapshot.noteSourceLinksMigrationVersion ?? 0
+        materialNotePairings = snapshot.materialNotePairings ?? [:]
+        noteMaterialPairings = snapshot.noteMaterialPairings ?? [:]
         studyLocationsByItemID = snapshot.studyLocationsByItemID ?? [:]
         studyLocationsByCourseID = snapshot.studyLocationsByCourseID ?? [:]
         courseResumePoints = snapshot.courseResumePoints ?? []
@@ -26023,11 +27491,19 @@ final class WorkspaceStore: ObservableObject {
         }
         if selectedItem?.isNotebookNote == true {
             activeNotebookItemID = selectedItemID
-            selectedItemID = sampleItems.first?.id
+            selectedItemID = nil
         }
         if let activeNotebookItemID,
            !allItems.contains(where: { $0.id == activeNotebookItemID && $0.isNotebookNote }) {
             self.activeNotebookItemID = nil
+        }
+        materialNotePairings = materialNotePairings.filter {
+            item(withID: $0.key)?.isNotebookNote == false
+                && item(withID: $0.value)?.isNotebookNote == true
+        }
+        noteMaterialPairings = noteMaterialPairings.filter {
+            item(withID: $0.key)?.isNotebookNote == true
+                && item(withID: $0.value)?.isNotebookNote == false
         }
         if let activeCourseID,
            !courses.contains(where: { $0.id == activeCourseID }) {
@@ -26105,6 +27581,20 @@ final class WorkspaceStore: ObservableObject {
             .replacingOccurrences(of: "\n- <br />", with: "")
     }
 
+    private var persistedStudySessions: [StudySession] {
+        studySessions.filter {
+            $0.id != freshlyCreatedEmptyStudySessionID || !$0.messages.isEmpty
+        }
+    }
+
+    private var persistedActiveStudySessionID: UUID? {
+        let sessions = persistedStudySessions
+        guard sessions.contains(where: { $0.id == activeStudySessionID }) else {
+            return sessions.max(by: { $0.updatedAt < $1.updatedAt })?.id
+        }
+        return activeStudySessionID
+    }
+
     private func makePersistedWorkspaceSnapshot()
         -> (snapshot: PersistedWorkspace, resumePoints: [CourseResumePoint]) {
         let resumePoints = sanitizedCourseResumePoints()
@@ -26127,6 +27617,8 @@ final class WorkspaceStore: ObservableObject {
                 noteSourceLinks: noteSourceLinks,
                 noteSourceLinksMigrationVersion:
                     noteSourceLinksMigrationVersion,
+                materialNotePairings: materialNotePairings,
+                noteMaterialPairings: noteMaterialPairings,
                 studyLocationsByItemID: studyLocationsByItemID,
                 studyLocationsByCourseID: studyLocationsByCourseID,
                 courseResumePoints: resumePoints,
@@ -26147,10 +27639,10 @@ final class WorkspaceStore: ObservableObject {
                 courseKnowledgeProfiles: sanitizedCourseKnowledgeProfiles(),
                 learningMemoryScopeMigrationVersion:
                     learningMemoryScopeMigrationVersion,
-                studySessions: studySessions,
+                studySessions: persistedStudySessions,
                 studySessionScopeMigrationVersion:
                     studySessionScopeMigrationVersion,
-                activeStudySessionID: activeStudySessionID,
+                activeStudySessionID: persistedActiveStudySessionID,
                 selectionAskThreads: selectionAskThreads,
                 modelName: modelName,
                 agentProviderID: agentProviderID.rawValue,
@@ -26188,16 +27680,6 @@ final class WorkspaceStore: ObservableObject {
                 return item.id
             }
         )
-        let removedSessions = (workspace.studySessions ?? []).filter {
-            $0.courseID == courseID
-        }
-        let removedSessionIDs = Set(removedSessions.map(\.id))
-        let removedMessageIDs = Set(
-            removedSessions.flatMap {
-                $0.messages.map(\.id)
-            }
-        )
-
         workspace.importedItems.removeAll {
             removedItemIDs.contains($0.id)
         }
@@ -26238,6 +27720,16 @@ final class WorkspaceStore: ObservableObject {
             removedItemIDs.contains($0.noteItemID)
                 || removedItemIDs.contains($0.sourceItemID)
         }
+        workspace.materialNotePairings =
+            workspace.materialNotePairings?.filter {
+                !removedItemIDs.contains($0.key)
+                    && !removedItemIDs.contains($0.value)
+            }
+        workspace.noteMaterialPairings =
+            workspace.noteMaterialPairings?.filter {
+                !removedItemIDs.contains($0.key)
+                    && !removedItemIDs.contains($0.value)
+            }
         workspace.studyLocationsByItemID =
             workspace.studyLocationsByItemID?.filter {
                 !removedItemIDs.contains($0.key)
@@ -26264,14 +27756,20 @@ final class WorkspaceStore: ObservableObject {
         workspace.courseKnowledgeProfiles?.removeAll {
             $0.courseID == courseID
         }
-        workspace.studySessions?.removeAll {
-            $0.courseID == courseID
-        }
-        if workspace.activeStudySessionID.map(
-            removedSessionIDs.contains
-        ) == true {
-            workspace.activeStudySessionID =
-                workspace.studySessions?.first?.id
+        if workspace.studySessions != nil {
+            for index in workspace.studySessions!.indices {
+                workspace.studySessions![index].relatedCourseIDs.removeAll {
+                    $0 == courseID
+                }
+                workspace.studySessions![index].focusItemIDs.removeAll {
+                    removedItemIDs.contains($0)
+                }
+                if workspace.studySessions![index].materialItemID.map(
+                    removedItemIDs.contains
+                ) == true {
+                    workspace.studySessions![index].materialItemID = nil
+                }
+            }
         }
         workspace.selectionAskThreads =
             workspace.selectionAskThreads?.compactMap {
@@ -26281,17 +27779,7 @@ final class WorkspaceStore: ObservableObject {
                 ) == true {
                     return nil
                 }
-                var retained = thread
-                let originallyHadMessages =
-                    !retained.messageIDs.isEmpty
-                retained.messageIDs.removeAll {
-                    removedMessageIDs.contains($0)
-                }
-                if originallyHadMessages
-                    && retained.messageIDs.isEmpty {
-                    return nil
-                }
-                return retained
+                return thread
             }
         return workspace
     }
@@ -26866,6 +28354,8 @@ final class WorkspaceStore: ObservableObject {
                 courseLibraryRootBookmarkData: courseLibraryRootBookmarkData,
                 noteSourceLinks: noteSourceLinks,
                 noteSourceLinksMigrationVersion: noteSourceLinksMigrationVersion,
+                materialNotePairings: materialNotePairings,
+                noteMaterialPairings: noteMaterialPairings,
                 studyLocationsByItemID: studyLocationsByItemID,
                 studyLocationsByCourseID: studyLocationsByCourseID,
                 courseResumePoints: persistedCourseResumePoints,
@@ -26885,9 +28375,9 @@ final class WorkspaceStore: ObservableObject {
                 learningMemoryStates: learningMemoryStates,
                 courseKnowledgeProfiles: sanitizedCourseKnowledgeProfiles(),
                 learningMemoryScopeMigrationVersion: learningMemoryScopeMigrationVersion,
-                studySessions: studySessions,
+                studySessions: persistedStudySessions,
                 studySessionScopeMigrationVersion: studySessionScopeMigrationVersion,
-                activeStudySessionID: activeStudySessionID,
+                activeStudySessionID: persistedActiveStudySessionID,
                 selectionAskThreads: selectionAskThreads,
                 modelName: modelName,
                 agentProviderID: agentProviderID.rawValue,

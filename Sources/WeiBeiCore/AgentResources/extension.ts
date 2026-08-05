@@ -22,9 +22,6 @@ const COURSE_PROFILE_UPDATE_TOOL = "weibei_course_profile_update";
 const NOTE_PROPOSAL_TOOL = "weibei_note_proposal";
 const RELATION_PROPOSAL_TOOL = "weibei_relation_proposal";
 const READ_TOOL = "read";
-const LS_TOOL = "ls";
-const FIND_TOOL = "find";
-const GREP_TOOL = "grep";
 const RICH_ANSWER_CATALOG_TOOL = "weibei_ui_catalog";
 const COMPUTE_ARTIFACT_TOOL = "weibei_compute_artifact";
 const RICH_ANSWER_TOOL = "weibei_rich_answer";
@@ -51,9 +48,6 @@ const ALLOWED_TOOLS = new Set([
   NOTE_PROPOSAL_TOOL,
   RELATION_PROPOSAL_TOOL,
   READ_TOOL,
-  LS_TOOL,
-  FIND_TOOL,
-  GREP_TOOL,
   RICH_ANSWER_CATALOG_TOOL,
   COMPUTE_ARTIFACT_TOOL,
   RICH_ANSWER_TOOL,
@@ -361,18 +355,16 @@ const LIMITS = {
   courseCatalogItems: 500,
   courseItems: 80,
   courseRelations: 500,
-  courseMapPageItems: 60,
+  courseMapPageItems: 40,
   courseSearchText: 2_400,
   courseHeadings: 12,
   courseTags: 16,
   courseLinkedItems: 24,
   projectItems: 500,
   projectPath: 4_096,
-  projectListItems: 200,
   projectSearchItems: 8,
   projectSearchBytes: 256_000,
   projectReadBytes: 256_000,
-  projectReadLines: 400,
   learningMemories: 48,
   learningText: 500,
   learningEvidence: 400,
@@ -1667,6 +1659,8 @@ function currentFocusMessage(snapshot: ContextSnapshotV2): string {
         ? {
             title: snapshot.selection.title,
             label: `[选区：${snapshot.selection.title}]`,
+            text: snapshot.selection.text,
+            isTruncated: snapshot.selection.isTruncated,
           }
         : undefined,
     }, null, 2),
@@ -1786,6 +1780,11 @@ function resolutionEvidenceMatches(snapshot: ContextSnapshotV2, evidence: string
   return currentTurnEvidenceMatches(snapshot, evidence);
 }
 
+function hasExplicitLearningCheckpoint(question: string): boolean {
+  return /(?:我(?:懂|明白|理解|学会|确认|同意)|这个结论对|说得对|没问题|可以保存|写入笔记|保存下来|完成(?:了|这一)|学完(?:了|这一)|i (?:understand|agree|confirm)|got it|that(?:'s| is) right|save (?:it|this)|write (?:it|this) to (?:my )?notes)/iu
+    .test(question);
+}
+
 function currentTurnEvidenceStatement(evidence: string): string | undefined {
   const prefix = evidence.startsWith("[用户：本轮]")
     ? "[用户：本轮]"
@@ -1895,6 +1894,7 @@ async function queryCourseIndex(
   signal?: AbortSignal,
 ): Promise<{
   items: CourseItemSnapshot[];
+  total?: number;
   nextCursor?: string;
   sourceRevision?: string;
 }> {
@@ -1980,17 +1980,29 @@ async function queryCourseIndex(
         requireString(payload.sourceRevision, "hostToolResponse.payload.sourceRevision"),
         LIMITS.identifier,
       );
+  const total = payload.total === undefined || payload.total === null
+    ? undefined
+    : (() => {
+        if (typeof payload.total !== "number" || !Number.isInteger(payload.total) || payload.total < 0) {
+          throw new Error("hostToolResponse.payload.total 无效");
+        }
+        return payload.total;
+      })();
+  const maximumItems = toolName === COURSE_MAP_TOOL
+    ? LIMITS.courseMapPageItems
+    : LIMITS.projectSearchItems;
   return {
     items: payload.items
-    .slice(0, LIMITS.projectSearchItems)
+    .slice(0, maximumItems)
     .map((item, index) =>
       readHostCourseItem(
         item,
         `hostToolResponse.payload.items[${index}]`,
         snapshot,
-        toolName === COURSE_READ_TOOL ? 24_000 : LIMITS.courseSearchText * 2,
+        toolName === COURSE_READ_TOOL ? 12_000 : LIMITS.courseSearchText * 2,
       )
     ),
+    total,
     nextCursor,
     sourceRevision,
   };
@@ -2152,26 +2164,6 @@ export function projectItemForPath(
   return snapshot.project.items.find(
     (item) => item.relativePath === requestedPath,
   );
-}
-
-function globPattern(pattern: string): RegExp {
-  let source = "^";
-  for (let index = 0; index < pattern.length; index += 1) {
-    const character = pattern[index];
-    if (character === "*") {
-      if (pattern[index + 1] === "*") {
-        source += ".*";
-        index += 1;
-      } else {
-        source += "[^/]*";
-      }
-    } else if (character === "?") {
-      source += "[^/]";
-    } else {
-      source += character.replace(/[\\^$.*+?()[\]{}|]/gu, "\\$&");
-    }
-  }
-  return new RegExp(`${source}$`, "iu");
 }
 
 function courseJumpReference(
@@ -9270,187 +9262,14 @@ export default function weibeiExtension(pi: ExtensionAPI) {
   const verifiedVisualAssetBytes = new Map<string, number>();
 
   pi.registerTool({
-    name: LS_TOOL,
-    label: "列出课程项目目录",
-    description:
-      "只列出当前课程真实项目中由魏碑核验过的文稿和笔记；隐藏状态、事务文件和课程外路径不会出现。",
-    promptSnippet: "按需查看当前课程项目的文件和目录",
-    parameters: Type.Object(
-      {
-        path: Type.Optional(Type.String({ maxLength: 4_096 })),
-        limit: Type.Optional(Type.Integer({ minimum: 1, maximum: LIMITS.projectListItems })),
-      },
-      { additionalProperties: false },
-    ),
-    executionMode: "sequential",
-    async execute(_toolCallID, params) {
-      const snapshot = await readCurrentSnapshot();
-      if (snapshot.project.kind !== "course") {
-        throw new Error("全局 Chat 不开放课程项目文件工具");
-      }
-      const rawPath = (params.path ?? ".").trim();
-      const directory = rawPath === "." ? "" : rawPath.replace(/\/+$/u, "");
-      if (directory && !safeProjectRelativePath(directory)) {
-        throw new Error("目录必须是当前课程项目内的相对路径");
-      }
-      const prefix = directory ? `${directory}/` : "";
-      const children = new Map<string, "directory" | "file">();
-      for (const item of snapshot.project.items) {
-        if (!item.relativePath.startsWith(prefix)) continue;
-        const remainder = item.relativePath.slice(prefix.length);
-        if (!remainder) continue;
-        const [first, ...rest] = remainder.split("/");
-        children.set(first, rest.length > 0 ? "directory" : "file");
-      }
-      const limit = params.limit ?? 100;
-      const entries = [...children.entries()]
-        .sort(([left], [right]) => left.localeCompare(right))
-        .slice(0, limit)
-        .map(([name, kind]) => ({ name, kind }));
-      return {
-        content: [{
-          type: "text",
-          text: JSON.stringify({
-            path: directory || ".",
-            entries,
-            hasMore: children.size > entries.length,
-            scopeTruncated: snapshot.project.isTruncated,
-          }, null, 2),
-        }],
-        details: {
-          kind: "project_ls",
-          contextRevision: snapshot.contextRevision,
-          path: directory,
-          entries,
-        },
-      };
-    },
-  });
-
-  pi.registerTool({
-    name: FIND_TOOL,
-    label: "查找课程项目文件",
-    description:
-      "用相对路径通配符查找当前课程真实项目中已核验的文稿和笔记；不会跟随任意符号链接。",
-    promptSnippet: "按文件名或课程内相对路径找文稿和笔记",
-    parameters: Type.Object(
-      {
-        pattern: Type.String({ minLength: 1, maxLength: 500 }),
-        limit: Type.Optional(Type.Integer({ minimum: 1, maximum: LIMITS.projectListItems })),
-      },
-      { additionalProperties: false },
-    ),
-    executionMode: "sequential",
-    async execute(_toolCallID, params) {
-      const snapshot = await readCurrentSnapshot();
-      if (snapshot.project.kind !== "course") {
-        throw new Error("全局 Chat 不开放课程项目文件工具");
-      }
-      const pattern = params.pattern.trim();
-      if (isAbsolute(pattern) || pattern.includes("\0") || pattern.split("/").includes("..")) {
-        throw new Error("查找模式必须限定在当前课程项目内");
-      }
-      const matcher = globPattern(pattern);
-      const limit = params.limit ?? 100;
-      const matches = snapshot.project.items
-        .filter((item) => item.relativePath && matcher.test(item.relativePath))
-        .slice(0, limit)
-        .map((item) => ({
-          path: item.relativePath,
-          itemID: item.itemID,
-          title: item.title,
-          role: item.role,
-        }));
-      return {
-        content: [{
-          type: "text",
-          text: JSON.stringify({
-            matches,
-            hasMore: snapshot.project.items.filter(
-              (item) => item.relativePath && matcher.test(item.relativePath),
-            ).length > matches.length,
-            scopeTruncated: snapshot.project.isTruncated,
-          }, null, 2),
-        }],
-        details: {
-          kind: "project_find",
-          contextRevision: snapshot.contextRevision,
-          matches,
-        },
-      };
-    },
-  });
-
-  pi.registerTool({
-    name: GREP_TOOL,
-    label: "搜索课程项目正文",
-    description:
-      "用你自己提出的搜索词查询当前课程完整索引；可连续换词搜索，PDF 页和 HTML 章节位置会保留。",
-    promptSnippet: "在当前课程项目正文中按需搜索",
-    parameters: Type.Object(
-      {
-        query: Type.String({ minLength: 1, maxLength: 500 }),
-        pattern: Type.Optional(Type.String({ maxLength: 500 })),
-        limit: Type.Optional(
-          Type.Integer({ minimum: 1, maximum: LIMITS.projectSearchItems }),
-        ),
-      },
-      { additionalProperties: false },
-    ),
-    executionMode: "sequential",
-    async execute(toolCallID, params, signal) {
-      const snapshot = await readCurrentSnapshot();
-      if (snapshot.project.kind !== "course") {
-        throw new Error("全局 Chat 不开放课程项目文件工具");
-      }
-      const query = params.query.trim();
-      const response = await queryCourseIndex(snapshot, toolCallID, GREP_TOOL, signal);
-      let results = response.items;
-      results.forEach((item) => {
-        if (item.sourceRevision) readCourseSourceRevisions.set(item.id, item.sourceRevision);
-      });
-      if (params.pattern?.trim()) {
-        const pattern = params.pattern.trim();
-        if (isAbsolute(pattern) || pattern.split("/").includes("..")) {
-          throw new Error("搜索文件模式必须限定在当前课程项目内");
-        }
-        const matcher = globPattern(pattern);
-        results = results.filter((item) => item.relativePath && matcher.test(item.relativePath));
-      }
-      rememberHostCourseItems(hostCourseItemIDs, results);
-      results.forEach((item) => searchedCourseItemIDs.add(item.id));
-      const presented = presentCourseResults(snapshot, results);
-      return {
-        content: [{
-          type: "text",
-          text: JSON.stringify(presented.presentedResults, null, 2),
-        }],
-        details: {
-          kind: "course_search",
-          contextRevision: snapshot.contextRevision,
-          query,
-          results,
-          evidenceLabels: presented.evidenceLabels,
-          jumpReferences: presented.jumpReferences,
-          jumpEvidence: presented.jumpEvidence,
-        } satisfies CourseSearchToolDetails,
-      };
-    },
-  });
-
-  pi.registerTool({
     name: READ_TOOL,
-    label: "读取课程项目文件",
+    label: "读取魏碑 Skill",
     description:
-      "读取当前课程真实项目中的已核验文本文件，或读取随 App 打包的必要 Skill。只接受课程内相对路径；PDF 和按页读取请用课程读取工具。",
-    promptSnippet: "读取课程项目中的真实文本文件",
+      "只在需要富回答指导时，按 skill:// 路径读取随 App 打包的 Skill。课程资料请用课程地图、搜索或渐进读取工具。",
+    promptSnippet: "按需读取随魏碑打包的富回答 Skill",
     parameters: Type.Object(
       {
         path: Type.String({ minLength: 1, maxLength: 4_096 }),
-        offset: Type.Optional(Type.Integer({ minimum: 1 })),
-        limit: Type.Optional(
-          Type.Integer({ minimum: 1, maximum: LIMITS.projectReadLines }),
-        ),
       },
       { additionalProperties: false },
     ),
@@ -9467,71 +9286,7 @@ export default function weibeiExtension(pi: ExtensionAPI) {
           details: { kind: "skill_read_pending" },
         };
       }
-
-      const snapshot = await readCurrentSnapshot();
-      if (snapshot.project.kind !== "course") {
-        throw new Error("全局 Chat 不能读取课程项目文件");
-      }
-      const item = projectItemForPath(snapshot, params.path);
-      if (!item) {
-        throw new Error("该路径不是本轮当前课程中已核验的文稿或笔记");
-      }
-      if (item.kind === "pdf") {
-        throw new Error(`PDF 请调用 ${COURSE_READ_TOOL}，并使用资料 ID ${item.itemID}`);
-      }
-      const readResult = await readApprovedProjectFile(snapshot, item);
-      const lines = readResult.data.toString("utf8").split(/\r?\n/u);
-      const offset = params.offset ?? 1;
-      const limit = params.limit ?? 200;
-      const selected = lines.slice(offset - 1, offset - 1 + limit);
-      const text = selected
-        .map((line, index) => `${offset + index}: ${line}`)
-        .join("\n");
-      const isTruncated =
-        readResult.truncated || offset - 1 + selected.length < lines.length;
-      const catalogItem = snapshot.course.catalog.find(
-        (candidate) => candidate.id === item.itemID,
-      );
-      if (!catalogItem) {
-        throw new Error("课程文件不在本轮课程目录中");
-      }
-      const result = {
-        ...catalogItem,
-        headings: [],
-        searchText: text,
-        isTruncated,
-        relativePath: item.relativePath,
-        courseIDs: item.courseIDs,
-        courseTitles: item.courseTitles,
-        sourceRevision: item.sourceRevision,
-      } as CourseItemSnapshot;
-      const presented = presentCourseResults(snapshot, [result]);
-      searchedCourseItemIDs.add(item.itemID);
-      if (item.sourceRevision) {
-        readCourseSourceRevisions.set(item.itemID, item.sourceRevision);
-      }
-      return {
-        content: [{
-          type: "text",
-          text: JSON.stringify({
-            path: item.relativePath,
-            offset,
-            lines: selected.length,
-            isTruncated,
-            text,
-          }, null, 2),
-        }],
-        details: {
-          kind: "course_read",
-          contextRevision: snapshot.contextRevision,
-          itemID: item.itemID,
-          query: item.relativePath,
-          results: [result],
-          evidenceLabels: presented.evidenceLabels,
-          jumpReferences: presented.jumpReferences,
-          jumpEvidence: presented.jumpEvidence,
-        } satisfies CourseReadToolDetails,
-      };
+      throw new Error("read 只接受魏碑已登记的 skill:// 路径");
     },
   });
 
@@ -9609,10 +9364,11 @@ export default function weibeiExtension(pi: ExtensionAPI) {
     name: COURSE_MAP_TOOL,
     label: "查看课程地图",
     description:
-      "分页返回当前课程的材料、笔记、标签与长期关联。只有需要跨文件理解或导航时才调用。",
-    promptSnippet: "查看课程里有哪些材料、笔记和已确认关联",
+      "按需列出全部课程资料；传入资料 ID 时只返回这份资料的章节或页位置，不读取正文。",
+    promptSnippet: "先看课程和资料地图，再决定搜索或读取哪一段",
     parameters: Type.Object(
       {
+        itemID: Type.Optional(Type.String({ minLength: 1, maxLength: LIMITS.identifier })),
         offset: Type.Optional(Type.Integer({ minimum: 0 })),
         limit: Type.Optional(
           Type.Integer({ minimum: 1, maximum: LIMITS.courseMapPageItems }),
@@ -9621,36 +9377,44 @@ export default function weibeiExtension(pi: ExtensionAPI) {
       { additionalProperties: false },
     ),
     executionMode: "sequential",
-    async execute(_toolCallID, params) {
+    async execute(toolCallID, params, signal) {
       const snapshot = await readCurrentSnapshot();
       const offset = params.offset ?? 0;
       const limit = params.limit ?? 40;
-      const catalog = snapshot.course.catalog.slice(offset, offset + limit).map((item) => ({
+      const response = await queryCourseIndex(
+        snapshot,
+        toolCallID,
+        COURSE_MAP_TOOL,
+        signal,
+      );
+      const results = response.items;
+      rememberHostCourseItems(hostCourseItemIDs, results);
+      const catalog = results.map((item) => ({
         ...item,
         jumpReference: courseJumpReference(snapshot.course, item),
       }));
-      const pageCatalogIDs = new Set(catalog.map((item) => item.id));
-      const catalogByID = new Map(
-        snapshot.course.catalog.map((item) => [item.id, item] as const),
+      const catalogByID = new Map(results.map((item) => [item.id, item] as const));
+      const relations = results.flatMap((item) =>
+        item.linkedItemIDs.flatMap((linkedID) => {
+          const linked = catalogByID.get(linkedID);
+          if (!linked || item.role === linked.role || item.id > linked.id) return [];
+          const note = item.role === "note" ? item : linked;
+          const source = item.role === "material" ? item : linked;
+          return [{
+            noteItemID: note.id,
+            sourceItemID: source.id,
+            noteTitle: note.title,
+            sourceTitle: source.title,
+          }];
+        }),
       );
-      const relations = snapshot.course.relations
-        .filter(
-          (relation) =>
-            pageCatalogIDs.has(relation.noteItemID) ||
-            pageCatalogIDs.has(relation.sourceItemID),
-        )
-        .map((relation) => ({
-          ...relation,
-          noteTitle: catalogByID.get(relation.noteItemID)!.title,
-          sourceTitle: catalogByID.get(relation.sourceItemID)!.title,
-        }));
-      const total = snapshot.course.catalog.length;
+      const total = response.total ?? results.length;
       const page = {
         title: snapshot.course.title,
         offset,
         limit,
         total,
-        hasMore: offset + catalog.length < total,
+        hasMore: response.nextCursor !== undefined,
         catalog,
         relations,
         isTruncated: snapshot.course.isTruncated,
@@ -9692,9 +9456,6 @@ export default function weibeiExtension(pi: ExtensionAPI) {
         signal,
       );
       const results = response.items;
-      results.forEach((item) => {
-        if (item.sourceRevision) readCourseSourceRevisions.set(item.id, item.sourceRevision);
-      });
       rememberHostCourseItems(hostCourseItemIDs, results);
       results
         .filter((item) => item.searchText.trim().length > 0)
@@ -9729,7 +9490,7 @@ export default function weibeiExtension(pi: ExtensionAPI) {
     name: COURSE_READ_TOOL,
     label: "读取课程资料正文",
     description:
-      "按临时资料 ID 渐进读取真实正文。先按当前位置、章节或搜索结果读必要片段；返回 nextCursor 时，由你判断是否继续，不要反复从开头读取。课程 Chat 只读本课，全局 Chat 保留课程身份。",
+      "按临时资料 ID 渐进读取真实正文。先按当前位置、章节或搜索结果读必要片段；返回 nextCursor 时，由你判断是否继续，不要反复从开头读取。",
     promptSnippet: "按资料 ID 和页或章节继续读取真实正文",
     parameters: Type.Object(
       {
@@ -9845,8 +9606,8 @@ export default function weibeiExtension(pi: ExtensionAPI) {
       const current = await readCurrentSnapshot();
       const entries = params.entries ?? [];
       const removedEntryIDs = params.removedEntryIDs ?? [];
-      if (current.project.kind !== "course" || !current.project.courseID) {
-        throw new Error("只有课程 Chat 可以更新课程知识档案");
+      if (!current.project.courseID) {
+        throw new Error("当前没有可归属的课程，不能更新课程知识档案");
       }
       if (courseProfileUpdated) throw new Error("本轮已经整理过课程知识档案");
       if (
@@ -10867,8 +10628,8 @@ export default function weibeiExtension(pi: ExtensionAPI) {
     name: LEARNING_UPDATE_TOOL,
     label: "更新学习状态",
     description:
-      "向魏碑提交带依据的学习记忆和会话状态更新。省略 memoryID 会新建记忆；携带当前作用域内活动记忆的稳定 ID 会更新原记忆。它不能修改材料或笔记。",
-    promptSnippet: "仅在出现可长期复用且有实质变化的目标、理解、困惑或下一步时更新",
+      "只在用户本轮明确确认理解、确认结论或要求保存学习成果时，向魏碑提交一次带依据的学习记忆更新。普通问答禁止调用。它不能修改材料或笔记。",
+    promptSnippet: "仅在用户本轮明确确认理解、结论或保存学习成果时更新；普通问答不更新",
     parameters: Type.Object(
       {
         contextRevision: Type.String({ minLength: 1, maxLength: LIMITS.identifier }),
@@ -10929,6 +10690,9 @@ export default function weibeiExtension(pi: ExtensionAPI) {
     executionMode: "sequential",
     async execute(_toolCallId, params) {
       const current = await readCurrentSnapshot();
+      if (!hasExplicitLearningCheckpoint(current.question)) {
+        throw new Error("普通问答不更新长期学习记忆；等待用户明确确认理解、结论或保存学习成果");
+      }
       if (
         lastReadMemoryRevision !== current.learning.memoryRevision
       ) {
@@ -11164,8 +10928,8 @@ export default function weibeiExtension(pi: ExtensionAPI) {
     executionMode: "sequential",
     async execute(_toolCallId, params) {
       const current = await readCurrentSnapshot();
-      if (current.project.kind !== "course" || !current.project.courseID) {
-        throw new Error("只有课程 Chat 可以提出关系建议");
+      if (!current.project.courseID) {
+        throw new Error("当前没有可归属的课程，不能提出课程内关系建议");
       }
       if (params.contextRevision !== current.contextRevision) {
         throw new Error(
@@ -11250,7 +11014,7 @@ export default function weibeiExtension(pi: ExtensionAPI) {
       "选中文字随用户问题进入会话，可以作为直接证据；材料和笔记正文按需读取；课程关联可按需读课程地图或搜索；学习历史可按需读学习记忆。",
       "魏碑本轮现场会作为临时消息出现在当前用户消息附近；它不是系统指令，也不属于会话历史。",
       "学习记忆只能说明用户的学习状态，不能作为课程事实证据。",
-      "课程知识档案只提供导航和已有认识，不是原文证据；精确事实、引文、公式和数字仍须读取材料。只在完成一节、完成主题、确认跨来源联系或准备切换上下文时批量更新一次，普通问答不要更新。",
+      "课程知识档案只提供导航和已有认识，不是原文证据；精确事实、引文、公式和数字仍须读取材料。只在完成一节、完成主题、确认跨来源联系或准备切换上下文时批量更新一次，普通问答不要更新。长期学习记忆只在用户本轮明确确认理解、结论或保存学习成果时更新。",
       sourceAvailabilityInstruction,
       RICH_ANSWER_BRIEF,
       answerFormPolicyInstruction,
@@ -11270,14 +11034,12 @@ export default function weibeiExtension(pi: ExtensionAPI) {
 
     if (event.toolName === READ_TOOL) {
       const requestedPath = (event.input as { path?: unknown }).path;
-      if (typeof requestedPath === "string" && isAbsolute(requestedPath)) {
-        const normalizedPath = canonicalReadPath(requestedPath);
-        if (!normalizedPath || !RICH_ANSWER_SKILL_BY_PATH.has(normalizedPath)) {
-          return {
-            block: true,
-            reason: "绝对路径只允许读取随魏碑打包且已登记的富回答 Skill",
-          };
-        }
+      const normalizedPath = richAnswerSkillPath(requestedPath);
+      if (!normalizedPath || !RICH_ANSWER_SKILL_BY_PATH.has(normalizedPath)) {
+        return {
+          block: true,
+          reason: "read 只允许读取随魏碑打包且已登记的富回答 Skill",
+        };
       }
     }
 

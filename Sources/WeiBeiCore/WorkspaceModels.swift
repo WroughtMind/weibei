@@ -1846,6 +1846,8 @@ public struct PersistedWorkspace: Codable, Sendable {
     public var courseLibraryRootBookmarkData: Data?
     public var noteSourceLinks: [NoteSourceLink]?
     public var noteSourceLinksMigrationVersion: Int?
+    public var materialNotePairings: [String: String]?
+    public var noteMaterialPairings: [String: String]?
     public var studyLocationsByItemID: [String: StudyLocation]?
     public var studyLocationsByCourseID: [String: [String: StudyLocation]]?
     public var courseResumePoints: [CourseResumePoint]?
@@ -1894,6 +1896,8 @@ public struct PersistedWorkspace: Codable, Sendable {
         courseLibraryRootBookmarkData: Data? = nil,
         noteSourceLinks: [NoteSourceLink]? = nil,
         noteSourceLinksMigrationVersion: Int? = nil,
+        materialNotePairings: [String: String]? = nil,
+        noteMaterialPairings: [String: String]? = nil,
         studyLocationsByItemID: [String: StudyLocation]? = nil,
         studyLocationsByCourseID: [String: [String: StudyLocation]]? = nil,
         courseResumePoints: [CourseResumePoint]? = nil,
@@ -1940,6 +1944,8 @@ public struct PersistedWorkspace: Codable, Sendable {
         self.courseLibraryRootBookmarkData = courseLibraryRootBookmarkData
         self.noteSourceLinks = noteSourceLinks
         self.noteSourceLinksMigrationVersion = noteSourceLinksMigrationVersion
+        self.materialNotePairings = materialNotePairings
+        self.noteMaterialPairings = noteMaterialPairings
         self.studyLocationsByItemID = studyLocationsByItemID
         self.studyLocationsByCourseID = studyLocationsByCourseID
         self.courseResumePoints = courseResumePoints

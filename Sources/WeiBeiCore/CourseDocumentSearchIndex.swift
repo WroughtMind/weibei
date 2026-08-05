@@ -651,6 +651,46 @@ public final class CourseDocumentSearchIndex: @unchecked Sendable {
         )
     }
 
+    public func outline(
+        item: StudyItem,
+        maximumEntries: Int = 24
+    ) -> [String] {
+        guard maximumEntries > 0,
+              let scheduled = Self.scheduledItem(item) else { return [] }
+        refreshChangedItemsForLookup([item])
+        waitForInitialIndexing([scheduled])
+        guard !Task.isCancelled,
+              let database = openDatabase() else { return [] }
+        defer { sqlite3_close(database) }
+        schedulingLock.lock()
+        let expectedSignature = expectedSignaturesByStorageID[scheduled.storageID]
+        schedulingLock.unlock()
+        guard expectedSignature == scheduled.signature,
+              Self.fileSignature(for: item) == scheduled.signature,
+              fileState(for: scheduled.storageID, in: database)?.signature
+                == scheduled.signature,
+              let statement = prepare(
+                  """
+                  SELECT location
+                  FROM chunks
+                  WHERE item_id = ? AND location <> ''
+                  GROUP BY location
+                  ORDER BY MIN(sort_order)
+                  LIMIT ?
+                  """,
+                  in: database
+              ) else { return [] }
+        defer { sqlite3_finalize(statement) }
+        bind(scheduled.storageID, at: 1, in: statement)
+        sqlite3_bind_int64(statement, 2, sqlite3_int64(min(maximumEntries, 80)))
+        var entries: [String] = []
+        while !Task.isCancelled, sqlite3_step(statement) == SQLITE_ROW {
+            guard let value = columnText(statement, at: 0), !value.isEmpty else { continue }
+            entries.append(String(value.prefix(300)))
+        }
+        return entries
+    }
+
     private static func encodeCursor(
         itemID: String,
         sourceRevision: String,

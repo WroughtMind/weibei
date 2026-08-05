@@ -11,7 +11,7 @@
 3. 两段真实动机，不写品牌宣言；
 4. 一张三栏工作区截图；
 5. 六条可完成任务；
-6. 一段课程对话的边界与来源说明；
+6. 一段资料内对话的边界与来源说明；
 7. 运行方式和当前状态。
 
 GitHub Social Preview 使用 `assets/github/github-social-preview-1280x640.png`。仓库头像使用 `github-avatar-512.png`。README 不要连续堆三张品牌图；产品截图比 Logo 更能解释用途。

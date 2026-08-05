@@ -309,7 +309,8 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         "weibei_visual_asset",
         "weibei_learning_memory",
         "weibei_learning_update",
-        // Global Chat keeps read only for registered Skills; project paths remain unavailable.
+        "weibei_course_profile_update",
+        // `read` is limited by the extension to bundled Skills.
         "read",
         "weibei_note_proposal",
         "weibei_relation_proposal",
@@ -317,19 +318,16 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         "weibei_compute_artifact",
         "weibei_rich_answer",
     ]
-    private static let courseProjectToolNames = [
-        "ls", "find", "grep", "weibei_course_profile_update",
-    ]
     private static let hostToolNames: Set<String> = [
+        "weibei_course_map",
         "weibei_course_search",
         "weibei_course_read",
-        "grep",
     ]
 
     private static func allowedToolNames(
-        for scope: StudyAgentScopeKind
+        for _: StudyAgentScopeKind
     ) -> [String] {
-        sharedToolNames + (scope == .course ? courseProjectToolNames : [])
+        sharedToolNames
     }
 
     private struct ProgressDelivery: Sendable {
@@ -403,6 +401,7 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         var allowedAssetIDs: Set<String>
         var verifiedAssetBytesByContextID: [String: Int] = [:]
         var readCourseSourceRevisionsByContextID: [String: String] = [:]
+        var readPersistentItemIDs: Set<String> = []
         var persistentAssetIDsByContextID: [String: String]
         var allowedJumpReferences: Set<String>
         var jumpEvidenceLabels: [String: Set<String>]
@@ -1346,16 +1345,23 @@ public actor PiAgentRuntime: StudyAgentRuntime {
             }
             return trimmed
         }
-        func limit(maximum: Int) throws -> Int {
-            guard let raw = arguments["limit"] else { return min(5, maximum) }
+        func integer(
+            _ key: String,
+            defaultValue: Int,
+            range: ClosedRange<Int>
+        ) throws -> Int {
+            guard let raw = arguments[key] else { return defaultValue }
             guard !(raw is Bool), let number = raw as? NSNumber else {
-                throw PiAgentRuntimeError.protocolFailure("课程工具 limit 类型无效")
+                throw PiAgentRuntimeError.protocolFailure("课程工具 \(key) 类型无效")
             }
             let value = number.intValue
-            guard number.doubleValue == Double(value), (1...maximum).contains(value) else {
-                throw PiAgentRuntimeError.protocolFailure("课程工具 limit 超出边界")
+            guard number.doubleValue == Double(value), range.contains(value) else {
+                throw PiAgentRuntimeError.protocolFailure("课程工具 \(key) 超出边界")
             }
             return value
+        }
+        func limit(maximum: Int, defaultValue: Int = 5) throws -> Int {
+            try integer("limit", defaultValue: min(defaultValue, maximum), range: 1...maximum)
         }
         func maximumCharacters() throws -> Int {
             guard let raw = arguments["maximumCharacters"] else { return 6_000 }
@@ -1375,7 +1381,23 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         }
 
         switch name {
-        case "weibei_course_search", "grep":
+        case "weibei_course_map":
+            let contextItemID = try string("itemID", required: false, maximum: 256)
+            let persistentItemID: String?
+            if let contextItemID {
+                guard let mapped = run.persistentAssetIDsByContextID[contextItemID] else {
+                    throw PiAgentRuntimeError.protocolFailure("课程工具资料 ID 不属于本轮上下文")
+                }
+                persistentItemID = mapped
+            } else {
+                persistentItemID = nil
+            }
+            return .courseMap(
+                itemID: persistentItemID,
+                offset: try integer("offset", defaultValue: 0, range: 0...100_000),
+                limit: try limit(maximum: 40, defaultValue: 40)
+            )
+        case "weibei_course_search":
             return .courseSearch(
                 query: try string("query", required: true, maximum: 500) ?? "",
                 limit: try limit(maximum: 8)
@@ -1417,9 +1439,10 @@ public actor PiAgentRuntime: StudyAgentRuntime {
               run.completed == nil,
               run.hostToolCallIDs.contains(id) else { return }
         let mappedResult = result.map { result in
-            StudyAgentHostToolResult(
+            let maximumItems = name == "weibei_course_map" ? 40 : 8
+            return StudyAgentHostToolResult(
                 query: String(result.query.prefix(500)),
-                items: result.items.prefix(8).map { hostItem in
+                items: result.items.prefix(maximumItems).map { hostItem in
                     var item = hostItem.item
                     item.id = contextAssetID(for: item.id, run: &run)
                     run.courseCatalogRolesByContextID[item.id] = item.role
@@ -1434,6 +1457,7 @@ public actor PiAgentRuntime: StudyAgentRuntime {
                         sourceRevision: hostItem.sourceRevision.map { String($0.prefix(500)) }
                     )
                 },
+                total: result.total,
                 nextCursor: result.nextCursor.map { String($0.prefix(1_024)) },
                 sourceRevision: result.sourceRevision.map { String($0.prefix(500)) }
             )
@@ -1943,6 +1967,7 @@ public actor PiAgentRuntime: StudyAgentRuntime {
 
         case let .courseSourcesRead(
             _,
+            toolName,
             contextRevision,
             labels,
             assetIDs,
@@ -1958,6 +1983,13 @@ public actor PiAgentRuntime: StudyAgentRuntime {
                 sourceRevisions,
                 uniquingKeysWith: { _, latest in latest }
             )
+            if toolName == "weibei_course_read" {
+                for assetID in assetIDs {
+                    if let itemID = run.persistentAssetIDsByContextID[assetID] {
+                        run.readPersistentItemIDs.insert(itemID)
+                    }
+                }
+            }
             registerJumpEvidence(jumpEvidence, in: &run)
             run.contextSources.append(contentsOf: sources)
             activeRun = run
@@ -2254,6 +2286,7 @@ public actor PiAgentRuntime: StudyAgentRuntime {
                 learningUpdate: run.learningUpdate,
                 courseProfileUpdate: run.courseProfileUpdate,
                 loadedSkills: run.loadedSkills,
+                readItemIDs: run.readPersistentItemIDs.sorted(),
                 toolTrace: replyTrace
             )
             if stopReason == "aborted" {

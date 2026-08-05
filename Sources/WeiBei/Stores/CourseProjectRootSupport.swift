@@ -2509,7 +2509,10 @@ actor CourseProjectFileWorker {
         )
     }
 
-    func scanSharedOriginals(at sharedDirectory: URL) throws -> CourseFileScanSnapshot {
+    func scanSharedOriginals(
+        at sharedDirectory: URL,
+        isNote: Bool = false
+    ) throws -> CourseFileScanSnapshot {
         let canonicalDirectory = try CourseProjectPathPolicy.existingDirectory(
             sharedDirectory
         )
@@ -2554,7 +2557,7 @@ actor CourseProjectFileWorker {
                     modificationTimeNanoseconds: Self.nanoseconds(
                         values.contentModificationDate
                     ),
-                    isNote: false
+                    isNote: isNote
                 )
             )
         }
@@ -4829,7 +4832,7 @@ struct CourseProjectManifest: Codable, Equatable {
               portableExport.materializedSharedItems.allSatisfy({
                   !$0.itemID.isEmpty
                       && isSafeRelativePath($0.courseRelativePath)
-                      && isStrictSharedMaterialPath($0.sharedRelativePath)
+                      && isStrictCommonContentPath($0.sharedRelativePath)
                       && isSHA256($0.sourceContentDigest)
               }) else {
             throw CourseProjectRootError.manifestMismatch
@@ -4880,14 +4883,15 @@ struct CourseProjectManifest: Codable, Equatable {
             }
     }
 
-    private static func isStrictSharedMaterialPath(_ path: String) -> Bool {
+    private static func isStrictCommonContentPath(_ path: String) -> Bool {
         let components = path.split(
             separator: "/",
             omittingEmptySubsequences: false
         )
         return isSafeRelativePath(path)
             && components.count == 2
-            && components[0] == "共享文稿"
+            && ["通用资料", "通用笔记", "共享文稿"]
+                .contains(components[0])
     }
 }
 

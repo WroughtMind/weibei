@@ -127,7 +127,7 @@ try {
     note: { title: "当前笔记", text: "", isTruncated: false },
     selection: {
       title: "第一讲选区",
-      text: "ORIGINAL_EXTENSION_CONTENT",
+      text: "SELECTION_EXTENSION_CONTENT",
       isTruncated: false,
     },
     course: {
@@ -233,6 +233,12 @@ try {
     !registeredTools.has("weibei_context"),
     "魏碑仍注册了需要模型主动读取的上下文工具",
   );
+  requireValue(
+    !registeredTools.has("ls") &&
+      !registeredTools.has("find") &&
+      !registeredTools.has("grep"),
+    "普通学习场景仍暴露重复的项目文件工具",
+  );
   const contextHook = requireValue(
     eventHandlers.get("context"),
     "真实扩展没有注册 context 过滤器",
@@ -265,9 +271,10 @@ try {
       transientContext.content.includes("revision-a") &&
       transientContext.content.includes("material-1") &&
       transientContext.content.includes("COURSE_CARD_OVERVIEW") &&
+      transientContext.content.includes("SELECTION_EXTENSION_CONTENT") &&
       !transientContext.content.includes("PROFILE_ENTRY_SHOULD_STAY_HIDDEN") &&
       !transientContext.content.includes("ORIGINAL_EXTENSION_CONTENT"),
-    "当前现场没有只作为无正文的本轮临时消息交给 Pi",
+    "当前现场没有只把选区与无正文焦点作为本轮临时消息交给 Pi",
   );
   const emptyFocusEnvelope = {
     ...hookEnvelope,
@@ -332,6 +339,68 @@ try {
   const toolResponseDirectory = join(canonicalToolResponseRoot, hookEnvelope.requestID);
   await mkdir(toolResponseDirectory);
   process.env.WEIBEI_AGENT_TOOL_RESPONSE_DIR = canonicalToolResponseRoot;
+
+  const courseSearchTool = requireValue(
+    registeredTools.get("weibei_course_search"),
+    "真实扩展没有注册课程索引搜索工具",
+  );
+  const profileUpdateTool = requireValue(
+    registeredTools.get("weibei_course_profile_update"),
+    "真实扩展没有注册课程知识档案批量更新工具",
+  );
+  const searchToolCallID = "course-search-only";
+  await writeFile(
+    join(
+      toolResponseDirectory,
+      `${createHash("sha256").update(searchToolCallID, "utf8").digest("hex")}.json`,
+    ),
+    JSON.stringify({
+      schemaVersion: 1,
+      requestID: hookEnvelope.requestID,
+      contextRevision: hookEnvelope.contextRevision,
+      toolCallID: searchToolCallID,
+      toolName: "weibei_course_search",
+      success: true,
+      payload: {
+        query: "完整文章",
+        items: [{
+          item: {
+            ...hookEnvelope.course.items[0],
+            searchText: "SEARCH_ONLY_EXCERPT",
+          },
+          relativePath: "文稿/第一讲.txt",
+          courseIDs: ["course-a"],
+          courseTitles: ["课程甲"],
+          sourceRevision: "source-revision-1",
+        }],
+      },
+    }),
+  );
+  await courseSearchTool.execute(searchToolCallID, { query: "完整文章" });
+  let searchOnlyProfileRejected = false;
+  try {
+    await profileUpdateTool.execute("profile-update-after-search", {
+      contextRevision: hookEnvelope.contextRevision,
+      profileRevision: 0,
+      checkpoint: "sectionCompleted",
+      entries: [{
+        kind: "concept",
+        text: "只有搜索摘要，还没有读取原文。",
+        sources: [{
+          itemID: "material-1",
+          role: "material",
+          sourceRevision: "source-revision-1",
+        }],
+      }],
+    });
+  } catch {
+    searchOnlyProfileRejected = true;
+  }
+  requireValue(
+    searchOnlyProfileRejected,
+    "只搜索课程索引就能把摘要沉淀为已读课程认识",
+  );
+
   await writeFile(
     join(
       toolResponseDirectory,
@@ -418,10 +487,6 @@ try {
     "课程正文读取工具没有沿游标读到长文末尾",
   );
 
-  const profileUpdateTool = requireValue(
-    registeredTools.get("weibei_course_profile_update"),
-    "真实扩展没有注册课程知识档案批量更新工具",
-  );
   const profileUpdate = await profileUpdateTool.execute("profile-update", {
     contextRevision: hookEnvelope.contextRevision,
     profileRevision: 0,
@@ -453,6 +518,13 @@ try {
     skillRead.content[0]?.text.includes("# 富回答导演"),
     "read 工具没有按 skill:// 路径加载富回答导演",
   );
+  let courseFileReadRejected = false;
+  try {
+    await projectReadTool.execute("course-file-read", { path: "文稿/第一讲.txt" });
+  } catch {
+    courseFileReadRejected = true;
+  }
+  requireValue(courseFileReadRejected, "Skill read 仍能直接读取课程文件");
   const toolResultHook = requireValue(
     eventHandlers.get("tool_result"),
     "真实扩展没有记录按需 Skill 读取结果",

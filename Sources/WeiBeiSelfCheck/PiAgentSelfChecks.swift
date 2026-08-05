@@ -140,6 +140,7 @@ private func checkRPCDecoding() throws {
     let courseRead = try PiRPCMessageDecoder.decode(Data(#"{"type":"tool_execution_end","toolCallId":"tool-course","toolName":"weibei_course_search","isError":false,"result":{"details":{"kind":"course_search","contextRevision":"revision-7","results":[{"id":"material-rates","title":"利率","role":"material","searchText":"利率正文","sourceRevision":"source-revision-1"},{"id":"note-rates","title":"课堂笔记","role":"note","searchText":"笔记正文"},{"id":"title-only","title":"只有标题","role":"material","searchText":""}],"evidenceLabels":["[材料：利率，条目：2]","[笔记：课堂笔记]"],"jumpEvidence":{"来源：利率":"[材料：利率，条目：2]","来源：利率，条目：2，第 3 页":"[材料：利率，条目：2]"}}}}"#.utf8))
     if case let .courseSourcesRead(
         id,
+        toolName,
         revision,
         labels,
         assetIDs,
@@ -149,6 +150,7 @@ private func checkRPCDecoding() throws {
     ) = courseRead {
         try piRequire(
             id == "tool-course"
+                && toolName == "weibei_course_search"
                 && revision == "revision-7"
                 && labels == ["[材料：利率，条目：2]", "[笔记：课堂笔记]"]
                 && assetIDs == ["material-rates", "note-rates"]
@@ -968,14 +970,16 @@ private func checkBundledAgentResources() throws {
         "PI bundles a fixed isolated Python artifact worker instead of model-authored code"
     )
     try piRequire(
-            extensionSource.contains("contextFileBytes: 4 * 1024 * 1024")
-            && extensionSource.contains("courseCatalogItems: 500")
-            && extensionSource.contains("courseMapPageItems: 60")
-            && extensionSource.contains("const catalog = snapshot.course.catalog.map")
+        extensionSource.contains("contextFileBytes: 4 * 1024 * 1024")
+            && extensionSource.contains("courseMapPageItems: 40")
+            && extensionSource.contains("const catalog = results.map")
             && extensionSource.contains("const offset = params.offset ?? 0")
             && extensionSource.contains("const limit = params.limit ?? 40")
             && extensionSource.contains("与已有 catalog ID 重复")
-            && extensionSource.contains("noteTitle: catalogByID.get(relation.noteItemID)!.title")
+            && extensionSource.contains("noteTitle: note.title")
+            && extensionSource.contains("cursor: Type.Optional")
+            && extensionSource.contains("maximum: 12_000")
+            && extensionSource.contains("nextCursor: response.nextCursor")
             && extensionSource.contains("searchedCourseItemIDs.has(item.id)")
             && extensionSource.contains("courseJumpReference")
             && extensionSource.contains("courseEvidenceLabel")
@@ -996,7 +1000,7 @@ private func checkBundledAgentResources() throws {
             && !extensionSource.contains("immediateNegation")
             && extensionSource.contains("html-section-")
             && extensionSource.contains("用户陈述型记忆必须直接依据本轮用户原话"),
-        "PI extension keeps a paged full catalog, stable file and section jumps, compact context output, strict ids, and read-backed memory evidence"
+        "PI extension keeps host-backed progressive reading, stable file and section jumps, compact context output, strict ids, and read-backed memory evidence"
     )
     try piRequire(
         extensionSource.contains("richAnswerEnvelopeSchema")

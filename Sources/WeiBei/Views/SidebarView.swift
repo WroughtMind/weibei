@@ -409,7 +409,7 @@ struct SidebarView: View {
             }
         }
         if !item.isSample, !store.courses.isEmpty {
-            Menu(store.ui("课程归属", "Course membership")) {
+            Menu(store.ui("课程关系", "Course relations")) {
                 ForEach(store.courses) { course in
                     let assigned = store.courseIDs(for: item.id).contains(course.id)
                     Button {
@@ -424,6 +424,15 @@ struct SidebarView: View {
                         Label(course.title, systemImage: assigned ? "checkmark" : "circle")
                     }
                 }
+            }
+        }
+        if !item.isSample, item.url != nil {
+            Divider()
+            Button(store.ui(
+                "将原文件移到废纸篓…",
+                "Move Source File to Trash…"
+            )) {
+                store.confirmMoveItemSourceToTrash(item.id)
             }
         }
     }

@@ -291,7 +291,7 @@ public enum CoursePortableStateError: LocalizedError, Equatable {
 }
 
 public struct CoursePortableState: Codable, Equatable, Sendable {
-    public static let currentSchemaVersion = 1
+    public static let currentSchemaVersion = 2
 
     public var courseID: UUID
     public var schemaVersion: Int
@@ -338,7 +338,7 @@ public struct CoursePortableState: Codable, Equatable, Sendable {
     }
 
     public func validated(expectedCourseID: UUID) throws -> CoursePortableState {
-        guard schemaVersion == Self.currentSchemaVersion else {
+        guard (1...Self.currentSchemaVersion).contains(schemaVersion) else {
             throw CoursePortableStateError.unsupportedSchema
         }
         guard courseID == expectedCourseID else {
@@ -373,8 +373,10 @@ public struct CoursePortableState: Codable, Equatable, Sendable {
                 sharedRelativePath,
                 expectedContentDigest
             ):
-                guard !item.isNotebookNote,
-                      Self.isStrictSharedMaterialPath(sharedRelativePath),
+                guard Self.isStrictCommonPath(
+                        sharedRelativePath,
+                        isNotebookNote: item.isNotebookNote
+                      ),
                       let expectedContentDigest,
                       Self.isSHA256(expectedContentDigest),
                       item.contentDigest == expectedContentDigest else {
@@ -426,7 +428,7 @@ public struct CoursePortableState: Codable, Equatable, Sendable {
                 throw CoursePortableStateError.invalidCourseKnowledgeProfile
             }
         }
-        for session in studySessions {
+        for session in schemaVersion == 1 ? studySessions : [] {
             guard session.courseID == courseID,
                   session.scopeNeedsReview == false,
                   session.focusItemIDs.allSatisfy(itemIDs.contains),
@@ -516,6 +518,9 @@ public struct CoursePortableState: Codable, Equatable, Sendable {
                 sessionID: UUID?,
                 messageID: UUID?
             ) -> Bool {
+                if schemaVersion == 2 {
+                    return sessionID != nil || messageID == nil
+                }
                 guard let sessionID else {
                     return messageID == nil
                 }
@@ -554,7 +559,8 @@ public struct CoursePortableState: Codable, Equatable, Sendable {
                   resumePoint.materialLocation.map({
                     materialItemIDs.contains($0.itemID)
                 }) ?? true,
-                  resumePoint.chatID.map(chatIDs.contains) ?? true,
+                  (schemaVersion == 2
+                    || resumePoint.chatID.map(chatIDs.contains) ?? true),
                   resumePoint.noteItemID.map(noteItemIDs.contains) ?? true else {
                 throw CoursePortableStateError.invalidResumePoint
             }
@@ -613,31 +619,36 @@ public struct CoursePortableState: Codable, Equatable, Sendable {
         let pathDefinesNotebookNote =
             first == "笔记" && item.kind == .markdown
         if item.isNotebookNote {
-            guard pathDefinesNotebookNote,
-                  case .courseOwned = item.storage else {
-                return false
-            }
-            return true
+            return pathDefinesNotebookNote
         }
         return !pathDefinesNotebookNote
     }
 
-    private static func isStrictSharedMaterialPath(_ path: String) -> Bool {
+    private static func isStrictCommonPath(
+        _ path: String,
+        isNotebookNote: Bool
+    ) -> Bool {
         guard isSafeRelativePath(path) else { return false }
         let components = path.split(
             separator: "/",
             omittingEmptySubsequences: false
         )
         guard components.count == 2,
-              components[0] == "共享文稿",
               !components[1].hasPrefix(".") else {
             return false
         }
-        return kind(
+        let detectedKind = kind(
             forPathExtension: (String(components[1]) as NSString)
                 .pathExtension
                 .lowercased()
-        ) != nil
+        )
+        if isNotebookNote {
+            return components[0] == "通用笔记"
+                && detectedKind == .markdown
+        }
+        return (components[0] == "通用资料"
+            || components[0] == "共享文稿")
+            && detectedKind != nil
     }
 
     private static func kind(

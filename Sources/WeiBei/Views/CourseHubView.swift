@@ -91,8 +91,7 @@ struct CourseHubView: View {
         }
         return sessions.first { session in
             session.id == chatID
-                && session.courseID == courseID
-                && session.scopeNeedsReview == false
+                && session.relatedCourseIDs.contains(courseID)
                 && !session.messages.isEmpty
         }
     }
@@ -486,8 +485,8 @@ struct CourseHubView: View {
             }
 
             Text(store.ui(
-                "提交后将打开一条课程对话，基于这门课与你继续交流。",
-                "Submitting opens a course Chat grounded in this course."
+                "提交后会在当前 Chat 中优先查找这门课；切换资料不会切换 Chat。",
+                "The current Chat will prioritize this course; switching content does not switch Chats."
             ))
             .font(.system(size: 10.5))
             .foregroundStyle(WeiBeiTheme.tertiaryInk)

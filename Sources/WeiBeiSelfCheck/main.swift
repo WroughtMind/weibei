@@ -14,6 +14,33 @@ func expect(_ condition: @autoclosure () -> Bool, _ message: String) {
     }
 }
 
+let legacyChatID = UUID(uuidString: "00000000-0000-0000-0000-000000000101")!
+let legacyChatCourseID = UUID(uuidString: "00000000-0000-0000-0000-000000000102")!
+let legacyChatData = try! JSONSerialization.data(withJSONObject: [
+    "id": legacyChatID.uuidString,
+    "title": "旧课程会话",
+    "messages": [],
+    "summary": "原有摘要",
+    "courseID": legacyChatCourseID.uuidString,
+    "scopeNeedsReview": false,
+])
+let migratedChat = try! JSONDecoder().decode(StudySession.self, from: legacyChatData)
+let migratedChatJSON = try! JSONSerialization.jsonObject(
+    with: JSONEncoder().encode(migratedChat)
+) as! [String: Any]
+expect(
+    migratedChat.id == legacyChatID
+        && migratedChat.summary == "原有摘要"
+        && migratedChat.relatedCourseIDs == [legacyChatCourseID],
+    "legacy fixed-scope Chats migrate in place to course associations"
+)
+expect(
+    migratedChatJSON["relatedCourseIDs"] != nil
+        && migratedChatJSON["courseID"] == nil
+        && migratedChatJSON["scopeNeedsReview"] == nil,
+    "unified Chats persist associations without the removed scope classification"
+)
+
 func importedIdentity(at url: URL) -> ImportedFileIdentity? {
     var fileStat = Darwin.stat()
     guard url.withUnsafeFileSystemRepresentation({ path in
@@ -3619,8 +3646,6 @@ if let courseContextStart = workspaceStoreSource.range(
         workspaceStoreSource[courseContextStart..<projectAccessStart]
     )
     expect(courseContextSource.contains("text: \"\"")
-        && courseContextSource.contains("selectedMaterialText: nil")
-        && courseContextSource.contains("selectedNoteText: nil")
         && !courseContextSource.contains("Task.detached")
         && !courseContextSource.contains("searchIndex.lookup")
         && !courseContextSource.contains("searchIndex.read"),
@@ -3753,15 +3778,16 @@ expect(workspaceStoreSource.contains("summary: session.summary")
 expect(workspaceStoreSource.contains("let itemTitle = sourceReferenceBaseTitle(for: item)")
     && workspaceStoreSource.contains("itemTitle: itemTitle")
     && workspaceStoreSource.contains("private func refreshStudyLocationReferenceTitles() -> Bool")
-    && workspaceStoreSource.contains("let existingMemory = memoryEntries.first")
-    && workspaceStoreSource.contains("if existingMemory.origin == .userStatement")
+    && workspaceStoreSource.contains("let located = locatedMemory(parsedMemoryID)")
+    && workspaceStoreSource.contains("if located.2.origin == .userStatement")
     && workspaceStoreSource.contains("!evidence.hasPrefix(\"[会话：当前]\")")
     && workspaceStoreSource.contains("let origin: LearningMemoryOrigin = validated.evidence")
     && workspaceStoreSource.contains("? .userStatement")
     && workspaceStoreSource.contains(": validated.origin")
     && workspaceStoreSource.contains("memoryEntries[index].sessionID = target.sessionID")
     && workspaceStoreSource.contains("memoryEntries[index].messageID = messageID")
-    && workspaceStoreSource.contains("learningMemoryScope(courseID: target.courseID)"), "learning locations preserve duplicate-file identity and learning memories stay owned by the originating Chat scope")
+    && workspaceStoreSource.contains("if kind == .goal || kind == .preference { return .global }")
+    && workspaceStoreSource.contains("learningMemoryContextScopes(courseID: target.courseID)"), "learning locations preserve duplicate-file identity; learning memory splits global and course knowledge while retaining Chat provenance")
 expect(workspaceStoreSource.contains("@Published var readerTargetPageIndex")
     && workspaceStoreSource.contains("@Published var readerTargetLocationTitle")
     && workspaceStoreSource.contains("func openSourceReference")
@@ -4137,9 +4163,9 @@ if let requestStart = workspaceStoreSource.range(of: "private func performAgentR
         && requestSource.contains("focusMaterialItem: sentMaterialItem")
         && requestSource.contains("focusNoteItem: sentNoteItem")
         && requestSource.contains("courseID: target.courseID")
-        && requestSource.contains("materialText: courseBuild.selectedMaterialText ?? \"\"")
-        && requestSource.contains("materialIsTruncated: courseBuild.selectedMaterialIsTruncated")
-        && requestSource.contains("noteText: resolvedSentNoteText")
+        && requestSource.contains("materialText: \"\"")
+        && requestSource.contains("materialIsTruncated: false")
+        && requestSource.contains("noteText: \"\"")
         && requestSource.contains("courseContext: courseBuild.context")
         && requestSource.contains("learningContext: sentLearningContext")
         && requestSource.contains("let reply = try await executeStudyAgentRequest(")
@@ -4191,31 +4217,34 @@ expect(piAgentRuntimeSource.contains("private var processGeneration: UInt64 = 0"
 expect(workspaceStoreSource.contains("@Published private(set) var studySessions")
     && workspaceStoreSource.contains("func createStudySession(courseID: UUID?)")
     && workspaceStoreSource.contains("func activateStudySession(")
-    && workspaceStoreSource.contains("expectedCourseID: UUID?")
     && workspaceStoreSource.contains("private func syncActiveStudySession(titleSeed: String? = nil)")
     && workspaceStoreSource.contains("private func appendAgentMessage(_ message: AgentMessage)")
+    && workspaceStoreSource.contains("func associateStudySession(_ id: UUID, with courseIDs:")
+    && workspaceStoreSource.contains("withItemIDs: reply.readItemIDs")
+    && workspaceStoreSource.contains("private var persistedStudySessions: [StudySession]")
+    && workspaceStoreSource.contains("$0.id != freshlyCreatedEmptyStudySessionID || !$0.messages.isEmpty")
     && workspaceStoreSource.contains("private func migrateLegacyStudySessionScopes()")
     && workspaceStoreSource.contains("studySessionScopeMigrationVersion")
-    && courseWorkspaceSource.contains("session.scopeNeedsReview == true ? \"待归类 · \""),
-    "agent conversations persist an exact course scope, migrate old Chats once, and expose ambiguous records")
+    && !courseWorkspaceSource.contains("待归类 · "),
+    "agent conversations stay global, persist only after use, associate from real context and reads, and migrate old Chats once")
 expect(workspaceStoreSource.contains("noteSourceLinks: noteSourceLinks")
     && workspaceStoreSource.contains("studyLocationsByItemID: studyLocationsByItemID")
     && workspaceStoreSource.contains("studyLocationsByCourseID: studyLocationsByCourseID")
     && workspaceModelsSource.contains("studyLocationsByCourseID: [String: [String: StudyLocation]]?")
     && workspaceStoreSource.contains("learningMemoryStates: learningMemoryStates")
     && workspaceStoreSource.contains("learningMemoryScopeMigrationVersion: learningMemoryScopeMigrationVersion")
-    && workspaceStoreSource.contains("studySessions: studySessions")
+    && workspaceStoreSource.contains("studySessions: persistedStudySessions")
     && workspaceStoreSource.contains("studySessionScopeMigrationVersion: studySessionScopeMigrationVersion")
-    && workspaceStoreSource.contains("activeStudySessionID: activeStudySessionID"), "course links, progress, memory, and sessions are saved with the workspace")
+    && workspaceStoreSource.contains("activeStudySessionID: persistedActiveStudySessionID"), "course links, progress, memory, and used sessions are saved with the workspace")
 expect(workspaceStoreSource.contains("for validated in validatedResolutions")
     && workspaceStoreSource.contains("memoryEntries[index].status = .resolved")
     && workspaceStoreSource.contains("acceptedUpdate.resolutions = []")
     && workspaceStoreSource.contains("StudyAgentCurrentTurnEvidence.matches")
     && workspaceStoreSource.contains("func restoreLearningMemory(")
-    && workspaceStoreSource.contains("let memoryChanged = !changedMemoryIDs.isEmpty")
+    && workspaceStoreSource.contains("guard !changedMemoryIDs.isEmpty else { return nil }")
     && workspaceStoreSource.contains("$0.memoryUpdate = memoryUpdate"),
     "valid PI memory resolutions apply automatically and persist on the originating reply without hiding its answer")
-expect(workspaceStoreSource.contains("} else {\n            restoreCurrentStudyLocation()\n            recordCurrentStudyLocation(incrementVisit: false)\n        }")
+expect(workspaceStoreSource.contains("if selectedItemID != nil {\n            restoreCurrentStudyLocation()\n            recordCurrentStudyLocation(incrementVisit: false)\n        }")
     && workspaceStoreSource.contains("private func restoreCurrentStudyLocation()")
     && workspaceStoreSource.contains("readerPageIndex = max(location.pageIndex ?? 0, 0)")
     && workspaceStoreSource.contains("requestReaderPDFPage(location.pageIndex, recordsLocation: false)"), "saved heading and PDF page are restored before startup records the current study location")
@@ -4288,7 +4317,8 @@ expect(workspaceStoreSource.contains("func createBlankNotebookNote()")
     && workspaceStoreSource.contains("func promptCreateNotebookNoteFromCurrentMaterial()")
     && workspaceStoreSource.contains("@Published var notebookCreationDraft")
     && workspaceStoreSource.contains("struct NotebookCreationDraft")
-    && workspaceStoreSource.contains("private func createNotebookNote(seed: NotebookNoteSeed, title")
+    && workspaceStoreSource.contains("private func createNotebookNote(")
+    && workspaceStoreSource.contains("seed: NotebookNoteSeed")
     && !workspaceStoreSource.contains("func resetNote()")
     && !workspaceStoreSource.contains("updateNote(defaultNote(for: selectedItem))"), "new note commands separate blank notes from current-material notes and route through the inline naming strip")
 expect(workspaceStoreSource.contains("private func openExistingNotebookNote(for material: StudyItem) -> Bool")
@@ -4298,8 +4328,8 @@ expect(workspaceStoreSource.contains("private func openExistingNotebookNote(for 
     && workspaceStoreSource.contains("已打开现有资料笔记"), "current-material note creation opens an existing matching notebook note instead of prompting a duplicate")
 expect(workspaceStoreSource.contains("case currentMaterial(StudyItem)")
     && workspaceStoreSource.contains("private func suggestedNotebookTitle(for seed: NotebookNoteSeed)")
-    && workspaceStoreSource.contains("let markdown = defaultNotebookNote(title: item.title, sourceItem: sourceItem)")
-    && workspaceStoreSource.contains("try markdown.write(to: url"), "new notebook notes are backed by local markdown files and can be seeded from the current material")
+    && workspaceStoreSource.contains("defaultNotebookNote(title: item.title, sourceItem: sourceItem)")
+    && workspaceStoreSource.contains("try markdown.write(to: url"), "new notebook notes are backed by real markdown files and can be seeded from the current material")
 expect(workspaceStoreSource.contains("func cancelNotebookNoteCreation()")
     && workspaceStoreSource.contains("func confirmNotebookNoteCreation()")
     && workspaceStoreSource.contains("notebookCreationDraft = NotebookCreationDraft(")
@@ -4509,20 +4539,20 @@ expect(notesAgentSource.contains("func weibeiPaneHeaderChrome(appearanceMode: We
     && !notePaneHeaderSource.contains("Button(\"作为笔记编辑\")")
     && agentPaneHeaderSource.contains("sessionMenu")
     && notesAgentSource.contains("private var sessionMenu: some View")
-    && notesAgentSource.contains("store.createStudySession(courseID: courseID)")
     && notesAgentSource.contains("store.createStudySession(courseID: nil)")
-    && notesAgentSource.contains("store.activeStudySession?.courseID ?? store.activeCourseID")
-    && notesAgentSource.contains("expectedCourseID: session.courseID")
-    && notesAgentSource.contains("store.globalStudySessions")
-    && notesAgentSource.contains("store.studySessions(in: course.id)")
-    && notesAgentSource.contains("store.unclassifiedStudySessions")
-    && notesAgentSource.contains("store.classifyStudySession(session.id, as: nil)")
-    && notesAgentSource.contains("store.classifyStudySession(session.id, as: course.id)")
+    && notesAgentSource.contains("Section(store.ui(\"全部对话\", \"All Chats\"))")
+    && notesAgentSource.contains("store.studySessions(in: courseID)")
+    && notesAgentSource.contains("session.relatedCourseIDs")
+    && !notesAgentSource.contains("store.createStudySession(courseID: courseID)")
+    && !notesAgentSource.contains("store.unclassifiedStudySessions")
+    && !notesAgentSource.contains("store.classifyStudySession")
     && courseWorkspaceSource.contains("store.sessionsTouchingCourse(courseID)")
     && courseWorkspaceSource.contains("LearningMemoryListSection(")
     && courseWorkspaceSource.contains("本课记忆")
-    && notesAgentSource.contains("GlobalLearningMemorySheet()")
-    && notesAgentSource.contains("全局记忆")
+    && courseWorkspaceSource.contains("struct GlobalLearningMemorySheet")
+    && courseWorkspaceSource.contains("所有对话共用")
+    && !notesAgentSource.contains("GlobalLearningMemorySheet()")
+    && !notesAgentSource.contains("openGlobalMemory()")
     && !notesAgentSource.contains("store.clearCurrentSessionInferredMemory()")
     && !agentPaneHeaderSource.contains("agentToolButton(")
     && !notesAgentSource.contains("private func agentToolButton")
@@ -4540,7 +4570,7 @@ expect(notesAgentSource.contains("AgentReplyMemoryUpdateTag(")
     && notesAgentSource.contains(".accessibilityValue(Text(store.ui(")
     && notesAgentSource.contains("expanded ? \"已展开\" : \"已收起\"")
     && notesAgentSource.contains("store.presentCourseWorkspace(.sessions, courseID: courseID)")
-    && notesAgentSource.contains("openGlobalMemory()")
+    && !notesAgentSource.contains("openGlobalMemory()")
     && notesAgentSource.contains("update.revisions(")
     && workspaceModelsSource.contains("matches.count == memoryIDs.count ? matches : nil")
     && notesAgentSource.contains("agent-memory-update-view-all")
@@ -4549,7 +4579,7 @@ expect(notesAgentSource.contains("AgentReplyMemoryUpdateTag(")
     && courseWorkspaceSource.contains("搜索全局记忆")
     && courseWorkspaceSource.contains("search: search")
     && workspaceStoreSource.contains("reply_tag_persisted=\\(replyTagPersisted)")
-    && runScript.contains("^reply_tag_persisted=true$"), "persisted memory updates render as one scoped expandable tag with searchable course and global destinations")
+    && runScript.contains("^reply_tag_persisted=true$"), "persisted memory updates render as one expandable tag; course records and shared global memory remain searchable without another Chat-header control")
 expect(noteModeControlSource.contains("NoteRenderMode.visibleCases")
     && notePaneHeaderSource.contains("@State private var hoveredNoteMode: NoteRenderMode?")
     && noteModeControlSource.contains("HStack(spacing: 3)")
@@ -5709,10 +5739,8 @@ let invalidCourseHomeSessions = [
         courseID: UUID(uuidString: "10000000-0000-0000-0000-000000000012")
     ),
     StudySession(
-        title: "待归类来源",
-        messages: [AgentMessage(role: .user, text: "不能跳转", source: "待归类")],
-        courseID: courseHomeHighlightCourseID,
-        scopeNeedsReview: true
+        title: "未关联来源",
+        messages: [AgentMessage(role: .user, text: "不能跳转", source: "未关联")]
     ),
     StudySession(
         title: "空对话来源",
@@ -5749,7 +5777,7 @@ for invalidSession in invalidCourseHomeSessions {
     expect(invalidTargetHighlights.summary == nil
         && invalidTargetHighlights.nextStepText == "保留这条真实文字"
         && invalidTargetHighlights.nextStepSessionID == nil,
-        "course home keeps a real next-step text but removes actions for cross-course, unclassified, and empty Chats")
+        "course home keeps a real next-step text but removes actions for cross-course, unrelated, and empty Chats")
 }
 
 let courseA = Course(
