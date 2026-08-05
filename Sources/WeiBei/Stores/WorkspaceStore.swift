@@ -12305,6 +12305,15 @@ final class WorkspaceStore: ObservableObject {
         lastUsableAgentAnswer?.id
     }
 
+    var lastRegeneratableAgentReplyID: UUID? {
+        guard !isAgentRunningInActiveChat,
+              !isStoppingAgent,
+              let reply = messages.last,
+              reply.isUsableAgentAnswer,
+              messages.dropLast().last?.role == .user else { return nil }
+        return reply.id
+    }
+
     var canReplaceNoteSelection: Bool {
         canApplyAgentAnswer && selectionContext?.isReplaceableNoteSelection == true
     }
@@ -22694,7 +22703,7 @@ final class WorkspaceStore: ObservableObject {
         }
     }
 
-    func askAgent() {
+    func askAgent(reusingLastUserMessage: Bool = false) {
         flushStagedNoteDraftForAgentContext()
         guard agentRequestTask == nil,
               !isStoppingAgent,
@@ -22705,11 +22714,18 @@ final class WorkspaceStore: ObservableObject {
         do {
             target = try agentConversationTarget()
         } catch {
-            recordAgentTargetFailure(question: question, error: error)
+            recordAgentTargetFailure(
+                question: question,
+                error: error,
+                appendUserMessage: !reusingLastUserMessage
+            )
             return
         }
         agentRequestTask = Task { @MainActor [weak self] in
-            await self?.performAgentRequest(target: target)
+            await self?.performAgentRequest(
+                target: target,
+                reusingLastUserMessage: reusingLastUserMessage
+            )
         }
     }
 
@@ -22832,7 +22848,11 @@ final class WorkspaceStore: ObservableObject {
         }
     }
 
-    private func recordAgentTargetFailure(question: String, error: Error) {
+    private func recordAgentTargetFailure(
+        question: String,
+        error: Error,
+        appendUserMessage: Bool = true
+    ) {
         ensureActiveStudySession()
         guard let session = activeStudySession else { return }
         let requestID = UUID()
@@ -22841,9 +22861,11 @@ final class WorkspaceStore: ObservableObject {
         lastFailedAgentQuestion = question
         agentDraftsBySessionID[session.id] = question
         focusedPane = .agent
-        let userMessage = AgentMessage(role: .user, text: question, source: sourceTitle)
-        appendAgentMessage(userMessage)
-        appendMessageToActiveSelectionAskThread(userMessage.id)
+        if appendUserMessage {
+            let userMessage = AgentMessage(role: .user, text: question, source: sourceTitle)
+            appendAgentMessage(userMessage)
+            appendMessageToActiveSelectionAskThread(userMessage.id)
+        }
         let assistantMessage = AgentMessage(
             role: .assistant,
             text: AgentFailureKind.generic.userMessage(
@@ -22920,7 +22942,10 @@ final class WorkspaceStore: ObservableObject {
         }
     }
 
-    private func performAgentRequest(target: AgentConversationTarget) async {
+    private func performAgentRequest(
+        target: AgentConversationTarget,
+        reusingLastUserMessage: Bool = false
+    ) async {
         guard !Task.isCancelled, activeStudySessionID == target.sessionID else {
             agentRequestTask = nil
             return
@@ -22931,10 +22956,22 @@ final class WorkspaceStore: ObservableObject {
             agentRequestTask = nil
             return
         }
+        if reusingLastUserMessage {
+            guard let userMessage = messages.last,
+                  userMessage.role == .user,
+                  userMessage.text.trimmingCharacters(in: .whitespacesAndNewlines) == question else {
+                agentRequestTask = nil
+                return
+            }
+        }
         do {
             try validateAgentConversationTarget(target, mustBeActive: true)
         } catch {
-            recordAgentTargetFailure(question: question, error: error)
+            recordAgentTargetFailure(
+                question: question,
+                error: error,
+                appendUserMessage: !reusingLastUserMessage
+            )
             agentRequestTask = nil
             return
         }
@@ -23022,13 +23059,15 @@ final class WorkspaceStore: ObservableObject {
             }
         }
 
-        var didAppendUserMessage = false
+        var didAppendUserMessage = reusingLastUserMessage
         var replyMessageID: UUID?
         do {
-            let userMessage = AgentMessage(role: .user, text: question, source: sourceTitle)
-            appendAgentMessage(userMessage)
-            appendMessageToActiveSelectionAskThread(userMessage.id)
-            didAppendUserMessage = true
+            if !reusingLastUserMessage {
+                let userMessage = AgentMessage(role: .user, text: question, source: sourceTitle)
+                appendAgentMessage(userMessage)
+                appendMessageToActiveSelectionAskThread(userMessage.id)
+                didAppendUserMessage = true
+            }
             if let courseID = target.courseID {
                 _ = captureCourseResumePoint(
                     courseID: courseID,
@@ -23412,6 +23451,29 @@ final class WorkspaceStore: ObservableObject {
         lastFailedAgentQuestion = nil
         lastAgentFailureKind = nil
         submitAgentDraft()
+    }
+
+    func regenerateLastAssistantReply() {
+        guard let replyID = lastRegeneratableAgentReplyID,
+              let sessionID = activeStudySessionID,
+              let questionMessage = messages.dropLast().last else { return }
+        let question = questionMessage.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !question.isEmpty else { return }
+
+        messages.removeLast()
+        selectionAskThreads.indices.forEach {
+            selectionAskThreads[$0].messageIDs.removeAll { $0 == replyID }
+        }
+        syncActiveStudySession()
+        if let session = studySessions.first(where: { $0.id == sessionID }) {
+            restoreAgentReplyState(from: session)
+        }
+        agentDraft = question
+        agentDraftsBySessionID[sessionID] = question
+        lastFailedAgentQuestion = nil
+        lastAgentFailureKind = nil
+        save()
+        askAgent(reusingLastUserMessage: true)
     }
 
     func canRetryAgentRequest(question: String?, failureKind: AgentFailureKind?) -> Bool {

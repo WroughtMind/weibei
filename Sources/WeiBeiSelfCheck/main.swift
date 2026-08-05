@@ -4149,7 +4149,23 @@ expect(workspaceStoreSource.contains("restoreAgentReplyState(from: session)")
     && notesAgentSource.contains("question: message.retryQuestion")
     && notesAgentSource.contains("store.retryAgentRequest(question)")
     && notesAgentSource.contains("store.agentDraft = question"), "switching Chats restores that Chat reply state and each failure bubble retries or restores its own question")
-if let requestStart = workspaceStoreSource.range(of: "private func performAgentRequest(target:")?.lowerBound,
+if let regenerationStart = workspaceStoreSource.range(of: "func regenerateLastAssistantReply()")?.lowerBound,
+   let regenerationEnd = workspaceStoreSource.range(of: "func canRetryAgentRequest", range: regenerationStart..<workspaceStoreSource.endIndex)?.lowerBound {
+    let regenerationSource = String(workspaceStoreSource[regenerationStart..<regenerationEnd])
+    expect(regenerationSource.contains("messages.removeLast()")
+        && regenerationSource.contains("messageIDs.removeAll { $0 == replyID }")
+        && regenerationSource.contains("askAgent(reusingLastUserMessage: true)"),
+        "regenerating replaces the last reply, removes its selection-thread link, and reuses the existing send path")
+} else {
+    expect(false, "agent regeneration source is readable")
+}
+expect(notesAgentSource.contains(".overlay(alignment: isUser ? .bottomTrailing : .bottomLeading)")
+    && notesAgentSource.contains("AgentCitationParser.parse(message.text).displayText")
+    && notesAgentSource.contains("message.id == store.lastRegeneratableAgentReplyID")
+    && notesAgentSource.contains("store.regenerateLastAssistantReply()")
+    && notesAgentSource.contains("isAgentHistoryRevealButtonHovered"),
+    "message copy, last-reply regeneration, and history reveal polish stay in non-layout-changing overlays and existing controls")
+if let requestStart = workspaceStoreSource.range(of: "private func performAgentRequest(")?.lowerBound,
    let executionStart = workspaceStoreSource.range(of: "private func executeStudyAgentRequest")?.lowerBound {
     let requestSource = String(workspaceStoreSource[requestStart..<executionStart])
     expect(requestSource.contains("guard !Task.isCancelled, activeStudySessionID == target.sessionID")
@@ -4167,6 +4183,8 @@ if let requestStart = workspaceStoreSource.range(of: "private func performAgentR
         && requestSource.contains("let shouldClearSentDocumentSelection = sentSelections.contains")
         && requestSource.contains("clearUnpinnedFloatingSelection(keepContext: false, invalidatesAgentContext: false)")
         && requestSource.contains("let userMessage = AgentMessage(role: .user, text: question, source: sourceTitle)")
+        && requestSource.contains("var didAppendUserMessage = reusingLastUserMessage")
+        && requestSource.contains("if !reusingLastUserMessage {")
         && requestSource.contains("flushPendingWorkspaceSaveAsync()")
         && requestSource.contains("let sentLearningContext = makeLearningContext(target: target)")
         && requestSource.contains("let courseBuild = try await makeCourseContext(")

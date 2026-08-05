@@ -1841,6 +1841,7 @@ struct AgentPaneView: View {
     /// back re-enters the LazyVStack remount storm this pane was cured of.
     @State private var agentVisibleMessageLimit = AgentPaneView.agentHistoryPageSize
     @State private var isRevealingEarlierAgentHistory = false
+    @State private var isAgentHistoryRevealButtonHovered = false
 
     private static let agentHistoryPageSize = AgentHistoryRevealPolicy.pageSize
     private static let paneStructureTransitionDuration: TimeInterval = 0.24
@@ -1930,6 +1931,7 @@ struct AgentPaneView: View {
                             VStack(alignment: .leading, spacing: comfy ? 22 : 12) {
                                 if hiddenAgentHistoryCount > 0 {
                                     agentHistoryRevealButton(proxy: proxy)
+                                        .transition(WeiBeiTransition.message)
                                 }
                                 ForEach(visibleAgentMessages) { message in
                                     agentMessageRow(
@@ -2444,13 +2446,28 @@ struct AgentPaneView: View {
         return Button {
             revealEarlierAgentHistory(proxy: proxy)
         } label: {
-            Text(store.ui("查看更早的 \(revealCount) 条消息", "Show \(revealCount) earlier messages"))
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(WeiBeiTheme.link)
+            HStack(spacing: 6) {
+                Image(systemName: "chevron.up")
+                    .font(.system(size: 9, weight: .semibold))
+                Text(store.ui("查看更早的 \(revealCount) 条消息", "Show \(revealCount) earlier messages"))
+                    .font(.system(size: 12, weight: .medium))
+            }
+                .foregroundStyle(isAgentHistoryRevealButtonHovered ? WeiBeiTheme.link : WeiBeiTheme.secondaryInk)
                 .padding(.vertical, 6)
                 .padding(.horizontal, 12)
+                .background {
+                    Capsule()
+                        .fill(WeiBeiTheme.paperInset.opacity(isAgentHistoryRevealButtonHovered ? 0.42 : 0.24))
+                }
+                .overlay {
+                    Capsule()
+                        .stroke(WeiBeiTheme.hairline.opacity(isAgentHistoryRevealButtonHovered ? 0.72 : 0.44), lineWidth: 1)
+                }
         }
         .buttonStyle(.plain)
+        .scaleEffect(isAgentHistoryRevealButtonHovered ? 1.015 : 1)
+        .animation(reduceMotion ? nil : WeiBeiMotion.hover, value: isAgentHistoryRevealButtonHovered)
+        .onHover { isAgentHistoryRevealButtonHovered = $0 }
         .frame(maxWidth: .infinity, alignment: .center)
     }
 
@@ -3433,6 +3450,7 @@ private struct AgentBubble: View {
     var message: AgentMessage
     var isChatWideTypography = false
     @State private var hovering = false
+    @State private var copiedMessage = false
     /// True only if this bubble streamed in the current session — history rows
     /// mount straight into the finalized renderer with no handoff.
     @State private var sawStreamingThisSession = false
@@ -3453,10 +3471,68 @@ private struct AgentBubble: View {
                 assistantTurn
             }
         }
+        .overlay(alignment: isUser ? .bottomTrailing : .bottomLeading) {
+            messageActionBar
+                .offset(x: isUser ? -8 : 16, y: 16)
+        }
         .onHover { hovering in
             withAnimation(WeiBeiMotion.hover) {
                 self.hovering = hovering
             }
+        }
+        .task(id: copiedMessage) {
+            guard copiedMessage else { return }
+            try? await Task.sleep(nanoseconds: 1_200_000_000)
+            copiedMessage = false
+        }
+    }
+
+    private var messageActionBar: some View {
+        HStack(spacing: 1) {
+            Button {
+                copyMessage()
+            } label: {
+                Image(systemName: copiedMessage ? "checkmark" : "doc.on.doc")
+            }
+            .buttonStyle(WeiBeiIconButtonStyle(active: copiedMessage, size: 20))
+            .help(store.ui(copiedMessage ? "已复制" : "复制消息", copiedMessage ? "Copied" : "Copy message"))
+            .accessibilityLabel(store.ui(copiedMessage ? "已复制" : "复制消息", copiedMessage ? "Copied" : "Copy message"))
+
+            if message.id == store.lastRegeneratableAgentReplyID {
+                Button {
+                    store.regenerateLastAssistantReply()
+                } label: {
+                    Image(systemName: "arrow.clockwise")
+                }
+                .buttonStyle(WeiBeiIconButtonStyle(size: 20))
+                .help(store.ui("重新生成最后一条回答", "Regenerate last response"))
+                .accessibilityLabel(store.ui("重新生成最后一条回答", "Regenerate last response"))
+            }
+        }
+        .padding(2)
+        .background {
+            Capsule()
+                .fill(WeiBeiTheme.paperRaised.opacity(0.96))
+        }
+        .overlay {
+            Capsule()
+                .stroke(WeiBeiTheme.hairline.opacity(0.62), lineWidth: 1)
+        }
+        .shadow(color: WeiBeiTheme.ink.opacity(0.08), radius: 5, y: 2)
+        .opacity(hovering ? 1 : 0)
+        .scaleEffect(hovering ? 1 : 0.96)
+        .allowsHitTesting(hovering)
+        .animation(reduceMotion ? nil : WeiBeiMotion.hover, value: hovering)
+    }
+
+    private func copyMessage() {
+        let markdown = isUser
+            ? message.text
+            : AgentCitationParser.parse(message.text).displayText
+        guard !markdown.isEmpty else { return }
+        NSPasteboard.general.clearContents()
+        if NSPasteboard.general.setString(markdown, forType: .string) {
+            copiedMessage = true
         }
     }
 
