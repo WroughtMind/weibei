@@ -472,10 +472,10 @@ private struct UnifiedTopBarView: View {
         HStack(spacing: max(5, topBarSpacing - 1)) {
             topIconButton(
                 "doc.text",
-                help: store.isPaneToggleActive(.reader) ? store.ui("隐藏文稿", "Hide document") : store.ui("显示文稿", "Show document"),
+                help: store.ui("打开文稿", "Open document"),
                 active: store.isPaneToggleActive(.reader)
             ) {
-                store.toggleReader()
+                store.openReaderEntry()
             }
 
             topIconButton(
@@ -483,15 +483,15 @@ private struct UnifiedTopBarView: View {
                 help: agentPaneToggleHelp,
                 active: store.isPaneToggleActive(.agent)
             ) {
-                store.toggleAgent()
+                store.openAgentEntry()
             }
 
             topIconButton(
                 "note.text",
-                help: store.isPaneToggleActive(.notes) ? store.ui("隐藏笔记", "Hide notes") : store.ui("显示笔记", "Show notes"),
+                help: store.ui("打开笔记", "Open notes"),
                 active: store.isPaneToggleActive(.notes)
             ) {
-                store.toggleNotes()
+                store.openNotesEntry()
             }
         }
         .padding(.horizontal, 4)
@@ -510,7 +510,7 @@ private struct UnifiedTopBarView: View {
         if store.selectionContext != nil {
             return store.ui("用当前选区打开对话", "Open chat with current selection")
         }
-        return store.isPaneToggleActive(.agent) ? store.ui("隐藏对话", "Hide chat") : store.ui("显示对话", "Show chat")
+        return store.ui("打开对话", "Open chat")
     }
 
     @ViewBuilder

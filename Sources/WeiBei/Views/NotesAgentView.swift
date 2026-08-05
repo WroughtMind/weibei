@@ -565,6 +565,7 @@ struct NotePaneView: View {
                 appearanceMode: store.appearanceMode,
                 reorderRole: reorderRole
             ) {
+                ContextualContentListButton(kind: .note)
                 LinkedSourcesControl()
                 writingAssistControl
                 noteModeControl
@@ -587,6 +588,7 @@ struct NotePaneView: View {
                 actionsAlignedTrailing: true,
                 reorderRole: reorderRole
             ) {
+                ContextualContentListButton(kind: .note)
                 LinkedSourcesControl()
                 writingAssistControl
                 noteModeControl
@@ -2464,8 +2466,6 @@ struct AgentPaneView: View {
         // separates input from messages.
         return VStack(spacing: 0) {
             VStack(alignment: .leading, spacing: wide ? 8 : 8) {
-                AgentFocusContextPills()
-
                 if store.hasSelectionAttachments {
                     AgentSelectionAttachmentPill()
                         .transition(WeiBeiTransition.floating)
@@ -2886,50 +2886,6 @@ private struct AgentSelectionAttachmentPill: View {
                 popoverHovering = false
             }
         }
-    }
-}
-
-private struct AgentFocusContextPills: View {
-    @EnvironmentObject private var store: WorkspaceStore
-
-    var body: some View {
-        HStack(spacing: 6) {
-            if let material = store.selectedMaterialItem {
-                contextPill(
-                    title: store.displayTitle(for: material),
-                    systemImage: "doc.text"
-                )
-            }
-            if let note = store.activeNoteItem {
-                contextPill(
-                    title: store.displayTitle(for: note),
-                    systemImage: "note.text"
-                )
-            }
-        }
-    }
-
-    private func contextPill(
-        title: String,
-        systemImage: String
-    ) -> some View {
-        Label(title, systemImage: systemImage)
-            .font(.system(size: 11, weight: .medium))
-            .foregroundStyle(WeiBeiTheme.secondaryInk)
-            .lineLimit(1)
-            .padding(.horizontal, 9)
-            .frame(height: 26)
-            .background(
-                WeiBeiTheme.paperRaised.opacity(0.52),
-                in: RoundedRectangle(cornerRadius: 8, style: .continuous)
-            )
-            .overlay {
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .stroke(
-                        WeiBeiTheme.hairline.opacity(0.42),
-                        lineWidth: 1
-                    )
-            }
     }
 }
 

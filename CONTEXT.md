@@ -1,7 +1,7 @@
 # Domain Context
 
 - **Course workspace**: A real local course project directory containing its materials, notes, relations, Chats, and learning memory. It is a durable Agent scope; it is not the currently open file.
-- **Chat**: A recoverable conversation thread whose scope is fixed when it is created: either global or one course. A course can contain many Chats; their histories stay independent.
+- **Chat**: A recoverable global conversation thread. Opening or using materials and notes can associate the same Chat with one or more courses, but does not restrict what that Chat may read later; separate Chats keep independent histories while sharing durable user learning memory.
 - **Material**: A source document used as course evidence, such as a PDF, HTML page, text file, or non-notebook Markdown file.
 - **Notebook**: A user-editable course note. A notebook can be linked to many materials, and a material can be linked to many notebooks.
 - **Note-source link**: A durable relation saying that a notebook uses or discusses a material. Opening a file does not create this relation.

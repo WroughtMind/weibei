@@ -4,6 +4,7 @@ import WeiBeiCore
 enum ImportedIdentitySelfCheck {
     @MainActor
     static func run() throws {
+        try launchAndPrimaryEntriesStartBlank()
         try storageModelsDecodeLegacySnapshotsAndRoundTrip()
         try legacyPathSnapshotMigratesItsEntireRelationshipGraph()
         try selectionThreadMigrationWaitsForWorkspaceCommit()
@@ -27,6 +28,114 @@ enum ImportedIdentitySelfCheck {
         try failedWorkspaceSaveRecoversRenameOnRestart()
         try duplicateLegacyIdentityMigratesInOneLaunch()
         try replacedAndCrossVolumeFilesReceiveNewIdentities()
+    }
+
+    @MainActor
+    private static func launchAndPrimaryEntriesStartBlank() throws {
+        let fixture = try WorkspaceFixture(name: "blank-primary-entries")
+        defer { fixture.remove() }
+
+        let materialURL = fixture.importsDirectory
+            .appendingPathComponent("上次文稿.txt")
+        let noteURL = fixture.importsDirectory
+            .appendingPathComponent("上次笔记.md")
+        try Data("上次打开的文稿".utf8).write(to: materialURL)
+        try Data("# 上次打开的笔记".utf8).write(to: noteURL)
+        let material = StudyItem(
+            id: "launch-material",
+            title: "上次文稿",
+            subtitle: materialURL.lastPathComponent,
+            kind: .text,
+            urlPath: materialURL.path,
+            isSample: false
+        )
+        let note = StudyItem(
+            id: "launch-note",
+            title: "上次笔记",
+            subtitle: noteURL.lastPathComponent,
+            kind: .markdown,
+            urlPath: noteURL.path,
+            isSample: false,
+            isNotebookNote: true
+        )
+        let oldChat = StudySession(
+            title: "上次会话",
+            messages: [
+                AgentMessage(
+                    role: .user,
+                    text: "上次问题",
+                    source: nil
+                ),
+            ]
+        )
+        try fixture.write(
+            PersistedWorkspace(
+                importedItems: [material, note],
+                selectedItemID: material.id,
+                activeNotebookItemID: note.id,
+                studySessions: [oldChat],
+                activeStudySessionID: oldChat.id,
+                workspaceLayout: .documentAgentNotes,
+                showReader: true,
+                showAgent: true,
+                showNotes: true
+            )
+        )
+
+        let store = WorkspaceStore(
+            workspaceDirectory: fixture.workspaceDirectory,
+            selectionAskThreadDefaults:
+                fixture.selectionAskThreadDefaults,
+            startsAtBlankEntries: true
+        )
+        try check(
+            store.selectedMaterialItem == nil
+                && store.activeNoteItem == nil
+                && !store.showReader
+                && !store.showAgent
+                && !store.showNotes,
+            "冷启动恢复了上次具体内容或栏位，没有停在空白入口"
+        )
+        try check(
+            store.activeStudySession?.messages.isEmpty == true
+                && store.activeStudySessionID != oldChat.id
+                && store.historicalStudySessions.contains {
+                    $0.id == oldChat.id
+                },
+            "冷启动没有创建空白 Chat，或错误删除了旧会话"
+        )
+
+        for _ in 0..<6 { store.openReaderEntry() }
+        try check(
+            store.showReader && store.focusedPane == .reader,
+            "连续点击文稿入口把文稿栏反复关闭了"
+        )
+        for _ in 0..<6 { store.openAgentEntry() }
+        try check(
+            store.showAgent && store.focusedPane == .agent,
+            "连续点击 Chat 入口把会话栏反复关闭了"
+        )
+        for _ in 0..<6 { store.openNotesEntry() }
+        try check(
+            store.showNotes && store.focusedPane == .notes,
+            "连续点击笔记入口把笔记栏反复关闭了"
+        )
+
+        store.openContextualItem(material.id, kind: .material)
+        store.openContextualItem(note.id, kind: .note)
+        store.showContextualBrowser(.note)
+        try check(
+            store.activeNoteItem == nil
+                && store.selectedMaterialItem?.id == material.id,
+            "笔记内容页不能稳定返回笔记列表；note=\(store.activeNoteItem?.id ?? "nil") material=\(store.selectedMaterialItem?.id ?? "nil")"
+        )
+        store.openContextualItem(note.id, kind: .note)
+        store.showContextualBrowser(.material)
+        try check(
+            store.selectedMaterialItem == nil
+                && store.activeNoteItem?.id == note.id,
+            "文稿内容页不能稳定返回文稿列表"
+        )
     }
 
     @MainActor

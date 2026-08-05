@@ -225,6 +225,7 @@ struct ReaderView: View {
                     reorderRole: floatingTitleReorderRole
                 ) {
                     HStack(spacing: 8) {
+                        ContextualContentListButton(kind: .material)
                         selectionAskThreadsMenu
                         importedDocumentAdaptationControl
                     }
@@ -3351,13 +3352,6 @@ struct ContextualContentPicker: View {
             }
         }
         .background(WeiBeiTheme.paper)
-        .onAppear {
-            if kind == .note {
-                store.prepareNoteForOpening()
-            } else {
-                store.prepareMaterialForOpening()
-            }
-        }
         .accessibilityIdentifier(
             kind == .note
                 ? "contextual-note-picker"
@@ -3591,6 +3585,33 @@ struct ContextualContentPicker: View {
             case .item(let item): store.displayTitle(for: item)
             }
         }
+    }
+}
+
+struct ContextualContentListButton: View {
+    @EnvironmentObject private var store: WorkspaceStore
+    let kind: ContextualContentKind
+
+    var body: some View {
+        Button {
+            store.showContextualBrowser(kind)
+        } label: {
+            Image(systemName: "list.bullet")
+        }
+        .buttonStyle(WeiBeiIconButtonStyle(size: 24))
+        .accessibilityLabel(Text(accessibilityTitle))
+        .accessibilityIdentifier(
+            kind == .note
+                ? "contextual-note-list-button"
+                : "contextual-material-list-button"
+        )
+        .help(accessibilityTitle)
+    }
+
+    private var accessibilityTitle: String {
+        kind == .note
+            ? store.ui("选择其他笔记", "Choose another note")
+            : store.ui("选择其他资料", "Choose another material")
     }
 }
 

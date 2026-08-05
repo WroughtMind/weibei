@@ -1123,7 +1123,10 @@ final class WorkspaceStore: ObservableObject {
     convenience init() {
         let folder = Self.workspaceRootDirectory()
             ?? FileManager.default.temporaryDirectory.appendingPathComponent("WeiBei", isDirectory: true)
-        self.init(workspaceDirectory: folder)
+        self.init(
+            workspaceDirectory: folder,
+            startsAtBlankEntries: true
+        )
     }
 
     init(
@@ -1159,7 +1162,8 @@ final class WorkspaceStore: ObservableObject {
             Data?,
             () throws -> Void
         ) throws -> Void = CourseProjectFileWorker.writePortableState,
-        selectionAskThreadDefaults: UserDefaults = .standard
+        selectionAskThreadDefaults: UserDefaults = .standard,
+        startsAtBlankEntries: Bool = false
     ) {
         workspaceDirectory = folder.standardizedFileURL
         storageURL = folder.appendingPathComponent("workspace.json")
@@ -1214,7 +1218,10 @@ final class WorkspaceStore: ObservableObject {
         let sanitizedCourseResumePoints = sanitizeCourseResumePoints()
         let initializedCourseKnowledgeProfiles = ensureCourseKnowledgeProfiles()
         courseDocumentSearchIndex.synchronize(allItems)
-        ensureActiveStudySession()
+        if startsAtBlankEntries {
+            resetPrimaryEntriesForLaunch()
+        }
+        ensureActiveStudySession(preferFresh: startsAtBlankEntries)
         let savedInitializationChanges: Bool
         if noteSourceLinksMigrationVersion < 1 {
             migrateNoteSourceLinksFromMarkdown()
@@ -11218,25 +11225,49 @@ final class WorkspaceStore: ObservableObject {
         focus(.reader)
     }
 
-    private func ensureActiveStudySession() {
-        if let activeStudySessionID,
+    private func ensureActiveStudySession(preferFresh: Bool = false) {
+        if !preferFresh,
+           let activeStudySessionID,
            let session = studySessions.first(where: { $0.id == activeStudySessionID }) {
             messages = session.messages
             restoreAgentReplyState(from: session)
             return
         }
-        if let session = orderedStudySessions.first {
+        if !preferFresh, let session = orderedStudySessions.first {
             activeStudySessionID = session.id
             messages = session.messages
             restoreAgentReplyState(from: session)
             return
         }
         let session = StudySession(title: ui("新学习会话", "New Study Session"))
-        studySessions = [session]
+        studySessions.append(session)
         activeStudySessionID = session.id
         freshlyCreatedEmptyStudySessionID = session.id
         messages = []
         restoreAgentReplyState(from: session)
+    }
+
+    private func resetPrimaryEntriesForLaunch() {
+        selectedItemID = nil
+        activeNotebookItemID = nil
+        activeStudySessionID = nil
+        activeCourseID = nil
+        noteText = ""
+        messages = []
+        agentDraft = ""
+        blankNoteDraftMaterialID = nil
+        pendingBlankNoteText = ""
+        showLibrary = false
+        showReader = false
+        showAgent = false
+        showNotes = false
+        showReaderSearch = false
+        readerSearch = ""
+        layout = .documentAgentNotes
+        threePaneOrder = WorkspacePaneRole.defaultThreePaneOrder
+        agentSurface = .hidden
+        selectionContext = nil
+        selectionAttachments = []
     }
 
     private func appendAgentMessage(_ message: AgentMessage) {
@@ -11978,6 +12009,7 @@ final class WorkspaceStore: ObservableObject {
            let item = allItems.first(where: { $0.id == activeNotebookItemID && $0.isNotebookNote }) {
             return item
         }
+        guard selectedItem?.isNotebookNote == true else { return nil }
         return selectedItem
     }
 
@@ -13479,6 +13511,13 @@ final class WorkspaceStore: ObservableObject {
         toggleDocumentPane(.reader)
     }
 
+    func openReaderEntry() {
+        if !showReader {
+            prepareMaterialForOpening()
+        }
+        openDocumentPane(.reader)
+    }
+
     func toggleAgent() {
         if selectionContext != nil {
             recordNavigationPoint()
@@ -13490,11 +13529,56 @@ final class WorkspaceStore: ObservableObject {
         toggleDocumentPane(.agent)
     }
 
+    func openAgentEntry() {
+        if selectionContext != nil {
+            toggleAgent()
+            return
+        }
+        openDocumentPane(.agent)
+    }
+
     func toggleNotes() {
         if !showNotes {
             prepareNoteForOpening()
         }
         toggleDocumentPane(.notes)
+    }
+
+    func openNotesEntry() {
+        if !showNotes {
+            prepareNoteForOpening()
+        }
+        openDocumentPane(.notes)
+    }
+
+    func showContextualBrowser(_ kind: ContextualContentKind) {
+        switch kind {
+        case .material:
+            if selectedMaterialItem != nil {
+                select(itemID: nil)
+            }
+            openDocumentPane(.reader)
+        case .note:
+            guard activeNoteItem != nil || blankNoteDraftMaterialID != nil else {
+                openDocumentPane(.notes)
+                return
+            }
+            persistCurrentNote()
+            blankNoteMaterializationTask?.cancel()
+            blankNoteMaterializationTask = nil
+            pendingBlankNoteText = ""
+            blankNoteDraftMaterialID = nil
+            activeNotebookItemID = nil
+            noteText = ""
+            notebookCreationDraft = nil
+            notebookRenameDraft = nil
+            linkedSourcesPresented = false
+            latestAgentNoteProposal = nil
+            latestAgentLearningUpdate = nil
+            syncActiveStudySession()
+            openDocumentPane(.notes)
+            save()
+        }
     }
 
     func toggleRightPane() {
@@ -13541,6 +13625,21 @@ final class WorkspaceStore: ObservableObject {
             layout = layoutMatchingThreePaneOrder(normalizedThreePaneOrder)
         }
         focus(isPaneVisible(role) ? role.focus : fallbackDocumentPaneFocus())
+        save()
+    }
+
+    private func openDocumentPane(_ role: WorkspacePaneRole) {
+        if isPaneVisible(role) {
+            if focusedPane != role.focus {
+                focus(role.focus)
+            }
+            return
+        }
+        recordNavigationPoint()
+        if !showReader && !showAgent && !showNotes {
+            threePaneOrder = WorkspacePaneRole.defaultThreePaneOrder
+        }
+        revealDocumentPane(role)
         save()
     }
 
