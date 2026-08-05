@@ -105,20 +105,38 @@ enum ImportedIdentitySelfCheck {
             "冷启动没有创建空白 Chat，或错误删除了旧会话"
         )
 
-        for _ in 0..<6 { store.openReaderEntry() }
+        for click in 1...6 {
+            store.toggleReader()
+            try check(
+                store.showReader == !click.isMultiple(of: 2),
+                "文稿入口第 \(click) 次点击没有切换栏位"
+            )
+        }
         try check(
-            store.showReader && store.focusedPane == .reader,
-            "连续点击文稿入口把文稿栏反复关闭了"
+            !store.showReader,
+            "文稿入口连续点击后状态错误"
         )
-        for _ in 0..<6 { store.openAgentEntry() }
+        for click in 1...6 {
+            store.toggleAgent()
+            try check(
+                store.showAgent == !click.isMultiple(of: 2),
+                "Chat 入口第 \(click) 次点击没有切换栏位"
+            )
+        }
         try check(
-            store.showAgent && store.focusedPane == .agent,
-            "连续点击 Chat 入口把会话栏反复关闭了"
+            !store.showAgent,
+            "Chat 入口连续点击后状态错误"
         )
-        for _ in 0..<6 { store.openNotesEntry() }
+        for click in 1...6 {
+            store.toggleNotes()
+            try check(
+                store.showNotes == !click.isMultiple(of: 2),
+                "笔记入口第 \(click) 次点击没有切换栏位"
+            )
+        }
         try check(
-            store.showNotes && store.focusedPane == .notes,
-            "连续点击笔记入口把笔记栏反复关闭了"
+            !store.showNotes,
+            "笔记入口连续点击后状态错误"
         )
 
         store.openContextualItem(material.id, kind: .material)

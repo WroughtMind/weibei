@@ -448,7 +448,7 @@ struct NotePaneView: View {
             let railItems = noteRailItems
             ZStack(alignment: .topLeading) {
                 VStack(spacing: 0) {
-                    if showsPaneHeader {
+                    if showsPaneHeader && hasNoteContent {
                         noteHeader
                     }
 
@@ -498,7 +498,7 @@ struct NotePaneView: View {
                 .allowsHitTesting(false)
         }
         .overlay(alignment: .top) {
-            if !showsPaneHeader {
+            if !showsPaneHeader && hasNoteContent {
                 immersiveNoteHeader
             }
         }
@@ -545,6 +545,10 @@ struct NotePaneView: View {
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("stable-document-slot-reader")
         .accessibilityLabel(Text("notes reader pane"))
+    }
+
+    private var hasNoteContent: Bool {
+        store.activeNoteItem != nil || store.blankNoteDraftMaterialID != nil
     }
 
     @ViewBuilder

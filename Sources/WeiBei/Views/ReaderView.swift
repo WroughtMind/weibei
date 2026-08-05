@@ -216,7 +216,8 @@ struct ReaderView: View {
             }
         }
         .overlay(alignment: .top) {
-            if !railOnly, showsFloatingTitle {
+            if !railOnly, showsFloatingTitle,
+               store.selectedMaterialItem != nil {
                 // Mask switch lives only on this hover DOC tab — not pinned, not main top bar.
                 ImmersiveHoverTitleView(
                     mark: "DOC",
