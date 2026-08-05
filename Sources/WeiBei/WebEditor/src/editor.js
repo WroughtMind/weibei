@@ -1,4 +1,4 @@
-import { Editor, defaultValueCtx, editorViewCtx, editorViewOptionsCtx, rootCtx } from '@milkdown/kit/core';
+import { Editor, defaultValueCtx, editorViewCtx, editorViewOptionsCtx, parserCtx, rootCtx } from '@milkdown/kit/core';
 import { commonmark } from '@milkdown/kit/preset/commonmark';
 import { gfm } from '@milkdown/kit/preset/gfm';
 import { listener, listenerCtx } from '@milkdown/kit/plugin/listener';
@@ -2196,7 +2196,30 @@ const scrollToHeadingInternal = (rawIndex) => {
 
 window.WeiBeiEditor = {
   getMarkdown: getMarkdownInternal,
-  setMarkdown: setMarkdownInternal,
+  setMarkdown: (markdown) => {
+    setMarkdownInternal(markdown);
+    post('markdownChanged', { markdown: String(markdown || '') });
+  },
+  // Streaming prefix appends: parse the new blocks standalone and insert at
+  // the end of the doc. Existing nodes are never rebuilt, so already-rendered
+  // formulas/tables cannot flash back to raw text mid-stream.
+  appendMarkdown: (markdown) => {
+    try {
+      ensureEditor();
+      const chunk = normalizeHtmlBreaks(markdown || '');
+      if (!chunk.trim()) return;
+      editor.action((ctx) => {
+        const view = ctx.get(editorViewCtx);
+        const parsed = ctx.get(parserCtx)(chunk);
+        if (!parsed || !parsed.content || parsed.content.size === 0) return;
+        view.dispatch(view.state.tr.insert(view.state.doc.content.size, parsed.content));
+      });
+      lastMarkdown = withFrontmatter(editor.action(readMarkdown()));
+      scheduleContentHeightReports();
+    } catch (error) {
+      showFailure(error);
+    }
+  },
   replaceSelection: (markdown) => {
     try {
       replaceSelectionInternal(markdown);

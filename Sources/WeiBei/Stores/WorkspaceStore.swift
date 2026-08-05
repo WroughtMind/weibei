@@ -11264,12 +11264,9 @@ final class WorkspaceStore: ObservableObject {
     }
 
     var agentInputPrompt: String {
-        if hasSelectionAttachments {
-            return ui("输入问题", "Ask a question")
-        }
-        return hasSelectedMaterial
-            ? ui("问当前课程或材料", "Ask the course or current material")
-            : ui("问当前课程或笔记", "Ask the course or current note")
+        // Neutral, ChatGPT-like. Never steer toward a surface — the agent
+        // already knows what is open; the placeholder should not lecture.
+        ui("问点什么…", "Ask anything")
     }
 
     var selectionPromptScope: String {
@@ -11947,9 +11944,6 @@ final class WorkspaceStore: ObservableObject {
                 return
             }
             activeCourseID = requestedCourseID
-        } else if let activeCourseID,
-                  !courseMembershipIndex.itemIDs(in: activeCourseID).contains(itemID) {
-            return
         }
         dismissCourseWorkspace(restoringFocus: false)
         showLibrary = false
@@ -19414,15 +19408,39 @@ final class WorkspaceStore: ObservableObject {
 
         let noteMarker = "# Pane ownership marker\n\nUnsaved note input must survive stable slot animations.\n"
         let draftMarker = "Unsent agent draft must survive stable slot animations."
-        let messageMarker = AgentMessage(
-            role: .assistant,
-            text: "Stable parent conversation marker",
-            source: "verification",
-            backend: .offline
-        )
+        let richConversation = (0..<15).flatMap { turn in
+            [
+                AgentMessage(
+                    role: .user,
+                    text: "第 \(turn + 1) 轮：解释复利如何累积。",
+                    source: "verification",
+                    backend: .offline
+                ),
+                AgentMessage(
+                    role: .assistant,
+                    text: """
+                    ## 第 \(turn + 1) 轮复利说明
+
+                    - 本金先产生利息
+                    - 下一期利息继续进入本金
+
+                    | 变量 | 含义 |
+                    | --- | --- |
+                    | P | 本金 |
+                    | r | 每期利率 |
+
+                    \\(A = P(1 + r)^n\\)
+
+                    $$A = P(1 + r)^n$$
+                    """,
+                    source: "verification",
+                    backend: .offline
+                ),
+            ]
+        }
         updateNote(noteMarker)
         agentDraft = draftMarker
-        messages = [messageMarker]
+        messages = richConversation
         try? await Task.sleep(nanoseconds: 700_000_000)
 
         let itemID = selectedMaterialItem?.id
@@ -19456,7 +19474,7 @@ final class WorkspaceStore: ObservableObject {
             && showNotes
             && noteText == noteMarker
             && agentDraft == draftMarker
-            && messages == [messageMarker]
+            && messages == richConversation
             && normalizedThreePaneOrder == baselineOrder
             && finalLocation == baselineLocation
             && revisionDelta == 0
@@ -19480,7 +19498,8 @@ final class WorkspaceStore: ObservableObject {
             "note_editor_dismantle=\(PaneToggleContinuityVerifier.noteEditorDismantleCount)",
             "note_preserved=\(noteText == noteMarker)",
             "agent_draft_preserved=\(agentDraft == draftMarker)",
-            "conversation_preserved=\(messages == [messageMarker])",
+            "conversation_preserved=\(messages == richConversation)",
+            "conversation_count=\(messages.count)",
             "pane_order_preserved=\(normalizedThreePaneOrder == baselineOrder)",
         ].joined(separator: "\n") + "\n"
         PaneToggleContinuityVerifier.endMeasurement()
@@ -22119,24 +22138,35 @@ final class WorkspaceStore: ObservableObject {
             if updatesVisibleChat {
                 agentActivityText = ui("正在思考", "Thinking")
             }
-        case let .usingTool(name):
+        case let .usingTool(name, detail):
             guard updatesVisibleChat else { return }
+            let base: String
             switch name {
             case "weibei_context":
-                agentActivityText = ui("正在核对材料与笔记", "Checking material and notes")
-            case "weibei_course_map", "weibei_course_search", "weibei_course_read",
-                 "ls", "find", "grep", "read":
-                agentActivityText = ui("正在查找课程关联", "Finding course connections")
+                base = ui("正在核对材料与笔记", "Checking material and notes")
+            case "weibei_course_search", "grep", "find":
+                base = ui("正在搜索", "Searching")
+            case "weibei_course_read", "read":
+                base = ui("正在读取", "Reading")
+            case "weibei_course_map", "ls":
+                base = ui("正在查找课程关联", "Finding course connections")
             case "weibei_learning_memory":
-                agentActivityText = ui("正在回顾学习记忆", "Reviewing learning memory")
+                base = ui("正在回顾学习记忆", "Reviewing learning memory")
             case "weibei_learning_update":
-                agentActivityText = ui("正在整理学习进展", "Updating study progress")
+                base = ui("正在整理学习进展", "Updating study progress")
             case "weibei_note_proposal":
-                agentActivityText = ui("正在整理写入建议", "Preparing a note proposal")
+                base = ui("正在整理写入建议", "Preparing a note proposal")
             case "weibei_rich_answer":
-                agentActivityText = ui("正在组织富回答", "Building a rich answer")
+                base = ui("正在组织富回答", "Building a rich answer")
             default:
-                agentActivityText = ui("正在处理", "Working")
+                base = ui("正在处理", "Working")
+            }
+            // Surface what the agent is actually touching, ChatGPT-style:
+            // "正在搜索：泰勒展开" / "正在读取：导数.md".
+            if let detail, !detail.isEmpty {
+                agentActivityText = base + ui("：", ": ") + detail
+            } else {
+                agentActivityText = base
             }
         case let .text(text):
             if updatesVisibleChat {
@@ -24023,8 +24053,15 @@ final class WorkspaceStore: ObservableObject {
 
     private func persistCurrentNote() {
         guard let item = activeNoteItem else { return }
-        cancelPendingNotePersistence(for: item.id)
-        persistNote(noteText, for: item)
+        if let stagedNoteDraft, stagedNoteDraft.itemID == item.id {
+            self.stagedNoteDraft = nil
+            updateNote(stagedNoteDraft.value, for: item.id)
+        }
+        if pendingNotePersistenceByItemID[item.id] != nil {
+            flushPendingNotePersistence(for: item.id)
+        } else if pendingNoteWritesByItemID[item.id] != nil {
+            persistNote(noteText, for: item)
+        }
     }
 
     func flushPendingNotePersistence() {
@@ -24450,6 +24487,11 @@ final class WorkspaceStore: ObservableObject {
                         transactionDirectory:
                             transaction.transactionDirectory
                     )
+                    courseNoteWritesInFlight.remove(itemID)
+                    courseNoteWriteTasksByItemID[itemID] = nil
+                    if pendingNoteWritesByItemID[itemID] != nil {
+                        startCourseOwnedNoteWriteIfNeeded(itemID: itemID)
+                    }
                     return
                 }
                 let result = transaction.result

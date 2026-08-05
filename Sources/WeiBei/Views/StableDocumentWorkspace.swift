@@ -3,6 +3,11 @@ import QuartzCore
 import SwiftUI
 import WeiBeiCore
 
+extension Notification.Name {
+    static let weiBeiDocumentDividerDragBegan = Notification.Name("WeiBeiDocumentDividerDragBegan")
+    static let weiBeiDocumentDividerDragEnded = Notification.Name("WeiBeiDocumentDividerDragEnded")
+}
+
 struct StableDocumentWorkspace: NSViewRepresentable {
     @EnvironmentObject private var store: WorkspaceStore
     @Binding var firstSplit: CGFloat
@@ -815,6 +820,7 @@ final class StableDocumentSplitCoordinator {
         captureReadableWidths(in: splitView)
         dividerDrag = DividerDrag(index: index, baseWidths: widths)
         isDraggingDivider = true
+        NotificationCenter.default.post(name: .weiBeiDocumentDividerDragBegan, object: splitView)
     }
 
     private func updateDividerDrag(delta: CGFloat, in splitView: StableDocumentSplitView) {
@@ -843,13 +849,19 @@ final class StableDocumentSplitCoordinator {
                 self.persistRatios(in: splitView)
                 self.reportFrames(in: splitView)
                 self.applyPendingWork(in: splitView)
+                self.notifyDividerDragEnded(in: splitView)
             }
         } else {
             captureReadableWidths(in: splitView)
             persistRatios(in: splitView)
             reportFrames(in: splitView)
             applyPendingWork(in: splitView)
+            notifyDividerDragEnded(in: splitView)
         }
+    }
+
+    private func notifyDividerDragEnded(in splitView: StableDocumentSplitView) {
+        NotificationCenter.default.post(name: .weiBeiDocumentDividerDragEnded, object: splitView)
     }
 
     private func snappedWidths(_ widths: [CGFloat]) -> [CGFloat] {
@@ -873,8 +885,18 @@ final class StableDocumentSplitCoordinator {
 
     private func applyVisibleWidthsImmediately(_ widths: [CGFloat], in splitView: StableDocumentSplitView) {
         let frames = visibleFrames(order: displayedVisibleOrder, widths: widths, size: splitView.bounds.size)
+        let agentWidthChanged = frames[.agent].map { frame in
+            guard let host = splitView.roleHosts[.agent] else { return false }
+            return abs(host.frame.width - frame.width) > 0.5
+        } ?? false
         for (role, frame) in frames {
             splitView.roleHosts[role]?.frame = frame
+        }
+        // Direct frame changes happen inside the divider mouse event. AppKit may
+        // defer NSHostingView's SwiftUI layout; widening hides that delay, while
+        // shrinking clips the old chat width. Flush only the resized chat host.
+        if agentWidthChanged, let agentHost = splitView.roleHosts[.agent] {
+            agentHost.layoutSubtreeIfNeeded()
         }
         let dividers = dividerFramesForOrder(displayedVisibleOrder, visibleFrames: frames, size: splitView.bounds.size)
         updateDividerFrames(dividers, animated: false, in: splitView)

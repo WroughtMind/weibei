@@ -132,7 +132,7 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
     private var activatedWikiTitle: String?
     private var attachmentRequests = 0
     private var imagePickerRequests = 0
-    private var markdownChanges: [String] = []
+    private var markdownChanges: [(documentID: String, markdown: String)] = []
 
     override init() {
         let configuration = WKWebViewConfiguration()
@@ -186,9 +186,13 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
         case "imagePickerRequested":
             imagePickerRequests += 1
         case "markdownChanged":
-            if let markdown = (message.body as? [String: Any])?["markdown"] as? String {
-                markdownChanges.append(markdown)
+            guard let body = message.body as? [String: Any],
+                  let documentID = body["documentID"] as? String,
+                  let markdown = body["markdown"] as? String else {
+                fail("markdownChanged did not include document identity and Markdown")
+                return
             }
+            markdownChanges.append((documentID, markdown))
         default:
             break
         }
@@ -608,7 +612,62 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
                 self.fail("inline code should not receive WeiBei Markdown syntax decorations")
                 return
             }
-            self.validateFrontmatterLanguageCycle(completion: completion)
+            self.validateStreamingAppendIntegrity {
+                self.validateFrontmatterLanguageCycle(completion: completion)
+            }
+        }
+    }
+
+    /// Regression: streamed chat prefixes append via appendMarkdown; a delta
+    /// misalignment once shredded paragraphs into word-sized fragments
+    /// (2026-08-01 user report). Drive the real pipeline and count blocks.
+    private func validateStreamingAppendIntegrity(completion: @escaping () -> Void) {
+        let script = """
+        (() => {
+          window.WeiBeiEditor.setMarkdown("第一段落完整内容。\\n\\n");
+          window.WeiBeiEditor.appendMarkdown("第二段带 **加粗** 与 $a+b$ 内容。\\n\\n");
+          window.WeiBeiEditor.appendMarkdown("- 列表甲\\n- 列表乙\\n\\n");
+          window.WeiBeiEditor.appendMarkdown("收尾一段。\\n\\n");
+          const root = document.querySelector('.ProseMirror');
+          const blocks = root ? Array.from(root.children).filter((node) => !node.classList.contains('ProseMirror-trailingBreak')) : [];
+          return JSON.stringify({
+            blockCount: blocks.length,
+            text: (root?.textContent || '').replace(/\\s+/g, ''),
+            markdown: window.WeiBeiEditor.getMarkdown()
+          });
+        })();
+        """
+        webView.evaluateJavaScript(script) { [weak self] value, error in
+            guard let self else { return }
+            if let error {
+                self.fail("streaming append check threw \(error.localizedDescription)")
+                return
+            }
+            guard let raw = value as? String,
+                  let data = raw.data(using: .utf8),
+                  let result = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                self.fail("streaming append check returned no result")
+                return
+            }
+            let blockCount = result["blockCount"] as? Int ?? -1
+            let text = result["text"] as? String ?? ""
+            // 3 paragraphs + 1 list = 4 top-level blocks; fragmentation inflates this.
+            guard blockCount == 4 else {
+                self.fail("appendMarkdown fragmented streamed blocks: expected 4 top-level blocks, got \(blockCount)")
+                return
+            }
+            guard text.contains("第二段带") else {
+                self.fail("appendMarkdown lost streamed content: \(text)")
+                return
+            }
+            guard text.contains("收尾一段。"), text.contains("列表甲"), text.contains("列表乙") else {
+                self.fail("appendMarkdown dropped appended blocks: \(text)")
+                return
+            }
+            // Restore the fixture document for the checks that follow.
+            self.webView.evaluateJavaScript("window.WeiBeiEditor.setMarkdown(\(json(sampleMarkdown)))") { _, _ in
+                completion()
+            }
         }
     }
 
@@ -1430,8 +1489,8 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
           const menu = document.querySelector('.weibei-slash-menu'); menu.style.maxHeight = '90px'; menu.style.scrollBehavior = 'auto'; open('/'); for (let index = 0; index < 12; index += 1) window.WeiBeiEditor.pressKeyForCheck('ArrowDown'); if (menu.scrollTop <= 0) throw new Error('arrow navigation did not scroll the slash menu'); menu.style.maxHeight = '';
           window.WeiBeiEditor.pressKeyForCheck('Escape'); if (!window.WeiBeiEditor.getMarkdown().includes('/')) throw new Error('escape removed slash text');
           open('/h1'); window.WeiBeiEditor.executeSlashCommandForCheck('heading1'); window.WeiBeiEditor.typeTextForCheck('一级标题'); window.WeiBeiEditor.pressKeyForCheck('Enter'); window.WeiBeiEditor.typeTextForCheck('/h2'); window.WeiBeiEditor.openSlashMenuForCheck(); window.WeiBeiEditor.executeSlashCommandForCheck('heading2'); window.WeiBeiEditor.typeTextForCheck('二级标题'); window.WeiBeiEditor.pressKeyForCheck('Enter'); window.WeiBeiEditor.typeTextForCheck('/'); window.WeiBeiEditor.openSlashMenuForCheck();
-          const headingMarkdown = window.WeiBeiEditor.getMarkdown(); const editorSelection = window.WeiBeiEditor.selectionForCheck(); const domSelection = window.getSelection(); const rootSelectionBackground = getComputedStyle(document.querySelector('.ProseMirror'), '::selection').backgroundColor;
-          if (headingMarkdown !== '# 一级标题\\n\\n## 二级标题\\n\\n/\\n' || editorSelection.from !== editorSelection.to || !domSelection?.isCollapsed || !['rgba(0, 0, 0, 0)', 'transparent'].includes(rootSelectionBackground)) throw new Error('heading typing created blank lines or a root selection fill: ' + JSON.stringify({ headingMarkdown, editorSelection, domSelectionCollapsed: domSelection?.isCollapsed, rootSelectionBackground }));
+          const headingMarkdown = window.WeiBeiEditor.getMarkdown(); const editorSelection = window.WeiBeiEditor.selectionForCheck(); const domSelection = window.getSelection(); const rootSelectionBackground = getComputedStyle(document.querySelector('.ProseMirror'), '::selection').backgroundColor; const selectionSwatch = document.createElement('span'); selectionSwatch.style.color = getComputedStyle(document.documentElement).getPropertyValue('--selection').trim(); document.body.appendChild(selectionSwatch); const expectedSelectionBackground = getComputedStyle(selectionSwatch).color; selectionSwatch.remove();
+          if (headingMarkdown !== '# 一级标题\\n\\n## 二级标题\\n\\n/\\n' || editorSelection.from !== editorSelection.to || !domSelection?.isCollapsed || rootSelectionBackground !== expectedSelectionBackground) throw new Error('heading typing or root selection highlight is invalid: ' + JSON.stringify({ headingMarkdown, editorSelection, domSelectionCollapsed: domSelection?.isCollapsed, rootSelectionBackground, expectedSelectionBackground }));
           window.WeiBeiEditor.setDocumentID('slash-table-menu'); open('/table');
           const tableButton = document.querySelector('#weibei-slash-command-table .weibei-slash-command-button');
           if (!tableButton || document.querySelector('.weibei-slash-table-panel')) throw new Error('table submenu opened without an activation');
@@ -1474,7 +1533,7 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
             guard let self else { return }
             guard error == nil else { self.fail("IME composition setup failed: \(error!.localizedDescription)"); return }
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
-                guard self.markdownChanges.count == initialChangeCount else {
+                guard self.markdownChanges.count == initialChangeCount + 1 else {
                     self.fail("IME transient markdown escaped to Swift: \(self.markdownChanges.count - initialChangeCount) updates; \(String(describing: value))")
                     return
                 }
@@ -1495,8 +1554,8 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
                                   result["markdown"] as? String == "# 中文标题\n",
                                   result["childCount"] as? Int == 1,
                                   result["breakCount"] as? Int == 0,
-                                  self.markdownChanges.count == initialChangeCount + 1,
-                                  self.markdownChanges.last == "# 中文标题\n" else {
+                                  self.markdownChanges.count == initialChangeCount + 2,
+                                  self.markdownChanges.last?.markdown == "# 中文标题\n" else {
                                 self.fail("IME final markdown was not published exactly once: \(String(describing: finalError)); \(String(describing: finalValue)); changes=\(self.markdownChanges.count - initialChangeCount)")
                                 return
                             }
@@ -1523,7 +1582,7 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
             guard let self else { return }
             guard error == nil else { self.fail("IME quote setup failed: \(error!.localizedDescription)"); return }
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
-                guard self.markdownChanges.count == initialChangeCount else {
+                guard self.markdownChanges.count == initialChangeCount + 1 else {
                     self.fail("IME quote transient markdown escaped to Swift: \(self.markdownChanges.count - initialChangeCount) updates; \(String(describing: value))")
                     return
                 }
@@ -1536,8 +1595,8 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
                                   let result = finalValue as? [String: Any],
                                   result["markdown"] as? String == "> 引用内容\n",
                                   result["breakCount"] as? Int == 0,
-                                  self.markdownChanges.count == initialChangeCount + 1,
-                                  self.markdownChanges.last == "> 引用内容\n" else {
+                                  self.markdownChanges.count == initialChangeCount + 2,
+                                  self.markdownChanges.last?.markdown == "> 引用内容\n" else {
                                 self.fail("IME quote line breaks were not normalized: \(String(describing: finalError)); \(String(describing: finalValue)); changes=\(self.markdownChanges.count - initialChangeCount)")
                                 return
                             }
@@ -1622,7 +1681,32 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
         webView.evaluateJavaScript(script) { [weak self] value, error in
             guard let self else { return }
             guard error == nil, value as? Bool == true else { self.fail("code language isolation failed: \(String(describing: error))"); return }
-            self.isDone = true
+            self.validateExternalMarkdownAcknowledgement()
+        }
+    }
+
+    private func validateExternalMarkdownAcknowledgement() {
+        let documentID = "note-switch-target"
+        let markdown = "# 切换后的笔记\n\n"
+        markdownChanges.removeAll()
+        webView.evaluateJavaScript("""
+        window.WeiBeiEditor.setDocumentID(\(json(documentID)));
+        window.WeiBeiEditor.setMarkdown(\(json(markdown)));
+        """) { [weak self] _, error in
+            guard let self else { return }
+            if let error {
+                self.fail("external Markdown acknowledgement setup threw \(error.localizedDescription)")
+                return
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                guard self.markdownChanges.contains(where: {
+                    $0.documentID == documentID && $0.markdown == markdown
+                }) else {
+                    self.fail("setMarkdown did not acknowledge the switched document before user editing")
+                    return
+                }
+                self.isDone = true
+            }
         }
     }
 
