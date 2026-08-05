@@ -105,7 +105,7 @@ public enum MarkdownAttachmentStore {
     }
 
     public static func isSupportedImageExtension(_ value: String) -> Bool {
-        ["png", "jpg", "jpeg", "gif", "webp", "tiff", "heic"].contains(value.lowercased())
+        ["png", "jpg", "jpeg", "gif", "webp", "tif", "tiff", "heic"].contains(value.lowercased())
     }
 
     public static func mimeType(forFileExtension value: String) -> String {
@@ -113,7 +113,7 @@ public enum MarkdownAttachmentStore {
         case "jpg", "jpeg": return "image/jpeg"
         case "gif": return "image/gif"
         case "webp": return "image/webp"
-        case "tiff": return "image/tiff"
+        case "tif", "tiff": return "image/tiff"
         case "heic": return "image/heic"
         default: return "image/png"
         }

@@ -113,6 +113,8 @@ No private course data is included. Use a small folder containing a PDF, HTML pa
 
 ## Checks
 
+笔记编辑器的 Slash 命令、图片选择与代码块行为见 [Docs/note-slash-commands.md](Docs/note-slash-commands.md)。
+
 ```bash
 ./script/build_and_run.sh check
 ./script/build_and_run.sh --verify
