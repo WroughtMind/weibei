@@ -245,10 +245,8 @@ public struct StudySession: Identifiable, Codable, Hashable, Sendable {
     public var title: String
     public var messages: [AgentMessage]
     public var summary: String
-    /// Fixed Chat scope. `nil` means the global workspace, never the active course.
-    public var courseID: UUID?
-    /// `nil` exists only in pre-scope snapshots awaiting one-time migration.
-    public var scopeNeedsReview: Bool?
+    /// Courses this Chat has actually used. Chat itself remains global.
+    public var relatedCourseIDs: [UUID]
     public var focusItemIDs: [String]
     /// Preferred material for grouping (scheme A). Optional for older workspaces.
     public var materialItemID: String?
@@ -263,6 +261,7 @@ public struct StudySession: Identifiable, Codable, Hashable, Sendable {
         summary: String = "",
         courseID: UUID? = nil,
         scopeNeedsReview: Bool = false,
+        relatedCourseIDs: [UUID]? = nil,
         focusItemIDs: [String] = [],
         materialItemID: String? = nil,
         flow: StudyFlowState = StudyFlowState(),
@@ -273,8 +272,9 @@ public struct StudySession: Identifiable, Codable, Hashable, Sendable {
         self.title = title
         self.messages = messages
         self.summary = summary
-        self.courseID = courseID
-        self.scopeNeedsReview = scopeNeedsReview
+        self.relatedCourseIDs = Self.normalizedCourseIDs(
+            relatedCourseIDs ?? [courseID].compactMap { $0 }
+        )
         self.focusItemIDs = focusItemIDs
         self.materialItemID = materialItemID
         self.flow = flow
@@ -284,5 +284,65 @@ public struct StudySession: Identifiable, Codable, Hashable, Sendable {
 
     public var groupingMaterialItemID: String? {
         materialItemID ?? focusItemIDs.first
+    }
+
+    // Compatibility while call sites move from fixed Chat scope to associations.
+    public var courseID: UUID? {
+        get { relatedCourseIDs.count == 1 ? relatedCourseIDs.first : nil }
+        set { relatedCourseIDs = [newValue].compactMap { $0 } }
+    }
+
+    public var scopeNeedsReview: Bool? {
+        get { false }
+        set { }
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case title
+        case messages
+        case summary
+        case relatedCourseIDs
+        case courseID
+        case scopeNeedsReview
+        case focusItemIDs
+        case materialItemID
+        case flow
+        case createdAt
+        case updatedAt
+    }
+
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        id = try values.decode(UUID.self, forKey: .id)
+        title = try values.decode(String.self, forKey: .title)
+        messages = try values.decodeIfPresent([AgentMessage].self, forKey: .messages) ?? []
+        summary = try values.decodeIfPresent(String.self, forKey: .summary) ?? ""
+        let current = try values.decodeIfPresent([UUID].self, forKey: .relatedCourseIDs)
+        let legacy = try values.decodeIfPresent(UUID.self, forKey: .courseID)
+        relatedCourseIDs = Self.normalizedCourseIDs(current ?? [legacy].compactMap { $0 })
+        focusItemIDs = try values.decodeIfPresent([String].self, forKey: .focusItemIDs) ?? []
+        materialItemID = try values.decodeIfPresent(String.self, forKey: .materialItemID)
+        flow = try values.decodeIfPresent(StudyFlowState.self, forKey: .flow) ?? StudyFlowState()
+        createdAt = try values.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
+        updatedAt = try values.decodeIfPresent(Date.self, forKey: .updatedAt) ?? createdAt
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var values = encoder.container(keyedBy: CodingKeys.self)
+        try values.encode(id, forKey: .id)
+        try values.encode(title, forKey: .title)
+        try values.encode(messages, forKey: .messages)
+        try values.encode(summary, forKey: .summary)
+        try values.encode(relatedCourseIDs, forKey: .relatedCourseIDs)
+        try values.encode(focusItemIDs, forKey: .focusItemIDs)
+        try values.encodeIfPresent(materialItemID, forKey: .materialItemID)
+        try values.encode(flow, forKey: .flow)
+        try values.encode(createdAt, forKey: .createdAt)
+        try values.encode(updatedAt, forKey: .updatedAt)
+    }
+
+    private static func normalizedCourseIDs(_ courseIDs: [UUID]) -> [UUID] {
+        Array(Set(courseIDs)).sorted { $0.uuidString < $1.uuidString }
     }
 }

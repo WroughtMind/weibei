@@ -20,17 +20,23 @@ public struct CourseDocumentIndexResult: Sendable {
     public var isTruncated: Bool
     public var rank: Double?
     public var availability: CourseDocumentIndexAvailability
+    public var nextCursor: String?
+    public var sourceRevision: String?
 
     public init(
         text: String?,
         isTruncated: Bool,
         rank: Double? = nil,
-        availability: CourseDocumentIndexAvailability = .ready
+        availability: CourseDocumentIndexAvailability = .ready,
+        nextCursor: String? = nil,
+        sourceRevision: String? = nil
     ) {
         self.text = text
         self.isTruncated = isTruncated
         self.rank = rank
         self.availability = availability
+        self.nextCursor = nextCursor
+        self.sourceRevision = sourceRevision
     }
 }
 
@@ -48,6 +54,15 @@ public typealias CourseNativePDFTextLoader = @Sendable (
 ) -> [Int: BoundedPDFTextPage]?
 
 public final class CourseDocumentSearchIndex: @unchecked Sendable {
+    private struct ReadCursor: Codable {
+        var version = 1
+        var itemID: String
+        var sourceRevision: String
+        var location: String?
+        var sortOrder: Int
+        var characterOffset: Int
+    }
+
     private static let maximumDatabaseBytes: UInt64 = 1_024 * 1_024 * 1_024
     private static let maximumSQLiteBytes: UInt64 = 768 * 1_024 * 1_024
     private static let sqlitePageBytes: UInt64 = 4_096
@@ -447,7 +462,8 @@ public final class CourseDocumentSearchIndex: @unchecked Sendable {
                     || (state?.chunkCount ?? 0) > chunks.count
                     || joined.count > characterLimit,
                 rank: chunks.map(\.rank).min(),
-                availability: availability
+                availability: availability,
+                sourceRevision: expectedSignature
             )
         }
     }
@@ -456,11 +472,20 @@ public final class CourseDocumentSearchIndex: @unchecked Sendable {
         item: StudyItem,
         query: String,
         location: String?,
+        cursor: String? = nil,
         maximumCharacters: Int = 24_000
     ) -> CourseDocumentIndexResult {
         let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        let trimmedLocation = location?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let rawLocation = location?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedLocation = rawLocation?.isEmpty == false ? rawLocation : nil
         if !trimmedQuery.isEmpty, trimmedLocation?.isEmpty ?? true {
+            guard cursor == nil else {
+                return CourseDocumentIndexResult(
+                    text: nil,
+                    isTruncated: false,
+                    availability: .unavailable
+                )
+            }
             return lookup(
                 items: [item],
                 query: trimmedQuery,
@@ -507,21 +532,38 @@ public final class CourseDocumentSearchIndex: @unchecked Sendable {
             )
         }
 
-        let hasLocation = !(trimmedLocation ?? "").isEmpty
+        let decodedCursor = cursor.flatMap(Self.decodeCursor)
+        if cursor != nil,
+           decodedCursor.map({
+               $0.version == 1
+                   && $0.itemID == scheduled.storageID
+                   && $0.sourceRevision == scheduled.signature
+                   && $0.location == trimmedLocation
+                   && $0.sortOrder >= 0
+                   && $0.characterOffset >= 0
+           }) != true {
+            return CourseDocumentIndexResult(
+                text: nil,
+                isTruncated: false,
+                availability: .unavailable,
+                sourceRevision: scheduled.signature
+            )
+        }
+
+        let hasLocation = trimmedLocation != nil
         let sql = hasLocation
             ? """
-              SELECT location, text
+              SELECT sort_order, location, text
               FROM chunks
               WHERE item_id = ? AND (location = ? OR instr(location, ?) > 0)
+                AND sort_order >= ?
               ORDER BY sort_order
-              LIMIT 24
               """
             : """
-              SELECT location, text
+              SELECT sort_order, location, text
               FROM chunks
-              WHERE item_id = ?
+              WHERE item_id = ? AND sort_order >= ?
               ORDER BY sort_order
-              LIMIT 24
               """
         guard let statement = prepare(sql, in: database) else {
             return CourseDocumentIndexResult(
@@ -535,34 +577,142 @@ public final class CourseDocumentSearchIndex: @unchecked Sendable {
         if hasLocation, let trimmedLocation {
             bind(trimmedLocation, at: 2, in: statement)
             bind(trimmedLocation, at: 3, in: statement)
+            sqlite3_bind_int64(
+                statement,
+                4,
+                sqlite3_int64(decodedCursor?.sortOrder ?? 0)
+            )
+        } else {
+            sqlite3_bind_int64(
+                statement,
+                2,
+                sqlite3_int64(decodedCursor?.sortOrder ?? 0)
+            )
         }
 
         let characterLimit = max(maximumCharacters, 1)
-        var chunks: [String] = []
-        var characterCount = 0
+        var output = ""
+        var nextCursor: String?
         while !Task.isCancelled, sqlite3_step(statement) == SQLITE_ROW {
-            guard let text = columnText(statement, at: 1), !text.isEmpty else { continue }
-            let location = columnText(statement, at: 0) ?? ""
-            let chunk = location.isEmpty || text.hasPrefix(location)
+            let sortOrder = Int(sqlite3_column_int64(statement, 0))
+            guard let text = columnText(statement, at: 2), !text.isEmpty else { continue }
+            let chunkLocation = columnText(statement, at: 1) ?? ""
+            let chunk = chunkLocation.isEmpty || text.hasPrefix(chunkLocation)
                 ? text
-                : "\(location)\n\(text)"
-            let remaining = characterLimit - characterCount
-            guard remaining > 0 else { break }
-            let clipped = String(chunk.prefix(remaining))
-            chunks.append(clipped)
-            characterCount += clipped.count + 2
+                : "\(chunkLocation)\n\(text)"
+            let offset = decodedCursor?.sortOrder == sortOrder
+                ? decodedCursor?.characterOffset ?? 0
+                : 0
+            guard offset <= chunk.count else {
+                return CourseDocumentIndexResult(
+                    text: nil,
+                    isTruncated: false,
+                    availability: .unavailable,
+                    sourceRevision: scheduled.signature
+                )
+            }
+            let separator = output.isEmpty ? "" : "\n\n"
+            let remaining = characterLimit - output.count
+            guard remaining > separator.count else {
+                nextCursor = Self.encodeCursor(
+                    itemID: scheduled.storageID,
+                    sourceRevision: scheduled.signature,
+                    location: trimmedLocation,
+                    sortOrder: sortOrder,
+                    characterOffset: offset
+                )
+                break
+            }
+            output += separator
+            let unread = chunk.dropFirst(offset)
+            let consumed = min(unread.count, characterLimit - output.count)
+            output += unread.prefix(consumed)
+            if consumed < unread.count {
+                nextCursor = Self.encodeCursor(
+                    itemID: scheduled.storageID,
+                    sourceRevision: scheduled.signature,
+                    location: trimmedLocation,
+                    sortOrder: sortOrder,
+                    characterOffset: offset + consumed
+                )
+                break
+            }
         }
-        let joined = chunks.joined(separator: "\n\n")
         return CourseDocumentIndexResult(
-            text: joined.isEmpty ? nil : joined,
+            text: output.isEmpty ? nil : output,
             isTruncated: state.isComplete != true
                 || state.hasPartialExtraction
-                || state.chunkCount > chunks.count
-                || characterCount >= characterLimit,
+                || nextCursor != nil,
             availability: state.isComplete
                 ? .ready
-                : (isScheduled ? .indexing : .unavailable)
+                : (isScheduled ? .indexing : .unavailable),
+            nextCursor: nextCursor,
+            sourceRevision: scheduled.signature
         )
+    }
+
+    public func outline(
+        item: StudyItem,
+        maximumEntries: Int = 24
+    ) -> [String] {
+        guard maximumEntries > 0,
+              let scheduled = Self.scheduledItem(item) else { return [] }
+        refreshChangedItemsForLookup([item])
+        waitForInitialIndexing([scheduled])
+        guard !Task.isCancelled,
+              let database = openDatabase() else { return [] }
+        defer { sqlite3_close(database) }
+        schedulingLock.lock()
+        let expectedSignature = expectedSignaturesByStorageID[scheduled.storageID]
+        schedulingLock.unlock()
+        guard expectedSignature == scheduled.signature,
+              Self.fileSignature(for: item) == scheduled.signature,
+              fileState(for: scheduled.storageID, in: database)?.signature
+                == scheduled.signature,
+              let statement = prepare(
+                  """
+                  SELECT location
+                  FROM chunks
+                  WHERE item_id = ? AND location <> ''
+                  GROUP BY location
+                  ORDER BY MIN(sort_order)
+                  LIMIT ?
+                  """,
+                  in: database
+              ) else { return [] }
+        defer { sqlite3_finalize(statement) }
+        bind(scheduled.storageID, at: 1, in: statement)
+        sqlite3_bind_int64(statement, 2, sqlite3_int64(min(maximumEntries, 80)))
+        var entries: [String] = []
+        while !Task.isCancelled, sqlite3_step(statement) == SQLITE_ROW {
+            guard let value = columnText(statement, at: 0), !value.isEmpty else { continue }
+            entries.append(String(value.prefix(300)))
+        }
+        return entries
+    }
+
+    private static func encodeCursor(
+        itemID: String,
+        sourceRevision: String,
+        location: String?,
+        sortOrder: Int,
+        characterOffset: Int
+    ) -> String? {
+        try? JSONEncoder().encode(
+            ReadCursor(
+                itemID: itemID,
+                sourceRevision: sourceRevision,
+                location: location,
+                sortOrder: sortOrder,
+                characterOffset: characterOffset
+            )
+        ).base64EncodedString()
+    }
+
+    private static func decodeCursor(_ value: String) -> ReadCursor? {
+        guard value.utf8.count <= 1_024,
+              let data = Data(base64Encoded: value) else { return nil }
+        return try? JSONDecoder().decode(ReadCursor.self, from: data)
     }
 
     private struct ScheduledItem {
@@ -1741,6 +1891,8 @@ public final class CourseDocumentSearchIndex: @unchecked Sendable {
         _ markdown: String,
         query: String,
         location: String?,
+        cursor: String? = nil,
+        sourceID: String = "markdown",
         maximumCharacters: Int = 24_000
     ) -> CourseDocumentIndexResult {
         let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1760,10 +1912,55 @@ public final class CourseDocumentSearchIndex: @unchecked Sendable {
             section.heading.map { "# \($0)\n\(section.text)" } ?? section.text
         }.joined(separator: "\n\n")
         let limit = max(maximumCharacters, 1)
+        let sourceRevision = sourceRevision(forMarkdown: markdown)
+        let scope = [trimmedQuery, trimmedLocation].joined(separator: "\u{1f}")
+        let decodedCursor = cursor.flatMap(Self.decodeCursor)
+        if cursor != nil,
+           decodedCursor.map({
+               $0.version == 1
+                   && $0.itemID == sourceID
+                   && $0.sourceRevision == sourceRevision
+                   && $0.location == scope
+                   && $0.sortOrder == 0
+                   && $0.characterOffset >= 0
+                   && $0.characterOffset <= joined.count
+           }) != true {
+            return CourseDocumentIndexResult(
+                text: nil,
+                isTruncated: false,
+                availability: .unavailable,
+                sourceRevision: sourceRevision
+            )
+        }
+        let offset = decodedCursor?.characterOffset ?? 0
+        let unread = joined.dropFirst(offset)
+        let pageText = String(unread.prefix(limit))
+        let nextOffset = offset + pageText.count
+        let nextCursor = nextOffset < joined.count
+            ? Self.encodeCursor(
+                itemID: sourceID,
+                sourceRevision: sourceRevision,
+                location: scope,
+                sortOrder: 0,
+                characterOffset: nextOffset
+            )
+            : nil
         return CourseDocumentIndexResult(
-            text: joined.isEmpty ? nil : String(joined.prefix(limit)),
-            isTruncated: joined.count > limit
+            text: pageText.isEmpty ? nil : pageText,
+            isTruncated: nextCursor != nil,
+            nextCursor: nextCursor,
+            sourceRevision: sourceRevision
         )
+    }
+
+    public static func sourceRevision(for item: StudyItem) -> String? {
+        fileSignature(for: item)
+    }
+
+    public static func sourceRevision(forMarkdown markdown: String) -> String {
+        SHA256.hash(data: Data(markdown.utf8))
+            .map { String(format: "%02x", $0) }
+            .joined()
     }
 
     private static func appendChineseTerms(from run: String, to terms: inout [String]) {

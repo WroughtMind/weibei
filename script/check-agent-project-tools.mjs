@@ -9,6 +9,7 @@ import {
   symlink,
   writeFile,
 } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -91,6 +92,7 @@ try {
     isShared: false,
     courseIDs: ["course-a"],
     courseTitles: ["课程甲"],
+    sourceRevision: "source-revision-1",
   };
   const snapshot = {
     project: {
@@ -125,10 +127,9 @@ try {
     note: { title: "当前笔记", text: "", isTruncated: false },
     selection: {
       title: "第一讲选区",
-      text: "ORIGINAL_EXTENSION_CONTENT",
+      text: "SELECTION_EXTENSION_CONTENT",
       isTruncated: false,
     },
-    recentMessages: [],
     course: {
       title: "课程甲",
       catalog: [{
@@ -187,12 +188,29 @@ try {
         },
       ],
     },
+    courseProfile: {
+      revision: 0,
+      overview: "COURSE_CARD_OVERVIEW",
+      entries: [{
+        id: "profile-concept-1",
+        kind: "concept",
+        text: "PROFILE_ENTRY_SHOULD_STAY_HIDDEN",
+        sources: [{
+          itemID: "material-1",
+          role: "material",
+          sourceRevision: "source-revision-1",
+        }],
+      }],
+    },
   };
   await writeFile(contextFile, JSON.stringify(hookEnvelope));
   process.env.WEIBEI_AGENT_CONTEXT_FILE = contextFile;
   const eventHandlers = new Map();
+  const registeredTools = new Map();
   extension.default({
-    registerTool() {},
+    registerTool(tool) {
+      registeredTools.set(tool.name, tool);
+    },
     on(name, handler) {
       eventHandlers.set(name, handler);
     },
@@ -203,11 +221,23 @@ try {
   );
   const beforeResult = await beforeAgentStart({ systemPrompt: "base" });
   requireValue(
-      beforeResult.message?.customType === "weibei-current-focus" &&
-      beforeResult.message?.display === false &&
-      beforeResult.message?.content.includes("ORIGINAL_EXTENSION_CONTENT") &&
-      beforeResult.systemPrompt.includes("直接回答用户的问题"),
-    "当前材料、选区和笔记没有作为隐藏本轮焦点自然交给 Pi",
+      beforeResult.message === undefined &&
+      beforeResult.systemPrompt.includes("直接回答用户的问题") &&
+      beforeResult.systemPrompt.includes("location.materialItemID") &&
+      beforeResult.systemPrompt.includes("weibei_course_read") &&
+      beforeResult.systemPrompt.includes("weibei_course_search") &&
+      beforeResult.systemPrompt.includes("weibei_course_map"),
+    "本轮现场仍被写成持久消息，或本轮规则没有交给 Pi",
+  );
+  requireValue(
+    !registeredTools.has("weibei_context"),
+    "魏碑仍注册了需要模型主动读取的上下文工具",
+  );
+  requireValue(
+    !registeredTools.has("ls") &&
+      !registeredTools.has("find") &&
+      !registeredTools.has("grep"),
+    "普通学习场景仍暴露重复的项目文件工具",
   );
   const contextHook = requireValue(
     eventHandlers.get("context"),
@@ -216,14 +246,35 @@ try {
   const filteredContext = await contextHook({
     messages: [
       { role: "custom", customType: "weibei-current-focus", content: "old", display: false },
+      {
+        role: "assistant",
+        content: [{ type: "toolCall", id: "legacy-context", name: "weibei_context", arguments: {} }],
+      },
+      {
+        role: "toolResult",
+        toolCallId: "legacy-context",
+        toolName: "weibei_context",
+        content: [{ type: "text", text: "ORIGINAL_EXTENSION_CONTENT" }],
+        details: { kind: "weibei_context", contextRevision: "old" },
+        isError: false,
+      },
       { role: "user", content: "继续" },
-      beforeResult.message,
     ],
   });
+  const transientContext = filteredContext.messages.at(-1);
   requireValue(
     filteredContext.messages.length === 2 &&
-      filteredContext.messages.at(-1)?.content === beforeResult.message.content,
-    "后续回合仍把旧焦点和当前焦点一起交给 Pi",
+      filteredContext.messages[0]?.role === "user" &&
+      transientContext?.role === "custom" &&
+      transientContext.customType === "weibei-current-focus" &&
+      transientContext.display === false &&
+      transientContext.content.includes("revision-a") &&
+      transientContext.content.includes("material-1") &&
+      transientContext.content.includes("COURSE_CARD_OVERVIEW") &&
+      transientContext.content.includes("SELECTION_EXTENSION_CONTENT") &&
+      !transientContext.content.includes("PROFILE_ENTRY_SHOULD_STAY_HIDDEN") &&
+      !transientContext.content.includes("ORIGINAL_EXTENSION_CONTENT"),
+    "当前现场没有只把选区与无正文焦点作为本轮临时消息交给 Pi",
   );
   const emptyFocusEnvelope = {
     ...hookEnvelope,
@@ -236,14 +287,39 @@ try {
   await writeFile(contextFile, JSON.stringify(emptyFocusEnvelope));
   const clearedContext = await contextHook({
     messages: [
-      { role: "custom", customType: "weibei-current-focus", content: beforeResult.message.content, display: false },
+      { role: "custom", customType: "weibei-current-focus", content: "old", display: false },
       { role: "user", content: "现在没有打开资料" },
     ],
   });
   requireValue(
-    clearedContext.messages.length === 1 &&
-      clearedContext.messages[0]?.role === "user",
-    "本轮没有焦点时仍把上一轮焦点交给 Pi",
+    clearedContext.messages.length === 2 &&
+      clearedContext.messages[0]?.role === "user" &&
+      clearedContext.messages[1]?.content.includes("context-empty") &&
+      !clearedContext.messages[1]?.content.includes("ORIGINAL_EXTENSION_CONTENT"),
+    "本轮现场没有替换上一轮现场，或仍携带材料正文",
+  );
+  const rootlessEnvelope = {
+    ...hookEnvelope,
+    contextRevision: "context-rootless-course",
+    project: {
+      ...hookEnvelope.project,
+      rootPath: undefined,
+      rootIdentity: undefined,
+      items: [{
+        ...item,
+        relativePath: "",
+        resolvedPath: "",
+        entryIdentity: undefined,
+        targetIdentity: undefined,
+      }],
+    },
+  };
+  await writeFile(contextFile, JSON.stringify(rootlessEnvelope));
+  const rootlessContext = await contextHook({ messages: [] });
+  requireValue(
+    rootlessContext.messages.at(-1)?.content.includes("context-rootless-course") &&
+      rootlessContext.messages.at(-1)?.content.includes("material-1"),
+    "没有课程文件夹的旧课程无法继续建立本轮课程上下文",
   );
   await writeFile(contextFile, "{broken");
   let brokenContextRejected = false;
@@ -254,6 +330,215 @@ try {
   }
   requireValue(brokenContextRejected, "回合中的损坏上下文快照被静默忽略");
   await writeFile(contextFile, JSON.stringify(hookEnvelope));
+
+  const firstArticlePage = "完整文章上下文。".repeat(700);
+  const toolCallID = "course-read-full-article";
+  const toolResponseRoot = join(temporaryRoot, "tool-responses");
+  await mkdir(toolResponseRoot, { recursive: true });
+  const canonicalToolResponseRoot = await realpath(toolResponseRoot);
+  const toolResponseDirectory = join(canonicalToolResponseRoot, hookEnvelope.requestID);
+  await mkdir(toolResponseDirectory);
+  process.env.WEIBEI_AGENT_TOOL_RESPONSE_DIR = canonicalToolResponseRoot;
+
+  const courseSearchTool = requireValue(
+    registeredTools.get("weibei_course_search"),
+    "真实扩展没有注册课程索引搜索工具",
+  );
+  const profileUpdateTool = requireValue(
+    registeredTools.get("weibei_course_profile_update"),
+    "真实扩展没有注册课程知识档案批量更新工具",
+  );
+  const searchToolCallID = "course-search-only";
+  await writeFile(
+    join(
+      toolResponseDirectory,
+      `${createHash("sha256").update(searchToolCallID, "utf8").digest("hex")}.json`,
+    ),
+    JSON.stringify({
+      schemaVersion: 1,
+      requestID: hookEnvelope.requestID,
+      contextRevision: hookEnvelope.contextRevision,
+      toolCallID: searchToolCallID,
+      toolName: "weibei_course_search",
+      success: true,
+      payload: {
+        query: "完整文章",
+        items: [{
+          item: {
+            ...hookEnvelope.course.items[0],
+            searchText: "SEARCH_ONLY_EXCERPT",
+          },
+          relativePath: "文稿/第一讲.txt",
+          courseIDs: ["course-a"],
+          courseTitles: ["课程甲"],
+          sourceRevision: "source-revision-1",
+        }],
+      },
+    }),
+  );
+  await courseSearchTool.execute(searchToolCallID, { query: "完整文章" });
+  let searchOnlyProfileRejected = false;
+  try {
+    await profileUpdateTool.execute("profile-update-after-search", {
+      contextRevision: hookEnvelope.contextRevision,
+      profileRevision: 0,
+      checkpoint: "sectionCompleted",
+      entries: [{
+        kind: "concept",
+        text: "只有搜索摘要，还没有读取原文。",
+        sources: [{
+          itemID: "material-1",
+          role: "material",
+          sourceRevision: "source-revision-1",
+        }],
+      }],
+    });
+  } catch {
+    searchOnlyProfileRejected = true;
+  }
+  requireValue(
+    searchOnlyProfileRejected,
+    "只搜索课程索引就能把摘要沉淀为已读课程认识",
+  );
+
+  await writeFile(
+    join(
+      toolResponseDirectory,
+      `${createHash("sha256").update(toolCallID, "utf8").digest("hex")}.json`,
+    ),
+    JSON.stringify({
+      schemaVersion: 1,
+      requestID: hookEnvelope.requestID,
+      contextRevision: hookEnvelope.contextRevision,
+      toolCallID,
+      toolName: "weibei_course_read",
+      success: true,
+      payload: {
+        query: "",
+        items: [{
+          item: {
+            ...hookEnvelope.course.items[0],
+            searchText: firstArticlePage,
+          },
+          relativePath: "文稿/第一讲.txt",
+          courseIDs: ["course-a"],
+          courseTitles: ["课程甲"],
+          sourceRevision: "source-revision-1",
+        }],
+        nextCursor: "cursor-2",
+        sourceRevision: "source-revision-1",
+      },
+    }),
+  );
+  const courseReadTool = requireValue(
+    registeredTools.get("weibei_course_read"),
+    "真实扩展没有注册课程正文读取工具",
+  );
+  requireValue(
+    courseReadTool.description.includes("临时资料 ID"),
+    "课程正文读取工具没有告诉模型使用本轮临时资料 ID",
+  );
+  const courseReadResult = await courseReadTool.execute(
+    toolCallID,
+    { itemID: "material-1", maximumCharacters: 6_000 },
+  );
+  requireValue(
+    courseReadResult.content[0]?.text.includes('"hasMore": true') &&
+      courseReadResult.content[0]?.text.includes('"nextCursor": "cursor-2"'),
+    "课程正文读取工具没有把续读游标交给模型",
+  );
+
+  const continuationToolCallID = "course-read-continuation";
+  await writeFile(
+    join(
+      toolResponseDirectory,
+      `${createHash("sha256").update(continuationToolCallID, "utf8").digest("hex")}.json`,
+    ),
+    JSON.stringify({
+      schemaVersion: 1,
+      requestID: hookEnvelope.requestID,
+      contextRevision: hookEnvelope.contextRevision,
+      toolCallID: continuationToolCallID,
+      toolName: "weibei_course_read",
+      success: true,
+      payload: {
+        query: "",
+        items: [{
+          item: {
+            ...hookEnvelope.course.items[0],
+            searchText: "FULL_ARTICLE_TAIL_TOKEN",
+          },
+          relativePath: "文稿/第一讲.txt",
+          courseIDs: ["course-a"],
+          courseTitles: ["课程甲"],
+          sourceRevision: "source-revision-1",
+        }],
+        sourceRevision: "source-revision-1",
+      },
+    }),
+  );
+  const continuationResult = await courseReadTool.execute(
+    continuationToolCallID,
+    { itemID: "material-1", cursor: "cursor-2", maximumCharacters: 6_000 },
+  );
+  requireValue(
+    continuationResult.content[0]?.text.includes("FULL_ARTICLE_TAIL_TOKEN") &&
+      continuationResult.content[0]?.text.includes('"hasMore": false'),
+    "课程正文读取工具没有沿游标读到长文末尾",
+  );
+
+  const profileUpdate = await profileUpdateTool.execute("profile-update", {
+    contextRevision: hookEnvelope.contextRevision,
+    profileRevision: 0,
+    checkpoint: "sectionCompleted",
+    entries: [{
+      kind: "concept",
+      text: "第一讲建立了课程的基础概念。",
+      sources: [{
+        itemID: "material-1",
+        role: "material",
+        sourceRevision: "source-revision-1",
+      }],
+    }],
+  });
+  requireValue(
+    profileUpdate.details?.kind === "course_profile_update",
+    "课程知识档案没有在阶段性节点接收本轮真实已读来源",
+  );
+
+  const projectReadTool = requireValue(
+    registeredTools.get("read"),
+    "真实扩展没有复用 read 工具加载按需 Skill",
+  );
+  const skillRead = await projectReadTool.execute(
+    "rich-answer-skill-read",
+    { path: "skill://rich-answer-director" },
+  );
+  requireValue(
+    skillRead.content[0]?.text.includes("# 富回答导演"),
+    "read 工具没有按 skill:// 路径加载富回答导演",
+  );
+  let courseFileReadRejected = false;
+  try {
+    await projectReadTool.execute("course-file-read", { path: "文稿/第一讲.txt" });
+  } catch {
+    courseFileReadRejected = true;
+  }
+  requireValue(courseFileReadRejected, "Skill read 仍能直接读取课程文件");
+  const toolResultHook = requireValue(
+    eventHandlers.get("tool_result"),
+    "真实扩展没有记录按需 Skill 读取结果",
+  );
+  const skillMetadata = await toolResultHook({
+    toolName: "read",
+    isError: false,
+    input: { path: "skill://rich-answer-director" },
+  });
+  requireValue(
+    skillMetadata?.details?.kind === "weibei_skill_read" &&
+      skillMetadata.details.loaded.id === "rich-answer-director",
+    "按需 Skill 读取没有留下版本与哈希证据",
+  );
 
   const normalRead = await extension.readApprovedProjectFile(snapshot, item);
   requireValue(

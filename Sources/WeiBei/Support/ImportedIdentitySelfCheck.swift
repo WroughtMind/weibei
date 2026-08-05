@@ -4,6 +4,7 @@ import WeiBeiCore
 enum ImportedIdentitySelfCheck {
     @MainActor
     static func run() throws {
+        try launchAndPrimaryEntriesStartBlank()
         try storageModelsDecodeLegacySnapshotsAndRoundTrip()
         try legacyPathSnapshotMigratesItsEntireRelationshipGraph()
         try selectionThreadMigrationWaitsForWorkspaceCommit()
@@ -27,6 +28,157 @@ enum ImportedIdentitySelfCheck {
         try failedWorkspaceSaveRecoversRenameOnRestart()
         try duplicateLegacyIdentityMigratesInOneLaunch()
         try replacedAndCrossVolumeFilesReceiveNewIdentities()
+    }
+
+    @MainActor
+    private static func launchAndPrimaryEntriesStartBlank() throws {
+        let fixture = try WorkspaceFixture(name: "blank-primary-entries")
+        defer { fixture.remove() }
+
+        let materialURL = fixture.importsDirectory
+            .appendingPathComponent("上次文稿.txt")
+        let noteURL = fixture.importsDirectory
+            .appendingPathComponent("上次笔记.md")
+        try Data("上次打开的文稿".utf8).write(to: materialURL)
+        try Data("# 上次打开的笔记".utf8).write(to: noteURL)
+        let material = StudyItem(
+            id: "launch-material",
+            title: "上次文稿",
+            subtitle: materialURL.lastPathComponent,
+            kind: .text,
+            urlPath: materialURL.path,
+            isSample: false
+        )
+        let note = StudyItem(
+            id: "launch-note",
+            title: "上次笔记",
+            subtitle: noteURL.lastPathComponent,
+            kind: .markdown,
+            urlPath: noteURL.path,
+            isSample: false,
+            isNotebookNote: true
+        )
+        let oldChat = StudySession(
+            title: "上次会话",
+            messages: [
+                AgentMessage(
+                    role: .user,
+                    text: "上次问题",
+                    source: nil
+                ),
+            ]
+        )
+        try fixture.write(
+            PersistedWorkspace(
+                importedItems: [material, note],
+                selectedItemID: material.id,
+                activeNotebookItemID: note.id,
+                studySessions: [oldChat],
+                activeStudySessionID: oldChat.id,
+                workspaceLayout: .documentAgentNotes,
+                showReader: true,
+                showAgent: true,
+                showNotes: true
+            )
+        )
+
+        let store = WorkspaceStore(
+            workspaceDirectory: fixture.workspaceDirectory,
+            selectionAskThreadDefaults:
+                fixture.selectionAskThreadDefaults,
+            startsAtBlankEntries: true
+        )
+        try check(
+            store.selectedMaterialItem == nil
+                && store.activeNoteItem == nil
+                && !store.showReader
+                && !store.showAgent
+                && !store.showNotes,
+            "冷启动恢复了上次具体内容或栏位，没有停在空白入口"
+        )
+        try check(
+            store.activeStudySession?.messages.isEmpty == true
+                && store.activeStudySessionID != oldChat.id
+                && store.historicalStudySessions.contains {
+                    $0.id == oldChat.id
+                },
+            "冷启动没有创建空白 Chat，或错误删除了旧会话"
+        )
+
+        for click in 1...6 {
+            store.toggleReader()
+            try check(
+                store.showReader == !click.isMultiple(of: 2),
+                "文稿入口第 \(click) 次点击没有切换栏位"
+            )
+        }
+        try check(
+            !store.showReader,
+            "文稿入口连续点击后状态错误"
+        )
+        for click in 1...6 {
+            store.toggleAgent()
+            try check(
+                store.showAgent == !click.isMultiple(of: 2),
+                "Chat 入口第 \(click) 次点击没有切换栏位"
+            )
+        }
+        try check(
+            !store.showAgent,
+            "Chat 入口连续点击后状态错误"
+        )
+        store.selectionContext = SelectionContext(
+            text: "开关自检选区",
+            source: .document,
+            ownerTitle: material.title,
+            itemID: material.id
+        )
+        store.toggleAgent()
+        try check(store.showAgent, "存在选区时，Chat 入口第一次点击没有打开栏位")
+        store.toggleAgent()
+        try check(!store.showAgent, "存在选区时，Chat 入口第二次点击没有关闭栏位")
+        store.selectionContext = nil
+        for click in 1...6 {
+            store.toggleNotes()
+            try check(
+                store.showNotes == !click.isMultiple(of: 2),
+                "笔记入口第 \(click) 次点击没有切换栏位"
+            )
+        }
+        try check(
+            !store.showNotes,
+            "笔记入口连续点击后状态错误"
+        )
+
+        store.openContextualItem(material.id, kind: .material)
+        store.openContextualItem(note.id, kind: .note)
+        for click in 1...4 {
+            store.toggleReader()
+            try check(
+                store.showReader == click.isMultiple(of: 2),
+                "已有文稿—笔记配对时，文稿入口第 \(click) 次点击没有切换栏位"
+            )
+        }
+        for click in 1...4 {
+            store.toggleNotes()
+            try check(
+                store.showNotes == click.isMultiple(of: 2),
+                "已有文稿—笔记配对时，笔记入口第 \(click) 次点击没有切换栏位"
+            )
+        }
+        store.showContextualBrowser(.note)
+        try check(
+            store.activeNoteItem == nil
+                && store.selectedMaterialItem?.id == material.id,
+            "笔记内容页不能稳定返回笔记列表；note=\(store.activeNoteItem?.id ?? "nil") material=\(store.selectedMaterialItem?.id ?? "nil")"
+        )
+        store.openContextualItem(note.id, kind: .note)
+        store.showContextualBrowser(.material)
+        try check(
+            store.selectedMaterialItem == nil
+                && store.activeNoteItem?.id == note.id,
+            "文稿内容页不能稳定返回文稿列表"
+        )
     }
 
     @MainActor
@@ -806,6 +958,7 @@ enum ImportedIdentitySelfCheck {
             "旧 Chat 迁移样本缺少会话"
         )
         for index in legacySessions.indices {
+            legacySessions[index].removeValue(forKey: "relatedCourseIDs")
             legacySessions[index].removeValue(forKey: "courseID")
             legacySessions[index].removeValue(forKey: "scopeNeedsReview")
         }
@@ -838,34 +991,31 @@ enum ImportedIdentitySelfCheck {
             "空白旧 Chat 在迁移时丢失"
         )
         try check(
-            migratedUnique.courseID == courseA.id
-                && migratedUnique.scopeNeedsReview == false,
+            migratedUnique.relatedCourseIDs == [courseA.id],
             "唯一课程旧 Chat 没有迁入唯一课程"
         )
         try check(
-            migratedShared.courseID == nil
-                && migratedShared.scopeNeedsReview == true,
-            "共享文稿旧 Chat 被活动课程猜测归属"
+            Set(migratedShared.relatedCourseIDs) == Set([courseA.id, courseB.id]),
+            "共享文稿旧 Chat 没有同时关联真实相关课程"
         )
         try check(
-            migratedOrphan.courseID == nil
-                && migratedOrphan.scopeNeedsReview == true,
-            "无归属旧 Chat 没有进入待归类"
+            migratedOrphan.relatedCourseIDs.isEmpty,
+            "无课程证据的旧 Chat 被猜测关联"
         )
         try check(
-            migratedBlank.courseID == nil
-                && migratedBlank.scopeNeedsReview == false,
-            "无内容空白旧 Chat 不应要求用户归类"
+            migratedBlank.relatedCourseIDs.isEmpty,
+            "无内容空白旧 Chat 不应关联课程"
         )
         try check(migratedUnique.title == uniqueSession.title, "旧 Chat 迁移改变了标题")
         try check(migratedUnique.messages == uniqueSession.messages, "旧 Chat 迁移改变了消息")
         try check(migratedUnique.createdAt == createdAt, "旧 Chat 迁移改变了创建时间")
         try check(migratedUnique.updatedAt == updatedAt, "旧 Chat 迁移改变了更新时间")
         try check(
-            store.sessionsTouchingCourse(courseA.id).map(\.id) == [uniqueSession.id]
-                && store.sessionsTouchingCourse(courseB.id).map(\.id) == [courseBSession.id]
-                && store.primaryCourseID(for: migratedShared) == nil,
-            "课程记录仍靠接触文稿或活动课程猜 Chat 归属"
+            Set(store.sessionsTouchingCourse(courseA.id).map(\.id))
+                == Set([uniqueSession.id, sharedSession.id])
+                && Set(store.sessionsTouchingCourse(courseB.id).map(\.id))
+                    == Set([courseBSession.id, sharedSession.id]),
+            "课程记录没有按旧 Chat 的真实资料证据恢复多课程关联"
         )
         let courseMemories = store.learningMemoryEntries(in: .course(courseA.id))
         let courseBMemories = store.learningMemoryEntries(in: .course(courseB.id))
@@ -895,7 +1045,7 @@ enum ImportedIdentitySelfCheck {
         try check(store.flushPendingWorkspaceSave(), "旧 Chat 迁移结果无法保存")
         let migratedSnapshot = try fixture.readSnapshot()
         try check(
-            migratedSnapshot.studySessionScopeMigrationVersion == 1
+            migratedSnapshot.studySessionScopeMigrationVersion == 2
                 && migratedSnapshot.learningMemoryScopeMigrationVersion == 1
                 && migratedSnapshot.learningMemoryStates?.count == 3
                 && migratedSnapshot.learningMemoryEntries == nil
@@ -947,13 +1097,12 @@ enum ImportedIdentitySelfCheck {
                 expectedCourseID: courseA.id,
                 expectedScopeNeedsReview: false
             ),
-            "无法按固定课程激活旧 Chat"
+            "无法激活已迁移的旧 Chat"
         )
         let courseSessionID = reopened.createStudySession(courseID: courseA.id)?.id
         try check(
-            reopened.activeStudySession?.courseID == courseA.id
-                && reopened.activeStudySession?.scopeNeedsReview == false,
-            "显式新建课程 Chat 没有固定到指定课程"
+            reopened.activeStudySession?.relatedCourseIDs.isEmpty == true,
+            "新建 Chat 被入口课程提前固定作用域"
         )
         try check(
             reopened.activateStudySession(
@@ -961,35 +1110,41 @@ enum ImportedIdentitySelfCheck {
                 expectedCourseID: nil,
                 expectedScopeNeedsReview: true
             ),
-            "无法按待归类作用域激活旧 Chat"
+            "无法激活关联多课程的旧 Chat"
         )
         try check(
-            reopened.classifyStudySession(sharedSession.id, as: courseB.id)
-                && reopened.activeStudySession?.courseID == courseB.id
-                && reopened.activeStudySession?.scopeNeedsReview == false,
-            "待归类 Chat 无法一次性归入用户选择的课程"
+            Set(reopened.activeStudySession?.relatedCourseIDs ?? [])
+                == Set([courseA.id, courseB.id]),
+            "关联多课程的旧 Chat 被强行归入单一课程"
         )
         try check(
-            !reopened.classifyStudySession(sharedSession.id, as: nil),
-            "已经固定作用域的 Chat 仍可被普通操作重新归类"
+            courseSessionID.map { sessionID in
+                !reopened.studySessions.contains { $0.id == sessionID }
+            } == true,
+            "未发送消息的空白 Chat 在切换后被错误保存"
         )
         reopened.createStudySession(courseID: nil)
         try check(
-            reopened.activeStudySession?.courseID == nil
-                && reopened.activeStudySession?.scopeNeedsReview == false,
-            "显式新建全局 Chat 时传播了待归类状态"
+            reopened.activeStudySession?.relatedCourseIDs.isEmpty == true,
+            "新建统一 Chat 继承了旧会话课程关联"
         )
         reopened.removeCourseRegistrationImmediatelyForSelfCheck(
             courseA.id
         )
-        for sessionID in [uniqueSession.id, courseSessionID].compactMap({ $0 }) {
+        for sessionID in [uniqueSession.id] {
             try check(
-                !reopened.studySessions.contains {
+                reopened.studySessions.contains {
                     $0.id == sessionID
+                        && !$0.relatedCourseIDs.contains(courseA.id)
                 },
-                "从魏碑移除课程后仍残留所属 Chat"
+                "从魏碑移除课程时删除了统一 Chat，或残留课程关联"
             )
         }
+        try check(
+            reopened.studySessions.first { $0.id == sharedSession.id }?
+                .relatedCourseIDs == [courseB.id],
+            "移除课程时破坏了 Chat 与其他课程的关联"
+        )
         try check(
             reopened.learningMemoryEntries(in: .course(courseA.id))
                 .isEmpty,
@@ -1955,7 +2110,6 @@ enum ImportedIdentitySelfCheck {
         let persistedMovedNote = try String(contentsOf: movedNoteURL, encoding: .utf8)
         try check(persistedMovedNote == editedNote, "笔记移动后最新正文没有写入真实文件")
         store?.select(itemID: firstMaterial.id)
-        let originalSessionID = store?.activeStudySessionID
 
         let searchIndex = CourseDocumentSearchIndex(
             databaseURL: fixture.indexDirectory.appendingPathComponent("search.sqlite3")
@@ -1986,8 +2140,6 @@ enum ImportedIdentitySelfCheck {
         try check(store?.noteText == editedNote, "活跃笔记移动后重启没有从新路径加载正文")
         try check(store?.linkedSourceIDs(for: note.id) == [firstMaterial.id], "改名后笔记关系丢失")
         try check(store?.studyLocation(for: firstMaterial.id) != nil, "改名后阅读位置丢失")
-        try check(store?.activeStudySessionID == originalSessionID, "改名后学习会话被替换")
-        try check(Set(store?.activeStudySession?.focusItemIDs ?? []).isSuperset(of: [firstMaterial.id, note.id]), "改名后学习会话焦点丢失")
 
         let countBeforeDuplicateImport = store?.importedItems.count
         let duplicateImport = try require(

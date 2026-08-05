@@ -216,7 +216,8 @@ struct ReaderView: View {
             }
         }
         .overlay(alignment: .top) {
-            if !railOnly, showsFloatingTitle {
+            if !railOnly, showsFloatingTitle,
+               store.selectedMaterialItem != nil {
                 // Mask switch lives only on this hover DOC tab — not pinned, not main top bar.
                 ImmersiveHoverTitleView(
                     mark: "DOC",
@@ -225,6 +226,7 @@ struct ReaderView: View {
                     reorderRole: floatingTitleReorderRole
                 ) {
                     HStack(spacing: 8) {
+                        ContextualContentListButton(kind: .material)
                         selectionAskThreadsMenu
                         importedDocumentAdaptationControl
                     }
@@ -3254,14 +3256,8 @@ private struct MarkdownReadFailureView: View {
 }
 
 private struct EmptyReaderView: View {
-    @EnvironmentObject private var store: WorkspaceStore
-
     var body: some View {
-        ReaderStateMessage(
-            title: store.ui("选择资料", "Choose Material"),
-            detail: store.ui("从课程目录打开 HTML、PDF 或 Markdown。", "Open HTML, PDF, or Markdown from the course index."),
-            systemImage: "doc.text.magnifyingglass"
-        )
+        ContextualContentPicker(kind: .material)
     }
 }
 
@@ -3299,6 +3295,324 @@ private struct ReaderStateMessage: View {
         .frame(maxWidth: 320)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(WeiBeiTheme.paper)
+    }
+}
+
+struct ContextualContentPicker: View {
+    @EnvironmentObject private var store: WorkspaceStore
+    let kind: ContextualContentKind
+    @State private var level: Level = .root
+    @State private var showsAll = false
+
+    private enum Level: Hashable {
+        case root
+        case course(UUID)
+        case common
+    }
+
+    var body: some View {
+        GeometryReader { geometry in
+            ScrollView {
+                VStack(spacing: 13) {
+                    if level != .root {
+                        backButton
+                    }
+                    Text(title)
+                        .font(.system(size: 19, weight: .semibold, design: .serif))
+                        .foregroundStyle(WeiBeiTheme.ink)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.bottom, 3)
+
+                    if rows.isEmpty {
+                        Text(emptyText)
+                            .font(.system(size: 12))
+                            .foregroundStyle(WeiBeiTheme.secondaryInk)
+                            .frame(height: 54)
+                    } else {
+                        ForEach(rows) { row in
+                            rowButton(row)
+                        }
+                    }
+
+                    if !showsAll, level == .root,
+                       !store.contextualPreferredItems(kind).isEmpty {
+                        Button(allTitle) {
+                            showsAll = true
+                        }
+                        .buttonStyle(.plain)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(WeiBeiTheme.secondaryInk)
+                        .padding(.top, 3)
+                    }
+                }
+                .frame(maxWidth: min(420, max(240, geometry.size.width - 48)))
+                .padding(.horizontal, 24)
+                .padding(.top, topPadding(in: geometry.size.height))
+                .padding(.bottom, 36)
+                .frame(maxWidth: .infinity)
+            }
+        }
+        .background(WeiBeiTheme.paper)
+        .accessibilityIdentifier(
+            kind == .note
+                ? "contextual-note-picker"
+                : "contextual-material-picker"
+        )
+    }
+
+    private var title: String {
+        switch level {
+        case .root:
+            if !showsAll, hasPreferredContext {
+                return kind == .note
+                    ? store.ui("相关笔记", "Related Notes")
+                    : store.ui("相关资料", "Related Materials")
+            }
+            return kind == .note
+                ? store.ui("选择笔记", "Choose Note")
+                : store.ui("选择资料", "Choose Material")
+        case .course(let courseID):
+            return store.course(withID: courseID)?.title ?? ""
+        case .common:
+            return kind == .note
+                ? store.ui("通用笔记", "Common Notes")
+                : store.ui("通用资料", "Common Materials")
+        }
+    }
+
+    private var allTitle: String {
+        kind == .note
+            ? store.ui("查看全部笔记", "View All Notes")
+            : store.ui("查看全部资料", "View All Materials")
+    }
+
+    private var emptyText: String {
+        kind == .note
+            ? store.ui("这里还没有笔记", "No notes here yet")
+            : store.ui("这里还没有资料", "No materials here yet")
+    }
+
+    private var rows: [PickerRow] {
+        if level == .root, !showsAll {
+            let preferred = store.contextualPreferredItems(kind)
+            if !preferred.isEmpty {
+                return preferred.map(PickerRow.item)
+            }
+            let courses = store.contextualPreferredCourses(kind)
+            if !courses.isEmpty {
+                return courses.map {
+                    PickerRow.course(
+                        $0,
+                        store.contextualBrowserItems(kind, courseID: $0.id).count
+                    )
+                }
+            }
+        }
+        switch level {
+        case .root:
+            var result = store.contextualBrowserCourses(kind).map {
+                PickerRow.course(
+                    $0,
+                    store.contextualBrowserItems(
+                        kind,
+                        courseID: $0.id
+                    ).count
+                )
+            }
+            let common = store.contextualBrowserItems(kind, courseID: nil)
+            if !common.isEmpty {
+                result.append(.common(common.count))
+            }
+            return result
+        case .course(let courseID):
+            return store.contextualBrowserItems(
+                kind,
+                courseID: courseID
+            ).map(PickerRow.item)
+        case .common:
+            return store.contextualBrowserItems(
+                kind,
+                courseID: nil
+            ).map(PickerRow.item)
+        }
+    }
+
+    private var hasPreferredContext: Bool {
+        !store.contextualPreferredItems(kind).isEmpty
+            || !store.contextualPreferredCourses(kind).isEmpty
+    }
+
+    private func topPadding(in height: CGFloat) -> CGFloat {
+        rows.count <= 6
+            ? max(36, (height - CGFloat(rows.count + 1) * 67) / 2 - 34)
+            : 36
+    }
+
+    private var backButton: some View {
+        Button {
+            level = .root
+            showsAll = true
+        } label: {
+            Label(store.ui("全部", "All"), systemImage: "chevron.left")
+        }
+        .buttonStyle(.plain)
+        .font(.system(size: 11, weight: .medium))
+        .foregroundStyle(WeiBeiTheme.secondaryInk)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func rowButton(_ row: PickerRow) -> some View {
+        Button {
+            switch row {
+            case .course(let course, _):
+                level = .course(course.id)
+            case .common:
+                level = .common
+            case .item(let item):
+                store.openContextualItem(item.id, kind: kind)
+            }
+        } label: {
+            HStack(spacing: 12) {
+                rowIcon(row)
+                    .frame(width: 18)
+                Text(row.title(store: store, kind: kind))
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(WeiBeiTheme.ink)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Spacer(minLength: 8)
+                if let count = row.count {
+                    Text("\(count)")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(WeiBeiTheme.tertiaryInk)
+                }
+                Image(systemName: row.isContainer ? "chevron.right" : "arrow.up.right")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(WeiBeiTheme.tertiaryInk.opacity(0.72))
+            }
+            .padding(.horizontal, 17)
+            .frame(height: 54)
+            .background {
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(WeiBeiTheme.paperRaised.opacity(0.58))
+            }
+            .overlay {
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .stroke(WeiBeiTheme.hairline.opacity(0.62), lineWidth: 0.7)
+            }
+            .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .contextMenu {
+            if case .item(let item) = row {
+                if case .course(let courseID) = level {
+                    Button(store.ui(
+                        "从本课程移除",
+                        "Remove from This Course"
+                    )) {
+                        store.removeItem(
+                            item.id,
+                            fromCourseID: courseID
+                        )
+                    }
+                    Divider()
+                }
+                Button(store.ui(
+                    "将原文件移到废纸篓…",
+                    "Move Source File to Trash…"
+                )) {
+                    store.confirmMoveItemSourceToTrash(item.id)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func rowIcon(_ row: PickerRow) -> some View {
+        switch row {
+        case .course(let course, _):
+            Circle()
+                .fill(courseWorkspaceAccent(colorIndex: course.colorIndex))
+                .frame(width: 11, height: 11)
+        case .common:
+            Image(systemName: "tray.full")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(WeiBeiTheme.cinnabar.opacity(0.78))
+        case .item(let item):
+            Image(systemName: item.isNotebookNote ? "note.text" : "doc.text")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(WeiBeiTheme.secondaryInk)
+        }
+    }
+
+    private enum PickerRow: Identifiable {
+        case course(Course, Int)
+        case common(Int)
+        case item(StudyItem)
+
+        var id: String {
+            switch self {
+            case .course(let course, _): "course:\(course.id)"
+            case .common: "common"
+            case .item(let item): "item:\(item.id)"
+            }
+        }
+
+        var count: Int? {
+            switch self {
+            case .course(_, let count), .common(let count): count
+            case .item: nil
+            }
+        }
+
+        var isContainer: Bool {
+            switch self {
+            case .course, .common: true
+            case .item: false
+            }
+        }
+
+        @MainActor
+        func title(
+            store: WorkspaceStore,
+            kind: ContextualContentKind
+        ) -> String {
+            switch self {
+            case .course(let course, _): course.title
+            case .common:
+                kind == .note
+                    ? store.ui("通用笔记", "Common Notes")
+                    : store.ui("通用资料", "Common Materials")
+            case .item(let item): store.displayTitle(for: item)
+            }
+        }
+    }
+}
+
+struct ContextualContentListButton: View {
+    @EnvironmentObject private var store: WorkspaceStore
+    let kind: ContextualContentKind
+
+    var body: some View {
+        Button {
+            store.showContextualBrowser(kind)
+        } label: {
+            Image(systemName: "list.bullet")
+        }
+        .buttonStyle(WeiBeiIconButtonStyle(size: 24))
+        .accessibilityLabel(Text(accessibilityTitle))
+        .accessibilityIdentifier(
+            kind == .note
+                ? "contextual-note-list-button"
+                : "contextual-material-list-button"
+        )
+        .help(accessibilityTitle)
+    }
+
+    private var accessibilityTitle: String {
+        kind == .note
+            ? store.ui("选择其他笔记", "Choose another note")
+            : store.ui("选择其他资料", "Choose another material")
     }
 }
 

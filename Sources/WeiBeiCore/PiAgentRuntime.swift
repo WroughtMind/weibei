@@ -303,14 +303,14 @@ public actor PiAgentRuntime: StudyAgentRuntime {
 
     private static let processReadinessTimeoutSeconds: UInt64 = 12
     private static let sharedToolNames = [
-        "weibei_context",
         "weibei_course_map",
         "weibei_course_search",
         "weibei_course_read",
         "weibei_visual_asset",
         "weibei_learning_memory",
         "weibei_learning_update",
-        // Global Chat keeps read only for registered Skills; project paths remain unavailable.
+        "weibei_course_profile_update",
+        // `read` is limited by the extension to bundled Skills.
         "read",
         "weibei_note_proposal",
         "weibei_relation_proposal",
@@ -318,17 +318,16 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         "weibei_compute_artifact",
         "weibei_rich_answer",
     ]
-    private static let courseProjectToolNames = ["ls", "find", "grep"]
     private static let hostToolNames: Set<String> = [
+        "weibei_course_map",
         "weibei_course_search",
         "weibei_course_read",
-        "grep",
     ]
 
     private static func allowedToolNames(
-        for scope: StudyAgentScopeKind
+        for _: StudyAgentScopeKind
     ) -> [String] {
-        sharedToolNames + (scope == .course ? courseProjectToolNames : [])
+        sharedToolNames
     }
 
     private struct ProgressDelivery: Sendable {
@@ -393,6 +392,7 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         var id: UUID
         var contextRevision: String
         var memoryRevision: UInt64
+        var courseProfileRevision: UInt64
         var userQuestion: String
         var answerFormPolicy: StudyAgentAnswerFormPolicy
         var updatableMemoryIDs: Set<String>
@@ -400,6 +400,8 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         var allowedSourceLabels: Set<String>
         var allowedAssetIDs: Set<String>
         var verifiedAssetBytesByContextID: [String: Int] = [:]
+        var readCourseSourceRevisionsByContextID: [String: String] = [:]
+        var readPersistentItemIDs: Set<String> = []
         var persistentAssetIDsByContextID: [String: String]
         var allowedJumpReferences: Set<String>
         var jumpEvidenceLabels: [String: Set<String>]
@@ -414,6 +416,7 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         var richAnswer: RichAnswerPresentation?
         var safeRichAnswerNarrative: String?
         var learningUpdate: StudyAgentLearningUpdate?
+        var courseProfileUpdate: StudyAgentCourseProfileUpdate?
         var loadedSkills: [StudyAgentLoadedSkill] = []
         var toolTrace: [String] = []
         var allowedToolNames: Set<String>
@@ -528,48 +531,44 @@ public actor PiAgentRuntime: StudyAgentRuntime {
             workingDirectory: workingDirectory,
             scope: request.projectScope.kind
         )
-        var startupState: PiSessionState?
-        var needsHistoryRecovery = false
         let hadStoredSession = sessionDirectoryHasContents(binding.sessionDirectory)
         do {
-            startupState = try await ensureProcess(binding: binding)
+            _ = try await ensureProcess(binding: binding)
         } catch let failure as PiSessionStateFailure {
             guard failure.repairsEmptySession || hadStoredSession else {
                 throw PiAgentRuntimeError.protocolFailure(failure.message)
             }
             try await resetSession(binding: binding)
-            needsHistoryRecovery = true
+            let rebuiltState: PiSessionState
             do {
-                startupState = try await ensureProcess(binding: binding)
+                rebuiltState = try await ensureProcess(binding: binding)
             } catch let secondFailure as PiSessionStateFailure {
                 throw PiAgentRuntimeError.protocolFailure(secondFailure.message)
             }
-            guard startupState?.messageCount == 0 else {
+            guard rebuiltState.messageCount == 0 else {
                 throw PiAgentRuntimeError.protocolFailure(
                     "rebuilt PI session did not start empty"
                 )
             }
         }
-        if startupState?.messageCount == 0, !request.recentMessages.isEmpty {
-            needsHistoryRecovery = true
-        }
         try requireStartingRun(request.id)
 
-        var contextRequest = request
-        if !needsHistoryRecovery {
-            contextRequest.recentMessages = []
-        }
-        let context = StudyAgentContextEnvelope(request: contextRequest)
+        let context = StudyAgentContextEnvelope(request: request)
         try writeContext(context)
         try prepareHostToolResponseDirectory(for: request.id)
         let progressDelivery = progress.map(ProgressDelivery.init(handler:))
 
         let currentJumpEvidence = currentJumpEvidence(in: context)
-        let currentSourceLabels = currentSourceLabels(in: context)
+        let currentSourceLabels = currentSourceLabels(request: request, context: context)
+        let persistentAssetIDsByContextID = persistentAssetIDsByContextID(
+            request: request,
+            context: context
+        )
         activeRun = ActiveRun(
             id: request.id,
             contextRevision: request.contextRevision,
             memoryRevision: request.learningContext.memoryRevision,
+            courseProfileRevision: request.courseProfile.revision,
             userQuestion: request.question,
             answerFormPolicy: request.answerFormPolicy,
             updatableMemoryIDs: Set(request.learningContext.memories.compactMap { memory in
@@ -585,15 +584,12 @@ public actor PiAgentRuntime: StudyAgentRuntime {
             }),
             allowedSourceLabels: currentSourceLabels,
             allowedAssetIDs: currentAssetIDs(in: context),
-            persistentAssetIDsByContextID: persistentAssetIDsByContextID(
-                request: request,
-                context: context
-            ),
+            persistentAssetIDsByContextID: persistentAssetIDsByContextID,
             allowedJumpReferences: Set(currentJumpEvidence.keys),
             jumpEvidenceLabels: currentJumpEvidence,
             lastLocationSourceLabel: context.learning.lastLocation.map { "[材料：\($0.itemTitle)]" },
             allowedNoteSourceLabels: currentSourceLabels,
-            contextSources: currentReplySources(request: request, context: context),
+            contextSources: request.selectionSources,
             allowedToolNames: Set(Self.allowedToolNames(for: binding.scope)),
             allowsRelationProposal: binding.scope == .course,
             courseCatalogRolesByContextID: context.course.catalog.reduce(into: [:]) {
@@ -610,7 +606,12 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         do {
             _ = try await sendCommand(
                 type: "prompt",
-                fields: ["message": piPrompt(for: request)],
+                fields: [
+                    "message": piPrompt(
+                        for: request,
+                        persistentAssetIDsByContextID: persistentAssetIDsByContextID
+                    ),
+                ],
                 timeoutSeconds: 3
             )
         } catch {
@@ -700,7 +701,7 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         )
     }
 
-    private func ensureProcess(binding: ProcessBinding) async throws -> PiSessionState? {
+    private func ensureProcess(binding: ProcessBinding) async throws -> PiSessionState {
         if let process, process.isRunning, processBinding == binding {
             return try await readSessionState(binding: binding)
         }
@@ -1001,81 +1002,60 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         return arguments
     }
 
-    private func piPrompt(for request: StudyAgentRequest) -> String {
-        request.question
+    private func piPrompt(
+        for request: StudyAgentRequest,
+        persistentAssetIDsByContextID: [String: String]
+    ) -> String {
+        guard let selection = request.selectionText?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !selection.isEmpty else {
+            return request.question
+        }
+
+        let title = request.selectionTitle?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let selectionTitle = title.flatMap { $0.isEmpty ? nil : $0 }
+            ?? request.language.text("当前选区", "Current selection")
+        let separator = request.language.text("；", "; ")
+        let contextItemIDsByPersistentID = Dictionary(
+            uniqueKeysWithValues: persistentAssetIDsByContextID.map { ($0.value, $0.key) }
+        )
+        let sources = request.selectionSources.map { source in
+            var parts = [source.label]
+            if let itemID = source.itemID,
+               let contextItemID = contextItemIDsByPersistentID[itemID] {
+                parts.append(
+                    request.language.text(
+                        "条目 ID：\(contextItemID)",
+                        "Item ID: \(contextItemID)"
+                    )
+                )
+            }
+            if let position = source.positionLabel(language: request.language) {
+                parts.append(position)
+            }
+            return parts.joined(separator: separator)
+        }
+        let sourceLines = sources.isEmpty ? "[选区：\(selectionTitle)]" : sources.joined(separator: "\n")
+
+        return request.language.text(
+            "[选中文字：\(selectionTitle)]\n\(selection)\n\n[来源]\n\(sourceLines)\n\n[问题]\n\(request.question)",
+            "[Selected text: \(selectionTitle)]\n\(selection)\n\n[Sources]\n\(sourceLines)\n\n[Question]\n\(request.question)"
+        )
     }
 
-    private func currentSourceLabels(in context: StudyAgentContextEnvelope) -> Set<String> {
-        var labels: [String] = []
-        if !context.note.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            labels.append("[笔记：\(context.note.title)]")
-        }
-        if let material = context.material,
-           !material.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            labels.append("[材料：\(material.title)]")
-        }
+    private func currentSourceLabels(
+        request: StudyAgentRequest,
+        context: StudyAgentContextEnvelope
+    ) -> Set<String> {
+        var labels = Set(request.selectionSources.map(\.label))
         if let selection = context.selection,
            !selection.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            labels.append("[选区：\(selection.title)]")
+            labels.insert("[选区：\(selection.title)]")
         }
-        return Set(labels)
+        return labels
     }
 
     private func currentAssetIDs(in context: StudyAgentContextEnvelope) -> Set<String> {
         Set(context.course.catalog.lazy.filter(\.isCurrentMaterial).map(\.id))
-    }
-
-    private func currentReplySources(
-        request: StudyAgentRequest,
-        context: StudyAgentContextEnvelope
-    ) -> [AgentReplySource] {
-        var sources: [AgentReplySource] = []
-        func append(
-            itemID: String?,
-            kind: AgentReplySourceKind,
-            title: String,
-            label: String,
-            text: String
-        ) {
-            let excerpt = text.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !excerpt.isEmpty else { return }
-            let parsed = SourceReferenceTitle.parse(title)
-            sources.append(
-                AgentReplySource(
-                    itemID: itemID,
-                    kind: kind,
-                    title: parsed.title,
-                    label: label,
-                    excerpt: String(excerpt.prefix(400)),
-                    pageIndex: parsed.pageIndex,
-                    sectionTitle: parsed.sectionTitle,
-                    sectionLocationID: parsed.sectionLocationID,
-                    sectionOrdinal: parsed.sectionOrdinal,
-                    courseItemOrdinal: parsed.courseItemOrdinal
-                )
-            )
-        }
-
-        let materialID = context.course.catalog.first(where: \.isCurrentMaterial)?.id
-        if let material = context.material {
-            append(
-                itemID: materialID,
-                kind: .material,
-                title: material.title,
-                label: "[材料：\(material.title)]",
-                text: material.text
-            )
-        }
-        let noteID = context.course.catalog.first(where: \.isCurrentNote)?.id
-        append(
-            itemID: noteID,
-            kind: .note,
-            title: context.note.title,
-            label: "[笔记：\(context.note.title)]",
-            text: context.note.text
-        )
-        sources.append(contentsOf: request.selectionSources)
-        return sources
     }
 
     private func appendSources(_ sources: [AgentReplySource], to run: inout ActiveRun) {
@@ -1114,13 +1094,6 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         func add(_ rawReference: String, label: String) {
             guard let reference = canonicalJumpReference(rawReference) else { return }
             evidence[reference, default: []].insert(label)
-        }
-        if !context.note.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            add("来源：\(context.note.title)", label: "[笔记：\(context.note.title)]")
-        }
-        if let material = context.material,
-           !material.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            add("来源：\(material.title)", label: "[材料：\(material.title)]")
         }
         if let selection = context.selection,
            !selection.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -1372,20 +1345,59 @@ public actor PiAgentRuntime: StudyAgentRuntime {
             }
             return trimmed
         }
-        func limit(maximum: Int) throws -> Int {
-            guard let raw = arguments["limit"] else { return min(5, maximum) }
+        func integer(
+            _ key: String,
+            defaultValue: Int,
+            range: ClosedRange<Int>
+        ) throws -> Int {
+            guard let raw = arguments[key] else { return defaultValue }
             guard !(raw is Bool), let number = raw as? NSNumber else {
-                throw PiAgentRuntimeError.protocolFailure("课程工具 limit 类型无效")
+                throw PiAgentRuntimeError.protocolFailure("课程工具 \(key) 类型无效")
             }
             let value = number.intValue
-            guard number.doubleValue == Double(value), (1...maximum).contains(value) else {
-                throw PiAgentRuntimeError.protocolFailure("课程工具 limit 超出边界")
+            guard number.doubleValue == Double(value), range.contains(value) else {
+                throw PiAgentRuntimeError.protocolFailure("课程工具 \(key) 超出边界")
+            }
+            return value
+        }
+        func limit(maximum: Int, defaultValue: Int = 5) throws -> Int {
+            try integer("limit", defaultValue: min(defaultValue, maximum), range: 1...maximum)
+        }
+        func maximumCharacters() throws -> Int {
+            guard let raw = arguments["maximumCharacters"] else { return 6_000 }
+            guard !(raw is Bool), let number = raw as? NSNumber else {
+                throw PiAgentRuntimeError.protocolFailure(
+                    "课程工具 maximumCharacters 类型无效"
+                )
+            }
+            let value = number.intValue
+            guard number.doubleValue == Double(value),
+                  (1_000...12_000).contains(value) else {
+                throw PiAgentRuntimeError.protocolFailure(
+                    "课程工具 maximumCharacters 超出边界"
+                )
             }
             return value
         }
 
         switch name {
-        case "weibei_course_search", "grep":
+        case "weibei_course_map":
+            let contextItemID = try string("itemID", required: false, maximum: 256)
+            let persistentItemID: String?
+            if let contextItemID {
+                guard let mapped = run.persistentAssetIDsByContextID[contextItemID] else {
+                    throw PiAgentRuntimeError.protocolFailure("课程工具资料 ID 不属于本轮上下文")
+                }
+                persistentItemID = mapped
+            } else {
+                persistentItemID = nil
+            }
+            return .courseMap(
+                itemID: persistentItemID,
+                offset: try integer("offset", defaultValue: 0, range: 0...100_000),
+                limit: try limit(maximum: 40, defaultValue: 40)
+            )
+        case "weibei_course_search":
             return .courseSearch(
                 query: try string("query", required: true, maximum: 500) ?? "",
                 limit: try limit(maximum: 8)
@@ -1402,7 +1414,8 @@ public actor PiAgentRuntime: StudyAgentRuntime {
                 itemID: persistentItemID,
                 query: try string("query", required: false, maximum: 500) ?? "",
                 location: try string("location", required: false, maximum: 300),
-                limit: try limit(maximum: 8)
+                cursor: try string("cursor", required: false, maximum: 1_024),
+                maximumCharacters: try maximumCharacters()
             )
         default:
             throw PiAgentRuntimeError.protocolFailure("不支持的课程宿主工具 \(name)")
@@ -1426,11 +1439,13 @@ public actor PiAgentRuntime: StudyAgentRuntime {
               run.completed == nil,
               run.hostToolCallIDs.contains(id) else { return }
         let mappedResult = result.map { result in
-            StudyAgentHostToolResult(
+            let maximumItems = name == "weibei_course_map" ? 40 : 8
+            return StudyAgentHostToolResult(
                 query: String(result.query.prefix(500)),
-                items: result.items.prefix(8).map { hostItem in
+                items: result.items.prefix(maximumItems).map { hostItem in
                     var item = hostItem.item
                     item.id = contextAssetID(for: item.id, run: &run)
+                    run.courseCatalogRolesByContextID[item.id] = item.role
                     item.linkedItemIDs = item.linkedItemIDs.prefix(24).map {
                         contextAssetID(for: $0, run: &run)
                     }
@@ -1438,9 +1453,13 @@ public actor PiAgentRuntime: StudyAgentRuntime {
                         item: item,
                         relativePath: hostItem.relativePath.map { String($0.prefix(4_096)) },
                         courseIDs: hostItem.courseIDs.prefix(32).map { String($0.prefix(128)) },
-                        courseTitles: hostItem.courseTitles.prefix(32).map { String($0.prefix(300)) }
+                        courseTitles: hostItem.courseTitles.prefix(32).map { String($0.prefix(300)) },
+                        sourceRevision: hostItem.sourceRevision.map { String($0.prefix(500)) }
                     )
-                }
+                },
+                total: result.total,
+                nextCursor: result.nextCursor.map { String($0.prefix(1_024)) },
+                sourceRevision: result.sourceRevision.map { String($0.prefix(500)) }
             )
         }
         activeRun = run
@@ -1946,27 +1965,31 @@ public actor PiAgentRuntime: StudyAgentRuntime {
             refreshRunWatchdog()
             run.progressDelivery?.yield(.usingTool(name, Self.toolActivityDetail(argumentsJSON: argumentsJSON)))
 
-        case let .contextRead(_, contextRevision):
-            guard var run = activeRun else { return }
-            guard contextRevision == run.contextRevision else {
-                recordRejectedAction(
-                    "weibei_context",
-                    reason: "PI read a stale WeiBei context",
-                    run: &run
-                )
-                activeRun = run
-                refreshRunWatchdog()
-                return
-            }
-            activeRun = run
-            trace("context read revision matched")
-            refreshRunWatchdog()
-
-        case let .courseSourcesRead(_, contextRevision, labels, assetIDs, jumpEvidence, sources):
+        case let .courseSourcesRead(
+            _,
+            toolName,
+            contextRevision,
+            labels,
+            assetIDs,
+            sourceRevisions,
+            jumpEvidence,
+            sources
+        ):
             guard var run = activeRun, contextRevision == run.contextRevision else { return }
             run.allowedSourceLabels.formUnion(labels)
             run.allowedNoteSourceLabels.formUnion(labels)
             run.allowedAssetIDs.formUnion(assetIDs)
+            run.readCourseSourceRevisionsByContextID.merge(
+                sourceRevisions,
+                uniquingKeysWith: { _, latest in latest }
+            )
+            if toolName == "weibei_course_read" {
+                for assetID in assetIDs {
+                    if let itemID = run.persistentAssetIDsByContextID[assetID] {
+                        run.readPersistentItemIDs.insert(itemID)
+                    }
+                }
+            }
             registerJumpEvidence(jumpEvidence, in: &run)
             run.contextSources.append(contentsOf: sources)
             activeRun = run
@@ -2154,6 +2177,60 @@ public actor PiAgentRuntime: StudyAgentRuntime {
             activeRun = run
             refreshRunWatchdog()
 
+        case let .courseProfileUpdate(_, update):
+            guard var run = activeRun,
+                  run.courseProfileUpdate == nil,
+                  update.contextRevision == run.contextRevision,
+                  update.profileRevision == run.courseProfileRevision,
+                  [
+                      "sectionCompleted",
+                      "topicCompleted",
+                      "crossSourceConnection",
+                      "beforeContextSwitch",
+                  ].contains(update.checkpoint),
+                  !update.entries.isEmpty || !update.removedEntryIDs.isEmpty,
+                  update.entries.count <= 12,
+                  update.removedEntryIDs.count <= 12 else { return }
+            var mappedEntries: [StudyAgentCourseProfileUpdateEntry] = []
+            for entry in update.entries {
+                guard !entry.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                      entry.text.count <= 1_200,
+                      !entry.sources.isEmpty,
+                      entry.sources.count <= 8 else { return }
+                var mappedSources: [StudyAgentCourseProfileSource] = []
+                for source in entry.sources {
+                    guard let persistentID = run.persistentAssetIDsByContextID[source.itemID],
+                          run.courseCatalogRolesByContextID[source.itemID] == source.role,
+                          run.readCourseSourceRevisionsByContextID[source.itemID]
+                            == source.sourceRevision else { return }
+                    mappedSources.append(
+                        StudyAgentCourseProfileSource(
+                            itemID: persistentID,
+                            role: source.role,
+                            location: source.location,
+                            sourceRevision: source.sourceRevision
+                        )
+                    )
+                }
+                mappedEntries.append(
+                    StudyAgentCourseProfileUpdateEntry(
+                        entryID: entry.entryID,
+                        kind: entry.kind,
+                        text: entry.text,
+                        sources: mappedSources
+                    )
+                )
+            }
+            run.courseProfileUpdate = StudyAgentCourseProfileUpdate(
+                contextRevision: update.contextRevision,
+                profileRevision: update.profileRevision,
+                checkpoint: update.checkpoint,
+                entries: mappedEntries,
+                removedEntryIDs: update.removedEntryIDs
+            )
+            activeRun = run
+            refreshRunWatchdog()
+
         case let .toolFailed(_, name, message):
             guard var run = activeRun else { return }
             trace("tool failed name=\(name) message=\(sanitizedDiagnostic(message))")
@@ -2207,7 +2284,9 @@ public actor PiAgentRuntime: StudyAgentRuntime {
                 noteProposal: run.proposal,
                 relationProposal: run.relationProposal,
                 learningUpdate: run.learningUpdate,
+                courseProfileUpdate: run.courseProfileUpdate,
                 loadedSkills: run.loadedSkills,
+                readItemIDs: run.readPersistentItemIDs.sorted(),
                 toolTrace: replyTrace
             )
             if stopReason == "aborted" {

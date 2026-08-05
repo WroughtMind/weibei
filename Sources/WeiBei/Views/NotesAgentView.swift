@@ -448,7 +448,7 @@ struct NotePaneView: View {
             let railItems = noteRailItems
             ZStack(alignment: .topLeading) {
                 VStack(spacing: 0) {
-                    if showsPaneHeader {
+                    if showsPaneHeader && hasNoteContent {
                         noteHeader
                     }
 
@@ -498,7 +498,7 @@ struct NotePaneView: View {
                 .allowsHitTesting(false)
         }
         .overlay(alignment: .top) {
-            if !showsPaneHeader {
+            if !showsPaneHeader && hasNoteContent {
                 immersiveNoteHeader
             }
         }
@@ -547,6 +547,10 @@ struct NotePaneView: View {
         .accessibilityLabel(Text("notes reader pane"))
     }
 
+    private var hasNoteContent: Bool {
+        store.activeNoteItem != nil || store.blankNoteDraftMaterialID != nil
+    }
+
     @ViewBuilder
     private var noteHeader: some View {
         if let draft = store.notebookCreationDraft {
@@ -565,6 +569,7 @@ struct NotePaneView: View {
                 appearanceMode: store.appearanceMode,
                 reorderRole: reorderRole
             ) {
+                ContextualContentListButton(kind: .note)
                 LinkedSourcesControl()
                 writingAssistControl
                 noteModeControl
@@ -587,6 +592,7 @@ struct NotePaneView: View {
                 actionsAlignedTrailing: true,
                 reorderRole: reorderRole
             ) {
+                ContextualContentListButton(kind: .note)
                 LinkedSourcesControl()
                 writingAssistControl
                 noteModeControl
@@ -802,7 +808,11 @@ struct NotePaneView: View {
 
     @ViewBuilder
     private var noteBody: some View {
-        Group {
+        if store.activeNoteItem == nil
+            && store.blankNoteDraftMaterialID == nil {
+            ContextualContentPicker(kind: .note)
+        } else {
+            Group {
             switch store.noteRenderMode.visibleMode {
             case .rich:
                 richEditor
@@ -831,13 +841,14 @@ struct NotePaneView: View {
             case .preview:
                 richEditor
             }
-        }
-        .transition(WeiBeiTransition.layout)
-        .animation(WeiBeiMotion.layout, value: store.noteRenderMode.visibleMode)
-        .overlay(alignment: .topLeading) {
-            if noteIsEmpty {
-                emptyNoteHint
-                    .transition(WeiBeiTransition.message)
+            }
+            .transition(WeiBeiTransition.layout)
+            .animation(WeiBeiMotion.layout, value: store.noteRenderMode.visibleMode)
+            .overlay(alignment: .topLeading) {
+                if noteIsEmpty {
+                    emptyNoteHint
+                        .transition(WeiBeiTransition.message)
+                }
             }
         }
     }
@@ -849,6 +860,10 @@ struct NotePaneView: View {
                 guard value != draftNoteText else { return }
                 draftNoteText = value
                 draftNoteItemID = store.activeNoteItemID
+                if draftNoteItemID == nil {
+                    store.updateNote(value)
+                    return
+                }
                 store.stageNoteDraft(value, for: draftNoteItemID)
                 scheduleNoteDraftFlush()
             }
@@ -993,7 +1008,10 @@ struct NotePaneView: View {
     private func flushNoteDraft(for itemID: String?, immediate: Bool) {
         noteDraftFlushTask?.cancel()
         noteDraftFlushTask = nil
-        guard let itemID else { return }
+        guard let itemID else {
+            store.updateNote(draftNoteText)
+            return
+        }
         let value = (itemID == draftNoteItemID) ? draftNoteText : draftNoteText
         defer { store.clearStagedNoteDraft(for: itemID, matching: value) }
         if itemID == store.activeNoteItemID {
@@ -1804,7 +1822,7 @@ struct AgentPaneView: View {
     @FocusState private var draftFocused: Bool
     @State private var activeAgentRailID: String?
     @State private var agentFollowsLatest = true
-    @State private var globalMemoryPanelPresented = false
+    @State private var sessionPendingDeletion: StudySession?
     /// Settled pane width for renderer caches. 0 until first real measurement.
     @State private var measuredPaneWidth: CGFloat = 0
     @State private var paneWidthRelay = AgentPaneWidthRelay()
@@ -1943,13 +1961,6 @@ struct AgentPaneView: View {
                                     }
                                     .id("agent-thinking")
                                     .transition(WeiBeiTransition.message)
-                                }
-                                if store.messages.isEmpty
-                                    && !(store.isAgentRunningInActiveChat && store.agentStreamingText.isEmpty)
-                                {
-                                    emptyAgentState
-                                        .frame(maxWidth: .infinity, alignment: .leading)
-                                        .transition(WeiBeiTransition.message)
                                 }
                                 Color.clear
                                     .frame(height: agentScrollBottomInset)
@@ -2114,9 +2125,24 @@ struct AgentPaneView: View {
         .task(id: replySources) {
             await store.validateAgentReplySources(replySources)
         }
-        .sheet(isPresented: $globalMemoryPanelPresented) {
-            GlobalLearningMemorySheet()
-                .environmentObject(store)
+        .confirmationDialog(
+            store.ui("删除这条对话？", "Delete this Chat?"),
+            isPresented: Binding(
+                get: { sessionPendingDeletion != nil },
+                set: { if !$0 { sessionPendingDeletion = nil } }
+            ),
+            titleVisibility: .visible,
+            presenting: sessionPendingDeletion
+        ) { session in
+            Button(store.ui("删除对话", "Delete Chat"), role: .destructive) {
+                store.deleteStudySession(session.id)
+                sessionPendingDeletion = nil
+            }
+            Button(store.ui("取消", "Cancel"), role: .cancel) {
+                sessionPendingDeletion = nil
+            }
+        } message: { session in
+            Text(sessionDeletionMessage(session))
         }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("stable-document-slot-agent")
@@ -2236,10 +2262,7 @@ struct AgentPaneView: View {
                 // Typography follows the real column width, not the layout enum —
                 // a full-window chat tab is not .immersiveConversation but reads wide.
                 isChatWideTypography: wide
-                    || contentWidth >= AgentChatLayoutMetrics.wideTypographyMinContentWidth,
-                openGlobalMemory: {
-                    globalMemoryPanelPresented = true
-                }
+                    || contentWidth >= AgentChatLayoutMetrics.wideTypographyMinContentWidth
             )
         }
         .id(message.id)
@@ -2452,14 +2475,6 @@ struct AgentPaneView: View {
                         .transition(WeiBeiTransition.floating)
                 }
 
-                if let notice = store.agentContextScopeNotice {
-                    Label(notice, systemImage: "rectangle.on.rectangle.slash")
-                        .font(.system(size: 11.5, weight: .medium))
-                        .foregroundStyle(WeiBeiTheme.secondaryInk)
-                        .lineLimit(wide ? 2 : 3)
-                        .accessibilityIdentifier("agent-course-scope-notice")
-                }
-
                 AgentComposerField(
                     prompt: agentPrompt,
                     focused: $draftFocused,
@@ -2536,53 +2551,6 @@ struct AgentPaneView: View {
         usesWideChatLayout ? 120 : 100
     }
 
-    private var emptyAgentState: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            LazyVGrid(columns: starterChipColumns, alignment: .leading, spacing: 6) {
-                if store.canResumePreviousStudy {
-                    starterChip(store.ui("继续上次", "Resume"), systemImage: "arrow.uturn.forward", help: store.ui("回顾上次学习位置并继续", "Review the last study location and continue")) {
-                        store.resumePreviousStudy()
-                        askWith(store.ui("上次学到哪了？请结合学习记忆告诉我当时的位置、还没解决的问题和现在最适合的下一步。", "Where did I stop last time? Use my learning memory to give the location, unresolved questions, and the best next step."))
-                    }
-                }
-                if store.allItems.count > 1 {
-                    starterChip(store.ui("关联", "Connections"), systemImage: "point.3.connected.trianglepath.dotted", help: store.ui("查找当前概念在课程里的关联", "Find related course materials and notes")) {
-                        askWith(store.ui("请查找当前材料、选区或笔记在整个课程里的知识关联，说清为什么相关，并给出可跳转的来源。", "Find connections between the current material, selection, or note and the rest of the course. Explain each connection and provide jumpable sources."))
-                    }
-                }
-                if store.hasSelectedMaterial {
-                    starterChip(store.ui("梳理", "Outline"), systemImage: "text.alignleft", help: store.ui("梳理当前材料", "Outline current material")) {
-                        askWith(store.ui("请基于当前材料提炼核心概念、关键公式和需要回看出处的位置。", "Extract the core concepts, key formulas, and places that need source review from the current material."))
-                    }
-                }
-                starterChip(store.ui("整理", "Organize"), systemImage: "list.bullet.rectangle", help: store.ui("整理当前笔记", "Organize current note")) {
-                    store.askToOrganizeNote()
-                }
-                if store.hasSelectedMaterial {
-                    starterChip(store.ui("出题", "Quiz"), systemImage: "questionmark.square", help: store.ui("生成复习题", "Generate review questions")) {
-                        askWith(store.ui("请根据当前材料和笔记生成 5 个复习问题，并标出每题依据。", "Generate 5 review questions from the current material and note, and cite the evidence for each question."))
-                    }
-                }
-            }
-        }
-        .frame(maxWidth: 420, alignment: .leading)
-    }
-
-    private func starterChip(_ title: String, systemImage: String, help: String, action: @escaping () -> Void) -> some View {
-        AgentStarterChip(title: title, systemImage: systemImage, help: help, action: action)
-    }
-
-    private var starterChipColumns: [GridItem] {
-        [GridItem(.adaptive(minimum: 56), spacing: 6, alignment: .leading)]
-    }
-
-    private func askWith(_ prompt: String) {
-        withAnimation(WeiBeiMotion.panel) {
-            store.agentDraft = prompt
-        }
-        store.submitAgentDraft()
-    }
-
     /// Compact catalog for immersive hover tab + pane header.
     private var agentSessionCatalogMenu: some View {
         Menu {
@@ -2600,7 +2568,7 @@ struct AgentPaneView: View {
         .menuStyle(.borderlessButton)
         .fixedSize()
         .accessibilityLabel(Text(store.ui("对话目录", "Conversation catalog")))
-        .help(store.ui("按全局或课程切换对话", "Switch Chats by global or course scope"))
+        .help(store.ui("新建或切换对话", "Create or switch Chats"))
     }
 
     private var sessionMenu: some View {
@@ -2611,97 +2579,42 @@ struct AgentPaneView: View {
         }
         .buttonStyle(WeiBeiIconButtonStyle(size: 24))
         .accessibilityLabel(Text(store.ui("学习会话", "Study Sessions")))
-        .help(store.ui("按全局或课程新建、切换对话", "Create or switch global and course Chats"))
+        .help(store.ui("新建或切换对话", "Create or switch Chats"))
     }
 
     @ViewBuilder
     private var sessionCatalogContent: some View {
-        if store.activeStudySession?.scopeNeedsReview == false,
-           let courseID = store.activeStudySession?.courseID ?? store.activeCourseID,
-           let course = store.course(withID: courseID) {
-            Button {
-                store.createStudySession(courseID: courseID)
-            } label: {
-                Label(
-                    store.ui("新建“\(course.title)”对话", "New \"\(course.title)\" Chat"),
-                    systemImage: "plus.bubble"
-                )
-            }
-        }
-
         Button {
             store.createStudySession(courseID: nil)
         } label: {
-            Label(store.ui("新建全局对话", "New Global Chat"), systemImage: "globe")
+            Label(store.ui("新建对话", "New Chat"), systemImage: "plus.bubble")
         }
 
         Divider()
 
-        if !store.globalStudySessions.isEmpty {
-            Section(store.ui("全局", "Global")) {
-                ForEach(store.globalStudySessions.prefix(12)) { session in
+        if let courseID = store.activeCourseID,
+           let course = store.course(withID: courseID),
+           !store.studySessions(in: courseID).isEmpty {
+            Menu(store.ui("当前课程 · \(course.title)", "Current Course · \(course.title)")) {
+                ForEach(store.studySessions(in: courseID).prefix(30)) { session in
                     sessionMenuButton(session)
                 }
             }
         }
 
-        ForEach(store.courses) { course in
-            let sessions = store.studySessions(in: course.id)
-            if !sessions.isEmpty {
-                Section(course.title) {
-                    ForEach(sessions.prefix(12)) { session in
-                        sessionMenuButton(session)
-                    }
+        if !store.historicalStudySessions.isEmpty {
+            Section(store.ui("全部对话", "All Chats")) {
+                ForEach(store.historicalStudySessions.prefix(30)) { session in
+                    sessionMenuButton(session)
                 }
             }
         }
 
-        if !store.unclassifiedStudySessions.isEmpty {
-            Section(store.ui("待归类", "Needs Course")) {
-                ForEach(store.unclassifiedStudySessions.prefix(12)) { session in
-                    Menu(session.title) {
-                        Button {
-                            store.activateStudySession(
-                                session.id,
-                                expectedCourseID: nil,
-                                expectedScopeNeedsReview: true
-                            )
-                        } label: {
-                            Label(store.ui("打开并查看", "Open and Review"), systemImage: "eye")
-                        }
-
-                        Divider()
-
-                        Button {
-                            store.classifyStudySession(session.id, as: nil)
-                        } label: {
-                            Label(store.ui("归为全局对话", "Classify as Global"), systemImage: "globe")
-                        }
-
-                        if !store.courses.isEmpty {
-                            Section(store.ui("归入课程", "Classify into Course")) {
-                                ForEach(store.courses) { course in
-                                    Button(course.title) {
-                                        store.classifyStudySession(session.id, as: course.id)
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        Divider()
-        Button {
-            globalMemoryPanelPresented = true
-        } label: {
-            Label(store.ui("全局记忆", "Global Memory"), systemImage: "brain.head.profile")
-        }
-
-        if let activeID = store.activeStudySessionID, store.studySessions.count > 1 {
+        if let active = store.activeStudySession,
+           !active.messages.isEmpty {
+            Divider()
             Button(role: .destructive) {
-                store.deleteStudySession(activeID)
+                sessionPendingDeletion = active
             } label: {
                 Label(store.ui("删除当前会话", "Delete Current Session"), systemImage: "trash")
             }
@@ -2713,16 +2626,34 @@ struct AgentPaneView: View {
         Button {
             store.activateStudySession(
                 session.id,
-                expectedCourseID: session.courseID,
-                expectedScopeNeedsReview: session.scopeNeedsReview == true
+                expectedCourseID: nil,
+                expectedScopeNeedsReview: false
             )
         } label: {
             if session.id == store.activeStudySessionID {
                 Label(session.title, systemImage: "checkmark")
+            } else if !session.relatedCourseIDs.isEmpty {
+                Label(session.title, systemImage: "folder")
             } else {
                 Text(session.title)
             }
         }
+    }
+
+    private func sessionDeletionMessage(_ session: StudySession) -> String {
+        let courseNames = session.relatedCourseIDs.compactMap {
+            store.course(withID: $0)?.title
+        }
+        guard !courseNames.isEmpty else {
+            return store.ui(
+                "消息和本地 Agent 运行记录都会删除。",
+                "Messages and the local Agent run will be deleted."
+            )
+        }
+        return store.ui(
+            "这条对话也会从这些课程中消失：\(courseNames.joined(separator: "、"))。",
+            "This Chat will also disappear from: \(courseNames.joined(separator: ", "))."
+        )
     }
 
     private func scrollAgentToBottom(_ proxy: ScrollViewProxy) {
@@ -2780,43 +2711,6 @@ private struct AgentPaneWidthKey: PreferenceKey {
         let next = nextValue()
         if next > 1 {
             value = next
-        }
-    }
-}
-
-private struct AgentStarterChip: View {
-    var title: String
-    var systemImage: String
-    var help: String
-    var action: () -> Void
-    @State private var hovering = false
-
-    var body: some View {
-        Button(action: action) {
-            Label(title, systemImage: systemImage)
-                .labelStyle(.titleAndIcon)
-                .font(.system(size: 11.5, weight: .medium))
-                .symbolRenderingMode(.hierarchical)
-                .lineLimit(1)
-                .fixedSize(horizontal: true, vertical: false)
-                .padding(.horizontal, 8)
-                .frame(height: 26)
-        }
-        .buttonStyle(.plain)
-        .foregroundStyle(hovering ? WeiBeiTheme.ink : WeiBeiTheme.secondaryInk)
-        .background(WeiBeiTheme.paperInset.opacity(hovering ? 0.18 : 0.0))
-        .clipShape(RoundedRectangle(cornerRadius: 5))
-        .overlay {
-            RoundedRectangle(cornerRadius: 5)
-                .stroke(hovering ? WeiBeiTheme.hairline.opacity(0.56) : WeiBeiTheme.hairline.opacity(0.0), lineWidth: 1)
-        }
-        .offset(y: hovering ? -1 : 0)
-        .accessibilityLabel(Text(help))
-        .help(help)
-        .onHover { value in
-            withAnimation(WeiBeiMotion.hover) {
-                hovering = value
-            }
         }
     }
 }
@@ -3533,7 +3427,6 @@ private struct AgentBubble: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     var message: AgentMessage
     var isChatWideTypography = false
-    var openGlobalMemory: () -> Void
     @State private var hovering = false
     /// True only if this bubble streamed in the current session — history rows
     /// mount straight into the finalized renderer with no handoff.
@@ -3750,8 +3643,7 @@ private struct AgentBubble: View {
                !memoryUpdate.memoryIDs.isEmpty {
                 AgentReplyMemoryUpdateTag(
                     message: message,
-                    update: memoryUpdate,
-                    openGlobalMemory: openGlobalMemory
+                    update: memoryUpdate
                 )
                 .transition(WeiBeiTransition.floating)
             }
@@ -4121,7 +4013,6 @@ private struct AgentReplyMemoryUpdateTag: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let message: AgentMessage
     let update: AgentReplyMemoryUpdate
-    let openGlobalMemory: () -> Void
     @State private var expanded = false
 
     private var scope: LearningMemoryScope? {
@@ -4138,8 +4029,7 @@ private struct AgentReplyMemoryUpdateTag: View {
     }
 
     private var canOpenAll: Bool {
-        guard let origin = message.origin else { return false }
-        guard let courseID = origin.courseID else { return true }
+        guard let courseID = message.origin?.courseID else { return false }
         return store.course(withID: courseID) != nil
     }
 
@@ -4205,11 +4095,8 @@ private struct AgentReplyMemoryUpdateTag: View {
 
                     if canOpenAll {
                         Button(store.ui("查看全部", "View all")) {
-                            if let courseID = message.origin?.courseID {
-                                store.presentCourseWorkspace(.sessions, courseID: courseID)
-                            } else {
-                                openGlobalMemory()
-                            }
+                            guard let courseID = message.origin?.courseID else { return }
+                            store.presentCourseWorkspace(.sessions, courseID: courseID)
                         }
                         .buttonStyle(WeiBeiTextActionButtonStyle())
                         .accessibilityIdentifier("agent-memory-update-view-all")

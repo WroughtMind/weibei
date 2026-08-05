@@ -379,7 +379,6 @@ struct WeiBeiPiCheckMain {
                             kind: "degradation",
                             checks: [
                                 "backend-pi",
-                                "context-read",
                                 "honest-readable-limitation",
                                 "unsafe-rich-answer-blocked",
                                 "thinking-level=\(runConfiguration.thinkingLevel ?? "inherited")",
@@ -1328,9 +1327,6 @@ struct WeiBeiPiCheckMain {
         var issues: [String] = []
         if reply.backend != .pi { issues.append("backend-not-pi") }
         if reply.noteProposal != nil { issues.append("unexpected-note-proposal") }
-        if !replyToolTraceContains(reply, token: "weibei_context") {
-            issues.append("missing-context-read")
-        }
         if !checkCase.allowsPartialRichAnswer {
             if replyToolTraceContains(reply, token: "weibei_ui_catalog") {
                 issues.append("text-only-degradation-called-ui-catalog")
@@ -1417,7 +1413,6 @@ struct WeiBeiPiCheckMain {
         guard reply.backend == .pi,
               reply.noteProposal == nil,
               reply.richAnswer == nil,
-              replyToolTraceContains(reply, token: "weibei_context"),
               !replyToolTraceContains(reply, token: "weibei_ui_catalog"),
               !reply.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               containsSourceLabel(reply.text),

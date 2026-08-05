@@ -54,12 +54,12 @@ func runPiTerminalRuntimeSelfChecks() async throws {
     try await checkRejectedRichAnswerKeepsSafeNarrative(fixture)
     try await checkRejectedActionKeepsOrdinaryAnswer(fixture)
     try await checkRelationProposalUsesCurrentCourseCatalog(fixture)
-    try await checkAutomaticFocusSourceAttachesWithoutContextTool(fixture)
+    try await checkPersistedSelectionSourcesAttachWithoutReadTool(fixture)
     try await checkContextSnapshotLivesUntilProcessShutdown(fixture)
     try await checkConversationBindingLaunchContract(fixture)
     try await checkHostCourseToolBridge(fixture)
     try await checkHostCourseToolBridgeRejectsSymlinkRoot(fixture)
-    try await checkMissingSessionRecoversVisibleHistory(fixture)
+    try await checkMissingSessionStartsFreshNativeHistory(fixture)
     try await checkWrongSessionStateRebuildsOnlyRequestedChat(fixture)
     try await checkUnreadableStoredSessionRebuildsOnce(fixture)
     try await checkStandardProxyEnvironmentIsForwarded(fixture)
@@ -145,10 +145,21 @@ private func checkHostCourseToolBridge(
     let request = StudyAgentRequest(
         purpose: .conversation,
         question: "查找利率",
-        materialTitle: "",
+        materialTitle: "利率的含义",
         materialText: "",
         noteTitle: "",
         noteText: "",
+        selectionTitle: "利率选区",
+        selectionText: "利率是资金的价格。",
+        selectionSources: [
+            AgentReplySource(
+                itemID: "persistent-material",
+                kind: .selection,
+                title: "利率的含义",
+                label: "[选区：利率的含义]",
+                excerpt: "利率是资金的价格。"
+            ),
+        ],
         courseContext: StudyAgentCourseContext(
             title: "测试课程",
             catalog: [
@@ -173,7 +184,13 @@ private func checkHostCourseToolBridge(
         sessionID: UUID(),
         workingDirectory: try fixture.workingDirectory(named: "BridgeProject"),
         hostToolHandler: { toolRequest in
-            guard toolRequest == .courseSearch(query: "利率", limit: 3) else {
+            guard toolRequest == .courseRead(
+                itemID: "persistent-material",
+                query: "",
+                location: nil,
+                cursor: nil,
+                maximumCharacters: 6_000
+            ) else {
                 throw PiTerminalRuntimeSelfCheckError.failed("PI host bridge received invalid arguments")
             }
             return StudyAgentHostToolResult(
@@ -186,7 +203,7 @@ private func checkHostCourseToolBridge(
                             subtitle: "测试文稿",
                             kind: "markdown",
                             role: "material",
-                            searchText: "利率是资金的价格。"
+                            searchText: "利率是资金的价格。FULL_ARTICLE_TAIL_TOKEN"
                         )
                     ),
                 ]
@@ -195,7 +212,7 @@ private func checkHostCourseToolBridge(
         progress: nil
     )
     await runtime.shutdown()
-    guard reply.text == "宿主课程工具桥可用。",
+    guard reply.text == "宿主课程全文读取可用。",
           reply.sources.isEmpty else {
         throw PiTerminalRuntimeSelfCheckError.failed(
             "PI host tool bridge returned an invalid reply or attached an uncited source"
@@ -533,7 +550,7 @@ private func checkRelationProposalUsesCurrentCourseCatalog(
     }
 }
 
-private func checkAutomaticFocusSourceAttachesWithoutContextTool(
+private func checkPersistedSelectionSourcesAttachWithoutReadTool(
     _ fixture: PiTerminalRuntimeFixture
 ) async throws {
     let runtime = PiAgentRuntime(
@@ -595,15 +612,12 @@ private func checkAutomaticFocusSourceAttachesWithoutContextTool(
     )
     await runtime.shutdown()
 
-    guard reply.text == "[材料：测试材料] [选区：2 个已选文本片段] 当前焦点可直接回答。",
-          reply.sources.count == 3,
-          reply.sources.contains(where: {
-              $0.label == "[材料：测试材料]" && $0.itemID == "persistent-material"
-          }),
+    guard reply.text == "[选区：2 个已选文本片段] 当前选区可直接回答。",
+          reply.sources.count == 2,
           reply.sources.contains(where: { $0.label == "[选区：测试材料]" }),
           reply.sources.contains(where: { $0.label == "[选区：测试笔记]" }) else {
         throw PiTerminalRuntimeSelfCheckError.failed(
-            "PI did not attach the cited automatic-focus source without a context tool call"
+            "PI did not attach the persisted selection sources without reading another source"
         )
     }
 }
@@ -654,21 +668,33 @@ private func checkConversationBindingLaunchContract(
             materialText: "测试正文",
             noteTitle: "测试笔记",
             noteText: "",
-            recentMessages: turn == 2
+            selectionTitle: turn == 1 ? "第一讲选区" : nil,
+            selectionText: turn == 1 ? "注意力只处理当前上下文" : nil,
+            selectionSources: turn == 1
                 ? [
-                    AgentMessage(
-                        role: .assistant,
-                        text: "上一轮可见回答",
-                        source: nil,
-                        backend: .pi
-                    ),
-                    AgentMessage(
-                        role: .assistant,
-                        text: "课程文件夹暂时不可用",
-                        source: nil
+                    AgentReplySource(
+                        itemID: "material-1",
+                        kind: .selection,
+                        title: "第一讲",
+                        label: "[选区：第一讲]",
+                        excerpt: "注意力只处理当前上下文",
+                        pageIndex: 17
                     ),
                 ]
                 : [],
+            courseContext: StudyAgentCourseContext(
+                title: "测试课程",
+                catalog: [
+                    StudyAgentCourseCatalogItem(
+                        id: "material-1",
+                        title: "第一讲",
+                        subtitle: "测试文稿",
+                        kind: "markdown",
+                        role: "material",
+                        isCurrentMaterial: true
+                    ),
+                ]
+            ),
             contextRevision: "session-\(turn)"
         )
         let reply = try await runtime.respond(
@@ -722,14 +748,6 @@ private func checkConversationBindingLaunchContract(
 
     let traceURL = projectDirectory.appendingPathComponent(".fake-pi-trace.log")
     let trace = try String(contentsOf: traceURL, encoding: .utf8)
-    let expectedSessionDirectory = runtimeDirectory
-        .appendingPathComponent("Sessions", isDirectory: true)
-        .appendingPathComponent(sessionID.uuidString.lowercased(), isDirectory: true)
-        .path
-    let expectedSecondSessionDirectory = runtimeDirectory
-        .appendingPathComponent("Sessions", isDirectory: true)
-        .appendingPathComponent(secondSessionID.uuidString.lowercased(), isDirectory: true)
-        .path
     let expectedWorkingDirectories = [
         projectDirectory.path,
         projectDirectory.path.hasPrefix("/private/")
@@ -742,29 +760,35 @@ private func checkConversationBindingLaunchContract(
               separatedBy: "arg=--session-id\narg=\(sessionID.uuidString.lowercased())\n"
           ).count - 1 == 3,
           trace.contains("arg=--session-id\narg=\(secondSessionID.uuidString.lowercased())\n"),
-          trace.contains("arg=--session-dir\narg=\(expectedSessionDirectory)\n"),
-          trace.contains("arg=--session-dir\narg=\(expectedSecondSessionDirectory)\n"),
+          trace.components(separatedBy: "arg=--session-dir\n").count - 1 == 4,
+          trace.components(
+              separatedBy: "/Sessions/\(sessionID.uuidString.lowercased())\n"
+          ).count - 1 == 3,
+          trace.contains("/Sessions/\(secondSessionID.uuidString.lowercased())\n"),
           trace.components(
               separatedBy: "arg=--provider\narg=openai-codex\n"
           ).count - 1 == 4,
           trace.components(
               separatedBy: "arg=--model\narg=\(AgentModelListService.codexDefaultModel)\n"
           ).count - 1 == 4,
-          trace.contains("prompt-message=第 1 问\n"),
+          trace.contains("prompt-message=[选中文字：第一讲选区]") &&
+          trace.contains("注意力只处理当前上下文") &&
+          trace.contains("[选区：第一讲]；条目 ID：course-item-1；第 18 页") &&
+          trace.contains("[问题]\\n第 1 问"),
           trace.contains("prompt-message=第 2 问\n"),
           trace.contains("prompt-message=切换 Chat\n"),
           !trace.contains("prompt-message=/skill:"),
           !trace.contains("arg=--no-session\n"),
           !trace.contains("command=new_session\n"),
           trace.components(separatedBy: "command=prompt\n").count - 1 == 4,
-          trace.components(separatedBy: "recent=empty\n").count - 1 == 4 else {
+          trace.components(separatedBy: "recent=absent\n").count - 1 == 4 else {
         throw PiTerminalRuntimeSelfCheckError.failed(
             "Chat 复用、切换隔离或原生历史合同不成立：\n\(trace)"
         )
     }
 }
 
-private func checkMissingSessionRecoversVisibleHistory(
+private func checkMissingSessionStartsFreshNativeHistory(
     _ fixture: PiTerminalRuntimeFixture
 ) async throws {
     let runtimeDirectory = try fixture.workingDirectory(named: "RecoveryRuntime")
@@ -775,15 +799,6 @@ private func checkMissingSessionRecoversVisibleHistory(
         runtimeDirectory: runtimeDirectory,
         runInactivityTimeoutNanoseconds: 2_000_000_000
     )
-    let visibleHistory = [
-        AgentMessage(role: .user, text: "此前问题", source: nil),
-        AgentMessage(
-            role: .assistant,
-            text: "[材料：测试材料] 此前回答",
-            source: nil,
-            backend: .pi
-        ),
-    ]
     let request = StudyAgentRequest(
         purpose: .conversation,
         question: "继续此前对话",
@@ -791,7 +806,6 @@ private func checkMissingSessionRecoversVisibleHistory(
         materialText: "测试正文",
         noteTitle: "测试笔记",
         noteText: "",
-        recentMessages: visibleHistory,
         contextRevision: "recovery-turn"
     )
     _ = try await runtime.respond(
@@ -808,9 +822,9 @@ private func checkMissingSessionRecoversVisibleHistory(
     )
     guard trace.components(separatedBy: "launch\n").count - 1 == 1,
           trace.contains("state-message-count=0\n"),
-          trace.contains("recent=present\n") else {
+          trace.contains("recent=absent\n") else {
         throw PiTerminalRuntimeSelfCheckError.failed(
-            "Pi 会话缺失时没有只在恢复轮注入 App 可见历史：\n\(trace)"
+            "Pi 会话缺失时没有从原生空会话开始：\n\(trace)"
         )
     }
 }
@@ -839,10 +853,6 @@ private func checkWrongSessionStateRebuildsOnlyRequestedChat(
         runtimeDirectory: runtimeDirectory,
         runInactivityTimeoutNanoseconds: 2_000_000_000
     )
-    let visibleHistory = [
-        AgentMessage(role: .user, text: "此前问题", source: nil),
-        AgentMessage(role: .assistant, text: "此前回答", source: nil, backend: .pi),
-    ]
     let request = StudyAgentRequest(
         purpose: .conversation,
         question: "从损坏会话继续",
@@ -850,7 +860,6 @@ private func checkWrongSessionStateRebuildsOnlyRequestedChat(
         materialText: "测试正文",
         noteTitle: "测试笔记",
         noteText: "",
-        recentMessages: visibleHistory,
         contextRevision: "wrong-state-recovery"
     )
     _ = try await runtime.respond(
@@ -869,7 +878,7 @@ private func checkWrongSessionStateRebuildsOnlyRequestedChat(
           trace.contains("state-session=wrong\n"),
           trace.contains("state-session=correct\n"),
           trace.components(separatedBy: "command=prompt\n").count - 1 == 1,
-          trace.contains("recent=present\n"),
+          trace.contains("recent=absent\n"),
           !FileManager.default.fileExists(atPath: corruptMarker.path),
           FileManager.default.fileExists(atPath: siblingMarker.path) else {
         throw PiTerminalRuntimeSelfCheckError.failed(
@@ -903,10 +912,6 @@ private func checkUnreadableStoredSessionRebuildsOnce(
         materialText: "测试正文",
         noteTitle: "测试笔记",
         noteText: "",
-        recentMessages: [
-            AgentMessage(role: .user, text: "此前问题", source: nil),
-            AgentMessage(role: .assistant, text: "此前回答", source: nil, backend: .pi),
-        ],
         contextRevision: "unreadable-state-recovery"
     )
     _ = try await runtime.respond(
@@ -925,9 +930,9 @@ private func checkUnreadableStoredSessionRebuildsOnce(
           trace.contains("state-session=unreadable\n"),
           trace.contains("state-session=correct\n"),
           trace.components(separatedBy: "command=prompt\n").count - 1 == 1,
-          trace.contains("recent=present\n") else {
+          trace.contains("recent=absent\n") else {
         throw PiTerminalRuntimeSelfCheckError.failed(
-            "已有 Pi 会话无法读取时没有只重建一次并恢复可见历史：\n\(trace)"
+            "已有 Pi 会话无法读取时没有只重建一次原生会话：\n\(trace)"
         )
     }
 }
@@ -1176,11 +1181,6 @@ static void terminate_fixture(int signal_number) {
     _exit(0);
 }
 
-static void emit_context(const char *revision) {
-    printf("{\"type\":\"tool_execution_end\",\"toolCallId\":\"ctx\",\"toolName\":\"weibei_context\",\"isError\":false,\"result\":{\"details\":{\"kind\":\"weibei_context\",\"contextRevision\":\"%s\"}}}\n", revision);
-    fflush(stdout);
-}
-
 static void start_emitter(void) {
     if (emitter_pid > 0) return;
     char cwd[PATH_MAX];
@@ -1198,7 +1198,6 @@ static void start_emitter(void) {
     if (emitter_pid != 0) return;
 
     if (error_mode) {
-        emit_context("error-test");
         for (int index = 0; index < 256; index++) {
             printf("{\"type\":\"message_update\",\"assistantMessageEvent\":{\"type\":\"text_delta\",\"delta\":\"临时文本\"}}\n");
         }
@@ -1209,7 +1208,6 @@ static void start_emitter(void) {
     }
 
     if (thinking_mode) {
-        emit_context("thinking-test");
         for (int index = 0; index < 6; index++) {
             if (index == 1 || index == 2) {
                 printf("{\"type\":\"tool_execution_update\",\"toolCallId\":\"tool-long\",\"toolName\":\"weibei_course_search\"}\n");
@@ -1227,7 +1225,6 @@ static void start_emitter(void) {
     }
 
     if (rich_fallback_mode) {
-        emit_context("rich-fallback-test");
         printf("{\"type\":\"tool_execution_end\",\"toolCallId\":\"rich-fallback\",\"toolName\":\"weibei_rich_answer\",\"isError\":false,\"result\":{\"details\":{\"kind\":\"rich_answer\",\"contextRevision\":\"rich-fallback-test\",\"envelope\":{\"schemaVersion\":2,\"contextRevision\":\"rich-fallback-test\",\"narrative\":\"[材料：测试材料] 应保留的正文\",\"expressionPlan\":{\"action\":\"explain\",\"summary\":\"安全降级\",\"families\":[\"textAndAlignment\"],\"preferredSurface\":\"inline\",\"directManipulation\":false},\"scenes\":[{\"id\":\"rejected-scene\",\"title\":\"无效场景\",\"family\":\"textAndAlignment\",\"objects\":[],\"evidenceIDs\":[\"missing-evidence\"]}],\"evidenceLedger\":[],\"fallback\":{\"text\":\"[材料：测试材料] 安全正文\",\"reason\":\"场景被拒绝\"}}}}}\n");
         printf("{\"type\":\"agent_end\",\"messages\":[{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"模型收尾文字\"}],\"stopReason\":\"stop\"}]}\n");
         fflush(stdout);
@@ -1263,7 +1260,7 @@ static void start_emitter(void) {
     }
 
     if (focus_answer_mode) {
-        printf("{\"type\":\"agent_end\",\"messages\":[{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"[材料：测试材料] [选区：2 个已选文本片段] 当前焦点可直接回答。\"}],\"stopReason\":\"stop\"}]}\n");
+        printf("{\"type\":\"agent_end\",\"messages\":[{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"[选区：2 个已选文本片段] 当前选区可直接回答。\"}],\"stopReason\":\"stop\"}]}\n");
         fflush(stdout);
         _exit(0);
     }
@@ -1277,15 +1274,14 @@ static void start_emitter(void) {
             json_value(context, "requestID", request_id, sizeof(request_id));
             free(context);
         }
-        emit_context(revision);
-        printf("{\"type\":\"tool_execution_start\",\"toolCallId\":\"bridge-search\",\"toolName\":\"weibei_course_search\",\"args\":{\"query\":\"利率\",\"limit\":3}}\n");
+        printf("{\"type\":\"tool_execution_start\",\"toolCallId\":\"bridge-read\",\"toolName\":\"weibei_course_read\",\"args\":{\"itemID\":\"course-item-1\",\"query\":\"\",\"limit\":5}}\n");
         fflush(stdout);
         const char *response_root = getenv("WEIBEI_AGENT_TOOL_RESPONSE_DIR");
         char response_path[PATH_MAX];
         snprintf(
             response_path,
             sizeof(response_path),
-            "%s/%s/1fdef2b47c9435b713031024ad45758e11d78563def9d62dd9d1157bd89776f1.json",
+            "%s/%s/d1c5a80cf77478cb5f65bc199c19d5a52ff009dbfd8ad53ec443b5b55e7c6c3e.json",
             response_root == NULL ? "" : response_root,
             request_id
         );
@@ -1298,19 +1294,19 @@ static void start_emitter(void) {
                 fclose(response);
                 buffer[length] = '\0';
                 ready = strstr(buffer, "\"success\":true") != NULL
-                    && strstr(buffer, "\"toolCallID\":\"bridge-search\"") != NULL
-                    && strstr(buffer, "\"id\":\"course-item-1\"") != NULL;
+                    && strstr(buffer, "\"toolCallID\":\"bridge-read\"") != NULL
+                    && strstr(buffer, "\"id\":\"course-item-1\"") != NULL
+                    && strstr(buffer, "FULL_ARTICLE_TAIL_TOKEN") != NULL;
                 break;
             }
             usleep(20000);
         }
-        printf("{\"type\":\"tool_execution_end\",\"toolCallId\":\"bridge-search\",\"toolName\":\"weibei_course_search\",\"isError\":false,\"result\":{\"details\":{\"kind\":\"course_search\",\"contextRevision\":\"%s\",\"results\":[{\"id\":\"persistent-material\",\"title\":\"利率的含义\",\"role\":\"material\",\"searchText\":\"利率是资金的价格。\"}],\"evidenceLabels\":[\"[材料：利率的含义]\"],\"jumpEvidence\":{}}}}\n", revision);
-        printf("{\"type\":\"agent_end\",\"messages\":[{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"%s\"}],\"stopReason\":\"stop\"}]}\n", ready ? "宿主课程工具桥可用。" : "宿主课程工具桥缺失。");
+        printf("{\"type\":\"tool_execution_end\",\"toolCallId\":\"bridge-read\",\"toolName\":\"weibei_course_read\",\"isError\":false,\"result\":{\"details\":{\"kind\":\"course_read\",\"contextRevision\":\"%s\",\"results\":[{\"id\":\"course-item-1\",\"title\":\"利率的含义\",\"role\":\"material\",\"searchText\":\"利率是资金的价格。FULL_ARTICLE_TAIL_TOKEN\"}],\"evidenceLabels\":[\"[材料：利率的含义]\"],\"jumpEvidence\":{}}}}\n", revision);
+        printf("{\"type\":\"agent_end\",\"messages\":[{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"%s\"}],\"stopReason\":\"stop\"}]}\n", ready ? "宿主课程全文读取可用。" : "宿主课程全文读取缺失。");
         fflush(stdout);
         _exit(0);
     }
 
-    emit_context(cancel_mode ? "cancel-test" : "heartbeat-test");
     for (;;) {
         printf("{\"type\":\"future_event\"}\n");
         fflush(stdout);
@@ -1422,20 +1418,15 @@ int main(int argc, char **argv) {
             if (session_mode) {
                 session_turn += 1;
                 save_session_turn();
-                char revision[64];
                 char *context = NULL;
-                if (!read_context(&context)
-                    || !json_value(context, "contextRevision", revision, sizeof(revision))) {
-                    snprintf(revision, sizeof(revision), "missing-revision");
-                }
+                read_context(&context);
                 trace_line(
                     "recent",
-                    context != NULL && strstr(context, "\"recentMessages\":[]") == NULL
-                        ? "present"
-                        : "empty"
+                    context != NULL && strstr(context, "\"recentMessages\"") == NULL
+                        ? "absent"
+                        : "present"
                 );
                 free(context);
-                emit_context(revision);
                 printf("{\"type\":\"agent_end\",\"messages\":[{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"[材料：测试材料] 第 %d 次回答\"}],\"stopReason\":\"stop\"}]}\n", session_turn);
                 fflush(stdout);
             } else {

@@ -14,6 +14,33 @@ func expect(_ condition: @autoclosure () -> Bool, _ message: String) {
     }
 }
 
+let legacyChatID = UUID(uuidString: "00000000-0000-0000-0000-000000000101")!
+let legacyChatCourseID = UUID(uuidString: "00000000-0000-0000-0000-000000000102")!
+let legacyChatData = try! JSONSerialization.data(withJSONObject: [
+    "id": legacyChatID.uuidString,
+    "title": "旧课程会话",
+    "messages": [],
+    "summary": "原有摘要",
+    "courseID": legacyChatCourseID.uuidString,
+    "scopeNeedsReview": false,
+])
+let migratedChat = try! JSONDecoder().decode(StudySession.self, from: legacyChatData)
+let migratedChatJSON = try! JSONSerialization.jsonObject(
+    with: JSONEncoder().encode(migratedChat)
+) as! [String: Any]
+expect(
+    migratedChat.id == legacyChatID
+        && migratedChat.summary == "原有摘要"
+        && migratedChat.relatedCourseIDs == [legacyChatCourseID],
+    "legacy fixed-scope Chats migrate in place to course associations"
+)
+expect(
+    migratedChatJSON["relatedCourseIDs"] != nil
+        && migratedChatJSON["courseID"] == nil
+        && migratedChatJSON["scopeNeedsReview"] == nil,
+    "unified Chats persist associations without the removed scope classification"
+)
+
 func importedIdentity(at url: URL) -> ImportedFileIdentity? {
     var fileStat = Darwin.stat()
     guard url.withUnsafeFileSystemRepresentation({ path in
@@ -302,6 +329,8 @@ func runRichAnswerEmbeddingSelfChecks() {
     let richAnswerRuntimeCSS = source("Sources/WeiBei/Resources/rich-answer-runtime.css")
     let richAnswerSystemPrompt = source("Sources/WeiBeiCore/AgentResources/system.md")
     let richAnswerExtensionSource = source("Sources/WeiBeiCore/AgentResources/extension.ts")
+    let richAnswerDirectorSkillSource = source("Sources/WeiBeiCore/AgentResources/skills/rich-answer/rich-answer-director/SKILL.md")
+    let richAnswerGenerativeSkillSource = source("Sources/WeiBeiCore/AgentResources/skills/rich-answer/generative-composition/SKILL.md")
     let richAnswerEngineSource = source("Sources/WeiBeiCore/RichAnswerEngine.swift")
     let richAnswerFixtureSource = source("Sources/WeiBei/Support/RichAnswerVerificationFixture.swift")
     let richAnswerTurnSource: String = {
@@ -401,7 +430,6 @@ func runRichAnswerEmbeddingSelfChecks() {
         && extensionComponentNames == swiftComponentNames, "the model catalog, Web renderer, and native safety validator expose the same open-ended T1 component vocabulary")
     expect(richAnswerExtensionSource.contains("const RICH_ANSWER_CATALOG_TOOL = \"weibei_ui_catalog\"")
         && richAnswerExtensionSource.contains("const VISUAL_ASSET_TOOL = \"weibei_visual_asset\"")
-        && richAnswerExtensionSource.contains("visualInspection:")
         && richAnswerExtensionSource.contains("visualAssetMagicMatches(")
         && richAnswerExtensionSource.contains("const OPENUI_COMPONENT_GROUPS = {")
         && richAnswerExtensionSource.contains("selectedOpenUIComponentGroups(")
@@ -414,9 +442,11 @@ func runRichAnswerEmbeddingSelfChecks() {
         && richAnswerExtensionSource.contains("并控制在 8 项以内")
         && richAnswerExtensionSource.contains("richAnswerCatalogSelection")
         && richAnswerExtensionSource.contains("组件 ${declaration.component} 不在本轮目录选择中")
-        && richAnswerSystemPrompt.contains("先由 Agent 判断是否需要富回答")
-        && richAnswerSystemPrompt.contains("`routeRecommendation` 只是")
-        && richAnswerSystemPrompt.contains("不要依赖旧回合或完整组件库记忆"), "Pi retrieves a relevant component subset before generation instead of carrying the entire growing catalog in every rich-answer prompt")
+        && richAnswerSystemPrompt.contains("skill://rich-answer-director")
+        && richAnswerSystemPrompt.utf8.count < 10_000
+        && richAnswerDirectorSkillSource.contains("调用 `weibei_ui_catalog` 查看本轮真实能力")
+        && richAnswerExtensionSource.contains("routeRecommendation")
+        && richAnswerExtensionSource.contains("不要让完整目录挤进每次生成"), "Pi retrieves a relevant component subset before generation instead of carrying the entire growing catalog in every rich-answer prompt")
     expect(richAnswerExtendedComponentsSource.contains("name: \"LayeredSpatialView\"")
         && richAnswerExtendedComponentsSource.contains("name: \"DistributionBrush\"")
         && richAnswerExtendedComponentsSource.contains("name: \"DependencyFlow\"")
@@ -484,21 +514,21 @@ func runRichAnswerEmbeddingSelfChecks() {
     }()
     expect(!richAnswerPresentationContentSource.contains("presentation.expressionPlan?.summary")
         && !richAnswerPresentationContentSource.contains("Text(summary)"), "the native host does not repeat the expression-plan summary above an embedded generated experience")
-    expect(richAnswerSystemPrompt.contains("生成式 UI 是 Agent 回答流中的生成式视觉体验块")
-        && richAnswerSystemPrompt.contains("它可以按问题需要组合多个视觉、控件、读数、局部解释和实验步骤")
-        && richAnswerSystemPrompt.contains("不是第二篇回答、独立小网页或完整网页外壳")
-        && richAnswerSystemPrompt.contains("禁止在体验块中重复 Agent 正文的整套标题、摘要、结论"), "the rich-answer contract allows a composable visual experience without repeating the narrative title, summary, or conclusion")
+    expect(richAnswerSystemPrompt.contains("作为正文中的内联体验而不是第二篇文章")
+        && richAnswerDirectorSkillSource.contains("体验块不自带第二套页头，不重复整篇答案")
+        && richAnswerGenerativeSkillSource.contains("不得重新生成一张带页头和导航的完整网页"), "the rich-answer contract allows a composable visual experience without repeating the narrative title, summary, or conclusion")
     expect(richAnswerExtensionSource.contains("const richAnswerT1SceneSchema")
         && richAnswerExtensionSource.contains("program: richAnswerUIProgramSchema")
         && richAnswerExtensionSource.contains("const richAnswerT2SceneSchema")
         && richAnswerExtensionSource.contains("ui: richAnswerUICompositionSchema")
         && richAnswerExtensionSource.contains("场景从输入层三选一")
         && richAnswerExtensionSource.contains("validateRichAnswerUI(scene, allowedEvidenceIDs, allowedAssetIDs)")
-        && richAnswerSystemPrompt.contains("`renderPlan` 用注册专业渲染器的高层规格")
-        && richAnswerSystemPrompt.contains("三者不能同时提交"), "the Agent chooses exactly one open rich-answer route instead of falling back merely because no specialized component exists")
+        && richAnswerExtensionSource.contains("深组件只提交 program")
+        && richAnswerExtensionSource.contains("注册专业渲染器只提交 renderPlan")
+        && richAnswerExtensionSource.contains("通用原语只提交 ui"), "the Agent chooses exactly one open rich-answer route instead of falling back merely because no specialized component exists")
     expect(richAnswerExtensionSource.contains("validateRichAnswerNarrativeFlow")
         && richAnswerExtensionSource.contains("narrative 没有就近标注已使用的真实来源")
-        && richAnswerSystemPrompt.contains("`narrative` 就是本次富回答最终显示的完整正文"), "rich answers validate their final inline narrative and real source labels instead of trusting a separate model afterword")
+        && richAnswerExtensionSource.contains("本次最终显示的完整、带真实来源标签的回答正文"), "rich answers validate their final inline narrative and real source labels instead of trusting a separate model afterword")
     expect(richAnswerFixtureSource.contains("case pendulum = \"rich-answer-pendulum\"")
         && richAnswerFixtureSource.contains("id: \"pendulum-primitives\"")
         && richAnswerFixtureSource.contains("role: .path")
@@ -1709,15 +1739,11 @@ let groundedPrompt = OpenAIResponsesClient.composePrompt(
     noteTitle: "利率笔记",
     noteText: "## 摘录\n金融体系和利率相关。",
     selectionTitle: "Mishkin 教材样例，第 1 页选区",
-    selectionText: "储蓄者的资金转移给有投资机会的人",
-    recentMessages: [
-        AgentMessage(role: .user, text: "上一问", source: "利率笔记")
-    ]
+    selectionText: "储蓄者的资金转移给有投资机会的人"
 )
 expect(groundedPrompt.input.contains("当前材料：Mishkin 教材样例"), "agent prompt includes material title")
 expect(groundedPrompt.input.contains("当前笔记：利率笔记"), "agent prompt includes note title")
 expect(groundedPrompt.input.contains("当前选区（来源：Mishkin 教材样例，第 1 页选区）："), "agent prompt includes selection source")
-expect(groundedPrompt.input.contains("用户（来源：利率笔记）：上一问"), "agent prompt keeps recent message source")
 expect(groundedPrompt.instructions.contains("普通问题可以使用通用知识")
     && groundedPrompt.instructions.contains("就近标注真实标题")
     && !groundedPrompt.instructions.contains("回答末尾用“来源依据”"), "agent prompt answers ordinary questions and cites only material actually used")
@@ -1735,33 +1761,18 @@ let multiSelectionPrompt = OpenAIResponsesClient.composePrompt(
 
     片段 2（来源：利率笔记）：
     利率是资金使用价格。
-    """,
-    recentMessages: []
+    """
 )
 expect(multiSelectionPrompt.input.contains("当前选区（来源：2 个已选文本片段）：")
     && multiSelectionPrompt.input.contains("片段 1（来源：Mishkin 教材样例，第 1 页）：")
     && multiSelectionPrompt.input.contains("片段 2（来源：利率笔记）："), "agent prompt can carry multiple selected text attachments with source labels")
-let assistantDialoguePrompt = OpenAIResponsesClient.composePrompt(
-    question: "继续解释",
-    materialTitle: "Mishkin 教材样例",
-    materialText: "金融体系把储蓄者的资金转移给有投资机会的人。",
-    noteTitle: "利率笔记",
-    noteText: "",
-    selectionText: nil,
-    recentMessages: [
-        AgentMessage(role: .assistant, text: "上一答", source: nil)
-    ]
-)
-expect(assistantDialoguePrompt.input.contains("助手：上一答")
-    && !assistantDialoguePrompt.input.contains("Agent：上一答"), "assistant dialogue turns avoid internal agent labels")
 let currentPagePrompt = OpenAIResponsesClient.composePrompt(
     question: "解释当前页",
     materialTitle: "Mishkin 教材样例，第 3 页",
     materialText: "第 1 页\n旧页面内容\n\n第 3 页\n当前页内容\n\n第 4 页\n后续页面内容",
     noteTitle: "利率笔记",
     noteText: "",
-    selectionText: nil,
-    recentMessages: []
+    selectionText: nil
 )
 expect(currentPagePrompt.input.contains("当前材料：Mishkin 教材样例，第 3 页")
     && currentPagePrompt.input.contains("第 3 页\n当前页内容")
@@ -1773,8 +1784,7 @@ let noteOnlyPrompt = OpenAIResponsesClient.composePrompt(
     materialText: "",
     noteTitle: "概念笔记",
     noteText: "实际利率需要区分通胀预期。",
-    selectionText: "实际利率",
-    recentMessages: []
+    selectionText: "实际利率"
 )
 expect(noteOnlyPrompt.input.contains("当前材料：无") && noteOnlyPrompt.input.contains("当前选区（来源：概念笔记）："), "note-only prompt anchors selection to the current note")
 let englishPrompt = OpenAIResponsesClient.composePrompt(
@@ -1785,16 +1795,12 @@ let englishPrompt = OpenAIResponsesClient.composePrompt(
     noteText: "Real interest rates account for expected inflation.",
     selectionTitle: "",
     selectionText: "real interest rates",
-    recentMessages: [
-        AgentMessage(role: .assistant, text: "Earlier answer", source: "Current note")
-    ],
     language: .english
 )
 expect(
     englishPrompt.input.contains("Current material: none")
         && englishPrompt.input.contains("Current note: Current note")
         && englishPrompt.input.contains("Current selection (source: Current note):")
-        && englishPrompt.input.contains("Assistant (source: Current note): Earlier answer")
         && englishPrompt.instructions.contains("Answer in English")
         && englishPrompt.instructions.contains("general questions may use general knowledge")
         && englishPrompt.instructions.contains("cite its real title next to the relevant sentence")
@@ -2447,7 +2453,7 @@ expect(contentViewSource.contains("if shouldShowSearchAction && !store.showReade
 expect(contentViewSource.contains("private var paneToggleCluster: some View")
     && contentViewSource.contains("store.toggleReader()")
     && contentViewSource.contains("store.toggleAgent()")
-    && contentViewSource.contains("store.toggleNotes()"), "top bar exposes persistent reader, chat, and notes pane toggles")
+    && contentViewSource.contains("store.toggleNotes()"), "top bar exposes reader, chat, and notes pane toggles")
 expect(!contentViewSource.contains("private var layoutMenu")
     && !contentViewSource.contains(".accessibilityLabel(Text(store.ui(\"切换布局\"")
     && !contentViewSource.contains("shortLayoutLabel")
@@ -2523,13 +2529,6 @@ let paneHeaderReorderSource: String = {
     }
     return String(notesAgentSource[start..<end])
 }()
-let emptyAgentStateSource: String = {
-    guard let start = notesAgentSource.range(of: "private var emptyAgentState: some View")?.lowerBound,
-          let end = notesAgentSource.range(of: "private func starterChip", range: start..<notesAgentSource.endIndex)?.lowerBound else {
-        return ""
-    }
-    return String(notesAgentSource[start..<end])
-}()
 let notebookCreationPanelSource: String = {
     guard let start = notesAgentSource.range(of: "private struct NotebookCreationPanel")?.lowerBound,
           let end = notesAgentSource.range(of: "final class MarkdownSourceTextView", range: start..<notesAgentSource.endIndex)?.lowerBound else {
@@ -2539,7 +2538,8 @@ let notebookCreationPanelSource: String = {
 }()
 expect(notesAgentSource.contains("private struct AgentComposerField")
     && notesAgentSource.contains("prompt: Text(prompt)")
-    && notesAgentSource.contains(".foregroundStyle(WeiBeiTheme.placeholderInk)"), "agent tray placeholder uses native prompt text so the cursor and text baseline align")
+    && notesAgentSource.contains(".foregroundStyle(WeiBeiTheme.placeholderInk)")
+    && !notesAgentSource.contains("AgentFocusContextPills"), "agent tray keeps only the input and explicit selection attachment")
 expect(notesAgentSource.contains("SelectionAnchorContentPoint.fromScreenPoint(screenPoint, in: window)")
     && !notesAgentSource.contains("SelectionAnchorCoordinate.y(")
     && !notesAgentSource.contains("contentView.convert("), "note source editor selection anchors use the shared coordinate helper")
@@ -2653,6 +2653,15 @@ expect(readerViewSource.contains("private final class PDFContentRailPreviewLoade
     && readerViewSource.contains("static let contentRailScript")
     && readerViewSource.contains("window.WeiBeiContentRail")
     && readerViewSource.contains("if railOnly {\n            store.requestPaneExpansion(.reader)"), "PDF and HTML rails use real page or document content and restore narrow reader panes")
+expect(readerViewSource.contains("struct ContextualContentListButton: View")
+    && readerViewSource.contains("ContextualContentListButton(kind: .material)")
+    && notesAgentSource.contains("ContextualContentListButton(kind: .note)")
+    && readerViewSource.contains("store.selectedMaterialItem != nil")
+    && notesAgentSource.contains("if showsPaneHeader && hasNoteContent")
+    && notesAgentSource.contains("if !showsPaneHeader && hasNoteContent")
+    && notesAgentSource.contains("private var hasNoteContent: Bool")
+    && !readerViewSource.contains("store.prepareNoteForOpening()")
+    && !readerViewSource.contains("store.prepareMaterialForOpening()"), "document and note panes share one explicit list entry without picker auto-navigation or content-only chrome")
 expect(readerViewSource.contains("NEVER put GeometryReader as an ancestor of WKWebView / PDFView")
     && readerViewSource.contains("ReaderPaneSizeKey")
     && readerViewSource.contains("ReaderPlatformViewSizing.proposedReaderSize")
@@ -3636,12 +3645,24 @@ expect(readerViewSource.contains("var isEnabled = true")
     && readerViewSource.contains("hasModalWindow: NSApp.modalWindow != nil")
     && courseWorkspaceSource.contains("isEnabled: !showsNewNotePrompt")
     && !courseWorkspaceSource.contains("courseFolderImportDraft"), "escape dismisses only the active course surface and leaves sheets or file panels in control")
-expect(workspaceStoreSource.contains("DocumentTextExtractor.cachedText(for: item)")
-    && workspaceStoreSource.contains("let indexingTask = Task.detached(priority: .userInitiated)")
-    && workspaceStoreSource.contains("let indexedByItemID = searchIndex.lookup(")
-    && workspaceStoreSource.contains("searchIndex.read(item: $0, query: \"\", location: nil)")
-    && !workspaceStoreSource.contains("DocumentTextExtractor.indexText(for: candidate.item")
-    && !workspaceStoreSource.contains("if let text = DocumentTextExtractor.text(for: item)"), "main-actor workspace reads only cached document text; cold current-material reads use the verified course index inside the detached task")
+if let courseContextStart = workspaceStoreSource.range(
+    of: "private func makeCourseContext("
+)?.lowerBound,
+   let projectAccessStart = workspaceStoreSource.range(
+    of: "private func makeAgentProjectAccessSnapshot(",
+    range: courseContextStart..<workspaceStoreSource.endIndex
+   )?.lowerBound {
+    let courseContextSource = String(
+        workspaceStoreSource[courseContextStart..<projectAccessStart]
+    )
+    expect(courseContextSource.contains("text: \"\"")
+        && !courseContextSource.contains("Task.detached")
+        && !courseContextSource.contains("searchIndex.lookup")
+        && !courseContextSource.contains("searchIndex.read"),
+        "each Agent turn builds metadata-only course context without pre-reading material or note text")
+} else {
+    expect(false, "course context builder source is readable")
+}
 expect(workspaceStoreSource.contains("@Published var showDailyInspiration = true")
     && workspaceStoreSource.contains("func setDailyInspirationEnabled(_ enabled: Bool)")
     && workspaceStoreSource.contains("showDailyInspiration = snapshot.showDailyInspiration ?? true")
@@ -3761,22 +3782,22 @@ expect(workspaceStoreSource.contains("var readerLocationID: String?")
     && workspaceStoreSource.contains("func updateReaderHTMLLocation")
     && workspaceStoreSource.contains("let publish = reason != \"scroll\"")
     && workspaceStoreSource.contains("var currentReferenceTitle"), "store tracks durable PDF and HTML reader locations; scroll commits do not publish viewport chrome")
-expect(workspaceStoreSource.contains("private func sessionContinuitySummary(for session: StudySession)")
-    && workspaceStoreSource.contains("messages.suffix(20)")
-    && workspaceStoreSource.contains("olderMessages.prefix(4)")
-    && workspaceStoreSource.contains("olderMessages.suffix(8)"), "durable study sessions inject recent turns plus bounded earlier conversation excerpts into each clean PI run")
+expect(workspaceStoreSource.contains("summary: session.summary")
+    && !workspaceStoreSource.contains("sessionContinuitySummary")
+    && !workspaceStoreSource.contains("messages.suffix(20)"), "PI owns conversation continuity without WeiBei rebuilding recent turns or an earlier-message summary")
 expect(workspaceStoreSource.contains("let itemTitle = sourceReferenceBaseTitle(for: item)")
     && workspaceStoreSource.contains("itemTitle: itemTitle")
     && workspaceStoreSource.contains("private func refreshStudyLocationReferenceTitles() -> Bool")
-    && workspaceStoreSource.contains("let existingMemory = memoryEntries.first")
-    && workspaceStoreSource.contains("if existingMemory.origin == .userStatement")
+    && workspaceStoreSource.contains("let located = locatedMemory(parsedMemoryID)")
+    && workspaceStoreSource.contains("if located.2.origin == .userStatement")
     && workspaceStoreSource.contains("!evidence.hasPrefix(\"[会话：当前]\")")
     && workspaceStoreSource.contains("let origin: LearningMemoryOrigin = validated.evidence")
     && workspaceStoreSource.contains("? .userStatement")
     && workspaceStoreSource.contains(": validated.origin")
     && workspaceStoreSource.contains("memoryEntries[index].sessionID = target.sessionID")
     && workspaceStoreSource.contains("memoryEntries[index].messageID = messageID")
-    && workspaceStoreSource.contains("learningMemoryScope(courseID: target.courseID)"), "learning locations preserve duplicate-file identity and learning memories stay owned by the originating Chat scope")
+    && workspaceStoreSource.contains("if kind == .goal || kind == .preference { return .global }")
+    && workspaceStoreSource.contains("learningMemoryContextScopes(courseID: target.courseID)"), "learning locations preserve duplicate-file identity; learning memory splits global and course knowledge while retaining Chat provenance")
 expect(workspaceStoreSource.contains("@Published var readerTargetPageIndex")
     && workspaceStoreSource.contains("@Published var readerTargetLocationTitle")
     && workspaceStoreSource.contains("func openSourceReference")
@@ -3861,9 +3882,9 @@ expect(workspaceStoreSource.contains("selectionTitle: sentSelectionTitle")
     && workspaceStoreSource.contains("selectionText: sentSelectionText")
     && workspaceStoreSource.contains("selectionSources: sentSelectionSources")
     && workspaceStoreSource.contains("itemID: source == .note ? activeNotebookItemID : selectedItemID")
-    && piAgentRuntimeSource.contains("sources.append(contentsOf: request.selectionSources)")
+    && piAgentRuntimeSource.contains("contextSources: request.selectionSources")
     && piAgentRuntimeSource.contains("run.persistentAssetIDsByContextID[itemID]")
-    && !workspaceStoreSource.contains("selectionText: selectionContext?.text,\n                recentMessages: recentMessages"), "agent requests capture selection via sentSelectionText (attachments or live fallback), not a raw live-only field")
+    && !workspaceStoreSource.contains("recentMessages"), "agent requests persist sent selections while PI owns conversation history")
 expect(workspaceStoreSource.contains("let sentSelectionTitle = agentSelectionTitle")
     && workspaceStoreSource.contains("let sentSelectionText = agentSelectionText")
     && workspaceStoreSource.contains("selectionAttachments = []")
@@ -4152,9 +4173,9 @@ if let requestStart = workspaceStoreSource.range(of: "private func performAgentR
         && requestSource.contains("focusMaterialItem: sentMaterialItem")
         && requestSource.contains("focusNoteItem: sentNoteItem")
         && requestSource.contains("courseID: target.courseID")
-        && requestSource.contains("materialText: courseBuild.selectedMaterialText ?? \"\"")
-        && requestSource.contains("materialIsTruncated: courseBuild.selectedMaterialIsTruncated")
-        && requestSource.contains("noteText: resolvedSentNoteText")
+        && requestSource.contains("materialText: \"\"")
+        && requestSource.contains("materialIsTruncated: false")
+        && requestSource.contains("noteText: \"\"")
         && requestSource.contains("courseContext: courseBuild.context")
         && requestSource.contains("learningContext: sentLearningContext")
         && requestSource.contains("let reply = try await executeStudyAgentRequest(")
@@ -4206,31 +4227,34 @@ expect(piAgentRuntimeSource.contains("private var processGeneration: UInt64 = 0"
 expect(workspaceStoreSource.contains("@Published private(set) var studySessions")
     && workspaceStoreSource.contains("func createStudySession(courseID: UUID?)")
     && workspaceStoreSource.contains("func activateStudySession(")
-    && workspaceStoreSource.contains("expectedCourseID: UUID?")
     && workspaceStoreSource.contains("private func syncActiveStudySession(titleSeed: String? = nil)")
     && workspaceStoreSource.contains("private func appendAgentMessage(_ message: AgentMessage)")
+    && workspaceStoreSource.contains("func associateStudySession(_ id: UUID, with courseIDs:")
+    && workspaceStoreSource.contains("withItemIDs: reply.readItemIDs")
+    && workspaceStoreSource.contains("private var persistedStudySessions: [StudySession]")
+    && workspaceStoreSource.contains("$0.id != freshlyCreatedEmptyStudySessionID || !$0.messages.isEmpty")
     && workspaceStoreSource.contains("private func migrateLegacyStudySessionScopes()")
     && workspaceStoreSource.contains("studySessionScopeMigrationVersion")
-    && courseWorkspaceSource.contains("session.scopeNeedsReview == true ? \"待归类 · \""),
-    "agent conversations persist an exact course scope, migrate old Chats once, and expose ambiguous records")
+    && !courseWorkspaceSource.contains("待归类 · "),
+    "agent conversations stay global, persist only after use, associate from real context and reads, and migrate old Chats once")
 expect(workspaceStoreSource.contains("noteSourceLinks: noteSourceLinks")
     && workspaceStoreSource.contains("studyLocationsByItemID: studyLocationsByItemID")
     && workspaceStoreSource.contains("studyLocationsByCourseID: studyLocationsByCourseID")
     && workspaceModelsSource.contains("studyLocationsByCourseID: [String: [String: StudyLocation]]?")
     && workspaceStoreSource.contains("learningMemoryStates: learningMemoryStates")
     && workspaceStoreSource.contains("learningMemoryScopeMigrationVersion: learningMemoryScopeMigrationVersion")
-    && workspaceStoreSource.contains("studySessions: studySessions")
+    && workspaceStoreSource.contains("studySessions: persistedStudySessions")
     && workspaceStoreSource.contains("studySessionScopeMigrationVersion: studySessionScopeMigrationVersion")
-    && workspaceStoreSource.contains("activeStudySessionID: activeStudySessionID"), "course links, progress, memory, and sessions are saved with the workspace")
+    && workspaceStoreSource.contains("activeStudySessionID: persistedActiveStudySessionID"), "course links, progress, memory, and used sessions are saved with the workspace")
 expect(workspaceStoreSource.contains("for validated in validatedResolutions")
     && workspaceStoreSource.contains("memoryEntries[index].status = .resolved")
     && workspaceStoreSource.contains("acceptedUpdate.resolutions = []")
     && workspaceStoreSource.contains("StudyAgentCurrentTurnEvidence.matches")
     && workspaceStoreSource.contains("func restoreLearningMemory(")
-    && workspaceStoreSource.contains("let memoryChanged = !changedMemoryIDs.isEmpty")
+    && workspaceStoreSource.contains("guard !changedMemoryIDs.isEmpty else { return nil }")
     && workspaceStoreSource.contains("$0.memoryUpdate = memoryUpdate"),
     "valid PI memory resolutions apply automatically and persist on the originating reply without hiding its answer")
-expect(workspaceStoreSource.contains("} else {\n            restoreCurrentStudyLocation()\n            recordCurrentStudyLocation(incrementVisit: false)\n        }")
+expect(workspaceStoreSource.contains("if selectedItemID != nil {\n            restoreCurrentStudyLocation()\n            recordCurrentStudyLocation(incrementVisit: false)\n        }")
     && workspaceStoreSource.contains("private func restoreCurrentStudyLocation()")
     && workspaceStoreSource.contains("readerPageIndex = max(location.pageIndex ?? 0, 0)")
     && workspaceStoreSource.contains("requestReaderPDFPage(location.pageIndex, recordsLocation: false)"), "saved heading and PDF page are restored before startup records the current study location")
@@ -4242,7 +4266,8 @@ expect(workspaceStoreSource.contains("private func agentFocusMaterialItem(")
     && workspaceStoreSource.contains("focusNoteItem: StudyItem? = nil")
     && workspaceStoreSource.contains("access: AgentProjectAccessSnapshot")
     && workspaceStoreSource.contains("let candidates = access.sources.compactMap")
-    && workspaceStoreSource.contains("source.grants.contains(where: Self.agentFileGrantIsValid)")
+    && workspaceStoreSource.contains("Self.agentHostToolSourceIsValid(source)")
+    && workspaceStoreSource.contains("Self.agentDirectSourceIsValid(item)")
     && workspaceStoreSource.contains("\"课程：\\(courseTitles.joined(separator: \"、\"))")
     && workspaceStoreSource.contains("scopedItemIDs.contains($0.noteItemID)")
     && workspaceStoreSource.contains("scopedItemIDs.contains($0.sourceItemID)")
@@ -4250,11 +4275,11 @@ expect(workspaceStoreSource.contains("private func agentFocusMaterialItem(")
     && workspaceStoreSource.contains("courseDocumentSearchIndex: CourseDocumentSearchIndex")
     && workspaceStoreSource.contains("course-search-v3.sqlite3")
     && workspaceStoreSource.contains("removeLegacyCourseIndex")
-    && workspaceStoreSource.contains("let indexedByItemID = searchIndex.lookup(")
+    && workspaceStoreSource.contains("let indexed = searchIndex.lookup(")
     && workspaceStoreSource.contains("$0.memoryText == nil ? $0.item : nil")
-    && workspaceStoreSource.contains("let indexingTask = Task.detached(priority: .userInitiated)")
+    && workspaceStoreSource.contains("let task = Task.detached(priority: .userInitiated)")
     && workspaceStoreSource.contains("withTaskCancellationHandler")
-    && workspaceStoreSource.contains("migrateNoteSourceLinksFromMarkdown()"), "agent queries the persistent course index in the background and migrates durable note-source links")
+    && workspaceStoreSource.contains("migrateNoteSourceLinksFromMarkdown()"), "agent tools query the persistent course index on demand in the background and migrate durable note-source links")
 if let selectStart = workspaceStoreSource.range(of: "func select(itemID: String?)")?.lowerBound,
    let selectEnd = workspaceStoreSource[selectStart...].range(of: "\n    func ", options: [], range: workspaceStoreSource.index(after: selectStart)..<workspaceStoreSource.endIndex)?.lowerBound {
     let selectSource = String(workspaceStoreSource[selectStart..<selectEnd])
@@ -4302,7 +4327,8 @@ expect(workspaceStoreSource.contains("func createBlankNotebookNote()")
     && workspaceStoreSource.contains("func promptCreateNotebookNoteFromCurrentMaterial()")
     && workspaceStoreSource.contains("@Published var notebookCreationDraft")
     && workspaceStoreSource.contains("struct NotebookCreationDraft")
-    && workspaceStoreSource.contains("private func createNotebookNote(seed: NotebookNoteSeed, title")
+    && workspaceStoreSource.contains("private func createNotebookNote(")
+    && workspaceStoreSource.contains("seed: NotebookNoteSeed")
     && !workspaceStoreSource.contains("func resetNote()")
     && !workspaceStoreSource.contains("updateNote(defaultNote(for: selectedItem))"), "new note commands separate blank notes from current-material notes and route through the inline naming strip")
 expect(workspaceStoreSource.contains("private func openExistingNotebookNote(for material: StudyItem) -> Bool")
@@ -4312,8 +4338,8 @@ expect(workspaceStoreSource.contains("private func openExistingNotebookNote(for 
     && workspaceStoreSource.contains("已打开现有资料笔记"), "current-material note creation opens an existing matching notebook note instead of prompting a duplicate")
 expect(workspaceStoreSource.contains("case currentMaterial(StudyItem)")
     && workspaceStoreSource.contains("private func suggestedNotebookTitle(for seed: NotebookNoteSeed)")
-    && workspaceStoreSource.contains("let markdown = defaultNotebookNote(title: item.title, sourceItem: sourceItem)")
-    && workspaceStoreSource.contains("try markdown.write(to: url"), "new notebook notes are backed by local markdown files and can be seeded from the current material")
+    && workspaceStoreSource.contains("defaultNotebookNote(title: item.title, sourceItem: sourceItem)")
+    && workspaceStoreSource.contains("try markdown.write(to: url"), "new notebook notes are backed by real markdown files and can be seeded from the current material")
 expect(workspaceStoreSource.contains("func cancelNotebookNoteCreation()")
     && workspaceStoreSource.contains("func confirmNotebookNoteCreation()")
     && workspaceStoreSource.contains("notebookCreationDraft = NotebookCreationDraft(")
@@ -4523,20 +4549,20 @@ expect(notesAgentSource.contains("func weibeiPaneHeaderChrome(appearanceMode: We
     && !notePaneHeaderSource.contains("Button(\"作为笔记编辑\")")
     && agentPaneHeaderSource.contains("sessionMenu")
     && notesAgentSource.contains("private var sessionMenu: some View")
-    && notesAgentSource.contains("store.createStudySession(courseID: courseID)")
     && notesAgentSource.contains("store.createStudySession(courseID: nil)")
-    && notesAgentSource.contains("store.activeStudySession?.courseID ?? store.activeCourseID")
-    && notesAgentSource.contains("expectedCourseID: session.courseID")
-    && notesAgentSource.contains("store.globalStudySessions")
-    && notesAgentSource.contains("store.studySessions(in: course.id)")
-    && notesAgentSource.contains("store.unclassifiedStudySessions")
-    && notesAgentSource.contains("store.classifyStudySession(session.id, as: nil)")
-    && notesAgentSource.contains("store.classifyStudySession(session.id, as: course.id)")
+    && notesAgentSource.contains("Section(store.ui(\"全部对话\", \"All Chats\"))")
+    && notesAgentSource.contains("store.studySessions(in: courseID)")
+    && notesAgentSource.contains("session.relatedCourseIDs")
+    && !notesAgentSource.contains("store.createStudySession(courseID: courseID)")
+    && !notesAgentSource.contains("store.unclassifiedStudySessions")
+    && !notesAgentSource.contains("store.classifyStudySession")
     && courseWorkspaceSource.contains("store.sessionsTouchingCourse(courseID)")
     && courseWorkspaceSource.contains("LearningMemoryListSection(")
     && courseWorkspaceSource.contains("本课记忆")
-    && notesAgentSource.contains("GlobalLearningMemorySheet()")
-    && notesAgentSource.contains("全局记忆")
+    && courseWorkspaceSource.contains("struct GlobalLearningMemorySheet")
+    && courseWorkspaceSource.contains("所有对话共用")
+    && !notesAgentSource.contains("GlobalLearningMemorySheet()")
+    && !notesAgentSource.contains("openGlobalMemory()")
     && !notesAgentSource.contains("store.clearCurrentSessionInferredMemory()")
     && !agentPaneHeaderSource.contains("agentToolButton(")
     && !notesAgentSource.contains("private func agentToolButton")
@@ -4554,7 +4580,7 @@ expect(notesAgentSource.contains("AgentReplyMemoryUpdateTag(")
     && notesAgentSource.contains(".accessibilityValue(Text(store.ui(")
     && notesAgentSource.contains("expanded ? \"已展开\" : \"已收起\"")
     && notesAgentSource.contains("store.presentCourseWorkspace(.sessions, courseID: courseID)")
-    && notesAgentSource.contains("openGlobalMemory()")
+    && !notesAgentSource.contains("openGlobalMemory()")
     && notesAgentSource.contains("update.revisions(")
     && workspaceModelsSource.contains("matches.count == memoryIDs.count ? matches : nil")
     && notesAgentSource.contains("agent-memory-update-view-all")
@@ -4563,7 +4589,7 @@ expect(notesAgentSource.contains("AgentReplyMemoryUpdateTag(")
     && courseWorkspaceSource.contains("搜索全局记忆")
     && courseWorkspaceSource.contains("search: search")
     && workspaceStoreSource.contains("reply_tag_persisted=\\(replyTagPersisted)")
-    && runScript.contains("^reply_tag_persisted=true$"), "persisted memory updates render as one scoped expandable tag with searchable course and global destinations")
+    && runScript.contains("^reply_tag_persisted=true$"), "persisted memory updates render as one expandable tag; course records and shared global memory remain searchable without another Chat-header control")
 expect(noteModeControlSource.contains("NoteRenderMode.visibleCases")
     && notePaneHeaderSource.contains("@State private var hoveredNoteMode: NoteRenderMode?")
     && noteModeControlSource.contains("HStack(spacing: 3)")
@@ -4770,18 +4796,14 @@ if let noteBridgeStart = notesAgentSource.range(of: "onAskAgentWithSelection: { 
 } else {
     expect(false, "rich markdown selection ask bridge is inspectable")
 }
-expect(!emptyAgentStateSource.isEmpty
-    && !emptyAgentStateSource.contains("noteContextTitle")
-    && !emptyAgentStateSource.contains("Text(store.selectedMaterialItem?.title ?? \"当前笔记\")")
-    && !emptyAgentStateSource.contains(".fill(WeiBeiTheme.cinnabar.opacity(0.34))"), "agent empty state avoids a repeated title card and heavy cinnabar rule")
-expect(notesAgentSource.contains("AgentStarterChip") && notesAgentSource.contains("hovering ? -1 : 0"), "agent starter chips keep subtle hover motion")
-expect(notesAgentSource.contains("if store.hasSelectedMaterial")
-    && notesAgentSource.contains("starterChip(store.ui(\"梳理\", \"Outline\"")
-    && notesAgentSource.contains("help: store.ui(\"梳理当前材料\", \"Outline current material\"")
-    && notesAgentSource.contains("starterChip(store.ui(\"出题\", \"Quiz\"")
-    && notesAgentSource.contains("help: store.ui(\"生成复习题\", \"Generate review questions\"")
-    && !notesAgentSource.contains("starterChip(\"梳理材料\"")
-    && !notesAgentSource.contains("starterChip(\"出复习题\""), "agent starter chips hide material actions without a selected material and avoid clipped long labels")
+expect(!notesAgentSource.contains("emptyAgentState")
+    && !notesAgentSource.contains("AgentStarterChip")
+    && !notesAgentSource.contains("starterChip(store.ui(\"继续上次\"")
+    && !notesAgentSource.contains("starterChip(store.ui(\"关联\"")
+    && !notesAgentSource.contains("starterChip(store.ui(\"梳理\"")
+    && !notesAgentSource.contains("starterChip(store.ui(\"整理\"")
+    && !notesAgentSource.contains("starterChip(store.ui(\"出题\"")
+    && notesAgentSource.contains("agentSessionCatalogMenu"), "empty Chat keeps only the existing conversation catalog and composer")
 expect(notesAgentSource.contains("GeometryReader { paneGeometry in")
     && notesAgentSource.contains("let liveAvailableWidth = max(paneGeometry.size.width, 1)")
     && notesAgentSource.contains("availableWidth: liveAvailableWidth")
@@ -5176,9 +5198,8 @@ expect(!notesAgentSource.contains("RoundedRectangle(cornerRadius: 9)")
     && !notesAgentSource.contains("WeiBeiTheme.paperRaised.opacity(0.46)"), "agent input tray avoids a heavy nested form border")
 expect(!notesAgentSource.contains(".disabled(store.agentDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)") && !notesAgentSource.contains(".disabled(!canSend)") && !notesAgentSource.contains(".disabled(store.isAskingAgent)"), "agent inputs hide unavailable send actions instead of showing disabled buttons")
 expect(!notesAgentSource.contains("agentToolButton(") && !notesAgentSource.contains("help: store.ui(\"整理笔记\""), "main agent header does not become a toolbar")
-expect(notesAgentSource.contains("LazyVGrid(columns: starterChipColumns")
-    && notesAgentSource.contains("GridItem(.adaptive(minimum: 56)")
-    && !notesAgentSource.contains("HStack(spacing: 8) {\n                if store.hasSelectedMaterial {\n                    starterChip(\"梳理材料\""), "agent empty-state starter actions adapt in narrow panes instead of squeezing into one row")
+expect(!notesAgentSource.contains("starterChipColumns")
+    && !notesAgentSource.contains("LazyVGrid(columns: starterChipColumns"), "agent pane does not add starter actions beside the conversation catalog")
 expect(notesAgentSource.contains("private func togglePinnedFloatingAgent()")
     && notesAgentSource.contains("store.pinnedFloatingAgent = next")
     && notesAgentSource.contains("store.keepFloatingSelectionForAnswer = true")
@@ -5728,10 +5749,8 @@ let invalidCourseHomeSessions = [
         courseID: UUID(uuidString: "10000000-0000-0000-0000-000000000012")
     ),
     StudySession(
-        title: "待归类来源",
-        messages: [AgentMessage(role: .user, text: "不能跳转", source: "待归类")],
-        courseID: courseHomeHighlightCourseID,
-        scopeNeedsReview: true
+        title: "未关联来源",
+        messages: [AgentMessage(role: .user, text: "不能跳转", source: "未关联")]
     ),
     StudySession(
         title: "空对话来源",
@@ -5768,7 +5787,7 @@ for invalidSession in invalidCourseHomeSessions {
     expect(invalidTargetHighlights.summary == nil
         && invalidTargetHighlights.nextStepText == "保留这条真实文字"
         && invalidTargetHighlights.nextStepSessionID == nil,
-        "course home keeps a real next-step text but removes actions for cross-course, unclassified, and empty Chats")
+        "course home keeps a real next-step text but removes actions for cross-course, unrelated, and empty Chats")
 }
 
 let courseA = Course(

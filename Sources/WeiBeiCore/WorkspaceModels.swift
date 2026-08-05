@@ -1846,6 +1846,8 @@ public struct PersistedWorkspace: Codable, Sendable {
     public var courseLibraryRootBookmarkData: Data?
     public var noteSourceLinks: [NoteSourceLink]?
     public var noteSourceLinksMigrationVersion: Int?
+    public var materialNotePairings: [String: String]?
+    public var noteMaterialPairings: [String: String]?
     public var studyLocationsByItemID: [String: StudyLocation]?
     public var studyLocationsByCourseID: [String: [String: StudyLocation]]?
     public var courseResumePoints: [CourseResumePoint]?
@@ -1853,6 +1855,7 @@ public struct PersistedWorkspace: Codable, Sendable {
     public var coursePortableStateDigests: [String: String]?
     public var dirtyPortableCourseIDs: [UUID]?
     public var learningMemoryStates: [ScopedLearningMemoryState]?
+    public var courseKnowledgeProfiles: [CourseKnowledgeProfile]?
     public var learningMemoryScopeMigrationVersion: Int?
     /// Legacy flat memory fields. Decode-only after scoped memory migration.
     public var learningMemoryEntries: [LearningMemoryEntry]?
@@ -1893,6 +1896,8 @@ public struct PersistedWorkspace: Codable, Sendable {
         courseLibraryRootBookmarkData: Data? = nil,
         noteSourceLinks: [NoteSourceLink]? = nil,
         noteSourceLinksMigrationVersion: Int? = nil,
+        materialNotePairings: [String: String]? = nil,
+        noteMaterialPairings: [String: String]? = nil,
         studyLocationsByItemID: [String: StudyLocation]? = nil,
         studyLocationsByCourseID: [String: [String: StudyLocation]]? = nil,
         courseResumePoints: [CourseResumePoint]? = nil,
@@ -1900,6 +1905,7 @@ public struct PersistedWorkspace: Codable, Sendable {
         coursePortableStateDigests: [String: String]? = nil,
         dirtyPortableCourseIDs: [UUID]? = nil,
         learningMemoryStates: [ScopedLearningMemoryState]? = nil,
+        courseKnowledgeProfiles: [CourseKnowledgeProfile]? = nil,
         learningMemoryScopeMigrationVersion: Int? = nil,
         learningMemoryEntries: [LearningMemoryEntry]? = nil,
         learningMemoryRevision: UInt64? = nil,
@@ -1938,6 +1944,8 @@ public struct PersistedWorkspace: Codable, Sendable {
         self.courseLibraryRootBookmarkData = courseLibraryRootBookmarkData
         self.noteSourceLinks = noteSourceLinks
         self.noteSourceLinksMigrationVersion = noteSourceLinksMigrationVersion
+        self.materialNotePairings = materialNotePairings
+        self.noteMaterialPairings = noteMaterialPairings
         self.studyLocationsByItemID = studyLocationsByItemID
         self.studyLocationsByCourseID = studyLocationsByCourseID
         self.courseResumePoints = courseResumePoints
@@ -1945,6 +1953,7 @@ public struct PersistedWorkspace: Codable, Sendable {
         self.coursePortableStateDigests = coursePortableStateDigests
         self.dirtyPortableCourseIDs = dirtyPortableCourseIDs
         self.learningMemoryStates = learningMemoryStates
+        self.courseKnowledgeProfiles = courseKnowledgeProfiles
         self.learningMemoryScopeMigrationVersion = learningMemoryScopeMigrationVersion
         self.learningMemoryEntries = learningMemoryEntries
         self.learningMemoryRevision = learningMemoryRevision

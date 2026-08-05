@@ -507,10 +507,13 @@ private struct UnifiedTopBarView: View {
     }
 
     private var agentPaneToggleHelp: String {
+        if store.isPaneToggleActive(.agent) {
+            return store.ui("隐藏对话", "Hide chat")
+        }
         if store.selectionContext != nil {
             return store.ui("用当前选区打开对话", "Open chat with current selection")
         }
-        return store.isPaneToggleActive(.agent) ? store.ui("隐藏对话", "Hide chat") : store.ui("显示对话", "Show chat")
+        return store.ui("显示对话", "Show chat")
     }
 
     @ViewBuilder
