@@ -715,12 +715,26 @@ final class StableDocumentSplitCoordinator {
         visibleOrder: [WorkspacePaneRole],
         in splitView: StableDocumentSplitView
     ) {
-        for (role, frame) in roleFrames {
-            splitView.roleHosts[role]?.frame = frame
-        }
+        setRoleFramesImmediately(roleFrames, in: splitView)
         updateDividerFrames(dividerFrames, animated: false, in: splitView)
         splitView.emptyHost?.frame = splitView.bounds
         splitView.emptyHost?.alphaValue = visibleOrder.isEmpty ? 1 : 0
+    }
+
+    private func setRoleFramesImmediately(
+        _ frames: [WorkspacePaneRole: CGRect],
+        in splitView: StableDocumentSplitView
+    ) {
+        let previousAgentWidth = splitView.roleHosts[.agent]?.frame.width
+        for (role, frame) in frames {
+            splitView.roleHosts[role]?.frame = frame
+        }
+        guard let previousAgentWidth,
+              let agentHost = splitView.roleHosts[.agent],
+              abs(previousAgentWidth - agentHost.frame.width) > 0.5 else { return }
+        // NSHostingView can defer SwiftUI's new width until the current window or
+        // divider event ends. Flush only the resized chat host at the shared frame path.
+        agentHost.layoutSubtreeIfNeeded()
     }
 
     private func animateFrames(
@@ -885,19 +899,7 @@ final class StableDocumentSplitCoordinator {
 
     private func applyVisibleWidthsImmediately(_ widths: [CGFloat], in splitView: StableDocumentSplitView) {
         let frames = visibleFrames(order: displayedVisibleOrder, widths: widths, size: splitView.bounds.size)
-        let agentWidthChanged = frames[.agent].map { frame in
-            guard let host = splitView.roleHosts[.agent] else { return false }
-            return abs(host.frame.width - frame.width) > 0.5
-        } ?? false
-        for (role, frame) in frames {
-            splitView.roleHosts[role]?.frame = frame
-        }
-        // Direct frame changes happen inside the divider mouse event. AppKit may
-        // defer NSHostingView's SwiftUI layout; widening hides that delay, while
-        // shrinking clips the old chat width. Flush only the resized chat host.
-        if agentWidthChanged, let agentHost = splitView.roleHosts[.agent] {
-            agentHost.layoutSubtreeIfNeeded()
-        }
+        setRoleFramesImmediately(frames, in: splitView)
         let dividers = dividerFramesForOrder(displayedVisibleOrder, visibleFrames: frames, size: splitView.bounds.size)
         updateDividerFrames(dividers, animated: false, in: splitView)
         reportFrames(in: splitView)
