@@ -1976,7 +1976,12 @@ struct AgentPaneView: View {
                             .environment(\.agentChatLayoutWidth, markdownContentWidth)
                             .environment(\.agentChatPaneStructureTransitionActive, isPaneWidthMotionActive)
                             .padding(.top, store.messages.isEmpty ? 22 : 0)
-                            .frame(maxWidth: .infinity, alignment: .topLeading)
+                            // A held offscreen renderer may be wider than the pane,
+                            // but it must never establish the scroll document width.
+                            .frame(
+                                width: railOnly ? ContentRailMetrics.readableWidth : liveAvailableWidth,
+                                alignment: .topLeading
+                            )
                         }
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .clipped()
@@ -5287,13 +5292,12 @@ private struct AgentMessageMarkdownText: View {
                         }
                     }
                 )
-                // The renderer itself must accept the live reading-column
-                // proposal. A flexible outer row alone leaves WKWebView at its
-                // previous intrinsic width after the chat pane resizes.
-                .frame(maxWidth: .infinity, alignment: .leading)
-                // A visible row takes the real parent proposal (nil width), so
-                // it cannot feed a stale cached width back into the chat pane.
+                // Keep an offscreen WebView at its settled width without letting
+                // that fixed child establish the scroll document's minimum width.
                 .frame(width: heldOffscreenRendererWidth, alignment: .leading)
+                // The outer row always accepts the live parent proposal. Visible
+                // renderers use it directly; held offscreen renderers are clipped.
+                .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
                 .allowsHitTesting(finalizedRendererReady)
                 .accessibilityHidden(!finalizedRendererReady)
                 .opacity(finalizedRendererReady ? 1 : 0.01)
@@ -5309,7 +5313,7 @@ private struct AgentMessageMarkdownText: View {
                     .zIndex(1)
             }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
         .clipped()
         .background {
             AgentScrollViewportVisibilityProbe { visible in
