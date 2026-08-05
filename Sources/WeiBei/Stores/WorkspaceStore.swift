@@ -12306,9 +12306,10 @@ final class WorkspaceStore: ObservableObject {
     }
 
     var lastRegeneratableAgentReplyID: UUID? {
-        guard !isAgentRunningInActiveChat,
+        guard !isAskingAgent,
               !isStoppingAgent,
               let reply = messages.last,
+              reply.completionState == .completed,
               reply.isUsableAgentAnswer,
               messages.dropLast().last?.role == .user else { return nil }
         return reply.id

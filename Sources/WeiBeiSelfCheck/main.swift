@@ -4165,6 +4165,9 @@ expect(notesAgentSource.contains(".overlay(alignment: isUser ? .bottomTrailing :
     && notesAgentSource.contains("store.regenerateLastAssistantReply()")
     && notesAgentSource.contains("isAgentHistoryRevealButtonHovered"),
     "message copy, last-reply regeneration, and history reveal polish stay in non-layout-changing overlays and existing controls")
+expect(workspaceStoreSource.contains("guard !isAskingAgent,")
+    && workspaceStoreSource.contains("reply.completionState == .completed,"),
+    "regeneration is offered only for a completed reply while no Chat is running")
 if let requestStart = workspaceStoreSource.range(of: "private func performAgentRequest(")?.lowerBound,
    let executionStart = workspaceStoreSource.range(of: "private func executeStudyAgentRequest")?.lowerBound {
     let requestSource = String(workspaceStoreSource[requestStart..<executionStart])
