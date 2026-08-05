@@ -388,7 +388,10 @@ const slashExcludedAncestors = new Set(['list_item', 'task_list_item', 'table', 
  * Returns slash context only when `/` begins an otherwise blank editable line.
  *
  * Zero-width placeholders are tolerated because ProseMirror can retain them in
- * a visually blank paragraph while a composition session finishes.
+ * a visually blank paragraph while a composition session finishes.  Paragraphs
+ * that contain inline nodes (images, etc.) are rejected \u2014 textContent excludes
+ * them, so without this check an image followed by "/" would be mistaken for a
+ * blank Slash line and replaced wholesale.
  */
 const slashContextForView = (view) => {
   if (!isEditable || view.composing) return null;
@@ -397,6 +400,9 @@ const slashContextForView = (view) => {
   const { $from } = selection;
   if ($from.parent.type.name !== 'paragraph' || $from.parentOffset !== $from.parent.content.size) return null;
   for (let depth = $from.depth; depth > 0; depth -= 1) if (slashExcludedAncestors.has($from.node(depth).type.name)) return null;
+  let hasInlineNode = false;
+  $from.parent.content.forEach((node) => { if (!node.isText) hasInlineNode = true; });
+  if (hasInlineNode) return null;
   const source = $from.parent.textContent || '';
   const match = source.match(/^[\u200B\uFEFF]*\/([^\s/]*)$/u);
   if (!match) return null;

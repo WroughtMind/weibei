@@ -1623,6 +1623,29 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
         webView.evaluateJavaScript(script) { [weak self] value, error in
             guard let self else { return }
             guard error == nil, value as? Bool == true, self.imagePickerRequests >= 2 else { self.fail("slash image lifecycle failed: \(String(describing: error)); requests=\(self.imagePickerRequests)"); return }
+            self.validateSlashImageInlineRejection()
+        }
+    }
+
+    /// Verifies that an inline image followed by "/" does NOT trigger a Slash menu,
+    /// and that attempting to execute a command leaves the Markdown and image intact.
+    private func validateSlashImageInlineRejection() {
+        let script = """
+        (() => {
+          window.WeiBeiEditor.setDocumentID('slash-image-inline');
+          window.WeiBeiEditor.setMarkdown('![icon](assets/weibei.svg) /');
+          if (window.WeiBeiEditor.openSlashMenuForCheck()) throw new Error('slash menu opened after an inline image + /');
+          const before = window.WeiBeiEditor.getMarkdown();
+          if (!before.includes('![icon](assets/weibei.svg)')) throw new Error('image reference missing before command attempt: ' + before);
+          window.WeiBeiEditor.executeSlashCommandForCheck('quote');
+          const after = window.WeiBeiEditor.getMarkdown();
+          if (after !== before) throw new Error('command replaced the paragraph and lost the image: ' + JSON.stringify({ before, after }));
+          return true;
+        })();
+        """
+        webView.evaluateJavaScript(script) { [weak self] value, error in
+            guard let self else { return }
+            guard error == nil, value as? Bool == true else { self.fail("inline image slash rejection failed: \(String(describing: error)); \(String(describing: value))"); return }
             self.validateSlashCodeBlockTypingStability()
         }
     }
