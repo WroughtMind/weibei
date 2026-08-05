@@ -3877,7 +3877,7 @@ expect(workspaceStoreSource.contains("@Published var selectionAttachments: [Sele
     && workspaceStoreSource.contains("let maxAttachments = 8")
     && workspaceStoreSource.contains("private func currentAgentSelections(")
     && workspaceStoreSource.contains("allowedItemIDs.contains(itemID)")
-    && workspaceStoreSource.contains("if selectionAttachments.isEmpty,\n           let selectionContext,"), "agent selection context uses removable attachments, falls back to live selection, and attaches before send")
+    && workspaceStoreSource.contains("if replayingSelections == nil,\n           selectionAttachments.isEmpty,\n           let selectionContext,"), "agent selection context uses removable attachments, falls back to live selection, and attaches before send")
 expect(workspaceStoreSource.contains("selectionTitle: sentSelectionTitle")
     && workspaceStoreSource.contains("selectionText: sentSelectionText")
     && workspaceStoreSource.contains("selectionSources: sentSelectionSources")
@@ -4149,7 +4149,31 @@ expect(workspaceStoreSource.contains("restoreAgentReplyState(from: session)")
     && notesAgentSource.contains("question: message.retryQuestion")
     && notesAgentSource.contains("store.retryAgentRequest(question)")
     && notesAgentSource.contains("store.agentDraft = question"), "switching Chats restores that Chat reply state and each failure bubble retries or restores its own question")
-if let requestStart = workspaceStoreSource.range(of: "private func performAgentRequest(target:")?.lowerBound,
+if let regenerationStart = workspaceStoreSource.range(of: "func regenerateLastAssistantReply()")?.lowerBound,
+   let regenerationEnd = workspaceStoreSource.range(of: "func canRetryAgentRequest", range: regenerationStart..<workspaceStoreSource.endIndex)?.lowerBound {
+    let regenerationSource = String(workspaceStoreSource[regenerationStart..<regenerationEnd])
+    expect(regenerationSource.contains("messages.removeLast()")
+        && regenerationSource.contains("messageIDs.removeAll { $0 == replyID }")
+        && regenerationSource.contains("$0.messageIDs.contains(questionMessage.id)")
+        && regenerationSource.contains("replayingSelections: replayingSelections")
+        && regenerationSource.contains("replayingCourseID: reply.origin?.courseID"),
+        "regenerating replaces the last reply and replays its saved selection thread through the existing send path")
+} else {
+    expect(false, "agent regeneration source is readable")
+}
+expect(notesAgentSource.contains(".overlay(alignment: .bottomLeading)")
+    && notesAgentSource.contains("if !isUser {")
+    && notesAgentSource.contains(".buttonStyle(.plain)")
+    && notesAgentSource.contains(".accessibilityAction(named: Text(store.ui(\"复制消息\"")
+    && notesAgentSource.contains("AgentCitationParser.parse(message.text).displayText")
+    && notesAgentSource.contains("message.id == store.lastRegeneratableAgentReplyID")
+    && notesAgentSource.contains("store.regenerateLastAssistantReply()")
+    && notesAgentSource.contains("isAgentHistoryRevealButtonHovered"),
+    "user-bubble copy, bare assistant actions, last-reply regeneration, and history reveal polish stay in existing message controls")
+expect(workspaceStoreSource.contains("guard !isAskingAgent,")
+    && workspaceStoreSource.contains("reply.completionState == .completed,"),
+    "regeneration is offered only for a completed reply while no Chat is running")
+if let requestStart = workspaceStoreSource.range(of: "private func performAgentRequest(")?.lowerBound,
    let executionStart = workspaceStoreSource.range(of: "private func executeStudyAgentRequest")?.lowerBound {
     let requestSource = String(workspaceStoreSource[requestStart..<executionStart])
     expect(requestSource.contains("guard !Task.isCancelled, activeStudySessionID == target.sessionID")
@@ -4160,13 +4184,16 @@ if let requestStart = workspaceStoreSource.range(of: "private func performAgentR
         && requestSource.contains("selectionAttachments.removeAll")
         && requestSource.contains("let projectAccess = makeAgentProjectAccessSnapshot(target: target)")
         && requestSource.contains("let allowedItemIDs = Set(projectAccess.sources.map(\\.item.id))")
-        && requestSource.contains("let sentMaterialItem = agentFocusMaterialItem(for: target)")
-        && requestSource.contains("let sentNoteItem = agentFocusNoteItem(for: target)")
+        && requestSource.contains("?? agentFocusMaterialItem(for: target)")
+        && requestSource.contains("?? agentFocusNoteItem(for: target)")
         && requestSource.contains("let focusAllowedItemIDs = allowedItemIDs.union")
+        && requestSource.contains("replayingSelections.map { selections in")
         && requestSource.contains("currentAgentSelections(allowedItemIDs: focusAllowedItemIDs)")
         && requestSource.contains("let shouldClearSentDocumentSelection = sentSelections.contains")
         && requestSource.contains("clearUnpinnedFloatingSelection(keepContext: false, invalidatesAgentContext: false)")
         && requestSource.contains("let userMessage = AgentMessage(role: .user, text: question, source: sourceTitle)")
+        && requestSource.contains("var didAppendUserMessage = reusingLastUserMessage")
+        && requestSource.contains("if !reusingLastUserMessage {")
         && requestSource.contains("flushPendingWorkspaceSaveAsync()")
         && requestSource.contains("let sentLearningContext = makeLearningContext(target: target)")
         && requestSource.contains("let courseBuild = try await makeCourseContext(")

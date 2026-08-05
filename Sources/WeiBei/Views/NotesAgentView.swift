@@ -1841,6 +1841,7 @@ struct AgentPaneView: View {
     /// back re-enters the LazyVStack remount storm this pane was cured of.
     @State private var agentVisibleMessageLimit = AgentPaneView.agentHistoryPageSize
     @State private var isRevealingEarlierAgentHistory = false
+    @State private var isAgentHistoryRevealButtonHovered = false
 
     private static let agentHistoryPageSize = AgentHistoryRevealPolicy.pageSize
     private static let paneStructureTransitionDuration: TimeInterval = 0.24
@@ -1930,6 +1931,7 @@ struct AgentPaneView: View {
                             VStack(alignment: .leading, spacing: comfy ? 22 : 12) {
                                 if hiddenAgentHistoryCount > 0 {
                                     agentHistoryRevealButton(proxy: proxy)
+                                        .transition(WeiBeiTransition.message)
                                 }
                                 ForEach(visibleAgentMessages) { message in
                                     agentMessageRow(
@@ -2444,13 +2446,28 @@ struct AgentPaneView: View {
         return Button {
             revealEarlierAgentHistory(proxy: proxy)
         } label: {
-            Text(store.ui("查看更早的 \(revealCount) 条消息", "Show \(revealCount) earlier messages"))
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(WeiBeiTheme.link)
+            HStack(spacing: 6) {
+                Image(systemName: "chevron.up")
+                    .font(.system(size: 9, weight: .semibold))
+                Text(store.ui("查看更早的 \(revealCount) 条消息", "Show \(revealCount) earlier messages"))
+                    .font(.system(size: 12, weight: .medium))
+            }
+                .foregroundStyle(isAgentHistoryRevealButtonHovered ? WeiBeiTheme.link : WeiBeiTheme.secondaryInk)
                 .padding(.vertical, 6)
                 .padding(.horizontal, 12)
+                .background {
+                    Capsule()
+                        .fill(WeiBeiTheme.paperInset.opacity(isAgentHistoryRevealButtonHovered ? 0.42 : 0.24))
+                }
+                .overlay {
+                    Capsule()
+                        .stroke(WeiBeiTheme.hairline.opacity(isAgentHistoryRevealButtonHovered ? 0.72 : 0.44), lineWidth: 1)
+                }
         }
         .buttonStyle(.plain)
+        .scaleEffect(isAgentHistoryRevealButtonHovered ? 1.015 : 1)
+        .animation(reduceMotion ? nil : WeiBeiMotion.hover, value: isAgentHistoryRevealButtonHovered)
+        .onHover { isAgentHistoryRevealButtonHovered = $0 }
         .frame(maxWidth: .infinity, alignment: .center)
     }
 
@@ -3433,6 +3450,7 @@ private struct AgentBubble: View {
     var message: AgentMessage
     var isChatWideTypography = false
     @State private var hovering = false
+    @State private var copiedMessage = false
     /// True only if this bubble streamed in the current session — history rows
     /// mount straight into the finalized renderer with no handoff.
     @State private var sawStreamingThisSession = false
@@ -3453,10 +3471,69 @@ private struct AgentBubble: View {
                 assistantTurn
             }
         }
+        .overlay(alignment: .bottomLeading) {
+            if !isUser {
+                messageActionBar
+                    .offset(x: 16, y: 16)
+            }
+        }
         .onHover { hovering in
+            guard !isUser else { return }
             withAnimation(WeiBeiMotion.hover) {
                 self.hovering = hovering
             }
+        }
+        .task(id: copiedMessage) {
+            guard copiedMessage else { return }
+            try? await Task.sleep(nanoseconds: 1_200_000_000)
+            copiedMessage = false
+        }
+    }
+
+    private var messageActionBar: some View {
+        HStack(spacing: 5) {
+            Button {
+                copyMessage()
+            } label: {
+                Image(systemName: copiedMessage ? "checkmark" : "doc.on.doc")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(copiedMessage ? WeiBeiTheme.cinnabar : WeiBeiTheme.secondaryInk)
+                    .frame(width: 24, height: 24)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help(store.ui(copiedMessage ? "已复制" : "复制消息", copiedMessage ? "Copied" : "Copy message"))
+            .accessibilityLabel(store.ui(copiedMessage ? "已复制" : "复制消息", copiedMessage ? "Copied" : "Copy message"))
+
+            if message.id == store.lastRegeneratableAgentReplyID {
+                Button {
+                    store.regenerateLastAssistantReply()
+                } label: {
+                    Image(systemName: "arrow.clockwise")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(WeiBeiTheme.secondaryInk)
+                        .frame(width: 24, height: 24)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help(store.ui("重新生成最后一条回答", "Regenerate last response"))
+                .accessibilityLabel(store.ui("重新生成最后一条回答", "Regenerate last response"))
+            }
+        }
+        .opacity(hovering ? 1 : 0)
+        .offset(y: hovering ? 0 : -1)
+        .allowsHitTesting(hovering)
+        .animation(reduceMotion ? nil : WeiBeiMotion.hover, value: hovering)
+    }
+
+    private func copyMessage() {
+        let markdown = isUser
+            ? message.text
+            : AgentCitationParser.parse(message.text).displayText
+        guard !markdown.isEmpty else { return }
+        NSPasteboard.general.clearContents()
+        if NSPasteboard.general.setString(markdown, forType: .string) {
+            copiedMessage = true
         }
     }
 
@@ -3486,9 +3563,24 @@ private struct AgentBubble: View {
                         y: hovering ? 2 : 1.2
                     )
             }
+            .contentShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+            .onTapGesture {
+                copyMessage()
+            }
+            .help(store.ui(copiedMessage ? "已复制" : "点击复制消息", copiedMessage ? "Copied" : "Click to copy message"))
+            .accessibilityLabel(message.text)
+            .accessibilityAddTraits(.isButton)
+            .accessibilityAction(named: Text(store.ui("复制消息", "Copy message"))) {
+                copyMessage()
+            }
+            .weibeiHoverLift(active: hovering || copiedMessage, amount: 0.6)
+            .onHover { value in
+                withAnimation(WeiBeiMotion.hover) {
+                    hovering = value
+                }
+            }
             .frame(maxWidth: 520, alignment: .trailing)
         }
-        .weibeiHoverLift(active: hovering, amount: 0.6)
         .frame(maxWidth: .infinity, alignment: .trailing)
     }
 
@@ -3500,7 +3592,10 @@ private struct AgentBubble: View {
     }
 
     private var userBubbleStroke: Color {
-        store.appearanceMode.isDark
+        if copiedMessage {
+            return WeiBeiTheme.cinnabar.opacity(0.52)
+        }
+        return store.appearanceMode.isDark
             ? WeiBeiTheme.hairline.opacity(hovering ? 0.58 : 0.42)
             : WeiBeiTheme.hairline.opacity(hovering ? 0.52 : 0.38)
     }

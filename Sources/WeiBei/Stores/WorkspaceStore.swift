@@ -12305,6 +12305,16 @@ final class WorkspaceStore: ObservableObject {
         lastUsableAgentAnswer?.id
     }
 
+    var lastRegeneratableAgentReplyID: UUID? {
+        guard !isAskingAgent,
+              !isStoppingAgent,
+              let reply = messages.last,
+              reply.completionState == .completed,
+              reply.isUsableAgentAnswer,
+              messages.dropLast().last?.role == .user else { return nil }
+        return reply.id
+    }
+
     var canReplaceNoteSelection: Bool {
         canApplyAgentAnswer && selectionContext?.isReplaceableNoteSelection == true
     }
@@ -18822,7 +18832,8 @@ final class WorkspaceStore: ObservableObject {
                 cancelPendingSelectionAttachment()
                 addSelectionAttachment(context)
                 floatingSelectionPrompt = context.label(language: interfaceLanguage)
-                _ = beginOrReuseSelectionAskThread(for: context)
+                let thread = beginOrReuseSelectionAskThread(for: context)
+                activeSelectionAskThreadID = thread.id
             }
             // Prefer keeping float if user is mid answer; otherwise collapse into chat.
             if !keepFloatingSelectionForAnswer, agentSurface == .selectionFloat {
@@ -19227,6 +19238,7 @@ final class WorkspaceStore: ObservableObject {
             source: .document,
             ownerTitle: currentSourceReferenceTitle
         )
+        routeSelectionToConversation()
         recordVerificationStage("context-prepared")
         let continuityToken = ui("玉兰七号", "Magnolia Seven")
         agentDraft = scenario == "pi-learning-flow"
@@ -22694,7 +22706,11 @@ final class WorkspaceStore: ObservableObject {
         }
     }
 
-    func askAgent() {
+    func askAgent(
+        reusingLastUserMessage: Bool = false,
+        replayingSelections: [SelectionContext]? = nil,
+        replayingCourseID: UUID? = nil
+    ) {
         flushStagedNoteDraftForAgentContext()
         guard agentRequestTask == nil,
               !isStoppingAgent,
@@ -22703,13 +22719,28 @@ final class WorkspaceStore: ObservableObject {
         let question = agentDraft.trimmingCharacters(in: .whitespacesAndNewlines)
         let target: AgentConversationTarget
         do {
-            target = try agentConversationTarget()
+            if reusingLastUserMessage, let session = activeStudySession {
+                target = try makeAgentConversationTarget(
+                    sessionID: session.id,
+                    courseID: replayingCourseID
+                )
+            } else {
+                target = try agentConversationTarget()
+            }
         } catch {
-            recordAgentTargetFailure(question: question, error: error)
+            recordAgentTargetFailure(
+                question: question,
+                error: error,
+                appendUserMessage: !reusingLastUserMessage
+            )
             return
         }
         agentRequestTask = Task { @MainActor [weak self] in
-            await self?.performAgentRequest(target: target)
+            await self?.performAgentRequest(
+                target: target,
+                reusingLastUserMessage: reusingLastUserMessage,
+                replayingSelections: replayingSelections
+            )
         }
     }
 
@@ -22832,7 +22863,11 @@ final class WorkspaceStore: ObservableObject {
         }
     }
 
-    private func recordAgentTargetFailure(question: String, error: Error) {
+    private func recordAgentTargetFailure(
+        question: String,
+        error: Error,
+        appendUserMessage: Bool = true
+    ) {
         ensureActiveStudySession()
         guard let session = activeStudySession else { return }
         let requestID = UUID()
@@ -22841,9 +22876,11 @@ final class WorkspaceStore: ObservableObject {
         lastFailedAgentQuestion = question
         agentDraftsBySessionID[session.id] = question
         focusedPane = .agent
-        let userMessage = AgentMessage(role: .user, text: question, source: sourceTitle)
-        appendAgentMessage(userMessage)
-        appendMessageToActiveSelectionAskThread(userMessage.id)
+        if appendUserMessage {
+            let userMessage = AgentMessage(role: .user, text: question, source: sourceTitle)
+            appendAgentMessage(userMessage)
+            appendMessageToActiveSelectionAskThread(userMessage.id)
+        }
         let assistantMessage = AgentMessage(
             role: .assistant,
             text: AgentFailureKind.generic.userMessage(
@@ -22920,7 +22957,11 @@ final class WorkspaceStore: ObservableObject {
         }
     }
 
-    private func performAgentRequest(target: AgentConversationTarget) async {
+    private func performAgentRequest(
+        target: AgentConversationTarget,
+        reusingLastUserMessage: Bool = false,
+        replayingSelections: [SelectionContext]? = nil
+    ) async {
         guard !Task.isCancelled, activeStudySessionID == target.sessionID else {
             agentRequestTask = nil
             return
@@ -22931,17 +22972,30 @@ final class WorkspaceStore: ObservableObject {
             agentRequestTask = nil
             return
         }
+        if reusingLastUserMessage {
+            guard let userMessage = messages.last,
+                  userMessage.role == .user,
+                  userMessage.text.trimmingCharacters(in: .whitespacesAndNewlines) == question else {
+                agentRequestTask = nil
+                return
+            }
+        }
         do {
             try validateAgentConversationTarget(target, mustBeActive: true)
         } catch {
-            recordAgentTargetFailure(question: question, error: error)
+            recordAgentTargetFailure(
+                question: question,
+                error: error,
+                appendUserMessage: !reusingLastUserMessage
+            )
             agentRequestTask = nil
             return
         }
 
         persistCurrentNote()
         // Ensure live document selection is attached before we snapshot context for the request.
-        if selectionAttachments.isEmpty,
+        if replayingSelections == nil,
+           selectionAttachments.isEmpty,
            let selectionContext,
            !selectionContext.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             addSelectionAttachment(selectionContext)
@@ -22949,12 +23003,30 @@ final class WorkspaceStore: ObservableObject {
         let projectAccess = makeAgentProjectAccessSnapshot(target: target)
         let allowedItemIDs = Set(projectAccess.sources.map(\.item.id))
         // Focus materials/notes do not require project-file grants (legacyExternal etc.).
-        let sentMaterialItem = agentFocusMaterialItem(for: target)
-        let sentNoteItem = agentFocusNoteItem(for: target)
+        let replayMaterialItemID = replayingSelections?
+            .first(where: { $0.source == .document })?
+            .itemID
+        let replayNoteItemID = replayingSelections?
+            .first(where: { $0.source == .note })?
+            .itemID
+        let sentMaterialItem = replayMaterialItemID
+            .flatMap { itemID in allItems.first(where: { $0.id == itemID }) }
+            ?? agentFocusMaterialItem(for: target)
+        let sentNoteItem = replayNoteItemID
+            .flatMap { itemID in allItems.first(where: { $0.id == itemID }) }
+            ?? agentFocusNoteItem(for: target)
         let focusAllowedItemIDs = allowedItemIDs.union(
             [sentMaterialItem?.id, sentNoteItem?.id].compactMap { $0 }
+        ).union(
+            (replayingSelections ?? []).compactMap(\.itemID)
         )
-        let sentSelections = currentAgentSelections(allowedItemIDs: focusAllowedItemIDs)
+        let sentSelections = replayingSelections.map { selections in
+            selections.filter { selection in
+                guard !selection.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                      let itemID = selection.itemID else { return false }
+                return focusAllowedItemIDs.contains(itemID)
+            }
+        } ?? currentAgentSelections(allowedItemIDs: focusAllowedItemIDs)
         let sentSelectionTitle = agentSelectionTitle(from: sentSelections)
         let sentSelectionText = agentSelectionText(from: sentSelections)
         let sentSelectionSources = agentSelectionSources(from: sentSelections)
@@ -23022,13 +23094,15 @@ final class WorkspaceStore: ObservableObject {
             }
         }
 
-        var didAppendUserMessage = false
+        var didAppendUserMessage = reusingLastUserMessage
         var replyMessageID: UUID?
         do {
-            let userMessage = AgentMessage(role: .user, text: question, source: sourceTitle)
-            appendAgentMessage(userMessage)
-            appendMessageToActiveSelectionAskThread(userMessage.id)
-            didAppendUserMessage = true
+            if !reusingLastUserMessage {
+                let userMessage = AgentMessage(role: .user, text: question, source: sourceTitle)
+                appendAgentMessage(userMessage)
+                appendMessageToActiveSelectionAskThread(userMessage.id)
+                didAppendUserMessage = true
+            }
             if let courseID = target.courseID {
                 _ = captureCourseResumePoint(
                     courseID: courseID,
@@ -23412,6 +23486,50 @@ final class WorkspaceStore: ObservableObject {
         lastFailedAgentQuestion = nil
         lastAgentFailureKind = nil
         submitAgentDraft()
+    }
+
+    func regenerateLastAssistantReply() {
+        guard let replyID = lastRegeneratableAgentReplyID,
+              let sessionID = activeStudySessionID,
+              let reply = messages.last,
+              let questionMessage = messages.dropLast().last else { return }
+        let question = questionMessage.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !question.isEmpty else { return }
+        let replayThread = selectionAskThreads.first {
+            $0.messageIDs.contains(questionMessage.id)
+        }
+        let replayingSelections = replayThread.map { thread in
+            [
+                SelectionContext(
+                    id: thread.id,
+                    text: thread.selectionText,
+                    source: thread.source,
+                    ownerTitle: thread.ownerTitle,
+                    itemID: thread.itemID,
+                    isEditable: thread.source == .note
+                ),
+            ]
+        } ?? []
+
+        messages.removeLast()
+        selectionAskThreads.indices.forEach {
+            selectionAskThreads[$0].messageIDs.removeAll { $0 == replyID }
+        }
+        syncActiveStudySession()
+        if let session = studySessions.first(where: { $0.id == sessionID }) {
+            restoreAgentReplyState(from: session)
+        }
+        agentDraft = question
+        agentDraftsBySessionID[sessionID] = question
+        lastFailedAgentQuestion = nil
+        lastAgentFailureKind = nil
+        activeSelectionAskThreadID = replayThread?.id
+        save()
+        askAgent(
+            reusingLastUserMessage: true,
+            replayingSelections: replayingSelections,
+            replayingCourseID: reply.origin?.courseID
+        )
     }
 
     func canRetryAgentRequest(question: String?, failureKind: AgentFailureKind?) -> Bool {
