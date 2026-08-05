@@ -127,6 +127,17 @@ enum ImportedIdentitySelfCheck {
             !store.showAgent,
             "Chat 入口连续点击后状态错误"
         )
+        store.selectionContext = SelectionContext(
+            text: "开关自检选区",
+            source: .document,
+            ownerTitle: material.title,
+            itemID: material.id
+        )
+        store.toggleAgent()
+        try check(store.showAgent, "存在选区时，Chat 入口第一次点击没有打开栏位")
+        store.toggleAgent()
+        try check(!store.showAgent, "存在选区时，Chat 入口第二次点击没有关闭栏位")
+        store.selectionContext = nil
         for click in 1...6 {
             store.toggleNotes()
             try check(
@@ -141,6 +152,20 @@ enum ImportedIdentitySelfCheck {
 
         store.openContextualItem(material.id, kind: .material)
         store.openContextualItem(note.id, kind: .note)
+        for click in 1...4 {
+            store.toggleReader()
+            try check(
+                store.showReader == click.isMultiple(of: 2),
+                "已有文稿—笔记配对时，文稿入口第 \(click) 次点击没有切换栏位"
+            )
+        }
+        for click in 1...4 {
+            store.toggleNotes()
+            try check(
+                store.showNotes == click.isMultiple(of: 2),
+                "已有文稿—笔记配对时，笔记入口第 \(click) 次点击没有切换栏位"
+            )
+        }
         store.showContextualBrowser(.note)
         try check(
             store.activeNoteItem == nil

@@ -13505,14 +13505,16 @@ final class WorkspaceStore: ObservableObject {
     }
 
     func toggleReader() {
-        if !showReader {
-            prepareMaterialForOpening()
-        }
+        let isOpening = !isPaneToggleActive(.reader)
         toggleDocumentPane(.reader)
+        if isOpening {
+            prepareMaterialForOpening()
+            save()
+        }
     }
 
     func toggleAgent() {
-        if selectionContext != nil {
+        if !isPaneToggleActive(.agent), selectionContext != nil {
             recordNavigationPoint()
             revealDocumentPane(.agent, clearSelection: false)
             routeSelectionToConversation()
@@ -13523,10 +13525,12 @@ final class WorkspaceStore: ObservableObject {
     }
 
     func toggleNotes() {
-        if !showNotes {
-            prepareNoteForOpening()
-        }
+        let isOpening = !isPaneToggleActive(.notes)
         toggleDocumentPane(.notes)
+        if isOpening {
+            prepareNoteForOpening()
+            save()
+        }
     }
 
     func showContextualBrowser(_ kind: ContextualContentKind) {
