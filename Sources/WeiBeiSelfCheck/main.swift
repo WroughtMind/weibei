@@ -5901,6 +5901,7 @@ let rawAttachment = try MarkdownAttachmentStore.save(
 expect(rawAttachment.src == ".weibei-assets/dragged.webp", "raw image data save keeps image extension")
 expect(MarkdownAttachmentStore.isSupportedImageExtension("HEIC"), "image extension check is case insensitive")
 expect(MarkdownAttachmentStore.mimeType(forFileExtension: "jpeg") == "image/jpeg", "mime from extension")
+expect(MarkdownAttachmentStore.isSupportedImageExtension("TIF") && MarkdownAttachmentStore.mimeType(forFileExtension: "tif") == "image/tiff" && MarkdownAttachmentStore.fileExtension(originalName: "scan.tif", mime: "image/tiff") == "tif", "TIFF images keep their .tif extension and MIME type")
 let blockInsert = MarkdownBlockInsertion.insert(
     "![pasted](Attachments/pasted.png)",
     into: "来源：课程 HTML",
