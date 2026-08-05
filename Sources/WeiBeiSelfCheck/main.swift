@@ -4161,12 +4161,15 @@ if let regenerationStart = workspaceStoreSource.range(of: "func regenerateLastAs
 } else {
     expect(false, "agent regeneration source is readable")
 }
-expect(notesAgentSource.contains(".overlay(alignment: isUser ? .bottomTrailing : .bottomLeading)")
+expect(notesAgentSource.contains(".overlay(alignment: .bottomLeading)")
+    && notesAgentSource.contains("if !isUser {")
+    && notesAgentSource.contains(".buttonStyle(.plain)")
+    && notesAgentSource.contains(".accessibilityAction(named: Text(store.ui(\"复制消息\"")
     && notesAgentSource.contains("AgentCitationParser.parse(message.text).displayText")
     && notesAgentSource.contains("message.id == store.lastRegeneratableAgentReplyID")
     && notesAgentSource.contains("store.regenerateLastAssistantReply()")
     && notesAgentSource.contains("isAgentHistoryRevealButtonHovered"),
-    "message copy, last-reply regeneration, and history reveal polish stay in non-layout-changing overlays and existing controls")
+    "user-bubble copy, bare assistant actions, last-reply regeneration, and history reveal polish stay in existing message controls")
 expect(workspaceStoreSource.contains("guard !isAskingAgent,")
     && workspaceStoreSource.contains("reply.completionState == .completed,"),
     "regeneration is offered only for a completed reply while no Chat is running")

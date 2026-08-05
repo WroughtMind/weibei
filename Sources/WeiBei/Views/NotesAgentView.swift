@@ -3471,11 +3471,14 @@ private struct AgentBubble: View {
                 assistantTurn
             }
         }
-        .overlay(alignment: isUser ? .bottomTrailing : .bottomLeading) {
-            messageActionBar
-                .offset(x: isUser ? -8 : 16, y: 16)
+        .overlay(alignment: .bottomLeading) {
+            if !isUser {
+                messageActionBar
+                    .offset(x: 16, y: 16)
+            }
         }
         .onHover { hovering in
+            guard !isUser else { return }
             withAnimation(WeiBeiMotion.hover) {
                 self.hovering = hovering
             }
@@ -3488,13 +3491,17 @@ private struct AgentBubble: View {
     }
 
     private var messageActionBar: some View {
-        HStack(spacing: 1) {
+        HStack(spacing: 5) {
             Button {
                 copyMessage()
             } label: {
                 Image(systemName: copiedMessage ? "checkmark" : "doc.on.doc")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(copiedMessage ? WeiBeiTheme.cinnabar : WeiBeiTheme.secondaryInk)
+                    .frame(width: 24, height: 24)
+                    .contentShape(Rectangle())
             }
-            .buttonStyle(WeiBeiIconButtonStyle(active: copiedMessage, size: 20))
+            .buttonStyle(.plain)
             .help(store.ui(copiedMessage ? "已复制" : "复制消息", copiedMessage ? "Copied" : "Copy message"))
             .accessibilityLabel(store.ui(copiedMessage ? "已复制" : "复制消息", copiedMessage ? "Copied" : "Copy message"))
 
@@ -3503,24 +3510,18 @@ private struct AgentBubble: View {
                     store.regenerateLastAssistantReply()
                 } label: {
                     Image(systemName: "arrow.clockwise")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(WeiBeiTheme.secondaryInk)
+                        .frame(width: 24, height: 24)
+                        .contentShape(Rectangle())
                 }
-                .buttonStyle(WeiBeiIconButtonStyle(size: 20))
+                .buttonStyle(.plain)
                 .help(store.ui("重新生成最后一条回答", "Regenerate last response"))
                 .accessibilityLabel(store.ui("重新生成最后一条回答", "Regenerate last response"))
             }
         }
-        .padding(2)
-        .background {
-            Capsule()
-                .fill(WeiBeiTheme.paperRaised.opacity(0.96))
-        }
-        .overlay {
-            Capsule()
-                .stroke(WeiBeiTheme.hairline.opacity(0.62), lineWidth: 1)
-        }
-        .shadow(color: WeiBeiTheme.ink.opacity(0.08), radius: 5, y: 2)
         .opacity(hovering ? 1 : 0)
-        .scaleEffect(hovering ? 1 : 0.96)
+        .offset(y: hovering ? 0 : -1)
         .allowsHitTesting(hovering)
         .animation(reduceMotion ? nil : WeiBeiMotion.hover, value: hovering)
     }
@@ -3562,9 +3563,24 @@ private struct AgentBubble: View {
                         y: hovering ? 2 : 1.2
                     )
             }
+            .contentShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+            .onTapGesture {
+                copyMessage()
+            }
+            .help(store.ui(copiedMessage ? "已复制" : "点击复制消息", copiedMessage ? "Copied" : "Click to copy message"))
+            .accessibilityLabel(message.text)
+            .accessibilityAddTraits(.isButton)
+            .accessibilityAction(named: Text(store.ui("复制消息", "Copy message"))) {
+                copyMessage()
+            }
+            .weibeiHoverLift(active: hovering || copiedMessage, amount: 0.6)
+            .onHover { value in
+                withAnimation(WeiBeiMotion.hover) {
+                    hovering = value
+                }
+            }
             .frame(maxWidth: 520, alignment: .trailing)
         }
-        .weibeiHoverLift(active: hovering, amount: 0.6)
         .frame(maxWidth: .infinity, alignment: .trailing)
     }
 
@@ -3576,7 +3592,10 @@ private struct AgentBubble: View {
     }
 
     private var userBubbleStroke: Color {
-        store.appearanceMode.isDark
+        if copiedMessage {
+            return WeiBeiTheme.cinnabar.opacity(0.52)
+        }
+        return store.appearanceMode.isDark
             ? WeiBeiTheme.hairline.opacity(hovering ? 0.58 : 0.42)
             : WeiBeiTheme.hairline.opacity(hovering ? 0.52 : 0.38)
     }
