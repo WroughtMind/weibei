@@ -3877,7 +3877,7 @@ expect(workspaceStoreSource.contains("@Published var selectionAttachments: [Sele
     && workspaceStoreSource.contains("let maxAttachments = 8")
     && workspaceStoreSource.contains("private func currentAgentSelections(")
     && workspaceStoreSource.contains("allowedItemIDs.contains(itemID)")
-    && workspaceStoreSource.contains("if selectionAttachments.isEmpty,\n           let selectionContext,"), "agent selection context uses removable attachments, falls back to live selection, and attaches before send")
+    && workspaceStoreSource.contains("if replayingSelections == nil,\n           selectionAttachments.isEmpty,\n           let selectionContext,"), "agent selection context uses removable attachments, falls back to live selection, and attaches before send")
 expect(workspaceStoreSource.contains("selectionTitle: sentSelectionTitle")
     && workspaceStoreSource.contains("selectionText: sentSelectionText")
     && workspaceStoreSource.contains("selectionSources: sentSelectionSources")
@@ -4154,8 +4154,10 @@ if let regenerationStart = workspaceStoreSource.range(of: "func regenerateLastAs
     let regenerationSource = String(workspaceStoreSource[regenerationStart..<regenerationEnd])
     expect(regenerationSource.contains("messages.removeLast()")
         && regenerationSource.contains("messageIDs.removeAll { $0 == replyID }")
-        && regenerationSource.contains("askAgent(reusingLastUserMessage: true)"),
-        "regenerating replaces the last reply, removes its selection-thread link, and reuses the existing send path")
+        && regenerationSource.contains("$0.messageIDs.contains(questionMessage.id)")
+        && regenerationSource.contains("replayingSelections: replayingSelections")
+        && regenerationSource.contains("replayingCourseID: reply.origin?.courseID"),
+        "regenerating replaces the last reply and replays its saved selection thread through the existing send path")
 } else {
     expect(false, "agent regeneration source is readable")
 }
@@ -4179,9 +4181,10 @@ if let requestStart = workspaceStoreSource.range(of: "private func performAgentR
         && requestSource.contains("selectionAttachments.removeAll")
         && requestSource.contains("let projectAccess = makeAgentProjectAccessSnapshot(target: target)")
         && requestSource.contains("let allowedItemIDs = Set(projectAccess.sources.map(\\.item.id))")
-        && requestSource.contains("let sentMaterialItem = agentFocusMaterialItem(for: target)")
-        && requestSource.contains("let sentNoteItem = agentFocusNoteItem(for: target)")
+        && requestSource.contains("?? agentFocusMaterialItem(for: target)")
+        && requestSource.contains("?? agentFocusNoteItem(for: target)")
         && requestSource.contains("let focusAllowedItemIDs = allowedItemIDs.union")
+        && requestSource.contains("replayingSelections.map { selections in")
         && requestSource.contains("currentAgentSelections(allowedItemIDs: focusAllowedItemIDs)")
         && requestSource.contains("let shouldClearSentDocumentSelection = sentSelections.contains")
         && requestSource.contains("clearUnpinnedFloatingSelection(keepContext: false, invalidatesAgentContext: false)")
