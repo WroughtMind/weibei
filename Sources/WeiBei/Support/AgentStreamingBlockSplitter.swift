@@ -21,38 +21,48 @@ enum AgentStreamingBlockSplitter {
     }
 
     /// A boundary is a `\n\n` gap where everything before it has:
-    /// - an even number of ``` fences (no open code block), and
+    /// - no open backtick or tilde code fence, and
     /// - an even number of `$$` markers (no open display-math block).
     /// The last such boundary wins; without one, everything stays in the tail.
     private static func splitUnchecked(_ text: String) -> Split {
         guard !text.isEmpty else { return Split(stablePrefix: "", tail: "") }
-        var index = text.startIndex
-        var openCodeFence: String?
+        var lineStart = text.startIndex
+        var openCodeFence: (marker: Character, length: Int)?
         var displayMathOpen = false
         var lastStableEnd: String.Index?
 
-        while index < text.endIndex {
-            let remainder = text[index...]
-            if let marker = openCodeFence, remainder.hasPrefix(marker) {
-                openCodeFence = nil
-                index = text.index(index, offsetBy: 3)
-                continue
+        while lineStart < text.endIndex {
+            let newline = text[lineStart...].firstIndex(of: "\n")
+            let lineEnd = newline ?? text.endIndex
+            let line = text[lineStart..<lineEnd]
+            var handledFenceLine = false
+
+            if let candidate = codeFence(in: line) {
+                if let activeFence = openCodeFence,
+                   candidate.marker == activeFence.marker,
+                   candidate.length >= activeFence.length,
+                   candidate.trailingOnlyWhitespace {
+                    openCodeFence = nil
+                    handledFenceLine = true
+                } else if openCodeFence == nil, !displayMathOpen {
+                    openCodeFence = (candidate.marker, candidate.length)
+                    handledFenceLine = true
+                }
             }
-            if openCodeFence == nil, !displayMathOpen,
-               let marker = remainder.hasPrefix("```") ? "```" : (remainder.hasPrefix("~~~") ? "~~~" : nil) {
-                openCodeFence = marker
-                index = text.index(index, offsetBy: 3)
-                continue
+
+            if openCodeFence == nil, !handledFenceLine {
+                toggleDisplayMath(in: line, open: &displayMathOpen)
             }
-            if remainder.hasPrefix("$$"), openCodeFence == nil {
-                displayMathOpen.toggle()
-                index = text.index(index, offsetBy: 2)
-                continue
+
+            guard let newline else { break }
+            let nextLineStart = text.index(after: newline)
+            if nextLineStart < text.endIndex,
+               text[nextLineStart] == "\n",
+               openCodeFence == nil,
+               !displayMathOpen {
+                lastStableEnd = text.index(after: nextLineStart)
             }
-            if remainder.hasPrefix("\n\n"), openCodeFence == nil, !displayMathOpen {
-                lastStableEnd = text.index(index, offsetBy: 2)
-            }
-            index = text.index(after: index)
+            lineStart = nextLineStart
         }
 
         guard let stableEnd = lastStableEnd else {
@@ -62,6 +72,44 @@ enum AgentStreamingBlockSplitter {
             stablePrefix: String(text[..<stableEnd]),
             tail: String(text[stableEnd...])
         )
+    }
+
+    private static func codeFence(
+        in line: Substring
+    ) -> (marker: Character, length: Int, trailingOnlyWhitespace: Bool)? {
+        var index = line.startIndex
+        var indentation = 0
+        while index < line.endIndex, line[index] == " ", indentation < 4 {
+            indentation += 1
+            index = line.index(after: index)
+        }
+        guard indentation <= 3, index < line.endIndex else { return nil }
+        let marker = line[index]
+        guard marker == "`" || marker == "~" else { return nil }
+
+        var length = 0
+        while index < line.endIndex, line[index] == marker {
+            length += 1
+            index = line.index(after: index)
+        }
+        guard length >= 3 else { return nil }
+        if marker == "`", line[index...].contains("`") {
+            return nil
+        }
+        let trailingOnlyWhitespace = line[index...].allSatisfy { $0 == " " || $0 == "\t" }
+        return (marker, length, trailingOnlyWhitespace)
+    }
+
+    private static func toggleDisplayMath(in line: Substring, open: inout Bool) {
+        var index = line.startIndex
+        while index < line.endIndex {
+            if line[index...].hasPrefix("$$") {
+                open.toggle()
+                index = line.index(index, offsetBy: 2)
+            } else {
+                index = line.index(after: index)
+            }
+        }
     }
 
     #if DEBUG
@@ -85,6 +133,12 @@ enum AgentStreamingBlockSplitter {
             ("```swift\nlet price = \"$$\"\n```\n\n结论", "```swift\nlet price = \"$$\"\n```\n\n", "结论"),
             // 波浪线围栏与反引号围栏遵循相同边界
             ("~~~text\na\n\nb\n~~~\n\n结论", "~~~text\na\n\nb\n~~~\n\n", "结论"),
+            // 行内三反引号不是代码围栏
+            ("解释 ``` 符号。\n\n下一段", "解释 ``` 符号。\n\n", "下一段"),
+            // 行首合法内联代码也不是代码围栏
+            ("```x```\n\n下一段", "```x```\n\n", "下一段"),
+            // 四反引号不能被更短的围栏提前闭合
+            ("前文\n\n````swift\na\n```\n\nb", "前文\n\n", "````swift\na\n```\n\nb"),
         ]
         return cases.allSatisfy { input, stable, tail in
             let result = splitUnchecked(input)
