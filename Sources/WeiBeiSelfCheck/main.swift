@@ -4863,11 +4863,11 @@ expect(notesAgentSource.contains("AgentThinkingIndicator()")
     && notesAgentSource.contains("selection-float-thinking")
     && notesAgentSource.contains("Same order as immersive chat")
     && notesAgentSource.contains("WorkspaceStore.isAgentFailureMessage(message.text)")
-    && notesAgentSource.contains("floatResizeHandle")
+    && !notesAgentSource.contains("floatResizeHandle")
+    && !notesAgentSource.contains("resizeOriginWidth")
     && notesAgentSource.contains("SelectionFloatingAgentPlacement.expandedHalfWidth * 2")
-    && notesAgentSource.contains("isError ? WeiBeiTheme.cinnabar : WeiBeiTheme.cinnabar.opacity(0.76)")
     && notesAgentSource.contains(".foregroundStyle(WeiBeiTheme.cinnabar)")
-    && !notesAgentSource.contains("if message.role == .user || message.text.hasPrefix(\"Agent 请求失败：\")"), "selection floating agent mirrors immersive order/thinking, stays resizable, and reserves cinnabar for real failures")
+    && !notesAgentSource.contains("if message.role == .user || message.text.hasPrefix(\"Agent 请求失败：\")"), "selection floating agent mirrors immersive order/thinking, keeps a fixed compact width, and reserves cinnabar for real failures")
 expect(notesAgentSource.contains("private var isCredentialNotice: Bool")
     && notesAgentSource.contains("message.text.hasPrefix(\"未配置密钥\")")
     && notesAgentSource.contains("message.text.hasPrefix(\"未配置 OPENAI_API_KEY\")")
@@ -5072,16 +5072,31 @@ expect(!notesAgentSource.contains("struct AgentDrawerView")
 if let selectionStart = notesAgentSource.range(of: "struct FloatingSelectionAgentView")?.lowerBound,
    let agentBubbleStart = notesAgentSource.range(of: "private struct AgentBubble")?.lowerBound {
     let floatingSelectionSource = String(notesAgentSource[selectionStart..<agentBubbleStart])
+    if let previewStart = notesAgentSource.range(of: "private struct FloatingSelectionPreview")?.lowerBound,
+       previewStart < selectionStart {
+        let previewSource = String(notesAgentSource[previewStart..<selectionStart])
+        expect(previewSource.contains(".lineLimit(1)")
+            && previewSource.contains(".popover(isPresented: popoverPresented")
+            && previewSource.contains(".frame(maxHeight: 240)")
+            && previewSource.contains(".frame(width: 320")
+            && previewSource.contains("查看完整原文")
+            && previewSource.contains(".textSelection(.enabled)"), "floating passage preview stays one line and exposes the full selectable text on hover or click")
+    } else {
+        expect(false, "floating passage preview source is readable")
+    }
     expect(floatingSelectionSource.contains("private var promptSeparator: some View")
         && floatingSelectionSource.contains("WeiBeiTheme.hairline.opacity(0.78)")
         && !floatingSelectionSource.contains("Divider()"), "selection floating agent uses WeiBei hairline separators instead of system dividers")
     expect(floatingSelectionSource.contains("AgentComposerField(")
-        && floatingSelectionSource.contains("prompt: store.ui(\"问选区或继续追问\", \"Ask about selection…\")")
+        && floatingSelectionSource.contains("store.ui(\"再问一点…\", \"Ask a follow-up…\")")
+        && floatingSelectionSource.contains("store.ui(\"问点什么…\", \"Ask anything…\")")
         && floatingSelectionSource.contains("lineLimit: 1...5")
-        && floatingSelectionSource.contains("height: 56")
-        && floatingSelectionSource.contains("sendButtonSize: 26"), "expanded selection agent keeps a usable follow-up composer for full answers")
+        && floatingSelectionSource.contains("height: 48")
+        && floatingSelectionSource.contains("sendButtonSize: 26")
+        && floatingSelectionSource.contains("showsChrome: false")
+        && notesAgentSource.contains("var showsChrome = true"), "expanded selection agent reuses the normal composer behavior without drawing a second input box")
     expect(floatingSelectionSource.contains("Button(store.ui(\"问\", \"Ask\"))")
-        && floatingSelectionSource.contains(".help(store.ui(\"问当前选区\", \"Ask current selection\"))")
+        && floatingSelectionSource.contains(".help(store.ui(\"就这段提问\", \"Ask about this passage\"))")
         && !floatingSelectionSource.contains("Button(\"问 Agent\")"), "compact selection prompt uses short task language instead of a visible internal agent label")
     if let openStart = floatingSelectionSource.range(of: "private func openExpandedComposer()")?.lowerBound,
        let openSourceStart = floatingSelectionSource.range(of: "private func openSourceReference()")?.lowerBound {
@@ -5098,15 +5113,24 @@ if let selectionStart = notesAgentSource.range(of: "struct FloatingSelectionAgen
         && floatingSelectionSource.contains("isThreadReopen")
         && floatingSelectionSource.contains("if showsExpandedBody")
         && floatingSelectionSource.contains("store.isAgentRunningInActiveChat")
-        && floatingSelectionSource.contains("selectionTagLabel")
+        && floatingSelectionSource.contains("FloatingSelectionPreview(text: selection)")
+        && floatingSelectionSource.contains("if showsFloatingFeed")
+        && floatingSelectionSource.contains("floatingFeedHeight / 2")
+        && !floatingSelectionSource.contains("selectionTagLabel")
+        && !floatingSelectionSource.contains("写下问题后发送，回答会出现在这里")
+        && !floatingSelectionSource.contains("问选区或继续追问")
+        && !floatingSelectionSource.contains("选区对话")
+        && !floatingSelectionSource.contains("跳到对话")
+        && !floatingSelectionSource.contains("floatResizeHandle")
         && floatingSelectionSource.contains("Never fall back to the global conversation feed")
         && floatingSelectionSource.contains("AgentMessageMarkdownText(")
-        && floatingSelectionSource.contains("compact: true"), "selection float expands on ask/reopen, isolates threads, and renders compact markdown")
+        && floatingSelectionSource.contains("compact: true"), "selection float expands downward with a bounded feed, removes redundant empty chrome, isolates threads, and renders compact markdown")
     expect(floatingSelectionSource.contains("message.text.hasPrefix(\"请解释当前已选文本片段\")")
         && floatingSelectionSource.contains("message.text.hasPrefix(\"请解释下面选区\")"), "selection floating feed hides generated selection prompts from both current and legacy drafts")
     expect(floatingSelectionSource.contains("closeFloatingAgent()")
         && floatingSelectionSource.contains("togglePinnedFloatingAgent")
         && floatingSelectionSource.contains("pin.fill")
+        && floatingSelectionSource.contains("固定在当前位置")
         && floatingSelectionSource.contains("Unpin must not dismiss"), "selection floating agent supports pin and explicit close")
 } else {
     expect(false, "selection floating agent source is readable")
@@ -5299,13 +5323,16 @@ if let reopenStart = workspaceStoreSource.range(of: "func openSelectionAskThread
 } else {
     expect(false, "openSelectionAskThread source is readable")
 }
-expect(SelectionFloatingAgentPlacement.expandedHalfWidth == 230 && SelectionFloatingAgentPlacement.compactHalfWidth == 82, "selection agent placement constants match the compact and expanded surfaces")
+expect(SelectionFloatingAgentPlacement.expandedHalfWidth == 190
+    && SelectionFloatingAgentPlacement.expandedHalfHeight == 230
+    && SelectionFloatingAgentPlacement.compactHalfWidth == 82, "selection agent placement constants bound the narrow expanded surface and compact prompt")
 expect(contentViewSource.contains("SelectionFloatingAgentPlacement.expandedHalfWidth")
     && contentViewSource.contains("SelectionFloatingAgentPlacement.compactHalfWidth")
     && !contentViewSource.contains("surfaceHalfWidth: floatingAgentExpanded ? 170 : 82"), "selection agent placement uses shared width constants instead of duplicate magic numbers")
 expect(notesAgentSource.contains(".frame(width: panelWidth, alignment: .leading)")
     && notesAgentSource.contains("SelectionFloatingAgentPlacement.expandedHalfWidth * 2")
-    && !notesAgentSource.contains(".frame(width: 312, alignment: .leading)"), "expanded selection agent visual width matches placement half-width and stays resizable")
+    && !notesAgentSource.contains("floatResizeHandle")
+    && !notesAgentSource.contains(".frame(width: 312, alignment: .leading)"), "expanded selection agent visual width matches the fixed narrow placement width")
 let floatingPoint = SelectionFloatingAgentPlacement.position(
     anchor: FloatingAgentCoordinate(x: 320, y: 200),
     canvas: FloatingAgentCoordinate(x: 1200, y: 800)
@@ -5315,8 +5342,8 @@ let topInsetFloatingPoint = SelectionFloatingAgentPlacement.position(
     canvas: FloatingAgentCoordinate(x: 1200, y: 800),
     topInset: 42
 )
-expect(floatingPoint.x == 562 && floatingPoint.y == 245.5, "selection agent opens close beside the text anchor")
-expect(topInsetFloatingPoint.x == 562 && topInsetFloatingPoint.y == 228, "selection agent compensates top bar coordinate space")
+expect(floatingPoint.x == 522 && floatingPoint.y == 248.5, "selection agent opens close beside the text anchor")
+expect(topInsetFloatingPoint.x == 522 && topInsetFloatingPoint.y == 248, "selection agent compensates top bar coordinate space")
 let compactEdgeFloatingPoint = SelectionFloatingAgentPlacement.position(
     anchor: FloatingAgentCoordinate(x: 12, y: 200),
     canvas: FloatingAgentCoordinate(x: 1200, y: 800),
@@ -5335,7 +5362,7 @@ let edgeFloatingPoint = SelectionFloatingAgentPlacement.position(
     anchor: FloatingAgentCoordinate(x: 1160, y: 760),
     canvas: FloatingAgentCoordinate(x: 1200, y: 800)
 )
-expect(edgeFloatingPoint.x == 918 && edgeFloatingPoint.y == 572, "selection agent flips to the left of text near the window edge")
+expect(edgeFloatingPoint.x == 958 && edgeFloatingPoint.y == 552, "selection agent flips to the left of text near the window edge")
 expect(AgentMessage(role: .assistant, text: "整理完成", source: nil).isUsableAgentAnswer, "usable agent answer")
 expect(!AgentMessage(role: .assistant, text: "未配置密钥。", source: nil).isUsableAgentAnswer, "credential setup message is not writable")
 expect(!AgentMessage(role: .assistant, text: "未配置 OPENAI_API_KEY。", source: nil).isUsableAgentAnswer, "api key setup message is not writable")

@@ -80,3 +80,28 @@ final result: passed
 - 仅最后 12pt（40–52pt）作为可感知的磁吸区，松手后收成 40pt 轨道。
 - 40pt 收起态悬浮仍显示 280pt 简介浮层；浮层越过分栏边界但不改宽、不抢焦点，点击沿用原有“恢复并跳转”行为。
 - 新增 `content-rail-dormant-preview` 隔离验收场景，真实截图确认轨道、简介与相邻分栏无裁切或挤压。
+
+---
+
+# 原文问答浮层 Design QA
+
+- 目标视觉：`/Users/changfenhuang/.codex/generated_images/019fd849-59a6-73f0-b4b9-16cfaa45d5a3/exec-e4166657-5bce-4871-ac02-87c466432bf3.png`
+- 空态真窗口：`/private/tmp/weibei-selection-float-empty-final.png`
+- 回答态真窗口：`/private/tmp/weibei-selection-float-answer-final.png`
+- 完整原文弹层：`/private/tmp/weibei-selection-float-preview-ax.png`
+- 视口：1440 × 900pt；浅色外观；隔离工作区；候选 App 未抢前台
+
+## 对照结论
+
+- 展开宽度固定为 380pt，不再允许拖成横向大窗；空态不挂载回答区，只保留一行原文、固定/关闭和无边框输入。
+- 用户界面不再出现“选区对话”“选区”“已固定”“跳到对话”和空状态说明，也移除了输入区上方分割线与右下缩放柄。
+- 原文默认单行省略；通过同一可访问按钮打开完整可选择文本。固定按钮在真 App 中完成一次开关，辅助功能标签从“取消固定”正确变为“固定在当前位置”。
+- 空态与回答态的顶部指针保持同一位置；回答只向下展开，正文无重叠、无裁切，达到上限后内部滚动。
+- 真窗口验收所用临时数据未进入提交，最终分支没有给正式 App 新增验收后门。
+
+## Findings
+
+- P0 / P1 / P2：本任务稳态界面无遗留。
+- 跨任务记录：App 自带的 250ms 首帧截图早于富 Markdown 测高完成，曾捕获到暂态重叠；3 秒稳定态截图正常。流式/Markdown 状态切换由并行任务 #142 负责，#141 未改其状态机。
+
+final result: passed
