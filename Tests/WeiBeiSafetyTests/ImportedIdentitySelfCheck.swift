@@ -1,4 +1,5 @@
 import Foundation
+@testable import WeiBei
 import WeiBeiCore
 
 enum ImportedIdentitySelfCheck {

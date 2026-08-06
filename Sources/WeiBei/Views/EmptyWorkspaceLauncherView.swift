@@ -167,22 +167,6 @@ struct EmptyWorkspaceLauncherView: View {
     }
 
     private func dailyInspiration(at date: Date) -> EmptyWorkspaceInspiration {
-        let environment = ProcessInfo.processInfo.environment
-        if environment["WEIBEI_SUPPRESS_ACTIVATION"] == "1" {
-            let forcedID: String?
-            switch environment["WEIBEI_VERIFY_SCENARIO"] {
-            case "empty-workspace-calligraphy-light":
-                forcedID = "lanting-clear-breeze"
-            case "empty-workspace-calligraphy-dark":
-                forcedID = "lanting-universe"
-            default:
-                forcedID = environment["WEIBEI_VERIFY_INSPIRATION_ID"]
-            }
-            if let forcedID,
-               let requested = EmptyWorkspaceInspirationCatalog.rotationItems.first(where: { $0.id == forcedID }) {
-                return requested
-            }
-        }
         return EmptyWorkspaceInspirationCatalog.item(for: date)
     }
 

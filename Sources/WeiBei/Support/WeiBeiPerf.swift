@@ -16,7 +16,6 @@ enum WeiBeiPerf {
     static var scenarioID: String {
         let environment = ProcessInfo.processInfo.environment
         let raw = environment["WEIBEI_PERF_SCENARIO"]
-            ?? environment["WEIBEI_VERIFY_SCENARIO"]
             ?? "manual"
         return token(raw)
     }

@@ -75,7 +75,6 @@ struct SidebarView: View {
                     courseSection
                     sidebarSection(title: store.ui("独立资料", "Unassigned Materials"), items: unassignedMaterials)
                     sidebarSection(title: store.ui("独立笔记", "Unassigned Notes"), items: unassignedNotes)
-                    sidebarSection(title: store.ui("内置示例", "Built-in Examples"), items: sampleItems)
                 }
                 .padding(.horizontal, 10)
                 .padding(.vertical, 10)
@@ -172,10 +171,6 @@ struct SidebarView: View {
             course.title.localizedCaseInsensitiveContains(query)
                 || store.courseItems(in: course.id).contains { filteredItemIDs.contains($0.id) }
         }
-    }
-
-    private var sampleItems: [StudyItem] {
-        store.sampleItems.filter { filteredItemIDs.contains($0.id) }
     }
 
     private var unassignedMaterials: [StudyItem] {

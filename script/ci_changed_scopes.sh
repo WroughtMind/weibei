@@ -11,7 +11,7 @@ classify_path() {
   local path="$1"
 
   case "$path" in
-    Sources/*|Package.swift|Package.resolved|package.json|package-lock.json|script/*|.github/workflows/*|VERSION|DesignSystem/*|Config/*|Vendor/PiRuntime/manifest.json)
+    Sources/*|Tests/*|Package.swift|Package.resolved|package.json|package-lock.json|script/*|.github/workflows/*|VERSION|DesignSystem/*|Config/*|Vendor/PiRuntime/manifest.json)
       code=true
       ;;
   esac
@@ -29,7 +29,7 @@ classify_path() {
   esac
 
   case "$path" in
-    Sources/WeiBei/Stores/CourseProjectRootSupport.swift|Sources/WeiBei/Support/CourseProjectRootSelfCheck.swift|Sources/WeiBei/Support/ImportedIdentitySelfCheck.swift|Sources/WeiBeiCore/CourseDocumentSearchIndex.swift|Sources/WeiBeiCore/CourseLibraryModels.swift|Sources/WeiBeiCore/LearningModels.swift|Sources/WeiBeiCore/NoteSourceRelations.swift|Sources/WeiBeiCore/WorkspaceModels.swift)
+    Sources/WeiBei/Stores/CourseProjectRootSupport.swift|Tests/WeiBeiSafetyTests/*|Sources/WeiBeiCore/CourseDocumentSearchIndex.swift|Sources/WeiBeiCore/CourseLibraryModels.swift|Sources/WeiBeiCore/LearningModels.swift|Sources/WeiBeiCore/NoteSourceRelations.swift|Sources/WeiBeiCore/WorkspaceModels.swift)
       data_safety=true
       ;;
   esac
@@ -44,7 +44,7 @@ classify_path() {
   esac
 
   case "$path" in
-    VERSION|Package.swift|Package.resolved|package.json|package-lock.json|.github/workflows/*|script/build_and_run.sh|script/build_release_dmg.sh|script/dmg/*|script/homebrew/*|script/prepare_pi_runtime.sh|script/verify_release_metadata.sh|Docs/releases/*|LICENSE|PRIVACY.md|THIRD_PARTY_NOTICES.md|ASSET_ATTRIBUTIONS.md|DesignSystem/assets/app-icon/*|Config/*|Vendor/PiRuntime/manifest.json|Vendor/PiRuntime/LICENSE|Vendor/PiRuntime/THIRD_PARTY_NOTICES.md|*.entitlements|*/Info.plist)
+    VERSION|Package.swift|Package.resolved|package.json|package-lock.json|.github/workflows/*|script/build_and_run.sh|script/build_release_dmg.sh|script/dmg/*|script/homebrew/*|script/prepare_pi_runtime.sh|script/verify_release_metadata.sh|script/verify_production_hygiene.sh|Docs/releases/*|LICENSE|PRIVACY.md|THIRD_PARTY_NOTICES.md|ASSET_ATTRIBUTIONS.md|DesignSystem/assets/app-icon/*|Config/*|Vendor/PiRuntime/manifest.json|Vendor/PiRuntime/LICENSE|Vendor/PiRuntime/THIRD_PARTY_NOTICES.md|*.entitlements|*/Info.plist)
       release=true
       ;;
   esac
@@ -94,7 +94,7 @@ if [[ "${1:-}" == "--self-check" ]]; then
     "Sources/WeiBeiCore/MarkdownAttachmentStore.swift"
   expect_scopes \
     "code=true pi=false editor=false data_safety=true release=false " \
-    "Sources/WeiBei/Support/CourseProjectRootSelfCheck.swift"
+    "Tests/WeiBeiSafetyTests/CourseProjectRootSelfCheck.swift"
   expect_scopes \
     "code=true pi=false editor=false data_safety=true release=false " \
     "Sources/WeiBeiCore/LearningModels.swift" \

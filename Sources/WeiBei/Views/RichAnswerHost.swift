@@ -11,23 +11,6 @@ struct RichAnswerHost: View {
     @State private var focusPresented = false
     @State private var focusedSceneID: String?
     @State private var selectedSceneID: String?
-    @State private var readySceneIDs: Set<String> = []
-    @State private var hostContentSize: CGSize = .zero
-
-    /// Verification markers stay deferred until the host has a real layout size
-    /// and every rich scene renderer has reported ready.
-    private func rendererIsReady(_ updatedSceneIDs: Set<String>) -> Bool {
-        let sceneIDs = Set(presentation.scenes.map(\.id))
-        let everySceneReady = presentation.scenes.isEmpty
-            || updatedSceneIDs.isSuperset(of: sceneIDs)
-        let hostHasMeasuredSize = hostContentSize.width > 1 && hostContentSize.height > 1
-        // Web runtime readiness already requires a real viewport and measured content
-        // height, so it remains trustworthy when a lazy ScrollView reports a zero host height.
-        let everySceneHasMeasuredWebRuntime = !presentation.scenes.isEmpty
-            && presentation.scenes.allSatisfy(\.usesWebRuntime)
-        return everySceneReady && (hostHasMeasuredSize || everySceneHasMeasuredWebRuntime)
-    }
-
     init(
         presentation: RichAnswerPresentation,
         onOpenEvidence: @escaping (RichAnswerEvidence) -> Void = { _ in },
@@ -66,26 +49,6 @@ struct RichAnswerHost: View {
                 }
             }
             .frame(minWidth: 860, minHeight: 640)
-        }
-        .background {
-            GeometryReader { geometry in
-                Color.clear
-                    .preference(key: RichAnswerHostSizeKey.self, value: geometry.size)
-            }
-        }
-        .onPreferenceChange(RichAnswerHostSizeKey.self) { size in
-            hostContentSize = size
-            updateVerificationMarker(readySceneIDs)
-        }
-        .onAppear {
-            updateVerificationMarker(readySceneIDs)
-        }
-        .onChange(of: readySceneIDs) { _, updatedSceneIDs in
-            updateVerificationMarker(updatedSceneIDs)
-        }
-        .onRichAnswerVerificationStage { stage in
-            guard stage == .overview || stage == .before || stage == .after else { return }
-            selectedSceneID = selectedSceneID ?? firstVerificationSceneID
         }
     }
 
@@ -137,10 +100,7 @@ struct RichAnswerHost: View {
                 },
                 onOpenEvidence: onOpenEvidence,
                 onAction: onAction,
-                assetPreview: assetPreview,
-                onRuntimeReady: {
-                    readySceneIDs.formUnion(scenes.map(\.id))
-                }
+                assetPreview: assetPreview
             )
             .id(scenes.map(\.id).joined(separator: "|"))
             .frame(minWidth: 0, maxWidth: maxWidth, alignment: .leading)
@@ -176,10 +136,7 @@ struct RichAnswerHost: View {
             onOpenEvidence: onOpenEvidence,
             onOpenAsset: onOpenAsset,
             assetPreview: assetPreview,
-            onAction: onAction,
-            onSceneReady: {
-                readySceneIDs.insert(scene.id)
-            }
+            onAction: onAction
         )
         .id(scene.id)
         .frame(
@@ -236,12 +193,6 @@ struct RichAnswerHost: View {
             return scene
         }
         return presentation.scenes.first
-    }
-
-    private var firstVerificationSceneID: String? {
-        presentation.scenes.first {
-            $0.usesWebRuntime || $0.ui != nil || !$0.operations.isEmpty
-        }?.id ?? presentation.scenes.first?.id
     }
 
     private var preferredContentWidth: CGFloat {
@@ -325,22 +276,6 @@ struct RichAnswerHost: View {
         return presentation.evidenceLedger.filter { !usedEvidenceIDs.contains($0.id) }
     }
 
-    private func updateVerificationMarker(_ updatedSceneIDs: Set<String>) {
-        // Defer ready markers until rendererIsReady (host size + every scene ready).
-        let effectiveReadyIDs = rendererIsReady(updatedSceneIDs) ? updatedSceneIDs : Set<String>()
-        RichAnswerVerificationMarker.update(
-            mode: presentation.mode,
-            sceneIDs: presentation.scenes.map(\.id),
-            readySceneIDs: effectiveReadyIDs
-        )
-    }
-}
-
-private struct RichAnswerHostSizeKey: PreferenceKey {
-    static var defaultValue: CGSize = .zero
-    static func reduce(value: inout CGSize, nextValue: () -> CGSize) {
-        value = nextValue()
-    }
 }
 
 private extension RichAnswerScene {
@@ -357,91 +292,6 @@ private extension RichAnswerScene {
     }
 }
 
-private enum RichAnswerVerificationMarker {
-    static func update(
-        mode: RichAnswerPresentationMode,
-        sceneIDs: [String],
-        readySceneIDs: Set<String>
-    ) {
-        guard isVerificationRichAnswerRun else { return }
-        guard mode == .rich,
-              !sceneIDs.isEmpty,
-              readySceneIDs.isSuperset(of: Set(sceneIDs)) else {
-            holdPrematureVerificationMarkerIfNeeded()
-            return
-        }
-        writeRendererReadyMarkerIfPossible(mode: mode, sceneIDs: sceneIDs)
-    }
-
-    private static var isVerificationRichAnswerRun: Bool {
-        let environment = ProcessInfo.processInfo.environment
-        guard environment["WEIBEI_SUPPRESS_ACTIVATION"] == "1" else { return false }
-        if environment["WEIBEI_VERIFY_RICH_ANSWER_REPLAY"]?.isEmpty == false { return true }
-        guard let scenario = environment["WEIBEI_VERIFY_SCENARIO"] else { return false }
-        return RichAnswerVerificationFixture.supports(scenario)
-    }
-
-    private static func writeRendererReadyMarkerIfPossible(
-        mode: RichAnswerPresentationMode,
-        sceneIDs: [String]
-    ) {
-        guard let workspaceDirectory = ProcessInfo.processInfo.environment["WEIBEI_WORKSPACE_DIR"],
-              !workspaceDirectory.isEmpty else { return }
-        let baseURL = URL(fileURLWithPath: workspaceDirectory, isDirectory: true)
-        restoreDeferredVerificationMarkerIfNeeded(in: baseURL)
-        let markerURL = baseURL.appendingPathComponent("rich-answer-renderer-ready.txt")
-        guard !FileManager.default.fileExists(atPath: markerURL.path) else { return }
-        let summary = [
-            "ready=renderer",
-            "mode=\(mode.rawValue)",
-            "scenes=\(sceneIDs.count)",
-            "ids=\(sceneIDs.joined(separator: ","))",
-        ].joined(separator: "\n") + "\n"
-        try? summary.write(
-            to: markerURL,
-            atomically: true,
-            encoding: .utf8
-        )
-        let stateURL = baseURL.appendingPathComponent("verification-state.txt")
-        let previous = (try? String(contentsOf: stateURL, encoding: .utf8)) ?? ""
-        try? "\(previous)rich-answer-renderer-ready\n".write(to: stateURL, atomically: true, encoding: .utf8)
-    }
-
-    private static func holdPrematureVerificationMarkerIfNeeded() {
-        guard let workspaceDirectory = ProcessInfo.processInfo.environment["WEIBEI_WORKSPACE_DIR"],
-              !workspaceDirectory.isEmpty else { return }
-        let baseURL = URL(fileURLWithPath: workspaceDirectory, isDirectory: true)
-        let markerURL = verificationMarkerURL(in: baseURL)
-        guard FileManager.default.fileExists(atPath: markerURL.path),
-              !FileManager.default.fileExists(atPath: baseURL.appendingPathComponent("rich-answer-renderer-ready.txt").path) else { return }
-        let pendingURL = deferredVerificationMarkerURL(in: baseURL)
-        if !FileManager.default.fileExists(atPath: pendingURL.path),
-           let marker = try? Data(contentsOf: markerURL) {
-            try? marker.write(to: pendingURL, options: .atomic)
-        }
-        try? FileManager.default.removeItem(at: markerURL)
-    }
-
-    private static func restoreDeferredVerificationMarkerIfNeeded(in baseURL: URL) {
-        let markerURL = verificationMarkerURL(in: baseURL)
-        guard !FileManager.default.fileExists(atPath: markerURL.path) else { return }
-        let pendingURL = deferredVerificationMarkerURL(in: baseURL)
-        guard let marker = try? Data(contentsOf: pendingURL) else { return }
-        try? marker.write(to: markerURL, options: .atomic)
-        try? FileManager.default.removeItem(at: pendingURL)
-    }
-
-    private static func verificationMarkerURL(in baseURL: URL) -> URL {
-        let environment = ProcessInfo.processInfo.environment
-        let isReplay = environment["WEIBEI_VERIFY_RICH_ANSWER_REPLAY"]?.isEmpty == false
-        return baseURL.appendingPathComponent(isReplay ? "rich-answer-replay-verified.txt" : "rich-answer-verified.txt")
-    }
-
-    private static func deferredVerificationMarkerURL(in baseURL: URL) -> URL {
-        baseURL.appendingPathComponent("rich-answer-deferred-verified.txt")
-    }
-}
-
 private struct RichAnswerSceneHost: View {
     let scene: RichAnswerScene
     let evidenceByID: [String: RichAnswerEvidence]
@@ -451,7 +301,6 @@ private struct RichAnswerSceneHost: View {
     var onOpenAsset: (String) -> Void
     var assetPreview: (String) -> NSImage?
     var onAction: (String) -> Void
-    var onSceneReady: () -> Void
 
     var body: some View {
         if let program = scene.program {
@@ -463,8 +312,7 @@ private struct RichAnswerSceneHost: View {
                 onRequestExpansion: onRequestExpansion,
                 onOpenEvidence: onOpenEvidence,
                 onAction: onAction,
-                assetPreview: assetPreview,
-                onRuntimeReady: onSceneReady
+                assetPreview: assetPreview
             )
         } else if let renderPlan = scene.renderPlan {
             RichAnswerWebRuntimeView(
@@ -475,8 +323,7 @@ private struct RichAnswerSceneHost: View {
                 onRequestExpansion: onRequestExpansion,
                 onOpenEvidence: onOpenEvidence,
                 onAction: onAction,
-                assetPreview: assetPreview,
-                onRuntimeReady: onSceneReady
+                assetPreview: assetPreview
             )
         } else if let composition = scene.ui {
             GeneratedRichAnswerSceneView(
@@ -485,26 +332,20 @@ private struct RichAnswerSceneHost: View {
                 evidenceByID: evidenceByID,
                 onOpenEvidence: onOpenEvidence,
                 onOpenAsset: onOpenAsset,
-                assetPreview: assetPreview,
-                onSceneReady: onSceneReady
+                assetPreview: assetPreview
             )
         } else {
             switch scene.family {
             case .textAndAlignment:
                 TextAlignmentSceneView(scene: scene, evidenceByID: evidenceByID, onOpenEvidence: onOpenEvidence)
-                    .onAppear(perform: onSceneReady)
             case .quantityAndCoordinates:
                 QuantityCoordinateSceneView(scene: scene, evidenceByID: evidenceByID, onOpenEvidence: onOpenEvidence)
-                    .onAppear(perform: onSceneReady)
             case .processAndState:
                 ProcessStateSceneView(scene: scene, evidenceByID: evidenceByID, onOpenEvidence: onOpenEvidence)
-                    .onAppear(perform: onSceneReady)
             case .relationAndEvidence:
                 RelationEvidenceSceneView(scene: scene, evidenceByID: evidenceByID, onOpenEvidence: onOpenEvidence)
-                    .onAppear(perform: onSceneReady)
             case .timeAndSpace:
                 TimeSpaceSceneView(scene: scene, evidenceByID: evidenceByID, onOpenEvidence: onOpenEvidence)
-                    .onAppear(perform: onSceneReady)
             case .imageAndOverlay:
                 ImageOverlaySceneView(
                     scene: scene,
@@ -513,35 +354,13 @@ private struct RichAnswerSceneHost: View {
                     onOpenAsset: onOpenAsset,
                     assetPreview: assetPreview
                 )
-                .onAppear(perform: onSceneReady)
             case .comparisonAndEvaluation:
                 ComparisonEvaluationSceneView(scene: scene, evidenceByID: evidenceByID, onOpenEvidence: onOpenEvidence)
-                    .onAppear(perform: onSceneReady)
             case .calculationAndConstraints:
                 CalculationConstraintSceneView(scene: scene, evidenceByID: evidenceByID, onOpenEvidence: onOpenEvidence)
-                    .onAppear(perform: onSceneReady)
             }
         }
     }
-}
-
-private func writeDeepComponentVerificationReceipt(
-    scene: RichAnswerScene,
-    target: [String: Any],
-    kind: String,
-    before: [String: Any],
-    after: [String: Any]
-) {
-    RichAnswerVerificationBridge.writeInteractionReceipt(
-        sceneID: scene.id,
-        sceneTitle: scene.title,
-        target: target,
-        kind: kind,
-        before: before,
-        after: after,
-        changed: RichAnswerVerificationBridge.changed(before, after),
-        source: "deep-component"
-    )
 }
 
 private struct TextAlignmentSceneView: View {
@@ -580,22 +399,6 @@ private struct TextAlignmentSceneView: View {
             )
         }
         .sceneSurface(fill: WeiBeiTheme.paperRaised.opacity(0.12))
-        .onRichAnswerVerificationStage { stage in
-            guard stage == .after else { return }
-            let before = verificationState
-            advanceVerificationInteraction()
-            writeDeepComponentVerificationReceipt(
-                scene: scene,
-                target: [
-                    "id": selectedObjectID ?? "",
-                    "control": "text-selection",
-                    "label": selectedObjectID.map(objectLabel) ?? "",
-                ],
-                kind: "select",
-                before: before,
-                after: verificationState
-            )
-        }
     }
 
     private var textColumn: some View {
@@ -674,25 +477,6 @@ private struct TextAlignmentSceneView: View {
         scene.operations.first { $0.kind == .reset }
     }
 
-    private var verificationState: [String: Any] {
-        [
-            "selectedObjectID": selectedObjectID ?? NSNull(),
-            "revealsNotes": revealsNotes,
-            "visibleRelationIDs": visibleRelations.map(\.id),
-        ]
-    }
-
-    private func advanceVerificationInteraction() {
-        if let currentID = selectedObjectID,
-           let currentIndex = selectableObjects.firstIndex(where: { $0.id == currentID }),
-           currentIndex + 1 < selectableObjects.count {
-            selectedObjectID = selectableObjects[currentIndex + 1].id
-        } else {
-            selectedObjectID = selectableObjects.first?.id
-        }
-        revealsNotes = true
-    }
-
     private func relationLabel(_ relation: RichAnswerRelation) -> String {
         let source = objectLabel(relation.sourceID)
         let target = objectLabel(relation.targetID)
@@ -730,18 +514,6 @@ private struct QuantityCoordinateSceneView: View {
             )
         }
         .sceneSurface(fill: Color.clear, horizontalPadding: 0)
-        .onRichAnswerVerificationStage { stage in
-            guard stage == .after else { return }
-            let before = verificationState
-            advanceVerificationInteraction()
-            writeDeepComponentVerificationReceipt(
-                scene: scene,
-                target: verificationTarget,
-                kind: primaryAdjustment != nil ? "adjust" : "probe",
-                before: before,
-                after: verificationState
-            )
-        }
     }
 
     @ViewBuilder
@@ -835,44 +607,6 @@ private struct QuantityCoordinateSceneView: View {
         selectedObjectID = nil
     }
 
-    private var verificationState: [String: Any] {
-        [
-            "adjustmentValues": adjustmentValues,
-            "fallbackProbeValue": fallbackProbeValue,
-            "selectedObjectID": selectedObjectID ?? NSNull(),
-            "chartProbeValue": chartProbeValue ?? NSNull(),
-        ]
-    }
-
-    private var verificationTarget: [String: Any] {
-        if let operation = primaryAdjustment, let parameter = operation.parameter {
-            return [
-                "id": operation.id,
-                "control": "adjustment",
-                "label": operation.label,
-                "parameterID": parameter.id,
-            ]
-        }
-        return [
-            "id": scene.operations.first(where: { $0.kind == .probe })?.id ?? "fallback-probe",
-            "control": "probe",
-            "label": "观察位置",
-        ]
-    }
-
-    private func advanceVerificationInteraction() {
-        if let operation = primaryAdjustment, let parameter = operation.parameter {
-            adjustmentValues[operation.id] = RichAnswerVerificationBridge.nextVerificationValue(
-                current: adjustmentValue(for: operation, parameter: parameter),
-                minimum: parameter.minimum,
-                maximum: parameter.maximum,
-                step: parameter.step
-            )
-        } else if scene.operations.contains(where: { $0.kind == .probe }) {
-            fallbackProbeValue = fallbackProbeValue < 0.66 ? 0.74 : 0.32
-        }
-        selectedObjectID = selectedObjectID ?? scene.objects.first(where: { $0.coordinate != nil })?.id
-    }
 }
 
 private struct ProcessStateSceneView: View {
@@ -919,22 +653,6 @@ private struct ProcessStateSceneView: View {
                     isPlaying = false
                 }
             }
-        }
-        .onRichAnswerVerificationStage { stage in
-            guard stage == .after else { return }
-            let before = verificationState
-            advanceVerificationInteraction()
-            writeDeepComponentVerificationReceipt(
-                scene: scene,
-                target: [
-                    "id": activeStepID ?? "",
-                    "control": "process-step",
-                    "label": activeStepLabel,
-                ],
-                kind: "step",
-                before: before,
-                after: verificationState
-            )
         }
     }
 
@@ -1036,22 +754,6 @@ private struct ProcessStateSceneView: View {
         scene.evidenceIDs.compactMap { evidenceByID[$0] }
     }
 
-    private var activeStepID: String? {
-        processObjects.indices.contains(activeIndex) ? processObjects[activeIndex].id : processObjects.first?.id
-    }
-
-    private var activeStepLabel: String {
-        activeStepID.flatMap { id in processObjects.first(where: { $0.id == id })?.label } ?? ""
-    }
-
-    private var verificationState: [String: Any] {
-        [
-            "activeIndex": activeIndex,
-            "activeStepID": activeStepID ?? NSNull(),
-            "isPlaying": isPlaying,
-        ]
-    }
-
     private var processObjects: [RichAnswerObject] {
         let operationTargets = Set(scene.operations.filter {
             $0.kind == .step || $0.kind == .playPause || $0.kind == .select
@@ -1084,10 +786,6 @@ private struct ProcessStateSceneView: View {
         return ordered
     }
 
-    private func advanceVerificationInteraction() {
-        isPlaying = false
-        activeIndex = min(max(processObjects.count - 1, 0), activeIndex + 1)
-    }
 }
 
 private struct RelationEvidenceSceneView: View {
@@ -1127,22 +825,6 @@ private struct RelationEvidenceSceneView: View {
             )
         }
         .padding(.vertical, 10)
-        .onRichAnswerVerificationStage { stage in
-            guard stage == .after else { return }
-            let before = verificationState
-            advanceVerificationInteraction()
-            writeDeepComponentVerificationReceipt(
-                scene: scene,
-                target: [
-                    "id": focusedRelationID ?? "",
-                    "control": "relation-focus",
-                    "label": focusedRelation.map { "\(objectLabel($0.sourceID)) → \(objectLabel($0.targetID))" } ?? "",
-                ],
-                kind: "select",
-                before: before,
-                after: verificationState
-            )
-        }
     }
 
     @ViewBuilder
@@ -1181,28 +863,10 @@ private struct RelationEvidenceSceneView: View {
         scene.operations.first { $0.kind == .reset }
     }
 
-    private var verificationState: [String: Any] {
-        [
-            "focusedRelationID": focusedRelationID ?? NSNull(),
-            "showsAllEvidence": showsAllEvidence,
-            "focusedEvidenceIDs": focusedEvidence.map(\.id),
-        ]
-    }
-
     private func objectLabel(_ objectID: String) -> String {
         scene.objects.first(where: { $0.id == objectID })?.label ?? objectID
     }
 
-    private func advanceVerificationInteraction() {
-        if let currentID = focusedRelationID,
-           let currentIndex = scene.relations.firstIndex(where: { $0.id == currentID }),
-           currentIndex + 1 < scene.relations.count {
-            focusedRelationID = scene.relations[currentIndex + 1].id
-        } else {
-            focusedRelationID = scene.relations.first?.id
-        }
-        showsAllEvidence = true
-    }
 }
 
 private struct RelationMapCanvas: View {
@@ -1398,18 +1062,6 @@ private struct TimeSpaceSceneView: View {
             EvidenceStrip(evidence: sceneEvidence, onOpenEvidence: onOpenEvidence)
         }
         .sceneSurface(fill: WeiBeiTheme.paperRaised.opacity(0.08))
-        .onRichAnswerVerificationStage { stage in
-            guard stage == .after else { return }
-            let before = verificationState
-            advanceVerificationInteraction()
-            writeDeepComponentVerificationReceipt(
-                scene: scene,
-                target: verificationTarget,
-                kind: scene.operations.contains(where: { $0.kind == .scrub }) ? "scrub" : "toggle",
-                before: before,
-                after: verificationState
-            )
-        }
     }
 
     private var layerControls: some View {
@@ -1466,40 +1118,6 @@ private struct TimeSpaceSceneView: View {
         scene.operations.first { $0.kind == .reset }
     }
 
-    private var verificationState: [String: Any] {
-        [
-            "scrubPosition": scrubPosition,
-            "activeLayerIDs": activeLayerIDs,
-        ]
-    }
-
-    private var verificationTarget: [String: Any] {
-        if let scrub = scene.operations.first(where: { $0.kind == .scrub }) {
-            return [
-                "id": scrub.id,
-                "control": "scrub",
-                "label": scrub.label,
-            ]
-        }
-        return [
-            "id": toggleFrames.first?.id ?? "",
-            "control": "layer-toggle",
-            "label": toggleFrames.first?.title ?? "",
-        ]
-    }
-
-    private func advanceVerificationInteraction() {
-        if scene.operations.contains(where: { $0.kind == .scrub }) {
-            scrubPosition = scrubPosition < 0.66 ? 0.72 : 0.28
-        }
-        if let firstFrameID = toggleFrames.first?.id {
-            if activeLayerIDs.contains(firstFrameID), toggleFrames.count > 1 {
-                activeLayerIDs.insert(toggleFrames[1].id)
-            } else {
-                activeLayerIDs.insert(firstFrameID)
-            }
-        }
-    }
 }
 
 private struct ImageOverlaySceneView: View {
@@ -1550,22 +1168,6 @@ private struct ImageOverlaySceneView: View {
             EvidenceStrip(evidence: sceneEvidence, onOpenEvidence: onOpenEvidence)
         }
         .padding(.vertical, 10)
-        .onRichAnswerVerificationStage { stage in
-            guard stage == .after else { return }
-            let before = verificationState
-            advanceVerificationInteraction()
-            writeDeepComponentVerificationReceipt(
-                scene: scene,
-                target: [
-                    "id": selectedRegionID ?? scene.objects.first(where: { $0.bounds != nil })?.id ?? "",
-                    "control": hasZoomOperation ? "image-zoom" : "image-overlay",
-                    "label": "图像叠层",
-                ],
-                kind: hasZoomOperation ? "zoom" : "toggle",
-                before: before,
-                after: verificationState
-            )
-        }
     }
 
     @ViewBuilder
@@ -1646,22 +1248,6 @@ private struct ImageOverlaySceneView: View {
         scene.evidenceIDs.compactMap { evidenceByID[$0] }
     }
 
-    private var verificationState: [String: Any] {
-        [
-            "selectedRegionID": selectedRegionID ?? NSNull(),
-            "showsOverlay": showsOverlay,
-            "zoomScale": zoomScale,
-            "hasPreviewImage": previewImage != nil,
-        ]
-    }
-
-    private func advanceVerificationInteraction() {
-        showsOverlay = true
-        selectedRegionID = selectedRegionID ?? scene.objects.first(where: { $0.bounds != nil })?.id
-        if hasZoomOperation {
-            zoomScale = zoomScale < 1.3 ? 1.5 : 1.1
-        }
-    }
 }
 
 private struct ComparisonEvaluationSceneView: View {
@@ -1705,22 +1291,6 @@ private struct ComparisonEvaluationSceneView: View {
             Rectangle()
                 .fill(WeiBeiTheme.hairline.opacity(0.72))
                 .frame(height: 1)
-        }
-        .onRichAnswerVerificationStage { stage in
-            guard stage == .after else { return }
-            let before = verificationState
-            advanceVerificationInteraction()
-            writeDeepComponentVerificationReceipt(
-                scene: scene,
-                target: [
-                    "id": selectedObjectID ?? "",
-                    "control": "comparison",
-                    "label": selectedObjectID.map(objectLabel) ?? "",
-                ],
-                kind: compareOperation != nil ? "compare" : "select",
-                before: before,
-                after: verificationState
-            )
         }
     }
 
@@ -1817,14 +1387,6 @@ private struct ComparisonEvaluationSceneView: View {
         return ids
     }
 
-    private var verificationState: [String: Any] {
-        [
-            "selectedObjectID": selectedObjectID ?? NSNull(),
-            "comparesFirstPair": comparesFirstPair,
-            "comparisonObjectIDs": comparisonObjects.map(\.id),
-        ]
-    }
-
     private func objectLabel(_ id: String) -> String {
         scene.objects.first(where: { $0.id == id })?.label ?? id
     }
@@ -1839,16 +1401,6 @@ private struct ComparisonEvaluationSceneView: View {
         return Color.clear
     }
 
-    private func advanceVerificationInteraction() {
-        comparesFirstPair = compareOperation != nil
-        if let currentID = selectedObjectID,
-           let currentIndex = comparisonObjects.firstIndex(where: { $0.id == currentID }),
-           currentIndex + 1 < comparisonObjects.count {
-            selectedObjectID = comparisonObjects[currentIndex + 1].id
-        } else {
-            selectedObjectID = comparisonObjects.first?.id
-        }
-    }
 }
 
 private struct CalculationConstraintSceneView: View {
@@ -1886,18 +1438,6 @@ private struct CalculationConstraintSceneView: View {
             EvidenceStrip(evidence: sceneEvidence, onOpenEvidence: onOpenEvidence)
         }
         .sceneSurface(fill: WeiBeiTheme.codePaper.opacity(0.16))
-        .onRichAnswerVerificationStage { stage in
-            guard stage == .after else { return }
-            let before = verificationState
-            advanceVerificationInteraction()
-            writeDeepComponentVerificationReceipt(
-                scene: scene,
-                target: verificationTarget,
-                kind: calculableOperations.first?.kind.rawValue ?? "reset",
-                before: before,
-                after: verificationState
-            )
-        }
     }
 
     private var formulaColumn: some View {
@@ -2076,41 +1616,6 @@ private struct CalculationConstraintSceneView: View {
         )
     }
 
-    private var verificationState: [String: Any] {
-        [
-            "currentValues": currentValues,
-            "didReset": didReset,
-        ]
-    }
-
-    private var verificationTarget: [String: Any] {
-        guard let operation = calculableOperations.first, let parameter = operation.parameter else {
-            return [
-                "id": resetOperation?.id ?? "calculation-reset",
-                "control": "reset",
-                "label": resetOperation?.label ?? "切换计算状态",
-            ]
-        }
-        return [
-            "id": operation.id,
-            "control": "calculation-parameter",
-            "label": operation.label,
-            "parameterID": parameter.id,
-        ]
-    }
-
-    private func advanceVerificationInteraction() {
-        guard let parameter = calculableOperations.first?.parameter else {
-            didReset.toggle()
-            return
-        }
-        currentValues[parameter.id] = RichAnswerVerificationBridge.nextVerificationValue(
-            current: value(for: parameter),
-            minimum: parameter.minimum,
-            maximum: parameter.maximum,
-            step: parameter.step
-        )
-    }
 }
 
 private struct UnsupportedOperationNotice: View {

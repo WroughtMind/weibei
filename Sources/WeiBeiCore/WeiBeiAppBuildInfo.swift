@@ -93,33 +93,6 @@ public enum WeiBeiUpdateChecker {
         string: "https://github.com/weibei-app/weibei/releases"
     )!
 
-    /// Isolation-only override key. Never read outside verification runs.
-    public static let candidateManifestURLEnvironmentKey = "WEIBEI_UPDATE_MANIFEST_URL"
-    /// Same activation gate used by scripted app verification.
-    public static let suppressActivationEnvironmentKey = "WEIBEI_SUPPRESS_ACTIVATION"
-
-    /// Public channel, or a verification-only candidate manifest when isolation is active.
-    ///
-    /// `WEIBEI_UPDATE_MANIFEST_URL` is ignored unless `WEIBEI_SUPPRESS_ACTIVATION=1`, so a
-    /// normal user session cannot be redirected away from the public channel.
-    public static func resolvedManifestURL(
-        environment: [String: String] = ProcessInfo.processInfo.environment
-    ) -> URL {
-        guard environment[suppressActivationEnvironmentKey] == "1" else {
-            return defaultManifestURL
-        }
-        let raw = environment[candidateManifestURLEnvironmentKey]?
-            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        guard !raw.isEmpty,
-              let url = URL(string: raw),
-              let scheme = url.scheme?.lowercased(),
-              scheme == "https" || scheme == "http" || scheme == "file"
-        else {
-            return defaultManifestURL
-        }
-        return url
-    }
-
     public static func compare(
         local: WeiBeiAppBuildInfo,
         remote: WeiBeiUpdateManifest
@@ -135,7 +108,7 @@ public enum WeiBeiUpdateChecker {
         manifestURL: URL? = nil,
         session: URLSession = .shared
     ) async -> WeiBeiUpdateCheckResult {
-        let resolvedURL = manifestURL ?? resolvedManifestURL()
+        let resolvedURL = manifestURL ?? defaultManifestURL
         do {
             var request = URLRequest(url: resolvedURL)
             request.cachePolicy = .reloadIgnoringLocalCacheData

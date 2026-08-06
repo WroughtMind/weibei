@@ -15,9 +15,6 @@ struct NotesAgentView: View {
             AgentPaneView()
         }
         .weibeiPanel()
-        .task {
-            await store.runVerificationScenarioIfNeeded()
-        }
     }
 }
 
@@ -434,11 +431,6 @@ struct NotePaneView: View {
 
     private let noteDraftFlushDelayNanoseconds: UInt64 = 220_000_000
 
-    private static var showsLinkedSourcesVerificationOverlay: Bool {
-        ProcessInfo.processInfo.environment["WEIBEI_VERIFY_SCENARIO"] == "linked-sources-flow"
-            && ProcessInfo.processInfo.environment["WEIBEI_SUPPRESS_ACTIVATION"] == "1"
-    }
-
     var body: some View {
         GeometryReader { geometry in
             let railOnly = ContentRailMetrics.isRailOnly(
@@ -500,17 +492,6 @@ struct NotePaneView: View {
         .overlay(alignment: .top) {
             if !showsPaneHeader && hasNoteContent {
                 immersiveNoteHeader
-            }
-        }
-        .overlay(alignment: .topTrailing) {
-            if Self.showsLinkedSourcesVerificationOverlay {
-                LinkedSourcesPopover(dismiss: {})
-                    .environmentObject(store)
-                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                    .shadow(color: WeiBeiTheme.ink.opacity(0.16), radius: 22, y: 10)
-                    .padding(.top, 48)
-                    .padding(.trailing, 24)
-                    .allowsHitTesting(false)
             }
         }
         .animation(WeiBeiMotion.panel, value: store.notebookCreationDraft?.id)
@@ -2051,9 +2032,6 @@ struct AgentPaneView: View {
                     agentVisibleMessageLimit = Self.agentHistoryPageSize
                     isRevealingEarlierAgentHistory = false
                 }
-                .onRichAnswerVerificationStage { stage in
-                    handleRichAnswerVerificationStage(stage, proxy: proxy)
-                }
             }
             .preference(
                 key: AgentPaneWidthKey.self,
@@ -2685,40 +2663,6 @@ struct AgentPaneView: View {
                 proxy.scrollTo(agentBottomAnchorID, anchor: .bottom)
             }
         }
-    }
-
-    private func handleRichAnswerVerificationStage(
-        _ stage: RichAnswerVerificationStage,
-        proxy: ScrollViewProxy
-    ) {
-        guard stage == .overview || stage == .before || stage == .after,
-              let target = latestRichAnswerVerificationTarget else { return }
-        agentFollowsLatest = false
-        let capturesMessageBottom = ProcessInfo.processInfo.environment["WEIBEI_VERIFY_RICH_ANSWER_CAPTURE_ANCHOR"] == "bottom"
-        DispatchQueue.main.async {
-            if capturesMessageBottom {
-                proxy.scrollTo(target.messageID, anchor: .bottom)
-            } else {
-                proxy.scrollTo(target.sceneAnchorID, anchor: .top)
-            }
-        }
-    }
-
-    private var latestRichAnswerVerificationTarget: (messageID: UUID, sceneAnchorID: String)? {
-        for message in store.messages.reversed() {
-            guard let richAnswer = message.richAnswer,
-                  richAnswer.mode == .rich,
-                  !richAnswer.scenes.isEmpty else { continue }
-            for (index, part) in richAnswer.resolvedParts.enumerated() {
-                guard case .scene = part.kind,
-                      let sceneID = part.sceneID else { continue }
-                return (
-                    message.id,
-                    "rich-answer-\(message.id.uuidString)-\(sceneID)-\(index)"
-                )
-            }
-        }
-        return nil
     }
 
 }

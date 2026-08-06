@@ -278,10 +278,6 @@ PLIST
     /usr/bin/codesign --verify --deep --strict --verbose=2 "$APP_BUNDLE" 2>&1 | tail -20 >&2 || true
     exit 19
   fi
-  if [[ "$(/usr/bin/env WEIBEI_PDF_WORKER_VERIFY=1 "$PDF_TEXT_WORKER" --verification-probe normal)" != "verification-ok" ]]; then
-    echo "package failed: signed PDF text worker did not complete its runtime probe" >&2
-    exit 14
-  fi
   BUILD_UUID="$(/usr/bin/dwarfdump --uuid "$BUILD_BINARY" | /usr/bin/awk 'NR == 1 {print $2}')"
   PACKAGED_UUID="$(/usr/bin/dwarfdump --uuid "$APP_BINARY" | /usr/bin/awk 'NR == 1 {print $2}')"
   if [[ -z "$BUILD_UUID" || "$PACKAGED_UUID" != "$BUILD_UUID" ]]; then
@@ -333,6 +329,7 @@ PLIST
       exit 18
     fi
     "$ROOT_DIR/script/verify_release_metadata.sh" "$FINAL_APP_BUNDLE"
+    "$ROOT_DIR/script/verify_production_hygiene.sh" "$FINAL_APP_BUNDLE"
   fi
 fi
 
@@ -1075,10 +1072,7 @@ finish_verify_window() {
 run_verifiers() {
   WEIBEI_PI_EXECUTABLE="$PI_RUNTIME_BINARY" \
     swift run -c "$BUILD_CONFIGURATION" WeiBeiSelfCheck
-  WEIBEI_SUPPRESS_ACTIVATION=1 \
-    swift run -c "$BUILD_CONFIGURATION" WeiBei --self-check-imported-identity
-  WEIBEI_SUPPRESS_ACTIVATION=1 \
-    swift run -c "$BUILD_CONFIGURATION" WeiBei --self-check-course-project-root
+  swift test -c "$BUILD_CONFIGURATION" --filter WeiBeiSafetyTests
   swift run -c "$BUILD_CONFIGURATION" WeiBeiWebEditorCheck
   WEIBEI_PI_EXECUTABLE="$PI_RUNTIME_BINARY" \
     swift run -c "$BUILD_CONFIGURATION" WeiBeiPiCheck
