@@ -3159,11 +3159,10 @@ struct FloatingSelectionAgentView: View {
                                 .id(message.id)
                                 .padding(.vertical, 4)
                         } else {
-                            floatBubble(
-                                messageID: message.id,
+                            FloatingSelectionMessageBubble(
+                                message: message,
                                 roleLabel: message.role == .user ? store.ui("你", "You") : "WeiBei",
                                 text: floatingText(for: message),
-                                isUser: message.role == .user,
                                 isError: WorkspaceStore.isAgentFailureMessage(message.text)
                             )
                         }
@@ -3172,7 +3171,7 @@ struct FloatingSelectionAgentView: View {
                     if store.isAgentRunningInActiveChat
                         && !store.hasPersistedGeneratingAgentReply
                         && !store.agentStreamingText.isEmpty {
-                        floatStreamingBubble(text: store.agentStreamingText)
+                        AgentStreamingResponse(text: store.agentStreamingText, compact: true)
                             .id("selection-float-streaming")
                     }
 
@@ -3248,63 +3247,6 @@ struct FloatingSelectionAgentView: View {
             )
             .help(store.ui("拖拽调整选区对话大小", "Drag to resize selection chat"))
             .accessibilityLabel(Text(store.ui("调整选区对话大小", "Resize selection chat")))
-    }
-
-    private func floatBubble(messageID: UUID, roleLabel: String, text: String, isUser: Bool, isError: Bool = false) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            if isUser {
-                Text(roleLabel)
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundStyle(WeiBeiTheme.link.opacity(0.85))
-            } else {
-                HStack(spacing: 6) {
-                    Text("WeiBei")
-                        .font(WeiBeiTypography.englishBrandFont(size: 9.8, weight: .semibold))
-                        .foregroundStyle(isError ? WeiBeiTheme.cinnabar : WeiBeiTheme.cinnabar.opacity(0.76))
-                    if !isError {
-                        Text("PI")
-                            .font(.system(size: 9.5, weight: .semibold))
-                            .foregroundStyle(WeiBeiTheme.secondaryInk)
-                    }
-                }
-            }
-            if isError {
-                Text(text)
-                    .font(.system(size: 13))
-                    .foregroundStyle(WeiBeiTheme.cinnabar)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .allowsHitTesting(false)
-            } else {
-                // Same markdown path as immersive chat (`AgentMessageMarkdownText`).
-                AgentMessageMarkdownText(
-                    text: text,
-                    rendersRichMarkdown: !isUser,
-                    compact: true,
-                    isChatWideTypography: false,
-                    usesFinalizedKaTeX: !isUser,
-                    messageID: messageID
-                )
-            }
-        }
-        .padding(.vertical, 3)
-    }
-
-    private func floatStreamingBubble(text: String) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 6) {
-                Text("WeiBei")
-                    .font(WeiBeiTypography.englishBrandFont(size: 9.8, weight: .semibold))
-                    .foregroundStyle(WeiBeiTheme.cinnabar.opacity(0.76))
-                Text("PI")
-                    .font(.system(size: 9.5, weight: .semibold))
-                    .foregroundStyle(WeiBeiTheme.secondaryInk)
-            }
-            // Streaming: native text only (no KaTeX WebView mid-stream).
-            AgentStreamingMarkdownText(text: text, compact: true)
-        }
-        .padding(.vertical, 3)
-        .accessibilityLabel(Text(store.ui("PI 正在回答", "PI is responding")))
     }
 
     private static func selectionTagLabel(_ text: String, limit: Int = 18) -> String {
@@ -3444,6 +3386,102 @@ private struct SelectionFloatChrome: ViewModifier {
     }
 }
 
+private struct FloatingSelectionMessageBubble: View {
+    var message: AgentMessage
+    var roleLabel: String
+    var text: String
+    var isError = false
+    @State private var sawStreamingThisSession = false
+    @State private var finalizedRendererWarm = false
+
+    private var isUser: Bool {
+        message.role == .user
+    }
+
+    private var keepsStreamingHandoffContainerMounted: Bool {
+        sawStreamingThisSession && !isUser && !isError
+    }
+
+    private var streamingHandoffActive: Bool {
+        keepsStreamingHandoffContainerMounted && !finalizedRendererWarm
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            messageHeader
+            if isError {
+                Text(text)
+                    .font(.system(size: 13))
+                    .foregroundStyle(WeiBeiTheme.cinnabar)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .allowsHitTesting(false)
+            } else if isUser {
+                finalizedMessage
+            } else if message.completionState == .generating
+                || keepsStreamingHandoffContainerMounted {
+                ZStack(alignment: .topLeading) {
+                    if message.completionState != .generating {
+                        finalizedMessage
+                            .opacity(finalizedRendererWarm ? 1 : 0.01)
+                    }
+                    if message.completionState == .generating || streamingHandoffActive {
+                        AgentStreamingResponse(
+                            text: text,
+                            showsBrandHeader: false,
+                            finalSnapshot: message.completionState != .generating,
+                            compact: true
+                        )
+                        .onAppear {
+                            if message.completionState == .generating {
+                                sawStreamingThisSession = true
+                            }
+                        }
+                        .allowsHitTesting(message.completionState == .generating)
+                    }
+                }
+            } else {
+                finalizedMessage
+            }
+        }
+        .padding(.vertical, 3)
+    }
+
+    @ViewBuilder
+    private var messageHeader: some View {
+        if isUser {
+            Text(roleLabel)
+                .font(.system(size: 10, weight: .medium))
+                .foregroundStyle(WeiBeiTheme.link.opacity(0.85))
+        } else {
+            HStack(spacing: 6) {
+                Text("WeiBei")
+                    .font(WeiBeiTypography.englishBrandFont(size: 9.8, weight: .semibold))
+                    .foregroundStyle(isError ? WeiBeiTheme.cinnabar : WeiBeiTheme.cinnabar.opacity(0.76))
+                if !isError {
+                    Text("PI")
+                        .font(.system(size: 9.5, weight: .semibold))
+                        .foregroundStyle(WeiBeiTheme.secondaryInk)
+                }
+            }
+        }
+    }
+
+    private var finalizedMessage: some View {
+        AgentMessageMarkdownText(
+            text: text,
+            rendersRichMarkdown: !isUser,
+            compact: true,
+            isChatWideTypography: false,
+            usesFinalizedKaTeX: !isUser,
+            messageID: message.id,
+            suppressesLoadingOverlay: keepsStreamingHandoffContainerMounted,
+            onFinalizedRenderPending: { finalizedRendererWarm = false },
+            onFinalizedRenderReady: { finalizedRendererWarm = true }
+        )
+    }
+}
+
 private struct AgentBubble: View {
     @EnvironmentObject private var store: WorkspaceStore
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -3456,11 +3494,14 @@ private struct AgentBubble: View {
     @State private var sawStreamingThisSession = false
     @State private var finalizedRendererWarm = false
 
-    private var streamingHandoffActive: Bool {
+    private var keepsStreamingHandoffContainerMounted: Bool {
         sawStreamingThisSession
-            && !finalizedRendererWarm
             && !(message.richAnswer?.mode == .rich && message.richAnswer?.scenes.isEmpty == false)
             && !isFailureMessage
+    }
+
+    private var streamingHandoffActive: Bool {
+        keepsStreamingHandoffContainerMounted && !finalizedRendererWarm
     }
 
     var body: some View {
@@ -3643,11 +3684,10 @@ private struct AgentBubble: View {
             if message.completionState == .generating
                 && message.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 AgentThinkingIndicator()
-            } else if message.completionState == .generating || streamingHandoffActive {
-                // Seamless finalize: the streaming subtree keeps its identity
-                // across completion while the finalized WebView warms hidden
-                // underneath; destroying it at completion flashed the whole
-                // answer as raw text until the new WebView measured.
+            } else if message.completionState == .generating
+                || keepsStreamingHandoffContainerMounted {
+                // Keep this container mounted after handoff. Rebuilding the
+                // finalized renderer after its first measure flashed raw text.
                 ZStack(alignment: .topLeading) {
                     if message.completionState != .generating {
                         if !availableSources.isEmpty {
@@ -3662,8 +3702,10 @@ private struct AgentBubble: View {
                                     activateSource(source)
                                 },
                                 suppressesLoadingOverlay: true,
+                                onFinalizedRenderPending: { finalizedRendererWarm = false },
                                 onFinalizedRenderReady: { finalizedRendererWarm = true }
                             )
+                            .opacity(finalizedRendererWarm ? 1 : 0.01)
                         } else {
                             AgentMessageMarkdownText(
                                 text: citationParse.displayText,
@@ -3672,23 +3714,24 @@ private struct AgentBubble: View {
                                 usesFinalizedKaTeX: true,
                                 messageID: message.id,
                                 suppressesLoadingOverlay: true,
+                                onFinalizedRenderPending: { finalizedRendererWarm = false },
                                 onFinalizedRenderReady: { finalizedRendererWarm = true }
                             )
+                            .opacity(finalizedRendererWarm ? 1 : 0.01)
                         }
                     }
-                    AgentStreamingResponse(text: message.text, showsBrandHeader: false)
-                        .onAppear { sawStreamingThisSession = true }
+                    if message.completionState == .generating || streamingHandoffActive {
+                        AgentStreamingResponse(
+                            text: message.text,
+                            showsBrandHeader: false,
+                            finalSnapshot: message.completionState != .generating
+                        )
+                        .onAppear {
+                            if message.completionState == .generating {
+                                sawStreamingThisSession = true
+                            }
+                        }
                         .allowsHitTesting(message.completionState == .generating)
-                }
-                .task(id: message.completionState) {
-                    // Handoff failsafe: if the finalized WebView never reports
-                    // (process pressure, missed measure), fall back to the
-                    // normal finalized presentation instead of pinning the
-                    // streaming view forever.
-                    guard message.completionState != .generating else { return }
-                    try? await Task.sleep(nanoseconds: 2_500_000_000)
-                    if !finalizedRendererWarm {
-                        finalizedRendererWarm = true
                     }
                 }
             } else if let richAnswer = message.richAnswer,
@@ -5213,7 +5256,7 @@ private struct AgentScrollDistanceProbe: NSViewRepresentable {
 
 /// Agent chat markdown — shared by immersive conversation and selection float.
 /// - Finalized assistant turns: full `MarkdownPreviewView` with width-aware frozen height.
-/// - Streaming, user turns, failures, and renderer fallback: native `AttributedString`.
+/// - User turns, failures, and renderer fallback: native `AttributedString`.
 private struct AgentMessageMarkdownText: View {
     @EnvironmentObject private var store: WorkspaceStore
     @Environment(\.agentChatLayoutWidth) private var layoutWidth
@@ -5232,6 +5275,8 @@ private struct AgentMessageMarkdownText: View {
     /// Streaming handoff: caller keeps the streaming view on top, so skip the
     /// raw-text loading overlay (it flashed the whole answer unrendered).
     var suppressesLoadingOverlay = false
+    /// Fires only when the Markdown actually sent to the renderer changes.
+    var onFinalizedRenderPending: () -> Void = {}
     /// Fires once the finalized renderer can take over (real measure, native
     /// fallback, or render failure) — the caller drops its streaming overlay.
     var onFinalizedRenderReady: () -> Void = {}
@@ -5319,8 +5364,14 @@ private struct AgentMessageMarkdownText: View {
         }
         .help(sourceHelp)
         .onChange(of: finalizedMarkdown) { _, _ in
+            onFinalizedRenderPending()
             finalizedRendererReady = false
             finalizedRendererFailed = false
+            if !shouldUseFinalizedMarkdown {
+                Task { @MainActor in
+                    onFinalizedRenderReady()
+                }
+            }
         }
     }
 
@@ -6105,53 +6156,57 @@ private struct AgentStreamingResponse: View {
     /// Bubble rows already carry the WeiBei metadata line — never draw a
     /// second brand mark inside the same bubble (user-reported duplication).
     var showsBrandHeader = true
+    /// Completion handoff renders the entire final snapshot while the
+    /// finalized renderer measures underneath.
+    var finalSnapshot = false
+    var compact = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
-            if showsBrandHeader {
-            HStack(spacing: 6) {
-                Text("WeiBei")
-                    .font(WeiBeiTypography.englishBrandFont(size: 9.8, weight: .semibold))
-                    .foregroundStyle(WeiBeiTheme.cinnabar.opacity(0.76))
-                Text("PI")
-                    .font(.system(size: 9.5, weight: .semibold))
-                    .foregroundStyle(WeiBeiTheme.secondaryInk)
-                // Status stays visible while tokens stream ("正在读取：…"),
-                // plain text only — WP9 forbids loading-card chrome here.
-                if let activity = store.agentActivityText {
-                    Text(activity)
-                        .font(.system(size: 11, weight: .regular))
-                        .foregroundStyle(WeiBeiTheme.secondaryInk.opacity(0.82))
-                        .lineLimit(1)
-                        .padding(.leading, 2)
+            if showsBrandHeader || store.agentActivityText != nil {
+                HStack(spacing: 6) {
+                    if showsBrandHeader {
+                        Text("WeiBei")
+                            .font(WeiBeiTypography.englishBrandFont(size: 9.8, weight: .semibold))
+                            .foregroundStyle(WeiBeiTheme.cinnabar.opacity(0.76))
+                        Text("PI")
+                            .font(.system(size: 9.5, weight: .semibold))
+                            .foregroundStyle(WeiBeiTheme.secondaryInk)
+                    }
+                    // Status stays visible while tokens stream ("正在读取：…"),
+                    // plain text only — WP9 forbids loading-card chrome here.
+                    if let activity = store.agentActivityText {
+                        Text(activity)
+                            .font(.system(size: 11, weight: .regular))
+                            .foregroundStyle(WeiBeiTheme.secondaryInk.opacity(0.82))
+                            .lineLimit(1)
+                            .padding(.leading, 2)
+                    }
                 }
             }
-            }
-            // Completed blocks render through the real Milkdown/KaTeX pipeline as
-            // they close; only the still-growing tail stays native (typewriter).
+            // Only complete blocks reach the real Milkdown/KaTeX pipeline. The
+            // growing tail stays hidden, never briefly appearing as raw Markdown.
             let split = AgentStreamingBlockSplitter.split(text)
+            let markdown = finalSnapshot ? text : split.stablePrefix
             // Always mounted: the WebView warms up (editor.js + KaTeX load)
-            // before the first block closes, so the first rendered blocks do
-            // not pop out of a blank box. Appends go through appendMarkdown.
-            AgentStreamingRenderedPrefix(markdown: split.stablePrefix)
-                .frame(height: split.stablePrefix.isEmpty ? 0 : nil)
+            // before the first block closes, so rendered blocks do not pop out
+            // of a blank box.
+            AgentStreamingRenderedPrefix(markdown: markdown)
+                .frame(height: markdown.isEmpty ? 0 : nil)
                 .clipped()
-                .opacity(split.stablePrefix.isEmpty ? 0 : 1)
-            if !split.tail.isEmpty {
-                AgentStreamingMarkdownText(text: split.tail, compact: false)
-            }
+                .opacity(markdown.isEmpty ? 0 : 1)
         }
-        .padding(.vertical, 10)
-        .padding(.leading, 20)
-        .padding(.trailing, 8)
+        .padding(.vertical, compact ? 0 : 10)
+        .padding(.leading, compact ? 0 : 20)
+        .padding(.trailing, compact ? 0 : 8)
         .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityLabel(Text(store.ui("PI 正在回答", "PI is responding")))
     }
 }
 
-/// Renders closed streaming blocks through the mature pipeline. Height is
-/// preserved across appends (no 44pt collapse) and never frozen — a streaming
-/// row grows by design and lives only until the turn finalizes.
+/// Renders stable streaming blocks through the mature pipeline. Height is
+/// preserved across updates (no 44pt collapse) and never frozen — a streaming
+/// row grows by design.
 private struct AgentStreamingRenderedPrefix: View {
     @EnvironmentObject private var store: WorkspaceStore
     @Environment(\.agentChatLayoutWidth) private var layoutWidth
@@ -6170,57 +6225,5 @@ private struct AgentStreamingRenderedPrefix: View {
             preservesHeightAcrossMarkdownChanges: true,
             prefersIncrementalAppends: true
         )
-    }
-}
-
-/// Typewriter tail: Pi delivers whole-snapshot updates that used to land as
-/// visible chunks every 100ms. Reveal characters on a paced pump instead —
-/// batch size adapts to the backlog so the tail catches up within ~1s and the
-/// turn never *feels* slower than the raw stream.
-private struct AgentStreamingMarkdownText: View {
-    var text: String
-    var compact: Bool = false
-    @State private var revealedCount = 0
-    @State private var pump: Task<Void, Never>?
-
-    var body: some View {
-        AgentMessageMarkdownText(
-            text: String(text.prefix(revealedCount)),
-            rendersRichMarkdown: true,
-            compact: compact,
-            usesFinalizedKaTeX: false
-        )
-        .onAppear {
-            // Mid-stream (re)mount — e.g. returning to a session — shows what
-            // has already arrived; the typewriter only paces new characters.
-            revealedCount = text.count
-        }
-        .onChange(of: text) { oldValue, newValue in
-            if !newValue.hasPrefix(oldValue.prefix(min(revealedCount, oldValue.count))) {
-                // Tail was rebased (its blocks closed into the rendered prefix).
-                revealedCount = 0
-            }
-            startPump(targetCount: newValue.count)
-        }
-        .onDisappear {
-            pump?.cancel()
-        }
-    }
-
-    private func startPump(targetCount: Int) {
-        pump?.cancel()
-        guard revealedCount < targetCount else {
-            revealedCount = min(revealedCount, targetCount)
-            return
-        }
-        pump = Task { @MainActor in
-            while !Task.isCancelled && revealedCount < targetCount {
-                let backlog = targetCount - revealedCount
-                // ~45 ticks/s; catch a 1000-char backlog in about a second.
-                let step = max(2, backlog / 40)
-                revealedCount = min(targetCount, revealedCount + step)
-                try? await Task.sleep(nanoseconds: 22_000_000)
-            }
-        }
     }
 }

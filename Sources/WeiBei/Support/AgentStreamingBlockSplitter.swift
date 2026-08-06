@@ -1,13 +1,12 @@
 import Foundation
 
 /// Splits in-flight streaming text into a *stable prefix* (complete blocks,
-/// safe to hand to the Milkdown/KaTeX renderer) and a *tail* (still growing,
-/// shown as native typewriter text until its block closes).
+/// safe to hand to the Milkdown/KaTeX renderer) and a hidden growing tail.
 ///
 /// Invariant: as the snapshot grows, the stable prefix only ever appends —
 /// a boundary's balance depends solely on the text before it, so once chosen
-/// it never un-balances. This keeps the WebView on an append-only diet and
-/// prevents re-render churn.
+/// it never un-balances. The renderer therefore appends finished blocks without
+/// ever exposing incomplete Markdown as native text.
 enum AgentStreamingBlockSplitter {
     struct Split: Equatable {
         var stablePrefix: String
@@ -27,31 +26,42 @@ enum AgentStreamingBlockSplitter {
     /// The last such boundary wins; without one, everything stays in the tail.
     private static func splitUnchecked(_ text: String) -> Split {
         guard !text.isEmpty else { return Split(stablePrefix: "", tail: "") }
-        var searchEnd = text.endIndex
-        while let gap = text.range(of: "\n\n", options: .backwards, range: text.startIndex..<searchEnd) {
-            let prefix = String(text[text.startIndex..<gap.upperBound])
-            if isBalanced(prefix) {
-                let tail = String(text[gap.upperBound...])
-                return Split(stablePrefix: prefix, tail: tail)
+        var index = text.startIndex
+        var openCodeFence: String?
+        var displayMathOpen = false
+        var lastStableEnd: String.Index?
+
+        while index < text.endIndex {
+            let remainder = text[index...]
+            if let marker = openCodeFence, remainder.hasPrefix(marker) {
+                openCodeFence = nil
+                index = text.index(index, offsetBy: 3)
+                continue
             }
-            searchEnd = gap.lowerBound
+            if openCodeFence == nil, !displayMathOpen,
+               let marker = remainder.hasPrefix("```") ? "```" : (remainder.hasPrefix("~~~") ? "~~~" : nil) {
+                openCodeFence = marker
+                index = text.index(index, offsetBy: 3)
+                continue
+            }
+            if remainder.hasPrefix("$$"), openCodeFence == nil {
+                displayMathOpen.toggle()
+                index = text.index(index, offsetBy: 2)
+                continue
+            }
+            if remainder.hasPrefix("\n\n"), openCodeFence == nil, !displayMathOpen {
+                lastStableEnd = text.index(index, offsetBy: 2)
+            }
+            index = text.index(after: index)
         }
-        return Split(stablePrefix: "", tail: text)
-    }
 
-    private static func isBalanced(_ text: String) -> Bool {
-        occurrences(of: "```", in: text) % 2 == 0
-            && occurrences(of: "$$", in: text) % 2 == 0
-    }
-
-    private static func occurrences(of needle: String, in text: String) -> Int {
-        var count = 0
-        var searchStart = text.startIndex
-        while let found = text.range(of: needle, range: searchStart..<text.endIndex) {
-            count += 1
-            searchStart = found.upperBound
+        guard let stableEnd = lastStableEnd else {
+            return Split(stablePrefix: "", tail: text)
         }
-        return count
+        return Split(
+            stablePrefix: String(text[..<stableEnd]),
+            tail: String(text[stableEnd...])
+        )
     }
 
     #if DEBUG
@@ -69,6 +79,12 @@ enum AgentStreamingBlockSplitter {
             ("$$a+b$$\n\n下一段", "$$a+b$$\n\n", "下一段"),
             // 无空行边界：全部留在 tail
             ("只有一段没有边界", "", "只有一段没有边界"),
+            // 代码块内的空行不能成为边界
+            ("前文\n\n```\na\n\nb", "前文\n\n", "```\na\n\nb"),
+            // 代码内容里的 $$ 不是数学块边界
+            ("```swift\nlet price = \"$$\"\n```\n\n结论", "```swift\nlet price = \"$$\"\n```\n\n", "结论"),
+            // 波浪线围栏与反引号围栏遵循相同边界
+            ("~~~text\na\n\nb\n~~~\n\n结论", "~~~text\na\n\nb\n~~~\n\n", "结论"),
         ]
         return cases.allSatisfy { input, stable, tail in
             let result = splitUnchecked(input)
