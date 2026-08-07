@@ -5738,7 +5738,11 @@ final class WorkspaceStore: ObservableObject {
 
     func recoverCourseTransactionsForSelfCheck() throws {
         precondition(WeiBeiSafetyTestMode.isEnabled)
+        let maintenanceTask = courseReconciliationTask
+        maintenanceTask?.cancel()
+        courseReconciliationTask = nil
         try waitForCourseFileOperation {
+            await maintenanceTask?.value
             await self.recoverPendingCourseFileTransactionsInBackground()
         }
     }
