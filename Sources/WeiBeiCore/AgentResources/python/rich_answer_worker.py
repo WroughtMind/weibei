@@ -206,14 +206,13 @@ def parse_request(raw: Any, input_size: int) -> tuple[dict[str, Any], Limits]:
     source_evidence_ids = request.get("sourceEvidenceIDs")
     if (
         not isinstance(source_evidence_ids, list)
-        or not source_evidence_ids
         or len(source_evidence_ids) > 12
         or len(set(source_evidence_ids)) != len(source_evidence_ids)
         or not all(isinstance(item, str) and is_safe_source_evidence(item) for item in source_evidence_ids)
     ):
         raise WorkerError(
             "invalid_source_evidence",
-            "sourceEvidenceIDs must be unique current WeiBei material, note, or selection labels",
+            "sourceEvidenceIDs must be unique safe WeiBei source labels when provided",
             "sourceEvidenceIDs",
         )
     limits = parse_limits(request)
