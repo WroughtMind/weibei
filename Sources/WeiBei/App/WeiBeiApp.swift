@@ -75,6 +75,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         sharedWorkspaceStore.flushPendingNotePersistence(
             flushWorkspace: false
         )
+        sharedWorkspaceStore.cancelAgentRequest(restoreDraft: false)
         Task { @MainActor [weak self] in
             let saved =
                 await sharedWorkspaceStore.flushPendingWorkspaceSaveAsync()
@@ -92,6 +93,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         // Keep a final fallback for termination paths that bypassed the
         // asynchronous applicationShouldTerminate handshake.
+        sharedWorkspaceStore.cancelAgentRequest(restoreDraft: false)
         if !terminationApproved {
             sharedWorkspaceStore.flushPendingNotePersistence()
         }
