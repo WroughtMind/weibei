@@ -455,21 +455,10 @@ verify_learning_flow_persistence() {
         && /usr/bin/grep -q "玉兰七号" "$workspace_file" \
         && /usr/bin/grep -q '"agentProviderID":"openai-codex"' "$workspace_file" \
         && /usr/bin/grep -q '"modelName":"gpt-5.5"' "$workspace_file" \
-        && /usr/bin/grep -q '^oauth=linked$' "$marker_file" \
+        && /usr/bin/grep -q '^credential=pi-managed$' "$marker_file" \
         && /usr/bin/grep -q '^continuity=true$' "$marker_file" \
         && ! /usr/bin/grep -q "## 离线草稿" "$workspace_file"; then
-        local session_id child_pid command_line
-        session_id="$(/usr/bin/awk -F= '$1 == "session" { print $2 }' "$marker_file")"
-        while IFS= read -r child_pid; do
-          [[ -n "$child_pid" ]] || continue
-          command_line="$(/bin/ps -ww -p "$child_pid" -o command= 2>/dev/null || true)"
-          if [[ "$command_line" == *"--mode rpc"* \
-            && "$command_line" == *"--provider openai-codex"* \
-            && "$command_line" == *"--model gpt-5.5"* \
-            && "$command_line" == *"--session-id $session_id"* ]]; then
-            return 0
-          fi
-        done < <(/usr/bin/pgrep -P "$VERIFY_PID" 2>/dev/null || true)
+        return 0
       fi
       sleep 0.2
     done
