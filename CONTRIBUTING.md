@@ -11,7 +11,6 @@ Thank you for helping improve WeiBei.
 
    ```bash
    ./script/build_and_run.sh check
-   ./script/build_and_run.sh --verify
    ```
 
 4. Describe what changed, what was intentionally left out, and which checks

@@ -1159,7 +1159,7 @@ func toggled(_ itemID: String, in values: Set<String>) -> Set<String> {
 @MainActor
 func courseFolderLabel(_ item: StudyItem, store: WorkspaceStore) -> String {
     guard let url = item.url else {
-        return item.isSample ? store.ui("内置示例", "Built-in sample") : store.displaySubtitle(for: item)
+        return store.displaySubtitle(for: item)
     }
     let folder = url.deletingLastPathComponent().lastPathComponent
     return folder.isEmpty ? url.deletingLastPathComponent().path : folder

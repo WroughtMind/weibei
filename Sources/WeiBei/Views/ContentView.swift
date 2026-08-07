@@ -658,41 +658,15 @@ private struct LayoutContentView: View {
     }
 
     private var firstSplit: Binding<CGFloat> {
-        if Self.isDormantRailPreviewVerification {
-            return .constant(0.02)
-        }
         return numericBinding($firstSplitStorage)
     }
 
     private var secondSplit: Binding<CGFloat> {
-        if Self.isDormantRailPreviewVerification {
-            return .constant(0.55)
-        }
         return numericBinding($secondSplitStorage)
     }
 
-    private static var isDormantRailPreviewVerification: Bool {
-        let scenario = ProcessInfo.processInfo.environment["WEIBEI_VERIFY_SCENARIO"]
-        return scenario == "content-rail-dormant-preview" || scenario == "content-rail-activation-preview"
-    }
-
     private var halfSplit: Binding<CGFloat> {
-        if let agentRatio = Self.verificationAgentPaneRatio {
-            let order = store.visibleDocumentPaneOrder
-            if order.count == 2, let agentIndex = order.firstIndex(of: .agent) {
-                return .constant(agentIndex == 0 ? agentRatio : 1 - agentRatio)
-            }
-        }
         return numericBinding($halfSplitStorage)
-    }
-
-    private static var verificationAgentPaneRatio: CGFloat? {
-        guard let rawValue = ProcessInfo.processInfo.environment["WEIBEI_VERIFY_AGENT_PANE_RATIO"],
-              let ratio = Double(rawValue)
-        else {
-            return nil
-        }
-        return CGFloat(min(max(ratio, 0.20), 0.80))
     }
 
     @ViewBuilder

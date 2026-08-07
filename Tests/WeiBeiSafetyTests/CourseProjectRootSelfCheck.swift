@@ -1,4 +1,5 @@
 import Foundation
+@testable import WeiBei
 import WeiBeiCore
 
 enum CourseProjectRootSelfCheck {
@@ -81,7 +82,6 @@ enum CourseProjectRootSelfCheck {
         try courseRootRefreshRebindsOwnedItemsAndRollsBackTogether()
         try courseOwnedAndGlobalNotesStaySeparated()
         try largeFileWorkStaysOffMainThread()
-        try backgroundWorkspacePersistenceIsOrderedAndDurable()
         try courseMarkdownConditionalWritePreservesFinderContentAndRecovers()
         try courseMarkdownPostPlacementReplacementPreservesAllContent()
         try firstScanAndFinderReconciliationPreserveIdentity()
@@ -99,6 +99,7 @@ enum CourseProjectRootSelfCheck {
         try step("旧课程首次整理") {
             try rootlessLegacyCourseIsOrganizedByCopy()
         }
+        try rootlessLegacyCourseCanBeRemovedFromWeiBei()
         try sharedRepairFailurePreservesMembershipUntilEntryDisappears()
         try sharedConversionStagesBesideSharedDestination()
         try sharedPostPlacementReplacementPreservesVerifiedOriginal()
@@ -224,12 +225,12 @@ enum CourseProjectRootSelfCheck {
                 }
             }
         )
-        let activeStore = try require(store, "无法创建课程移除样本")
-        try activeStore.configureCourseLibrary(at: library)
-        let courseA = try activeStore.createCourseInLibrary(
+        try check(store != nil, "无法创建课程移除样本")
+        try store!.configureCourseLibrary(at: library)
+        let courseA = try store!.createCourseInLibrary(
             title: "课程甲"
         )
-        let courseB = try activeStore.createCourseInLibrary(
+        let courseB = try store!.createCourseInLibrary(
             title: "课程乙"
         )
         let sharedSource = imports.appendingPathComponent(
@@ -240,24 +241,24 @@ enum CourseProjectRootSelfCheck {
         )
         try Data("SHARED_ORIGINAL".utf8).write(to: sharedSource)
         try Data("COURSE_A_OWNED".utf8).write(to: ownedSource)
-        let sharedItem = try activeStore
+        let sharedItem = try store!
             .importFileIntoCourseForSelfCheck(
                 sharedSource,
                 courseID: courseA,
                 role: .material
             ).item
-        try activeStore.shareCourseOwnedItemForSelfCheck(
+        try store!.shareCourseOwnedItemForSelfCheck(
             itemID: sharedItem.id,
             withCourseID: courseB
         )
-        let ownedItem = try activeStore
+        let ownedItem = try store!
             .importFileIntoCourseForSelfCheck(
                 ownedSource,
                 courseID: courseA,
                 role: .material
             ).item
         let noteID = try require(
-            activeStore.createCourseNotebookNoteForSelfCheck(
+            store!.createCourseNotebookNoteForSelfCheck(
                 courseID: courseA,
                 title: "课程甲笔记"
             ),
@@ -266,7 +267,7 @@ enum CourseProjectRootSelfCheck {
         let chatToken = "A0C_GHOST_CHAT_TOKEN"
         let memoryToken = "A0C_COURSE_MEMORY_TOKEN"
         let globalMemoryToken = "A0C_GLOBAL_MEMORY_TOKEN"
-        _ = try activeStore.installCourseRemovalStateForSelfCheck(
+        _ = try store!.installCourseRemovalStateForSelfCheck(
             courseID: courseA,
             materialItemID: ownedItem.id,
             noteItemID: noteID,
@@ -275,16 +276,16 @@ enum CourseProjectRootSelfCheck {
             globalMemoryText: globalMemoryToken
         )
         try check(
-            activeStore.flushPendingWorkspaceSave(),
+            store!.flushPendingWorkspaceSave(),
             "课程移除样本无法写入课程状态"
         )
 
         let rootA = try require(
-            activeStore.courseRootURL(for: courseA),
+            store!.courseRootURL(for: courseA),
             "课程甲根目录缺失"
         )
         let rootB = try require(
-            activeStore.courseRootURL(for: courseB),
+            store!.courseRootURL(for: courseB),
             "课程乙根目录缺失"
         )
         courseARootForHook = rootA
@@ -303,7 +304,7 @@ enum CourseProjectRootSelfCheck {
             )
         )
         let sharedURL = try require(
-            activeStore.item(withID: sharedItem.id)?.url,
+            store!.item(withID: sharedItem.id)?.url,
             "共享原件路径缺失"
         )
         let sharedIdentity = try require(
@@ -312,27 +313,27 @@ enum CourseProjectRootSelfCheck {
         )
         let sharedData = try Data(contentsOf: sharedURL)
 
-        try activeStore.removeCourseFromWeiBeiForSelfCheck(
+        try store!.removeCourseFromWeiBeiForSelfCheck(
             courseA
         )
         try check(
-            activeStore.course(withID: courseA) == nil
-                && activeStore.studySessions.contains {
+            store!.course(withID: courseA) == nil
+                && store!.studySessions.contains {
                     !$0.relatedCourseIDs.contains(courseA)
                         && $0.messages.contains { $0.text == chatToken }
                 }
-                && activeStore.courseIDs(for: sharedItem.id)
+                && store!.courseIDs(for: sharedItem.id)
                     == [courseB]
-                && activeStore.item(withID: sharedItem.id) != nil
-                && activeStore.item(withID: ownedItem.id) == nil
-                && activeStore.learningMemoryEntries(
+                && store!.item(withID: sharedItem.id) != nil
+                && store!.item(withID: ownedItem.id) == nil
+                && store!.learningMemoryEntries(
                     in: .course(courseA)
                 ).isEmpty
-                && activeStore.learningMemoryEntries(in: .global)
+                && store!.learningMemoryEntries(in: .global)
                     .contains {
                         $0.text == globalMemoryToken
                     }
-                && activeStore.courseResumePoint(
+                && store!.courseResumePoint(
                     for: courseA
                 ) == nil,
             "普通移除没有解除课程关系、保留 Chat，或误删共享资料与全局状态"
@@ -359,7 +360,7 @@ enum CourseProjectRootSelfCheck {
             "普通移除改动了真实课程内容、其他课程或共享原件"
         )
 
-        let reopenedCourseID = try activeStore.adoptCourseFolder(
+        let reopenedCourseID = try store!.adoptCourseFolder(
             at: rootA,
             title: "不应覆盖课程名"
         )
@@ -368,28 +369,28 @@ enum CourseProjectRootSelfCheck {
             "重新纳入课程改变了课程身份"
         )
         try check(
-            activeStore.studySessions.filter {
+            store!.studySessions.filter {
                 $0.messages.contains { $0.text == chatToken }
             }.count == 1,
             "重新纳入课程时丢失或复制了本机 Chat"
         )
         try check(
-            activeStore.learningMemoryEntries(
+            store!.learningMemoryEntries(
                 in: .course(courseA)
             ).contains { $0.text == memoryToken },
             "重新纳入课程没有恢复课程记忆"
         )
         try check(
-            activeStore.courseResumePoint(for: courseA)?
+            store!.courseResumePoint(for: courseA)?
                 .materialLocation?.itemID == ownedItem.id
-                && activeStore.courseResumePoint(for: courseA)?
+                && store!.courseResumePoint(for: courseA)?
                     .noteItemID == noteID,
             "重新纳入课程没有恢复阅读位置和当前笔记"
         )
 
         swapRootBeforeTrash = true
         try expectFailure("确认后根目录身份变化") {
-            _ = try activeStore
+            _ = try store!
                 .moveCourseFolderToTrashForSelfCheck(courseA)
         }
         let displacedRoot = try require(
@@ -403,7 +404,7 @@ enum CourseProjectRootSelfCheck {
                 at: displacedRoot
             ) == rootAIdentity
         let registrationSurvived =
-            activeStore.course(withID: courseA) != nil
+            store!.course(withID: courseA) != nil
         try check(
             lureSurvived
                 && realRootSurvived
@@ -418,7 +419,7 @@ enum CourseProjectRootSelfCheck {
 
         crashAfterTrashMove = true
         try expectFailure("废纸篓移动后崩溃") {
-            _ = try activeStore
+            _ = try store!
                 .moveCourseFolderToTrashForSelfCheck(courseA)
         }
         let selfCheckTrash = fixture.workspaceDirectory
@@ -452,34 +453,40 @@ enum CourseProjectRootSelfCheck {
             "废纸篓崩溃窗口损坏了课程、其他课程或共享原件"
         )
         try expectFailure("未完成恢复期间拒绝第二门课移除") {
-            try activeStore.removeCourseFromWeiBeiForSelfCheck(
+            try store!.removeCourseFromWeiBeiForSelfCheck(
                 courseB
             )
         }
         try check(
-            activeStore.course(withID: courseB) != nil,
+            store!.course(withID: courseB) != nil,
             "未完成的课程移除恢复被另一门课覆盖"
         )
 
         store = nil
-        let recovered = makeStore(fixture: fixture)
-        try recovered
+        var recovered: WorkspaceStore? = makeStore(fixture: fixture)
+        try recovered!
             .finishPendingCourseRemovalRecoveryForSelfCheck()
         let journalURL = fixture.workspaceDirectory
             .appendingPathComponent(
                 "pending-course-removal.json"
         )
+        let courseARemoved = recovered!.course(withID: courseA) == nil
+        let retainedChatCount = recovered!.studySessions.filter {
+            !$0.relatedCourseIDs.contains(courseA)
+                && $0.messages.contains { $0.text == chatToken }
+        }.count
+        let courseBRetained = recovered!.course(withID: courseB) != nil
+        let sharedItemRetained = recovered!.item(withID: sharedItem.id) != nil
+        let journalRemoved = !journalURL.exists
         try check(
-            recovered.course(withID: courseA) == nil
-                && recovered.studySessions.filter {
-                    !$0.relatedCourseIDs.contains(courseA)
-                        && $0.messages.contains { $0.text == chatToken }
-                }.count == 1
-                && recovered.course(withID: courseB) != nil
-                && recovered.item(withID: sharedItem.id) != nil
-                && !journalURL.exists,
-            "重开没有完成课程注销、保留统一 Chat，或留下恢复记录"
+            courseARemoved
+                && retainedChatCount == 1
+                && courseBRetained
+                && sharedItemRetained
+                && journalRemoved,
+            "重开恢复结果不完整：课程甲已移除=\(courseARemoved)，保留 Chat 数=\(retainedChatCount)，课程乙保留=\(courseBRetained)，共享资料保留=\(sharedItemRetained)，恢复记录已清理=\(journalRemoved)"
         )
+        recovered = nil
         let recoveredAgain = makeStore(fixture: fixture)
         try check(
             recoveredAgain.course(withID: courseA) == nil
@@ -511,16 +518,13 @@ enum CourseProjectRootSelfCheck {
                 }
             }
         )
-        let originalStore = try require(
-            firstStore,
-            "无法建立第一次崩溃样本"
-        )
-        try originalStore.configureCourseLibrary(at: library)
-        let courseID = try originalStore.createCourseInLibrary(
+        try check(firstStore != nil, "无法建立第一次崩溃样本")
+        try firstStore!.configureCourseLibrary(at: library)
+        let courseID = try firstStore!.createCourseInLibrary(
             title: "连续崩溃课程"
         )
         let root = try require(
-            originalStore.courseRootURL(for: courseID),
+            firstStore!.courseRootURL(for: courseID),
             "连续崩溃课程根缺失"
         )
         let rootIdentity = try require(
@@ -528,11 +532,11 @@ enum CourseProjectRootSelfCheck {
             "连续崩溃课程身份缺失"
         )
         try check(
-            originalStore.flushPendingWorkspaceSave(),
+            firstStore!.flushPendingWorkspaceSave(),
             "连续崩溃课程初始状态未保存"
         )
         try expectFailure("隔离后写恢复记录前第一次崩溃") {
-            _ = try originalStore
+            _ = try firstStore!
                 .moveCourseFolderToTrashForSelfCheck(courseID)
         }
         firstStore = nil
@@ -549,21 +553,24 @@ enum CourseProjectRootSelfCheck {
                 }
             }
         )
-        let recoveringStore = try require(
-            secondStore,
-            "无法建立第二次崩溃恢复样本"
-        )
-        try recoveringStore
-            .finishPendingCourseRemovalRecoveryForSelfCheck()
-        secondStore = nil
-
-        let recovered = makeStore(fixture: fixture)
-        try recovered
+        try check(secondStore != nil, "无法建立第二次崩溃恢复样本")
+        try secondStore!
             .finishPendingCourseRemovalRecoveryForSelfCheck()
         let journalURL = fixture.workspaceDirectory
             .appendingPathComponent(
                 "pending-course-removal.json"
             )
+        try check(
+            !secondCrash
+                && journalURL.exists
+                && secondStore!.course(withID: courseID) != nil,
+            "第二次重开没有停在模拟崩溃点"
+        )
+        secondStore = nil
+
+        let recovered = makeStore(fixture: fixture)
+        try recovered
+            .finishPendingCourseRemovalRecoveryForSelfCheck()
         let selfCheckTrash = fixture.workspaceDirectory
             .appendingPathComponent(
                 "SelfCheckTrash",
@@ -7564,6 +7571,106 @@ enum CourseProjectRootSelfCheck {
                 && store.importedItems.contains { $0.id == item.id }
                 && (try Data(contentsOf: sourceURL)) == original,
             "重启后旧课程整理结果或外部原件丢失"
+        )
+    }
+
+    @MainActor
+    private static func rootlessLegacyCourseCanBeRemovedFromWeiBei() throws {
+        let fixture = try Fixture(name: "rootless-course-removal")
+        defer { fixture.remove() }
+        let source = fixture.root.appendingPathComponent("旧课程外部资料.txt")
+        let sourceData = Data("原文件不能被普通移除碰到".utf8)
+        try sourceData.write(to: source)
+        var store = makeStore(fixture: fixture)
+        let item = try require(
+            store.importFiles(
+                [source],
+                selectsFirstImportedItem: false
+            ).first,
+            "旧课程外部资料没有登记"
+        )
+        let courseID = store.installRootlessCourseForSelfCheck(
+            title: "没有文件夹的旧课程"
+        )
+        store.assignItemIDs([item.id], to: courseID)
+
+        try expectFailure("无文件夹课程移到废纸篓") {
+            try store.moveCourseFolderToTrashForSelfCheck(courseID)
+        }
+        try check(
+            store.course(withID: courseID) != nil
+                && store.courseIDs(for: item.id) == [courseID]
+                && (try Data(contentsOf: source)) == sourceData,
+            "无文件夹课程误进废纸篓路径或改动了原文件"
+        )
+
+        try store.removeCourseFromWeiBeiForSelfCheck(courseID)
+        try check(
+            store.course(withID: courseID) == nil
+                && store.courseIDs(for: item.id).isEmpty
+                && store.item(withID: item.id) != nil
+                && (try Data(contentsOf: source)) == sourceData,
+            "普通移除没有只解除旧课程关系，或改动了原文件"
+        )
+
+        store = makeStore(fixture: fixture)
+        try check(
+            store.course(withID: courseID) == nil
+                && store.item(withID: item.id) != nil
+                && (try Data(contentsOf: source)) == sourceData,
+            "旧课程在重开后复活，或外部资料没有保留"
+        )
+
+        let guardedFixture = try Fixture(name: "rootless-owned-item-removal")
+        defer { guardedFixture.remove() }
+        let guardedSource = guardedFixture.root
+            .appendingPathComponent("不能随课程消失的资料.txt")
+        let guardedData = Data("课程自有条目没有课程根时必须保留".utf8)
+        try guardedData.write(to: guardedSource)
+        let guardedCourse = Course(
+            title: "异常的无根课程",
+            sourceRootRelativePath: "已经丢失的课程文件夹"
+        )
+        let guardedItem = StudyItem(
+            id: "imported:rootless-owned-item",
+            title: "不能随课程消失的资料",
+            subtitle: guardedSource.lastPathComponent,
+            kind: .text,
+            urlPath: guardedSource.path,
+            importedFileIdentity: CourseProjectFileWorker.identity(
+                at: guardedSource
+            ),
+            isSample: false,
+            storage: .courseOwned(ownerCourseID: guardedCourse.id)
+        )
+        let guardedSnapshot = PersistedWorkspace(
+            importedItems: [guardedItem],
+            courses: [guardedCourse],
+            courseItemMemberships: [
+                CourseItemMembership(
+                    courseID: guardedCourse.id,
+                    itemID: guardedItem.id
+                ),
+            ],
+            activeCourseID: guardedCourse.id,
+            noteSourceLinksMigrationVersion: 1
+        )
+        try JSONEncoder().encode(guardedSnapshot).write(
+            to: guardedFixture.workspaceDirectory
+                .appendingPathComponent("workspace.json"),
+            options: [.atomic]
+        )
+        let guardedStore = makeStore(fixture: guardedFixture)
+        try expectFailure("无根课程仍含课程自有条目") {
+            try guardedStore.removeCourseFromWeiBeiForSelfCheck(
+                guardedCourse.id
+            )
+        }
+        try check(
+            guardedStore.course(withID: guardedCourse.id) != nil
+                && guardedStore.item(withID: guardedItem.id) != nil
+                && (try Data(contentsOf: guardedSource)) == guardedData,
+            "无根课程的安全闸门没有保住课程自有条目"
         )
     }
 

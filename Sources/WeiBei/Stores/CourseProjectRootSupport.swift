@@ -228,6 +228,7 @@ actor CourseProjectFileWorker {
 
     private let fileManager = FileManager.default
     private var highestWorkspaceSaveGeneration: UInt64 = 0
+#if DEBUG
     private var selfCheckGatedWorkspaceGeneration: UInt64?
     private var selfCheckWorkspaceGenerationEntered = false
     private var selfCheckWorkspaceEntryWaiters:
@@ -272,6 +273,7 @@ actor CourseProjectFileWorker {
     ) {
         selfCheckFailingWorkspaceGeneration = generation
     }
+#endif
 
     func verifiedCourseRoot(
         at rawURL: URL,
@@ -355,9 +357,11 @@ actor CourseProjectFileWorker {
             )
         }
         highestWorkspaceSaveGeneration = request.generation
+#if DEBUG
         await pauseWorkspacePersistenceForSelfCheck(
             generation: request.generation
         )
+#endif
 
         var revisions = decodedRevisions(request.workspace)
         var digests = decodedDigests(request.workspace)
@@ -553,6 +557,7 @@ actor CourseProjectFileWorker {
         workspace.dirtyPortableCourseIDs = dirty.sorted {
             $0.uuidString < $1.uuidString
         }
+#if DEBUG
         if selfCheckFailingWorkspaceGeneration == request.generation {
             selfCheckFailingWorkspaceGeneration = nil
             let rollbackFailed = Self.rollbackPortableWrites(committedWrites)
@@ -570,6 +575,7 @@ actor CourseProjectFileWorker {
                 ranOnMainThread: ranOnMainThread
             )
         }
+#endif
         do {
             let encodeSpan = WeiBeiPerf.begin(
                 "workspace.save_encode"
@@ -641,6 +647,7 @@ actor CourseProjectFileWorker {
         )
     }
 
+#if DEBUG
     private func pauseWorkspacePersistenceForSelfCheck(
         generation: UInt64
     ) async {
@@ -659,6 +666,7 @@ actor CourseProjectFileWorker {
         selfCheckGatedWorkspaceGeneration = nil
         selfCheckWorkspaceGenerationEntered = false
     }
+#endif
 
     private struct PortableWorkspaceWrite {
         var url: URL
@@ -1950,7 +1958,7 @@ actor CourseProjectFileWorker {
         at url: URL,
         selfCheckDestination: URL
     ) throws -> URL {
-        if ProcessInfo.processInfo.arguments.contains("--self-check-course-project-root") {
+        if WeiBeiSafetyTestMode.isEnabled {
             guard Self.renameWithoutReplacement(
                 from: url,
                 to: selfCheckDestination
@@ -2127,9 +2135,7 @@ actor CourseProjectFileWorker {
         }
 
         let movedRoot: URL
-        if ProcessInfo.processInfo.arguments.contains(
-            "--self-check-course-project-root"
-        ) {
+        if WeiBeiSafetyTestMode.isEnabled {
             try fileManager.createDirectory(
                 at: selfCheckDestination.deletingLastPathComponent(),
                 withIntermediateDirectories: true
@@ -2294,9 +2300,7 @@ actor CourseProjectFileWorker {
     }
 
     func finishSelfCheckTrash(at url: URL) throws {
-        guard ProcessInfo.processInfo.arguments.contains(
-            "--self-check-course-project-root"
-        ) else {
+        guard WeiBeiSafetyTestMode.isEnabled else {
             return
         }
         try fileManager.removeItem(at: url)

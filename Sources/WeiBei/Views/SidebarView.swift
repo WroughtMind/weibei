@@ -75,7 +75,6 @@ struct SidebarView: View {
                     courseSection
                     sidebarSection(title: store.ui("独立资料", "Unassigned Materials"), items: unassignedMaterials)
                     sidebarSection(title: store.ui("独立笔记", "Unassigned Notes"), items: unassignedNotes)
-                    sidebarSection(title: store.ui("内置示例", "Built-in Examples"), items: sampleItems)
                 }
                 .padding(.horizontal, 10)
                 .padding(.vertical, 10)
@@ -142,8 +141,8 @@ struct SidebarView: View {
             }
         } message: { _ in
             Text(store.ui(
-                "只会让这门课从魏碑中移除。魏碑会先保存最新学习状态，真实课程文件夹和其中内容会完整保留；以后重新纳入这个文件夹即可恢复。",
-                "This only removes the course from WeiBei. WeiBei first saves the latest learning state, keeps the real course folder and its contents intact, and can restore them when the folder is adopted again."
+                "只会从魏碑中移除这门课程。资料、笔记原文件和 Chat 都会保留，不会移到废纸篓。",
+                "This only removes the course from WeiBei. Material files, note files, and Chats are kept and are not moved to Trash."
             ))
         }
         .alert(
@@ -172,10 +171,6 @@ struct SidebarView: View {
             course.title.localizedCaseInsensitiveContains(query)
                 || store.courseItems(in: course.id).contains { filteredItemIDs.contains($0.id) }
         }
-    }
-
-    private var sampleItems: [StudyItem] {
-        store.sampleItems.filter { filteredItemIDs.contains($0.id) }
     }
 
     private var unassignedMaterials: [StudyItem] {

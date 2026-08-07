@@ -130,8 +130,6 @@ final class StableDocumentSplitView: NSView {
     fileprivate var emptyHost: NSHostingView<AnyView>?
     fileprivate let dividerViews = [StableDocumentDividerView(), StableDocumentDividerView()]
     fileprivate weak var coordinator: StableDocumentSplitCoordinator?
-    private let continuityRecorder = PaneContinuityRecorder.configuredFromEnvironment()
-
     override var isFlipped: Bool { true }
 
     func install(
@@ -161,63 +159,6 @@ final class StableDocumentSplitView: NSView {
         assert(emptyHost?.superview === self)
         assert(roleHosts.values.allSatisfy { $0.superview === self })
         assert(dividerViews.allSatisfy { $0.superview === self })
-    }
-
-    func recordContinuityTransition(duration: TimeInterval) {
-        continuityRecorder?.recordTransition(view: self, duration: duration)
-    }
-
-    func continuitySample(recorderID: String, transition: Int, frame: Int) -> PaneContinuitySample {
-        let parentID = String(describing: ObjectIdentifier(self))
-        let roles = WorkspacePaneRole.allCases.compactMap { role -> PaneContinuityRoleSample? in
-            guard let host = roleHosts[role] else { return nil }
-            let presentationFrame = host.layer?.presentation()?.frame ?? host.frame
-            let contentHost = descendant(
-                identifiedBy: "persistent-pane-\(role.rawValue)",
-                in: host
-            )
-            let contentAttached = contentHost?.superview != nil && contentHost?.window != nil
-            let slotHasVisibleArea = !host.isHidden
-                && host.alphaValue > 0.01
-                && presentationFrame.width > 0.5
-                && presentationFrame.height > 0.5
-            return PaneContinuityRoleSample(
-                role: role.rawValue,
-                hostID: String(describing: ObjectIdentifier(host)),
-                parentID: host.superview.map { String(describing: ObjectIdentifier($0)) } ?? "none",
-                contentHostID: contentHost.map { String(describing: ObjectIdentifier($0)) },
-                contentParentID: contentHost?.superview.map { String(describing: ObjectIdentifier($0)) },
-                contentAttached: contentAttached,
-                slotHasVisibleArea: slotHasVisibleArea,
-                visibleContentReady: !slotHasVisibleArea || (contentAttached && contentHost?.isHidden == false),
-                hidden: host.isHidden,
-                modelFrame: host.frame,
-                presentationFrame: presentationFrame
-            )
-        }
-        return PaneContinuitySample(
-            recorderID: recorderID,
-            transition: transition,
-            frame: frame,
-            timestamp: ProcessInfo.processInfo.systemUptime,
-            stableOwnership: roles.count == WorkspacePaneRole.allCases.count
-                && roles.allSatisfy { $0.parentID == parentID && $0.contentAttached },
-            noBlankVisibleSlots: roles.allSatisfy(\.visibleContentReady),
-            containerBounds: bounds,
-            roles: roles
-        )
-    }
-
-    private func descendant(identifiedBy identifier: String, in root: NSView) -> NSView? {
-        if root.identifier?.rawValue == identifier {
-            return root
-        }
-        for subview in root.subviews {
-            if let match = descendant(identifiedBy: identifier, in: subview) {
-                return match
-            }
-        }
-        return nil
     }
 
     override func layout() {
@@ -423,7 +364,7 @@ final class StableDocumentSplitCoordinator {
                 state: state,
                 in: splitView,
                 animated: true,
-                preserveCurrentWidths: ProcessInfo.processInfo.environment["WEIBEI_VERIFY_AGENT_PANE_RATIO"] == nil
+                preserveCurrentWidths: true
             )
             return
         }
@@ -526,7 +467,6 @@ final class StableDocumentSplitCoordinator {
             deadline: .now() + layoutAnimationDuration + animationFallbackGrace,
             execute: finishAnimation
         )
-        splitView.recordContinuityTransition(duration: layoutAnimationDuration)
     }
 
     private func paneWidths(
@@ -930,7 +870,6 @@ final class StableDocumentSplitCoordinator {
             }
             updateDividerFrames(dividers, animated: true, in: splitView)
         }, completionHandler: finishAnimation)
-        splitView.recordContinuityTransition(duration: duration)
         DispatchQueue.main.asyncAfter(
             deadline: .now() + duration + animationFallbackGrace,
             execute: finishAnimation

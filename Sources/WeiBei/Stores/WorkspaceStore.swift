@@ -7,6 +7,15 @@ import SwiftUI
 import UniformTypeIdentifiers
 import WeiBeiCore
 
+enum WeiBeiSafetyTestMode {
+#if DEBUG
+    static var isEnabled: Bool {
+        ProcessInfo.processInfo.environment["WEIBEI_SAFETY_TEST_MODE"] == "1"
+    }
+#else
+    static let isEnabled = false
+#endif
+}
 enum NotebookCreationKind: String {
     case blank
     case currentMaterial
@@ -122,165 +131,6 @@ private struct CoursePortableStateCommit {
     let previousNeedsBootstrap: Bool
 }
 
-@MainActor
-enum ChatSourceNavigationVerifier {
-    private(set) static var markdownMatches = Set<String>()
-    private(set) static var htmlSectionIDs = [String]()
-    private(set) static var htmlActiveID: String?
-    private(set) static var htmlActiveReason = ""
-
-    static func reset() {
-        markdownMatches = []
-        htmlSectionIDs = []
-        htmlActiveID = nil
-        htmlActiveReason = ""
-    }
-
-    static func recordHTMLSections(_ ids: [String]) {
-        guard ProcessInfo.processInfo.environment["WEIBEI_VERIFY_SCENARIO"]
-                == "chat-source-navigation-flow" else {
-            return
-        }
-        htmlSectionIDs = ids
-    }
-
-    static func recordHTMLActive(id: String?, reason: String) {
-        guard ProcessInfo.processInfo.environment["WEIBEI_VERIFY_SCENARIO"]
-                == "chat-source-navigation-flow" else {
-            return
-        }
-        htmlActiveID = id
-        htmlActiveReason = reason
-    }
-
-    static func recordMarkdownSearch(itemID: String, query: String, found: Bool) {
-        guard found,
-              ProcessInfo.processInfo.environment["WEIBEI_VERIFY_SCENARIO"]
-                == "chat-source-navigation-flow" else {
-            return
-        }
-        markdownMatches.insert("\(itemID)\u{1F}\(query)")
-    }
-
-    static func foundMarkdown(itemID: String, query: String) -> Bool {
-        markdownMatches.contains("\(itemID)\u{1F}\(query)")
-    }
-}
-
-enum PaneToggleContinuityVerifier {
-    private(set) static var isMeasuring = false
-    private(set) static var htmlEventSequence = 0
-    private(set) static var htmlSectionEventCount = 0
-    private(set) static var htmlActiveEventCount = 0
-    private(set) static var htmlLocationCallCount = 0
-    private(set) static var htmlLocationCommitCount = 0
-    private(set) static var htmlLocationReasons: [String: Int] = [:]
-    private(set) static var webReaderMakeCount = 0
-    private(set) static var webReaderDismantleCount = 0
-    private(set) static var pdfReaderMakeCount = 0
-    private(set) static var pdfReaderDismantleCount = 0
-    private(set) static var noteEditorMakeCount = 0
-    private(set) static var noteEditorDismantleCount = 0
-    private(set) static var verificationScrollScheduleCount = 0
-    private(set) static var verificationScrollResult = ""
-
-    static var isEnabled: Bool {
-        let scenario = ProcessInfo.processInfo.environment["WEIBEI_VERIFY_SCENARIO"]
-        return scenario == "pane-toggle-continuity-flow"
-            || scenario == "pane-layout-stability-flow"
-            || scenario == "pane-reorder-width-flow"
-            || scenario == "reader-scroll-persistence-flow"
-            || scenario == "course-workspace-workflow-flow"
-    }
-
-    static func beginMeasurement() {
-        guard isEnabled else { return }
-        isMeasuring = true
-        htmlSectionEventCount = 0
-        htmlActiveEventCount = 0
-        htmlLocationCallCount = 0
-        htmlLocationCommitCount = 0
-        htmlLocationReasons = [:]
-        webReaderMakeCount = 0
-        webReaderDismantleCount = 0
-        pdfReaderMakeCount = 0
-        pdfReaderDismantleCount = 0
-        noteEditorMakeCount = 0
-        noteEditorDismantleCount = 0
-        verificationScrollScheduleCount = 0
-        verificationScrollResult = ""
-    }
-
-    static func endMeasurement() {
-        guard isEnabled else { return }
-        isMeasuring = false
-    }
-
-    static func recordHTMLActiveEvent(reason: String) {
-        guard isEnabled else { return }
-        htmlEventSequence += 1
-        if isMeasuring {
-            htmlActiveEventCount += 1
-        }
-    }
-
-    static func recordHTMLSectionEvent(count: Int) {
-        guard isEnabled else { return }
-        htmlEventSequence += 1
-        if isMeasuring { htmlSectionEventCount += 1 }
-    }
-
-    static func recordHTMLLocationCall(reason: String) {
-        guard isMeasuring else { return }
-        htmlLocationCallCount += 1
-        htmlLocationReasons[reason, default: 0] += 1
-    }
-
-    static func recordHTMLLocationCommit(reason: String) {
-        guard isMeasuring else { return }
-        htmlLocationCommitCount += 1
-    }
-
-    static func recordWebReaderMake() {
-        guard isEnabled else { return }
-        if isMeasuring { webReaderMakeCount += 1 }
-    }
-
-    static func recordWebReaderDismantle() {
-        guard isEnabled else { return }
-        if isMeasuring { webReaderDismantleCount += 1 }
-    }
-
-    static func recordNoteEditorMake() {
-        guard isEnabled else { return }
-        if isMeasuring { noteEditorMakeCount += 1 }
-    }
-
-    static func recordPDFReaderMake() {
-        guard isEnabled else { return }
-        if isMeasuring { pdfReaderMakeCount += 1 }
-    }
-
-    static func recordPDFReaderDismantle() {
-        guard isEnabled else { return }
-        if isMeasuring { pdfReaderDismantleCount += 1 }
-    }
-
-    static func recordNoteEditorDismantle() {
-        guard isEnabled else { return }
-        if isMeasuring { noteEditorDismantleCount += 1 }
-    }
-
-    static func recordVerificationScrollScheduled() {
-        guard isEnabled else { return }
-        verificationScrollScheduleCount += 1
-    }
-
-    static func recordVerificationScrollResult(_ result: String) {
-        guard isEnabled else { return }
-        verificationScrollResult = result
-    }
-}
 
 enum CourseWorkspaceDestination: String, CaseIterable, Sendable {
     case hub
@@ -598,9 +448,6 @@ final class WorkspaceStore: ObservableObject {
     @Published private(set) var paneExpansionRequest: PaneExpansionRequest?
     @Published var agentSurface: AgentSurface = .hidden
     @Published var noteRenderMode: NoteRenderMode = .rich
-    @Published var showQuietInsight = true
-    @Published var generatedQuietInsight: QuietInsight?
-    @Published var isGeneratingQuietInsight = false
     @Published var floatingSelectionPrompt = ""
     @Published var pinnedFloatingAgent = false
     @Published var selectionContext: SelectionContext?
@@ -655,6 +502,7 @@ final class WorkspaceStore: ObservableObject {
 
     private var notesByItemID: [String: String] = [:]
     private var pendingNoteWritesByItemID: [String: PendingNoteWriteState] = [:]
+    private var noteOperationErrorsByItemID: [String: String] = [:]
     private var noteBackingContentDigestsByItemID: [String: String] = [:]
     private var loadedCourseNoteTextByItemID: [String: String] = [:]
     private var courseNoteLoadTasksByItemID: [String: Task<Void, Never>] = [:]
@@ -702,16 +550,16 @@ final class WorkspaceStore: ObservableObject {
     private var agentReplyIDsThatDisplayedStreamingText: Set<UUID> = []
     private var activeAgentReplyChatID: UUID?
     private var agentRequestTask: Task<Void, Never>?
+#if DEBUG
     private var capturesAgentRequestForSelfCheck = false
     private var selfCheckCapturedAgentRequest: StudyAgentRequest?
+#endif
     private var agentStopTask: Task<Void, Never>?
     private var pendingAgentSwitchTargetID: UUID?
     private var agentDraftsBySessionID: [UUID: String] = [:]
     /// Session-local proof for the one allowed course-home reuse case.
     /// Deliberately not persisted: reopening the App makes an old empty Chat non-fresh.
     private var freshlyCreatedEmptyStudySessionID: UUID?
-    private var quietInsightTask: Task<Void, Never>?
-    private var quietInsightTaskID: UUID?
     private var agentContextRevision: UInt64 = 0
     private var coursePortableStateRevisions: [UUID: UInt64] = [:]
     private var coursePortableStateDigests: [UUID: String] = [:]
@@ -724,9 +572,7 @@ final class WorkspaceStore: ObservableObject {
     private var lastAgentReplyContextRevision: UInt64?
     private var latestAgentLearningUpdateQuestion: String?
     private var stagedNoteDraft: (itemID: String, value: String)?
-    private var quietInsightSignature = ""
     private var isRestoringNavigation = false
-    private var didRunVerificationScenario = false
     private var lastSelectionAttachmentDate: Date?
     private var lastSelectionUpdateDate: Date?
     private var pendingSelectionAttachmentTask: Task<Void, Never>?
@@ -769,7 +615,9 @@ final class WorkspaceStore: ObservableObject {
     private var activeCourseFileMutationCounts: [UUID: Int] = [:]
     private var workspacePersistenceRemovingCourseID: UUID?
     private var workspaceRemovalCommitObserved = false
+#if DEBUG
     private var usesBackgroundWorkspacePersistenceForSelfCheck = false
+#endif
     private var pendingCourseRemovalRecovery:
         PendingCourseRemovalJournal?
     private var resolvedCourseRootURLs: [UUID: URL] = [:]
@@ -1092,8 +940,6 @@ final class WorkspaceStore: ObservableObject {
     private static let shortcutModifierMask: NSEvent.ModifierFlags = [.command, .option, .control, .shift]
     private static let legacySelectionAskThreadsDefaultsKey = "weibei.selectionAskThreads.v1"
 
-    let sampleItems: [StudyItem] = WorkspaceStore.makeSampleItems()
-
     convenience init() {
         let folder = Self.workspaceRootDirectory()
             ?? FileManager.default.temporaryDirectory.appendingPathComponent("WeiBei", isDirectory: true)
@@ -1172,7 +1018,7 @@ final class WorkspaceStore: ObservableObject {
         let restoredPortableCourseStates = restorePortableCourseStates()
         let recoveredPendingCourseRemoval =
             recoverPendingCourseRemovalIfNeeded()
-        if ProcessInfo.processInfo.arguments.contains("--self-check-course-project-root") {
+        if WeiBeiSafetyTestMode.isEnabled {
             recoverPendingCourseFileTransactions()
         }
         WeiBeiThemeRuntime.mode = appearanceMode
@@ -1230,9 +1076,7 @@ final class WorkspaceStore: ObservableObject {
             recordCurrentStudyLocation(incrementVisit: false)
         }
         isRestoringCourseResumePoint = false
-        if !ProcessInfo.processInfo.arguments.contains("--self-check-course-project-root") {
-            startCourseFileMaintenance()
-        }
+        startCourseFileMaintenance()
     }
 
     deinit {
@@ -1245,7 +1089,7 @@ final class WorkspaceStore: ObservableObject {
     }
 
     var allItems: [StudyItem] {
-        sampleItems + importedItems
+        importedItems
     }
 
     var courseMaterials: [StudyItem] {
@@ -2395,7 +2239,7 @@ final class WorkspaceStore: ObservableObject {
                 "The course was registered, but its portable state has not been written yet."
             )
         }
-        if !ProcessInfo.processInfo.arguments.contains("--self-check-course-project-root") {
+        if !WeiBeiSafetyTestMode.isEnabled {
             Task { @MainActor [weak self] in
                 await self?.reconcileCourseFilesNow(courseID: course.id)
             }
@@ -2525,7 +2369,7 @@ final class WorkspaceStore: ObservableObject {
         }
         courseDocumentSearchIndex.synchronize(allItems)
         invalidateAgentContext()
-        if !ProcessInfo.processInfo.arguments.contains("--self-check-course-project-root") {
+        if !WeiBeiSafetyTestMode.isEnabled {
             Task { @MainActor [weak self] in
                 await self?.reconcileCourseFilesNow(courseID: existing.id)
             }
@@ -2733,9 +2577,7 @@ final class WorkspaceStore: ObservableObject {
         courseID: UUID
     ) throws {
         precondition(
-            ProcessInfo.processInfo.arguments.contains(
-                "--self-check-course-project-root"
-            )
+            WeiBeiSafetyTestMode.isEnabled
         )
         try validateCourseRebindStorage(state, courseID: courseID)
     }
@@ -2855,9 +2697,7 @@ final class WorkspaceStore: ObservableObject {
 
     func courseRebindRootSearchRunsOffMainForSelfCheck() -> Bool {
         precondition(
-            ProcessInfo.processInfo.arguments.contains(
-                "--self-check-course-project-root"
-            )
+            WeiBeiSafetyTestMode.isEnabled
         )
         return lastCourseRebindRootSearchRanOnMainThread == false
     }
@@ -3294,9 +3134,7 @@ final class WorkspaceStore: ObservableObject {
             }
             courseDocumentSearchIndex.synchronize(allItems)
             invalidateAgentContext()
-            if !ProcessInfo.processInfo.arguments.contains(
-                "--self-check-course-project-root"
-            ) {
+            if !WeiBeiSafetyTestMode.isEnabled {
                 Task { @MainActor [weak self] in
                     await self?.reconcileCourseFilesNow(
                         courseID: proposal.courseID
@@ -3365,9 +3203,7 @@ final class WorkspaceStore: ObservableObject {
         ) throws -> Void = { _ in }
     ) throws -> CoursePortableExportResult {
         precondition(
-            ProcessInfo.processInfo.arguments.contains(
-                "--self-check-course-project-root"
-            )
+            WeiBeiSafetyTestMode.isEnabled
         )
         return try waitForCourseFileOperation {
             try await self.exportPortableCourseCopy(
@@ -3565,7 +3401,7 @@ final class WorkspaceStore: ObservableObject {
         role: CourseOwnedFileRole,
         conflictResolution: CourseFileConflictResolution = .cancel
     ) throws -> CourseOwnedFileImportResult {
-        precondition(ProcessInfo.processInfo.arguments.contains("--self-check-course-project-root"))
+        precondition(WeiBeiSafetyTestMode.isEnabled)
         return try waitForCourseFileOperation {
             try await self.importFileIntoCourse(
                 sourceURL,
@@ -3989,9 +3825,7 @@ final class WorkspaceStore: ObservableObject {
             courseDocumentSearchIndex.schedule([importedItems[itemIndex]])
             invalidateAgentContext()
         } catch {
-            if ProcessInfo.processInfo.arguments.contains(
-                "--self-check-course-project-root"
-            ), error is CourseProjectSimulatedCrash {
+            if WeiBeiSafetyTestMode.isEnabled, error is CourseProjectSimulatedCrash {
                 throw error
             }
             importedItems = previousItems
@@ -4241,9 +4075,7 @@ final class WorkspaceStore: ObservableObject {
             )
             invalidateAgentContext()
         } catch {
-            if ProcessInfo.processInfo.arguments.contains(
-                "--self-check-course-project-root"
-            ), error is CourseProjectSimulatedCrash {
+            if WeiBeiSafetyTestMode.isEnabled, error is CourseProjectSimulatedCrash {
                 throw error
             }
             courseItemMemberships = previousMemberships
@@ -4272,7 +4104,7 @@ final class WorkspaceStore: ObservableObject {
     }
 
     func courseFileSnapshotRunsOffMainForSelfCheck(_ url: URL) throws -> Bool {
-        precondition(ProcessInfo.processInfo.arguments.contains("--self-check-course-project-root"))
+        precondition(WeiBeiSafetyTestMode.isEnabled)
         let evidence = try waitForCourseFileOperation {
             try await self.courseProjectFileWorker.snapshotWithThreadEvidence(at: url)
         }
@@ -4281,9 +4113,7 @@ final class WorkspaceStore: ObservableObject {
 
     func portableAdoptionReadRunsOffMainForSelfCheck() -> Bool {
         precondition(
-            ProcessInfo.processInfo.arguments.contains(
-                "--self-check-course-project-root"
-            )
+            WeiBeiSafetyTestMode.isEnabled
         )
         return lastPortableAdoptionReadRanOnMainThread == false
     }
@@ -4293,9 +4123,7 @@ final class WorkspaceStore: ObservableObject {
         courseID: UUID
     ) -> Bool {
         precondition(
-            ProcessInfo.processInfo.arguments.contains(
-                "--self-check-course-project-root"
-            )
+            WeiBeiSafetyTestMode.isEnabled
         )
         courseNoteLoadGenerationByItemID[
             itemID,
@@ -4320,9 +4148,7 @@ final class WorkspaceStore: ObservableObject {
         markdown: String
     ) throws -> (read: Bool, write: Bool) {
         precondition(
-            ProcessInfo.processInfo.arguments.contains(
-                "--self-check-course-project-root"
-            )
+            WeiBeiSafetyTestMode.isEnabled
         )
         return try waitForCourseFileOperation {
             guard let item = self.importedItems.first(where: {
@@ -4368,9 +4194,7 @@ final class WorkspaceStore: ObservableObject {
         markdown: String
     ) throws {
         precondition(
-            ProcessInfo.processInfo.arguments.contains(
-                "--self-check-course-project-root"
-            )
+            WeiBeiSafetyTestMode.isEnabled
         )
         try waitForCourseFileOperation {
             guard let item = self.importedItems.first(where: {
@@ -4432,9 +4256,7 @@ final class WorkspaceStore: ObservableObject {
         itemID: String
     ) -> String? {
         precondition(
-            ProcessInfo.processInfo.arguments.contains(
-                "--self-check-course-project-root"
-            )
+            WeiBeiSafetyTestMode.isEnabled
         )
         guard pendingNoteWritesByItemID[itemID] != nil else { return nil }
         return notesByItemID[itemID]
@@ -4442,9 +4264,7 @@ final class WorkspaceStore: ObservableObject {
 
     func waitForCourseNoteWritesForSelfCheck() throws {
         precondition(
-            ProcessInfo.processInfo.arguments.contains(
-                "--self-check-course-project-root"
-            )
+            WeiBeiSafetyTestMode.isEnabled
         )
         let deadline = Date(timeIntervalSinceNow: 20)
         while !courseNoteWritesInFlight.isEmpty, Date() < deadline {
@@ -4463,9 +4283,7 @@ final class WorkspaceStore: ObservableObject {
         markdown: String
     ) throws {
         precondition(
-            ProcessInfo.processInfo.arguments.contains(
-                "--self-check-course-project-root"
-            )
+            WeiBeiSafetyTestMode.isEnabled
         )
         guard let item = importedItems.first(where: {
             $0.id == itemID && $0.isNotebookNote
@@ -4477,9 +4295,7 @@ final class WorkspaceStore: ObservableObject {
 
     func discardPendingCourseNoteForSelfCheck(itemID: String) {
         precondition(
-            ProcessInfo.processInfo.arguments.contains(
-                "--self-check-course-project-root"
-            )
+            WeiBeiSafetyTestMode.isEnabled
         )
         cancelPendingNotePersistence(for: itemID)
         pendingNotePersistenceByItemID.removeValue(forKey: itemID)
@@ -4493,7 +4309,7 @@ final class WorkspaceStore: ObservableObject {
         courseID: UUID,
         conflictResolution: CourseFileConflictResolution = .cancel
     ) throws -> CourseOwnedFileImportResult {
-        precondition(ProcessInfo.processInfo.arguments.contains("--self-check-course-project-root"))
+        precondition(WeiBeiSafetyTestMode.isEnabled)
         return try waitForCourseFileOperation {
             try await self.migrateLegacyExternalItemIntoCourse(
                 itemID: itemID,
@@ -4508,7 +4324,7 @@ final class WorkspaceStore: ObservableObject {
         toCourseID courseID: UUID,
         conflictResolution: CourseFileConflictResolution = .cancel
     ) throws -> CourseOwnedFileImportResult {
-        precondition(ProcessInfo.processInfo.arguments.contains("--self-check-course-project-root"))
+        precondition(WeiBeiSafetyTestMode.isEnabled)
         return try waitForCourseFileOperation {
             try await self.moveCourseOwnedItem(
                 itemID: itemID,
@@ -4523,7 +4339,7 @@ final class WorkspaceStore: ObservableObject {
         withCourseID courseID: UUID,
         conflictResolution: CourseFileConflictResolution = .cancel
     ) throws {
-        precondition(ProcessInfo.processInfo.arguments.contains("--self-check-course-project-root"))
+        precondition(WeiBeiSafetyTestMode.isEnabled)
         try waitForCourseFileOperation {
             try await self.shareCourseOwnedItem(
                 itemID: itemID,
@@ -4982,9 +4798,7 @@ final class WorkspaceStore: ObservableObject {
                 sourceCleanupPending: sourceCleanupPending
             )
         } catch {
-            if ProcessInfo.processInfo.arguments.contains(
-                "--self-check-course-project-root"
-            ), error is CourseProjectSimulatedCrash {
+            if WeiBeiSafetyTestMode.isEnabled, error is CourseProjectSimulatedCrash {
                 throw error
             }
             if !workspaceCommitted {
@@ -5896,8 +5710,12 @@ final class WorkspaceStore: ObservableObject {
     }
 
     func recoverCourseTransactionsForSelfCheck() throws {
-        precondition(ProcessInfo.processInfo.arguments.contains("--self-check-course-project-root"))
+        precondition(WeiBeiSafetyTestMode.isEnabled)
+        let maintenanceTask = courseReconciliationTask
+        maintenanceTask?.cancel()
+        courseReconciliationTask = nil
         try waitForCourseFileOperation {
+            await maintenanceTask?.value
             await self.recoverPendingCourseFileTransactionsInBackground()
         }
     }
@@ -8600,23 +8418,20 @@ final class WorkspaceStore: ObservableObject {
         _ courseID: UUID
     ) throws {
         precondition(
-            ProcessInfo.processInfo.arguments.contains(
-                "--self-check-course-project-root"
-            )
+            WeiBeiSafetyTestMode.isEnabled
         )
         try waitForCourseFileOperation {
             try await self.removeCourseFromWeiBei(courseID)
         }
     }
 
+#if DEBUG
     func verifyCourseRemovalPersistenceRaceForSelfCheck(
         removing courseID: UUID,
         retaining retainedCourseID: UUID
     ) throws -> Bool {
         precondition(
-            ProcessInfo.processInfo.arguments.contains(
-                "--self-check-course-project-root"
-            )
+            WeiBeiSafetyTestMode.isEnabled
         )
         return try waitForCourseFileOperation {
             let transactionID = try self.beginCourseRemovalTransaction()
@@ -8712,15 +8527,14 @@ final class WorkspaceStore: ObservableObject {
                     == "课程移除第二代全局状态"
         }
     }
+#endif
 
     @discardableResult
     func moveCourseFolderToTrashForSelfCheck(
         _ courseID: UUID
     ) throws -> URL {
         precondition(
-            ProcessInfo.processInfo.arguments.contains(
-                "--self-check-course-project-root"
-            )
+            WeiBeiSafetyTestMode.isEnabled
         )
         return try waitForCourseFileOperation {
             try await self.moveCourseFolderToTrash(courseID)
@@ -8730,11 +8544,13 @@ final class WorkspaceStore: ObservableObject {
     func finishPendingCourseRemovalRecoveryForSelfCheck()
         throws {
         precondition(
-            ProcessInfo.processInfo.arguments.contains(
-                "--self-check-course-project-root"
-            )
+            WeiBeiSafetyTestMode.isEnabled
         )
+        let maintenanceTask = courseReconciliationTask
+        maintenanceTask?.cancel()
+        courseReconciliationTask = nil
         try waitForCourseFileOperation {
+            await maintenanceTask?.value
             await self
                 .finishPendingCourseRemovalRecoveryIfNeeded()
         }
@@ -8749,9 +8565,7 @@ final class WorkspaceStore: ObservableObject {
         globalMemoryText: String
     ) throws -> UUID {
         precondition(
-            ProcessInfo.processInfo.arguments.contains(
-                "--self-check-course-project-root"
-            )
+            WeiBeiSafetyTestMode.isEnabled
         )
         guard let material = importedItems.first(where: {
             $0.id == materialItemID
@@ -8832,14 +8646,7 @@ final class WorkspaceStore: ObservableObject {
     func removeCourseRegistrationImmediatelyForSelfCheck(
         _ courseID: UUID
     ) {
-        precondition(
-            ProcessInfo.processInfo.arguments.contains(
-                "--self-check-course-project-root"
-            )
-                || ProcessInfo.processInfo.arguments.contains(
-                    "--self-check-imported-identity"
-                )
-        )
+        precondition(WeiBeiSafetyTestMode.isEnabled)
         guard courses.contains(where: { $0.id == courseID }) else {
             return
         }
@@ -8955,16 +8762,32 @@ final class WorkspaceStore: ObservableObject {
                     throw CourseRemovalError.latestStateNotSaved
                 }
             } else {
-                guard !requiresAvailableRoot,
-                      !dirtyPortableCourseIDs.contains(courseID),
-                      !blockedPortableCourseIDs.contains(courseID),
-                      !oversizedPortableCourseIDs.contains(courseID),
-                      coursePortableStateRevisions[courseID] != nil,
-                      coursePortableStateDigests[courseID] != nil,
-                      coursePortableStateMatchesLastSaved(
-                        courseID
-                      ) else {
+                let hasCourseOwnedItems = importedItems.contains { item in
+                    guard case .courseOwned(let ownerCourseID) = item.storage else {
+                        return false
+                    }
+                    return ownerCourseID == courseID
+                }
+                guard !hasCourseOwnedItems else {
                     throw CourseRemovalError.latestStateNotSaved
+                }
+                let isRootlessLegacyCourse =
+                    expectedCourse.sourceRootPath == nil
+                    && expectedCourse.sourceRootRelativePath == nil
+                    && expectedCourse.sourceRootIdentity == nil
+                    && expectedCourse.sourceRootBookmarkData == nil
+                if !isRootlessLegacyCourse {
+                    guard !requiresAvailableRoot,
+                          !dirtyPortableCourseIDs.contains(courseID),
+                          !blockedPortableCourseIDs.contains(courseID),
+                          !oversizedPortableCourseIDs.contains(courseID),
+                          coursePortableStateRevisions[courseID] != nil,
+                          coursePortableStateDigests[courseID] != nil,
+                          coursePortableStateMatchesLastSaved(
+                            courseID
+                          ) else {
+                        throw CourseRemovalError.latestStateNotSaved
+                    }
                 }
             }
 
@@ -9028,6 +8851,7 @@ final class WorkspaceStore: ObservableObject {
             courseNoteWritesInFlight.remove(itemID)
             notesByItemID.removeValue(forKey: itemID)
             pendingNoteWritesByItemID.removeValue(forKey: itemID)
+            noteOperationErrorsByItemID.removeValue(forKey: itemID)
             noteBackingContentDigestsByItemID.removeValue(forKey: itemID)
             loadedCourseNoteTextByItemID.removeValue(forKey: itemID)
             studyLocationsByItemID.removeValue(forKey: itemID)
@@ -9173,9 +8997,7 @@ final class WorkspaceStore: ObservableObject {
             invalidateAgentContext()
         }
         if restartMaintenance,
-           !ProcessInfo.processInfo.arguments.contains(
-            "--self-check-course-project-root"
-        ) {
+           !WeiBeiSafetyTestMode.isEnabled {
             startCourseFileMaintenance()
         }
     }
@@ -9519,9 +9341,7 @@ final class WorkspaceStore: ObservableObject {
                     for: .trashDirectory,
                     in: .userDomainMask
                 )
-                if ProcessInfo.processInfo.arguments.contains(
-                    "--self-check-course-project-root"
-                ) {
+                if WeiBeiSafetyTestMode.isEnabled {
                     searchDirectories.append(
                         workspaceDirectory.appendingPathComponent(
                             "SelfCheckTrash",
@@ -10212,6 +10032,7 @@ final class WorkspaceStore: ObservableObject {
         courseNoteWritesInFlight.remove(itemID)
         notesByItemID.removeValue(forKey: itemID)
         pendingNoteWritesByItemID.removeValue(forKey: itemID)
+        noteOperationErrorsByItemID.removeValue(forKey: itemID)
         noteBackingContentDigestsByItemID.removeValue(forKey: itemID)
         loadedCourseNoteTextByItemID.removeValue(forKey: itemID)
         studyLocationsByItemID.removeValue(forKey: itemID)
@@ -10370,9 +10191,7 @@ final class WorkspaceStore: ObservableObject {
                 to: journalURL
             )
         } catch {
-            if ProcessInfo.processInfo.arguments.contains(
-                "--self-check-course-project-root"
-            ), error is CourseProjectSimulatedCrash {
+            if WeiBeiSafetyTestMode.isEnabled, error is CourseProjectSimulatedCrash {
                 throw error
             }
             if CourseProjectFileWorker.identity(at: linkURL) == nil {
@@ -10425,9 +10244,7 @@ final class WorkspaceStore: ObservableObject {
                 throw CourseOwnedFileError.verificationFailed
             }
         } catch {
-            if ProcessInfo.processInfo.arguments.contains(
-                "--self-check-course-project-root"
-            ), error is CourseProjectSimulatedCrash {
+            if WeiBeiSafetyTestMode.isEnabled, error is CourseProjectSimulatedCrash {
                 throw error
             }
             courseItemMemberships = previous
@@ -10457,7 +10274,7 @@ final class WorkspaceStore: ObservableObject {
         itemID: String,
         fromCourseID courseID: UUID
     ) throws {
-        precondition(ProcessInfo.processInfo.arguments.contains("--self-check-course-project-root"))
+        precondition(WeiBeiSafetyTestMode.isEnabled)
         try waitForCourseFileOperation {
             try await self.removeSharedItem(itemID: itemID, fromCourseID: courseID)
         }
@@ -10468,9 +10285,7 @@ final class WorkspaceStore: ObservableObject {
         conflictResolution: CourseFileConflictResolution = .cancel
     ) throws {
         precondition(
-            ProcessInfo.processInfo.arguments.contains(
-                "--self-check-course-project-root"
-            )
+            WeiBeiSafetyTestMode.isEnabled
         )
         try waitForCourseFileOperation {
             try await self.promoteCourseOwnedItemToCommon(
@@ -10482,9 +10297,7 @@ final class WorkspaceStore: ObservableObject {
 
     func moveItemSourceToTrashForSelfCheck(_ itemID: String) throws {
         precondition(
-            ProcessInfo.processInfo.arguments.contains(
-                "--self-check-course-project-root"
-            )
+            WeiBeiSafetyTestMode.isEnabled
         )
         try waitForCourseFileOperation {
             try await self.moveItemSourceToTrash(itemID)
@@ -10493,9 +10306,7 @@ final class WorkspaceStore: ObservableObject {
 
     func installRootlessCourseForSelfCheck(title: String) -> UUID {
         precondition(
-            ProcessInfo.processInfo.arguments.contains(
-                "--self-check-course-project-root"
-            )
+            WeiBeiSafetyTestMode.isEnabled
         )
         let course = Course(
             title: title,
@@ -12066,7 +11877,7 @@ final class WorkspaceStore: ObservableObject {
         if let text = DocumentTextExtractor.cachedText(for: item), !text.isEmpty {
             return text
         }
-        return sampleText(for: item)
+        return ""
     }
 
     var selectedMaterialTitle: String {
@@ -12320,47 +12131,6 @@ final class WorkspaceStore: ObservableObject {
         canApplyAgentAnswer && selectionContext?.isReplaceableNoteSelection == true
     }
 
-    var quietInsight: QuietInsight {
-        if isGeneratingQuietInsight {
-            return QuietInsight(
-                body: hasSelectedMaterial
-                    ? ui("正在静默阅读当前材料和笔记。", "Reading the current material and note in the background.")
-                    : ui("正在静默阅读当前笔记。", "Reading the current note in the background."),
-                noteBlock: ""
-            )
-        }
-        if let generatedQuietInsight {
-            return generatedQuietInsight
-        }
-        return QuietInsight.make(
-            materialTitle: quietInsightReferenceTitle,
-            materialText: selectedContextText,
-            noteText: noteText,
-            selectionText: selectionContext?.text,
-            language: interfaceLanguage
-        )
-    }
-
-    var quietInsightTitle: String {
-        return ui("阅读线索", "Reading clue")
-    }
-
-    var quietInsightSourceLabel: String {
-        if selectionContext != nil {
-            return ui("来自当前选区", "From current selection")
-        }
-        if !hasSelectedMaterial {
-            return ui("来自当前笔记", "From current note")
-        }
-        return generatedQuietInsight == nil ? ui("来自当前材料", "From current material") : ui("来自材料和笔记", "From material and note")
-    }
-
-    private var quietInsightReferenceTitle: String {
-        selectionContext?.ownerTitle
-            ?? (hasSelectedMaterial ? currentSourceReferenceTitle : activeNoteItem.map(displayTitle))
-            ?? ui("当前笔记", "Current note")
-    }
-
     var appDisplayName: String {
         ui("魏碑", "WeiBei")
     }
@@ -12374,27 +12144,11 @@ final class WorkspaceStore: ObservableObject {
     }
 
     func displayTitle(for item: StudyItem) -> String {
-        switch item.id {
-        case "sample-html":
-            return ui("货币金融学课程 HTML", "Money and Banking HTML")
-        case "sample-pdf":
-            return ui("Mishkin 教材样例", "Mishkin Textbook Sample")
-        case "sample-md":
-            return ui("课堂笔记样例", "Class Notes Sample")
-        default:
-            return item.title
-        }
+        item.title
     }
 
     func displaySubtitle(for item: StudyItem) -> String {
-        switch item.id {
-        case "sample-html":
-            return ui("HTML 教程", "HTML lesson")
-        case "sample-pdf":
-            return ui("PDF 阅读", "PDF reading")
-        default:
-            return item.subtitle
-        }
+        item.subtitle
     }
 
     func displayTags(for item: StudyItem, limit: Int = 3) -> [String] {
@@ -12520,8 +12274,6 @@ final class WorkspaceStore: ObservableObject {
             syncActiveStudySession()
         }
         recordCurrentStudyLocation(incrementVisit: itemChanged)
-        clearGeneratedQuietInsight()
-        refreshQuietInsightIfNeeded()
         save()
     }
 
@@ -13101,7 +12853,6 @@ final class WorkspaceStore: ObservableObject {
         }
         invalidateAgentContext()
         noteText = value
-        clearGeneratedQuietInsight()
         guard let item = activeNoteItem else { return }
         if let materialID = selectedMaterialItem?.id,
            materialNotePairings[materialID] == item.id,
@@ -13278,7 +13029,7 @@ final class WorkspaceStore: ObservableObject {
         courseID: UUID,
         title: String
     ) -> String? {
-        precondition(ProcessInfo.processInfo.arguments.contains("--self-check-course-project-root"))
+        precondition(WeiBeiSafetyTestMode.isEnabled)
         do {
             return try waitForCourseFileOperation {
                 await self.createCourseNotebookNote(courseID: courseID, title: title)
@@ -13388,7 +13139,6 @@ final class WorkspaceStore: ObservableObject {
                 if agentSurface != .selectionFloat {
                     agentSurface = .hidden
                 }
-                showQuietInsight = false
             }
         }
         collapseSelectionFloatIntoConversationIfVisible()
@@ -13660,7 +13410,6 @@ final class WorkspaceStore: ObservableObject {
 
     func updateReaderHTMLLocation(id: String?, title: String?, reason: String) {
         guard selectedMaterialItem?.kind == .html else { return }
-        PaneToggleContinuityVerifier.recordHTMLLocationCall(reason: reason)
         let cleanedID = id?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let cleanedTitle = title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let nextID = cleanedID.isEmpty ? nil : String(cleanedID.prefix(500))
@@ -13669,7 +13418,6 @@ final class WorkspaceStore: ObservableObject {
             clearReaderHTMLLocationTarget()
         }
         guard readerLocationID != nextID || readerLocationTitle != nextTitle else { return }
-        PaneToggleContinuityVerifier.recordHTMLLocationCommit(reason: reason)
         // Scroll: persist silently. ReaderView already mirrors the active section in
         // @State; publishing here rebuilds agent chat PlatformViews and freezes UI.
         // Also skip study-progress save — successful saves assigned workspaceSaveError=nil
@@ -14029,7 +13777,6 @@ final class WorkspaceStore: ObservableObject {
             .reader
         }
         if layout == .immersiveReading {
-            showQuietInsight = false
         }
         if layout == .immersiveConversation {
             showReaderSearch = false
@@ -14207,7 +13954,6 @@ final class WorkspaceStore: ObservableObject {
         guard agentSurface != surface else { return }
         recordNavigationPoint()
         agentSurface = surface
-        showQuietInsight = false
         save()
     }
 
@@ -14317,7 +14063,6 @@ final class WorkspaceStore: ObservableObject {
         latestAgentLearningUpdate = nil
         syncActiveStudySession()
         recordCurrentStudyLocation(incrementVisit: false)
-        showQuietInsight = false
         clearUnpinnedFloatingSelection(keepContext: false)
         clearReaderSearchIfNeeded()
         save()
@@ -15771,17 +15516,14 @@ final class WorkspaceStore: ObservableObject {
                 if agentSurface != .selectionFloat {
                     agentSurface = .selectionFloat
                 }
-                showQuietInsight = false
                 return
             }
             if shouldRevealSelectionPrompt {
                 if agentSurface != .selectionFloat {
                     withAnimation(WeiBeiMotion.panel) {
                         agentSurface = .selectionFloat
-                        showQuietInsight = false
                     }
                 } else {
-                    showQuietInsight = false
                 }
             } else if agentSurface == .selectionFloat {
                 withAnimation(WeiBeiMotion.panel) {
@@ -15792,7 +15534,6 @@ final class WorkspaceStore: ObservableObject {
         }
 
         invalidateAgentContext()
-        clearGeneratedQuietInsight()
         let nextSelection = SelectionContext(
             text: boundedText,
             source: source,
@@ -15809,17 +15550,14 @@ final class WorkspaceStore: ObservableObject {
         // Respect pin / answer lock — do not force-unpin on every new selection.
         if pinnedFloatingAgent || keepFloatingSelectionForAnswer {
             agentSurface = .selectionFloat
-            showQuietInsight = false
             return
         }
         if shouldRevealSelectionPrompt {
             if agentSurface != .selectionFloat {
                 withAnimation(WeiBeiMotion.panel) {
                     agentSurface = .selectionFloat
-                    showQuietInsight = false
                 }
             } else {
-                showQuietInsight = false
             }
         } else if agentSurface == .selectionFloat {
             withAnimation(WeiBeiMotion.panel) {
@@ -16768,7 +16506,7 @@ final class WorkspaceStore: ObservableObject {
         itemID: String,
         courseID: UUID
     ) {
-        precondition(ProcessInfo.processInfo.arguments.contains("--self-check-course-project-root"))
+        precondition(WeiBeiSafetyTestMode.isEnabled)
         courseItemMemberships.append(
             CourseItemMembership(courseID: courseID, itemID: itemID)
         )
@@ -16778,7 +16516,7 @@ final class WorkspaceStore: ObservableObject {
         courseID: UUID,
         data: Data
     ) throws -> StudyItem {
-        precondition(ProcessInfo.processInfo.arguments.contains("--self-check-course-project-root"))
+        precondition(WeiBeiSafetyTestMode.isEnabled)
         guard let root = courseRootURL(for: courseID) else {
             throw AgentConversationTargetError(message: "课程根目录不可用")
         }
@@ -16816,7 +16554,7 @@ final class WorkspaceStore: ObservableObject {
         at url: URL,
         courseID: UUID
     ) throws -> StudyItem {
-        precondition(ProcessInfo.processInfo.arguments.contains("--self-check-course-project-root"))
+        precondition(WeiBeiSafetyTestMode.isEnabled)
         guard let identity = CourseProjectFileWorker.identity(at: url) else {
             throw AgentConversationTargetError(message: "无法核验旧外部图像")
         }
@@ -16843,7 +16581,7 @@ final class WorkspaceStore: ObservableObject {
         memoryText: String,
         diskText: String? = nil
     ) throws {
-        precondition(ProcessInfo.processInfo.arguments.contains("--self-check-course-project-root"))
+        precondition(WeiBeiSafetyTestMode.isEnabled)
         guard let index = importedItems.firstIndex(where: {
             $0.id == itemID && $0.isNotebookNote
         }), let url = importedItems[index].url else {
@@ -16884,7 +16622,7 @@ final class WorkspaceStore: ObservableObject {
         firstMessageID: UUID,
         firstRichNarrative: String
     ) {
-        precondition(ProcessInfo.processInfo.arguments.contains("--self-check-course-project-root"))
+        precondition(WeiBeiSafetyTestMode.isEnabled)
         guard item(materialItemID, belongsTo: courseID),
               item(noteItemID, belongsTo: courseID),
               item(foreignItemID, belongsTo: foreignCourseID) else {
@@ -17125,7 +16863,7 @@ final class WorkspaceStore: ObservableObject {
     }
 
     func pendingPortableNoteDraftForSelfCheck(itemID: String) -> String? {
-        precondition(ProcessInfo.processInfo.arguments.contains("--self-check-course-project-root"))
+        precondition(WeiBeiSafetyTestMode.isEnabled)
         guard pendingNoteWritesByItemID[itemID] != nil else { return nil }
         return notesByItemID[itemID]
     }
@@ -17135,9 +16873,7 @@ final class WorkspaceStore: ObservableObject {
         text: String
     ) throws -> UUID {
         precondition(
-            ProcessInfo.processInfo.arguments.contains(
-                "--self-check-course-project-root"
-            )
+            WeiBeiSafetyTestMode.isEnabled
         )
         let sessionID = studySessions.first(where: {
             $0.relatedCourseIDs.contains(courseID)
@@ -17177,9 +16913,7 @@ final class WorkspaceStore: ObservableObject {
         pageIndex: Int
     ) throws {
         precondition(
-            ProcessInfo.processInfo.arguments.contains(
-                "--self-check-course-project-root"
-            )
+            WeiBeiSafetyTestMode.isEnabled
         )
         guard let item = importedItems.first(where: {
             $0.id == materialItemID
@@ -17248,9 +16982,7 @@ final class WorkspaceStore: ObservableObject {
         pageIndex: Int
     ) -> Bool {
         precondition(
-            ProcessInfo.processInfo.arguments.contains(
-                "--self-check-course-project-root"
-            )
+            WeiBeiSafetyTestMode.isEnabled
         )
         let hasMessage = studySessions.contains {
             $0.relatedCourseIDs.contains(courseID)
@@ -17282,9 +17014,7 @@ final class WorkspaceStore: ObservableObject {
         messageID: UUID
     ) {
         precondition(
-            ProcessInfo.processInfo.arguments.contains(
-                "--self-check-course-project-root"
-            )
+            WeiBeiSafetyTestMode.isEnabled
         )
         guard let sessionIndex = studySessions.firstIndex(where: {
             $0.relatedCourseIDs.contains(courseID)
@@ -17304,9 +17034,7 @@ final class WorkspaceStore: ObservableObject {
         generating: Bool
     ) throws {
         precondition(
-            ProcessInfo.processInfo.arguments.contains(
-                "--self-check-course-project-root"
-            )
+            WeiBeiSafetyTestMode.isEnabled
         )
         guard let sessionIndex = studySessions.firstIndex(where: {
             $0.relatedCourseIDs.contains(courseID)
@@ -17331,9 +17059,7 @@ final class WorkspaceStore: ObservableObject {
         oversized: Bool
     ) {
         precondition(
-            ProcessInfo.processInfo.arguments.contains(
-                "--self-check-course-project-root"
-            )
+            WeiBeiSafetyTestMode.isEnabled
         )
         return (
             dirtyPortableCourseIDs.contains(courseID),
@@ -17346,7 +17072,7 @@ final class WorkspaceStore: ObservableObject {
         itemID: String,
         courseID: UUID
     ) {
-        precondition(ProcessInfo.processInfo.arguments.contains("--self-check-course-project-root"))
+        precondition(WeiBeiSafetyTestMode.isEnabled)
         courseItemMemberships.removeAll {
             $0.courseID == courseID && $0.itemID == itemID
         }
@@ -17356,7 +17082,7 @@ final class WorkspaceStore: ObservableObject {
         itemID: String,
         courseID: UUID
     ) -> Bool {
-        precondition(ProcessInfo.processInfo.arguments.contains("--self-check-imported-identity"))
+        precondition(WeiBeiSafetyTestMode.isEnabled)
         let previousMemberships = courseItemMemberships
         courseItemMemberships.removeAll {
             $0.courseID == courseID && $0.itemID == itemID
@@ -17371,7 +17097,7 @@ final class WorkspaceStore: ObservableObject {
         itemID: String,
         courseID: UUID
     ) -> Bool {
-        precondition(ProcessInfo.processInfo.arguments.contains("--self-check-imported-identity"))
+        precondition(WeiBeiSafetyTestMode.isEnabled)
         let previousMemberships = courseItemMemberships
         courseItemMemberships.removeAll {
             $0.courseID == courseID && $0.itemID == itemID
@@ -17388,7 +17114,7 @@ final class WorkspaceStore: ObservableObject {
     func agentProjectScopeForSelfCheck(
         courseID: UUID?
     ) throws -> StudyAgentProjectScope {
-        precondition(ProcessInfo.processInfo.arguments.contains("--self-check-course-project-root"))
+        precondition(WeiBeiSafetyTestMode.isEnabled)
         return makeAgentProjectAccessSnapshot(
             target: try agentConversationTargetForSelfCheck(courseID: courseID)
         ).scope
@@ -17399,7 +17125,7 @@ final class WorkspaceStore: ObservableObject {
         query: String,
         beforeSearch: (() throws -> Void)? = nil
     ) throws -> StudyAgentHostToolResult {
-        precondition(ProcessInfo.processInfo.arguments.contains("--self-check-course-project-root"))
+        precondition(WeiBeiSafetyTestMode.isEnabled)
         let target = try agentConversationTargetForSelfCheck(courseID: courseID)
         let access = makeAgentProjectAccessSnapshot(target: target)
         let handler = makeAgentHostToolHandler(target: target, access: access)
@@ -17414,7 +17140,7 @@ final class WorkspaceStore: ObservableObject {
         itemID: String? = nil,
         offset: Int = 0
     ) throws -> StudyAgentHostToolResult {
-        precondition(ProcessInfo.processInfo.arguments.contains("--self-check-course-project-root"))
+        precondition(WeiBeiSafetyTestMode.isEnabled)
         let target = try agentConversationTargetForSelfCheck(courseID: courseID)
         let access = makeAgentProjectAccessSnapshot(target: target)
         let handler = makeAgentHostToolHandler(target: target, access: access)
@@ -17429,7 +17155,7 @@ final class WorkspaceStore: ObservableObject {
         query: String = "",
         location: String? = nil
     ) throws -> StudyAgentHostToolResult {
-        precondition(ProcessInfo.processInfo.arguments.contains("--self-check-course-project-root"))
+        precondition(WeiBeiSafetyTestMode.isEnabled)
         let target = try agentConversationTargetForSelfCheck(courseID: courseID)
         let access = makeAgentProjectAccessSnapshot(target: target)
         let handler = makeAgentHostToolHandler(target: target, access: access)
@@ -17450,7 +17176,7 @@ final class WorkspaceStore: ObservableObject {
         courseID: UUID?,
         query: String
     ) throws -> StudyAgentCourseContext {
-        precondition(ProcessInfo.processInfo.arguments.contains("--self-check-course-project-root"))
+        precondition(WeiBeiSafetyTestMode.isEnabled)
         let target = try agentConversationTargetForSelfCheck(courseID: courseID)
         let access = makeAgentProjectAccessSnapshot(target: target)
         return try waitForCourseFileOperation {
@@ -17462,13 +17188,14 @@ final class WorkspaceStore: ObservableObject {
         }
     }
 
+#if DEBUG
     func capturedAgentRequestForSelfCheck(
         courseID: UUID,
         materialItemID: String,
         noteItemID: String,
         selectionItemID: String
     ) throws -> StudyAgentRequest {
-        precondition(ProcessInfo.processInfo.arguments.contains("--self-check-course-project-root"))
+        precondition(WeiBeiSafetyTestMode.isEnabled)
         guard let session = createStudySession(courseID: courseID) else {
             throw AgentConversationTargetError(message: "无法创建课程自检 Chat")
         }
@@ -17513,6 +17240,7 @@ final class WorkspaceStore: ObservableObject {
         }
         return selfCheckCapturedAgentRequest
     }
+#endif
 
     private func agentConversationTargetForSelfCheck(
         courseID: UUID?
@@ -18502,7 +18230,6 @@ final class WorkspaceStore: ObservableObject {
                 cancelPendingSelectionAttachment()
                 addSelectionAttachment(selectionContext)
                 floatingSelectionPrompt = selectionContext.label(language: interfaceLanguage)
-                showQuietInsight = false
                 // Record underline mark when the user opens “问” on this selection.
                 let thread = beginOrReuseSelectionAskThread(for: selectionContext)
                 activeSelectionAskThreadID = thread.id
@@ -18556,7 +18283,6 @@ final class WorkspaceStore: ObservableObject {
             if !keepFloatingSelectionForAnswer {
                 selectionAnchor = nil
             }
-            showQuietInsight = false
             focusedPane = .agent
             focusRequest += 1
         }
@@ -18696,27 +18422,6 @@ final class WorkspaceStore: ObservableObject {
         )
     }
 
-    func acceptQuietInsight() {
-        // Quiet insight surface removed for 1.0; keep no-op for any residual callers.
-        showQuietInsight = false
-    }
-
-    func askQuietInsight() {
-        // Quiet insight surface removed for 1.0 — open primary conversation instead.
-        showQuietInsight = false
-        layout = .immersiveConversation
-        showAgent = true
-        agentSurface = .hidden
-        focus(.agent)
-    }
-
-    func refreshQuietInsight() async {
-        // Quiet insight generation disabled for 1.0 (no silent API spend).
-        showQuietInsight = false
-        isGeneratingQuietInsight = false
-    }
-
-
     func applyLastAgentAnswerToNote() {
         guard let content = lastAgentAnswerContentForCurrentNote() else { return }
         let block = "\n\n\(noteBlockForAgentAnswer(content))"
@@ -18724,3684 +18429,6 @@ final class WorkspaceStore: ObservableObject {
         focus(.notes)
     }
 
-    func runVerificationScenarioIfNeeded() async {
-        guard !didRunVerificationScenario else { return }
-        guard Self.environmentValue("WEIBEI_SUPPRESS_ACTIVATION") == "1" else { return }
-        let richAnswerReplayPath = Self.environmentValue("WEIBEI_VERIFY_RICH_ANSWER_REPLAY")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        if !richAnswerReplayPath.isEmpty {
-            didRunVerificationScenario = true
-            recordVerificationStage("recognized:rich-answer-replay")
-            configureRichAnswerReplayVerification(path: richAnswerReplayPath)
-            return
-        }
-        let scenario = Self.environmentValue("WEIBEI_VERIFY_SCENARIO")
-        let emptyWorkspaceScenarios: Set<String> = [
-            "empty-workspace-light-wide",
-            "empty-workspace-light-narrow",
-            "empty-workspace-dark-wide",
-            "empty-workspace-dark-narrow",
-            "empty-workspace-calligraphy-light",
-            "empty-workspace-calligraphy-dark",
-            "empty-workspace-inspiration-off",
-            "empty-workspace-open-doc",
-            "empty-workspace-open-chat",
-            "empty-workspace-open-notes",
-        ]
-        guard scenario == "pi-learning-flow"
-            || scenario == "pi-course-memory-flow"
-            || RichAnswerVerificationFixture.supports(scenario)
-            || scenario == "immersive-conversation-flow"
-            || scenario == "notebook-creation-flow"
-            || scenario == "pure-writing-flow"
-            || scenario == "linked-sources-flow"
-            || scenario == "pane-layout-stability-flow"
-            || scenario == "content-rail-dormant-preview"
-            || scenario == "content-rail-activation-preview"
-            || scenario == "pane-toggle-continuity-flow"
-            || scenario == "pane-reorder-width-flow"
-            || scenario == "reader-scroll-persistence-flow"
-            || scenario == "course-workspace-overview-flow"
-            || scenario == "course-workspace-workflow-flow"
-            || scenario == "course-home-flow"
-            || scenario == "course-index-navigation-flow"
-            || scenario == "course-chat-scope-flow"
-            || scenario == "course-resume-point-flow"
-            || scenario == "chat-reply-persistence-flow"
-            || scenario == "chat-source-navigation-flow"
-            || scenario == "chat-action-cards-flow"
-            || scenario == "learning-memory-scopes-flow"
-            || scenario == "loading-indicator-samples"
-            || emptyWorkspaceScenarios.contains(scenario) else { return }
-        didRunVerificationScenario = true
-        recordVerificationStage("recognized:\(scenario)")
-        if emptyWorkspaceScenarios.contains(scenario) {
-            configureEmptyWorkspaceVerificationScenario(scenario)
-            return
-        }
-        if scenario == "loading-indicator-samples" {
-            // Shows product V3 「行文进行中」thinking indicator in the agent stream.
-            let appearanceRaw = Self.environmentValue("WEIBEI_VERIFY_APPEARANCE").lowercased()
-            if appearanceRaw == "ink" || appearanceRaw == "inkstone" || appearanceRaw == "dark" {
-                appearanceMode = .inkstone
-            } else {
-                appearanceMode = .paper
-            }
-            let languageRaw = Self.environmentValue("WEIBEI_VERIFY_LANGUAGE").lowercased()
-            if languageRaw == "en" || languageRaw == "english" {
-                interfaceLanguage = .english
-            } else {
-                interfaceLanguage = .chinese
-            }
-            layout = .immersiveConversation
-            showLibrary = false
-            showReader = false
-            showAgent = true
-            showNotes = false
-            agentSurface = .hidden
-            isAskingAgent = true
-            agentActivityText = ui("正在思考", "Thinking")
-            agentStreamingText = ""
-            messages = []
-            showLoadingIndicatorSamples = false
-            recordVerificationStage("loading-samples")
-            recordVerificationStage("completed")
-            return
-        }
-        if scenario == "chat-reply-persistence-flow" {
-            runChatReplyPersistenceVerification()
-            return
-        }
-        if scenario == "chat-source-navigation-flow" {
-            Task {
-                await runChatSourceNavigationVerification()
-            }
-            return
-        }
-        if scenario == "chat-action-cards-flow" {
-            Task {
-                await runChatActionCardVerification()
-            }
-            return
-        }
-        if scenario == "learning-memory-scopes-flow" {
-            runLearningMemoryScopesVerification()
-            return
-        }
-        if scenario == "content-rail-dormant-preview" || scenario == "content-rail-activation-preview" {
-            layout = .documentAgentNotes
-            showLibrary = false
-            showReader = true
-            showAgent = true
-            showNotes = true
-            agentSurface = .hidden
-            select(itemID: "sample-html")
-            updateNote(ui("# 收起轨道验收\n\n悬浮简介必须越过收起边界显示。\n", "# Dormant rail check\n\nThe hover preview must cross the dormant pane boundary.\n"))
-            save()
-            return
-        }
-        if RichAnswerVerificationFixture.supports(scenario) {
-            configureRichAnswerPreviewVerification(scenario: scenario)
-            return
-        }
-        if scenario == "course-workspace-overview-flow"
-            || scenario == "course-workspace-workflow-flow"
-            || scenario == "course-home-flow"
-            || scenario == "course-index-navigation-flow"
-            || scenario == "course-chat-scope-flow"
-            || scenario == "course-resume-point-flow" {
-            await runCourseWorkspaceVerification(scenario)
-            return
-        }
-        if scenario == "pane-toggle-continuity-flow" {
-            await runPaneToggleContinuityVerification()
-            return
-        }
-        if scenario == "pane-layout-stability-flow" {
-            await runPaneLayoutStabilityVerification()
-            return
-        }
-        if scenario == "pane-reorder-width-flow" {
-            await runPaneReorderWidthVerification()
-            return
-        }
-        if scenario == "reader-scroll-persistence-flow" {
-            await runReaderScrollPersistenceVerification()
-            return
-        }
-        layout = scenario == "immersive-conversation-flow" ? .immersiveConversation : .documentAgentNotes
-        if scenario == "notebook-creation-flow" {
-            layout = .immersiveWriting
-        }
-        if scenario == "pure-writing-flow" || scenario == "linked-sources-flow" {
-            layout = .immersiveWriting
-        }
-        showLibrary = scenario != "immersive-conversation-flow"
-        showReader = true
-        showAgent = true
-        showNotes = true
-        agentSurface = .hidden
-        select(itemID: "sample-html")
-        if scenario == "immersive-conversation-flow" {
-            save()
-            recordVerificationStage("completed")
-            return
-        }
-        if scenario == "pure-writing-flow" || scenario == "linked-sources-flow" {
-            createNotebookNote(
-                seed: .currentMaterial(sampleItems[0]),
-                title: ui("多资料研究笔记", "Multi-source research note")
-            )
-            setLinkedSourceIDsForActiveNote(["sample-html", "sample-pdf"])
-            select(itemID: "sample-pdf")
-            showLibrary = false
-            linkedSourcesPresented = scenario == "linked-sources-flow"
-            if scenario == "linked-sources-flow" {
-                noteRenderMode = .source
-            }
-            save()
-            return
-        }
-        if scenario == "pi-learning-flow" || scenario == "pi-course-memory-flow" {
-            // Keep the packaged-App check isolated from the user's saved profiles while
-            // exercising the same in-memory values that Settings sends into Pi.
-            agentProviderID = .openaiCodex
-            agentAuthMethod = .subscription
-            modelName = "gpt-5.5"
-            save()
-            await waitForReaderContextToSettle()
-        }
-        if scenario == "notebook-creation-flow" {
-            promptCreateBlankNotebookNote()
-            return
-        }
-        if scenario == "pi-course-memory-flow" {
-            updateReaderLocationTitle(ui("实际利率", "Real interest rates"))
-            updateNote(ui("# 课程学习记录\n\n", "# Course study record\n\n"))
-            recordVerificationStage("course-memory-context-prepared")
-            agentDraft = ui(
-                "我上次学到哪？课程里哪份其他资料也提到利率，为什么相关？我还不懂名义利率和实际利率的区别，请记住这个困惑，并给出可点击来源。",
-                "Where did I stop last time? Which other course material discusses interest rates, and why is it related? I still do not understand nominal versus real rates. Remember that confusion and give me a clickable source."
-            )
-            await askAgentAndWait()
-            let answer = messages.last?.text ?? ""
-            let recordedConfusion = latestAgentLearningUpdate?.entries.contains { $0.kind == .confusion } == true
-            let hasJumpReference = answer.contains(ui("来源：", "Source:"))
-            let previousItemID = selectedItemID
-            let previousLearningUpdate = latestAgentLearningUpdate
-            let openedJumpReference = openSourceReference(answer)
-            if openedJumpReference, let previousItemID {
-                select(itemID: previousItemID)
-                latestAgentLearningUpdate = previousLearningUpdate
-                lastAgentReplyContextRevision = agentContextRevision
-            }
-            recordVerificationStage("course-memory-reply:\(messages.last?.backend?.rawValue ?? "none")")
-            recordVerificationStage("course-memory-update:\(recordedConfusion)")
-            recordVerificationStage("course-memory-jump:\(hasJumpReference && openedJumpReference)")
-            if messages.last?.backend == .pi,
-               recordedConfusion,
-               hasJumpReference,
-               openedJumpReference {
-                let markerURL = storageURL.deletingLastPathComponent().appendingPathComponent("pi-course-memory-verified.txt")
-                try? "PI backend completed course memory and wayfinding\n".write(to: markerURL, atomically: true, encoding: .utf8)
-            }
-            recordVerificationStage("completed")
-            return
-        }
-        let verificationNoteSeed = ui("# 视觉验收笔记\n\n", "# Visual verification note\n\n")
-        updateNote(verificationNoteSeed)
-        updateSelection(
-            ui("利率是资金使用价格的表达。", "An interest rate is the price paid for using funds."),
-            source: .document,
-            ownerTitle: currentSourceReferenceTitle
-        )
-        routeSelectionToConversation()
-        recordVerificationStage("context-prepared")
-        let continuityToken = ui("玉兰七号", "Magnolia Seven")
-        agentDraft = ui(
-            "用两句话解释当前选区，并在回答最后单独写出校验词“\(continuityToken)”。",
-            "Explain the current selection in two sentences, then end with the check phrase “\(continuityToken)” on its own line."
-        )
-        let verificationSessionID = activeStudySessionID
-        let firstReplyStartedAt = Date()
-        await askAgentAndWait()
-        let firstReplySeconds = Date().timeIntervalSince(firstReplyStartedAt)
-        let firstReplyBackend = messages.last?.backend
-        recordVerificationStage("reply:\(messages.last?.backend?.rawValue ?? "none")")
-        if messages.last?.backend == nil, let message = messages.last?.text {
-            recordVerificationStage("failure:\(String(message.prefix(500)))")
-        }
-        if scenario == "pi-learning-flow" {
-            let firstTurnMessageCount = messages.count
-            agentDraft = ui(
-                "刚才让我记住的暗号是什么？只回答暗号。",
-                "What code phrase did I ask you to remember? Reply with only the code phrase."
-            )
-            let secondReplyStartedAt = Date()
-            await askAgentAndWait()
-            let secondReplySeconds = Date().timeIntervalSince(secondReplyStartedAt)
-            let secondReply = messages.last
-            let sameChatContinued = activeStudySessionID == verificationSessionID
-                && messages.count >= firstTurnMessageCount + 2
-                && secondReply?.backend == .pi
-                && secondReply?.text.localizedCaseInsensitiveContains(continuityToken) == true
-            recordVerificationStage("pi-provider:\(agentProviderID.rawValue)")
-            recordVerificationStage("pi-model:\(modelName)")
-            recordVerificationStage("pi-credential:managed")
-            recordVerificationStage("pi-continuity:\(sameChatContinued)")
-            recordVerificationStage(
-                String(format: "pi-speed:%.2f:%.2f", firstReplySeconds, secondReplySeconds)
-            )
-            try? await Task.sleep(nanoseconds: 700_000_000)
-            if firstReplyBackend == .pi,
-               sameChatContinued,
-               firstReplySeconds < 60,
-               secondReplySeconds < 60 {
-                let markerURL = storageURL.deletingLastPathComponent().appendingPathComponent("pi-agent-verified.txt")
-                let marker = """
-                provider=\(agentProviderID.rawValue)
-                model=\(modelName)
-                credential=pi-managed
-                session=\(verificationSessionID?.uuidString.lowercased() ?? "none")
-                continuity=true
-                first_seconds=\(String(format: "%.2f", firstReplySeconds))
-                second_seconds=\(String(format: "%.2f", secondReplySeconds))
-
-                """
-                try? marker.write(to: markerURL, atomically: true, encoding: .utf8)
-            }
-        }
-        recordVerificationStage("completed")
-    }
-
-    private func configureRichAnswerPreviewVerification(scenario: String) {
-        let presentation = RichAnswerVerificationFixture.presentation(for: scenario)
-        let verifiesInlinePane = scenario == RichAnswerVerificationFixture.inlineExtendedOpenUIProgramScenario
-        layout = verifiesInlinePane ? .documentAgentNotes : .immersiveConversation
-        showLibrary = false
-        showReader = verifiesInlinePane
-        showAgent = true
-        showNotes = false
-        agentSurface = .hidden
-        select(itemID: "sample-html")
-        messages = []
-        appendAgentMessage(
-            AgentMessage(
-                role: .user,
-                text: RichAnswerVerificationFixture.question(for: scenario),
-                source: "货币金融学课程 HTML"
-            )
-        )
-        appendAgentMessage(
-            AgentMessage(
-                role: .assistant,
-                text: presentation.narrative,
-                source: "货币金融学课程 HTML",
-                backend: .pi,
-                richAnswer: presentation
-            )
-        )
-        let familySummary = presentation.scenes.map(\.family.rawValue).joined(separator: ",")
-        let verificationSummary = [
-            "scenario=\(scenario)",
-            "mode=\(presentation.mode.rawValue)",
-            "scenes=\(presentation.scenes.count)",
-            "families=\(familySummary)",
-            "diagnostics=\(presentation.diagnostics.count)",
-        ].joined(separator: "\n") + "\n"
-        let markerURL = storageURL.deletingLastPathComponent()
-            .appendingPathComponent("rich-answer-verified.txt")
-        try? verificationSummary.write(to: markerURL, atomically: true, encoding: .utf8)
-        recordVerificationStage("rich-answer:\(presentation.mode.rawValue):\(presentation.scenes.count):\(presentation.diagnostics.count)")
-        focus(.agent)
-        recordVerificationStage("completed")
-    }
-
-    private func configureRichAnswerReplayVerification(path: String) {
-        let baseURL = storageURL.deletingLastPathComponent()
-        do {
-            let artifactURL = RichAnswerReplayArtifact.url(fromEnvironmentValue: path, relativeTo: baseURL)
-            let artifact = try RichAnswerReplayArtifact.load(from: artifactURL)
-            let materialItem = try installRichAnswerReplayMaterial(artifact, baseURL: baseURL)
-            layout = .documentAgentNotes
-            showLibrary = false
-            showReader = true
-            showAgent = true
-            showNotes = false
-            agentSurface = .hidden
-            select(itemID: materialItem.id)
-            messages = []
-            latestAgentNoteProposal = nil
-            latestAgentLearningUpdate = nil
-            agentStreamingText = ""
-            agentActivityText = "真实回放：\(artifact.status)"
-            appendAgentMessage(
-                AgentMessage(
-                    role: .user,
-                    text: artifact.question,
-                    source: materialItem.title
-                )
-            )
-            appendAgentMessage(
-                AgentMessage(
-                    role: .assistant,
-                    text: artifact.visibleAssistantText,
-                    source: materialItem.title,
-                    backend: artifact.backend,
-                    richAnswer: artifact.presentationForDisplay
-                )
-            )
-            let verificationSummary = [
-                "artifact=\(artifact.artifactURL.path)",
-                "case=\(artifact.caseID)",
-                "status=\(artifact.status)",
-                "backend=\(artifact.backend?.rawValue ?? "none")",
-                "materialItemID=\(artifact.materialItemID)",
-                "materialKind=\(artifact.materialKind)",
-                "verificationAssetID=\(artifact.verificationAssetID ?? "none")",
-                "sourceFingerprint=\(artifact.sourceFingerprint ?? "none")",
-                "verificationAssetFingerprint=\(artifact.verificationAssetFingerprint ?? "none")",
-                "richAnswer=\(artifact.richAnswer?.mode.rawValue ?? "none")",
-                "scenes=\(artifact.richAnswer?.scenes.count ?? 0)",
-                "tools=\(artifact.toolTrace.joined(separator: ","))",
-            ].joined(separator: "\n") + "\n"
-            try verificationSummary.write(
-                to: baseURL.appendingPathComponent("rich-answer-replay-verified.txt"),
-                atomically: true,
-                encoding: .utf8
-            )
-            recordVerificationStage("rich-answer-replay:\(artifact.status):\(artifact.richAnswer?.mode.rawValue ?? "none"):\(artifact.richAnswer?.scenes.count ?? 0)")
-        } catch {
-            configureRichAnswerReplayFailure(path: path, error: error, baseURL: baseURL)
-        }
-        recordVerificationStage("completed")
-    }
-
-    private func installRichAnswerReplayMaterial(
-        _ artifact: RichAnswerReplayArtifact,
-        baseURL: URL
-    ) throws -> StudyItem {
-        let directory = baseURL.appendingPathComponent("RichAnswerReplay", isDirectory: true)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let materialURL = try richAnswerReplayMaterialURL(for: artifact, directory: directory)
-        let item = StudyItem(
-            id: artifact.materialItemID,
-            title: artifact.materialTitle,
-            subtitle: "真实富回答回放材料 · \(artifact.materialKind)",
-            kind: richAnswerReplayStudyItemKind(for: artifact.materialKind),
-            urlPath: materialURL.path,
-            isSample: false
-        )
-        importedItems.removeAll {
-            $0.id == item.id
-                || $0.id == "rich-answer-replay-material"
-                || $0.urlPath == materialURL.path
-        }
-        importedItems.append(item)
-        courseDocumentSearchIndex.synchronize(allItems)
-        save()
-        return item
-    }
-
-    private func richAnswerReplayMaterialURL(
-        for artifact: RichAnswerReplayArtifact,
-        directory: URL
-    ) throws -> URL {
-        let normalizedKind = artifact.materialKind.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        let isImageMaterial = normalizedKind == "image"
-        let verificationAssetID = artifact.verificationAssetID?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        if let assetID = verificationAssetID, !assetID.isEmpty {
-            guard isImageMaterial else {
-                throw RichAnswerReplayMaterialInstallError.unexpectedVerificationAssetID(
-                    assetID,
-                    artifact.materialKind
-                )
-            }
-            try RichAnswerVerificationAssets.validateBundledResources()
-            guard let url = RichAnswerVerificationAssets.url(for: assetID) else {
-                throw RichAnswerReplayMaterialInstallError.missingBundledVerificationAsset(assetID)
-            }
-            return url
-        }
-        if isImageMaterial {
-            throw RichAnswerReplayMaterialInstallError.missingVerificationAssetID(artifact.materialItemID)
-        }
-        if artifact.referencesCurrentMaterialAsset {
-            throw RichAnswerReplayMaterialInstallError.missingReferencedAsset(artifact.materialItemID)
-        }
-
-        if normalizedKind == "html" {
-            let escapedTitle = artifact.materialTitle
-                .replacingOccurrences(of: "&", with: "&amp;")
-                .replacingOccurrences(of: "<", with: "&lt;")
-                .replacingOccurrences(of: ">", with: "&gt;")
-            let paragraphs = artifact.materialBody
-                .split(whereSeparator: \.isNewline)
-                .map(String.init)
-                .map {
-                    $0.replacingOccurrences(of: "&", with: "&amp;")
-                        .replacingOccurrences(of: "<", with: "&lt;")
-                        .replacingOccurrences(of: ">", with: "&gt;")
-                }
-                .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-                .map { "<p>\($0)</p>" }
-                .joined(separator: "\n")
-            let escapedBody = paragraphs.isEmpty
-                ? "<p>当前材料没有可显示的正文。</p>"
-                : paragraphs
-            let materialURL = directory.appendingPathComponent("material.html")
-            let document = """
-            <!doctype html>
-            <html lang="zh-CN">
-            <head>
-              <meta charset="utf-8">
-              <meta name="viewport" content="width=device-width, initial-scale=1">
-              <style>
-                html, body { margin: 0; background: transparent; }
-                main { box-sizing: border-box; max-width: 760px; margin: 0 auto; padding: 34px 38px 64px; }
-                h1 { margin: 0 0 24px; font-family: "Songti SC", "STSong", serif; font-size: 28px; line-height: 1.35; font-weight: 600; }
-                p { margin: 0 0 14px; font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif; font-size: 16px; line-height: 1.82; }
-              </style>
-            </head>
-            <body><main data-weibei-paper-surface><h1>\(escapedTitle)</h1>\(escapedBody)</main></body>
-            </html>
-            """
-            try document.write(to: materialURL, atomically: true, encoding: .utf8)
-            return materialURL
-        }
-
-        let body = """
-        \(artifact.materialTitle)
-
-        \(artifact.materialBody)
-        """
-        let materialURL = directory.appendingPathComponent("material.txt")
-        try body.write(to: materialURL, atomically: true, encoding: .utf8)
-        return materialURL
-    }
-
-    private func richAnswerReplayStudyItemKind(for materialKind: String) -> StudyItemKind {
-        switch materialKind.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
-        case "image":
-            .html
-        case "html":
-            .html
-        case "pdf":
-            .pdf
-        case "markdown", "md":
-            .markdown
-        default:
-            .text
-        }
-    }
-
-    private func configureRichAnswerReplayFailure(path: String, error: Error, baseURL: URL) {
-        layout = .immersiveConversation
-        showLibrary = false
-        showReader = false
-        showAgent = true
-        showNotes = false
-        agentSurface = .hidden
-        messages = []
-        latestAgentNoteProposal = nil
-        latestAgentLearningUpdate = nil
-        agentStreamingText = ""
-        agentActivityText = "真实回放失败"
-        let question = "回放富回答留档：\(path)"
-        let answer = """
-        富回答真实回放失败，已显式显示错误，避免空白误判。
-
-        路径：\(path)
-        错误：\(error.localizedDescription)
-        """
-        appendAgentMessage(AgentMessage(role: .user, text: question, source: "富回答回放"))
-        appendAgentMessage(AgentMessage(role: .assistant, text: answer, source: "富回答回放"))
-        try? answer.write(
-            to: baseURL.appendingPathComponent("rich-answer-replay-error.txt"),
-            atomically: true,
-            encoding: .utf8
-        )
-        recordVerificationStage("rich-answer-replay-failure:\(error.localizedDescription)")
-    }
-
-    private enum RichAnswerReplayMaterialInstallError: LocalizedError {
-        case missingVerificationAssetID(String)
-        case missingBundledVerificationAsset(String)
-        case missingReferencedAsset(String)
-        case unexpectedVerificationAssetID(String, String)
-
-        var errorDescription: String? {
-            switch self {
-            case let .missingVerificationAssetID(materialItemID):
-                return "富回答图片回放缺少 verificationAssetID，材料 \(materialItemID) 不显示空 Canvas。"
-            case let .missingBundledVerificationAsset(assetID):
-                return "富回答图片回放找不到已校验的打包图片资源：\(assetID)。"
-            case let .missingReferencedAsset(assetID):
-                return "富回答回放引用了材料资产 \(assetID)，但没有可解析的真实图片资源。"
-            case let .unexpectedVerificationAssetID(assetID, materialKind):
-                return "富回答回放记录了图片资源 \(assetID)，但材料类型是 \(materialKind)，已停止安装。"
-            }
-        }
-    }
-
-    private func runCourseWorkspaceVerification(_ scenario: String) async {
-        let fixtureDirectory = storageURL.deletingLastPathComponent()
-            .appendingPathComponent("CourseWorkspaceFixtures", isDirectory: true)
-        try? FileManager.default.createDirectory(at: fixtureDirectory, withIntermediateDirectories: true)
-
-        func fixtureURL(_ name: String, extension fileExtension: String) -> URL {
-            fixtureDirectory.appendingPathComponent(name).appendingPathExtension(fileExtension)
-        }
-
-        let materialAURL = fixtureURL("利率基础", extension: "html")
-        let materialBURL = fixtureURL("货币政策", extension: "md")
-        let materialCURL = fixtureURL("复习问题", extension: "txt")
-        let noteAURL = fixtureURL("利率研究笔记", extension: "md")
-        let noteBURL = fixtureURL("政策工具笔记", extension: "md")
-        let noteCURL = fixtureURL("期末复习笔记", extension: "md")
-        try? "<h1>利率基础</h1><p>名义利率与实际利率。</p>".write(to: materialAURL, atomically: true, encoding: .utf8)
-        try? "# 货币政策\n\n公开市场操作与政策利率。\n".write(to: materialBURL, atomically: true, encoding: .utf8)
-        try? "复习：比较名义利率与实际利率。\n".write(to: materialCURL, atomically: true, encoding: .utf8)
-        try? "# 利率研究笔记\n\n## 核心要点\n".write(to: noteAURL, atomically: true, encoding: .utf8)
-        try? "# 政策工具笔记\n\n## 摘录\n".write(to: noteBURL, atomically: true, encoding: .utf8)
-        try? "# 期末复习笔记\n\n## 待追问\n".write(to: noteCURL, atomically: true, encoding: .utf8)
-
-        let selectionBeforeCourseImports = selectedItemID
-        let importedMaterials = importFiles(
-            [materialAURL, materialBURL, materialCURL],
-            selectsFirstImportedItem: false,
-            reclassifiesExistingMarkdown: true
-        )
-        let importedNotes = importFiles(
-            [noteAURL, noteBURL, noteCURL],
-            selectsFirstImportedItem: false,
-            markdownAsNotes: true,
-            markdownOnly: true,
-            reclassifiesExistingMarkdown: true
-        )
-        let materialImportPassed = importedMaterials.count == 3
-            && importedMaterials.allSatisfy { !$0.isNotebookNote }
-        let noteImportPassed = importedNotes.count == 3
-            && importedNotes.allSatisfy(\.isNotebookNote)
-        let importSelectionPreserved = selectedItemID == selectionBeforeCourseImports
-        let courseFileImportPassed = materialImportPassed
-            && noteImportPassed
-            && importSelectionPreserved
-
-        let materialA = StudyItem(id: "course-material-a", title: "利率基础", subtitle: materialAURL.lastPathComponent, kind: .html, urlPath: materialAURL.path, isSample: false)
-        let materialB = StudyItem(id: "course-material-b", title: "货币政策", subtitle: materialBURL.lastPathComponent, kind: .markdown, urlPath: materialBURL.path, isSample: false)
-        let materialC = StudyItem(id: "course-material-c", title: "复习问题", subtitle: materialCURL.lastPathComponent, kind: .text, urlPath: materialCURL.path, isSample: false)
-        let noteA = StudyItem(id: "course-note-a", title: "利率研究笔记", subtitle: noteAURL.lastPathComponent, kind: .markdown, urlPath: noteAURL.path, isSample: false, isNotebookNote: true)
-        let noteB = StudyItem(id: "course-note-b", title: "政策工具笔记", subtitle: noteBURL.lastPathComponent, kind: .markdown, urlPath: noteBURL.path, isSample: false, isNotebookNote: true)
-        let noteC = StudyItem(id: "course-note-c", title: "期末复习笔记", subtitle: noteCURL.lastPathComponent, kind: .markdown, urlPath: noteCURL.path, isSample: false, isNotebookNote: true)
-
-        importedItems = [materialA, materialB, materialC, noteA, noteB, noteC]
-        notesByItemID = [
-            noteA.id: "# 利率研究笔记\n\n## 核心要点\n",
-            noteB.id: "# 政策工具笔记\n\n## 摘录\n",
-            noteC.id: "# 期末复习笔记\n\n## 待追问\n",
-        ]
-        selectedItemID = materialA.id
-        activeNotebookItemID = noteA.id
-        noteText = notesByItemID[noteA.id] ?? ""
-        noteSourceLinks = [
-            NoteSourceLink(noteItemID: noteA.id, sourceItemID: materialA.id),
-            NoteSourceLink(noteItemID: noteA.id, sourceItemID: materialB.id),
-            NoteSourceLink(noteItemID: noteB.id, sourceItemID: materialB.id),
-        ]
-        let courseARoot = fixtureDirectory.appendingPathComponent(
-            "CourseA",
-            isDirectory: true
-        )
-        let courseBRoot = fixtureDirectory.appendingPathComponent(
-            "CourseB",
-            isDirectory: true
-        )
-        try? FileManager.default.createDirectory(
-            at: courseARoot,
-            withIntermediateDirectories: true
-        )
-        try? FileManager.default.createDirectory(
-            at: courseBRoot,
-            withIntermediateDirectories: true
-        )
-        let courseA = Course(
-            id: UUID(uuidString: "11111111-1111-1111-1111-111111111111")!,
-            title: "货币金融学",
-            colorIndex: 0,
-            sourceRootPath: courseARoot.path,
-            sourceRootIdentity: CourseProjectFileWorker.identity(at: courseARoot)
-        )
-        let courseB = Course(
-            id: UUID(uuidString: "22222222-2222-2222-2222-222222222222")!,
-            title: "经济思想史",
-            colorIndex: 1,
-            sourceRootPath: courseBRoot.path,
-            sourceRootIdentity: CourseProjectFileWorker.identity(at: courseBRoot)
-        )
-        courses = [courseA, courseB]
-        resolvedCourseRootURLs = [
-            courseA.id: courseARoot,
-            courseB.id: courseBRoot,
-        ]
-        courseRootUnavailableReasons.removeAll()
-        var verificationMemberships = CourseItemMemberships()
-        verificationMemberships.assign(
-            itemIDs: Set([materialA.id, materialB.id, noteA.id, noteB.id]),
-            to: courseA.id
-        )
-        verificationMemberships.assign(
-            itemIDs: Set([materialB.id, materialC.id, noteB.id, noteC.id]),
-            to: courseB.id
-        )
-        courseItemMemberships = verificationMemberships.values
-        activeCourseID = courseA.id
-        studyLocationsByItemID = [
-            materialA.id: StudyLocation(
-                itemID: materialA.id,
-                itemTitle: materialA.title,
-                locationID: "html-heading-1",
-                locationTitle: "名义利率与实际利率",
-                lastStudiedAt: Date().addingTimeInterval(-1_800),
-                visitCount: 3
-            )
-        ]
-        let activeSession = StudySession(
-            title: "利率为什么会变化",
-            messages: [
-                AgentMessage(role: .user, text: "名义利率和实际利率有什么区别？", source: materialA.title, backend: .pi),
-                AgentMessage(role: .assistant, text: "实际利率会扣除通货膨胀的影响。", source: materialA.title, backend: .pi),
-            ],
-            summary: "比较名义利率与实际利率，并联系货币政策工具。",
-            courseID: courseA.id,
-            focusItemIDs: [materialA.id, materialB.id, noteA.id],
-            flow: StudyFlowState(phase: .note, suggestedNext: ["把利率公式整理到复习笔记", "用一道例题检验区别"]),
-            updatedAt: Date().addingTimeInterval(-900)
-        )
-        let emptySession = StudySession(title: "新学习会话")
-        studySessions = [activeSession, emptySession]
-        activeStudySessionID = activeSession.id
-        messages = activeSession.messages
-        learningMemoryStates = [
-            ScopedLearningMemoryState(
-                scope: .course(courseA.id),
-                revision: 1,
-                entries: [
-                    LearningMemoryEntry(
-                        kind: .summary,
-                        text: "已经理解名义利率与实际利率的区别，并开始联系货币政策工具。",
-                        evidence: "当前课程学习过程",
-                        origin: .agentInference,
-                        sessionID: activeSession.id
-                    ),
-                    LearningMemoryEntry(
-                        kind: .confusion,
-                        text: "仍不确定通货膨胀预期如何传导到名义利率。",
-                        evidence: "用户在当前会话中明确提出",
-                        origin: .userStatement,
-                        sessionID: activeSession.id
-                    ),
-                    LearningMemoryEntry(
-                        kind: .nextStep,
-                        text: "完成名义利率与实际利率的对照例题。",
-                        evidence: "当前会话建议",
-                        origin: .agentInference,
-                        sessionID: activeSession.id
-                    ),
-                ].map {
-                    Self.learningMemoryEntryWithInitialRevision($0, revision: 1)
-                }
-            ),
-        ]
-        learningMemoryScopeMigrationVersion = 1
-        layout = .documentAgentNotes
-        showLibrary = false
-        showReader = true
-        showAgent = true
-        showNotes = true
-        agentSurface = .hidden
-        courseDocumentSearchIndex.synchronize(allItems)
-        save()
-
-        if scenario == "course-home-flow" {
-            recordVerificationStage("course-home:fixture-ready")
-            let courseBSession = StudySession(
-                title: "经济思想史 Chat",
-                messages: [
-                    AgentMessage(
-                        role: .user,
-                        text: "比较两种经济思想",
-                        source: materialC.title
-                    ),
-                ],
-                courseID: courseB.id,
-                focusItemIDs: [materialC.id],
-                materialItemID: materialC.id
-            )
-            studySessions.append(courseBSession)
-            let courseAHighlights = CourseHomeLearningHighlights(
-                courseID: courseA.id,
-                learningMemoryEntries: learningMemoryEntries(
-                    in: .course(courseA.id)
-                ),
-                studySessions: studySessions
-            )
-            let courseBHighlights = CourseHomeLearningHighlights(
-                courseID: courseB.id,
-                learningMemoryEntries: learningMemoryEntries(
-                    in: .course(courseB.id)
-                ),
-                studySessions: studySessions
-            )
-            let learningHighlightsPassed =
-                courseAHighlights.summary?.kind == .summary
-                && courseAHighlights.summary?.text
-                    == "已经理解名义利率与实际利率的区别，并开始联系货币政策工具。"
-                && courseAHighlights.nextStepText
-                    == "完成名义利率与实际利率的对照例题。"
-                && courseAHighlights.nextStepSessionID == activeSession.id
-                && courseBHighlights.summary == nil
-                && courseBHighlights.nextStepText == nil
-                && courseBHighlights.nextStepSessionID == nil
-            activeStudySessionID = courseBSession.id
-            messages = courseBSession.messages
-            activeCourseID = courseB.id
-            select(itemID: materialC.id)
-            openCourseNote(noteC.id, in: courseB.id)
-            let baselineMaterialID = selectedItemID
-            let baselineNoteID = activeNotebookItemID
-            let baselineChatID = activeStudySessionID
-            let baselineMessages = messages
-            let baselinePaneOrder = threePaneOrder
-
-            let courseASharedLocation = StudyLocation(
-                itemID: materialB.id,
-                itemTitle: materialB.title,
-                locationID: "course-a-shared-location",
-                locationTitle: "公开市场操作",
-                lastStudiedAt: Date().addingTimeInterval(-600),
-                visitCount: 2
-            )
-            let courseBSharedLocation = StudyLocation(
-                itemID: materialB.id,
-                itemTitle: materialB.title,
-                locationID: "course-b-shared-location",
-                locationTitle: "政策工具比较",
-                lastStudiedAt: Date().addingTimeInterval(-300),
-                visitCount: 4
-            )
-            studyLocationsByCourseID = [
-                courseA.id.uuidString: [materialB.id: courseASharedLocation],
-                courseB.id.uuidString: [materialB.id: courseBSharedLocation],
-            ]
-            courseResumePoints = [
-                CourseResumePoint(
-                    courseID: courseA.id,
-                    materialLocation: StudyLocation(
-                        itemID: materialA.id,
-                        itemTitle: materialA.title,
-                        locationID: "html-heading-1",
-                        locationTitle: "名义利率与实际利率",
-                        lastStudiedAt: Date().addingTimeInterval(-1_800),
-                        visitCount: 3
-                    ),
-                    chatID: activeSession.id,
-                    noteItemID: noteA.id
-                ),
-            ]
-            readerLocationID = "html-heading-1"
-            readerLocationTitle = "名义利率与实际利率"
-            presentCourseWorkspace(.hub, courseID: courseA.id)
-            let openedWithoutMutation = courseWorkspacePresented
-                && courseWorkspaceCourseID == courseA.id
-                && activeCourseID == courseB.id
-                && selectedItemID == baselineMaterialID
-                && activeNotebookItemID == baselineNoteID
-                && activeStudySessionID == baselineChatID
-                && messages == baselineMessages
-
-            selectCourseWorkspaceCourse(courseB.id)
-            selectCourseWorkspaceCourse(courseA.id)
-            let browsingIsolated = courseWorkspaceCourseID == courseA.id
-                && activeCourseID == courseB.id
-                && selectedItemID == baselineMaterialID
-                && activeNotebookItemID == baselineNoteID
-                && activeStudySessionID == baselineChatID
-                && threePaneOrder == baselinePaneOrder
-            recordVerificationStage("course-home:browse-ready")
-
-            notesByItemID[noteA.id] =
-                "# 利率研究笔记\n\n本轮尚未写回的收益率曲线困惑。\n"
-            recordVerificationStage("course-home:search-start")
-            let documentSearch = await searchCourseHome(
-                courseID: courseA.id,
-                query: "公开市场操作"
-            ).results
-            let chatSearch = await searchCourseHome(
-                courseID: courseA.id,
-                query: "通货膨胀"
-            ).results
-            let noteSearch = await searchCourseHome(
-                courseID: courseA.id,
-                query: "收益率曲线困惑"
-            ).results
-            let deletedNoteSearch = await searchCourseHome(
-                courseID: courseA.id,
-                query: "核心要点"
-            ).results
-            recordVerificationStage("course-home:search-done")
-            let materialSearchPassed = documentSearch.contains {
-                $0.kind == .material && $0.itemID == materialB.id
-            }
-            let chatSearchPassed = chatSearch.contains {
-                $0.kind == .chat && $0.sessionID == activeSession.id
-            }
-            let searchPassed = materialSearchPassed && chatSearchPassed
-            let noteSearchPassed = noteSearch.contains {
-                $0.kind == .note && $0.itemID == noteA.id
-            }
-            let deletedNoteSearchPassed = !deletedNoteSearch.contains {
-                $0.kind == .note && $0.itemID == noteA.id
-            }
-            let searchOffMainThread = lastCourseHomeSearchRanOnMainThread == false
-            let multipleContentPassed = courseMaterials(in: courseA.id).count == 2
-                && courseNotes(in: courseA.id).count == 2
-                && sessionsTouchingCourse(courseA.id).count == 1
-            let sharedLocationsPassed =
-                studyLocation(for: materialB.id, in: courseA.id)?.locationID
-                    == courseASharedLocation.locationID
-                && studyLocation(for: materialB.id, in: courseB.id)?.locationID
-                    == courseBSharedLocation.locationID
-
-            let missingURL = fixtureURL("已移走的课程文稿", extension: "md")
-            try? FileManager.default.removeItem(at: missingURL)
-            let missingMaterial = StudyItem(
-                id: "course-material-missing",
-                title: "已移走的课程文稿",
-                subtitle: missingURL.lastPathComponent,
-                kind: .markdown,
-                urlPath: missingURL.path,
-                isSample: false
-            )
-            importedItems.append(missingMaterial)
-            var membershipsWithMissingItem = courseMembershipIndex
-            membershipsWithMissingItem.assign(
-                itemIDs: [missingMaterial.id],
-                to: courseA.id
-            )
-            courseItemMemberships = membershipsWithMissingItem.values
-            let failedOpenPreserved = !openCourseMaterial(
-                missingMaterial.id,
-                in: courseA.id
-            )
-                && activeCourseID == courseB.id
-                && selectedItemID == baselineMaterialID
-                && activeNotebookItemID == baselineNoteID
-                && activeStudySessionID == baselineChatID
-                && courseWorkspaceCourseID == courseA.id
-            importedItems.removeAll { $0.id == missingMaterial.id }
-            courseItemMemberships.removeAll { $0.itemID == missingMaterial.id }
-            noteFileError = nil
-
-            let workspaceSaved = flushPendingWorkspaceSave()
-            let persistedWorkspace = (try? Data(contentsOf: storageURL))
-                .flatMap { try? JSONDecoder().decode(PersistedWorkspace.self, from: $0) }
-            let sharedLocationsPersisted = workspaceSaved
-                && persistedWorkspace?.studyLocationsByCourseID?[
-                    courseA.id.uuidString
-                ]?[materialB.id]?.locationID == courseASharedLocation.locationID
-                && persistedWorkspace?.studyLocationsByCourseID?[
-                    courseB.id.uuidString
-                ]?[materialB.id]?.locationID == courseBSharedLocation.locationID
-
-            dismissCourseWorkspace()
-            let dismissedWithoutMutation = !courseWorkspacePresented
-                && courseWorkspaceCourseID == nil
-                && activeCourseID == courseB.id
-                && selectedItemID == baselineMaterialID
-                && activeNotebookItemID == baselineNoteID
-                && activeStudySessionID == baselineChatID
-                && messages == baselineMessages
-                && threePaneOrder == baselinePaneOrder
-
-            presentCourseWorkspace(.hub, courseID: courseA.id)
-            let backgroundChat = studySessions.first { $0.id == courseBSession.id }
-            recordVerificationStage("course-home:resume-start")
-            let resumePassed = resumeCourseReading(courseA.id)
-                && activeCourseID == courseA.id
-                && selectedMaterialItem?.id == materialA.id
-                && readerLocationID == "html-heading-1"
-                && activeStudySessionID == courseBSession.id
-                && studySessions.first(where: { $0.id == courseBSession.id })
-                    == backgroundChat
-                && !courseWorkspacePresented
-            recordVerificationStage("course-home:resume-done")
-            presentCourseWorkspace(.hub, courseID: courseA.id)
-
-            // B2b: the course home routes into the existing Chat/Pi pipeline
-            // without replacing the reader or note panes.
-            dismissCourseWorkspace()
-            _ = activateStudySession(
-                courseBSession.id,
-                expectedCourseID: courseB.id,
-                expectedScopeNeedsReview: false
-            )
-            activeCourseID = courseB.id
-            select(itemID: materialC.id)
-            readerLocationID = "html-heading-1"
-            readerLocationTitle = "名义利率与实际利率"
-            openCourseNote(noteC.id, in: courseB.id)
-            let chatRouteMaterialID = selectedItemID
-            let chatRouteLocationID = readerLocationID
-            let chatRouteNoteID = activeNotebookItemID
-            let chatRoutePaneOrder = threePaneOrder
-            let courseBMessagesBeforeQuestion = studySessions.first {
-                $0.id == courseBSession.id
-            }?.messages
-            let courseAChatCountBeforeQuestion = studySessions.filter {
-                $0.courseID == courseA.id
-            }.count
-            agentProviderID = .openai
-            agentAuthMethod = .apiKey
-            let homeQuestion = "请用一句话说明这门课研究什么。"
-            presentCourseWorkspace(.hub, courseID: courseA.id)
-            recordVerificationStage("course-home:question-submit-start")
-            let newCourseChatID = submitCourseHomeQuestion(
-                homeQuestion,
-                in: courseA.id
-            )
-            recordVerificationStage("course-home:question-submit-routed")
-            await agentRequestTask?.value
-            recordVerificationStage("course-home:question-submit-done")
-            let newCourseChat = newCourseChatID.flatMap { chatID in
-                studySessions.first { $0.id == chatID }
-            }
-            let newCourseQuestionPassed = newCourseChat?.courseID == courseA.id
-                && newCourseChat?.messages.contains {
-                    $0.role == .user && $0.text == homeQuestion
-                } == true
-                && studySessions.filter { $0.courseID == courseA.id }.count
-                    == courseAChatCountBeforeQuestion + 1
-                && studySessions.first { $0.id == courseBSession.id }?.messages
-                    == courseBMessagesBeforeQuestion
-                && selectedItemID == chatRouteMaterialID
-                && readerLocationID == chatRouteLocationID
-                && activeNotebookItemID == chatRouteNoteID
-                && threePaneOrder == chatRoutePaneOrder
-                && showReader
-                && showAgent
-                && showNotes
-                && !courseWorkspacePresented
-
-            let freshSession = createStudySession(courseID: courseA.id)
-            let countBeforeFreshReuse = studySessions.count
-            presentCourseWorkspace(.hub, courseID: courseA.id)
-            recordVerificationStage("course-home:fresh-reuse-start")
-            let reusedFreshSessionID = submitCourseHomeQuestion(
-                "这条问题应复用刚创建的空对话。",
-                in: courseA.id
-            )
-            await agentRequestTask?.value
-            recordVerificationStage("course-home:fresh-reuse-done")
-            let freshEmptyReusePassed = reusedFreshSessionID == freshSession?.id
-                && studySessions.count == countBeforeFreshReuse
-
-            let draftedEmptySession = createStudySession(courseID: courseA.id)
-            agentDraft = "必须保留的旧问题草稿"
-            let countBeforeDraftedQuestion = studySessions.count
-            presentCourseWorkspace(.hub, courseID: courseA.id)
-            recordVerificationStage("course-home:draft-route-start")
-            let draftedRouteID = submitCourseHomeQuestion(
-                "这条问题必须进入另一条新对话。",
-                in: courseA.id
-            )
-            await agentRequestTask?.value
-            recordVerificationStage("course-home:draft-route-done")
-            let draftedEmptyNotReused = draftedRouteID != draftedEmptySession?.id
-                && studySessions.count == countBeforeDraftedQuestion + 1
-                && draftedEmptySession.map {
-                    agentDraftsBySessionID[$0.id]
-                        == "必须保留的旧问题草稿"
-                } == true
-
-            let staleEmptySession = createStudySession(courseID: courseA.id)
-            _ = activateStudySession(
-                courseBSession.id,
-                expectedCourseID: courseB.id,
-                expectedScopeNeedsReview: false
-            )
-            let blankDiscardedOnSwitch = staleEmptySession.map { stale in
-                !studySessions.contains(where: { $0.id == stale.id })
-                    && agentDraftsBySessionID[stale.id] == nil
-            } == true
-            let countBeforeStaleQuestion = studySessions.count
-            presentCourseWorkspace(.hub, courseID: courseA.id)
-            recordVerificationStage("course-home:stale-route-start")
-            let staleRouteID = submitCourseHomeQuestion(
-                "旧空对话不能被静默复用。",
-                in: courseA.id
-            )
-            await agentRequestTask?.value
-            recordVerificationStage("course-home:stale-route-done")
-            let staleEmptyNotReused = blankDiscardedOnSwitch
-                && staleRouteID != staleEmptySession?.id
-                && studySessions.count == countBeforeStaleQuestion + 1
-
-            let exactResumeMessages = activeSession.messages
-            let materialBeforeExactResume = selectedItemID
-            let locationBeforeExactResume = readerLocationID
-            let noteBeforeExactResume = activeNotebookItemID
-            courseResumePoints = [
-                CourseResumePoint(
-                    courseID: courseA.id,
-                    materialLocation: StudyLocation(
-                        itemID: materialA.id,
-                        itemTitle: materialA.title,
-                        locationID: "old-course-a-location",
-                        locationTitle: "旧课程位置"
-                    ),
-                    chatID: activeSession.id,
-                    noteItemID: noteA.id
-                ),
-            ]
-            _ = activateStudySession(
-                courseBSession.id,
-                expectedCourseID: courseB.id,
-                expectedScopeNeedsReview: false
-            )
-            let countBeforeExactResume = studySessions.count
-            let paneOrderBeforeExactResume = threePaneOrder
-            presentCourseWorkspace(.hub, courseID: courseA.id)
-            let exactConversationResumePassed =
-                resumeCourseConversation(courseA.id)
-                && activeStudySessionID == activeSession.id
-                && messages == exactResumeMessages
-                && studySessions.count == countBeforeExactResume
-                && selectedItemID == materialBeforeExactResume
-                && readerLocationID == locationBeforeExactResume
-                && activeNotebookItemID == noteBeforeExactResume
-                && threePaneOrder == paneOrderBeforeExactResume
-                && showReader
-                && showAgent
-                && showNotes
-                && !courseWorkspacePresented
-
-            courseResumePoints = [
-                CourseResumePoint(
-                    courseID: courseA.id,
-                    chatID: UUID()
-                ),
-            ]
-            let chatBeforeInvalidResume = activeStudySessionID
-            presentCourseWorkspace(.hub, courseID: courseA.id)
-            let invalidResumePreserved = !resumeCourseConversation(courseA.id)
-                && activeStudySessionID == chatBeforeInvalidResume
-                && courseWorkspacePresented
-
-            courseResumePoints = [
-                CourseResumePoint(
-                    courseID: courseA.id,
-                    materialLocation: StudyLocation(
-                        itemID: materialA.id,
-                        itemTitle: materialA.title,
-                        locationID: "html-heading-1",
-                        locationTitle: "名义利率与实际利率",
-                        lastStudiedAt: Date().addingTimeInterval(-1_800),
-                        visitCount: 3
-                    ),
-                    chatID: activeSession.id,
-                    noteItemID: noteA.id
-                ),
-            ]
-            presentCourseWorkspace(.hub, courseID: courseA.id)
-
-            let passed = openedWithoutMutation
-                && browsingIsolated
-                && dismissedWithoutMutation
-                && multipleContentPassed
-                && searchPassed
-                && noteSearchPassed
-                && deletedNoteSearchPassed
-                && searchOffMainThread
-                && failedOpenPreserved
-                && sharedLocationsPassed
-                && sharedLocationsPersisted
-                && resumePassed
-                && newCourseQuestionPassed
-                && freshEmptyReusePassed
-                && draftedEmptyNotReused
-                && staleEmptyNotReused
-                && exactConversationResumePassed
-                && invalidResumePreserved
-                && learningHighlightsPassed
-            writeCourseWorkspaceVerificationReport(
-                name: "course-home-report.json",
-                payload: [
-                    "result": passed ? "pass" : "fail",
-                    "openedWithoutMutation": openedWithoutMutation,
-                    "browsingIsolated": browsingIsolated,
-                    "dismissedWithoutMutation": dismissedWithoutMutation,
-                    "multipleContentPassed": multipleContentPassed,
-                    "searchPassed": searchPassed,
-                    "materialSearchPassed": materialSearchPassed,
-                    "chatSearchPassed": chatSearchPassed,
-                    "noteSearchPassed": noteSearchPassed,
-                    "deletedNoteSearchPassed": deletedNoteSearchPassed,
-                    "searchOffMainThread": searchOffMainThread,
-                    "failedOpenPreserved": failedOpenPreserved,
-                    "sharedLocationsPassed": sharedLocationsPassed,
-                    "sharedLocationsPersisted": sharedLocationsPersisted,
-                    "resumePassed": resumePassed,
-                    "newCourseQuestionPassed": newCourseQuestionPassed,
-                    "freshEmptyReusePassed": freshEmptyReusePassed,
-                    "draftedEmptyNotReused": draftedEmptyNotReused,
-                    "staleEmptyNotReused": staleEmptyNotReused,
-                    "exactConversationResumePassed": exactConversationResumePassed,
-                    "invalidResumePreserved": invalidResumePreserved,
-                    "learningHighlightsPassed": learningHighlightsPassed,
-                    "courseWorkspacePresented": courseWorkspacePresented,
-                    "workspaceCourseID": courseWorkspaceCourseID?.uuidString ?? "",
-                    "activeCourseID": activeCourseID?.uuidString ?? "",
-                    "activeChatID": activeStudySessionID?.uuidString ?? "",
-                    "materialLocationID": readerLocationID ?? "",
-                ]
-            )
-            save()
-            recordVerificationStage("course-home:\(passed ? "pass" : "fail")")
-            recordVerificationStage("completed")
-            return
-        }
-
-        if scenario == "course-chat-scope-flow" {
-            let courseBSession = StudySession(
-                title: "经济思想史复习",
-                courseID: courseB.id,
-                focusItemIDs: [materialC.id, noteC.id],
-                materialItemID: materialC.id
-            )
-            studySessions.append(courseBSession)
-            let courseAChatID = activeSession.id
-            if let courseAIndex = studySessions.firstIndex(where: { $0.id == courseAChatID }) {
-                studySessions[courseAIndex].focusItemIDs.append(materialC.id)
-                studySessions[courseAIndex].materialItemID = materialC.id
-            }
-            layout = .immersiveConversation
-            showLibrary = false
-            showReader = false
-            showAgent = true
-            showNotes = false
-            agentSurface = .hidden
-            select(itemID: materialC.id)
-            selectionContext = SelectionContext(
-                text: "只属于课程 B 的选区",
-                source: .document,
-                ownerTitle: materialC.title,
-                itemID: materialC.id
-            )
-            let chatStayedOpen = activeStudySessionID == courseAChatID
-            let focusFollowedVisibleContent =
-                currentAgentFocusCourseID == courseB.id
-                && currentAgentSelections().contains {
-                    $0.itemID == materialC.id
-                }
-            let openingDidNotAssociate = activeStudySession?
-                .relatedCourseIDs.contains(courseB.id) == false
-            let expectedCourseDoesNotBlock = activateStudySession(
-                courseBSession.id,
-                expectedCourseID: courseA.id,
-                expectedScopeNeedsReview: false
-            )
-            let explicitCourseChat = createStudySession(courseID: courseA.id)
-            let unifiedCreationPassed = explicitCourseChat?.courseID == nil
-                && explicitCourseChat?.relatedCourseIDs.isEmpty == true
-            let explicitGlobalChat = createStudySession(courseID: nil)
-            let singleCreationPathPassed = explicitGlobalChat?.id
-                == explicitCourseChat?.id
-            let restoredChat = activateStudySession(
-                courseAChatID,
-                expectedCourseID: nil,
-                expectedScopeNeedsReview: false
-            )
-            let resultPassed = chatStayedOpen
-                && focusFollowedVisibleContent
-                && openingDidNotAssociate
-                && expectedCourseDoesNotBlock
-                && unifiedCreationPassed
-                && singleCreationPathPassed
-                && restoredChat
-            writeCourseWorkspaceVerificationReport(
-                name: "course-chat-scope-report.json",
-                payload: [
-                    "result": resultPassed ? "pass" : "fail",
-                    "chatStayedOpen": chatStayedOpen,
-                    "focusFollowedVisibleContent": focusFollowedVisibleContent,
-                    "openingDidNotAssociate": openingDidNotAssociate,
-                    "expectedCourseDoesNotBlock": expectedCourseDoesNotBlock,
-                    "unifiedCreationPassed": unifiedCreationPassed,
-                    "singleCreationPathPassed": singleCreationPathPassed,
-                    "restoredChat": restoredChat,
-                    "activeChatTitle": activeStudySessionScopeTitle,
-                ]
-            )
-            save()
-            recordVerificationStage("completed")
-            return
-        }
-
-        if scenario == "course-resume-point-flow" {
-            let courseBSession = StudySession(
-                title: "经济思想史 Chat",
-                messages: [
-                    AgentMessage(
-                        role: .user,
-                        text: "比较两种经济思想",
-                        source: materialC.title
-                    ),
-                ],
-                courseID: courseB.id,
-                focusItemIDs: [materialC.id],
-                materialItemID: materialC.id
-            )
-            studySessions = [activeSession, courseBSession, emptySession]
-            activeStudySessionID = activeSession.id
-            messages = activeSession.messages
-            courseResumePoints = [
-                CourseResumePoint(
-                    courseID: courseA.id,
-                    materialLocation: StudyLocation(
-                        itemID: materialA.id,
-                        itemTitle: materialA.title,
-                        locationID: "html-heading-1",
-                        locationTitle: "名义利率与实际利率",
-                        visitCount: 3
-                    ),
-                    chatID: activeSession.id,
-                    noteItemID: noteA.id
-                ),
-            ]
-            _ = activateStudySession(
-                courseBSession.id,
-                expectedCourseID: courseB.id,
-                expectedScopeNeedsReview: false
-            )
-            _ = openCourseMaterial(materialC.id)
-            openCourseNote(noteC.id)
-            swapThreePaneSecondaryPanes()
-            presentCourseWorkspace(.hub, courseID: courseA.id)
-            let sessionCount = studySessions.count
-            let paneOrder = threePaneOrder
-            let backgroundChat = studySessions.first { $0.id == courseBSession.id }
-            let readingPassed = resumeCourseReading(courseA.id)
-                && activeStudySessionID == courseBSession.id
-                && studySessions.first(where: { $0.id == courseBSession.id }) == backgroundChat
-                && selectedMaterialItem?.id == materialA.id
-                && readerLocationID == "html-heading-1"
-                && activeNotebookItemID == noteA.id
-                && focusedPane == .reader
-                && showReader
-                && showAgent
-                && showNotes
-                && layout.isDocumentThreePane
-                && !courseWorkspacePresented
-                && studySessions.count == sessionCount
-                && threePaneOrder == paneOrder
-            updateReaderHTMLLocation(
-                id: "html-heading-2",
-                title: "费雪效应",
-                reason: "scroll"
-            )
-            let scrollPreservedPoint = courseResumePoint(for: courseA.id)
-            let scrollPassed = scrollPreservedPoint?.materialLocation?.locationID
-                    == "html-heading-2"
-                && scrollPreservedPoint?.chatID == activeSession.id
-                && scrollPreservedPoint?.noteItemID == noteA.id
-            let conversationPassed = resumeCourseConversation(courseA.id)
-                && activeStudySessionID == activeSession.id
-                && readerLocationID == "html-heading-2"
-                && activeNotebookItemID == noteA.id
-                && focusedPane == .agent
-                && showAgent
-                && layout.isDocumentThreePane
-                && studySessions.count == sessionCount
-                && threePaneOrder == paneOrder
-            let saved = flushPendingWorkspaceSave()
-            let diskSnapshot = (try? Data(contentsOf: storageURL))
-                .flatMap { try? JSONDecoder().decode(PersistedWorkspace.self, from: $0) }
-            let diskPoint = diskSnapshot?.courseResumePoints?
-                .first { $0.courseID == courseA.id }
-            let persisted = saved
-                && diskPoint?.materialLocation?.locationID == "html-heading-2"
-                && diskPoint?.chatID == activeSession.id
-                && diskPoint?.noteItemID == noteA.id
-            let passed = readingPassed && scrollPassed && conversationPassed && persisted
-            writeCourseWorkspaceVerificationReport(
-                name: "course-resume-point-report.json",
-                payload: [
-                    "result": passed ? "pass" : "fail",
-                    "readingPassed": readingPassed,
-                    "scrollPreservedPoint": scrollPassed,
-                    "conversationPassed": conversationPassed,
-                    "persisted": persisted,
-                    "sessionCount": studySessions.count,
-                    "paneOrderPreserved": threePaneOrder == paneOrder,
-                    "activeChatID": activeStudySessionID?.uuidString ?? "",
-                    "materialLocationID": readerLocationID ?? "",
-                    "noteItemID": activeNotebookItemID ?? "",
-                ]
-            )
-            recordVerificationStage("course-resume-point:\(passed ? "pass" : "fail")")
-            recordVerificationStage("completed")
-            return
-        }
-
-        if scenario == "course-index-navigation-flow" {
-            let unassignedURL = fixtureURL("跨课程阅读清单", extension: "txt")
-            try? "待归类：金融史、政策工具与复习问题。\n".write(to: unassignedURL, atomically: true, encoding: .utf8)
-            importedItems.append(
-                StudyItem(
-                    id: "course-material-unassigned",
-                    title: "跨课程阅读清单",
-                    subtitle: unassignedURL.lastPathComponent,
-                    kind: .text,
-                    urlPath: unassignedURL.path,
-                    isSample: false
-                )
-            )
-            activeCourseID = nil
-            showLibrary = true
-            courseWorkspacePresented = false
-            courseDocumentSearchIndex.synchronize(allItems)
-            save()
-            recordVerificationStage("completed")
-            return
-        }
-
-        let noteCountBeforeInvalidCreation = courseNotebookItems.count
-        let invalidNoteID: String?
-        if let activeCourseID {
-            invalidNoteID = await createCourseNotebookNote(
-                courseID: activeCourseID,
-                title: "   "
-            )
-        } else {
-            invalidNoteID = nil
-        }
-        let invalidNoteCreationPassed = invalidNoteID == nil
-            && courseNotebookItems.count == noteCountBeforeInvalidCreation
-            && noteFileError?.isEmpty == false
-        noteFileError = nil
-
-        let initialSummary = courseWorkspaceSummary
-        let initialRelations = NoteSourceRelations(links: noteSourceLinks)
-        if scenario == "course-workspace-overview-flow" {
-            let requestedPage = Self.environmentValue("WEIBEI_VERIFY_COURSE_PAGE")
-            var routeRecognized = true
-            switch requestedPage {
-            case "hub":
-                presentCourseWorkspace(.hub)
-            case "notes":
-                presentCourseWorkspace(.notes, selecting: noteA.id)
-            case "materials", "relations-large":
-                if requestedPage == "relations-large" {
-                    activeCourseID = nil
-                }
-                presentCourseWorkspace(.materials, selecting: materialB.id)
-            case "sessions":
-                presentCourseWorkspace(.sessions, selecting: activeSession.id.uuidString)
-            case "", "relations":
-                presentCourseWorkspace(.relations)
-            default:
-                routeRecognized = false
-            }
-            writeCourseWorkspaceVerificationReport(
-                name: "course-workspace-overview-report.json",
-                payload: [
-                    "result": routeRecognized
-                        && initialSummary.materialCount == 3
-                        && initialSummary.noteCount == 3
-                        && initialSummary.explicitLinkCount == 3
-                        && initialSummary.readingPositionCount == 1
-                        && initialSummary.unlinkedMaterialCount == 1
-                        && initialSummary.unlinkedNoteCount == 1
-                        && initialSummary.studySessionCount == 1
-                        && initialSummary.unresolvedConfusionCount == 1
-                        && courseFileImportPassed ? "pass" : "fail",
-                    "courseFileImportPassed": courseFileImportPassed,
-                    "invalidNoteCreationPassed": invalidNoteCreationPassed,
-                    "materialImportPassed": materialImportPassed,
-                    "noteImportPassed": noteImportPassed,
-                    "importSelectionPreserved": importSelectionPreserved,
-                    "importedMaterialCount": importedMaterials.count,
-                    "importedNoteCount": importedNotes.count,
-                    "materialCount": initialSummary.materialCount,
-                    "noteCount": initialSummary.noteCount,
-                    "explicitLinkCount": initialSummary.explicitLinkCount,
-                    "readingPositionCount": initialSummary.readingPositionCount,
-                    "unlinkedMaterialIDs": courseMaterialsWithoutNoteLinks.map(\.id).sorted(),
-                    "unlinkedNoteIDs": courseNotesWithoutSourceLinks.map(\.id).sorted(),
-                    "studySessionCount": initialSummary.studySessionCount,
-                    "unresolvedConfusionCount": initialSummary.unresolvedConfusionCount,
-                    "currentMaterialID": selectedItemID ?? "",
-                    "currentNoteID": activeNotebookItemID ?? "",
-                    "courseWorkspacePresented": courseWorkspacePresented,
-                    "routeRecognized": routeRecognized,
-                    "destination": courseWorkspaceDestination.rawValue,
-                ]
-            )
-            if requestedPage == "relations-large" {
-                let courseC = Course(
-                    id: UUID(uuidString: "33333333-3333-3333-3333-333333333333")!,
-                    title: "金融史专题",
-                    colorIndex: 2
-                )
-                let courseD = Course(
-                    id: UUID(uuidString: "44444444-4444-4444-4444-444444444444")!,
-                    title: "计量练习",
-                    colorIndex: 3
-                )
-                courses.append(contentsOf: [courseC, courseD])
-
-                var expandedMemberships = CourseItemMemberships(values: courseItemMemberships)
-                var expandedRelations = NoteSourceRelations(links: noteSourceLinks)
-                for index in 1...7 {
-                    let materialURL = fixtureURL("扩展资料 \(index)", extension: "txt")
-                    let noteURL = fixtureURL("扩展笔记 \(index)", extension: "md")
-                    try? "第 \(index) 份课程材料，包含利率、政策与历史线索。\n".write(to: materialURL, atomically: true, encoding: .utf8)
-                    try? "# 扩展笔记 \(index)\n\n## 课程线索\n".write(to: noteURL, atomically: true, encoding: .utf8)
-                    let material = StudyItem(
-                        id: "course-large-material-\(index)",
-                        title: ["债券定价", "通胀预期", "央行沟通", "危机史料", "政策冲击", "回归练习", "期末框架"][index - 1],
-                        subtitle: materialURL.lastPathComponent,
-                        kind: .text,
-                        urlPath: materialURL.path,
-                        isSample: false
-                    )
-                    let note = StudyItem(
-                        id: "course-large-note-\(index)",
-                        title: ["期限结构札记", "费雪效应", "政策信号", "危机比较", "识别假设", "模型结果", "总复习图谱"][index - 1],
-                        subtitle: noteURL.lastPathComponent,
-                        kind: .markdown,
-                        urlPath: noteURL.path,
-                        isSample: false,
-                        isNotebookNote: true
-                    )
-                    importedItems.append(contentsOf: [material, note])
-                    notesByItemID[note.id] = "# \(note.title)\n\n## 课程线索\n"
-                    let primaryCourseID = index <= 3 ? courseC.id : courseD.id
-                    expandedMemberships.assign(itemIDs: Set([material.id, note.id]), to: primaryCourseID)
-                    if index == 3 || index == 4 {
-                        expandedMemberships.assign(itemIDs: Set([material.id, note.id]), to: courseB.id)
-                    }
-                    let nextNoteID = "course-large-note-\(index == 7 ? 1 : index + 1)"
-                    expandedRelations.replaceNotes(
-                        for: material.id,
-                        noteItemIDs: Set([note.id, nextNoteID])
-                    )
-                }
-                courseItemMemberships = expandedMemberships.values
-                noteSourceLinks = expandedRelations.links
-                activeCourseID = nil
-                courseDocumentSearchIndex.synchronize(allItems)
-                save()
-            }
-            recordVerificationStage("completed")
-            return
-        }
-
-        func verifyCourseOverlayContinuity(itemID: String) async -> (passed: Bool, makeCount: Int, dismantleCount: Int) {
-            select(itemID: itemID)
-            try? await Task.sleep(nanoseconds: 900_000_000)
-            let baselineLayout = layout
-            let baselineMaterialID = selectedItemID
-            let baselineNoteID = activeNotebookItemID
-            let baselineNoteText = noteText
-            let baselineMessages = messages
-            let baselineOrder = threePaneOrder
-            let baselineLocation = selectedItemID.flatMap { studyLocationsByItemID[$0] }
-            PaneToggleContinuityVerifier.beginMeasurement()
-            presentCourseWorkspace(.relations)
-            try? await Task.sleep(nanoseconds: 500_000_000)
-            dismissCourseWorkspace()
-            try? await Task.sleep(nanoseconds: 500_000_000)
-            let makeCount = PaneToggleContinuityVerifier.webReaderMakeCount
-                + PaneToggleContinuityVerifier.pdfReaderMakeCount
-                + PaneToggleContinuityVerifier.noteEditorMakeCount
-            let dismantleCount = PaneToggleContinuityVerifier.webReaderDismantleCount
-                + PaneToggleContinuityVerifier.pdfReaderDismantleCount
-                + PaneToggleContinuityVerifier.noteEditorDismantleCount
-            let passed = layout == baselineLayout
-                && selectedItemID == baselineMaterialID
-                && activeNotebookItemID == baselineNoteID
-                && noteText == baselineNoteText
-                && messages == baselineMessages
-                && threePaneOrder == baselineOrder
-                && selectedItemID.flatMap { studyLocationsByItemID[$0] } == baselineLocation
-                && makeCount == 0
-                && dismantleCount == 0
-            PaneToggleContinuityVerifier.endMeasurement()
-            return (passed, makeCount, dismantleCount)
-        }
-
-        let htmlContinuity = await verifyCourseOverlayContinuity(itemID: materialA.id)
-        let pdfContinuity = await verifyCourseOverlayContinuity(itemID: "sample-pdf")
-        let continuityPassed = htmlContinuity.passed && pdfContinuity.passed
-        let paneMakeCount = htmlContinuity.makeCount + pdfContinuity.makeCount
-        let paneDismantleCount = htmlContinuity.dismantleCount + pdfContinuity.dismantleCount
-        select(itemID: materialA.id)
-
-        setLinkedSourceIDs([materialA.id], for: noteA.id)
-        setLinkedSourceIDs([materialB.id, materialC.id], for: noteC.id)
-        let editedRelations = NoteSourceRelations(links: noteSourceLinks)
-
-        presentCourseWorkspace(.materials, selecting: materialC.id)
-        openCourseMaterial(materialC.id)
-        let materialNavigationPassed = selectedItemID == materialC.id
-            && activeNotebookItemID == noteA.id
-            && !editedRelations.isLinked(noteItemID: noteA.id, sourceItemID: materialC.id)
-
-        presentCourseWorkspace(.notes, selecting: noteC.id)
-        openCourseNote(noteC.id)
-        let noteNavigationPassed = selectedItemID == materialC.id
-            && activeNotebookItemID == noteC.id
-
-        flushPendingNotePersistence()
-        save()
-        let diskData = try? Data(contentsOf: storageURL)
-        let diskSnapshot = diskData.flatMap { try? JSONDecoder().decode(PersistedWorkspace.self, from: $0) }
-        let diskRelations = NoteSourceRelations(links: diskSnapshot?.noteSourceLinks ?? [])
-        let diskSummary = diskSnapshot.map {
-            CourseWorkspaceSummary(
-                importedItems: $0.importedItems,
-                noteSourceLinks: $0.noteSourceLinks ?? [],
-                studyLocationsByItemID: $0.studyLocationsByItemID ?? [:],
-                studySessions: $0.studySessions ?? [],
-                learningMemoryEntries: ($0.learningMemoryStates ?? []).flatMap(\.entries)
-            )
-        }
-        let persistencePassed = diskRelations.sourceIDs(for: noteA.id) == [materialA.id]
-            && Set(diskRelations.sourceIDs(for: noteC.id)) == Set([materialB.id, materialC.id])
-            && Set(diskRelations.noteIDs(for: materialB.id)) == Set([noteB.id, noteC.id])
-            && Set(diskSnapshot?.courses?.map(\.id) ?? []) == Set([courseA.id, courseB.id])
-            && diskSnapshot?.activeCourseID == courseB.id
-            && diskSnapshot?.courseItemMemberships?.count == courseItemMemberships.count
-            && diskSummary?.explicitLinkCount == 4
-            && diskSummary?.unlinkedMaterialCount == 0
-            && diskSummary?.unlinkedNoteCount == 0
-
-        let resultPassed = initialRelations.links.count == 3
-            && courseFileImportPassed
-            && invalidNoteCreationPassed
-            && continuityPassed
-            && materialNavigationPassed
-            && noteNavigationPassed
-            && persistencePassed
-        writeCourseWorkspaceVerificationReport(
-            name: "course-workspace-workflow-report.json",
-            payload: [
-                "result": resultPassed ? "pass" : "fail",
-                "continuityPassed": continuityPassed,
-                "courseFileImportPassed": courseFileImportPassed,
-                "invalidNoteCreationPassed": invalidNoteCreationPassed,
-                "materialImportPassed": materialImportPassed,
-                "noteImportPassed": noteImportPassed,
-                "importSelectionPreserved": importSelectionPreserved,
-                "importedMaterialCount": importedMaterials.count,
-                "importedNoteCount": importedNotes.count,
-                "materialNavigationPassed": materialNavigationPassed,
-                "noteNavigationPassed": noteNavigationPassed,
-                "persistencePassed": persistencePassed,
-                "finalMaterialID": selectedItemID ?? "",
-                "finalNoteID": activeNotebookItemID ?? "",
-                "noteA_sources": diskRelations.sourceIDs(for: noteA.id),
-                "noteC_sources": diskRelations.sourceIDs(for: noteC.id),
-                "materialB_notes": diskRelations.noteIDs(for: materialB.id),
-                "paneMakeCount": paneMakeCount,
-                "paneDismantleCount": paneDismantleCount,
-            ]
-        )
-        recordVerificationStage("completed")
-    }
-
-    private func writeCourseWorkspaceVerificationReport(name: String, payload: [String: Any]) {
-        guard JSONSerialization.isValidJSONObject(payload),
-              let data = try? JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted, .sortedKeys]) else { return }
-        let url = storageURL.deletingLastPathComponent().appendingPathComponent(name)
-        try? data.write(to: url, options: .atomic)
-    }
-
-    private func waitForReaderContextToSettle() async {
-        var previousTitle = readerLocationTitle
-        var previousPage = readerPageIndex
-        var stableChecks = 0
-        for _ in 0..<20 {
-            try? await Task.sleep(nanoseconds: 150_000_000)
-            if readerLocationTitle == previousTitle, readerPageIndex == previousPage {
-                stableChecks += 1
-                if stableChecks >= 3 { return }
-            } else {
-                previousTitle = readerLocationTitle
-                previousPage = readerPageIndex
-                stableChecks = 0
-            }
-        }
-    }
-
-    private func runPaneToggleContinuityVerification() async {
-        layout = .documentAgentNotes
-        showLibrary = true
-        showReader = true
-        showAgent = false
-        showNotes = true
-        agentSurface = .hidden
-        recordVerificationStage("pane-toggle-context-prepared")
-        let agentMarker = AgentMessage(
-            role: .assistant,
-            text: "Pane continuity conversation marker",
-            source: "verification",
-            backend: .offline
-        )
-        messages = [agentMarker]
-        let baselineOrder = normalizedThreePaneOrder
-        let cases: [(itemID: String, agentVisible: Bool)] = [
-            ("sample-html", false),
-            ("sample-html", true),
-            ("sample-pdf", false),
-            ("sample-pdf", true),
-            ("sample-md", false),
-            ("sample-md", true),
-        ]
-        var caseReports: [String] = []
-        var allPassed = true
-
-        for verificationCase in cases {
-            showReader = true
-            showAgent = verificationCase.agentVisible
-            showNotes = true
-            select(itemID: verificationCase.itemID)
-            if verificationCase.itemID == "sample-html" {
-                await waitForHTMLContentRailToSettle()
-                requestReaderHTMLLocation(
-                    id: nil,
-                    title: ui("名义利率与实际利率", "Nominal and Real Interest Rates")
-                )
-                await waitForHTMLContentRailToSettle()
-            } else {
-                try? await Task.sleep(nanoseconds: 900_000_000)
-            }
-            try? await Task.sleep(nanoseconds: 700_000_000)
-
-            let noteMarker = "# Pane continuity \(verificationCase.itemID) \(verificationCase.agentVisible ? "agent-on" : "agent-off")\n\nUncommitted note state must survive pane toggles.\n"
-            updateNote(noteMarker)
-            try? await Task.sleep(nanoseconds: 450_000_000)
-            let itemID = selectedMaterialItem?.id
-            let baselineRevision = agentContextRevision
-            let baselineLocation = itemID.flatMap { studyLocationsByItemID[$0] }
-            let baselineMessages = messages
-            PaneToggleContinuityVerifier.beginMeasurement()
-
-            for _ in 1...20 {
-                toggleNotes()
-                try? await Task.sleep(nanoseconds: 520_000_000)
-                toggleNotes()
-                try? await Task.sleep(nanoseconds: 520_000_000)
-            }
-            for _ in 1...20 {
-                toggleReader()
-                try? await Task.sleep(nanoseconds: 520_000_000)
-                toggleReader()
-                try? await Task.sleep(nanoseconds: 520_000_000)
-            }
-            if verificationCase.itemID == "sample-html" {
-                await waitForHTMLContentRailToSettle()
-            } else {
-                try? await Task.sleep(nanoseconds: 700_000_000)
-            }
-
-            let finalLocation = itemID.flatMap { studyLocationsByItemID[$0] }
-            let revisionDelta = agentContextRevision &- baselineRevision
-            let studyLocationChanged = baselineLocation != finalLocation
-            let lifecycleStable = PaneToggleContinuityVerifier.webReaderMakeCount == 0
-                && PaneToggleContinuityVerifier.webReaderDismantleCount == 0
-                && PaneToggleContinuityVerifier.pdfReaderMakeCount == 0
-                && PaneToggleContinuityVerifier.pdfReaderDismantleCount == 0
-                && PaneToggleContinuityVerifier.noteEditorMakeCount == 0
-                && PaneToggleContinuityVerifier.noteEditorDismantleCount == 0
-            let exercisedResizeChain = verificationCase.itemID != "sample-html"
-                || PaneToggleContinuityVerifier.htmlSectionEventCount > 0
-            let casePassed = exercisedResizeChain
-                && PaneToggleContinuityVerifier.htmlLocationCallCount == 0
-                && PaneToggleContinuityVerifier.htmlLocationCommitCount == 0
-                && revisionDelta == 0
-                && !studyLocationChanged
-                && lifecycleStable
-                && noteText == noteMarker
-                && messages == baselineMessages
-                && normalizedThreePaneOrder == baselineOrder
-                && showReader
-                && showAgent == verificationCase.agentVisible
-                && showNotes
-            allPassed = allPassed && casePassed
-            let caseName = "\(verificationCase.itemID)-agent-\(verificationCase.agentVisible ? "on" : "off")"
-            let locationReasons = PaneToggleContinuityVerifier.htmlLocationReasons
-                .sorted { $0.key < $1.key }
-                .map { "\($0.key):\($0.value)" }
-                .joined(separator: ",")
-            caseReports.append([
-                "case=\(caseName)",
-                "case_result=\(casePassed ? "pass" : "fail")",
-                "agent_revision_delta=\(revisionDelta)",
-                "study_location_changed=\(studyLocationChanged)",
-                "html_location_calls=\(PaneToggleContinuityVerifier.htmlLocationCallCount)",
-                "html_location_commits=\(PaneToggleContinuityVerifier.htmlLocationCommitCount)",
-                "html_location_reasons=\(locationReasons)",
-                "web_reader_make=\(PaneToggleContinuityVerifier.webReaderMakeCount)",
-                "web_reader_dismantle=\(PaneToggleContinuityVerifier.webReaderDismantleCount)",
-                "pdf_reader_make=\(PaneToggleContinuityVerifier.pdfReaderMakeCount)",
-                "pdf_reader_dismantle=\(PaneToggleContinuityVerifier.pdfReaderDismantleCount)",
-                "markdown_editor_make=\(PaneToggleContinuityVerifier.noteEditorMakeCount)",
-                "markdown_editor_dismantle=\(PaneToggleContinuityVerifier.noteEditorDismantleCount)",
-                "note_preserved=\(noteText == noteMarker)",
-                "conversation_preserved=\(messages == baselineMessages)",
-                "pane_order_preserved=\(normalizedThreePaneOrder == baselineOrder)",
-            ].joined(separator: " "))
-            PaneToggleContinuityVerifier.endMeasurement()
-        }
-
-        let report = ([
-            "result=\(allPassed ? "pass" : "fail")",
-            "cases=\(cases.count)",
-            "notes_cycles_per_case=20",
-            "reader_cycles_per_case=20",
-        ] + caseReports).joined(separator: "\n") + "\n"
-        let reportURL = storageURL.deletingLastPathComponent()
-            .appendingPathComponent("pane-toggle-continuity-report.txt")
-        try? report.write(to: reportURL, atomically: true, encoding: .utf8)
-        recordVerificationStage("pane-toggle-result:\(allPassed ? "pass" : "fail")")
-        recordVerificationStage("completed")
-    }
-
-    private func runPaneLayoutStabilityVerification() async {
-        layout = .documentAgentNotes
-        showLibrary = false
-        showReader = true
-        showAgent = false
-        showNotes = true
-        agentSurface = .hidden
-        select(itemID: "sample-html")
-        await waitForHTMLContentRailToSettle()
-
-        let noteMarker = "# Pane ownership marker\n\nUnsaved note input must survive stable slot animations.\n"
-        let draftMarker = "Unsent agent draft must survive stable slot animations."
-        let richConversation = (0..<15).flatMap { turn in
-            [
-                AgentMessage(
-                    role: .user,
-                    text: "第 \(turn + 1) 轮：解释复利如何累积。",
-                    source: "verification",
-                    backend: .offline
-                ),
-                AgentMessage(
-                    role: .assistant,
-                    text: """
-                    ## 第 \(turn + 1) 轮复利说明
-
-                    - 本金先产生利息
-                    - 下一期利息继续进入本金
-
-                    | 变量 | 含义 |
-                    | --- | --- |
-                    | P | 本金 |
-                    | r | 每期利率 |
-
-                    \\(A = P(1 + r)^n\\)
-
-                    $$A = P(1 + r)^n$$
-                    """,
-                    source: "verification",
-                    backend: .offline
-                ),
-            ]
-        }
-        updateNote(noteMarker)
-        agentDraft = draftMarker
-        messages = richConversation
-        try? await Task.sleep(nanoseconds: 700_000_000)
-
-        let itemID = selectedMaterialItem?.id
-        let baselineLocation = itemID.flatMap { studyLocationsByItemID[$0] }
-        let baselineRevision = agentContextRevision
-        let baselineOrder = normalizedThreePaneOrder
-        PaneToggleContinuityVerifier.beginMeasurement()
-        recordVerificationStage("pane-layout-context-prepared")
-
-        toggleNotes()
-        try? await Task.sleep(nanoseconds: 520_000_000)
-        toggleNotes()
-        try? await Task.sleep(nanoseconds: 520_000_000)
-        toggleAgent()
-        try? await Task.sleep(nanoseconds: 520_000_000)
-        toggleReader()
-        try? await Task.sleep(nanoseconds: 520_000_000)
-        toggleReader()
-        try? await Task.sleep(nanoseconds: 520_000_000)
-        toggleAgent()
-        try? await Task.sleep(nanoseconds: 520_000_000)
-        toggleNotes()
-        try? await Task.sleep(nanoseconds: 520_000_000)
-        toggleNotes()
-        try? await Task.sleep(nanoseconds: 700_000_000)
-
-        let finalLocation = itemID.flatMap { studyLocationsByItemID[$0] }
-        let revisionDelta = agentContextRevision &- baselineRevision
-        let passed = showReader
-            && !showAgent
-            && showNotes
-            && noteText == noteMarker
-            && agentDraft == draftMarker
-            && messages == richConversation
-            && normalizedThreePaneOrder == baselineOrder
-            && finalLocation == baselineLocation
-            && revisionDelta == 0
-            && PaneToggleContinuityVerifier.htmlLocationCallCount == 0
-            && PaneToggleContinuityVerifier.webReaderMakeCount == 0
-            && PaneToggleContinuityVerifier.webReaderDismantleCount == 0
-            && PaneToggleContinuityVerifier.noteEditorMakeCount == 0
-            && PaneToggleContinuityVerifier.noteEditorDismantleCount == 0
-        let report = [
-            "result=\(passed ? "pass" : "fail")",
-            "transitions=8",
-            "reader_visible=\(showReader)",
-            "agent_visible=\(showAgent)",
-            "notes_visible=\(showNotes)",
-            "agent_revision_delta=\(revisionDelta)",
-            "study_location_changed=\(finalLocation != baselineLocation)",
-            "html_location_calls=\(PaneToggleContinuityVerifier.htmlLocationCallCount)",
-            "web_reader_make=\(PaneToggleContinuityVerifier.webReaderMakeCount)",
-            "web_reader_dismantle=\(PaneToggleContinuityVerifier.webReaderDismantleCount)",
-            "note_editor_make=\(PaneToggleContinuityVerifier.noteEditorMakeCount)",
-            "note_editor_dismantle=\(PaneToggleContinuityVerifier.noteEditorDismantleCount)",
-            "note_preserved=\(noteText == noteMarker)",
-            "agent_draft_preserved=\(agentDraft == draftMarker)",
-            "conversation_preserved=\(messages == richConversation)",
-            "conversation_count=\(messages.count)",
-            "pane_order_preserved=\(normalizedThreePaneOrder == baselineOrder)",
-        ].joined(separator: "\n") + "\n"
-        PaneToggleContinuityVerifier.endMeasurement()
-        let reportURL = storageURL.deletingLastPathComponent()
-            .appendingPathComponent("pane-layout-stability-report.txt")
-        try? report.write(to: reportURL, atomically: true, encoding: .utf8)
-        recordVerificationStage("pane-layout-result:\(passed ? "pass" : "fail")")
-        recordVerificationStage("completed")
-    }
-
-    private func runPaneReorderWidthVerification() async {
-        layout = .documentAgentNotes
-        showLibrary = false
-        showReader = true
-        showAgent = true
-        showNotes = true
-        agentSurface = .hidden
-        select(itemID: "sample-html")
-        await waitForHTMLContentRailToSettle()
-
-        let noteMarker = "# Reorder and width marker\n\nUnsaved text must survive pane movement.\n"
-        let draftMarker = "Unsent draft must survive pane movement."
-        let messageMarker = AgentMessage(
-            role: .assistant,
-            text: "Reorder conversation marker",
-            source: "verification",
-            backend: .offline
-        )
-        updateNote(noteMarker)
-        agentDraft = draftMarker
-        messages = [messageMarker]
-
-        for _ in 0..<30 {
-            let order = visibleDocumentPaneOrder
-            if order.count == 3, order.allSatisfy({ threePaneReorderFrames[$0] != nil }) {
-                break
-            }
-            try? await Task.sleep(nanoseconds: 100_000_000)
-        }
-
-        let baselineOrder = normalizedThreePaneOrder
-        let baselineRevision = agentContextRevision
-        let itemID = selectedMaterialItem?.id
-        let baselineLocation = itemID.flatMap { studyLocationsByItemID[$0] }
-        let baselineAgentWidth = threePaneReorderFrames[.agent]?.width ?? 0
-        PaneToggleContinuityVerifier.beginMeasurement()
-        recordVerificationStage("pane-reorder-width-context-prepared")
-
-        requestPaneExpansion(.agent)
-        for _ in 0..<20 {
-            guard paneExpansionRequest != nil else { break }
-            try? await Task.sleep(nanoseconds: 100_000_000)
-        }
-        try? await Task.sleep(nanoseconds: 350_000_000)
-        let expandedAgentWidth = threePaneReorderFrames[.agent]?.width ?? 0
-
-        beginThreePaneReorder(.reader)
-        let dragDistance = max(
-            (threePaneReorderFrames[.notes]?.midX ?? 1_000)
-                - (threePaneReorderFrames[.reader]?.midX ?? 0),
-            1_000
-        )
-        updateThreePaneReorder(.reader, horizontalDelta: dragDistance)
-        finishThreePaneReorder(.reader, horizontalDelta: dragDistance)
-        try? await Task.sleep(nanoseconds: 700_000_000)
-        let reorderedOrder = normalizedThreePaneOrder
-        let reorderedAgentWidth = threePaneReorderFrames[.agent]?.width ?? 0
-
-        toggleAgent()
-        try? await Task.sleep(nanoseconds: 520_000_000)
-        toggleAgent()
-        try? await Task.sleep(nanoseconds: 700_000_000)
-        let restoredAgentWidth = threePaneReorderFrames[.agent]?.width ?? 0
-        let restoredStore = WorkspaceStore()
-        let persistedOrder = restoredStore.normalizedThreePaneOrder
-        let widthTolerance = max(12, reorderedAgentWidth * 0.12)
-        let finalLocation = itemID.flatMap { studyLocationsByItemID[$0] }
-        let lifecycleStable = PaneToggleContinuityVerifier.webReaderMakeCount == 0
-            && PaneToggleContinuityVerifier.webReaderDismantleCount == 0
-            && PaneToggleContinuityVerifier.noteEditorMakeCount == 0
-            && PaneToggleContinuityVerifier.noteEditorDismantleCount == 0
-        let passed = baselineOrder != reorderedOrder
-            && reorderedOrder.last == .reader
-            && persistedOrder == reorderedOrder
-            && paneExpansionRequest == nil
-            && expandedAgentWidth >= ContentRailMetrics.readableWidth
-            && reorderedAgentWidth >= ContentRailMetrics.readableWidth
-            && abs(restoredAgentWidth - reorderedAgentWidth) <= widthTolerance
-            && noteText == noteMarker
-            && agentDraft == draftMarker
-            && messages == [messageMarker]
-            && finalLocation == baselineLocation
-            && agentContextRevision == baselineRevision
-            && lifecycleStable
-
-        let report = [
-            "result=\(passed ? "pass" : "fail")",
-            "baseline_order=\(baselineOrder.map(\.rawValue).joined(separator: ","))",
-            "reordered_order=\(reorderedOrder.map(\.rawValue).joined(separator: ","))",
-            "persisted_order=\(persistedOrder.map(\.rawValue).joined(separator: ","))",
-            "baseline_agent_width=\(baselineAgentWidth)",
-            "expanded_agent_width=\(expandedAgentWidth)",
-            "reordered_agent_width=\(reorderedAgentWidth)",
-            "restored_agent_width=\(restoredAgentWidth)",
-            "width_tolerance=\(widthTolerance)",
-            "expansion_consumed=\(paneExpansionRequest == nil)",
-            "note_preserved=\(noteText == noteMarker)",
-            "agent_draft_preserved=\(agentDraft == draftMarker)",
-            "conversation_preserved=\(messages == [messageMarker])",
-            "study_location_changed=\(finalLocation != baselineLocation)",
-            "agent_revision_delta=\(agentContextRevision &- baselineRevision)",
-            "native_lifecycle_stable=\(lifecycleStable)",
-        ].joined(separator: "\n") + "\n"
-        PaneToggleContinuityVerifier.endMeasurement()
-        let reportURL = storageURL.deletingLastPathComponent()
-            .appendingPathComponent("pane-reorder-width-report.txt")
-        try? report.write(to: reportURL, atomically: true, encoding: .utf8)
-        recordVerificationStage("pane-reorder-width-result:\(passed ? "pass" : "fail")")
-        recordVerificationStage("completed")
-    }
-
-    private func runReaderScrollPersistenceVerification() async {
-        PaneToggleContinuityVerifier.beginMeasurement()
-        layout = .documentAgentNotes
-        showLibrary = true
-        showReader = true
-        showAgent = true
-        showNotes = true
-        agentSurface = .hidden
-        select(itemID: "sample-html")
-        await waitForHTMLContentRailToSettle()
-        let baseline = studyLocationsByItemID["sample-html"]
-        let previousScrollSchedules = PaneToggleContinuityVerifier.verificationScrollScheduleCount
-        NotificationCenter.default.post(name: .weiBeiVerificationUserScroll, object: nil)
-        try? await Task.sleep(nanoseconds: 100_000_000)
-        let didTriggerScroll = PaneToggleContinuityVerifier.verificationScrollScheduleCount > previousScrollSchedules
-        recordVerificationStage("reader-scroll-context-prepared")
-
-        var finalLocation = studyLocationsByItemID["sample-html"]
-        for _ in 0..<60 {
-            try? await Task.sleep(nanoseconds: 150_000_000)
-            finalLocation = studyLocationsByItemID["sample-html"]
-            if finalLocation?.locationID != nil,
-               finalLocation?.locationID != baseline?.locationID {
-                break
-            }
-        }
-        save()
-        try? await Task.sleep(nanoseconds: 250_000_000)
-        let restoredStore = WorkspaceStore()
-        let persisted = restoredStore.studyLocationsByItemID["sample-html"]
-        let scrolled = finalLocation?.locationID != nil
-            && finalLocation?.locationID != baseline?.locationID
-            && finalLocation?.lastStudiedAt != baseline?.lastStudiedAt
-        let restored = restoredStore.selectedItemID == "sample-html"
-            && restoredStore.readerLocationID == finalLocation?.locationID
-            && restoredStore.readerTargetLocationID == finalLocation?.locationID
-            && persisted?.locationID == finalLocation?.locationID
-            && persisted?.locationTitle == finalLocation?.locationTitle
-        let passed = didTriggerScroll && scrolled && restored
-        let locationReasons = PaneToggleContinuityVerifier.htmlLocationReasons
-            .sorted { $0.key < $1.key }
-            .map { "\($0.key):\($0.value)" }
-            .joined(separator: ",")
-        let report = [
-            "result=\(passed ? "pass" : "fail")",
-            "input_path=dom-wheel-event",
-            "verification_scroll_triggered=\(didTriggerScroll)",
-            "baseline_location_id=\(baseline?.locationID ?? "")",
-            "final_location_id=\(finalLocation?.locationID ?? "")",
-            "final_location_title=\(finalLocation?.locationTitle ?? "")",
-            "timestamp_changed=\(finalLocation?.lastStudiedAt != baseline?.lastStudiedAt)",
-            "restored_location_id=\(restoredStore.readerLocationID ?? "")",
-            "restored_target_id=\(restoredStore.readerTargetLocationID ?? "")",
-            "html_section_events=\(PaneToggleContinuityVerifier.htmlSectionEventCount)",
-            "html_active_events=\(PaneToggleContinuityVerifier.htmlActiveEventCount)",
-            "html_location_calls=\(PaneToggleContinuityVerifier.htmlLocationCallCount)",
-            "html_location_reasons=\(locationReasons)",
-            "verification_scroll_schedules=\(PaneToggleContinuityVerifier.verificationScrollScheduleCount)",
-            "verification_scroll_result=\(PaneToggleContinuityVerifier.verificationScrollResult)",
-        ].joined(separator: "\n") + "\n"
-        PaneToggleContinuityVerifier.endMeasurement()
-        let reportURL = storageURL.deletingLastPathComponent()
-            .appendingPathComponent("reader-scroll-persistence-report.txt")
-        try? report.write(to: reportURL, atomically: true, encoding: .utf8)
-        recordVerificationStage("reader-scroll-result:\(passed ? "pass" : "fail")")
-        recordVerificationStage("completed")
-    }
-
-    private func waitForHTMLContentRailToSettle() async {
-        var previousEventCount = PaneToggleContinuityVerifier.htmlEventSequence
-        var stableChecks = 0
-        for _ in 0..<40 {
-            try? await Task.sleep(nanoseconds: 150_000_000)
-            let currentEventCount = PaneToggleContinuityVerifier.htmlEventSequence
-            if currentEventCount == previousEventCount {
-                stableChecks += 1
-                if stableChecks >= 4 { return }
-            } else {
-                previousEventCount = currentEventCount
-                stableChecks = 0
-            }
-        }
-    }
-
-    private func recordVerificationStage(_ stage: String) {
-        guard Self.environmentValue("WEIBEI_SUPPRESS_ACTIVATION") == "1" else { return }
-        let url = storageURL.deletingLastPathComponent().appendingPathComponent("verification-state.txt")
-        let previous = (try? String(contentsOf: url, encoding: .utf8)) ?? ""
-        try? "\(previous)\(stage)\n".write(to: url, atomically: true, encoding: .utf8)
-    }
-
-    private func runChatReplyPersistenceVerification() {
-        let root = storageURL.deletingLastPathComponent()
-            .appendingPathComponent("chat-reply-persistence-workspace", isDirectory: true)
-        try? FileManager.default.removeItem(at: root)
-        let suiteName = "weibei.chat-reply-persistence.\(UUID().uuidString)"
-        guard let defaults = UserDefaults(suiteName: suiteName) else { return }
-        defer { defaults.removePersistentDomain(forName: suiteName) }
-
-        let chatID = UUID()
-        let switchedChatID = UUID()
-        let requestID = UUID()
-        let source = AgentReplySource(
-            itemID: "material:rates",
-            kind: .material,
-            title: "利率",
-            label: "[材料：利率]",
-            excerpt: "利率是资金的价格。",
-            pageIndex: 17
-        )
-        let action = AgentReplyAction(
-            kind: .writeNote,
-            targetItemID: "note:rates",
-            sourceItemID: "material:rates",
-            proposedMarkdown: "## 利率\n利率是资金的价格。",
-            evidence: ["[材料：利率]"],
-            contextRevision: "verification",
-            baselineContentDigest: "verification-digest"
-        )
-        let reply = AgentMessage(
-            role: .assistant,
-            text: "已经生成的安全正文",
-            source: "利率",
-            backend: .pi,
-            richAnswer: RichAnswerPresentation(
-                mode: .narrativeOnly,
-                narrative: "已经生成的安全正文"
-            ),
-            completionState: .generating,
-            sources: [source],
-            actions: [action],
-            memoryUpdate: AgentReplyMemoryUpdate(memoryIDs: [UUID()], summary: "已经理解利率"),
-            origin: AgentReplyOrigin(requestID: requestID, chatID: chatID, courseID: nil),
-            retryQuestion: "继续解释利率"
-        )
-        let session = StudySession(
-            id: chatID,
-            title: "回复恢复验收",
-            messages: [
-                AgentMessage(role: .user, text: "继续解释利率", source: "利率"),
-                reply,
-            ]
-        )
-        let switchedSession = StudySession(id: switchedChatID, title: "切换目标 Chat")
-
-        let initial = WorkspaceStore(workspaceDirectory: root, selectionAskThreadDefaults: defaults)
-        initial.studySessions = [session]
-        initial.activeStudySessionID = chatID
-        initial.messages = session.messages
-        initial.activeAgentRequestID = requestID
-        initial.activeAgentReplyMessageID = reply.id
-        initial.activeAgentReplyChatID = chatID
-        initial.isAskingAgent = true
-        initial.applyAgentProgress(
-            .text("流式正文已经写入固定消息"),
-            requestID: requestID,
-            replyMessageID: reply.id,
-            chatID: chatID
-        )
-        let streamedReply = initial.messages.last
-        let streamed = streamedReply?.id == reply.id
-            && streamedReply?.text == reply.text
-            && streamedReply.map(initial.agentDisplayText(for:)) == "流式正文已经写入固定消息"
-        initial.cancelAgentRequest(restoreDraft: false)
-        initial.applyAgentProgress(
-            .text("退出后的迟到正文"),
-            requestID: requestID,
-            replyMessageID: reply.id,
-            chatID: chatID
-        )
-        let quitFrozen = initial.messages.last?.text == "流式正文已经写入固定消息"
-            && initial.messages.last?.completionState == .interrupted
-            && initial.messages.last?.failureKind == .cancelled
-        let quitSaved = initial.flushPendingWorkspaceSave()
-        let quitReopened = WorkspaceStore(
-            workspaceDirectory: root,
-            selectionAskThreadDefaults: defaults
-        ).studySessions.first?.messages.last
-        let quitRecovered = quitFrozen
-            && quitSaved
-            && quitReopened?.text == "流式正文已经写入固定消息"
-            && quitReopened?.completionState == .interrupted
-        let cancelled = initial.messages.last?.completionState == .interrupted
-            && initial.messages.last?.text == "流式正文已经写入固定消息"
-            && initial.messages.last?.failureKind == .cancelled
-        let streamBackend = initial.messages.last?.backend
-        let cancelledSaved = initial.flushPendingWorkspaceSave()
-        let cancelledReopened = WorkspaceStore(
-            workspaceDirectory: root,
-            selectionAskThreadDefaults: defaults
-        )
-        let persistedStream = cancelledReopened.studySessions.first?.messages.last
-        let streamRecovered = cancelledSaved
-            && persistedStream?.text == "流式正文已经写入固定消息"
-            && persistedStream?.completionState == .interrupted
-            && persistedStream?.backend == .pi
-
-        var completedReply = reply
-        completedReply.text = "已经完成的正式正文"
-        completedReply.completionState = .completed
-        completedReply.failureKind = nil
-        let completedStore = WorkspaceStore(
-            workspaceDirectory: root.appendingPathComponent("completed", isDirectory: true),
-            selectionAskThreadDefaults: defaults
-        )
-        completedStore.studySessions = [
-            StudySession(
-                id: chatID,
-                title: "已完成回复",
-                messages: [completedReply]
-            ),
-        ]
-        completedStore.activeStudySessionID = chatID
-        completedStore.messages = [completedReply]
-        completedStore.activeAgentRequestID = requestID
-        completedStore.activeAgentReplyMessageID = completedReply.id
-        completedStore.activeAgentReplyChatID = chatID
-        completedStore.isAskingAgent = true
-        completedStore.latestAgentStreamingText = "较早的流式正文"
-        completedStore.cancelAgentRequest(restoreDraft: false)
-        let completedReplyPreserved = completedStore.messages.last?.text == "已经完成的正式正文"
-            && completedStore.messages.last?.completionState == .completed
-            && completedStore.messages.last?.failureKind == nil
-
-        initial.studySessions = [session]
-        initial.messages = session.messages
-        let initialSaved = initial.flushPendingWorkspaceSave()
-
-        let reopened = WorkspaceStore(workspaceDirectory: root, selectionAskThreadDefaults: defaults)
-        let recovered = reopened.studySessions.first?.messages.last
-        let recoveryPassed = initialSaved
-            && recovered?.id == reply.id
-            && recovered?.text == reply.text
-            && recovered?.completionState == .interrupted
-            && recovered?.failureKind == .cancelled
-            && recovered?.retryQuestion == "继续解释利率"
-            && recovered?.sources == [source]
-            && recovered?.actions == [action]
-            && recovered?.memoryUpdate == reply.memoryUpdate
-            && recovered?.richAnswer != nil
-            && recovered?.origin?.requestID == requestID
-            && reopened.flushPendingWorkspaceSave()
-
-        let reopenedAgain = WorkspaceStore(workspaceDirectory: root, selectionAskThreadDefaults: defaults)
-        let stable = reopenedAgain.studySessions.first?.messages.last
-        let idempotent = stable == recovered && !reopenedAgain.recoveredInterruptedAgentReply
-
-        let switchRoot = root.appendingPathComponent("switch", isDirectory: true)
-        let switching = WorkspaceStore(
-            workspaceDirectory: switchRoot,
-            selectionAskThreadDefaults: defaults
-        )
-        switching.studySessions = [session, switchedSession]
-        switching.activeStudySessionID = chatID
-        switching.messages = session.messages
-        switching.activeAgentRequestID = requestID
-        switching.activeAgentReplyMessageID = reply.id
-        switching.activeAgentReplyChatID = chatID
-        switching.isAskingAgent = true
-        switching.agentDraft = "A 尚未发送的草稿"
-        switching.applyAgentProgress(
-            .text("A 切换前的正文"),
-            requestID: requestID,
-            replyMessageID: reply.id,
-            chatID: chatID
-        )
-        switching.activateStudySession(
-            switchedChatID,
-            expectedCourseID: nil,
-            expectedScopeNeedsReview: false
-        )
-        switching.invalidateAgentContext()
-        switching.applyAgentProgress(
-            .text("A 在后台继续完成"),
-            requestID: requestID,
-            replyMessageID: reply.id,
-            chatID: chatID
-        )
-        let backgroundOrigin = switching.studySessions
-            .first(where: { $0.id == chatID })?
-            .messages
-            .last
-        let switchIsolated = switching.activeStudySessionID == switchedChatID
-            && switching.agentDraft.isEmpty
-            && switching.messages.isEmpty
-            && switching.isAskingAgent
-            && !switching.isAgentRunningInActiveChat
-            && backgroundOrigin?.completionState == .generating
-            && backgroundOrigin.map(switching.agentDisplayText(for:)) == "A 在后台继续完成"
-        switching.agentDraft = "B 尚未发送的草稿"
-        switching.submitAgentDraft()
-        let confirmationPresented = switching.isAgentSwitchConfirmationPresented
-        switching.dismissAgentSwitchConfirmation()
-        let returnedToA = switching.activateStudySession(
-            chatID,
-            expectedCourseID: nil,
-            expectedScopeNeedsReview: false
-        )
-        let aDraftRestored = switching.agentDraft == "A 尚未发送的草稿"
-        let returnedToB = switching.activateStudySession(
-            switchedChatID,
-            expectedCourseID: nil,
-            expectedScopeNeedsReview: false
-        )
-        let bDraftRestored = switching.agentDraft == "B 尚未发送的草稿"
-        let draftsIsolated = returnedToA && returnedToB && aDraftRestored && bDraftRestored
-        let terminalMerge = Self.interruptedAgentReplyText(
-            streamed: "已流式生成的安全正文",
-            persisted: "较早的持久化正文"
-        ) == "已流式生成的安全正文"
-
-        let replacementRequestID = UUID()
-        let replacementReply = AgentMessage(
-            role: .assistant,
-            text: "",
-            source: "B",
-            completionState: .generating,
-            origin: AgentReplyOrigin(
-                requestID: replacementRequestID,
-                chatID: switchedChatID,
-                courseID: nil
-            ),
-            retryQuestion: "B 的问题"
-        )
-        switching.checkpointActiveAgentStreamingText()
-        switching.latestAgentStreamingText = ""
-        switching.appendAgentMessage(replacementReply)
-        switching.activeAgentRequestID = replacementRequestID
-        switching.activeAgentReplyMessageID = replacementReply.id
-        switching.activeAgentReplyChatID = switchedChatID
-        switching.applyAgentProgress(
-            .text("A 的迟到正文"),
-            requestID: requestID,
-            replyMessageID: reply.id,
-            chatID: chatID
-        )
-        switching.interruptAgentReply(
-            requestID: requestID,
-            messageID: reply.id,
-            chatID: chatID,
-            kind: .cancelled
-        )
-        let replacementAfterLateEvents = switching.studySessions
-            .first(where: { $0.id == switchedChatID })?
-            .messages
-            .last
-        let lateEventsRejected = replacementAfterLateEvents?.id == replacementReply.id
-            && replacementAfterLateEvents?.text.isEmpty == true
-            && replacementAfterLateEvents?.completionState == .generating
-            && switching.studySessions
-                .first(where: { $0.id == chatID })?
-                .messages
-                .last?
-                .text == "A 在后台继续完成"
-            && switching.flushPendingWorkspaceSave()
-
-        let passed = streamed
-            && quitRecovered
-            && cancelled
-            && streamRecovered
-            && completedReplyPreserved
-            && recoveryPassed
-            && idempotent
-            && switchIsolated
-            && confirmationPresented
-            && draftsIsolated
-            && terminalMerge
-            && lateEventsRejected
-        let report = """
-        result=\(passed ? "pass" : "fail")
-        streamed=\(streamed)
-        quit_recovered=\(quitRecovered)
-        cancelled=\(cancelled)
-        stream_backend=\(streamBackend?.rawValue ?? "missing")
-        stream_recovered=\(streamRecovered)
-        completed_reply_preserved=\(completedReplyPreserved)
-        initial_saved=\(initialSaved)
-        recovered=\(recoveryPassed)
-        idempotent=\(idempotent)
-        switch_isolated=\(switchIsolated)
-        confirmation_presented=\(confirmationPresented)
-        drafts_isolated=\(draftsIsolated)
-        terminal_merge=\(terminalMerge)
-        late_events_rejected=\(lateEventsRejected)
-        body=\(stable?.text ?? "")
-        state=\(stable?.completionState.rawValue ?? "missing")
-        sources=\(stable?.sources.count ?? 0)
-        source_id=\(stable?.sources.first?.itemID ?? "missing")
-        actions=\(stable?.actions.count ?? 0)
-        rich_answer=\(stable?.richAnswer != nil)
-        """
-        let reportURL = storageURL.deletingLastPathComponent()
-            .appendingPathComponent("chat-reply-persistence-report.txt")
-        try? "\(report)\n".write(to: reportURL, atomically: true, encoding: .utf8)
-        recordVerificationStage("chat-reply-persistence:\(passed ? "pass" : "fail")")
-        recordVerificationStage("completed")
-    }
-
-    private func runLearningMemoryScopesVerification() {
-        let courseAID = UUID(uuidString: "66666666-6666-6666-6666-666666666661")!
-        let courseBID = UUID(uuidString: "66666666-6666-6666-6666-666666666662")!
-        let courseAChatID = UUID(uuidString: "66666666-6666-6666-6666-666666666663")!
-        let courseBChatID = UUID(uuidString: "66666666-6666-6666-6666-666666666664")!
-        let globalChatID = UUID(uuidString: "66666666-6666-6666-6666-666666666665")!
-        let courseASecondChatID = UUID(uuidString: "66666666-6666-6666-6666-666666666669")!
-        let globalSecondChatID = UUID(uuidString: "66666666-6666-6666-6666-66666666666A")!
-        let courseAMemoryID = UUID(uuidString: "66666666-6666-6666-6666-666666666666")!
-        let courseBMemoryID = UUID(uuidString: "66666666-6666-6666-6666-666666666667")!
-        let globalMemoryID = UUID(uuidString: "66666666-6666-6666-6666-666666666668")!
-        let courseAConfusionID = UUID(uuidString: "66666666-6666-6666-6666-666666666660")!
-        let now = Date()
-
-        func initialEntry(
-            id: UUID,
-            kind: LearningMemoryKind,
-            text: String,
-            sessionID: UUID
-        ) -> LearningMemoryEntry {
-            Self.learningMemoryEntryWithInitialRevision(
-                LearningMemoryEntry(
-                    id: id,
-                    kind: kind,
-                    text: text,
-                    evidence: "真实 App 作用域验收",
-                    origin: .agentInference,
-                    sessionID: sessionID,
-                    createdAt: now,
-                    updatedAt: now
-                ),
-                revision: 1
-            )
-        }
-
-        courses = [
-            Course(id: courseAID, title: "货币金融学", colorIndex: 0),
-            Course(id: courseBID, title: "经济思想史", colorIndex: 1),
-        ]
-        activeCourseID = courseAID
-        studySessions = [
-            StudySession(
-                id: courseAChatID,
-                title: "利率复习",
-                messages: [AgentMessage(role: .user, text: "继续复习利率", source: nil)],
-                courseID: courseAID
-            ),
-            StudySession(
-                id: courseBChatID,
-                title: "思想史复习",
-                messages: [AgentMessage(role: .user, text: "继续复习思想史", source: nil)],
-                courseID: courseBID
-            ),
-            StudySession(
-                id: globalChatID,
-                title: "跨课程计划",
-                messages: [AgentMessage(role: .user, text: "安排本周学习", source: nil)],
-                courseID: nil
-            ),
-            StudySession(
-                id: courseASecondChatID,
-                title: "利率练习",
-                messages: [AgentMessage(role: .user, text: "继续练习利率", source: nil)],
-                courseID: courseAID
-            ),
-            StudySession(
-                id: globalSecondChatID,
-                title: "另一条全局计划",
-                messages: [AgentMessage(role: .user, text: "换一条全局对话继续", source: nil)],
-                courseID: nil
-            ),
-        ]
-        activeStudySessionID = courseAChatID
-        messages = studySessions[0].messages
-        learningMemoryStates = [
-            ScopedLearningMemoryState(
-                scope: .global,
-                revision: 1,
-                entries: [
-                    initialEntry(
-                        id: globalMemoryID,
-                        kind: .goal,
-                        text: "本周完成两门课程复习",
-                        sessionID: globalChatID
-                    ),
-                ]
-            ),
-            ScopedLearningMemoryState(
-                scope: .course(courseAID),
-                revision: 1,
-                entries: [
-                    initialEntry(
-                        id: courseAMemoryID,
-                        kind: .confusion,
-                        text: "仍需区分名义利率和实际利率",
-                        sessionID: courseAChatID
-                    ),
-                    initialEntry(
-                        id: courseAConfusionID,
-                        kind: .confusion,
-                        text: "还不会解释费雪方程",
-                        sessionID: courseAChatID
-                    ),
-                ]
-            ),
-            ScopedLearningMemoryState(
-                scope: .course(courseBID),
-                revision: 1,
-                entries: [
-                    initialEntry(
-                        id: courseBMemoryID,
-                        kind: .understood,
-                        text: "已经理解古典经济学背景",
-                        sessionID: courseBChatID
-                    ),
-                ]
-            ),
-        ]
-        learningMemoryScopeMigrationVersion = 1
-
-        let globalRevisionBefore = learningMemoryRevision(in: .global)
-        let courseARevisionBefore = learningMemoryRevision(in: .course(courseAID))
-        let courseBRevisionBefore = learningMemoryRevision(in: .course(courseBID))
-        let edited = updateLearningMemory(
-            courseAMemoryID,
-            in: .course(courseAID),
-            kind: .progress,
-            text: "已能区分名义利率和实际利率，准备练习费雪方程"
-        )
-        resolveLearningMemory(globalMemoryID, in: .global)
-
-        let courseAEntry = learningMemoryEntries(in: .course(courseAID))
-            .first { $0.id == courseAMemoryID }
-        let globalEntry = learningMemoryEntries(in: .global)
-            .first { $0.id == globalMemoryID }
-        let scopesIsolated = edited
-            && courseAEntry?.kind == .progress
-            && courseAEntry?.revisions?.last?.actor == .user
-            && globalEntry?.status == .resolved
-            && learningMemoryRevision(in: .course(courseAID)) == courseARevisionBefore + 1
-            && learningMemoryRevision(in: .global) == globalRevisionBefore + 1
-            && learningMemoryRevision(in: .course(courseBID)) == courseBRevisionBefore
-            && learningMemoryEntries(in: .course(courseBID)).map(\.id) == [courseBMemoryID]
-
-        func target(_ sessionID: UUID, courseID: UUID?) -> AgentConversationTarget {
-            AgentConversationTarget(
-                sessionID: sessionID,
-                workingDirectory: workspaceDirectory,
-                courseID: courseID,
-                courseRootIdentity: nil
-            )
-        }
-
-        activeCourseID = courseBID
-        activeStudySessionID = courseBChatID
-        messages = studySessions.first(where: { $0.id == courseBChatID })?.messages ?? []
-        let createQuestion = "我开始会用费雪方程计算实际利率了"
-        let createRevision = learningMemoryRevision(in: .course(courseAID))
-        let createAttachment = applyLearningUpdate(
-            StudyAgentLearningUpdate(
-                contextRevision: "a5b-create",
-                memoryRevision: createRevision,
-                entries: [
-                    StudyAgentMemoryUpdateEntry(
-                        kind: .progress,
-                        text: "开始会用费雪方程计算实际利率",
-                        evidence: "[用户：本轮] \(createQuestion)",
-                        origin: .userStatement
-                    ),
-                ]
-            ),
-            expectedContextRevision: "a5b-create",
-            expectedMemoryRevision: createRevision,
-            expectedUserQuestion: createQuestion,
-            target: target(courseAChatID, courseID: courseAID),
-            messageID: UUID()
-        )
-        let createdMemoryID = createAttachment?.memoryIDs.first
-        let fixedTargetPassed = createdMemoryID != nil
-            && activeCourseID == courseBID
-            && activeStudySessionID == courseBChatID
-            && learningMemoryRevision(in: .course(courseBID)) == courseBRevisionBefore
-
-        let noOpRevision = learningMemoryRevision(in: .course(courseAID))
-        let noOpAttachment = createdMemoryID.flatMap { memoryID in
-            applyLearningUpdate(
-                StudyAgentLearningUpdate(
-                    contextRevision: "a5b-no-op",
-                    memoryRevision: noOpRevision,
-                    entries: [
-                        StudyAgentMemoryUpdateEntry(
-                            memoryID: memoryID.uuidString.lowercased(),
-                            kind: .progress,
-                            text: "开始会用费雪方程计算实际利率",
-                            evidence: "[用户：本轮] \(createQuestion)",
-                            origin: .userStatement
-                        ),
-                    ]
-                ),
-                expectedContextRevision: "a5b-no-op",
-                expectedMemoryRevision: noOpRevision,
-                expectedUserQuestion: createQuestion,
-                target: target(courseASecondChatID, courseID: courseAID),
-                messageID: UUID()
-            )
-        }
-        let noOpPassed = noOpAttachment == nil
-            && learningMemoryRevision(in: .course(courseAID)) == noOpRevision
-
-        let updateQuestion = "我现在已经会用费雪方程了"
-        let updateRevision = learningMemoryRevision(in: .course(courseAID))
-        let updateAttachment = createdMemoryID.flatMap { memoryID in
-            applyLearningUpdate(
-                StudyAgentLearningUpdate(
-                    contextRevision: "a5b-update",
-                    memoryRevision: updateRevision,
-                    entries: [
-                        StudyAgentMemoryUpdateEntry(
-                            memoryID: memoryID.uuidString.lowercased(),
-                            kind: .understood,
-                            text: "已经会用费雪方程计算实际利率",
-                            evidence: "[用户：本轮] \(updateQuestion)",
-                            origin: .userStatement
-                        ),
-                    ]
-                ),
-                expectedContextRevision: "a5b-update",
-                expectedMemoryRevision: updateRevision,
-                expectedUserQuestion: updateQuestion,
-                target: target(courseASecondChatID, courseID: courseAID),
-                messageID: UUID()
-            )
-        }
-        let crossChatUpdatePassed = createdMemoryID.flatMap { memoryID in
-            learningMemoryEntries(in: .course(courseAID))
-                .first(where: { $0.id == memoryID })
-        }?.text == "已经会用费雪方程计算实际利率"
-            && updateAttachment?.memoryIDs == createdMemoryID.map { [$0] }
-
-        let staleRevision = learningMemoryRevision(in: .course(courseAID))
-        let userCorrectionPassed = createdMemoryID.map { memoryID in
-            updateLearningMemory(
-                memoryID,
-                in: .course(courseAID),
-                kind: .progress,
-                text: "用户修正：目前只会做最基础的费雪方程题"
-            )
-        } == true
-        let staleQuestion = "我现在已经完全掌握费雪方程了"
-        let staleAttachment = createdMemoryID.flatMap { memoryID in
-            applyLearningUpdate(
-                StudyAgentLearningUpdate(
-                    contextRevision: "a5b-stale",
-                    memoryRevision: staleRevision,
-                    entries: [
-                        StudyAgentMemoryUpdateEntry(
-                            memoryID: memoryID.uuidString.lowercased(),
-                            kind: .understood,
-                            text: "已经完全掌握费雪方程",
-                            evidence: "[用户：本轮] \(staleQuestion)",
-                            origin: .userStatement
-                        ),
-                    ]
-                ),
-                expectedContextRevision: "a5b-stale",
-                expectedMemoryRevision: staleRevision,
-                expectedUserQuestion: staleQuestion,
-                target: target(courseASecondChatID, courseID: courseAID),
-                messageID: UUID()
-            )
-        }
-        let staleRejected = staleAttachment == nil
-            && createdMemoryID.flatMap { memoryID in
-                learningMemoryEntries(in: .course(courseAID))
-                    .first(where: { $0.id == memoryID })
-            }?.text == "用户修正：目前只会做最基础的费雪方程题"
-
-        let sourceOnlyRevision = learningMemoryRevision(in: .course(courseAID))
-        let sourceOnlyAttachment = createdMemoryID.flatMap { memoryID in
-            applyLearningUpdate(
-                StudyAgentLearningUpdate(
-                    contextRevision: "a5b-source-only",
-                    memoryRevision: sourceOnlyRevision,
-                    entries: [
-                        StudyAgentMemoryUpdateEntry(
-                            memoryID: memoryID.uuidString.lowercased(),
-                            kind: .understood,
-                            text: "已经完全掌握费雪方程",
-                            evidence: "[材料：利率章节]",
-                            origin: .agentInference
-                        ),
-                    ]
-                ),
-                expectedContextRevision: "a5b-source-only",
-                expectedMemoryRevision: sourceOnlyRevision,
-                expectedUserQuestion: "继续学习利率",
-                target: target(courseASecondChatID, courseID: courseAID),
-                messageID: UUID()
-            )
-        }
-        let sourceOnlyInferenceRejected = sourceOnlyAttachment == nil
-            && learningMemoryRevision(in: .course(courseAID)) == sourceOnlyRevision
-            && createdMemoryID.flatMap { memoryID in
-                learningMemoryEntries(in: .course(courseAID))
-                    .first(where: { $0.id == memoryID })
-            }?.origin == .userStatement
-
-        let explicitQuestion = "我确认目前只会做最基础的费雪方程题"
-        let explicitRevision = learningMemoryRevision(in: .course(courseAID))
-        let explicitAttachment = createdMemoryID.flatMap { memoryID in
-            applyLearningUpdate(
-                StudyAgentLearningUpdate(
-                    contextRevision: "a5b-user-confirmed",
-                    memoryRevision: explicitRevision,
-                    entries: [
-                        StudyAgentMemoryUpdateEntry(
-                            memoryID: memoryID.uuidString.lowercased(),
-                            kind: .progress,
-                            text: "目前只会做最基础的费雪方程题",
-                            evidence: "[用户：本轮] \(explicitQuestion)",
-                            origin: .userStatement
-                        ),
-                    ]
-                ),
-                expectedContextRevision: "a5b-user-confirmed",
-                expectedMemoryRevision: explicitRevision,
-                expectedUserQuestion: explicitQuestion,
-                target: target(courseASecondChatID, courseID: courseAID),
-                messageID: UUID()
-            )
-        }
-        let explicitUserUpdatePassed = explicitAttachment != nil
-            && createdMemoryID.flatMap { memoryID in
-                learningMemoryEntries(in: .course(courseAID))
-                    .first(where: { $0.id == memoryID })
-            }?.origin == .userStatement
-
-        let selfTestQuestion = "我刚才独立算出了这道题的实际利率"
-        let selfTestRevision = learningMemoryRevision(in: .course(courseAID))
-        let selfTestAttachment = createdMemoryID.flatMap { memoryID in
-            applyLearningUpdate(
-                StudyAgentLearningUpdate(
-                    contextRevision: "a5b-self-test",
-                    memoryRevision: selfTestRevision,
-                    entries: [
-                        StudyAgentMemoryUpdateEntry(
-                            memoryID: memoryID.uuidString.lowercased(),
-                            kind: .progress,
-                            text: "能独立完成基础费雪方程题",
-                            evidence: "[会话：当前] \(selfTestQuestion)",
-                            origin: .agentInference
-                        ),
-                    ]
-                ),
-                expectedContextRevision: "a5b-self-test",
-                expectedMemoryRevision: selfTestRevision,
-                expectedUserQuestion: selfTestQuestion,
-                target: target(courseASecondChatID, courseID: courseAID),
-                messageID: UUID()
-            )
-        }
-        let selfTestInferencePassed = selfTestAttachment != nil
-            && createdMemoryID.flatMap { memoryID in
-                learningMemoryEntries(in: .course(courseAID))
-                    .first(where: { $0.id == memoryID })
-            }?.origin == .agentInference
-
-        activeStudySessionID = courseASecondChatID
-        messages = studySessions.first(where: {
-            $0.id == courseASecondChatID
-        })?.messages ?? []
-        let resolveQuestion = "我已经能清楚解释费雪方程了"
-        let resolveRevision = learningMemoryRevision(in: .course(courseAID))
-        let resolutionMessageID = UUID()
-        let resolutionAttachment = applyLearningUpdate(
-            StudyAgentLearningUpdate(
-                contextRevision: "a5b-resolve",
-                memoryRevision: resolveRevision,
-                resolutions: [
-                    StudyAgentMemoryResolution(
-                        memoryID: courseAConfusionID.uuidString.lowercased(),
-                        text: "已经能解释费雪方程",
-                        evidence: "[会话：当前] \(resolveQuestion)"
-                    ),
-                ]
-            ),
-            expectedContextRevision: "a5b-resolve",
-            expectedMemoryRevision: resolveRevision,
-            expectedUserQuestion: resolveQuestion,
-            target: target(courseASecondChatID, courseID: courseAID),
-            messageID: resolutionMessageID
-        )
-        let resolvedMemory = learningMemoryEntries(in: .course(courseAID))
-            .first(where: { $0.id == courseAConfusionID })
-        let automaticResolutionPassed = resolutionAttachment?.memoryIDs == [courseAConfusionID]
-            && resolvedMemory?.status == .resolved
-            && resolvedMemory?.messageID == resolutionMessageID
-            && resolvedMemory?.revisions?.last?.actor == .agent
-            && latestAgentLearningUpdate?.resolutions.isEmpty == true
-
-        let invalidRevision = learningMemoryRevision(in: .course(courseAID))
-        let invalidAttachment = applyLearningUpdate(
-            StudyAgentLearningUpdate(
-                contextRevision: "a5b-invalid",
-                memoryRevision: invalidRevision,
-                entries: [
-                    StudyAgentMemoryUpdateEntry(
-                        memoryID: globalMemoryID.uuidString.lowercased(),
-                        kind: .goal,
-                        text: "不能越界修改全局记忆",
-                        evidence: "[用户：本轮] 不要跨作用域修改记忆",
-                        origin: .userStatement
-                    ),
-                ]
-            ),
-            expectedContextRevision: "a5b-invalid",
-            expectedMemoryRevision: invalidRevision,
-            expectedUserQuestion: "不要跨作用域修改记忆",
-            target: target(courseASecondChatID, courseID: courseAID),
-            messageID: UUID()
-        )
-        let invalidTargetRejected = invalidAttachment == nil
-            && learningMemoryRevision(in: .course(courseAID)) == invalidRevision
-
-        activeCourseID = courseAID
-        activeStudySessionID = courseAChatID
-        let globalQuestion = "请记住我每周日做一次全局复盘"
-        let globalUpdateRevision = learningMemoryRevision(in: .global)
-        let globalAttachment = applyLearningUpdate(
-            StudyAgentLearningUpdate(
-                contextRevision: "a5b-global",
-                memoryRevision: globalUpdateRevision,
-                entries: [
-                    StudyAgentMemoryUpdateEntry(
-                        kind: .preference,
-                        text: "每周日做一次全局复盘",
-                        evidence: "[用户：本轮] \(globalQuestion)",
-                        origin: .userStatement
-                    ),
-                ]
-            ),
-            expectedContextRevision: "a5b-global",
-            expectedMemoryRevision: globalUpdateRevision,
-            expectedUserQuestion: globalQuestion,
-            target: target(globalChatID, courseID: nil),
-            messageID: UUID()
-        )
-        let globalMemoryCreated = globalAttachment?.memoryIDs.first
-        let secondGlobalContext = makeLearningContext(
-            target: target(globalSecondChatID, courseID: nil)
-        )
-        let globalScopePassed = globalMemoryCreated.map { memoryID in
-            learningMemoryEntries(in: .global).contains(where: {
-                $0.id == memoryID
-            })
-                && secondGlobalContext.memories.contains(where: {
-                    $0.id == memoryID
-                })
-        } == true
-            && learningMemoryRevision(in: .course(courseBID)) == courseBRevisionBefore
-
-        deleteStudySession(courseASecondChatID)
-        let survivesChatDeletion = createdMemoryID.map { memoryID in
-            learningMemoryEntries(in: .course(courseAID)).contains(where: {
-                $0.id == memoryID
-            })
-        } == true
-
-        let tagMemoryIDs = [courseAMemoryID] + (createdMemoryID.map { [$0] } ?? [])
-        let tagReply = AgentMessage(
-            role: .assistant,
-            text: "你已经能区分两类利率，也开始独立完成费雪方程练习。",
-            source: nil,
-            backend: .pi,
-            memoryUpdate: AgentReplyMemoryUpdate(
-                memoryIDs: tagMemoryIDs,
-                summary: "已能区分名义利率与实际利率；能独立完成基础费雪方程题"
-            ),
-            origin: AgentReplyOrigin(
-                requestID: UUID(),
-                chatID: courseAChatID,
-                courseID: courseAID
-            )
-        )
-        if let index = studySessions.firstIndex(where: { $0.id == courseAChatID }) {
-            studySessions[index].messages = [
-                AgentMessage(role: .user, text: "总结一下我这轮真正学会了什么？", source: nil),
-                tagReply,
-            ]
-        }
-        activeCourseID = courseAID
-        activeStudySessionID = courseAChatID
-        messages = studySessions.first(where: { $0.id == courseAChatID })?.messages ?? []
-
-        let saved = flushPendingWorkspaceSave()
-        let snapshot = (try? Data(contentsOf: storageURL)).flatMap {
-            try? JSONDecoder().decode(PersistedWorkspace.self, from: $0)
-        }
-        let persistedTagReply = snapshot?.studySessions?
-            .first(where: { $0.id == courseAChatID })?
-            .messages
-            .last
-        let replyTagPersisted = persistedTagReply?.memoryUpdate?.memoryIDs == tagMemoryIDs
-            && persistedTagReply?.origin?.courseID == courseAID
-        let persistedCourseA = snapshot?.learningMemoryStates?
-            .first { $0.scope == .course(courseAID) }?
-            .entries
-            .first { $0.id == courseAMemoryID }
-        let persistencePassed = saved
-            && snapshot?.learningMemoryScopeMigrationVersion == 1
-            && snapshot?.learningMemoryEntries == nil
-            && snapshot?.learningMemoryRevision == nil
-            && persistedCourseA?.text == courseAEntry?.text
-            && persistedCourseA?.revisions?.last?.actor == .user
-            && createdMemoryID.map { memoryID in
-                snapshot?.learningMemoryStates?
-                    .first(where: { $0.scope == .course(courseAID) })?
-                    .entries
-                    .contains(where: { $0.id == memoryID }) ?? false
-            } == true
-            && snapshot?.learningMemoryStates?
-                .first(where: { $0.scope == .course(courseAID) })?
-                .entries
-                .first(where: { $0.id == courseAConfusionID })?
-                .status == .resolved
-            && globalMemoryCreated.map { memoryID in
-                snapshot?.learningMemoryStates?
-                    .first(where: { $0.scope == .global })?
-                    .entries
-                    .contains(where: { $0.id == memoryID }) ?? false
-            } == true
-            && replyTagPersisted
-
-        select(itemID: nil)
-        layout = .immersiveConversation
-        showLibrary = false
-        showReader = false
-        showAgent = true
-        showNotes = false
-        courseWorkspacePresented = false
-
-        let passed = scopesIsolated
-            && fixedTargetPassed
-            && noOpPassed
-            && crossChatUpdatePassed
-            && userCorrectionPassed
-            && staleRejected
-            && sourceOnlyInferenceRejected
-            && explicitUserUpdatePassed
-            && selfTestInferencePassed
-            && automaticResolutionPassed
-            && invalidTargetRejected
-            && globalScopePassed
-            && survivesChatDeletion
-            && persistencePassed
-        let report = """
-        result=\(passed ? "pass" : "fail")
-        scopes_isolated=\(scopesIsolated)
-        fixed_target=\(fixedTargetPassed)
-        no_op_stable=\(noOpPassed)
-        cross_chat_update=\(crossChatUpdatePassed)
-        user_correction=\(userCorrectionPassed)
-        stale_rejected=\(staleRejected)
-        source_only_inference_rejected=\(sourceOnlyInferenceRejected)
-        explicit_user_update=\(explicitUserUpdatePassed)
-        self_test_inference=\(selfTestInferencePassed)
-        automatic_resolution=\(automaticResolutionPassed)
-        invalid_target_rejected=\(invalidTargetRejected)
-        global_scope=\(globalScopePassed)
-        global_cross_chat=\(globalScopePassed)
-        survives_chat_deletion=\(survivesChatDeletion)
-        independent_revisions=\(learningMemoryRevision(in: .course(courseBID)) == courseBRevisionBefore)
-        user_history=\(courseAEntry?.revisions?.last?.actor == .user)
-        stable_ids=\(persistedCourseA?.id == courseAMemoryID)
-        legacy_fields_removed=\(snapshot?.learningMemoryEntries == nil && snapshot?.learningMemoryRevision == nil)
-        persisted=\(persistencePassed)
-        reply_tag_persisted=\(replyTagPersisted)
-        """
-        let reportURL = storageURL.deletingLastPathComponent()
-            .appendingPathComponent("learning-memory-scopes-report.txt")
-        try? "\(report)\n".write(to: reportURL, atomically: true, encoding: .utf8)
-        recordVerificationStage("learning-memory-scopes:\(passed ? "pass" : "fail")")
-        recordVerificationStage("completed")
-    }
-
-    private func runChatActionCardVerification() async {
-        let courseID = UUID(uuidString: "55555555-5555-5555-5555-555555555555")!
-        let chatID = UUID(uuidString: "55555555-5555-5555-5555-555555555556")!
-        let originalNote = "# 利率复习笔记\n\n## 已有内容\n"
-        let fixtureRoot = workspaceDirectory
-            .appendingPathComponent("ActionCardCourse", isDirectory: true)
-        let metadataDirectory = fixtureRoot
-            .appendingPathComponent(".weibei", isDirectory: true)
-        let noteDirectory = fixtureRoot.appendingPathComponent("笔记", isDirectory: true)
-        let materialDirectory = fixtureRoot.appendingPathComponent("文稿", isDirectory: true)
-        let noteURL = noteDirectory.appendingPathComponent("利率复习笔记.md")
-        let materialURL = materialDirectory.appendingPathComponent("利率的含义.md")
-        try? FileManager.default.createDirectory(
-            at: noteDirectory,
-            withIntermediateDirectories: true
-        )
-        try? FileManager.default.createDirectory(
-            at: metadataDirectory,
-            withIntermediateDirectories: true
-        )
-        try? FileManager.default.createDirectory(
-            at: materialDirectory,
-            withIntermediateDirectories: true
-        )
-        try? originalNote.write(to: noteURL, atomically: true, encoding: .utf8)
-        try? "# 利率的含义\n\n实际利率需要扣除通胀影响。\n".write(
-            to: materialURL,
-            atomically: true,
-            encoding: .utf8
-        )
-        guard let rootIdentity = CourseProjectFileWorker.identity(at: fixtureRoot),
-              let noteIdentity = CourseProjectFileWorker.identity(at: noteURL),
-              let materialIdentity = CourseProjectFileWorker.identity(at: materialURL) else {
-            recordVerificationStage("chat-action-cards:fixture-fail")
-            recordVerificationStage("completed")
-            return
-        }
-        let note = StudyItem(
-            id: "action-note",
-            title: "利率复习笔记",
-            subtitle: "利率复习笔记.md",
-            kind: .markdown,
-            urlPath: noteURL.path,
-            importedFileIdentity: noteIdentity,
-            importedFileLastKnownPath: noteURL.path,
-            isSample: false,
-            isNotebookNote: true,
-            storage: .courseOwned(ownerCourseID: courseID),
-            contentDigest: Self.noteContentDigest(Data(originalNote.utf8))
-        )
-        let material = StudyItem(
-            id: "action-material",
-            title: "利率的含义",
-            subtitle: "利率的含义.md",
-            kind: .markdown,
-            urlPath: materialURL.path,
-            importedFileIdentity: materialIdentity,
-            importedFileLastKnownPath: materialURL.path,
-            isSample: false,
-            storage: .courseOwned(ownerCourseID: courseID)
-        )
-        importedItems = [note, material]
-        courses = [
-            Course(
-                id: courseID,
-                title: "货币金融学",
-                colorIndex: 0,
-                sourceRootPath: fixtureRoot.path,
-                sourceRootIdentity: rootIdentity
-            ),
-        ]
-        resolvedCourseRootURLs[courseID] = fixtureRoot
-        courseItemMemberships = [
-            CourseItemMembership(
-                courseID: courseID,
-                itemID: note.id,
-                courseRelativePath: "笔记/\(noteURL.lastPathComponent)",
-                entryIdentity: noteIdentity
-            ),
-            CourseItemMembership(
-                courseID: courseID,
-                itemID: material.id,
-                courseRelativePath: "文稿/\(materialURL.lastPathComponent)",
-                entryIdentity: materialIdentity
-            ),
-        ]
-        activeCourseID = courseID
-        activeNotebookItemID = note.id
-        selectedItemID = material.id
-        noteBackingContentDigestsByItemID[note.id] =
-            Self.noteContentDigest(Data(originalNote.utf8))
-        noteText = originalNote
-
-        let writeAction = AgentReplyAction(
-            id: UUID(uuidString: "55555555-5555-5555-5555-555555555557")!,
-            kind: .writeNote,
-            targetItemID: note.id,
-            sourceItemID: material.id,
-            proposedMarkdown: "## 实际利率\n实际利率约等于名义利率减去通胀率。",
-            evidence: ["[材料：利率的含义]"],
-            contextRevision: "action-verification",
-            baselineContentDigest: Self.noteContentDigest(Data(originalNote.utf8))
-        )
-        let relationAction = AgentReplyAction(
-            id: UUID(uuidString: "55555555-5555-5555-5555-555555555558")!,
-            kind: .createRelation,
-            targetItemID: note.id,
-            sourceItemID: material.id,
-            contextRevision: "action-verification"
-        )
-        let conflictAction = AgentReplyAction(
-            id: UUID(uuidString: "55555555-5555-5555-5555-555555555559")!,
-            kind: .writeNote,
-            targetItemID: note.id,
-            sourceItemID: material.id,
-            proposedMarkdown: "## 冲突建议\n这段不应覆盖后来的用户编辑。",
-            evidence: ["[材料：利率的含义]"],
-            contextRevision: "action-verification",
-            baselineContentDigest: Self.noteContentDigest(Data(originalNote.utf8))
-        )
-        let pendingAction = AgentReplyAction(
-            id: UUID(uuidString: "55555555-5555-5555-5555-555555555560")!,
-            kind: .writeNote,
-            targetItemID: note.id,
-            sourceItemID: material.id,
-            proposedMarkdown: "## 待确认建议\n这张卡片用于真实窗口验收。",
-            evidence: ["[材料：利率的含义]"],
-            contextRevision: "action-verification",
-            baselineContentDigest: Self.noteContentDigest(Data(originalNote.utf8))
-        )
-        let retryAction = AgentReplyAction(
-            id: UUID(uuidString: "55555555-5555-5555-5555-555555555562")!,
-            kind: .writeNote,
-            targetItemID: note.id,
-            sourceItemID: material.id,
-            proposedMarkdown: "## 重试建议\n用户确认后追加到变化后的笔记。",
-            contextRevision: "action-verification",
-            baselineContentDigest: Self.noteContentDigest(Data(originalNote.utf8))
-        )
-        let relationConflictAction = AgentReplyAction(
-            id: UUID(uuidString: "55555555-5555-5555-5555-555555555563")!,
-            kind: .createRelation,
-            targetItemID: note.id,
-            sourceItemID: material.id,
-            contextRevision: "action-verification"
-        )
-        let reply = AgentMessage(
-            id: UUID(uuidString: "55555555-5555-5555-5555-555555555561")!,
-            role: .assistant,
-            text: "正文始终保留：实际利率需要扣除通胀影响。",
-            source: material.title,
-            backend: .offline,
-            richAnswer: RichAnswerPresentation(
-                mode: .narrativeOnly,
-                narrative: "正文始终保留：实际利率需要扣除通胀影响。"
-            ),
-            actions: [
-                writeAction,
-                relationAction,
-                conflictAction,
-                pendingAction,
-                retryAction,
-                relationConflictAction,
-            ],
-            origin: AgentReplyOrigin(
-                requestID: UUID(),
-                chatID: chatID,
-                courseID: courseID
-            )
-        )
-        let session = StudySession(
-            id: chatID,
-            title: "动作卡片验收",
-            messages: [reply],
-            courseID: courseID,
-            focusItemIDs: [material.id, note.id],
-            materialItemID: material.id
-        )
-        studySessions = [session]
-        activeStudySessionID = chatID
-        messages = [reply]
-        layout = .immersiveConversation
-        showLibrary = false
-        showReader = false
-        showAgent = true
-        showNotes = false
-        agentSurface = .hidden
-
-        await confirmAgentReplyAction(
-            messageID: reply.id,
-            actionID: writeAction.id,
-            proposedMarkdown: "## 实际利率\n实际利率约等于名义利率减去预期通胀率。"
-        )
-        let writtenState = messages.first?.actions.first(where: {
-            $0.id == writeAction.id
-        })?.state
-        let writtenDiskDigest = Self.noteContentDigest(at: noteURL)
-        let written = writtenState == .executed
-            && writtenDiskDigest == messages.first?.actions.first(where: {
-                $0.id == writeAction.id
-            })?.resultContentDigest
-        await undoAgentReplyAction(messageID: reply.id, actionID: writeAction.id)
-        let undoState = messages.first?.actions.first(where: {
-            $0.id == writeAction.id
-        })?.state
-        let undoDiskDigest = Self.noteContentDigest(at: noteURL)
-        let noteUndone = undoState == .cancelled
-            && undoDiskDigest == Self.noteContentDigest(Data(originalNote.utf8))
-
-        await confirmAgentReplyAction(
-            messageID: reply.id,
-            actionID: relationAction.id
-        )
-        let related = noteSourceLinks.contains {
-            $0.noteItemID == note.id && $0.sourceItemID == material.id
-        }
-        await undoAgentReplyAction(messageID: reply.id, actionID: relationAction.id)
-        let relationUndone = !noteSourceLinks.contains {
-            $0.noteItemID == note.id && $0.sourceItemID == material.id
-        }
-        let preexistingRelation = NoteSourceLink(
-            noteItemID: note.id,
-            sourceItemID: material.id
-        )
-        noteSourceLinks.append(preexistingRelation)
-        _ = flushPendingWorkspaceSave()
-        await confirmAgentReplyAction(
-            messageID: reply.id,
-            actionID: relationConflictAction.id
-        )
-        let relationConflictIsolated = messages.first?.actions.first(where: {
-            $0.id == relationConflictAction.id
-        })?.state == .failed
-            && noteSourceLinks.contains(where: { $0.id == preexistingRelation.id })
-        noteSourceLinks.removeAll { $0.id == preexistingRelation.id }
-        _ = flushPendingWorkspaceSave()
-
-        let changedNote = "# 利率复习笔记\n\n用户刚刚补充了新内容。\n"
-        let currentNote = allItems.first(where: { $0.id == note.id }) ?? note
-        let changedNoteSaved = await persistAgentActionNote(
-            changedNote,
-            target: currentNote,
-            resultDigest: Self.noteContentDigest(Data(changedNote.utf8))
-        )
-        await confirmAgentReplyAction(
-            messageID: reply.id,
-            actionID: conflictAction.id
-        )
-        let conflictIsolated = messages.first?.actions.first(where: {
-            $0.id == conflictAction.id
-        })?.state == .failed
-            && changedNoteSaved
-            && (try? String(contentsOf: noteURL, encoding: .utf8)) == changedNote
-            && messages.first?.text == reply.text
-            && messages.first?.richAnswer != nil
-
-        await confirmAgentReplyAction(messageID: reply.id, actionID: retryAction.id)
-        let retryFailedSafely = messages.first?.actions.first(where: {
-            $0.id == retryAction.id
-        })?.state == .failed
-            && (try? String(contentsOf: noteURL, encoding: .utf8)) == changedNote
-        await confirmAgentReplyAction(messageID: reply.id, actionID: retryAction.id)
-        let retrySucceeded = retryFailedSafely
-            && messages.first?.actions.first(where: {
-                $0.id == retryAction.id
-            })?.state == .executed
-            && (try? String(contentsOf: noteURL, encoding: .utf8))?
-                .contains("用户确认后追加到变化后的笔记") == true
-        let retryWrittenText = (try? String(contentsOf: noteURL, encoding: .utf8)) ?? ""
-        let postWriteEdit = "\(retryWrittenText)\n\n用户随后补充的内容。\n"
-        let retryTarget = allItems.first(where: { $0.id == note.id }) ?? note
-        _ = await persistAgentActionNote(
-            postWriteEdit,
-            target: retryTarget,
-            resultDigest: Self.noteContentDigest(Data(postWriteEdit.utf8))
-        )
-        await undoAgentReplyAction(messageID: reply.id, actionID: retryAction.id)
-        await confirmAgentReplyAction(messageID: reply.id, actionID: retryAction.id)
-        let retryConflictSafe = messages.first?.actions.first(where: {
-            $0.id == retryAction.id
-        })?.state == .failed
-            && (try? String(contentsOf: noteURL, encoding: .utf8)) == postWriteEdit
-            && postWriteEdit.components(
-                separatedBy: "用户确认后追加到变化后的笔记"
-            ).count == 2
-
-        let restoredTarget = allItems.first(where: { $0.id == note.id }) ?? note
-        _ = await persistAgentActionNote(
-            originalNote,
-            target: restoredTarget,
-            resultDigest: Self.noteContentDigest(Data(originalNote.utf8))
-        )
-        _ = flushPendingWorkspaceSave()
-        let reopened = WorkspaceStore(
-            workspaceDirectory: workspaceDirectory,
-            selectionAskThreadDefaults: selectionAskThreadDefaults
-        )
-        let reopenedReply = reopened.studySessions
-            .first(where: { $0.id == chatID })?
-            .messages
-            .first(where: { $0.id == reply.id })
-        let reopenedStates = Dictionary(
-            uniqueKeysWithValues: (reopenedReply?.actions ?? []).map {
-                ($0.id, $0.state)
-            }
-        )
-        let reopenedStable = reopenedReply?.text == reply.text
-            && reopenedReply?.richAnswer != nil
-            && reopenedStates[writeAction.id] == .cancelled
-            && reopenedStates[relationAction.id] == .cancelled
-            && reopenedStates[conflictAction.id] == .failed
-            && reopenedStates[pendingAction.id] == .pending
-            && reopenedStates[retryAction.id] == .failed
-            && reopenedStates[relationConflictAction.id] == .failed
-
-        let passed = written
-            && noteUndone
-            && related
-            && relationUndone
-            && relationConflictIsolated
-            && conflictIsolated
-            && retrySucceeded
-            && retryConflictSafe
-            && reopenedStable
-        let report = """
-        result=\(passed ? "pass" : "fail")
-        note_written=\(written)
-        note_undone=\(noteUndone)
-        relation_created=\(related)
-        relation_undone=\(relationUndone)
-        relation_conflict_isolated=\(relationConflictIsolated)
-        conflict_isolated=\(conflictIsolated)
-        retry_succeeded=\(retrySucceeded)
-        retry_conflict_safe=\(retryConflictSafe)
-        body_preserved=\(messages.first?.text == reply.text)
-        rich_answer_preserved=\(messages.first?.richAnswer != nil)
-        reopened=\(reopenedStable)
-        pending_card=\(reopenedStates[pendingAction.id] == .pending)
-        """
-        let reportURL = storageURL.deletingLastPathComponent()
-            .appendingPathComponent("chat-action-cards-report.txt")
-        try? "\(report)\n".write(to: reportURL, atomically: true, encoding: .utf8)
-        recordVerificationStage("chat-action-cards:\(passed ? "pass" : "fail")")
-        recordVerificationStage("completed")
-    }
-
-    private func runChatSourceNavigationVerification() async {
-        let chatID = UUID()
-        let courseID = UUID(uuidString: "33333333-3333-3333-3333-333333333333")!
-        let otherCourseID = UUID(uuidString: "44444444-4444-4444-4444-444444444444")!
-        let fixtureDirectory = workspaceDirectory
-            .appendingPathComponent("SourceNavigationCourse", isDirectory: true)
-        let pdfURL = fixtureDirectory.appendingPathComponent("rates.pdf")
-        let htmlURL = fixtureDirectory.appendingPathComponent("rates.html")
-        let markdownURL = fixtureDirectory.appendingPathComponent("notes.md")
-        let movedURL = fixtureDirectory.appendingPathComponent("moved-away.md")
-        let htmlSectionLocationID = "html-section-ef9ff782"
-        try? FileManager.default.createDirectory(
-            at: fixtureDirectory,
-            withIntermediateDirectories: true
-        )
-        let pdfReady = Self.writeSamplePDF(to: pdfURL)
-        try? """
-        <!doctype html><html><head><meta charset="utf-8"></head><body>
-        <h1>利率</h1>
-        <h2 id="real-rate">实际利率</h2>
-        <p>实际利率需要扣除通货膨胀。</p>
-        </body></html>
-        """.write(to: htmlURL, atomically: true, encoding: .utf8)
-        try? """
-        # 课堂笔记
-
-        名义利率和实际利率需要分开理解。
-        """.write(to: markdownURL, atomically: true, encoding: .utf8)
-        let pdfItem = StudyItem(
-            id: "source-nav-pdf",
-            title: "Mishkin 教材",
-            subtitle: pdfURL.lastPathComponent,
-            kind: .pdf,
-            urlPath: pdfURL.path,
-            isSample: false
-        )
-        let htmlItem = StudyItem(
-            id: "source-nav-html",
-            title: "课程讲义",
-            subtitle: htmlURL.lastPathComponent,
-            kind: .html,
-            urlPath: htmlURL.path,
-            isSample: false
-        )
-        let markdownItem = StudyItem(
-            id: "source-nav-markdown",
-            title: "课堂笔记",
-            subtitle: markdownURL.lastPathComponent,
-            kind: .markdown,
-            urlPath: markdownURL.path,
-            isSample: false
-        )
-        let movedItem = StudyItem(
-            id: "source-nav-moved",
-            title: "已移走资料",
-            subtitle: movedURL.lastPathComponent,
-            kind: .markdown,
-            urlPath: movedURL.path,
-            isSample: false
-        )
-        importedItems = [pdfItem, htmlItem, markdownItem, movedItem]
-        courses = [
-            Course(id: courseID, title: "来源标签验收课", colorIndex: 0),
-            Course(id: otherCourseID, title: "其他课程", colorIndex: 1),
-        ]
-        var memberships = CourseItemMemberships()
-        memberships.assign(
-            itemIDs: [pdfItem.id, htmlItem.id, markdownItem.id, movedItem.id],
-            to: courseID
-        )
-        courseItemMemberships = memberships.values
-        activeCourseID = courseID
-        let sources = [
-            AgentReplySource(
-                itemID: pdfItem.id,
-                courseID: courseID,
-                kind: .material,
-                title: pdfItem.title,
-                label: "[材料：\(pdfItem.title)]",
-                excerpt: "利率是资金使用价格的表达。",
-                pageIndex: 0
-            ),
-            AgentReplySource(
-                itemID: htmlItem.id,
-                courseID: courseID,
-                kind: .material,
-                title: htmlItem.title,
-                label: "[材料：\(htmlItem.title)]",
-                excerpt: "实际利率需要扣除通货膨胀。",
-                sectionTitle: "实际利率",
-                sectionLocationID: htmlSectionLocationID
-            ),
-            AgentReplySource(
-                itemID: markdownItem.id,
-                courseID: courseID,
-                kind: .material,
-                title: markdownItem.title,
-                label: "[材料：\(markdownItem.title)]",
-                excerpt: "名义利率和实际利率需要分开理解。"
-            ),
-        ]
-        let replyText = """
-        利率是资金使用价格的表达。\(sources[0].label)
-
-        它需要结合通胀与课堂笔记理解。\(sources[1].label)、\(sources[2].label)
-        """
-        let reply = AgentMessage(
-            role: .assistant,
-            text: replyText,
-            source: pdfItem.title,
-            backend: .pi,
-            sources: sources,
-            origin: AgentReplyOrigin(
-                requestID: UUID(),
-                chatID: chatID,
-                courseID: courseID
-            )
-        )
-        let session = StudySession(
-            id: chatID,
-            title: "来源标签验收",
-            messages: [
-                AgentMessage(role: .user, text: "什么是利率？", source: nil),
-                reply,
-            ],
-            courseID: courseID
-        )
-        studySessions = [session]
-        activeStudySessionID = chatID
-        messages = session.messages
-        layout = .immersiveConversation
-        showLibrary = false
-        showReader = false
-        showAgent = true
-        showNotes = false
-        agentSurface = .hidden
-
-        let crossCourseSource = AgentReplySource(
-            itemID: pdfItem.id,
-            courseID: otherCourseID,
-            kind: .material,
-            title: "同名但不属于该课的资料",
-            label: "[材料：同名但不属于该课的资料]",
-            excerpt: "不应打开。"
-        )
-        let missingSource = AgentReplySource(
-            itemID: "missing-material",
-            courseID: courseID,
-            kind: .material,
-            title: "已失效资料",
-            label: "[材料：已失效资料]",
-            excerpt: "不应打开。"
-        )
-        let movedSource = AgentReplySource(
-            itemID: movedItem.id,
-            courseID: courseID,
-            kind: .material,
-            title: movedItem.title,
-            label: "[材料：\(movedItem.title)]",
-            excerpt: "文件已经移走，不应显示可点击标签。"
-        )
-        await validateAgentReplySources(
-            sources + [crossCourseSource, missingSource, movedSource]
-        )
-        let rejectsInvalidSources = !canOpenAgentReplySource(crossCourseSource)
-            && !openAgentReplySource(crossCourseSource)
-            && !canOpenAgentReplySource(missingSource)
-            && !openAgentReplySource(missingSource)
-            && !canOpenAgentReplySource(movedSource)
-            && !openAgentReplySource(movedSource)
-        let inline = AgentReplySourceInlinePresentation(
-            text: replyText,
-            sources: sources,
-            language: interfaceLanguage
-        )
-        let firstSourceURL = URL(
-            string: "weibei-source://\(sources[0].id.uuidString.lowercased())"
-        )!
-        let additionalSourceURL = URL(string: "weibei-source-group://0")!
-        let inlineTagsWork = inline.source(for: firstSourceURL) == sources[0]
-            && inline.additionalSources(for: additionalSourceURL)
-                == [sources[2]]
-            && inline.markdown.contains("+1")
-        ChatSourceNavigationVerifier.reset()
-        let openedHTML = openAgentReplySource(sources[1])
-        let htmlRequested = openedHTML
-            && activeStudySessionID == chatID
-            && selectedItemID == htmlItem.id
-            && readerTargetLocationID == htmlSectionLocationID
-            && readerTargetLocationTitle == "实际利率"
-            && readerSourceHighlight == sources[1].highlightQuery
-        let htmlRendered = await waitForChatSourceVerification {
-            self.selectedItemID == htmlItem.id
-                && self.readerLocationID == htmlSectionLocationID
-                && self.readerTargetLocationID == nil
-        }
-        let openedMarkdown = openAgentReplySource(sources[2])
-        let markdownRequested = openedMarkdown
-            && activeStudySessionID == chatID
-            && selectedItemID == markdownItem.id
-            && readerSourceHighlight == sources[2].highlightQuery
-        let markdownRendered = await waitForChatSourceVerification {
-            ChatSourceNavigationVerifier.foundMarkdown(
-                itemID: markdownItem.id,
-                query: sources[2].highlightQuery
-            )
-        }
-        let opened = openAgentReplySource(sources[0])
-        let pdfRendered = await waitForChatSourceVerification {
-            self.selectedItemID == pdfItem.id
-                && self.readerTargetPageIndex == nil
-                && self.readerPageIndex == 0
-        }
-        let passed = rejectsInvalidSources
-            && pdfReady
-            && inlineTagsWork
-            && htmlRequested
-            && htmlRendered
-            && markdownRequested
-            && markdownRendered
-            && opened
-            && pdfRendered
-            && activeStudySessionID == chatID
-            && selectedItemID == pdfItem.id
-            && showReader
-            && showAgent
-            && readerSourceHighlight == sources[0].highlightQuery
-            && readerSourceHighlightPageIndex == 0
-            && messages.last?.sources == sources
-        save()
-        let restored = WorkspaceStore(workspaceDirectory: workspaceDirectory)
-        let reopenedReply = restored.studySessions
-            .first(where: { $0.id == chatID })?
-            .messages
-            .last
-        await restored.validateAgentReplySources(sources)
-        let reopenedHTML = restored.openAgentReplySource(sources[1])
-            && restored.activeStudySessionID == chatID
-            && restored.selectedItemID == htmlItem.id
-            && restored.readerTargetLocationID == htmlSectionLocationID
-            && restored.readerSourceHighlight == sources[1].highlightQuery
-        let reopenedMarkdown = restored.openAgentReplySource(sources[2])
-            && restored.activeStudySessionID == chatID
-            && restored.selectedItemID == markdownItem.id
-            && restored.readerSourceHighlight == sources[2].highlightQuery
-        let reopenedPDF = restored.openAgentReplySource(sources[0])
-            && restored.activeStudySessionID == chatID
-            && restored.selectedItemID == pdfItem.id
-            && restored.readerTargetPageIndex == 0
-            && restored.readerSourceHighlight == sources[0].highlightQuery
-        let reopened = reopenedReply?.sources == sources
-            && reopenedHTML
-            && reopenedMarkdown
-            && reopenedPDF
-        let report = """
-        result=\(passed && reopened ? "pass" : "fail")
-        rejects_invalid=\(rejectsInvalidSources)
-        pdf_ready=\(pdfReady)
-        inline_tags=\(inlineTagsWork)
-        html_requested=\(htmlRequested)
-        html_rendered=\(htmlRendered)
-        html_section_ids=\(ChatSourceNavigationVerifier.htmlSectionIDs.joined(separator: ","))
-        html_active_id=\(ChatSourceNavigationVerifier.htmlActiveID ?? "")
-        html_active_reason=\(ChatSourceNavigationVerifier.htmlActiveReason)
-        markdown_requested=\(markdownRequested)
-        markdown_rendered=\(markdownRendered)
-        pdf_opened=\(opened)
-        pdf_rendered=\(pdfRendered)
-        reopened_sources=\(reopenedReply?.sources == sources)
-        reopened_html=\(reopenedHTML)
-        reopened_markdown=\(reopenedMarkdown)
-        reopened_pdf=\(reopenedPDF)
-        """
-        try? "\(report)\n".write(
-            to: workspaceDirectory.appendingPathComponent(
-                "chat-source-navigation-report.txt"
-            ),
-            atomically: true,
-            encoding: .utf8
-        )
-        recordVerificationStage("chat-source-navigation:\(passed)")
-        if passed && reopened {
-            let markerURL = storageURL.deletingLastPathComponent()
-                .appendingPathComponent("chat-source-navigation-verified.txt")
-            try? "Inline source tags survived reopen, kept Chat visible, and opened exact PDF, HTML, and Markdown locations\n"
-                .write(to: markerURL, atomically: true, encoding: .utf8)
-        }
-        recordVerificationStage("completed")
-    }
-
-    private func waitForChatSourceVerification(
-        _ condition: @MainActor () -> Bool
-    ) async -> Bool {
-        for _ in 0..<50 {
-            if condition() { return true }
-            try? await Task.sleep(nanoseconds: 100_000_000)
-        }
-        return false
-    }
-
-    private func configureEmptyWorkspaceVerificationScenario(_ scenario: String) {
-        layout = .documentAgentNotes
-        showLibrary = false
-        agentSurface = .hidden
-        appearanceMode = scenario.contains("dark") ? .inkstone : .paper
-        showDailyInspiration = scenario != "empty-workspace-inspiration-off"
-
-        if scenario.hasPrefix("empty-workspace-open-") {
-            select(itemID: "sample-html")
-            updateNote("# Empty workspace entry state marker\n\nPane toggles must preserve this note.\n")
-        }
-
-        showReader = false
-        showAgent = false
-        showNotes = false
-
-        switch scenario {
-        case "empty-workspace-open-doc":
-            toggleReader()
-        case "empty-workspace-open-chat":
-            toggleAgent()
-        case "empty-workspace-open-notes":
-            toggleNotes()
-        default:
-            save()
-        }
-    }
 
     func replaceSelectionWithLastAgentAnswer() {
         guard selectionContext?.isReplaceableNoteSelection == true,
@@ -22995,9 +19022,6 @@ final class WorkspaceStore: ObservableObject {
                 contextRevision: "\(requestWorkspaceRevision):\(requestID.uuidString.lowercased())"
             )
             agentActivityText = ui("正在思考", "Thinking")
-            if isGeneratingQuietInsight {
-                await piRuntime.cancel()
-            }
             let reply = try await executeStudyAgentRequest(
                 request,
                 target: target,
@@ -23321,14 +19345,16 @@ final class WorkspaceStore: ObservableObject {
         replyMessageID: UUID,
         hostToolHandler: @escaping StudyAgentHostToolHandler
     ) async throws -> StudyAgentReply {
+#if DEBUG
         if capturesAgentRequestForSelfCheck,
-           ProcessInfo.processInfo.arguments.contains("--self-check-course-project-root") {
+           WeiBeiSafetyTestMode.isEnabled {
             selfCheckCapturedAgentRequest = request
             return StudyAgentReply(
                 text: "课程请求授权自检完成",
                 backend: .pi
             )
         }
+#endif
         let selectedProvider = agentProviderID
         let selectedModel = modelName.trimmingCharacters(in: .whitespacesAndNewlines)
         await piRuntime.configure(
@@ -23362,7 +19388,6 @@ final class WorkspaceStore: ObservableObject {
         let span = WeiBeiPerf.begin("pi.shutdown")
         agentRequestTask?.cancel()
         agentStopTask?.cancel()
-        quietInsightTask?.cancel()
         let runtime = piRuntime
         let completion = DispatchSemaphore(value: 0)
         Task.detached {
@@ -23439,126 +19464,6 @@ final class WorkspaceStore: ObservableObject {
                 }
             }
         }
-    }
-
-    func sampleHTML(for item: StudyItem?) -> String {
-        guard item?.id == "sample-html" else { return sampleMarkdownHTML(for: item) }
-        let htmlLanguage = ui("zh-CN", "en")
-        let title = ui("利率的含义与分类", "Meaning and Types of Interest Rates")
-        let intro = ui("利率是资金使用价格的表达，也是金融市场配置资源时最敏感的信号之一。", "An interest rate is the price paid for using funds, and one of the most sensitive signals in financial resource allocation.")
-        let nominalTitle = ui("名义利率与实际利率", "Nominal and Real Interest Rates")
-        let nominalBody = ui("名义利率以货币单位表示，实际利率扣除了通货膨胀后的购买力变化。", "A nominal interest rate is expressed in money terms; a real interest rate adjusts for purchasing power changes caused by inflation.")
-        let quote = ui("学习时要同时记录概念、公式、例子和材料出处，避免只留下孤立结论。", "When studying, record concepts, formulas, examples, and sources together so conclusions do not stand alone.")
-        let termTitle = ui("短期利率与长期利率", "Short-Term and Long-Term Interest Rates")
-        let termBody = ui("短期利率通常受流动性和政策操作影响，长期利率更能反映期限溢价与未来预期。", "Short-term rates are often shaped by liquidity and policy operations; long-term rates reflect term premiums and expectations.")
-        let reviewTitle = ui("复习问题", "Review Question")
-        let reviewQuestion = ui("为什么通货膨胀预期上升时，名义利率通常会上行？", "Why do nominal interest rates usually rise when expected inflation increases?")
-        return """
-        <!doctype html>
-        <html lang="\(htmlLanguage)">
-        <head>
-        <meta charset="utf-8">
-        <style>
-        body { margin: 0; background: #f1e4cf; color: #201b17; font: 18px/1.85 -apple-system, BlinkMacSystemFont, "Songti SC", serif; }
-        main { max-width: 820px; margin: 0 auto; padding: 64px 72px 96px; background: rgba(247, 236, 217, .44); }
-        h1 { font-size: 34px; line-height: 1.28; margin: 0 0 24px; letter-spacing: 0; word-break: keep-all; }
-        h2 { margin-top: 44px; font-size: 25px; }
-        code { background: rgba(127, 84, 58, .12); padding: 2px 6px; border-radius: 5px; }
-        blockquote { border-left: 4px solid #9f3427; margin: 28px 0; padding: 12px 20px; background: rgba(159, 52, 39, .08); }
-        </style>
-        </head>
-        <body>
-        <main>
-        <h1>\(title)</h1>
-        <p>\(intro)</p>
-        <h2>\(nominalTitle)</h2>
-        <p>\(nominalBody)</p>
-        <blockquote>\(quote)</blockquote>
-        <h2>\(termTitle)</h2>
-        <p>\(termBody)</p>
-        <h2>\(reviewTitle)</h2>
-        <p>\(reviewQuestion)</p>
-        </main>
-        </body>
-        </html>
-        """
-    }
-
-    func sampleText(for item: StudyItem?) -> String {
-        switch item?.id {
-        case "sample-html":
-            return ui("利率是资金使用价格的表达。名义利率以货币单位表示，实际利率扣除了通货膨胀后的购买力变化。", "An interest rate is the price paid for using funds. A nominal rate is expressed in money terms; a real rate adjusts for inflation.")
-        case "sample-pdf":
-            return ui("Mishkin 教材样例：金融体系通过降低交易成本和信息成本来改善资源配置。", "Mishkin textbook sample: the financial system improves resource allocation by reducing transaction and information costs.")
-        case "sample-md":
-            return noteText
-        default:
-            return ""
-        }
-    }
-
-    private static func makeSampleItems() -> [StudyItem] {
-        [
-            StudyItem(id: "sample-html", title: "货币金融学课程 HTML", subtitle: "HTML 教程", kind: .html, urlPath: nil, isSample: true),
-            StudyItem(id: "sample-pdf", title: "Mishkin 教材样例", subtitle: "PDF 阅读", kind: .pdf, urlPath: samplePDFURL()?.path, isSample: true),
-            StudyItem(id: "sample-md", title: "课堂笔记样例", subtitle: "Markdown", kind: .markdown, urlPath: nil, isSample: true)
-        ]
-    }
-
-    private static func samplePDFURL() -> URL? {
-        guard let root = workspaceRootDirectory() else { return nil }
-        let directory = root.appendingPathComponent("Samples", isDirectory: true)
-        let url = directory.appendingPathComponent("mishkin-sample.pdf")
-        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        return writeSamplePDF(to: url) ? url : nil
-    }
-
-    private static func writeSamplePDF(to url: URL) -> Bool {
-        let data = NSMutableData()
-        var mediaBox = CGRect(x: 0, y: 0, width: 560, height: 780)
-        guard let consumer = CGDataConsumer(data: data as CFMutableData),
-              let context = CGContext(consumer: consumer, mediaBox: &mediaBox, nil) else {
-            return false
-        }
-
-        context.beginPDFPage(nil)
-        NSGraphicsContext.saveGraphicsState()
-        NSGraphicsContext.current = NSGraphicsContext(cgContext: context, flipped: false)
-
-        func draw(_ text: String, at point: CGPoint, font: NSFont, color: NSColor = .black) {
-            NSString(string: text).draw(at: point, withAttributes: [
-                .font: font,
-                .foregroundColor: color
-            ])
-        }
-
-        draw("金融体系的功能", at: CGPoint(x: 72, y: 650), font: .boldSystemFont(ofSize: 30))
-        draw("金融市场和金融中介能够把储蓄者的资金转移给有投资机会的人。", at: CGPoint(x: 72, y: 598), font: .systemFont(ofSize: 16))
-        draw("它们降低交易成本，缓解信息不对称，并帮助社会更有效地配置资源。", at: CGPoint(x: 72, y: 570), font: .systemFont(ofSize: 16))
-        draw("利率是资金使用价格的表达。", at: CGPoint(x: 72, y: 516), font: .systemFont(ofSize: 18))
-        draw("页 1", at: CGPoint(x: 72, y: 76), font: .systemFont(ofSize: 14), color: .darkGray)
-
-        NSGraphicsContext.restoreGraphicsState()
-        context.endPDFPage()
-        context.closePDF()
-        return data.write(to: url, atomically: true)
-    }
-
-    private func sampleMarkdownHTML(for item: StudyItem?) -> String {
-        let title = item.map(displayTitle) ?? ui("课堂笔记样例", "Class Notes Sample")
-        let escaped = (notesByItemID[item?.id ?? ""] ?? defaultNote(for: item))
-            .replacingOccurrences(of: "&", with: "&amp;")
-            .replacingOccurrences(of: "<", with: "&lt;")
-            .replacingOccurrences(of: ">", with: "&gt;")
-        return """
-        <!doctype html>
-        <html><head><meta charset="utf-8"><style>
-        body { margin: 0; background: #f1e4cf; color: #211d19; font: 16px/1.75 ui-monospace, SFMono-Regular, Menlo, monospace; }
-        main { max-width: 840px; margin: 0 auto; padding: 56px 64px; }
-        h1 { font-family: -apple-system, BlinkMacSystemFont, "Songti SC", serif; font-size: 34px; }
-        pre { white-space: pre-wrap; }
-        </style></head><body><main><h1>\(title)</h1><pre>\(escaped)</pre></main></body></html>
-        """
     }
 
     private func appOwnedFilesDirectory() -> URL {
@@ -23974,14 +19879,14 @@ final class WorkspaceStore: ObservableObject {
     }
 
     func reconcileCourseFilesForSelfCheck(courseID: UUID? = nil) throws {
-        precondition(ProcessInfo.processInfo.arguments.contains("--self-check-course-project-root"))
+        precondition(WeiBeiSafetyTestMode.isEnabled)
         try waitForCourseFileOperation {
             await self.reconcileCourseFilesNow(courseID: courseID)
         }
     }
 
     func courseReconciliationLookupCountForSelfCheck() -> Int {
-        precondition(ProcessInfo.processInfo.arguments.contains("--self-check-course-project-root"))
+        precondition(WeiBeiSafetyTestMode.isEnabled)
         return lastCourseReconciliationLookupCount
     }
 
@@ -24653,14 +20558,15 @@ final class WorkspaceStore: ObservableObject {
     private func startCourseFileMaintenance() {
         courseReconciliationTask?.cancel()
         courseReconciliationTask = Task { @MainActor [weak self] in
-            guard let self else { return }
-            await finishPendingCourseRemovalRecoveryIfNeeded()
-            await recoverPendingCourseFileTransactionsInBackground()
-            await reconcileCourseFilesNow()
+            guard !Task.isCancelled else { return }
+            await self?.finishPendingCourseRemovalRecoveryIfNeeded()
+            await self?.recoverPendingCourseFileTransactionsInBackground()
+            await self?.reconcileCourseFilesNow()
+            self?.retryRestoredPendingNoteWrites()
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 3_000_000_000)
                 guard !Task.isCancelled else { return }
-                await reconcileCourseFilesNow()
+                await self?.reconcileCourseFilesNow()
             }
         }
     }
@@ -25154,13 +21060,6 @@ final class WorkspaceStore: ObservableObject {
         }
     }
 
-    private func clearGeneratedQuietInsight() {
-        if generatedQuietInsight != nil {
-            generatedQuietInsight = nil
-        }
-        quietInsightSignature = ""
-    }
-
     private func layoutMatchingThreePaneOrder(_ order: [WorkspacePaneRole]) -> WorkspaceLayout {
         let normalized = WorkspacePaneRole.normalized(order)
         if normalized == [.reader, .notes, .agent] {
@@ -25185,7 +21084,6 @@ final class WorkspaceStore: ObservableObject {
         agentContextRevision &+= 1
         latestAgentNoteProposal = nil
         lastAgentReplyContextRevision = nil
-        quietInsightTask?.cancel()
     }
 
     private func clearUnpinnedFloatingSelection(keepContext: Bool = true, invalidatesAgentContext: Bool = true) {
@@ -25240,30 +21138,6 @@ final class WorkspaceStore: ObservableObject {
         pinnedFloatingAgent = false
     }
 
-    private func refreshQuietInsightIfNeeded() {
-        // Quiet insight surface removed for 1.0: never schedule background generation.
-        quietInsightTask?.cancel()
-        quietInsightTask = nil
-        quietInsightTaskID = nil
-        isGeneratingQuietInsight = false
-        showQuietInsight = false
-    }
-
-    private func finishQuietInsightTask(id: UUID) {
-        guard quietInsightTaskID == id else { return }
-        quietInsightTask = nil
-        quietInsightTaskID = nil
-    }
-
-    private func makeQuietInsightSignature(materialText: String, noteText: String, selectionText: String?) -> String {
-        [
-            selectedItemID ?? "",
-            String(materialText.prefix(1_000)),
-            String(noteText.prefix(1_000)),
-            String((selectionText ?? "").prefix(400))
-        ].joined(separator: "\u{1f}")
-    }
-
     private func defaultNote(for item: StudyItem?) -> String {
         let title = item.map(displayTitle) ?? ui("新笔记", "New Note")
         let sourceItem = item?.isNotebookNote == true ? nil : item
@@ -25310,6 +21184,27 @@ final class WorkspaceStore: ObservableObject {
 
     private static func noteContentDigest(at url: URL) -> String? {
         (try? Data(contentsOf: url)).map(noteContentDigest)
+    }
+
+    private func setNoteFileError(_ message: String?, for itemID: String) {
+        if let message {
+            noteOperationErrorsByItemID[itemID] = message
+        } else {
+            noteOperationErrorsByItemID.removeValue(forKey: itemID)
+        }
+        guard activeNoteItemID == itemID else { return }
+        noteFileError = message
+    }
+
+    private func retryRestoredPendingNoteWrites() {
+        for item in importedItems where item.editsBackingMarkdownFile {
+            guard pendingNoteWritesByItemID[item.id]?
+                    .baselineContentDigest != nil,
+                  let markdown = notesByItemID[item.id] else {
+                continue
+            }
+            persistNote(markdown, for: item)
+        }
     }
 
     private func scheduleCourseNoteLoad(_ item: StudyItem) {
@@ -25386,21 +21281,22 @@ final class WorkspaceStore: ObservableObject {
                         pendingWrite.baselineContentDigest == nil
                         || pendingWrite.baselineContentDigest
                             != result.snapshot.sha256
-                    noteFileError = hasConflict
-                        ? ui(
-                            "检测到笔记冲突：魏碑草稿和外部文件都已保留，请对照后再处理。",
-                            "A note conflict was detected. Both the WeiBei draft and external file were kept for review."
-                        )
-                        : ui(
-                            "正在保留尚未写回原 Markdown 的最新编辑。",
-                            "Keeping the latest edit that has not yet been written back to the original Markdown."
-                        )
+                    if hasConflict {
+                        if activeNoteItemID == itemID {
+                            noteFileError = ui(
+                                "检测到笔记冲突：魏碑草稿和外部文件都已保留，请对照后再处理。",
+                                "A note conflict was detected. Both the WeiBei draft and external file were kept for review."
+                            )
+                        }
+                    } else if activeNoteItemID == itemID {
+                        noteFileError = noteOperationErrorsByItemID[itemID]
+                    }
                 } else {
                     if activeNoteItemID == itemID,
                        displayedText == noteText {
                         noteText = markdown
                     }
-                    noteFileError = nil
+                    setNoteFileError(nil, for: itemID)
                 }
                 courseDocumentSearchIndex.schedule([
                     importedItems[currentIndex]
@@ -25410,9 +21306,12 @@ final class WorkspaceStore: ObservableObject {
                 guard courseNoteLoadGenerationByItemID[itemID] == generation else {
                     return
                 }
-                noteFileError = ui(
-                    "无法读取原 Markdown：\(url.lastPathComponent)",
-                    "Could not read original Markdown: \(url.lastPathComponent)"
+                setNoteFileError(
+                    ui(
+                        "无法读取原 Markdown：\(url.lastPathComponent)",
+                        "Could not read original Markdown: \(url.lastPathComponent)"
+                    ),
+                    for: itemID
                 )
             }
         }
@@ -25442,15 +21341,11 @@ final class WorkspaceStore: ObservableObject {
             }
             let hasConflict = diskDigest != nil
                 && (pendingWrite.baselineContentDigest == nil || pendingWrite.baselineContentDigest != diskDigest)
-            noteFileError = hasConflict
-                ? ui(
+            noteFileError = hasConflict ? ui(
                     "检测到笔记冲突：魏碑草稿和外部文件都已保留，请对照后再处理。",
                     "A note conflict was detected. Both the WeiBei draft and external file were kept for review."
                 )
-                : ui(
-                    "正在保留尚未写回原 Markdown 的最新编辑。",
-                    "Keeping the latest edit that has not yet been written back to the original Markdown."
-                )
+                : noteOperationErrorsByItemID[item.id]
             return cleanLegacyPlaceholder(cached)
         }
         guard item.editsBackingMarkdownFile, let url = item.url else {
@@ -25739,9 +21634,7 @@ final class WorkspaceStore: ObservableObject {
                 transactionDirectory: transactionDirectory
             )
         } catch {
-            if ProcessInfo.processInfo.arguments.contains(
-                "--self-check-course-project-root"
-            ), error is CourseProjectSimulatedCrash {
+            if WeiBeiSafetyTestMode.isEnabled, error is CourseProjectSimulatedCrash {
                 throw error
             }
             await rollbackCourseMarkdownWrite(
@@ -25850,9 +21743,12 @@ final class WorkspaceStore: ObservableObject {
                 itemID: itemID,
                 fallbackURL: nil
             )
-            noteFileError = ui(
-                "原 Markdown 已移动或不可用，最新编辑已安全保留在课程中。",
-                "The original Markdown moved or is unavailable. The latest edit is safely retained in the course."
+            setNoteFileError(
+                ui(
+                    "原 Markdown 已移动或不可用，最新编辑已安全保留在课程中。",
+                    "The original Markdown moved or is unavailable. The latest edit is safely retained in the course."
+                ),
+                for: itemID
             )
             save()
             return
@@ -25864,9 +21760,12 @@ final class WorkspaceStore: ObservableObject {
         )
         if Self.mustSaveImmediately {
             guard performSaveNow() else {
-                noteFileError = ui(
-                    "最新编辑尚未安全保存到工作区，暂不写回原 Markdown。",
-                    "The latest edit is not yet safely stored in the workspace, so the original Markdown was not changed."
+                setNoteFileError(
+                    ui(
+                        "最新编辑尚未安全保存到工作区，暂不写回原 Markdown。",
+                        "The latest edit is not yet safely stored in the workspace, so the original Markdown was not changed."
+                    ),
+                    for: itemID
                 )
                 return
             }
@@ -25876,9 +21775,12 @@ final class WorkspaceStore: ObservableObject {
         Task { @MainActor [weak self] in
             guard let self else { return }
             guard await self.persistWorkspaceNow() else {
-                self.noteFileError = self.ui(
-                    "最新编辑尚未安全保存到工作区，暂不写回原 Markdown。",
-                    "The latest edit is not yet safely stored in the workspace, so the original Markdown was not changed."
+                self.setNoteFileError(
+                    self.ui(
+                        "最新编辑尚未安全保存到工作区，暂不写回原 Markdown。",
+                        "The latest edit is not yet safely stored in the workspace, so the original Markdown was not changed."
+                    ),
+                    for: itemID
                 )
                 return
             }
@@ -25890,6 +21792,7 @@ final class WorkspaceStore: ObservableObject {
         guard !courseNoteWritesInFlight.contains(itemID),
               let markdown = notesByItemID[itemID],
               let pendingWrite = pendingNoteWritesByItemID[itemID],
+              let expectedDigest = pendingWrite.baselineContentDigest,
               let item = importedItems.first(where: { $0.id == itemID }),
               item.isNotebookNote,
               case .courseOwned = item.storage,
@@ -25902,7 +21805,6 @@ final class WorkspaceStore: ObservableObject {
         courseNoteLoadTasksByItemID[itemID]?.cancel()
         courseNoteLoadTasksByItemID[itemID] = nil
         courseNoteWritesInFlight.insert(itemID)
-        let expectedDigest = pendingWrite.baselineContentDigest
         let task = Task { @MainActor [weak self] in
             guard let self else { return }
             do {
@@ -25942,7 +21844,7 @@ final class WorkspaceStore: ObservableObject {
                 if notesByItemID[itemID] == markdown {
                     notesByItemID.removeValue(forKey: itemID)
                     pendingNoteWritesByItemID.removeValue(forKey: itemID)
-                    noteFileError = nil
+                    setNoteFileError(nil, for: itemID)
                 } else {
                     pendingNoteWritesByItemID[itemID] = PendingNoteWriteState(
                         baselineContentDigest: result.snapshot.sha256
@@ -25976,10 +21878,12 @@ final class WorkspaceStore: ObservableObject {
                 }
                 courseNoteWritesInFlight.remove(itemID)
                 courseNoteWriteTasksByItemID[itemID] = nil
-                noteFileError = ui(
-                    "检测到笔记冲突：没有覆盖外部文件，魏碑草稿也已保留。请对照两份内容后再处理。",
-                    "A note conflict was detected. The external file was not overwritten, and the WeiBei draft was retained for review."
-                )
+                if activeNoteItemID == itemID {
+                    noteFileError = ui(
+                        "检测到笔记冲突：没有覆盖外部文件，魏碑草稿也已保留。请对照两份内容后再处理。",
+                        "A note conflict was detected. The external file was not overwritten, and the WeiBei draft was retained for review."
+                    )
+                }
                 scheduleCourseNoteLoad(item)
                 save()
             } catch {
@@ -25989,9 +21893,12 @@ final class WorkspaceStore: ObservableObject {
                 }
                 courseNoteWritesInFlight.remove(itemID)
                 courseNoteWriteTasksByItemID[itemID] = nil
-                noteFileError = ui(
-                    "无法写回原 Markdown：\(url.lastPathComponent)",
-                    "Could not write original Markdown: \(url.lastPathComponent)"
+                setNoteFileError(
+                    ui(
+                        "无法写回原 Markdown：\(url.lastPathComponent)",
+                        "Could not write original Markdown: \(url.lastPathComponent)"
+                    ),
+                    for: itemID
                 )
                 save()
             }
@@ -26044,7 +21951,10 @@ final class WorkspaceStore: ObservableObject {
         if item.editsBackingMarkdownFile {
             guard let index = importedItems.firstIndex(where: { $0.id == noteItemID }) else {
                 retainPendingNoteWrite(markdown, itemID: noteItemID, fallbackURL: item.url)
-                noteFileError = ui("无法确认原 Markdown 的课程身份。", "Could not resolve the original Markdown identity.")
+                setNoteFileError(
+                    ui("无法确认原 Markdown 的课程身份。", "Could not resolve the original Markdown identity."),
+                    for: noteItemID
+                )
                 save()
                 return
             }
@@ -26055,9 +21965,12 @@ final class WorkspaceStore: ObservableObject {
             let resolution = resolveTrackedImportedFile(at: index)
             guard let url = resolution.url else {
                 retainPendingNoteWrite(markdown, itemID: noteItemID, fallbackURL: item.url)
-                noteFileError = ui(
-                    "原 Markdown 已移动或不可用，最新编辑已安全保留在课程中。",
-                    "The original Markdown moved or is unavailable. The latest edit is safely retained in the course."
+                setNoteFileError(
+                    ui(
+                        "原 Markdown 已移动或不可用，最新编辑已安全保留在课程中。",
+                        "The original Markdown moved or is unavailable. The latest edit is safely retained in the course."
+                    ),
+                    for: noteItemID
                 )
                 save()
                 return
@@ -26079,26 +21992,34 @@ final class WorkspaceStore: ObservableObject {
             }
             if hasConflict {
                 retainPendingNoteWrite(markdown, itemID: noteItemID, fallbackURL: url)
-                noteFileError = ui(
-                    "检测到笔记冲突：没有覆盖外部文件，魏碑草稿也已保留。请对照两份内容后再处理。",
-                    "A note conflict was detected. The external file was not overwritten, and the WeiBei draft was retained for review."
-                )
+                if activeNoteItemID == noteItemID {
+                    noteFileError = ui(
+                        "检测到笔记冲突：没有覆盖外部文件，魏碑草稿也已保留。请对照两份内容后再处理。",
+                        "A note conflict was detected. The external file was not overwritten, and the WeiBei draft was retained for review."
+                    )
+                }
                 save()
                 return
             }
             do {
-                try markdown.write(to: url, atomically: true, encoding: .utf8)
+                try notebookMarkdownWriter(markdown, url)
                 notesByItemID.removeValue(forKey: noteItemID)
                 pendingNoteWritesByItemID.removeValue(forKey: noteItemID)
                 noteBackingContentDigestsByItemID[noteItemID] = Self.noteContentDigest(Data(markdown.utf8))
-                noteFileError = nil
+                setNoteFileError(nil, for: noteItemID)
                 let refreshedItem = refreshImportedFileTracking(itemID: noteItemID, url: url)
                     ?? importedItems[index]
                 courseDocumentSearchIndex.schedule([refreshedItem])
                 save()
             } catch {
                 retainPendingNoteWrite(markdown, itemID: noteItemID, fallbackURL: url)
-                noteFileError = ui("无法写回原 Markdown：\(url.lastPathComponent)", "Could not write original Markdown: \(url.lastPathComponent)")
+                setNoteFileError(
+                    ui(
+                        "无法写回原 Markdown：\(url.lastPathComponent)",
+                        "Could not write original Markdown: \(url.lastPathComponent)"
+                    ),
+                    for: noteItemID
+                )
                 save()
             }
             return
@@ -27751,6 +23672,7 @@ final class WorkspaceStore: ObservableObject {
         workspaceSaveGeneration &+= 1
         workspacePersistenceSkippingCourseIDs =
             skippingPortableCourseIDs
+#if DEBUG
         if Self.mustSaveImmediately
             && !usesBackgroundWorkspacePersistenceForSelfCheck {
             return performSaveNow(
@@ -27758,6 +23680,7 @@ final class WorkspaceStore: ObservableObject {
                     skippingPortableCourseIDs
             )
         }
+#endif
         return await startWorkspacePersistenceLoop().value
     }
 
@@ -27767,6 +23690,7 @@ final class WorkspaceStore: ObservableObject {
         guard workspacePersistenceRemovingCourseID == nil else {
             return false
         }
+#if DEBUG
         if Self.mustSaveImmediately
             && !usesBackgroundWorkspacePersistenceForSelfCheck {
             do {
@@ -27804,6 +23728,7 @@ final class WorkspaceStore: ObservableObject {
                 return false
             }
         }
+#endif
         let previousRevision =
             coursePortableStateRevisions[courseID]
         let previousDigest =
@@ -27855,13 +23780,9 @@ final class WorkspaceStore: ObservableObject {
     }
 
     private static var mustSaveImmediately: Bool {
-        // Keep verification / self-check / packaging paths synchronous and deterministic.
-        let environment = ProcessInfo.processInfo.environment
-        if environment["WEIBEI_SUPPRESS_ACTIVATION"] == "1" { return true }
-        if environment["WEIBEI_FORCE_IMMEDIATE_SAVE"] == "1" { return true }
-        if ProcessInfo.processInfo.arguments.contains("--self-check-imported-identity") { return true }
-        if ProcessInfo.processInfo.arguments.contains("--self-check-course-project-root") { return true }
-        if ProcessInfo.processInfo.arguments.contains("--self-check-background-workspace-save") { return true }
+#if DEBUG
+        if WeiBeiSafetyTestMode.isEnabled { return true }
+#endif
         return false
     }
 
@@ -28117,16 +24038,13 @@ final class WorkspaceStore: ObservableObject {
         return true
     }
 
+#if DEBUG
     func verifyBackgroundWorkspacePersistenceForSelfCheck(
         courseID: UUID
     ) throws -> Bool {
         precondition(
-            ProcessInfo.processInfo.arguments.contains(
-                "--self-check-course-project-root"
-            )
-                || ProcessInfo.processInfo.arguments.contains(
-                    "--self-check-background-workspace-save"
-                )
+            WeiBeiSafetyTestMode.isEnabled
+                || WeiBeiSafetyTestMode.isEnabled
         )
         return try waitForCourseFileOperation {
             let initialRevision =
@@ -28189,6 +24107,7 @@ final class WorkspaceStore: ObservableObject {
                     .contains(untouchedCourseID)
         }
     }
+#endif
 
     @discardableResult
     private func performSaveNow(

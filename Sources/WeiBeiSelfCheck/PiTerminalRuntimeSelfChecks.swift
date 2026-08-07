@@ -70,7 +70,7 @@ func runPiTerminalRuntimeSelfChecks() async throws {
     try await checkHostCourseToolBridge(fixture)
     try await checkHostCourseToolBridgeRejectsSymlinkRoot(fixture)
     try await checkMissingSessionStartsFreshNativeHistory(fixture)
-    try await checkSessionPathRepairKeepsSibling(fixture)
+    try await checkSessionPathRejectsOutsideAcceptsAliasAndKeepsSibling(fixture)
     try await checkUnreadableStoredSessionRebuildsOnce(fixture)
     try await checkStandardProxyEnvironmentIsForwarded(fixture)
 }
@@ -906,7 +906,7 @@ private func checkMissingSessionStartsFreshNativeHistory(
     }
 }
 
-private func checkSessionPathRepairKeepsSibling(
+private func checkSessionPathRejectsOutsideAcceptsAliasAndKeepsSibling(
     _ fixture: PiTerminalRuntimeFixture
 ) async throws {
     let realRuntimeDirectory = try fixture.workingDirectory(named: "WrongStateRuntimeReal")

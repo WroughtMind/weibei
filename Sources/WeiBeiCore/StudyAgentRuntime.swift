@@ -2,7 +2,6 @@ import Foundation
 
 public enum StudyAgentPurpose: String, Codable, Sendable {
     case conversation
-    case quietInsight
 }
 
 public enum StudyAgentAnswerFormPolicy: String, Codable, Equatable, Sendable {

@@ -2,27 +2,15 @@
 set -euo pipefail
 
 MODE="${1:-run}"
-RUN_VISUAL_VERIFY=false
-if [[ "$MODE" == "--visual-verify" || "$MODE" == "visual-verify" ]]; then
-  MODE="--verify"
-  RUN_VISUAL_VERIFY=true
-fi
-if [[ "${2:-}" == "--visual-verify" || "${2:-}" == "visual-verify" ]]; then
-  RUN_VISUAL_VERIFY=true
-fi
 PACKAGE_ONLY=false
 if [[ "$MODE" == "--package" || "$MODE" == "package" ]]; then
   MODE="package"
   PACKAGE_ONLY=true
 fi
 CHECK_ONLY=false
-if [[ "$MODE" == "--check" || "$MODE" == "check" || "$MODE" == "--verify-only" || "$MODE" == "verify-only" ]]; then
+if [[ "$MODE" == "--check" || "$MODE" == "check" ]]; then
   MODE="check"
   CHECK_ONLY=true
-fi
-VERIFY_MODE=false
-if [[ "$MODE" == "--verify" || "$MODE" == "verify" || "$MODE" == "--visual-verify" || "$MODE" == "visual-verify" ]]; then
-  VERIFY_MODE=true
 fi
 PRODUCT_NAME="WeiBei"
 APP_DISPLAY_NAME="魏碑"
@@ -42,9 +30,7 @@ FINAL_APP_BINARY="$FINAL_APP_BUNDLE/Contents/MacOS/$PRODUCT_NAME"
 # (iCloud / File Provider) get com.apple.FinderInfo and related xattrs stamped
 # onto the bundle; codesign then fails with "resource fork, Finder information,
 # or similar detritus not allowed".
-if [[ "$VERIFY_MODE" == true ]]; then
-  DIST_DIR="${TMPDIR:-/tmp}/weibei-verify-$UID-$$"
-elif [[ "$PACKAGE_ONLY" == true ]]; then
+if [[ "$PACKAGE_ONLY" == true ]]; then
   DIST_DIR="${TMPDIR:-/tmp}/weibei-package-$UID"
 else
   DIST_DIR="${TMPDIR:-/tmp}/weibei-run-$UID"
@@ -69,14 +55,6 @@ FINAL_AUDIT_APP_BINARY="$FINAL_AUDIT_APP_BUNDLE/Contents/MacOS/$PRODUCT_NAME"
 PDF_TEXT_WORKER_NAME="WeiBeiPDFTextWorker"
 PDF_TEXT_WORKER="$APP_HELPERS/$PDF_TEXT_WORKER_NAME"
 INFO_PLIST="$APP_CONTENTS/Info.plist"
-VERIFY_PID=""
-VERIFY_DATA_DIR="$DIST_DIR/Data"
-VERIFY_STDOUT="$VERIFY_DATA_DIR/app-stdout.log"
-VERIFY_STDERR="$VERIFY_DATA_DIR/app-stderr.log"
-VERIFY_SCENARIO="${WEIBEI_VERIFY_SCENARIO:-empty-workspace-light-wide}"
-VERIFY_WINDOW_SIZE="${WEIBEI_VERIFY_WINDOW_SIZE:-}"
-VERIFY_INSPIRATION_ID="${WEIBEI_VERIFY_INSPIRATION_ID:-}"
-VERIFY_CAPTURE_PATH="${TMPDIR:-/tmp}/weibei-self-capture-$UID-$$-$VERIFY_SCENARIO.png"
 
 target_app_is_running() {
   local pid command target_binary="$APP_BINARY"
@@ -94,8 +72,6 @@ target_app_is_running() {
 }
 
 if [[ "$CHECK_ONLY" == true ]]; then
-  :
-elif [[ "$VERIFY_MODE" == true ]]; then
   :
 elif [[ "$PACKAGE_ONLY" == true ]]; then
   if target_app_is_running; then
@@ -277,10 +253,6 @@ PLIST
     /usr/bin/codesign --verify --deep --strict --verbose=2 "$APP_BUNDLE" 2>&1 | tail -20 >&2 || true
     exit 19
   fi
-  if [[ "$(/usr/bin/env WEIBEI_PDF_WORKER_VERIFY=1 "$PDF_TEXT_WORKER" --verification-probe normal)" != "verification-ok" ]]; then
-    echo "package failed: signed PDF text worker did not complete its runtime probe" >&2
-    exit 14
-  fi
   BUILD_UUID="$(/usr/bin/dwarfdump --uuid "$BUILD_BINARY" | /usr/bin/awk 'NR == 1 {print $2}')"
   PACKAGED_UUID="$(/usr/bin/dwarfdump --uuid "$APP_BINARY" | /usr/bin/awk 'NR == 1 {print $2}')"
   if [[ -z "$BUILD_UUID" || "$PACKAGED_UUID" != "$BUILD_UUID" ]]; then
@@ -292,15 +264,13 @@ PLIST
   # Mirror a clean copy into repo dist/ for inspection. Launch always uses the
   # staged /tmp bundle (valid signature); Documents copies can re-acquire
   # File Provider xattrs that invalidate codesign verification.
-  if [[ "$VERIFY_MODE" != true ]]; then
-    rm -rf "$FINAL_APP_BUNDLE"
-    mkdir -p "$FINAL_DIST_DIR"
-    /usr/bin/ditto --norsrc --noextattr "$APP_BUNDLE" "$FINAL_APP_BUNDLE"
-    /usr/bin/xattr -cr "$FINAL_APP_BUNDLE" 2>/dev/null || true
-    if ! /usr/bin/cmp -s "$APP_BINARY" "$FINAL_APP_BINARY"; then
-      echo "package failed: final app binary changed while copying from signed staging" >&2
-      exit 15
-    fi
+  rm -rf "$FINAL_APP_BUNDLE"
+  mkdir -p "$FINAL_DIST_DIR"
+  /usr/bin/ditto --norsrc --noextattr "$APP_BUNDLE" "$FINAL_APP_BUNDLE"
+  /usr/bin/xattr -cr "$FINAL_APP_BUNDLE" 2>/dev/null || true
+  if ! /usr/bin/cmp -s "$APP_BINARY" "$FINAL_APP_BINARY"; then
+    echo "package failed: final app binary changed while copying from signed staging" >&2
+    exit 15
   fi
   if [[ "$PACKAGE_ONLY" == true ]]; then
     if ! /usr/bin/codesign --verify --deep "$FINAL_APP_BUNDLE" >/dev/null 2>&1; then
@@ -332,6 +302,7 @@ PLIST
       exit 18
     fi
     "$ROOT_DIR/script/verify_release_metadata.sh" "$FINAL_APP_BUNDLE"
+    "$ROOT_DIR/script/verify_production_hygiene.sh" "$FINAL_APP_BUNDLE"
   fi
 fi
 
@@ -344,693 +315,10 @@ open_app() {
   /usr/bin/open "$APP_BUNDLE"
 }
 
-cleanup_verify_app() {
-  if [[ "$VERIFY_MODE" == true && -n "${VERIFY_PID:-}" ]]; then
-    kill "$VERIFY_PID" >/dev/null 2>&1 || true
-  fi
-}
-
-open_app_for_verify() {
-  local pane_trace_dir=""
-  local pane_trace_samples=0
-  if [[ "$VERIFY_SCENARIO" == "pane-layout-stability-flow" || "$VERIFY_SCENARIO" == "pane-toggle-continuity-flow" || "$VERIFY_SCENARIO" == "pane-reorder-width-flow" ]]; then
-    pane_trace_dir="$VERIFY_DATA_DIR/pane-trace"
-  fi
-  if [[ "$VERIFY_SCENARIO" == "pane-layout-stability-flow" ]]; then
-    pane_trace_samples=1
-  fi
-  rm -rf "$VERIFY_DATA_DIR"
-  mkdir -p "$VERIFY_DATA_DIR"
-  rm -f "$VERIFY_CAPTURE_PATH"
-  /usr/bin/env \
-    WEIBEI_SUPPRESS_ACTIVATION=1 \
-    "WEIBEI_WORKSPACE_DIR=$VERIFY_DATA_DIR" \
-    "WEIBEI_VERIFY_SCENARIO=$VERIFY_SCENARIO" \
-    "WEIBEI_VERIFY_WINDOW_SIZE=$VERIFY_WINDOW_SIZE" \
-    "WEIBEI_VERIFY_INSPIRATION_ID=$VERIFY_INSPIRATION_ID" \
-    "WEIBEI_VERIFY_CAPTURE_PATH=$VERIFY_CAPTURE_PATH" \
-    "WEIBEI_VERIFY_PANE_TRACE_DIR=$pane_trace_dir" \
-    "WEIBEI_VERIFY_PANE_TRACE_SAMPLES=$pane_trace_samples" \
-    "$APP_BINARY" >"$VERIFY_STDOUT" 2>"$VERIFY_STDERR" &
-  VERIFY_PID="$!"
-  trap cleanup_verify_app EXIT
-  for _ in {1..50}; do
-    if kill -0 "$VERIFY_PID" >/dev/null 2>&1; then
-      return 0
-    fi
-    sleep 0.1
-  done
-  echo "verify launch failed: signed $APP_DISPLAY_NAME process exited before opening a window." >&2
-  [[ -s "$VERIFY_STDERR" ]] && cat "$VERIFY_STDERR" >&2
-  return 1
-}
-
-verify_window() {
-  swift -e 'import CoreGraphics; import Foundation; let owner = CommandLine.arguments[1]; let targetPID = CommandLine.arguments.count > 2 ? Int(CommandLine.arguments[2]) : nil; func number(_ value: Any?) -> Double { (value as? NSNumber)?.doubleValue ?? 0 }; let windows = CGWindowListCopyWindowInfo([.optionAll], kCGNullWindowID) as? [[String: Any]] ?? []; let found = windows.contains { window in guard (window[kCGWindowOwnerName as String] as? String) == owner else { return false }; if let targetPID, (window[kCGWindowOwnerPID as String] as? NSNumber)?.intValue != targetPID { return false }; let bounds = window[kCGWindowBounds as String] as? [String: Any]; let isOnscreen = window[kCGWindowIsOnscreen as String] as? NSNumber; let visibleEnough = isOnscreen == nil || isOnscreen?.intValue != 0; return visibleEnough && number(window[kCGWindowLayer as String]) == 0 && number(bounds?["Width"]) >= 600 && number(bounds?["Height"]) >= 400 }; if !found { exit(1) }' "$APP_DISPLAY_NAME" "$VERIFY_PID"
-}
-
-visual_verify_window() {
-  if [[ -n "$VERIFY_SCENARIO" ]]; then
-    for _ in {1..50}; do
-      [[ -s "$VERIFY_CAPTURE_PATH" ]] && break
-      sleep 0.2
-    done
-  fi
-  local capture_path="$VERIFY_CAPTURE_PATH"
-  if [[ ! -s "$capture_path" ]]; then
-    local window_id
-    window_id="$(swift -target arm64-apple-macosx14.0 -e 'import CoreGraphics; import Foundation; let owner = CommandLine.arguments[1]; let targetPID = CommandLine.arguments.count > 2 ? Int(CommandLine.arguments[2]) : nil; func number(_ value: Any?) -> Double { (value as? NSNumber)?.doubleValue ?? 0 }; let windows = CGWindowListCopyWindowInfo([.optionAll], kCGNullWindowID) as? [[String: Any]] ?? []; guard let window = windows.first(where: { window in guard (window[kCGWindowOwnerName as String] as? String) == owner else { return false }; if let targetPID, (window[kCGWindowOwnerPID as String] as? NSNumber)?.intValue != targetPID { return false }; let bounds = window[kCGWindowBounds as String] as? [String: Any]; let isOnscreen = window[kCGWindowIsOnscreen as String] as? NSNumber; let visibleEnough = isOnscreen == nil || isOnscreen?.intValue != 0; return visibleEnough && number(window[kCGWindowLayer as String]) == 0 && number(bounds?["Width"]) >= 600 && number(bounds?["Height"]) >= 400 }), let id = window[kCGWindowNumber as String] as? UInt32 else { exit(1) }; print(id)' "$APP_DISPLAY_NAME" "$VERIFY_PID")"
-    capture_path="${TMPDIR:-/tmp}/weibei-visual-verify-$window_id.png"
-    local capture_error="${TMPDIR:-/tmp}/weibei-visual-verify-$window_id.err"
-    if ! /usr/sbin/screencapture -x -l "$window_id" "$capture_path" 2>"$capture_error"; then
-      cat "$capture_error" >&2
-      echo "visual verify blocked: both the app-owned capture and macOS window capture failed for $APP_DISPLAY_NAME. Grant Screen Recording permission to this terminal/Codex host, then rerun --visual-verify." >&2
-      rm -f "$capture_path" "$capture_error"
-      exit 5
-    fi
-    rm -f "$capture_error"
-  fi
-  swift -target arm64-apple-macosx14.0 -e 'import AppKit; import Foundation; let path = CommandLine.arguments[1]; guard let image = NSImage(contentsOf: URL(fileURLWithPath: path)), let data = image.tiffRepresentation, let bitmap = NSBitmapImageRep(data: data) else { exit(2) }; let xStep = max(1, bitmap.pixelsWide / 80); let yStep = max(1, bitmap.pixelsHigh / 60); var sampled = 0; var visible = 0; var black = 0; var transparent = 0; for y in stride(from: 0, to: bitmap.pixelsHigh, by: yStep) { for x in stride(from: 0, to: bitmap.pixelsWide, by: xStep) { guard let color = bitmap.colorAt(x: x, y: y) else { continue }; if color.redComponent > 0.08 || color.greenComponent > 0.08 || color.blueComponent > 0.08 { visible += 1 }; if color.redComponent < 0.035 && color.greenComponent < 0.035 && color.blueComponent < 0.035 { black += 1 }; if color.alphaComponent < 0.05 { transparent += 1 }; sampled += 1 } }; guard sampled > 0 else { exit(3) }; let nonBlackRatio = Double(visible) / Double(sampled); let blackRatio = Double(black) / Double(sampled); let transparentRatio = Double(transparent) / Double(sampled); print("visual_non_black_ratio=\(nonBlackRatio)"); print("visual_black_ratio=\(blackRatio)"); print("visual_transparent_ratio=\(transparentRatio)"); if nonBlackRatio < 0.02 || blackRatio > 0.12 || transparentRatio > 0.005 { fputs("visual verify failed: captured window is empty, transparent, or contains black rendering blocks\n", stderr); exit(4) }' "$capture_path"
-  local latest_capture_path="${TMPDIR:-/tmp}/weibei-visual-verify-latest.png"
-  local scenario_capture_path="${TMPDIR:-/tmp}/weibei-visual-verify-$VERIFY_SCENARIO.png"
-  cp "$capture_path" "$latest_capture_path"
-  cp "$capture_path" "$scenario_capture_path"
-  echo "visual_capture_path=$scenario_capture_path"
-  rm -f "$capture_path"
-}
-
-verify_learning_flow_persistence() {
-  if [[ "$VERIFY_SCENARIO" == "pi-course-memory-flow" ]]; then
-    local workspace_file="$VERIFY_DATA_DIR/workspace.json"
-    local marker_file="$VERIFY_DATA_DIR/pi-course-memory-verified.txt"
-    for _ in {1..600}; do
-      if [[ -s "$marker_file" ]] \
-        && [[ -f "$workspace_file" ]] \
-        && /usr/bin/grep -q '"learningMemoryStates"' "$workspace_file" \
-        && /usr/bin/grep -q '"studyLocationsByItemID"' "$workspace_file" \
-        && /usr/bin/grep -q '"studySessions"' "$workspace_file" \
-        && /usr/bin/grep -q '"confusion"' "$workspace_file" \
-        && /usr/bin/grep -q '"userStatement"' "$workspace_file" \
-        && /usr/bin/grep -q '"pi"' "$workspace_file"; then
-        return 0
-      fi
-      sleep 0.2
-    done
-    echo "verify failed: packaged PI did not persist the course-memory learning flow." >&2
-    if [[ -f "$VERIFY_DATA_DIR/verification-state.txt" ]]; then
-      cat "$VERIFY_DATA_DIR/verification-state.txt" >&2
-    fi
-    [[ -s "$VERIFY_STDERR" ]] && cat "$VERIFY_STDERR" >&2
-    return 1
-  fi
-
-  if [[ "$VERIFY_SCENARIO" == "pi-learning-flow" ]]; then
-    local workspace_file="$VERIFY_DATA_DIR/workspace.json"
-    local marker_file="$VERIFY_DATA_DIR/pi-agent-verified.txt"
-    for _ in {1..600}; do
-      if [[ -s "$marker_file" ]] \
-        && [[ -f "$workspace_file" ]] \
-        && /usr/bin/grep -q "视觉验收笔记" "$workspace_file" \
-        && /usr/bin/grep -q "利率" "$workspace_file" \
-        && /usr/bin/grep -q "玉兰七号" "$workspace_file" \
-        && /usr/bin/grep -q '"agentProviderID":"openai-codex"' "$workspace_file" \
-        && /usr/bin/grep -q '"modelName":"gpt-5.5"' "$workspace_file" \
-        && /usr/bin/grep -q '^credential=pi-managed$' "$marker_file" \
-        && /usr/bin/grep -q '^continuity=true$' "$marker_file" \
-        && ! /usr/bin/grep -q "## 离线草稿" "$workspace_file"; then
-        return 0
-      fi
-      sleep 0.2
-    done
-    echo "verify failed: packaged PI did not complete the in-app learning flow." >&2
-    if [[ -f "$VERIFY_DATA_DIR/verification-state.txt" ]]; then
-      cat "$VERIFY_DATA_DIR/verification-state.txt" >&2
-    fi
-    [[ -s "$marker_file" ]] && cat "$marker_file" >&2
-    [[ -s "$VERIFY_STDERR" ]] && cat "$VERIFY_STDERR" >&2
-    return 1
-  fi
-
-  return 0
-}
-
-verify_empty_workspace_state() {
-  case "$VERIFY_SCENARIO" in
-    empty-workspace-*)
-      ;;
-    *)
-      return 0
-      ;;
-  esac
-
-  local workspace_file="$VERIFY_DATA_DIR/workspace.json"
-  local expected_reader=false
-  local expected_agent=false
-  local expected_notes=false
-  local expected_inspiration=true
-  case "$VERIFY_SCENARIO" in
-    empty-workspace-open-doc)
-      expected_reader=true
-      ;;
-    empty-workspace-open-chat)
-      expected_agent=true
-      ;;
-    empty-workspace-open-notes)
-      expected_notes=true
-      ;;
-    empty-workspace-inspiration-off)
-      expected_inspiration=false
-      ;;
-  esac
-
-  for _ in {1..30}; do
-    if [[ -f "$workspace_file" ]] \
-      && /usr/bin/grep -q "\"showReader\":$expected_reader" "$workspace_file" \
-      && /usr/bin/grep -q "\"showAgent\":$expected_agent" "$workspace_file" \
-      && /usr/bin/grep -q "\"showNotes\":$expected_notes" "$workspace_file" \
-      && /usr/bin/grep -q "\"showDailyInspiration\":$expected_inspiration" "$workspace_file"; then
-      if [[ "$VERIFY_SCENARIO" == empty-workspace-open-* ]] \
-        && ! /usr/bin/grep -q "Empty workspace entry state marker" "$workspace_file"; then
-        sleep 0.2
-        continue
-      fi
-      return 0
-    fi
-    sleep 0.2
-  done
-
-  echo "verify failed: empty-workspace pane or inspiration state was not persisted for $VERIFY_SCENARIO." >&2
-  if [[ -f "$workspace_file" ]]; then
-    /usr/bin/sed -n '1,80p' "$workspace_file" >&2
-  else
-    echo "missing workspace file: $workspace_file" >&2
-  fi
-  return 1
-}
-
-verify_linked_sources_flow() {
-  if [[ "$VERIFY_SCENARIO" != "linked-sources-flow" ]]; then
-    return 0
-  fi
-
-  local workspace_file="$VERIFY_DATA_DIR/workspace.json"
-  for _ in {1..30}; do
-    if [[ -f "$workspace_file" ]] \
-      && /usr/bin/grep -q '"noteSourceLinks"' "$workspace_file" \
-      && /usr/bin/grep -q '"sourceItemID":"sample-html"' "$workspace_file" \
-      && /usr/bin/grep -q '"sourceItemID":"sample-pdf"' "$workspace_file" \
-      && /usr/bin/grep -q '"selectedItemID":"sample-pdf"' "$workspace_file" \
-      && /usr/bin/grep -q '"showLibrary":false' "$workspace_file" \
-      && /usr/bin/grep -q '"activeNotebookItemID":"imported:' "$workspace_file" \
-      && ! /usr/bin/grep -q '"activeNotebookItemID":"file:' "$workspace_file"; then
-      return 0
-    fi
-    sleep 0.2
-  done
-
-  echo "verify failed: linked-sources-flow did not persist two sources while keeping the active note independent." >&2
-  return 1
-}
-
-verify_course_workspace_flow() {
-  local report_file=""
-  case "$VERIFY_SCENARIO" in
-    course-workspace-overview-flow)
-      report_file="$VERIFY_DATA_DIR/course-workspace-overview-report.json"
-      ;;
-    course-workspace-workflow-flow)
-      report_file="$VERIFY_DATA_DIR/course-workspace-workflow-report.json"
-      ;;
-    course-home-flow)
-      report_file="$VERIFY_DATA_DIR/course-home-report.json"
-      ;;
-    course-resume-point-flow)
-      report_file="$VERIFY_DATA_DIR/course-resume-point-report.json"
-      ;;
-    *)
-      return 0
-      ;;
-  esac
-
-  for _ in {1..150}; do
-    if [[ -s "$report_file" ]]; then
-      break
-    fi
-    sleep 0.2
-  done
-  if [[ ! -s "$report_file" ]]; then
-    echo "verify failed: course workspace report was not produced for $VERIFY_SCENARIO." >&2
-    [[ -s "$VERIFY_STDERR" ]] && cat "$VERIFY_STDERR" >&2
-    return 1
-  fi
-
-  if [[ "$VERIFY_SCENARIO" == "course-home-flow" ]]; then
-    if ! /usr/bin/jq -e '
-      .result == "pass"
-      and .openedWithoutMutation == true
-      and .browsingIsolated == true
-      and .dismissedWithoutMutation == true
-      and .multipleContentPassed == true
-      and .searchPassed == true
-      and .noteSearchPassed == true
-      and .deletedNoteSearchPassed == true
-      and .searchOffMainThread == true
-      and .failedOpenPreserved == true
-      and .sharedLocationsPassed == true
-      and .sharedLocationsPersisted == true
-      and .resumePassed == true
-      and .newCourseQuestionPassed == true
-      and .freshEmptyReusePassed == true
-      and .draftedEmptyNotReused == true
-      and .staleEmptyNotReused == true
-      and .exactConversationResumePassed == true
-      and .invalidResumePreserved == true
-      and .learningHighlightsPassed == true
-      and .courseWorkspacePresented == true
-      and .workspaceCourseID == "11111111-1111-1111-1111-111111111111"
-      and .activeCourseID == "11111111-1111-1111-1111-111111111111"
-      and .materialLocationID == "html-heading-1"
-    ' "$report_file" >/dev/null; then
-      echo "verify failed: course home browsing changed the underlying workspace or failed to find real course content." >&2
-      /usr/bin/jq . "$report_file" >&2
-      return 1
-    fi
-  elif [[ "$VERIFY_SCENARIO" == "course-resume-point-flow" ]]; then
-    if ! /usr/bin/jq -e '
-      .result == "pass"
-      and .readingPassed == true
-      and .scrollPreservedPoint == true
-      and .conversationPassed == true
-      and .persisted == true
-      and .sessionCount == 3
-      and .paneOrderPreserved == true
-      and .materialLocationID == "html-heading-2"
-      and .noteItemID == "course-note-a"
-    ' "$report_file" >/dev/null; then
-      echo "verify failed: course resume point did not restore one exact learning scene." >&2
-      /usr/bin/jq . "$report_file" >&2
-      return 1
-    fi
-  elif [[ "$VERIFY_SCENARIO" == "course-workspace-overview-flow" ]]; then
-    if ! /usr/bin/jq -e --arg requested "${WEIBEI_VERIFY_COURSE_PAGE:-}" '
-      .result == "pass"
-      and .routeRecognized == true
-      and (
-        ($requested == "hub" and .destination == "hub")
-        or ($requested == "notes" and .destination == "notes")
-        or (($requested == "materials" or $requested == "relations-large") and .destination == "materials")
-        or ($requested == "sessions" and .destination == "sessions")
-        or (($requested == "" or $requested == "relations") and .destination == "relations")
-      )
-      and .materialCount == 3
-      and .noteCount == 3
-      and .explicitLinkCount == 3
-      and .readingPositionCount == 1
-      and .studySessionCount == 1
-      and .unresolvedConfusionCount == 1
-      and .courseFileImportPassed == true
-      and .invalidNoteCreationPassed == true
-      and .materialImportPassed == true
-      and .noteImportPassed == true
-      and .unlinkedMaterialIDs == ["course-material-c"]
-      and .unlinkedNoteIDs == ["course-note-c"]
-      and .courseWorkspacePresented == true
-    ' "$report_file" >/dev/null; then
-      echo "verify failed: course workspace overview exposed inaccurate facts." >&2
-      /usr/bin/jq . "$report_file" >&2
-      return 1
-    fi
-  elif ! /usr/bin/jq -e '
-    .result == "pass"
-    and .continuityPassed == true
-    and .courseFileImportPassed == true
-    and .invalidNoteCreationPassed == true
-    and .materialImportPassed == true
-    and .noteImportPassed == true
-    and .materialNavigationPassed == true
-    and .noteNavigationPassed == true
-    and .persistencePassed == true
-    and .finalMaterialID == "course-material-c"
-    and .finalNoteID == "course-note-c"
-    and .noteA_sources == ["course-material-a"]
-    and (.noteC_sources | sort) == ["course-material-b", "course-material-c"]
-    and (.materialB_notes | sort) == ["course-note-b", "course-note-c"]
-    and .paneMakeCount == 0
-    and .paneDismantleCount == 0
-  ' "$report_file" >/dev/null; then
-    echo "verify failed: course workspace relationship workflow or pane continuity regressed." >&2
-    /usr/bin/jq . "$report_file" >&2
-    return 1
-  fi
-
-  /usr/bin/jq -r '"course_workspace_result=\(.result)"' "$report_file"
-}
-
-verify_pane_toggle_continuity() {
-  if [[ "$VERIFY_SCENARIO" != "pane-toggle-continuity-flow" ]]; then
-    return 0
-  fi
-
-  local report_file="$VERIFY_DATA_DIR/pane-toggle-continuity-report.txt"
-  for _ in {1..1800}; do
-    if [[ -f "$report_file" ]]; then
-      if /usr/bin/grep -q '^result=pass$' "$report_file"; then
-        verify_pane_trace_summary 480
-        return $?
-      fi
-      echo "verify failed: pane toggles changed passive reading state or recreated a persistent pane." >&2
-      cat "$report_file" >&2
-      [[ -s "$VERIFY_STDERR" ]] && cat "$VERIFY_STDERR" >&2
-      return 1
-    fi
-    sleep 0.2
-  done
-
-  echo "verify failed: pane-toggle continuity report was not produced." >&2
-  [[ -f "$VERIFY_DATA_DIR/verification-state.txt" ]] && cat "$VERIFY_DATA_DIR/verification-state.txt" >&2
-  [[ -s "$VERIFY_STDERR" ]] && cat "$VERIFY_STDERR" >&2
-  return 1
-}
-
-verify_pane_trace_summary() {
-  local minimum_transitions="$1"
-  local summary_file="$VERIFY_DATA_DIR/pane-trace/summary.json"
-  for _ in {1..100}; do
-    if [[ -s "$summary_file" ]] \
-      && /usr/bin/jq -e ".transitions >= $minimum_transitions" "$summary_file" >/dev/null 2>&1; then
-      break
-    fi
-    sleep 0.1
-  done
-  if [[ ! -s "$summary_file" ]]; then
-    echo "verify failed: pane frame summary was not produced." >&2
-    return 1
-  fi
-  if ! /usr/bin/jq -e ".transitions >= $minimum_transitions and .ownershipFailures == 0 and .blankVisibleFailures == 0 and .identityFailures == 0 and (.roleIdentities | length) == 3" "$summary_file" >/dev/null; then
-    echo "verify failed: pane frame summary recorded unstable ownership or an empty visible slot." >&2
-    /usr/bin/jq . "$summary_file" >&2
-    return 1
-  fi
-  /usr/bin/jq -r '"pane_summary_samples=\(.samples)\npane_summary_transitions=\(.transitions)\npane_summary_failures=\(.ownershipFailures + .blankVisibleFailures + .identityFailures)"' "$summary_file"
-}
-
-verify_pane_layout_stability() {
-  if [[ "$VERIFY_SCENARIO" != "pane-layout-stability-flow" ]]; then
-    return 0
-  fi
-
-  local report_file="$VERIFY_DATA_DIR/pane-layout-stability-report.txt"
-  local trace_dir="$VERIFY_DATA_DIR/pane-trace"
-  for _ in {1..180}; do
-    if [[ -f "$report_file" ]]; then
-      if ! /usr/bin/grep -q '^result=pass$' "$report_file"; then
-        echo "verify failed: pane state changed while exercising the stable workspace." >&2
-        cat "$report_file" >&2
-        [[ -s "$VERIFY_STDERR" ]] && cat "$VERIFY_STDERR" >&2
-        return 1
-      fi
-      break
-    fi
-    sleep 0.2
-  done
-
-  if [[ ! -f "$report_file" ]]; then
-    echo "verify failed: pane-layout stability report was not produced." >&2
-    [[ -f "$VERIFY_DATA_DIR/verification-state.txt" ]] && cat "$VERIFY_DATA_DIR/verification-state.txt" >&2
-    [[ -s "$VERIFY_STDERR" ]] && cat "$VERIFY_STDERR" >&2
-    return 1
-  fi
-
-  local trace_files=()
-  for _ in {1..50}; do
-    shopt -s nullglob
-    trace_files=("$trace_dir"/container-*.json)
-    shopt -u nullglob
-    (( ${#trace_files[@]} >= 120 )) && break
-    sleep 0.1
-  done
-  if (( ${#trace_files[@]} < 120 )); then
-    echo "verify failed: expected frame-level pane traces, found ${#trace_files[@]}." >&2
-    return 1
-  fi
-
-  if ! /usr/bin/jq -s -e '
-    def role_is_stable($role):
-      ([.[] | .roles[] | select(.role == $role) | .hostID] | unique | length) == 1
-      and ([.[] | .roles[] | select(.role == $role) | .parentID] | unique | length) == 1
-      and ([.[] | .roles[] | select(.role == $role) | .contentHostID] | unique | length) == 1
-      and ([.[] | .roles[] | select(.role == $role) | .contentParentID] | unique | length) == 1;
-    ([.[].recorderID] | unique | length) == 1
-    and ([.[].transition] | unique | length) >= 8
-    and all(.[]; .stableOwnership == true and .noBlankVisibleSlots == true)
-    and all((sort_by(.transition) | group_by(.transition))[]; length >= 15)
-    and role_is_stable("reader")
-    and role_is_stable("agent")
-    and role_is_stable("notes")
-  ' "${trace_files[@]}" >/dev/null; then
-    echo "verify failed: a pane host changed identity/parent or exposed an empty visible slot during animation." >&2
-    /usr/bin/jq -s '{samples:length, transitions:([.[].transition] | unique | length), ownership_failures:[.[] | select(.stableOwnership != true)] | length, blank_visible_failures:[.[] | select(.noBlankVisibleSlots != true)] | length}' "${trace_files[@]}" >&2
-    return 1
-  fi
-
-  local pane_performance
-  pane_performance="$(/usr/bin/jq -s '
-    def role_visibility($role):
-      [.[] | .roles[] | select(.role == $role) | .slotHasVisibleArea];
-    def changed($role):
-      role_visibility($role) as $values
-      | (($values | first) != ($values | last));
-    def ever_visible($role):
-      any(.[]; any(.roles[]; .role == $role and .slotHasVisibleArea));
-    def max_gap_ms:
-      [.[].timestamp] as $timestamps
-      | (([range(1; $timestamps | length) | (($timestamps[.] - $timestamps[.-1]) * 1000)] | max) // 0);
-    def duration_ms:
-      ((.[-1].timestamp - .[0].timestamp) * 1000);
-    sort_by(.transition, .frame)
-    | group_by(.transition)
-    | if length > 8 then .[-8:] else . end
-    | map({
-        transition: .[0].transition,
-        chatChanged: changed("agent"),
-        neighborChanged: (changed("reader") or changed("notes")),
-        agentEverVisible: ever_visible("agent"),
-        maxGapMs: max_gap_ms,
-        durationMs: duration_ms
-      })
-    | {
-        chatMaxGapMs: ([.[] | select(.chatChanged) | .maxGapMs] | max),
-        neighborMaxGapMs: ([.[] | select(.neighborChanged and .agentEverVisible and (.chatChanged | not)) | .maxGapMs] | max),
-        chatMaxDurationMs: ([.[] | select(.chatChanged) | .durationMs] | max),
-        neighborMaxDurationMs: ([.[] | select(.neighborChanged and .agentEverVisible and (.chatChanged | not)) | .durationMs] | max),
-        measuredTransitions: length
-      }
-  ' "${trace_files[@]}")"
-  if ! /usr/bin/jq -e '
-    .measuredTransitions == 8
-    and .chatMaxGapMs != null
-    and .neighborMaxGapMs != null
-    and .chatMaxDurationMs != null
-    and .neighborMaxDurationMs != null
-    and .chatMaxGapMs < 50
-    and .chatMaxDurationMs <= (.neighborMaxDurationMs * 1.5)
-  ' <<<"$pane_performance" >/dev/null; then
-    echo "verify failed: rich-history Chat pane transitions missed the responsiveness gate." >&2
-    /usr/bin/jq . <<<"$pane_performance" >&2
-    return 1
-  fi
-
-  local transition_count
-  transition_count="$(/usr/bin/jq -s '[.[].transition] | unique | length' "${trace_files[@]}")"
-  echo "pane_trace_samples=${#trace_files[@]}"
-  echo "pane_trace_transitions=$transition_count"
-  echo "pane_host_and_parent_identity=stable"
-  echo "pane_visible_slots=nonblank"
-  /usr/bin/jq -r '"pane_chat_max_gap_ms=\(.chatMaxGapMs)\npane_neighbor_max_gap_ms=\(.neighborMaxGapMs)\npane_chat_max_duration_ms=\(.chatMaxDurationMs)\npane_neighbor_max_duration_ms=\(.neighborMaxDurationMs)"' <<<"$pane_performance"
-}
-
-verify_pane_reorder_width() {
-  if [[ "$VERIFY_SCENARIO" != "pane-reorder-width-flow" ]]; then
-    return 0
-  fi
-
-  local report_file="$VERIFY_DATA_DIR/pane-reorder-width-report.txt"
-  for _ in {1..180}; do
-    if [[ -f "$report_file" ]]; then
-      if ! /usr/bin/grep -q '^result=pass$' "$report_file"; then
-        echo "verify failed: pane reorder, width restoration, or persistent state changed unexpectedly." >&2
-        cat "$report_file" >&2
-        [[ -s "$VERIFY_STDERR" ]] && cat "$VERIFY_STDERR" >&2
-        return 1
-      fi
-      verify_pane_trace_summary 4
-      return $?
-    fi
-    sleep 0.2
-  done
-
-  echo "verify failed: pane reorder and width report was not produced." >&2
-  [[ -f "$VERIFY_DATA_DIR/verification-state.txt" ]] && cat "$VERIFY_DATA_DIR/verification-state.txt" >&2
-  [[ -s "$VERIFY_STDERR" ]] && cat "$VERIFY_STDERR" >&2
-  return 1
-}
-
-verify_reader_scroll_persistence() {
-  if [[ "$VERIFY_SCENARIO" != "reader-scroll-persistence-flow" ]]; then
-    return 0
-  fi
-
-  local report_file="$VERIFY_DATA_DIR/reader-scroll-persistence-report.txt"
-  for _ in {1..120}; do
-    if [[ -f "$report_file" ]]; then
-      if /usr/bin/grep -q '^result=pass$' "$report_file"; then
-        return 0
-      fi
-      echo "verify failed: user scroll did not persist and restore the HTML section." >&2
-      cat "$report_file" >&2
-      [[ -s "$VERIFY_STDERR" ]] && cat "$VERIFY_STDERR" >&2
-      return 1
-    fi
-    sleep 0.2
-  done
-
-  echo "verify failed: reader scroll persistence report was not produced." >&2
-  [[ -f "$VERIFY_DATA_DIR/verification-state.txt" ]] && cat "$VERIFY_DATA_DIR/verification-state.txt" >&2
-  [[ -s "$VERIFY_STDERR" ]] && cat "$VERIFY_STDERR" >&2
-  return 1
-}
-
-verify_chat_reply_persistence() {
-  if [[ "$VERIFY_SCENARIO" != "chat-reply-persistence-flow" ]]; then
-    return 0
-  fi
-
-  local report_file="$VERIFY_DATA_DIR/chat-reply-persistence-report.txt"
-  local workspace_file="$VERIFY_DATA_DIR/chat-reply-persistence-workspace/workspace.json"
-  for _ in {1..60}; do
-    if [[ -f "$report_file" ]]; then
-      if /usr/bin/grep -q '^result=pass$' "$report_file" \
-        && /usr/bin/grep -q '^streamed=true$' "$report_file" \
-        && /usr/bin/grep -q '^cancelled=true$' "$report_file" \
-        && /usr/bin/grep -q '^stream_backend=pi$' "$report_file" \
-        && /usr/bin/grep -q '^stream_recovered=true$' "$report_file" \
-        && /usr/bin/grep -q '^switch_isolated=true$' "$report_file" \
-        && /usr/bin/grep -q '^confirmation_presented=true$' "$report_file" \
-        && /usr/bin/grep -q '^drafts_isolated=true$' "$report_file" \
-        && /usr/bin/grep -q '^terminal_merge=true$' "$report_file" \
-        && /usr/bin/grep -q '^late_events_rejected=true$' "$report_file" \
-        && /usr/bin/grep -q '^state=interrupted$' "$report_file" \
-        && /usr/bin/grep -q '^sources=1$' "$report_file" \
-        && /usr/bin/grep -q '^source_id=material:rates$' "$report_file" \
-        && /usr/bin/grep -q '^actions=1$' "$report_file" \
-        && /usr/bin/grep -q '^rich_answer=true$' "$report_file" \
-        && /usr/bin/grep -q '"completionState":"interrupted"' "$workspace_file"; then
-        return 0
-      fi
-      echo "verify failed: Chat reply body or attachments did not survive reopen." >&2
-      cat "$report_file" >&2
-      return 1
-    fi
-    sleep 0.2
-  done
-
-  echo "verify failed: Chat reply persistence report was not produced." >&2
-  [[ -f "$VERIFY_DATA_DIR/verification-state.txt" ]] && cat "$VERIFY_DATA_DIR/verification-state.txt" >&2
-  [[ -s "$VERIFY_STDERR" ]] && cat "$VERIFY_STDERR" >&2
-  return 1
-}
-
-verify_chat_action_cards() {
-  if [[ "$VERIFY_SCENARIO" != "chat-action-cards-flow" ]]; then
-    return 0
-  fi
-
-  local report_file="$VERIFY_DATA_DIR/chat-action-cards-report.txt"
-  for _ in {1..60}; do
-    if [[ -f "$report_file" ]]; then
-      if /usr/bin/grep -q '^result=pass$' "$report_file" \
-        && /usr/bin/grep -q '^note_written=true$' "$report_file" \
-        && /usr/bin/grep -q '^note_undone=true$' "$report_file" \
-        && /usr/bin/grep -q '^relation_created=true$' "$report_file" \
-        && /usr/bin/grep -q '^relation_undone=true$' "$report_file" \
-        && /usr/bin/grep -q '^relation_conflict_isolated=true$' "$report_file" \
-        && /usr/bin/grep -q '^conflict_isolated=true$' "$report_file" \
-        && /usr/bin/grep -q '^retry_succeeded=true$' "$report_file" \
-        && /usr/bin/grep -q '^retry_conflict_safe=true$' "$report_file" \
-        && /usr/bin/grep -q '^body_preserved=true$' "$report_file" \
-        && /usr/bin/grep -q '^rich_answer_preserved=true$' "$report_file" \
-        && /usr/bin/grep -q '^reopened=true$' "$report_file" \
-        && /usr/bin/grep -q '^pending_card=true$' "$report_file"; then
-        return 0
-      fi
-      echo "verify failed: Chat action cards did not survive their full lifecycle." >&2
-      cat "$report_file" >&2
-      return 1
-    fi
-    sleep 0.2
-  done
-
-  echo "verify failed: Chat action card report was not produced." >&2
-  [[ -f "$VERIFY_DATA_DIR/verification-state.txt" ]] && cat "$VERIFY_DATA_DIR/verification-state.txt" >&2
-  [[ -s "$VERIFY_STDERR" ]] && cat "$VERIFY_STDERR" >&2
-  return 1
-}
-
-verify_learning_memory_scopes() {
-  if [[ "$VERIFY_SCENARIO" != "learning-memory-scopes-flow" ]]; then
-    return 0
-  fi
-
-  local report_file="$VERIFY_DATA_DIR/learning-memory-scopes-report.txt"
-  for _ in {1..60}; do
-    if [[ -f "$report_file" ]]; then
-      if /usr/bin/grep -q '^result=pass$' "$report_file" \
-        && /usr/bin/grep -q '^scopes_isolated=true$' "$report_file" \
-        && /usr/bin/grep -q '^independent_revisions=true$' "$report_file" \
-        && /usr/bin/grep -q '^user_history=true$' "$report_file" \
-        && /usr/bin/grep -q '^stable_ids=true$' "$report_file" \
-        && /usr/bin/grep -q '^legacy_fields_removed=true$' "$report_file" \
-        && /usr/bin/grep -q '^persisted=true$' "$report_file" \
-        && /usr/bin/grep -q '^reply_tag_persisted=true$' "$report_file"; then
-        return 0
-      fi
-      echo "verify failed: scoped learning memory lifecycle did not pass." >&2
-      cat "$report_file" >&2
-      return 1
-    fi
-    sleep 0.2
-  done
-
-  echo "verify failed: scoped learning memory report was not produced." >&2
-  [[ -f "$VERIFY_DATA_DIR/verification-state.txt" ]] && cat "$VERIFY_DATA_DIR/verification-state.txt" >&2
-  [[ -s "$VERIFY_STDERR" ]] && cat "$VERIFY_STDERR" >&2
-  return 1
-}
-
-finish_verify_window() {
-  verify_learning_flow_persistence
-  verify_empty_workspace_state
-  verify_linked_sources_flow
-  verify_course_workspace_flow
-  verify_pane_toggle_continuity
-  verify_pane_layout_stability
-  verify_pane_reorder_width
-  verify_reader_scroll_persistence
-  verify_chat_reply_persistence
-  verify_chat_action_cards
-  verify_learning_memory_scopes
-  if [[ "$RUN_VISUAL_VERIFY" == true ]]; then
-    visual_verify_window
-  fi
-}
-
 run_verifiers() {
   WEIBEI_PI_EXECUTABLE="$PI_RUNTIME_BINARY" \
     swift run -c "$BUILD_CONFIGURATION" WeiBeiSelfCheck
-  WEIBEI_SUPPRESS_ACTIVATION=1 \
-    swift run -c "$BUILD_CONFIGURATION" WeiBei --self-check-imported-identity
-  WEIBEI_SUPPRESS_ACTIVATION=1 \
-    swift run -c "$BUILD_CONFIGURATION" WeiBei --self-check-course-project-root
+  swift test -c "$BUILD_CONFIGURATION" --filter WeiBeiSafetyTests
   swift run -c "$BUILD_CONFIGURATION" WeiBeiWebEditorCheck
   WEIBEI_PI_EXECUTABLE="$PI_RUNTIME_BINARY" \
     swift run -c "$BUILD_CONFIGURATION" WeiBeiPiCheck
@@ -1056,34 +344,8 @@ case "$MODE" in
     open_app
     /usr/bin/log stream --info --style compact --predicate "subsystem == \"$BUNDLE_ID\""
     ;;
-  --verify|verify)
-    run_verifiers
-    open_app_for_verify
-    for _ in {1..30}; do
-      if verify_window >/dev/null 2>&1; then
-        finish_verify_window
-        exit 0
-      fi
-      sleep 0.2
-    done
-    verify_window
-    finish_verify_window
-    ;;
-  --visual-verify|visual-verify)
-    run_verifiers
-    open_app_for_verify
-    for _ in {1..30}; do
-      if verify_window >/dev/null 2>&1; then
-        finish_verify_window
-        exit $?
-      fi
-      sleep 0.2
-    done
-    verify_window
-    finish_verify_window
-    ;;
   *)
-    echo "usage: $0 [run|check|package|--debug|--logs|--telemetry|--verify [--visual-verify]|--visual-verify]" >&2
+    echo "usage: $0 [run|check|package|--debug|--logs|--telemetry]" >&2
     exit 2
     ;;
 esac

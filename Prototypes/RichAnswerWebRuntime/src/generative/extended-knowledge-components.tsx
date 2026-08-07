@@ -413,38 +413,6 @@ export const DistributionBrush = defineComponent({
       return () => observer.disconnect();
     }, [props.binCount, props.values, lower, upper]);
 
-    useEffect(() => {
-      const canvas = canvasRef.current;
-      if (!canvas) return;
-      const verifyInteraction = () => {
-        const sortedValues = [...props.values].sort((left, right) => left - right);
-        let largestGapIndex = 0;
-        let largestGap = Number.NEGATIVE_INFINITY;
-        for (let index = 0; index < sortedValues.length - 1; index += 1) {
-          const gap = sortedValues[index + 1] - sortedValues[index];
-          if (gap > largestGap) {
-            largestGap = gap;
-            largestGapIndex = index;
-          }
-        }
-        const leftCluster = sortedValues.slice(0, largestGapIndex + 1);
-        const rightCluster = sortedValues.slice(largestGapIndex + 1);
-        const targetCluster = leftCluster.length >= rightCluster.length ? leftCluster : rightCluster;
-        const targetMinimum = Math.min(...targetCluster);
-        const targetMaximum = Math.max(...targetCluster);
-        const nextSpan = clamp(Math.max(minimumSpan, targetMaximum - targetMinimum), minimumSpan, range);
-        const nextCenter = clamp(
-          (targetMinimum + targetMaximum) / 2,
-          minimum + nextSpan / 2,
-          maximum - nextSpan / 2,
-        );
-        spanField.setValue(nextSpan);
-        centerField.setValue(nextCenter);
-      };
-      canvas.addEventListener("weibei:verify-interaction", verifyInteraction);
-      return () => canvas.removeEventListener("weibei:verify-interaction", verifyInteraction);
-    }, [centerField, maximum, minimum, minimumSpan, props.values, range, spanField]);
-
     const valueAtPointer = (event: ReactPointerEvent<HTMLCanvasElement>) => {
       const bounds = event.currentTarget.getBoundingClientRect();
       const fraction = clamp((event.clientX - bounds.left - 28) / Math.max(1, bounds.width - 42), 0, 1);

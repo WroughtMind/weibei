@@ -434,30 +434,13 @@ function FunctionMount({
         setFocus({ x, y });
       }
     };
-    const verifyInteraction = () => {
-      const firstParameter = compiled.spec.parameters?.[0];
-      if (firstParameter) {
-        const current = parametersRef.current[firstParameter.id] ?? firstParameter.value;
-        const next = current + firstParameter.step <= firstParameter.maximum
-          ? current + firstParameter.step
-          : firstParameter.minimum;
-        setParameters((values) => ({ ...values, [firstParameter.id]: next }));
-        return;
-      }
-      const currentSegments = segmentsRef.current;
-      const segment = currentSegments[Math.floor(currentSegments.length / 2)] ?? currentSegments[0];
-      const point = segment?.[Math.floor(segment.length / 2)];
-      if (point) setFocus({ x: point[0], y: point[1] });
-    };
     chart.on("click", focusFromChart);
-    element.addEventListener("weibei:verify-interaction", verifyInteraction);
     const observer = new ResizeObserver(resize);
     observer.observe(element);
     resize();
     return () => {
       observer.disconnect();
       chart.off("click", focusFromChart);
-      element.removeEventListener("weibei:verify-interaction", verifyInteraction);
       chart.dispose();
       chartRef.current = null;
     };
