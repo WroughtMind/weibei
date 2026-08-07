@@ -234,7 +234,7 @@ form-action 'none'; base-uri 'none'; frame-src 'self'
 
 ## 唯一执行容器候选
 
-当前只保留一个值得验证的候选：macOS 13+ 随魏碑安装的界面扩展（bundle-only UI App Extension）。
+当前只保留一个值得验证的候选：面向魏碑最低 macOS 14、随 App 安装的界面扩展（bundle-only UI App Extension）。
 
 ```mermaid
 flowchart LR
