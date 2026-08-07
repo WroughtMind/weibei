@@ -1633,7 +1633,7 @@ public struct AgentMessage: Identifiable, Codable, Hashable, Sendable {
     public var isUsableAgentAnswer: Bool {
         role == .assistant
             && completionState != .generating
-            && failureKind == nil
+            && (failureKind == nil || (failureKind == .cancelled && completionState == .interrupted))
             && !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 }
