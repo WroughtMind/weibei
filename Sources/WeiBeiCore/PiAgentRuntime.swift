@@ -248,9 +248,7 @@ public enum PiAgentRuntimeError: LocalizedError, Equatable, Sendable {
             return true
         case let .commandTimedOut(command):
             return command != "prompt" && command != "abort"
-        case .protocolFailure:
-            return true
-        case .agentFailed, .inFlightFailed, .cancelled:
+        case .protocolFailure, .agentFailed, .inFlightFailed, .cancelled:
             return false
         }
     }
@@ -393,7 +391,6 @@ public actor PiAgentRuntime: StudyAgentRuntime {
 
     private struct PiSessionStateFailure: Error {
         var message: String
-        var repairsEmptySession: Bool
     }
 
     private struct ActiveRun {
@@ -539,25 +536,10 @@ public actor PiAgentRuntime: StudyAgentRuntime {
             workingDirectory: workingDirectory,
             scope: request.projectScope.kind
         )
-        let hadStoredSession = sessionDirectoryHasContents(binding.sessionDirectory)
         do {
             _ = try await ensureProcess(binding: binding)
         } catch let failure as PiSessionStateFailure {
-            guard failure.repairsEmptySession || hadStoredSession else {
-                throw PiAgentRuntimeError.protocolFailure(failure.message)
-            }
-            try await resetSession(binding: binding)
-            let rebuiltState: PiSessionState
-            do {
-                rebuiltState = try await ensureProcess(binding: binding)
-            } catch let secondFailure as PiSessionStateFailure {
-                throw PiAgentRuntimeError.protocolFailure(secondFailure.message)
-            }
-            guard rebuiltState.messageCount == 0 else {
-                throw PiAgentRuntimeError.protocolFailure(
-                    "rebuilt PI session did not start empty"
-                )
-            }
+            throw PiAgentRuntimeError.protocolFailure(failure.message)
         }
         try requireStartingRun(request.id)
 
@@ -599,7 +581,7 @@ public actor PiAgentRuntime: StudyAgentRuntime {
             allowedNoteSourceLabels: currentSourceLabels,
             contextSources: request.selectionSources,
             allowedToolNames: Set(Self.allowedToolNames(for: binding.scope)),
-            allowsRelationProposal: binding.scope == .course,
+            allowsRelationProposal: request.projectScope.courseID?.isEmpty == false,
             courseCatalogRolesByContextID: context.course.catalog.reduce(into: [:]) {
                 $0[$1.id] = $1.role
             },
@@ -813,8 +795,7 @@ public actor PiAgentRuntime: StudyAgentRuntime {
             )
         } catch {
             throw PiSessionStateFailure(
-                message: "could not read the requested Chat session: \(error.localizedDescription)",
-                repairsEmptySession: false
+                message: "could not read the requested Chat session: \(error.localizedDescription)"
             )
         }
         return try validatedSessionState(state, binding: binding)
@@ -832,33 +813,29 @@ public actor PiAgentRuntime: StudyAgentRuntime {
               messageCount >= 0,
               let sessionFile = object["sessionFile"] as? String else {
             throw PiSessionStateFailure(
-                message: "get_state did not match the requested Chat session",
-                repairsEmptySession: true
+                message: "get_state did not match the requested Chat session"
             )
         }
-        let sessionFileURL = URL(fileURLWithPath: sessionFile).standardizedFileURL
-        guard sessionFileURL.deletingLastPathComponent().path
-                == binding.sessionDirectory.standardizedFileURL.path else {
+        let reportedSessionDirectory = Self.canonicalFileURL(
+            URL(fileURLWithPath: sessionFile).deletingLastPathComponent()
+        )
+        let requestedSessionDirectory = Self.canonicalFileURL(binding.sessionDirectory)
+        guard reportedSessionDirectory == requestedSessionDirectory else {
             throw PiSessionStateFailure(
-                message: "get_state returned a session outside the requested Chat directory",
-                repairsEmptySession: true
+                message: "get_state returned a session outside the requested Chat directory"
             )
         }
         return PiSessionState(messageCount: messageCount)
-    }
-
-    private func resetSession(binding: ProcessBinding) async throws {
-        if let runningProcess = process, runningProcess.isRunning {
-            shutdownProcess(reason: PiAgentRuntimeError.cancelled)
-            await forceStopIfNeeded(runningProcess, graceNanoseconds: 750_000_000)
-        }
-        try removeSessionDirectory(binding.sessionDirectory)
     }
 
     private func sessionDirectory(for sessionID: UUID) -> URL {
         runtimeDirectory
             .appendingPathComponent("Sessions", isDirectory: true)
             .appendingPathComponent(sessionID.uuidString.lowercased(), isDirectory: true)
+    }
+
+    private static func canonicalFileURL(_ url: URL) -> URL {
+        url.resolvingSymlinksInPath().standardizedFileURL
     }
 
     private var hostToolResponseRoot: URL {
@@ -957,24 +934,16 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         try? FileManager.default.removeItem(at: directory)
     }
 
-    private func sessionDirectoryHasContents(_ sessionDirectory: URL) -> Bool {
-        guard let contents = try? FileManager.default.contentsOfDirectory(
-            at: sessionDirectory,
-            includingPropertiesForKeys: nil
-        ) else {
-            return false
-        }
-        return !contents.isEmpty
-    }
-
     private func removeSessionDirectory(_ sessionDirectory: URL) throws {
-        let sessionsRoot = runtimeDirectory
-            .appendingPathComponent("Sessions", isDirectory: true)
-            .standardizedFileURL
-        guard sessionDirectory.standardizedFileURL
-                .deletingLastPathComponent().path == sessionsRoot.path else {
+        let sessionsRoot = Self.canonicalFileURL(
+            runtimeDirectory.appendingPathComponent("Sessions", isDirectory: true)
+        )
+        let sessionParent = Self.canonicalFileURL(
+            sessionDirectory.deletingLastPathComponent()
+        )
+        guard sessionParent == sessionsRoot else {
             throw PiAgentRuntimeError.protocolFailure(
-                "refused to rebuild a session outside WeiBei AgentRuntime"
+                "refused to remove a session outside WeiBei AgentRuntime"
             )
         }
         if FileManager.default.fileExists(atPath: sessionDirectory.path) {
@@ -1213,7 +1182,7 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         run: ActiveRun
     ) -> String? {
         guard run.allowsRelationProposal else {
-            return "PI proposed a relation outside a course Chat"
+            return "PI proposed a relation without a current course context"
         }
         guard proposal.contextRevision == run.contextRevision else {
             return "PI proposed a relation for a stale context"

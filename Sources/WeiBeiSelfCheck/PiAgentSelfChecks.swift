@@ -896,8 +896,19 @@ private func checkStudyAgentContext() throws {
     )
 
     try piRequire(PiAgentRuntimeError.unavailable.permitsAutomaticFallback, "PI startup failures may use the existing fallback")
+    try piRequire(!PiAgentRuntimeError.protocolFailure("wrong Chat session").permitsAutomaticFallback, "invalid PI session state is never replayed through another runtime")
     try piRequire(!PiAgentRuntimeError.agentFailed("model error").permitsAutomaticFallback, "accepted PI runs are never replayed automatically")
     try piRequire(!PiAgentRuntimeError.commandTimedOut("prompt").permitsAutomaticFallback, "unknown prompt acceptance is never replayed automatically")
+
+    let safeFailureMessage = AgentFailureKind.generic.userMessage(
+        language: .chinese,
+        detail: "PI 通信失败：get_state returned /private/var/internal/session.jsonl",
+        draftPreserved: true
+    )
+    try piRequire(
+        safeFailureMessage == "请求失败\n可直接重试。\n问题已保留在输入框。",
+        "user-facing failure bubbles do not expose PI commands or local paths"
+    )
 
     let diagnostic = PiAgentDiagnosticSanitizer.sanitize(
         #"Authorization: Bearer abcdefghijklmnop api_key="sk-sensitive-token""#,

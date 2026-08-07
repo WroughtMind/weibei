@@ -70,8 +70,9 @@ func runPiTerminalRuntimeSelfChecks() async throws {
     try await checkHostCourseToolBridge(fixture)
     try await checkHostCourseToolBridgeRejectsSymlinkRoot(fixture)
     try await checkMissingSessionStartsFreshNativeHistory(fixture)
-    try await checkWrongSessionStateRebuildsOnlyRequestedChat(fixture)
-    try await checkUnreadableStoredSessionRebuildsOnce(fixture)
+    try await checkEquivalentSessionDirectoryAliasIsAccepted(fixture)
+    try await checkWrongStoredSessionStateIsPreserved(fixture)
+    try await checkUnreadableStoredSessionIsPreserved(fixture)
     try await checkStandardProxyEnvironmentIsForwarded(fixture)
 }
 
@@ -595,7 +596,7 @@ private func checkRelationProposalUsesCurrentCourseCatalog(
             ]
         ),
         projectScope: StudyAgentProjectScope(
-            kind: .course,
+            kind: .global,
             chatID: "relation-proposal-chat",
             courseID: UUID().uuidString.lowercased()
         ),
@@ -904,7 +905,7 @@ private func checkMissingSessionStartsFreshNativeHistory(
     }
 }
 
-private func checkWrongSessionStateRebuildsOnlyRequestedChat(
+private func checkWrongStoredSessionStateIsPreserved(
     _ fixture: PiTerminalRuntimeFixture
 ) async throws {
     let runtimeDirectory = try fixture.workingDirectory(named: "WrongStateRuntime")
@@ -937,9 +938,58 @@ private func checkWrongSessionStateRebuildsOnlyRequestedChat(
         noteText: "",
         contextRevision: "wrong-state-recovery"
     )
-    _ = try await runtime.respond(
+    let failure: PiAgentRuntimeError?
+    do {
+        _ = try await runtime.respond(
+            to: request,
+            sessionID: sessionID,
+            workingDirectory: projectDirectory,
+            progress: nil
+        )
+        failure = nil
+    } catch let error as PiAgentRuntimeError {
+        failure = error
+    }
+    await runtime.shutdown()
+
+    let trace = try String(
+        contentsOf: projectDirectory.appendingPathComponent(".fake-pi-trace.log"),
+        encoding: .utf8
+    )
+    guard case let .protocolFailure(message) = failure,
+          message.contains("did not match the requested Chat session"),
+          trace.components(separatedBy: "launch\n").count - 1 == 1,
+          trace.contains("state-session=wrong\n"),
+          !trace.contains("command=prompt\n"),
+          FileManager.default.fileExists(atPath: corruptMarker.path),
+          FileManager.default.fileExists(atPath: siblingMarker.path) else {
+        throw PiTerminalRuntimeSelfCheckError.failed(
+            "错误会话状态触发了自动重建，或删除了已有 Chat 历史：\n\(trace)"
+        )
+    }
+}
+
+private func checkEquivalentSessionDirectoryAliasIsAccepted(
+    _ fixture: PiTerminalRuntimeFixture
+) async throws {
+    let projectDirectory = try fixture.workingDirectory(named: "PathAliasProject")
+    let runtime = PiAgentRuntime(
+        executableURL: fixture.executableURL,
+        runtimeDirectory: try fixture.workingDirectory(named: "PathAliasRuntime"),
+        runInactivityTimeoutNanoseconds: 2_000_000_000
+    )
+    let request = StudyAgentRequest(
+        purpose: .conversation,
+        question: "继续同一个会话",
+        materialTitle: "测试材料",
+        materialText: "测试正文",
+        noteTitle: "测试笔记",
+        noteText: "",
+        contextRevision: "path-alias"
+    )
+    let reply = try await runtime.respond(
         to: request,
-        sessionID: sessionID,
+        sessionID: UUID(uuidString: "12345678-3333-4444-5555-666666666666")!,
         workingDirectory: projectDirectory,
         progress: nil
     )
@@ -949,20 +999,15 @@ private func checkWrongSessionStateRebuildsOnlyRequestedChat(
         contentsOf: projectDirectory.appendingPathComponent(".fake-pi-trace.log"),
         encoding: .utf8
     )
-    guard trace.components(separatedBy: "launch\n").count - 1 == 2,
-          trace.contains("state-session=wrong\n"),
-          trace.contains("state-session=correct\n"),
-          trace.components(separatedBy: "command=prompt\n").count - 1 == 1,
-          trace.contains("recent=absent\n"),
-          !FileManager.default.fileExists(atPath: corruptMarker.path),
-          FileManager.default.fileExists(atPath: siblingMarker.path) else {
+    guard reply.text == "[材料：测试材料] 第 1 次回答",
+          trace.contains("state-path=alias\n") else {
         throw PiTerminalRuntimeSelfCheckError.failed(
-            "错误会话状态没有单次重建目标 Chat，或误伤了兄弟 Chat：\n\(trace)"
+            "同一会话目录的 /var 与 /private/var 写法没有被视为同一位置：\n\(trace)"
         )
     }
 }
 
-private func checkUnreadableStoredSessionRebuildsOnce(
+private func checkUnreadableStoredSessionIsPreserved(
     _ fixture: PiTerminalRuntimeFixture
 ) async throws {
     let runtimeDirectory = try fixture.workingDirectory(named: "UnreadableStateRuntime")
@@ -972,9 +1017,8 @@ private func checkUnreadableStoredSessionRebuildsOnce(
         .appendingPathComponent("Sessions", isDirectory: true)
         .appendingPathComponent(sessionID.uuidString.lowercased(), isDirectory: true)
     try FileManager.default.createDirectory(at: sessionDirectory, withIntermediateDirectories: true)
-    try Data("broken".utf8).write(
-        to: sessionDirectory.appendingPathComponent("corrupt-session")
-    )
+    let corruptMarker = sessionDirectory.appendingPathComponent("corrupt-session")
+    try Data("broken".utf8).write(to: corruptMarker)
     let runtime = PiAgentRuntime(
         executableURL: fixture.executableURL,
         runtimeDirectory: runtimeDirectory,
@@ -989,25 +1033,32 @@ private func checkUnreadableStoredSessionRebuildsOnce(
         noteText: "",
         contextRevision: "unreadable-state-recovery"
     )
-    _ = try await runtime.respond(
-        to: request,
-        sessionID: sessionID,
-        workingDirectory: projectDirectory,
-        progress: nil
-    )
+    let failure: PiAgentRuntimeError?
+    do {
+        _ = try await runtime.respond(
+            to: request,
+            sessionID: sessionID,
+            workingDirectory: projectDirectory,
+            progress: nil
+        )
+        failure = nil
+    } catch let error as PiAgentRuntimeError {
+        failure = error
+    }
     await runtime.shutdown()
 
     let trace = try String(
         contentsOf: projectDirectory.appendingPathComponent(".fake-pi-trace.log"),
         encoding: .utf8
     )
-    guard trace.components(separatedBy: "launch\n").count - 1 == 2,
+    guard case let .protocolFailure(message) = failure,
+          message.contains("could not read the requested Chat session"),
+          trace.components(separatedBy: "launch\n").count - 1 == 1,
           trace.contains("state-session=unreadable\n"),
-          trace.contains("state-session=correct\n"),
-          trace.components(separatedBy: "command=prompt\n").count - 1 == 1,
-          trace.contains("recent=absent\n") else {
+          !trace.contains("command=prompt\n"),
+          FileManager.default.fileExists(atPath: corruptMarker.path) else {
         throw PiTerminalRuntimeSelfCheckError.failed(
-            "已有 Pi 会话无法读取时没有只重建一次原生会话：\n\(trace)"
+            "已有 Pi 会话无法读取时被自动重建或删除：\n\(trace)"
         )
     }
 }
@@ -1153,6 +1204,7 @@ static int late_cancel_mode = 0;
 static int session_mode = 0;
 static int wrong_state_mode = 0;
 static int unreadable_state_mode = 0;
+static int path_alias_mode = 0;
 static int session_turn = 0;
 static char session_id[128] = "";
 static char session_directory[PATH_MAX] = "";
@@ -1403,11 +1455,13 @@ int main(int argc, char **argv) {
     }
     wrong_state_mode = strstr(cwd, "WrongStateProject") != NULL;
     unreadable_state_mode = strstr(cwd, "UnreadableStateProject") != NULL;
+    path_alias_mode = strstr(cwd, "PathAliasProject") != NULL;
     session_mode = strstr(cwd, "SessionProject") != NULL
         || strstr(cwd, "RecoveryProject") != NULL
         || strstr(cwd, "ProxyProject") != NULL
         || wrong_state_mode
-        || unreadable_state_mode;
+        || unreadable_state_mode
+        || path_alias_mode;
     load_session_turn();
     if (session_mode) {
         snprintf(trace_path, sizeof(trace_path), "%s/.fake-pi-trace.log", cwd);
@@ -1443,6 +1497,17 @@ int main(int argc, char **argv) {
         if (strcmp(type, "get_state") == 0) {
             char state[PATH_MAX + 512];
             const char *reported_session_id = session_id;
+            const char *reported_session_directory = session_directory;
+            char aliased_session_directory[PATH_MAX] = "";
+            if (path_alias_mode) {
+                if (strncmp(session_directory, "/private/", 9) == 0) {
+                    snprintf(aliased_session_directory, sizeof(aliased_session_directory), "%s", session_directory + 8);
+                } else {
+                    snprintf(aliased_session_directory, sizeof(aliased_session_directory), "/private%s", session_directory);
+                }
+                reported_session_directory = aliased_session_directory;
+                trace_line("state-path", "alias");
+            }
             if (unreadable_state_mode) {
                 char marker_path[PATH_MAX];
                 snprintf(marker_path, sizeof(marker_path), "%s/.fake-pi-returned-unreadable-state", cwd);
@@ -1479,7 +1544,7 @@ int main(int argc, char **argv) {
                 "{\"isStreaming\":false,\"sessionId\":\"%s\",\"messageCount\":%d,\"pendingMessageCount\":0,\"sessionFile\":\"%s/session.jsonl\"}",
                 reported_session_id,
                 session_turn * 2,
-                session_directory
+                reported_session_directory
             );
             respond(id, type, state);
         } else if (strcmp(type, "get_commands") == 0) {

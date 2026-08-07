@@ -880,7 +880,7 @@ public enum AgentFailureKind: String, Codable, Equatable, Sendable {
     /// Build a bilingual failure bubble body. Includes a stable marker for UI detection.
     public func userMessage(
         language: WeiBeiInterfaceLanguage,
-        detail: String?,
+        detail _: String?,
         draftPreserved: Bool = false
     ) -> String {
         let titleText = title(language: language)
@@ -893,10 +893,6 @@ public enum AgentFailureKind: String, Codable, Equatable, Sendable {
             header = language.text("请求失败：\(titleText)", "Request failed: \(titleText)")
         }
         var lines = [header, guidance(language: language)]
-        if let detail = detail?.trimmingCharacters(in: .whitespacesAndNewlines), !detail.isEmpty {
-            let clipped = detail.count > 280 ? String(detail.prefix(280)) + "…" : detail
-            lines.append(language.text("详情：\(clipped)", "Detail: \(clipped)"))
-        }
         if draftPreserved {
             lines.append(language.text("问题已保留在输入框。", "The question remains in the composer."))
         }
