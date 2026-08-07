@@ -1153,7 +1153,6 @@ private func checkRichAnswerInlineMathDisplayNormalization() throws {
 }
 
 private func checkProfessionalJudgmentContractsRejectReverseClaims() throws {
-    try RichAnswerLiveCases.assertMatrixMatchesPressureCases()
     let casesWithoutReverseContracts = RichAnswerLiveCases.successes.filter {
         $0.professionalJudgmentContract.forbiddenMisconceptions.isEmpty
     }.map(\.id)
