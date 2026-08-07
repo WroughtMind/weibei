@@ -532,6 +532,7 @@ final class WorkspaceStore: ObservableObject {
 
     private var notesByItemID: [String: String] = [:]
     private var pendingNoteWritesByItemID: [String: PendingNoteWriteState] = [:]
+    private var noteOperationErrorsByItemID: [String: String] = [:]
     private var noteBackingContentDigestsByItemID: [String: String] = [:]
     private var loadedCourseNoteTextByItemID: [String: String] = [:]
     private var courseNoteLoadTasksByItemID: [String: Task<Void, Never>] = [:]
@@ -8783,16 +8784,32 @@ final class WorkspaceStore: ObservableObject {
                     throw CourseRemovalError.latestStateNotSaved
                 }
             } else {
-                guard !requiresAvailableRoot,
-                      !dirtyPortableCourseIDs.contains(courseID),
-                      !blockedPortableCourseIDs.contains(courseID),
-                      !oversizedPortableCourseIDs.contains(courseID),
-                      coursePortableStateRevisions[courseID] != nil,
-                      coursePortableStateDigests[courseID] != nil,
-                      coursePortableStateMatchesLastSaved(
-                        courseID
-                      ) else {
+                let hasCourseOwnedItems = importedItems.contains { item in
+                    guard case .courseOwned(let ownerCourseID) = item.storage else {
+                        return false
+                    }
+                    return ownerCourseID == courseID
+                }
+                guard !hasCourseOwnedItems else {
                     throw CourseRemovalError.latestStateNotSaved
+                }
+                let isRootlessLegacyCourse =
+                    expectedCourse.sourceRootPath == nil
+                    && expectedCourse.sourceRootRelativePath == nil
+                    && expectedCourse.sourceRootIdentity == nil
+                    && expectedCourse.sourceRootBookmarkData == nil
+                if !isRootlessLegacyCourse {
+                    guard !requiresAvailableRoot,
+                          !dirtyPortableCourseIDs.contains(courseID),
+                          !blockedPortableCourseIDs.contains(courseID),
+                          !oversizedPortableCourseIDs.contains(courseID),
+                          coursePortableStateRevisions[courseID] != nil,
+                          coursePortableStateDigests[courseID] != nil,
+                          coursePortableStateMatchesLastSaved(
+                            courseID
+                          ) else {
+                        throw CourseRemovalError.latestStateNotSaved
+                    }
                 }
             }
 
@@ -8856,6 +8873,7 @@ final class WorkspaceStore: ObservableObject {
             courseNoteWritesInFlight.remove(itemID)
             notesByItemID.removeValue(forKey: itemID)
             pendingNoteWritesByItemID.removeValue(forKey: itemID)
+            noteOperationErrorsByItemID.removeValue(forKey: itemID)
             noteBackingContentDigestsByItemID.removeValue(forKey: itemID)
             loadedCourseNoteTextByItemID.removeValue(forKey: itemID)
             studyLocationsByItemID.removeValue(forKey: itemID)
@@ -10036,6 +10054,7 @@ final class WorkspaceStore: ObservableObject {
         courseNoteWritesInFlight.remove(itemID)
         notesByItemID.removeValue(forKey: itemID)
         pendingNoteWritesByItemID.removeValue(forKey: itemID)
+        noteOperationErrorsByItemID.removeValue(forKey: itemID)
         noteBackingContentDigestsByItemID.removeValue(forKey: itemID)
         loadedCourseNoteTextByItemID.removeValue(forKey: itemID)
         studyLocationsByItemID.removeValue(forKey: itemID)
@@ -20853,6 +20872,7 @@ final class WorkspaceStore: ObservableObject {
             await finishPendingCourseRemovalRecoveryIfNeeded()
             await recoverPendingCourseFileTransactionsInBackground()
             await reconcileCourseFilesNow()
+            retryRestoredPendingNoteWrites()
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 3_000_000_000)
                 guard !Task.isCancelled else { return }
@@ -21476,6 +21496,27 @@ final class WorkspaceStore: ObservableObject {
         (try? Data(contentsOf: url)).map(noteContentDigest)
     }
 
+    private func setNoteFileError(_ message: String?, for itemID: String) {
+        if let message {
+            noteOperationErrorsByItemID[itemID] = message
+        } else {
+            noteOperationErrorsByItemID.removeValue(forKey: itemID)
+        }
+        guard activeNoteItemID == itemID else { return }
+        noteFileError = message
+    }
+
+    private func retryRestoredPendingNoteWrites() {
+        for item in importedItems where item.editsBackingMarkdownFile {
+            guard pendingNoteWritesByItemID[item.id]?
+                    .baselineContentDigest != nil,
+                  let markdown = notesByItemID[item.id] else {
+                continue
+            }
+            persistNote(markdown, for: item)
+        }
+    }
+
     private func scheduleCourseNoteLoad(_ item: StudyItem) {
         guard let access = verifiedCourseOwnedNoteAccess(
             item
@@ -21550,21 +21591,22 @@ final class WorkspaceStore: ObservableObject {
                         pendingWrite.baselineContentDigest == nil
                         || pendingWrite.baselineContentDigest
                             != result.snapshot.sha256
-                    noteFileError = hasConflict
-                        ? ui(
-                            "检测到笔记冲突：魏碑草稿和外部文件都已保留，请对照后再处理。",
-                            "A note conflict was detected. Both the WeiBei draft and external file were kept for review."
-                        )
-                        : ui(
-                            "正在保留尚未写回原 Markdown 的最新编辑。",
-                            "Keeping the latest edit that has not yet been written back to the original Markdown."
-                        )
+                    if hasConflict {
+                        if activeNoteItemID == itemID {
+                            noteFileError = ui(
+                                "检测到笔记冲突：魏碑草稿和外部文件都已保留，请对照后再处理。",
+                                "A note conflict was detected. Both the WeiBei draft and external file were kept for review."
+                            )
+                        }
+                    } else if activeNoteItemID == itemID {
+                        noteFileError = noteOperationErrorsByItemID[itemID]
+                    }
                 } else {
                     if activeNoteItemID == itemID,
                        displayedText == noteText {
                         noteText = markdown
                     }
-                    noteFileError = nil
+                    setNoteFileError(nil, for: itemID)
                 }
                 courseDocumentSearchIndex.schedule([
                     importedItems[currentIndex]
@@ -21574,9 +21616,12 @@ final class WorkspaceStore: ObservableObject {
                 guard courseNoteLoadGenerationByItemID[itemID] == generation else {
                     return
                 }
-                noteFileError = ui(
-                    "无法读取原 Markdown：\(url.lastPathComponent)",
-                    "Could not read original Markdown: \(url.lastPathComponent)"
+                setNoteFileError(
+                    ui(
+                        "无法读取原 Markdown：\(url.lastPathComponent)",
+                        "Could not read original Markdown: \(url.lastPathComponent)"
+                    ),
+                    for: itemID
                 )
             }
         }
@@ -21606,15 +21651,11 @@ final class WorkspaceStore: ObservableObject {
             }
             let hasConflict = diskDigest != nil
                 && (pendingWrite.baselineContentDigest == nil || pendingWrite.baselineContentDigest != diskDigest)
-            noteFileError = hasConflict
-                ? ui(
+            noteFileError = hasConflict ? ui(
                     "检测到笔记冲突：魏碑草稿和外部文件都已保留，请对照后再处理。",
                     "A note conflict was detected. Both the WeiBei draft and external file were kept for review."
                 )
-                : ui(
-                    "正在保留尚未写回原 Markdown 的最新编辑。",
-                    "Keeping the latest edit that has not yet been written back to the original Markdown."
-                )
+                : noteOperationErrorsByItemID[item.id]
             return cleanLegacyPlaceholder(cached)
         }
         guard item.editsBackingMarkdownFile, let url = item.url else {
@@ -22012,9 +22053,12 @@ final class WorkspaceStore: ObservableObject {
                 itemID: itemID,
                 fallbackURL: nil
             )
-            noteFileError = ui(
-                "原 Markdown 已移动或不可用，最新编辑已安全保留在课程中。",
-                "The original Markdown moved or is unavailable. The latest edit is safely retained in the course."
+            setNoteFileError(
+                ui(
+                    "原 Markdown 已移动或不可用，最新编辑已安全保留在课程中。",
+                    "The original Markdown moved or is unavailable. The latest edit is safely retained in the course."
+                ),
+                for: itemID
             )
             save()
             return
@@ -22026,9 +22070,12 @@ final class WorkspaceStore: ObservableObject {
         )
         if Self.mustSaveImmediately {
             guard performSaveNow() else {
-                noteFileError = ui(
-                    "最新编辑尚未安全保存到工作区，暂不写回原 Markdown。",
-                    "The latest edit is not yet safely stored in the workspace, so the original Markdown was not changed."
+                setNoteFileError(
+                    ui(
+                        "最新编辑尚未安全保存到工作区，暂不写回原 Markdown。",
+                        "The latest edit is not yet safely stored in the workspace, so the original Markdown was not changed."
+                    ),
+                    for: itemID
                 )
                 return
             }
@@ -22038,9 +22085,12 @@ final class WorkspaceStore: ObservableObject {
         Task { @MainActor [weak self] in
             guard let self else { return }
             guard await self.persistWorkspaceNow() else {
-                self.noteFileError = self.ui(
-                    "最新编辑尚未安全保存到工作区，暂不写回原 Markdown。",
-                    "The latest edit is not yet safely stored in the workspace, so the original Markdown was not changed."
+                self.setNoteFileError(
+                    self.ui(
+                        "最新编辑尚未安全保存到工作区，暂不写回原 Markdown。",
+                        "The latest edit is not yet safely stored in the workspace, so the original Markdown was not changed."
+                    ),
+                    for: itemID
                 )
                 return
             }
@@ -22052,6 +22102,7 @@ final class WorkspaceStore: ObservableObject {
         guard !courseNoteWritesInFlight.contains(itemID),
               let markdown = notesByItemID[itemID],
               let pendingWrite = pendingNoteWritesByItemID[itemID],
+              let expectedDigest = pendingWrite.baselineContentDigest,
               let item = importedItems.first(where: { $0.id == itemID }),
               item.isNotebookNote,
               case .courseOwned = item.storage,
@@ -22064,7 +22115,6 @@ final class WorkspaceStore: ObservableObject {
         courseNoteLoadTasksByItemID[itemID]?.cancel()
         courseNoteLoadTasksByItemID[itemID] = nil
         courseNoteWritesInFlight.insert(itemID)
-        let expectedDigest = pendingWrite.baselineContentDigest
         let task = Task { @MainActor [weak self] in
             guard let self else { return }
             do {
@@ -22104,7 +22154,7 @@ final class WorkspaceStore: ObservableObject {
                 if notesByItemID[itemID] == markdown {
                     notesByItemID.removeValue(forKey: itemID)
                     pendingNoteWritesByItemID.removeValue(forKey: itemID)
-                    noteFileError = nil
+                    setNoteFileError(nil, for: itemID)
                 } else {
                     pendingNoteWritesByItemID[itemID] = PendingNoteWriteState(
                         baselineContentDigest: result.snapshot.sha256
@@ -22138,10 +22188,12 @@ final class WorkspaceStore: ObservableObject {
                 }
                 courseNoteWritesInFlight.remove(itemID)
                 courseNoteWriteTasksByItemID[itemID] = nil
-                noteFileError = ui(
-                    "检测到笔记冲突：没有覆盖外部文件，魏碑草稿也已保留。请对照两份内容后再处理。",
-                    "A note conflict was detected. The external file was not overwritten, and the WeiBei draft was retained for review."
-                )
+                if activeNoteItemID == itemID {
+                    noteFileError = ui(
+                        "检测到笔记冲突：没有覆盖外部文件，魏碑草稿也已保留。请对照两份内容后再处理。",
+                        "A note conflict was detected. The external file was not overwritten, and the WeiBei draft was retained for review."
+                    )
+                }
                 scheduleCourseNoteLoad(item)
                 save()
             } catch {
@@ -22151,9 +22203,12 @@ final class WorkspaceStore: ObservableObject {
                 }
                 courseNoteWritesInFlight.remove(itemID)
                 courseNoteWriteTasksByItemID[itemID] = nil
-                noteFileError = ui(
-                    "无法写回原 Markdown：\(url.lastPathComponent)",
-                    "Could not write original Markdown: \(url.lastPathComponent)"
+                setNoteFileError(
+                    ui(
+                        "无法写回原 Markdown：\(url.lastPathComponent)",
+                        "Could not write original Markdown: \(url.lastPathComponent)"
+                    ),
+                    for: itemID
                 )
                 save()
             }
@@ -22206,7 +22261,10 @@ final class WorkspaceStore: ObservableObject {
         if item.editsBackingMarkdownFile {
             guard let index = importedItems.firstIndex(where: { $0.id == noteItemID }) else {
                 retainPendingNoteWrite(markdown, itemID: noteItemID, fallbackURL: item.url)
-                noteFileError = ui("无法确认原 Markdown 的课程身份。", "Could not resolve the original Markdown identity.")
+                setNoteFileError(
+                    ui("无法确认原 Markdown 的课程身份。", "Could not resolve the original Markdown identity."),
+                    for: noteItemID
+                )
                 save()
                 return
             }
@@ -22217,9 +22275,12 @@ final class WorkspaceStore: ObservableObject {
             let resolution = resolveTrackedImportedFile(at: index)
             guard let url = resolution.url else {
                 retainPendingNoteWrite(markdown, itemID: noteItemID, fallbackURL: item.url)
-                noteFileError = ui(
-                    "原 Markdown 已移动或不可用，最新编辑已安全保留在课程中。",
-                    "The original Markdown moved or is unavailable. The latest edit is safely retained in the course."
+                setNoteFileError(
+                    ui(
+                        "原 Markdown 已移动或不可用，最新编辑已安全保留在课程中。",
+                        "The original Markdown moved or is unavailable. The latest edit is safely retained in the course."
+                    ),
+                    for: noteItemID
                 )
                 save()
                 return
@@ -22241,26 +22302,34 @@ final class WorkspaceStore: ObservableObject {
             }
             if hasConflict {
                 retainPendingNoteWrite(markdown, itemID: noteItemID, fallbackURL: url)
-                noteFileError = ui(
-                    "检测到笔记冲突：没有覆盖外部文件，魏碑草稿也已保留。请对照两份内容后再处理。",
-                    "A note conflict was detected. The external file was not overwritten, and the WeiBei draft was retained for review."
-                )
+                if activeNoteItemID == noteItemID {
+                    noteFileError = ui(
+                        "检测到笔记冲突：没有覆盖外部文件，魏碑草稿也已保留。请对照两份内容后再处理。",
+                        "A note conflict was detected. The external file was not overwritten, and the WeiBei draft was retained for review."
+                    )
+                }
                 save()
                 return
             }
             do {
-                try markdown.write(to: url, atomically: true, encoding: .utf8)
+                try notebookMarkdownWriter(markdown, url)
                 notesByItemID.removeValue(forKey: noteItemID)
                 pendingNoteWritesByItemID.removeValue(forKey: noteItemID)
                 noteBackingContentDigestsByItemID[noteItemID] = Self.noteContentDigest(Data(markdown.utf8))
-                noteFileError = nil
+                setNoteFileError(nil, for: noteItemID)
                 let refreshedItem = refreshImportedFileTracking(itemID: noteItemID, url: url)
                     ?? importedItems[index]
                 courseDocumentSearchIndex.schedule([refreshedItem])
                 save()
             } catch {
                 retainPendingNoteWrite(markdown, itemID: noteItemID, fallbackURL: url)
-                noteFileError = ui("无法写回原 Markdown：\(url.lastPathComponent)", "Could not write original Markdown: \(url.lastPathComponent)")
+                setNoteFileError(
+                    ui(
+                        "无法写回原 Markdown：\(url.lastPathComponent)",
+                        "Could not write original Markdown: \(url.lastPathComponent)"
+                    ),
+                    for: noteItemID
+                )
                 save()
             }
             return

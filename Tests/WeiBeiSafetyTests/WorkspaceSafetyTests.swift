@@ -8,21 +8,18 @@ final class WorkspaceSafetyTests: XCTestCase {
         setenv("WEIBEI_SAFETY_TEST_MODE", "1", 1)
     }
 
-    func testImportedFileIdentitySafety() async throws {
-        try await MainActor.run {
-            try ImportedIdentitySelfCheck.run()
-        }
+    @MainActor
+    func testImportedFileIdentitySafety() throws {
+        try ImportedIdentitySelfCheck.run()
     }
 
-    func testCourseProjectDataSafety() async throws {
-        try await MainActor.run {
-            try CourseProjectRootSelfCheck.run()
-        }
+    @MainActor
+    func testCourseProjectDataSafety() throws {
+        try CourseProjectRootSelfCheck.run()
     }
 
-    func testBackgroundWorkspacePersistence() async throws {
-        try await MainActor.run {
-            try CourseProjectRootSelfCheck.runBackgroundWorkspacePersistenceOnly()
-        }
+    @MainActor
+    func testBackgroundWorkspacePersistence() throws {
+        try CourseProjectRootSelfCheck.runBackgroundWorkspacePersistenceOnly()
     }
 }

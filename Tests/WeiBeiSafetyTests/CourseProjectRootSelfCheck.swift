@@ -82,7 +82,6 @@ enum CourseProjectRootSelfCheck {
         try courseRootRefreshRebindsOwnedItemsAndRollsBackTogether()
         try courseOwnedAndGlobalNotesStaySeparated()
         try largeFileWorkStaysOffMainThread()
-        try backgroundWorkspacePersistenceIsOrderedAndDurable()
         try courseMarkdownConditionalWritePreservesFinderContentAndRecovers()
         try courseMarkdownPostPlacementReplacementPreservesAllContent()
         try firstScanAndFinderReconciliationPreserveIdentity()
@@ -100,6 +99,7 @@ enum CourseProjectRootSelfCheck {
         try step("旧课程首次整理") {
             try rootlessLegacyCourseIsOrganizedByCopy()
         }
+        try rootlessLegacyCourseCanBeRemovedFromWeiBei()
         try sharedRepairFailurePreservesMembershipUntilEntryDisappears()
         try sharedConversionStagesBesideSharedDestination()
         try sharedPostPlacementReplacementPreservesVerifiedOriginal()
@@ -7565,6 +7565,106 @@ enum CourseProjectRootSelfCheck {
                 && store.importedItems.contains { $0.id == item.id }
                 && (try Data(contentsOf: sourceURL)) == original,
             "重启后旧课程整理结果或外部原件丢失"
+        )
+    }
+
+    @MainActor
+    private static func rootlessLegacyCourseCanBeRemovedFromWeiBei() throws {
+        let fixture = try Fixture(name: "rootless-course-removal")
+        defer { fixture.remove() }
+        let source = fixture.root.appendingPathComponent("旧课程外部资料.txt")
+        let sourceData = Data("原文件不能被普通移除碰到".utf8)
+        try sourceData.write(to: source)
+        var store = makeStore(fixture: fixture)
+        let item = try require(
+            store.importFiles(
+                [source],
+                selectsFirstImportedItem: false
+            ).first,
+            "旧课程外部资料没有登记"
+        )
+        let courseID = store.installRootlessCourseForSelfCheck(
+            title: "没有文件夹的旧课程"
+        )
+        store.assignItemIDs([item.id], to: courseID)
+
+        try expectFailure("无文件夹课程移到废纸篓") {
+            try store.moveCourseFolderToTrashForSelfCheck(courseID)
+        }
+        try check(
+            store.course(withID: courseID) != nil
+                && store.courseIDs(for: item.id) == [courseID]
+                && (try Data(contentsOf: source)) == sourceData,
+            "无文件夹课程误进废纸篓路径或改动了原文件"
+        )
+
+        try store.removeCourseFromWeiBeiForSelfCheck(courseID)
+        try check(
+            store.course(withID: courseID) == nil
+                && store.courseIDs(for: item.id).isEmpty
+                && store.item(withID: item.id) != nil
+                && (try Data(contentsOf: source)) == sourceData,
+            "普通移除没有只解除旧课程关系，或改动了原文件"
+        )
+
+        store = makeStore(fixture: fixture)
+        try check(
+            store.course(withID: courseID) == nil
+                && store.item(withID: item.id) != nil
+                && (try Data(contentsOf: source)) == sourceData,
+            "旧课程在重开后复活，或外部资料没有保留"
+        )
+
+        let guardedFixture = try Fixture(name: "rootless-owned-item-removal")
+        defer { guardedFixture.remove() }
+        let guardedSource = guardedFixture.root
+            .appendingPathComponent("不能随课程消失的资料.txt")
+        let guardedData = Data("课程自有条目没有课程根时必须保留".utf8)
+        try guardedData.write(to: guardedSource)
+        let guardedCourse = Course(
+            title: "异常的无根课程",
+            sourceRootRelativePath: "已经丢失的课程文件夹"
+        )
+        let guardedItem = StudyItem(
+            id: "imported:rootless-owned-item",
+            title: "不能随课程消失的资料",
+            subtitle: guardedSource.lastPathComponent,
+            kind: .text,
+            urlPath: guardedSource.path,
+            importedFileIdentity: CourseProjectFileWorker.identity(
+                at: guardedSource
+            ),
+            isSample: false,
+            storage: .courseOwned(ownerCourseID: guardedCourse.id)
+        )
+        let guardedSnapshot = PersistedWorkspace(
+            importedItems: [guardedItem],
+            courses: [guardedCourse],
+            courseItemMemberships: [
+                CourseItemMembership(
+                    courseID: guardedCourse.id,
+                    itemID: guardedItem.id
+                ),
+            ],
+            activeCourseID: guardedCourse.id,
+            noteSourceLinksMigrationVersion: 1
+        )
+        try JSONEncoder().encode(guardedSnapshot).write(
+            to: guardedFixture.workspaceDirectory
+                .appendingPathComponent("workspace.json"),
+            options: [.atomic]
+        )
+        let guardedStore = makeStore(fixture: guardedFixture)
+        try expectFailure("无根课程仍含课程自有条目") {
+            try guardedStore.removeCourseFromWeiBeiForSelfCheck(
+                guardedCourse.id
+            )
+        }
+        try check(
+            guardedStore.course(withID: guardedCourse.id) != nil
+                && guardedStore.item(withID: guardedItem.id) != nil
+                && (try Data(contentsOf: guardedSource)) == guardedData,
+            "无根课程的安全闸门没有保住课程自有条目"
         )
     }
 
