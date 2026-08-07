@@ -71,6 +71,10 @@ struct SettingsView: View {
             store.shutdownAgentRuntime()
             store.setAgentAuthMethod(.subscription)
             store.setAgentProviderID(provider)
+            store.recordAgentAuthenticationSuccess(
+                provider: provider,
+                authMethod: .subscription
+            )
             if let firstModel = oauthService.models(providerID: provider.piProviderName).first {
                 store.updateModelName(firstModel)
             }

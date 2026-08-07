@@ -288,14 +288,19 @@ extension SettingsView {
             VStack(alignment: .trailing, spacing: 8) {
                 let provider = currentOAuthProvider
                 HStack(spacing: 8) {
-                    if let provider, oauthService.isLinked(provider) {
-                        settingsPill(
-                            title: store.ui("登录凭据已保存", "Credentials stored"),
-                            icon: "key.fill",
-                            active: true
-                        )
-                    }
                     if let provider {
+                        let requiresLogin = store.agentAuthenticationStatus.requiresLogin(for: provider)
+                        if oauthService.isLinked(provider) || requiresLogin {
+                            settingsPill(
+                                title: requiresLogin
+                                    ? store.ui("需要重新登录", "Sign in again")
+                                    : store.ui("已连接", "Linked"),
+                                icon: requiresLogin
+                                    ? "exclamationmark.triangle.fill"
+                                    : "checkmark.seal.fill",
+                                active: !requiresLogin
+                            )
+                        }
                         Button {
                             guard !oauthService.isLoggingIn else { return }
                             oauthService.startLogin(provider)
