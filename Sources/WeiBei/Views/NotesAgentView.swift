@@ -1562,8 +1562,8 @@ struct MarkdownPreviewView: View {
     /// frame height until the next real measurement instead of collapsing to
     /// the 44pt loading height on every append (which strobed the chat).
     var preservesHeightAcrossMarkdownChanges = false
-    /// Pass-through to RichMarkdownEditorView — streaming prefix only.
-    var prefersIncrementalAppends = false
+    /// Pass-through to Milkdown's cumulative document-diff streaming session.
+    var streamsMarkdownUpdates = false
     var onWikiLink: (String) -> Void = { _ in }
     var onSourceReference: (String) -> Void = { _ in }
     var onAppShortcut: (String, NSEvent.ModifierFlags) -> Bool = { _, _ in false }
@@ -1593,7 +1593,7 @@ struct MarkdownPreviewView: View {
             interfaceLanguage: interfaceLanguage,
             isCompactPreview: compact,
             isChatWideTypography: isChatWideTypography,
-            prefersIncrementalAppends: prefersIncrementalAppends,
+            streamsMarkdownUpdates: streamsMarkdownUpdates,
             onSelectionChange: onSelectionChange,
             onAskAgentWithSelection: onSelectionChange,
             onContentHeightChange: { height in
@@ -1928,7 +1928,10 @@ struct AgentPaneView: View {
                                     agentReadingColumn(
                                         alignment: .leading
                                     ) {
-                                        AgentStreamingResponse(text: store.agentStreamingText)
+                                        AgentStreamingResponse(
+                                            text: store.agentStreamingText,
+                                            isChatWideTypography: comfy
+                                        )
                                     }
                                     .id("agent-streaming-response")
                                     .transition(WeiBeiTransition.message)
@@ -3097,17 +3100,17 @@ struct FloatingSelectionAgentView: View {
                     }
 
                     ForEach(visibleFloatingMessages) { message in
+                        let displayText = store.agentDisplayText(for: message)
                         if message.completionState == .generating
-                            && message.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                            && displayText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                             AgentThinkingIndicator()
                                 .id(message.id)
                                 .padding(.vertical, 4)
                         } else {
-                            floatBubble(
-                                messageID: message.id,
+                            FloatingSelectionMessageBubble(
+                                message: message,
                                 roleLabel: message.role == .user ? store.ui("你", "You") : "WeiBei",
                                 text: floatingText(for: message),
-                                isUser: message.role == .user,
                                 isError: WorkspaceStore.isAgentFailureMessage(message.text)
                             )
                         }
@@ -3116,7 +3119,11 @@ struct FloatingSelectionAgentView: View {
                     if store.isAgentRunningInActiveChat
                         && !store.hasPersistedGeneratingAgentReply
                         && !store.agentStreamingText.isEmpty {
-                        floatStreamingBubble(text: store.agentStreamingText)
+                        AgentStreamingResponse(
+                            text: store.agentStreamingText,
+                            isChatWideTypography: false,
+                            compact: true
+                        )
                             .id("selection-float-streaming")
                     }
 
@@ -3194,63 +3201,6 @@ struct FloatingSelectionAgentView: View {
             .accessibilityLabel(Text(store.ui("调整选区对话大小", "Resize selection chat")))
     }
 
-    private func floatBubble(messageID: UUID, roleLabel: String, text: String, isUser: Bool, isError: Bool = false) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            if isUser {
-                Text(roleLabel)
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundStyle(WeiBeiTheme.link.opacity(0.85))
-            } else {
-                HStack(spacing: 6) {
-                    Text("WeiBei")
-                        .font(WeiBeiTypography.englishBrandFont(size: 9.8, weight: .semibold))
-                        .foregroundStyle(isError ? WeiBeiTheme.cinnabar : WeiBeiTheme.cinnabar.opacity(0.76))
-                    if !isError {
-                        Text("PI")
-                            .font(.system(size: 9.5, weight: .semibold))
-                            .foregroundStyle(WeiBeiTheme.secondaryInk)
-                    }
-                }
-            }
-            if isError {
-                Text(text)
-                    .font(.system(size: 13))
-                    .foregroundStyle(WeiBeiTheme.cinnabar)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .allowsHitTesting(false)
-            } else {
-                // Same markdown path as immersive chat (`AgentMessageMarkdownText`).
-                AgentMessageMarkdownText(
-                    text: text,
-                    rendersRichMarkdown: !isUser,
-                    compact: true,
-                    isChatWideTypography: false,
-                    usesFinalizedKaTeX: !isUser,
-                    messageID: messageID
-                )
-            }
-        }
-        .padding(.vertical, 3)
-    }
-
-    private func floatStreamingBubble(text: String) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 6) {
-                Text("WeiBei")
-                    .font(WeiBeiTypography.englishBrandFont(size: 9.8, weight: .semibold))
-                    .foregroundStyle(WeiBeiTheme.cinnabar.opacity(0.76))
-                Text("PI")
-                    .font(.system(size: 9.5, weight: .semibold))
-                    .foregroundStyle(WeiBeiTheme.secondaryInk)
-            }
-            // Streaming: native text only (no KaTeX WebView mid-stream).
-            AgentStreamingMarkdownText(text: text, compact: true)
-        }
-        .padding(.vertical, 3)
-        .accessibilityLabel(Text(store.ui("PI 正在回答", "PI is responding")))
-    }
-
     private static func selectionTagLabel(_ text: String, limit: Int = 18) -> String {
         let cleaned = text.trimmingCharacters(in: .whitespacesAndNewlines)
             .replacingOccurrences(of: "\n", with: " ")
@@ -3274,7 +3224,6 @@ struct FloatingSelectionAgentView: View {
     }
 
     private var floatingFeedHeight: CGFloat {
-        if store.isAgentRunningInActiveChat { return 160 }
         if visibleFloatingMessages.isEmpty { return 88 }
         switch visibleFloatingMessages.count {
         case 1: return 130
@@ -3291,7 +3240,7 @@ struct FloatingSelectionAgentView: View {
             }
             return store.ui("未配置密钥。设置后会结合\(store.agentPromptScope)和已选文本片段作答。", "No key is configured. After setup, answers will use \(store.agentPromptScope) and selected text fragments.")
         }
-        return message.text
+        return store.agentDisplayText(for: message)
     }
 
     private func isCredentialNotice(_ message: AgentMessage) -> Bool {
@@ -3388,6 +3337,75 @@ private struct SelectionFloatChrome: ViewModifier {
     }
 }
 
+private struct FloatingSelectionMessageBubble: View {
+    @EnvironmentObject private var store: WorkspaceStore
+    var message: AgentMessage
+    var roleLabel: String
+    var text: String
+    var isError = false
+
+    private var isUser: Bool {
+        message.role == .user
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            messageHeader
+            if isError {
+                Text(text)
+                    .font(.system(size: 13))
+                    .foregroundStyle(WeiBeiTheme.cinnabar)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .allowsHitTesting(false)
+            } else {
+                finalizedMessage
+            }
+        }
+        .padding(.vertical, 3)
+    }
+
+    @ViewBuilder
+    private var messageHeader: some View {
+        if isUser {
+            Text(roleLabel)
+                .font(.system(size: 10, weight: .medium))
+                .foregroundStyle(WeiBeiTheme.link.opacity(0.85))
+        } else {
+            HStack(spacing: 6) {
+                Text("WeiBei")
+                    .font(WeiBeiTypography.englishBrandFont(size: 9.8, weight: .semibold))
+                    .foregroundStyle(isError ? WeiBeiTheme.cinnabar : WeiBeiTheme.cinnabar.opacity(0.76))
+                if !isError {
+                    Text("PI")
+                        .font(.system(size: 9.5, weight: .semibold))
+                        .foregroundStyle(WeiBeiTheme.secondaryInk)
+                    if message.completionState == .generating,
+                       let activity = store.agentActivityText {
+                        Text(activity)
+                            .font(.system(size: 9.5))
+                            .foregroundStyle(WeiBeiTheme.secondaryInk.opacity(0.82))
+                            .lineLimit(1)
+                    }
+                }
+            }
+        }
+    }
+
+    private var finalizedMessage: some View {
+        AgentMessageMarkdownText(
+            text: text,
+            rendersRichMarkdown: !isUser,
+            compact: true,
+            isChatWideTypography: false,
+            usesFinalizedKaTeX: !isUser,
+            messageID: message.id,
+            keepsMarkdownSurfaceMounted: !isUser && !isError,
+            isStreaming: message.completionState == .generating
+        )
+    }
+}
+
 private struct AgentBubble: View {
     @EnvironmentObject private var store: WorkspaceStore
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -3395,17 +3413,6 @@ private struct AgentBubble: View {
     var isChatWideTypography = false
     @State private var hovering = false
     @State private var copiedMessage = false
-    /// True only if this bubble streamed in the current session — history rows
-    /// mount straight into the finalized renderer with no handoff.
-    @State private var sawStreamingThisSession = false
-    @State private var finalizedRendererWarm = false
-
-    private var streamingHandoffActive: Bool {
-        sawStreamingThisSession
-            && !finalizedRendererWarm
-            && !(message.richAnswer?.mode == .rich && message.richAnswer?.scenes.isEmpty == false)
-            && !isFailureMessage
-    }
 
     var body: some View {
         Group {
@@ -3473,7 +3480,7 @@ private struct AgentBubble: View {
     private func copyMessage() {
         let markdown = isUser
             ? message.text
-            : AgentCitationParser.parse(message.text).displayText
+            : AgentCitationParser.parse(store.agentDisplayText(for: message)).displayText
         guard !markdown.isEmpty else { return }
         NSPasteboard.general.clearContents()
         if NSPasteboard.general.setString(markdown, forType: .string) {
@@ -3559,8 +3566,8 @@ private struct AgentBubble: View {
         } else {
             regularMessageContent
                 .padding(.vertical, 10)
-                .padding(.leading, hasRenderableRichAnswer ? 0 : 20)
-                .padding(.trailing, hasRenderableRichAnswer ? 0 : 8)
+                .padding(.leading, 20)
+                .padding(.trailing, 8)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .contentShape(Rectangle())
                 // Assistant messages no longer carry a cinnabar leading mark;
@@ -3569,7 +3576,8 @@ private struct AgentBubble: View {
     }
 
     private var regularMessageContent: some View {
-        let citationParse = AgentCitationParser.parse(message.text)
+        let answerText = store.agentDisplayText(for: message)
+        let citationParse = AgentCitationParser.parse(answerText)
         let availableSources = message.sources.filter {
             store.canOpenAgentReplySource($0)
         }
@@ -3581,91 +3589,45 @@ private struct AgentBubble: View {
                 return true
             }
         }
+        let displayedStreamingText = store.agentReplyDisplayedStreamingText(message)
         return VStack(alignment: .leading, spacing: 8) {
             messageMetadata
 
             if message.completionState == .generating
-                && message.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                && answerText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 AgentThinkingIndicator()
-            } else if message.completionState == .generating || streamingHandoffActive {
-                // Seamless finalize: the streaming subtree keeps its identity
-                // across completion while the finalized WebView warms hidden
-                // underneath; destroying it at completion flashed the whole
-                // answer as raw text until the new WebView measured.
-                ZStack(alignment: .topLeading) {
-                    if message.completionState != .generating {
-                        if !availableSources.isEmpty {
-                            AgentMessageMarkdownText(
-                                text: message.text,
-                                rendersRichMarkdown: true,
-                                isChatWideTypography: isChatWideTypography,
-                                usesFinalizedKaTeX: true,
-                                messageID: message.id,
-                                sources: availableSources,
-                                onActivateSource: { source in
-                                    activateSource(source)
-                                },
-                                suppressesLoadingOverlay: true,
-                                onFinalizedRenderReady: { finalizedRendererWarm = true }
-                            )
-                        } else {
-                            AgentMessageMarkdownText(
-                                text: citationParse.displayText,
-                                rendersRichMarkdown: true,
-                                isChatWideTypography: isChatWideTypography,
-                                usesFinalizedKaTeX: true,
-                                messageID: message.id,
-                                suppressesLoadingOverlay: true,
-                                onFinalizedRenderReady: { finalizedRendererWarm = true }
-                            )
-                        }
-                    }
-                    AgentStreamingResponse(text: message.text, showsBrandHeader: false)
-                        .onAppear { sawStreamingThisSession = true }
-                        .allowsHitTesting(message.completionState == .generating)
-                }
-                .task(id: message.completionState) {
-                    // Handoff failsafe: if the finalized WebView never reports
-                    // (process pressure, missed measure), fall back to the
-                    // normal finalized presentation instead of pinning the
-                    // streaming view forever.
-                    guard message.completionState != .generating else { return }
-                    try? await Task.sleep(nanoseconds: 2_500_000_000)
-                    if !finalizedRendererWarm {
-                        finalizedRendererWarm = true
-                    }
-                }
             } else if let richAnswer = message.richAnswer,
                richAnswer.mode == .rich,
-               !richAnswer.scenes.isEmpty {
+               !richAnswer.scenes.isEmpty,
+               !displayedStreamingText {
                 richAnswerFlow(richAnswer)
                 if !availableSources.isEmpty {
                     AgentReplySourceTagRow(sources: availableSources) { source in
                         activateSource(source)
                     }
                 }
-            } else if !availableSources.isEmpty {
-                AgentMessageMarkdownText(
-                    text: message.text,
-                    rendersRichMarkdown: true,
-                    isChatWideTypography: isChatWideTypography,
-                    usesFinalizedKaTeX: !isFailureMessage,
-                    messageID: message.id,
-                    sources: availableSources,
-                    onActivateSource: { source in
-                        activateSource(source)
-                    }
-                )
             } else {
-                // Hang-proof agent chat: finalized turns use KaTeX with frozen height;
-                // failures stay native text (no WebView). Never height→scroll.
+                // One surface owns the answer from its first rendered token through
+                // completion. State changes may freeze/cache it, but never replace it.
                 AgentMessageMarkdownText(
                     text: citationParse.displayText,
                     rendersRichMarkdown: true,
                     isChatWideTypography: isChatWideTypography,
                     usesFinalizedKaTeX: !isFailureMessage,
-                    messageID: message.id
+                    messageID: message.id,
+                    keepsMarkdownSurfaceMounted: !isFailureMessage,
+                    isStreaming: message.completionState == .generating
                 )
+                if let richAnswer = message.richAnswer,
+                   richAnswer.mode == .rich,
+                   !richAnswer.scenes.isEmpty {
+                    richAnswerSceneFlow(richAnswer)
+                }
+                if !availableSources.isEmpty {
+                    AgentReplySourceTagRow(sources: availableSources) { source in
+                        activateSource(source)
+                    }
+                }
             }
 
             if !legacyCitations.isEmpty {
@@ -3790,6 +3752,12 @@ private struct AgentBubble: View {
         }
     }
 
+    private func richAnswerSceneFlow(_ presentation: RichAnswerPresentation) -> some View {
+        var scenesOnly = presentation
+        scenesOnly.parts = presentation.resolvedParts.filter { $0.kind == .scene }
+        return richAnswerFlow(scenesOnly)
+    }
+
     private func scopedRichAnswer(
         _ presentation: RichAnswerPresentation,
         sceneID: String
@@ -3825,6 +3793,13 @@ private struct AgentBubble: View {
                 Text(backendLabel(backend))
                     .font(.system(size: 9.5, weight: .semibold))
                     .foregroundStyle(WeiBeiTheme.secondaryInk)
+            }
+            if message.completionState == .generating,
+               let activity = store.agentActivityText {
+                Text(activity)
+                    .font(.system(size: 9.5))
+                    .foregroundStyle(WeiBeiTheme.secondaryInk.opacity(0.82))
+                    .lineLimit(1)
             }
             // Do not render message.source here — long "课程 HTML，章节标识…" strings
             // add noise; materials / learning context use citation tags instead.
@@ -3900,10 +3875,6 @@ private struct AgentBubble: View {
         message.role == .user
     }
 
-    private var hasRenderableRichAnswer: Bool {
-        message.richAnswer?.mode == .rich && message.richAnswer?.scenes.isEmpty == false
-    }
-
     private var isCredentialNotice: Bool {
         message.role == .assistant
             && (message.text.hasPrefix("未配置密钥") || message.text.hasPrefix("未配置 OPENAI_API_KEY") || message.text.hasPrefix("No key is configured"))
@@ -3914,7 +3885,7 @@ private struct AgentBubble: View {
     }
 
     private var displayText: String {
-        guard isCredentialNotice else { return message.text }
+        guard isCredentialNotice else { return store.agentDisplayText(for: message) }
         if isOfflineContextPreview {
             return message.text
         }
@@ -5157,7 +5128,7 @@ private struct AgentScrollDistanceProbe: NSViewRepresentable {
 
 /// Agent chat markdown — shared by immersive conversation and selection float.
 /// - Finalized assistant turns: full `MarkdownPreviewView` with width-aware frozen height.
-/// - Streaming, user turns, failures, and renderer fallback: native `AttributedString`.
+/// - User turns, failures, and renderer fallback: native `AttributedString`.
 private struct AgentMessageMarkdownText: View {
     @EnvironmentObject private var store: WorkspaceStore
     @Environment(\.agentChatLayoutWidth) private var layoutWidth
@@ -5173,12 +5144,10 @@ private struct AgentMessageMarkdownText: View {
     var messageID: UUID? = nil
     var sources: [AgentReplySource] = []
     var onActivateSource: (AgentReplySource) -> Void = { _ in }
-    /// Streaming handoff: caller keeps the streaming view on top, so skip the
-    /// raw-text loading overlay (it flashed the whole answer unrendered).
-    var suppressesLoadingOverlay = false
-    /// Fires once the finalized renderer can take over (real measure, native
-    /// fallback, or render failure) — the caller drops its streaming overlay.
-    var onFinalizedRenderReady: () -> Void = {}
+    /// Assistant replies keep this Web renderer mounted from the first streamed text
+    /// through the completed message instead of handing off to a second view.
+    var keepsMarkdownSurfaceMounted = false
+    var isStreaming = false
     @State private var finalizedRendererReady = false
     @State private var finalizedRendererFailed = false
     /// nil = newly mounted and not classified yet. Treat unknown as visible so
@@ -5209,7 +5178,8 @@ private struct AgentMessageMarkdownText: View {
 
     private var shouldUseFinalizedMarkdown: Bool {
         usesFinalizedKaTeX && rendersRichMarkdown
-            && AgentChatKaTeXMarkdown.requiresWebRenderer(finalizedMarkdown)
+            && (keepsMarkdownSurfaceMounted
+                || AgentChatKaTeXMarkdown.requiresWebRenderer(finalizedMarkdown))
     }
 
     private var heldOffscreenRendererWidth: CGFloat? {
@@ -5225,7 +5195,6 @@ private struct AgentMessageMarkdownText: View {
                 finalizedMarkdownBody
             } else {
                 nativeBody
-                    .onAppear { onFinalizedRenderReady() }
             }
         }
         .modifier(AgentMessageTextWidthModifier(fillsReadingColumn: rendersRichMarkdown || compact))
@@ -5263,8 +5232,12 @@ private struct AgentMessageMarkdownText: View {
         }
         .help(sourceHelp)
         .onChange(of: finalizedMarkdown) { _, _ in
-            finalizedRendererReady = false
-            finalizedRendererFailed = false
+            // A live answer owns one renderer. Preserve its visible identity
+            // while the same WebView accepts the next snapshot or final text.
+            if !keepsMarkdownSurfaceMounted {
+                finalizedRendererReady = false
+                finalizedRendererFailed = false
+            }
         }
     }
 
@@ -5299,11 +5272,13 @@ private struct AgentMessageMarkdownText: View {
                     interfaceLanguage: store.interfaceLanguage,
                     compact: true,
                     fitsContentHeight: true,
-                    freezeHeightAfterMeasure: !paneStructureTransitionActive
-                        || isInScrollViewport == false,
-                    seedContentHeight: cachedFinalizedHeight,
+                    freezeHeightAfterMeasure: !isStreaming
+                        && (!paneStructureTransitionActive || isInScrollViewport == false),
+                    seedContentHeight: isStreaming ? nil : cachedFinalizedHeight,
                     layoutWidthKey: layoutWidthBucket,
                     isChatWideTypography: isChatWideTypography,
+                    preservesHeightAcrossMarkdownChanges: keepsMarkdownSurfaceMounted,
+                    streamsMarkdownUpdates: isStreaming,
                     onWikiLink: { title in store.openOrCreateWikiNote(title: title) },
                     onSourceReference: { reference in
                         if let url = URL(string: reference),
@@ -5319,15 +5294,13 @@ private struct AgentMessageMarkdownText: View {
                     onRenderFailure: {
                         finalizedRendererReady = false
                         finalizedRendererFailed = true
-                        onFinalizedRenderReady()
                     },
                     onMeasuredHeight: { height in
-                        if !paneStructureTransitionActive {
+                        if !isStreaming && !paneStructureTransitionActive {
                             AgentFinalizedMarkdownHeightCache.store(height, for: cacheKey)
                         }
                         if !finalizedRendererReady {
                             finalizedRendererReady = true
-                            onFinalizedRenderReady()
                         }
                     }
                 )
@@ -5337,14 +5310,15 @@ private struct AgentMessageMarkdownText: View {
                 // The outer row always accepts the live parent proposal. Visible
                 // renderers use it directly; held offscreen renderers are clipped.
                 .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
-                .allowsHitTesting(finalizedRendererReady)
+                .allowsHitTesting(finalizedRendererReady && !isStreaming)
                 .accessibilityHidden(!finalizedRendererReady)
-                .opacity(finalizedRendererReady ? 1 : 0.01)
+                .opacity(keepsMarkdownSurfaceMounted || finalizedRendererReady ? 1 : 0.01)
                 .zIndex(0)
             }
-            // Suppressed during streaming handoff (caller overlays the live
-            // streaming view instead), except when WebKit failed outright.
-            if !finalizedRendererReady && (!suppressesLoadingOverlay || finalizedRendererFailed) {
+            // Never flash native/raw Markdown over a live stream. Native text is
+            // retained only as the established WebKit failure recovery path.
+            if !finalizedRendererReady
+                && (!keepsMarkdownSurfaceMounted || finalizedRendererFailed) {
                 nativeBody
                     .background(WeiBeiTheme.paper)
                     .allowsHitTesting(false)
@@ -6049,122 +6023,44 @@ private struct AgentStreamingResponse: View {
     /// Bubble rows already carry the WeiBei metadata line — never draw a
     /// second brand mark inside the same bubble (user-reported duplication).
     var showsBrandHeader = true
+    var isChatWideTypography = false
+    var compact = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
             if showsBrandHeader {
-            HStack(spacing: 6) {
-                Text("WeiBei")
-                    .font(WeiBeiTypography.englishBrandFont(size: 9.8, weight: .semibold))
-                    .foregroundStyle(WeiBeiTheme.cinnabar.opacity(0.76))
-                Text("PI")
-                    .font(.system(size: 9.5, weight: .semibold))
-                    .foregroundStyle(WeiBeiTheme.secondaryInk)
-                // Status stays visible while tokens stream ("正在读取：…"),
-                // plain text only — WP9 forbids loading-card chrome here.
-                if let activity = store.agentActivityText {
-                    Text(activity)
-                        .font(.system(size: 11, weight: .regular))
-                        .foregroundStyle(WeiBeiTheme.secondaryInk.opacity(0.82))
-                        .lineLimit(1)
-                        .padding(.leading, 2)
+                HStack(spacing: 6) {
+                    Text("WeiBei")
+                        .font(WeiBeiTypography.englishBrandFont(size: 9.8, weight: .semibold))
+                        .foregroundStyle(WeiBeiTheme.cinnabar.opacity(0.76))
+                    Text("PI")
+                        .font(.system(size: 9.5, weight: .semibold))
+                        .foregroundStyle(WeiBeiTheme.secondaryInk)
+                    // Status stays visible while tokens stream ("正在读取：…"),
+                    // plain text only — WP9 forbids loading-card chrome here.
+                    if let activity = store.agentActivityText {
+                        Text(activity)
+                            .font(.system(size: 11, weight: .regular))
+                            .foregroundStyle(WeiBeiTheme.secondaryInk.opacity(0.82))
+                            .lineLimit(1)
+                            .padding(.leading, 2)
+                    }
                 }
             }
-            }
-            // Completed blocks render through the real Milkdown/KaTeX pipeline as
-            // they close; only the still-growing tail stays native (typewriter).
-            let split = AgentStreamingBlockSplitter.split(text)
-            // Always mounted: the WebView warms up (editor.js + KaTeX load)
-            // before the first block closes, so the first rendered blocks do
-            // not pop out of a blank box. Appends go through appendMarkdown.
-            AgentStreamingRenderedPrefix(markdown: split.stablePrefix)
-                .frame(height: split.stablePrefix.isEmpty ? 0 : nil)
-                .clipped()
-                .opacity(split.stablePrefix.isEmpty ? 0 : 1)
-            if !split.tail.isEmpty {
-                AgentStreamingMarkdownText(text: split.tail, compact: false)
-            }
+            AgentMessageMarkdownText(
+                text: text,
+                rendersRichMarkdown: true,
+                compact: compact,
+                isChatWideTypography: isChatWideTypography,
+                usesFinalizedKaTeX: true,
+                keepsMarkdownSurfaceMounted: true,
+                isStreaming: true
+            )
         }
-        .padding(.vertical, 10)
-        .padding(.leading, 20)
-        .padding(.trailing, 8)
+        .padding(.vertical, compact ? 0 : 10)
+        .padding(.leading, compact ? 0 : 20)
+        .padding(.trailing, compact ? 0 : 8)
         .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityLabel(Text(store.ui("PI 正在回答", "PI is responding")))
-    }
-}
-
-/// Renders closed streaming blocks through the mature pipeline. Height is
-/// preserved across appends (no 44pt collapse) and never frozen — a streaming
-/// row grows by design and lives only until the turn finalizes.
-private struct AgentStreamingRenderedPrefix: View {
-    @EnvironmentObject private var store: WorkspaceStore
-    @Environment(\.agentChatLayoutWidth) private var layoutWidth
-    var markdown: String
-
-    var body: some View {
-        MarkdownPreviewView(
-            markdown: AgentChatKaTeXMarkdown.prepare(markdown),
-            markdownBaseURL: store.currentMarkdownBaseURL,
-            appearanceMode: store.appearanceMode,
-            interfaceLanguage: store.interfaceLanguage,
-            compact: true,
-            fitsContentHeight: true,
-            freezeHeightAfterMeasure: false,
-            isChatWideTypography: layoutWidth >= AgentChatLayoutMetrics.wideTypographyMinContentWidth,
-            preservesHeightAcrossMarkdownChanges: true,
-            prefersIncrementalAppends: true
-        )
-    }
-}
-
-/// Typewriter tail: Pi delivers whole-snapshot updates that used to land as
-/// visible chunks every 100ms. Reveal characters on a paced pump instead —
-/// batch size adapts to the backlog so the tail catches up within ~1s and the
-/// turn never *feels* slower than the raw stream.
-private struct AgentStreamingMarkdownText: View {
-    var text: String
-    var compact: Bool = false
-    @State private var revealedCount = 0
-    @State private var pump: Task<Void, Never>?
-
-    var body: some View {
-        AgentMessageMarkdownText(
-            text: String(text.prefix(revealedCount)),
-            rendersRichMarkdown: true,
-            compact: compact,
-            usesFinalizedKaTeX: false
-        )
-        .onAppear {
-            // Mid-stream (re)mount — e.g. returning to a session — shows what
-            // has already arrived; the typewriter only paces new characters.
-            revealedCount = text.count
-        }
-        .onChange(of: text) { oldValue, newValue in
-            if !newValue.hasPrefix(oldValue.prefix(min(revealedCount, oldValue.count))) {
-                // Tail was rebased (its blocks closed into the rendered prefix).
-                revealedCount = 0
-            }
-            startPump(targetCount: newValue.count)
-        }
-        .onDisappear {
-            pump?.cancel()
-        }
-    }
-
-    private func startPump(targetCount: Int) {
-        pump?.cancel()
-        guard revealedCount < targetCount else {
-            revealedCount = min(revealedCount, targetCount)
-            return
-        }
-        pump = Task { @MainActor in
-            while !Task.isCancelled && revealedCount < targetCount {
-                let backlog = targetCount - revealedCount
-                // ~45 ticks/s; catch a 1000-char backlog in about a second.
-                let step = max(2, backlog / 40)
-                revealedCount = min(targetCount, revealedCount + step)
-                try? await Task.sleep(nanoseconds: 22_000_000)
-            }
-        }
     }
 }

@@ -575,6 +575,9 @@ final class WorkspaceStore: ObservableObject {
     private let courseDocumentSearchIndex: CourseDocumentSearchIndex
     private var activeAgentRequestID: UUID?
     private var activeAgentReplyMessageID: UUID?
+    private var latestAgentStreamingText = ""
+    private var lastAgentStreamingPublishNanoseconds: UInt64 = 0
+    private var agentReplyIDsThatDisplayedStreamingText: Set<UUID> = []
     private var activeAgentReplyChatID: UUID?
     private var agentRequestTask: Task<Void, Never>?
 #if DEBUG
@@ -11795,12 +11798,10 @@ final class WorkspaceStore: ObservableObject {
         return title.isEmpty ? "Study Session" : String(title.prefix(36))
     }
 
-    private static func mergedAgentReplyText(streamed: String, final: String) -> String {
-        let streamed = streamed.trimmingCharacters(in: .whitespacesAndNewlines)
-        let final = final.trimmingCharacters(in: .whitespacesAndNewlines)
-        if streamed.isEmpty || final.hasPrefix(streamed) { return final }
-        if final.isEmpty || streamed.hasPrefix(final) { return streamed }
-        return "\(streamed)\n\n\(final)"
+    private static func interruptedAgentReplyText(streamed: String, persisted: String) -> String {
+        streamed.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? persisted
+            : streamed
     }
 
     var navigableItems: [StudyItem] {
@@ -12082,6 +12083,35 @@ final class WorkspaceStore: ObservableObject {
 
     var hasPersistedGeneratingAgentReply: Bool {
         messages.contains { $0.role == .assistant && $0.completionState == .generating }
+    }
+
+    func agentDisplayText(for message: AgentMessage) -> String {
+        guard message.id == activeAgentReplyMessageID,
+              message.completionState == .generating else {
+            return message.text
+        }
+        return latestAgentStreamingText
+    }
+
+    func agentReplyDisplayedStreamingText(_ message: AgentMessage) -> Bool {
+        agentReplyIDsThatDisplayedStreamingText.contains(message.id)
+    }
+
+    /// The UI draft stays transient while tokens arrive. Durability boundaries
+    /// checkpoint its latest cumulative snapshot once, before the workspace is written.
+    private func checkpointActiveAgentStreamingText() {
+        guard let messageID = activeAgentReplyMessageID,
+              let chatID = activeAgentReplyChatID,
+              !latestAgentStreamingText.isEmpty,
+              let message = studySessions.first(where: { $0.id == chatID })?
+                .messages.first(where: { $0.id == messageID }),
+              message.completionState == .generating,
+              message.text != latestAgentStreamingText
+        else { return }
+        _ = updateAgentMessage(messageID, in: chatID) {
+            $0.text = latestAgentStreamingText
+            $0.backend = .pi
+        }
     }
 
     var agentNoteTitle: String {
@@ -19151,6 +19181,8 @@ final class WorkspaceStore: ObservableObject {
             .joined(separator: "\n\n")
         isAskingAgent = true
         activeAgentRequestID = requestID
+        latestAgentStreamingText = ""
+        lastAgentStreamingPublishNanoseconds = 0
         agentStreamingText = ""
         agentActivityText = ui("正在准备课程现场", "Preparing course context")
         defer {
@@ -19159,6 +19191,8 @@ final class WorkspaceStore: ObservableObject {
                 activeAgentReplyMessageID = nil
                 activeAgentReplyChatID = nil
                 isAskingAgent = false
+                latestAgentStreamingText = ""
+                lastAgentStreamingPublishNanoseconds = 0
                 agentStreamingText = ""
                 agentActivityText = nil
                 agentRequestTask = nil
@@ -19201,6 +19235,7 @@ final class WorkspaceStore: ObservableObject {
                 role: .assistant,
                 text: "",
                 source: sourceTitle,
+                backend: .pi,
                 completionState: .generating,
                 origin: AgentReplyOrigin(
                     requestID: requestID,
@@ -19366,10 +19401,7 @@ final class WorkspaceStore: ObservableObject {
             let sources = reply.sources
             if let messageID = replyMessageID {
                 _ = updateAgentMessage(messageID, in: target.sessionID) {
-                    $0.text = Self.mergedAgentReplyText(
-                        streamed: $0.text,
-                        final: reply.text
-                    )
+                    $0.text = reply.text
                     $0.backend = reply.backend
                     $0.richAnswer = reply.richAnswer
                     $0.completionState = .completed
@@ -19473,8 +19505,15 @@ final class WorkspaceStore: ObservableObject {
     ) {
         guard activeAgentRequestID == requestID,
               activeAgentReplyMessageID == messageID,
-              activeAgentReplyChatID == chatID else { return }
+              activeAgentReplyChatID == chatID,
+              studySessions.first(where: { $0.id == chatID })?
+                .messages.first(where: { $0.id == messageID })?
+                .completionState == .generating else { return }
         let updated = updateAgentMessage(messageID, in: chatID) {
+            $0.text = Self.interruptedAgentReplyText(
+                streamed: latestAgentStreamingText,
+                persisted: $0.text
+            )
             if $0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                let fallbackText {
                 $0.text = fallbackText
@@ -19538,6 +19577,8 @@ final class WorkspaceStore: ObservableObject {
         activeAgentReplyChatID = nil
         isAskingAgent = false
         isStoppingAgent = true
+        latestAgentStreamingText = ""
+        lastAgentStreamingPublishNanoseconds = 0
         agentStreamingText = ""
         agentActivityText = nil
         agentStopTask?.cancel()
@@ -19771,15 +19812,21 @@ final class WorkspaceStore: ObservableObject {
                 agentActivityText = base
             }
         case let .text(text):
-            if updatesVisibleChat {
+            latestAgentStreamingText = text
+            if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                agentReplyIDsThatDisplayedStreamingText.insert(replyMessageID)
+            }
+            let now = DispatchTime.now().uptimeNanoseconds
+            if updatesVisibleChat,
+               now &- lastAgentStreamingPublishNanoseconds >= 33_000_000 {
+                lastAgentStreamingPublishNanoseconds = now
                 agentStreamingText = text
             }
-            _ = updateAgentMessage(replyMessageID, in: chatID) {
-                $0.text = text
-                $0.backend = .pi
-            }
             if updatesVisibleChat {
-                agentActivityText = ui("正在组织回答", "Composing answer")
+                let activity = ui("正在组织回答", "Composing answer")
+                if agentActivityText != activity {
+                    agentActivityText = activity
+                }
             }
         }
     }
@@ -23965,6 +24012,7 @@ final class WorkspaceStore: ObservableObject {
     /// Flush any coalesced save (quit / resign active / note flush / agent send).
     @discardableResult
     func flushPendingWorkspaceSave() -> Bool {
+        checkpointActiveAgentStreamingText()
         pendingWorkspaceSaveTask?.cancel()
         pendingWorkspaceSaveTask = nil
         workspaceSaveGeneration &+= 1
@@ -23979,7 +24027,8 @@ final class WorkspaceStore: ObservableObject {
 
     @discardableResult
     func flushPendingWorkspaceSaveAsync() async -> Bool {
-        await persistWorkspaceNow()
+        checkpointActiveAgentStreamingText()
+        return await persistWorkspaceNow()
     }
 
     @discardableResult
