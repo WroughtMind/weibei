@@ -202,6 +202,34 @@ struct WeiBeiPiCheckMain {
                         "PI management catalog was incomplete; missing=\(missingProviderIDs.joined(separator: ",")) no-auth=\(providersWithoutAuth.joined(separator: ",")) no-models=\(providersWithoutModels.joined(separator: ","))"
                     )
                 }
+                let bedrockCredential = try await runtime.login(
+                    providerID: "amazon-bedrock",
+                    type: .apiKey,
+                    interaction: PiManagementInteraction(
+                        prompt: { prompt in
+                            switch prompt.type {
+                            case .select:
+                                guard prompt.options?.contains(where: { $0.id == "aws-profile" }) == true else {
+                                    throw PiAgentRuntimeError.protocolFailure("PI Bedrock login options were incomplete")
+                                }
+                                return "aws-profile"
+                            case .text:
+                                return "weibei-pi-check-profile"
+                            default:
+                                throw PiAgentRuntimeError.protocolFailure("PI Bedrock login requested unexpected input")
+                            }
+                        },
+                        notify: { _ in }
+                    )
+                )
+                guard bedrockCredential.providerId == "amazon-bedrock",
+                      bedrockCredential.type == .apiKey,
+                      try await runtime.managementCatalog().credentials.contains(where: {
+                          $0.providerId == "amazon-bedrock" && $0.type == .apiKey
+                      }) else {
+                    throw PiAgentRuntimeError.protocolFailure("PI multi-step API login did not persist")
+                }
+                try await runtime.logout(providerID: "amazon-bedrock")
                 let credential = try await runtime.login(
                     providerID: "openai",
                     type: .apiKey,
@@ -234,7 +262,7 @@ struct WeiBeiPiCheckMain {
                 await runtime.shutdown()
                 try? FileManager.default.removeItem(at: root)
                 print(
-                    "pi-management-check passed: providers=\(catalog.providers.count) models=\(catalog.models.count) api-key-login=passed logout=passed"
+                    "pi-management-check passed: providers=\(catalog.providers.count) models=\(catalog.models.count) multi-step-login=passed api-key-login=passed logout=passed"
                 )
                 return
             } catch {

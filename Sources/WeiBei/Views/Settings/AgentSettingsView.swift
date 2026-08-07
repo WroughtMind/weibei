@@ -265,6 +265,15 @@ extension SettingsView {
                         Button(store.ui("保存", "Save")) { saveActiveAPIKey() }
                             .buttonStyle(WeiBeiTextActionButtonStyle(active: !oauthService.isLoggingIn))
                     }
+                    if !oauthService.isConfigured(
+                        providerID: store.agentProviderID.piProviderName,
+                        type: .apiKey
+                    ) {
+                        Button(store.ui("由内置 Pi 配置", "Configure with embedded Pi")) {
+                            startGuidedAPIConfiguration()
+                        }
+                        .buttonStyle(WeiBeiTextActionButtonStyle(active: !oauthService.isLoggingIn))
+                    }
                     if oauthService.isConfigured(
                         providerID: store.agentProviderID.piProviderName,
                         type: .apiKey
@@ -398,8 +407,16 @@ extension SettingsView {
     private func saveActiveAPIKey() {
         let key = store.openAIAPIKey.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !key.isEmpty, !oauthService.isLoggingIn else { return }
-        oauthService.saveAPIKey(
+        oauthService.startAPIKeyLogin(
             key,
+            provider: store.agentProviderID,
+            baseURL: store.agentBaseURL,
+            model: store.modelName
+        )
+    }
+
+    private func startGuidedAPIConfiguration() {
+        oauthService.startAPIKeyLogin(
             provider: store.agentProviderID,
             baseURL: store.agentBaseURL,
             model: store.modelName

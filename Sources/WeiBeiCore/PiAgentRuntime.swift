@@ -1863,6 +1863,7 @@ public actor PiAgentRuntime: StudyAgentRuntime {
 
     private func finishManagement(with result: Result<PiManagementEnvelope, Error>) {
         guard var management = pendingManagement else { return }
+        guard management.completed == nil else { return }
         management.promptTasks.values.forEach { $0.cancel() }
         management.promptTasks.removeAll()
         if let continuation = management.continuation {

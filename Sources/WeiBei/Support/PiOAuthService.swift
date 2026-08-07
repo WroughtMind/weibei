@@ -26,7 +26,7 @@ final class PiOAuthService: ObservableObject {
         self.runtime = runtime ?? PiAgentRuntime(
             runtimeDirectory: WeiBeiAgentDataPaths.applicationSupportRoot
                 .appendingPathComponent("PiManagementRuntime", isDirectory: true),
-            persistentPiConfigurationDirectory: WeiBeiAgentDataPaths.piAgentDirectory
+            persistentPiConfigurationDirectory: WeiBeiAgentDataPaths.piAuthJSON.deletingLastPathComponent()
         )
     }
 
@@ -95,15 +95,15 @@ final class PiOAuthService: ObservableObject {
         )
     }
 
-    func saveAPIKey(
-        _ key: String,
+    func startAPIKeyLogin(
+        _ key: String = "",
         provider: AgentProviderID,
         baseURL: String = "",
         model: String = ""
     ) {
         let cleaned = key.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !cleaned.isEmpty, !isLoggingIn else { return }
-        suppliedAPIKey = cleaned
+        guard !isLoggingIn else { return }
+        suppliedAPIKey = cleaned.isEmpty ? nil : cleaned
         if provider == .custom || provider == .llamaCpp {
             customProviderSetup = (provider, baseURL, model)
         }
