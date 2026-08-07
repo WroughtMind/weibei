@@ -82,28 +82,6 @@ extension SettingsView {
                 }
             }
 
-            // Region — only for Bedrock.
-            if store.agentProviderID == .amazonBedrock {
-                settingsRow(title: store.ui("区域", "Region"), detail: "") {
-                    TextField(
-                        "",
-                        text: Binding(
-                            get: { store.bedrockRegion },
-                            set: {
-                                store.bedrockRegion = $0.trimmingCharacters(in: .whitespacesAndNewlines)
-                                requestModelListRefresh()
-                            }
-                        ),
-                        prompt: Text("us-east-1").font(.system(size: 13)).foregroundStyle(WeiBeiTheme.placeholderInk)
-                    )
-                    .textFieldStyle(.plain)
-                    .foregroundColor(WeiBeiTheme.ink)
-                    .font(.system(size: 13))
-                    .weibeiInputSurface(active: false, height: 38)
-                    .frame(width: SettingsView.controlWidth)
-                }
-            }
-
             // Quiet reminder — only when attention is needed.
             agentStatusReminder
         }
@@ -120,6 +98,7 @@ extension SettingsView {
                 compactMenu(activeProfileName) {
                     ForEach(store.agentCredentialProfiles) { profile in
                         Button(profile.name) {
+                            apiKeyDraft = ""
                             store.selectAgentCredentialProfile(profile.id)
                         }
                     }
@@ -196,6 +175,7 @@ extension SettingsView {
     }
 
     private func applyProvider(_ provider: AgentProviderID) {
+        apiKeyDraft = ""
         store.setAgentProviderID(provider)
         if let firstModel = oauthService.models(providerID: provider.piProviderName).first {
             store.updateModelName(firstModel)
@@ -237,7 +217,7 @@ extension SettingsView {
             VStack(alignment: .trailing, spacing: 8) {
                 SecureField(
                     "",
-                    text: $store.openAIAPIKey,
+                    text: $apiKeyDraft,
                     prompt: Text(store.ui("粘贴 API Key", "Paste API key"))
                         .font(.system(size: 13))
                         .foregroundStyle(WeiBeiTheme.placeholderInk)
@@ -261,7 +241,7 @@ extension SettingsView {
                             active: true
                         )
                     }
-                    if !store.openAIAPIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    if !apiKeyDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                         Button(store.ui("保存", "Save")) { saveActiveAPIKey() }
                             .buttonStyle(WeiBeiTextActionButtonStyle(active: !oauthService.isLoggingIn))
                     }
@@ -405,7 +385,7 @@ extension SettingsView {
     }
 
     private func saveActiveAPIKey() {
-        let key = store.openAIAPIKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        let key = apiKeyDraft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !key.isEmpty, !oauthService.isLoggingIn else { return }
         oauthService.startAPIKeyLogin(
             key,
@@ -424,7 +404,7 @@ extension SettingsView {
     }
 
     private func clearActiveAPICredential() {
-        store.openAIAPIKey = ""
+        apiKeyDraft = ""
         oauthService.logoutCredential(
             providerID: store.agentProviderID.piProviderName,
             displayName: store.agentProviderID.label(language: store.interfaceLanguage)
@@ -442,7 +422,7 @@ extension SettingsView {
                       providerID: store.agentProviderID.piProviderName,
                       type: .apiKey
                   ),
-                  store.openAIAPIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                  apiKeyDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             settingsNote(
                 store.ui("尚未配置密钥，对话将无法连接。", "No key configured — chat won't connect."),
                 icon: "exclamationmark.triangle"
@@ -455,8 +435,8 @@ extension SettingsView {
         return activeAgentAuthMethod == .subscription && oauthService.isLinked(provider)
     }
 
-    // MARK: Advanced (collapsed) — removed; Base URL / Region now sit flat in the card
-    // and Profile lives at the top. Nothing to disclose.
+    // MARK: Advanced (collapsed) — removed; Base URL sits flat in the card and
+    // Profile lives at the top. Nothing to disclose.
 
     private var baseURLPlaceholder: String {
         store.agentProviderID == .azureOpenAI
@@ -477,7 +457,7 @@ extension SettingsView {
                     get: { store.modelName },
                     set: { store.updateModelName($0) }
                 ),
-                prompt: Text(store.agentProviderID.defaultModelHint)
+                prompt: Text(oauthService.models(providerID: store.agentProviderID.piProviderName).first ?? "model-id")
                     .font(.system(size: 13))
                     .foregroundStyle(WeiBeiTheme.placeholderInk)
             )

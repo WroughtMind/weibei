@@ -14,8 +14,8 @@ func runPiAgentSelfChecks() throws {
 private func checkPiProviderConfiguration() throws {
     let inherited = PiAgentProviderConfiguration()
     try piRequire(
-        inherited.provider == nil && inherited.model == nil && inherited.apiKey == nil && inherited.thinkingLevel == "medium",
-        "PI provider defaults keep the current medium thinking level without injecting API-key overrides"
+        inherited.provider == nil && inherited.model == nil && inherited.thinkingLevel == "medium",
+        "PI provider defaults keep the current medium thinking level"
     )
 
     let explicit = PiAgentProviderConfiguration(
@@ -895,13 +895,9 @@ private func checkStudyAgentContext() throws {
         "legacy workspaces remain decodable without course-learning state"
     )
 
-    try piRequire(PiAgentRuntimeError.unavailable.permitsAutomaticFallback, "PI startup failures may use the existing fallback")
-    try piRequire(!PiAgentRuntimeError.agentFailed("model error").permitsAutomaticFallback, "accepted PI runs are never replayed automatically")
-    try piRequire(!PiAgentRuntimeError.commandTimedOut("prompt").permitsAutomaticFallback, "unknown prompt acceptance is never replayed automatically")
 
     let diagnostic = PiAgentDiagnosticSanitizer.sanitize(
-        #"Authorization: Bearer abcdefghijklmnop api_key="sk-sensitive-token""#,
-        secret: "sk-sensitive-token"
+        #"Authorization: Bearer abcdefghijklmnop api_key="sk-sensitive-token""#
     )
     try piRequire(
         diagnostic.contains("[REDACTED]")

@@ -41,8 +41,7 @@ FINAL_APP_BINARY="$FINAL_APP_BUNDLE/Contents/MacOS/$PRODUCT_NAME"
 # Always assemble + codesign outside the repo tree. Projects under ~/Documents
 # (iCloud / File Provider) get com.apple.FinderInfo and related xattrs stamped
 # onto the bundle; codesign then fails with "resource fork, Finder information,
-# or similar detritus not allowed". A broken/changing ad-hoc identity makes
-# Keychain re-prompt for the login password every launch when reading API keys.
+# or similar detritus not allowed".
 if [[ "$VERIFY_MODE" == true ]]; then
   DIST_DIR="${TMPDIR:-/tmp}/weibei-verify-$UID-$$"
 elif [[ "$PACKAGE_ONLY" == true ]]; then
@@ -74,7 +73,7 @@ VERIFY_PID=""
 VERIFY_DATA_DIR="$DIST_DIR/Data"
 VERIFY_STDOUT="$VERIFY_DATA_DIR/app-stdout.log"
 VERIFY_STDERR="$VERIFY_DATA_DIR/app-stderr.log"
-VERIFY_SCENARIO="${WEIBEI_VERIFY_SCENARIO:-offline-learning-flow}"
+VERIFY_SCENARIO="${WEIBEI_VERIFY_SCENARIO:-empty-workspace-light-wide}"
 VERIFY_WINDOW_SIZE="${WEIBEI_VERIFY_WINDOW_SIZE:-}"
 VERIFY_INSPIRATION_ID="${WEIBEI_VERIFY_INSPIRATION_ID:-}"
 VERIFY_CAPTURE_PATH="${TMPDIR:-/tmp}/weibei-self-capture-$UID-$$-$VERIFY_SCENARIO.png"
@@ -352,17 +351,8 @@ cleanup_verify_app() {
 }
 
 open_app_for_verify() {
-  local agent_environment=(WEIBEI_FORCE_OFFLINE_AGENT=1)
   local pane_trace_dir=""
   local pane_trace_samples=0
-  if [[ "$VERIFY_SCENARIO" == "pi-learning-flow" || "$VERIFY_SCENARIO" == "pi-course-memory-flow" ]]; then
-    agent_environment=(
-      WEIBEI_FORCE_OFFLINE_AGENT=0
-      WEIBEI_PI_PROVIDER=
-      WEIBEI_PI_MODEL=
-      WEIBEI_OPENAI_MODEL=
-    )
-  fi
   if [[ "$VERIFY_SCENARIO" == "pane-layout-stability-flow" || "$VERIFY_SCENARIO" == "pane-toggle-continuity-flow" || "$VERIFY_SCENARIO" == "pane-reorder-width-flow" ]]; then
     pane_trace_dir="$VERIFY_DATA_DIR/pane-trace"
   fi
@@ -374,7 +364,6 @@ open_app_for_verify() {
   rm -f "$VERIFY_CAPTURE_PATH"
   /usr/bin/env \
     WEIBEI_SUPPRESS_ACTIVATION=1 \
-    "${agent_environment[@]}" \
     "WEIBEI_WORKSPACE_DIR=$VERIFY_DATA_DIR" \
     "WEIBEI_VERIFY_SCENARIO=$VERIFY_SCENARIO" \
     "WEIBEI_VERIFY_WINDOW_SIZE=$VERIFY_WINDOW_SIZE" \
@@ -493,33 +482,7 @@ verify_learning_flow_persistence() {
     return 1
   fi
 
-  case "$VERIFY_SCENARIO" in
-    offline-learning-flow|immersive-conversation-flow)
-      ;;
-    *)
-      return 0
-      ;;
-  esac
-
-  local workspace_file="$VERIFY_DATA_DIR/workspace.json"
-  for _ in {1..30}; do
-    if [[ -f "$workspace_file" ]] \
-      && /usr/bin/grep -q "## 整理建议" "$workspace_file" \
-      && /usr/bin/grep -q "把可确认依据写入笔记" "$workspace_file" \
-      && ! /usr/bin/grep -q "## 离线草稿" "$workspace_file" \
-      && ! /usr/bin/grep -q "## 可确认" "$workspace_file"; then
-      return 0
-    fi
-    sleep 0.2
-  done
-
-  echo "verify failed: offline learning flow did not persist a note-ready agent suggestion into workspace.json." >&2
-  if [[ -f "$workspace_file" ]]; then
-    /usr/bin/sed -n '1,80p' "$workspace_file" >&2
-  else
-    echo "missing workspace file: $workspace_file" >&2
-  fi
-  return 1
+  return 0
 }
 
 verify_empty_workspace_state() {

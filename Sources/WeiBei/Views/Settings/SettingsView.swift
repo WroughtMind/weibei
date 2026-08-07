@@ -24,6 +24,7 @@ struct SettingsView: View {
     // Profile inline-rename state (AgentSettingsView extension).
     @State var isRenamingActiveProfile = false
     @State var profileRenameDraft = ""
+    @State var apiKeyDraft = ""
     // Profile delete confirmation (AgentSettingsView extension).
     @State var showDeleteProfileConfirmation = false
     // About / update check (tier-0: prompt only, never silent install).
@@ -72,10 +73,6 @@ struct SettingsView: View {
             if let firstModel = oauthService.models(providerID: provider.piProviderName).first {
                 store.updateModelName(firstModel)
             }
-            store.openAIKeyStatus = store.ui(
-                "订阅已连接：\(provider.label(language: store.interfaceLanguage))",
-                "Subscription linked: \(provider.label(language: store.interfaceLanguage))"
-            )
             oauthService.refreshCatalog(force: true)
         }
         .onReceive(NotificationCenter.default.publisher(for: .weiBeiPiCredentialsDidChange)) { note in
@@ -83,11 +80,7 @@ struct SettingsView: View {
                   note.userInfo?["provider"] as? String == store.agentProviderID.piProviderName else {
                 return
             }
-            store.openAIAPIKey = ""
-            store.openAIKeyStatus = store.ui(
-                "密钥已交给内置 Pi 保存。",
-                "The API key is now stored by embedded Pi."
-            )
+            apiKeyDraft = ""
             oauthService.refreshCatalog(force: true)
         }
         .onChange(of: oauthService.catalog) { _, _ in
@@ -95,7 +88,7 @@ struct SettingsView: View {
             let current = store.modelName.trimmingCharacters(in: .whitespacesAndNewlines)
             if let firstModel = models.first,
                !models.contains(current),
-               current.isEmpty || current == store.agentProviderID.defaultModelHint {
+               current.isEmpty {
                 store.updateModelName(firstModel)
             }
         }

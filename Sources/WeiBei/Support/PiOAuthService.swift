@@ -26,7 +26,7 @@ final class PiOAuthService: ObservableObject {
         self.runtime = runtime ?? PiAgentRuntime(
             runtimeDirectory: WeiBeiAgentDataPaths.applicationSupportRoot
                 .appendingPathComponent("PiManagementRuntime", isDirectory: true),
-            persistentPiConfigurationDirectory: WeiBeiAgentDataPaths.piAuthJSON.deletingLastPathComponent()
+            persistentPiConfigurationDirectory: WeiBeiAgentDataPaths.piAgentDirectory
         )
     }
 
@@ -67,19 +67,6 @@ final class PiOAuthService: ObservableObject {
         }
         guard type == nil || type == .apiKey else { return false }
         return catalog?.providers.first(where: { $0.id == providerID })?.configured ?? false
-    }
-
-    static func readLinkedOAuthProviders(from url: URL) -> [String] {
-        guard let data = try? Data(contentsOf: url),
-              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            return []
-        }
-        return object.compactMap { key, value in
-            guard let dict = value as? [String: Any],
-                  (dict["type"] as? String) == "oauth",
-                  dict["access"] != nil || dict["refresh"] != nil else { return nil }
-            return key
-        }.sorted()
     }
 
     func isLinked(_ provider: AgentProviderID) -> Bool {

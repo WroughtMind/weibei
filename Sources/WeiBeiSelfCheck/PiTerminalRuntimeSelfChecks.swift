@@ -721,17 +721,19 @@ private func checkConversationBindingLaunchContract(
 ) async throws {
     let runtimeDirectory = try fixture.workingDirectory(named: "SessionRuntime")
     let projectDirectory = try fixture.workingDirectory(named: "SessionProject")
+    let piConfigurationDirectory = try fixture.workingDirectory(named: "SessionPiAgent")
     let sessionID = UUID(uuidString: "11111111-2222-3333-4444-555555555555")!
     let secondSessionID = UUID(uuidString: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")!
     let runtime = PiAgentRuntime(
         executableURL: fixture.executableURL,
         runtimeDirectory: runtimeDirectory,
+        persistentPiConfigurationDirectory: piConfigurationDirectory,
         runInactivityTimeoutNanoseconds: 2_000_000_000
     )
     await runtime.configure(
         PiAgentProviderConfiguration(
             provider: "openai-codex",
-            model: AgentModelListService.codexDefaultModel
+            model: "gpt-5.5"
         )
     )
 
@@ -844,7 +846,7 @@ private func checkConversationBindingLaunchContract(
               separatedBy: "arg=--provider\narg=openai-codex\n"
           ).count - 1 == 4,
           trace.components(
-              separatedBy: "arg=--model\narg=\(AgentModelListService.codexDefaultModel)\n"
+              separatedBy: "arg=--model\narg=gpt-5.5\n"
           ).count - 1 == 4,
           trace.contains("prompt-message=[选中文字：第一讲选区]") &&
           trace.contains("注意力只处理当前上下文") &&

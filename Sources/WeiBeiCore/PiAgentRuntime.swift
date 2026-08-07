@@ -6,20 +6,17 @@ import Security
 public struct PiAgentProviderConfiguration: Equatable, Sendable {
     public var provider: String?
     public var model: String?
-    public var apiKey: String?
     public var baseURL: String?
     public var thinkingLevel: String
 
     public init(
         provider: String? = nil,
         model: String? = nil,
-        apiKey: String? = nil,
         baseURL: String? = nil,
         thinkingLevel: String = "medium"
     ) {
         self.provider = provider?.trimmingCharacters(in: .whitespacesAndNewlines)
         self.model = model?.trimmingCharacters(in: .whitespacesAndNewlines)
-        self.apiKey = apiKey?.trimmingCharacters(in: .whitespacesAndNewlines)
         self.baseURL = baseURL?.trimmingCharacters(in: .whitespacesAndNewlines)
         self.thinkingLevel = thinkingLevel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             ? "medium"
@@ -246,26 +243,11 @@ public enum PiAgentRuntimeError: LocalizedError, Equatable, Sendable {
         }
     }
 
-    public var permitsAutomaticFallback: Bool {
-        switch self {
-        case .unavailable, .resourcesMissing, .busy, .launchFailed, .commandRejected:
-            return true
-        case let .commandTimedOut(command):
-            return command != "prompt" && command != "abort"
-        case .protocolFailure:
-            return true
-        case .agentFailed, .inFlightFailed, .cancelled:
-            return false
-        }
-    }
 }
 
 public enum PiAgentDiagnosticSanitizer {
-    public static func sanitize(_ value: String, secret: String? = nil) -> String {
+    public static func sanitize(_ value: String) -> String {
         var result = value
-        if let secret, !secret.isEmpty {
-            result = result.replacingOccurrences(of: secret, with: "[REDACTED]")
-        }
         let redactions = [
             (#"(?i)bearer\s+[A-Za-z0-9._~+/=-]{8,}"#, "Bearer [REDACTED]"),
             (#"\bsk-[A-Za-z0-9_-]{8,}\b"#, "[REDACTED]"),
@@ -1723,9 +1705,10 @@ public actor PiAgentRuntime: StudyAgentRuntime {
             let piConfigurationURL = try preparePiConfigurationDirectory()
             let modelsURL = piConfigurationURL.appendingPathComponent("models.json")
             let providerKey = providerID.piProviderName
-            let modelID = model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                ? providerID.defaultModelHint
-                : model.trimmingCharacters(in: .whitespacesAndNewlines)
+            let selectedModel = model.trimmingCharacters(in: .whitespacesAndNewlines)
+            let modelID = selectedModel.isEmpty
+                ? (providerID == .llamaCpp ? "local-model" : "model-id")
+                : selectedModel
             let payload: [String: Any] = [
                 "providers": [
                     providerKey: [
@@ -2608,7 +2591,7 @@ public actor PiAgentRuntime: StudyAgentRuntime {
     }
 
     private func sanitizedDiagnostic(_ value: String) -> String {
-        PiAgentDiagnosticSanitizer.sanitize(value, secret: providerConfiguration.apiKey)
+        PiAgentDiagnosticSanitizer.sanitize(value)
     }
 
     private func boundedDiagnostic(_ value: String, limit: Int = 1_024) -> String {

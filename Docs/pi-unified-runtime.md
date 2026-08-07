@@ -16,7 +16,8 @@
 - 认证数据变化后只重启内置 Pi 子进程，不重启魏碑 App。
 - 删除外部 Node 探测、独立 OAuth 脚本、独立 API Key 文件、跨提供商密钥环境变量注入和魏碑自建模型目录请求。
 - 保留自定义 OpenAI 兼容端点所需的 Pi `models.json`；其余内置提供商与模型元数据以 Pi 为准。
-- 正式产品的模型请求统一经过 Pi；离线确定性运行时只保留在自检目标中。
+- 正式产品的模型请求统一经过 Pi，不保留离线生成或厂商直连回退。
+- 删除旧离线学习验收；无凭证的默认验收只检查工作区，真实学习回答只由明确的 Pi 验收场景发起。
 
 ## 不采用
 
@@ -30,14 +31,13 @@
 
 负责人任务：`codex/pi-unified-runtime`。
 
-等待 PR #144 释放后接续占用：
+PR #144 已释放重叠文件，本任务当前占用：
 
 - `Sources/WeiBei/Stores/WorkspaceStore.swift`
 - `Sources/WeiBeiSelfCheck/main.swift`
-- `Package.swift`（仅在验证目标确需调整时）
-- `script/`（仅在打包检查确需调整时）
+- `script/build_and_run.sh`
 
-在 PR #144 释放前，本任务不修改以上共享位置。其他主要改动位于 Pi RPC、Pi 运行时、认证服务、凭证配置、模型目录和设置界面。
+本任务未修改 `Package.swift`。其他主要改动位于 Pi RPC、Pi 运行时、认证服务、凭证配置、模型目录和设置界面。
 
 预计释放条件：构建与自检通过；无 Node/Bun 的候选 App 完成 OAuth、API Key、模型加载、真实 Pi 回答、重开连续性及失效凭证恢复验收；草稿 PR 写清合并风险并交给整合任务。
 

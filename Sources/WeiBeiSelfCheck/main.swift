@@ -3,7 +3,6 @@ import CoreText
 import Darwin
 import Foundation
 import PDFKit
-import Security
 import WebKit
 import WeiBeiCore
 
@@ -656,99 +655,6 @@ let inspirationDayTwo = inspirationCalendar.date(byAdding: .day, value: 1, to: i
 expect(EmptyWorkspaceInspirationCatalog.item(for: inspirationDayOne, calendar: inspirationCalendar).id
     != EmptyWorkspaceInspirationCatalog.item(for: inspirationDayTwo, calendar: inspirationCalendar).id, "daily inspiration rotates deterministically from one local day to the next")
 
-let offlineChinesePreview = AgentOfflinePreview.render(
-    AgentOfflinePreviewInput(
-        language: .chinese,
-        question: "解释利率为什么是资金价格",
-        hasMaterial: true,
-        materialTitle: "Mishkin 教材样例",
-        materialText: "利率是资金使用价格的表达。金融市场通过利率配置资源。",
-        noteTitle: "货币金融学课程 HTML",
-        noteText: "## 摘录\n来源：Mishkin 教材样例",
-        selectionTitle: "已选文本片段",
-        selectionText: "利率是资金使用价格的表达。"
-    )
-)
-expect(offlineChinesePreview.contains("## 离线草稿")
-    && !offlineChinesePreview.hasPrefix("未配置密钥")
-    && offlineChinesePreview.contains("未配置密钥；这里只整理当前可见内容")
-    && offlineChinesePreview.contains("**问题**：解释利率为什么是资金价格")
-    && offlineChinesePreview.contains("**上下文**：资料：Mishkin 教材样例 · 笔记：货币金融学课程 HTML · 选区：已选文本片段")
-    && offlineChinesePreview.contains("## 可确认")
-    && offlineChinesePreview.contains("- 选区依据：利率是资金使用价格的表达。")
-    && offlineChinesePreview.contains("- 资料依据：利率是资金使用价格的表达。金融市场通过利率配置资源。")
-    && offlineChinesePreview.contains("- 笔记线索：## 摘录 来源：Mishkin 教材样例")
-    && !offlineChinesePreview.contains("## 建议写入")
-    && !offlineChinesePreview.contains("| 上下文 | 内容 |")
-    && !offlineChinesePreview.contains("> 资料摘录："), "offline agent draft stays compact, source-grounded, and note-ready without API key")
-
-let offlineEnglishPreview = AgentOfflinePreview.render(
-    AgentOfflinePreviewInput(
-        language: .english,
-        question: "Explain the selected sentence",
-        hasMaterial: false,
-        materialTitle: "No document",
-        materialText: "",
-        noteTitle: "Current note",
-        noteText: "",
-        selectionTitle: nil,
-        selectionText: nil
-    )
-)
-expect(offlineEnglishPreview.contains("## Offline Draft")
-    && !offlineEnglishPreview.hasPrefix("No key is configured")
-    && offlineEnglishPreview.contains("No key is configured; this only organizes visible context")
-    && offlineEnglishPreview.contains("**Question**: Explain the selected sentence")
-    && offlineEnglishPreview.contains("**Context**: Material: None · Note: Current note · Selection: None")
-    && offlineEnglishPreview.contains("## Confirmed")
-    && offlineEnglishPreview.contains("- Note state: the current note is empty.")
-    && !offlineEnglishPreview.contains("## Suggested Note")
-    && !offlineEnglishPreview.contains("| Context | Content |")
-    && !offlineEnglishPreview.contains("> Note excerpt:"), "offline agent draft renders compact English empty-context state as Markdown")
-expect(AgentOfflinePreview.preview("A\nB\tC", limit: 20) == "A B C", "offline agent preview normalizes whitespace")
-let offlineSuggestedNoteBlock = AgentOfflinePreview.suggestedNoteBlock(
-    from: """
-    ## 离线草稿
-    旧版本内容
-
-    ## 建议写入
-    - 把可确认依据写入笔记，并保留来源。
-    """,
-    language: .chinese
-) ?? ""
-expect(offlineSuggestedNoteBlock.contains("## 整理建议")
-    && offlineSuggestedNoteBlock.contains("把可确认依据写入笔记，并保留来源。")
-    && !offlineSuggestedNoteBlock.contains("## 离线草稿")
-    && !offlineSuggestedNoteBlock.contains("## 可确认")
-    && !offlineSuggestedNoteBlock.contains("**上下文**"), "writing an offline answer into notes keeps only the note-ready suggestion section")
-let normalAgentNoteBlock = AgentOfflinePreview.suggestedNoteBlock(from: "## 正式解释\n利率是资金价格。", language: .chinese)
-expect(normalAgentNoteBlock == nil, "non-offline markdown answers are not rewritten by the offline-note extractor")
-
-let offlineTurnMessages = AgentOfflineTurn.messages(
-    question: "解释当前材料",
-    sourceTitle: "Mishkin 教材样例",
-    input: AgentOfflinePreviewInput(
-        language: .chinese,
-        question: "解释当前材料",
-        hasMaterial: true,
-        materialTitle: "Mishkin 教材样例",
-        materialText: "利率是资金使用价格的表达。",
-        noteTitle: "货币金融学课程 HTML",
-        noteText: "## 摘录",
-        selectionTitle: nil,
-        selectionText: nil
-    )
-)
-expect(offlineTurnMessages.count == 2
-    && offlineTurnMessages[0].role == .user
-    && offlineTurnMessages[0].text == "解释当前材料"
-    && offlineTurnMessages[0].source == "Mishkin 教材样例"
-    && offlineTurnMessages[1].role == .assistant
-    && offlineTurnMessages[1].text.contains("## 离线草稿")
-    && offlineTurnMessages[1].text.contains("未配置密钥；这里只整理当前可见内容")
-    && offlineTurnMessages[1].source == "Mishkin 教材样例"
-    && offlineTurnMessages[1].isUsableAgentAnswer, "offline agent turn appends a visible user turn and writable local draft without an API key")
-
 let fontDirectoryURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
     .appendingPathComponent("Sources/WeiBei/Resources/Fonts")
 let displayFontURL = fontDirectoryURL.appendingPathComponent("WeiBeiStele.ttf")
@@ -945,12 +851,12 @@ expect(runScript.contains("RUN_VISUAL_VERIFY=false")
     && runScript.contains("swift run -c \"$BUILD_CONFIGURATION\" WeiBeiPiCheck"), "run script verify mode includes Web editor and PI checks and honors --verify --visual-verify")
 expect(runScript.contains("open_app_for_verify()")
     && runScript.contains("VERIFY_DATA_DIR=\"$DIST_DIR/Data\"")
-    && runScript.contains("VERIFY_SCENARIO=\"${WEIBEI_VERIFY_SCENARIO:-offline-learning-flow}\"")
+    && runScript.contains("VERIFY_SCENARIO=\"${WEIBEI_VERIFY_SCENARIO:-empty-workspace-light-wide}\"")
     && runScript.contains("VERIFY_WINDOW_SIZE=\"${WEIBEI_VERIFY_WINDOW_SIZE:-}\"")
     && runScript.contains("VERIFY_INSPIRATION_ID=\"${WEIBEI_VERIFY_INSPIRATION_ID:-}\"")
     && runScript.contains("rm -rf \"$VERIFY_DATA_DIR\"")
-    && runScript.contains("local agent_environment=(WEIBEI_FORCE_OFFLINE_AGENT=1)")
-    && runScript.contains("if [[ \"$VERIFY_SCENARIO\" == \"pi-learning-flow\" || \"$VERIFY_SCENARIO\" == \"pi-course-memory-flow\" ]]")
+    && !runScript.contains("WEIBEI_FORCE_OFFLINE_AGENT")
+    && !runScript.contains("WEIBEI_PI_PROVIDER=")
     && runScript.contains("/usr/bin/env \\")
     && runScript.contains("WEIBEI_SUPPRESS_ACTIVATION=1 \\")
     && runScript.contains("\"WEIBEI_WORKSPACE_DIR=$VERIFY_DATA_DIR\"")
@@ -960,13 +866,7 @@ expect(runScript.contains("open_app_for_verify()")
     && runScript.contains("VERIFY_PID=\"$!\"")
     && runScript.contains("if [[ -n \"$VERIFY_SCENARIO\" ]]; then\n    for _ in {1..50}; do")
     && runScript.contains("--verify|verify)\n    run_verifiers\n    open_app_for_verify")
-    && runScript.contains("--visual-verify|visual-verify)\n    run_verifiers\n    open_app_for_verify"), "verify modes launch the app in the background with an isolated offline or PI-backed learning-flow workspace")
-expect(runScript.contains("verify_learning_flow_persistence()")
-    && runScript.contains("workspace.json")
-    && runScript.contains("## 整理建议")
-    && runScript.contains("把可确认依据写入笔记")
-    && runScript.contains("! /usr/bin/grep -q \"## 离线草稿\"")
-    && runScript.contains("! /usr/bin/grep -q \"## 可确认\""), "verify mode checks that the offline learning flow persists only the note-ready agent suggestion into the note workspace")
+    && runScript.contains("--visual-verify|visual-verify)\n    run_verifiers\n    open_app_for_verify"), "verify modes launch the app in the background with an isolated workspace; only explicit PI scenarios perform model requests")
 expect(runScript.contains("verify_learning_memory_scopes()")
     && runScript.contains("learning-memory-scopes-report.txt")
     && runScript.contains("scopes_isolated=true")
@@ -983,7 +883,7 @@ expect(runScript.contains("pi-agent-verified.txt")
     && runScript.contains("\"--model gpt-5.4\"")
     && runScript.contains("\"--session-id $session_id\"")
     && workspaceStoreSource.contains("agentProviderID = .openaiCodex")
-    && workspaceStoreSource.contains("modelName = AgentModelListService.codexDefaultModel")
+    && workspaceStoreSource.contains("modelName = \"gpt-5.5\"")
     && workspaceStoreSource.contains("sameChatContinued")
     && workspaceStoreSource.contains("secondReply?.text.localizedCaseInsensitiveContains(continuityToken) == true"), "verify mode proves the packaged app uses its selected PI provider/model and continues the same Chat across two real turns")
 expect(runScript.contains("pi-course-memory-verified.txt")
@@ -1727,139 +1627,22 @@ expect(
     "a failed native PDF batch is bisected to single pages instead of sending unattempted text pages to OCR"
 )
 
-let data = Data("""
-{"output":[{"content":[{"type":"output_text","text":"只根据当前材料回答。"}]}]}
-""".utf8)
-let text = try OpenAIResponsesClient.extractText(from: data)
-expect(text == "只根据当前材料回答。", "response parser")
-let groundedPrompt = OpenAIResponsesClient.composePrompt(
-    question: "解释金融体系",
-    materialTitle: "Mishkin 教材样例",
-    materialText: "金融体系把储蓄者的资金转移给有投资机会的人。",
-    noteTitle: "利率笔记",
-    noteText: "## 摘录\n金融体系和利率相关。",
-    selectionTitle: "Mishkin 教材样例，第 1 页选区",
-    selectionText: "储蓄者的资金转移给有投资机会的人"
-)
-expect(groundedPrompt.input.contains("当前材料：Mishkin 教材样例"), "agent prompt includes material title")
-expect(groundedPrompt.input.contains("当前笔记：利率笔记"), "agent prompt includes note title")
-expect(groundedPrompt.input.contains("当前选区（来源：Mishkin 教材样例，第 1 页选区）："), "agent prompt includes selection source")
-expect(groundedPrompt.instructions.contains("普通问题可以使用通用知识")
-    && groundedPrompt.instructions.contains("就近标注真实标题")
-    && !groundedPrompt.instructions.contains("回答末尾用“来源依据”"), "agent prompt answers ordinary questions and cites only material actually used")
-expect(groundedPrompt.instructions.contains("学习助手") && !groundedPrompt.instructions.contains("学习 Agent"), "agent prompt speaks as a study assistant instead of internal agent copy")
-let multiSelectionPrompt = OpenAIResponsesClient.composePrompt(
-    question: "比较这些片段",
-    materialTitle: "Mishkin 教材样例",
-    materialText: "金融体系与利率。",
-    noteTitle: "利率笔记",
-    noteText: "",
-    selectionTitle: "2 个已选文本片段",
-    selectionText: """
-    片段 1（来源：Mishkin 教材样例，第 1 页）：
-    金融体系转移资金。
-
-    片段 2（来源：利率笔记）：
-    利率是资金使用价格。
-    """
-)
-expect(multiSelectionPrompt.input.contains("当前选区（来源：2 个已选文本片段）：")
-    && multiSelectionPrompt.input.contains("片段 1（来源：Mishkin 教材样例，第 1 页）：")
-    && multiSelectionPrompt.input.contains("片段 2（来源：利率笔记）："), "agent prompt can carry multiple selected text attachments with source labels")
-let currentPagePrompt = OpenAIResponsesClient.composePrompt(
-    question: "解释当前页",
-    materialTitle: "Mishkin 教材样例，第 3 页",
-    materialText: "第 1 页\n旧页面内容\n\n第 3 页\n当前页内容\n\n第 4 页\n后续页面内容",
-    noteTitle: "利率笔记",
-    noteText: "",
-    selectionText: nil
-)
-expect(currentPagePrompt.input.contains("当前材料：Mishkin 教材样例，第 3 页")
-    && currentPagePrompt.input.contains("第 3 页\n当前页内容")
-    && !currentPagePrompt.input.contains("旧页面内容")
-    && !currentPagePrompt.input.contains("后续页面内容"), "agent prompt focuses PDF material text on the current reader page when the material title has a page reference")
-let noteOnlyPrompt = OpenAIResponsesClient.composePrompt(
-    question: "整理这段",
-    materialTitle: "未选择材料",
-    materialText: "",
-    noteTitle: "概念笔记",
-    noteText: "实际利率需要区分通胀预期。",
-    selectionText: "实际利率"
-)
-expect(noteOnlyPrompt.input.contains("当前材料：无") && noteOnlyPrompt.input.contains("当前选区（来源：概念笔记）："), "note-only prompt anchors selection to the current note")
-let englishPrompt = OpenAIResponsesClient.composePrompt(
-    question: "Summarize this",
-    materialTitle: "",
-    materialText: "",
-    noteTitle: "",
-    noteText: "Real interest rates account for expected inflation.",
-    selectionTitle: "",
-    selectionText: "real interest rates",
-    language: .english
-)
-expect(
-    englishPrompt.input.contains("Current material: none")
-        && englishPrompt.input.contains("Current note: Current note")
-        && englishPrompt.input.contains("Current selection (source: Current note):")
-        && englishPrompt.instructions.contains("Answer in English")
-        && englishPrompt.instructions.contains("general questions may use general knowledge")
-        && englishPrompt.instructions.contains("cite its real title next to the relevant sentence")
-        && !englishPrompt.instructions.contains("At the end, add a 'Sources used' section")
-        && !englishPrompt.input.contains("当前笔记"),
-    "agent prompt has a complete English note-only mode"
-)
-expect(OpenAIAPIKeyStore.cleaned("  sk-test\n") == "sk-test", "api key cleaning")
-
-do {
-    let temporaryKeychainURL = FileManager.default.temporaryDirectory
-        .appendingPathComponent("weibei-selfcheck-\(UUID().uuidString).keychain-db")
-    let temporaryKeychainPassword = Data("weibei-selfcheck-only".utf8)
-    var temporaryKeychain: SecKeychain?
-    let createStatus = temporaryKeychainURL.path.withCString { path in
-        temporaryKeychainPassword.withUnsafeBytes { password in
-            SecKeychainCreate(path, UInt32(password.count), password.baseAddress, false, nil, &temporaryKeychain)
-        }
-    }
-    expect(createStatus == errSecSuccess && temporaryKeychain != nil, "isolated self-check keychain is created without changing the user's default keychain")
-    guard let temporaryKeychain else { exit(1) }
-    defer {
-        SecKeychainDelete(temporaryKeychain)
-    }
-
-    let temporaryCredentialStore = WeiBeiCredentialStore(
-        service: "com.changfenhuang.weibei.selfcheck.\(UUID().uuidString)",
-        account: "OPENAI_API_KEY",
-        keychain: temporaryKeychain
-    )
-    try? temporaryCredentialStore.delete()
-    try temporaryCredentialStore.save("  sk-selfcheck\n")
-    expect(temporaryCredentialStore.load() == "sk-selfcheck", "isolated credential store save and load")
-    try temporaryCredentialStore.delete()
-    expect(temporaryCredentialStore.load().isEmpty, "isolated credential store delete")
-
-    // Production path: file under Application Support, no login-keychain UI.
-    let fileService = "com.changfenhuang.weibei.selfcheck.file.\(UUID().uuidString)"
-    let fileStore = WeiBeiCredentialStore(service: fileService, account: "TEST_KEY")
-    try? fileStore.delete()
-    try fileStore.save(" sk-file-store \n")
-    expect(fileStore.load() == "sk-file-store", "WeiBei app-data credential file save and load")
-    try fileStore.delete()
-    expect(fileStore.load().isEmpty, "WeiBei app-data credential file delete")
-}
-
 expect(
     {
         let paths = readSource("Sources/WeiBeiCore/WeiBeiAgentDataPaths.swift")
         let oauth = readSource("Sources/WeiBei/Support/PiOAuthService.swift")
         let runtime = readSource("Sources/WeiBeiCore/PiAgentRuntime.swift")
         return paths.contains("enum WeiBeiAgentDataPaths")
-            && paths.contains("piAuthJSON")
-            && oauth.contains("WeiBeiAgentDataPaths.piAuthJSON")
-            && !oauth.contains("homeAuthURL")
+            && paths.contains("piAgentDirectory")
+            && !paths.contains("secretsDirectory")
+            && !paths.contains("piAuthJSON")
+            && !paths.contains("migrateHomePiAuthIfNeeded")
+            && oauth.contains("WeiBeiAgentDataPaths.piAgentDirectory")
+            && !oauth.contains("auth.json")
             && runtime.contains("WeiBeiAgentDataPaths.piAgentDirectory")
             && !runtime.contains("homeDirectoryForCurrentUser.appendingPathComponent(\".pi/agent\"")
     }(),
-    "OAuth and Pi config use WeiBei Application Support paths, not terminal ~/.pi"
+    "embedded Pi exclusively owns credentials under WeiBei Application Support"
 )
 
 let missingSelectionInsight = QuietInsight.make(
@@ -3232,15 +3015,16 @@ expect(!agentSettingsSource.contains("Form {")
     && !agentSettingsSource.contains("settingsGroup(store.ui(\"API\"")
     && !agentSettingsSource.contains("把 Agent 作为")
     && agentSettingsSource.contains("prompt: Text(store.ui(\"粘贴 API Key\"")
-    && !agentSettingsSource.contains("Button(store.ui(\"保存到当前配置\"")
-    && !agentSettingsSource.contains("Button(store.ui(\"保存\", \"Save\")")
-    && agentSettingsSource.contains("onChange(of: store.openAIAPIKey)")
+    && agentSettingsSource.contains("text: $apiKeyDraft")
     && agentSettingsSource.contains("AgentAuthMethod")
     && agentSettingsSource.contains("createAgentCredentialProfile")
     && agentSettingsSource.contains("openAgentProviderConsole")
     && !agentSettingsSource.contains("prompt: Text(\"OpenAI 密钥\")")
-    && agentSettingsSource.contains("store.saveOpenAIAPIKey()")
-    && agentSettingsSource.contains(".onSubmit { store.saveOpenAIAPIKey() }")
+    && agentSettingsSource.contains(".onSubmit { saveActiveAPIKey() }")
+    && agentSettingsSource.contains("已保存在内置 Pi")
+    && agentSettingsSource.contains("startGuidedAPIConfiguration()")
+    && !agentSettingsSource.contains("store.openAIAPIKey")
+    && !agentSettingsSource.contains("saveOpenAIAPIKey")
     && agentSettingsSource.contains("SecureField(")
     && agentSettingsSource.contains(".foregroundStyle(WeiBeiTheme.placeholderInk)")
     && agentSettingsSource.contains(".foregroundColor(WeiBeiTheme.ink)")
@@ -3261,18 +3045,17 @@ expect(!agentSettingsSource.contains("Form {")
     && !agentSettingsSource.contains("TopBarVariant")
     && !agentSettingsSource.contains("setTopBarVariant")
     && !agentSettingsSource.contains("顶部栏样式"), "settings center uses 4 sections (Chat/Interface/Shortcuts/About), durable prefs only, theme name segments on Interface")
-// Model list is discovered live per-provider (OpenAI-compatible / Anthropic / Gemini /
-// Azure / Bedrock / GitHub Models / OpenRouter), with a built-in fallback for providers
-// whose listing is unavailable or untrustworthy (e.g. Codex subscription).
+// Provider credentials and models come from the embedded Pi runtime.
 func readSource(_ relativePath: String) -> String {
     let url = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
         .appendingPathComponent(relativePath)
     return (try? String(contentsOf: url, encoding: .utf8)) ?? ""
 }
 let workspaceStoreSource = readSource("Sources/WeiBei/Stores/WorkspaceStore.swift")
-let modelListServiceSource = readSource("Sources/WeiBeiCore/AgentModelListService.swift")
 let workspaceModelsSource = readSource("Sources/WeiBeiCore/WorkspaceModels.swift")
 let piAgentRuntimeSource = readSource("Sources/WeiBeiCore/PiAgentRuntime.swift")
+let piManagementSource = readSource("Sources/WeiBeiCore/AgentResources/management-extension.ts")
+let piOAuthSource = readSource("Sources/WeiBei/Support/PiOAuthService.swift")
 expect(
     notesAgentSource.contains("let availableSources = message.sources.filter")
         && notesAgentSource.contains("AgentReplySourceInlinePresentation(")
@@ -3301,55 +3084,34 @@ expect(
         && readerViewSource.contains("searchTargetPageIndex: store.readerSourceHighlightPageIndex"),
     "structured reply sources render as compact +N tags and open an exact in-course item without hiding Chat"
 )
-expect(modelListServiceSource.contains("enum ModelListStrategy")
-    && modelListServiceSource.contains("case openAICompatible")
-    && modelListServiceSource.contains("case anthropic")
-    && modelListServiceSource.contains("case gemini")
-    && modelListServiceSource.contains("case azureOpenAI")
-    && modelListServiceSource.contains("case bedrock")
-    && modelListServiceSource.contains("case gitHubModels")
-    && modelListServiceSource.contains("case openRouterPublic")
-    && modelListServiceSource.contains("case codexSubscription(token: String, accountID: String)")
-    && modelListServiceSource.contains("chatgpt.com/backend-api/codex/models")
-    && modelListServiceSource.contains("ChatGPT-Account-ID")
-    && modelListServiceSource.contains("func fetchModels(strategy:")
-    && modelListServiceSource.contains("x-api-key")
-    && modelListServiceSource.contains("anthropic-version")
-    && modelListServiceSource.contains("foundation-models")
-    && workspaceModelsSource.contains("var modelListProtocol: ModelListProtocol")
-    && workspaceModelsSource.contains("var recommendedModels: [String]")
-    && workspaceModelsSource.contains("var defaultListBaseURL: String?")
-    && workspaceStoreSource.contains("var availableModels: [String]")
-    && workspaceStoreSource.contains("var modelListStatus: ModelListStatus")
-    && workspaceStoreSource.contains("func resolvedModelListStrategy()")
-    && workspaceStoreSource.contains("func refreshModelList()")
-    && workspaceStoreSource.contains("AgentModelListService.shared.fetchModels")
+expect(piManagementSource.contains("const { ModelRuntime } = await import(PI_PACKAGE)")
+    && piManagementSource.contains("ModelRuntime.create")
+    && piManagementSource.contains("runtime.getProviders()")
+    && piManagementSource.contains("runtime.getModels()")
+    && piManagementSource.contains("runtime.listCredentials()")
+    && piManagementSource.contains("runtime.login(request.providerId, request.authType")
+    && piManagementSource.contains("runtime.logout(request.providerId)")
+    && piOAuthSource.contains("runtime.managementCatalog")
+    && piOAuthSource.contains("runtime.managementLogin")
+    && piOAuthSource.contains("runtime.managementLogout")
     && agentSettingsSource.contains("agentModelPicker()")
-    && agentSettingsSource.contains("requestModelListRefresh()"), "chat service enumerates models live per provider with a built-in fallback and surfaces them in a dropdown")
-// Regression: refreshModelList must not cancel modelFetchTask at entry. The scheduler
-// stores the Task that awaits refreshModelList; cancelling there self-cancels the
-// in-flight fetch, discards a successful Codex catalog, and leaves status .loading.
-// Exactly one cancel site remains, inside scheduleModelListRefresh.
-expect(workspaceStoreSource.contains("func scheduleModelListRefresh()")
-    && workspaceStoreSource.components(separatedBy: "modelFetchTask?.cancel()").count == 2
-    && workspaceStoreSource.contains("must NOT cancel `modelFetchTask`")
-    && !workspaceStoreSource.contains("func refreshModelList() async {\n        modelFetchTask?.cancel()"),
-    "model-list race guard cancels only from scheduleModelListRefresh, never self-cancels refreshModelList")
-// L5: provider console links + key-help live in one metadata table (behavior locked).
+    && agentSettingsSource.contains("oauthService.refreshCatalog(force: force)")
+    && !workspaceModelsSource.contains("ModelListProtocol")
+    && !workspaceStoreSource.contains("AgentModelListService"),
+    "embedded Pi is the sole provider, credential, and model catalog runtime")
+// Provider console links remain table-driven; credentials themselves belong to Pi.
 let credentialProfilesSource = readSource("Sources/WeiBeiCore/AgentCredentialProfiles.swift")
 expect(credentialProfilesSource.contains("public struct Metadata: Sendable, Equatable")
-    && credentialProfilesSource.contains("public enum KeyHelp: Sendable, Equatable")
     && credentialProfilesSource.contains("public static func metadata(for provider: AgentProviderID) -> Metadata")
     && credentialProfilesSource.contains("public static func loginURL(for provider: AgentProviderID) -> URL?")
     && credentialProfilesSource.contains("public static func accountURL(for provider: AgentProviderID) -> URL?")
-    && credentialProfilesSource.contains("public static func keyHelp(language: WeiBeiInterfaceLanguage, provider: AgentProviderID) -> String"),
-    "provider console metadata is table-driven behind the existing AgentProviderConsoleLinks API")
-// Runtime golden values — keep the pre-L5 URLs/help strings from drifting.
+    && !credentialProfilesSource.contains("KeyHelp")
+    && !credentialProfilesSource.contains("environmentAPIKeyName"),
+    "provider console metadata stays table-driven without duplicating Pi credential rules")
+// Runtime golden values — keep provider console URLs from drifting.
 for provider in AgentProviderID.allCases {
     _ = AgentProviderConsoleLinks.loginURL(for: provider)
     _ = AgentProviderConsoleLinks.accountURL(for: provider)
-    _ = AgentProviderConsoleLinks.keyHelp(language: .chinese, provider: provider)
-    _ = AgentProviderConsoleLinks.keyHelp(language: .english, provider: provider)
     _ = AgentProviderConsoleLinks.metadata(for: provider)
 }
 expect(AgentProviderConsoleLinks.loginURL(for: .openai)?.absoluteString == "https://platform.openai.com/api-keys"
@@ -3368,20 +3130,7 @@ expect(AgentProviderConsoleLinks.loginURL(for: .openai)?.absoluteString == "http
     && AgentProviderConsoleLinks.loginURL(for: .llamaCpp) == nil
     && AgentProviderConsoleLinks.loginURL(for: .xiaomi) == nil
     && AgentProviderConsoleLinks.accountURL(for: .deepseek)?.absoluteString == "https://platform.deepseek.com/api_keys",
-    "provider console login/account URLs match the pre-L5 golden set")
-expect(AgentProviderConsoleLinks.keyHelp(language: .chinese, provider: .openaiCodex).contains("订阅 OAuth")
-    && AgentProviderConsoleLinks.keyHelp(language: .english, provider: .openaiCodex).contains("Subscription OAuth")
-    && AgentProviderConsoleLinks.keyHelp(language: .chinese, provider: .anthropic).contains("ANTHROPIC_API_KEY")
-    && AgentProviderConsoleLinks.keyHelp(language: .chinese, provider: .azureOpenAI).contains("AZURE_OPENAI_BASE_URL")
-    && AgentProviderConsoleLinks.keyHelp(language: .chinese, provider: .amazonBedrock).contains("AWS_BEARER_TOKEN_BEDROCK")
-    && AgentProviderConsoleLinks.keyHelp(language: .chinese, provider: .custom).contains("OpenAI 兼容")
-    && AgentProviderConsoleLinks.keyHelp(language: .chinese, provider: .llamaCpp).contains("llama.cpp")
-    && AgentProviderConsoleLinks.keyHelp(language: .chinese, provider: .openai).contains("OPENAI_API_KEY")
-    && AgentProviderConsoleLinks.metadata(for: .openai).help == .genericEnv
-    && AgentProviderConsoleLinks.metadata(for: .openaiCodex).help == .openaiCodex
-    && AgentProviderConsoleLinks.metadata(for: .cloudflareAIGateway).help == .cloudflareAIGateway
-    && AgentProviderConsoleLinks.metadata(for: .cloudflareWorkersAI).help == .cloudflareWorkersAI,
-    "provider key-help copy matches the pre-L5 golden set for special and generic cases")
+    "provider console login/account URLs match the golden set")
 expect(agentSettingsSource.contains(".contentShape(Rectangle())")
     && agentSettingsSource.contains("func settingsSwitch(isOn: Binding<Bool>, accessibilityLabel: String)")
     // Sidebar is a pure section list — no language/theme jump pills at the bottom.
@@ -3815,7 +3564,7 @@ expect(workspaceStoreSource.contains("let sampleItems: [StudyItem] = WorkspaceSt
     && workspaceStoreSource.contains("private var didRunVerificationScenario = false")
     && workspaceStoreSource.contains("func runVerificationScenarioIfNeeded() async")
     && workspaceStoreSource.contains("let scenario = Self.environmentValue(\"WEIBEI_VERIFY_SCENARIO\")")
-    && workspaceStoreSource.contains("scenario == \"offline-learning-flow\"")
+    && !workspaceStoreSource.contains("scenario == \"offline-learning-flow\"")
     && workspaceStoreSource.contains("scenario == \"immersive-conversation-flow\"")
     && workspaceStoreSource.contains("scenario == \"notebook-creation-flow\"")
     && workspaceStoreSource.contains("layout = scenario == \"immersive-conversation-flow\" ? .immersiveConversation : .documentAgentNotes")
@@ -3824,7 +3573,7 @@ expect(workspaceStoreSource.contains("let sampleItems: [StudyItem] = WorkspaceSt
     && workspaceStoreSource.contains("updateSelection(\n            ui(\"利率是资金使用价格的表达。\"")
     && workspaceStoreSource.contains("await askAgentAndWait()")
     && workspaceStoreSource.contains("applyLastAgentAnswerToNote()")
-    && workspaceStoreSource.contains("WEIBEI_FORCE_OFFLINE_AGENT")
+    && !workspaceStoreSource.contains("WEIBEI_FORCE_OFFLINE_AGENT")
     && workspaceStoreSource.contains("private static func workspaceRootDirectory() -> URL?")
     && workspaceStoreSource.contains("environmentValue(\"WEIBEI_WORKSPACE_DIR\")")
     && workspaceStoreSource.contains("let directory = root.appendingPathComponent(\"Samples\", isDirectory: true)")
@@ -4109,32 +3858,30 @@ expect(!workspaceStoreSource.contains("selectedItem?.title ?? \"当前材料\"")
     && workspaceStoreSource.contains("draftPreserved: true")
     && workspaceStoreSource.contains("func retryAgentRequest(_ question: String)")
     && !workspaceStoreSource.contains("Agent 设置")
-    && workspaceStoreSource.contains("PI 与在线密钥均不可用，当前使用离线草稿。")
-    && workspaceStoreSource.contains("OfflineStudyAgentRuntime().respond")
     && workspaceStoreSource.contains("PiAgentRuntime")
     && workspaceStoreSource.contains("appendAgentMessage(AgentMessage(role: .user, text: question, source: sourceTitle))")
-    && !workspaceStoreSource.contains("未配置 OPENAI_API_KEY 或钥匙串密钥")
-    // Provider-aware key help + in-field key used for requests (local secret file + keychain mirror).
-    && workspaceStoreSource.contains("正在使用本机环境变量")
-    && workspaceStoreSource.contains("设置中的密钥")
-    && workspaceStoreSource.contains("密钥保存在魏碑应用数据中")
-    && workspaceStoreSource.contains("let fieldKey = OpenAIAPIKeyStore.cleaned(openAIAPIKey)")
-    && workspaceStoreSource.contains("resolveStoredAPIKey()")
-    && workspaceStoreSource.contains("已清除密钥。")
-    && workspaceStoreSource.contains("密钥已保存到当前配置。")
     && workspaceStoreSource.contains("AgentCredentialProfileStore")
+    && !workspaceStoreSource.contains("OfflineStudyAgentRuntime")
+    && !workspaceStoreSource.contains("OpenAIResponsesClient")
+    && !workspaceStoreSource.contains("OpenAIAPIKeyStore")
+    && !workspaceStoreSource.contains("openAIAPIKey")
+    && !workspaceStoreSource.contains("resolveStoredAPIKey")
     && !workspaceStoreSource.contains("打包应用可直接读取")
     && !workspaceStoreSource.contains("已清除钥匙串密钥。")
     && !workspaceStoreSource.contains("已保存到 macOS 钥匙串。")
     && !workspaceStoreSource.contains("已选择材料、当前选区和右侧笔记"), "agent context and setup notices avoid fake material fallback copy and visible internal agent labels")
 expect(
     workspaceStoreSource.contains("let selectedProvider = agentProviderID")
-        && workspaceStoreSource.contains("let linkedOAuth = PiOAuthService.readLinkedOAuthProviders")
-        && workspaceStoreSource.contains("if !explicitProvider.isEmpty { return explicitProvider }")
-        && workspaceStoreSource.contains("if selectedProvider == .openaiCodex { return \"openai-codex\" }")
-        && workspaceStoreSource.contains("apiKey: usesOAuth ? nil : credential?.key")
-        && workspaceStoreSource.contains("thinkingLevel: thinking.isEmpty ? \"medium\" : thinking"),
-    "PI honors the selected provider, reuses subscription OAuth without injecting an API key, and keeps the current thinking default"
+        && workspaceStoreSource.contains("provider: selectedProvider.piProviderName")
+        && workspaceStoreSource.contains("model: selectedModel.isEmpty ? nil : selectedModel")
+        && workspaceStoreSource.contains("await piRuntime.writeCustomModelsJSONIfNeeded")
+        && workspaceStoreSource.contains("return try await piRuntime.respond")
+        && !workspaceStoreSource.contains("PiOAuthService.readLinkedOAuthProviders")
+        && !workspaceStoreSource.contains("WEIBEI_PI_PROVIDER")
+        && !workspaceStoreSource.contains("WEIBEI_PI_MODEL")
+        && !workspaceStoreSource.contains("WEIBEI_PI_DISABLED")
+        && !workspaceStoreSource.contains("WEIBEI_FORCE_OFFLINE_AGENT"),
+    "every study request honors the selected provider and runs through embedded Pi without a parallel credential or HTTP path"
 )
 if let failureStart = workspaceStoreSource.range(of: "private func recordAgentTargetFailure")?.lowerBound,
    let requestStart = workspaceStoreSource.range(of: "private func askAgentAndWait")?.lowerBound {
@@ -4349,9 +4096,9 @@ expect(workspaceStoreSource.contains("正在静默阅读当前材料和笔记。
 expect(workspaceStoreSource.contains("scenario == \"notebook-creation-flow\"")
     && workspaceStoreSource.contains("promptCreateBlankNotebookNote()\n            return"), "visual verification can exercise blank notebook creation")
 expect(workspaceStoreSource.contains("private func noteBlockForAgentAnswer")
-    && workspaceStoreSource.contains("AgentOfflinePreview.suggestedNoteBlock(from: text, language: interfaceLanguage)")
     && workspaceStoreSource.contains("guard !text.hasPrefix(\"#\") else { return text }")
     && workspaceStoreSource.contains("return \"## \\(ui(\"整理建议\", \"Organization suggestion\"))\\n\\(text)\"")
+    && !workspaceStoreSource.contains("AgentOfflinePreview")
     && workspaceStoreSource.contains("private func lastAgentAnswerContentForCurrentNote()")
     && workspaceStoreSource.contains("lastUsableAgentAnswer?.text")
     && workspaceStoreSource.contains("if let proposal = reply.noteProposal,")
@@ -4878,15 +4625,9 @@ expect(notesAgentSource.contains("AgentThinkingIndicator()")
     && notesAgentSource.contains("isError ? WeiBeiTheme.cinnabar : WeiBeiTheme.cinnabar.opacity(0.76)")
     && notesAgentSource.contains(".foregroundStyle(WeiBeiTheme.cinnabar)")
     && !notesAgentSource.contains("if message.role == .user || message.text.hasPrefix(\"Agent 请求失败：\")"), "selection floating agent mirrors immersive order/thinking, stays resizable, and reserves cinnabar for real failures")
-expect(notesAgentSource.contains("private var isCredentialNotice: Bool")
-    && notesAgentSource.contains("message.text.hasPrefix(\"未配置密钥\")")
-    && notesAgentSource.contains("message.text.hasPrefix(\"未配置 OPENAI_API_KEY\")")
-    && notesAgentSource.contains("message.text.hasPrefix(\"No key is configured\")")
-    && notesAgentSource.contains("isOfflineContextPreview")
-    && notesAgentSource.contains("return message.text")
-    && notesAgentSource.contains("Text(store.ui(\"需要设置密钥\", \"Key Required\"))")
-    && notesAgentSource.contains("let scope = store.hasSelectionAttachments ? store.ui(\"\\(store.agentPromptScope)、已选文本片段\"")
-    && notesAgentSource.contains("store.ui(\"设置后会结合\\(scope)作答；未配置时不会编造内容。\"")
+expect(!notesAgentSource.contains("isCredentialNotice")
+    && !notesAgentSource.contains("isOfflineContextPreview")
+    && !notesAgentSource.contains("未配置 OPENAI_API_KEY")
     && notesAgentSource.contains("private var assistantTurn: some View")
     && notesAgentSource.contains("AgentMessageMarkdownText(")
     && notesAgentSource.contains("rendersRichMarkdown: false")
@@ -5412,14 +5153,8 @@ let edgeFloatingPoint = SelectionFloatingAgentPlacement.position(
 )
 expect(edgeFloatingPoint.x == 918 && edgeFloatingPoint.y == 572, "selection agent flips to the left of text near the window edge")
 expect(AgentMessage(role: .assistant, text: "整理完成", source: nil).isUsableAgentAnswer, "usable agent answer")
-expect(!AgentMessage(role: .assistant, text: "未配置密钥。", source: nil).isUsableAgentAnswer, "credential setup message is not writable")
-expect(!AgentMessage(role: .assistant, text: "未配置 OPENAI_API_KEY。", source: nil).isUsableAgentAnswer, "api key setup message is not writable")
-expect(!AgentMessage(role: .assistant, text: "未配置 OPENAI_API_KEY 或钥匙串密钥。", source: nil).isUsableAgentAnswer, "keychain setup message is not writable")
-expect(AgentMessage(role: .assistant, text: offlineChinesePreview, source: nil).isUsableAgentAnswer, "offline draft is visible in chat and writable to notes")
-expect(AgentMessage(role: .assistant, text: offlineEnglishPreview, source: nil).isUsableAgentAnswer, "English offline draft is visible in chat and writable to notes")
-expect(!AgentMessage(role: .assistant, text: "请求失败：网络错误", source: nil).isUsableAgentAnswer, "agent error is not writable")
-expect(!AgentMessage(role: .assistant, text: "请求失败\n可直接重试。", source: nil).isUsableAgentAnswer, "generic failure header without colon is not writable")
-expect(!AgentMessage(role: .assistant, text: "Agent 请求失败：网络错误", source: nil).isUsableAgentAnswer, "legacy agent error is not writable")
+expect(!AgentMessage(role: .assistant, text: "认证已失效", source: nil, failureKind: .unauthorized).isUsableAgentAnswer, "structured authentication failures are not writable")
+expect(!AgentMessage(role: .assistant, text: "请求失败", source: nil, failureKind: .generic).isUsableAgentAnswer, "structured agent failures are not writable")
 expect(!AgentMessage(
     role: .assistant,
     text: "尚未完成",
