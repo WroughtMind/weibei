@@ -1083,16 +1083,6 @@ export const spatialMapRenderer: RichAnswerRenderer = {
   compile(plan: RenderPlan, context) {
     const parsed = parseSpatialMapSpec(plan);
     if (!parsed.ok) return { ok: false, issue: parsed.issue };
-    if (!plan.sourceBindings.length) {
-      return {
-        ok: false,
-        issue: createRendererIssue(
-          "validation_error",
-          SPATIAL_MAP_RENDERER,
-          "来源绑定缺失，空间地图需至少保留一个来源绑定用于学习追溯。",
-        ),
-      };
-    }
     if (parsed.spec.coordinateMode === "geographic" && parsed.spec.mapAsset.kind === "assetRef") {
       context.showNotice("地理坐标场景已启用本地底图引用；渲染器不会加载外部瓦片或脚本。");
     }

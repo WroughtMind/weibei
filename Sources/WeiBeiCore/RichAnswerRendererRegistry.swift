@@ -462,17 +462,6 @@ public struct RichAnswerRendererRegistry: Sendable {
         }
         let request = normalizedIntent.merging(normalizedPlan.derivedCapabilityRequest)
         var issues = requestIssues(for: request, declaration: registration.declaration)
-        if normalizedPlan.sourceBindings.isEmpty {
-            issues.append(
-                RichAnswerCapabilityMismatchIssue(
-                    code: .missingSourceBinding,
-                    renderer: normalizedPlan.renderer,
-                    field: "sourceBindings",
-                    message: "renderPlan 没有绑定任何来源或证据",
-                    repairHint: "为视觉参数、数据、结论或降级内容绑定本轮 evidenceID。"
-                )
-            )
-        }
         issues.append(contentsOf: resourceBudgetIssues(
             normalizedPlan,
             declaration: registration.declaration,

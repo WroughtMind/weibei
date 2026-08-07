@@ -309,9 +309,6 @@ function guardScene3DPlan(plan: RenderPlan, spec: Scene3DSpec) {
   if (plan.qualityBudget.allowNetwork || plan.qualityBudget.allowWebGL) {
     return createRendererIssue("capability_mismatch", plan.renderer, "三维渲染器不使用网络、WebGL、外链模型或任意脚本，只做确定性 Canvas 投影。");
   }
-  if (!plan.sourceBindings.length) {
-    return createRendererIssue("validation_error", plan.renderer, "三维场景必须保留来源绑定，不能生成无来源演示。");
-  }
   const sourceIds = new Set(plan.sourceBindings.flatMap((binding) => [
     binding.sourceID,
     binding.evidenceID,
