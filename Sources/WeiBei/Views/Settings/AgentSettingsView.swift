@@ -3,14 +3,7 @@ import WeiBeiCore
 
 // MARK: - 对话服务 card (Settings → 对话)
 //
-// Replaces the legacy four parallel cards (连接配置 / 接入方式 / 提供商与模型 / 对话入口) with
-// one linear decision chain: 服务 → 认证 → 模型 → 状态. The auth method is now derived
-// from the provider kind (no separate toggle), OAuth collapses to a single login button,
-// and the model field becomes a dropdown fed by `AgentModelListService`. Advanced options
-// (Base URL, Bedrock region, multiple profiles) live in a collapsed disclosure group.
-//
-// This view is an extension of `SettingsView` so it can reuse the shared Settings row /
-// group / pill / menu primitives defined in WeiBeiApp.swift.
+// One decision chain: service → embedded-Pi authentication → embedded-Pi model.
 
 extension SettingsView {
     /// Entry point — used by `agentSettings` in WeiBeiApp.swift.
@@ -18,13 +11,6 @@ extension SettingsView {
     func agentSettingsContent() -> some View {
         VStack(alignment: .leading, spacing: 16) {
             agentServiceCard
-        }
-        .onAppear {
-            // First paint only. Provider / profile switches now drive their own fetch
-            // from inside the Store (setAgentProviderID / selectAgentCredentialProfile
-            // call scheduleModelListRefresh), so the view no longer needs to fan out
-            // three onChange hooks — that triple-trigger was the root of the race (S2).
-            requestModelListRefresh()
         }
         .sheet(isPresented: $showManualModelEntry) {
             agentManualModelSheet
@@ -96,28 +82,6 @@ extension SettingsView {
                 }
             }
 
-            // Region — only for Bedrock.
-            if store.agentProviderID == .amazonBedrock {
-                settingsRow(title: store.ui("区域", "Region"), detail: "") {
-                    TextField(
-                        "",
-                        text: Binding(
-                            get: { store.bedrockRegion },
-                            set: {
-                                store.bedrockRegion = $0.trimmingCharacters(in: .whitespacesAndNewlines)
-                                requestModelListRefresh()
-                            }
-                        ),
-                        prompt: Text("us-east-1").font(.system(size: 13)).foregroundStyle(WeiBeiTheme.placeholderInk)
-                    )
-                    .textFieldStyle(.plain)
-                    .foregroundColor(WeiBeiTheme.ink)
-                    .font(.system(size: 13))
-                    .weibeiInputSurface(active: false, height: 38)
-                    .frame(width: SettingsView.controlWidth)
-                }
-            }
-
             // Quiet reminder — only when attention is needed.
             agentStatusReminder
         }
@@ -134,6 +98,7 @@ extension SettingsView {
                 compactMenu(activeProfileName) {
                     ForEach(store.agentCredentialProfiles) { profile in
                         Button(profile.name) {
+                            apiKeyDraft = ""
                             store.selectAgentCredentialProfile(profile.id)
                         }
                     }
@@ -146,9 +111,6 @@ extension SettingsView {
                         isRenamingActiveProfile = true
                     }
                     if store.agentCredentialProfiles.count > 1 {
-                        // Destructive: also wipes the profile's stored API key, so it
-                        // only arms the confirmation dialog rather than deleting
-                        // outright (see S3).
                         Button(store.ui("删除当前配置", "Delete Current Profile"), role: .destructive) {
                             showDeleteProfileConfirmation = true
                         }
@@ -161,14 +123,14 @@ extension SettingsView {
             isPresented: $showDeleteProfileConfirmation,
             titleVisibility: .visible
         ) {
-            Button(store.ui("删除配置及其密钥", "Delete profile and its key"), role: .destructive) {
+            Button(store.ui("删除配置", "Delete profile"), role: .destructive) {
                 store.deleteActiveAgentCredentialProfile()
             }
             Button(store.ui("取消", "Cancel"), role: .cancel) {}
         } message: {
             Text(store.ui(
-                "将删除该配置及保存在魏碑中的密钥，此操作不可恢复。",
-                "This deletes the profile and its key stored in WeiBei. This cannot be undone."
+                "只删除这组服务与模型选择；内置 Pi 中的登录凭证不受影响。",
+                "This only deletes the service and model selection. Credentials in embedded Pi are unchanged."
             ))
         }
     }
@@ -213,32 +175,49 @@ extension SettingsView {
     }
 
     private func applyProvider(_ provider: AgentProviderID) {
+        apiKeyDraft = ""
         store.setAgentProviderID(provider)
-        // Derive auth method from kind (replaces the separate "接入方式" card state).
-        store.setAgentAuthMethod(provider.kind == .subscription ? .subscription : .apiKey)
+        if let firstModel = oauthService.models(providerID: provider.piProviderName).first {
+            store.updateModelName(firstModel)
+        }
+        let authTypes = piAuthTypes(for: provider)
+        store.setAgentAuthMethod(
+            authTypes.contains(.oauth) && provider.kind == .subscription
+                ? .subscription
+                : .apiKey
+        )
     }
 
     // MARK: ② Auth
 
     @ViewBuilder
     private var agentAuthRow: some View {
-        switch store.agentProviderID.kind {
+        if activePiAuthTypes.contains(.oauth), activePiAuthTypes.contains(.apiKey) {
+            settingsRow(title: store.ui("认证方式", "Authentication"), detail: "") {
+                compactMenu(activeAgentAuthMethod.label(language: store.interfaceLanguage)) {
+                    Button(AgentAuthMethod.subscription.label(language: store.interfaceLanguage)) {
+                        store.setAgentAuthMethod(.subscription)
+                    }
+                    Button(AgentAuthMethod.apiKey.label(language: store.interfaceLanguage)) {
+                        store.setAgentAuthMethod(.apiKey)
+                    }
+                }
+            }
+        }
+        switch activeAgentAuthMethod {
         case .subscription:
             agentSubscriptionAuth
-        case .apiKey, .localOrCustom:
+        case .apiKey:
             agentAPIKeyAuth
         }
     }
 
     private var agentAPIKeyAuth: some View {
-        // No long key-help blurb under the field — console button + status notes
-        // cover the rare cases that need guidance. Quiet by default: no "Configured"
-        // pill when a key is present (the non-empty field is enough).
         settingsRow(title: store.ui("密钥", "API Key")) {
             VStack(alignment: .trailing, spacing: 8) {
                 SecureField(
                     "",
-                    text: $store.openAIAPIKey,
+                    text: $apiKeyDraft,
                     prompt: Text(store.ui("粘贴 API Key", "Paste API key"))
                         .font(.system(size: 13))
                         .foregroundStyle(WeiBeiTheme.placeholderInk)
@@ -249,22 +228,37 @@ extension SettingsView {
                 .font(.system(size: 13))
                 .weibeiInputSurface(active: focusedField == .apiKey, height: 38)
                 .frame(width: SettingsView.controlWidth)
-                .onSubmit { store.saveOpenAIAPIKey() }
-                .onChange(of: focusedField) { _, field in
-                    if field != .apiKey { store.saveOpenAIAPIKey() }
-                }
-                // Persist on any change so the key survives a tab switch or window
-                // close without the user pressing Return. This is the implicit-save
-                // contract the self-check expects: no explicit Save button, but the
-                // key is never stranded in memory. Writes go to WeiBei app data
-                // (no macOS keychain UI); saveOpenAIAPIKey cleans + dedups.
-                .onChange(of: store.openAIAPIKey) { _, _ in
-                    store.saveOpenAIAPIKey()
-                }
+                .onSubmit { saveActiveAPIKey() }
 
                 HStack(spacing: 8) {
-                    if !store.openAIAPIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                        Button(store.ui("清除", "Clear")) { store.clearOpenAIAPIKey() }
+                    if oauthService.isConfigured(
+                        providerID: store.agentProviderID.piProviderName,
+                        type: .apiKey
+                    ) {
+                        settingsPill(
+                            title: store.ui("已保存在内置 Pi", "Stored in embedded Pi"),
+                            icon: "checkmark.seal.fill",
+                            active: true
+                        )
+                    }
+                    if !apiKeyDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        Button(store.ui("保存", "Save")) { saveActiveAPIKey() }
+                            .buttonStyle(WeiBeiTextActionButtonStyle(active: !oauthService.isLoggingIn))
+                    }
+                    if !oauthService.isConfigured(
+                        providerID: store.agentProviderID.piProviderName,
+                        type: .apiKey
+                    ) {
+                        Button(store.ui("由内置 Pi 配置", "Configure with embedded Pi")) {
+                            startGuidedAPIConfiguration()
+                        }
+                        .buttonStyle(WeiBeiTextActionButtonStyle(active: !oauthService.isLoggingIn))
+                    }
+                    if oauthService.isConfigured(
+                        providerID: store.agentProviderID.piProviderName,
+                        type: .apiKey
+                    ) {
+                        Button(store.ui("清除", "Clear")) { clearActiveAPICredential() }
                             .buttonStyle(WeiBeiTextActionButtonStyle())
                     }
                     if AgentProviderConsoleLinks.loginURL(for: store.agentProviderID) != nil
@@ -275,24 +269,29 @@ extension SettingsView {
                         .buttonStyle(WeiBeiTextActionButtonStyle())
                     }
                 }
+                piManagementPrompt
+                if let progress = oauthService.statusMessage, oauthService.isLoggingIn {
+                    settingsNote(progress, icon: "arrow.triangle.2.circlepath")
+                }
+                if let error = oauthService.lastError {
+                    settingsNote(error, icon: "exclamationmark.triangle")
+                }
             }
         }
     }
 
-    // OAuth collapsed to a single button for the *current* subscription provider,
-    // instead of three side-by-side providers.
     private var agentSubscriptionAuth: some View {
         settingsRow(
             title: store.ui("订阅登录", "Subscription Login"),
             detail: ""
         ) {
             VStack(alignment: .trailing, spacing: 8) {
-                let provider = currentSubscriptionProvider
+                let provider = currentOAuthProvider
                 HStack(spacing: 8) {
                     if let provider, oauthService.isLinked(provider) {
                         settingsPill(title: store.ui("已连接", "Linked"), icon: "checkmark.seal.fill", active: true)
                     }
-                    if let provider, provider.supportsInAppOAuth {
+                    if let provider {
                         Button {
                             guard !oauthService.isLoggingIn else { return }
                             oauthService.startLogin(provider)
@@ -300,22 +299,25 @@ extension SettingsView {
                             Text(
                                 oauthService.isLoggingIn
                                     ? store.ui("登录中…", "Signing in…")
-                                    : store.ui("OAuth 登录", "OAuth sign in")
+                                    : oauthService.isLinked(provider)
+                                        ? store.ui("重新登录", "Sign in again")
+                                        : store.ui("OAuth 登录", "OAuth sign in")
                             )
                         }
                         .buttonStyle(WeiBeiTextActionButtonStyle(active: !oauthService.isLoggingIn))
-                    } else {
-                        // Copilot: in-app OAuth unsupported; show guidance.
-                        Button(store.ui("查看登录说明", "Show login help")) {
-                            store.openAIKeyStatus = currentSubscriptionHelpText
+                        if oauthService.isLinked(provider) {
+                            Button(store.ui("断开", "Disconnect")) {
+                                oauthService.logout(provider)
+                            }
+                            .buttonStyle(WeiBeiTextActionButtonStyle())
                         }
-                        .buttonStyle(WeiBeiTextActionButtonStyle())
                     }
                     if oauthService.isLoggingIn {
                         Button(store.ui("取消", "Cancel")) { oauthService.cancelLogin() }
                             .buttonStyle(WeiBeiTextActionButtonStyle())
                     }
                 }
+                piManagementPrompt
                 if let progress = oauthService.statusMessage {
                     settingsNote(progress, icon: "arrow.triangle.2.circlepath")
                 }
@@ -326,31 +328,101 @@ extension SettingsView {
         }
     }
 
-    private var currentSubscriptionProvider: PiSubscriptionProvider? {
-        PiSubscriptionProvider(rawValue: store.agentProviderID.rawValue)
+    private var currentOAuthProvider: AgentProviderID? {
+        activePiAuthTypes.contains(.oauth) ? store.agentProviderID : nil
     }
 
-    private var currentSubscriptionHelpText: String {
-        currentSubscriptionProvider?.detail(language: store.interfaceLanguage)
-            ?? store.ui("请在终端运行 pi 后执行对应 /login。", "Run pi in a terminal, then the matching /login.")
+    private var activePiAuthTypes: [PiCredentialType] {
+        piAuthTypes(for: store.agentProviderID)
+    }
+
+    private var activeAgentAuthMethod: AgentAuthMethod {
+        if activePiAuthTypes.contains(.oauth), activePiAuthTypes.contains(.apiKey) {
+            return store.agentAuthMethod
+        }
+        return activePiAuthTypes.contains(.oauth) ? .subscription : .apiKey
+    }
+
+    private func piAuthTypes(for provider: AgentProviderID) -> [PiCredentialType] {
+        if let types = oauthService.catalog?.providers.first(where: {
+            $0.id == provider.piProviderName
+        })?.authTypes, !types.isEmpty {
+            return types
+        }
+        return provider.kind == .subscription ? [.oauth] : [.apiKey]
+    }
+
+    @ViewBuilder
+    private var piManagementPrompt: some View {
+        if let prompt = oauthService.pendingPrompt {
+            settingsNote(prompt.message, icon: "key.horizontal")
+            HStack(spacing: 8) {
+                if prompt.type == .select {
+                    Picker("", selection: $oauthService.promptValue) {
+                        ForEach(prompt.options ?? [], id: \.id) { option in
+                            Text(option.label).tag(option.id)
+                        }
+                    }
+                    .labelsHidden()
+                    .frame(width: SettingsView.controlWidth)
+                } else if prompt.type == .secret {
+                    SecureField(prompt.placeholder ?? "", text: $oauthService.promptValue)
+                        .textFieldStyle(.plain)
+                        .weibeiInputSurface(active: true, height: 38)
+                        .frame(width: SettingsView.controlWidth)
+                        .onSubmit { oauthService.submitPrompt() }
+                } else {
+                    TextField(prompt.placeholder ?? "", text: $oauthService.promptValue)
+                        .textFieldStyle(.plain)
+                        .weibeiInputSurface(active: true, height: 38)
+                        .frame(width: SettingsView.controlWidth)
+                        .onSubmit { oauthService.submitPrompt() }
+                }
+                Button(store.ui("继续", "Continue")) { oauthService.submitPrompt() }
+                    .buttonStyle(WeiBeiTextActionButtonStyle(active: !oauthService.promptValue.isEmpty))
+            }
+        }
+    }
+
+    private func saveActiveAPIKey() {
+        let key = apiKeyDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !key.isEmpty, !oauthService.isLoggingIn else { return }
+        oauthService.startAPIKeyLogin(
+            key,
+            provider: store.agentProviderID,
+            baseURL: store.agentBaseURL,
+            model: store.modelName
+        )
+    }
+
+    private func startGuidedAPIConfiguration() {
+        oauthService.startAPIKeyLogin(
+            provider: store.agentProviderID,
+            baseURL: store.agentBaseURL,
+            model: store.modelName
+        )
+    }
+
+    private func clearActiveAPICredential() {
+        apiKeyDraft = ""
+        oauthService.logoutCredential(
+            providerID: store.agentProviderID.piProviderName,
+            displayName: store.agentProviderID.label(language: store.interfaceLanguage)
+        )
     }
 
     // MARK: Status reminder — only when attention is needed
 
-    /// Quiet by default. Surfaces one short line only when something needs the user's
-    /// attention: the key is missing, or an env-var override is silently in effect (so
-    /// the field they're editing wouldn't actually take). Replaces the old 5-pill bar
-    /// that piled every status into a noisy row.
+    /// Quiet by default. Surfaces one short line only when authentication is missing.
     @ViewBuilder
     private var agentStatusReminder: some View {
-        if !envKeyOverride.isEmpty {
-            settingsNote(
-                store.ui("由环境变量 \(envKeyOverride) 生效，此处填写不会覆盖。", "Env \(envKeyOverride) is active; this field won't override it."),
-                icon: "lock.fill"
-            )
-        } else if !oauthLinked,
-                  store.agentProviderID.kind != .subscription,
-                  store.openAIAPIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        if !oauthLinked,
+                  activeAgentAuthMethod != .subscription,
+                  !oauthService.isConfigured(
+                      providerID: store.agentProviderID.piProviderName,
+                      type: .apiKey
+                  ),
+                  apiKeyDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             settingsNote(
                 store.ui("尚未配置密钥，对话将无法连接。", "No key configured — chat won't connect."),
                 icon: "exclamationmark.triangle"
@@ -358,17 +430,13 @@ extension SettingsView {
         }
     }
 
-    private var envKeyOverride: String {
-        // Delegates to the Store's single source of truth (see M4).
-        store.activeKeyEnvOverride
-    }
-
     private var oauthLinked: Bool {
-        store.agentProviderID.kind == .subscription && !oauthService.linkedProviders.isEmpty
+        guard let provider = currentOAuthProvider else { return false }
+        return activeAgentAuthMethod == .subscription && oauthService.isLinked(provider)
     }
 
-    // MARK: Advanced (collapsed) — removed; Base URL / Region now sit flat in the card
-    // and Profile lives at the top. Nothing to disclose.
+    // MARK: Advanced (collapsed) — removed; Base URL sits flat in the card and
+    // Profile lives at the top. Nothing to disclose.
 
     private var baseURLPlaceholder: String {
         store.agentProviderID == .azureOpenAI
@@ -389,7 +457,7 @@ extension SettingsView {
                     get: { store.modelName },
                     set: { store.updateModelName($0) }
                 ),
-                prompt: Text(store.agentProviderID.defaultModelHint)
+                prompt: Text(oauthService.models(providerID: store.agentProviderID.piProviderName).first ?? "model-id")
                     .font(.system(size: 13))
                     .foregroundStyle(WeiBeiTheme.placeholderInk)
             )

@@ -24,6 +24,7 @@ struct SettingsView: View {
     // Profile inline-rename state (AgentSettingsView extension).
     @State var isRenamingActiveProfile = false
     @State var profileRenameDraft = ""
+    @State var apiKeyDraft = ""
     // Profile delete confirmation (AgentSettingsView extension).
     @State var showDeleteProfileConfirmation = false
     // About / update check (tier-0: prompt only, never silent install).
@@ -62,21 +63,37 @@ struct SettingsView: View {
         .onAppear {
             // Always land on Chat: highest-frequency durable settings (provider / key / model).
             selectedSection = .agent
-            oauthService.refreshLinkedStatus()
+            oauthService.refreshCatalog()
         }
         .onReceive(NotificationCenter.default.publisher(for: .weiBeiPiOAuthDidSucceed)) { note in
             guard let raw = note.userInfo?["provider"] as? String,
-                  let subscription = PiSubscriptionProvider(rawValue: raw) else { return }
+                  let provider = AgentProviderID(rawValue: raw) else { return }
+            store.shutdownAgentRuntime()
             store.setAgentAuthMethod(.subscription)
-            store.setAgentProviderID(subscription.agentProviderID)
-            store.updateModelName(subscription.defaultModel)
-            if raw == "openai-codex" {
-                store.updateModelName(subscription.defaultModel)
+            store.setAgentProviderID(provider)
+            if let firstModel = oauthService.models(providerID: provider.piProviderName).first {
+                store.updateModelName(firstModel)
             }
-            store.openAIKeyStatus = store.ui(
-                "订阅已连接：\(subscription.label(language: store.interfaceLanguage))",
-                "Subscription linked: \(subscription.label(language: store.interfaceLanguage))"
-            )
+            oauthService.refreshCatalog(force: true)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .weiBeiPiCredentialsDidChange)) { note in
+            store.shutdownAgentRuntime()
+            guard note.userInfo?["provider"] as? String == store.agentProviderID.piProviderName else {
+                return
+            }
+            if note.userInfo?["type"] as? String == PiCredentialType.apiKey.rawValue {
+                apiKeyDraft = ""
+            }
+            oauthService.refreshCatalog(force: true)
+        }
+        .onChange(of: oauthService.catalog) { _, _ in
+            let models = oauthService.models(providerID: store.agentProviderID.piProviderName)
+            let current = store.modelName.trimmingCharacters(in: .whitespacesAndNewlines)
+            if let firstModel = models.first,
+               !models.contains(current),
+               current.isEmpty {
+                store.updateModelName(firstModel)
+            }
         }
     }
 

@@ -16,21 +16,6 @@ enum WeiBeiSafetyTestMode {
     static let isEnabled = false
 #endif
 }
-
-/// State of the model-list discovery shown in Settings → 对话服务 → 模型.
-enum ModelListStatus: Equatable {
-    case idle
-    case loading
-    case loaded
-    case failed(String)
-    case builtin
-
-    var isLoading: Bool {
-        if case .loading = self { return true }
-        return false
-    }
-}
-
 enum NotebookCreationKind: String {
     case blank
     case currentMaterial
@@ -497,29 +482,14 @@ final class WorkspaceStore: ObservableObject {
     @Published var notebookCreationDraft: NotebookCreationDraft?
     @Published var notebookRenameDraft: NotebookRenameDraft?
     private var notebookRenameInFlight = false
-    @Published var modelName: String = ProcessInfo.processInfo.environment["WEIBEI_OPENAI_MODEL"] ?? "gpt-5.5"
+    @Published var modelName: String = ""
     @Published var agentProviderID: AgentProviderID = .openai
     @Published var agentBaseURL: String = ""
-    /// Loaded once in `load()` after provider/profile IDs are restored — never in the
-    /// property default (that double-hit Keychain with a second load and caused dual password prompts).
-    @Published var openAIAPIKey: String = ""
-    @Published var openAIKeyStatus: String?
     @Published var agentAuthMethod: AgentAuthMethod = .apiKey
     @Published var agentCredentialProfiles: [AgentCredentialProfile] = AgentCredentialProfileStore.loadProfiles()
     @Published var activeAgentProfileID: UUID = AgentCredentialProfileStore.activeProfileID()
         ?? AgentCredentialProfileStore.loadProfiles().first?.id
         ?? AgentCredentialProfileStore.defaultProfile().id
-    // Model-list discovery (settings UI). Backed by `AgentModelListService`.
-    @Published var availableModels: [String] = []
-    @Published var modelListStatus: ModelListStatus = .idle
-    @Published var bedrockRegion: String = ProcessInfo.processInfo.environment["WEIBEI_BEDROCK_REGION"] ?? "us-east-1"
-    // Race guard for `refreshModelList` (see S2). Without this, rapidly switching
-    // profiles / providers launches overlapping async fetches; whichever resolves
-    // last wins and can paint the wrong provider's catalog. `modelFetchGeneration`
-    // tags each in-flight request so a stale resolution is discarded; the held
-    // `modelFetchTask` is cancelled when a newer request supersedes it.
-    private var modelFetchGeneration: UInt64 = 0
-    private var modelFetchTask: Task<Void, Never>?
     @Published var appearanceMode: WeiBeiAppearanceMode = .paper
     @Published var adaptImportedDocumentColors = true
     @Published var interfaceLanguage: WeiBeiInterfaceLanguage = .chinese
@@ -12161,93 +12131,6 @@ final class WorkspaceStore: ObservableObject {
         canApplyAgentAnswer && selectionContext?.isReplaceableNoteSelection == true
     }
 
-    /// Single source of truth for "which env-var override is active for the key field".
-    /// Empty when none. Consolidates the three previously independent checks (see M4):
-    /// the former `openAIKeyHelpText` detection and the `envKeyOverride` /
-    /// `envModelOverride` copies in the Settings view extensions.
-    var activeKeyEnvOverride: String {
-        let envName = agentProviderID.environmentAPIKeyName
-        if !Self.environmentValue(envName).isEmpty { return envName }
-        if agentProviderID != .openai,
-           !Self.environmentValue("OPENAI_API_KEY").isEmpty {
-            return "OPENAI_API_KEY"
-        }
-        return ""
-    }
-
-    /// Single source of truth for "which env-var override is active for the model field".
-    /// Empty when none. Replaces the `envModelOverride` copy in AgentModelPicker.swift.
-    var activeModelEnvOverride: String {
-        let pi = ProcessInfo.processInfo.environment["WEIBEI_PI_MODEL"] ?? ""
-        let openai = ProcessInfo.processInfo.environment["WEIBEI_OPENAI_MODEL"] ?? ""
-        return !pi.isEmpty ? "WEIBEI_PI_MODEL" : (!openai.isEmpty ? "WEIBEI_OPENAI_MODEL" : "")
-    }
-
-    var openAIKeyHelpText: String {
-        // Env-var override takes precedence — the Settings key is inert while set.
-        if !activeKeyEnvOverride.isEmpty {
-            return ui(
-                "正在使用本机环境变量 \(activeKeyEnvOverride)。设置里的密钥在没有环境变量时才会使用。",
-                "Using local environment variable \(activeKeyEnvOverride). The Settings key is used only when that env is empty."
-            )
-        }
-        let fieldKey = OpenAIAPIKeyStore.cleaned(openAIAPIKey)
-        if !fieldKey.isEmpty {
-            return ui(
-                "当前提供商：\(agentProviderID.label(language: interfaceLanguage))。密钥保存在魏碑应用数据中，跨次启动自动带上，不会弹 macOS 钥匙串密码。",
-                "Provider: \(agentProviderID.label(language: interfaceLanguage)). The key is stored in WeiBei app data, restored on launch, and never prompts for the Mac login keychain."
-            )
-        }
-        return ui(
-            "未配置 \(agentProviderID.label(language: interfaceLanguage)) 密钥。填入后自动保存即可提问。",
-            "No \(agentProviderID.label(language: interfaceLanguage)) key yet. Enter one and it saves automatically."
-        )
-    }
-
-    var piChatGPTSubscriptionConnected: Bool {
-        Self.localPiSubscriptionAuthIsAvailable()
-    }
-
-    var piChatGPTSubscriptionModelLabel: String {
-        let settings = Self.localPiSubscriptionSettings()
-        let model = settings["defaultModel"] ?? "gpt-5.5"
-        let thinking = settings["defaultThinkingLevel"]
-        return thinking.map { "\(model) · \($0)" } ?? model
-    }
-
-    private static func localPiSubscriptionAuthIsAvailable() -> Bool {
-        WeiBeiAgentDataPaths.migrateHomePiAuthIfNeeded()
-        let authURL = WeiBeiAgentDataPaths.piAuthJSON
-        guard let data = try? Data(contentsOf: authURL),
-              data.count <= 1_048_576,
-              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let credential = root["openai-codex"] as? [String: Any],
-              credential["type"] as? String == "oauth",
-              let access = credential["access"] as? String,
-              !access.isEmpty,
-              let refresh = credential["refresh"] as? String,
-              !refresh.isEmpty else {
-            return false
-        }
-        return true
-    }
-
-    private static func localPiSubscriptionSettings() -> [String: String] {
-        // Prefer WeiBei-owned settings; fall back to defaults without reading terminal ~/.pi.
-        let settingsURL = WeiBeiAgentDataPaths.piSettingsJSON
-        guard let data = try? Data(contentsOf: settingsURL),
-              data.count <= 1_048_576,
-              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              root["defaultProvider"] as? String == "openai-codex" else {
-            return [:]
-        }
-        return ["defaultModel", "defaultThinkingLevel"].reduce(into: [:]) { result, key in
-            if let value = root[key] as? String, !value.isEmpty {
-                result[key] = value
-            }
-        }
-    }
-
     var appDisplayName: String {
         ui("魏碑", "WeiBei")
     }
@@ -14415,23 +14298,10 @@ final class WorkspaceStore: ObservableObject {
 
     func setAgentProviderID(_ provider: AgentProviderID) {
         guard agentProviderID != provider else { return }
-        let previousDefault = agentProviderID.defaultModelHint
         agentProviderID = provider
-        // Prefer profile-scoped key; fall back to legacy per-provider store.
-        openAIAPIKey = resolveStoredAPIKey()
-        // Switch model when empty or still on the previous provider's default hint.
-        let trimmedModel = modelName.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmedModel.isEmpty || trimmedModel == previousDefault {
-            modelName = provider.defaultModelHint
-        }
-        openAIKeyStatus = nil
-        // Drop the old provider's catalog so the dropdown never briefly shows the
-        // previous provider's models; the Store re-fetches right after (see S2).
-        availableModels = []
-        modelListStatus = .idle
+        modelName = ""
         touchActiveAgentProfileMetadata()
         save()
-        scheduleModelListRefresh()
     }
 
     func updateAgentBaseURL(_ value: String) {
@@ -14445,146 +14315,6 @@ final class WorkspaceStore: ObservableObject {
         touchActiveAgentProfileMetadata()
         save()
     }
-
-    /// Assemble the concrete listing strategy for the active provider, combining the
-    /// provider's protocol with the runtime base URL / Bedrock region.
-    func resolvedModelListStrategy() -> ModelListStrategy? {
-        switch agentProviderID.modelListProtocol {
-        case .openAICompatible:
-            let base = agentBaseURL.trimmingCharacters(in: .whitespacesAndNewlines)
-            let resolved = base.isEmpty ? (agentProviderID.defaultListBaseURL ?? "") : base
-            guard !resolved.isEmpty else { return nil }
-            return .openAICompatible(base: resolved)
-        case .anthropic:
-            return .anthropic
-        case .gemini:
-            return .gemini
-        case .openRouterPublic:
-            return .openRouterPublic
-        case .azureOpenAI:
-            let base = agentBaseURL.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !base.isEmpty else { return nil }
-            return .azureOpenAI(base: base)
-        case .bedrock:
-            return .bedrock(region: bedrockRegion)
-        case .gitHubModels:
-            return .gitHubModels
-        case .codexSubscription:
-            // OAuth token + account id from WeiBei-owned auth.json. If absent
-            // (not signed in), return nil — the caller falls back to the built-in catalog.
-            guard let credential = codexSubscriptionCredential() else { return nil }
-            return .codexSubscription(token: credential.token, accountID: credential.accountID)
-        case .unsupported:
-            return nil
-        }
-    }
-
-    /// Read the openai-codex OAuth token + accountId stored by WeiBei OAuth login.
-    private func codexSubscriptionCredential() -> (token: String, accountID: String)? {
-        WeiBeiAgentDataPaths.migrateHomePiAuthIfNeeded()
-        let url = WeiBeiAgentDataPaths.piAuthJSON
-        guard let data = try? Data(contentsOf: url),
-              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let entry = root["openai-codex"] as? [String: Any] else { return nil }
-        let token = (entry["access"] as? String) ?? ""
-        let accountID = (entry["accountId"] as? String) ?? ""
-        guard !token.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
-        return (token, accountID)
-    }
-
-    /// Whether the active provider can enumerate models at all (vs. built-in only).
-    var supportsRemoteModelList: Bool {
-        agentProviderID.modelListProtocol != .unsupported
-    }
-
-    /// Fetch the model catalog for the active provider. Updates `availableModels` /
-    /// `modelListStatus` on the main actor. Safe to call repeatedly; debounced by the UI.
-    ///
-    /// Codex subscription tries the live `codex/models` endpoint first, then falls back
-    /// to the built-in catalog on any failure (best-effort listing, per upstream behavior).
-    /// Fetch the model catalog for the active provider. Updates `availableModels` /
-    /// `modelListStatus` on the main actor.
-    ///
-    /// Race-safe via `modelFetchGeneration`: each call stamps a generation, and a
-    /// late-resolving fetch whose generation no longer matches is discarded so rapid
-    /// provider/profile switches can't paint the wrong catalog (see S2).
-    ///
-    /// Cancellation of an in-flight **scheduled** fetch is owned by
-    /// `scheduleModelListRefresh()` only. This method must NOT cancel `modelFetchTask`:
-    /// the scheduler stores the Task that awaits `refreshModelList()`, so cancelling
-    /// here would cancel ourselves mid-flight, trip `Task.isCancelled` after the
-    /// network returns, discard a successful catalog, and leave `modelListStatus`
-    /// stuck on `.loading` (OpenAI Codex subscription looked permanently broken).
-    func refreshModelList() async {
-        // No strategy (unsupported provider, or Codex subscription not signed in):
-        // surface the built-in catalog immediately. These are synchronous resolutions
-        // — stamp them with the current generation so an in-flight async fetch that
-        // resolves later is still discarded.
-        modelFetchGeneration &+= 1
-        let myGen = modelFetchGeneration
-
-        guard let strategy = resolvedModelListStrategy() else {
-            guard myGen == modelFetchGeneration else { return }
-            availableModels = fallbackModelCatalog
-            modelListStatus = .builtin
-            return
-        }
-        // Codex subscription doesn't use an API key — it carries its own OAuth token in
-        // the strategy. OpenRouter public catalog needs no credential either.
-        let needsAPIKey: Bool
-        if case .codexSubscription = strategy { needsAPIKey = false }
-        else if strategy == .openRouterPublic { needsAPIKey = false }
-        else { needsAPIKey = true }
-
-        if needsAPIKey, resolvedAPIKey() == nil {
-            guard myGen == modelFetchGeneration else { return }
-            availableModels = fallbackModelCatalog
-            modelListStatus = .failed(ui("未配置密钥，无法列出模型。", "No API key configured; cannot list models."))
-            return
-        }
-        let apiKey = resolvedAPIKey()?.key ?? ""
-        guard myGen == modelFetchGeneration else { return }
-        modelListStatus = .loading
-        do {
-            let models = try await AgentModelListService.shared.fetchModels(strategy: strategy, apiKey: apiKey)
-            // Discard if a newer request superseded this one, or this scheduled task
-            // was cancelled by a later scheduleModelListRefresh().
-            guard myGen == modelFetchGeneration, !Task.isCancelled else { return }
-            availableModels = models.isEmpty ? fallbackModelCatalog : models
-            modelListStatus = .loaded
-        } catch {
-            guard myGen == modelFetchGeneration, !Task.isCancelled else { return }
-            availableModels = fallbackModelCatalog
-            modelListStatus = (agentProviderID == .openaiCodex) ? .builtin : .failed(error.localizedDescription)
-        }
-    }
-
-    /// Fire-and-forget entry point for the Store's own state transitions
-    /// (`setAgentProviderID`, `selectAgentCredentialProfile`). Makes the Store the
-    /// single originator of model-list fetches instead of relying on UI onChange
-    /// hooks that fired from three separate places (see S2).
-    ///
-    /// Cancels any previous scheduled fetch before starting a new one. Do not move
-    /// that cancel into `refreshModelList` — see the self-cancel note there.
-    func scheduleModelListRefresh() {
-        modelFetchTask?.cancel()
-        modelFetchTask = Task { @MainActor [weak self] in
-            guard let self else { return }
-            // Yield once so the calling mutation (provider/profile/modelName swap)
-            // has fully settled before we read state inside refreshModelList.
-            await Task.yield()
-            guard !Task.isCancelled else { return }
-            await self.refreshModelList()
-        }
-    }
-
-    /// Built-in fallback shown before the first successful fetch, or when listing fails.
-    private var fallbackModelCatalog: [String] {
-        agentProviderID == .openaiCodex
-            ? AgentModelListService.codexSubscriptionModels
-            : agentProviderID.recommendedModels
-    }
-
 
     func toggleAppearanceMode() {
         setAppearanceMode(appearanceMode.toggled)
@@ -14632,27 +14362,6 @@ final class WorkspaceStore: ObservableObject {
         save()
     }
 
-    func saveOpenAIAPIKey() {
-        do {
-            let cleanedKey = OpenAIAPIKeyStore.cleaned(openAIAPIKey)
-            // Keep legacy per-provider key for compatibility with older paths.
-            try OpenAIAPIKeyStore.save(cleanedKey, provider: agentProviderID.piProviderName)
-            try AgentCredentialProfileStore.saveAPIKey(cleanedKey, profileID: activeAgentProfileID)
-            openAIAPIKey = cleanedKey
-            touchActiveAgentProfileMetadata()
-            openAIKeyStatus = cleanedKey.isEmpty
-                ? ui("已清除密钥。", "Key cleared.")
-                : ui("密钥已保存到当前配置。", "Key saved to the current profile.")
-        } catch {
-            openAIKeyStatus = ui("保存失败：\(error.localizedDescription)", "Save failed: \(error.localizedDescription)")
-        }
-    }
-
-    func clearOpenAIAPIKey() {
-        openAIAPIKey = ""
-        saveOpenAIAPIKey()
-    }
-
     func setAgentAuthMethod(_ method: AgentAuthMethod) {
         guard agentAuthMethod != method else { return }
         agentAuthMethod = method
@@ -14667,16 +14376,7 @@ final class WorkspaceStore: ObservableObject {
         agentAuthMethod = profile.authMethod
         modelName = profile.modelName
         agentBaseURL = profile.baseURL
-        openAIAPIKey = resolveStoredAPIKey()
-        openAIKeyStatus = nil
-        // Clear the stale model list from the previous profile, then kick off a fresh
-        // fetch from the Store itself (single originator — see S2). Previously this
-        // only cleared and relied on the UI's onChange hooks to refetch, which raced
-        // when several hooks fired at once.
-        availableModels = []
-        modelListStatus = .idle
         save()
-        scheduleModelListRefresh()
     }
 
     @discardableResult
@@ -14693,10 +14393,6 @@ final class WorkspaceStore: ObservableObject {
         )
         agentCredentialProfiles.append(profile)
         AgentCredentialProfileStore.saveProfiles(agentCredentialProfiles)
-        // Seed keychain from current key if any.
-        if !openAIAPIKey.isEmpty {
-            try? AgentCredentialProfileStore.saveAPIKey(openAIAPIKey, profileID: profile.id)
-        }
         selectAgentCredentialProfile(profile.id)
         return profile.id
     }
@@ -14713,8 +14409,7 @@ final class WorkspaceStore: ObservableObject {
     func deleteActiveAgentCredentialProfile() {
         guard agentCredentialProfiles.count > 1,
               let index = agentCredentialProfiles.firstIndex(where: { $0.id == activeAgentProfileID }) else { return }
-        let removed = agentCredentialProfiles.remove(at: index)
-        try? AgentCredentialProfileStore.deleteAPIKey(profileID: removed.id)
+        agentCredentialProfiles.remove(at: index)
         AgentCredentialProfileStore.saveProfiles(agentCredentialProfiles)
         if let next = agentCredentialProfiles.first {
             selectAgentCredentialProfile(next.id)
@@ -14726,18 +14421,8 @@ final class WorkspaceStore: ObservableObject {
             ? AgentProviderConsoleLinks.accountURL(for: agentProviderID)
                 ?? AgentProviderConsoleLinks.loginURL(for: agentProviderID)
             : AgentProviderConsoleLinks.loginURL(for: agentProviderID)
-        guard let url else {
-            openAIKeyStatus = ui(
-                "自定义提供商请在本页填写 Base URL 与密钥。",
-                "For a custom provider, enter Base URL and API key on this page."
-            )
-            return
-        }
+        guard let url else { return }
         NSWorkspace.shared.open(url)
-        openAIKeyStatus = ui(
-            "已在浏览器打开提供商页面。登录后创建密钥并粘贴回来。",
-            "Opened the provider page in your browser. Sign in, create a key, then paste it here."
-        )
     }
 
     private func touchActiveAgentProfileMetadata() {
@@ -14767,9 +14452,6 @@ final class WorkspaceStore: ObservableObject {
             activeAgentProfileID = seeded.id
             AgentCredentialProfileStore.saveProfiles(agentCredentialProfiles)
             AgentCredentialProfileStore.setActiveProfileID(seeded.id)
-            if !openAIAPIKey.isEmpty {
-                try? AgentCredentialProfileStore.saveAPIKey(openAIAPIKey, profileID: seeded.id)
-            }
         }
     }
 
@@ -19673,77 +19355,33 @@ final class WorkspaceStore: ObservableObject {
             )
         }
 #endif
-        let credential = resolvedAPIKey()
-        var piFailure: Error?
-        if Self.environmentValue("WEIBEI_PI_DISABLED") != "1" {
-            let explicitProvider = Self.environmentValue("WEIBEI_PI_PROVIDER")
-            let explicitModel = Self.environmentValue("WEIBEI_PI_MODEL")
-            let thinking = Self.environmentValue("WEIBEI_PI_THINKING")
-            let selectedProvider = agentProviderID
-            WeiBeiAgentDataPaths.migrateHomePiAuthIfNeeded()
-            let linkedOAuth = PiOAuthService.readLinkedOAuthProviders(
-                from: WeiBeiAgentDataPaths.piAuthJSON
+        let selectedProvider = agentProviderID
+        let selectedModel = modelName.trimmingCharacters(in: .whitespacesAndNewlines)
+        await piRuntime.configure(
+            PiAgentProviderConfiguration(
+                provider: selectedProvider.piProviderName,
+                model: selectedModel.isEmpty ? nil : selectedModel,
+                baseURL: agentBaseURL.isEmpty ? nil : agentBaseURL
             )
-            // Prefer explicit Pi provider id; map legacy OpenAI API selection to openai-codex when OAuth-linked.
-            let providerName: String = {
-                if !explicitProvider.isEmpty { return explicitProvider }
-                if selectedProvider == .openaiCodex { return "openai-codex" }
-                if selectedProvider == .openai, linkedOAuth.contains("openai-codex"), agentAuthMethod == .subscription {
-                    return "openai-codex"
-                }
-                return selectedProvider.piProviderName
-            }()
-            // OAuth tokens live in auth.json — do not force API key env when subscription is active.
-            let usesOAuth = linkedOAuth.contains(providerName)
-                || (providerName == "openai-codex" && linkedOAuth.contains("openai-codex"))
-            let configuration = PiAgentProviderConfiguration(
-                provider: providerName,
-                model: explicitModel.isEmpty ? resolvedModelName : explicitModel,
-                apiKey: usesOAuth ? nil : credential?.key,
-                baseURL: agentBaseURL.isEmpty ? nil : agentBaseURL,
-                thinkingLevel: thinking.isEmpty ? "medium" : thinking
+        )
+        await piRuntime.writeCustomModelsJSONIfNeeded(
+            providerID: selectedProvider,
+            baseURL: agentBaseURL,
+            model: selectedModel
+        )
+        return try await piRuntime.respond(
+            to: request,
+            sessionID: target.sessionID,
+            workingDirectory: target.workingDirectory,
+            hostToolHandler: hostToolHandler
+        ) { [weak self] progress in
+            await self?.applyAgentProgress(
+                progress,
+                requestID: request.id,
+                replyMessageID: replyMessageID,
+                chatID: target.sessionID
             )
-            await piRuntime.configure(configuration)
-            await piRuntime.writeCustomModelsJSONIfNeeded(
-                providerID: selectedProvider,
-                baseURL: agentBaseURL,
-                model: resolvedModelName
-            )
-            do {
-                return try await piRuntime.respond(
-                    to: request,
-                    sessionID: target.sessionID,
-                    workingDirectory: target.workingDirectory,
-                    hostToolHandler: hostToolHandler
-                ) { [weak self] progress in
-                    await self?.applyAgentProgress(
-                        progress,
-                        requestID: request.id,
-                        replyMessageID: replyMessageID,
-                        chatID: target.sessionID
-                    )
-                }
-            } catch let error as PiAgentRuntimeError {
-                if error == .cancelled || Task.isCancelled {
-                    throw PiAgentRuntimeError.cancelled
-                }
-                guard error.permitsAutomaticFallback else { throw error }
-                piFailure = error
-                openAIKeyStatus = ui(
-                    "PI 暂不可用：\(error.localizedDescription)",
-                    "PI is unavailable: \(error.localizedDescription)"
-                )
-            } catch {
-                if Task.isCancelled { throw PiAgentRuntimeError.cancelled }
-                piFailure = error
-                openAIKeyStatus = ui(
-                    "PI 暂不可用：\(error.localizedDescription)",
-                    "PI is unavailable: \(error.localizedDescription)"
-                )
-            }
         }
-
-        throw piFailure ?? PiAgentRuntimeError.unavailable
     }
 
     func shutdownAgentRuntime() {
@@ -23673,9 +23311,6 @@ final class WorkspaceStore: ObservableObject {
         if let agentBaseURL = snapshot.agentBaseURL {
             self.agentBaseURL = agentBaseURL
         }
-        // Single credential resolve: profile first, then legacy per-provider store.
-        // Avoids two Keychain reads (and two password dialogs) on every launch.
-        openAIAPIKey = resolveStoredAPIKey()
         // Legacy field: still read so older workspaces restore immersion/multi-pane;
         // free drag order lives in threePaneOrder and is the source of truth for columns.
         if let workspaceLayout = snapshot.workspaceLayout {
@@ -24598,49 +24233,9 @@ final class WorkspaceStore: ObservableObject {
         }
     }
 
-    private func resolvedAPIKey() -> (key: String, source: String)? {
-        let envName = agentProviderID.environmentAPIKeyName
-        let environmentKey = Self.environmentValue(envName)
-        if !environmentKey.isEmpty {
-            return (environmentKey, ui("本机环境变量", "local environment variable"))
-        }
-        // Always honor OPENAI_API_KEY as a last-resort env for openai-compatible keys.
-        if agentProviderID != .openai {
-            let openaiEnv = Self.environmentValue("OPENAI_API_KEY")
-            if !openaiEnv.isEmpty {
-                return (openaiEnv, ui("本机环境变量", "local environment variable"))
-            }
-        }
-
-        // Prefer the in-settings field (already hydrated once at load). Do not re-hit
-        // Keychain on every agent request — that re-triggered ACL prompts mid-session.
-        let fieldKey = OpenAIAPIKeyStore.cleaned(openAIAPIKey)
-        if !fieldKey.isEmpty {
-            return (fieldKey, ui("设置中的密钥", "key from Settings"))
-        }
-
-        return nil
-    }
-
-    /// One-shot credential resolve used at workspace load / profile switch.
-    private func resolveStoredAPIKey() -> String {
-        let profileKey = AgentCredentialProfileStore.loadAPIKey(profileID: activeAgentProfileID)
-        if !profileKey.isEmpty { return profileKey }
-        return OpenAIAPIKeyStore.load(provider: agentProviderID.piProviderName)
-    }
-
-    /// Backward-compatible alias used by remaining call sites / SelfCheck slices.
-    private func resolvedOpenAIAPIKey() -> (key: String, source: String)? {
-        resolvedAPIKey()
-    }
-
-    private var resolvedModelName: String {
-        let environmentModel = Self.environmentValue("WEIBEI_OPENAI_MODEL")
-        return environmentModel.isEmpty ? modelName : environmentModel
-    }
-
     private static func environmentValue(_ name: String) -> String {
-        OpenAIAPIKeyStore.cleaned(ProcessInfo.processInfo.environment[name] ?? "")
+        (ProcessInfo.processInfo.environment[name] ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private static func removeLegacyCourseIndex(in directory: URL) {

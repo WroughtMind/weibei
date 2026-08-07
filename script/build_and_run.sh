@@ -29,8 +29,7 @@ FINAL_APP_BINARY="$FINAL_APP_BUNDLE/Contents/MacOS/$PRODUCT_NAME"
 # Always assemble + codesign outside the repo tree. Projects under ~/Documents
 # (iCloud / File Provider) get com.apple.FinderInfo and related xattrs stamped
 # onto the bundle; codesign then fails with "resource fork, Finder information,
-# or similar detritus not allowed". A broken/changing ad-hoc identity makes
-# Keychain re-prompt for the login password every launch when reading API keys.
+# or similar detritus not allowed".
 if [[ "$PACKAGE_ONLY" == true ]]; then
   DIST_DIR="${TMPDIR:-/tmp}/weibei-package-$UID"
 else

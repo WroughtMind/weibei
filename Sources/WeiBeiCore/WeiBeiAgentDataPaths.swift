@@ -12,22 +12,9 @@ public enum WeiBeiAgentDataPaths {
         return base.appendingPathComponent("com.changfenhuang.weibei", isDirectory: true)
     }
 
-    /// API keys (0600 files), one file per service/account.
-    public static var secretsDirectory: URL {
-        applicationSupportRoot.appendingPathComponent("Secrets", isDirectory: true)
-    }
-
     /// Pi-format agent config owned by WeiBei (auth.json, settings.json, …).
     public static var piAgentDirectory: URL {
         applicationSupportRoot.appendingPathComponent("PiAgent", isDirectory: true)
-    }
-
-    public static var piAuthJSON: URL {
-        piAgentDirectory.appendingPathComponent("auth.json")
-    }
-
-    public static var piSettingsJSON: URL {
-        piAgentDirectory.appendingPathComponent("settings.json")
     }
 
     /// Ensure the PiAgent directory exists with private permissions.
@@ -39,21 +26,4 @@ public enum WeiBeiAgentDataPaths {
         return dir
     }
 
-    /// One-time migration: if WeiBei has no OAuth auth yet but `~/.pi/agent/auth.json`
-    /// does, copy it once so existing logins keep working without ongoing CLI sharing.
-    public static func migrateHomePiAuthIfNeeded() {
-        let fileManager = FileManager.default
-        let destination = piAuthJSON
-        if let existing = try? Data(contentsOf: destination), !existing.isEmpty {
-            return
-        }
-        let homeAuth = fileManager.homeDirectoryForCurrentUser
-            .appendingPathComponent(".pi/agent/auth.json")
-        guard let data = try? Data(contentsOf: homeAuth),
-              data.count <= 1_048_576,
-              data.count > 2 else { return }
-        try? ensurePiAgentDirectory()
-        try? data.write(to: destination, options: [.atomic])
-        try? fileManager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: destination.path)
-    }
 }

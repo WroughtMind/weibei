@@ -3234,23 +3234,7 @@ struct FloatingSelectionAgentView: View {
     }
 
     private func floatingText(for message: AgentMessage) -> String {
-        if isCredentialNotice(message) {
-            if isOfflineContextPreview(message) {
-                return message.text
-            }
-            return store.ui("未配置密钥。设置后会结合\(store.agentPromptScope)和已选文本片段作答。", "No key is configured. After setup, answers will use \(store.agentPromptScope) and selected text fragments.")
-        }
-        return store.agentDisplayText(for: message)
-    }
-
-    private func isCredentialNotice(_ message: AgentMessage) -> Bool {
-        message.role == .assistant
-            && (message.text.hasPrefix("未配置密钥") || message.text.hasPrefix("未配置 OPENAI_API_KEY") || message.text.hasPrefix("No key is configured"))
-    }
-
-    private func isOfflineContextPreview(_ message: AgentMessage) -> Bool {
-        message.text.contains("## 离线草稿")
-            || message.text.contains("## Offline Draft")
+        store.agentDisplayText(for: message)
     }
 
     private func isGeneratedSelectionPrompt(_ message: AgentMessage) -> Bool {
@@ -3553,26 +3537,12 @@ private struct AgentBubble: View {
 
     @ViewBuilder
     private var assistantTurn: some View {
-        if isCredentialNotice {
-            credentialNoticeContent
-                .padding(.vertical, 8)
-                .padding(.leading, 18)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .overlay(alignment: .leading) {
-                    Capsule()
-                        .fill(WeiBeiTheme.link.opacity(hovering ? 0.50 : 0.34))
-                        .frame(width: 2, height: 30)
-                }
-        } else {
-            regularMessageContent
-                .padding(.vertical, 10)
-                .padding(.leading, 20)
-                .padding(.trailing, 8)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .contentShape(Rectangle())
-                // Assistant messages no longer carry a cinnabar leading mark;
-                // only credential notices keep a link-blue affordance.
-        }
+        regularMessageContent
+            .padding(.vertical, 10)
+            .padding(.leading, 20)
+            .padding(.trailing, 8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
     }
 
     private var regularMessageContent: some View {
@@ -3834,19 +3804,6 @@ private struct AgentBubble: View {
         }
     }
 
-    private var credentialNoticeContent: some View {
-        VStack(alignment: .leading, spacing: 3) {
-            Text(store.ui("需要设置密钥", "Key Required"))
-                .font(.system(size: 11.5, weight: .semibold))
-                .foregroundStyle(WeiBeiTheme.secondaryInk)
-            Text(displayText)
-                .font(.system(size: 12.5))
-                .lineSpacing(3)
-                .foregroundStyle(WeiBeiTheme.secondaryInk)
-                .allowsHitTesting(false)
-        }
-    }
-
     private func openRichAnswerEvidence(_ evidence: RichAnswerEvidence) {
         if let source = message.sources.first(where: {
             $0.label == evidence.sourceLabel
@@ -3875,27 +3832,8 @@ private struct AgentBubble: View {
         message.role == .user
     }
 
-    private var isCredentialNotice: Bool {
-        message.role == .assistant
-            && (message.text.hasPrefix("未配置密钥") || message.text.hasPrefix("未配置 OPENAI_API_KEY") || message.text.hasPrefix("No key is configured"))
-    }
-
     private var isFailureMessage: Bool {
         message.role == .assistant && WorkspaceStore.isAgentFailureMessage(message.text)
-    }
-
-    private var displayText: String {
-        guard isCredentialNotice else { return store.agentDisplayText(for: message) }
-        if isOfflineContextPreview {
-            return message.text
-        }
-        let scope = store.hasSelectionAttachments ? store.ui("\(store.agentPromptScope)、已选文本片段", "\(store.agentPromptScope) and selected text fragments") : store.agentPromptScope
-        return store.ui("设置后会结合\(scope)作答；未配置时不会编造内容。", "After setup, answers will use \(scope). Without a key, WeiBei will not invent content.")
-    }
-
-    private var isOfflineContextPreview: Bool {
-        message.text.contains("## 离线草稿")
-            || message.text.contains("## Offline Draft")
     }
 
     private func backendLabel(_ backend: StudyAgentBackend) -> String {

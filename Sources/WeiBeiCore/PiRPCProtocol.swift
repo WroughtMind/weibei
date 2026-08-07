@@ -79,11 +79,22 @@ public enum PiRPCRunActivity: Equatable, Sendable {
     case retrying
 }
 
+public struct PiRPCExtensionUIRequest: Equatable, Sendable {
+    public var id: String
+    public var method: String
+    public var title: String?
+    public var message: String?
+    public var placeholder: String?
+    public var options: [String]
+    public var notifyType: String?
+}
+
 public enum PiRPCIncomingMessage: Equatable, Sendable {
     case response(PiRPCResponse)
     case textDelta(String)
     case runActivity(PiRPCRunActivity)
     case assistantError(String)
+    case extensionUIRequest(PiRPCExtensionUIRequest)
     case toolStarted(id: String, name: String, argumentsJSON: Data?)
     case courseSourcesRead(
         id: String,
@@ -145,6 +156,35 @@ public enum PiRPCMessageDecoder {
                     success: success,
                     error: object["error"] as? String,
                     dataJSON: jsonData(object["data"])
+                )
+            )
+
+        case "extension_ui_request":
+            guard let id = object["id"] as? String,
+                  !id.isEmpty,
+                  id.utf8.count <= 256,
+                  let method = object["method"] as? String,
+                  method.utf8.count <= 64 else {
+                throw PiRPCProtocolError.invalidEnvelope
+            }
+            let title = object["title"] as? String
+            let message = object["message"] as? String
+            let placeholder = object["placeholder"] as? String
+            let options = object["options"] as? [String] ?? []
+            guard [title, message, placeholder].compactMap({ $0 }).allSatisfy({ $0.utf8.count <= 8 * 1_024 * 1_024 }),
+                  options.count <= 100,
+                  options.allSatisfy({ $0.utf8.count <= 16_384 }) else {
+                throw PiRPCProtocolError.invalidEnvelope
+            }
+            return .extensionUIRequest(
+                PiRPCExtensionUIRequest(
+                    id: id,
+                    method: method,
+                    title: title,
+                    message: message,
+                    placeholder: placeholder,
+                    options: options,
+                    notifyType: object["notifyType"] as? String
                 )
             )
 

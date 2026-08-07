@@ -54,6 +54,7 @@ func runPiTerminalRuntimeSelfChecks() async throws {
     let fixture = try makePiTerminalRuntimeFixture()
     defer { try? FileManager.default.removeItem(at: fixture.rootURL) }
 
+    try await checkProviderWithoutModelIsRejected(fixture)
     try await checkUserStopReturnsImmediately(fixture)
     try await checkCancelledTurnCannotAffectImmediateNextChat(fixture)
     try await checkTerminalErrorBypassesSlowProgress(fixture)
@@ -70,9 +71,31 @@ func runPiTerminalRuntimeSelfChecks() async throws {
     try await checkHostCourseToolBridge(fixture)
     try await checkHostCourseToolBridgeRejectsSymlinkRoot(fixture)
     try await checkMissingSessionStartsFreshNativeHistory(fixture)
-    try await checkWrongSessionStateRebuildsOnlyRequestedChat(fixture)
+    try await checkSessionPathRejectsOutsideAcceptsAliasAndKeepsSibling(fixture)
     try await checkUnreadableStoredSessionRebuildsOnce(fixture)
     try await checkStandardProxyEnvironmentIsForwarded(fixture)
+}
+
+private func checkProviderWithoutModelIsRejected(
+    _ fixture: PiTerminalRuntimeFixture
+) async throws {
+    let runtime = PiAgentRuntime(
+        executableURL: fixture.executableURL,
+        runtimeDirectory: try fixture.workingDirectory(named: "MissingModelRuntime"),
+        runInactivityTimeoutNanoseconds: 500_000_000
+    )
+    await runtime.configure(PiAgentProviderConfiguration(provider: "openai-codex"))
+    let outcome = await terminalOutcome(
+        runtime: runtime,
+        revision: "missing-model-test",
+        progress: nil
+    )
+    await runtime.shutdown()
+    guard outcome.hasPrefix("error:"), outcome.contains("请先在设置中选择模型") else {
+        throw PiTerminalRuntimeSelfCheckError.failed(
+            "PI sent a request without an explicitly selected model: \(outcome)"
+        )
+    }
 }
 
 private func checkHostCourseToolBridgeRejectsSymlinkRoot(
@@ -721,17 +744,19 @@ private func checkConversationBindingLaunchContract(
 ) async throws {
     let runtimeDirectory = try fixture.workingDirectory(named: "SessionRuntime")
     let projectDirectory = try fixture.workingDirectory(named: "SessionProject")
+    let piConfigurationDirectory = try fixture.workingDirectory(named: "SessionPiAgent")
     let sessionID = UUID(uuidString: "11111111-2222-3333-4444-555555555555")!
     let secondSessionID = UUID(uuidString: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")!
     let runtime = PiAgentRuntime(
         executableURL: fixture.executableURL,
         runtimeDirectory: runtimeDirectory,
+        persistentPiConfigurationDirectory: piConfigurationDirectory,
         runInactivityTimeoutNanoseconds: 2_000_000_000
     )
     await runtime.configure(
         PiAgentProviderConfiguration(
             provider: "openai-codex",
-            model: AgentModelListService.codexDefaultModel
+            model: "gpt-5.5"
         )
     )
 
@@ -844,7 +869,7 @@ private func checkConversationBindingLaunchContract(
               separatedBy: "arg=--provider\narg=openai-codex\n"
           ).count - 1 == 4,
           trace.components(
-              separatedBy: "arg=--model\narg=\(AgentModelListService.codexDefaultModel)\n"
+              separatedBy: "arg=--model\narg=gpt-5.5\n"
           ).count - 1 == 4,
           trace.contains("prompt-message=[选中文字：第一讲选区]") &&
           trace.contains("注意力只处理当前上下文") &&
@@ -904,10 +929,15 @@ private func checkMissingSessionStartsFreshNativeHistory(
     }
 }
 
-private func checkWrongSessionStateRebuildsOnlyRequestedChat(
+private func checkSessionPathRejectsOutsideAcceptsAliasAndKeepsSibling(
     _ fixture: PiTerminalRuntimeFixture
 ) async throws {
-    let runtimeDirectory = try fixture.workingDirectory(named: "WrongStateRuntime")
+    let realRuntimeDirectory = try fixture.workingDirectory(named: "WrongStateRuntimeReal")
+    let runtimeDirectory = fixture.rootURL.appendingPathComponent("WrongStateRuntime")
+    try FileManager.default.createSymbolicLink(
+        at: runtimeDirectory,
+        withDestinationURL: realRuntimeDirectory
+    )
     let projectDirectory = try fixture.workingDirectory(named: "WrongStateProject")
     let sessionID = UUID(uuidString: "12345678-2222-3333-4444-555555555555")!
     let siblingSessionID = UUID(uuidString: "87654321-bbbb-cccc-dddd-eeeeeeeeeeee")!
@@ -950,14 +980,14 @@ private func checkWrongSessionStateRebuildsOnlyRequestedChat(
         encoding: .utf8
     )
     guard trace.components(separatedBy: "launch\n").count - 1 == 2,
-          trace.contains("state-session=wrong\n"),
-          trace.contains("state-session=correct\n"),
+          trace.contains("state-session=outside\n"),
+          trace.contains("state-session=canonical-alias\n"),
           trace.components(separatedBy: "command=prompt\n").count - 1 == 1,
           trace.contains("recent=absent\n"),
           !FileManager.default.fileExists(atPath: corruptMarker.path),
           FileManager.default.fileExists(atPath: siblingMarker.path) else {
         throw PiTerminalRuntimeSelfCheckError.failed(
-            "错误会话状态没有单次重建目标 Chat，或误伤了兄弟 Chat：\n\(trace)"
+            "Pi 没有拒绝越界状态、接受等价目录并只重建目标 Chat：\n\(trace)"
         )
     }
 }
@@ -1442,7 +1472,8 @@ int main(int argc, char **argv) {
         if (session_mode) trace_line("command", type);
         if (strcmp(type, "get_state") == 0) {
             char state[PATH_MAX + 512];
-            const char *reported_session_id = session_id;
+            const char *reported_session_directory = session_directory;
+            char canonical_session_directory[PATH_MAX] = "";
             if (unreadable_state_mode) {
                 char marker_path[PATH_MAX];
                 snprintf(marker_path, sizeof(marker_path), "%s/.fake-pi-returned-unreadable-state", cwd);
@@ -1462,10 +1493,11 @@ int main(int argc, char **argv) {
                 if (access(marker_path, F_OK) != 0) {
                     FILE *marker = fopen(marker_path, "w");
                     if (marker != NULL) fclose(marker);
-                    reported_session_id = "00000000-0000-0000-0000-000000000000";
-                    trace_line("state-session", "wrong");
-                } else {
-                    trace_line("state-session", "correct");
+                    reported_session_directory = cwd;
+                    trace_line("state-session", "outside");
+                } else if (realpath(session_directory, canonical_session_directory) != NULL) {
+                    reported_session_directory = canonical_session_directory;
+                    trace_line("state-session", "canonical-alias");
                 }
             }
             if (session_mode) {
@@ -1477,9 +1509,9 @@ int main(int argc, char **argv) {
                 state,
                 sizeof(state),
                 "{\"isStreaming\":false,\"sessionId\":\"%s\",\"messageCount\":%d,\"pendingMessageCount\":0,\"sessionFile\":\"%s/session.jsonl\"}",
-                reported_session_id,
+                session_id,
                 session_turn * 2,
-                session_directory
+                reported_session_directory
             );
             respond(id, type, state);
         } else if (strcmp(type, "get_commands") == 0) {

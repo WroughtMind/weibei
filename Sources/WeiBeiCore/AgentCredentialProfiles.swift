@@ -1,9 +1,8 @@
 import Foundation
-import Security
 
 /// How the user wants to attach a model provider for Pi.
 public enum AgentAuthMethod: String, Codable, CaseIterable, Identifiable, Sendable {
-    /// Paste / store an API key (Pi env vars + auth.json api_key).
+    /// Configure an API credential through embedded Pi.
     case apiKey
     /// Pi `/login` style OAuth subscription (tokens in auth.json).
     case subscription
@@ -23,8 +22,8 @@ public enum AgentAuthMethod: String, Codable, CaseIterable, Identifiable, Sendab
         switch self {
         case .apiKey:
             return language.text(
-                "选择任意 Pi 支持的提供商，粘贴 API Key 并保存。密钥保存在魏碑应用数据中，启动 Agent 时注入 Pi 环境变量。",
-                "Pick any Pi-supported provider, paste an API key, and save. Keys stay in WeiBei app data and are injected as Pi env vars."
+                "选择 Pi 支持的提供商，由内置 Pi 完成 API 凭证配置与保存。",
+                "Choose a Pi-supported provider and let embedded Pi configure and store its API credential."
             )
         case .subscription:
             return language.text(
@@ -35,8 +34,8 @@ public enum AgentAuthMethod: String, Codable, CaseIterable, Identifiable, Sendab
     }
 }
 
-/// A named, switchable agent connection profile (provider + model + optional base URL).
-/// Secrets live in WeiBei's local credential store under the profile id — never in this Codable payload.
+/// A named, switchable agent configuration (provider + model + optional base URL).
+/// Credentials are provider-owned entries in embedded Pi and never enter this payload.
 public struct AgentCredentialProfile: Identifiable, Codable, Equatable, Sendable {
     public var id: UUID
     public var name: String
@@ -59,17 +58,13 @@ public struct AgentCredentialProfile: Identifiable, Codable, Equatable, Sendable
         self.name = name
         self.provider = provider
         self.authMethod = authMethod
-        self.modelName = modelName.isEmpty ? provider.defaultModelHint : modelName
+        self.modelName = modelName
         self.baseURL = baseURL
         self.updatedAt = updatedAt
     }
 }
 
-/// Console URLs + key-help copy for every `AgentProviderID`.
-///
-/// L5: one metadata row per provider instead of three parallel `switch` blocks.
-/// Public API (`loginURL` / `accountURL` / `keyHelp`) is unchanged — callers keep
-/// working; only the storage shape moves to a single exhaustive table.
+/// Console URLs for every `AgentProviderID`.
 public enum AgentProviderConsoleLinks {
     /// Per-provider console metadata. Exhaustive via `metadata(for:)` switch so a
     /// new `AgentProviderID` case forces a compile error here.
@@ -78,30 +73,10 @@ public enum AgentProviderConsoleLinks {
         public var loginURLString: String?
         /// Account home when it differs from the login URL. `nil` means “use login”.
         public var accountURLString: String?
-        /// Localized key-help template; rendered with the provider’s env var name.
-        public var help: KeyHelp
-
-        public init(loginURLString: String?, accountURLString: String? = nil, help: KeyHelp) {
+        public init(loginURLString: String?, accountURLString: String? = nil) {
             self.loginURLString = loginURLString
             self.accountURLString = accountURLString
-            self.help = help
         }
-    }
-
-    /// Help templates. Special cases keep their historical wording; everything else
-    /// shares the generic env-var line so we don’t maintain 30 near-identical strings.
-    public enum KeyHelp: Sendable, Equatable {
-        case openaiCodex
-        case anthropic
-        case githubCopilot
-        case azureOpenAI
-        case googleVertex
-        case amazonBedrock
-        case cloudflareAIGateway
-        case cloudflareWorkersAI
-        case custom
-        case llamaCpp
-        case genericEnv
     }
 
     /// Dashboard / key-creation pages for API-key providers.
@@ -117,158 +92,92 @@ public enum AgentProviderConsoleLinks {
         return row.loginURLString.flatMap(URL.init(string:))
     }
 
-    public static func keyHelp(language: WeiBeiInterfaceLanguage, provider: AgentProviderID) -> String {
-        let env = provider.environmentAPIKeyName
-        switch metadata(for: provider).help {
-        case .openaiCodex:
-            return language.text(
-                "ChatGPT Plus/Pro：用「订阅 OAuth」登录（Pi /login openai-codex）。无需粘贴 sk-。",
-                "ChatGPT Plus/Pro: use Subscription OAuth (Pi /login openai-codex). No sk- paste required."
-            )
-        case .anthropic:
-            return language.text(
-                "Claude 订阅用 OAuth；或粘贴 API Key（\(env)）。",
-                "Claude subscription via OAuth, or paste an API key (\(env))."
-            )
-        case .githubCopilot:
-            return language.text(
-                "GitHub Copilot：在 Pi 中 /login github-copilot，或设置 \(env)。",
-                "GitHub Copilot: use Pi /login github-copilot, or set \(env)."
-            )
-        case .azureOpenAI:
-            return language.text(
-                "环境变量：\(env)。还需 AZURE_OPENAI_BASE_URL 或资源名（可写在 Base URL）。",
-                "Env: \(env). Also need AZURE_OPENAI_BASE_URL or resource name (use Base URL)."
-            )
-        case .googleVertex:
-            return language.text(
-                "可用 \(env)，或 gcloud ADC + GOOGLE_CLOUD_PROJECT / LOCATION。",
-                "Use \(env), or gcloud ADC with GOOGLE_CLOUD_PROJECT / LOCATION."
-            )
-        case .amazonBedrock:
-            return language.text(
-                "Bearer \(env)，或 AWS_PROFILE / IAM 密钥（由系统环境提供）。",
-                "Bearer \(env), or AWS_PROFILE / IAM keys from the host environment."
-            )
-        case .cloudflareAIGateway:
-            return language.text(
-                "\(env) + CLOUDFLARE_ACCOUNT_ID + CLOUDFLARE_GATEWAY_ID。",
-                "\(env) + CLOUDFLARE_ACCOUNT_ID + CLOUDFLARE_GATEWAY_ID."
-            )
-        case .cloudflareWorkersAI:
-            return language.text(
-                "\(env) + CLOUDFLARE_ACCOUNT_ID。",
-                "\(env) + CLOUDFLARE_ACCOUNT_ID."
-            )
-        case .custom:
-            return language.text(
-                "自定义：填写 OpenAI 兼容 Base URL，并粘贴该服务的 API Key（注入 \(env)）。",
-                "Custom: set an OpenAI-compatible Base URL and paste the API key (injected as \(env))."
-            )
-        case .llamaCpp:
-            return language.text(
-                "llama.cpp：填写本地 OpenAI 兼容 Base URL；密钥通常可留空。",
-                "llama.cpp: set local OpenAI-compatible Base URL; key is often empty."
-            )
-        case .genericEnv:
-            return language.text(
-                "环境变量：\(env)。粘贴密钥后保存到当前配置。",
-                "Env: \(env). Paste the key and save to the current profile."
-            )
-        }
-    }
-
-    /// Single source of truth for console links + help template.
-    /// Keep strings byte-identical to the pre-L5 switches so settings UI does not drift.
+    /// Single source of truth for provider console links.
     public static func metadata(for provider: AgentProviderID) -> Metadata {
         switch provider {
         case .openai:
             return Metadata(
                 loginURLString: "https://platform.openai.com/api-keys",
-                accountURLString: "https://platform.openai.com/",
-                help: .genericEnv
+                accountURLString: "https://platform.openai.com/"
             )
         case .openaiCodex:
             return Metadata(
                 loginURLString: "https://platform.openai.com/api-keys",
-                accountURLString: "https://chatgpt.com/",
-                help: .openaiCodex
+                accountURLString: "https://chatgpt.com/"
             )
         case .anthropic:
             return Metadata(
                 loginURLString: "https://console.anthropic.com/settings/keys",
-                accountURLString: "https://claude.ai/",
-                help: .anthropic
+                accountURLString: "https://claude.ai/"
             )
         case .githubCopilot:
             return Metadata(
                 loginURLString: "https://github.com/settings/copilot",
-                accountURLString: "https://github.com/login",
-                help: .githubCopilot
+                accountURLString: "https://github.com/login"
             )
         case .xai:
             return Metadata(
                 loginURLString: "https://console.x.ai/",
-                accountURLString: "https://x.ai/",
-                help: .genericEnv
+                accountURLString: "https://x.ai/"
             )
         case .antLing:
-            return Metadata(loginURLString: nil, help: .genericEnv)
+            return Metadata(loginURLString: nil)
         case .azureOpenAI:
-            return Metadata(loginURLString: "https://portal.azure.com/", help: .azureOpenAI)
+            return Metadata(loginURLString: "https://portal.azure.com/")
         case .deepseek:
-            return Metadata(loginURLString: "https://platform.deepseek.com/api_keys", help: .genericEnv)
+            return Metadata(loginURLString: "https://platform.deepseek.com/api_keys")
         case .nvidia:
-            return Metadata(loginURLString: "https://build.nvidia.com/", help: .genericEnv)
+            return Metadata(loginURLString: "https://build.nvidia.com/")
         case .google:
-            return Metadata(loginURLString: "https://aistudio.google.com/apikey", help: .genericEnv)
+            return Metadata(loginURLString: "https://aistudio.google.com/apikey")
         case .googleVertex:
-            return Metadata(loginURLString: "https://console.cloud.google.com/vertex-ai", help: .googleVertex)
+            return Metadata(loginURLString: "https://console.cloud.google.com/vertex-ai")
         case .amazonBedrock:
-            return Metadata(loginURLString: "https://console.aws.amazon.com/bedrock", help: .amazonBedrock)
+            return Metadata(loginURLString: "https://console.aws.amazon.com/bedrock")
         case .mistral:
-            return Metadata(loginURLString: "https://console.mistral.ai/", help: .genericEnv)
+            return Metadata(loginURLString: "https://console.mistral.ai/")
         case .groq:
-            return Metadata(loginURLString: "https://console.groq.com/keys", help: .genericEnv)
+            return Metadata(loginURLString: "https://console.groq.com/keys")
         case .cerebras:
-            return Metadata(loginURLString: "https://cloud.cerebras.ai/", help: .genericEnv)
+            return Metadata(loginURLString: "https://cloud.cerebras.ai/")
         case .cloudflareAIGateway:
-            return Metadata(loginURLString: "https://dash.cloudflare.com/", help: .cloudflareAIGateway)
+            return Metadata(loginURLString: "https://dash.cloudflare.com/")
         case .cloudflareWorkersAI:
-            return Metadata(loginURLString: "https://dash.cloudflare.com/", help: .cloudflareWorkersAI)
+            return Metadata(loginURLString: "https://dash.cloudflare.com/")
         case .openrouter:
-            return Metadata(loginURLString: "https://openrouter.ai/keys", help: .genericEnv)
+            return Metadata(loginURLString: "https://openrouter.ai/keys")
+        case .qwenTokenPlan, .qwenTokenPlanCN, .radius:
+            return Metadata(loginURLString: nil)
         case .vercelAIGateway:
-            return Metadata(loginURLString: "https://vercel.com/docs/ai-gateway", help: .genericEnv)
+            return Metadata(loginURLString: "https://vercel.com/docs/ai-gateway")
         case .zai, .zaiCodingCN:
-            return Metadata(loginURLString: "https://z.ai/", help: .genericEnv)
+            return Metadata(loginURLString: "https://z.ai/")
         case .opencode, .opencodeGo:
-            return Metadata(loginURLString: "https://opencode.ai/", help: .genericEnv)
+            return Metadata(loginURLString: "https://opencode.ai/")
         case .huggingface:
-            return Metadata(loginURLString: "https://huggingface.co/settings/tokens", help: .genericEnv)
+            return Metadata(loginURLString: "https://huggingface.co/settings/tokens")
         case .fireworks:
-            return Metadata(loginURLString: "https://fireworks.ai/account/api-keys", help: .genericEnv)
+            return Metadata(loginURLString: "https://fireworks.ai/account/api-keys")
         case .together:
-            return Metadata(loginURLString: "https://api.together.xyz/settings/api-keys", help: .genericEnv)
+            return Metadata(loginURLString: "https://api.together.xyz/settings/api-keys")
         case .kimiCoding, .moonshotai, .moonshotaiCN:
-            return Metadata(loginURLString: "https://platform.moonshot.cn/", help: .genericEnv)
+            return Metadata(loginURLString: "https://platform.moonshot.cn/")
         case .minimax, .minimaxCN:
-            return Metadata(loginURLString: "https://www.minimaxi.com/", help: .genericEnv)
+            return Metadata(loginURLString: "https://www.minimaxi.com/")
         case .xiaomi, .xiaomiTokenPlanCN, .xiaomiTokenPlanAMS, .xiaomiTokenPlanSGP:
-            return Metadata(loginURLString: nil, help: .genericEnv)
+            return Metadata(loginURLString: nil)
         case .llamaCpp:
-            return Metadata(loginURLString: nil, help: .llamaCpp)
+            return Metadata(loginURLString: nil)
         case .custom:
-            return Metadata(loginURLString: nil, help: .custom)
+            return Metadata(loginURLString: nil)
         }
     }
 }
 
-/// Persist named profiles (metadata in UserDefaults; secrets in WeiBei local store).
+/// Persist named provider/model configurations. Embedded Pi owns credentials.
 public enum AgentCredentialProfileStore {
     private static let profilesKey = "weibei.agentCredentialProfiles.v1"
     private static let activeProfileKey = "weibei.agentCredentialActiveProfileID.v1"
-    private static let keychainService = "com.changfenhuang.weibei.agent-profile"
 
     public static func loadProfiles() -> [AgentCredentialProfile] {
         guard let data = UserDefaults.standard.data(forKey: profilesKey),
@@ -299,29 +208,8 @@ public enum AgentCredentialProfileStore {
         AgentCredentialProfile(
             name: "Default",
             provider: .openai,
-            authMethod: .apiKey,
-            modelName: AgentProviderID.openai.defaultModelHint
+            authMethod: .apiKey
         )
     }
 
-    public static func loadAPIKey(profileID: UUID) -> String {
-        WeiBeiCredentialStore(
-            service: keychainService,
-            account: "PROFILE_\(profileID.uuidString)"
-        ).load()
-    }
-
-    public static func saveAPIKey(_ value: String, profileID: UUID) throws {
-        try WeiBeiCredentialStore(
-            service: keychainService,
-            account: "PROFILE_\(profileID.uuidString)"
-        ).save(value)
-    }
-
-    public static func deleteAPIKey(profileID: UUID) throws {
-        try WeiBeiCredentialStore(
-            service: keychainService,
-            account: "PROFILE_\(profileID.uuidString)"
-        ).delete()
-    }
 }
