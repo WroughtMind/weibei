@@ -352,6 +352,14 @@ public actor PiAgentRuntime: StudyAgentRuntime {
 
         func finish() {
             continuation.finish()
+        }
+
+        func waitUntilFinished() async {
+            await task.value
+        }
+
+        func cancel() {
+            continuation.finish()
             task.cancel()
         }
     }
@@ -622,6 +630,12 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         }
 
         let reply = try await waitForRun(id: request.id)
+        await withTaskCancellationHandler {
+            await progressDelivery?.waitUntilFinished()
+        } onCancel: {
+            progressDelivery?.cancel()
+        }
+        try Task.checkCancellation()
         // PI emits agent_end before every post-turn hook is guaranteed to be flushed.
         // An ordered state read gives those hooks a chance to finish before the
         // process boundary prevents late events from entering the next turn.
@@ -2255,9 +2269,13 @@ public actor PiAgentRuntime: StudyAgentRuntime {
             }
             let modelClosureText = (text.isEmpty ? run.streamedText : text)
                 .trimmingCharacters(in: .whitespacesAndNewlines)
+            let streamedClosureText = run.streamedText
+                .trimmingCharacters(in: .whitespacesAndNewlines)
             let richNarrative = run.safeRichAnswerNarrative
             let finalText: String
-            if let richNarrative, !richNarrative.isEmpty {
+            if !streamedClosureText.isEmpty {
+                finalText = modelClosureText
+            } else if let richNarrative, !richNarrative.isEmpty {
                 finalText = richNarrative
             } else {
                 finalText = modelClosureText
@@ -2299,12 +2317,7 @@ public actor PiAgentRuntime: StudyAgentRuntime {
             } else if finalText.isEmpty {
                 finishRun(id: run.id, with: .failure(PiAgentRuntimeError.agentFailed(run.lastError ?? "PI returned no readable text")))
             } else {
-                finishRun(
-                    id: run.id,
-                    with: .success(
-                        replyCandidate
-                    )
-                )
+                finishRun(id: run.id, with: .success(replyCandidate))
             }
 
         case let .extensionError(message):
@@ -2325,7 +2338,23 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         finishHostToolRun(requestID: id)
         run.watchdogTask?.cancel()
         run.watchdogTask = nil
-        run.progressDelivery?.finish()
+        switch result {
+        case let .success(reply):
+            if !run.streamedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                run.progressDelivery?.yield(.text(reply.text))
+            }
+            run.progressDelivery?.finish()
+        case .failure:
+            run.progressDelivery?.cancel()
+        }
+        completeRun(run, with: result)
+    }
+
+    private func completeRun(
+        _ run: ActiveRun,
+        with result: Result<StudyAgentReply, Error>
+    ) {
+        var run = run
         if let continuation = run.continuation {
             activeRun = nil
             continuation.resume(with: result)
@@ -2363,7 +2392,7 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         guard let run = activeRun, run.id == id else { return }
         finishHostToolRun(requestID: id)
         run.watchdogTask?.cancel()
-        run.progressDelivery?.finish()
+        run.progressDelivery?.cancel()
         activeRun = nil
         scheduleIdleShutdown()
     }

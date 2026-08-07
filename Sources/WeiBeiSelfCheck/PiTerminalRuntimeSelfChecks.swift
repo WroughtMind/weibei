@@ -26,10 +26,14 @@ private enum PiTerminalRuntimeSelfCheckError: LocalizedError {
 
 private actor PiProgressProbe {
     private var reachedPreparing = false
+    private var latestText: String?
 
     func record(_ event: StudyAgentProgress) {
         if event == .preparing {
             reachedPreparing = true
+        }
+        if case let .text(text) = event {
+            latestText = text
         }
     }
 
@@ -40,6 +44,10 @@ private actor PiProgressProbe {
         }
         return false
     }
+
+    func text() -> String? {
+        latestText
+    }
 }
 
 func runPiTerminalRuntimeSelfChecks() async throws {
@@ -49,6 +57,8 @@ func runPiTerminalRuntimeSelfChecks() async throws {
     try await checkUserStopReturnsImmediately(fixture)
     try await checkCancelledTurnCannotAffectImmediateNextChat(fixture)
     try await checkTerminalErrorBypassesSlowProgress(fixture)
+    try await checkSuccessfulRunDeliversFinalTextBeforeReply(fixture)
+    try await checkToolOnlyReplyDoesNotPretendToStream(fixture)
     try await checkGenericEventsDoNotDefeatWatchdog(fixture)
     try await checkMeaningfulThinkingKeepsRunAlive(fixture)
     try await checkRejectedRichAnswerKeepsSafeNarrative(fixture)
@@ -341,6 +351,71 @@ private func checkTerminalErrorBypassesSlowProgress(_ fixture: PiTerminalRuntime
     guard outcome == "error:PI 回答失败：真实终止错误", completionSeconds < 1.0 else {
         throw PiTerminalRuntimeSelfCheckError.failed(
             "PI terminal error was hidden or blocked behind progress delivery (outcome=\(outcome), seconds=\(completionSeconds))"
+        )
+    }
+}
+
+private func checkSuccessfulRunDeliversFinalTextBeforeReply(
+    _ fixture: PiTerminalRuntimeFixture
+) async throws {
+    let runtime = PiAgentRuntime(
+        executableURL: fixture.executableURL,
+        runtimeDirectory: try fixture.workingDirectory(named: "FinalProgressDirectAnswerMode"),
+        runInactivityTimeoutNanoseconds: 2_000_000_000
+    )
+    let probe = PiProgressProbe()
+    let request = StudyAgentRequest(
+        purpose: .conversation,
+        question: "完成前交付最后正文",
+        materialTitle: "",
+        materialText: "",
+        noteTitle: "",
+        noteText: "",
+        contextRevision: "thinking-test"
+    )
+    let reply = try await runtime.respond(to: request) { event in
+        if case .text = event {
+            try? await Task.sleep(nanoseconds: 150_000_000)
+        }
+        await probe.record(event)
+    }
+    let deliveredText = await probe.text()
+    await runtime.shutdown()
+
+    guard deliveredText == reply.text else {
+        throw PiTerminalRuntimeSelfCheckError.failed(
+            "PI completed before its final cumulative text reached the progress handler"
+        )
+    }
+}
+
+private func checkToolOnlyReplyDoesNotPretendToStream(
+    _ fixture: PiTerminalRuntimeFixture
+) async throws {
+    let runtime = PiAgentRuntime(
+        executableURL: fixture.executableURL,
+        runtimeDirectory: try fixture.workingDirectory(named: "ToolOnlyRichFallbackMode"),
+        runInactivityTimeoutNanoseconds: 2_000_000_000
+    )
+    let probe = PiProgressProbe()
+    let request = StudyAgentRequest(
+        purpose: .conversation,
+        question: "工具回答不能伪造正文流",
+        materialTitle: "测试材料",
+        materialText: "测试正文",
+        noteTitle: "测试笔记",
+        noteText: "",
+        contextRevision: "rich-fallback-test"
+    )
+    let reply = try await runtime.respond(to: request) { event in
+        await probe.record(event)
+    }
+    let deliveredText = await probe.text()
+    await runtime.shutdown()
+
+    guard reply.text == "[材料：测试材料] 安全正文", deliveredText == nil else {
+        throw PiTerminalRuntimeSelfCheckError.failed(
+            "PI synthesized a streaming text event for a tool-only reply"
         )
     }
 }
