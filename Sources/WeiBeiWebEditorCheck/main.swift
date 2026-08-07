@@ -2203,6 +2203,10 @@ private func verifyAgentChatMarkdownSourceContract() {
         "real short-block measurement must be independent from the 44pt minimum frame"
     )
     expect(
+        chat.contains("freezeHeightAfterMeasure: !isStreaming && isInScrollViewport == false"),
+        "visible finalized Markdown must remain live while delayed layout can still grow"
+    )
+    expect(
         chat.contains(".environment(\\.agentChatLayoutWidth, max(panelWidth - 28, 1))"),
         "selection-float Agent Markdown must receive its real panel width"
     )

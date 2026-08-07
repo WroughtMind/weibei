@@ -5328,8 +5328,10 @@ private struct AgentMessageMarkdownText: View {
                     interfaceLanguage: store.interfaceLanguage,
                     compact: true,
                     fitsContentHeight: true,
-                    freezeHeightAfterMeasure: !isStreaming
-                        && (!paneStructureTransitionActive || isInScrollViewport == false),
+                    // Freezing is only a recycle optimization for offscreen rows.
+                    // A visible answer stays authoritative so delayed list, font,
+                    // image, or KaTeX growth can never be clipped by an old frame.
+                    freezeHeightAfterMeasure: !isStreaming && isInScrollViewport == false,
                     seedContentHeight: isStreaming ? nil : cachedFinalizedHeight,
                     layoutWidthKey: layoutWidthBucket,
                     isChatWideTypography: isChatWideTypography,
