@@ -9,7 +9,6 @@ struct GeneratedRichAnswerSceneView: View {
     var onOpenEvidence: (RichAnswerEvidence) -> Void
     var onOpenAsset: (String) -> Void
     var assetPreview: (String) -> NSImage?
-    var onSceneReady: () -> Void
     @State private var runtime: GeneratedRichAnswerRuntime
 
     init(
@@ -18,8 +17,7 @@ struct GeneratedRichAnswerSceneView: View {
         evidenceByID: [String: RichAnswerEvidence],
         onOpenEvidence: @escaping (RichAnswerEvidence) -> Void,
         onOpenAsset: @escaping (String) -> Void,
-        assetPreview: @escaping (String) -> NSImage?,
-        onSceneReady: @escaping () -> Void = {}
+        assetPreview: @escaping (String) -> NSImage?
     ) {
         self.scene = scene
         self.composition = composition
@@ -27,7 +25,6 @@ struct GeneratedRichAnswerSceneView: View {
         self.onOpenEvidence = onOpenEvidence
         self.onOpenAsset = onOpenAsset
         self.assetPreview = assetPreview
-        self.onSceneReady = onSceneReady
         _runtime = State(initialValue: GeneratedRichAnswerRuntime(composition: composition))
     }
 
@@ -45,29 +42,7 @@ struct GeneratedRichAnswerSceneView: View {
         .accessibilityElement(children: .contain)
         .accessibilityLabel(scene.title)
         .accessibilityIdentifier("rich-answer-scene-\(scene.id)")
-        .onAppear(perform: onSceneReady)
-        .onRichAnswerVerificationStage { stage in
-            guard stage == .after else { return }
-            let before = runtime.verificationStateSnapshot()
-            let advance = runtime.advanceVerificationInteraction(composition)
-            let after = runtime.verificationStateSnapshot()
-            RichAnswerVerificationBridge.writeInteractionReceipt(
-                sceneID: scene.id,
-                sceneTitle: scene.title,
-                target: advance.target,
-                kind: advance.kind,
-                before: before,
-                after: after,
-                changed: RichAnswerVerificationBridge.changed(before, after),
-                source: "generated-ui"
-            )
-        }
     }
-}
-
-private struct GeneratedVerificationAdvanceResult {
-    var target: [String: Any]
-    var kind: String
 }
 
 private struct GeneratedRichAnswerRuntime: Equatable {
@@ -83,62 +58,6 @@ private struct GeneratedRichAnswerRuntime: Equatable {
         selectedID = nil
     }
 
-    func verificationStateSnapshot() -> [String: Any] {
-        [
-            "values": Dictionary(uniqueKeysWithValues: values.map { ($0.key, $0.value) }),
-            "selectedID": selectedID ?? NSNull(),
-        ]
-    }
-
-    mutating func advanceVerificationInteraction(_ composition: RichAnswerUIComposition) -> GeneratedVerificationAdvanceResult {
-        var target: [String: Any] = [:]
-        var kind = "generated-ui"
-        if let binding = composition.bindings.first {
-            let beforeValue = values[binding.id] ?? binding.initialValue
-            let afterValue = RichAnswerVerificationBridge.nextVerificationValue(
-                current: beforeValue,
-                minimum: binding.minimum,
-                maximum: binding.maximum,
-                step: binding.step
-            )
-            values[binding.id] = afterValue
-            target = [
-                "id": binding.id,
-                "label": binding.label,
-                "control": "binding",
-                "beforeValue": beforeValue,
-                "afterValue": afterValue,
-            ]
-            kind = "binding"
-        }
-        if selectedID == nil,
-           let selectableID = firstSelectableID(in: composition) {
-            selectedID = selectableID
-            if target.isEmpty {
-                target = [
-                    "id": selectableID,
-                    "control": "selectable-node",
-                ]
-                kind = "select"
-            }
-        }
-        if target.isEmpty {
-            target = [
-                "id": composition.rootID,
-                "control": "composition-root",
-            ]
-        }
-        return GeneratedVerificationAdvanceResult(target: target, kind: kind)
-    }
-
-    private func firstSelectableID(in composition: RichAnswerUIComposition) -> String? {
-        if let rowID = composition.datasets.first(where: { !$0.rows.isEmpty })?.rows.first?.id {
-            return rowID
-        }
-        return composition.nodes.first {
-            [.region, .shape, .bar, .point, .dotMatrix, .label, .sequence].contains($0.role)
-        }?.id
-    }
 }
 
 private struct GeneratedRichAnswerNodeView: View {

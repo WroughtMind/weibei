@@ -158,19 +158,6 @@ struct ContentRailView: View {
                 onHover(nil)
             }
         }
-        .task(id: "\(isRailOnly)-\(items.first?.id ?? "empty")") {
-            let verificationScenario = ProcessInfo.processInfo.environment["WEIBEI_VERIFY_SCENARIO"]
-            guard isRailOnly,
-                  verificationScenario == "content-rail-dormant-preview" || verificationScenario == "content-rail-activation-preview",
-                  let first = items.first else { return }
-            try? await Task.sleep(nanoseconds: 50_000_000)
-            guard !Task.isCancelled else { return }
-            if verificationScenario == "content-rail-activation-preview" {
-                activate(first)
-            } else {
-                beginHover(first)
-            }
-        }
     }
 
     private var compactWidth: CGFloat {
@@ -421,9 +408,6 @@ struct ContentRailView: View {
     }
 
     private func schedulePreviewClose() {
-        if ProcessInfo.processInfo.environment["WEIBEI_VERIFY_SCENARIO"] == "content-rail-dormant-preview" {
-            return
-        }
         previewCloseWork?.cancel()
         let work = DispatchWorkItem {
             guard hoveredID == nil else { return }

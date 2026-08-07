@@ -1,4 +1,5 @@
 import Foundation
+@testable import WeiBei
 import WeiBeiCore
 
 enum ImportedIdentitySelfCheck {
@@ -17,6 +18,7 @@ enum ImportedIdentitySelfCheck {
         try courseResumePointRestoresOneAtomicLearningScene()
         try sameVolumeMoveKeepsIdentityRelationsNavigationAndIndex()
         try temporarilyUnavailableNoteRetainsLatestEdit()
+        try restoredPendingNoteErrorsStayWithAffectedNote()
         try offlineLaunchNoteRetainsEditWhenFileReturns()
         try inactiveQueuedDraftBlocksRenameWhenExternalChanged()
         try reentrantNotebookRenameKeepsOneRecoveryTransaction()
@@ -2264,13 +2266,21 @@ enum ImportedIdentitySelfCheck {
             selectionAskThreadDefaults: fixture.selectionAskThreadDefaults
         )
         try check(store?.noteText == latestEdit, "文件恢复后重启没有优先恢复最新编辑缓存")
-        store?.select(itemID: "sample-pdf")
-        store?.flushPendingNotePersistence()
+        let retryDeadline = Date(timeIntervalSinceNow: 20)
+        while (try? fixture.readSnapshot()
+            .pendingNoteWritesByItemID?[note.id]) != nil,
+            Date() < retryDeadline {
+            RunLoop.current.run(
+                mode: .default,
+                before: Date(timeIntervalSinceNow: 0.01)
+            )
+        }
         let restoredDiskText = try String(contentsOf: noteURL, encoding: .utf8)
         let restoredSnapshot = try fixture.readSnapshot()
-        try check(restoredDiskText == latestEdit, "文件恢复后没有把最新编辑写回真实文件")
+        try check(restoredDiskText == latestEdit, "文件恢复后重启没有自动写回最新编辑")
         try check(restoredSnapshot.notesByItemID[note.id] == nil, "最新编辑写回成功后仍残留待写缓存")
         try check(restoredSnapshot.pendingNoteWritesByItemID?[note.id] == nil, "最新编辑写回成功后仍残留待写状态")
+        try check(store?.noteFileError == nil, "安全补写成功后仍显示笔记提示")
 
         store?.select(itemID: note.id)
         let conflictedEdit = "# 暂时不可用笔记\n\n魏碑断开期间的第二份编辑"
@@ -2301,6 +2311,126 @@ enum ImportedIdentitySelfCheck {
         try check(conflictSnapshot.notesByItemID[note.id] == conflictedEdit, "发生冲突后魏碑待写草稿没有继续保留")
         try check(conflictSnapshot.pendingNoteWritesByItemID?[note.id] != nil, "发生冲突后待写草稿丢失磁盘基线")
         try check(store?.noteFileError?.contains("冲突") == true, "发生冲突后没有向用户说明两份编辑需要处理")
+    }
+
+    @MainActor
+    private static func restoredPendingNoteErrorsStayWithAffectedNote() throws {
+        let fixture = try WorkspaceFixture(name: "restored-pending-note-errors")
+        defer { fixture.remove() }
+
+        let noteAURL = fixture.importsDirectory.appendingPathComponent("后台失败笔记.md")
+        let noteBURL = fixture.importsDirectory.appendingPathComponent("当前成功笔记.md")
+        let diskA = "# 后台失败笔记\n\n磁盘原文"
+        let diskB = "# 当前成功笔记\n\n磁盘原文"
+        let draftA = "# 后台失败笔记\n\n魏碑最新编辑"
+        let draftB = "# 当前成功笔记\n\n魏碑最新编辑"
+        try Data(diskA.utf8).write(to: noteAURL)
+        try Data(diskB.utf8).write(to: noteBURL)
+        let identityA = ImportedFileIdentity(
+            volumeID: 21,
+            fileID: 201,
+            birthTimeSeconds: 2_001,
+            birthTimeNanoseconds: 21
+        )
+        let identityB = ImportedFileIdentity(
+            volumeID: 21,
+            fileID: 202,
+            birthTimeSeconds: 2_002,
+            birthTimeNanoseconds: 22
+        )
+        var identitiesAreAvailable = true
+        let resolver: (URL) -> ImportedFileIdentity? = { url in
+            guard identitiesAreAvailable else { return nil }
+            switch url.path {
+            case noteAURL.path: return identityA
+            case noteBURL.path: return identityB
+            default: return nil
+            }
+        }
+
+        var store: WorkspaceStore? = WorkspaceStore(
+            workspaceDirectory: fixture.workspaceDirectory,
+            importedFileIdentityResolver: resolver,
+            selectionAskThreadDefaults: fixture.selectionAskThreadDefaults
+        )
+        _ = store?.importFiles(
+            [noteBURL, noteAURL],
+            selectsFirstImportedItem: false,
+            markdownNotePaths: [noteAURL.path, noteBURL.path]
+        )
+        let noteA = try require(
+            store?.courseNotebookItems.first { $0.urlPath == noteAURL.path },
+            "后台失败场景找不到 A 笔记"
+        )
+        let noteB = try require(
+            store?.courseNotebookItems.first { $0.urlPath == noteBURL.path },
+            "后台失败场景找不到 B 笔记"
+        )
+        store?.select(itemID: noteA.id)
+        identitiesAreAvailable = false
+        store?.updateNote(draftA)
+        store?.flushPendingNotePersistence()
+        store?.select(itemID: noteB.id)
+        store?.updateNote(draftB)
+        store?.flushPendingNotePersistence()
+        let pendingSnapshot = try fixture.readSnapshot()
+        try check(
+            pendingSnapshot.pendingNoteWritesByItemID?[noteA.id] != nil
+                && pendingSnapshot.pendingNoteWritesByItemID?[noteB.id] != nil,
+            "重开前没有保留两份待写草稿"
+        )
+        store = nil
+
+        identitiesAreAvailable = true
+        var failedAWrite = false
+        let reopened = WorkspaceStore(
+            workspaceDirectory: fixture.workspaceDirectory,
+            importedFileIdentityResolver: resolver,
+            notebookMarkdownWriter: { markdown, url in
+                if url.path == noteAURL.path, !failedAWrite {
+                    failedAWrite = true
+                    throw CheckError.failed("注入后台笔记写回失败")
+                }
+                try markdown.write(to: url, atomically: true, encoding: .utf8)
+            },
+            selectionAskThreadDefaults: fixture.selectionAskThreadDefaults
+        )
+        let retryDeadline = Date(timeIntervalSinceNow: 20)
+        while (!failedAWrite
+                || (try? fixture.readSnapshot()
+                    .pendingNoteWritesByItemID?[noteB.id]) != nil),
+              Date() < retryDeadline {
+            RunLoop.current.run(
+                mode: .default,
+                before: Date(timeIntervalSinceNow: 0.01)
+            )
+        }
+
+        let restoredSnapshot = try fixture.readSnapshot()
+        let restoredB = try String(contentsOf: noteBURL, encoding: .utf8)
+        let restoredA = try String(contentsOf: noteAURL, encoding: .utf8)
+        try check(failedAWrite, "重开没有尝试自动写回后台笔记")
+        try check(
+            restoredB == draftB
+                && restoredSnapshot.pendingNoteWritesByItemID?[noteB.id] == nil,
+            "当前笔记没有自动写回或清除待写状态"
+        )
+        try check(
+            restoredA == diskA
+                && restoredSnapshot.notesByItemID[noteA.id] == draftA
+                && restoredSnapshot.pendingNoteWritesByItemID?[noteA.id] != nil,
+            "后台写回失败没有同时保留磁盘原文和魏碑草稿"
+        )
+        try check(
+            reopened.activeNoteItemID == noteB.id && reopened.noteFileError == nil,
+            "后台笔记写回失败打扰了当前笔记"
+        )
+        reopened.openCourseNote(noteA.id)
+        try check(
+            reopened.noteText == draftA
+                && reopened.noteFileError?.contains("无法写回") == true,
+            "打开受影响笔记时没有恢复草稿或显示真实错误"
+        )
     }
 
     @MainActor

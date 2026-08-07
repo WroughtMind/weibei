@@ -816,19 +816,13 @@ struct CourseHubView: View {
         searchAvailability = outcome.availability
         isSearching = false
         guard let span else { return }
-        let inputMode =
-            ProcessInfo.processInfo.environment[
-                "WEIBEI_PERF_SEARCH_UI_REPETITIONS"
-            ] == nil
-                ? "manual_ui"
-                : "verification_ui_state"
         await withCheckedContinuation {
             (continuation: CheckedContinuation<Void, Never>) in
             DispatchQueue.main.async {
                 WeiBeiPerf.end(
                     span,
                     extra:
-                        "outcome=completed endpoint=next_main_queue_proxy input=\(inputMode) results=\(outcome.results.count)"
+                        "outcome=completed endpoint=next_main_queue_proxy input=manual_ui results=\(outcome.results.count)"
                 )
                 continuation.resume()
             }

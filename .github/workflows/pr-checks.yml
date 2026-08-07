@@ -82,9 +82,7 @@ jobs:
 
       - name: 运行课程目录与数据安全自检
         if: (github.event_name == 'pull_request' && steps.scope.outputs.data_safety == 'true') || (github.event_name == 'workflow_dispatch' && inputs.full_suite)
-        run: |
-          WEIBEI_SUPPRESS_ACTIVATION=1 swift run WeiBei --self-check-imported-identity
-          WEIBEI_SUPPRESS_ACTIVATION=1 swift run WeiBei --self-check-course-project-root
+        run: swift test --filter WeiBeiSafetyTests
 
       - name: 检查空白与生成文件
         run: |
@@ -113,6 +111,9 @@ jobs:
 
       - name: 校验安装包签名
         run: /usr/bin/codesign --verify --deep --strict "dist/魏碑.app"
+
+      - name: 确认正式包不含测试支架或内置示例
+        run: ./script/verify_production_hygiene.sh "dist/魏碑.app"
 
       - name: 压缩短期真实窗口验收包
         run: ditto -c -k --sequesterRsrc --keepParent "dist/魏碑.app" "dist/魏碑-CI验收包.zip"

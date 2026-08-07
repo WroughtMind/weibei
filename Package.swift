@@ -65,6 +65,10 @@ let package = Package(
             linkerSettings: [
                 .linkedFramework("PDFKit")
             ]
+        ),
+        .testTarget(
+            name: "WeiBeiSafetyTests",
+            dependencies: ["WeiBei"]
         )
     ]
 )

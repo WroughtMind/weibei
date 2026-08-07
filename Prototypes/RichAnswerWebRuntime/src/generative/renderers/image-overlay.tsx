@@ -28,13 +28,12 @@ import {
   imageOverlayFeatureKey,
   measurementUnitLabel,
   parseImageOverlaySpec,
-  runImageOverlaySelfChecks,
   segmentLengthPxl,
   IMAGE_OVERLAY_RENDERER,
   IMAGE_OVERLAY_SPEC_VERSION,
   type ImageOverlayFeature,
   type ImageOverlaySpec,
-} from "./image-overlay.self-check";
+} from "./image-overlay-model";
 
 type ImageSource = ImageOverlaySpec["image"];
 
@@ -1313,17 +1312,6 @@ export const imageOverlayRenderer: RichAnswerRenderer = {
     fallback: ["narrativeOnly"],
   },
   validate(plan) {
-    const selfCheck = runImageOverlaySelfChecks();
-    if (!selfCheck.ok) {
-      return {
-        ok: false,
-        issue: {
-          code: "validation_error",
-          renderer: IMAGE_OVERLAY_RENDERER,
-          message: `图像覆盖响应式自检失败：${selfCheck.cases.filter((item) => !item.ok).map((item) => item.name).join("；")}`,
-        },
-      };
-    }
     const parsed = parseImageOverlaySpec(plan);
     return parsed.ok === false ? { ok: false, issue: parsed.issue } : { ok: true };
   },

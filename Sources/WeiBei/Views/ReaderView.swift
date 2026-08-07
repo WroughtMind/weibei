@@ -6,7 +6,6 @@ import WeiBeiCore
 import WebKit
 
 extension Notification.Name {
-    static let weiBeiVerificationUserScroll = Notification.Name("WeiBeiVerificationUserScroll")
     static let weiBeiScrollAgentToMessage = Notification.Name("WeiBeiScrollAgentToMessage")
 }
 
@@ -460,7 +459,6 @@ struct ReaderView: View {
     }
 
     private func applyHTMLContentRailSections(_ sections: [WebReaderContentRailSection]) {
-        ChatSourceNavigationVerifier.recordHTMLSections(sections.map(\.id))
         let items = sections.map { section in
             ContentRailItem(
                 id: section.id,
@@ -481,10 +479,6 @@ struct ReaderView: View {
 
     private func applyHTMLContentRailActiveID(_ change: WebReaderContentRailActiveChange) {
         let id = change.id
-        ChatSourceNavigationVerifier.recordHTMLActive(
-            id: id,
-            reason: change.reason.rawValue
-        )
         // Jump must update the rail highlight immediately. Scroll updates are
         // coalesced so fast section crossings do not re-enter WebReader updateNSView.
         if change.reason == .jump {
@@ -897,12 +891,7 @@ struct ReaderView: View {
                         store.updateSelection(text, source: .document, anchor: anchor, ownerTitle: ownerTitle)
                     }
                 } else {
-                    SamplePDFView(appearanceMode: store.appearanceMode, language: store.interfaceLanguage) { text, anchor in
-                        let title = store.displayTitle(for: item)
-                        let ownerTitle = store.ui("\(title)，第 1 页", "\(title), page 1")
-                        store.updateReaderLocationTitle(ownerTitle)
-                        store.updateSelection(text, source: .document, anchor: anchor, ownerTitle: ownerTitle)
-                    }
+                    MaterialReadFailureView(fileName: store.displayTitle(for: item))
                 }
             case .html:
                 if let url = item.url {
@@ -925,24 +914,7 @@ struct ReaderView: View {
                         store.updateSelection(text, source: .document, anchor: anchor)
                     }
                 } else {
-                    WebReaderRepresentable(
-                        html: store.sampleHTML(for: item),
-                        searchQuery: store.effectiveReaderSearch,
-                        appearanceMode: store.appearanceMode,
-                        adaptsDocumentColors: true,
-                        contentRailTarget: htmlContentRailTarget,
-                        selectionAskMarks: selectionAskMarksJSON(for: item.id),
-                        onContentRailChange: applyHTMLContentRailSections,
-                        onContentRailActiveChange: applyHTMLContentRailActiveID,
-                        onAppShortcut: { key, modifiers in store.handleAppShortcut(key: key, modifiers: modifiers) },
-                        onSelectionAskMark: { threadID in
-                            if let uuid = UUID(uuidString: threadID) {
-                                store.openSelectionAskThread(uuid, jumpToConversation: false)
-                            }
-                        }
-                    ) { text, anchor in
-                        store.updateSelection(text, source: .document, anchor: anchor)
-                    }
+                    MaterialReadFailureView(fileName: store.displayTitle(for: item))
                 }
             case .markdown:
                 if let url = item.url {
@@ -952,7 +924,7 @@ struct ReaderView: View {
                         MarkdownReadFailureView(fileName: url.lastPathComponent)
                     }
                 } else {
-                    markdownReader(markdown: store.sampleText(for: item), markdownBaseURL: store.currentMarkdownBaseURL)
+                    MaterialReadFailureView(fileName: store.displayTitle(for: item))
                 }
             case .text:
                 if let url = item.url, let text = try? String(contentsOf: url, encoding: .utf8) {
@@ -960,9 +932,7 @@ struct ReaderView: View {
                         store.updateSelection(text, source: .document, anchor: anchor)
                     }
                 } else {
-                    PlainTextReaderView(text: store.sampleText(for: item), searchQuery: store.effectiveReaderSearch, appearanceMode: store.appearanceMode) { text, anchor in
-                        store.updateSelection(text, source: .document, anchor: anchor)
-                    }
+                    MaterialReadFailureView(fileName: store.displayTitle(for: item))
                 }
             }
         } else if store.selectedItem?.isNotebookNote == true {
@@ -1197,7 +1167,6 @@ private struct PDFReaderRepresentable: NSViewRepresentable {
     }
 
     func makeNSView(context: Context) -> ReaderPDFView {
-        PaneToggleContinuityVerifier.recordPDFReaderMake()
         let view = ReaderPDFView()
         view.autoScales = true
         view.displayDirection = .vertical
@@ -1297,7 +1266,6 @@ private struct PDFReaderRepresentable: NSViewRepresentable {
     }
 
     static func dismantleNSView(_ view: ReaderPDFView, coordinator: Coordinator) {
-        PaneToggleContinuityVerifier.recordPDFReaderDismantle()
         coordinator.suspend()
         view.reportCurrentSelection = nil
     }
@@ -2294,7 +2262,6 @@ struct WebReaderRepresentable: NSViewRepresentable {
     }
 
     func makeNSView(context: Context) -> WKWebView {
-        PaneToggleContinuityVerifier.recordWebReaderMake()
         let configuration = WKWebViewConfiguration()
         let controller = WKUserContentController()
         for name in Self.scriptMessageNames {
@@ -2330,7 +2297,6 @@ struct WebReaderRepresentable: NSViewRepresentable {
         view.setValue(false, forKey: "drawsBackground")
         context.coordinator.webView = view
         view.navigationDelegate = context.coordinator
-        context.coordinator.installVerificationScrollObserverIfNeeded()
         return view
     }
 
@@ -2386,9 +2352,7 @@ struct WebReaderRepresentable: NSViewRepresentable {
     }
 
     static func dismantleNSView(_ view: WKWebView, coordinator: Coordinator) {
-        PaneToggleContinuityVerifier.recordWebReaderDismantle()
         coordinator.cancelHTMLLoad()
-        coordinator.removeVerificationScrollObserver()
         unbindScriptMessages(in: view)
         view.navigationDelegate = nil
     }
@@ -2776,21 +2740,10 @@ struct WebReaderRepresentable: NSViewRepresentable {
         if (keys.includes(event.key)) markUserScrollIntent();
       };
 
-      const simulateUserScrollForVerification = () => {
-        const before = window.scrollY;
-        const maximum = maximumScroll();
-        state.activeID = "";
-        window.dispatchEvent(new WheelEvent("wheel", { deltaY: window.innerHeight * 2.4 }));
-        window.scrollTo({ top: maximum, behavior: "auto" });
-        applyActive("scroll");
-        return `before:${before},after:${window.scrollY},max:${maximum},intent:${state.userScrollUntil > Date.now()}`;
-      };
-
       window.WeiBeiContentRail = {
         installed: true,
         scan: () => scan("initial"),
-        scrollTo,
-        simulateUserScrollForVerification
+        scrollTo
       };
       window.addEventListener("wheel", markUserScrollIntent, { passive: true });
       window.addEventListener("touchmove", markUserScrollIntent, { passive: true });
@@ -2928,7 +2881,6 @@ struct WebReaderRepresentable: NSViewRepresentable {
         private var lastAppliedSearchQuery = ""
         var lastAppliedSelectionAskMarks = ""
         private var lastAppliedContentRailTargetRequestID: UUID?
-        private var observesVerificationScroll = false
         weak var webView: WKWebView?
 
         init(
@@ -3013,37 +2965,6 @@ struct WebReaderRepresentable: NSViewRepresentable {
             webView.evaluateJavaScript(js, completionHandler: nil)
         }
 
-        func installVerificationScrollObserverIfNeeded() {
-            guard !observesVerificationScroll,
-                  ProcessInfo.processInfo.environment["WEIBEI_VERIFY_SCENARIO"] == "reader-scroll-persistence-flow" else { return }
-            observesVerificationScroll = true
-            NotificationCenter.default.addObserver(
-                self,
-                selector: #selector(performVerificationUserScroll),
-                name: .weiBeiVerificationUserScroll,
-                object: nil
-            )
-        }
-
-        func removeVerificationScrollObserver() {
-            guard observesVerificationScroll else { return }
-            NotificationCenter.default.removeObserver(self, name: .weiBeiVerificationUserScroll, object: nil)
-            observesVerificationScroll = false
-        }
-
-        @objc private func performVerificationUserScroll() {
-            guard let webView else { return }
-            PaneToggleContinuityVerifier.recordVerificationScrollScheduled()
-            webView.evaluateJavaScript(
-                "window.WeiBeiContentRail?.simulateUserScrollForVerification()"
-            ) { result, error in
-                let value = result as? String
-                    ?? error.map { "error:\($0.localizedDescription)" }
-                    ?? "missing-result"
-                PaneToggleContinuityVerifier.recordVerificationScrollResult(value)
-            }
-        }
-
         func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
             if message.name == "appShortcut" {
                 guard let body = message.body as? [String: Any],
@@ -3070,7 +2991,6 @@ struct WebReaderRepresentable: NSViewRepresentable {
             if message.name == "contentRailSections" {
                 guard let rows = message.body as? [[String: Any]] else { return }
                 let sections = rows.compactMap(Self.contentRailSection(from:))
-                PaneToggleContinuityVerifier.recordHTMLSectionEvent(count: sections.count)
                 Task { @MainActor in
                     self.onContentRailChange(sections)
                 }
@@ -3082,7 +3002,6 @@ struct WebReaderRepresentable: NSViewRepresentable {
                 let id = body?["id"] as? String
                 let reason = (body?["reason"] as? String)
                     .flatMap(WebReaderContentRailEventReason.init(rawValue:)) ?? .unknown
-                PaneToggleContinuityVerifier.recordHTMLActiveEvent(reason: reason.rawValue)
                 Task { @MainActor in
                     self.onContentRailActiveChange(
                         WebReaderContentRailActiveChange(
@@ -3229,13 +3148,7 @@ private struct MarkdownDocumentReaderView: View {
             onWikiLink: onWikiLink,
             onSourceReference: onSourceReference,
             onAppShortcut: onAppShortcut,
-            onSearchResult: { query, found in
-                ChatSourceNavigationVerifier.recordMarkdownSearch(
-                    itemID: store.selectedMaterialItem?.id ?? "",
-                    query: query,
-                    found: found
-                )
-            },
+            onSearchResult: { _, _ in },
             selectionAskMarks: selectionAskMarks,
             onSelectionAskMark: onSelectionAskMark
         )
@@ -3249,6 +3162,19 @@ private struct MarkdownReadFailureView: View {
     var body: some View {
         ReaderStateMessage(
             title: store.ui("无法读取 Markdown", "Could not read Markdown"),
+            detail: fileName,
+            systemImage: "exclamationmark.triangle"
+        )
+    }
+}
+
+private struct MaterialReadFailureView: View {
+    @EnvironmentObject private var store: WorkspaceStore
+    var fileName: String
+
+    var body: some View {
+        ReaderStateMessage(
+            title: store.ui("无法读取资料", "Could not read material"),
             detail: fileName,
             systemImage: "exclamationmark.triangle"
         )
@@ -3775,142 +3701,6 @@ private struct SelectablePlainTextReader: NSViewRepresentable {
             textView.setSelectedRange(range)
             suppressSelectionReport = false
             textView.scrollRangeToVisible(range)
-        }
-    }
-}
-
-private struct SamplePDFView: View {
-    var appearanceMode: WeiBeiAppearanceMode
-    var language: WeiBeiInterfaceLanguage
-    var onSelectionChange: (String, CGPoint?) -> Void
-
-    var body: some View {
-        ScrollView {
-            VStack(spacing: 18) {
-                SamplePDFSelectablePageView(
-                    appearanceMode: appearanceMode,
-                    language: language,
-                    onSelectionChange: onSelectionChange
-                )
-                .frame(maxWidth: 620, minHeight: 820, alignment: .topLeading)
-                .background(WeiBeiTheme.paperRaised)
-                .clipShape(RoundedRectangle(cornerRadius: 3))
-                .overlay {
-                    RoundedRectangle(cornerRadius: 3)
-                        .stroke(WeiBeiTheme.hairline, lineWidth: 1)
-                }
-                .shadow(color: WeiBeiTheme.ink.opacity(0.075), radius: 16, y: 8)
-            }
-            .frame(maxWidth: .infinity)
-            .padding(.horizontal, 18)
-            .padding(.vertical, 28)
-        }
-        .background(WeiBeiTheme.paper)
-    }
-}
-
-private struct SamplePDFSelectablePageView: NSViewRepresentable {
-    var appearanceMode: WeiBeiAppearanceMode
-    var language: WeiBeiInterfaceLanguage
-    var onSelectionChange: (String, CGPoint?) -> Void
-
-    func makeCoordinator() -> Coordinator {
-        Coordinator(onSelectionChange: onSelectionChange)
-    }
-
-    func makeNSView(context: Context) -> NSTextView {
-        let textView = ReaderSelectableTextView()
-        textView.isEditable = false
-        textView.isSelectable = true
-        textView.drawsBackground = false
-        textView.textContainerInset = NSSize(width: 42, height: 44)
-        textView.textContainer?.lineFragmentPadding = 0
-        textView.textContainer?.widthTracksTextView = true
-        textView.isHorizontallyResizable = false
-        textView.isVerticallyResizable = false
-        textView.autoresizingMask = [.width, .height]
-        textView.delegate = context.coordinator
-        applyContent(to: textView, coordinator: context.coordinator)
-        return textView
-    }
-
-    func updateNSView(_ textView: NSTextView, context: Context) {
-        context.coordinator.onSelectionChange = onSelectionChange
-        applyContent(to: textView, coordinator: context.coordinator)
-    }
-
-    private func applyContent(to textView: NSTextView, coordinator: Coordinator) {
-        coordinator.appearanceMode = appearanceMode
-        if coordinator.appliedAppearanceMode != appearanceMode || coordinator.appliedLanguage != language {
-            textView.textStorage?.setAttributedString(Self.attributedText(for: appearanceMode, language: language))
-            coordinator.appliedAppearanceMode = appearanceMode
-            coordinator.appliedLanguage = language
-        }
-        textView.selectedTextAttributes = [
-            .foregroundColor: WeiBeiNativePalette.selectedText(for: appearanceMode),
-            .backgroundColor: WeiBeiNativePalette.selectionFill(for: appearanceMode)
-        ]
-    }
-
-    private static func attributedText(for appearanceMode: WeiBeiAppearanceMode, language: WeiBeiInterfaceLanguage) -> NSAttributedString {
-        let output = NSMutableAttributedString()
-        let ink = WeiBeiNativePalette.ink(for: appearanceMode)
-        let secondary = ink.withAlphaComponent(0.62)
-        let tertiary = ink.withAlphaComponent(0.45)
-        let titleFont = NSFont.systemFont(ofSize: 34, weight: .semibold)
-        let bodyFont = NSFont.systemFont(ofSize: 17, weight: .regular)
-        let smallFont = NSFont.systemFont(ofSize: 11, weight: .medium)
-        let footerFont = NSFont.systemFont(ofSize: 12, weight: .medium)
-
-        func paragraph(lineSpacing: CGFloat = 0, paragraphSpacing: CGFloat = 0) -> NSMutableParagraphStyle {
-            let style = NSMutableParagraphStyle()
-            style.lineSpacing = lineSpacing
-            style.paragraphSpacing = paragraphSpacing
-            return style
-        }
-
-        func append(_ string: String, font: NSFont, color: NSColor, style: NSParagraphStyle) {
-            output.append(NSAttributedString(string: string, attributes: [
-                .font: font,
-                .foregroundColor: color,
-                .paragraphStyle: style
-            ]))
-        }
-
-        append(language.text("Mishkin 教材样例                                      PDF 阅读样例\n", "Mishkin Textbook Sample                         PDF Reading Sample\n"), font: smallFont, color: tertiary, style: paragraph(paragraphSpacing: 20))
-        append(language.text("金融体系的功能\n", "Functions of the Financial System\n"), font: titleFont, color: ink, style: paragraph(paragraphSpacing: 24))
-        append(language.text("金融市场和金融中介能够把储蓄者的资金转移给有投资机会的人。它们降低交易成本，缓解信息不对称，并帮助社会更有效地配置资源。\n", "Financial markets and intermediaries move funds from savers to people with investment opportunities. They reduce transaction costs, ease information problems, and help allocate resources more effectively.\n"), font: bodyFont, color: ink, style: paragraph(lineSpacing: 8, paragraphSpacing: 22))
-        append(language.text("这一页是内置 PDF 阅读样例。导入真实 PDF 后，中央区域会切换为 PDFKit 阅读器。现在这个样例页也可以像真实 PDF 一样选中文字并唤起选区 Agent。\n", "This page is the built-in PDF reading sample. After you import a real PDF, the center area switches to the PDFKit reader. This sample page also supports text selection and the selection Agent.\n"), font: bodyFont, color: secondary, style: paragraph(lineSpacing: 8, paragraphSpacing: 240))
-        append(language.text("页 1                                                        魏碑", "Page 1                                                     WeiBei"), font: footerFont, color: tertiary, style: paragraph())
-        return output
-    }
-
-    final class Coordinator: NSObject, NSTextViewDelegate {
-        var onSelectionChange: (String, CGPoint?) -> Void
-        var appearanceMode: WeiBeiAppearanceMode = .paper
-        var appliedAppearanceMode: WeiBeiAppearanceMode?
-        var appliedLanguage: WeiBeiInterfaceLanguage?
-
-        init(onSelectionChange: @escaping (String, CGPoint?) -> Void) {
-            self.onSelectionChange = onSelectionChange
-        }
-
-        func textViewDidChangeSelection(_ notification: Notification) {
-            guard let textView = notification.object as? NSTextView else { return }
-            let range = textView.selectedRange()
-            guard range.length > 0, let stringRange = Range(range, in: textView.string) else {
-                onSelectionChange("", nil)
-                return
-            }
-            onSelectionChange(String(textView.string[stringRange]), Self.anchor(for: range, in: textView))
-        }
-
-        private static func anchor(for range: NSRange, in textView: NSTextView) -> CGPoint? {
-            guard let window = textView.window else { return nil }
-            let rect = textView.firstRect(forCharacterRange: range, actualRange: nil)
-            guard !rect.isEmpty else { return nil }
-            let screenPoint = CGPoint(x: rect.midX, y: rect.minY)
-            return SelectionAnchorContentPoint.fromScreenPoint(screenPoint, in: window)
         }
     }
 }
