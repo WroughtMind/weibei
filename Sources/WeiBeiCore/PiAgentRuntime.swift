@@ -465,12 +465,15 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         runInactivityTimeoutNanoseconds: UInt64 = 90_000_000_000
     ) {
         executableOverride = executableURL
-        self.runtimeDirectory = runtimeDirectory
+        let resolvedRuntimeDirectory = runtimeDirectory
             ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first?
                 .appendingPathComponent("WeiBei/AgentRuntime", isDirectory: true)
             ?? FileManager.default.temporaryDirectory.appendingPathComponent("WeiBeiAgentRuntime", isDirectory: true)
+        self.runtimeDirectory = resolvedRuntimeDirectory
         self.persistentPiConfigurationDirectory = persistentPiConfigurationDirectory
-            ?? WeiBeiAgentDataPaths.piAgentDirectory
+            ?? (executableURL == nil
+                ? WeiBeiAgentDataPaths.piAgentDirectory
+                : resolvedRuntimeDirectory.appendingPathComponent("PiAgent", isDirectory: true))
         self.runInactivityTimeoutNanoseconds = max(1, runInactivityTimeoutNanoseconds)
     }
 
@@ -600,6 +603,16 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         hostToolHandler: StudyAgentHostToolHandler? = nil,
         progress: StudyAgentProgressHandler?
     ) async throws -> StudyAgentReply {
+        if let provider = providerConfiguration.provider,
+           !provider.isEmpty,
+           providerConfiguration.model?.isEmpty != false {
+            throw PiAgentRuntimeError.commandRejected(
+                request.language.text(
+                    "请先在设置中选择模型。",
+                    "Choose a model in Settings before sending."
+                )
+            )
+        }
         var request = request
         if request.projectScope.chatID
             .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1762,6 +1775,11 @@ public actor PiAgentRuntime: StudyAgentRuntime {
             [.posixPermissions: 0o700],
             ofItemAtPath: persistentPiConfigurationDirectory.path
         )
+        let remoteCatalogCacheURL = persistentPiConfigurationDirectory
+            .appendingPathComponent("models-store.json")
+        if fileManager.fileExists(atPath: remoteCatalogCacheURL.path) {
+            try fileManager.removeItem(at: remoteCatalogCacheURL)
+        }
         return persistentPiConfigurationDirectory
     }
 

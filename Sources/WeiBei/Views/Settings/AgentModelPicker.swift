@@ -7,6 +7,9 @@ import WeiBeiCore
 
 extension SettingsView {
     func requestModelListRefresh(force: Bool = false) {
+        if force {
+            store.shutdownAgentRuntime()
+        }
         oauthService.refreshCatalog(force: force)
     }
 
@@ -38,7 +41,7 @@ extension SettingsView {
                         .font(.system(size: 11, weight: .semibold))
                 }
                 .buttonStyle(WeiBeiTextActionButtonStyle(active: !oauthService.isRefreshingCatalog))
-                .help(store.ui("重新获取模型列表", "Refresh model list"))
+                .help(store.ui("重新读取内置 Pi 模型列表", "Reload embedded Pi models"))
             }
 
             // Inline status line under the control.

@@ -86,16 +86,9 @@ async function run(args: string, ctx: ExtensionCommandContext): Promise<void> {
     if (!agentDirectory || !authPath) throw new Error("魏碑 Pi 配置目录不可用");
 
     const { ModelRuntime } = await import(PI_PACKAGE);
-    const refreshModels = request.action === "catalog" && request.refresh === true;
-    const offline = process.env.PI_OFFLINE;
-    if (refreshModels) delete process.env.PI_OFFLINE;
     const runtime = await ModelRuntime.create({
       authPath,
       modelsPath: join(agentDirectory, "models.json"),
-      allowModelNetwork: refreshModels,
-    }).finally(() => {
-      if (offline === undefined) delete process.env.PI_OFFLINE;
-      else process.env.PI_OFFLINE = offline;
     });
 
     if (request.action === "catalog") {

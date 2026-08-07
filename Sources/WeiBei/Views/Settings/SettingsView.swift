@@ -68,6 +68,7 @@ struct SettingsView: View {
         .onReceive(NotificationCenter.default.publisher(for: .weiBeiPiOAuthDidSucceed)) { note in
             guard let raw = note.userInfo?["provider"] as? String,
                   let provider = AgentProviderID(rawValue: raw) else { return }
+            store.shutdownAgentRuntime()
             store.setAgentAuthMethod(.subscription)
             store.setAgentProviderID(provider)
             if let firstModel = oauthService.models(providerID: provider.piProviderName).first {
@@ -76,11 +77,13 @@ struct SettingsView: View {
             oauthService.refreshCatalog(force: true)
         }
         .onReceive(NotificationCenter.default.publisher(for: .weiBeiPiCredentialsDidChange)) { note in
-            guard note.userInfo?["type"] as? String == PiCredentialType.apiKey.rawValue,
-                  note.userInfo?["provider"] as? String == store.agentProviderID.piProviderName else {
+            store.shutdownAgentRuntime()
+            guard note.userInfo?["provider"] as? String == store.agentProviderID.piProviderName else {
                 return
             }
-            apiKeyDraft = ""
+            if note.userInfo?["type"] as? String == PiCredentialType.apiKey.rawValue {
+                apiKeyDraft = ""
+            }
             oauthService.refreshCatalog(force: true)
         }
         .onChange(of: oauthService.catalog) { _, _ in

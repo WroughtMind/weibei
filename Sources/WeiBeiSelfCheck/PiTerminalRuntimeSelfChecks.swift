@@ -54,6 +54,7 @@ func runPiTerminalRuntimeSelfChecks() async throws {
     let fixture = try makePiTerminalRuntimeFixture()
     defer { try? FileManager.default.removeItem(at: fixture.rootURL) }
 
+    try await checkProviderWithoutModelIsRejected(fixture)
     try await checkUserStopReturnsImmediately(fixture)
     try await checkCancelledTurnCannotAffectImmediateNextChat(fixture)
     try await checkTerminalErrorBypassesSlowProgress(fixture)
@@ -73,6 +74,28 @@ func runPiTerminalRuntimeSelfChecks() async throws {
     try await checkSessionPathRejectsOutsideAcceptsAliasAndKeepsSibling(fixture)
     try await checkUnreadableStoredSessionRebuildsOnce(fixture)
     try await checkStandardProxyEnvironmentIsForwarded(fixture)
+}
+
+private func checkProviderWithoutModelIsRejected(
+    _ fixture: PiTerminalRuntimeFixture
+) async throws {
+    let runtime = PiAgentRuntime(
+        executableURL: fixture.executableURL,
+        runtimeDirectory: try fixture.workingDirectory(named: "MissingModelRuntime"),
+        runInactivityTimeoutNanoseconds: 500_000_000
+    )
+    await runtime.configure(PiAgentProviderConfiguration(provider: "openai-codex"))
+    let outcome = await terminalOutcome(
+        runtime: runtime,
+        revision: "missing-model-test",
+        progress: nil
+    )
+    await runtime.shutdown()
+    guard outcome.hasPrefix("error:"), outcome.contains("请先在设置中选择模型") else {
+        throw PiTerminalRuntimeSelfCheckError.failed(
+            "PI sent a request without an explicitly selected model: \(outcome)"
+        )
+    }
 }
 
 private func checkHostCourseToolBridgeRejectsSymlinkRoot(

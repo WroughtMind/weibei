@@ -167,12 +167,17 @@ struct WeiBeiPiCheckMain {
         if CommandLine.arguments.contains("--management-protocol") {
             let root = FileManager.default.temporaryDirectory
                 .appendingPathComponent("weibei-pi-management-check-\(UUID().uuidString)", isDirectory: true)
+            let piAgentURL = root.appendingPathComponent("PiAgent", isDirectory: true)
+            let remoteCatalogCacheURL = piAgentURL.appendingPathComponent("models-store.json")
             let runtime = PiAgentRuntime(
                 executableURL: executableURL,
                 runtimeDirectory: root.appendingPathComponent("Runtime", isDirectory: true),
-                persistentPiConfigurationDirectory: root.appendingPathComponent("PiAgent", isDirectory: true)
+                persistentPiConfigurationDirectory: piAgentURL
             )
             do {
+                try FileManager.default.createDirectory(at: piAgentURL, withIntermediateDirectories: true)
+                try Data(#"{"remote-catalog-cache":"must-not-survive"}"#.utf8)
+                    .write(to: remoteCatalogCacheURL, options: .atomic)
                 let catalog = try await runtime.managementCatalog()
                 let selectableProviderIDs = Set(AgentProviderID.allCases.map(\.piProviderName))
                 let missingProviderIDs = catalog.providers
@@ -197,7 +202,8 @@ struct WeiBeiPiCheckMain {
                       catalog.providers.contains(where: {
                           $0.id == "openai-codex" && $0.authTypes.contains(.oauth)
                       }),
-                      catalog.credentials.isEmpty else {
+                      catalog.credentials.isEmpty,
+                      !FileManager.default.fileExists(atPath: remoteCatalogCacheURL.path) else {
                     throw PiAgentRuntimeError.protocolFailure(
                         "PI management catalog was incomplete; missing=\(missingProviderIDs.joined(separator: ",")) no-auth=\(providersWithoutAuth.joined(separator: ",")) no-models=\(providersWithoutModels.joined(separator: ","))"
                     )
@@ -244,7 +250,6 @@ struct WeiBeiPiCheckMain {
                       }) else {
                     throw PiAgentRuntimeError.protocolFailure("PI API-key login did not persist")
                 }
-                let piAgentURL = root.appendingPathComponent("PiAgent", isDirectory: true)
                 let authURL = piAgentURL.appendingPathComponent("auth.json")
                 let directoryMode = (try FileManager.default.attributesOfItem(atPath: piAgentURL.path)[.posixPermissions] as? NSNumber)?.intValue
                 let authMode = (try FileManager.default.attributesOfItem(atPath: authURL.path)[.posixPermissions] as? NSNumber)?.intValue
