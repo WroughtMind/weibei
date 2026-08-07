@@ -556,15 +556,21 @@ enum CourseProjectRootSelfCheck {
         try check(secondStore != nil, "无法建立第二次崩溃恢复样本")
         try secondStore!
             .finishPendingCourseRemovalRecoveryForSelfCheck()
+        let journalURL = fixture.workspaceDirectory
+            .appendingPathComponent(
+                "pending-course-removal.json"
+            )
+        try check(
+            !secondCrash
+                && journalURL.exists
+                && secondStore!.course(withID: courseID) != nil,
+            "第二次重开没有停在模拟崩溃点"
+        )
         secondStore = nil
 
         let recovered = makeStore(fixture: fixture)
         try recovered
             .finishPendingCourseRemovalRecoveryForSelfCheck()
-        let journalURL = fixture.workspaceDirectory
-            .appendingPathComponent(
-                "pending-course-removal.json"
-            )
         let selfCheckTrash = fixture.workspaceDirectory
             .appendingPathComponent(
                 "SelfCheckTrash",

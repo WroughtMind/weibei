@@ -8569,17 +8569,13 @@ final class WorkspaceStore: ObservableObject {
         precondition(
             WeiBeiSafetyTestMode.isEnabled
         )
+        let maintenanceTask = courseReconciliationTask
+        maintenanceTask?.cancel()
+        courseReconciliationTask = nil
         try waitForCourseFileOperation {
+            await maintenanceTask?.value
             await self
                 .finishPendingCourseRemovalRecoveryIfNeeded()
-            let deadline = Date().addingTimeInterval(20)
-            while self.activeCourseRemovalTransactionID != nil,
-                  Date() < deadline {
-                await Task.yield()
-            }
-            guard self.activeCourseRemovalTransactionID == nil else {
-                throw CourseRemovalError.courseBusy
-            }
         }
     }
 
@@ -20876,6 +20872,7 @@ final class WorkspaceStore: ObservableObject {
     private func startCourseFileMaintenance() {
         courseReconciliationTask?.cancel()
         courseReconciliationTask = Task { @MainActor [weak self] in
+            guard !Task.isCancelled else { return }
             await self?.finishPendingCourseRemovalRecoveryIfNeeded()
             await self?.recoverPendingCourseFileTransactionsInBackground()
             await self?.reconcileCourseFilesNow()
