@@ -454,7 +454,7 @@ verify_learning_flow_persistence() {
         && /usr/bin/grep -q "利率" "$workspace_file" \
         && /usr/bin/grep -q "玉兰七号" "$workspace_file" \
         && /usr/bin/grep -q '"agentProviderID":"openai-codex"' "$workspace_file" \
-        && /usr/bin/grep -q '"modelName":"gpt-5.4"' "$workspace_file" \
+        && /usr/bin/grep -q '"modelName":"gpt-5.5"' "$workspace_file" \
         && /usr/bin/grep -q '^oauth=linked$' "$marker_file" \
         && /usr/bin/grep -q '^continuity=true$' "$marker_file" \
         && ! /usr/bin/grep -q "## 离线草稿" "$workspace_file"; then
@@ -465,7 +465,7 @@ verify_learning_flow_persistence() {
           command_line="$(/bin/ps -ww -p "$child_pid" -o command= 2>/dev/null || true)"
           if [[ "$command_line" == *"--mode rpc"* \
             && "$command_line" == *"--provider openai-codex"* \
-            && "$command_line" == *"--model gpt-5.4"* \
+            && "$command_line" == *"--model gpt-5.5"* \
             && "$command_line" == *"--session-id $session_id"* ]]; then
             return 0
           fi
