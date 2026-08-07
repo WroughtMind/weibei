@@ -52,10 +52,10 @@ public enum RichAnswerPythonArtifactSelfCheck {
 
         var noSource = request
         noSource.sourceBindings = []
-        try requireThrows(
-            try RichAnswerPythonArtifactPipeline.validate(noSource),
-            "validator accepted a request without source bindings"
-        )
+        for index in noSource.inputs.indices {
+            noSource.inputs[index].sourceBindingID = nil
+        }
+        _ = try RichAnswerPythonArtifactPipeline.validate(noSource)
 
         var fileAccess = request
         fileAccess.limits = RichAnswerPythonArtifactLimits(allowFilesystem: true)

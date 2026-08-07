@@ -839,7 +839,7 @@ function richAnswerPathSpecificRepair(input: RichAnswerFaultInput): string {
       input.line !== undefined ? `line=${input.line}` : undefined,
       input.column !== undefined ? `column=${input.column}` : undefined,
     ].filter(Boolean).join("，");
-    return `先修 ${input.jsonPath}${target ? `（${target}）` : ""}：${input.humanFixHint}；然后检查同一层的所有引用、证据绑定和 narrative 场景标记，最后完整重发。`;
+    return `先修 ${input.jsonPath}${target ? `（${target}）` : ""}：${input.humanFixHint}；然后检查同一层已有的引用、证据绑定和 narrative 场景标记，最后完整重发。`;
   }
   return `没有更深 jsonPath 时，不要猜局部补丁；根据 code=${input.code} 和 humanFixHint 重新规划整个表达层，再完整重发。`;
 }
@@ -849,20 +849,20 @@ function richAnswerLayerReplanHint(input: RichAnswerFaultInput): string {
     case "invalid_openui_program":
       return "当前 program 深组件未过受控程序校验：若只是签名、状态类型、引用或行列错误，按目录签名修正 program；若目录组件不贴合本题学习对象，重新选择 renderPlan 或 ui。";
     case "invalid_render_plan":
-      return "当前 renderPlan 未过注册、版本、字段、安全、来源或预算校验：若知识形状仍匹配本轮注册专业渲染器，修正高层 spec 和绑定；若不匹配，重新选择 program 或 ui。";
+      return "当前 renderPlan 未过注册、版本、字段、安全或预算校验：若知识形状仍匹配本轮注册专业渲染器，修正高层 spec 和绑定；若不匹配，重新选择 program 或 ui。";
     case "invalid_t2_ui":
       if (input.message.includes("超出预算")) {
         return "当前 ui 通用原语的表达层适合本题，但节点、数据行或 binding 超出硬预算：优先保留同一学习动作，减少采样行、合并共享数据集并删除无关 binding；不要只因为数量超限就换成 program。";
       }
-      return "当前 ui 通用原语未通过节点、数据、binding、证据或资源边界校验：先按错误位置修正客观结构；若所选层确实不贴合当前学习动作，再改选 program、renderPlan 或更朴素的 ui。";
+      return "当前 ui 通用原语未通过节点、数据、binding 或资源边界校验：先按错误位置修正客观结构；若所选层确实不贴合当前学习动作，再改选 program、renderPlan 或更朴素的 ui。";
     case "weak_ui":
-      return "当前回答的视觉表达质量需要重新规划：这类内容、形态和审美建议不再作为运行时硬拒绝；下一次优先保持来源结论正确，再让 Agent 自主选择 program、renderPlan、ui 或普通文本。";
+      return "当前回答的视觉表达质量需要重新规划：这类内容、形态和审美建议不再作为运行时硬拒绝；下一次优先保持结论正确，再让 Agent 自主选择 program、renderPlan、ui 或普通文本。";
     case "scene_layer_choice":
       return "每个 scene 必须只选一条表达出口：program、renderPlan 或 ui，不要同时提交、不要三条都空。";
     case "catalog_required":
       return "先重新调用 weibei_ui_catalog 取得本轮相关能力，再基于返回子集选择 program、renderPlan 或 ui。";
     default:
-      return "先保留当前学习目标和来源结论，再按错误位置修复；如果修复会让所选出口变成硬凑或无法表达，重新在 program、renderPlan 与 ui 之间选择。";
+      return "先保留当前学习目标和结论，再按错误位置修复；如果修复会让所选出口变成硬凑或无法表达，重新在 program、renderPlan 与 ui 之间选择。";
   }
 }
 
@@ -875,7 +875,7 @@ function richAnswerReplanningFeedback(
     meaning: input.message,
     requiredAction: remainingAttempts > 0
       ? `${richAnswerLayerReplanHint(input)} ${richAnswerPathSpecificRepair(input)}`
-      : "停止调用富回答工具，直接正常回答用户问题；只说明真实材料限制，不得暴露校验、协议、payload、repair_fault 或内部工具错误。",
+      : "停止调用富回答工具，直接正常回答用户问题；只说明与问题有关的真实限制，不得暴露校验、协议、payload、repair_fault 或内部工具错误。",
   };
 
   if (remainingAttempts <= 0) {
@@ -895,16 +895,16 @@ function richAnswerReplanningFeedback(
     primarySignal,
     layerChoice: {
       allowed: ["program", "renderPlan", "ui"],
-      chooseProgramWhen: "目录返回的深组件签名能真实表达当前知识对象、状态联动和来源绑定，并且不需要自造组件、脚本、SVG、网页壳或任意配置。",
-      chooseRenderPlanWhen: "本轮目录返回的注册专业渲染器匹配知识形状，且模型只需给高层 spec、交互绑定、来源绑定和质量预算，不需要 raw option、脚本、HTML 或 SVG path。",
-      chooseUIWhen: "没有贴合的深组件或注册专业渲染器，或当前问题需要用受控节点、数据集、图层、binding、证据位置和读数组合成长尾形态。",
+      chooseProgramWhen: "目录返回的深组件签名能真实表达当前知识对象和状态联动，并且不需要自造组件、脚本、SVG、网页壳或任意配置。",
+      chooseRenderPlanWhen: "本轮目录返回的注册专业渲染器匹配知识形状，且模型只需给高层 spec、交互绑定和质量预算，不需要 raw option、脚本、HTML 或 SVG path。",
+      chooseUIWhen: "没有贴合的深组件或注册专业渲染器，或当前问题需要用受控节点、数据集、图层、binding 和读数组合成长尾形态。",
     },
     nextAttemptChecklist: [
-      "先保持原问题的学习目标、专业结论和真实来源，不把修复变成换题或删减关键信息。",
+      "先保持原问题的学习目标和专业结论，不把修复变成换题或删减关键信息。",
       richAnswerLayerReplanHint(input),
-      "remainingAttempts 仍大于 0，当前轮必须先完成一次完整富回答重试；只有次数耗尽，或重新核对后确认本轮来源/目录客观不足且继续生成会误导用户时，才停止工具并使用正常文本。",
-      "expressionPlan 必须覆盖 scene.family、学习收益、交互结果、来源绑定和首选表面；scenes 必须与 narrative 的场景标记一一对应。",
-      "program、renderPlan、ui 三选一；如果换出口，删除另外两条出口的全部字段，并同步 evidenceLedger、scene.evidenceIDs 和 narrative。",
+      "remainingAttempts 仍大于 0，当前轮必须先完成一次完整富回答重试；只有次数耗尽，或重新核对后确认现有能力无法诚实表达时，才停止工具并使用正常文本。",
+      "expressionPlan 必须覆盖 scene.family、学习收益、交互结果和首选表面；scenes 必须与 narrative 的场景标记一一对应。",
+      "program、renderPlan、ui 三选一；如果换出口，删除另外两条出口的全部字段，并同步已有的 evidenceLedger、scene.evidenceIDs、sourceBindings 和 narrative。",
       "完整重发 schemaVersion、contextRevision、narrative、expressionPlan、scenes、evidenceLedger、fallback；不要只补 jsonPath 那一个字段。",
     ],
     forbiddenActions: [
@@ -1741,11 +1741,11 @@ function richAnswerSourceBindings(
     currentItems: richAnswerCurrentItems(snapshot, searchedCourseItemIDs),
     rules: {
       sourceLabels:
-        "evidenceLedger.sourceLabel 必须逐字使用 readableSourceLabels 或本轮课程搜索返回的 evidenceLabel；不要引用空材料、空笔记、文件名、目录标题或学习记忆来支持课程事实。",
+        "只有实际引用课程内容时才提交 evidenceLedger；一旦提交，sourceLabel 必须逐字使用 readableSourceLabels 或本轮课程搜索返回的 evidenceLabel，不得伪造来源。",
       assetIDs:
         "图像、地图和设计叠层只能使用 allowedAssetIDs 中的当前材料 item.id；image.assetID 与 evidenceLedger.assetIDs 都必须写 item.id，不写文件名、标签、注册名或标题。",
       excerpts:
-        "evidenceLedger.excerpt 必须来自同一来源标签当前可读文本中的短摘录；可直接逐字复制 exactExcerptCandidates，也可从本轮已读原文选择其他真实短句。没有可读来源时保持纯文本，说明材料缺口，不调用富回答。",
+        "一旦提交 evidenceLedger，excerpt 必须来自同一来源标签当前可读文本中的短摘录；可直接逐字复制 exactExcerptCandidates，也可从本轮已读原文选择其他真实短句。没有可读来源不限制生成式视觉表达。",
     },
     imageOverlayGuidance: [
       "只有当前材料真实提供图像、地图或设计资产，且 allowedAssetIDs 非空时，才做图像叠层。",
@@ -4246,7 +4246,6 @@ const richAnswerRenderPlanSchema = Type.Object(
       maxItems: LIMITS.richAnswerRenderPlanBindings,
     }),
     sourceBindings: Type.Array(richAnswerRenderPlanSourceBindingSchema, {
-      minItems: 1,
       maxItems: LIMITS.richAnswerRenderPlanSourceBindings,
     }),
     artifactRefs: Type.Array(richAnswerRenderPlanArtifactRefSchema, {
@@ -4277,7 +4276,6 @@ const richAnswerSceneCommonFields = {
     ].map((value) => Type.Literal(value)),
   ),
   evidenceIDs: Type.Array(richAnswerIdentifierSchema, {
-    minItems: 1,
     maxItems: LIMITS.richAnswerEvidence,
   }),
   placement: Type.Optional(
@@ -4319,7 +4317,7 @@ const richAnswerEnvelopeSchema = Type.Object(
     narrative: Type.String({
       minLength: 1,
       maxLength: LIMITS.richAnswerNarrative,
-      description: "本次最终显示的完整、带真实来源标签的回答正文；可用独占一行的 <!-- weibei-scene:场景ID --> 把场景插入正文中间",
+      description: "本次最终显示的完整回答正文；实际引用课程内容时使用真实来源标签。可用独占一行的 <!-- weibei-scene:场景ID --> 把场景插入正文中间",
     }),
     expressionPlan: Type.Object(
       {
@@ -4407,7 +4405,7 @@ const richAnswerEnvelopeSchema = Type.Object(
         },
         { additionalProperties: false },
       ),
-      { minItems: 1, maxItems: LIMITS.richAnswerEvidence },
+      { maxItems: LIMITS.richAnswerEvidence },
     ),
     fallback: Type.Object(
       {
@@ -9661,7 +9659,7 @@ export default function weibeiExtension(pi: ExtensionAPI) {
     description:
       "用魏碑随 App 打包的固定 Python 工人执行白名单确定性计算。只接受数列、成对数值或受限数学表达式；不执行模型生成代码，不联网，不读取任意文件。结果可作为标准图表、函数或其他注册渲染器的高层数据规格。",
     promptSnippet:
-      "需要统计、线性回归、分箱或函数采样时调用受控 Python；保留产物哈希和来源标签，再把结果用于本轮目录返回的专业渲染器",
+      "需要统计、线性回归、分箱或函数采样时调用受控 Python；保留产物哈希，实际引用材料时保留来源标签，再把结果用于本轮目录返回的专业渲染器",
     parameters: Type.Object(
       {
         contextRevision: Type.String({ minLength: 1, maxLength: LIMITS.identifier }),
@@ -9684,7 +9682,7 @@ export default function weibeiExtension(pi: ExtensionAPI) {
         ),
         sourceEvidenceIDs: Type.Array(
           Type.String({ minLength: 1, maxLength: 300 }),
-          { minItems: 1, maxItems: LIMITS.richAnswerEvidence },
+          { maxItems: LIMITS.richAnswerEvidence },
         ),
         reason: Type.String({ minLength: 1, maxLength: 500 }),
       },
@@ -10032,7 +10030,7 @@ export default function weibeiExtension(pi: ExtensionAPI) {
             richAnswerSourceBindings(current, searchedCourseItemIDs).readableSourceLabels,
           rules: [
             "只执行固定统计、线性回归、分箱和受限函数采样；不执行模型代码。",
-            "无网络、无任意文件访问、无 shell；每次返回长度、哈希、来源和耗时。",
+            "无网络、无任意文件访问、无 shell；每次返回长度、哈希、来源数组和耗时；未引用材料时来源数组可为空。",
             "产物只提供数据/规格，再由 Agent 选择本轮目录返回的专业 renderer、成熟深组件或长尾组合。",
           ],
         },
@@ -10065,7 +10063,7 @@ export default function weibeiExtension(pi: ExtensionAPI) {
           {
             route: "text",
             candidates: ["source-grounded-text"],
-            reason: "可视化没有明确学习增益、能力不足或来源不够时保持正常文本。",
+            reason: "可视化没有明确学习增益或现有能力无法诚实表达时保持正常文本。",
           },
           ],
           rule: "这些是对称候选，不是固定排名；不能按题号或路线标签强迫选择。",
@@ -10073,7 +10071,7 @@ export default function weibeiExtension(pi: ExtensionAPI) {
         planningLoop: {
           steps: [
             "判断纯文本是否已经足够；足够则停止，不为装饰生成 UI。",
-            "写清用户要看懂的判断、要观察的对象/关系/过程、初始状态、操作后变化和证据。",
+            "写清用户要看懂的判断、要观察的对象/关系/过程、初始状态和操作后变化；实际引用材料时再绑定证据。",
             "先声明维度、动态性、数据来源、坐标系、计算、精度和原图依赖，再按知识形状匹配注册专业渲染器并检查交互覆盖。",
             "只有前两者都不贴合且形态本身确属长尾时，才组合 ui；能力不足则保留正文并诚实表达边界。",
             "生成正文与内联体验交错的结果；局部 UI 不重复整篇回答。",
@@ -10148,7 +10146,7 @@ export default function weibeiExtension(pi: ExtensionAPI) {
           "ui 必须从 rootID 开始形成单父节点树；孤立节点、只在不可达 dataset 里放证据、控件不驱动图元或读数都会被拒绝。",
           "不要引入 Card、Tabs、KPI、Slide、Gallery 这类整页看板组件；要把视觉、控件和读数作为回答流里的内联体验块。",
           "先核对结论、公式、单位、数值、方向和因果边界；不能验证的结果不得交给界面假装计算。",
-          "无论 program、renderPlan 或 ui，最终内容、单位、关系与来源都必须由本轮真实材料支撑。",
+          "无论 program、renderPlan 或 ui，最终内容、单位和关系都必须可核对；实际引用材料时，来源也必须真实且一致。",
         ],
       };
       return {
@@ -11000,7 +10998,7 @@ export default function weibeiExtension(pi: ExtensionAPI) {
       answerFormPolicy === "textOnly"
         ? "本轮 answerFormPolicy=textOnly：即使问题文本出现“富回答、图示、互动、实验、叠层”等词，也必须保持普通文本；不得调用 weibei_ui_catalog 或 weibei_rich_answer；不要向用户暴露这是内部策略。"
         : answerFormPolicy === "partialRichAllowed"
-          ? "本轮 answerFormPolicy=partialRichAllowed：允许在证据充分且学习收益明显时使用富回答，但问题文本里的“富回答、图示、互动、实验、叠层”等词不构成强制调用。"
+          ? "本轮 answerFormPolicy=partialRichAllowed：允许在学习收益明显时使用富回答，但问题文本里的“富回答、图示、互动、实验、叠层”等词不构成强制调用。"
           : "本轮 answerFormPolicy=automatic：结合用户意图和学习收益自行判断回答形态；不要用关键词路由，也不要为了展示能力硬做富回答。";
 
     const sourceAvailabilityInstruction = selectionLabel

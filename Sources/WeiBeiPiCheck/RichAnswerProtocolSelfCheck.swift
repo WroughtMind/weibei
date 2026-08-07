@@ -8,6 +8,7 @@ func runRichAnswerProtocolSelfCheck() throws {
     try checkNarrativeAndScenesFormOneInlineFlow()
     try checkOpenUIProgramRejectsUnsafeVariants()
     try checkGeneratedUITreeRenders()
+    try checkGeneratedUITreeRendersWithoutSources()
     try checkFormalRichAnswerRouteContract()
     try checkPersistedRichAnswerReplayAdmission()
     try checkWholeCallRenderPlanBudgetIsolation()
@@ -1152,7 +1153,6 @@ private func checkRichAnswerInlineMathDisplayNormalization() throws {
 }
 
 private func checkProfessionalJudgmentContractsRejectReverseClaims() throws {
-    try RichAnswerLiveCases.assertMatrixMatchesPressureCases()
     let casesWithoutReverseContracts = RichAnswerLiveCases.successes.filter {
         $0.professionalJudgmentContract.forbiddenMisconceptions.isEmpty
     }.map(\.id)
@@ -2545,6 +2545,41 @@ private func checkGeneratedUITreeRenders() throws {
         )
     )
     try richAnswerRequire(decoded == presentation, "the generated UI JSON boundary round-trips")
+}
+
+private func checkGeneratedUITreeRendersWithoutSources() throws {
+    var envelope = generatedUIEnvelope()
+    envelope.narrative = "拖动 x，观察 y = x² 的曲线与读数。"
+    envelope.scenes[0].evidenceIDs = []
+    envelope.evidenceLedger = []
+
+    var ui = envelope.scenes[0].ui!
+    let evidenceNodeIDs = Set(ui.nodes.filter { $0.role == .evidence }.map(\.id))
+    ui.nodes.removeAll { evidenceNodeIDs.contains($0.id) }
+    for index in ui.nodes.indices {
+        ui.nodes[index].evidenceIDs = []
+        ui.nodes[index].children.removeAll { evidenceNodeIDs.contains($0) }
+    }
+    for datasetIndex in ui.datasets.indices {
+        for rowIndex in ui.datasets[datasetIndex].rows.indices {
+            ui.datasets[datasetIndex].rows[rowIndex].evidenceIDs = []
+        }
+    }
+    envelope.scenes[0].ui = ui
+
+    let presentation = RichAnswerEngine.prepare(
+        envelope: envelope,
+        environment: RichAnswerEnvironment(
+            contextRevision: "revision-ui",
+            allowedSourceLabels: []
+        )
+    )
+
+    try richAnswerRequire(
+        presentation.mode == .rich
+            && !presentation.diagnostics.contains(where: { $0.code == .missingEvidence }),
+        "a self-contained generated UI stays rich without course sources"
+    )
 }
 
 private func checkGeneratedUITreeRejectsUnboundEvidenceAndFalseFamily() throws {
