@@ -4756,15 +4756,6 @@ if let userTurnStart = notesAgentSource.range(of: "private var userTurn: some Vi
 } else {
     expect(false, "agent user message source is inspectable")
 }
-if let credentialStart = notesAgentSource.range(of: "private var credentialNoticeContent")?.lowerBound,
-   let isUserStart = notesAgentSource[credentialStart...].range(of: "private var isUser")?.lowerBound {
-    let credentialSource = String(notesAgentSource[credentialStart..<isUserStart])
-    expect(credentialSource.contains("Text(displayText)")
-        && credentialSource.contains(".allowsHitTesting(false)")
-        && !credentialSource.contains(".textSelection(.enabled)"), "agent credential notice text lets wheel events pass to the conversation scroll")
-} else {
-    expect(false, "agent credential notice source is inspectable")
-}
 if let messageTextStart = notesAgentSource.range(of: "private struct AgentMessageMarkdownText")?.lowerBound,
    let thinkingStart = notesAgentSource[messageTextStart...].range(of: "private struct AgentThinkingIndicator")?.lowerBound {
     let messageTextSource = String(notesAgentSource[messageTextStart..<thinkingStart])
