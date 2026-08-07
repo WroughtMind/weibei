@@ -470,16 +470,21 @@ enum CourseProjectRootSelfCheck {
             .appendingPathComponent(
                 "pending-course-removal.json"
         )
+        let courseARemoved = recovered!.course(withID: courseA) == nil
+        let retainedChatCount = recovered!.studySessions.filter {
+            !$0.relatedCourseIDs.contains(courseA)
+                && $0.messages.contains { $0.text == chatToken }
+        }.count
+        let courseBRetained = recovered!.course(withID: courseB) != nil
+        let sharedItemRetained = recovered!.item(withID: sharedItem.id) != nil
+        let journalRemoved = !journalURL.exists
         try check(
-            recovered!.course(withID: courseA) == nil
-                && recovered!.studySessions.filter {
-                    !$0.relatedCourseIDs.contains(courseA)
-                        && $0.messages.contains { $0.text == chatToken }
-                }.count == 1
-                && recovered!.course(withID: courseB) != nil
-                && recovered!.item(withID: sharedItem.id) != nil
-                && !journalURL.exists,
-            "重开没有完成课程注销、保留统一 Chat，或留下恢复记录"
+            courseARemoved
+                && retainedChatCount == 1
+                && courseBRetained
+                && sharedItemRetained
+                && journalRemoved,
+            "重开恢复结果不完整：课程甲已移除=\(courseARemoved)，保留 Chat 数=\(retainedChatCount)，课程乙保留=\(courseBRetained)，共享资料保留=\(sharedItemRetained)，恢复记录已清理=\(journalRemoved)"
         )
         recovered = nil
         let recoveredAgain = makeStore(fixture: fixture)
