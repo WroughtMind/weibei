@@ -494,24 +494,6 @@ private func checkFormalRichAnswerRouteContract() throws {
                     * trustedAssetMaxBytes,
         "the shared group boundary admits exactly four legal trusted assets and rejects only the fifth"
     )
-    let bundledExtension = try String(
-        contentsOf: PiAgentResources.bundled().extensionURL,
-        encoding: .utf8
-    )
-    let trustedAssetPattern = #"richAnswerTrustedAssetBytes:\s*([0-9_]+)"#
-    let trustedAssetMatch = try NSRegularExpression(pattern: trustedAssetPattern).firstMatch(
-        in: bundledExtension,
-        range: NSRange(bundledExtension.startIndex..., in: bundledExtension)
-    )
-    let extensionTrustedAssetBytes: Int? = trustedAssetMatch
-        .flatMap { Range($0.range(at: 1), in: bundledExtension) }
-        .flatMap { Int(bundledExtension[$0].replacingOccurrences(of: "_", with: "")) }
-    try richAnswerRequire(
-        extensionTrustedAssetBytes == RichAnswerRendererRegistry.formalTrustedAssetMaxBytes
-            && bundledExtension.contains(#"mode: Type.Literal("narrativeOnly")"#),
-        "the bundled Agent extension and Swift registry expose the same trusted-asset ceiling and implemented fallback"
-    )
-
     let validArtifacts = [
         RichAnswerRenderArtifactRef(
             id: "image-a",

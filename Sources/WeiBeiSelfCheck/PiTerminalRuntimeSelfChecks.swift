@@ -58,10 +58,8 @@ func runPiTerminalRuntimeSelfChecks() async throws {
     try await checkCancelledTurnCannotAffectImmediateNextChat(fixture)
     try await checkTerminalErrorBypassesSlowProgress(fixture)
     try await checkSuccessfulRunDeliversFinalTextBeforeReply(fixture)
-    try await checkToolOnlyReplyDoesNotPretendToStream(fixture)
     try await checkGenericEventsDoNotDefeatWatchdog(fixture)
     try await checkMeaningfulThinkingKeepsRunAlive(fixture)
-    try await checkRejectedRichAnswerKeepsSafeNarrative(fixture)
     try await checkRejectedActionKeepsOrdinaryAnswer(fixture)
     try await checkRelationProposalUsesCurrentCourseCatalog(fixture)
     try await checkPersistedSelectionSourcesAttachWithoutReadTool(fixture)
@@ -389,37 +387,6 @@ private func checkSuccessfulRunDeliversFinalTextBeforeReply(
     }
 }
 
-private func checkToolOnlyReplyDoesNotPretendToStream(
-    _ fixture: PiTerminalRuntimeFixture
-) async throws {
-    let runtime = PiAgentRuntime(
-        executableURL: fixture.executableURL,
-        runtimeDirectory: try fixture.workingDirectory(named: "ToolOnlyRichFallbackMode"),
-        runInactivityTimeoutNanoseconds: 2_000_000_000
-    )
-    let probe = PiProgressProbe()
-    let request = StudyAgentRequest(
-        purpose: .conversation,
-        question: "工具回答不能伪造正文流",
-        materialTitle: "测试材料",
-        materialText: "测试正文",
-        noteTitle: "测试笔记",
-        noteText: "",
-        contextRevision: "rich-fallback-test"
-    )
-    let reply = try await runtime.respond(to: request) { event in
-        await probe.record(event)
-    }
-    let deliveredText = await probe.text()
-    await runtime.shutdown()
-
-    guard reply.text == "[材料：测试材料] 安全正文", deliveredText == nil else {
-        throw PiTerminalRuntimeSelfCheckError.failed(
-            "PI synthesized a streaming text event for a tool-only reply"
-        )
-    }
-}
-
 private func checkGenericEventsDoNotDefeatWatchdog(_ fixture: PiTerminalRuntimeFixture) async throws {
     let runtime = PiAgentRuntime(
         executableURL: fixture.executableURL,
@@ -475,39 +442,6 @@ private func checkMeaningfulThinkingKeepsRunAlive(_ fixture: PiTerminalRuntimeFi
         throw PiTerminalRuntimeSelfCheckError.failed(
             "PI meaningful thinking did not keep the run alive (\(outcome))"
         )
-    }
-}
-
-private func checkRejectedRichAnswerKeepsSafeNarrative(
-    _ fixture: PiTerminalRuntimeFixture
-) async throws {
-    let runtime = PiAgentRuntime(
-        executableURL: fixture.executableURL,
-        runtimeDirectory: try fixture.workingDirectory(named: "RichFallbackMode"),
-        runInactivityTimeoutNanoseconds: 2_000_000_000
-    )
-    let request = StudyAgentRequest(
-        purpose: .conversation,
-        question: "请解释测试材料",
-        materialTitle: "测试材料",
-        materialText: "测试正文",
-        noteTitle: "测试笔记",
-        noteText: "",
-        contextRevision: "rich-fallback-test"
-    )
-
-    do {
-        let reply = try await runtime.respond(to: request)
-        await runtime.shutdown()
-        guard reply.text == "[材料：测试材料] 安全正文",
-              reply.richAnswer == nil else {
-            throw PiTerminalRuntimeSelfCheckError.failed(
-                "PI narrative-only admission lost its safe text or attached a rejected rich block"
-            )
-        }
-    } catch {
-        await runtime.shutdown()
-        throw error
     }
 }
 
@@ -852,6 +786,10 @@ private func checkConversationBindingLaunchContract(
           trace.contains("[问题]\\n第 1 问"),
           trace.contains("prompt-message=第 2 问\n"),
           trace.contains("prompt-message=切换 Chat\n"),
+          trace.contains("arg=--tools\n"),
+          !trace.contains("weibei_ui_catalog"),
+          !trace.contains("weibei_compute_artifact"),
+          !trace.contains("weibei_rich_answer"),
           !trace.contains("prompt-message=/skill:"),
           !trace.contains("arg=--no-session\n"),
           !trace.contains("command=new_session\n"),
@@ -1264,7 +1202,6 @@ static void start_emitter(void) {
     cancel_mode = strstr(cwd, "CancelMode") != NULL;
     int error_mode = strstr(cwd, "ErrorMode") != NULL;
     int thinking_mode = strstr(cwd, "ThinkingMode") != NULL;
-    int rich_fallback_mode = strstr(cwd, "RichFallbackMode") != NULL;
     int direct_answer_mode = strstr(cwd, "DirectAnswerMode") != NULL;
     int relation_proposal_mode = strstr(cwd, "RelationProposalMode") != NULL;
     int focus_answer_mode = strstr(cwd, "FocusAnswerMode") != NULL;
@@ -1295,13 +1232,6 @@ static void start_emitter(void) {
             usleep(120000);
         }
         printf("{\"type\":\"agent_end\",\"messages\":[{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"[材料：测试材料] 思考完成\"}],\"stopReason\":\"stop\"}]}\n");
-        fflush(stdout);
-        _exit(0);
-    }
-
-    if (rich_fallback_mode) {
-        printf("{\"type\":\"tool_execution_end\",\"toolCallId\":\"rich-fallback\",\"toolName\":\"weibei_rich_answer\",\"isError\":false,\"result\":{\"details\":{\"kind\":\"rich_answer\",\"contextRevision\":\"rich-fallback-test\",\"envelope\":{\"schemaVersion\":2,\"contextRevision\":\"rich-fallback-test\",\"narrative\":\"[材料：测试材料] 应保留的正文\",\"expressionPlan\":{\"action\":\"explain\",\"summary\":\"安全降级\",\"families\":[\"textAndAlignment\"],\"preferredSurface\":\"inline\",\"directManipulation\":false},\"scenes\":[{\"id\":\"rejected-scene\",\"title\":\"无效场景\",\"family\":\"textAndAlignment\",\"objects\":[],\"evidenceIDs\":[\"missing-evidence\"]}],\"evidenceLedger\":[],\"fallback\":{\"text\":\"[材料：测试材料] 安全正文\",\"reason\":\"场景被拒绝\"}}}}}\n");
-        printf("{\"type\":\"agent_end\",\"messages\":[{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"模型收尾文字\"}],\"stopReason\":\"stop\"}]}\n");
         fflush(stdout);
         _exit(0);
     }
@@ -1424,7 +1354,8 @@ int main(int argc, char **argv) {
                 trace_line("arg", argv[index]);
                 trace_line("arg", argv[index + 1]);
             } else if ((strcmp(argv[index], "--provider") == 0
-                        || strcmp(argv[index], "--model") == 0)
+                        || strcmp(argv[index], "--model") == 0
+                        || strcmp(argv[index], "--tools") == 0)
                        && index + 1 < argc) {
                 trace_line("arg", argv[index]);
                 trace_line("arg", argv[index + 1]);
@@ -1483,7 +1414,7 @@ int main(int argc, char **argv) {
             );
             respond(id, type, state);
         } else if (strcmp(type, "get_commands") == 0) {
-            respond(id, type, "{\"commands\":[{\"name\":\"skill:rich-answer-director\"},{\"name\":\"skill:professional-visualization\"},{\"name\":\"skill:deep-interaction-components\"},{\"name\":\"skill:generative-composition\"}]}");
+            respond(id, type, "{\"commands\":[{\"name\":\"skill:visualize\"}]}");
         } else if (strcmp(type, "prompt") == 0) {
             char prompt_message[1024];
             if (json_value(line, "message", prompt_message, sizeof(prompt_message))) {

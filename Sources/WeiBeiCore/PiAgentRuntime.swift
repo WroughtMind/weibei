@@ -28,19 +28,10 @@ public struct PiAgentProviderConfiguration: Equatable, Sendable {
 }
 
 public struct PiAgentResources: Sendable {
-    public static let requiredRichAnswerSkillNames = [
-        "rich-answer-director",
-        "professional-visualization",
-        "deep-interaction-components",
-        "generative-composition",
-    ]
-    public static var allRequiredSkillNames: [String] {
-        requiredRichAnswerSkillNames
-    }
+    public static let allRequiredSkillNames = ["visualize"]
 
     public var rootURL: URL
     public var extensionURL: URL
-    public var pythonArtifactWorkerURL: URL
     public var skillsURL: URL
     public var systemPrompt: String
 
@@ -55,23 +46,18 @@ public struct PiAgentResources: Sendable {
             throw PiAgentRuntimeError.resourcesMissing("AgentResources")
         }
         let extensionURL = rootURL.appendingPathComponent("extension.ts")
-        let pythonArtifactWorkerURL = rootURL
-            .appendingPathComponent("python", isDirectory: true)
-            .appendingPathComponent("rich_answer_worker.py")
         let skillsURL = rootURL.appendingPathComponent("skills", isDirectory: true)
         let systemURL = rootURL.appendingPathComponent("system.md")
-        let hasRequiredRichAnswerSkills = requiredRichAnswerSkillNames.allSatisfy { skillName in
+        let hasRequiredSkills = allRequiredSkillNames.allSatisfy { skillName in
             FileManager.default.fileExists(
                 atPath: skillsURL
-                    .appendingPathComponent("rich-answer", isDirectory: true)
                     .appendingPathComponent(skillName, isDirectory: true)
                     .appendingPathComponent("SKILL.md")
                     .path
             )
         }
         guard FileManager.default.fileExists(atPath: extensionURL.path),
-              FileManager.default.fileExists(atPath: pythonArtifactWorkerURL.path),
-              hasRequiredRichAnswerSkills,
+              hasRequiredSkills,
               let systemPrompt = try? String(contentsOf: systemURL, encoding: .utf8),
               !systemPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw PiAgentRuntimeError.resourcesMissing(rootURL.path)
@@ -79,7 +65,6 @@ public struct PiAgentResources: Sendable {
         return PiAgentResources(
             rootURL: rootURL,
             extensionURL: extensionURL,
-            pythonArtifactWorkerURL: pythonArtifactWorkerURL,
             skillsURL: skillsURL,
             systemPrompt: systemPrompt
         )
@@ -314,9 +299,6 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         "read",
         "weibei_note_proposal",
         "weibei_relation_proposal",
-        "weibei_ui_catalog",
-        "weibei_compute_artifact",
-        "weibei_rich_answer",
     ]
     private static let hostToolNames: Set<String> = [
         "weibei_course_map",
@@ -402,7 +384,6 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         var memoryRevision: UInt64
         var courseProfileRevision: UInt64
         var userQuestion: String
-        var answerFormPolicy: StudyAgentAnswerFormPolicy
         var updatableMemoryIDs: Set<String>
         var resolvableMemoryIDs: Set<String>
         var allowedSourceLabels: Set<String>
@@ -421,8 +402,6 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         var streamedText = ""
         var proposal: StudyAgentNoteProposal?
         var relationProposal: StudyAgentRelationProposal?
-        var richAnswer: RichAnswerPresentation?
-        var safeRichAnswerNarrative: String?
         var learningUpdate: StudyAgentLearningUpdate?
         var courseProfileUpdate: StudyAgentCourseProfileUpdate?
         var loadedSkills: [StudyAgentLoadedSkill] = []
@@ -578,7 +557,6 @@ public actor PiAgentRuntime: StudyAgentRuntime {
             memoryRevision: request.learningContext.memoryRevision,
             courseProfileRevision: request.courseProfile.revision,
             userQuestion: request.question,
-            answerFormPolicy: request.answerFormPolicy,
             updatableMemoryIDs: Set(request.learningContext.memories.compactMap { memory in
                 guard memory.status == .active else { return nil }
                 return memory.id.uuidString.lowercased()
@@ -2053,67 +2031,8 @@ public actor PiAgentRuntime: StudyAgentRuntime {
             activeRun = run
             refreshRunWatchdog()
 
-        case let .artifactComputed(
-            _,
-            contextRevision,
-            requestID,
-            operation,
-            workerVersion,
-            requestSHA256,
-            outputSHA256,
-            artifactSHA256s,
-            durationMS
-        ):
-            guard var run = activeRun, contextRevision == run.contextRevision else { return }
-            let artifacts = artifactSHA256s
-                .map { String($0.prefix(12)) }
-                .joined(separator: "+")
-            run.toolTrace.append(
-                "weibei_compute_artifact:request=\(requestID) operation=\(operation) worker=\(workerVersion) requestSHA=\(requestSHA256.prefix(12)) outputSHA=\(outputSHA256.prefix(12)) artifacts=\(artifacts) durationMS=\(durationMS)"
-            )
-            activeRun = run
-            refreshRunWatchdog()
-
-        case let .richAnswer(_, data):
-            guard var run = activeRun else { return }
-            trace("rich answer received bytes=\(data.count)")
-            if run.answerFormPolicy == .textOnly {
-                trace("rich answer rejected by text-only answer-form policy")
-                run.toolTrace.append("weibei_rich_answer:host_rejected=text_only_policy")
-                run.lastError = "PI 尝试在纯文本回合生成富回答"
-                run.richAnswer = nil
-                activeRun = run
-                refreshRunWatchdog()
-                return
-            }
-            let presentation = RichAnswerEngine.prepare(
-                data: data,
-                fallbackText: run.streamedText,
-                environment: RichAnswerEnvironment(
-                    contextRevision: run.contextRevision,
-                    allowedSourceLabels: run.allowedSourceLabels,
-                    allowedAssetIDs: run.allowedAssetIDs,
-                    verifiedAssetBytes: run.verifiedAssetBytesByContextID
-                )
-            ).resolvingAssetIDs(using: run.persistentAssetIDsByContextID)
-            let safeNarrative = presentation.narrative
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            run.safeRichAnswerNarrative = safeNarrative.isEmpty ? nil : safeNarrative
-            if presentation.mode == .rich {
-                run.richAnswer = presentation
-            } else {
-                let rejectionDetails = presentation.diagnostics.map {
-                    "\($0.code.rawValue):\($0.message)"
-                }.joined(separator: " | ")
-                trace("rich answer rejected diagnostics=\(rejectionDetails)")
-                run.toolTrace.append(
-                    "weibei_rich_answer:host_rejected=\(sanitizedDiagnostic(rejectionDetails).prefix(600))"
-                )
-                run.lastError = "PI 返回的可视化结果未通过本地安全与来源校验"
-                run.richAnswer = nil
-            }
-            activeRun = run
-            refreshRunWatchdog()
+        case .artifactComputed, .richAnswer:
+            break
 
         case let .noteProposal(_, proposal):
             guard var run = activeRun else { return }
@@ -2248,13 +2167,7 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         case let .toolFailed(_, name, message):
             guard var run = activeRun else { return }
             trace("tool failed name=\(name) message=\(sanitizedDiagnostic(message))")
-            if name == "weibei_rich_answer",
-               let faultTrace = richAnswerFaultTrace(message) {
-                run.toolTrace.append(faultTrace)
-            }
-            run.lastError = name == "weibei_rich_answer"
-                ? "PI 模型未完成本轮回答"
-                : "\(name): \(boundedDiagnostic(message))"
+            run.lastError = "\(name): \(boundedDiagnostic(message))"
             activeRun = run
             refreshRunWatchdog()
 
@@ -2269,17 +2182,7 @@ public actor PiAgentRuntime: StudyAgentRuntime {
             }
             let modelClosureText = (text.isEmpty ? run.streamedText : text)
                 .trimmingCharacters(in: .whitespacesAndNewlines)
-            let streamedClosureText = run.streamedText
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            let richNarrative = run.safeRichAnswerNarrative
-            let finalText: String
-            if !streamedClosureText.isEmpty {
-                finalText = modelClosureText
-            } else if let richNarrative, !richNarrative.isEmpty {
-                finalText = richNarrative
-            } else {
-                finalText = modelClosureText
-            }
+            let finalText = modelClosureText
             let citesCurrentSelection = run.allowedSourceLabels.contains {
                 $0.hasPrefix("[选区：") && finalText.contains($0)
             }
@@ -2292,12 +2195,12 @@ public actor PiAgentRuntime: StudyAgentRuntime {
             )
             trace(
                 "agent ended stop=\(stopReason ?? "unknown") closureChars=\(modelClosureText.count) "
-                    + "finalChars=\(finalText.count) rich=\(run.richAnswer?.mode == .rich)"
+                    + "finalChars=\(finalText.count)"
             )
             let replyCandidate = StudyAgentReply(
                 text: finalText,
                 backend: .pi,
-                richAnswer: run.richAnswer,
+                richAnswer: nil,
                 sources: run.sources,
                 noteProposal: run.proposal,
                 relationProposal: run.relationProposal,
@@ -2363,29 +2266,6 @@ public actor PiAgentRuntime: StudyAgentRuntime {
             run.completed = result
             activeRun = run
         }
-    }
-
-    private func richAnswerFaultTrace(_ message: String) -> String? {
-        guard message.contains("weibei.rich_answer.repair_fault"),
-              let start = message.firstIndex(of: "{") else {
-            return nil
-        }
-        let json = String(message[start...])
-        guard let data = json.data(using: .utf8),
-              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              object["type"] as? String == "weibei.rich_answer.repair_fault",
-              let code = object["code"] as? String else {
-            return "weibei_rich_answer:repair_fault=unparsed"
-        }
-        let path = (object["jsonPath"] as? String) ?? "$"
-        let remainingAttempts = (object["remainingAttempts"] as? NSNumber)?.intValue ?? -1
-        let reason = sanitizedDiagnostic((object["message"] as? String) ?? "unknown")
-            .replacingOccurrences(of: "\n", with: " ")
-            .replacingOccurrences(of: "\t", with: " ")
-        let hint = sanitizedDiagnostic((object["humanFixHint"] as? String) ?? "")
-            .replacingOccurrences(of: "\n", with: " ")
-            .replacingOccurrences(of: "\t", with: " ")
-        return "weibei_rich_answer:repair_fault=\(code):path=\(path):remaining=\(remainingAttempts):reason=\(reason.prefix(240)):hint=\(hint.prefix(240))"
     }
 
     private func discardRun(id: UUID) {

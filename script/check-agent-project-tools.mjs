@@ -239,6 +239,12 @@ try {
       !registeredTools.has("grep"),
     "普通学习场景仍暴露重复的项目文件工具",
   );
+  requireValue(
+    !registeredTools.has("weibei_ui_catalog") &&
+      !registeredTools.has("weibei_compute_artifact") &&
+      !registeredTools.has("weibei_rich_answer"),
+    "旧生成式界面工具仍暴露给模型",
+  );
   const contextHook = requireValue(
     eventHandlers.get("context"),
     "真实扩展没有注册 context 过滤器",
@@ -511,12 +517,12 @@ try {
     "真实扩展没有复用 read 工具加载按需 Skill",
   );
   const skillRead = await projectReadTool.execute(
-    "rich-answer-skill-read",
-    { path: "skill://rich-answer-director" },
+    "visualize-skill-read",
+    { path: "skill://visualize" },
   );
   requireValue(
-    skillRead.content[0]?.text.includes("# 富回答导演"),
-    "read 工具没有按 skill:// 路径加载富回答导演",
+    skillRead.content[0]?.text.includes("# Visualize"),
+    "read 工具没有按 skill:// 路径加载 visualize",
   );
   let courseFileReadRejected = false;
   try {
@@ -532,11 +538,11 @@ try {
   const skillMetadata = await toolResultHook({
     toolName: "read",
     isError: false,
-    input: { path: "skill://rich-answer-director" },
+    input: { path: "skill://visualize" },
   });
   requireValue(
     skillMetadata?.details?.kind === "weibei_skill_read" &&
-      skillMetadata.details.loaded.id === "rich-answer-director",
+      skillMetadata.details.loaded.id === "visualize",
     "按需 Skill 读取没有留下版本与哈希证据",
   );
 

@@ -100,19 +100,19 @@ private func checkRPCDecoding() throws {
         "PI visual asset reads preserve source ID, hash, and byte count"
     )
 
-    let skillRead = try PiRPCMessageDecoder.decode(Data(#"{"type":"tool_execution_end","toolCallId":"tool-skill","toolName":"read","isError":false,"result":{"details":{"kind":"weibei_skill_read","contextRevision":"revision-7","loaded":{"id":"rich-answer-director","name":"富回答导演","version":"1.0.0","sha256":"abc123","byteCount":1524,"relativePath":"skills/rich-answer/rich-answer-director/SKILL.md","loadedAtContextRevision":"revision-7"}}}}"#.utf8))
+    let skillRead = try PiRPCMessageDecoder.decode(Data(#"{"type":"tool_execution_end","toolCallId":"tool-skill","toolName":"read","isError":false,"result":{"details":{"kind":"weibei_skill_read","contextRevision":"revision-7","loaded":{"id":"visualize","name":"Visualize","version":"1.0.0","sha256":"abc123","byteCount":1840,"relativePath":"skills/visualize/SKILL.md","loadedAtContextRevision":"revision-7"}}}}"#.utf8))
     try piRequire(
         skillRead == .skillsLoaded(
             id: "tool-skill",
             contextRevision: "revision-7",
             skills: [
                 StudyAgentLoadedSkill(
-                    id: "rich-answer-director",
-                    name: "富回答导演",
+                    id: "visualize",
+                    name: "Visualize",
                     version: "1.0.0",
                     sha256: "abc123",
-                    byteCount: 1524,
-                    relativePath: "skills/rich-answer/rich-answer-director/SKILL.md",
+                    byteCount: 1840,
+                    relativePath: "skills/visualize/SKILL.md",
                     loadedAtContextRevision: "revision-7"
                 ),
             ]
