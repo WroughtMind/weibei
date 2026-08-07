@@ -2407,14 +2407,16 @@ enum ImportedIdentitySelfCheck {
         }
 
         let restoredSnapshot = try fixture.readSnapshot()
+        let restoredB = try String(contentsOf: noteBURL, encoding: .utf8)
+        let restoredA = try String(contentsOf: noteAURL, encoding: .utf8)
         try check(failedAWrite, "重开没有尝试自动写回后台笔记")
         try check(
-            try String(contentsOf: noteBURL, encoding: .utf8) == draftB
+            restoredB == draftB
                 && restoredSnapshot.pendingNoteWritesByItemID?[noteB.id] == nil,
             "当前笔记没有自动写回或清除待写状态"
         )
         try check(
-            try String(contentsOf: noteAURL, encoding: .utf8) == diskA
+            restoredA == diskA
                 && restoredSnapshot.notesByItemID[noteA.id] == draftA
                 && restoredSnapshot.pendingNoteWritesByItemID?[noteA.id] != nil,
             "后台写回失败没有同时保留磁盘原文和魏碑草稿"
