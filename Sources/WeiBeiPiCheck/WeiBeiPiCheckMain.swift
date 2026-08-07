@@ -50,7 +50,7 @@ struct WeiBeiPiCheckMain {
                 try await RichAnswerPythonArtifactSelfCheck.runExecutorChecks()
                 try runRichAnswerSemanticGateSelfCheck()
                 try runRichAnswerProtocolSelfCheck()
-                print("rich-answer-protocol-check completed: invalid protocol rejected; final evidence gates still pending user acceptance")
+                print("rich-answer-protocol-check completed: source semantics left to Agent; runtime safety enforced")
             } catch {
                 fputs("rich-answer-protocol-check failed: \(error.localizedDescription)\n", stderr)
                 exit(1)
@@ -324,7 +324,6 @@ struct WeiBeiPiCheckMain {
                             kind: "rich",
                             checks: [
                                 "backend-pi",
-                                "source-bound",
                                 "catalog-before-rich-answer",
                                 "professional-judgment-contract",
                                 "inline-placement",
@@ -353,7 +352,6 @@ struct WeiBeiPiCheckMain {
                             kind: "text-only",
                             checks: [
                                 "backend-pi",
-                                "source-bound",
                                 "no-rich-answer",
                                 "no-ui-catalog",
                                 "thinking-level=\(runConfiguration.thinkingLevel ?? "inherited")",
@@ -1091,7 +1089,7 @@ struct WeiBeiPiCheckMain {
         let noteID = "note-\(checkCase.id)"
         return StudyAgentRequest(
             purpose: .conversation,
-            question: "这是自动验收题。回答依赖魏碑提供的当前材料或选区，请实际读取来源；如果无法读取，只说明无法读取来源，不要生成富回答。读取本轮来源后，检索本轮相关生成式 UI 能力，再生成一个紧凑、真正可操作、来源绑定的视觉体验块；本题明确要求 expressionPlan.preferredSurface 和 scene.placement 均为 inline，使它成为正文的自然一部分。请自主比较注册专业渲染计划、成熟深组件程序和受控长尾组合三条表达出口，以本题学习价值选择最合适的路线；不要把组件名、程序源码或 UI JSON 写进正文，不要穷举节点，也不要写成第二篇完整文章。\(checkCase.question)",
+            question: "这是自动验收题。检索本轮相关生成式 UI 能力，再生成一个紧凑、真正可操作的视觉体验块；本题明确要求 expressionPlan.preferredSurface 和 scene.placement 均为 inline，使它成为正文的自然一部分。请自主比较注册专业渲染计划、成熟深组件程序和受控长尾组合三条表达出口，以本题学习价值选择最合适的路线；来源与证据元数据由你按回答需要决定，不影响是否生成富回答。不要把组件名、程序源码或 UI JSON 写进正文，不要穷举节点，也不要写成第二篇完整文章。\(checkCase.question)",
             materialTitle: checkCase.materialTitle,
             materialText: checkCase.materialText,
             noteTitle: "\(checkCase.discipline)验收笔记",
@@ -1171,7 +1169,7 @@ struct WeiBeiPiCheckMain {
         return StudyAgentRequest(
             purpose: .conversation,
             answerFormPolicy: checkCase.allowsPartialRichAnswer ? .partialRichAllowed : .textOnly,
-            question: "这是回答失败与诚实降级验收题。答案依赖本题材料，请实际读取魏碑当前上下文和可用来源。不得用常识、示例数据或假执行补齐缺口；来源、安全或协议条件不满足时，保留简短可读正文并诚实说明限制。\(checkCase.question)",
+            question: "这是回答失败与诚实降级验收题。请根据现有信息自行选择最有帮助的表达形态；不得伪造精确数据、真实图片内容或工具执行结果。安全或协议条件不满足时，保留简短可读正文并诚实说明限制；来源与证据元数据缺失本身不构成降级理由。\(checkCase.question)",
             materialTitle: checkCase.materialTitle,
             materialText: checkCase.materialText,
             materialIsTruncated: checkCase.materialIsTruncated,
@@ -1223,7 +1221,7 @@ struct WeiBeiPiCheckMain {
         let noteID = "note-\(checkCase.id)"
         return StudyAgentRequest(
             purpose: .conversation,
-            question: "这是回答形态选择验收题。答案依赖本题材料，请实际读取魏碑当前材料或选区，然后自行选择最合适的回答形态；只有交互或可视关系能显著提高理解时才生成富回答，不要为了展示能力硬做 UI。\(checkCase.question)",
+            question: "这是回答形态选择验收题。请自行选择最合适的回答形态；只有交互或可视关系能显著提高理解时才生成富回答，不要为了展示能力硬做 UI。来源与证据元数据由你按回答需要决定。\(checkCase.question)",
             materialTitle: checkCase.materialTitle,
             materialText: checkCase.materialText,
             noteTitle: "\(checkCase.subject)验收笔记",
@@ -1272,22 +1270,18 @@ struct WeiBeiPiCheckMain {
     ) throws -> RichAnswerPresentation {
         guard reply.backend == .pi,
               reply.noteProposal == nil,
-              containsSourceLabel(reply.text),
-              containsExpectedSource(reply.text, for: checkCase),
               replyToolTraceShowsCatalogBeforeRichAnswer(reply),
               let presentation = reply.richAnswer,
               presentation.mode == .rich,
               !presentation.scenes.isEmpty,
               presentation.diagnostics.isEmpty,
-              presentation.evidenceState == .complete,
-              !presentation.evidenceLedger.isEmpty,
               presentation.expressionPlan?.preferredSurface == .inline,
               presentation.expressionPlan?.directManipulation == true,
               presentation.scenes.allSatisfy({ $0.placement == .inline }) else {
             throw richAnswerFailure(reply, checkCase: checkCase)
         }
 
-        let hasValidT1 = presentation.scenes.contains { validT1Scene($0, in: presentation, for: checkCase) }
+        let hasValidT1 = presentation.scenes.contains { validT1Scene($0, for: checkCase) }
         let hasValidT2 = presentation.scenes.contains { validT2Scene($0, for: checkCase) }
         let hasValidRenderPlan = presentation.scenes.contains { validRenderPlanScene($0) }
         guard hasValidT1 || hasValidT2 || hasValidRenderPlan else {
@@ -1315,7 +1309,6 @@ struct WeiBeiPiCheckMain {
         var issues: [String] = []
         issues.append(contentsOf: richAnswerDegradationInvocationIssues(reply, for: checkCase))
         issues.append(contentsOf: richAnswerDegradationReadableLimitationIssues(reply, for: checkCase))
-        issues.append(contentsOf: richAnswerDegradationSourceIssues(reply, for: checkCase))
         issues.append(contentsOf: richAnswerDegradationRichSceneIssues(reply, for: checkCase))
         return issues
     }
@@ -1362,25 +1355,6 @@ struct WeiBeiPiCheckMain {
         return issues
     }
 
-    private static func richAnswerDegradationSourceIssues(
-        _ reply: StudyAgentReply,
-        for checkCase: RichAnswerLiveDegradationCase
-    ) -> [String] {
-        if checkCase.expectsSourceCitation {
-            if !containsSourceLabel(reply.text) {
-                return ["missing-visible-source-label"]
-            }
-            let citesMaterial = reply.text.contains("[材料：\(checkCase.materialTitle)")
-            let citesSelection = checkCase.selectionTitle.map {
-                reply.text.contains("[选区：\($0)")
-            } == true
-            if !citesMaterial && !citesSelection {
-                return ["missing-expected-source-label"]
-            }
-        }
-        return []
-    }
-
     private static func richAnswerDegradationRichSceneIssues(
         _ reply: StudyAgentReply,
         for checkCase: RichAnswerLiveDegradationCase
@@ -1395,9 +1369,6 @@ struct WeiBeiPiCheckMain {
         if !presentation.diagnostics.isEmpty { issues.append("partial-rich-diagnostics-present") }
         if !replyToolTraceShowsCatalogBeforeRichAnswer(reply) {
             issues.append("partial-rich-missing-catalog-trace")
-        }
-        if checkCase.materialIsTruncated, presentation.evidenceState != .partial {
-            issues.append("truncated-material-rich-not-partial")
         }
         let unsafeProgramFragments = unsafePartialRichProgramFragments(in: presentation)
         if !unsafeProgramFragments.isEmpty {
@@ -1415,13 +1386,10 @@ struct WeiBeiPiCheckMain {
               reply.richAnswer == nil,
               !replyToolTraceContains(reply, token: "weibei_ui_catalog"),
               !reply.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-              containsSourceLabel(reply.text),
-              reply.text.contains("[材料：\(checkCase.materialTitle)")
-                || reply.text.contains("[选区：\(checkCase.selectionTitle)"),
               textOnlyChoiceHasNoDegradationDisclosure(reply.text),
               checkCase.forbiddenTextFragments.allSatisfy({ !reply.text.localizedCaseInsensitiveContains($0) }) else {
             throw PiCheckError.invalidEvaluation(
-                "\(checkCase.id) should stay a short source-grounded text answer without UI catalog work"
+                "\(checkCase.id) should stay a short text answer without UI catalog work"
             )
         }
     }
@@ -1437,7 +1405,6 @@ struct WeiBeiPiCheckMain {
 
     private static func validT1Scene(
         _ scene: RichAnswerScene,
-        in presentation: RichAnswerPresentation,
         for checkCase: RichAnswerLiveSuccessCase
     ) -> Bool {
         guard let program = scene.program,
@@ -1445,8 +1412,7 @@ struct WeiBeiPiCheckMain {
               program.directManipulation,
               checkCase.forbiddenProgramFragments.allSatisfy({
                   !program.source.localizedCaseInsensitiveContains($0)
-              }),
-              !scene.evidenceIDs.isEmpty else {
+              }) else {
             return false
         }
         return true
@@ -1467,7 +1433,6 @@ struct WeiBeiPiCheckMain {
             issue == "missing-ui"
                 || issue == "missing-direct-control"
                 || issue == "missing-stateful-nontext-encoding"
-                || issue.hasPrefix("unbound-evidence:")
                 || issue.hasPrefix("missing-material-asset:")
         }
     }
@@ -1475,9 +1440,7 @@ struct WeiBeiPiCheckMain {
     private static func validRenderPlanScene(_ scene: RichAnswerScene) -> Bool {
         guard let plan = scene.renderPlan else { return false }
         let negotiation = RichAnswerRendererRegistry.defaultRegistry().negotiate(plan: plan)
-        guard negotiation.status == .accepted else { return false }
-        let sceneEvidenceIDs = Set(scene.evidenceIDs)
-        return plan.sourceBindings.allSatisfy { sceneEvidenceIDs.contains($0.evidenceID) }
+        return negotiation.status == .accepted
     }
 
     private static func t2SceneIssues(
@@ -1571,16 +1534,8 @@ struct WeiBeiPiCheckMain {
             issues.append("missing-embodied-primitive")
         }
 
-        let boundEvidenceIDs = Set(
-            ui.nodes.flatMap(\.evidenceIDs)
-                + ui.datasets.flatMap { $0.rows.flatMap(\.evidenceIDs) }
-        )
         let semanticCorpus = t2SemanticCorpus(ui)
         let dataRowCount = ui.datasets.reduce(0) { $0 + $1.rows.count }
-        let unboundEvidenceIDs = Set(scene.evidenceIDs).subtracting(boundEvidenceIDs)
-        if !unboundEvidenceIDs.isEmpty {
-            issues.append("unbound-evidence:\(unboundEvidenceIDs.sorted().joined(separator: "+"))")
-        }
         let matchedKnowledgeTargetCount = checkCase.knowledgeTargets.filter {
             containsAny(semanticCorpus, $0)
         }.count
@@ -1718,7 +1673,7 @@ struct WeiBeiPiCheckMain {
         let placements = presentation?.scenes.map(\.placement.rawValue).joined(separator: ",") ?? "none"
         let hasValidT1 = presentation.map { currentPresentation in
             currentPresentation.scenes.contains {
-                validT1Scene($0, in: currentPresentation, for: checkCase)
+                validT1Scene($0, for: checkCase)
             }
         } ?? false
         let hasValidT2 = presentation?.scenes.contains { validT2Scene($0, for: checkCase) } ?? false
@@ -1768,8 +1723,7 @@ struct WeiBeiPiCheckMain {
             .prefix(420)
         let toolTrace = reply.toolTrace.joined(separator: ",")
         return .invalidEvaluation(
-            "\(checkCase.id) backend=\(reply.backend.rawValue) source=\(containsSourceLabel(reply.text)) "
-                + "expectedSource=\(containsExpectedSource(reply.text, for: checkCase)) "
+            "\(checkCase.id) backend=\(reply.backend.rawValue) "
                 + "professionalFacts=\(presentation.map { professionalFactObligationsSatisfied(reply: reply, presentation: $0, for: checkCase) } ?? false) "
                 + "missingFacts=\(presentation.map { missingProfessionalFactObligations(reply: reply, presentation: $0, for: checkCase).joined(separator: "+") } ?? "missing-presentation") "
                 + "professionalJudgments=\(professionalJudgment?.passedDeterministicGates ?? false) "
@@ -2113,14 +2067,6 @@ struct WeiBeiPiCheckMain {
             pendingNodeIDs.append(contentsOf: node.children.reversed())
         }
         return ui.nodes.filter { visibleClaimNodeIDs.contains($0.id) }
-    }
-
-    private static func containsExpectedSource(
-        _ text: String,
-        for checkCase: RichAnswerLiveSuccessCase
-    ) -> Bool {
-        text.contains("[材料：\(checkCase.materialTitle)")
-            || text.contains("[选区：\(checkCase.selectionTitle)")
     }
 
     private static func containsAny(_ text: String, _ fragments: [String]) -> Bool {

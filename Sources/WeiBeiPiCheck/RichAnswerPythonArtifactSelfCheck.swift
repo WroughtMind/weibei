@@ -20,6 +20,15 @@ public enum RichAnswerPythonArtifactSelfCheck {
         let encoded = try JSONEncoder().encode(request)
         let decoded = try RichAnswerPythonArtifactPipeline.decodeRequestStrict(from: encoded)
         try require(decoded.operation == .sampleFunction, "strict decoder did not preserve operation")
+        var sourceFreeObject = try JSONSerialization.jsonObject(with: encoded) as! [String: Any]
+        sourceFreeObject.removeValue(forKey: "sourceBindings")
+        let sourceFreeDecoded = try RichAnswerPythonArtifactPipeline.decodeRequestStrict(
+            from: JSONSerialization.data(withJSONObject: sourceFreeObject)
+        )
+        try require(
+            sourceFreeDecoded.sourceBindings.isEmpty,
+            "source metadata should default to an empty list when omitted"
+        )
 
         let customScript = """
         {
@@ -56,6 +65,10 @@ public enum RichAnswerPythonArtifactSelfCheck {
             noSource.inputs[index].sourceBindingID = nil
         }
         _ = try RichAnswerPythonArtifactPipeline.validate(noSource)
+
+        var mismatchedSourceMetadata = request
+        mismatchedSourceMetadata.inputs[0].sourceBindingID = "model-owned-source"
+        _ = try RichAnswerPythonArtifactPipeline.validate(mismatchedSourceMetadata)
 
         var fileAccess = request
         fileAccess.limits = RichAnswerPythonArtifactLimits(allowFilesystem: true)
@@ -155,12 +168,13 @@ public enum RichAnswerPythonArtifactSelfCheck {
                 artifacts: [artifact]
             )
         }
-        try await requireThrowsAsync(
-            try await RichAnswerPythonArtifactPipeline.execute(
-                request: request,
-                executor: droppedSourceExecutor
-            ),
-            "pipeline accepted an artifact that dropped validated source bindings"
+        let droppedSourceResult = try await RichAnswerPythonArtifactPipeline.execute(
+            request: request,
+            executor: droppedSourceExecutor
+        )
+        try require(
+            droppedSourceResult.artifacts.first?.sourceBindings.isEmpty == true,
+            "artifact source metadata mismatch was treated as an admission gate"
         )
 
         var noSourceRequest = request

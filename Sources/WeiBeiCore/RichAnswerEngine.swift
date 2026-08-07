@@ -705,8 +705,8 @@ public struct RichAnswerEvidence: Codable, Hashable, Sendable {
         try RichAnswerStrictDecoding.rejectUnknownFields(in: decoder, allowed: CodingKeys.allowedFieldNames)
         let container = try decoder.container(keyedBy: CodingKeys.self)
         id = try container.decode(String.self, forKey: .id)
-        sourceLabel = try container.decode(String.self, forKey: .sourceLabel)
-        excerpt = try container.decode(String.self, forKey: .excerpt)
+        sourceLabel = try container.decodeIfPresent(String.self, forKey: .sourceLabel) ?? ""
+        excerpt = try container.decodeIfPresent(String.self, forKey: .excerpt) ?? ""
         isTruncated = try container.decodeIfPresent(Bool.self, forKey: .isTruncated) ?? false
         tags = try container.decodeIfPresent(Set<String>.self, forKey: .tags) ?? []
         assetIDs = try container.decodeIfPresent([String].self, forKey: .assetIDs) ?? []
@@ -1092,6 +1092,7 @@ public struct RichAnswerPresentation: Codable, Hashable, Sendable {
     public var fallback: RichAnswerFallback?
     public var diagnostics: [RichAnswerDiagnostic]
     public var evidenceState: RichAnswerEvidenceState
+    public var verifiedAssetBytes: [String: Int]?
 
     public init(
         mode: RichAnswerPresentationMode,
@@ -1102,7 +1103,8 @@ public struct RichAnswerPresentation: Codable, Hashable, Sendable {
         evidenceLedger: [RichAnswerEvidence] = [],
         fallback: RichAnswerFallback? = nil,
         diagnostics: [RichAnswerDiagnostic] = [],
-        evidenceState: RichAnswerEvidenceState = .missing
+        evidenceState: RichAnswerEvidenceState = .missing,
+        verifiedAssetBytes: [String: Int]? = nil
     ) {
         self.mode = mode
         self.narrative = narrative
@@ -1113,6 +1115,7 @@ public struct RichAnswerPresentation: Codable, Hashable, Sendable {
         self.fallback = fallback
         self.diagnostics = diagnostics
         self.evidenceState = evidenceState
+        self.verifiedAssetBytes = verifiedAssetBytes
     }
 
     public var resolvedParts: [RichAnswerPart] {
@@ -1174,6 +1177,11 @@ public struct RichAnswerPresentation: Codable, Hashable, Sendable {
             var resolvedEvidence = evidence
             resolvedEvidence.assetIDs = evidence.assetIDs.map { aliases[$0] ?? $0 }
             return resolvedEvidence
+        }
+        if let verifiedAssetBytes {
+            resolved.verifiedAssetBytes = verifiedAssetBytes.reduce(into: [:]) { result, entry in
+                result[aliases[entry.key] ?? entry.key] = entry.value
+            }
         }
         return resolved
     }
@@ -1270,7 +1278,6 @@ public enum RichAnswerEngine {
         let sceneResult = validateScenes(
             envelope.scenes,
             expressionPlan: envelope.expressionPlan,
-            evidenceByID: evidenceResult.validEvidenceByID,
             environment: environment,
             diagnostics: &diagnostics
         )
@@ -1323,7 +1330,10 @@ public enum RichAnswerEngine {
                 diagnostics: diagnostics,
                 invalidEvidenceWasSeen: evidenceResult.invalidEvidenceWasSeen,
                 hasTruncatedEvidence: evidenceLedger.contains(where: \.isTruncated)
-            )
+            ),
+            verifiedAssetBytes: environment.verifiedAssetBytes.filter {
+                environment.allowedAssetIDs.contains($0.key)
+            }
         )
         return admit(presentation: semanticPresentation)
     }
@@ -1486,6 +1496,17 @@ public enum RichAnswerEngine {
             admittedEvidenceState = recomputedEvidenceState
         }
 
+        var admittedAssetIDs: Set<String> = []
+        for scene in admittedScenes {
+            admittedAssetIDs.formUnion(scene.objects.compactMap(\.assetID))
+            admittedAssetIDs.formUnion(scene.frames.compactMap(\.assetID))
+            admittedAssetIDs.formUnion(scene.ui?.nodes.compactMap(\.assetID) ?? [])
+            admittedAssetIDs.formUnion(scene.renderPlan?.referencedAssetIDs ?? [])
+        }
+        let admittedVerifiedAssetBytes = (presentation.verifiedAssetBytes ?? [:]).filter {
+            admittedAssetIDs.contains($0.key)
+        }
+
         return RichAnswerPresentation(
             mode: mode,
             narrative: safeNarrative,
@@ -1495,7 +1516,8 @@ public enum RichAnswerEngine {
             evidenceLedger: evidenceLedger,
             fallback: presentation.fallback,
             diagnostics: diagnostics,
-            evidenceState: admittedEvidenceState
+            evidenceState: admittedEvidenceState,
+            verifiedAssetBytes: admittedVerifiedAssetBytes
         )
     }
 
@@ -1507,7 +1529,7 @@ public enum RichAnswerEngine {
             return PersistedSceneAdmission(scenes: [], rejectedSceneFallbacks: [:])
         }
         let scenesRequiringReplayValidation = presentation.scenes.filter {
-            $0.program != nil || $0.ui != nil
+            $0.program != nil || $0.ui != nil || $0.renderPlan != nil
         }
         guard !scenesRequiringReplayValidation.isEmpty else {
             return PersistedSceneAdmission(
@@ -1515,8 +1537,29 @@ public enum RichAnswerEngine {
                 rejectedSceneFallbacks: [:]
             )
         }
-        guard let expressionPlan = presentation.expressionPlan else {
-            for scene in scenesRequiringReplayValidation {
+        let replayScenes: [RichAnswerScene]
+        let replayExpressionPlan: RichAnswerExpressionPlan
+        if let expressionPlan = presentation.expressionPlan {
+            if let planIssue = validateExpressionPlanIntentBudget(expressionPlan) {
+                for scene in scenesRequiringReplayValidation {
+                    diagnostics.append(
+                        RichAnswerDiagnostic(
+                            code: planIssue.code,
+                            sceneID: scene.id,
+                            message: planIssue.message
+                        )
+                    )
+                }
+                return mergedPersistedSceneAdmission(
+                    originalScenes: presentation.scenes,
+                    validatedReplayScenes: []
+                )
+            }
+            replayScenes = scenesRequiringReplayValidation
+            replayExpressionPlan = expressionPlan
+        } else {
+            replayScenes = scenesRequiringReplayValidation.filter { $0.renderPlan != nil }
+            for scene in scenesRequiringReplayValidation where scene.renderPlan == nil {
                 diagnostics.append(
                     RichAnswerDiagnostic(
                         code: .unsupportedField,
@@ -1525,55 +1568,25 @@ public enum RichAnswerEngine {
                     )
                 )
             }
-            return mergedPersistedSceneAdmission(
-                originalScenes: presentation.scenes,
-                validatedReplayScenes: []
-            )
-        }
-        if let planIssue = validateExpressionPlanIntentBudget(expressionPlan) {
-            for scene in scenesRequiringReplayValidation {
-                diagnostics.append(
-                    RichAnswerDiagnostic(
-                        code: planIssue.code,
-                        sceneID: scene.id,
-                        message: planIssue.message
-                    )
-                )
-            }
-            return mergedPersistedSceneAdmission(
-                originalScenes: presentation.scenes,
-                validatedReplayScenes: []
+            replayExpressionPlan = RichAnswerExpressionPlan(
+                action: .observe,
+                summary: "persisted render-plan replay",
+                families: Set(replayScenes.map(\.family)),
+                preferredSurface: .inline,
+                directManipulation: false
             )
         }
 
-        let replayEvidenceIDs = Set(
-            scenesRequiringReplayValidation.flatMap(\.allEvidenceIDs)
-        )
-        let replayEvidenceLedger = presentation.evidenceLedger.filter {
-            replayEvidenceIDs.contains($0.id)
-        }
-        let allowedSourceLabels = Set(replayEvidenceLedger.map(\.sourceLabel))
-        let allowedEvidenceTags = replayEvidenceLedger.reduce(
-            into: Set<String>()
-        ) { result, evidence in
-            result.formUnion(evidence.tags)
-        }
-        let allowedAssetIDs = Set(replayEvidenceLedger.flatMap(\.assetIDs))
+        let verifiedAssetBytes = presentation.verifiedAssetBytes ?? [:]
         let replayEnvironment = RichAnswerEnvironment(
             contextRevision: "persisted-rich-answer-replay",
-            allowedSourceLabels: allowedSourceLabels,
-            allowedEvidenceTags: allowedEvidenceTags,
-            allowedAssetIDs: allowedAssetIDs
-        )
-        let evidenceResult = validateEvidenceLedger(
-            replayEvidenceLedger,
-            environment: replayEnvironment,
-            diagnostics: &diagnostics
+            allowedSourceLabels: [],
+            allowedAssetIDs: Set(verifiedAssetBytes.keys),
+            verifiedAssetBytes: verifiedAssetBytes
         )
         let sceneResult = validateScenes(
-            scenesRequiringReplayValidation,
-            expressionPlan: expressionPlan,
-            evidenceByID: evidenceResult.validEvidenceByID,
+            replayScenes,
+            expressionPlan: replayExpressionPlan,
             environment: replayEnvironment,
             diagnostics: &diagnostics
         )
@@ -1591,7 +1604,7 @@ public enum RichAnswerEngine {
         var admittedScenes: [RichAnswerScene] = []
         var rejectedScenes: [RichAnswerScene] = []
         for scene in originalScenes {
-            guard scene.program != nil || scene.ui != nil else {
+            guard scene.program != nil || scene.ui != nil || scene.renderPlan != nil else {
                 admittedScenes.append(scene)
                 continue
             }
@@ -1817,33 +1830,13 @@ public enum RichAnswerEngine {
                 )
                 continue
             }
-            guard environment.allowedSourceLabels.contains(evidence.sourceLabel) else {
-                invalidEvidenceWasSeen = true
-                diagnostics.append(
-                    RichAnswerDiagnostic(
-                        code: .unsupportedEvidence,
-                        message: "evidence \(evidence.id) uses a source label that is not allowed in this context"
-                    )
-                )
-                continue
-            }
-            guard !evidence.excerpt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+            guard evidence.sourceLabel.count <= 400,
                   evidence.excerpt.count <= 1_200 else {
                 invalidEvidenceWasSeen = true
                 diagnostics.append(
                     RichAnswerDiagnostic(
                         code: .budgetExceeded,
-                        message: "evidence \(evidence.id) has an empty or oversized excerpt"
-                    )
-                )
-                continue
-            }
-            guard evidence.tags.isSubset(of: environment.allowedEvidenceTags) else {
-                invalidEvidenceWasSeen = true
-                diagnostics.append(
-                    RichAnswerDiagnostic(
-                        code: .unsupportedEvidence,
-                        message: "evidence \(evidence.id) uses a tag that is not allowed in this context"
+                        message: "evidence \(evidence.id) exceeded its display text budget"
                     )
                 )
                 continue
@@ -1874,7 +1867,6 @@ public enum RichAnswerEngine {
     private static func validateScenes(
         _ scenes: [RichAnswerScene],
         expressionPlan: RichAnswerExpressionPlan,
-        evidenceByID: [String: RichAnswerEvidence],
         environment: RichAnswerEnvironment,
         diagnostics: inout [RichAnswerDiagnostic]
     ) -> SceneValidationResult {
@@ -1897,7 +1889,6 @@ public enum RichAnswerEngine {
             if let issue = validateScene(
                 scene,
                 expressionPlan: expressionPlan,
-                evidenceByID: evidenceByID,
                 environment: environment
             ) {
                 diagnostics.append(issue)
@@ -1925,7 +1916,6 @@ public enum RichAnswerEngine {
     private static func validateScene(
         _ scene: RichAnswerScene,
         expressionPlan: RichAnswerExpressionPlan,
-        evidenceByID: [String: RichAnswerEvidence],
         environment: RichAnswerEnvironment
     ) -> RichAnswerDiagnostic? {
         guard isSafeIdentifier(scene.id) else {
@@ -1986,14 +1976,6 @@ public enum RichAnswerEngine {
                 message: "scene exceeded the rich-answer resource budget"
             )
         }
-        guard scene.evidenceIDs.allSatisfy({ evidenceByID[$0] != nil }) else {
-            return RichAnswerDiagnostic(
-                code: .missingEvidence,
-                sceneID: scene.id,
-                message: "scene references evidence that is missing or not allowed"
-            )
-        }
-
         let objectIDs = scene.objects.map(\.id)
         let relationIDs = scene.relations.map(\.id)
         let operationIDs = scene.operations.map(\.id)
@@ -2017,7 +1999,6 @@ public enum RichAnswerEngine {
                 object,
                 sceneID: scene.id,
                 frameIDs: frameIDSet,
-                evidenceByID: evidenceByID,
                 environment: environment
             ) {
                 return issue
@@ -2028,8 +2009,7 @@ public enum RichAnswerEngine {
             if let issue = validateRelation(
                 relation,
                 sceneID: scene.id,
-                objectIDs: objectIDSet,
-                evidenceByID: evidenceByID
+                objectIDs: objectIDSet
             ) {
                 return issue
             }
@@ -2051,7 +2031,6 @@ public enum RichAnswerEngine {
                 frame,
                 sceneID: scene.id,
                 objectIDs: objectIDSet,
-                evidenceByID: evidenceByID,
                 environment: environment
             ) {
                 return issue
@@ -2069,17 +2048,9 @@ public enum RichAnswerEngine {
             if let issue = validateUIComposition(
                 ui,
                 sceneID: scene.id,
-                evidenceByID: evidenceByID,
                 environment: environment
             ) {
                 return issue
-            }
-            let boundEvidenceIDs = reachableUIEvidenceIDs(in: ui)
-            guard Set(scene.evidenceIDs).isSubset(of: boundEvidenceIDs) else {
-                return missingEvidence(
-                    sceneID: scene.id,
-                    "generated UI does not bind every scene evidence item to a reachable node or data row"
-                )
             }
             return nil
         }
@@ -2088,7 +2059,6 @@ public enum RichAnswerEngine {
             return validateRenderPlan(
                 renderPlan,
                 scene: scene,
-                evidenceByID: evidenceByID,
                 environment: environment
             )
         }
@@ -2103,7 +2073,6 @@ public enum RichAnswerEngine {
     private static func validateRenderPlan(
         _ plan: RichAnswerRenderPlan,
         scene: RichAnswerScene,
-        evidenceByID: [String: RichAnswerEvidence],
         environment: RichAnswerEnvironment
     ) -> RichAnswerDiagnostic? {
         let negotiation = RichAnswerRendererRegistry.defaultRegistry().negotiate(plan: plan)
@@ -2131,23 +2100,6 @@ public enum RichAnswerEngine {
                     message: "renderPlan artifactRef.sizeBytes does not match the current trusted visual-asset read: \(assetID)"
                 )
             }
-        }
-
-        let sceneEvidenceIDs = Set(scene.evidenceIDs)
-        let boundEvidenceIDs = Set(plan.sourceBindings.map(\.evidenceID))
-        guard plan.sourceBindings.allSatisfy({
-            sceneEvidenceIDs.contains($0.evidenceID) && evidenceByID[$0.evidenceID] != nil
-        }) else {
-            return missingEvidence(
-                sceneID: scene.id,
-                "renderPlan sourceBindings must reference evidence IDs declared by this scene and evidence ledger"
-            )
-        }
-        guard sceneEvidenceIDs.isSubset(of: boundEvidenceIDs) else {
-            return missingEvidence(
-                sceneID: scene.id,
-                "renderPlan sourceBindings must cover every scene evidence item"
-            )
         }
 
         return nil
@@ -2210,13 +2162,6 @@ public enum RichAnswerEngine {
             "FlowAssumption", "DependencyNode", "FlowMetric", "DependencyFlow",
         ]
         var hasRoot = false
-        let evidenceBindingComponents: Set<String> = [
-            "EvidenceSnippet",
-            "ArgumentUnit",
-            "CausalEvent",
-            "SpatialPoint",
-        ]
-        var evidenceBindingLines: [String] = []
         for line in lines {
             if line.hasPrefix("$") {
                 guard line.range(
@@ -2245,9 +2190,6 @@ public enum RichAnswerEngine {
             if statementID == "root" {
                 hasRoot = componentName == "RichAnswerRoot"
             }
-            if evidenceBindingComponents.contains(componentName) {
-                evidenceBindingLines.append(line)
-            }
         }
 
         guard hasRoot else {
@@ -2261,26 +2203,12 @@ public enum RichAnswerEngine {
            canvasComponents.contains(where: source.contains) {
             return invalidValue(sceneID: sceneID, "generated UI Canvas components require the Canvas graphics kernel")
         }
-        let bindsEveryEvidence = scene.evidenceIDs.allSatisfy { evidenceID in
-            guard let data = try? JSONEncoder().encode(evidenceID),
-                  let quotedEvidenceID = String(data: data, encoding: .utf8) else { return false }
-            return evidenceBindingLines.contains { line in
-                line.contains(quotedEvidenceID)
-            }
-        }
-        guard bindsEveryEvidence else {
-            return missingEvidence(
-                sceneID: sceneID,
-                "generated UI program must bind every scene evidence item through EvidenceSnippet, ArgumentUnit, CausalEvent, or SpatialPoint"
-            )
-        }
         return nil
     }
 
     private static func validateUIComposition(
         _ ui: RichAnswerUIComposition,
         sceneID: String,
-        evidenceByID: [String: RichAnswerEvidence],
         environment: RichAnswerEnvironment
     ) -> RichAnswerDiagnostic? {
         guard !ui.nodes.isEmpty else {
@@ -2320,7 +2248,6 @@ public enum RichAnswerEngine {
                 nodesByID: nodesByID,
                 datasetsByID: datasetsByID,
                 bindingsByID: bindingsByID,
-                evidenceByID: evidenceByID,
                 environment: environment
             ) {
                 return issue
@@ -2377,9 +2304,6 @@ public enum RichAnswerEngine {
                           y2 <= 1 else {
                         return invalidValue(sceneID: sceneID, "generated UI row \(row.id) has an invalid vector endpoint")
                     }
-                }
-                guard row.evidenceIDs.allSatisfy({ evidenceByID[$0] != nil }) else {
-                    return missingEvidence(sceneID: sceneID, "generated UI row \(row.id) references missing evidence")
                 }
             }
         }
@@ -2495,39 +2419,12 @@ public enum RichAnswerEngine {
             && (hasVaryingNumericState || (acceptsSemanticOnly && hasVaryingSemanticState))
     }
 
-    private static func reachableUIEvidenceIDs(in ui: RichAnswerUIComposition) -> Set<String> {
-        let nodesByID = Dictionary(uniqueKeysWithValues: ui.nodes.map { ($0.id, $0) })
-        var visited: Set<String> = []
-        var active: Set<String> = []
-        func visit(_ nodeID: String, depth: Int) {
-            guard depth <= 7,
-                  let node = nodesByID[nodeID],
-                  !active.contains(nodeID),
-                  !visited.contains(nodeID) else { return }
-            active.insert(nodeID)
-            for childID in node.children {
-                visit(childID, depth: depth + 1)
-            }
-            active.remove(nodeID)
-            visited.insert(nodeID)
-        }
-        visit(ui.rootID, depth: 1)
-        let reachableNodes = ui.nodes.filter { visited.contains($0.id) }
-        let reachableDatasetIDs = Set(reachableNodes.compactMap(\.datasetID))
-        let nodeEvidenceIDs = reachableNodes.flatMap(\.evidenceIDs)
-        let rowEvidenceIDs = ui.datasets
-            .filter { reachableDatasetIDs.contains($0.id) }
-            .flatMap { dataset in dataset.rows.flatMap(\.evidenceIDs) }
-        return Set(nodeEvidenceIDs + rowEvidenceIDs)
-    }
-
     private static func validateUINode(
         _ node: RichAnswerUINode,
         sceneID: String,
         nodesByID: [String: RichAnswerUINode],
         datasetsByID: [String: RichAnswerUIDataset],
         bindingsByID: [String: RichAnswerUIBinding],
-        evidenceByID: [String: RichAnswerEvidence],
         environment: RichAnswerEnvironment
     ) -> RichAnswerDiagnostic? {
         let containerRoles: Set<RichAnswerUIRole> = [.vstack, .hstack, .zstack, .grid, .panel]
@@ -2652,11 +2549,13 @@ public enum RichAnswerEngine {
             return invalidValue(sceneID: sceneID, "generated UI node \(node.id) has invalid bounds")
         }
         if node.role == .image {
-            guard let assetID = node.assetID, isAllowedAssetID(assetID, environment: environment) else {
+            guard let assetID = node.assetID,
+                  isAllowedAssetID(assetID, environment: environment),
+                  environment.verifiedAssetBytes[assetID] != nil else {
                 return RichAnswerDiagnostic(
                     code: .unauthorizedAsset,
                     sceneID: sceneID,
-                    message: "generated UI image \(node.id) references an unauthorized asset"
+                    message: "generated UI image \(node.id) was not read through the trusted visual-asset tool"
                 )
             }
         } else if node.assetID != nil {
@@ -2665,12 +2564,6 @@ public enum RichAnswerEngine {
                 sceneID: sceneID,
                 message: "generated UI node \(node.id) uses an asset outside an image mark"
             )
-        }
-        guard node.evidenceIDs.allSatisfy({ evidenceByID[$0] != nil }) else {
-            return missingEvidence(sceneID: sceneID, "generated UI node \(node.id) references missing evidence")
-        }
-        if node.role == .evidence, node.evidenceIDs.isEmpty {
-            return missingEvidence(sceneID: sceneID, "generated UI evidence node \(node.id) has no source")
         }
         return nil
     }
@@ -3353,14 +3246,10 @@ public enum RichAnswerEngine {
         _ object: RichAnswerObject,
         sceneID: String,
         frameIDs: Set<String>,
-        evidenceByID: [String: RichAnswerEvidence],
         environment: RichAnswerEnvironment
     ) -> RichAnswerDiagnostic? {
         guard object.number.map({ $0.isFinite }) ?? true else {
             return invalidValue(sceneID: sceneID, "object \(object.id) has a non-finite number")
-        }
-        guard object.evidenceIDs.allSatisfy({ evidenceByID[$0] != nil }) else {
-            return missingEvidence(sceneID: sceneID, "object \(object.id) references missing or disallowed evidence")
         }
         if let assetID = object.assetID, !isAllowedAssetID(assetID, environment: environment) {
             return RichAnswerDiagnostic(
@@ -3387,8 +3276,7 @@ public enum RichAnswerEngine {
     private static func validateRelation(
         _ relation: RichAnswerRelation,
         sceneID: String,
-        objectIDs: Set<String>,
-        evidenceByID: [String: RichAnswerEvidence]
+        objectIDs: Set<String>
     ) -> RichAnswerDiagnostic? {
         guard objectIDs.contains(relation.sourceID),
               objectIDs.contains(relation.targetID) else {
@@ -3396,9 +3284,6 @@ public enum RichAnswerEngine {
                 sceneID: sceneID,
                 "relation \(relation.id) references an object that is not present"
             )
-        }
-        guard relation.evidenceIDs.allSatisfy({ evidenceByID[$0] != nil }) else {
-            return missingEvidence(sceneID: sceneID, "relation \(relation.id) references missing or disallowed evidence")
         }
         return nil
     }
@@ -3433,14 +3318,10 @@ public enum RichAnswerEngine {
         _ frame: RichAnswerFrame,
         sceneID: String,
         objectIDs: Set<String>,
-        evidenceByID: [String: RichAnswerEvidence],
         environment: RichAnswerEnvironment
     ) -> RichAnswerDiagnostic? {
         guard frame.objectIDs.allSatisfy({ objectIDs.contains($0) }) else {
             return brokenReference(sceneID: sceneID, "frame \(frame.id) references an object that is not present")
-        }
-        guard frame.evidenceIDs.allSatisfy({ evidenceByID[$0] != nil }) else {
-            return missingEvidence(sceneID: sceneID, "frame \(frame.id) references missing or disallowed evidence")
         }
         if frame.kind == .cartesian {
             guard let xAxis = frame.xAxis, let yAxis = frame.yAxis,
@@ -3510,10 +3391,6 @@ public enum RichAnswerEngine {
 
     private static func brokenReference(sceneID: String, _ message: String) -> RichAnswerDiagnostic {
         RichAnswerDiagnostic(code: .brokenReference, sceneID: sceneID, message: message)
-    }
-
-    private static func missingEvidence(sceneID: String, _ message: String) -> RichAnswerDiagnostic {
-        RichAnswerDiagnostic(code: .missingEvidence, sceneID: sceneID, message: message)
     }
 
     private static func invalidValue(sceneID: String, _ message: String) -> RichAnswerDiagnostic {

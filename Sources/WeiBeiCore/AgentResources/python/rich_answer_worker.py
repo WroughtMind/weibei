@@ -28,8 +28,6 @@ HARD_MAX_EXPRESSION_NODES = 96
 HARD_MAX_EXPRESSION_DEPTH = 24
 HARD_MAX_MAGNITUDE = 1.0e12
 SAFE_ID_CHARS = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-")
-SAFE_SOURCE_PREFIXES = ("[材料：", "[笔记：", "[选区：")
-
 ALLOWED_OPERATIONS = {
     "compute_statistics",
     "fit_regression",
@@ -73,12 +71,9 @@ def is_safe_id(value: str) -> bool:
     return 1 <= len(value) <= 128 and all(char in SAFE_ID_CHARS for char in value)
 
 
-def is_safe_source_evidence(value: str) -> bool:
-    return (
-        4 <= len(value) <= 300
-        and value.startswith(SAFE_SOURCE_PREFIXES)
-        and value.endswith("]")
-        and all(ord(char) >= 32 and char not in {"\x7f", "\x00"} for char in value)
+def is_safe_source_metadata(value: str) -> bool:
+    return 1 <= len(value) <= 300 and all(
+        ord(char) >= 32 and char not in {"\x7f", "\x00"} for char in value
     )
 
 
@@ -203,18 +198,18 @@ def parse_request(raw: Any, input_size: int) -> tuple[dict[str, Any], Limits]:
     if requested_output.get("mimeType") != "application/json":
         raise WorkerError("unsupported_mime_type", "requestedOutput.mimeType must be application/json", "requestedOutput.mimeType")
     as_string(requested_output.get("role"), "requestedOutput.role")
-    source_evidence_ids = request.get("sourceEvidenceIDs")
+    source_evidence_ids = request.get("sourceEvidenceIDs", [])
     if (
         not isinstance(source_evidence_ids, list)
         or len(source_evidence_ids) > 12
-        or len(set(source_evidence_ids)) != len(source_evidence_ids)
-        or not all(isinstance(item, str) and is_safe_source_evidence(item) for item in source_evidence_ids)
+        or not all(isinstance(item, str) and is_safe_source_metadata(item) for item in source_evidence_ids)
     ):
         raise WorkerError(
             "invalid_source_evidence",
-            "sourceEvidenceIDs must be unique safe WeiBei source labels when provided",
+            "sourceEvidenceIDs must be empty or contain printable metadata strings",
             "sourceEvidenceIDs",
         )
+    request["sourceEvidenceIDs"] = list(dict.fromkeys(source_evidence_ids))
     limits = parse_limits(request)
     if input_size > limits.max_input_bytes:
         raise WorkerError("limit_exceeded", "stdin exceeds maxInputBytes", "limits.maxInputBytes")

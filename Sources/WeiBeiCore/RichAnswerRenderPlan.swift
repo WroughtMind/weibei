@@ -474,13 +474,29 @@ public struct RichAnswerRenderSourceBinding: Codable, Hashable, Sendable {
         evidenceID: String,
         target: String,
         role: String,
-        requiredForFallback: Bool = true
+        requiredForFallback: Bool = false
     ) {
         self.id = id
         self.evidenceID = evidenceID
         self.target = target
         self.role = role
         self.requiredForFallback = requiredForFallback
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, evidenceID, target, role, requiredForFallback
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        evidenceID = try container.decode(String.self, forKey: .evidenceID)
+        target = try container.decode(String.self, forKey: .target)
+        role = try container.decode(String.self, forKey: .role)
+        requiredForFallback = try container.decodeIfPresent(
+            Bool.self,
+            forKey: .requiredForFallback
+        ) ?? false
     }
 }
 
@@ -535,7 +551,7 @@ public struct RichAnswerRenderFallback: Codable, Hashable, Sendable {
         text: String,
         renderer: String? = nil,
         artifactID: String? = nil,
-        preservesSourceBinding: Bool = true
+        preservesSourceBinding: Bool = false
     ) {
         self.mode = mode
         self.reason = reason
@@ -543,6 +559,23 @@ public struct RichAnswerRenderFallback: Codable, Hashable, Sendable {
         self.renderer = renderer
         self.artifactID = artifactID
         self.preservesSourceBinding = preservesSourceBinding
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case mode, reason, text, renderer, artifactID, preservesSourceBinding
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        mode = try container.decode(RichAnswerRenderFallbackMode.self, forKey: .mode)
+        reason = try container.decode(String.self, forKey: .reason)
+        text = try container.decode(String.self, forKey: .text)
+        renderer = try container.decodeIfPresent(String.self, forKey: .renderer)
+        artifactID = try container.decodeIfPresent(String.self, forKey: .artifactID)
+        preservesSourceBinding = try container.decodeIfPresent(
+            Bool.self,
+            forKey: .preservesSourceBinding
+        ) ?? false
     }
 }
 
@@ -574,6 +607,35 @@ public struct RichAnswerRenderPlan: Codable, Hashable, Sendable {
         self.artifactRefs = artifactRefs
         self.fallback = fallback
         self.qualityBudget = qualityBudget
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case renderer, specVersion, spec, interactionBindings, sourceBindings
+        case artifactRefs, fallback, qualityBudget
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        renderer = try container.decode(String.self, forKey: .renderer)
+        specVersion = try container.decode(String.self, forKey: .specVersion)
+        spec = try container.decode(RichAnswerRenderSpec.self, forKey: .spec)
+        interactionBindings = try container.decodeIfPresent(
+            [RichAnswerRenderInteractionBinding].self,
+            forKey: .interactionBindings
+        ) ?? []
+        sourceBindings = try container.decodeIfPresent(
+            [RichAnswerRenderSourceBinding].self,
+            forKey: .sourceBindings
+        ) ?? []
+        artifactRefs = try container.decodeIfPresent(
+            [RichAnswerRenderArtifactRef].self,
+            forKey: .artifactRefs
+        ) ?? []
+        fallback = try container.decode(RichAnswerRenderFallback.self, forKey: .fallback)
+        qualityBudget = try container.decodeIfPresent(
+            RichAnswerRenderQualityBudget.self,
+            forKey: .qualityBudget
+        ) ?? RichAnswerRenderQualityBudget()
     }
 
     public var derivedCapabilityRequest: RichAnswerRendererCapabilityRequest {

@@ -745,9 +745,6 @@ final class RichAnswerEvidenceRecorder {
         reply: StudyAgentReply?
     ) -> [String] {
         guard let presentation = reply?.richAnswer else { return [] }
-        let ledgerAssetIDs = Set(
-            presentation.evidenceLedger.flatMap(\.assetIDs).compactMap(nonEmpty)
-        )
         var issues: [String] = []
         for scene in presentation.scenes {
             guard let plan = scene.renderPlan else { continue }
@@ -763,9 +760,6 @@ final class RichAnswerEvidenceRecorder {
                 guard let source = nonEmpty(assetRef.source) else {
                     issues.append("\(scenePrefix) \(assetRef.path) assetRef source is empty")
                     continue
-                }
-                if !ledgerAssetIDs.contains(source) {
-                    issues.append("\(scenePrefix) \(assetRef.path) assetRef source \(source) is absent from evidenceLedger.assetIDs")
                 }
                 if source == caseSnapshot.materialItemID,
                    !isParseableVisualMaterialKind(caseSnapshot.materialKind) {

@@ -2109,7 +2109,7 @@ public actor PiAgentRuntime: StudyAgentRuntime {
                 run.toolTrace.append(
                     "weibei_rich_answer:host_rejected=\(sanitizedDiagnostic(rejectionDetails).prefix(600))"
                 )
-                run.lastError = "PI 返回的可视化结果未通过本地安全与来源校验"
+                run.lastError = "PI 返回的可视化结果未通过本地协议或安全校验"
                 run.richAnswer = nil
             }
             activeRun = run

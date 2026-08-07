@@ -392,15 +392,15 @@ const EvidenceSnippet = defineComponent({
       <button
         className="ra-evidence"
         type="button"
-        aria-label={`回到来源：${hostEvidence?.sourceLabel ?? props.locator}`}
+        aria-label={`回到来源：${hostEvidence?.sourceLabel || props.locator}`}
         data-weibei-control="evidence-snippet"
         data-weibei-control-id={props.evidenceID}
         onClick={() => window.dispatchEvent(new CustomEvent("weibei:evidence", { detail: { evidenceID: props.evidenceID } }))}
       >
         <span className="ra-evidence__mark">{String.fromCharCode(0x301d)}</span>
         <span>
-          <strong>{hostEvidence?.sourceLabel ?? props.locator}</strong>
-          <q>{hostEvidence?.excerpt ?? props.quote}{hostEvidence?.isTruncated ? "…" : ""}</q>
+          <strong>{hostEvidence?.sourceLabel || props.locator}</strong>
+          <q>{hostEvidence?.excerpt || props.quote}{hostEvidence?.isTruncated ? "…" : ""}</q>
           <small>{props.relation}</small>
         </span>
         <i aria-hidden="true">回原文</i>
@@ -677,17 +677,17 @@ export const weiBeiGenerativeLibrary = createLibrary({
     {
       name: "数据与读数",
       components: ["ChartSeries", "LinkedDataChart", "MetricItem", "MetricStrip"],
-      notes: ["图表序列由当前材料或可核验计算提供。", "点击图表只改变本地聚焦状态。"],
+      notes: ["图表序列和说明由 Agent 根据当前问题提供。", "点击图表只改变本地聚焦状态。"],
     },
     {
       name: "原文与因果",
       components: ["ArgumentUnit", "ArgumentReader", "CausalEvent", "CausalTrack"],
-      notes: ["原句、论证角色和 evidenceID 必须成组出现。", "只有先后关系时使用 insufficient，不伪造因果边。"],
+      notes: ["来源定位是可选追溯信息，由 Agent 按需加入。", "只有先后关系时使用 insufficient。"],
     },
     {
       name: "直接实验",
       components: ["TwoPointLineLab", "BalanceExperiment"],
-      notes: ["这些是可复用的知识机制，不是整套固定学科页面。", "模型仍需自行组合控制、解释和证据。"],
+      notes: ["这些是可复用的知识机制，不是整套固定学科页面。", "模型仍需自行组合控制与解释。"],
     },
     {
       name: "空间、分布与传导",
@@ -711,7 +711,7 @@ export const weiBeiGenerativePrompt = weiBeiGenerativeLibrary.prompt({
     "每个界面要围绕一个可验证的学习动作，不得只改文字排版。",
     "围绕一个主要学习目标按需组合多个视觉、控件、读数与步骤；不要为了简洁牺牲真正有帮助的互动，也不要为了丰富拼成网页。",
     "优先使用一个主视觉或主互动，不把每条内容都做成卡片。",
-    "证据必须绑定当前材料的 evidenceID 和 locator。",
+    "来源与证据字段是可选追溯信息，由 Agent 按需加入，不参与界面生成准入。",
     "示例场景只用于理解组件能力，禁止把示例标题、数据或整套结构当作模板复用。",
     "先选择知识对象，再从不同组件组组合；不得调用一个包办标题、数据、互动和结论的整场景组件。",
     "LayeredSpatialView、DistributionBrush 和 DependencyFlow 是跨学科深组件；只在空间关系、抽样偏差或逐层传导确实是问题核心时使用。",

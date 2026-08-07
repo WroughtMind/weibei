@@ -93,6 +93,7 @@ struct RichAnswerHost: View {
             RichAnswerWebRuntimeView(
                 scenes: scenes,
                 evidenceByID: evidenceByID,
+                verifiedAssetIDs: verifiedAssetIDs,
                 expandsOverflow: expandsOverflow,
                 onRequestExpansion: {
                     focusedSceneID = scenes.count == 1 ? scenes.first?.id : nil
@@ -100,7 +101,7 @@ struct RichAnswerHost: View {
                 },
                 onOpenEvidence: onOpenEvidence,
                 onAction: onAction,
-                assetPreview: assetPreview
+                assetPreview: verifiedAssetPreview
             )
             .id(scenes.map(\.id).joined(separator: "|"))
             .frame(minWidth: 0, maxWidth: maxWidth, alignment: .leading)
@@ -128,14 +129,15 @@ struct RichAnswerHost: View {
         RichAnswerSceneHost(
             scene: scene,
             evidenceByID: evidenceByID,
+            verifiedAssetIDs: verifiedAssetIDs,
             expandsOverflow: expandsOverflow,
             onRequestExpansion: {
                 focusedSceneID = scene.id
                 focusPresented = true
             },
             onOpenEvidence: onOpenEvidence,
-            onOpenAsset: onOpenAsset,
-            assetPreview: assetPreview,
+            onOpenAsset: openVerifiedAsset,
+            assetPreview: verifiedAssetPreview,
             onAction: onAction
         )
         .id(scene.id)
@@ -266,6 +268,21 @@ struct RichAnswerHost: View {
         Dictionary(uniqueKeysWithValues: presentation.evidenceLedger.map { ($0.id, $0) })
     }
 
+    private var verifiedAssetIDs: Set<String> {
+        guard let verifiedAssetBytes = presentation.verifiedAssetBytes else { return [] }
+        return Set(verifiedAssetBytes.keys)
+    }
+
+    private func openVerifiedAsset(_ assetID: String) {
+        guard verifiedAssetIDs.contains(assetID) else { return }
+        onOpenAsset(assetID)
+    }
+
+    private func verifiedAssetPreview(_ assetID: String) -> NSImage? {
+        guard verifiedAssetIDs.contains(assetID) else { return nil }
+        return assetPreview(assetID)
+    }
+
     private var ledgerEvidence: [RichAnswerEvidence] {
         let usedEvidenceIDs = Set(presentation.scenes.flatMap { scene in
             scene.evidenceIDs
@@ -295,6 +312,7 @@ private extension RichAnswerScene {
 private struct RichAnswerSceneHost: View {
     let scene: RichAnswerScene
     let evidenceByID: [String: RichAnswerEvidence]
+    let verifiedAssetIDs: Set<String>
     let expandsOverflow: Bool
     var onRequestExpansion: () -> Void
     var onOpenEvidence: (RichAnswerEvidence) -> Void
@@ -308,6 +326,7 @@ private struct RichAnswerSceneHost: View {
                 scene: scene,
                 program: program,
                 evidenceByID: evidenceByID,
+                verifiedAssetIDs: verifiedAssetIDs,
                 expandsOverflow: expandsOverflow,
                 onRequestExpansion: onRequestExpansion,
                 onOpenEvidence: onOpenEvidence,
@@ -319,6 +338,7 @@ private struct RichAnswerSceneHost: View {
                 scene: scene,
                 renderPlan: renderPlan,
                 evidenceByID: evidenceByID,
+                verifiedAssetIDs: verifiedAssetIDs,
                 expandsOverflow: expandsOverflow,
                 onRequestExpansion: onRequestExpansion,
                 onOpenEvidence: onOpenEvidence,

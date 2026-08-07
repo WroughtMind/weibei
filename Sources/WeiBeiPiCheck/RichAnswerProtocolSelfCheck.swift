@@ -14,7 +14,7 @@ func runRichAnswerProtocolSelfCheck() throws {
     try checkWholeCallRenderPlanBudgetIsolation()
     try checkTrustedAssetAdmissionAndPersistence()
     try checkGeneratedUISequencePrimitiveRenders()
-    try checkGeneratedUITreeRejectsUnboundEvidenceAndFalseFamily()
+    try checkGeneratedUITreeLeavesEvidenceAndFamilyJudgmentToAgent()
     try checkGeneratedUITreeRejectsMalformedProtocol()
     try checkGeneratedUITreeRejectsPseudoInteractionAndMissingObligations()
     try checkProfessionalJudgmentContractsRejectReverseClaims()
@@ -958,6 +958,112 @@ private func checkTrustedAssetAdmissionAndPersistence() throws {
         )
     }
 
+    var optionalSourcePlanObject = try richAnswerJSONObject(
+        from: JSONEncoder().encode(plan(assetID: assetIDs[0], sceneID: "optional-source"))
+    )
+    optionalSourcePlanObject.removeValue(forKey: "sourceBindings")
+    var optionalSourceFallback = optionalSourcePlanObject["fallback"] as! [String: Any]
+    optionalSourceFallback.removeValue(forKey: "preservesSourceBinding")
+    optionalSourcePlanObject["fallback"] = optionalSourceFallback
+    let optionalSourcePlan = try JSONDecoder().decode(
+        RichAnswerRenderPlan.self,
+        from: JSONSerialization.data(withJSONObject: optionalSourcePlanObject)
+    )
+    try richAnswerRequire(
+        optionalSourcePlan.sourceBindings.isEmpty
+            && !optionalSourcePlan.fallback.preservesSourceBinding,
+        "renderPlan source metadata defaults to empty when omitted"
+    )
+
+    let sourceFreePlanScene = RichAnswerScene(
+        id: "source-free-render-plan",
+        title: "已读取图像",
+        family: .imageAndOverlay,
+        objects: [],
+        renderPlan: optionalSourcePlan
+    )
+    let sourceFreePlanEnvelope = RichAnswerEnvelope(
+        contextRevision: contextRevision,
+        narrative: "已读取图像。\n<!-- weibei-scene:source-free-render-plan -->",
+        expressionPlan: RichAnswerExpressionPlan(
+            action: .observe,
+            summary: "展示本轮真实读取的图像",
+            families: [.imageAndOverlay],
+            preferredSurface: .inline,
+            directManipulation: false
+        ),
+        scenes: [sourceFreePlanScene],
+        evidenceLedger: [],
+        fallback: RichAnswerFallback(text: "保留图像说明正文。", reason: "图像不可用")
+    )
+    let sourceFreePlanPresentation = RichAnswerEngine.prepare(
+        envelope: sourceFreePlanEnvelope,
+        environment: RichAnswerEnvironment(
+            contextRevision: contextRevision,
+            allowedSourceLabels: [],
+            allowedAssetIDs: [assetIDs[0]],
+            verifiedAssetBytes: [assetIDs[0]: assetByteCount]
+        )
+    )
+    let reopenedSourceFreePlan = try JSONDecoder().decode(
+        AgentMessage.self,
+        from: JSONEncoder().encode(AgentMessage(
+            role: .assistant,
+            text: sourceFreePlanPresentation.narrative,
+            source: nil,
+            backend: .pi,
+            richAnswer: sourceFreePlanPresentation
+        ))
+    )
+    try richAnswerRequire(
+        sourceFreePlanPresentation.mode == .rich
+            && sourceFreePlanPresentation.evidenceLedger.isEmpty
+            && reopenedSourceFreePlan.richAnswer?.mode == .rich,
+        "a source-free renderPlan stays rich after a verified read and reopen"
+    )
+
+    var unverifiedPersistedPlan = sourceFreePlanPresentation
+    unverifiedPersistedPlan.verifiedAssetBytes = nil
+    let rejectedUnverifiedPlan = AgentMessage(
+        role: .assistant,
+        text: unverifiedPersistedPlan.narrative,
+        source: nil,
+        backend: .pi,
+        richAnswer: unverifiedPersistedPlan
+    ).richAnswer
+    try richAnswerRequire(
+        rejectedUnverifiedPlan?.mode == .narrativeOnly
+            && rejectedUnverifiedPlan?.diagnostics.contains(where: {
+                $0.code == .unauthorizedAsset
+            }) == true,
+        "a persisted renderPlan cannot replay without its verified asset record"
+    )
+
+    var evidenceClaimedPlan = unverifiedPersistedPlan
+    evidenceClaimedPlan.scenes[0].evidenceIDs = ["claimed-evidence"]
+    evidenceClaimedPlan.evidenceLedger = [
+        RichAnswerEvidence(
+            id: "claimed-evidence",
+            sourceLabel: "模型声明的来源",
+            excerpt: "模型声明这张图已读取",
+            assetIDs: [assetIDs[0]]
+        ),
+    ]
+    let rejectedEvidenceClaim = AgentMessage(
+        role: .assistant,
+        text: evidenceClaimedPlan.narrative,
+        source: nil,
+        backend: .pi,
+        richAnswer: evidenceClaimedPlan
+    ).richAnswer
+    try richAnswerRequire(
+        rejectedEvidenceClaim?.mode == .narrativeOnly
+            && rejectedEvidenceClaim?.diagnostics.contains(where: {
+                $0.code == .unauthorizedAsset
+            }) == true,
+        "model-authored evidence metadata cannot authorize an unread local asset"
+    )
+
     let scenes = assetIDs.enumerated().map { offset, assetID in
         let sceneID = "asset-scene-\(offset + 1)"
         return RichAnswerScene(
@@ -1073,6 +1179,83 @@ private func checkTrustedAssetAdmissionAndPersistence() throws {
         "an allowed but unread assetRef is not admitted as trusted local material"
     )
 
+    let sourceFreeUIScene = RichAnswerScene(
+        id: "source-free-ui-image",
+        title: "已读取图像",
+        family: .imageAndOverlay,
+        objects: [],
+        ui: RichAnswerUIComposition(
+            rootID: "image-canvas",
+            nodes: [
+                RichAnswerUINode(
+                    id: "image-canvas",
+                    role: .canvas,
+                    children: ["image-mark"]
+                ),
+                RichAnswerUINode(
+                    id: "image-mark",
+                    role: .image,
+                    assetID: assetIDs[0]
+                ),
+            ]
+        )
+    )
+    let sourceFreeUIEnvelope = RichAnswerEnvelope(
+        contextRevision: contextRevision,
+        narrative: "已读取图像。\n<!-- weibei-scene:source-free-ui-image -->",
+        expressionPlan: RichAnswerExpressionPlan(
+            action: .observe,
+            summary: "展示本轮真实读取的图像",
+            families: [.imageAndOverlay],
+            preferredSurface: .inline,
+            directManipulation: false
+        ),
+        scenes: [sourceFreeUIScene],
+        evidenceLedger: [],
+        fallback: RichAnswerFallback(
+            text: "保留图像说明正文。",
+            reason: "图像不可用"
+        )
+    )
+    let sourceFreeUI = RichAnswerEngine.prepare(
+        envelope: sourceFreeUIEnvelope,
+        environment: RichAnswerEnvironment(
+            contextRevision: contextRevision,
+            allowedSourceLabels: [],
+            allowedAssetIDs: [assetIDs[0]],
+            verifiedAssetBytes: [assetIDs[0]: assetByteCount]
+        )
+    )
+    let sourceFreeUIReopened = try JSONDecoder().decode(
+        AgentMessage.self,
+        from: JSONEncoder().encode(AgentMessage(
+            role: .assistant,
+            text: sourceFreeUI.narrative,
+            source: nil,
+            backend: .pi,
+            richAnswer: sourceFreeUI
+        ))
+    )
+    try richAnswerRequire(
+        sourceFreeUI.mode == .rich
+            && sourceFreeUI.evidenceLedger.isEmpty
+            && sourceFreeUIReopened.richAnswer?.mode == .rich,
+        "a source-free UI image stays rich after a verified read and reopen"
+    )
+    let unreadSourceFreeUI = RichAnswerEngine.prepare(
+        envelope: sourceFreeUIEnvelope,
+        environment: RichAnswerEnvironment(
+            contextRevision: contextRevision,
+            allowedSourceLabels: [],
+            allowedAssetIDs: [assetIDs[0]]
+        )
+    )
+    try richAnswerRequire(
+        unreadSourceFreeUI.mode == .narrativeOnly
+            && unreadSourceFreeUI.diagnostics.contains(where: { $0.code == .unauthorizedAsset }),
+        "source metadata cannot authorize a UI image that was not really read"
+    )
+
     let aliases = Dictionary(
         uniqueKeysWithValues: assetIDs.prefix(4).map { ($0, "persistent-\($0)") }
     )
@@ -1091,6 +1274,11 @@ private func checkTrustedAssetAdmissionAndPersistence() throws {
     try richAnswerRequire(
         reopened.richAnswer?.mode == .rich
             && reopened.richAnswer?.scenes.count == 4
+            && reopened.richAnswer?.verifiedAssetBytes == Dictionary(
+                uniqueKeysWithValues: assetIDs.prefix(4).map {
+                    (aliases[$0]!, assetByteCount)
+                }
+            )
             && reopened.richAnswer?.scenes.allSatisfy({ scene in
                 guard let renderPlan = scene.renderPlan,
                       let originalAssetID = assetIDs.first(where: {
@@ -2316,10 +2504,16 @@ private func checkOpenUIProgramRejectsUnsafeVariants() throws {
     evidenceProgram.source = evidenceProgram.source
         .replacingOccurrences(of: "\"program-source\"", with: "\"other-source\"")
     missingEvidenceBinding.scenes[0].program = evidenceProgram
-    try assertOpenUIProgramRejected(
-        missingEvidenceBinding,
-        expectedCode: .missingEvidence,
-        "every scene evidence item must be bound inside the OpenUI program"
+    let missingEvidenceBindingPresentation = RichAnswerEngine.prepare(
+        envelope: missingEvidenceBinding,
+        environment: RichAnswerEnvironment(
+            contextRevision: "revision-openui",
+            allowedSourceLabels: ["[材料：函数样例]"]
+        )
+    )
+    try richAnswerRequire(
+        missingEvidenceBindingPresentation.mode == .rich,
+        "OpenUI source metadata does not have to match the scene evidence ledger"
     )
 
     var quotedOnlyEvidence = openUIProgramEnvelope()
@@ -2330,10 +2524,16 @@ private func checkOpenUIProgramRejectsUnsafeVariants() throws {
             with: "evidence = NarrativeBlock(\"来源\", \"program-source\", \"hint\")"
         )
     quotedOnlyEvidence.scenes[0].program = quotedOnlyProgram
-    try assertOpenUIProgramRejected(
-        quotedOnlyEvidence,
-        expectedCode: .missingEvidence,
-        "T1 cannot satisfy evidence binding by merely quoting an evidence id in a non-evidence component"
+    let quotedOnlyEvidencePresentation = RichAnswerEngine.prepare(
+        envelope: quotedOnlyEvidence,
+        environment: RichAnswerEnvironment(
+            contextRevision: "revision-openui",
+            allowedSourceLabels: ["[材料：函数样例]"]
+        )
+    )
+    try richAnswerRequire(
+        quotedOnlyEvidencePresentation.mode == .rich,
+        "OpenUI leaves natural-language source placement to the Agent"
     )
 
     var mixedLegacyOperations = openUIProgramEnvelope()
@@ -2357,7 +2557,7 @@ private func checkOpenUIProgramRejectsUnsafeVariants() throws {
     )
     try richAnswerRequire(
         repeatedConclusionPresentation.mode == .rich,
-        "inline OpenUI allows a conclusion narrative block when structure, source binding, and safety remain valid"
+        "inline OpenUI allows a conclusion narrative block when structure and safety remain valid"
     )
 }
 
@@ -2580,10 +2780,38 @@ private func checkGeneratedUITreeRendersWithoutSources() throws {
             && !presentation.diagnostics.contains(where: { $0.code == .missingEvidence }),
         "a self-contained generated UI stays rich without course sources"
     )
+
+    var sourceFreeJSON = try richAnswerJSONObject(from: JSONEncoder().encode(envelope))
+    sourceFreeJSON.removeValue(forKey: "evidenceLedger")
+    var sourceFreeScenes = sourceFreeJSON["scenes"] as! [[String: Any]]
+    sourceFreeScenes[0].removeValue(forKey: "evidenceIDs")
+    sourceFreeJSON["scenes"] = sourceFreeScenes
+    let omittedMetadataPresentation = RichAnswerEngine.prepare(
+        data: try JSONSerialization.data(withJSONObject: sourceFreeJSON),
+        fallbackText: envelope.fallback.text,
+        environment: RichAnswerEnvironment(
+            contextRevision: "revision-ui",
+            allowedSourceLabels: []
+        )
+    )
+    try richAnswerRequire(
+        omittedMetadataPresentation.mode == .rich,
+        "omitting evidenceLedger and scene evidenceIDs does not reject a rich answer"
+    )
+    let minimalEvidence = try JSONDecoder().decode(
+        RichAnswerEvidence.self,
+        from: Data(#"{"id":"optional-trace"}"#.utf8)
+    )
+    try richAnswerRequire(
+        minimalEvidence.sourceLabel.isEmpty && minimalEvidence.excerpt.isEmpty,
+        "optional evidence display text defaults to empty strings"
+    )
 }
 
-private func checkGeneratedUITreeRejectsUnboundEvidenceAndFalseFamily() throws {
+private func checkGeneratedUITreeLeavesEvidenceAndFamilyJudgmentToAgent() throws {
     var unboundEvidence = generatedUIEnvelope()
+    unboundEvidence.evidenceLedger[0].sourceLabel = "[材料：不存在]"
+    unboundEvidence.evidenceLedger[0].excerpt = "这段来源说明由 Agent 自行负责。"
     for nodeIndex in unboundEvidence.scenes[0].ui!.nodes.indices {
         unboundEvidence.scenes[0].ui!.nodes[nodeIndex].evidenceIDs = []
         if unboundEvidence.scenes[0].ui!.nodes[nodeIndex].role == .evidence {
@@ -2604,9 +2832,9 @@ private func checkGeneratedUITreeRejectsUnboundEvidenceAndFalseFamily() throws {
         )
     )
     try richAnswerRequire(
-        unboundPresentation.mode == .narrativeOnly
-            && unboundPresentation.diagnostics.contains(where: { $0.code == .missingEvidence }),
-        "T2 evidence must reach an actual UI node or data row instead of living on the scene shell"
+        unboundPresentation.mode == .rich
+            && !unboundPresentation.diagnostics.contains(where: { $0.code == .missingEvidence }),
+        "T2 source metadata does not have to match host labels or reach a UI node or data row"
     )
 
     var unreachableEvidence = generatedUIEnvelope()
@@ -2635,9 +2863,9 @@ private func checkGeneratedUITreeRejectsUnboundEvidenceAndFalseFamily() throws {
         )
     )
     try richAnswerRequire(
-        unreachableEvidencePresentation.mode == .narrativeOnly
-            && unreachableEvidencePresentation.diagnostics.contains(where: { $0.code == .missingEvidence }),
-        "T2 evidence in an unused dataset cannot satisfy reachable UI binding"
+        unreachableEvidencePresentation.mode == .rich
+            && !unreachableEvidencePresentation.diagnostics.contains(where: { $0.code == .missingEvidence }),
+        "T2 source metadata in an unused dataset does not block the visual"
     )
 
     var idleBinding = generatedUIEnvelope()

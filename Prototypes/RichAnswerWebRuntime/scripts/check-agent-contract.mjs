@@ -19,6 +19,7 @@ const agentResourcesRoot = join(
   "Sources/WeiBeiCore/AgentResources",
 );
 const extensionPath = join(agentResourcesRoot, "extension.ts");
+const workerPath = join(agentResourcesRoot, "python/rich_answer_worker.py");
 const stubsPath = join(scriptDirectory, "agent-contract-stubs.d.ts");
 
 const program = ts.createProgram(
@@ -49,6 +50,10 @@ assert.equal(
 );
 
 const extensionSource = await readFile(extensionPath, "utf8");
+const workerSource = await readFile(workerPath, "utf8");
+assert.match(extensionSource, /Array\.from\(new Set\(params\.sourceEvidenceIDs \?\? \[\]\)\)/u);
+assert.match(workerSource, /request\.get\("sourceEvidenceIDs", \[\]\)/u);
+assert.match(workerSource, /request\["sourceEvidenceIDs"\] = list\(dict\.fromkeys\(source_evidence_ids\)\)/u);
 assert.match(
   extensionSource,
   /pi\.on\("before_agent_start"[\s\S]*?verifiedVisualAssetBytes\.clear\(\);/u,
@@ -185,12 +190,82 @@ try {
       registeredHandlers.set(event, handler);
     },
   });
+  assert.doesNotThrow(() => extensionModule.validateRichAnswerProgram({
+    id: "optional-evidence-program",
+    operations: [],
+    program: {
+      source: [
+        "$focus = 0",
+        "$event = 0",
+        'u1 = ArgumentUnit("claim", "主张", "先看事实。", "模型自行判断这句话的作用。")',
+        'u2 = ArgumentUnit("reason", "理由", "再看关系。", "这里没有来源编号也可以阅读。")',
+        'reader = ArgumentReader("focus", $focus, "论证", [u1, u2])',
+        'e1 = CausalEvent("起点", "条件", "context", "背景", "起点", "medium", "先记录条件。")',
+        'e2 = CausalEvent("结果", "变化", "result", "结果", "随后", "insufficient", "模型保留不确定性。")',
+        'track = CausalTrack("event", $event, "变化路径", [e1, e2])',
+        'stage = LearningStage("visual", "", [reader, track])',
+        'root = RichAnswerRoot("解释", "模型判断", "来源编号可省略。", "document", [stage])',
+      ].join("\n"),
+      capabilities: [],
+      directManipulation: true,
+      maxHeight: 640,
+    },
+  }), "OpenUI argument and causal components accept omitted evidence IDs");
   const catalogTool = registeredTools.get("weibei_ui_catalog");
+  const computeArtifactTool = registeredTools.get("weibei_compute_artifact");
   const richAnswerTool = registeredTools.get("weibei_rich_answer");
   const beforeAgentStart = registeredHandlers.get("before_agent_start");
-  assert.ok(beforeAgentStart && catalogTool && richAnswerTool);
+  assert.ok(beforeAgentStart && catalogTool && computeArtifactTool && richAnswerTool);
 
   await beforeAgentStart({ systemPrompt: "测试系统提示" });
+  const computedWithoutSources = await computeArtifactTool.execute("compute-source-free", {
+    contextRevision: "agent-contract-revision",
+    requestID: "source-free-statistics",
+    operation: "compute_statistics",
+    data: { values: [1, 2, 3] },
+    requestedOutput: {
+      id: "source-free-stats",
+      kind: "json_spec",
+      mimeType: "application/json",
+      role: "statistics",
+    },
+    reason: "验证来源元数据可以省略",
+  });
+  assert.deepEqual(
+    computedWithoutSources.details.artifacts[0].sourceEvidenceIDs,
+    [],
+    "deterministic computation defaults omitted source metadata to an empty list",
+  );
+  const runtimeWorkerPath = join(runtimeRoot, "python/rich_answer_worker.py");
+  const runtimeWorkerSource = await readFile(runtimeWorkerPath, "utf8");
+  await writeFile(
+    runtimeWorkerPath,
+    runtimeWorkerSource.replace(
+      '"sourceEvidenceIDs": request["sourceEvidenceIDs"],',
+      '"sourceEvidenceIDs": ["worker-owned-source"],',
+    ),
+    "utf8",
+  );
+  const computedWithDifferentSources = await computeArtifactTool.execute("compute-source-mismatch", {
+    contextRevision: "agent-contract-revision",
+    requestID: "source-mismatch-statistics",
+    operation: "compute_statistics",
+    data: { values: [1, 2, 3] },
+    requestedOutput: {
+      id: "source-mismatch-stats",
+      kind: "json_spec",
+      mimeType: "application/json",
+      role: "statistics",
+    },
+    sourceEvidenceIDs: ["request-owned-source"],
+    reason: "验证来源元数据不参与结果准入",
+  });
+  assert.deepEqual(
+    computedWithDifferentSources.details.artifacts[0].sourceEvidenceIDs,
+    ["worker-owned-source"],
+    "worker-owned source metadata must not be compared with the request",
+  );
+  await writeFile(runtimeWorkerPath, runtimeWorkerSource, "utf8");
   const catalogRequest = {
     learningAction: "explain",
     knowledgeShapes: ["spatialLayers"],
@@ -199,12 +274,10 @@ try {
     knowledgeRelations: ["位置关系"],
     knowledgeProcesses: [],
     interactions: ["none"],
-    sourceMedium: "text",
     surface: "inline",
     representationNeeds: {
       spatialDimension: "twoDimensional",
       temporalBehavior: "static",
-      dataOrigin: "conceptual",
       coordinateFrame: "cartesian",
       computeNeed: "none",
       precisionNeed: "illustrative",
@@ -259,7 +332,6 @@ try {
       id: "source-free-scene",
       title: "相对位置示意",
       family: "timeAndSpace",
-      evidenceIDs: [],
       renderPlan: {
         renderer: "weibei.spatial.map",
         specVersion: "weibei.spatial.map.v1",
@@ -269,13 +341,11 @@ try {
           features: [{ id: "origin", kind: "point", x: 0.5, y: 0.5, label: "示意点" }],
         },
         interactionBindings: [],
-        sourceBindings: [],
         artifactRefs: [],
         fallback: {
           mode: "narrativeOnly",
           reason: "示意图暂不可用",
           text: "示意点位于画面中央。",
-          preservesSourceBinding: false,
         },
         qualityBudget: {
           maxNodes: 16,
@@ -292,7 +362,6 @@ try {
         },
       },
     }],
-    evidenceLedger: [],
     fallback: {
       text: "示意点位于画面中央。",
       reason: "解释性示意不可用",
@@ -306,8 +375,8 @@ try {
       dataOrigin: "userProvided",
     },
   });
-  const normalizedDisclosureResult = await richAnswerTool.execute(
-    "rich-normalized-disclosure",
+  const modelOwnedDisclosureResult = await richAnswerTool.execute(
+    "rich-model-owned-disclosure",
     {
       ...sourceFreeRequest,
       narrative: [
@@ -316,17 +385,47 @@ try {
       ].join("\n"),
     },
   );
-  assert.match(
-    normalizedDisclosureResult.details.envelope.narrative,
-    /^用户本轮给定数据。/u,
-    "the host adds the canonical data-origin disclosure instead of rejecting honest wording",
+  assert.equal(
+    modelOwnedDisclosureResult.details.envelope.narrative,
+    [
+      "这不是用户本轮给定数据，而是模型自己的说明。",
+      "<!-- weibei-scene:source-free-scene -->",
+    ].join("\n"),
+    "the host leaves source and data-origin wording to the model",
   );
 
   await catalogTool.execute("catalog-conceptual", catalogRequest);
   const sourceFreeResult = await richAnswerTool.execute("rich-source-free", sourceFreeRequest);
   assert.equal(sourceFreeResult.details.kind, "rich_answer");
   assert.deepEqual(sourceFreeResult.details.envelope.evidenceLedger, []);
+  assert.deepEqual(sourceFreeResult.details.envelope.scenes[0].evidenceIDs, []);
+  assert.deepEqual(sourceFreeResult.details.envelope.scenes[0].renderPlan.sourceBindings, []);
+  assert.equal(
+    sourceFreeResult.details.envelope.scenes[0].renderPlan.fallback.preservesSourceBinding,
+    false,
+  );
 
+  await catalogTool.execute("catalog-minimal-source-metadata", catalogRequest);
+  const minimalSourceMetadata = await richAnswerTool.execute(
+    "rich-minimal-source-metadata",
+    {
+      ...sourceFreeRequest,
+      evidenceLedger: [{ id: "optional-source-note" }],
+    },
+  );
+  assert.deepEqual(
+    minimalSourceMetadata.details.envelope.evidenceLedger[0],
+    {
+      id: "optional-source-note",
+      sourceLabel: "",
+      excerpt: "",
+      tags: [],
+      assetIDs: [],
+    },
+    "optional trace metadata is normalized without becoming a generation gate",
+  );
+
+  await beforeAgentStart({ systemPrompt: "测试系统提示" });
   await catalogTool.execute("catalog-source-required", {
     ...catalogRequest,
     representationNeeds: {
@@ -334,10 +433,14 @@ try {
       dataOrigin: "sourceObserved",
     },
   });
-  await assert.rejects(
-    () => richAnswerTool.execute("rich-source-required", sourceFreeRequest),
-    /不能省略真实来源/u,
-    "source-observed content cannot bypass evidence validation with empty arrays",
+  const sourceObservedWithoutMetadata = await richAnswerTool.execute(
+    "rich-source-observed-without-metadata",
+    sourceFreeRequest,
+  );
+  assert.equal(
+    sourceObservedWithoutMetadata.details.kind,
+    "rich_answer",
+    "catalog data origin does not turn source metadata into a generation requirement",
   );
 
   await beforeAgentStart({ systemPrompt: "测试系统提示" });
@@ -348,16 +451,21 @@ try {
       coordinateFrame: "geographic",
     },
   });
-  await assert.rejects(
-    () => richAnswerTool.execute("rich-geographic-source-required", sourceFreeRequest),
-    /不能省略真实来源/u,
-    "real geographic coordinates cannot enter the source-free path",
+  const geographicCatalogWithoutMetadata = await richAnswerTool.execute(
+    "rich-geographic-without-metadata",
+    sourceFreeRequest,
+  );
+  assert.equal(
+    geographicCatalogWithoutMetadata.details.kind,
+    "rich_answer",
+    "geographic intent does not require source metadata",
   );
 
   await beforeAgentStart({ systemPrompt: "测试系统提示" });
   await catalogTool.execute("catalog-payload-geographic", catalogRequest);
-  await assert.rejects(
-    () => richAnswerTool.execute("rich-payload-geographic", {
+  const geographicPayloadWithoutMetadata = await richAnswerTool.execute(
+    "rich-payload-geographic",
+    {
       ...sourceFreeRequest,
       scenes: [{
         ...sourceFreeRequest.scenes[0],
@@ -370,9 +478,12 @@ try {
           },
         },
       }],
-    }),
-    /真实地理坐标不能通过 cartesian 目录声明进入无来源路径/u,
-    "a cartesian source-free catalog cannot smuggle in a geographic map payload",
+    },
+  );
+  assert.equal(
+    geographicPayloadWithoutMetadata.details.kind,
+    "rich_answer",
+    "the model owns coordinate semantics instead of a source gate",
   );
 
   await beforeAgentStart({ systemPrompt: "测试系统提示" });
@@ -407,22 +518,51 @@ try {
       }],
     }),
     (error) => {
-      assert.match(String(error), /不是本轮 weibei_ui_catalog 返回的能力/u);
       assert.match(String(error), /spec\.image\.kind 必须是 assetRef/u);
       return true;
     },
-    "a source-free catalog cannot submit an asset-backed renderer from the global index",
+    "a registered renderer is model-selectable, while untrusted embedded image data remains blocked",
   );
-  await assert.rejects(
-    () => richAnswerTool.execute("rich-fake-source-label", {
+  const modelOwnedSourceLabel = await richAnswerTool.execute(
+    "rich-model-owned-source-label",
+    {
       ...sourceFreeRequest,
       narrative: [
         "[材料：不存在] 这是概念示意。",
         "<!-- weibei-scene:source-free-scene -->",
       ].join("\n"),
-    }),
-    /没有对应 evidenceLedger 的来源标签/u,
-    "source-free text cannot fabricate a material label",
+      scenes: [{
+        ...sourceFreeRequest.scenes[0],
+        evidenceIDs: ["scene-only-source"],
+        renderPlan: {
+          ...sourceFreeRequest.scenes[0].renderPlan,
+          sourceBindings: [{
+            id: "model-owned-binding",
+            evidenceID: "binding-only-source",
+            target: "spec.features",
+            role: "model-owned",
+          }],
+        },
+      }],
+      evidenceLedger: [{
+        id: "ledger-only-source",
+        sourceLabel: "[材料：不存在]",
+        excerpt: "这段来源说明由模型自行负责。",
+        assetIDs: [],
+        tags: ["model-owned"],
+        isTruncated: false,
+      }],
+    },
+  );
+  assert.equal(
+    modelOwnedSourceLabel.details.kind,
+    "rich_answer",
+    "the host does not classify or fact-check natural-language source claims",
+  );
+  assert.equal(
+    modelOwnedSourceLabel.details.envelope.evidenceLedger[0].sourceLabel,
+    "[材料：不存在]",
+    "source labels and mismatched trace IDs remain model-owned metadata",
   );
   await assert.rejects(
     () => richAnswerTool.execute("rich-source-free-asset", {
@@ -450,8 +590,8 @@ try {
         isTruncated: false,
       }],
     }),
-    /无来源富回答不能引用当前材料资产/u,
-    "adding an evidence ledger cannot bypass a source-free catalog declaration",
+    /必须恰好对应一个同 ID 的 artifactRef/u,
+    "source metadata stays optional while local file access still requires an authorized artifact reference",
   );
 
   await beforeAgentStart({ systemPrompt: "测试系统提示" });
@@ -462,8 +602,9 @@ try {
       dataOrigin: "sourceObserved",
     },
   });
-  await assert.rejects(
-    () => richAnswerTool.execute("rich-cross-source-asset", {
+  const crossSourceMetadata = await richAnswerTool.execute(
+    "rich-cross-source-metadata",
+    {
       ...sourceFreeRequest,
       narrative: [
         "[选区：测试材料] 这是材料中的空间点。",
@@ -495,9 +636,12 @@ try {
         tags: [],
         isTruncated: false,
       }],
-    }),
-    /不属于同一来源的材料资产/u,
-    "evidence from material A cannot bind material B's globally allowed image",
+    },
+  );
+  assert.equal(
+    crossSourceMetadata.details.kind,
+    "rich_answer",
+    "the host does not infer whether two pieces of source metadata describe the same material",
   );
 
   const longText = "空".repeat(100_000);

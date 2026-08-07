@@ -736,14 +736,11 @@ type RichAnswerFaultCode =
   | "unknown_role"
   | "duplicate_id"
   | "narrative_flow"
-  | "source_not_available"
-  | "excerpt_mismatch"
   | "unauthorized_asset"
   | "scene_layer_choice"
   | "broken_reference"
   | "invalid_frame"
   | "invalid_binding"
-  | "missing_evidence"
   | "invalid_openui_program"
   | "invalid_render_plan"
   | "invalid_t2_ui"
@@ -827,7 +824,7 @@ function richAnswerNextActionInstruction(remainingAttempts: number): string {
   if (remainingAttempts <= 0) {
     return "三次富回答提交已耗尽：停止提交 weibei_rich_answer，改用普通文本诚实降级；正文只回答用户问题和真实限制，不得提富回答校验、协议失败、repair_fault、payload 或内部工具错误，也不能声称富回答已生成。";
   }
-  return "丢弃被拒绝的坏 payload，下一次必须重新提交完整 weibei_rich_answer payload（schemaVersion、contextRevision、narrative、expressionPlan、完整 scenes、evidenceLedger、fallback 全部重发）；不能只解释原因，也不能在坏树基础上局部 patch。";
+  return "丢弃被拒绝的坏 payload，下一次必须重新提交完整 weibei_rich_answer 核心 payload（schemaVersion、contextRevision、narrative、expressionPlan、完整 scenes、fallback）；可选追溯字段按需附带，不能只解释原因，也不能在坏树基础上局部 patch。";
 }
 
 function richAnswerPathSpecificRepair(input: RichAnswerFaultInput): string {
@@ -839,7 +836,7 @@ function richAnswerPathSpecificRepair(input: RichAnswerFaultInput): string {
       input.line !== undefined ? `line=${input.line}` : undefined,
       input.column !== undefined ? `column=${input.column}` : undefined,
     ].filter(Boolean).join("，");
-    return `先修 ${input.jsonPath}${target ? `（${target}）` : ""}：${input.humanFixHint}；然后检查同一层已有的引用、证据绑定和 narrative 场景标记，最后完整重发。`;
+    return `先修 ${input.jsonPath}${target ? `（${target}）` : ""}：${input.humanFixHint}；然后检查同一层引用和 narrative 场景标记，最后完整重发。`;
   }
   return `没有更深 jsonPath 时，不要猜局部补丁；根据 code=${input.code} 和 humanFixHint 重新规划整个表达层，再完整重发。`;
 }
@@ -849,20 +846,20 @@ function richAnswerLayerReplanHint(input: RichAnswerFaultInput): string {
     case "invalid_openui_program":
       return "当前 program 深组件未过受控程序校验：若只是签名、状态类型、引用或行列错误，按目录签名修正 program；若目录组件不贴合本题学习对象，重新选择 renderPlan 或 ui。";
     case "invalid_render_plan":
-      return "当前 renderPlan 未过注册、版本、字段、安全或预算校验：若知识形状仍匹配本轮注册专业渲染器，修正高层 spec 和绑定；若不匹配，重新选择 program 或 ui。";
+      return "当前 renderPlan 未过注册、版本、字段、安全或预算校验：若知识形状仍匹配本轮注册专业渲染器，修正高层 spec；若不匹配，重新选择 program 或 ui。";
     case "invalid_t2_ui":
       if (input.message.includes("超出预算")) {
         return "当前 ui 通用原语的表达层适合本题，但节点、数据行或 binding 超出硬预算：优先保留同一学习动作，减少采样行、合并共享数据集并删除无关 binding；不要只因为数量超限就换成 program。";
       }
       return "当前 ui 通用原语未通过节点、数据、binding 或资源边界校验：先按错误位置修正客观结构；若所选层确实不贴合当前学习动作，再改选 program、renderPlan 或更朴素的 ui。";
     case "weak_ui":
-      return "当前回答的视觉表达质量需要重新规划：这类内容、形态和审美建议不再作为运行时硬拒绝；下一次优先保持结论正确，再让 Agent 自主选择 program、renderPlan、ui 或普通文本。";
+      return "当前回答的视觉表达质量需要重新规划：这类内容、形态和审美建议不再作为运行时硬拒绝；下一次由 Agent 自主选择 program、renderPlan、ui 或普通文本。";
     case "scene_layer_choice":
       return "每个 scene 必须只选一条表达出口：program、renderPlan 或 ui，不要同时提交、不要三条都空。";
     case "catalog_required":
       return "先重新调用 weibei_ui_catalog 取得本轮相关能力，再基于返回子集选择 program、renderPlan 或 ui。";
     default:
-      return "先保留当前学习目标和结论，再按错误位置修复；如果修复会让所选出口变成硬凑或无法表达，重新在 program、renderPlan 与 ui 之间选择。";
+      return "先保留当前学习目标和专业结论，再按错误位置修复；如果修复会让所选出口变成硬凑或无法表达，重新在 program、renderPlan 与 ui 之间选择。";
   }
 }
 
@@ -895,17 +892,18 @@ function richAnswerReplanningFeedback(
     primarySignal,
     layerChoice: {
       allowed: ["program", "renderPlan", "ui"],
-      chooseProgramWhen: "目录返回的深组件签名能真实表达当前知识对象和状态联动，并且不需要自造组件、脚本、SVG、网页壳或任意配置。",
+      chooseProgramWhen: "目录返回的深组件签名能真实表达当前知识对象和状态联动，且不需要自造组件、脚本、SVG、网页壳或任意配置。",
       chooseRenderPlanWhen: "本轮目录返回的注册专业渲染器匹配知识形状，且模型只需给高层 spec、交互绑定和质量预算，不需要 raw option、脚本、HTML 或 SVG path。",
-      chooseUIWhen: "没有贴合的深组件或注册专业渲染器，或当前问题需要用受控节点、数据集、图层、binding 和读数组合成长尾形态。",
+      chooseUIWhen: "没有贴合的深组件或注册专业渲染器，或当前问题需要用受控节点、数据集、图层、binding 和读数组合成长尾形态；来源追溯由 Agent 按需添加。",
     },
     nextAttemptChecklist: [
       "先保持原问题的学习目标和专业结论，不把修复变成换题或删减关键信息。",
       richAnswerLayerReplanHint(input),
-      "remainingAttempts 仍大于 0，当前轮必须先完成一次完整富回答重试；只有次数耗尽，或重新核对后确认现有能力无法诚实表达时，才停止工具并使用正常文本。",
+      "来源字段是可选追溯信息，不是生成许可；缺少来源、来源措辞或绑定本身都不能成为停止富回答的理由。",
+      "remainingAttempts 仍大于 0，当前轮必须先完成一次完整富回答重试；只有次数耗尽，或重新核对后确认现有能力无法诚实表达且继续生成会误导用户时，才停止工具并使用正常文本。",
       "expressionPlan 必须覆盖 scene.family、学习收益、交互结果和首选表面；scenes 必须与 narrative 的场景标记一一对应。",
-      "program、renderPlan、ui 三选一；如果换出口，删除另外两条出口的全部字段，并同步已有的 evidenceLedger、scene.evidenceIDs、sourceBindings 和 narrative。",
-      "完整重发 schemaVersion、contextRevision、narrative、expressionPlan、scenes、evidenceLedger、fallback；不要只补 jsonPath 那一个字段。",
+      "program、renderPlan、ui 三选一；如果换出口，删除另外两条出口的全部字段并完整重发。",
+      "完整重发 schemaVersion、contextRevision、narrative、expressionPlan、scenes、fallback；可选追溯字段按需附带，不要只补 jsonPath 那一个字段。",
     ],
     forbiddenActions: [
       "不要把“富回答校验失败”“协议未通过”“payload 错误”“repair_fault”写进用户正文。",
@@ -1741,11 +1739,11 @@ function richAnswerSourceBindings(
     currentItems: richAnswerCurrentItems(snapshot, searchedCourseItemIDs),
     rules: {
       sourceLabels:
-        "只有实际引用课程内容时才提交 evidenceLedger；一旦提交，sourceLabel 必须逐字使用 readableSourceLabels 或本轮课程搜索返回的 evidenceLabel，不得伪造来源。",
+        "evidenceLedger、scene.evidenceIDs 与 sourceBindings 都是可选追溯信息，由 Agent 根据回答需要决定是否填写；它们不决定富回答能否生成，工具也不对自然语言来源主张做真假裁决。",
       assetIDs:
-        "引用课程图像、地图或设计叠层时，只能使用 allowedAssetIDs 中的当前材料 item.id；image.assetID 与 evidenceLedger.assetIDs 都必须写 item.id，不写文件名、标签、注册名或标题。无材料资产的解释性或确定性展示不得假装引用原图。",
+        "本地图像只能使用 allowedAssetIDs 中当前开放的 item.id；这是文件访问边界，与是否填写 evidenceLedger 或 sourceBindings 无关。",
       excerpts:
-        "一旦提交 evidenceLedger，excerpt 必须来自同一来源标签当前可读文本中的短摘录；可直接逐字复制 exactExcerptCandidates，也可从本轮已读原文选择其他真实短句。没有可读来源不限制生成式视觉表达。",
+        "excerpt 和 sourceLabel 只用于用户可见的追溯与跳转；是否附带以及如何表述由 Agent 根据上下文自行判断。",
     },
     imageOverlayGuidance: [
       "只有当前材料真实提供图像、地图或设计资产，且 allowedAssetIDs 非空时，才做图像叠层。",
@@ -2317,9 +2315,9 @@ const OPENUI_COMPONENT_SIGNATURES = {
   MetricStrip: "MetricStrip(items)",
   ExecutionFrame: "ExecutionFrame(label, activeLine, values, changedIndices, explanation)",
   ExecutionTrack: "ExecutionTrack(stateName, $activeStep, title, codeLines, frames)",
-  ArgumentUnit: "ArgumentUnit(role, roleLabel, text, note, evidenceID)",
+  ArgumentUnit: "ArgumentUnit(role, roleLabel, text, note, evidenceID?)",
   ArgumentReader: "ArgumentReader(stateName, $activeUnit, title, units)",
-  CausalEvent: "CausalEvent(time, label, kind, kindLabel, relationFromPrevious, confidence, detail, evidenceID)",
+  CausalEvent: "CausalEvent(time, label, kind, kindLabel, relationFromPrevious, confidence, detail, evidenceID?)",
   CausalTrack: "CausalTrack(stateName, $activeEvent, title, events)",
   TwoPointLineLab: "TwoPointLineLab(x1Name, $x1, y1Name, $y1, x2Name, $x2, y2Name, $y2, title, xMinimum, xMaximum, yMinimum, yMaximum, height)",
   BalanceExperiment: "BalanceExperiment(stateName, $shift, title, leftLabel, rightLabel, forwardLabel, reverseLabel, caption)",
@@ -2342,7 +2340,7 @@ const OPENUI_COMPONENT_GUIDANCE: Partial<Record<OpenUIComponentName, string>> = 
   RichAnswerRoot: "Agent 回答流中的生成式视觉体验块根；title/summary 只作局部导向，不得形成第二套正文；layout: workbench|comparison|reasoning|flow|document|timeline|track",
   LearningStage: "title 只标记当前操作区域，可留空或使用 null；role: controls|visual|explanation|evidence|full",
   NarrativeBlock: "用于局部状态解释、读数含义或互动反馈，不得复述正文或另写摘要/结论；tone: mechanism|diagnosis|neutral",
-  EvidenceSnippet: "只承担来源定位与回原文；evidenceID 必须来自当前 scene.evidenceIDs",
+  EvidenceSnippet: "只承担可选的来源定位与回原文；evidenceID 由 Agent 负责",
   FunctionPlot: "family 当前固定写 \"quadratic\"，表示由本地内核绘制 y=a·x²；不要把公式或表达式传进 family",
   ProcessStepper: "先逐行声明 s1 = ReasonStep(...) 等步骤，再写 [s1, s2]；组件引用不加引号，也不要嵌套组件调用",
   ChartSeries: "kind: line|bar；color: cinnabar|jade|ochre|indigo|umber|moss",
@@ -2598,23 +2596,11 @@ const RICH_ANSWER_ASSET_DEPENDENCIES = ["none", "currentSourceAssetRequired"] as
 interface RichAnswerRepresentationNeeds {
   spatialDimension: typeof RICH_ANSWER_SPATIAL_DIMENSIONS[number];
   temporalBehavior: typeof RICH_ANSWER_TEMPORAL_BEHAVIORS[number];
-  dataOrigin: typeof RICH_ANSWER_DATA_ORIGINS[number];
+  dataOrigin?: typeof RICH_ANSWER_DATA_ORIGINS[number];
   coordinateFrame: typeof RICH_ANSWER_COORDINATE_FRAMES[number];
   computeNeed: typeof RICH_ANSWER_COMPUTE_NEEDS[number];
   precisionNeed: typeof RICH_ANSWER_PRECISION_NEEDS[number];
   assetDependency: typeof RICH_ANSWER_ASSET_DEPENDENCIES[number];
-}
-
-function richAnswerRepresentationAllowsSourceFree(
-  needs?: RichAnswerRepresentationNeeds,
-): boolean {
-  return needs?.assetDependency === "none" &&
-    needs.coordinateFrame !== "geographic" &&
-    (
-      needs.dataOrigin === "conceptual" ||
-      needs.dataOrigin === "userProvided" ||
-      needs.dataOrigin === "deterministicSimulation"
-    );
 }
 
 const RICH_ANSWER_T2_PRIMITIVE_ROLES = [
@@ -3291,9 +3277,6 @@ function richAnswerRendererRepresentationCoverage(
     !support.temporalBehaviors.includes(needs.temporalBehavior)
       ? `temporalBehavior:${needs.temporalBehavior}`
       : undefined,
-    !support.dataOrigins.includes(needs.dataOrigin)
-      ? `dataOrigin:${needs.dataOrigin}`
-      : undefined,
     !support.coordinateFrames.includes(needs.coordinateFrame)
       ? `coordinateFrame:${needs.coordinateFrame}`
       : undefined,
@@ -3334,7 +3317,7 @@ function richAnswerRendererMinimalSpecSkeleton(
   if (registration.id === "weibei.spatial.map" && replacementAssetID === undefined) {
     return {
       ...skeleton,
-      coordinateHint: "当前没有可渲染底图；使用来源支持的示意坐标，不得伪造地理精度",
+      coordinateHint: "当前没有本地底图；坐标模式和精度说明由 Agent 根据问题自行决定",
       mapAsset: { kind: "none" },
     };
   }
@@ -3434,8 +3417,8 @@ function richAnswerRendererCapabilityDeclarations(
           allowedAssetIDs,
         ),
         placeholderRule:
-          "骨架只展示字段形状；如出现 CURRENT_MATERIAL_ASSET_ID，必须替换为本轮 sourceBindings 中真实可用的当前材料资产 ID。其他示例值必须换成由当前问题、本轮材料或确定性内核支持的语义与数据，不得照抄骨架。",
-        rule: "模型只提交高层 spec、interactionBindings、sourceBindings、fallback 与 qualityBudget；不得提交 raw option、脚本、HTML、SVG path、外链或任意渲染代码。",
+          "骨架只展示字段形状；如出现 CURRENT_MATERIAL_ASSET_ID，必须替换为本轮 allowedAssetIDs 中开放的本地资源 ID。其他示例值必须换成适合当前问题的语义与数据，不得照抄骨架。",
+        rule: "模型只提交高层 spec、interactionBindings、fallback 与 qualityBudget；sourceBindings 可选；不得提交 raw option、脚本、HTML、SVG path、外链或任意渲染代码。",
       },
       fallbackModes: ["narrativeOnly"],
       qualityBudgetCeiling: registration.budgets,
@@ -3449,12 +3432,12 @@ const COMPOSABLE_PRIMITIVE_CATALOG = [
   "图元：axis|line|path|point|area|shape|bar|dotMatrix|vector|region|image|label；统一使用归一化坐标与魏碑主题令牌。label 是画布标注，必须引用带 label 的 dataset.rows；同一 dataset 的图形受 binding 控制时，label 必须共享同一 bindingID，不能图形隐藏后留下孤立标签；画布外说明文字使用 text。",
   "函数曲线与真实数据关系本来适合 line/path/point/metric；但物体、空间、过程、机制、证据链不能只剩曲线和读数，必须加入 shape/vector/region/area/sequence/image/bar/dotMatrix 等能表达对象或状态的通用图元。",
   "非过程题不能只用 sequence、metric、text、label 或 grid 改排版；数量、空间、机制、证据、图像、比较和计算题，可绑定控件必须驱动 line/path/point/area/shape/bar/dotMatrix/vector 等非文字图元或空间编码产生可检查变化。",
-  "图像材料：当路线、区域、比例或构图判断依赖原图位置时，必须把本轮现场 course.catalog 中当前材料的 item.id 写入 image.assetID，并在对应 evidenceLedger.assetIDs 中声明，再作为 canvas 底图叠加 path/region/point/label；只有材料已给出完整数值几何时才可重绘，并明确标成示意关系。",
+  "图像材料：需要使用当前原图时，把本轮 allowedAssetIDs 中的 item.id 写入 image.assetID，再作为 canvas 底图叠加 path/region/point/label；evidenceLedger 是否附带由 Agent 决定，不参与资源准入。",
   "序列：sequence 用于通用步骤、证据链、周期节点、过程状态和时间节点；必须引用 dataset，至少两行，每行 label 是用户可见语义，bindingID 可选；不要自造 stepList/list/items 字段。",
   "控件：slider|toggle|scrubber|probe 通过 bindingID 连接共享数值状态；select/reset 用作选择或重置入口，不冒充数值 binding。最多两个主要控件，但允许多个联动读数与图元。每个 binding 必须同时连接一个可见可绑定控件和至少一个可达的 metric、sequence 或视觉图元，不能只放一个不会改变画面的滑杆。",
   "数据：dataset.rows 提供 x/y、可选 x2/y2、value/result/label；带 bindingID 的图元和 metric 会按 value 插值或选择当前行。",
   "语义：决定结论的条件、变量、方向或关系必须出现在可见的 label/text/axis/dataset 标签里，并随对应图元或状态可检查；不能只画无标注路径，也不能只在 UI 外正文里解释。",
-  "证据：如使用 evidence 节点或数据行 evidenceIDs，它们必须来自本轮 evidenceLedger；只做定位，不复制原文。无材料依赖的解释性、公式或确定性展示可以不放证据节点。",
+  "证据：evidence 节点、evidenceIDs 与 evidenceLedger 都是可选追溯信息，不参与视觉生成准入。",
 ].join("\n");
 
 const OPENUI_STATE_SHAPE_GUIDANCE = [
@@ -3468,30 +3451,30 @@ const OPENUI_STATE_SHAPE_GUIDANCE = [
 
 const RICH_ANSWER_FAMILY_CONTRACT = [
   "富回答 schemaVersion 必须为 2；每个 scene 必须且只能提交 program、renderPlan、ui 三条表达出口之一。program 是深组件程序；renderPlan 是注册专业渲染器计划；ui 是可组合原语树。",
-  "富回答先过内容与专业性，再过视觉。提交前必须核对结论、公式、单位、数值、方向、因果边界和学科术语；课程事实、材料观测数据和材料资产必须由本轮材料验证，其他展示可以由当前问题、通用公式、用户本轮给定数据、本轮材料（如有）或本地确定性内核核对。用户给定数据只按给定值展示，必须明确标注且不得改写成课程事实；无法核对的数字、关系和模拟结果不得让界面假装计算，也不得用漂亮图形掩盖知识错误。",
-  "需要富回答时，先形成表达意图：用户真正卡住的判断、正文难呈现的知识对象/关系/过程、初始状态应出现的现象、一次操作前后应改变的状态；如引用材料，再补上真实证据。然后调用目录选择能力，不要先选图或组件再倒填内容。",
+  "富回答先过内容与专业性，再过视觉。Agent 负责判断结论、公式、单位、数值、方向、因果边界和来源表述；宿主只校验协议、资源和运行安全，不用规则系统替代模型做事实裁决。",
+  "需要富回答时，先形成表达意图：用户真正卡住的判断、正文难呈现的知识对象/关系/过程、初始状态应出现的现象、一次操作前后应改变的状态；然后调用目录选择能力，不要先选图或组件再倒填内容。",
   "生成式 UI 是 Agent 回答流中的生成式视觉体验块，不是第二篇回答、独立小网页或完整网页外壳。它可以按问题需要组合多个视觉、控件、读数、局部解释和实验步骤。",
-  "narrative 是本次富回答最终显示的完整正文：建议先给结论；引用课程事实或材料资产时就近标注真实来源，无材料依赖的解释性、用户本轮给定数据、公式或确定性展示则明确标为概念示意、用户本轮给定数据、公式演示、确定性计算或确定性模拟。用场景标记把视觉体验插在最有帮助的位置，优先用自然段连接解释与场景，避免页面级标题和标题—摘要—结论式第二篇文章；工具成功后不得再生成一份不同正文。",
+  "narrative 是本次富回答最终显示的完整正文：建议先给结论；来源、生成依据和不确定性由 Agent 按实际语境自然说明，不要求固定标签或固定前缀。用场景标记把视觉体验插在最有帮助的位置，优先用自然段连接解释与场景，避免页面级标题和标题—摘要—结论式第二篇文章；工具成功后不得再生成一份不同正文。",
   `提交富回答前必须先调用 ${RICH_ANSWER_CATALOG_TOOL}，让魏碑按本轮学习动作、知识形状、来源媒介、直接操作和表面重量返回相关深组件、注册专业渲染器与通用原语提示；组件目录可以再次调用，但不得绕过。`,
   "优先选择最贴合问题的表达出口：标准图表或统计形状匹配注册专业渲染器时先用 renderPlan；只有深组件能提供渲染器没有的领域实验或状态联动时才用 program；两者都不贴合的长尾组合才用 ui。",
-  "program 中模型负责选择深组件、布局、数据、$state 反应变量和动作；renderPlan 中模型只给注册渲染器的高层 spec、交互绑定、引用材料时的来源绑定和质量预算；ui 中模型负责组合容器、画布图元、数据集与 bindings；魏碑本地运行时统一负责渲染、联动与风格。",
+  "program 中模型负责选择深组件、布局、数据、$state 反应变量和动作；renderPlan 中模型只给注册渲染器的高层 spec、交互绑定、可选来源元数据和质量预算；ui 中模型负责组合容器、画布图元、数据集与 bindings；魏碑本地运行时统一负责渲染、联动与风格。",
   "ui 的画面必须能独立读出支撑结论的关键语义：用可见标签标明决定性条件、变量、方向、对应关系和当前状态，并把标签与实际图元、数据行或 binding 联动；禁止只画漂亮但无语义的线、点和区域。",
   "expressionPlan.knowledgeObjects 中声明的关键数值、比例、公式片段、采样尺寸和阈值，建议在 ui 的可见 label/text/axis/dataset 标签里原样或等价出现；不要只把它们留在计划或 narrative。",
   "sequence 单独只适合真实过程或状态演进；数量、空间、机制、证据、图像、比较和计算题必须让可绑定控件改变非文字图元或空间编码，不能只把正文拆成步骤、指标、卡片、表格或时间线。",
-  "图像、地图和设计题若结论依赖原图中的空间位置，ui 必须使用本轮现场 course.catalog 中当前材料的 item.id 作为 image.assetID，在对应 evidenceLedger.assetIDs 中声明，并作为画布底图叠加标注；不得脱离原图凭空重画路线、区域、比例或构图。材料已提供完整数值坐标时可画明确标注为示意的关系图。",
+  "图像、地图和设计题需要当前原图时，ui 使用本轮 allowedAssetIDs 中的 item.id 作为 image.assetID 并作为画布底图叠加标注；来源字段仍然可选。",
   "不要用固定的一图一控件或单场景模板限制表达。单个问题默认只提交一个最有帮助的 scene、一个主要操作和必要联动读数；相互关联的视觉、控件、读数和步骤优先组合进同一个 scene，只有两个体验确实独立时才拆分。每个元素都必须服务当前问题，不得用装饰、重复内容或穷举节点凑页面。",
   "保持多学科、多形态：根据知识对象选择函数图、数据图、执行轨、论证阅读、因果时间线、坐标实验、平衡实验或其他目录能力，不要把不同问题压成同一种外观。",
   "禁止在 program 中重复 Agent 正文的整套标题、摘要、结论或 evidenceLedger.excerpt，也不得从头重讲同一答案。RichAnswerRoot 与 LearningStage 只提供体验块内部的局部导向；证据组件只承担来源定位和回原文。",
   "NarrativeBlock 允许呈现局部状态解释、读数含义、诊断或互动反馈，但不得复述正文、扩写背景、另做摘要或再下一个完整结论。",
   "placement 与 preferredSurface 应按体验复杂度选择 inline、expanded 或 focus。复杂体验可以自然展开或进入专注模式；专注模式仍然是同一回答的延展，不得变成独立网页。",
-  "program 只允许使用本轮目录工具返回的组件签名；每行只能声明一个有限状态或一个组件。状态默认是数字；只有签名明确要求时才可使用字符串、数字数组或字符串数组。参数必须严格匹配签名。不得自造组件、嵌套组件调用、SVG path、HTML、CSS、JavaScript、Query、Mutation、URL、iframe 或外部资源。",
+  "program 使用已注册组件签名；目录返回相关签名供 Agent 选择，但宿主不按本轮知识分类限制已注册组件。每行只能声明一个有限状态或一个组件。状态默认是数字；只有签名明确要求时才可使用字符串、数字数组或字符串数组。参数必须严格匹配签名。不得自造组件、嵌套组件调用、SVG path、HTML、CSS、JavaScript、Query、Mutation、URL、iframe 或外部资源。",
   "program 的组件引用必须先声明后引用；引用数组使用 [step1, step2] 这种不加引号的组件 id，不能写成字符串数组。枚举参数只能使用目录指导列出的固定值，不能把公式或自然语言塞进枚举位。",
   "文字已经足够时不要调用富回答；禁止使用网站导航、页面级页头、功能菜单、营销区块或其他完整网页外壳，也不要用第二套标题—摘要—结论结构重新包装正文。",
-  "renderPlan 必须使用本轮目录返回的 renderer 与 specVersion；标准图表只提交 chartKind、title、series(name, values, xValues?, chartKind?, unit?)、xLabels、xAxisLabel、yAxisLabel、caption、focusEnabled、binCount、samples 这些高层字段，不提交 raw option、脚本、HTML、SVG path 或外链。scatter 用等长 xValues/values 数值对；line/bar/area/mixed 使用 xLabels；mixed 图必须给每个 series 声明相同 unit；跨单位混合图需要另一个已注册渲染器。",
+  "renderPlan 使用 rendererIndex 中已注册的 renderer 与 specVersion；matchingRenderers 只是建议，不是准入白名单。标准图表只提交 chartKind、title、series(name, values, xValues?, chartKind?, unit?)、xLabels、xAxisLabel、yAxisLabel、caption、focusEnabled、binCount、samples 这些高层字段，不提交 raw option、脚本、HTML、SVG path 或外链。scatter 用等长 xValues/values 数值对；line/bar/area/mixed 使用 xLabels；mixed 图必须给每个 series 声明相同 unit；跨单位混合图需要另一个已注册渲染器。",
   "program 的函数图、联动数据图和双点坐标实验由 Canvas 内核计算，不要提交采样路径；program、renderPlan 与 ui 都无法诚实表达对象时，才使用正常文本，不要假造可视化。",
   "压力样例不是场景模板。先选择知识对象，再组合不同组件；禁止复用样例标题、数据和整套结构。",
   "所有状态名和组件 id 必须唯一；$状态、组件引用和 root 组件树必须完整可达，不能有重复、悬空、循环或孤立声明。",
-  "如使用 EvidenceSnippet、ArgumentUnit、CausalEvent 或 SpatialPoint，它们的 evidenceID 必须属于 scene.evidenceIDs，并与本轮 evidenceLedger 中的真实材料对应；普通文本里出现 id 不算证据绑定。无材料依赖的解释性、公式或确定性展示可以让这些证据数组为空。",
+  "EvidenceSnippet、ArgumentUnit、CausalEvent、SpatialPoint、scene.evidenceIDs 与 evidenceLedger 都是可选追溯层；不用它们也不能阻止视觉生成。",
   "工具会在拒绝 program 时批量返回场景、行列、预期组件签名和修正动作。按完整诊断修正；仍有遗漏时可再修一轮，不要用改写字符串绕过校验。",
   "工具拒绝富回答时会返回 weibei.rich_answer.repair_fault；必须保留其中的 code、jsonPath 与 humanFixHint，并按 replanningFeedback 在 program、renderPlan 与 ui 之间重新选择或修正后完整重发 RichAnswerUI。不能解释原因代替提交，也不能在坏树基础上局部 patch。remainingAttempts 为 0 时停止富回答并诚实使用普通文本；正文只回答用户问题和真实限制，不得提富回答校验、协议失败、repair_fault、payload 或内部工具错误。",
   OPENUI_STATE_SHAPE_GUIDANCE,
@@ -3499,7 +3482,7 @@ const RICH_ANSWER_FAMILY_CONTRACT = [
 ].join("\n");
 
 const RICH_ANSWER_BRIEF =
-  `文本默认；确需生成式视觉时，先用 read 读取 skill://rich-answer-director，再按它的建议最多读取一个专业 Skill，然后调用 ${RICH_ANSWER_CATALOG_TOOL} 取得本轮真实能力。没有可读来源不等于禁止富回答：把 representationNeeds.dataOrigin 明确声明为 conceptual、userProvided 或 deterministicSimulation，assetDependency 声明为 none、coordinateFrame 声明为非 geographic 后，不引用课程事实或材料资产的解释性、用户本轮给定数据、公式或确定性展示可以不带证据；宿主会在需要时补上规范生成依据。真实地理坐标仍需来源，无来源空间关系改用 schematic；引用课程内容时仍必须绑定本轮真实来源。`;
+  `文本默认；确需生成式视觉时，先用 read 读取 skill://rich-answer-director，再按它的建议最多读取一个专业 Skill，然后调用 ${RICH_ANSWER_CATALOG_TOOL} 取得本轮真实能力。来源、证据和绑定字段都可为空，也不作为生成许可；Agent 自行判断是否提供追溯信息。`;
 
 const richAnswerIdentifierSchema = Type.String({ minLength: 1, maxLength: LIMITS.identifier });
 const richAnswerPointSchema = Type.Object(
@@ -3948,11 +3931,8 @@ const richAnswerUIResetNodeSchema = Type.Object(
 const richAnswerUIEvidenceNodeSchema = Type.Object(
   {
     ...richAnswerUINodeStyleFields,
+    ...richAnswerUINodeEvidenceFields,
     role: Type.Literal("evidence"),
-    evidenceIDs: Type.Array(richAnswerIdentifierSchema, {
-      minItems: 1,
-      maxItems: LIMITS.richAnswerEvidence,
-    }),
   },
   { additionalProperties: false },
 );
@@ -4204,7 +4184,7 @@ const richAnswerRenderPlanSourceBindingSchema = Type.Object(
     evidenceID: richAnswerIdentifierSchema,
     target: Type.String({ minLength: 1, maxLength: LIMITS.richAnswerRenderPlanTarget }),
     role: Type.String({ minLength: 1, maxLength: 80 }),
-    requiredForFallback: Type.Boolean(),
+    requiredForFallback: Type.Optional(Type.Boolean()),
   },
   { additionalProperties: false },
 );
@@ -4230,7 +4210,7 @@ const richAnswerRenderPlanFallbackSchema = Type.Object(
     text: Type.String({ minLength: 1, maxLength: LIMITS.richAnswerNarrative }),
     renderer: Type.Optional(Type.String({ minLength: 1, maxLength: 160 })),
     artifactID: Type.Optional(richAnswerIdentifierSchema),
-    preservesSourceBinding: Type.Boolean(),
+    preservesSourceBinding: Type.Optional(Type.Boolean()),
   },
   { additionalProperties: false },
 );
@@ -4258,9 +4238,9 @@ const richAnswerRenderPlanSchema = Type.Object(
     interactionBindings: Type.Array(richAnswerRenderPlanInteractionBindingSchema, {
       maxItems: LIMITS.richAnswerRenderPlanBindings,
     }),
-    sourceBindings: Type.Array(richAnswerRenderPlanSourceBindingSchema, {
+    sourceBindings: Type.Optional(Type.Array(richAnswerRenderPlanSourceBindingSchema, {
       maxItems: LIMITS.richAnswerRenderPlanSourceBindings,
-    }),
+    })),
     artifactRefs: Type.Array(richAnswerRenderPlanArtifactRefSchema, {
       maxItems: LIMITS.richAnswerRenderPlanArtifacts,
     }),
@@ -4270,7 +4250,7 @@ const richAnswerRenderPlanSchema = Type.Object(
   {
     additionalProperties: false,
     description:
-      "注册专业渲染器计划。只能引用目录返回的 renderer/specVersion，并提交 spec、interactionBindings、sourceBindings、artifactRefs、fallback、qualityBudget；禁止 raw option/script/html/svgPath，安全和预算由工具返回 repair_fault。",
+      "注册专业渲染器计划。renderer/specVersion 必须来自 rendererIndex；matchingRenderers 只是建议。提交 spec、interactionBindings、artifactRefs、fallback、qualityBudget；sourceBindings 可选；禁止 raw option/script/html/svgPath，安全和预算由工具返回 repair_fault。",
   },
 );
 const richAnswerSceneCommonFields = {
@@ -4288,9 +4268,9 @@ const richAnswerSceneCommonFields = {
       "calculationAndConstraints",
     ].map((value) => Type.Literal(value)),
   ),
-  evidenceIDs: Type.Array(richAnswerIdentifierSchema, {
+  evidenceIDs: Type.Optional(Type.Array(richAnswerIdentifierSchema, {
     maxItems: LIMITS.richAnswerEvidence,
-  }),
+  })),
   placement: Type.Optional(
     Type.Union([Type.Literal("inline"), Type.Literal("expanded"), Type.Literal("focus")]),
   ),
@@ -4330,7 +4310,7 @@ const richAnswerEnvelopeSchema = Type.Object(
     narrative: Type.String({
       minLength: 1,
       maxLength: LIMITS.richAnswerNarrative,
-      description: "本次最终显示的完整回答正文；实际引用课程内容时使用真实来源标签。可用独占一行的 <!-- weibei-scene:场景ID --> 把场景插入正文中间",
+      description: "本次最终显示的完整回答正文；来源、生成依据和不确定性由 Agent 自行判断，可用独占一行的 <!-- weibei-scene:场景ID --> 把场景插入正文中间",
     }),
     expressionPlan: Type.Object(
       {
@@ -4402,12 +4382,12 @@ const richAnswerEnvelopeSchema = Type.Object(
       minItems: 1,
       maxItems: LIMITS.richAnswerScenes,
     }),
-    evidenceLedger: Type.Array(
+    evidenceLedger: Type.Optional(Type.Array(
       Type.Object(
         {
           id: richAnswerIdentifierSchema,
-          sourceLabel: Type.String({ minLength: 1, maxLength: 400 }),
-          excerpt: Type.String({ minLength: 1, maxLength: LIMITS.richAnswerExcerpt }),
+          sourceLabel: Type.Optional(Type.String({ maxLength: 400 })),
+          excerpt: Type.Optional(Type.String({ maxLength: LIMITS.richAnswerExcerpt })),
           isTruncated: Type.Optional(Type.Boolean()),
           tags: Type.Optional(
             Type.Array(Type.String({ minLength: 1, maxLength: 120 }), { maxItems: 16 }),
@@ -4419,7 +4399,7 @@ const richAnswerEnvelopeSchema = Type.Object(
         { additionalProperties: false },
       ),
       { maxItems: LIMITS.richAnswerEvidence },
-    ),
+    )),
     fallback: Type.Object(
       {
         text: Type.String({ minLength: 1, maxLength: LIMITS.richAnswerNarrative }),
@@ -4473,28 +4453,9 @@ function normalizedEvidenceText(value: string): string {
   return value.normalize("NFKC").replace(/\s+/gu, " ").trim();
 }
 
-function canonicalRichAnswerEvidenceLabel(
-  rawLabel: string,
-  availableLabels: Iterable<string>,
-): string | undefined {
-  const raw = normalizedEvidenceText(rawLabel);
-  const matches = Array.from(availableLabels).filter((label) => {
-    const comparableLabel = normalizedEvidenceText(label);
-    if (raw === comparableLabel) return true;
-    const inner = comparableLabel.startsWith("[") && comparableLabel.endsWith("]")
-      ? comparableLabel.slice(1, -1)
-      : comparableLabel;
-    const separator = inner.search(/[:：]/u);
-    const title = separator >= 0 ? inner.slice(separator + 1) : inner;
-    return raw === inner || raw === title || raw === `[${title}]`;
-  });
-  return matches.length === 1 ? matches[0] : undefined;
-}
-
 interface RichAnswerEvidenceSource {
   text: string;
   isTruncated: boolean;
-  itemID?: string;
 }
 
 function richAnswerEvidenceText(
@@ -4503,13 +4464,9 @@ function richAnswerEvidenceText(
 ): Map<string, RichAnswerEvidenceSource> {
   const evidence = new Map<string, RichAnswerEvidenceSource>();
   if (snapshot.selection?.text.trim()) {
-    const focusedItemID = snapshot.focus?.selectionText?.trim() === snapshot.selection.text.trim()
-      ? snapshot.focus.materialItemID
-      : undefined;
     evidence.set(`[选区：${snapshot.selection.title}]`, {
       text: snapshot.selection.text,
       isTruncated: snapshot.selection.isTruncated,
-      itemID: focusedItemID,
     });
   }
   snapshot.course.items
@@ -4517,7 +4474,6 @@ function richAnswerEvidenceText(
     .forEach((item) => evidence.set(courseEvidenceLabel(snapshot.course, item), {
       text: item.searchText,
       isTruncated: item.isTruncated,
-      itemID: item.id,
     }));
   return evidence;
 }
@@ -4706,7 +4662,7 @@ interface RichAnswerRenderPlanSourceBindingParam {
   evidenceID: string;
   target: string;
   role: string;
-  requiredForFallback: boolean;
+  requiredForFallback?: boolean;
   [key: string]: unknown;
 }
 
@@ -4738,7 +4694,7 @@ interface RichAnswerRenderPlanFallbackParam {
   text: string;
   renderer?: string;
   artifactID?: string;
-  preservesSourceBinding: boolean;
+  preservesSourceBinding?: boolean;
   [key: string]: unknown;
 }
 
@@ -4762,7 +4718,7 @@ interface RichAnswerRenderPlanParam {
   specVersion: string;
   spec: RichAnswerRenderPlanSpecParam;
   interactionBindings: RichAnswerRenderPlanInteractionBindingParam[];
-  sourceBindings: RichAnswerRenderPlanSourceBindingParam[];
+  sourceBindings?: RichAnswerRenderPlanSourceBindingParam[];
   artifactRefs: RichAnswerRenderPlanArtifactRefParam[];
   fallback: RichAnswerRenderPlanFallbackParam;
   qualityBudget: RichAnswerRenderPlanQualityBudgetParam;
@@ -4777,7 +4733,7 @@ interface RichAnswerSceneParam {
   relations?: RichAnswerRelationParam[];
   operations?: RichAnswerOperationParam[];
   frames?: RichAnswerFrameParam[];
-  evidenceIDs: string[];
+  evidenceIDs?: string[];
   program?: RichAnswerUIProgramParam;
   renderPlan?: RichAnswerRenderPlanParam;
   ui?: RichAnswerUICompositionParam;
@@ -4918,13 +4874,6 @@ const RICH_ANSWER_RENDER_INTERACTION_FIELDS = new Set([
   "actionName",
   "knowledgeStateEffect",
 ]);
-const RICH_ANSWER_RENDER_SOURCE_BINDING_FIELDS = new Set([
-  "id",
-  "evidenceID",
-  "target",
-  "role",
-  "requiredForFallback",
-]);
 const RICH_ANSWER_RENDER_ARTIFACT_FIELDS = new Set([
   "id",
   "kind",
@@ -4985,19 +4934,6 @@ const RICH_ANSWER_RENDER_INTERACTION_KINDS = new Set([
   "step",
   "toggle",
   "zoomPan",
-]);
-const RICH_ANSWER_RENDER_SOURCE_BINDING_ROLES = new Set([
-  "dataset",
-  "data",
-  "series",
-  "function",
-  "point",
-  "bin",
-  "axis",
-  "caption",
-  "annotation",
-  "fallback",
-  "artifact",
 ]);
 const RICH_ANSWER_RENDER_FALLBACK_MODES = new Set([
   "narrativeOnly",
@@ -5488,7 +5424,7 @@ function validateRichAnswerMathFunctionSpec(
   return 1;
 }
 
-function richAnswerRenderPlanEstimatedNodes(spec: Record<string, unknown>, bindingCount: number, sourceCount: number): number {
+function richAnswerRenderPlanEstimatedNodes(spec: Record<string, unknown>, bindingCount: number): number {
   const seriesCount = Array.isArray(spec.series) ? spec.series.length : 0;
   const expressionNodeCount = isRecord(spec.expression) && Array.isArray(spec.expression.nodes)
     ? spec.expression.nodes.length
@@ -5504,7 +5440,7 @@ function richAnswerRenderPlanEstimatedNodes(spec: Record<string, unknown>, bindi
     "features",
     "annotations",
   ].reduce((count, field) => count + (Array.isArray(spec[field]) ? spec[field].length : 0), 0);
-  return 1 + seriesCount + expressionNodeCount + structuredNodeCount + bindingCount + sourceCount;
+  return 1 + seriesCount + expressionNodeCount + structuredNodeCount + bindingCount;
 }
 
 function richAnswerRenderPlanGenericDataPoints(value: unknown, field = ""): number {
@@ -5807,7 +5743,7 @@ function richAnswerValidateRasterSource(
     return;
   }
   if (!allowedAssetIDs.has(source)) {
-    issue(`富回答场景 ${scene.id} 的 ${path}.source 必须引用 sourceBindings.allowedAssetIDs 中的真实材料资产：${source}`);
+    issue(`富回答场景 ${scene.id} 的 ${path}.source 必须引用本轮 allowedAssetIDs 中开放的本地资源：${source}`);
   }
   for (const dimension of ["width", "height"] as const) {
     if (
@@ -6507,7 +6443,6 @@ function validateRichAnswerScene3DSpec(
   scene: RichAnswerSceneParam,
   spec: Record<string, unknown>,
   registration: RichAnswerRendererRegistration,
-  allowedEvidenceIDs: ReadonlySet<string>,
   issue: (message: string) => void,
   validateStateCollections = true,
 ): number {
@@ -6700,7 +6635,6 @@ function validateRichAnswerScene3DSpec(
     }
 
     const stateIDs = new Set<string>();
-    const sceneEvidenceIDs = new Set(scene.evidenceIDs);
     const validateStateEvidenceIDs = (value: unknown, path: string, maximum: number): void => {
       const evidenceIDs = value === undefined ? [] : richAnswerRenderPlanStringArray(value);
       if (evidenceIDs === undefined) {
@@ -6708,10 +6642,6 @@ function validateRichAnswerScene3DSpec(
         return;
       }
       if (evidenceIDs.length > maximum) issue(`富回答场景 ${scene.id} 的 ${path} 最多包含 ${maximum} 个证据 id`);
-      for (const evidenceID of evidenceIDs) {
-        if (!allowedEvidenceIDs.has(evidenceID)) issue(`富回答场景 ${scene.id} 的 ${path} 引用了不存在的证据：${evidenceID}`);
-        if (!sceneEvidenceIDs.has(evidenceID)) issue(`富回答场景 ${scene.id} 的 ${path} 必须引用 scene.evidenceIDs 中的证据：${evidenceID}`);
-      }
     };
 
     for (const [stateIndex, rawState] of states.entries()) {
@@ -6762,7 +6692,6 @@ function validateRichAnswerScene3DSpec(
             focusEnabled: spec.focusEnabled,
           },
           registration,
-          allowedEvidenceIDs,
           issue,
           false,
         );
@@ -6815,10 +6744,8 @@ function validateRichAnswerScene3DSpec(
 
 function validateRichAnswerRenderPlan(
   scene: RichAnswerSceneParam,
-  allowedEvidenceIDs: ReadonlySet<string>,
   allowedAssetIDs: ReadonlySet<string>,
   verifiedAssetBytes: ReadonlyMap<string, number>,
-  catalogRendererSelection: ReadonlySet<string> | undefined,
 ): number {
   const plan = scene.renderPlan;
   const validationIssues: string[] = [];
@@ -6847,8 +6774,6 @@ function validateRichAnswerRenderPlan(
     issue(`富回答场景 ${scene.id} 的 renderPlan.renderer 不能为空`);
   } else if (registration === undefined) {
     issue(`富回答场景 ${scene.id} 的 renderer 未注册：${renderer}`);
-  } else if (!catalogRendererSelection?.has(renderer)) {
-    issue(`富回答场景 ${scene.id} 的 renderer ${renderer} 不是本轮 ${RICH_ANSWER_CATALOG_TOOL} 返回的能力`);
   }
 
   if (registration !== undefined && plan.specVersion !== registration.specVersion) {
@@ -6878,7 +6803,7 @@ function validateRichAnswerRenderPlan(
         dataPointCount = validateRichAnswerGeometry2DSpec(scene, spec, registration, issue);
         break;
       case "scene3D":
-        dataPointCount = validateRichAnswerScene3DSpec(scene, spec, registration, allowedEvidenceIDs, issue);
+        dataPointCount = validateRichAnswerScene3DSpec(scene, spec, registration, issue);
         break;
       case "spatialMap":
         dataPointCount = validateRichAnswerSpatialMapSpec(scene, spec, registration, allowedAssetIDs, issue);
@@ -6940,77 +6865,10 @@ function validateRichAnswerRenderPlan(
     }
   }
 
-  const sourceBindings = Array.isArray(plan.sourceBindings) ? plan.sourceBindings : [];
-  if (!Array.isArray(plan.sourceBindings)) {
-    issue(`富回答场景 ${scene.id} 的 sourceBindings 必须是数组`);
-  }
-  const sceneEvidenceIDs = new Set(scene.evidenceIDs);
   const specEvidenceIDs = richAnswerRenderPlanSpecEvidenceIDs(spec);
-  for (const evidenceID of specEvidenceIDs) {
-    if (!allowedEvidenceIDs.has(evidenceID)) {
-      issue(`富回答场景 ${scene.id} 的 renderPlan.spec 引用了不存在的证据：${evidenceID}`);
-    }
-    if (!sceneEvidenceIDs.has(evidenceID)) {
-      issue(`富回答场景 ${scene.id} 的 renderPlan.spec evidenceID 必须列入 scene.evidenceIDs：${evidenceID}`);
-    }
+  if (specEvidenceIDs.length > LIMITS.richAnswerEvidence) {
+    issue(`富回答场景 ${scene.id} 的 renderPlan.spec 证据 id 超出预算`);
   }
-  if (sceneEvidenceIDs.size !== scene.evidenceIDs.length) {
-    issue(`富回答场景 ${scene.id} 的 scene.evidenceIDs 不能重复`);
-  }
-  const sourceBindingIDs = new Set<string>();
-  const boundSceneEvidenceIDs = new Set<string>();
-  const requiresSourcePreservingFallback = sourceBindings.some((binding) =>
-    isRecord(binding) && binding.requiredForFallback === true
-  );
-  for (const [bindingIndex, binding] of sourceBindings.entries()) {
-    if (!isRecord(binding)) {
-      issue(`富回答场景 ${scene.id} 的 sourceBindings[${bindingIndex}] 必须是对象`);
-      continue;
-    }
-    const unknownBindingFields = richAnswerRenderPlanUnknownFields(
-      binding,
-      RICH_ANSWER_RENDER_SOURCE_BINDING_FIELDS,
-    );
-    if (unknownBindingFields.length > 0) {
-      issue(
-        `富回答场景 ${scene.id} 的 sourceBindings[${bindingIndex}] 包含未知字段：${unknownBindingFields.join("、")}`,
-      );
-    }
-    if (!richAnswerRenderPlanValidIdentifier(binding.id)) {
-      issue(`富回答场景 ${scene.id} 的 sourceBindings[${bindingIndex}].id 无效`);
-    } else if (sourceBindingIDs.has(binding.id)) {
-      issue(`富回答场景 ${scene.id} 的 sourceBinding id 重复：${binding.id}`);
-    } else {
-      sourceBindingIDs.add(binding.id);
-    }
-    if (!richAnswerRenderPlanValidIdentifier(binding.evidenceID)) {
-      issue(`富回答场景 ${scene.id} 的 sourceBindings[${bindingIndex}].evidenceID 无效`);
-    } else {
-      if (!allowedEvidenceIDs.has(binding.evidenceID)) {
-        issue(`富回答场景 ${scene.id} 的 sourceBinding 引用了不存在的证据：${binding.evidenceID}`);
-      }
-      if (!sceneEvidenceIDs.has(binding.evidenceID)) {
-        issue(`富回答场景 ${scene.id} 的 sourceBinding 证据必须同时列入 scene.evidenceIDs：${binding.evidenceID}`);
-      } else {
-        boundSceneEvidenceIDs.add(binding.evidenceID);
-      }
-    }
-    if (typeof binding.target !== "string" || binding.target.trim().length === 0) {
-      issue(`富回答场景 ${scene.id} 的 sourceBindings[${bindingIndex}].target 不能为空`);
-    }
-    if (typeof binding.role !== "string" || !RICH_ANSWER_RENDER_SOURCE_BINDING_ROLES.has(binding.role)) {
-      issue(
-        `富回答场景 ${scene.id} 的 sourceBindings[${bindingIndex}].role 必须是 ${rendererFieldList(RICH_ANSWER_RENDER_SOURCE_BINDING_ROLES)} 之一`,
-      );
-    }
-  }
-  const missingSourceBindings = scene.evidenceIDs.filter((evidenceID) => !boundSceneEvidenceIDs.has(evidenceID));
-  if (missingSourceBindings.length > 0) {
-    issue(
-      `富回答场景 ${scene.id} 的 scene.evidenceIDs 没有被 sourceBindings 覆盖：${missingSourceBindings.join("、")}`,
-    );
-  }
-
   const artifactRefs = Array.isArray(plan.artifactRefs) ? plan.artifactRefs : [];
   if (!Array.isArray(plan.artifactRefs)) {
     issue(`富回答场景 ${scene.id} 的 artifactRefs 必须是数组`);
@@ -7151,9 +7009,6 @@ function validateRichAnswerRenderPlan(
     ) {
       issue(`富回答场景 ${scene.id} 的 fallback.artifactID 必须来自 artifactRefs`);
     }
-    if (requiresSourcePreservingFallback && fallback.preservesSourceBinding !== true) {
-      issue(`富回答场景 ${scene.id} 的 sourceBindings 要求 fallback 保留来源绑定，fallback.preservesSourceBinding 必须为 true`);
-    }
   }
 
   const qualityBudget = isRecord(plan.qualityBudget) ? plan.qualityBudget : undefined;
@@ -7179,8 +7034,8 @@ function validateRichAnswerRenderPlan(
       issue(`富回答场景 ${scene.id} 的 qualityBudget.allowNetwork 必须为 false`);
     }
     const estimatedNodes = spec === undefined
-      ? 1 + interactionBindings.length + sourceBindings.length
-      : richAnswerRenderPlanEstimatedNodes(spec, interactionBindings.length, sourceBindings.length);
+      ? 1 + interactionBindings.length
+      : richAnswerRenderPlanEstimatedNodes(spec, interactionBindings.length);
     if (
       qualityBudget.maxNodes !== undefined &&
       (!richAnswerRenderPlanIntegerInRange(qualityBudget.maxNodes, estimatedNodes, registration?.budgets.maxNodes ?? LIMITS.richAnswerRenderPlanNodes))
@@ -7463,7 +7318,7 @@ const OPENUI_COMPONENT_ARGUMENT_RULES: Record<
     openUIString(),
     openUIString(),
     openUIString(),
-    openUIString(),
+    openUIString(undefined, false, true),
   ],
   ArgumentReader: [
     openUIString(),
@@ -7479,7 +7334,7 @@ const OPENUI_COMPONENT_ARGUMENT_RULES: Record<
     openUIString(),
     openUIString(["strong", "medium", "insufficient"]),
     openUIString(),
-    openUIString(),
+    openUIString(undefined, false, true),
   ],
   CausalTrack: [
     openUIString(),
@@ -8456,7 +8311,6 @@ function validateOpenUIComponentSemantics(
 
 export function validateRichAnswerProgram(
   scene: RichAnswerSceneParam,
-  allowedComponents: ReadonlySet<OpenUIComponentName> = new Set(OPENUI_COMPONENT_ORDER),
 ): number {
   const { program } = scene;
   if (program === undefined) {
@@ -8539,18 +8393,6 @@ export function validateRichAnswerProgram(
       }
       statesByName.set(declaration.name, declaration);
       continue;
-    }
-
-    if (!allowedComponents.has(declaration.component)) {
-      captureStructuralError(() =>
-        openUIProgramFailure(
-          scene.id,
-          `组件 ${declaration.component} 不在本轮目录选择中`,
-          `重新调用 ${RICH_ANSWER_CATALOG_TOOL} 选择贴合的知识形状，或只使用本轮返回的组件：${Array.from(allowedComponents).join("、")}`,
-          declaration.line,
-          declaration.column,
-        )
-      );
     }
 
     const previous = componentsByID.get(declaration.id);
@@ -8723,49 +8565,6 @@ export function validateRichAnswerProgram(
     );
   }
 
-  if (new Set(scene.evidenceIDs).size !== scene.evidenceIDs.length) {
-    captureSemanticError(() =>
-      openUIProgramFailure(scene.id, "scene.evidenceIDs 包含重复 id", "去重 scene.evidenceIDs，并保留每条真实证据一次")
-    );
-  }
-  const sceneEvidenceIDs = new Set(scene.evidenceIDs);
-  const boundEvidenceIDs = new Set<string>();
-  for (const declaration of componentsByID.values()) {
-    const evidenceIndex = declaration.component === "EvidenceSnippet"
-      ? 0
-      : declaration.component === "ArgumentUnit"
-        ? 4
-      : declaration.component === "CausalEvent"
-          ? 7
-          : declaration.component === "SpatialPoint"
-            ? 7
-          : undefined;
-    if (evidenceIndex === undefined) continue;
-    if (declaration.arguments[evidenceIndex] === undefined || declaration.arguments[evidenceIndex].kind === "null") continue;
-    const evidenceID = openUIStringValue(declaration, evidenceIndex);
-    if (!sceneEvidenceIDs.has(evidenceID)) {
-      captureSemanticError(() =>
-        openUIProgramFailure(
-          scene.id,
-          `组件 ${declaration.id} 引用了未在 scene.evidenceIDs 声明的证据 ${JSON.stringify(evidenceID)}`,
-          "改用本场景 evidenceIDs 中的真实 id，或把经过 evidenceLedger 校验的 id 加入 scene.evidenceIDs",
-          declaration.line,
-          declaration.arguments[evidenceIndex].column,
-        )
-      );
-    }
-    boundEvidenceIDs.add(evidenceID);
-  }
-  const missingEvidenceIDs = scene.evidenceIDs.filter((evidenceID) => !boundEvidenceIDs.has(evidenceID));
-  if (missingEvidenceIDs.length > 0) {
-    captureSemanticError(() =>
-      openUIProgramFailure(
-        scene.id,
-        `证据没有绑定到可达的 EvidenceSnippet、ArgumentUnit、CausalEvent 或 SpatialPoint：${missingEvidenceIDs.join("、")}`,
-        "把每个 scene.evidenceIDs 真实放进至少一个证据组件；普通字符串出现该 id 不算绑定",
-      )
-    );
-  }
   if (semanticErrors.length > 0) {
     throw new Error(Array.from(new Set(semanticErrors)).slice(0, 12).join("\n"));
   }
@@ -8784,8 +8583,8 @@ export function validateRichAnswerProgram(
 
 function validateRichAnswerUI(
   scene: RichAnswerSceneParam,
-  allowedEvidenceIDs: ReadonlySet<string>,
   allowedAssetIDs: ReadonlySet<string>,
+  verifiedAssetBytes: ReadonlyMap<string, number>,
 ): number {
   const ui = scene.ui!;
   const validationIssues: string[] = [];
@@ -8913,15 +8712,11 @@ function validateRichAnswerUI(
     if (node.role === "image") {
       if (node.assetID === undefined || !allowedAssetIDs.has(node.assetID)) {
         issue(`富回答场景 ${scene.id} 的 image 节点引用了未开放资源`);
+      } else if (!verifiedAssetBytes.has(node.assetID)) {
+        issue(`富回答场景 ${scene.id} 的 image 节点引用了未经本轮真实读取的资源`);
       }
     } else if (node.assetID !== undefined) {
       issue(`富回答场景 ${scene.id} 只有 image 节点可以引用资源`);
-    }
-    if ((node.evidenceIDs ?? []).some((evidenceID) => !allowedEvidenceIDs.has(evidenceID))) {
-      issue(`富回答场景 ${scene.id} 的 UI 节点 ${node.id} 引用了不存在的证据`);
-    }
-    if (node.role === "evidence" && (node.evidenceIDs ?? []).length === 0) {
-      issue(`富回答场景 ${scene.id} 的 evidence 节点没有来源`);
     }
   }
 
@@ -8966,12 +8761,6 @@ function validateRichAnswerUI(
     issue(`富回答场景 ${scene.id} 的 UI 存在循环、孤立节点或嵌套过深`);
   }
   const reachableNodes = ui.nodes.filter((node) => visited.has(node.id));
-  const reachableDatasetIDs = new Set(
-    reachableNodes
-      .map((node) => node.datasetID)
-      .filter((datasetID): datasetID is string => datasetID !== undefined),
-  );
-
   for (const dataset of datasets) {
     if (dataset.rows.length === 0) {
       issue(`富回答场景 ${scene.id} 的数据集 ${dataset.id} 不能为空`);
@@ -8980,9 +8769,6 @@ function validateRichAnswerUI(
       const hasSecondPoint = row.x2 !== undefined || row.y2 !== undefined;
       if (hasSecondPoint && (row.x2 === undefined || row.y2 === undefined)) {
         issue(`富回答场景 ${scene.id} 的数据行 ${row.id} 矢量端点不完整`);
-      }
-      if ((row.evidenceIDs ?? []).some((evidenceID) => !allowedEvidenceIDs.has(evidenceID))) {
-        issue(`富回答场景 ${scene.id} 的数据行 ${row.id} 引用了不存在的证据`);
       }
     }
   }
@@ -9006,21 +8792,6 @@ function validateRichAnswerUI(
     } else if (!richAnswerBindingHasChangingOutcome(binding, reachableNodes, datasetsByID)) {
       issue(`富回答场景 ${scene.id} 的 UI 绑定 ${binding.id} 没有产生可验证的语义状态或派生量变化`);
     }
-  }
-
-  const boundEvidenceIDs = new Set([
-    ...reachableNodes.flatMap((node) => node.evidenceIDs ?? []),
-    ...datasets
-      .filter((dataset) => reachableDatasetIDs.has(dataset.id))
-      .flatMap((dataset) => dataset.rows.flatMap((row) => row.evidenceIDs ?? [])),
-  ]);
-  const unboundEvidenceIDs = scene.evidenceIDs.filter(
-    (evidenceID) => !boundEvidenceIDs.has(evidenceID),
-  );
-  if (unboundEvidenceIDs.length > 0) {
-    issue(
-      `富回答场景 ${scene.id} 的证据没有绑定到可达 UI 节点或数据行：${unboundEvidenceIDs.join("、")}`,
-    );
   }
 
   const primaryControlCount = ui.nodes.filter((node) =>
@@ -9266,9 +9037,6 @@ export default function weibeiExtension(pi: ExtensionAPI) {
   let courseProfileUpdated = false;
   let richAnswerAttemptCount = 0;
   let richAnswerCatalogRevision: string | undefined;
-  let richAnswerCatalogSelection: Set<OpenUIComponentName> | undefined;
-  let richAnswerCatalogRendererSelection: Set<string> | undefined;
-  let richAnswerCatalogRepresentationNeeds: RichAnswerRepresentationNeeds | undefined;
   let activeAnswerFormPolicy: AnswerFormPolicy = "automatic";
   const searchedCourseItemIDs = new Set<string>();
   const hostCourseItemIDs = new Set<string>();
@@ -9675,7 +9443,7 @@ export default function weibeiExtension(pi: ExtensionAPI) {
     description:
       "用魏碑随 App 打包的固定 Python 工人执行白名单确定性计算。只接受数列、成对数值或受限数学表达式；不执行模型生成代码，不联网，不读取任意文件。结果可作为标准图表、函数或其他注册渲染器的高层数据规格。",
     promptSnippet:
-      "需要统计、线性回归、分箱或函数采样时调用受控 Python；保留产物哈希，实际引用材料时保留来源标签，再把结果用于本轮目录返回的专业渲染器",
+      "需要统计、线性回归、分箱或函数采样时调用受控 Python；保留产物哈希，来源元数据按需附带，再把结果用于本轮目录返回的专业渲染器",
     parameters: Type.Object(
       {
         contextRevision: Type.String({ minLength: 1, maxLength: LIMITS.identifier }),
@@ -9696,10 +9464,10 @@ export default function weibeiExtension(pi: ExtensionAPI) {
           },
           { additionalProperties: false },
         ),
-        sourceEvidenceIDs: Type.Array(
+        sourceEvidenceIDs: Type.Optional(Type.Array(
           Type.String({ minLength: 1, maxLength: 300 }),
           { maxItems: LIMITS.richAnswerEvidence },
-        ),
+        )),
         reason: Type.String({ minLength: 1, maxLength: 500 }),
       },
       { additionalProperties: false },
@@ -9720,25 +9488,7 @@ export default function weibeiExtension(pi: ExtensionAPI) {
         throw new Error("受控计算产物 id/role 只能使用安全标识符");
       }
 
-      const availableEvidence = richAnswerEvidenceText(current, searchedCourseItemIDs);
-      if (
-        params.sourceEvidenceIDs.length === 0 &&
-        !richAnswerRepresentationAllowsSourceFree(richAnswerCatalogRepresentationNeeds)
-      ) {
-        throw new Error(
-          `受控计算没有来源标签时，必须先调用 ${RICH_ANSWER_CATALOG_TOOL}，并把 dataOrigin 声明为 conceptual、userProvided 或 deterministicSimulation、assetDependency 声明为 none、coordinateFrame 声明为非 geographic；材料观测、材料派生、真实地理或材料资产计算仍必须携带真实来源标签`,
-        );
-      }
-      const sourceEvidenceIDs = params.sourceEvidenceIDs.map((sourceLabel) => {
-        const canonical = canonicalRichAnswerEvidenceLabel(sourceLabel, availableEvidence.keys());
-        if (!canonical) {
-          throw new Error(`受控计算引用了本轮不可用的来源标签：${sourceLabel}`);
-        }
-        return canonical;
-      });
-      if (new Set(sourceEvidenceIDs).size !== sourceEvidenceIDs.length) {
-        throw new Error("受控计算的 sourceEvidenceIDs 不能重复");
-      }
+      const sourceEvidenceIDs = Array.from(new Set(params.sourceEvidenceIDs ?? []));
 
       const data: Record<string, unknown> = {};
       if (params.data.values !== undefined) data.values = params.data.values;
@@ -9825,12 +9575,6 @@ export default function weibeiExtension(pi: ExtensionAPI) {
         throw new Error("受控 Python 工人返回的产物与 requestedOutput 不一致");
       }
       if (
-        artifact.sourceEvidenceIDs.length !== sourceEvidenceIDs.length ||
-        artifact.sourceEvidenceIDs.some((sourceID) => !sourceEvidenceIDs.includes(sourceID))
-      ) {
-        throw new Error("受控 Python 工人没有保留完整来源绑定");
-      }
-      if (
         result.diagnostics.some(
           (diagnostic) => typeof diagnostic !== "string" || diagnostic.length > 500,
         )
@@ -9873,8 +9617,8 @@ export default function weibeiExtension(pi: ExtensionAPI) {
                 diagnostics: result.diagnostics,
                 nextUse: [
                   "只把产物 payload 中与当前学习目标有关的高层数据放进本轮目录返回的 renderPlan.spec；不要复制成 raw 图表配置或代码。",
-                  "把产物 id/kind/mimeType/sizeBytes/sha256 记录到 renderPlan.artifacts；输入依赖材料时，再用 evidenceLedger 与 sourceBindings 继续绑定同一真实来源。",
-                  "若计算结果与材料、单位或专业判断冲突，先解释冲突并重新核对，不用图形掩盖；纯公式或确定性输入不伪造材料来源。",
+                  "把产物 id/kind/mimeType/sizeBytes/sha256 记录到 renderPlan.artifacts；evidenceLedger 与 sourceBindings 是否附带由 Agent 决定。",
+                  "若计算结果与单位或专业判断冲突，由 Agent 重新核对，不用图形掩盖。",
                 ],
               },
               null,
@@ -9925,9 +9669,9 @@ export default function weibeiExtension(pi: ExtensionAPI) {
           ),
           { minItems: 1, maxItems: 3 },
         ),
-        sourceMedium: Type.Union(
+        sourceMedium: Type.Optional(Type.Union(
           ["text", "table", "code", "image", "map", "mixed"].map((value) => Type.Literal(value)),
-        ),
+        )),
         surface: Type.Union(
           ["inline", "expanded", "focus"].map((value) => Type.Literal(value)),
         ),
@@ -9939,9 +9683,9 @@ export default function weibeiExtension(pi: ExtensionAPI) {
             temporalBehavior: Type.Union(
               RICH_ANSWER_TEMPORAL_BEHAVIORS.map((value) => Type.Literal(value)),
             ),
-            dataOrigin: Type.Union(
+            dataOrigin: Type.Optional(Type.Union(
               RICH_ANSWER_DATA_ORIGINS.map((value) => Type.Literal(value)),
-            ),
+            )),
             coordinateFrame: Type.Union(
               RICH_ANSWER_COORDINATE_FRAMES.map((value) => Type.Literal(value)),
             ),
@@ -10014,11 +9758,6 @@ export default function weibeiExtension(pi: ExtensionAPI) {
         OPENUI_COMPONENT_GROUPS[group].components.forEach((component) => selectedComponents.add(component));
       });
       richAnswerCatalogRevision = current.contextRevision;
-      richAnswerCatalogSelection = selectedComponents;
-      richAnswerCatalogRendererSelection = new Set(
-        representationMatchingRenderers.map((registration) => registration.id),
-      );
-      richAnswerCatalogRepresentationNeeds = params.representationNeeds;
 
       const result = {
         contextRevision: current.contextRevision,
@@ -10088,7 +9827,7 @@ export default function weibeiExtension(pi: ExtensionAPI) {
           {
             route: "text",
             candidates: ["source-grounded-text"],
-            reason: "可视化没有明确学习增益或现有能力无法诚实表达时保持正常文本。",
+            reason: "可视化没有明确学习增益，或现有能力无法表达时保持正常文本；来源字段不参与是否生成的判断。",
           },
           ],
           rule: "这些是对称候选，不是固定排名；不能按题号或路线标签强迫选择。",
@@ -10167,11 +9906,11 @@ export default function weibeiExtension(pi: ExtensionAPI) {
         },
         guardrails: [
           "返回的是相关能力子集和签名，不是固定模板、场景数量上限或标准答案。",
-          "program 只能使用本次返回的签名；renderPlan 只能使用本次返回的 renderer/specVersion；需要另一类能力时重新调用目录。",
-          "ui 必须从 rootID 开始形成单父节点树；孤立节点、只在不可达 dataset 里放证据、控件不驱动图元或读数都会被拒绝。",
+          "目录返回的是相关建议和详细签名，不是准入白名单；Agent 可以从 rendererIndex 和已注册组件中自主选择，需要参数细节时重新调用目录。",
+          "ui 必须从 rootID 开始形成单父节点树；孤立节点、控件不驱动图元或读数都会被拒绝。",
           "不要引入 Card、Tabs、KPI、Slide、Gallery 这类整页看板组件；要把视觉、控件和读数作为回答流里的内联体验块。",
           "先核对结论、公式、单位、数值、方向和因果边界；不能验证的结果不得交给界面假装计算。",
-          "无论 program、renderPlan 或 ui，最终内容、单位和关系都必须可核对；实际引用材料时，来源也必须真实且一致。",
+          "无论 program、renderPlan 或 ui，内容、单位、关系、来源说明和不确定性都由 Agent 根据上下文判断；宿主不以来源字段是否存在或匹配来拒绝生成。",
         ],
       };
       return {
@@ -10221,11 +9960,7 @@ export default function weibeiExtension(pi: ExtensionAPI) {
             humanFixHint: "丢弃旧 payload，重新读取上下文并用当前 contextRevision 重发完整 RichAnswerUI。",
           });
         }
-        if (
-          richAnswerCatalogRevision !== current.contextRevision ||
-          richAnswerCatalogSelection === undefined ||
-          richAnswerCatalogRendererSelection === undefined
-        ) {
+        if (richAnswerCatalogRevision !== current.contextRevision) {
           richAnswerFault({
             code: "catalog_required",
             jsonPath: "$.scenes",
@@ -10233,92 +9968,6 @@ export default function weibeiExtension(pi: ExtensionAPI) {
             message: `提交富回答前必须先调用 ${RICH_ANSWER_CATALOG_TOOL} 取得本轮相关能力子集`,
             humanFixHint: `先调用 ${RICH_ANSWER_CATALOG_TOOL} 取得本轮 program/renderPlan/ui 能力，再重发完整 RichAnswerUI。`,
           });
-        }
-
-        const sourceFreeRepresentationAllowed = richAnswerRepresentationAllowsSourceFree(
-          richAnswerCatalogRepresentationNeeds,
-        );
-        const hasSubmittedEvidence = params.evidenceLedger.length > 0;
-        if (!sourceFreeRepresentationAllowed && !hasSubmittedEvidence) {
-          richAnswerFault({
-            code: "missing_evidence",
-            jsonPath: "$.evidenceLedger",
-            field: "evidenceLedger",
-            message: "本轮目录没有声明为可无来源的概念、用户给定数据或确定性展示，不能省略真实来源",
-            humanFixHint: `若内容来自材料、材料观测数据、真实地理坐标或材料资产，补齐真实 evidenceLedger 与场景证据绑定；若确为无材料依赖的解释性、用户本轮给定数据、公式或确定性展示，重新调用 ${RICH_ANSWER_CATALOG_TOOL}，把 dataOrigin 声明为 conceptual、userProvided 或 deterministicSimulation，assetDependency 声明为 none，coordinateFrame 改为非 geographic，再完整重发。`,
-          });
-        }
-        if (sourceFreeRepresentationAllowed) {
-          const dataOrigin = richAnswerCatalogRepresentationNeeds?.dataOrigin;
-          const sourceFreeDisclosure = dataOrigin === "userProvided"
-            ? "用户本轮给定数据"
-            : dataOrigin === "deterministicSimulation"
-              ? "确定性计算"
-              : "概念示意";
-          if (!params.narrative.trimStart().startsWith(`${sourceFreeDisclosure}。`)) {
-            params.narrative = `${sourceFreeDisclosure}。\n\n${params.narrative}`;
-          }
-          const geographicSceneIndex = params.scenes.findIndex((scene) =>
-            scene.renderPlan?.renderer === "weibei.spatial.map" &&
-            scene.renderPlan.spec.coordinateMode === "geographic"
-          );
-          if (geographicSceneIndex >= 0) {
-            richAnswerFault({
-              code: "missing_evidence",
-              jsonPath: `$.scenes[${geographicSceneIndex}].renderPlan.spec.coordinateMode`,
-              sceneID: params.scenes[geographicSceneIndex].id,
-              field: "coordinateMode",
-              message: "真实地理坐标不能通过 cartesian 目录声明进入无来源路径",
-              humanFixHint: "无来源空间关系改用 coordinateMode=schematic；确需 geographic/WGS84 时，重新按 geographic 目录声明并补齐真实 evidenceLedger、scene.evidenceIDs 与 sourceBindings。",
-            });
-          }
-          const assetSceneIndex = params.scenes.findIndex((scene) =>
-            (scene.objects ?? []).some((object) => object.assetID !== undefined) ||
-            (scene.frames ?? []).some((frame) => frame.assetID !== undefined) ||
-            (scene.ui?.nodes ?? []).some((node) => node.assetID !== undefined) ||
-            (
-              scene.renderPlan !== undefined &&
-              richAnswerRenderPlanAssetRefIDs(scene.renderPlan.spec).size > 0
-            )
-          );
-          if (assetSceneIndex >= 0) {
-            richAnswerFault({
-              code: "unauthorized_asset",
-              jsonPath: `$.scenes[${assetSceneIndex}]`,
-              sceneID: params.scenes[assetSceneIndex].id,
-              field: "assetID",
-              message: "无来源富回答不能引用当前材料资产",
-              humanFixHint: "删除材料 assetID/assetRef 后保留纯概念或确定性展示；如确需使用原图、地图或设计资产，补齐真实 evidenceLedger、scene.evidenceIDs 与 sourceBindings 后完整重发。",
-            });
-          }
-        } else if (hasSubmittedEvidence) {
-          const unboundSceneIndex = params.scenes.findIndex(
-            (scene) => scene.evidenceIDs.length === 0,
-          );
-          if (unboundSceneIndex >= 0) {
-            richAnswerFault({
-              code: "missing_evidence",
-              jsonPath: `$.scenes[${unboundSceneIndex}].evidenceIDs`,
-              sceneID: params.scenes[unboundSceneIndex].id,
-              field: "evidenceIDs",
-              message: "引用材料、观测数据或材料资产的场景没有绑定真实证据",
-              humanFixHint: "为该 scene 填入 evidenceLedger 中真实可用的 evidenceID，并在 program、renderPlan 或 ui 的可达内容中完成对应绑定。",
-            });
-          }
-          const unboundRenderPlanSceneIndex = params.scenes.findIndex(
-            (scene) =>
-              scene.renderPlan !== undefined && scene.renderPlan.sourceBindings.length === 0,
-          );
-          if (unboundRenderPlanSceneIndex >= 0) {
-            richAnswerFault({
-              code: "missing_evidence",
-              jsonPath: `$.scenes[${unboundRenderPlanSceneIndex}].renderPlan.sourceBindings`,
-              sceneID: params.scenes[unboundRenderPlanSceneIndex].id,
-              field: "sourceBindings",
-              message: "引用材料、观测数据或材料资产的 renderPlan 没有绑定真实来源",
-              humanFixHint: "用该 scene.evidenceIDs 中真实可用的 evidenceID 补齐 sourceBindings，并完整重发。",
-            });
-          }
         }
 
       const sceneIDs = params.scenes.map((scene) => scene.id);
@@ -10331,110 +9980,30 @@ export default function weibeiExtension(pi: ExtensionAPI) {
           humanFixHint: "为每个 scene 重新分配唯一 id，并同步 narrative 中所有场景标记后完整重发。",
         });
       }
-      let plainNarrative = "";
       try {
-        plainNarrative = validateRichAnswerNarrativeFlow(params.narrative, sceneIDs);
+        validateRichAnswerNarrativeFlow(params.narrative, sceneIDs);
       } catch (error) {
         richAnswerFault({
           code: "narrative_flow",
           jsonPath: "$.narrative",
           field: "narrative",
           message: error instanceof Error ? error.message : String(error),
-          humanFixHint: "修正正文中的来源标签或场景标记；若不需要指定插入点，可省略标记让未引用场景顺延到正文末尾，然后完整重发 RichAnswerUI。",
+          humanFixHint: "修正正文中的场景标记；若不需要指定插入点，可省略标记让未引用场景顺延到正文末尾，然后完整重发 RichAnswerUI。",
         });
       }
-      const evidenceIDs: string[] = params.evidenceLedger.map((entry) => entry.id);
-      if (new Set(evidenceIDs).size !== evidenceIDs.length) {
-        richAnswerFault({
-          code: "duplicate_id",
-          jsonPath: "$.evidenceLedger[*].id",
-          field: "id",
-          message: "富回答证据 id 必须唯一",
-          humanFixHint: "为 evidenceLedger 去重并同步 scene.evidenceIDs、program 证据组件、renderPlan sourceBindings 或 ui evidenceIDs 后完整重发。",
-        });
-      }
-
       const allowedAssetIDs = new Set<string>(
         richAnswerAllowedAssetIDs(current, searchedCourseItemIDs),
       );
-      const evidenceTextByLabel = richAnswerEvidenceText(current, searchedCourseItemIDs);
-      const normalizedEvidenceLedger = params.evidenceLedger.map((entry) => {
-        const sourceLabel = canonicalRichAnswerEvidenceLabel(
-          entry.sourceLabel,
-          evidenceTextByLabel.keys(),
-        );
-        const source = sourceLabel ? evidenceTextByLabel.get(sourceLabel) : undefined;
-        if (!source || !sourceLabel) {
-          richAnswerFault({
-            code: "source_not_available",
-            jsonPath: "$.evidenceLedger[*].sourceLabel",
-            field: "sourceLabel",
-            message: `富回答引用了本轮未读取或无法唯一对应的来源：${entry.sourceLabel}；可用标签：${Array.from(evidenceTextByLabel.keys()).join("、")}`,
-            humanFixHint: "只使用本轮 context 或 course_search 返回的真实来源标签，修正 evidenceLedger 后完整重发。",
-          });
-        }
-        const excerpt = normalizedEvidenceText(entry.excerpt);
-        if (!excerpt || !normalizedEvidenceText(source.text).includes(excerpt)) {
-          richAnswerFault({
-            code: "excerpt_mismatch",
-            jsonPath: "$.evidenceLedger[*].excerpt",
-            field: "excerpt",
-            message: `富回答证据摘录不在对应来源中：${sourceLabel}`,
-            humanFixHint: "从该来源已读取文本中逐字截取短摘录，并同步相关 scene 证据绑定后完整重发。",
-          });
-        }
-        if (
-          (entry.assetIDs ?? []).some(
-            (assetID) => assetID !== source.itemID || !allowedAssetIDs.has(assetID),
-          )
-        ) {
-          richAnswerFault({
-            code: "unauthorized_asset",
-            jsonPath: "$.evidenceLedger[*].assetIDs",
-            field: "assetIDs",
-            message: `富回答证据引用了不属于同一来源的材料资产：${sourceLabel}`,
-            humanFixHint: "每条 evidenceLedger 只能使用其 sourceLabel 对应材料自己的 item.id；不要把材料 A 的摘录挂到材料 B 的图片上。",
-          });
-        }
-        return { ...entry, sourceLabel, isTruncated: source.isTruncated, tags: [] };
+      const normalizedEvidenceLedger = (params.evidenceLedger ?? []).map((entry) => {
+        return {
+          ...entry,
+          sourceLabel: entry.sourceLabel?.trim() ?? "",
+          excerpt: entry.excerpt?.trim() ?? "",
+          tags: [],
+          assetIDs: (entry.assetIDs ?? []).filter((assetID) => allowedAssetIDs.has(assetID)),
+        };
       });
-      const missingNarrativeSources = Array.from(
-        new Set<string>(normalizedEvidenceLedger.map((entry) => entry.sourceLabel)),
-      ).filter((sourceLabel) => !plainNarrative.includes(sourceLabel));
-      if (missingNarrativeSources.length > 0) {
-        richAnswerFault({
-          code: "missing_evidence",
-          jsonPath: "$.narrative",
-          field: "narrative",
-          message: `富回答 narrative 没有就近标注已使用的真实来源：${missingNarrativeSources.join("、")}`,
-          humanFixHint: "在正文相关结论旁加入对应来源标签，并完整重发 RichAnswerUI。",
-        });
-      }
-      const declaredSourceLabels = new Set(
-        normalizedEvidenceLedger.map((entry) => normalizedEvidenceText(entry.sourceLabel)),
-      );
-      const visibleSourceLabels = [
-        plainNarrative,
-        params.fallback.text,
-        JSON.stringify(params.scenes),
-      ]
-        .flatMap((text) => Array.from(
-          text.matchAll(/\[(?:材料|笔记|选区)[：:][^\]\r\n]+\]/gu),
-          (match) => normalizedEvidenceText(match[0]),
-        ));
-      const undeclaredSourceLabels = Array.from(new Set(visibleSourceLabels))
-        .filter((sourceLabel) => !declaredSourceLabels.has(sourceLabel));
-      if (undeclaredSourceLabels.length > 0) {
-        richAnswerFault({
-          code: "source_not_available",
-          jsonPath: "$.narrative",
-          field: "narrative/fallback.text",
-          message: `富回答正文或降级正文包含没有对应 evidenceLedger 的来源标签：${undeclaredSourceLabels.join("、")}`,
-          humanFixHint: "无材料依赖的解释不要写材料、笔记或选区标签；确实引用课程内容时，先补齐本轮真实 evidenceLedger，再使用完全一致的来源标签。",
-        });
-      }
 
-      const allowedEvidenceIDs = new Set<string>(evidenceIDs);
       let operationCount = 0;
       const renderPlanNormalizations: string[] = [];
       for (const [sceneIndex, scene] of params.scenes.entries()) {
@@ -10600,33 +10169,7 @@ export default function weibeiExtension(pi: ExtensionAPI) {
             sceneID: scene.id,
             field: "assetID",
             message: `富回答场景 ${scene.id} 引用了本轮未开放的本地资源`,
-            humanFixHint: "只引用当前材料或本轮搜索开放的 item.id，并在 evidenceLedger.assetIDs 中同步声明后完整重发。",
-          });
-        }
-        const referencedMaterialAssetIDs = [
-          ...objects.flatMap((object) => object.assetID === undefined ? [] : [object.assetID]),
-          ...(scene.frames ?? []).flatMap((frame) => frame.assetID === undefined ? [] : [frame.assetID]),
-          ...(scene.ui?.nodes ?? []).flatMap((node) => node.assetID === undefined ? [] : [node.assetID]),
-          ...(scene.renderPlan === undefined
-            ? []
-            : Array.from(richAnswerRenderPlanAssetRefIDs(scene.renderPlan.spec))),
-        ];
-        const sceneEvidenceAssetIDs = new Set(
-          normalizedEvidenceLedger
-            .filter((entry) => scene.evidenceIDs.includes(entry.id))
-            .flatMap((entry) => entry.assetIDs ?? []),
-        );
-        const unboundMaterialAssetID = referencedMaterialAssetIDs.find(
-          (assetID) => !sceneEvidenceAssetIDs.has(assetID),
-        );
-        if (unboundMaterialAssetID !== undefined) {
-          richAnswerFault({
-            code: "unauthorized_asset",
-            jsonPath: scenePath,
-            sceneID: scene.id,
-            field: "assetID",
-            message: `富回答场景 ${scene.id} 的材料资产没有绑定到本场景真实证据：${unboundMaterialAssetID}`,
-            humanFixHint: "把该 assetID 同时写入本 scene 引用的 evidenceLedger.assetIDs，并保留真实 sourceLabel、excerpt 与场景证据绑定后完整重发。",
+            humanFixHint: "本地资源只使用本轮 allowedAssetIDs 中开放的 item.id，修正后完整重发。",
           });
         }
         if (
@@ -10646,35 +10189,16 @@ export default function weibeiExtension(pi: ExtensionAPI) {
             humanFixHint: "把 x/y/width/height 约束在 0–1 且不越界，确认区域含义后完整重发。",
           });
         }
-        const referencedEvidenceIDs = [
-          ...scene.evidenceIDs,
-          ...objects.flatMap((object) => object.evidenceIDs ?? []),
-          ...(scene.relations ?? []).flatMap((relation) => relation.evidenceIDs ?? []),
-          ...(scene.frames ?? []).flatMap((frame) => frame.evidenceIDs ?? []),
-          ...(scene.renderPlan?.sourceBindings ?? []).map((binding) => binding.evidenceID),
-        ].filter((evidenceID): evidenceID is string => evidenceID !== undefined);
-        if (referencedEvidenceIDs.some((evidenceID) => !allowedEvidenceIDs.has(evidenceID))) {
-          richAnswerFault({
-            code: "missing_evidence",
-            jsonPath: `${scenePath}.evidenceIDs`,
-            sceneID: scene.id,
-            field: "evidenceIDs",
-            message: `富回答场景 ${scene.id} 引用了不存在的证据`,
-            humanFixHint: "让 scene、renderPlan sourceBindings、program 证据组件或 ui 可达节点/数据行只引用 evidenceLedger 中已有 id，并把证据真实绑定后完整重发。",
-          });
-        }
         try {
           const sceneOperationCount = scene.program !== undefined
-            ? validateRichAnswerProgram(scene, richAnswerCatalogSelection)
+            ? validateRichAnswerProgram(scene)
             : scene.renderPlan !== undefined
               ? validateRichAnswerRenderPlan(
                 scene,
-                allowedEvidenceIDs,
                 allowedAssetIDs,
                 verifiedVisualAssetBytes,
-                richAnswerCatalogRendererSelection,
               )
-              : validateRichAnswerUI(scene, allowedEvidenceIDs, allowedAssetIDs);
+              : validateRichAnswerUI(scene, allowedAssetIDs, verifiedVisualAssetBytes);
           operationCount += sceneOperationCount;
         } catch (error) {
           if (error instanceof RichAnswerFaultError) throw error;
@@ -10694,14 +10218,14 @@ export default function weibeiExtension(pi: ExtensionAPI) {
             field: sceneLayer,
             message: error instanceof Error ? error.message : String(error),
             humanFixHint: scene.program !== undefined
-              ? "按行列诊断修正 program；不要局部 patch，必须带完整 envelope、完整 scenes 和 evidenceLedger 重发。"
+              ? "按行列诊断修正 program；不要局部 patch，必须带完整 envelope 和完整 scenes 重发。"
               : scene.renderPlan !== undefined
                 ? (() => {
                     const registration = RICH_ANSWER_RENDERER_REGISTRATION_BY_ID.get(
                       scene.renderPlan.renderer,
                     );
                     if (!registration) {
-                      return "按注册 renderer、specVersion、高层 spec、interactionBindings、sourceBindings、fallback 和 qualityBudget 诊断修正 renderPlan；不要改成 raw option、脚本、HTML 或 SVG path。";
+                      return "按注册 renderer、specVersion、高层 spec、interactionBindings、fallback 和 qualityBudget 诊断修正 renderPlan；sourceBindings 可选；不要改成 raw option、脚本、HTML 或 SVG path。";
                     }
                     return [
                       `若当前 renderer ${registration.id}@${registration.specVersion} 仍与本题知识对象和学习动作匹配，就按目录字段形状修正高层规格；若错误暴露的是路线不匹配，返回本轮目录重新对称比较 renderer、program 与 ui，不要机械保留当前路线，也不要直接退回低级通用点线。`,
@@ -10710,10 +10234,10 @@ export default function weibeiExtension(pi: ExtensionAPI) {
                         minimalSpecSkeleton: registration.minimalSpecSkeleton,
                         nestedFieldContracts: richAnswerRendererNestedFieldContracts(registration),
                       })}`,
-                      "仍需完整重发 envelope、scenes 与 evidenceLedger；禁止 raw option、脚本、HTML 或 SVG path。",
+                      "仍需完整重发 envelope 与 scenes；可选追溯字段按需附带；禁止 raw option、脚本、HTML 或 SVG path。",
                     ].join(" ");
                   })()
-                : "按 UI 节点、数据集、binding 和证据诊断修正 ui 原语树；不要局部 patch，必须完整重发。",
+                : "按 UI 节点、数据集和 binding 诊断修正 ui 原语树；不要局部 patch，必须完整重发。",
           });
         }
       }
@@ -10728,6 +10252,21 @@ export default function weibeiExtension(pi: ExtensionAPI) {
             ...params.expressionPlan,
             directManipulation: operationCount > 0,
           },
+          scenes: params.scenes.map((scene) => ({
+            ...scene,
+            evidenceIDs: scene.evidenceIDs ?? [],
+            renderPlan: scene.renderPlan === undefined
+              ? undefined
+              : {
+                ...scene.renderPlan,
+                sourceBindings: scene.renderPlan.sourceBindings ?? [],
+                fallback: {
+                  ...scene.renderPlan.fallback,
+                  preservesSourceBinding:
+                    scene.renderPlan.fallback.preservesSourceBinding ?? false,
+                },
+              },
+          })),
           evidenceLedger: normalizedEvidenceLedger,
         },
       };
@@ -10735,7 +10274,7 @@ export default function weibeiExtension(pi: ExtensionAPI) {
         content: [
           {
             type: "text",
-            text: "完整 narrative 与生成式视觉体验已通过魏碑的来源、内联位置、program/renderPlan/ui、状态和单项资源边界校验；宿主会继续按整组预算逐场景收敛，并把安全正文作为同一篇回答显示。请勿另写或改写第二份正文，只需简短结束本轮。",
+            text: "完整 narrative 与生成式视觉体验已通过魏碑的协议、内联位置、program/renderPlan/ui、状态和单项资源边界校验；来源元数据由 Agent 自行判断。宿主会继续按整组预算逐场景收敛，并把安全正文作为同一篇回答显示。请勿另写或改写第二份正文，只需简短结束本轮。",
           },
         ],
         details,
@@ -11143,9 +10682,6 @@ export default function weibeiExtension(pi: ExtensionAPI) {
     courseProfileUpdated = false;
     richAnswerAttemptCount = 0;
     richAnswerCatalogRevision = undefined;
-    richAnswerCatalogSelection = undefined;
-    richAnswerCatalogRendererSelection = undefined;
-    richAnswerCatalogRepresentationNeeds = undefined;
     searchedCourseItemIDs.clear();
     hostCourseItemIDs.clear();
     readCourseSourceRevisions.clear();

@@ -169,7 +169,7 @@ const renderPlanSchema = z.object({
   specVersion: z.string().min(1),
   spec: z.record(z.string(), z.unknown()),
   interactionBindings: z.array(z.record(z.string(), z.unknown())).default([]),
-  sourceBindings: z.array(z.record(z.string(), z.unknown())),
+  sourceBindings: z.array(z.record(z.string(), z.unknown())).default([]),
   artifactRefs: z.array(z.record(z.string(), z.unknown())).default([]),
   fallback: z.object({
     mode: z.enum(["artifactPreview", "narrativeOnly", "simplifiedRenderer", "staticSnapshot"]),
@@ -177,7 +177,7 @@ const renderPlanSchema = z.object({
     text: z.string().min(1),
     renderer: z.string().min(1).optional(),
     artifactID: z.string().min(1).optional(),
-    preservesSourceBinding: z.boolean(),
+    preservesSourceBinding: z.boolean().default(false),
   }).strict(),
   qualityBudget: z.object({
     maxNodes: z.number().int().min(1).max(formalRenderPlanAdmissionEnvelope.maxNodes).optional(),

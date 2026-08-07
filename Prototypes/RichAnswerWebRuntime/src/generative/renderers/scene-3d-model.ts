@@ -309,10 +309,6 @@ function guardScene3DPlan(plan: RenderPlan, spec: Scene3DSpec) {
   if (plan.qualityBudget.allowNetwork || plan.qualityBudget.allowWebGL) {
     return createRendererIssue("capability_mismatch", plan.renderer, "三维渲染器不使用网络、WebGL、外链模型或任意脚本，只做确定性 Canvas 投影。");
   }
-  const sourceIds = new Set(plan.sourceBindings.flatMap((binding) => [
-    binding.sourceID,
-    binding.evidenceID,
-  ].filter((value): value is string => typeof value === "string" && value.length > 0)));
   const totalObjectCount = spec.objects.length + spec.states.reduce((sum, state) => sum + state.objects.length, 0);
   if (totalObjectCount === 0) {
     return createRendererIssue("validation_error", plan.renderer, "三维场景至少需要一个共享对象或状态对象。");
@@ -399,16 +395,6 @@ function guardScene3DPlan(plan: RenderPlan, spec: Scene3DSpec) {
         return createRendererIssue("validation_error", plan.renderer, `状态 ${state.id} 的读数 id 重复：${readout.id}。`);
       }
       readoutIds.add(readout.id);
-      for (const evidenceId of readout.evidenceIDs) {
-        if (!sourceIds.has(evidenceId)) {
-          return createRendererIssue("validation_error", plan.renderer, `状态 ${state.id} 的读数引用了不存在的证据：${evidenceId}。`);
-        }
-      }
-    }
-    for (const evidenceId of state.evidenceIDs) {
-      if (!sourceIds.has(evidenceId)) {
-        return createRendererIssue("validation_error", plan.renderer, `状态 ${state.id} 引用了不存在的证据：${evidenceId}。`);
-      }
     }
 
     for (const objectId of state.objectIds ?? []) {

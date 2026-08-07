@@ -1918,7 +1918,6 @@ private struct RichAnswerEvidencePackageRecord {
         if root["shapeDecision"] == nil { missingFields.append("shapeDecision") }
         if root["expressionPlan"] == nil { missingFields.append("expressionPlan") }
         if root["toolAndProtocolValidation"] == nil { missingFields.append("toolAndProtocolValidation") }
-        if root["sourceBinding"] == nil { missingFields.append("sourceBinding") }
         if root["repairAndRetest"] == nil { missingFields.append("repairAndRetest") }
         if root["elapsedSeconds"] == nil { missingFields.append("elapsedSeconds") }
         if caseSnapshot["question"] == nil && prompt["question"] == nil { missingFields.append("question") }

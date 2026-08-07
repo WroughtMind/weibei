@@ -49,6 +49,7 @@ private struct RichAnswerWebRuntimeEntry {
 struct RichAnswerWebRuntimeView: View {
     private let entries: [RichAnswerWebRuntimeEntry]
     private let evidenceByID: [String: RichAnswerEvidence]
+    private let verifiedAssetIDs: Set<String>
     private let expandsOverflow: Bool
     private let onRequestExpansion: (() -> Void)?
     private let onOpenEvidence: (RichAnswerEvidence) -> Void
@@ -63,6 +64,7 @@ struct RichAnswerWebRuntimeView: View {
         scene: RichAnswerScene,
         program: RichAnswerUIProgram,
         evidenceByID: [String: RichAnswerEvidence],
+        verifiedAssetIDs: Set<String>,
         expandsOverflow: Bool = false,
         onRequestExpansion: (() -> Void)? = nil,
         onOpenEvidence: @escaping (RichAnswerEvidence) -> Void,
@@ -71,6 +73,7 @@ struct RichAnswerWebRuntimeView: View {
     ) {
         entries = [RichAnswerWebRuntimeEntry(scene: scene, program: program)]
         self.evidenceByID = evidenceByID
+        self.verifiedAssetIDs = verifiedAssetIDs
         self.expandsOverflow = expandsOverflow
         self.onRequestExpansion = onRequestExpansion
         self.onOpenEvidence = onOpenEvidence
@@ -82,6 +85,7 @@ struct RichAnswerWebRuntimeView: View {
         scene: RichAnswerScene,
         renderPlan: RichAnswerRenderPlan,
         evidenceByID: [String: RichAnswerEvidence],
+        verifiedAssetIDs: Set<String>,
         expandsOverflow: Bool = false,
         onRequestExpansion: (() -> Void)? = nil,
         onOpenEvidence: @escaping (RichAnswerEvidence) -> Void,
@@ -90,6 +94,7 @@ struct RichAnswerWebRuntimeView: View {
     ) {
         entries = [RichAnswerWebRuntimeEntry(scene: scene, renderPlan: renderPlan)]
         self.evidenceByID = evidenceByID
+        self.verifiedAssetIDs = verifiedAssetIDs
         self.expandsOverflow = expandsOverflow
         self.onRequestExpansion = onRequestExpansion
         self.onOpenEvidence = onOpenEvidence
@@ -100,6 +105,7 @@ struct RichAnswerWebRuntimeView: View {
     init(
         scenes: [RichAnswerScene],
         evidenceByID: [String: RichAnswerEvidence],
+        verifiedAssetIDs: Set<String>,
         expandsOverflow: Bool = false,
         onRequestExpansion: (() -> Void)? = nil,
         onOpenEvidence: @escaping (RichAnswerEvidence) -> Void,
@@ -116,6 +122,7 @@ struct RichAnswerWebRuntimeView: View {
             return nil
         }
         self.evidenceByID = evidenceByID
+        self.verifiedAssetIDs = verifiedAssetIDs
         self.expandsOverflow = expandsOverflow
         self.onRequestExpansion = onRequestExpansion
         self.onOpenEvidence = onOpenEvidence
@@ -128,6 +135,7 @@ struct RichAnswerWebRuntimeView: View {
             RichAnswerWebViewRepresentable(
                 entries: entries,
                 evidenceByID: evidenceByID,
+                verifiedAssetIDs: verifiedAssetIDs,
                 heightLimit: heightLimit,
                 contentHeight: $contentHeight,
                 contentOverflowed: $contentOverflowed,
@@ -286,6 +294,7 @@ private final class RichAnswerWebClippingView: NSView {
 private struct RichAnswerWebViewRepresentable: NSViewRepresentable {
     let entries: [RichAnswerWebRuntimeEntry]
     let evidenceByID: [String: RichAnswerEvidence]
+    let verifiedAssetIDs: Set<String>
     let heightLimit: CGFloat
     @Binding var contentHeight: CGFloat
     @Binding var contentOverflowed: Bool
@@ -298,6 +307,7 @@ private struct RichAnswerWebViewRepresentable: NSViewRepresentable {
         Coordinator(
             entries: entries,
             evidenceByID: evidenceByID,
+            verifiedAssetIDs: verifiedAssetIDs,
             heightLimit: heightLimit,
             contentHeight: $contentHeight,
             contentOverflowed: $contentOverflowed,
@@ -365,6 +375,7 @@ private struct RichAnswerWebViewRepresentable: NSViewRepresentable {
         context.coordinator.update(
             entries: entries,
             evidenceByID: evidenceByID,
+            verifiedAssetIDs: verifiedAssetIDs,
             heightLimit: heightLimit,
             contentHeight: $contentHeight,
             contentOverflowed: $contentOverflowed,
@@ -411,6 +422,7 @@ private struct RichAnswerWebViewRepresentable: NSViewRepresentable {
         weak var clippingView: RichAnswerWebClippingView?
         private var entries: [RichAnswerWebRuntimeEntry]
         private var evidenceByID: [String: RichAnswerEvidence]
+        private var verifiedAssetIDs: Set<String>
         private var heightLimit: CGFloat
         private var contentHeight: Binding<CGFloat>
         private var contentOverflowed: Binding<Bool>
@@ -432,6 +444,7 @@ private struct RichAnswerWebViewRepresentable: NSViewRepresentable {
         init(
             entries: [RichAnswerWebRuntimeEntry],
             evidenceByID: [String: RichAnswerEvidence],
+            verifiedAssetIDs: Set<String>,
             heightLimit: CGFloat,
             contentHeight: Binding<CGFloat>,
             contentOverflowed: Binding<Bool>,
@@ -442,6 +455,7 @@ private struct RichAnswerWebViewRepresentable: NSViewRepresentable {
         ) {
             self.entries = entries
             self.evidenceByID = evidenceByID
+            self.verifiedAssetIDs = verifiedAssetIDs
             self.heightLimit = heightLimit
             self.contentHeight = contentHeight
             self.contentOverflowed = contentOverflowed
@@ -454,6 +468,7 @@ private struct RichAnswerWebViewRepresentable: NSViewRepresentable {
         func update(
             entries: [RichAnswerWebRuntimeEntry],
             evidenceByID: [String: RichAnswerEvidence],
+            verifiedAssetIDs: Set<String>,
             heightLimit: CGFloat,
             contentHeight: Binding<CGFloat>,
             contentOverflowed: Binding<Bool>,
@@ -464,6 +479,7 @@ private struct RichAnswerWebViewRepresentable: NSViewRepresentable {
         ) {
             self.entries = entries
             self.evidenceByID = evidenceByID
+            self.verifiedAssetIDs = verifiedAssetIDs
             self.heightLimit = heightLimit
             self.contentHeight = contentHeight
             self.contentOverflowed = contentOverflowed
@@ -872,7 +888,6 @@ private struct RichAnswerWebViewRepresentable: NSViewRepresentable {
             var trustedAssetBytes: [Int] = []
             let errors = bridgeLocalImageAssets(
                 in: &plan,
-                for: entry.scene,
                 trustedAssetBytes: &trustedAssetBytes
             )
             if !errors.isEmpty {
@@ -905,28 +920,26 @@ private struct RichAnswerWebViewRepresentable: NSViewRepresentable {
 
         private func bridgeLocalImageAssets(
             in plan: inout [String: Any],
-            for scene: RichAnswerScene,
             trustedAssetBytes: inout [Int]
         ) -> [String] {
             guard let renderer = plan["renderer"] as? String,
                   renderer == "weibei.image.overlay" || renderer == "weibei.spatial.map",
                   var spec = plan["spec"] as? [String: Any] else { return [] }
 
-            let allowedAssetIDs = allowedAssetIDs(for: scene)
             var errors: [String] = []
 
             if renderer == "weibei.image.overlay" {
                 bridgeImageSource(
                     at: ["image"],
                     in: &spec,
-                    allowedAssetIDs: allowedAssetIDs,
+                    allowedAssetIDs: verifiedAssetIDs,
                     errors: &errors,
                     trustedAssetBytes: &trustedAssetBytes
                 )
                 bridgeImageSource(
                     at: ["comparison", "image"],
                     in: &spec,
-                    allowedAssetIDs: allowedAssetIDs,
+                    allowedAssetIDs: verifiedAssetIDs,
                     errors: &errors,
                     trustedAssetBytes: &trustedAssetBytes
                 )
@@ -934,7 +947,7 @@ private struct RichAnswerWebViewRepresentable: NSViewRepresentable {
                 bridgeImageSource(
                     at: ["mapAsset"],
                     in: &spec,
-                    allowedAssetIDs: allowedAssetIDs,
+                    allowedAssetIDs: verifiedAssetIDs,
                     errors: &errors,
                     trustedAssetBytes: &trustedAssetBytes
                 )
@@ -942,16 +955,6 @@ private struct RichAnswerWebViewRepresentable: NSViewRepresentable {
 
             plan["spec"] = spec
             return errors
-        }
-
-        private func allowedAssetIDs(for scene: RichAnswerScene) -> Set<String> {
-            var ids = Set(scene.objects.compactMap(\.assetID))
-            ids.formUnion(scene.frames.compactMap(\.assetID))
-            for evidenceID in scene.evidenceIDs {
-                guard let evidence = evidenceByID[evidenceID] else { continue }
-                ids.formUnion(evidence.assetIDs)
-            }
-            return ids
         }
 
         private func bridgeImageSource(
@@ -995,10 +998,13 @@ private struct RichAnswerWebViewRepresentable: NSViewRepresentable {
             errors: inout [String],
             trustedAssetBytes: inout [Int]
         ) {
-            guard source["kind"] as? String == "assetRef",
-                  let assetID = (source["source"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
+            guard source["kind"] as? String == "assetRef" else { return }
+            guard let assetID = (source["source"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
                   !assetID.isEmpty,
-                  allowedAssetIDs.contains(assetID) else { return }
+                  allowedAssetIDs.contains(assetID) else {
+                errors.append("\(path) 引用了未经真实读取授权的本地图片")
+                return
+            }
 
             guard let image = assetPreview(assetID) else {
                 errors.append("\(path) 引用的本地图片资产不可预览：\(assetID)")
@@ -1020,10 +1026,12 @@ private struct RichAnswerWebViewRepresentable: NSViewRepresentable {
         private func evidenceBindings(for scene: RichAnswerScene) -> [[String: String]] {
             scene.evidenceIDs.compactMap { evidenceID -> [String: String]? in
                 guard let evidence = evidenceByID[evidenceID] else { return nil }
+                let sourceLabel = evidence.sourceLabel.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !sourceLabel.isEmpty else { return nil }
                 return [
                     "id": evidence.id,
-                    "sourceID": evidence.sourceLabel,
-                    "locator": evidence.sourceLabel,
+                    "sourceID": sourceLabel,
+                    "locator": sourceLabel,
                 ]
             }
         }

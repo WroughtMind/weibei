@@ -276,7 +276,7 @@ public struct RichAnswerPythonArtifactRequest: Codable, Hashable, Sendable {
         parameters: [String: RichAnswerPythonArtifactScalar] = [:],
         requestedOutputs: [RichAnswerPythonArtifactOutputRequest],
         limits: RichAnswerPythonArtifactLimits = .default,
-        sourceBindings: [RichAnswerPythonArtifactSourceBinding],
+        sourceBindings: [RichAnswerPythonArtifactSourceBinding] = [],
         interactiveAdapter: RichAnswerPythonInteractiveAdapterDeclaration? = nil
     ) {
         self.id = id
@@ -308,7 +308,10 @@ public struct RichAnswerPythonArtifactRequest: Codable, Hashable, Sendable {
         parameters = try container.decodeIfPresent([String: RichAnswerPythonArtifactScalar].self, forKey: .parameters) ?? [:]
         requestedOutputs = try container.decode([RichAnswerPythonArtifactOutputRequest].self, forKey: .requestedOutputs)
         limits = try container.decodeIfPresent(RichAnswerPythonArtifactLimits.self, forKey: .limits) ?? .default
-        sourceBindings = try container.decode([RichAnswerPythonArtifactSourceBinding].self, forKey: .sourceBindings)
+        sourceBindings = try container.decodeIfPresent(
+            [RichAnswerPythonArtifactSourceBinding].self,
+            forKey: .sourceBindings
+        ) ?? []
         interactiveAdapter = try container.decodeIfPresent(RichAnswerPythonInteractiveAdapterDeclaration.self, forKey: .interactiveAdapter)
     }
 
@@ -395,7 +398,7 @@ public struct RichAnswerPythonArtifactProduced: Codable, Hashable, Sendable {
         mimeType: String,
         role: String,
         payload: RichAnswerPythonArtifactPayload,
-        sourceBindings: [RichAnswerPythonArtifactSourceBinding],
+        sourceBindings: [RichAnswerPythonArtifactSourceBinding] = [],
         lifecycle: RichAnswerPythonArtifactLifecycle = RichAnswerPythonArtifactLifecycle(),
         metadata: [String: RichAnswerRenderSpecValue] = [:]
     ) throws {
@@ -619,9 +622,6 @@ public enum RichAnswerPythonArtifactPipeline {
                 throw RichAnswerPythonArtifactError.outputMismatch("artifact \(artifact.id) checksum does not match payload")
             }
             try validateSourceBindings(artifact.sourceBindings)
-            guard Set(artifact.sourceBindings).isSubset(of: Set(validated.request.sourceBindings)) else {
-                throw RichAnswerPythonArtifactError.outputMismatch("artifact \(artifact.id) introduced an unknown source binding")
-            }
         }
         if totalBytes > validated.effectiveLimits.maxOutputBytes {
             throw RichAnswerPythonArtifactError.budgetExceeded(
@@ -645,10 +645,6 @@ public enum RichAnswerPythonArtifactPipeline {
             guard RichAnswerPythonArtifactID.isSafe(input.role) else {
                 throw RichAnswerPythonArtifactError.invalidIdentifier(field: "input.role", value: input.role)
             }
-            if let sourceBindingID = input.sourceBindingID,
-               !sourceBindingIDs.contains(sourceBindingID) {
-                throw RichAnswerPythonArtifactError.sourceBindingMissing(target: sourceBindingID)
-            }
             totalBytes += try RichAnswerPythonArtifactSize.encodedSize(input.payload)
             switch input.payload {
             case let .numberSeries(values):
@@ -661,7 +657,8 @@ public enum RichAnswerPythonArtifactPipeline {
             case let .table(table):
                 try validate(table, id: input.id, limits: limits)
             case let .imageRef(image):
-                guard input.sourceBindingID != nil else {
+                guard let sourceBindingID = input.sourceBindingID,
+                      sourceBindingIDs.contains(sourceBindingID) else {
                     throw RichAnswerPythonArtifactError.sourceBindingMissing(target: input.id)
                 }
                 guard RichAnswerPythonArtifactID.isSafeAssetID(image.assetID) else {

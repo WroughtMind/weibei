@@ -301,7 +301,7 @@ export const ArgumentUnit = defineComponent({
     roleLabel: z.string(),
     text: z.string(),
     note: z.string(),
-    evidenceID: z.string(),
+    evidenceID: z.string().optional(),
   }),
   component: () => null,
 });
@@ -341,13 +341,15 @@ export const ArgumentReader = defineComponent({
         <aside>
           <span>{active.props.roleLabel}</span>
           <p>{active.props.note}</p>
-          <button
-            type="button"
-            aria-label={`回到原文第 ${activeIndex + 1} 处`}
-            data-weibei-control="argument-evidence"
-            data-weibei-control-id={active.props.evidenceID}
-            onClick={() => window.dispatchEvent(new CustomEvent("weibei:evidence", { detail: { evidenceID: active.props.evidenceID } }))}
-          >回到原文第 {activeIndex + 1} 处</button>
+          {active.props.evidenceID ? (
+            <button
+              type="button"
+              aria-label={`回到原文第 ${activeIndex + 1} 处`}
+              data-weibei-control="argument-evidence"
+              data-weibei-control-id={active.props.evidenceID}
+              onClick={() => window.dispatchEvent(new CustomEvent("weibei:evidence", { detail: { evidenceID: active.props.evidenceID } }))}
+            >回到原文第 {activeIndex + 1} 处</button>
+          ) : null}
         </aside>
       </section>
     );
@@ -365,7 +367,7 @@ export const CausalEvent = defineComponent({
     relationFromPrevious: z.string(),
     confidence: z.enum(["strong", "medium", "insufficient"]),
     detail: z.string(),
-    evidenceID: z.string(),
+    evidenceID: z.string().optional(),
   }),
   component: () => null,
 });
@@ -411,13 +413,15 @@ export const CausalTrack = defineComponent({
           <span>{active.props.kindLabel} · {active.props.confidence === "insufficient" ? "证据不足" : `证据${active.props.confidence === "strong" ? "强" : "中"}`}</span>
           <strong>{active.props.label}</strong>
           <p>{active.props.detail}</p>
-          <button
-            type="button"
-            aria-label={`查看材料：${active.props.label}`}
-            data-weibei-control="causal-evidence"
-            data-weibei-control-id={active.props.evidenceID}
-            onClick={() => window.dispatchEvent(new CustomEvent("weibei:evidence", { detail: { evidenceID: active.props.evidenceID } }))}
-          >查看这一步的材料</button>
+          {active.props.evidenceID ? (
+            <button
+              type="button"
+              aria-label={`查看材料：${active.props.label}`}
+              data-weibei-control="causal-evidence"
+              data-weibei-control-id={active.props.evidenceID}
+              onClick={() => window.dispatchEvent(new CustomEvent("weibei:evidence", { detail: { evidenceID: active.props.evidenceID } }))}
+            >查看这一步的材料</button>
+          ) : null}
         </aside>
       </section>
     );

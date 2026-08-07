@@ -8,8 +8,8 @@ const evidenceBindingSchema = z.object({
 
 const evidenceContentSchema = z.object({
   id: z.string().min(1),
-  sourceLabel: z.string().min(1),
-  excerpt: z.string().min(1),
+  sourceLabel: z.string().default(""),
+  excerpt: z.string().default(""),
   isTruncated: z.boolean(),
 });
 

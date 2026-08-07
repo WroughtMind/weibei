@@ -249,8 +249,8 @@ try {
   assert.equal(parsedUnsourcedGeographicMap.success, true);
   assert.equal(
     registry.compile(parsedUnsourcedGeographicMap.data, context).ok,
-    false,
-    "real geographic coordinates still require a source binding",
+    true,
+    "geographic coordinates do not require source metadata",
   );
 
   const mixedPlans = parseRenderPlans([
