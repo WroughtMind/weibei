@@ -15,11 +15,9 @@ import {
   type SpatialMapSpec,
   parseSpatialMapSpec,
   resolveSpatialMapVisibility,
-  runSpatialMapVisibilitySelfCheck,
-  runSpatialMapViewportSelfCheck,
   spatialMapBaseToScreen,
   spatialMapScreenToBase,
-} from "./spatial-map.self-check";
+} from "./spatial-map-model";
 
 type SpatialCompiled = CompiledRenderPlan & {
   spec: SpatialMapSpec;
@@ -1064,7 +1062,7 @@ export const spatialMapRenderer: RichAnswerRenderer = {
       "probe",
     ],
     interactions: ["pan", "zoom", "toggle-layer", "probe", "double-tap-reset"],
-    resources: ["canvas-2d", "local-assets", "self-check-spec"],
+    resources: ["canvas-2d", "local-assets"],
     maxNodes: 280,
     maxDataPoints: 8_000,
     maxArtifacts: 2,
@@ -1079,41 +1077,22 @@ export const spatialMapRenderer: RichAnswerRenderer = {
     fallback: ["narrativeOnly"],
   },
   validate(plan: RenderPlan) {
-    const viewportCheck = runSpatialMapViewportSelfCheck();
-    if (!viewportCheck.ok) {
-      return {
-        ok: false,
-        issue: createRendererIssue(
-          "validation_error",
-          SPATIAL_MAP_RENDERER,
-          `空间地图 CSS 像素坐标自检失败：${viewportCheck.cases.join("；")}`,
-        ),
-      };
-    }
-    const visibilityCheck = runSpatialMapVisibilitySelfCheck();
-    if (!visibilityCheck.ok) {
-      return {
-        ok: false,
-        issue: createRendererIssue(
-          "validation_error",
-          SPATIAL_MAP_RENDERER,
-          `空间地图图层与标签绑定自检失败：${visibilityCheck.cases.join("；")}`,
-        ),
-      };
-    }
     const parsed = parseSpatialMapSpec(plan);
     return parsed.ok ? { ok: true } : { ok: false, issue: parsed.issue };
   },
   compile(plan: RenderPlan, context) {
     const parsed = parseSpatialMapSpec(plan);
     if (!parsed.ok) return { ok: false, issue: parsed.issue };
-    if (!plan.sourceBindings.length) {
+    if (
+      !plan.sourceBindings.length
+      && (parsed.spec.coordinateMode === "geographic" || parsed.spec.mapAsset.kind !== "none")
+    ) {
       return {
         ok: false,
         issue: createRendererIssue(
           "validation_error",
           SPATIAL_MAP_RENDERER,
-          "来源绑定缺失，空间地图需至少保留一个来源绑定用于学习追溯。",
+          "真实地理坐标或底图必须保留来源绑定；无来源时请改为不带底图的示意空间。",
         ),
       };
     }

@@ -1073,12 +1073,14 @@ private func checkBundledAgentResources() throws {
             && resources.systemPrompt.contains("文本是默认形态")
             && resources.systemPrompt.contains("skill://rich-answer-director")
             && resources.systemPrompt.contains("具体字段、能力、安全边界和修复提示以 Skill")
+            && resources.systemPrompt.contains("富回答不要求必须有课程来源")
+            && resources.systemPrompt.contains("不得伪造材料、笔记、选区或其他来源")
             && resources.systemPrompt.utf8.count < 10_000
             && !resources.systemPrompt.contains("富回答先过内容与专业性，再过视觉")
             && richAnswerDirectorSource.contains("提交前只检查四件事")
             && professionalVisualizationSource.contains("不能只凭材料文字猜坐标")
             && generativeCompositionSource.contains("不生成任意脚本"),
-        "PI rich answers stay source-grounded and cannot escape into arbitrary web payloads"
+        "PI rich answers allow source-free explanations while strictly validating every claimed source and blocking arbitrary web payloads"
     )
     try piRequire(
         resources.systemPrompt.contains("寒暄、创作、常识和不依赖课程资料的问题直接回答")

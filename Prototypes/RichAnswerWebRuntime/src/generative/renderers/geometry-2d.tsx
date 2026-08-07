@@ -27,7 +27,7 @@ import {
   type GeometryPoint,
   type GeometryReadout,
   type GeometryShape,
-} from "./geometry-2d.self-check";
+} from "./geometry-2d-model";
 
 type GeometryCompiled = CompiledRenderPlan & {
   spec: Geometry2DSpec;
@@ -1049,35 +1049,6 @@ function Geometry2DMount({ compiled, context }: { compiled: GeometryCompiled; co
   }, [surfaceMetrics.minHeight]);
 
   useEffect(() => {
-    const element = containerRef.current;
-    if (!element) return;
-    const verifyInteraction = () => {
-      const firstControl = spec.controls[0];
-      if (firstControl) {
-        const current = controlValues[firstControl.id] ?? firstControl.value;
-        const optionIndex = firstControl.options?.findIndex((option) => controlValueEquals(option.value, current)) ?? -1;
-        const next = firstControl.options?.length
-          ? firstControl.options[(optionIndex + 1 + firstControl.options.length) % firstControl.options.length].value
-          : typeof current === "number" && firstControl.step !== undefined && firstControl.minimum !== undefined && firstControl.maximum !== undefined
-            ? current + firstControl.step <= firstControl.maximum
-              ? current + firstControl.step
-              : firstControl.minimum
-            : firstControl.value;
-        setControlValues((values) => ({ ...values, [firstControl.id]: next }));
-        return;
-      }
-
-      const draggable = [...scene.points.values()].find((point) => point.draggable);
-      if (!draggable) return;
-      const moved = projectToConstraint({ x: draggable.x + 0.1, y: draggable.y + 0.1 }, draggable.constraint);
-      setPointOverrides((overrides) => ({ ...overrides, [draggable.id]: moved }));
-      setFocusID(draggable.id);
-    };
-    element.addEventListener("weibei:verify-interaction", verifyInteraction);
-    return () => element.removeEventListener("weibei:verify-interaction", verifyInteraction);
-  }, [controlValues, scene.points, spec.controls]);
-
-  useEffect(() => {
     context.postMessage({
       type: "weibei:state",
       programID: compiled.programID,
@@ -1333,7 +1304,6 @@ function Geometry2DMount({ compiled, context }: { compiled: GeometryCompiled; co
         ref={containerRef}
         data-weibei-control="geometry-2d-surface"
         data-weibei-control-id={compiled.programID}
-        data-weibei-verify-event="weibei:verify-interaction"
         data-weibei-state={JSON.stringify({
           controls: controlValues,
           focusID,

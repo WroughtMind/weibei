@@ -8,6 +8,7 @@ func runRichAnswerProtocolSelfCheck() throws {
     try checkNarrativeAndScenesFormOneInlineFlow()
     try checkOpenUIProgramRejectsUnsafeVariants()
     try checkGeneratedUITreeRenders()
+    try checkGeneratedUITreeRendersWithoutSources()
     try checkFormalRichAnswerRouteContract()
     try checkPersistedRichAnswerReplayAdmission()
     try checkWholeCallRenderPlanBudgetIsolation()
@@ -2545,6 +2546,46 @@ private func checkGeneratedUITreeRenders() throws {
         )
     )
     try richAnswerRequire(decoded == presentation, "the generated UI JSON boundary round-trips")
+}
+
+private func checkGeneratedUITreeRendersWithoutSources() throws {
+    var envelope = generatedUIEnvelope()
+    envelope.narrative = "这是一个不依赖课程材料的公式解释性演示：拖动 x，观察 y = x² 的曲线与读数。"
+    envelope.expressionPlan.summary = "用公式解释性演示连接自变量、曲线与读数"
+    envelope.scenes[0].title = "公式解释性演示"
+    envelope.scenes[0].evidenceIDs = []
+    envelope.evidenceLedger = []
+
+    var ui = envelope.scenes[0].ui!
+    let evidenceNodeIDs = Set(ui.nodes.filter { $0.role == .evidence }.map(\.id))
+    ui.nodes.removeAll { evidenceNodeIDs.contains($0.id) }
+    for nodeIndex in ui.nodes.indices {
+        ui.nodes[nodeIndex].evidenceIDs = []
+        ui.nodes[nodeIndex].children.removeAll { evidenceNodeIDs.contains($0) }
+    }
+    for datasetIndex in ui.datasets.indices {
+        for rowIndex in ui.datasets[datasetIndex].rows.indices {
+            ui.datasets[datasetIndex].rows[rowIndex].evidenceIDs = []
+        }
+    }
+    envelope.scenes[0].ui = ui
+
+    let presentation = RichAnswerEngine.prepare(
+        envelope: envelope,
+        environment: RichAnswerEnvironment(
+            contextRevision: "revision-ui",
+            allowedSourceLabels: []
+        )
+    )
+
+    try richAnswerRequire(
+        presentation.mode == .rich,
+        "a self-contained formula demonstration stays rich without course sources"
+    )
+    try richAnswerRequire(
+        !presentation.diagnostics.contains(where: { $0.code == .missingEvidence }),
+        "a source-free formula demonstration does not fabricate a missing-evidence failure"
+    )
 }
 
 private func checkGeneratedUITreeRejectsUnboundEvidenceAndFalseFamily() throws {

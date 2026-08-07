@@ -1,4 +1,5 @@
 import Foundation
+import WeiBeiCore
 
 public enum RichAnswerPythonArtifactSelfCheckError: Error, Equatable, CustomStringConvertible, Sendable {
     case failed(String)
@@ -51,9 +52,16 @@ public enum RichAnswerPythonArtifactSelfCheck {
 
         var noSource = request
         noSource.sourceBindings = []
+        for index in noSource.inputs.indices {
+            noSource.inputs[index].sourceBindingID = nil
+        }
+        _ = try RichAnswerPythonArtifactPipeline.validate(noSource)
+
+        var danglingSource = request
+        danglingSource.inputs[0].sourceBindingID = "missing-source"
         try requireThrows(
-            try RichAnswerPythonArtifactPipeline.validate(noSource),
-            "validator accepted a request without source bindings"
+            try RichAnswerPythonArtifactPipeline.validate(danglingSource),
+            "validator accepted an input with a missing source binding"
         )
 
         var fileAccess = request
@@ -95,6 +103,17 @@ public enum RichAnswerPythonArtifactSelfCheck {
             try RichAnswerPythonArtifactPipeline.validate(unsafeImage),
             "validator accepted path-like image asset ID"
         )
+
+        var sourceFreeImage = unsafeImage
+        sourceFreeImage.inputs[0].payload = .imageRef(
+            RichAnswerPythonArtifactImageRef(assetID: "material-image")
+        )
+        sourceFreeImage.inputs[0].sourceBindingID = nil
+        sourceFreeImage.sourceBindings = []
+        try requireThrows(
+            try RichAnswerPythonArtifactPipeline.validate(sourceFreeImage),
+            "validator accepted an image input without a real source binding"
+        )
     }
 
     public static func runExecutorChecks() async throws {
@@ -127,6 +146,43 @@ public enum RichAnswerPythonArtifactSelfCheck {
         try require(result.artifacts.count == 1, "executor did not produce one artifact")
         try require(result.artifacts[0].sha256.count == 64, "artifact sha256 was not recorded")
         try require(!result.artifacts[0].sourceBindings.isEmpty, "artifact did not retain source binding")
+
+        let droppedSourceExecutor = RichAnswerPythonArtifactExecutor { validated in
+            let artifact = try RichAnswerPythonArtifactProduced(
+                id: "sample-output",
+                kind: .jsonSpec,
+                mimeType: "application/json",
+                role: "function-samples",
+                payload: .json(.object(["x": .array([.number(0)])])),
+                sourceBindings: []
+            )
+            return RichAnswerPythonArtifactExecutionResult(
+                requestID: validated.request.id,
+                operation: validated.request.operation,
+                artifacts: [artifact]
+            )
+        }
+        try await requireThrowsAsync(
+            try await RichAnswerPythonArtifactPipeline.execute(
+                request: request,
+                executor: droppedSourceExecutor
+            ),
+            "pipeline accepted an artifact that dropped validated source bindings"
+        )
+
+        var noSourceRequest = request
+        noSourceRequest.sourceBindings = []
+        for index in noSourceRequest.inputs.indices {
+            noSourceRequest.inputs[index].sourceBindingID = nil
+        }
+        let noSourceResult = try await RichAnswerPythonArtifactPipeline.execute(
+            request: noSourceRequest,
+            executor: executor
+        )
+        try require(
+            noSourceResult.artifacts.first?.sourceBindings.isEmpty == true,
+            "deterministic artifact without course material was rejected"
+        )
 
         let oversizedExecutor = RichAnswerPythonArtifactExecutor { validated in
             let data = Data(repeating: 7, count: validated.effectiveLimits.maxOutputBytes + 1)

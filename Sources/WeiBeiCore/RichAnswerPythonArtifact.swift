@@ -240,7 +240,6 @@ public struct RichAnswerPythonArtifactPolicy: Codable, Hashable, Sendable {
     public var allowedOutputKinds: Set<RichAnswerPythonArtifactKind>
     public var allowedInteractiveAdapters: Set<RichAnswerPythonInteractiveAdapterKind>
     public var limits: RichAnswerPythonArtifactLimits
-    public var requireSourceBindings: Bool
     public var allowInteractiveAdapters: Bool
 
     public init(
@@ -248,14 +247,12 @@ public struct RichAnswerPythonArtifactPolicy: Codable, Hashable, Sendable {
         allowedOutputKinds: Set<RichAnswerPythonArtifactKind> = Set(RichAnswerPythonArtifactKind.allCases),
         allowedInteractiveAdapters: Set<RichAnswerPythonInteractiveAdapterKind> = Set(RichAnswerPythonInteractiveAdapterKind.allCases),
         limits: RichAnswerPythonArtifactLimits = .default,
-        requireSourceBindings: Bool = true,
         allowInteractiveAdapters: Bool = false
     ) {
         self.allowedOperations = allowedOperations
         self.allowedOutputKinds = allowedOutputKinds
         self.allowedInteractiveAdapters = allowedInteractiveAdapters
         self.limits = limits
-        self.requireSourceBindings = requireSourceBindings
         self.allowInteractiveAdapters = allowInteractiveAdapters
     }
 
@@ -473,7 +470,6 @@ public enum RichAnswerPythonArtifactError: Error, Equatable, CustomStringConvert
     case unsupportedOperation(RichAnswerPythonArtifactOperation)
     case unsupportedOutputKind(RichAnswerPythonArtifactKind)
     case unsupportedInteractiveAdapter(RichAnswerPythonInteractiveAdapterKind)
-    case sourceBindingRequired
     case sourceBindingMissing(target: String)
     case duplicateIdentifier(String)
     case budgetExceeded(field: String, actual: Int, limit: Int)
@@ -492,8 +488,6 @@ public enum RichAnswerPythonArtifactError: Error, Equatable, CustomStringConvert
             return "output kind is not in the allowlist: \(kind.rawValue)"
         case let .unsupportedInteractiveAdapter(kind):
             return "interactive adapter is not in the allowlist: \(kind.rawValue)"
-        case .sourceBindingRequired:
-            return "python artifact request requires at least one source binding"
         case let .sourceBindingMissing(target):
             return "python artifact source binding target is missing: \(target)"
         case let .duplicateIdentifier(identifier):
@@ -535,14 +529,15 @@ public enum RichAnswerPythonArtifactPipeline {
         if request.limits.allowFilesystem && !policy.limits.allowFilesystem {
             throw RichAnswerPythonArtifactError.filesystemNotAllowed
         }
-        if policy.requireSourceBindings && request.sourceBindings.isEmpty {
-            throw RichAnswerPythonArtifactError.sourceBindingRequired
-        }
         try validateUniqueIDs(
             request.inputs.map(\.id) + request.requestedOutputs.map(\.id) + request.sourceBindings.map(\.id)
         )
         try validateSourceBindings(request.sourceBindings)
-        try validateInputs(request.inputs, limits: effectiveLimits)
+        try validateInputs(
+            request.inputs,
+            sourceBindingIDs: Set(request.sourceBindings.map(\.id)),
+            limits: effectiveLimits
+        )
         try validateRequestedOutputs(request.requestedOutputs, policy: policy, limits: effectiveLimits)
         try validateInteractiveAdapter(request.interactiveAdapter, policy: policy)
 
@@ -623,10 +618,13 @@ public enum RichAnswerPythonArtifactPipeline {
             guard checksum == artifact.sha256 else {
                 throw RichAnswerPythonArtifactError.outputMismatch("artifact \(artifact.id) checksum does not match payload")
             }
-            if policy.requireSourceBindings && artifact.sourceBindings.isEmpty {
-                throw RichAnswerPythonArtifactError.sourceBindingRequired
-            }
+            try validateUniqueIDs(artifact.sourceBindings.map(\.id))
             try validateSourceBindings(artifact.sourceBindings)
+            guard Set(artifact.sourceBindings) == Set(validated.request.sourceBindings) else {
+                throw RichAnswerPythonArtifactError.outputMismatch(
+                    "artifact \(artifact.id) source bindings do not match validated request"
+                )
+            }
         }
         if totalBytes > validated.effectiveLimits.maxOutputBytes {
             throw RichAnswerPythonArtifactError.budgetExceeded(
@@ -639,6 +637,7 @@ public enum RichAnswerPythonArtifactPipeline {
 
     private static func validateInputs(
         _ inputs: [RichAnswerPythonArtifactInput],
+        sourceBindingIDs: Set<String>,
         limits: RichAnswerPythonArtifactLimits
     ) throws {
         var totalBytes = 0
@@ -648,6 +647,10 @@ public enum RichAnswerPythonArtifactPipeline {
             }
             guard RichAnswerPythonArtifactID.isSafe(input.role) else {
                 throw RichAnswerPythonArtifactError.invalidIdentifier(field: "input.role", value: input.role)
+            }
+            if let sourceBindingID = input.sourceBindingID,
+               !sourceBindingIDs.contains(sourceBindingID) {
+                throw RichAnswerPythonArtifactError.sourceBindingMissing(target: sourceBindingID)
             }
             totalBytes += try RichAnswerPythonArtifactSize.encodedSize(input.payload)
             switch input.payload {
@@ -661,6 +664,9 @@ public enum RichAnswerPythonArtifactPipeline {
             case let .table(table):
                 try validate(table, id: input.id, limits: limits)
             case let .imageRef(image):
+                guard input.sourceBindingID != nil else {
+                    throw RichAnswerPythonArtifactError.sourceBindingMissing(target: input.id)
+                }
                 guard RichAnswerPythonArtifactID.isSafeAssetID(image.assetID) else {
                     throw RichAnswerPythonArtifactError.invalidIdentifier(field: "image.assetID", value: image.assetID)
                 }

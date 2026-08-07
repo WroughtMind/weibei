@@ -169,7 +169,7 @@ const renderPlanSchema = z.object({
   specVersion: z.string().min(1),
   spec: z.record(z.string(), z.unknown()),
   interactionBindings: z.array(z.record(z.string(), z.unknown())).default([]),
-  sourceBindings: z.array(z.record(z.string(), z.unknown())).min(1),
+  sourceBindings: z.array(z.record(z.string(), z.unknown())),
   artifactRefs: z.array(z.record(z.string(), z.unknown())).default([]),
   fallback: z.object({
     mode: z.enum(["artifactPreview", "narrativeOnly", "simplifiedRenderer", "staticSnapshot"]),

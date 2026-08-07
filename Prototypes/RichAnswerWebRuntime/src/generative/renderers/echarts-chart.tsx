@@ -519,38 +519,6 @@ function ChartMount({
       }
     }
 
-    const verifyInteraction = () => {
-      if (!compiled.spec.focusEnabled) return;
-      if (compiled.spec.chartKind === "histogram") {
-        const bins = histogramBins(compiled.spec.samples ?? [], compiled.spec.binCount ?? 12);
-        const bin = bins[Math.min(1, Math.max(0, bins.length - 1))];
-        if (!bin) return;
-        setFocus({
-          seriesName: "频次",
-          label: bin.label,
-          value: bin.value,
-          unit: compiled.spec.yAxisLabel ?? "次",
-          dataIndex: Math.min(1, Math.max(0, bins.length - 1)),
-        });
-        return;
-      }
-      const series = compiled.spec.series?.[0];
-      const dataIndex = Math.min(1, Math.max(0, (series?.values.length ?? 1) - 1));
-      const value = series?.values[dataIndex];
-      if (!series || value === undefined) return;
-      setFocus({
-        seriesName: series.name,
-        label: compiled.spec.chartKind === "scatter"
-          ? formatNumber(series.xValues?.[dataIndex] ?? 0)
-          : compiled.spec.xLabels?.[dataIndex] ?? "",
-        value,
-        unit: series.unit ?? compiled.spec.yAxisLabel,
-        dataIndex,
-      });
-    };
-
-    surfaceElement.addEventListener("weibei:verify-interaction", verifyInteraction);
-
     const observer = new ResizeObserver(scheduleRender);
     observer.observe(surfaceElement);
     if (surfaceElement.parentElement) observer.observe(surfaceElement.parentElement);
@@ -563,7 +531,6 @@ function ChartMount({
       observer.disconnect();
       window.removeEventListener("resize", scheduleRender);
       chart?.off("click", focusFromParams);
-      surfaceElement.removeEventListener("weibei:verify-interaction", verifyInteraction);
       chart?.dispose();
       chartRef.current = null;
     };
