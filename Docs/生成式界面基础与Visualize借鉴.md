@@ -1,15 +1,15 @@
 # 魏碑 Visualize-native 生成式学习界面重构决策
 
-状态：外层有序内容接口已定；可执行 Visualize 页面 ABI 与容器仍是候选，四道闸门通过后才冻结
-依据：Codex Visualize `1.0.19`、魏碑 `origin/main` `f105f1fd`、2026-08-07 本机 WebKit 敌对样本
+状态：Visualize 判断法与 Mermaid 路由可立即采用；动态片段引用合同已定，执行容器尚未通过 G0a
+依据：Codex Visualize `1.0.19`、魏碑 `origin/main` `14941e72`、2026-08-07 本机 WebKit 敌对样本
 日期：2026-08-07
 
 ## 结论
 
 魏碑应该沿 Visualize 的路线重构整个生成式界面能力，但必须把两件事分开：
 
-1. **模型怎么表达**：直接收成一个 HTML 片段，不再让 Agent 学 `program / renderPlan / ui`、family、renderer、组件目录和图元 Schema。
-2. **片段在哪里执行**：不能直接复用当前 App 内的 `WKWebView`。先证明一个可销毁、可断网、可嵌入的独立执行容器；通过后才进入生产替换。
+1. **模型怎么表达**：普通解释继续写普通 Markdown；静态节点和关系优先用现有 Mermaid；只有动态、空间运动或可调输入才注册一个 HTML 片段。不再让 Agent 学 `program / renderPlan / ui`、family、renderer、组件目录和图元 Schema。
+2. **动态片段在哪里执行**：不能直接复用当前 App 内的 `WKWebView`。先证明一个可销毁、可断网、可嵌入的独立执行容器；通过后才接通动态片段。
 
 这不是增加第四条路线。目标仍是用 Visualize-native 替换旧三路线，并删除旧入口、验证器、分派和渲染目录。
 
@@ -18,20 +18,24 @@
 | 判断 | 分数 | 结论 |
 | --- | ---: | --- |
 | Visualize 作为产品方向 | 9/10 | 最接近“Agent 临时生成最合适的学习器” |
-| 极简模型接口 | 9/10 | 现有 JSON、来源、状态和正文足以承载 |
+| 极简模型接口 | 9/10 | 普通 Markdown 加一个受控片段引用即可承载 |
+| 现有 Markdown / Mermaid 立即采用 | 9/10 | 生产渲染链已存在，不依赖新容器 |
 | 直接在主 App 的 WKWebView 执行任意 JS | 2/10 | 本机已实测断网和资源回收失败 |
-| 独立 UI Extension 容器方向 | 6/10 | 面向 macOS 14 的旧运行时接口已通过双架构编译；包装、断网和销毁仍未证明 |
-| 魏碑现在直接进入容器实现 | 3/10 | 当前机器缺完整 Xcode 与官方扩展生成工具，G0 尚未接通 |
-| 全量替换旧体系 | 7/10 | 方向可行；执行容器是唯一真正的前置闸门 |
+| macOS 14 独立 UI Extension 容器 | 3/10 | 旧运行接口可编译，但自定义扩展点缺公开的从零创作证据 |
+| 魏碑现在直接进入容器实现 | 2/10 | G0a 尚未证明，先写宿主只会制造脚手架 |
+| 全量替换旧体系 | 8/10 | 方向可行；任意动态 JS 只是尚未打通的一层 |
 
 **该删的是模型可见的伪复杂性；该保留的是不可信代码与用户数据之间的真实边界。**
 
 ```mermaid
 flowchart LR
-    A["Agent 读取真实材料"] --> B["提交完整正文、Visualize 片段与可选初始状态"]
-    B --> C["魏碑校验版本、字节、来源与上下文"]
-    C --> D["独立生成界面执行容器"]
-    C -- "拒绝" --> X["正文、来源与失败说明"]
+    A["Agent 读取真实材料"] --> B{"视觉是否真正增益"}
+    B -- "不需要" --> T["普通 Markdown"]
+    B -- "静态关系" --> M["Markdown 中的 Mermaid"]
+    B -- "动态、空间或可调" --> C["注册片段并放入受控引用"]
+    C --> V["魏碑校验引用、字节、来源与上下文"]
+    V --> D["独立生成界面执行容器"]
+    V -- "拒绝" --> X["结论、上下文、来源与失败说明"]
     D --> E["用户本地操作"]
     E --> F["宿主接受并保存结构化状态"]
     F --> D
@@ -71,7 +75,7 @@ Visualize Skill 负责“生成什么”，不负责替第三方 App 解决不�
 | 固定组件表和图元 Schema | 死循环与内存爆炸必须能被限时回收 |
 | 用关键词和审美预算拒绝回答 | 来源、素材和状态必须由宿主复核 |
 | 每种视觉再写一个 Adapter | follow-up 必须由用户确认 |
-| 重复的样例、fixture 和浅自检 | 失败必须只降级当前场景并保留正文 |
+| 重复的样例、fixture 和浅自检 | 失败必须只降级当前场景，并保留结论、上下文和来源 |
 
 新的深模块只承担右栏。它不再替模型选择图表、地图、布局或组件。
 
@@ -80,15 +84,16 @@ Visualize Skill 负责“生成什么”，不负责替第三方 App 解决不�
 | Visualize 原则 | 魏碑处理 |
 | --- | --- |
 | 文本足够时不生成 | 成为 Agent 的第一判断 |
+| 静态节点和边关系用 Mermaid | 直接走现有 Markdown 渲染链，不等待动态容器 |
 | 只写片段，不造完整网页 | 直接采用；回答外壳由魏碑掌握 |
 | 一个主视觉、最少控件 | 进入唯一生成 Skill 和真实窗口审查 |
 | 初始状态无需操作也有用 | 成为学习价值门槛 |
 | 筛选、探针和显隐留在本地 | 直接采用，不为拖动调用 Agent |
 | 明确的继续解释动作 | 先形成原生待发送动作，用户确认后才调用 Agent |
-| 语义 HTML、原生控件、键盘和窄宽 | 进入生成 Skill、修复循环和真实验收 |
+| 语义 HTML、原生控件、键盘和窄宽 | 进入生成 Skill、提交前检查和真实验收 |
 | 图表轴、单位、范围和标签避让 | 作为专业正确性要求，不再变成 Schema |
 | 地图使用真实几何和坐标 | 作为来源与素材准入要求 |
-| 失败保留可读正文 | 直接采用，且只降级当前场景 |
+| 魏碑自己的韧性要求 | 片段失败只降级当前场景；正文保留结论、解释上下文和来源，不复制整份视觉数据 |
 
 不照抄的部分：
 
@@ -100,35 +105,31 @@ Visualize Skill 负责“生成什么”，不负责替第三方 App 解决不�
 
 首版只允许浏览器原生 DOM、SVG、Canvas，以及安装包里已经锁定的 ECharts 5.6.0。不新增 React、编译器、包管理器、虚拟文件系统或依赖下载。
 
-## 唯一模型接口
+Mermaid 不是纸面设想：魏碑已经锁定 Mermaid 11.16，最终聊天 Markdown 会进入现有网页 Markdown 渲染器，`WeiBeiWebEditorCheck` 也会确认 fenced `mermaid` 实际生成 SVG 而不是占位文字。因此这一层只需改变 Agent 的表达判断，不需要再造组件或渲染协议。
 
-Agent 只看到一个 `weibei_rich_answer` 工具。固定版本由宿主写入，模型只提交有序内容：
+## 唯一动态片段接口
+
+普通正文不进入工具 JSON。Agent 先写好片段并调用一次 `weibei_visualize`；工具只接收片段：
 
 ```json
 {
-  "parts": [
-    {
-      "kind": "markdown",
-      "markdown": "先比较原始数据中的集中位置。"
-    },
-    {
-      "kind": "visualize",
-      "fragment": "<figure>...</figure><style>...</style><script>...</script>",
-      "initialState": {
-        "selectedRange": [2, 7]
-      }
-    },
-    {
-      "kind": "markdown",
-      "markdown": "现在再观察异常值为什么改变均值。"
-    }
-  ]
+  "fragment": "<figure>...</figure><style>...</style><script>...</script>"
 }
 ```
 
-`parts` 只允许 `markdown` 和 `visualize`，顺序就是回答中的真实顺序。`initialState` 可省略，宿主按空对象处理。默认最多一个 `visualize`；只有多个体验承担不可合并的学习动作时才增加。
+工具通过后返回宿主分配的不透明 ID 和一条固定引用。Agent 不改写引用，只在最终普通 Markdown 中把它独占一行放到真实位置：
 
-模型不提交常量版本号，也不再为界面复制一份专用失败正文。宿主接受后自行写入保存版本；移除所有 `visualize` part 后，剩余 Markdown 必须仍是一份完整可读的回答。
+```markdown
+先比较原始数据中的集中位置。
+
+<!-- weibei-visualize:宿主分配的不透明ID -->
+
+再观察异常值为什么改变均值。
+```
+
+这直接复用魏碑现有“正文标记 → 内联场景”的成熟概念，但删除整篇 `narrative`、`parts` 和第二份 Markdown。默认只注册一个动态片段；未被最终 Markdown 引用的注册结果直接丢弃，未知、重复或改写过的引用不渲染。
+
+模型不提交 `initialState`、常量版本号、上下文修订、失败正文或完整回答 envelope。首帧默认值只写在片段代码里；宿主首次传空状态，重开时才传已经接受的学习状态。移除动态片段引用后，正文仍保留结论、解释上下文和来源，但不复制视觉中的全部读数与数据。
 
 模型不再重复声明来源、素材和动作清单：
 
@@ -140,6 +141,7 @@ Agent 只看到一个 `weibei_rich_answer` 工具。固定版本由宿主写入�
 没有以下字段：
 
 - route、family、renderer、component 或 capability group
+- narrative、parts、expressionPlan 或 fallback
 - 图表类型、布局树、坐标图元或视觉质量预算
 - evidenceIDs、assetIDs、actions 的重复清单
 - 网络地址、脚本地址、文件路径或原生桥名称
@@ -147,21 +149,23 @@ Agent 只看到一个 `weibei_rich_answer` 工具。固定版本由宿主写入�
 
 `fragment` 只接受片段，不接受 `doctype / html / head / body`。这条约束用于保证宿主装配清晰，不限制片段内部选择哪种语义 HTML、SVG、Canvas、CSS 或本地 JavaScript。
 
+片段必须有端到端硬字节预算。Visualize 的“小于 1 MB”只能作为上界参考，不能原样复制：魏碑当前 Pi 事件解码对工具开始参数只有 16,384 字节。真实竖切必须先决定是把完整参数移出状态事件，还是采用更小的片段预算，再用同一生产传输链证明不会截断；在此之前不写一个假的常量。
+
 ## 页面 ABI v1
 
 页面只需要知道这些固定能力：
 
 | 能力 | 固定合同 |
 | --- | --- |
-| 根节点 | 宿主在模型脚本执行前创建 `#weibei-visual-root` 并写入当前状态 |
+| 根节点 | 宿主在模型脚本执行前创建 `#weibei-visual-root`，片段只在根内查询和修改 |
 | 主题 | `--wb-background`、`--wb-foreground`、`--wb-muted`、`--wb-muted-foreground`、`--wb-border`、`--wb-accent`、`--wb-accent-foreground`、`--wb-series-1…6`、`--wb-font-size-base` |
 | 本地库 | 浏览器 DOM、SVG、Canvas；首版额外提供本地 `window.echarts` 5.6.0 |
 | 素材 | `<img data-weibei-asset="可信素材 ID" alt="真实替代文字">` |
 | 来源 | 原生按钮或链接使用 `data-weibei-source="来源 ID"` |
 | follow-up | 原生按钮使用 `data-weibei-follow-up="稳定动作 ID"`；可见名称就是用户将确认的动作名称 |
-| 当前状态 | 根节点的 `data-weibei-state` 和 `data-weibei-state-revision`，由宿主写入 |
-| 状态提议 | 页面写 `data-weibei-state-proposal` 后派发无 payload 的 `weibei:state-proposed` |
-| 状态接受 | 宿主校验、保存并回写后派发 `weibei:state-accepted` |
+| 已保存学习状态 | 根节点的 `data-weibei-learning-state` 和 `data-weibei-learning-state-revision`，仅在宿主已有接受状态时写入 |
+| 学习状态提议 | 只有需要重开恢复或进入 follow-up 的状态，页面才写 `data-weibei-learning-state-proposal` 并派发无 payload 的 `weibei:learning-state-proposed` |
+| 学习状态接受 | 宿主校验、保存并回写后派发 `weibei:learning-state-accepted` |
 | 环境变化 | 宿主更新主题、字号、减少动画和容器宽度后派发 `weibei:environment-changed` |
 
 状态不通过 `CustomEvent.detail` 或可任意扩大的原生消息传递。隔离世界只读取共享 DOM 上长度受限的 JSON 字符串，再交给原生宿主。
@@ -169,21 +173,21 @@ Agent 只看到一个 `weibei_rich_answer` 工具。固定版本由宿主写入�
 ```javascript
 const root = document.getElementById("weibei-visual-root");
 
-function acceptedState() {
-  return JSON.parse(root.dataset.weibeiState);
+function acceptedLearningState() {
+  return JSON.parse(root.dataset.weibeiLearningState || "{}");
 }
 
-function proposeState(nextState) {
-  root.dataset.weibeiStateProposal = JSON.stringify(nextState);
-  root.dispatchEvent(new Event("weibei:state-proposed", { bubbles: true }));
+function proposeLearningState(nextState) {
+  root.dataset.weibeiLearningStateProposal = JSON.stringify(nextState);
+  root.dispatchEvent(new Event("weibei:learning-state-proposed", { bubbles: true }));
 }
 
-root.addEventListener("weibei:state-accepted", () => render(acceptedState()));
-root.addEventListener("weibei:environment-changed", () => render(acceptedState()));
-render(acceptedState());
+root.addEventListener("weibei:learning-state-accepted", () => render(acceptedLearningState()));
+root.addEventListener("weibei:environment-changed", () => render(acceptedLearningState()));
+render(acceptedLearningState());
 ```
 
-宿主把状态当成有界 JSON 对象，只校验 JSON 类型、深度、数量、数值范围和总字节；不要求状态必须复刻 `initialState` 的键结构。页面可以改变自己的 DOM，但宿主保存的接受状态始终是唯一权威。
+普通 hover、显隐、筛选和临时选择只留在片段 DOM，不经过宿主。只有需要重开恢复或进入 follow-up 的学习状态才提议保存。宿主把这类状态当成有界 JSON 对象，只校验类型、深度、数量、数值范围和总字节；页面可以改变自己的 DOM，但宿主保存的接受状态始终是唯一权威。
 
 ## 最小装配方式
 
@@ -204,9 +208,9 @@ form-action 'none'; base-uri 'none'; frame-src 'self'
 装配顺序：
 
 1. WebKit 用 `loadHTMLString(..., baseURL: nil)` 加载固定父页，不再授予安装包资源目录读取权。
-2. 原生代码通过 `callAsyncJavaScript(arguments:)` 把片段和初始状态作为结构化参数交给父页挂载函数，不把模型字符串插进父页源码。
+2. 原生代码通过 `callAsyncJavaScript(arguments:)` 把片段和已保存学习状态作为结构化参数交给父页挂载函数，不把模型字符串插进父页源码。
 3. 父页只创建一个内容固定的 `srcdoc` 子文档；CSP、主题变量、本地 ECharts 和可信启动代码都来自安装包，子文档源码里没有模型字符串。
-4. 子文档加载后，父页用一次性 `postMessage` 发送片段和状态。可信启动代码只接收首个且 `event.source === parent` 的初始化消息，先用 DOM API 建根节点和写状态，再用惰性的 `template` 解析片段，最后按文档顺序显式激活其中的脚本。
+4. 子文档加载后，父页用一次性 `postMessage` 发送片段和已保存学习状态。可信启动代码只接收首个且 `event.source === parent` 的初始化消息，先用 DOM API 建根节点和写状态，再用惰性的 `template` 解析片段，最后按文档顺序显式激活其中的脚本。
 5. 模型脚本在无同源权限的子页 page world 运行，无法读取父页。任何不可信字符串都不参与父页或子页源码拼接。
 6. 原生消息处理器只注册在隔离的 `WKContentWorld`；可信监控在文档开始时注入所有 frame，通过 DOM 属性和无 payload 事件读取状态、来源和 follow-up。
 7. 初次父页与唯一子页建立后，所有后续导航、新窗口、下载、文件选择、媒体权限、JavaScript 对话框和拖入文件一律拒绝。
@@ -233,9 +237,9 @@ form-action 'none'; base-uri 'none'; frame-src 'self'
 
 因此，当前 App 内的 WKWebView 路线从生产候选中删除，不再围绕它补更多字符串黑名单、超时或假进程池。
 
-## 唯一执行容器候选
+## 最后一个动态容器候选
 
-当前只保留一个值得验证的候选：面向魏碑最低 macOS 14、随 App 安装的界面扩展（bundle-only UI App Extension）。
+当前只保留一个值得用最便宜证据证伪的候选：面向魏碑最低 macOS 14、随 App 安装的界面扩展（UI App Extension）。它不是已选生产方案，也不构成整个 Visualize 重构的前提。
 
 ```mermaid
 flowchart LR
@@ -250,14 +254,14 @@ flowchart LR
 它值得验证的原因：
 
 - `EXHostViewController` 是 Apple 公开的远程 UI 容器，可嵌进 AppKit/SwiftUI。[Apple 远程界面文档](https://developer.apple.com/documentation/extensionkit/including-extension-based-ui-in-your-interface)
-- bundle-only 扩展按官方定义默认启用，不应要求用户先到系统设置开开关。[Apple 扩展发现文档](https://developer.apple.com/documentation/extensionkit/exappextensionbrowserviewcontroller)
+- 随 App 打包的扩展在产品形态上符合“一起安装、独立执行”；是否无需设置即可发现，必须由开发态和正式分发产物分别实测，不能从文档倒推。
 - 生成页面、WebKit 和模型脚本可以离开魏碑主进程。
 - 场景通过 XPC 只接收片段、状态、主题、来源与素材快照，不拿工作区、令牌或 App 命令。
 
 它目前仍不是已选定的生产实现：
 
 - 魏碑当前是 SwiftPM + 手工 `.app` 打包，没有 `.appex`、macOS 14 适用的扩展点元数据、嵌套签名和公证链。
-- Apple 当前自动生成扩展点的新 API 面向 macOS 26；魏碑最低 macOS 14 需要验证旧系统适用的扩展点元数据和身份发现 API。[Apple 扩展点文档](https://developer.apple.com/documentation/extensionfoundation/adding-support-for-app-extensions-to-your-app)
+- Apple 当前程序化生成扩展点的新 API 面向 macOS 26；旧手工扩展点文件可以继续使用，但公开文档没有给出 macOS 14 自定义扩展点的从零字段格式与创作流程。[Apple 扩展点文档](https://developer.apple.com/documentation/extensionfoundation/adding-support-for-app-extensions-to-your-app)
 - 普通 XPC 服务虽有独立沙箱，却没有公开的可嵌交互远程 UI，不能替代 UI Extension。
 - Enhanced Security 扩展明确不能呈现 UI，也不能用于这条路径。
 - ExtensionKit 没有公开“立即杀掉该扩展及其 WebContent”的承诺；必须实测拆除场景后的资源回收。
@@ -265,24 +269,25 @@ flowchart LR
 
 ### 2026-08-07 G0 工具链尖峰
 
-已证明的只有源码兼容性：最小宿主与最小界面扩展轮廓均使用旧运行时接口，以 macOS 14 为最低目标编成 arm64、x86_64 Mach-O 对象；当前 SDK 下的完整最小扩展可执行文件也标记为 `minos 14.0`。这说明魏碑的最低系统目标不会在源码层面直接否决该方向。
+已证明的只有源码兼容性：最小宿主与最小界面扩展轮廓均使用旧运行时接口，以 macOS 14 为最低目标编成 arm64、x86_64 Mach-O 对象；当前 SDK 下的完整最小扩展可执行文件也标记为 `minos 14.0`。这只说明运行接口存在，不能证明一个新产品能用公开合同定义自己的扩展点。
 
-G0 仍未通过：本机只有 Command Line Tools，没有完整 Xcode、macOS 14 运行环境和可调用的官方扩展元数据生成工具；SwiftPM 也没有 App Extension 产品类型。因此 `.appex` 生成、宿主扩展点声明、自然发现、签名安装与远程场景激活都不能据此宣布完成。
+G0a 仍未通过：本机只有 Command Line Tools，没有完整 Xcode 和 macOS 14 运行环境；SwiftPM 也没有 App Extension 产品类型。更关键的是，当前 SDK 里的 `.xcappextensionpoints` 构建规则只证明旧文件可被转换，没有公开它的字段格式。完整 Xcode 也只有在标准模板能为最低 macOS 14 从零生成受支持元数据并可 clean archive 重现时，才算补上证据。
 
-手工拼装 bundle、照抄系统 App 的内部元数据或手动注册插件，即使能在当前系统运行，也只算定位问题的诊断，不算 macOS 14 产品证据。下一次 G0 必须使用完整 Xcode 的正式双目标构建能力，在干净 macOS 14 环境中从自然安装开始验证。
+手工拼装 bundle、照抄系统 App 的内部元数据或手动注册插件，即使能在当前系统运行，也只算定位问题的诊断，不算产品证据。下一步只做 G0a：使用全新 Xcode 工程和公开模板证明创作合同；失败就删除 ExtensionKit 候选，不在仓库先写宿主抽象。
 
-## 执行容器四道硬闸门
+## 动态执行容器硬闸门
 
-在这四项全部通过前，不改生产模型入口，不新增正式库目标、XPC 抽象或兼容层。
+这些闸门只阻止动态片段工具和宿主进入生产，不阻止立即采用 Visualize 的判断法、正文分工与现有 Mermaid 路由。在全部通过前，不新增正式库目标、XPC 抽象或兼容层。
 
 按最便宜的否决顺序执行，前一道失败就停止，不先造完整产品：
 
 | 闸门 | 必须证明 | 失败时 |
 | --- | --- | --- |
-| G0 最小接通 | 完整 Xcode 正式生成最小 App、扩展及扩展点元数据；本地签名产物在当前系统和干净 macOS 14 环境中自然安装后，无需设置即可发现、激活并嵌入固定文字 | 停止 ExtensionKit 路线 |
+| G0a 公开创作合同 | 全新 Xcode 工程不复制私有文件，标准模板能为最低 macOS 14 生成宿主、界面扩展和受支持的扩展点元数据，并可 clean archive 重现 | 立即停止 ExtensionKit 路线 |
+| G0b 开发态接通 | 开发签名产物在真实 macOS 14 用户会话中完成“发现身份 → 激活场景 → 嵌入固定文字”，如实记录任何授权或启用步骤 | 停止 ExtensionKit 路线 |
 | G1 零网络 | 使用计划中的最终沙盒权限，只运行最小脚本；对 fetch、XHR、WebSocket、EventSource、Beacon、图片、样式、表单、Worker、WebTransport、WebRTC/STUN/TURN 和 DNS 做进程级抓包，结果为零 | 任意 JS 不得进入产品 |
 | G2 可销毁 | 死循环、DOM 爆炸和持续内存增长下，魏碑主进程保持响应；拆除远程场景后，扩展及对应 WebContent 在明确时限内停止 CPU 与内存消耗 | 任意 JS 不得进入产品 |
-| G3 完整能力与交付 | 再加入 SVG、Canvas、ECharts、键盘和辅助功能；社区签名、Developer ID、公证与 DMG 均通过，并对同一最终安装包复跑 G1、G2 | 不进入学习闭环和生产替换 |
+| G3 完整能力与交付 | 再加入 SVG、Canvas、ECharts、键盘和辅助功能；Developer ID、强化运行时、公证、票据附加与 DMG 均通过，在干净 macOS 14 自然安装，并对同一最终安装包复跑激活、G1、G2 | 不进入学习闭环和生产替换 |
 
 G1 中仍应在文档开始时冻结 `RTCPeerConnection`、`webkitRTCPeerConnection` 和后续发现的非 CSP 网络入口，但这些只算纵深防御。抓包为零才算通过。
 
@@ -295,7 +300,7 @@ G2 不能用“窗口消失”“App 没崩”或“WKWebView 已释放”冒充
 
 ## 生产深模块
 
-只有执行容器通过四道闸门后，才建立一个生产深模块，暂称 `GeneratedLearningSurface`：
+只有动态执行容器全部通过硬闸门后，才建立一个生产深模块，暂称 `GeneratedLearningSurface`：
 
 ```text
 render(experience, hostContext)
@@ -320,7 +325,7 @@ render(experience, hostContext)
 - follow-up 预览、输入框附件与用户确认
 - 超时、崩溃、资源越界和正文降级
 
-不提前为“以后也许还有第二种容器”建立 Adapter、factory 或配置系统。四道闸门只会留下一个实际实现。
+不提前为“以后也许还有第二种容器”建立 Adapter、factory 或配置系统。硬闸门只会留下一个实际实现。
 
 ## 双向事件与用户确认
 
@@ -351,16 +356,16 @@ hostAcceptedState + evidenceIDs + deterministicPreview
 
 ## 状态、来源与重开
 
-片段、初始状态、当前宿主权威状态、宿主写入的保存版本与页面 ABI、内容摘要和失败原因随 `AgentMessage.richAnswer` 保存，不新建第二套持久化数据库。
+消息继续保存最终 Markdown 与消息级来源；同一消息记录再保存被引用的已登记片段、页面 ABI、内容摘要、失败原因，以及确实存在时才保存的宿主接受学习状态。不沿用 `richAnswer` 名称，也不新建第二套持久化数据库。
 
-状态在内存中即时接受并回写；连续输入只合并最新状态，静止 300ms 后最多保存一次。follow-up、场景离开、App 进入后台或正常退出前补刷。
+普通 hover、筛选、显隐和临时选择不保存。页面明确提议的学习状态经宿主接受后，直接复用现有消息更新与保存合并路径；不新增 300ms 定时器或第二套保存节奏。follow-up 只读取最后一次已接受状态。
 
 重开时：
 
 1. 重新执行版本、摘要、来源、素材和预算准入。
 2. 在完全离线状态恢复同一片段和宿主权威状态，不再次调用模型。
 3. 来源仍由当前消息的真实来源账本解析。
-4. 当前页面 ABI 不支持、容器不可用或准入失败时，只显示原有完整正文、来源和简短失败说明。
+4. 当前页面 ABI 不支持、容器不可用或准入失败时，只显示正文中的结论、解释上下文、来源和简短失败说明；不要求正文复制视觉中的全部数据。
 
 旧 `program / renderPlan / ui` 历史不建设兼容运行时；迁移完成后只保留正文与来源，不再执行旧协议。
 
@@ -368,32 +373,33 @@ hostAcceptedState + evidenceIDs + deterministicPreview
 
 不再使用“导演 → 专业 → 深组件 → 组合”的四 Skill 路由。一个生成式学习界面 Skill 保留这些规则：
 
-- 文本足够时不生成。
+- 文本足够时只写普通 Markdown；静态、有标注的节点、关系和步骤优先直接写 Mermaid；只有动态、空间运动或可调输入才注册片段。
 - 一个问题默认一个主要学习目标、一个主视觉或主交互。
-- 初始状态无需操作也能读懂关键关系、数值和来源。
+- 第一帧无需操作也能读懂关键关系、数值和来源。
 - 正文解释留在回答流；片段只放必要标题、标签、图例、值、控件和可访问替代。
 - 不生成页头、导航、标签页、看板、指标卡墙或重复答案。
 - 不发明无关搜索、筛选、重置或第二套状态机制来填空间。
+- 片段只使用固定根和局部选择器，不依赖 `currentScript`，不调用 fetch、XHR、WebSocket、WebRTC 或其他网络入口，不包含外部地址。
 - 每个控件改变真实知识对象、关系或读数，不只改变控件自己的数字。
-- 使用语义 HTML、原生控件和自然 Tab 顺序，不伪造按钮和输入框。
+- 使用语义 HTML、原生控件和自然 Tab 顺序，不伪造按钮和输入框；SVG、Canvas 与图表都提供屏幕阅读器可读摘要。
 - 宽度不足时换行、堆叠和减少次要标注，不裁切、不内部滚屏、不缩成小字。
-- ECharts 和 Canvas 在环境变化时重新读取主题、字号和减少动画并重绘。
+- ECharts 和 Canvas 在环境变化时重新读取主题、字号和减少动画并重绘；所有动画尊重系统的减少动画设置。
 - 轴、单位、数据域、系列身份、来源和派生关系可核对。
 - 标签避让或删除次要项；颜色必须配合文字、形状或线型。
 - 地图使用真实几何和坐标；图像叠层使用材料真实像素与尺寸。
-- 失败只影响当前场景，并保留正文、来源和已保存状态。
+- 失败只影响当前场景，并保留结论、上下文、来源和已接受学习状态。
 
-这些规则用于生成、修复和真实审查，不再变成 family、renderer 或 UI 节点 Schema。
+动态片段登记时必须在同一生产渲染器检查：固定根存在、脚本无异常、内容非零且不越界、主要控件可触发。失败只返回短诊断，同轮最多重提一次；仍失败就保留 Markdown 回答，不重建多层 repair 系统。这些规则用于生成与真实审查，不再变成 family、renderer 或 UI 节点 Schema。
 
 ## 第一条真实学习闭环
 
-四道执行容器闸门通过后，首题使用真实材料和真实 Pi 重新生成“均值、中位数与异常值”，不使用 fixture 或旧回放冒充。
+动态执行容器全部通过硬闸门后，首题使用真实材料和真实 Pi 重新生成“均值、中位数与异常值”，不使用 fixture 或旧回放冒充。
 
 1. 用户针对真实课程材料提问，不指定图表类型。
-2. Agent 判断视觉确有增益并提交一个 Visualize part。
+2. Agent 判断动态调节确有增益，调用一次 `weibei_visualize`，再把工具返回的引用放进最终 Markdown。
 3. 初始片段直接显示分布、均值、中位数、异常值和就近来源。
 4. 用户调整样本区间；图形和读数本地同步变化。
-5. 宿主接受并合并保存结构化状态；消息数和模型调用数不变。
+5. 只有当前区间值得重开恢复或进入追问时，宿主才接受并随消息保存该学习状态；消息数和模型调用数不变。
 6. 用户点击“解释当前选择”；输入框出现可移除的真实状态附件。
 7. 取消不发送；确认后只发送一次。
 8. Agent 收到动作 ID、状态值和来源 ID，继续解释当前区间。
@@ -423,19 +429,19 @@ hostAcceptedState + evidenceIDs + deterministicPreview
 ### 当前阶段
 
 - 冻结旧三路线的新 renderer、UI 节点、能力目录和语义验证器。
+- 立即把系统契约与导演 Skill 改成“普通 Markdown → 静态 Mermaid → 动态才进入现有富回答”；这条切片只减少不必要的旧工具调用，不引入新协议，并会原样留在最终架构里。
 - 当前草稿 PR #144 占用 `Package.swift`、`script/`、`.github/`、`WorkspaceStore.swift`、App 入口、主内容视图、稳定文档工作区、自检以及现有富回答宿主和运行时。
 - 新执行容器、打包、App 外验收和持久化都会与这些位置重叠。#144 必须释放其声明和实际 diff 中的相关共享文件，才能从最新 `origin/main` 开始实现并登记占用。
-- 在等待期间只保留本决策和临时尖峰，不把未证明的 ExtensionKit 结构写进生产代码。
+- 在等待期间不新增 `weibei_visualize`、消息字段或宿主；G0a 先在全新 Xcode 尖峰工程证明公开创作合同，不把未证明的 ExtensionKit 结构写进生产代码。
 
 ### 容器通过后尽量复用
 
 - Pi 的透明 JSON 传输
-- 上下文修订、来源和素材二次校验
-- `RichAnswerEvidence` 与正文片段
-- `AgentMessage.richAnswer` 的会话持久化
+- 上下文修订、当前回合来源和素材允许列表
+- 普通 Markdown、消息级来源和已核验跳转
 - 消息更新后的现有保存路径
 - 来源打开前的消息级真实性复核
-- 现有本地 ECharts 5.6.0
+- 动态容器通过 G3 后才复用现有本地 ECharts 5.6.0
 
 ### 不新增
 
@@ -496,10 +502,18 @@ Core：
 
 ## 完成定义
 
-只有同时满足以下条件，才能宣布替换完成：
+“Visualize 成为魏碑的生成基础”与“任意动态片段完成生产替换”是两个里程碑，不能互相冒充。
 
-- 执行容器 G0—G3 全部通过真实签名产物验收。
-- 新回答由宿主保存为 `weibei.rich-answer.v3`，只含 Markdown 与 Visualize part，没有旧路线产出。
+基础采用完成：
+
+- Agent 已按“普通 Markdown → 静态 Mermaid → 必要时动态片段”做判断，不再把所有视觉问题送进旧目录。
+- 现有生产 Markdown 渲染器用真实回答通过 Mermaid、窄宽、明暗主题和重开检查。
+- 旧三路线停止新增 family、renderer、图元 Schema 和修复规则。
+
+只有同时满足以下条件，才能宣布动态替换完成：
+
+- 动态执行容器 G0a、G0b、G1、G2、G3 全部通过真实签名产物验收；若 G0a 失败，则明确放弃任意 JavaScript，不伪造完成。
+- 新回答只保存最终 Markdown、被引用的登记片段与必要的宿主元数据，没有 `parts` envelope 或旧路线产出。
 - 真实学习闭环、宿主变体、敌对样本和行为覆盖全部通过。
 - 正式 App 中没有旧路线分派、生产 fixture、回放或隐藏验证后门。
 - 旧历史只保留正文与来源，不执行旧协议。
