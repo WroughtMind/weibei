@@ -1,8 +1,16 @@
-import { Editor, defaultValueCtx, editorViewCtx, editorViewOptionsCtx, parserCtx, rootCtx } from '@milkdown/kit/core';
+import { commandsCtx, Editor, defaultValueCtx, editorViewCtx, editorViewOptionsCtx, rootCtx } from '@milkdown/kit/core';
 import { commonmark } from '@milkdown/kit/preset/commonmark';
 import { gfm } from '@milkdown/kit/preset/gfm';
 import { listener, listenerCtx } from '@milkdown/kit/plugin/listener';
 import { history } from '@milkdown/kit/plugin/history';
+import {
+  abortStreamingCmd,
+  endStreamingCmd,
+  pushChunkCmd,
+  startStreamingCmd,
+  streaming,
+  streamingConfig,
+} from '@milkdown/plugin-streaming';
 import { SlashProvider, slashFactory } from '@milkdown/kit/plugin/slash';
 import { readImageAsBase64, upload, uploadConfig } from '@milkdown/kit/plugin/upload';
 import { exitCode, setBlockType } from '@milkdown/kit/prose/commands';
@@ -76,6 +84,7 @@ const pendingImagePickers = new Map();
 const weiBeiSlash = slashFactory('WEIBEI_BLOCK_COMMAND');
 let currentDocumentGeneration = 0;
 let currentContentGeneration = 0;
+let streamingMarkdownBuffer = null;
 const insertionCursorMarker = '{{WEIBEI_CURSOR}}';
 const insertionSelectionStartMarker = '{{WEIBEI_SELECT_START}}';
 const insertionSelectionEndMarker = '{{WEIBEI_SELECT_END}}';
@@ -2049,8 +2058,46 @@ const publishCompletedCompositionMarkdown = () => {
   reportActiveHeading();
 };
 
+const streamingCommands = () => editor.action((ctx) => ctx.get(commandsCtx));
+
+const stopStreamingMarkdown = (keep = true) => {
+  if (streamingMarkdownBuffer === null) return;
+  streamingCommands().call(abortStreamingCmd.key, { keep });
+  streamingMarkdownBuffer = null;
+};
+
+const updateStreamingMarkdownInternal = (markdown) => {
+  ensureEditor();
+  const document = splitFrontmatter(markdown || '');
+  const body = normalizeHtmlBreaks(document.body);
+  frontmatterBlock = document.frontmatter;
+  syncFrontmatterPanel();
+  const commands = streamingCommands();
+  if (streamingMarkdownBuffer === null) {
+    commands.call(startStreamingCmd.key);
+    streamingMarkdownBuffer = '';
+  } else if (!body.startsWith(streamingMarkdownBuffer)) {
+    commands.call(endStreamingCmd.key, { diffReview: false });
+    commands.call(startStreamingCmd.key);
+    streamingMarkdownBuffer = '';
+  }
+  const delta = body.slice(streamingMarkdownBuffer.length);
+  if (delta) commands.call(pushChunkCmd.key, delta);
+  streamingMarkdownBuffer = body;
+  lastMarkdown = withFrontmatter(body);
+  scheduleContentHeightReports();
+};
+
+const finishStreamingMarkdownInternal = (markdown) => {
+  updateStreamingMarkdownInternal(markdown);
+  streamingCommands().call(endStreamingCmd.key, { diffReview: false });
+  streamingMarkdownBuffer = null;
+  scheduleContentHeightReports();
+};
+
 const setMarkdownInternal = (markdown) => {
   ensureEditor();
+  stopStreamingMarkdown();
   compositionStartMarkdown = null;
   compositionTextblockFrom = null;
   compositionEndPending = false;
@@ -2206,22 +2253,19 @@ window.WeiBeiEditor = {
     setMarkdownInternal(markdown);
     post('markdownChanged', { markdown: String(markdown || '') });
   },
-  // Streaming prefix appends: parse the new blocks standalone and insert at
-  // the end of the doc. Existing nodes are never rebuilt, so already-rendered
-  // formulas/tables cannot flash back to raw text mid-stream.
-  appendMarkdown: (markdown) => {
+  // Milkdown's streaming plugin reparses the cumulative snapshot and applies a
+  // ProseMirror document diff, preserving unchanged DOM instead of rebuilding
+  // the whole answer or parsing token fragments as standalone paragraphs.
+  updateStreamingMarkdown: (markdown) => {
     try {
-      ensureEditor();
-      const chunk = normalizeHtmlBreaks(markdown || '');
-      if (!chunk.trim()) return;
-      editor.action((ctx) => {
-        const view = ctx.get(editorViewCtx);
-        const parsed = ctx.get(parserCtx)(chunk);
-        if (!parsed || !parsed.content || parsed.content.size === 0) return;
-        view.dispatch(view.state.tr.insert(view.state.doc.content.size, parsed.content));
-      });
-      lastMarkdown = withFrontmatter(editor.action(readMarkdown()));
-      scheduleContentHeightReports();
+      updateStreamingMarkdownInternal(markdown);
+    } catch (error) {
+      showFailure(error);
+    }
+  },
+  finishStreamingMarkdown: (markdown) => {
+    try {
+      finishStreamingMarkdownInternal(markdown);
     } catch (error) {
       showFailure(error);
     }
@@ -2394,6 +2438,12 @@ Editor
       strict: false,
       trust: false,
     });
+    ctx.set(streamingConfig.key, {
+      throttleMs: 0,
+      scrollFollow: false,
+      diffReviewOnEnd: false,
+      ignoreAttrs: { heading: ['id'] },
+    });
   })
   .config((ctx) => {
     ctx.set(weiBeiSlash.key, {
@@ -2414,6 +2464,7 @@ Editor
   .use(commonmark)
   .use(gfm)
   .use(math)
+  .use(streaming)
   .use(upload)
   .use(listener)
   .config((ctx) => {

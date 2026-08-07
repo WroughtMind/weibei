@@ -268,12 +268,9 @@ struct RichMarkdownEditorView: NSViewRepresentable {
     var interfaceLanguage: WeiBeiInterfaceLanguage = .chinese
     var isCompactPreview = false
     var isChatWideTypography = false
-    /// ONLY the streaming prefix (append-only by construction) may stream
-    /// deltas via appendMarkdown. Finalized messages can be rewritten by late
-    /// stream events token-by-token — appending those shredded paragraphs
-    /// into word fragments (user reports 2026-08-01/02). Everyone else gets a
-    /// full setMarkdown.
-    var prefersIncrementalAppends = false
+    /// A live read-only answer uses Milkdown's cumulative streaming document
+    /// diff. Completion ends that same session with a final synchronous flush.
+    var streamsMarkdownUpdates = false
     var onSelectionChange: (String, CGPoint?) -> Void
     var onAskAgentWithSelection: (String, CGPoint?) -> Void
     var onContentHeightChange: (CGFloat) -> Void = { _ in }
@@ -302,6 +299,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             searchQuery: searchQuery,
             appearanceMode: appearanceMode,
             interfaceLanguage: interfaceLanguage,
+            streamsMarkdownUpdates: streamsMarkdownUpdates,
             selectionAskMarks: selectionAskMarks,
             onContentHeightChange: onContentHeightChange,
             onActiveHeadingChange: onActiveHeadingChange,
@@ -448,8 +446,16 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         Self.applyWebAppearance(to: view, appearanceMode: appearanceMode)
         context.coordinator.markdown = $markdown
         context.coordinator.command = $command
+        let wasStreamingMarkdown = context.coordinator.streamsMarkdownUpdates
+        context.coordinator.streamsMarkdownUpdates = streamsMarkdownUpdates
+        if !context.coordinator.isReady, wasStreamingMarkdown, !streamsMarkdownUpdates {
+            context.coordinator.pendingStreamingCompletion = true
+        } else if streamsMarkdownUpdates {
+            context.coordinator.pendingStreamingCompletion = false
+        }
         if context.coordinator.documentID != documentID {
             context.coordinator.documentID = documentID
+            context.coordinator.pendingStreamingCompletion = false
             context.coordinator.setDocumentID(documentID)
         }
         context.coordinator.attachmentDirectory = attachmentDirectory
@@ -503,21 +509,12 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         }
 
         if context.coordinator.isReady {
-            if prefersIncrementalAppends, isCompactPreview, !isEditable {
-                // Streaming prefix only. Deltas are measured against what
-                // Swift itself pushed — never the JS echo (serializer
-                // normalization shifts offsets).
-                let baseline = context.coordinator.pushedMarkdownBaseline
-                if markdown != baseline {
-                    if !baseline.isEmpty, markdown.hasPrefix(baseline) {
-                        context.coordinator.appendMarkdown(
-                            String(markdown.dropFirst(baseline.count)),
-                            fullMarkdown: markdown
-                        )
-                    } else {
-                        context.coordinator.setMarkdown(markdown)
-                    }
+            if streamsMarkdownUpdates, isCompactPreview, !isEditable {
+                if context.coordinator.webMarkdown != markdown || !wasStreamingMarkdown {
+                    context.coordinator.updateStreamingMarkdown(markdown)
                 }
+            } else if wasStreamingMarkdown {
+                context.coordinator.finishStreamingMarkdown(markdown)
             } else if context.coordinator.webMarkdown != markdown {
                 context.coordinator.setMarkdown(markdown)
             }
@@ -678,6 +675,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         var onSelectionAskMark: (String) -> Void
         var selectionAskMarks: String
         var isChatWideTypography = false
+        var streamsMarkdownUpdates: Bool
         weak var webView: WKWebView?
         var isReady = false
         var isEditable: Bool
@@ -690,11 +688,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         var interfaceLanguage: WeiBeiInterfaceLanguage
         var webMarkdown = ""
         var pendingExternalMarkdown: String?
-        /// Authoritative append baseline: exactly what Swift last pushed.
-        /// NEVER synced from the JS markdownChanged echo — the serializer
-        /// normalizes markup, so echo lengths misalign delta offsets and
-        /// shredded streamed paragraphs into word-sized fragments.
-        var pushedMarkdownBaseline = ""
+        var pendingStreamingCompletion = false
         var lastCommandID: UUID?
         let performanceInstanceID = UUID()
         fileprivate let imageSchemeHandler = MarkdownImageSchemeHandler()
@@ -714,6 +708,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             searchQuery: String,
             appearanceMode: WeiBeiAppearanceMode,
             interfaceLanguage: WeiBeiInterfaceLanguage,
+            streamsMarkdownUpdates: Bool,
             selectionAskMarks: String,
             onContentHeightChange: @escaping (CGFloat) -> Void,
             onActiveHeadingChange: @escaping (Int?) -> Void,
@@ -738,6 +733,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             self.searchQuery = searchQuery
             self.appearanceMode = appearanceMode
             self.interfaceLanguage = interfaceLanguage
+            self.streamsMarkdownUpdates = streamsMarkdownUpdates
             self.selectionAskMarks = selectionAskMarks
             self.onContentHeightChange = onContentHeightChange
             self.onActiveHeadingChange = onActiveHeadingChange
@@ -831,7 +827,12 @@ struct RichMarkdownEditorView: NSViewRepresentable {
                 setInterfaceLanguage(interfaceLanguage)
                 if let text = (message.body as? [String: Any])?["markdown"] as? String {
                     webMarkdown = text
-                    if markdown.wrappedValue == text {
+                    if streamsMarkdownUpdates {
+                        updateStreamingMarkdown(markdown.wrappedValue)
+                    } else if pendingStreamingCompletion {
+                        pendingStreamingCompletion = false
+                        finishStreamingMarkdown(markdown.wrappedValue)
+                    } else if markdown.wrappedValue == text {
                         markdown.wrappedValue = text
                     } else {
                         setMarkdown(markdown.wrappedValue)
@@ -848,6 +849,11 @@ struct RichMarkdownEditorView: NSViewRepresentable {
                 onRenderReady()
             case "markdownChanged":
                 guard let text = (message.body as? [String: Any])?["markdown"] as? String else { return }
+                guard isEditable else {
+                    pendingExternalMarkdown = nil
+                    applySelectionAskMarks(force: true)
+                    return
+                }
                 if let pendingExternalMarkdown {
                     guard text == pendingExternalMarkdown else { return }
                     self.pendingExternalMarkdown = nil
@@ -955,15 +961,19 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         func setMarkdown(_ text: String) {
             pendingExternalMarkdown = text
             webMarkdown = text
-            pushedMarkdownBaseline = text
             evaluate("window.WeiBeiEditor?.setMarkdown(\(Self.json(text)))")
         }
 
-        func appendMarkdown(_ delta: String, fullMarkdown: String) {
-            pendingExternalMarkdown = fullMarkdown
-            webMarkdown = fullMarkdown
-            pushedMarkdownBaseline = fullMarkdown
-            evaluate("window.WeiBeiEditor?.appendMarkdown(\(Self.json(delta)))")
+        func updateStreamingMarkdown(_ text: String) {
+            pendingExternalMarkdown = nil
+            webMarkdown = text
+            evaluate("window.WeiBeiEditor?.updateStreamingMarkdown(\(Self.json(text)))")
+        }
+
+        func finishStreamingMarkdown(_ text: String) {
+            pendingExternalMarkdown = nil
+            webMarkdown = text
+            evaluate("window.WeiBeiEditor?.finishStreamingMarkdown(\(Self.json(text)))")
         }
 
         func setEditable(_ editable: Bool) {
