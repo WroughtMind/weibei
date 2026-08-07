@@ -923,9 +923,14 @@ public actor PiAgentRuntime: StudyAgentRuntime {
                 repairsEmptySession: true
             )
         }
-        let sessionFileURL = URL(fileURLWithPath: sessionFile).standardizedFileURL
-        guard sessionFileURL.deletingLastPathComponent().path
-                == binding.sessionDirectory.standardizedFileURL.path else {
+        let sessionFileDirectory = URL(fileURLWithPath: sessionFile)
+            .deletingLastPathComponent()
+            .standardizedFileURL
+            .resolvingSymlinksInPath()
+        let requestedSessionDirectory = binding.sessionDirectory
+            .standardizedFileURL
+            .resolvingSymlinksInPath()
+        guard sessionFileDirectory.path == requestedSessionDirectory.path else {
             throw PiSessionStateFailure(
                 message: "get_state returned a session outside the requested Chat directory",
                 repairsEmptySession: true

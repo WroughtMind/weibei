@@ -70,6 +70,7 @@ func runPiTerminalRuntimeSelfChecks() async throws {
     try await checkHostCourseToolBridge(fixture)
     try await checkHostCourseToolBridgeRejectsSymlinkRoot(fixture)
     try await checkMissingSessionStartsFreshNativeHistory(fixture)
+    try await checkSessionStateAcceptsAliasAndRejectsOutsidePath(fixture)
     try await checkWrongSessionStateRebuildsOnlyRequestedChat(fixture)
     try await checkUnreadableStoredSessionRebuildsOnce(fixture)
     try await checkStandardProxyEnvironmentIsForwarded(fixture)
@@ -964,6 +965,85 @@ private func checkWrongSessionStateRebuildsOnlyRequestedChat(
     }
 }
 
+private func checkSessionStateAcceptsAliasAndRejectsOutsidePath(
+    _ fixture: PiTerminalRuntimeFixture
+) async throws {
+    let realRuntimeDirectory = try fixture.workingDirectory(named: "AliasStateRuntime")
+    let aliasRuntimeDirectory = fixture.rootURL
+        .appendingPathComponent("AliasStateRuntimeLink", isDirectory: true)
+    try FileManager.default.createSymbolicLink(
+        at: aliasRuntimeDirectory,
+        withDestinationURL: realRuntimeDirectory
+    )
+    let request = StudyAgentRequest(
+        purpose: .conversation,
+        question: "验证会话目录",
+        materialTitle: "测试材料",
+        materialText: "测试正文",
+        noteTitle: "测试笔记",
+        noteText: "",
+        contextRevision: "session-path-validation"
+    )
+    let aliasProjectDirectory = try fixture.workingDirectory(named: "AliasStateProject")
+    let aliasRuntime = PiAgentRuntime(
+        executableURL: fixture.executableURL,
+        runtimeDirectory: aliasRuntimeDirectory,
+        runInactivityTimeoutNanoseconds: 2_000_000_000
+    )
+    let aliasReply = try await aliasRuntime.respond(
+        to: request,
+        sessionID: UUID(),
+        workingDirectory: aliasProjectDirectory,
+        progress: nil
+    )
+    await aliasRuntime.shutdown()
+    let aliasTrace = try String(
+        contentsOf: aliasProjectDirectory.appendingPathComponent(".fake-pi-trace.log"),
+        encoding: .utf8
+    )
+    guard aliasReply.text == "[材料：测试材料] 第 1 次回答",
+          aliasTrace.components(separatedBy: "launch\n").count - 1 == 1,
+          aliasTrace.contains("state-session=canonical-alias\n") else {
+        throw PiTerminalRuntimeSelfCheckError.failed(
+            "Pi 的等价会话目录路径被误判为越界：\n\(aliasTrace)"
+        )
+    }
+
+    let outsideProjectDirectory = try fixture.workingDirectory(named: "OutsideStateProject")
+    let outsideRuntime = PiAgentRuntime(
+        executableURL: fixture.executableURL,
+        runtimeDirectory: try fixture.workingDirectory(named: "OutsideStateRuntime"),
+        runInactivityTimeoutNanoseconds: 2_000_000_000
+    )
+    do {
+        _ = try await outsideRuntime.respond(
+            to: request,
+            sessionID: UUID(),
+            workingDirectory: outsideProjectDirectory,
+            progress: nil
+        )
+        await outsideRuntime.shutdown()
+        throw PiTerminalRuntimeSelfCheckError.failed(
+            "Pi 接受了请求目录之外的会话文件"
+        )
+    } catch let error as PiTerminalRuntimeSelfCheckError {
+        throw error
+    } catch {
+        await outsideRuntime.shutdown()
+    }
+    let outsideTrace = try String(
+        contentsOf: outsideProjectDirectory.appendingPathComponent(".fake-pi-trace.log"),
+        encoding: .utf8
+    )
+    guard outsideTrace.components(separatedBy: "launch\n").count - 1 == 2,
+          outsideTrace.components(separatedBy: "state-session=outside\n").count - 1 == 2,
+          !outsideTrace.contains("command=prompt\n") else {
+        throw PiTerminalRuntimeSelfCheckError.failed(
+            "Pi 的会话目录越界保护没有保持生效：\n\(outsideTrace)"
+        )
+    }
+}
+
 private func checkUnreadableStoredSessionRebuildsOnce(
     _ fixture: PiTerminalRuntimeFixture
 ) async throws {
@@ -1155,6 +1235,8 @@ static int late_cancel_mode = 0;
 static int session_mode = 0;
 static int wrong_state_mode = 0;
 static int unreadable_state_mode = 0;
+static int alias_state_mode = 0;
+static int outside_state_mode = 0;
 static int session_turn = 0;
 static char session_id[128] = "";
 static char session_directory[PATH_MAX] = "";
@@ -1405,11 +1487,15 @@ int main(int argc, char **argv) {
     }
     wrong_state_mode = strstr(cwd, "WrongStateProject") != NULL;
     unreadable_state_mode = strstr(cwd, "UnreadableStateProject") != NULL;
+    alias_state_mode = strstr(cwd, "AliasStateProject") != NULL;
+    outside_state_mode = strstr(cwd, "OutsideStateProject") != NULL;
     session_mode = strstr(cwd, "SessionProject") != NULL
         || strstr(cwd, "RecoveryProject") != NULL
         || strstr(cwd, "ProxyProject") != NULL
         || wrong_state_mode
-        || unreadable_state_mode;
+        || unreadable_state_mode
+        || alias_state_mode
+        || outside_state_mode;
     load_session_turn();
     if (session_mode) {
         snprintf(trace_path, sizeof(trace_path), "%s/.fake-pi-trace.log", cwd);
@@ -1445,6 +1531,8 @@ int main(int argc, char **argv) {
         if (strcmp(type, "get_state") == 0) {
             char state[PATH_MAX + 512];
             const char *reported_session_id = session_id;
+            const char *reported_session_directory = session_directory;
+            char canonical_session_directory[PATH_MAX] = "";
             if (unreadable_state_mode) {
                 char marker_path[PATH_MAX];
                 snprintf(marker_path, sizeof(marker_path), "%s/.fake-pi-returned-unreadable-state", cwd);
@@ -1470,6 +1558,15 @@ int main(int argc, char **argv) {
                     trace_line("state-session", "correct");
                 }
             }
+            if (alias_state_mode
+                && realpath(session_directory, canonical_session_directory) != NULL) {
+                reported_session_directory = canonical_session_directory;
+                trace_line("state-session", "canonical-alias");
+            }
+            if (outside_state_mode) {
+                reported_session_directory = cwd;
+                trace_line("state-session", "outside");
+            }
             if (session_mode) {
                 char message_count[32];
                 snprintf(message_count, sizeof(message_count), "%d", session_turn * 2);
@@ -1481,7 +1578,7 @@ int main(int argc, char **argv) {
                 "{\"isStreaming\":false,\"sessionId\":\"%s\",\"messageCount\":%d,\"pendingMessageCount\":0,\"sessionFile\":\"%s/session.jsonl\"}",
                 reported_session_id,
                 session_turn * 2,
-                session_directory
+                reported_session_directory
             );
             respond(id, type, state);
         } else if (strcmp(type, "get_commands") == 0) {
