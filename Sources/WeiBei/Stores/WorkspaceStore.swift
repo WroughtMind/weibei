@@ -20868,15 +20868,14 @@ final class WorkspaceStore: ObservableObject {
     private func startCourseFileMaintenance() {
         courseReconciliationTask?.cancel()
         courseReconciliationTask = Task { @MainActor [weak self] in
-            guard let self else { return }
-            await finishPendingCourseRemovalRecoveryIfNeeded()
-            await recoverPendingCourseFileTransactionsInBackground()
-            await reconcileCourseFilesNow()
-            retryRestoredPendingNoteWrites()
+            await self?.finishPendingCourseRemovalRecoveryIfNeeded()
+            await self?.recoverPendingCourseFileTransactionsInBackground()
+            await self?.reconcileCourseFilesNow()
+            self?.retryRestoredPendingNoteWrites()
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 3_000_000_000)
                 guard !Task.isCancelled else { return }
-                await reconcileCourseFilesNow()
+                await self?.reconcileCourseFilesNow()
             }
         }
     }
