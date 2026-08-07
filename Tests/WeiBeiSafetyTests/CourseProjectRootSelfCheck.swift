@@ -463,24 +463,25 @@ enum CourseProjectRootSelfCheck {
         )
 
         store = nil
-        let recovered = makeStore(fixture: fixture)
-        try recovered
+        var recovered: WorkspaceStore? = makeStore(fixture: fixture)
+        try recovered!
             .finishPendingCourseRemovalRecoveryForSelfCheck()
         let journalURL = fixture.workspaceDirectory
             .appendingPathComponent(
                 "pending-course-removal.json"
         )
         try check(
-            recovered.course(withID: courseA) == nil
-                && recovered.studySessions.filter {
+            recovered!.course(withID: courseA) == nil
+                && recovered!.studySessions.filter {
                     !$0.relatedCourseIDs.contains(courseA)
                         && $0.messages.contains { $0.text == chatToken }
                 }.count == 1
-                && recovered.course(withID: courseB) != nil
-                && recovered.item(withID: sharedItem.id) != nil
+                && recovered!.course(withID: courseB) != nil
+                && recovered!.item(withID: sharedItem.id) != nil
                 && !journalURL.exists,
             "重开没有完成课程注销、保留统一 Chat，或留下恢复记录"
         )
+        recovered = nil
         let recoveredAgain = makeStore(fixture: fixture)
         try check(
             recoveredAgain.course(withID: courseA) == nil
