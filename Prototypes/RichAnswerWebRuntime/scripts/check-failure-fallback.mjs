@@ -224,6 +224,35 @@ try {
     );
   }
 
+  for (const index of [1, 3, 4]) {
+    const sourceFreePlan = { ...canonicalPlans[index], sourceBindings: [] };
+    const parsed = parseRenderPlan(sourceFreePlan);
+    assert.equal(parsed.success, true, `${sourceFreePlan.renderer} accepts a source-free explanatory plan`);
+    const compiled = registry.compile(parsed.data, context);
+    assert.equal(
+      compiled.ok,
+      true,
+      `${sourceFreePlan.renderer} compiles a source-free deterministic or schematic plan`,
+    );
+  }
+
+  const unsourcedGeographicMap = {
+    ...canonicalPlans[4],
+    sourceBindings: [],
+    spec: {
+      ...canonicalPlans[4].spec,
+      coordinateMode: "geographic",
+      crs: "WGS84",
+    },
+  };
+  const parsedUnsourcedGeographicMap = parseRenderPlan(unsourcedGeographicMap);
+  assert.equal(parsedUnsourcedGeographicMap.success, true);
+  assert.equal(
+    registry.compile(parsedUnsourcedGeographicMap.data, context).ok,
+    false,
+    "real geographic coordinates still require a source binding",
+  );
+
   const mixedPlans = parseRenderPlans([
     canonicalPlans[0],
     { renderer: "broken" },

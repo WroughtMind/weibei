@@ -89,12 +89,17 @@ try {
     id: "material-1",
     title: "测试材料",
     subtitle: "",
-    kind: "text",
+    kind: "image",
     role: "material",
     isCurrentMaterial: true,
     isCurrentNote: false,
     linkedItemIDs: [],
     tags: [],
+  };
+  const otherAssetItem = {
+    ...catalogItem,
+    id: "material-2",
+    title: "另一份图像材料",
   };
   await writeFile(
     contextPath,
@@ -112,6 +117,11 @@ try {
         text: materialText,
         isTruncated: false,
       },
+      selection: {
+        title: "测试材料",
+        text: materialText,
+        isTruncated: false,
+      },
       note: {
         title: "课堂笔记",
         text: "",
@@ -120,19 +130,42 @@ try {
       recentMessages: [],
       course: {
         title: "测试课程",
-        catalog: [catalogItem],
+        catalog: [catalogItem, otherAssetItem],
         items: [{
           ...catalogItem,
           headings: [],
           searchText: materialText,
           isTruncated: false,
+        }, {
+          ...otherAssetItem,
+          headings: [],
+          searchText: "另一份图像材料的独立说明。",
+          isTruncated: false,
         }],
         relations: [],
         isTruncated: false,
       },
+      project: {
+        kind: "global",
+        chatID: "agent-contract-chat",
+        items: [],
+        isTruncated: false,
+      },
+      focus: {
+        chatID: "agent-contract-chat",
+        materialItemID: "material-1",
+        materialTitle: "测试材料",
+        selectionText: materialText,
+        actionSource: "selection",
+      },
       learning: {
         memoryRevision: 0,
         memories: [],
+      },
+      courseProfile: {
+        revision: 0,
+        overview: "",
+        entries: [],
       },
     }),
     "utf8",
@@ -140,6 +173,7 @@ try {
   process.env.WEIBEI_AGENT_CONTEXT_FILE = contextPath;
 
   const registeredTools = new Map();
+  const registeredHandlers = new Map();
   const extensionModule = await import(
     `${pathToFileURL(runtimeExtensionPath).href}?contract=${Date.now()}`
   );
@@ -147,15 +181,17 @@ try {
     registerTool(tool) {
       registeredTools.set(tool.name, tool);
     },
-    on() {},
+    on(event, handler) {
+      registeredHandlers.set(event, handler);
+    },
   });
-  const contextTool = registeredTools.get("weibei_context");
   const catalogTool = registeredTools.get("weibei_ui_catalog");
   const richAnswerTool = registeredTools.get("weibei_rich_answer");
-  assert.ok(contextTool && catalogTool && richAnswerTool);
+  const beforeAgentStart = registeredHandlers.get("before_agent_start");
+  assert.ok(beforeAgentStart && catalogTool && richAnswerTool);
 
-  await contextTool.execute("context-1", {});
-  await catalogTool.execute("catalog-1", {
+  await beforeAgentStart({ systemPrompt: "测试系统提示" });
+  const catalogRequest = {
     learningAction: "explain",
     knowledgeShapes: ["spatialLayers"],
     knowledgeNatures: ["spatialStructure"],
@@ -175,7 +211,294 @@ try {
       assetDependency: "none",
     },
     reason: "验证整组资源由宿主逐场景收敛",
+  };
+  await catalogTool.execute("catalog-1", catalogRequest);
+
+  const formulaCatalog = await catalogTool.execute("catalog-formula-conceptual", {
+    ...catalogRequest,
+    knowledgeShapes: ["formula"],
+    knowledgeNatures: ["quantityRelation"],
+    knowledgeObjects: ["公式曲线"],
+    knowledgeRelations: ["变量关系"],
+    representationNeeds: {
+      ...catalogRequest.representationNeeds,
+      temporalBehavior: "stateChange",
+      dataOrigin: "conceptual",
+      computeNeed: "lightDeterministic",
+      precisionNeed: "quantitative",
+    },
   });
+  assert.ok(
+    formulaCatalog.details.allowedRenderers.some(
+      (renderer) => renderer.id === "weibei.math.function",
+    ),
+    "a source-free conceptual formula still receives the function renderer",
+  );
+
+  const sourceFreeRequest = {
+    schemaVersion: 2,
+    contextRevision: "agent-contract-revision",
+    narrative: [
+      "这是按给定坐标生成的概念示意，不是课程原文。",
+      "<!-- weibei-scene:source-free-scene -->",
+    ].join("\n"),
+    expressionPlan: {
+      action: "explain",
+      summary: "用示意点解释相对位置",
+      knowledgeNatures: ["spatialStructure"],
+      knowledgeObjects: ["示意点"],
+      knowledgeRelations: ["相对位置"],
+      knowledgeProcesses: [],
+      visualPrimitives: ["point"],
+      visualRationale: ["空间位置需要可见点"],
+      families: ["timeAndSpace"],
+      preferredSurface: "inline",
+      directManipulation: false,
+    },
+    scenes: [{
+      id: "source-free-scene",
+      title: "相对位置示意",
+      family: "timeAndSpace",
+      evidenceIDs: [],
+      renderPlan: {
+        renderer: "weibei.spatial.map",
+        specVersion: "weibei.spatial.map.v1",
+        spec: {
+          title: "相对位置示意",
+          coordinateMode: "schematic",
+          features: [{ id: "origin", kind: "point", x: 0.5, y: 0.5, label: "示意点" }],
+        },
+        interactionBindings: [],
+        sourceBindings: [],
+        artifactRefs: [],
+        fallback: {
+          mode: "narrativeOnly",
+          reason: "示意图暂不可用",
+          text: "示意点位于画面中央。",
+          preservesSourceBinding: false,
+        },
+        qualityBudget: {
+          maxNodes: 16,
+          maxDataPoints: 8,
+          maxArtifacts: 0,
+          maxBytes: 32_000,
+          maxWidth: 640,
+          maxHeight: 320,
+          maxAnimationFPS: 0,
+          maxInteractionLatencyMS: 120,
+          allowAnimation: false,
+          allowWebGL: false,
+          allowNetwork: false,
+        },
+      },
+    }],
+    evidenceLedger: [],
+    fallback: {
+      text: "示意点位于画面中央。",
+      reason: "解释性示意不可用",
+    },
+  };
+
+  await catalogTool.execute("catalog-user-provided", {
+    ...catalogRequest,
+    representationNeeds: {
+      ...catalogRequest.representationNeeds,
+      dataOrigin: "userProvided",
+    },
+  });
+  const normalizedDisclosureResult = await richAnswerTool.execute(
+    "rich-normalized-disclosure",
+    {
+      ...sourceFreeRequest,
+      narrative: [
+        "这不是用户本轮给定数据，而是模型自己的说明。",
+        "<!-- weibei-scene:source-free-scene -->",
+      ].join("\n"),
+    },
+  );
+  assert.match(
+    normalizedDisclosureResult.details.envelope.narrative,
+    /^用户本轮给定数据。/u,
+    "the host adds the canonical data-origin disclosure instead of rejecting honest wording",
+  );
+
+  await catalogTool.execute("catalog-conceptual", catalogRequest);
+  const sourceFreeResult = await richAnswerTool.execute("rich-source-free", sourceFreeRequest);
+  assert.equal(sourceFreeResult.details.kind, "rich_answer");
+  assert.deepEqual(sourceFreeResult.details.envelope.evidenceLedger, []);
+
+  await catalogTool.execute("catalog-source-required", {
+    ...catalogRequest,
+    representationNeeds: {
+      ...catalogRequest.representationNeeds,
+      dataOrigin: "sourceObserved",
+    },
+  });
+  await assert.rejects(
+    () => richAnswerTool.execute("rich-source-required", sourceFreeRequest),
+    /不能省略真实来源/u,
+    "source-observed content cannot bypass evidence validation with empty arrays",
+  );
+
+  await beforeAgentStart({ systemPrompt: "测试系统提示" });
+  await catalogTool.execute("catalog-geographic-source-required", {
+    ...catalogRequest,
+    representationNeeds: {
+      ...catalogRequest.representationNeeds,
+      coordinateFrame: "geographic",
+    },
+  });
+  await assert.rejects(
+    () => richAnswerTool.execute("rich-geographic-source-required", sourceFreeRequest),
+    /不能省略真实来源/u,
+    "real geographic coordinates cannot enter the source-free path",
+  );
+
+  await beforeAgentStart({ systemPrompt: "测试系统提示" });
+  await catalogTool.execute("catalog-payload-geographic", catalogRequest);
+  await assert.rejects(
+    () => richAnswerTool.execute("rich-payload-geographic", {
+      ...sourceFreeRequest,
+      scenes: [{
+        ...sourceFreeRequest.scenes[0],
+        renderPlan: {
+          ...sourceFreeRequest.scenes[0].renderPlan,
+          spec: {
+            ...sourceFreeRequest.scenes[0].renderPlan.spec,
+            coordinateMode: "geographic",
+            crs: "WGS84",
+          },
+        },
+      }],
+    }),
+    /真实地理坐标不能通过 cartesian 目录声明进入无来源路径/u,
+    "a cartesian source-free catalog cannot smuggle in a geographic map payload",
+  );
+
+  await beforeAgentStart({ systemPrompt: "测试系统提示" });
+  await catalogTool.execute("catalog-source-free-asset", catalogRequest);
+  await assert.rejects(
+    () => richAnswerTool.execute("rich-unreturned-renderer", {
+      ...sourceFreeRequest,
+      expressionPlan: {
+        ...sourceFreeRequest.expressionPlan,
+        families: ["imageAndOverlay"],
+        visualPrimitives: ["image"],
+      },
+      scenes: [{
+        ...sourceFreeRequest.scenes[0],
+        family: "imageAndOverlay",
+        renderPlan: {
+          ...sourceFreeRequest.scenes[0].renderPlan,
+          renderer: "weibei.image.overlay",
+          specVersion: "weibei.image-overlay.v1",
+          spec: {
+            title: "无来源图像叠层",
+            image: { kind: "dataUrl", source: "data:image/png;base64,iVBORw0KGgo=" },
+            layers: [],
+            annotations: [],
+          },
+          qualityBudget: {
+            ...sourceFreeRequest.scenes[0].renderPlan.qualityBudget,
+            maxArtifacts: 1,
+            maxBytes: 1_500_000,
+          },
+        },
+      }],
+    }),
+    (error) => {
+      assert.match(String(error), /不是本轮 weibei_ui_catalog 返回的能力/u);
+      assert.match(String(error), /spec\.image\.kind 必须是 assetRef/u);
+      return true;
+    },
+    "a source-free catalog cannot submit an asset-backed renderer from the global index",
+  );
+  await assert.rejects(
+    () => richAnswerTool.execute("rich-fake-source-label", {
+      ...sourceFreeRequest,
+      narrative: [
+        "[材料：不存在] 这是概念示意。",
+        "<!-- weibei-scene:source-free-scene -->",
+      ].join("\n"),
+    }),
+    /没有对应 evidenceLedger 的来源标签/u,
+    "source-free text cannot fabricate a material label",
+  );
+  await assert.rejects(
+    () => richAnswerTool.execute("rich-source-free-asset", {
+      ...sourceFreeRequest,
+      narrative: [
+        "[选区：测试材料] 这是带来源上下文的概念示意。",
+        "<!-- weibei-scene:source-free-scene -->",
+      ].join("\n"),
+      scenes: [{
+        ...sourceFreeRequest.scenes[0],
+        renderPlan: {
+          ...sourceFreeRequest.scenes[0].renderPlan,
+          spec: {
+            ...sourceFreeRequest.scenes[0].renderPlan.spec,
+            mapAsset: { kind: "assetRef", source: "material-1" },
+          },
+        },
+      }],
+      evidenceLedger: [{
+        id: "evidence-asset",
+        sourceLabel: "[选区：测试材料]",
+        excerpt: "共同依据原文足够长",
+        assetIDs: [],
+        tags: [],
+        isTruncated: false,
+      }],
+    }),
+    /无来源富回答不能引用当前材料资产/u,
+    "adding an evidence ledger cannot bypass a source-free catalog declaration",
+  );
+
+  await beforeAgentStart({ systemPrompt: "测试系统提示" });
+  await catalogTool.execute("catalog-source-bound", {
+    ...catalogRequest,
+    representationNeeds: {
+      ...catalogRequest.representationNeeds,
+      dataOrigin: "sourceObserved",
+    },
+  });
+  await assert.rejects(
+    () => richAnswerTool.execute("rich-cross-source-asset", {
+      ...sourceFreeRequest,
+      narrative: [
+        "[选区：测试材料] 这是材料中的空间点。",
+        "<!-- weibei-scene:source-free-scene -->",
+      ].join("\n"),
+      scenes: [{
+        ...sourceFreeRequest.scenes[0],
+        evidenceIDs: ["evidence-asset"],
+        renderPlan: {
+          ...sourceFreeRequest.scenes[0].renderPlan,
+          sourceBindings: [{
+            id: "source-asset",
+            evidenceID: "evidence-asset",
+            target: "spec.features",
+            role: "data",
+            requiredForFallback: true,
+          }],
+          fallback: {
+            ...sourceFreeRequest.scenes[0].renderPlan.fallback,
+            preservesSourceBinding: true,
+          },
+        },
+      }],
+      evidenceLedger: [{
+        id: "evidence-asset",
+        sourceLabel: "[选区：测试材料]",
+        excerpt: "共同依据原文足够长",
+        assetIDs: ["material-2"],
+        tags: [],
+        isTruncated: false,
+      }],
+    }),
+    /不属于同一来源的材料资产/u,
+    "evidence from material A cannot bind material B's globally allowed image",
+  );
 
   const longText = "空".repeat(100_000);
   const layers = Array.from({ length: 276 }, (_, index) => ({
@@ -254,7 +577,7 @@ try {
     schemaVersion: 2,
     contextRevision: "agent-contract-revision",
     narrative: [
-      "[材料：测试材料] 三个场景共用同一段真实来源。",
+      "[选区：测试材料] 三个场景共用同一段真实来源。",
       "<!-- weibei-scene:scene-1 -->",
       "<!-- weibei-scene:scene-2 -->",
       "<!-- weibei-scene:scene-3 -->",
@@ -275,14 +598,14 @@ try {
     scenes,
     evidenceLedger: [{
       id: "evidence-1",
-      sourceLabel: "[材料：测试材料]",
+      sourceLabel: "[选区：测试材料]",
       excerpt: "共同依据原文足够长",
       assetIDs: [],
       tags: [],
       isTruncated: false,
     }],
     fallback: {
-      text: "[材料：测试材料] 三个场景的安全正文。",
+      text: "[选区：测试材料] 三个场景的安全正文。",
       reason: "整组视觉不可用",
     },
   });

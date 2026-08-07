@@ -661,6 +661,9 @@ public enum RichAnswerPythonArtifactPipeline {
             case let .table(table):
                 try validate(table, id: input.id, limits: limits)
             case let .imageRef(image):
+                guard input.sourceBindingID != nil else {
+                    throw RichAnswerPythonArtifactError.sourceBindingMissing(target: input.id)
+                }
                 guard RichAnswerPythonArtifactID.isSafeAssetID(image.assetID) else {
                     throw RichAnswerPythonArtifactError.invalidIdentifier(field: "image.assetID", value: image.assetID)
                 }
