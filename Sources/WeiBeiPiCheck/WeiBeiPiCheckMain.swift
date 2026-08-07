@@ -164,9 +164,95 @@ struct WeiBeiPiCheckMain {
             exit(1)
         }
 
+        if CommandLine.arguments.contains("--management-protocol") {
+            let root = FileManager.default.temporaryDirectory
+                .appendingPathComponent("weibei-pi-management-check-\(UUID().uuidString)", isDirectory: true)
+            let runtime = PiAgentRuntime(
+                executableURL: executableURL,
+                runtimeDirectory: root.appendingPathComponent("Runtime", isDirectory: true),
+                persistentPiConfigurationDirectory: root.appendingPathComponent("PiAgent", isDirectory: true)
+            )
+            do {
+                let catalog = try await runtime.managementCatalog()
+                let selectableProviderIDs = Set(AgentProviderID.allCases.map(\.piProviderName))
+                let missingProviderIDs = catalog.providers
+                    .map(\.id)
+                    .filter { !selectableProviderIDs.contains($0) }
+                let providersWithoutAuth = catalog.providers
+                    .filter(\.authTypes.isEmpty)
+                    .map(\.id)
+                let modelProviderIDs = Set(catalog.models.map(\.providerId))
+                let providersWithoutModels = catalog.providers
+                    .filter { !$0.authTypes.contains(.oauth) }
+                    .map(\.id)
+                    .filter { !modelProviderIDs.contains($0) }
+                guard catalog.providers.count >= 30,
+                      catalog.models.count >= 500,
+                      missingProviderIDs.isEmpty,
+                      providersWithoutAuth.isEmpty,
+                      providersWithoutModels.isEmpty,
+                      catalog.providers.contains(where: {
+                          $0.id == "openai" && $0.authTypes.contains(.apiKey)
+                      }),
+                      catalog.providers.contains(where: {
+                          $0.id == "openai-codex" && $0.authTypes.contains(.oauth)
+                      }),
+                      catalog.credentials.isEmpty else {
+                    throw PiAgentRuntimeError.protocolFailure(
+                        "PI management catalog was incomplete; missing=\(missingProviderIDs.joined(separator: ",")) no-auth=\(providersWithoutAuth.joined(separator: ",")) no-models=\(providersWithoutModels.joined(separator: ","))"
+                    )
+                }
+                let credential = try await runtime.login(
+                    providerID: "openai",
+                    type: .apiKey,
+                    interaction: PiManagementInteraction(
+                        prompt: { _ in "weibei-pi-check-key" },
+                        notify: { _ in }
+                    )
+                )
+                guard credential.providerId == "openai", credential.type == .apiKey,
+                      try await runtime.managementCatalog().credentials.contains(where: {
+                          $0.providerId == "openai" && $0.type == .apiKey
+                      }) else {
+                    throw PiAgentRuntimeError.protocolFailure("PI API-key login did not persist")
+                }
+                let piAgentURL = root.appendingPathComponent("PiAgent", isDirectory: true)
+                let authURL = piAgentURL.appendingPathComponent("auth.json")
+                let directoryMode = (try FileManager.default.attributesOfItem(atPath: piAgentURL.path)[.posixPermissions] as? NSNumber)?.intValue
+                let authMode = (try FileManager.default.attributesOfItem(atPath: authURL.path)[.posixPermissions] as? NSNumber)?.intValue
+                guard directoryMode == 0o700, authMode == 0o600 else {
+                    throw PiAgentRuntimeError.protocolFailure("PI credential permissions were not private")
+                }
+                try await runtime.logout(providerID: "openai")
+                let postLogoutCatalog = try await runtime.managementCatalog()
+                let auth = try Data(contentsOf: authURL)
+                let authObject = try JSONSerialization.jsonObject(with: auth) as? [String: Any]
+                guard postLogoutCatalog.credentials.isEmpty,
+                      authObject?.isEmpty == true else {
+                    throw PiAgentRuntimeError.protocolFailure("PI logout did not remove the credential")
+                }
+                await runtime.shutdown()
+                try? FileManager.default.removeItem(at: root)
+                print(
+                    "pi-management-check passed: providers=\(catalog.providers.count) models=\(catalog.models.count) api-key-login=passed logout=passed"
+                )
+                return
+            } catch {
+                await runtime.shutdown()
+                try? FileManager.default.removeItem(at: root)
+                fputs("pi-management-check failed: \(error.localizedDescription)\n", stderr)
+                exit(1)
+            }
+        }
+
         let runtimeRoot = FileManager.default.temporaryDirectory
             .appendingPathComponent("weibei-pi-check-\(UUID().uuidString)", isDirectory: true)
-        let runtime = PiAgentRuntime(executableURL: executableURL, runtimeDirectory: runtimeRoot)
+        let piAgentRoot = runtimeRoot.appendingPathComponent("PiAgent", isDirectory: true)
+        let runtime = PiAgentRuntime(
+            executableURL: executableURL,
+            runtimeDirectory: runtimeRoot,
+            persistentPiConfigurationDirectory: piAgentRoot
+        )
 
         do {
             let manifest = try PiBundledRuntime.validate(
@@ -174,13 +260,12 @@ struct WeiBeiPiCheckMain {
                 containingAppURL: containingAppURL
             )
             let launchedPath = try await runtime.healthCheck()
-            let isolatedConfig = runtimeRoot.appendingPathComponent("PiConfig", isDirectory: true)
-            guard FileManager.default.fileExists(atPath: isolatedConfig.path) else {
+            guard FileManager.default.fileExists(atPath: piAgentRoot.path) else {
                 throw PiCheckError.missingIsolatedConfiguration
             }
             print("pi-check ready: PI \(manifest.piVersion) at \(launchedPath)")
 
-            let isolatedAuth = isolatedConfig.appendingPathComponent("auth.json")
+            let isolatedAuth = piAgentRoot.appendingPathComponent("auth.json")
             let hasConfiguredAuth = ((try? isolatedAuth.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0) > 2
             let runsLiveCheck = runsEvaluation
                 || liveCheckSetting == "1"

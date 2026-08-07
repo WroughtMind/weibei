@@ -62,21 +62,42 @@ struct SettingsView: View {
         .onAppear {
             // Always land on Chat: highest-frequency durable settings (provider / key / model).
             selectedSection = .agent
-            oauthService.refreshLinkedStatus()
+            oauthService.refreshCatalog()
         }
         .onReceive(NotificationCenter.default.publisher(for: .weiBeiPiOAuthDidSucceed)) { note in
             guard let raw = note.userInfo?["provider"] as? String,
-                  let subscription = PiSubscriptionProvider(rawValue: raw) else { return }
+                  let provider = AgentProviderID(rawValue: raw) else { return }
             store.setAgentAuthMethod(.subscription)
-            store.setAgentProviderID(subscription.agentProviderID)
-            store.updateModelName(subscription.defaultModel)
-            if raw == "openai-codex" {
-                store.updateModelName(subscription.defaultModel)
+            store.setAgentProviderID(provider)
+            if let firstModel = oauthService.models(providerID: provider.piProviderName).first {
+                store.updateModelName(firstModel)
             }
             store.openAIKeyStatus = store.ui(
-                "订阅已连接：\(subscription.label(language: store.interfaceLanguage))",
-                "Subscription linked: \(subscription.label(language: store.interfaceLanguage))"
+                "订阅已连接：\(provider.label(language: store.interfaceLanguage))",
+                "Subscription linked: \(provider.label(language: store.interfaceLanguage))"
             )
+            oauthService.refreshCatalog(force: true)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .weiBeiPiCredentialsDidChange)) { note in
+            guard note.userInfo?["type"] as? String == PiCredentialType.apiKey.rawValue,
+                  note.userInfo?["provider"] as? String == store.agentProviderID.piProviderName else {
+                return
+            }
+            store.openAIAPIKey = ""
+            store.openAIKeyStatus = store.ui(
+                "密钥已交给内置 Pi 保存。",
+                "The API key is now stored by embedded Pi."
+            )
+            oauthService.refreshCatalog(force: true)
+        }
+        .onChange(of: oauthService.catalog) { _, _ in
+            let models = oauthService.models(providerID: store.agentProviderID.piProviderName)
+            let current = store.modelName.trimmingCharacters(in: .whitespacesAndNewlines)
+            if let firstModel = models.first,
+               !models.contains(current),
+               current.isEmpty || current == store.agentProviderID.defaultModelHint {
+                store.updateModelName(firstModel)
+            }
         }
     }
 

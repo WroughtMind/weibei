@@ -53,27 +53,12 @@ public struct AgentModelListService: Sendable {
 
     public init() {}
 
-    /// Resolve a strategy into a concrete list of model ids. Each strategy performs one
-    /// authenticated GET and parses the response. Callers handle fallback on error.
+    /// Legacy call site retained until the shared WorkspaceStore occupation is released.
+    /// Model discovery now runs through embedded Pi, so this path performs no request.
     public func fetchModels(strategy: ModelListStrategy, apiKey: String) async throws -> [String] {
-        switch strategy {
-        case let .openAICompatible(base):
-            return try await fetchOpenAICompatible(base: base, apiKey: apiKey)
-        case .anthropic:
-            return try await fetchAnthropic(apiKey: apiKey)
-        case .gemini:
-            return try await fetchGemini(apiKey: apiKey)
-        case .openRouterPublic:
-            return try await fetchOpenRouter()
-        case let .azureOpenAI(base):
-            return try await fetchAzureOpenAI(base: base, apiKey: apiKey)
-        case let .bedrock(region):
-            return try await fetchBedrock(region: region, apiKey: apiKey)
-        case .gitHubModels:
-            return try await fetchGitHubModels(apiKey: apiKey)
-        case let .codexSubscription(token, accountID):
-            return try await fetchCodexSubscription(token: token, accountID: accountID)
-        }
+        _ = strategy
+        _ = apiKey
+        return []
     }
 
     // MARK: - Strategies

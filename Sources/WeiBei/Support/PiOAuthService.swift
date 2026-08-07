@@ -2,56 +2,6 @@ import AppKit
 import Foundation
 import WeiBeiCore
 
-/// Subscription providers that Pi authenticates via OAuth (`/login`).
-/// Tokens are stored in **WeiBei’s** PiAgent directory (not terminal `~/.pi`).
-/// In-app browser OAuth is implemented for openai-codex + anthropic; Copilot surfaces terminal guidance.
-enum PiSubscriptionProvider: String, CaseIterable, Identifiable, Sendable {
-    case openaiCodex = "openai-codex"
-    case anthropic = "anthropic"
-    case githubCopilot = "github-copilot"
-
-    var id: String { rawValue }
-
-    var piProviderFlag: String { rawValue }
-
-    var supportsInAppOAuth: Bool {
-        switch self {
-        case .openaiCodex, .anthropic: return true
-        case .githubCopilot: return false
-        }
-    }
-
-    func label(language: WeiBeiInterfaceLanguage) -> String {
-        agentProviderID.label(language: language)
-    }
-
-    func detail(language: WeiBeiInterfaceLanguage) -> String {
-        switch self {
-        case .openaiCodex:
-            return language.text(
-                "浏览器 OAuth 连接 ChatGPT 订阅；凭证保存在魏碑应用数据中。",
-                "Browser OAuth for ChatGPT subscription; credentials stay in WeiBei app data."
-            )
-        case .anthropic:
-            return language.text(
-                "浏览器 OAuth 连接 Claude 订阅；凭证保存在魏碑应用数据中。",
-                "Browser OAuth for Claude subscription; credentials stay in WeiBei app data."
-            )
-        case .githubCopilot:
-            return language.text(
-                "暂需在终端完成 Copilot 登录后，将 token 配到魏碑（不与终端 Pi 自动共用）。",
-                "Complete Copilot login in a terminal if needed, then configure WeiBei separately (not shared with CLI Pi)."
-            )
-        }
-    }
-
-    var defaultModel: String { agentProviderID.defaultModelHint }
-
-    var agentProviderID: AgentProviderID {
-        AgentProviderID(rawValue: rawValue) ?? .openai
-    }
-}
-
 @MainActor
 final class PiOAuthService: ObservableObject {
     static let shared = PiOAuthService()
@@ -59,19 +9,63 @@ final class PiOAuthService: ObservableObject {
     @Published private(set) var isLoggingIn = false
     @Published private(set) var statusMessage: String?
     @Published private(set) var lastError: String?
-    @Published private(set) var linkedProviders: [String] = []
+    @Published private(set) var catalog: PiManagementCatalog?
+    @Published private(set) var isRefreshingCatalog = false
+    @Published private(set) var catalogError: String?
+    @Published private(set) var pendingPrompt: PiManagementPrompt?
+    @Published var promptValue = ""
 
-    private var process: Process?
-    private var stdoutPipe: Pipe?
+    private let runtime: PiAgentRuntime
+    private var operationTask: Task<Void, Never>?
+    private var refreshTask: Task<Void, Never>?
+    private var promptContinuation: CheckedContinuation<String, Error>?
+    private var suppliedAPIKey: String?
+    private var customProviderSetup: (provider: AgentProviderID, baseURL: String, model: String)?
 
-    /// WeiBei-owned auth.json — never terminal `~/.pi/agent/auth.json`.
-    var weibeiAuthURL: URL {
-        WeiBeiAgentDataPaths.piAuthJSON
+    init(runtime: PiAgentRuntime? = nil) {
+        self.runtime = runtime ?? PiAgentRuntime(
+            runtimeDirectory: WeiBeiAgentDataPaths.applicationSupportRoot
+                .appendingPathComponent("PiManagementRuntime", isDirectory: true)
+        )
     }
 
-    func refreshLinkedStatus() {
-        WeiBeiAgentDataPaths.migrateHomePiAuthIfNeeded()
-        linkedProviders = Self.readLinkedOAuthProviders(from: weibeiAuthURL)
+    func refreshCatalog(force: Bool = false) {
+        guard !isLoggingIn else { return }
+        let previousRefresh = refreshTask
+        refreshTask?.cancel()
+        refreshTask = Task { [weak self] in
+            guard let self else { return }
+            if let previousRefresh { _ = await previousRefresh.result }
+            isRefreshingCatalog = true
+            defer { isRefreshingCatalog = false }
+            catalogError = nil
+            do {
+                let loaded = try await runtime.managementCatalog(refresh: force)
+                guard !Task.isCancelled else { return }
+                catalog = loaded
+            } catch is CancellationError {
+                return
+            } catch {
+                guard !Task.isCancelled else { return }
+                catalogError = error.localizedDescription
+            }
+        }
+    }
+
+    func models(providerID: String) -> [String] {
+        catalog?.models
+            .filter { $0.providerId == providerID }
+            .map(\.id) ?? []
+    }
+
+    func isConfigured(providerID: String, type: PiCredentialType? = nil) -> Bool {
+        if catalog?.credentials.contains(where: {
+            $0.providerId == providerID && (type == nil || $0.type == type)
+        }) == true {
+            return true
+        }
+        guard type == nil || type == .apiKey else { return false }
+        return catalog?.providers.first(where: { $0.id == providerID })?.configured ?? false
     }
 
     static func readLinkedOAuthProviders(from url: URL) -> [String] {
@@ -87,180 +81,228 @@ final class PiOAuthService: ObservableObject {
         }.sorted()
     }
 
-    func isLinked(_ provider: PiSubscriptionProvider) -> Bool {
-        linkedProviders.contains(provider.rawValue)
+    func isLinked(_ provider: AgentProviderID) -> Bool {
+        isConfigured(providerID: provider.piProviderName, type: .oauth)
     }
 
-    func startLogin(_ provider: PiSubscriptionProvider) {
+    func startLogin(_ provider: AgentProviderID) {
+        startCredentialLogin(
+            providerID: provider.piProviderName,
+            type: .oauth,
+            displayName: provider.label(language: .chinese),
+            successNotification: .weiBeiPiOAuthDidSucceed
+        )
+    }
+
+    func saveAPIKey(
+        _ key: String,
+        provider: AgentProviderID,
+        baseURL: String = "",
+        model: String = ""
+    ) {
+        let cleaned = key.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleaned.isEmpty, !isLoggingIn else { return }
+        suppliedAPIKey = cleaned
+        if provider == .custom || provider == .llamaCpp {
+            customProviderSetup = (provider, baseURL, model)
+        }
+        startCredentialLogin(
+            providerID: provider.piProviderName,
+            type: .apiKey,
+            displayName: provider.label(language: .chinese),
+            successNotification: .weiBeiPiCredentialsDidChange
+        )
+    }
+
+    private func startCredentialLogin(
+        providerID: String,
+        type: PiCredentialType,
+        displayName: String,
+        successNotification: Notification.Name
+    ) {
         guard !isLoggingIn else { return }
         lastError = nil
-        statusMessage = nil
+        statusMessage = "正在启动内置 Pi 登录…"
         isLoggingIn = true
-
-        guard let node = Self.resolveNodeExecutable() else {
-            isLoggingIn = false
-            lastError = "Node.js is required for OAuth login (install Node 18+)."
-            return
-        }
-        guard let script = Self.resolveOAuthScriptURL() else {
-            isLoggingIn = false
-            lastError = "OAuth helper script missing from app resources."
-            return
-        }
-
-        try? WeiBeiAgentDataPaths.ensurePiAgentDirectory()
-        WeiBeiAgentDataPaths.migrateHomePiAuthIfNeeded()
-
-        let process = Process()
-        process.executableURL = node
-        process.arguments = [
-            script.path,
-            "--provider", provider.piProviderFlag,
-            "--auth-path", weibeiAuthURL.path,
-        ]
-        process.environment = ProcessInfo.processInfo.environment
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = pipe
-        stdoutPipe = pipe
-        self.process = process
-
-        pipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
-            let data = handle.availableData
-            guard !data.isEmpty, let text = String(data: data, encoding: .utf8) else { return }
-            Task { @MainActor in
-                self?.handleStdout(text, provider: provider)
-            }
-        }
-
-        process.terminationHandler = { [weak self] proc in
-            Task { @MainActor in
-                self?.isLoggingIn = false
-                self?.process = nil
-                self?.stdoutPipe?.fileHandleForReading.readabilityHandler = nil
-                self?.refreshLinkedStatus()
-                if proc.terminationStatus != 0, self?.lastError == nil {
-                    self?.lastError = "OAuth process exited with code \(proc.terminationStatus)"
+        _ = try? WeiBeiAgentDataPaths.ensurePiAgentDirectory()
+        let previousRefresh = refreshTask
+        previousRefresh?.cancel()
+        refreshTask = nil
+        operationTask = Task { [weak self] in
+            guard let self else { return }
+            if let previousRefresh { _ = await previousRefresh.result }
+            do {
+                if let setup = customProviderSetup {
+                    await runtime.writeCustomModelsJSONIfNeeded(
+                        providerID: setup.provider,
+                        baseURL: setup.baseURL,
+                        model: setup.model
+                    )
+                    customProviderSetup = nil
                 }
+                let credential = try await runtime.login(
+                    providerID: providerID,
+                    type: type,
+                    interaction: PiManagementInteraction(
+                        prompt: { [weak self] prompt in
+                            guard let self else { throw PiAgentRuntimeError.cancelled }
+                            return try await self.requestInput(for: prompt)
+                        },
+                        notify: { [weak self] notice in
+                            await self?.handle(notice)
+                        }
+                    )
+                )
+                guard !Task.isCancelled else { throw PiAgentRuntimeError.cancelled }
+                updateCatalogCredential(credential)
+                statusMessage = "已连接：\(displayName)"
+                lastError = nil
+                finishOperation()
+                NotificationCenter.default.post(
+                    name: successNotification,
+                    object: nil,
+                    userInfo: ["provider": providerID, "type": type.rawValue]
+                )
+            } catch {
+                finishOperation(error: error)
             }
         }
+    }
 
-        do {
-            try process.run()
-            statusMessage = "Starting OAuth…"
-        } catch {
-            isLoggingIn = false
-            lastError = error.localizedDescription
+    func logout(_ provider: AgentProviderID) {
+        logoutCredential(
+            providerID: provider.piProviderName,
+            displayName: provider.label(language: .chinese)
+        )
+    }
+
+    func logoutCredential(providerID: String, displayName: String? = nil) {
+        guard !isLoggingIn else { return }
+        lastError = nil
+        statusMessage = "正在断开内置 Pi 凭证…"
+        isLoggingIn = true
+        let previousRefresh = refreshTask
+        previousRefresh?.cancel()
+        refreshTask = nil
+        operationTask = Task { [weak self] in
+            guard let self else { return }
+            if let previousRefresh { _ = await previousRefresh.result }
+            do {
+                try await runtime.logout(providerID: providerID)
+                removeCatalogCredential(providerID: providerID)
+                statusMessage = "已断开：\(displayName ?? providerID)"
+                finishOperation()
+                NotificationCenter.default.post(
+                    name: .weiBeiPiCredentialsDidChange,
+                    object: nil,
+                    userInfo: ["provider": providerID]
+                )
+            } catch {
+                finishOperation(error: error)
+            }
         }
     }
 
     func cancelLogin() {
-        process?.terminate()
-        process = nil
+        operationTask?.cancel()
+        cancelPendingPrompt()
+        Task { await runtime.shutdown() }
+        finishOperation(error: PiAgentRuntimeError.cancelled)
+    }
+
+    func submitPrompt(_ value: String? = nil) {
+        guard let continuation = promptContinuation else { return }
+        let submitted = (value ?? promptValue).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !submitted.isEmpty else { return }
+        promptContinuation = nil
+        pendingPrompt = nil
+        promptValue = ""
+        continuation.resume(returning: submitted)
+    }
+
+    private func requestInput(for prompt: PiManagementPrompt) async throws -> String {
+        if prompt.type == .secret, let suppliedAPIKey {
+            self.suppliedAPIKey = nil
+            return suppliedAPIKey
+        }
+        guard promptContinuation == nil else { throw PiAgentRuntimeError.busy }
+        pendingPrompt = prompt
+        promptValue = prompt.type == .select ? (prompt.options?.first?.id ?? "") : ""
+        return try await withTaskCancellationHandler(operation: {
+            try await withCheckedThrowingContinuation { continuation in
+                promptContinuation = continuation
+            }
+        }, onCancel: {
+            Task { @MainActor [weak self] in self?.cancelPendingPrompt() }
+        })
+    }
+
+    private func cancelPendingPrompt() {
+        let continuation = promptContinuation
+        promptContinuation = nil
+        pendingPrompt = nil
+        promptValue = ""
+        continuation?.resume(throwing: PiAgentRuntimeError.cancelled)
+    }
+
+    private func handle(_ notice: PiManagementNotice) {
+        switch notice.type {
+        case .authURL:
+            if let raw = notice.url, let url = URL(string: raw) {
+                NSWorkspace.shared.open(url)
+            }
+            statusMessage = notice.instructions ?? "浏览器已打开；完成登录后回到魏碑。"
+        case .deviceCode:
+            if let raw = notice.verificationUri, let url = URL(string: raw) {
+                NSWorkspace.shared.open(url)
+            }
+            statusMessage = [notice.message, notice.userCode.map { "设备码：\($0)" }]
+                .compactMap { $0 }
+                .joined(separator: " ")
+        case .progress, .info:
+            statusMessage = notice.message ?? statusMessage
+        }
+    }
+
+    private func updateCatalogCredential(_ credential: PiManagementCredentialInfo) {
+        guard var catalog else { return }
+        catalog.credentials.removeAll { $0.providerId == credential.providerId }
+        catalog.credentials.append(credential)
+        if let index = catalog.providers.firstIndex(where: { $0.id == credential.providerId }) {
+            catalog.providers[index].configured = true
+            catalog.providers[index].authSource = "stored"
+        }
+        self.catalog = catalog
+    }
+
+    private func removeCatalogCredential(providerID: String) {
+        guard var catalog else { return }
+        catalog.credentials.removeAll { $0.providerId == providerID }
+        if let index = catalog.providers.firstIndex(where: { $0.id == providerID }) {
+            catalog.providers[index].configured = false
+            catalog.providers[index].authSource = nil
+        }
+        self.catalog = catalog
+    }
+
+    private func finishOperation(error: Error? = nil) {
+        operationTask = nil
         isLoggingIn = false
-        statusMessage = "Login cancelled"
-    }
-
-    private func handleStdout(_ chunk: String, provider: PiSubscriptionProvider) {
-        for line in chunk.split(whereSeparator: \.isNewline) {
-            let raw = String(line).trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !raw.isEmpty,
-                  let data = raw.data(using: .utf8),
-                  let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let type = obj["type"] as? String else { continue }
-
-            switch type {
-            case "auth_url":
-                if let urlString = obj["url"] as? String, let url = URL(string: urlString) {
-                    NSWorkspace.shared.open(url)
-                    statusMessage = "Browser opened — complete sign-in, then return here."
-                }
-            case "progress":
-                statusMessage = obj["message"] as? String ?? statusMessage
-            case "success":
-                statusMessage = "Subscription linked for \(provider.label(language: .english))."
-                lastError = nil
-                refreshLinkedStatus()
-                NotificationCenter.default.post(
-                    name: .weiBeiPiOAuthDidSucceed,
-                    object: nil,
-                    userInfo: ["provider": provider.rawValue]
-                )
-            case "error":
-                lastError = obj["message"] as? String ?? "OAuth failed"
+        suppliedAPIKey = nil
+        customProviderSetup = nil
+        cancelPendingPrompt()
+        if let error {
+            if error is CancellationError || (error as? PiAgentRuntimeError) == .cancelled {
+                statusMessage = "已取消"
+            } else {
+                lastError = error.localizedDescription
                 statusMessage = nil
-            case "status", "start":
-                break
-            default:
-                break
             }
         }
-    }
-
-    private static func resolveNodeExecutable() -> URL? {
-        let span = WeiBeiPerf.begin("oauth.node_probe")
-        var outcome = "not_found"
-        defer {
-            WeiBeiPerf.end(span, extra: "outcome=\(outcome)")
-        }
-        let candidates = [
-            "/usr/local/bin/node",
-            "/opt/homebrew/bin/node",
-            FileManager.default.homeDirectoryForCurrentUser
-                .appendingPathComponent(".nvm/versions/node").path,
-        ]
-        for path in candidates {
-            if path.contains("nvm") {
-                // Prefer first nvm node if present
-                if let versions = try? FileManager.default.contentsOfDirectory(atPath: path) {
-                    for version in versions.sorted().reversed() {
-                        let node = URL(fileURLWithPath: path)
-                            .appendingPathComponent(version)
-                            .appendingPathComponent("bin/node")
-                        if FileManager.default.isExecutableFile(atPath: node.path) {
-                            outcome = "found"
-                            return node
-                        }
-                    }
-                }
-            } else if FileManager.default.isExecutableFile(atPath: path) {
-                outcome = "found"
-                return URL(fileURLWithPath: path)
-            }
-        }
-        // PATH lookup
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/which")
-        process.arguments = ["node"]
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        try? process.run()
-        process.waitUntilExit()
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        if let path = String(data: data, encoding: .utf8)?
-            .trimmingCharacters(in: .whitespacesAndNewlines),
-           !path.isEmpty,
-           FileManager.default.isExecutableFile(atPath: path) {
-            outcome = "found"
-            return URL(fileURLWithPath: path)
-        }
-        return nil
-    }
-
-    private static func resolveOAuthScriptURL() -> URL? {
-        if let resource = Bundle.main.url(forResource: "pi-oauth-login", withExtension: "mjs") {
-            return resource
-        }
-        // Dev tree: Sources/WeiBei/Resources/pi-oauth-login.mjs
-        let dev = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
-            .appendingPathComponent("Sources/WeiBei/Resources/pi-oauth-login.mjs")
-        if FileManager.default.fileExists(atPath: dev.path) {
-            return dev
-        }
-        return nil
     }
 }
 
 extension Notification.Name {
     static let weiBeiPiOAuthDidSucceed = Notification.Name("weiBeiPiOAuthDidSucceed")
+    static let weiBeiPiCredentialsDidChange = Notification.Name("weiBeiPiCredentialsDidChange")
 }

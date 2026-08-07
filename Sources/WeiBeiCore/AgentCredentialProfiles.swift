@@ -238,6 +238,8 @@ public enum AgentProviderConsoleLinks {
             return Metadata(loginURLString: "https://dash.cloudflare.com/", help: .cloudflareWorkersAI)
         case .openrouter:
             return Metadata(loginURLString: "https://openrouter.ai/keys", help: .genericEnv)
+        case .qwenTokenPlan, .qwenTokenPlanCN, .radius:
+            return Metadata(loginURLString: nil, help: .genericEnv)
         case .vercelAIGateway:
             return Metadata(loginURLString: "https://vercel.com/docs/ai-gateway", help: .genericEnv)
         case .zai, .zaiCodingCN:

@@ -767,7 +767,7 @@ public enum AgentFailureKind: String, Codable, Equatable, Sendable {
         case .offline:
             return language.text("网络不可用", "Network unavailable")
         case .unauthorized:
-            return language.text("密钥无效或未授权", "Invalid or unauthorized key")
+            return language.text("认证已失效", "Authentication expired")
         case .rateLimited:
             return language.text("请求过于频繁", "Rate limited")
         case .serverError:
@@ -786,7 +786,10 @@ public enum AgentFailureKind: String, Codable, Equatable, Sendable {
         case .offline:
             return language.text("请检查本机网络后重试。", "Check your network connection, then retry.")
         case .unauthorized:
-            return language.text("请在设置中核对密钥与提供商。", "Check the API key and provider in Settings.")
+            return language.text(
+                "请到设置中重新登录，或重新保存 API Key。",
+                "Sign in again in Settings, or save the API key again."
+            )
         case .rateLimited:
             return language.text("请稍后再试，或更换模型/提供商。", "Wait a moment, or switch model/provider.")
         case .serverError:

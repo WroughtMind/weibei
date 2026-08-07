@@ -558,6 +558,9 @@ public enum AgentProviderID: String, Codable, CaseIterable, Identifiable, Sendab
     case cloudflareAIGateway = "cloudflare-ai-gateway"
     case cloudflareWorkersAI = "cloudflare-workers-ai"
     case openrouter
+    case qwenTokenPlan = "qwen-token-plan"
+    case qwenTokenPlanCN = "qwen-token-plan-cn"
+    case radius
     case vercelAIGateway = "vercel-ai-gateway"
     case zai
     case zaiCodingCN = "zai-coding-cn"
@@ -587,22 +590,12 @@ public enum AgentProviderID: String, Codable, CaseIterable, Identifiable, Sendab
 
     public var kind: AgentProviderKind {
         switch self {
-        case .openaiCodex, .anthropic, .githubCopilot:
+        case .openaiCodex, .anthropic, .githubCopilot, .radius:
             return .subscription
         case .llamaCpp, .custom:
             return .localOrCustom
         default:
             return .apiKey
-        }
-    }
-
-    /// Providers for which WeiBei can run browser OAuth (Pi-compatible).
-    public var supportsInAppOAuth: Bool {
-        switch self {
-        case .openaiCodex, .anthropic:
-            return true
-        default:
-            return false
         }
     }
 
@@ -636,6 +629,9 @@ public enum AgentProviderID: String, Codable, CaseIterable, Identifiable, Sendab
         case .cerebras: return "CEREBRAS_API_KEY"
         case .cloudflareAIGateway, .cloudflareWorkersAI: return "CLOUDFLARE_API_KEY"
         case .openrouter: return "OPENROUTER_API_KEY"
+        case .qwenTokenPlan: return "QWEN_TOKEN_PLAN_API_KEY"
+        case .qwenTokenPlanCN: return "QWEN_TOKEN_PLAN_CN_API_KEY"
+        case .radius: return "RADIUS_API_KEY"
         case .vercelAIGateway: return "AI_GATEWAY_API_KEY"
         case .zai: return "ZAI_API_KEY"
         case .zaiCodingCN: return "ZAI_CODING_CN_API_KEY"
@@ -680,6 +676,9 @@ public enum AgentProviderID: String, Codable, CaseIterable, Identifiable, Sendab
         case .cloudflareAIGateway: return "Cloudflare AI Gateway"
         case .cloudflareWorkersAI: return "Cloudflare Workers AI"
         case .openrouter: return "OpenRouter"
+        case .qwenTokenPlan: return "Qwen Token Plan"
+        case .qwenTokenPlanCN: return language.text("Qwen Token Plan（中国）", "Qwen Token Plan (China)")
+        case .radius: return "Radius"
         case .vercelAIGateway: return "Vercel AI Gateway"
         case .zai: return language.text("ZAI Coding Plan（全球）", "ZAI Coding Plan (Global)")
         case .zaiCodingCN: return language.text("ZAI Coding Plan（中国）", "ZAI Coding Plan (China)")
@@ -722,6 +721,8 @@ public enum AgentProviderID: String, Codable, CaseIterable, Identifiable, Sendab
         case .cloudflareAIGateway: return "claude-sonnet-4-5"
         case .cloudflareWorkersAI: return "@cf/meta/llama-3.1-70b-instruct"
         case .openrouter: return "openai/gpt-4.1"
+        case .qwenTokenPlan, .qwenTokenPlanCN: return "qwen3-coder-plus"
+        case .radius: return "default"
         case .vercelAIGateway: return "openai/gpt-4.1"
         case .zai, .zaiCodingCN: return "default"
         case .opencode, .opencodeGo: return "default"
@@ -764,6 +765,7 @@ public enum AgentProviderID: String, Codable, CaseIterable, Identifiable, Sendab
         case .antLing, .googleVertex, .cloudflareAIGateway, .cloudflareWorkersAI,
              .vercelAIGateway, .zai, .zaiCodingCN, .opencode, .opencodeGo,
              .kimiCoding, .moonshotai, .moonshotaiCN, .minimax, .minimaxCN,
+             .qwenTokenPlan, .qwenTokenPlanCN, .radius,
              .xiaomi, .xiaomiTokenPlanCN, .xiaomiTokenPlanAMS, .xiaomiTokenPlanSGP:
             return .unsupported
         }

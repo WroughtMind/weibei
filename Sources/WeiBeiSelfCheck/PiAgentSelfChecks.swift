@@ -916,6 +916,20 @@ private func checkBundledAgentResources() throws {
     try piRequire(resources.systemPrompt.contains("魏碑负责材料、选区、笔记"), "PI system contract is bundled")
     try piRequire(resources.systemPrompt.contains("课程地图") && resources.systemPrompt.contains("学习记忆与会话"), "PI system contract separates course evidence from learning memory")
     let extensionSource = try String(contentsOf: resources.extensionURL, encoding: .utf8)
+    let managementExtensionSource = try String(
+        contentsOf: resources.managementExtensionURL,
+        encoding: .utf8
+    )
+    try piRequire(
+        managementExtensionSource.contains("pi.registerCommand(COMMAND")
+            && managementExtensionSource.contains("ModelRuntime.create")
+            && managementExtensionSource.contains("runtime.login")
+            && managementExtensionSource.contains("runtime.logout")
+            && managementExtensionSource.contains("runtime.getModels")
+            && managementExtensionSource.contains("WEIBEI_PI_AUTH_PATH")
+            && !managementExtensionSource.contains("spawn("),
+        "PI management extension owns authentication and model discovery without an external runtime"
+    )
     let richAnswerSkillRoot = resources.skillsURL
         .appendingPathComponent("rich-answer", isDirectory: true)
     let richAnswerDirectorSource = try String(
@@ -1196,16 +1210,18 @@ private func checkBundledAgentResources() throws {
             && runtimeSource.contains("replyTrace.append(\"model=\\(model)\")")
             && runtimeSource.contains("toolTrace: replyTrace")
             && runtimeSource.contains("if !providerConfiguration.thinkingLevel.isEmpty")
-            && runtimeSource.contains("syncLocalPiAuth(from: source, to: destination)")
-            && runtimeSource.contains("let sourceObject = try? JSONSerialization.jsonObject")
             && runtimeSource.contains("WeiBeiAgentDataPaths.piAgentDirectory")
-            && runtimeSource.contains("WeiBeiAgentDataPaths.migrateHomePiAuthIfNeeded()")
-            && runtimeSource.contains("WeiBei store wins for OAuth providers")
+            && runtimeSource.contains("\"PI_CODING_AGENT_DIR\": piConfigurationURL.path")
+            && runtimeSource.contains("\"WEIBEI_PI_AUTH_PATH\"")
+            && runtimeSource.contains("return persistentPiConfigurationDirectory")
+            && !runtimeSource.contains("syncLocalPiAuth")
+            && !runtimeSource.contains("WeiBeiAgentDataPaths.migrateHomePiAuthIfNeeded()")
+            && !runtimeSource.contains("environment[providerID.environmentAPIKeyName]")
             && !runtimeSource.contains("Always take home OAuth entries")
             && !runtimeSource.contains("PI returned a content answer without a current-turn source citation")
             && runtimeSource.contains("binary.sha256")
             && runtimeSource.contains("SecStaticCodeCheckValidity"),
-        "PI host preserves ordinary text answers while isolating rejected actions and validating binary integrity and code signatures"
+        "PI host preserves ordinary text answers while isolating actions, credentials, binary integrity, and code signatures"
     )
 }
 
