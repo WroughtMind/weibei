@@ -25,7 +25,8 @@ final class PiOAuthService: ObservableObject {
     init(runtime: PiAgentRuntime? = nil) {
         self.runtime = runtime ?? PiAgentRuntime(
             runtimeDirectory: WeiBeiAgentDataPaths.applicationSupportRoot
-                .appendingPathComponent("PiManagementRuntime", isDirectory: true)
+                .appendingPathComponent("PiManagementRuntime", isDirectory: true),
+            persistentPiConfigurationDirectory: WeiBeiAgentDataPaths.piAgentDirectory
         )
     }
 
