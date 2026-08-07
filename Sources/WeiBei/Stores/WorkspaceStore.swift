@@ -8572,6 +8572,14 @@ final class WorkspaceStore: ObservableObject {
         try waitForCourseFileOperation {
             await self
                 .finishPendingCourseRemovalRecoveryIfNeeded()
+            let deadline = Date().addingTimeInterval(20)
+            while self.activeCourseRemovalTransactionID != nil,
+                  Date() < deadline {
+                await Task.yield()
+            }
+            guard self.activeCourseRemovalTransactionID == nil else {
+                throw CourseRemovalError.courseBusy
+            }
         }
     }
 
