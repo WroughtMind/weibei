@@ -289,7 +289,11 @@ extension SettingsView {
                 let provider = currentOAuthProvider
                 HStack(spacing: 8) {
                     if let provider, oauthService.isLinked(provider) {
-                        settingsPill(title: store.ui("已连接", "Linked"), icon: "checkmark.seal.fill", active: true)
+                        settingsPill(
+                            title: store.ui("登录凭据已保存", "Credentials stored"),
+                            icon: "key.fill",
+                            active: true
+                        )
                     }
                     if let provider {
                         Button {
@@ -318,7 +322,7 @@ extension SettingsView {
                     }
                 }
                 piManagementPrompt
-                if let progress = oauthService.statusMessage {
+                if let progress = oauthService.statusMessage, oauthService.isLoggingIn {
                     settingsNote(progress, icon: "arrow.triangle.2.circlepath")
                 }
                 if let error = oauthService.lastError {
