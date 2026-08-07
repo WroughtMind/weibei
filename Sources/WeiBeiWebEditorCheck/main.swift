@@ -1474,7 +1474,7 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
         webView.evaluateJavaScript(triggerScript) { [weak self] _, error in
             guard let self else { return }
             guard error == nil else { self.fail("automatic slash trigger setup failed: \(error!.localizedDescription)"); return }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                 self.validateAutomaticSlashMenu()
             }
         }
