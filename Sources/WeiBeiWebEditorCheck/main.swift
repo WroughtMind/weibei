@@ -2203,7 +2203,7 @@ private func verifyAgentChatMarkdownSourceContract() {
         "real short-block measurement must be independent from the 44pt minimum frame"
     )
     expect(
-        chat.contains("freezeHeightAfterMeasure: !isStreaming && isInScrollViewport == false"),
+        chat.contains("freezeHeightAfterMeasure: !isStreaming\n                        && (!paneStructureTransitionActive || isInScrollViewport == false)\n                        && isInScrollViewport == false"),
         "visible finalized Markdown must remain live while delayed layout can still grow"
     )
     expect(
