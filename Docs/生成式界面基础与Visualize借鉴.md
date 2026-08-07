@@ -20,7 +20,8 @@
 | Visualize 作为产品方向 | 9/10 | 最接近“Agent 临时生成最合适的学习器” |
 | 极简模型接口 | 9/10 | 现有 JSON、来源、状态和正文足以承载 |
 | 直接在主 App 的 WKWebView 执行任意 JS | 2/10 | 本机已实测断网和资源回收失败 |
-| 独立 UI Extension 执行容器 | 5/10 | Apple 有公开远程 UI，但 macOS 14 包装、断网和销毁仍未证明 |
+| 独立 UI Extension 容器方向 | 6/10 | 面向 macOS 14 的旧运行时接口已通过双架构编译；包装、断网和销毁仍未证明 |
+| 魏碑现在直接进入容器实现 | 3/10 | 当前机器缺完整 Xcode 与官方扩展生成工具，G0 尚未接通 |
 | 全量替换旧体系 | 7/10 | 方向可行；执行容器是唯一真正的前置闸门 |
 
 **该删的是模型可见的伪复杂性；该保留的是不可信代码与用户数据之间的真实边界。**
@@ -255,12 +256,20 @@ flowchart LR
 
 它目前仍不是已选定的生产实现：
 
-- 魏碑当前是 SwiftPM + 手工 `.app` 打包，没有 `.appex`、旧式 `.appext` 扩展点元数据、嵌套签名和公证链。
-- Apple 当前自动生成扩展点的新 API 面向 macOS 26；魏碑最低 macOS 14 需要验证旧式元数据和旧身份发现 API。[Apple 扩展点文档](https://developer.apple.com/documentation/extensionfoundation/adding-support-for-app-extensions-to-your-app)
+- 魏碑当前是 SwiftPM + 手工 `.app` 打包，没有 `.appex`、macOS 14 适用的扩展点元数据、嵌套签名和公证链。
+- Apple 当前自动生成扩展点的新 API 面向 macOS 26；魏碑最低 macOS 14 需要验证旧系统适用的扩展点元数据和身份发现 API。[Apple 扩展点文档](https://developer.apple.com/documentation/extensionfoundation/adding-support-for-app-extensions-to-your-app)
 - 普通 XPC 服务虽有独立沙箱，却没有公开的可嵌交互远程 UI，不能替代 UI Extension。
 - Enhanced Security 扩展明确不能呈现 UI，也不能用于这条路径。
 - ExtensionKit 没有公开“立即杀掉该扩展及其 WebContent”的承诺；必须实测拆除场景后的资源回收。
 - 本机沙盒样本已经证明：仅靠不授予 `network.client` 不能推导出 WKWebView 零网络。
+
+### 2026-08-07 G0 工具链尖峰
+
+已证明的只有源码兼容性：最小宿主与最小界面扩展轮廓均使用旧运行时接口，以 macOS 14 为最低目标编成 arm64、x86_64 Mach-O 对象；当前 SDK 下的完整最小扩展可执行文件也标记为 `minos 14.0`。这说明魏碑的最低系统目标不会在源码层面直接否决该方向。
+
+G0 仍未通过：本机只有 Command Line Tools，没有完整 Xcode、macOS 14 运行环境和可调用的官方扩展元数据生成工具；SwiftPM 也没有 App Extension 产品类型。因此 `.appex` 生成、宿主扩展点声明、自然发现、签名安装与远程场景激活都不能据此宣布完成。
+
+手工拼装 bundle、照抄系统 App 的内部元数据或手动注册插件，即使能在当前系统运行，也只算定位问题的诊断，不算 macOS 14 产品证据。下一次 G0 必须使用完整 Xcode 的正式双目标构建能力，在干净 macOS 14 环境中从自然安装开始验证。
 
 ## 执行容器四道硬闸门
 
@@ -270,7 +279,7 @@ flowchart LR
 
 | 闸门 | 必须证明 | 失败时 |
 | --- | --- | --- |
-| G0 最小接通 | 本地签名的最小 App 在当前系统和 macOS 14 干净环境中，无需设置即可发现、激活并嵌入只显示固定文字的扩展 | 停止 ExtensionKit 路线 |
+| G0 最小接通 | 完整 Xcode 正式生成最小 App、扩展及扩展点元数据；本地签名产物在当前系统和干净 macOS 14 环境中自然安装后，无需设置即可发现、激活并嵌入固定文字 | 停止 ExtensionKit 路线 |
 | G1 零网络 | 使用计划中的最终沙盒权限，只运行最小脚本；对 fetch、XHR、WebSocket、EventSource、Beacon、图片、样式、表单、Worker、WebTransport、WebRTC/STUN/TURN 和 DNS 做进程级抓包，结果为零 | 任意 JS 不得进入产品 |
 | G2 可销毁 | 死循环、DOM 爆炸和持续内存增长下，魏碑主进程保持响应；拆除远程场景后，扩展及对应 WebContent 在明确时限内停止 CPU 与内存消耗 | 任意 JS 不得进入产品 |
 | G3 完整能力与交付 | 再加入 SVG、Canvas、ECharts、键盘和辅助功能；社区签名、Developer ID、公证与 DMG 均通过，并对同一最终安装包复跑 G1、G2 | 不进入学习闭环和生产替换 |
