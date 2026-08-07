@@ -17,7 +17,6 @@ public enum RichAnswerCapabilityMismatchCode: String, Codable, Hashable, Sendabl
     case unsupportedArtifact = "unsupported_artifact"
     case unsupportedResource = "unsupported_resource"
     case fallbackUnavailable = "fallback_unavailable"
-    case missingSourceBinding = "missing_source_binding"
     case budgetExceeded = "budget_exceeded"
     case specContractViolation = "spec_contract_violation"
 }

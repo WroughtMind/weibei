@@ -1,4 +1,5 @@
 import Foundation
+import WeiBeiCore
 
 public enum RichAnswerPythonArtifactSelfCheckError: Error, Equatable, CustomStringConvertible, Sendable {
     case failed(String)

@@ -117,7 +117,6 @@ No private course data is included. Use a small folder containing a PDF, HTML pa
 
 ```bash
 ./script/build_and_run.sh check
-./script/build_and_run.sh --verify
 ```
 
 Individual checks are also available:

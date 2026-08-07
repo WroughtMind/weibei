@@ -29,7 +29,8 @@ private func applyResourceLimits() {
     }
 }
 
-private func runVerificationProbe(_ name: String) -> Never {
+#if DEBUG
+private func runSafetyProbe(_ name: String) -> Never {
     switch name {
     case "normal":
         FileHandle.standardOutput.write(Data("verification-ok\n".utf8))
@@ -53,14 +54,17 @@ private func runVerificationProbe(_ name: String) -> Never {
     }
     exit(0)
 }
+#endif
 
 applyResourceLimits()
 
-if ProcessInfo.processInfo.environment["WEIBEI_PDF_WORKER_VERIFY"] == "1",
+#if DEBUG
+if ProcessInfo.processInfo.environment["WEIBEI_PDF_WORKER_SAFETY_TEST"] == "1",
    CommandLine.arguments.count == 3,
-   CommandLine.arguments[1] == "--verification-probe" {
-    runVerificationProbe(CommandLine.arguments[2])
+   CommandLine.arguments[1] == "--safety-probe" {
+    runSafetyProbe(CommandLine.arguments[2])
 }
+#endif
 
 guard CommandLine.arguments.count == 4,
       let maximumCharacters = Int(CommandLine.arguments[3]),

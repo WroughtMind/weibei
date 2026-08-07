@@ -116,50 +116,51 @@ public enum BoundedPDFTextExtractor {
         }
     }
 
+#if DEBUG
     public static func runSafetySelfCheck() -> Bool {
         guard runWorker(
-            arguments: ["--verification-probe", "normal"],
+            arguments: ["--safety-probe", "normal"],
             timeout: 1,
             maximumResidentBytes: maximumWorkerResidentBytes,
             maximumOutputBytes: 1_024,
-            enablesVerificationProbe: true
+            environmentOverrides: ["WEIBEI_PDF_WORKER_SAFETY_TEST": "1"]
         ) == Data("verification-ok\n".utf8) else { return false }
 
         let timeoutStart = Date()
         guard runWorker(
-            arguments: ["--verification-probe", "timeout"],
+            arguments: ["--safety-probe", "timeout"],
             timeout: 0.15,
             maximumResidentBytes: maximumWorkerResidentBytes,
             maximumOutputBytes: 1_024,
-            enablesVerificationProbe: true
+            environmentOverrides: ["WEIBEI_PDF_WORKER_SAFETY_TEST": "1"]
         ) == nil, Date().timeIntervalSince(timeoutStart) < 1 else { return false }
 
         let outputStart = Date()
         guard runWorker(
-            arguments: ["--verification-probe", "output"],
+            arguments: ["--safety-probe", "output"],
             timeout: 1,
             maximumResidentBytes: maximumWorkerResidentBytes,
             maximumOutputBytes: 1_024,
-            enablesVerificationProbe: true
+            environmentOverrides: ["WEIBEI_PDF_WORKER_SAFETY_TEST": "1"]
         ) == nil, Date().timeIntervalSince(outputStart) < 1 else { return false }
 
         let memoryStart = Date()
         guard runWorker(
-            arguments: ["--verification-probe", "memory"],
+            arguments: ["--safety-probe", "memory"],
             timeout: 2,
             maximumResidentBytes: 128 * 1_024 * 1_024,
             maximumOutputBytes: 1_024,
-            enablesVerificationProbe: true
+            environmentOverrides: ["WEIBEI_PDF_WORKER_SAFETY_TEST": "1"]
         ) == nil, Date().timeIntervalSince(memoryStart) < 1.5 else { return false }
 
         let cancellationCompletion = DispatchSemaphore(value: 0)
         let cancellationTask = Task.detached {
             _ = runWorker(
-                arguments: ["--verification-probe", "timeout"],
+                arguments: ["--safety-probe", "timeout"],
                 timeout: 2,
                 maximumResidentBytes: maximumWorkerResidentBytes,
                 maximumOutputBytes: 1_024,
-                enablesVerificationProbe: true
+                environmentOverrides: ["WEIBEI_PDF_WORKER_SAFETY_TEST": "1"]
             )
             cancellationCompletion.signal()
         }
@@ -169,13 +170,14 @@ public enum BoundedPDFTextExtractor {
         return cancellationCompletion.wait(timeout: .now() + 1) == .success
             && Date().timeIntervalSince(cancellationStart) < 1
     }
+#endif
 
     private static func runWorker(
         arguments: [String],
         timeout: TimeInterval,
         maximumResidentBytes: UInt64,
         maximumOutputBytes: Int,
-        enablesVerificationProbe: Bool = false
+        environmentOverrides: [String: String] = [:]
     ) -> Data? {
         guard !Task.isCancelled,
               maximumOutputBytes > 0,
@@ -191,8 +193,8 @@ public enum BoundedPDFTextExtractor {
             "PATH": "/usr/bin:/bin",
             "TMPDIR": FileManager.default.temporaryDirectory.path,
         ]
-        if enablesVerificationProbe {
-            environment["WEIBEI_PDF_WORKER_VERIFY"] = "1"
+        for (key, value) in environmentOverrides {
+            environment[key] = value
         }
         process.environment = environment
 

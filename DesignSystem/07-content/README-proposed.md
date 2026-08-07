@@ -59,7 +59,6 @@ export WEIBEI_OPENAI_MODEL="gpt-5.1"
 ```bash
 ./script/build_and_run.sh check
 ./script/build_and_run.sh package
-./script/build_and_run.sh --verify
 ```
 
 几个有用的入口：

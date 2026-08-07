@@ -11,7 +11,7 @@ import {
   type Scene3DSpec,
   type Scene3DState,
   type Scene3DVector,
-} from "./scene-3d.self-check";
+} from "./scene-3d-model";
 import {
   createNarrativeFallbackNode,
   type CompiledRenderPlan,
@@ -1191,19 +1191,6 @@ function Scene3DMount({
     setFocus(null);
   }, [compiled.spec.camera]);
 
-  const handleVerifyInteraction = useCallback(() => {
-    setYaw((current) => (current + 18) % 360);
-    setPitch((current) => clamp(current + 6, -82, 82));
-    if (compiled.spec.controls.allowSlice && compiled.spec.slices.length) {
-      const next = (activeSliceIndex + 1) % compiled.spec.slices.length;
-      setActiveSliceIndex(next);
-      setSliceValue(compiled.spec.slices[next]?.value ?? 0);
-    }
-    if (stateList.length > 1) {
-      setActiveStateIndex((current) => (current + 1) % stateList.length);
-    }
-  }, [activeSliceIndex, compiled.spec.controls.allowSlice, compiled.spec.slices, stateList.length]);
-
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -1234,16 +1221,13 @@ function Scene3DMount({
     window.addEventListener("pointermove", onPointerMove);
     window.addEventListener("pointerup", onPointerUp);
     canvas.addEventListener("wheel", onWheel, { passive: false });
-    canvas.addEventListener("weibei:verify-interaction", handleVerifyInteraction);
-
     return () => {
       canvas.removeEventListener("pointerdown", onPointerDown);
       window.removeEventListener("pointermove", onPointerMove);
       window.removeEventListener("pointerup", onPointerUp);
       canvas.removeEventListener("wheel", onWheel);
-      canvas.removeEventListener("weibei:verify-interaction", handleVerifyInteraction);
     };
-  }, [compiled.spec.controls.allowCameraDrag, handleVerifyInteraction]);
+  }, [compiled.spec.controls.allowCameraDrag]);
 
   const onCanvasClick = useCallback((event: React.MouseEvent<HTMLCanvasElement>) => {
     if (!compiled.spec.focusEnabled && !compiled.spec.controls.allowProbe) return;

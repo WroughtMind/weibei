@@ -147,6 +147,7 @@ fi
 /usr/bin/codesign --verify --strict --verbose=2 "$PDF_HELPER"
 /usr/bin/codesign --verify --deep --strict --verbose=2 "$RELEASE_APP"
 "$ROOT_DIR/script/verify_release_metadata.sh" --require-clean "$RELEASE_APP"
+"$ROOT_DIR/script/verify_production_hygiene.sh" "$RELEASE_APP"
 
 BUILD_DIR="$(swift build -c release --show-bin-path)"
 WEIBEI_PI_EXECUTABLE="$PI_EXECUTABLE" \
@@ -176,7 +177,6 @@ fi
 /usr/bin/hdiutil verify "$DMG_PATH"
 
 MOUNT_DIR="$(mktemp -d "${TMPDIR:-/tmp}/weibei-dmg-verify.XXXXXX")"
-VERIFY_DATA_DIR="$(mktemp -d "${TMPDIR:-/tmp}/weibei-dmg-data.XXXXXX")"
 MOUNTED=false
 detach_release_mount() {
   local attempt
@@ -194,7 +194,7 @@ cleanup_mount() {
   if [[ "$MOUNTED" == true ]]; then
     detach_release_mount || /usr/bin/hdiutil detach "$MOUNT_DIR" -force >/dev/null 2>&1 || true
   fi
-  rm -rf "$MOUNT_DIR" "$VERIFY_DATA_DIR"
+  rm -rf "$MOUNT_DIR"
 }
 trap cleanup_mount EXIT
 
@@ -219,9 +219,6 @@ if [[ "$(/usr/bin/shasum -a 256 "$MOUNTED_PI" | /usr/bin/awk '{print $1}')" != "
   echo "release failed: mounted DMG Pi runtime failed its hash or version check" >&2
   exit 17
 fi
-WEIBEI_SUPPRESS_ACTIVATION=1 \
-WEIBEI_WORKSPACE_DIR="$VERIFY_DATA_DIR" \
-  "$MOUNTED_APP_BINARY" --self-check-imported-identity
 detach_release_mount
 
 DMG_SHA256="$(/usr/bin/shasum -a 256 "$DMG_PATH" | /usr/bin/awk '{print $1}')"
