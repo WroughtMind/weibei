@@ -1973,13 +1973,6 @@ public enum RichAnswerEngine {
                 message: "renderPlan scenes cannot also submit legacy operations"
             )
         }
-        guard !scene.evidenceIDs.isEmpty else {
-            return RichAnswerDiagnostic(
-                code: .missingEvidence,
-                sceneID: scene.id,
-                message: "scene does not bind to any evidence"
-            )
-        }
         guard scene.objects.count <= environment.resourceBudget.maxObjectsPerScene,
               scene.relations.count <= environment.resourceBudget.maxRelationsPerScene,
               scene.operations.count <= environment.resourceBudget.maxOperationsPerScene,
