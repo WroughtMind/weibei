@@ -243,14 +243,7 @@ public enum PiAgentRuntimeError: LocalizedError, Equatable, Sendable {
     }
 
     public var permitsAutomaticFallback: Bool {
-        switch self {
-        case .unavailable, .resourcesMissing, .busy, .launchFailed, .commandRejected:
-            return true
-        case let .commandTimedOut(command):
-            return command != "prompt" && command != "abort"
-        case .protocolFailure, .agentFailed, .inFlightFailed, .cancelled:
-            return false
-        }
+        false
     }
 }
 
@@ -322,12 +315,6 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         "weibei_course_read",
     ]
 
-    private static func allowedToolNames(
-        for _: StudyAgentScopeKind
-    ) -> [String] {
-        sharedToolNames
-    }
-
     private struct ProgressDelivery: Sendable {
         let continuation: AsyncStream<StudyAgentProgress>.Continuation
         let task: Task<Void, Never>
@@ -382,7 +369,11 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         var sessionID: UUID
         var workingDirectory: URL
         var sessionDirectory: URL
-        var scope: StudyAgentScopeKind
+    }
+
+    private struct DirectoryIdentity: Equatable {
+        var device: dev_t
+        var fileID: ino_t
     }
 
     private struct PiSessionState {
@@ -487,8 +478,7 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         _ = try await ensureProcess(
             binding: try makeProcessBinding(
                 sessionID: fallbackSessionID,
-                workingDirectory: runtimeDirectory,
-                scope: .global
+                workingDirectory: runtimeDirectory
             )
         )
         return process?.executableURL?.path ?? "pi"
@@ -511,16 +501,25 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         progress: StudyAgentProgressHandler?
     ) async throws -> StudyAgentReply {
         var request = request
-        if request.projectScope.chatID
+        let expectedChatID = sessionID.uuidString.lowercased()
+        let projectChatID = request.projectScope.chatID
             .trimmingCharacters(in: .whitespacesAndNewlines)
-            .isEmpty {
-            request.projectScope.chatID = sessionID.uuidString.lowercased()
+        guard projectChatID.isEmpty
+                || UUID(uuidString: projectChatID)?.uuidString.lowercased() == expectedChatID else {
+            throw PiAgentRuntimeError.protocolFailure(
+                "request Chat identity did not match the PI session"
+            )
         }
-        if request.focus?.chatID
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .isEmpty == true {
-            request.focus?.chatID = request.projectScope.chatID
+        request.projectScope.chatID = expectedChatID
+        if let focusChatID = request.focus?.chatID
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+           !focusChatID.isEmpty,
+           UUID(uuidString: focusChatID)?.uuidString.lowercased() != expectedChatID {
+            throw PiAgentRuntimeError.protocolFailure(
+                "request focus did not match the PI session"
+            )
         }
+        request.focus?.chatID = expectedChatID
         guard activeRun == nil, startingRunID == nil else { throw PiAgentRuntimeError.busy }
         startingRunID = request.id
         defer {
@@ -533,8 +532,7 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         idleShutdownTask = nil
         let binding = try makeProcessBinding(
             sessionID: sessionID,
-            workingDirectory: workingDirectory,
-            scope: request.projectScope.kind
+            workingDirectory: workingDirectory
         )
         do {
             _ = try await ensureProcess(binding: binding)
@@ -580,7 +578,7 @@ public actor PiAgentRuntime: StudyAgentRuntime {
             lastLocationSourceLabel: context.learning.lastLocation.map { "[材料：\($0.itemTitle)]" },
             allowedNoteSourceLabels: currentSourceLabels,
             contextSources: request.selectionSources,
-            allowedToolNames: Set(Self.allowedToolNames(for: binding.scope)),
+            allowedToolNames: Set(Self.sharedToolNames),
             allowsRelationProposal: request.projectScope.courseID?.isEmpty == false,
             courseCatalogRolesByContextID: context.course.catalog.reduce(into: [:]) {
                 $0[$1.id] = $1.role
@@ -673,8 +671,7 @@ public actor PiAgentRuntime: StudyAgentRuntime {
 
     private func makeProcessBinding(
         sessionID: UUID,
-        workingDirectory: URL,
-        scope: StudyAgentScopeKind
+        workingDirectory: URL
     ) throws -> ProcessBinding {
         let resolvedWorkingDirectory = workingDirectory
             .standardizedFileURL
@@ -692,8 +689,7 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         return ProcessBinding(
             sessionID: sessionID,
             workingDirectory: resolvedWorkingDirectory,
-            sessionDirectory: sessionDirectory,
-            scope: scope
+            sessionDirectory: sessionDirectory
         )
     }
 
@@ -713,14 +709,7 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         try FileManager.default.createDirectory(at: runtimeDirectory, withIntermediateDirectories: true)
         try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: runtimeDirectory.path)
         let piConfigurationURL = try preparePiConfigurationDirectory()
-        try FileManager.default.createDirectory(
-            at: binding.sessionDirectory,
-            withIntermediateDirectories: true
-        )
-        try? FileManager.default.setAttributes(
-            [.posixPermissions: 0o700],
-            ofItemAtPath: binding.sessionDirectory.path
-        )
+        try prepareSessionDirectory(binding.sessionDirectory)
 
         let contextURL = runtimeDirectory.appendingPathComponent("context.json")
         let process = Process()
@@ -816,11 +805,11 @@ public actor PiAgentRuntime: StudyAgentRuntime {
                 message: "get_state did not match the requested Chat session"
             )
         }
-        let reportedSessionDirectory = Self.canonicalFileURL(
-            URL(fileURLWithPath: sessionFile).deletingLastPathComponent()
-        )
-        let requestedSessionDirectory = Self.canonicalFileURL(binding.sessionDirectory)
-        guard reportedSessionDirectory == requestedSessionDirectory else {
+        let reportedSessionDirectory = URL(fileURLWithPath: sessionFile)
+            .deletingLastPathComponent()
+        let reportedIdentity = Self.directoryIdentity(at: reportedSessionDirectory)
+        let requestedIdentity = Self.directoryIdentity(at: binding.sessionDirectory)
+        guard let requestedIdentity, reportedIdentity == requestedIdentity else {
             throw PiSessionStateFailure(
                 message: "get_state returned a session outside the requested Chat directory"
             )
@@ -829,13 +818,121 @@ public actor PiAgentRuntime: StudyAgentRuntime {
     }
 
     private func sessionDirectory(for sessionID: UUID) -> URL {
-        runtimeDirectory
-            .appendingPathComponent("Sessions", isDirectory: true)
+        sessionsRoot
             .appendingPathComponent(sessionID.uuidString.lowercased(), isDirectory: true)
+    }
+
+    private var sessionsRoot: URL {
+        runtimeDirectory.appendingPathComponent("Sessions", isDirectory: true)
     }
 
     private static func canonicalFileURL(_ url: URL) -> URL {
         url.resolvingSymlinksInPath().standardizedFileURL
+    }
+
+    private static func directoryIdentity(at url: URL) -> DirectoryIdentity? {
+        let canonicalURL = canonicalFileURL(url)
+        var fileStat = Darwin.stat()
+        guard canonicalURL.withUnsafeFileSystemRepresentation({ path in
+            path.map { Darwin.lstat($0, &fileStat) == 0 } ?? false
+        }),
+        (fileStat.st_mode & mode_t(S_IFMT)) == mode_t(S_IFDIR) else {
+            return nil
+        }
+        return DirectoryIdentity(device: fileStat.st_dev, fileID: fileStat.st_ino)
+    }
+
+    private func checkedSessionsRoot(createIfMissing: Bool) throws -> DirectoryIdentity? {
+        let fileManager = FileManager.default
+        var rootStat = Darwin.stat()
+        var rootExists = sessionsRoot.withUnsafeFileSystemRepresentation { path in
+            path.map { Darwin.lstat($0, &rootStat) == 0 } ?? false
+        }
+        if !rootExists {
+            guard errno == ENOENT else {
+                throw PiAgentRuntimeError.protocolFailure(
+                    "could not inspect the PI session directory"
+                )
+            }
+            guard createIfMissing else { return nil }
+            try fileManager.createDirectory(
+                at: sessionsRoot,
+                withIntermediateDirectories: false
+            )
+            rootExists = sessionsRoot.withUnsafeFileSystemRepresentation { path in
+                path.map { Darwin.lstat($0, &rootStat) == 0 } ?? false
+            }
+        }
+        guard rootExists,
+              (rootStat.st_mode & mode_t(S_IFMT)) == mode_t(S_IFDIR),
+              Self.canonicalFileURL(sessionsRoot).deletingLastPathComponent()
+                == Self.canonicalFileURL(runtimeDirectory) else {
+            throw PiAgentRuntimeError.protocolFailure(
+                "PI session storage is not a safe local directory"
+            )
+        }
+        try? fileManager.setAttributes(
+            [.posixPermissions: 0o700],
+            ofItemAtPath: sessionsRoot.path
+        )
+        return DirectoryIdentity(device: rootStat.st_dev, fileID: rootStat.st_ino)
+    }
+
+    private func requireSessionsRootIdentity(_ identity: DirectoryIdentity) throws {
+        var rootStat = Darwin.stat()
+        guard sessionsRoot.withUnsafeFileSystemRepresentation({ path in
+            path.map { Darwin.lstat($0, &rootStat) == 0 } ?? false
+        }),
+        (rootStat.st_mode & mode_t(S_IFMT)) == mode_t(S_IFDIR),
+        DirectoryIdentity(device: rootStat.st_dev, fileID: rootStat.st_ino) == identity else {
+            throw PiAgentRuntimeError.protocolFailure(
+                "PI session storage changed during access"
+            )
+        }
+    }
+
+    private func prepareSessionDirectory(_ sessionDirectory: URL) throws {
+        guard sessionDirectory.deletingLastPathComponent().standardizedFileURL
+                == sessionsRoot.standardizedFileURL,
+              let rootIdentity = try checkedSessionsRoot(createIfMissing: true) else {
+            throw PiAgentRuntimeError.protocolFailure(
+                "refused to prepare a session outside WeiBei AgentRuntime"
+            )
+        }
+        var sessionStat = Darwin.stat()
+        let sessionExists = sessionDirectory.withUnsafeFileSystemRepresentation { path in
+            path.map { Darwin.lstat($0, &sessionStat) == 0 } ?? false
+        }
+        if sessionExists {
+            guard (sessionStat.st_mode & mode_t(S_IFMT)) == mode_t(S_IFDIR) else {
+                throw PiAgentRuntimeError.protocolFailure(
+                    "PI Chat session storage is not a local directory"
+                )
+            }
+        } else {
+            guard errno == ENOENT else {
+                throw PiAgentRuntimeError.protocolFailure(
+                    "could not inspect the PI Chat session directory"
+                )
+            }
+            try FileManager.default.createDirectory(
+                at: sessionDirectory,
+                withIntermediateDirectories: false
+            )
+            guard sessionDirectory.withUnsafeFileSystemRepresentation({ path in
+                path.map { Darwin.lstat($0, &sessionStat) == 0 } ?? false
+            }),
+            (sessionStat.st_mode & mode_t(S_IFMT)) == mode_t(S_IFDIR) else {
+                throw PiAgentRuntimeError.protocolFailure(
+                    "PI Chat session directory identity changed after creation"
+                )
+            }
+        }
+        try requireSessionsRootIdentity(rootIdentity)
+        try? FileManager.default.setAttributes(
+            [.posixPermissions: 0o700],
+            ofItemAtPath: sessionDirectory.path
+        )
     }
 
     private var hostToolResponseRoot: URL {
@@ -935,20 +1032,34 @@ public actor PiAgentRuntime: StudyAgentRuntime {
     }
 
     private func removeSessionDirectory(_ sessionDirectory: URL) throws {
-        let sessionsRoot = Self.canonicalFileURL(
-            runtimeDirectory.appendingPathComponent("Sessions", isDirectory: true)
-        )
-        let sessionParent = Self.canonicalFileURL(
-            sessionDirectory.deletingLastPathComponent()
-        )
-        guard sessionParent == sessionsRoot else {
+        guard sessionDirectory.deletingLastPathComponent().standardizedFileURL
+                == sessionsRoot.standardizedFileURL else {
             throw PiAgentRuntimeError.protocolFailure(
                 "refused to remove a session outside WeiBei AgentRuntime"
             )
         }
-        if FileManager.default.fileExists(atPath: sessionDirectory.path) {
-            try FileManager.default.removeItem(at: sessionDirectory)
+        guard let rootIdentity = try checkedSessionsRoot(createIfMissing: false) else {
+            return
         }
+        var sessionStat = Darwin.stat()
+        let sessionExists = sessionDirectory.withUnsafeFileSystemRepresentation { path in
+            path.map { Darwin.lstat($0, &sessionStat) == 0 } ?? false
+        }
+        guard sessionExists else {
+            guard errno == ENOENT else {
+                throw PiAgentRuntimeError.protocolFailure(
+                    "could not inspect the PI Chat session directory"
+                )
+            }
+            return
+        }
+        guard (sessionStat.st_mode & mode_t(S_IFMT)) == mode_t(S_IFDIR) else {
+            throw PiAgentRuntimeError.protocolFailure(
+                "refused to remove an invalid PI Chat session directory"
+            )
+        }
+        try requireSessionsRootIdentity(rootIdentity)
+        try FileManager.default.removeItem(at: sessionDirectory)
     }
 
     private func launchArguments(
@@ -961,7 +1072,7 @@ public actor PiAgentRuntime: StudyAgentRuntime {
             "--session-id", binding.sessionID.uuidString.lowercased(),
             "--session-dir", binding.sessionDirectory.path,
             "--no-builtin-tools",
-            "--tools", Self.allowedToolNames(for: binding.scope).joined(separator: ","),
+            "--tools", Self.sharedToolNames.joined(separator: ","),
             "--no-extensions",
             "--extension", resources.extensionURL.path,
             "--no-skills",

@@ -675,6 +675,61 @@ private func checkStudyAgentContext() throws {
         "study-agent context only carries bounded raster assets for the current material and remaps their ids"
     )
 
+    let globalChatID = UUID().uuidString.lowercased()
+    let globalProjectEnvelope = StudyAgentContextEnvelope(
+        request: StudyAgentRequest(
+            purpose: .conversation,
+            question: "解释当前材料",
+            materialTitle: "当前材料",
+            materialText: "",
+            noteTitle: "笔记",
+            noteText: "",
+            courseContext: StudyAgentCourseContext(
+                title: "当前课程",
+                items: [
+                    StudyAgentCourseItem(
+                        id: "current-material",
+                        title: "当前材料",
+                        subtitle: "PDF",
+                        kind: "pdf",
+                        role: "material"
+                    ),
+                ]
+            ),
+            projectScope: StudyAgentProjectScope(
+                kind: .global,
+                chatID: globalChatID,
+                courseID: UUID().uuidString.lowercased(),
+                rootPath: "/private/tmp/course-root",
+                items: [
+                    StudyAgentProjectItem(
+                        itemID: "current-material",
+                        title: "当前材料",
+                        kind: "pdf",
+                        role: "material",
+                        relativePath: "materials/current.pdf",
+                        resolvedPath: "/private/tmp/course-root/materials/current.pdf",
+                        entryIdentity: nil,
+                        targetIdentity: nil,
+                        isShared: false
+                    ),
+                ]
+            ),
+            contextRevision: "global-project-boundary"
+        )
+    )
+    try piRequire(
+        globalProjectEnvelope.project.kind == .global
+            && globalProjectEnvelope.project.chatID == globalChatID
+            && globalProjectEnvelope.project.rootPath == nil
+            && globalProjectEnvelope.project.rootIdentity == nil
+            && globalProjectEnvelope.project.items.first?.relativePath == ""
+            && globalProjectEnvelope.project.items.first?.resolvedPath == ""
+            && globalProjectEnvelope.project.items.first?.entryIdentity == nil
+            && globalProjectEnvelope.project.items.first?.targetIdentity == nil,
+        "global Chat context strips retired course-folder authorization at the shared envelope boundary"
+    )
+
     let privatePath = "/Users/student/Private Course/secret.pdf"
     let privateItem = StudyAgentCourseItem(
         id: "file:\(privatePath)",
@@ -895,7 +950,7 @@ private func checkStudyAgentContext() throws {
         "legacy workspaces remain decodable without course-learning state"
     )
 
-    try piRequire(PiAgentRuntimeError.unavailable.permitsAutomaticFallback, "PI startup failures may use the existing fallback")
+    try piRequire(!PiAgentRuntimeError.unavailable.permitsAutomaticFallback, "PI startup failures are never replayed through another runtime")
     try piRequire(!PiAgentRuntimeError.protocolFailure("wrong Chat session").permitsAutomaticFallback, "invalid PI session state is never replayed through another runtime")
     try piRequire(!PiAgentRuntimeError.agentFailed("model error").permitsAutomaticFallback, "accepted PI runs are never replayed automatically")
     try piRequire(!PiAgentRuntimeError.commandTimedOut("prompt").permitsAutomaticFallback, "unknown prompt acceptance is never replayed automatically")
@@ -1182,7 +1237,7 @@ private func checkBundledAgentResources() throws {
             && !runtimeSource.contains("allowsSourcelessLimitation")
             && !runtimeSource.contains("StudyAgentSourceLimitation.isHonest")
             && runtimeSource.contains("text_only_policy")
-            && runtimeSource.contains("private static func allowedToolNames")
+            && runtimeSource.contains("private static let sharedToolNames")
             && runtimeSource.contains("\"read\"")
             && runtimeSource.contains("\"--no-approve\"")
             && runtimeSource.contains("allRequiredSkillNames")
@@ -1196,7 +1251,7 @@ private func checkBundledAgentResources() throws {
             && runtimeSource.contains("\"weibei_compute_artifact\"")
             && runtimeSource.contains("\"weibei_visual_asset\"")
             && runtimeSource.contains("\"weibei_course_profile_update\"")
-            && runtimeSource.contains("Self.allowedToolNames(for: binding.scope).joined(separator: \",\")")
+            && runtimeSource.contains("Self.sharedToolNames.joined(separator: \",\")")
             && runtimeSource.contains("run.allowedToolNames.contains(name)")
             && runtimeSource.contains("verifiedAssetBytesByContextID")
             && runtimeSource.contains("run.verifiedAssetBytesByContextID[assetID] = byteCount")

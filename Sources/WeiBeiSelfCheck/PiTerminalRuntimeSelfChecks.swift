@@ -69,11 +69,147 @@ func runPiTerminalRuntimeSelfChecks() async throws {
     try await checkConversationBindingLaunchContract(fixture)
     try await checkHostCourseToolBridge(fixture)
     try await checkHostCourseToolBridgeRejectsSymlinkRoot(fixture)
+    try await checkGlobalChatIdentityBoundary(fixture)
+    try await checkSessionStorageRejectsSymlinkRoot(fixture)
     try await checkMissingSessionStartsFreshNativeHistory(fixture)
     try await checkEquivalentSessionDirectoryAliasIsAccepted(fixture)
     try await checkWrongStoredSessionStateIsPreserved(fixture)
     try await checkUnreadableStoredSessionIsPreserved(fixture)
     try await checkStandardProxyEnvironmentIsForwarded(fixture)
+}
+
+private func capturedFailure(
+    _ operation: () async throws -> Void
+) async -> Error? {
+    do {
+        try await operation()
+        return nil
+    } catch {
+        return error
+    }
+}
+
+private func checkGlobalChatIdentityBoundary(
+    _ fixture: PiTerminalRuntimeFixture
+) async throws {
+    let sessionID = UUID()
+    let runtime = PiAgentRuntime(
+        executableURL: fixture.executableURL,
+        runtimeDirectory: try fixture.workingDirectory(named: "ChatIdentityRuntime"),
+        runInactivityTimeoutNanoseconds: 2_000_000_000
+    )
+    var request = StudyAgentRequest(
+        purpose: .conversation,
+        question: "不应发送",
+        materialTitle: "",
+        materialText: "",
+        noteTitle: "",
+        noteText: "",
+        projectScope: StudyAgentProjectScope(
+            kind: .course,
+            chatID: sessionID.uuidString.lowercased(),
+            courseID: UUID().uuidString.lowercased()
+        ),
+        contextRevision: "chat-identity-test"
+    )
+    request.projectScope.chatID = UUID().uuidString.lowercased()
+    let projectIdentityFailure = await capturedFailure {
+        _ = try await runtime.respond(
+            to: request,
+            sessionID: sessionID,
+            workingDirectory: try fixture.workingDirectory(named: "ChatIdentityProject"),
+            progress: nil
+        )
+    }
+
+    request.projectScope.chatID = sessionID.uuidString.lowercased()
+    request.focus = StudyAgentFocus(
+        chatID: UUID().uuidString.lowercased(),
+        courseID: request.projectScope.courseID,
+        materialItemID: nil,
+        materialTitle: nil,
+        pageIndex: nil,
+        sectionTitle: nil,
+        sectionLocationID: nil,
+        sectionOrdinal: nil,
+        selectionText: nil,
+        actionSource: "chat"
+    )
+    let focusIdentityFailure = await capturedFailure {
+        _ = try await runtime.respond(
+            to: request,
+            sessionID: sessionID,
+            workingDirectory: try fixture.workingDirectory(named: "ChatIdentityProject"),
+            progress: nil
+        )
+    }
+    await runtime.shutdown()
+
+    guard case let .protocolFailure(projectMessage)? = projectIdentityFailure as? PiAgentRuntimeError,
+          projectMessage.contains("request Chat identity"),
+          case let .protocolFailure(focusMessage)? = focusIdentityFailure as? PiAgentRuntimeError,
+          focusMessage.contains("request focus") else {
+        throw PiTerminalRuntimeSelfCheckError.failed(
+            "PI did not enforce one global Chat identity at the runtime boundary"
+        )
+    }
+}
+
+private func checkSessionStorageRejectsSymlinkRoot(
+    _ fixture: PiTerminalRuntimeFixture
+) async throws {
+    let runtimeDirectory = try fixture.workingDirectory(named: "SymlinkSessionRuntime")
+    let outsideDirectory = try fixture.workingDirectory(named: "OutsideSessionStorage")
+    let sessionID = UUID()
+    let protectedDirectory = outsideDirectory
+        .appendingPathComponent(sessionID.uuidString.lowercased(), isDirectory: true)
+    try FileManager.default.createDirectory(
+        at: protectedDirectory,
+        withIntermediateDirectories: true
+    )
+    let protectedFile = protectedDirectory.appendingPathComponent("keep.txt")
+    try Data("must survive".utf8).write(to: protectedFile)
+    try FileManager.default.createSymbolicLink(
+        at: runtimeDirectory.appendingPathComponent("Sessions", isDirectory: true),
+        withDestinationURL: outsideDirectory
+    )
+    let runtime = PiAgentRuntime(
+        executableURL: fixture.executableURL,
+        runtimeDirectory: runtimeDirectory,
+        runInactivityTimeoutNanoseconds: 2_000_000_000
+    )
+    let deletionFailure = await capturedFailure {
+        try await runtime.deleteSession(sessionID)
+    }
+    let launchFailure = await capturedFailure {
+        _ = try await runtime.respond(
+            to: StudyAgentRequest(
+                purpose: .conversation,
+                question: "不应发送",
+                materialTitle: "",
+                materialText: "",
+                noteTitle: "",
+                noteText: "",
+                projectScope: StudyAgentProjectScope(
+                    kind: .global,
+                    chatID: sessionID.uuidString.lowercased()
+                ),
+                contextRevision: "symlink-session-test"
+            ),
+            sessionID: sessionID,
+            workingDirectory: try fixture.workingDirectory(named: "SymlinkSessionProject"),
+            progress: nil
+        )
+    }
+    await runtime.shutdown()
+
+    guard case .protocolFailure? = deletionFailure as? PiAgentRuntimeError,
+          case .protocolFailure? = launchFailure as? PiAgentRuntimeError,
+          FileManager.default.fileExists(atPath: protectedFile.path) else {
+        throw PiTerminalRuntimeSelfCheckError.failed(
+            "PI followed a symbolic-link session root outside WeiBei AgentRuntime"
+        )
+    }
 }
 
 private func checkHostCourseToolBridgeRejectsSymlinkRoot(
@@ -98,6 +234,7 @@ private func checkHostCourseToolBridgeRejectsSymlinkRoot(
         runtimeDirectory: runtimeDirectory,
         runInactivityTimeoutNanoseconds: 2_000_000_000
     )
+    let sessionID = UUID()
     do {
         _ = try await runtime.respond(
             to: StudyAgentRequest(
@@ -109,12 +246,12 @@ private func checkHostCourseToolBridgeRejectsSymlinkRoot(
                 noteText: "",
                 projectScope: StudyAgentProjectScope(
                     kind: .course,
-                    chatID: "symlink-bridge-chat",
+                    chatID: sessionID.uuidString.lowercased(),
                     courseID: UUID().uuidString.lowercased()
                 ),
                 contextRevision: "symlink-bridge-test"
             ),
-            sessionID: UUID(),
+            sessionID: sessionID,
             workingDirectory: try fixture.workingDirectory(named: "SymlinkBridgeProject"),
             hostToolHandler: nil,
             progress: nil
@@ -153,6 +290,7 @@ private func checkHostCourseToolBridge(
         runtimeDirectory: runtimeDirectory,
         runInactivityTimeoutNanoseconds: 2_000_000_000
     )
+    let sessionID = UUID()
     let request = StudyAgentRequest(
         purpose: .conversation,
         question: "查找利率",
@@ -185,14 +323,14 @@ private func checkHostCourseToolBridge(
         ),
         projectScope: StudyAgentProjectScope(
             kind: .course,
-            chatID: "bridge-chat",
+            chatID: sessionID.uuidString.lowercased(),
             courseID: UUID().uuidString.lowercased()
         ),
         contextRevision: "bridge-test"
     )
     let reply = try await runtime.respond(
         to: request,
-        sessionID: UUID(),
+        sessionID: sessionID,
         workingDirectory: try fixture.workingDirectory(named: "BridgeProject"),
         hostToolHandler: { toolRequest in
             guard toolRequest == .courseRead(
@@ -556,6 +694,7 @@ private func checkRelationProposalUsesCurrentCourseCatalog(
         runtimeDirectory: try fixture.workingDirectory(named: "RelationProposalRuntime"),
         runInactivityTimeoutNanoseconds: 2_000_000_000
     )
+    let sessionID = UUID()
     let request = StudyAgentRequest(
         purpose: .conversation,
         question: "建议把这份笔记关联到另一份材料",
@@ -597,7 +736,7 @@ private func checkRelationProposalUsesCurrentCourseCatalog(
         ),
         projectScope: StudyAgentProjectScope(
             kind: .global,
-            chatID: "relation-proposal-chat",
+            chatID: sessionID.uuidString.lowercased(),
             courseID: UUID().uuidString.lowercased()
         ),
         contextRevision: "relation-proposal-test"
@@ -605,7 +744,7 @@ private func checkRelationProposalUsesCurrentCourseCatalog(
 
     let reply = try await runtime.respond(
         to: request,
-        sessionID: UUID(),
+        sessionID: sessionID,
         workingDirectory: try fixture.workingDirectory(named: "RelationProposalMode"),
         progress: nil
     )
@@ -634,6 +773,7 @@ private func checkPersistedSelectionSourcesAttachWithoutReadTool(
         runtimeDirectory: try fixture.workingDirectory(named: "FocusAnswerRuntime"),
         runInactivityTimeoutNanoseconds: 2_000_000_000
     )
+    let sessionID = UUID()
     let request = StudyAgentRequest(
         purpose: .conversation,
         question: "解释当前材料",
@@ -674,7 +814,7 @@ private func checkPersistedSelectionSourcesAttachWithoutReadTool(
         ),
         projectScope: StudyAgentProjectScope(
             kind: .course,
-            chatID: "focus-chat",
+            chatID: sessionID.uuidString.lowercased(),
             courseID: UUID().uuidString.lowercased()
         ),
         contextRevision: "focus-answer-test"
@@ -682,7 +822,7 @@ private func checkPersistedSelectionSourcesAttachWithoutReadTool(
 
     let reply = try await runtime.respond(
         to: request,
-        sessionID: UUID(),
+        sessionID: sessionID,
         workingDirectory: try fixture.workingDirectory(named: "FocusAnswerMode"),
         progress: nil
     )

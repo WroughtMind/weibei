@@ -172,6 +172,7 @@ public struct StudyAgentCourseContext: Codable, Equatable, Sendable {
 }
 
 public enum StudyAgentScopeKind: String, Codable, Equatable, Sendable {
+    // This controls temporary project-file access, not Chat identity.
     case course
     case global
 }
@@ -1050,6 +1051,7 @@ public struct StudyAgentContextEnvelope: Codable, Equatable, Sendable {
         itemIDMap: [String: String]
     ) -> StudyAgentProjectScope {
         let maximumItems = 500
+        let carriesCourseFileAuthorization = scope.kind == .course
         let items = scope.items.prefix(maximumItems).compactMap { item -> StudyAgentProjectItem? in
             guard let itemID = itemIDMap[item.itemID] else { return nil }
             return StudyAgentProjectItem(
@@ -1057,10 +1059,14 @@ public struct StudyAgentContextEnvelope: Codable, Equatable, Sendable {
                 title: String(item.title.prefix(300)),
                 kind: String(item.kind.prefix(64)),
                 role: String(item.role.prefix(64)),
-                relativePath: String(item.relativePath.prefix(4_096)),
-                resolvedPath: String(item.resolvedPath.prefix(4_096)),
-                entryIdentity: item.entryIdentity,
-                targetIdentity: item.targetIdentity,
+                relativePath: carriesCourseFileAuthorization
+                    ? String(item.relativePath.prefix(4_096))
+                    : "",
+                resolvedPath: carriesCourseFileAuthorization
+                    ? String(item.resolvedPath.prefix(4_096))
+                    : "",
+                entryIdentity: carriesCourseFileAuthorization ? item.entryIdentity : nil,
+                targetIdentity: carriesCourseFileAuthorization ? item.targetIdentity : nil,
                 isShared: item.isShared,
                 courseIDs: item.courseIDs.prefix(32).map { String($0.prefix(128)) },
                 courseTitles: item.courseTitles.prefix(32).map { String($0.prefix(300)) },
@@ -1072,8 +1078,10 @@ public struct StudyAgentContextEnvelope: Codable, Equatable, Sendable {
             chatID: String(scope.chatID.prefix(128)),
             courseID: scope.courseID.map { String($0.prefix(128)) },
             courseTitle: scope.courseTitle.map { String($0.prefix(300)) },
-            rootPath: scope.rootPath.map { String($0.prefix(4_096)) },
-            rootIdentity: scope.rootIdentity,
+            rootPath: carriesCourseFileAuthorization
+                ? scope.rootPath.map { String($0.prefix(4_096)) }
+                : nil,
+            rootIdentity: carriesCourseFileAuthorization ? scope.rootIdentity : nil,
             items: items,
             isTruncated: scope.isTruncated || scope.items.count > items.count
         )
