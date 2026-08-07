@@ -8676,10 +8676,7 @@ final class WorkspaceStore: ObservableObject {
     func removeCourseRegistrationImmediatelyForSelfCheck(
         _ courseID: UUID
     ) {
-        precondition(
-            WeiBeiSafetyTestMode.isEnabled
-                || WeiBeiSafetyTestMode.isEnabled
-        )
+        precondition(WeiBeiSafetyTestMode.isEnabled)
         guard courses.contains(where: { $0.id == courseID }) else {
             return
         }
