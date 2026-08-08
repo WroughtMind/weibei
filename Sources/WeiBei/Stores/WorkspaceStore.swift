@@ -717,9 +717,19 @@ final class WorkspaceStore: ObservableObject {
         var courseRootIdentity: ImportedFileIdentity?
     }
 
-    private struct AgentConversationTargetError: LocalizedError {
+    struct AgentConversationTargetError: LocalizedError {
         var message: String
         var errorDescription: String? { message }
+    }
+
+    static func userFacingAgentFailureDetail(for error: Error) -> String? {
+        guard let targetError = error as? AgentConversationTargetError else {
+            return nil
+        }
+        let message = targetError.message.trimmingCharacters(
+            in: .whitespacesAndNewlines
+        )
+        return message.isEmpty ? nil : message
     }
 
     private struct ResolvedImportedFileBookmark {
@@ -768,7 +778,6 @@ final class WorkspaceStore: ObservableObject {
         var expectedCourse: Course
         var rootPath: String
         var rootIdentity: ImportedFileIdentity
-        var sessionIDs: [UUID]
         var isolationPath: String?
         var trashBookmarkData: Data?
         var trashPath: String?
@@ -8256,7 +8265,6 @@ final class WorkspaceStore: ObservableObject {
             token: prepared.token,
             succeeded: true
         )
-        await deleteCoursePiSessions(prepared.sessionIDs)
     }
 
     @discardableResult
@@ -8287,7 +8295,6 @@ final class WorkspaceStore: ObservableObject {
             expectedCourse: prepared.course,
             rootPath: root.path,
             rootIdentity: rootIdentity,
-            sessionIDs: prepared.sessionIDs,
             isolationPath: root.deletingLastPathComponent()
                 .appendingPathComponent(
                     ".weibei-course-removal-\(transactionID.uuidString.lowercased())",
@@ -8392,7 +8399,6 @@ final class WorkspaceStore: ObservableObject {
                 token: prepared.token,
                 succeeded: true
             )
-            await deleteCoursePiSessions(prepared.sessionIDs)
             return trashedRoot
         } catch {
             if importedFileIdentityResolver(root) == rootIdentity {
@@ -8666,7 +8672,6 @@ final class WorkspaceStore: ObservableObject {
         course: Course,
         root: URL?,
         rootIdentity: ImportedFileIdentity?,
-        sessionIDs: [UUID],
         token: UUID
     ) {
         guard let expectedCourse = course(withID: courseID) else {
@@ -8796,7 +8801,6 @@ final class WorkspaceStore: ObservableObject {
                 expectedCourse,
                 root,
                 rootIdentity,
-                [],
                 token
             )
         } catch {
@@ -9089,21 +9093,6 @@ final class WorkspaceStore: ObservableObject {
                 )
             } else {
                 activeCourseFileMutationCounts[courseID] = count - 1
-            }
-        }
-    }
-
-    private func deleteCoursePiSessions(
-        _ sessionIDs: [UUID]
-    ) async {
-        for sessionID in sessionIDs {
-            do {
-                try await piRuntime.deleteSession(sessionID)
-            } catch {
-                workspaceSaveError = ui(
-                    "课程已移除，但本机 Pi 会话缓存清理失败：\(error.localizedDescription)",
-                    "The course was removed, but a local Pi session cache could not be deleted: \(error.localizedDescription)"
-                )
             }
         }
     }
@@ -9447,7 +9436,6 @@ final class WorkspaceStore: ObservableObject {
             succeeded: true,
             restartMaintenance: false
         )
-        await deleteCoursePiSessions(journal.sessionIDs)
     }
 
     private func promoteCourseOwnedItemToCommon(
@@ -18603,8 +18591,8 @@ final class WorkspaceStore: ObservableObject {
         } catch {
             throw AgentConversationTargetError(
                 message: ui(
-                    "魏碑无法准备 Chat 的本地工作目录：\(error.localizedDescription)",
-                    "WeiBei could not prepare the Chat workspace: \(error.localizedDescription)"
+                    "魏碑无法准备 Chat 的本地工作目录，请检查本机存储空间和文件权限。",
+                    "WeiBei could not prepare the Chat workspace. Check local storage and file permissions."
                 )
             )
         }
@@ -18681,7 +18669,7 @@ final class WorkspaceStore: ObservableObject {
             role: .assistant,
             text: AgentFailureKind.generic.userMessage(
                 language: interfaceLanguage,
-                detail: error.localizedDescription,
+                userFacingDetail: Self.userFacingAgentFailureDetail(for: error),
                 draftPreserved: true
             ),
             source: sourceTitle,
@@ -18916,11 +18904,10 @@ final class WorkspaceStore: ObservableObject {
             // MainActor while waiting for another MainActor Task, which deadlocks UI.
             guard await flushPendingWorkspaceSaveAsync() else {
                 throw AgentConversationTargetError(
-                    message: workspaceSaveError
-                        ?? ui(
-                            "问题尚未安全写入本地，魏碑没有把它发送给 Agent。",
-                            "The question was not safely saved, so WeiBei did not send it to the Agent."
-                        )
+                    message: ui(
+                        "问题尚未安全写入本地，魏碑没有把它发送给 Agent。",
+                        "The question was not safely saved, so WeiBei did not send it to the Agent."
+                    )
                 )
             }
 
@@ -18944,11 +18931,10 @@ final class WorkspaceStore: ObservableObject {
             appendMessageToActiveSelectionAskThread(assistantMessage.id)
             guard await flushPendingWorkspaceSaveAsync() else {
                 throw AgentConversationTargetError(
-                    message: workspaceSaveError
-                        ?? ui(
-                            "回答状态尚未安全写入本地，魏碑没有继续请求 Agent。",
-                            "The reply state was not saved safely, so WeiBei did not continue the request."
-                        )
+                    message: ui(
+                        "回答状态尚未安全写入本地，魏碑没有继续请求 Agent。",
+                        "The reply state was not saved safely, so WeiBei did not continue the request."
+                    )
                 )
             }
 
@@ -19165,10 +19151,9 @@ final class WorkspaceStore: ObservableObject {
                 lastAgentFailureKind = kind
                 lastFailedAgentQuestion = question
             }
-            let detail = error.localizedDescription
             let failureText = kind.userMessage(
                 language: interfaceLanguage,
-                detail: detail,
+                userFacingDetail: Self.userFacingAgentFailureDetail(for: error),
                 draftPreserved: true
             )
             if let replyMessageID {

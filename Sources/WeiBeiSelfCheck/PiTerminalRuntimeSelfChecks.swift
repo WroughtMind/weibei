@@ -68,10 +68,188 @@ func runPiTerminalRuntimeSelfChecks() async throws {
     try await checkConversationBindingLaunchContract(fixture)
     try await checkHostCourseToolBridge(fixture)
     try await checkHostCourseToolBridgeRejectsSymlinkRoot(fixture)
+    try await checkGlobalChatIdentityBoundary(fixture)
+    try await checkSessionStorageRejectsSymlinkRoot(fixture)
     try await checkMissingSessionStartsFreshNativeHistory(fixture)
-    try await checkSessionPathRejectsOutsideAcceptsAliasAndKeepsSibling(fixture)
-    try await checkUnreadableStoredSessionRebuildsOnce(fixture)
+    try await checkEquivalentSessionDirectoryAliasIsAccepted(fixture)
+    try await checkWrongStoredSessionStateIsPreserved(fixture)
+    try await checkUnreadableStoredSessionIsPreserved(fixture)
     try await checkStandardProxyEnvironmentIsForwarded(fixture)
+}
+
+private func capturedFailure(
+    _ operation: () async throws -> Void
+) async -> Error? {
+    do {
+        try await operation()
+        return nil
+    } catch {
+        return error
+    }
+}
+
+private func checkGlobalChatIdentityBoundary(
+    _ fixture: PiTerminalRuntimeFixture
+) async throws {
+    let sessionID = UUID()
+    let runtime = PiAgentRuntime(
+        executableURL: fixture.executableURL,
+        runtimeDirectory: try fixture.workingDirectory(named: "ChatIdentityRuntime"),
+        runInactivityTimeoutNanoseconds: 2_000_000_000
+    )
+    var request = StudyAgentRequest(
+        purpose: .conversation,
+        question: "不应发送",
+        materialTitle: "",
+        materialText: "",
+        noteTitle: "",
+        noteText: "",
+        projectScope: StudyAgentProjectScope(
+            kind: .global,
+            chatID: sessionID.uuidString.lowercased(),
+            courseID: UUID().uuidString.lowercased()
+        ),
+        contextRevision: "chat-identity-test"
+    )
+    request.projectScope.chatID = UUID().uuidString.lowercased()
+    let projectIdentityFailure = await capturedFailure {
+        _ = try await runtime.respond(
+            to: request,
+            sessionID: sessionID,
+            workingDirectory: try fixture.workingDirectory(named: "ChatIdentityProject"),
+            progress: nil
+        )
+    }
+
+    request.projectScope.chatID = sessionID.uuidString.lowercased()
+    request.focus = StudyAgentFocus(
+        chatID: UUID().uuidString.lowercased(),
+        courseID: request.projectScope.courseID,
+        materialItemID: nil,
+        materialTitle: nil,
+        pageIndex: nil,
+        sectionTitle: nil,
+        sectionLocationID: nil,
+        sectionOrdinal: nil,
+        selectionText: nil,
+        actionSource: "chat"
+    )
+    let focusIdentityFailure = await capturedFailure {
+        _ = try await runtime.respond(
+            to: request,
+            sessionID: sessionID,
+            workingDirectory: try fixture.workingDirectory(named: "ChatIdentityProject"),
+            progress: nil
+        )
+    }
+    await runtime.shutdown()
+
+    guard case let .protocolFailure(projectMessage)? = projectIdentityFailure as? PiAgentRuntimeError,
+          projectMessage.contains("request Chat identity"),
+          case let .protocolFailure(focusMessage)? = focusIdentityFailure as? PiAgentRuntimeError,
+          focusMessage.contains("request focus") else {
+        throw PiTerminalRuntimeSelfCheckError.failed(
+            "PI did not enforce one global Chat identity at the runtime boundary"
+        )
+    }
+
+    let declaredSessionID = UUID()
+    let declaredRuntimeDirectory = try fixture.workingDirectory(
+        named: "DeclaredChatSessionProject"
+    )
+    let declaredRuntime = PiAgentRuntime(
+        executableURL: fixture.executableURL,
+        runtimeDirectory: declaredRuntimeDirectory,
+        runInactivityTimeoutNanoseconds: 2_000_000_000
+    )
+    let declaredReply = try await declaredRuntime.respond(
+        to: StudyAgentRequest(
+            purpose: .conversation,
+            question: "继续当前 Chat",
+            materialTitle: "测试材料",
+            materialText: "测试正文",
+            noteTitle: "测试笔记",
+            noteText: "",
+            projectScope: StudyAgentProjectScope(
+                kind: .global,
+                chatID: declaredSessionID.uuidString.lowercased()
+            ),
+            contextRevision: "declared-chat-identity"
+        ),
+        progress: nil
+    )
+    await declaredRuntime.shutdown()
+    let declaredTrace = try String(
+        contentsOf: declaredRuntimeDirectory.appendingPathComponent(
+            ".fake-pi-trace.log"
+        ),
+        encoding: .utf8
+    )
+    guard declaredReply.text == "[材料：测试材料] 第 1 次回答",
+          declaredTrace.contains(
+              "arg=\(declaredSessionID.uuidString.lowercased())\n"
+          ) else {
+        throw PiTerminalRuntimeSelfCheckError.failed(
+            "PI protocol entry did not reuse the Chat identity declared by the request"
+        )
+    }
+}
+
+private func checkSessionStorageRejectsSymlinkRoot(
+    _ fixture: PiTerminalRuntimeFixture
+) async throws {
+    let runtimeDirectory = try fixture.workingDirectory(named: "SymlinkSessionRuntime")
+    let outsideDirectory = try fixture.workingDirectory(named: "OutsideSessionStorage")
+    let sessionID = UUID()
+    let protectedDirectory = outsideDirectory
+        .appendingPathComponent(sessionID.uuidString.lowercased(), isDirectory: true)
+    try FileManager.default.createDirectory(
+        at: protectedDirectory,
+        withIntermediateDirectories: true
+    )
+    let protectedFile = protectedDirectory.appendingPathComponent("keep.txt")
+    try Data("must survive".utf8).write(to: protectedFile)
+    try FileManager.default.createSymbolicLink(
+        at: runtimeDirectory.appendingPathComponent("Sessions", isDirectory: true),
+        withDestinationURL: outsideDirectory
+    )
+    let runtime = PiAgentRuntime(
+        executableURL: fixture.executableURL,
+        runtimeDirectory: runtimeDirectory,
+        runInactivityTimeoutNanoseconds: 2_000_000_000
+    )
+    let deletionFailure = await capturedFailure {
+        try await runtime.deleteSession(sessionID)
+    }
+    let launchFailure = await capturedFailure {
+        _ = try await runtime.respond(
+            to: StudyAgentRequest(
+                purpose: .conversation,
+                question: "不应发送",
+                materialTitle: "",
+                materialText: "",
+                noteTitle: "",
+                noteText: "",
+                projectScope: StudyAgentProjectScope(
+                    kind: .global,
+                    chatID: sessionID.uuidString.lowercased()
+                ),
+                contextRevision: "symlink-session-test"
+            ),
+            sessionID: sessionID,
+            workingDirectory: try fixture.workingDirectory(named: "SymlinkSessionProject"),
+            progress: nil
+        )
+    }
+    await runtime.shutdown()
+
+    guard case .protocolFailure? = deletionFailure as? PiAgentRuntimeError,
+          case .protocolFailure? = launchFailure as? PiAgentRuntimeError,
+          FileManager.default.fileExists(atPath: protectedFile.path) else {
+        throw PiTerminalRuntimeSelfCheckError.failed(
+            "PI followed a symbolic-link session root outside WeiBei AgentRuntime"
+        )
+    }
 }
 
 private func checkProviderWithoutModelIsRejected(
@@ -118,6 +296,7 @@ private func checkHostCourseToolBridgeRejectsSymlinkRoot(
         runtimeDirectory: runtimeDirectory,
         runInactivityTimeoutNanoseconds: 2_000_000_000
     )
+    let sessionID = UUID()
     do {
         _ = try await runtime.respond(
             to: StudyAgentRequest(
@@ -128,13 +307,13 @@ private func checkHostCourseToolBridgeRejectsSymlinkRoot(
                 noteTitle: "",
                 noteText: "",
                 projectScope: StudyAgentProjectScope(
-                    kind: .course,
-                    chatID: "symlink-bridge-chat",
+                    kind: .global,
+                    chatID: sessionID.uuidString.lowercased(),
                     courseID: UUID().uuidString.lowercased()
                 ),
                 contextRevision: "symlink-bridge-test"
             ),
-            sessionID: UUID(),
+            sessionID: sessionID,
             workingDirectory: try fixture.workingDirectory(named: "SymlinkBridgeProject"),
             hostToolHandler: nil,
             progress: nil
@@ -173,6 +352,7 @@ private func checkHostCourseToolBridge(
         runtimeDirectory: runtimeDirectory,
         runInactivityTimeoutNanoseconds: 2_000_000_000
     )
+    let sessionID = UUID()
     let request = StudyAgentRequest(
         purpose: .conversation,
         question: "查找利率",
@@ -204,15 +384,15 @@ private func checkHostCourseToolBridge(
             ]
         ),
         projectScope: StudyAgentProjectScope(
-            kind: .course,
-            chatID: "bridge-chat",
+            kind: .global,
+            chatID: sessionID.uuidString.lowercased(),
             courseID: UUID().uuidString.lowercased()
         ),
         contextRevision: "bridge-test"
     )
     let reply = try await runtime.respond(
         to: request,
-        sessionID: UUID(),
+        sessionID: sessionID,
         workingDirectory: try fixture.workingDirectory(named: "BridgeProject"),
         hostToolHandler: { toolRequest in
             guard toolRequest == .courseRead(
@@ -512,6 +692,7 @@ private func checkRelationProposalUsesCurrentCourseCatalog(
         runtimeDirectory: try fixture.workingDirectory(named: "RelationProposalRuntime"),
         runInactivityTimeoutNanoseconds: 2_000_000_000
     )
+    let sessionID = UUID()
     let request = StudyAgentRequest(
         purpose: .conversation,
         question: "建议把这份笔记关联到另一份材料",
@@ -552,8 +733,8 @@ private func checkRelationProposalUsesCurrentCourseCatalog(
             ]
         ),
         projectScope: StudyAgentProjectScope(
-            kind: .course,
-            chatID: "relation-proposal-chat",
+            kind: .global,
+            chatID: sessionID.uuidString.lowercased(),
             courseID: UUID().uuidString.lowercased()
         ),
         contextRevision: "relation-proposal-test"
@@ -561,7 +742,7 @@ private func checkRelationProposalUsesCurrentCourseCatalog(
 
     let reply = try await runtime.respond(
         to: request,
-        sessionID: UUID(),
+        sessionID: sessionID,
         workingDirectory: try fixture.workingDirectory(named: "RelationProposalMode"),
         progress: nil
     )
@@ -590,6 +771,7 @@ private func checkPersistedSelectionSourcesAttachWithoutReadTool(
         runtimeDirectory: try fixture.workingDirectory(named: "FocusAnswerRuntime"),
         runInactivityTimeoutNanoseconds: 2_000_000_000
     )
+    let sessionID = UUID()
     let request = StudyAgentRequest(
         purpose: .conversation,
         question: "解释当前材料",
@@ -629,8 +811,8 @@ private func checkPersistedSelectionSourcesAttachWithoutReadTool(
             ]
         ),
         projectScope: StudyAgentProjectScope(
-            kind: .course,
-            chatID: "focus-chat",
+            kind: .global,
+            chatID: sessionID.uuidString.lowercased(),
             courseID: UUID().uuidString.lowercased()
         ),
         contextRevision: "focus-answer-test"
@@ -638,7 +820,7 @@ private func checkPersistedSelectionSourcesAttachWithoutReadTool(
 
     let reply = try await runtime.respond(
         to: request,
-        sessionID: UUID(),
+        sessionID: sessionID,
         workingDirectory: try fixture.workingDirectory(named: "FocusAnswerMode"),
         progress: nil
     )
@@ -867,7 +1049,7 @@ private func checkMissingSessionStartsFreshNativeHistory(
     }
 }
 
-private func checkSessionPathRejectsOutsideAcceptsAliasAndKeepsSibling(
+private func checkWrongStoredSessionStateIsPreserved(
     _ fixture: PiTerminalRuntimeFixture
 ) async throws {
     let realRuntimeDirectory = try fixture.workingDirectory(named: "WrongStateRuntimeReal")
@@ -905,7 +1087,57 @@ private func checkSessionPathRejectsOutsideAcceptsAliasAndKeepsSibling(
         noteText: "",
         contextRevision: "wrong-state-recovery"
     )
-    _ = try await runtime.respond(
+    let failure = await capturedFailure {
+        _ = try await runtime.respond(
+            to: request,
+            sessionID: sessionID,
+            workingDirectory: projectDirectory,
+            progress: nil
+        )
+    }
+    await runtime.shutdown()
+
+    let trace = try String(
+        contentsOf: projectDirectory.appendingPathComponent(".fake-pi-trace.log"),
+        encoding: .utf8
+    )
+    guard case let .protocolFailure(message)? = failure as? PiAgentRuntimeError,
+          message.contains("outside the requested Chat directory"),
+          trace.components(separatedBy: "launch\n").count - 1 == 1,
+          trace.contains("state-session=outside\n"),
+          !trace.contains("command=prompt\n"),
+          FileManager.default.fileExists(atPath: corruptMarker.path),
+          FileManager.default.fileExists(atPath: siblingMarker.path) else {
+        throw PiTerminalRuntimeSelfCheckError.failed(
+            "错误会话状态触发了自动重建，或删除了已有 Chat 历史：\n\(trace)"
+        )
+    }
+}
+
+private func checkEquivalentSessionDirectoryAliasIsAccepted(
+    _ fixture: PiTerminalRuntimeFixture
+) async throws {
+    let projectDirectory = try fixture.workingDirectory(named: "PathAliasProject")
+    let runtime = PiAgentRuntime(
+        executableURL: fixture.executableURL,
+        runtimeDirectory: try fixture.workingDirectory(named: "PathAliasRuntime"),
+        runInactivityTimeoutNanoseconds: 2_000_000_000
+    )
+    let sessionID = UUID(uuidString: "12345678-3333-4444-5555-666666666666")!
+    let request = StudyAgentRequest(
+        purpose: .conversation,
+        question: "继续同一个会话",
+        materialTitle: "测试材料",
+        materialText: "测试正文",
+        noteTitle: "测试笔记",
+        noteText: "",
+        projectScope: StudyAgentProjectScope(
+            kind: .global,
+            chatID: sessionID.uuidString.lowercased()
+        ),
+        contextRevision: "path-alias"
+    )
+    let reply = try await runtime.respond(
         to: request,
         sessionID: sessionID,
         workingDirectory: projectDirectory,
@@ -917,20 +1149,15 @@ private func checkSessionPathRejectsOutsideAcceptsAliasAndKeepsSibling(
         contentsOf: projectDirectory.appendingPathComponent(".fake-pi-trace.log"),
         encoding: .utf8
     )
-    guard trace.components(separatedBy: "launch\n").count - 1 == 2,
-          trace.contains("state-session=outside\n"),
-          trace.contains("state-session=canonical-alias\n"),
-          trace.components(separatedBy: "command=prompt\n").count - 1 == 1,
-          trace.contains("recent=absent\n"),
-          !FileManager.default.fileExists(atPath: corruptMarker.path),
-          FileManager.default.fileExists(atPath: siblingMarker.path) else {
+    guard reply.text == "[材料：测试材料] 第 1 次回答",
+          trace.contains("state-path=alias\n") else {
         throw PiTerminalRuntimeSelfCheckError.failed(
-            "Pi 没有拒绝越界状态、接受等价目录并只重建目标 Chat：\n\(trace)"
+            "同一会话目录的 /var 与 /private/var 写法没有被视为同一位置：\n\(trace)"
         )
     }
 }
 
-private func checkUnreadableStoredSessionRebuildsOnce(
+private func checkUnreadableStoredSessionIsPreserved(
     _ fixture: PiTerminalRuntimeFixture
 ) async throws {
     let runtimeDirectory = try fixture.workingDirectory(named: "UnreadableStateRuntime")
@@ -940,9 +1167,8 @@ private func checkUnreadableStoredSessionRebuildsOnce(
         .appendingPathComponent("Sessions", isDirectory: true)
         .appendingPathComponent(sessionID.uuidString.lowercased(), isDirectory: true)
     try FileManager.default.createDirectory(at: sessionDirectory, withIntermediateDirectories: true)
-    try Data("broken".utf8).write(
-        to: sessionDirectory.appendingPathComponent("corrupt-session")
-    )
+    let corruptMarker = sessionDirectory.appendingPathComponent("corrupt-session")
+    try Data("broken".utf8).write(to: corruptMarker)
     let runtime = PiAgentRuntime(
         executableURL: fixture.executableURL,
         runtimeDirectory: runtimeDirectory,
@@ -957,25 +1183,28 @@ private func checkUnreadableStoredSessionRebuildsOnce(
         noteText: "",
         contextRevision: "unreadable-state-recovery"
     )
-    _ = try await runtime.respond(
-        to: request,
-        sessionID: sessionID,
-        workingDirectory: projectDirectory,
-        progress: nil
-    )
+    let failure = await capturedFailure {
+        _ = try await runtime.respond(
+            to: request,
+            sessionID: sessionID,
+            workingDirectory: projectDirectory,
+            progress: nil
+        )
+    }
     await runtime.shutdown()
 
     let trace = try String(
         contentsOf: projectDirectory.appendingPathComponent(".fake-pi-trace.log"),
         encoding: .utf8
     )
-    guard trace.components(separatedBy: "launch\n").count - 1 == 2,
+    guard case let .protocolFailure(message)? = failure as? PiAgentRuntimeError,
+          message.contains("could not read the requested Chat session"),
+          trace.components(separatedBy: "launch\n").count - 1 == 1,
           trace.contains("state-session=unreadable\n"),
-          trace.contains("state-session=correct\n"),
-          trace.components(separatedBy: "command=prompt\n").count - 1 == 1,
-          trace.contains("recent=absent\n") else {
+          !trace.contains("command=prompt\n"),
+          FileManager.default.fileExists(atPath: corruptMarker.path) else {
         throw PiTerminalRuntimeSelfCheckError.failed(
-            "已有 Pi 会话无法读取时没有只重建一次原生会话：\n\(trace)"
+            "已有 Pi 会话无法读取时被自动重建或删除：\n\(trace)"
         )
     }
 }
@@ -1121,6 +1350,7 @@ static int late_cancel_mode = 0;
 static int session_mode = 0;
 static int wrong_state_mode = 0;
 static int unreadable_state_mode = 0;
+static int path_alias_mode = 0;
 static int session_turn = 0;
 static char session_id[128] = "";
 static char session_directory[PATH_MAX] = "";
@@ -1363,11 +1593,13 @@ int main(int argc, char **argv) {
     }
     wrong_state_mode = strstr(cwd, "WrongStateProject") != NULL;
     unreadable_state_mode = strstr(cwd, "UnreadableStateProject") != NULL;
+    path_alias_mode = strstr(cwd, "PathAliasProject") != NULL;
     session_mode = strstr(cwd, "SessionProject") != NULL
         || strstr(cwd, "RecoveryProject") != NULL
         || strstr(cwd, "ProxyProject") != NULL
         || wrong_state_mode
-        || unreadable_state_mode;
+        || unreadable_state_mode
+        || path_alias_mode;
     load_session_turn();
     if (session_mode) {
         snprintf(trace_path, sizeof(trace_path), "%s/.fake-pi-trace.log", cwd);
@@ -1404,32 +1636,35 @@ int main(int argc, char **argv) {
         if (strcmp(type, "get_state") == 0) {
             char state[PATH_MAX + 512];
             const char *reported_session_directory = session_directory;
-            char canonical_session_directory[PATH_MAX] = "";
+            char aliased_session_directory[PATH_MAX] = "";
             if (unreadable_state_mode) {
-                char marker_path[PATH_MAX];
-                snprintf(marker_path, sizeof(marker_path), "%s/.fake-pi-returned-unreadable-state", cwd);
-                if (access(marker_path, F_OK) != 0) {
-                    FILE *marker = fopen(marker_path, "w");
-                    if (marker != NULL) fclose(marker);
-                    trace_line("state-session", "unreadable");
-                    printf("{\"id\":\"%s\",\"type\":\"response\",\"command\":\"%s\",\"success\":false,\"error\":\"corrupt session\"}\n", id, type);
-                    fflush(stdout);
-                    continue;
-                }
-                trace_line("state-session", "correct");
+                trace_line("state-session", "unreadable");
+                printf("{\"id\":\"%s\",\"type\":\"response\",\"command\":\"%s\",\"success\":false,\"error\":\"corrupt session\"}\n", id, type);
+                fflush(stdout);
+                continue;
             }
             if (wrong_state_mode) {
-                char marker_path[PATH_MAX];
-                snprintf(marker_path, sizeof(marker_path), "%s/.fake-pi-returned-wrong-state", cwd);
-                if (access(marker_path, F_OK) != 0) {
-                    FILE *marker = fopen(marker_path, "w");
-                    if (marker != NULL) fclose(marker);
-                    reported_session_directory = cwd;
-                    trace_line("state-session", "outside");
-                } else if (realpath(session_directory, canonical_session_directory) != NULL) {
-                    reported_session_directory = canonical_session_directory;
-                    trace_line("state-session", "canonical-alias");
+                reported_session_directory = cwd;
+                trace_line("state-session", "outside");
+            }
+            if (path_alias_mode) {
+                if (strncmp(session_directory, "/private/", 9) == 0) {
+                    snprintf(
+                        aliased_session_directory,
+                        sizeof(aliased_session_directory),
+                        "%s",
+                        session_directory + 8
+                    );
+                } else {
+                    snprintf(
+                        aliased_session_directory,
+                        sizeof(aliased_session_directory),
+                        "/private%s",
+                        session_directory
+                    );
                 }
+                reported_session_directory = aliased_session_directory;
+                trace_line("state-path", "alias");
             }
             if (session_mode) {
                 char message_count[32];

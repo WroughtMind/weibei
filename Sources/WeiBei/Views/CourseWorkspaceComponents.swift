@@ -355,8 +355,8 @@ struct CourseProjectEntrySheet: View {
         switch intent {
         case .create:
             return store.ui(
-                "魏碑会为这门课创建文稿、笔记和本地课程状态，课程 Agent 只在这个项目范围内工作。",
-                "WeiBei will create materials, notes, and local course state for this course."
+                "魏碑会为这门课创建文稿、笔记和本地课程状态。Chat 始终是全局的，进入这门课只会把它设为当前学习现场。",
+                "WeiBei will create materials, notes, and local course state. Chats remain global; entering this course only makes it the current study context."
             )
         case .adopt:
             return store.ui(

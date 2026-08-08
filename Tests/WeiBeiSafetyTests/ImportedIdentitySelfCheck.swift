@@ -6,6 +6,7 @@ enum ImportedIdentitySelfCheck {
     @MainActor
     static func run() throws {
         try launchAndPrimaryEntriesStartBlank()
+        try agentFailureMessagesExposeOnlyUserFacingDetails()
         try storageModelsDecodeLegacySnapshotsAndRoundTrip()
         try legacyPathSnapshotMigratesItsEntireRelationshipGraph()
         try selectionThreadMigrationWaitsForWorkspaceCommit()
@@ -30,6 +31,72 @@ enum ImportedIdentitySelfCheck {
         try failedWorkspaceSaveRecoversRenameOnRestart()
         try duplicateLegacyIdentityMigratesInOneLaunch()
         try replacedAndCrossVolumeFilesReceiveNewIdentities()
+    }
+
+    @MainActor
+    private static func agentFailureMessagesExposeOnlyUserFacingDetails() throws {
+        let internalFailure = PiAgentRuntimeError.protocolFailure(
+            "before_agent_start failed in /private/tmp/AgentResources/extension.ts while running get_state"
+        )
+        let internalKind = AgentFailureKind.classify(internalFailure)
+        let internalMessage = internalKind.userMessage(
+            language: .chinese,
+            userFacingDetail: WorkspaceStore.userFacingAgentFailureDetail(
+                for: internalFailure
+            ),
+            draftPreserved: true
+        )
+        let forbiddenInternalText = [
+            "/private",
+            "/tmp",
+            "extension.ts",
+            "before_agent_start",
+            "get_state",
+            "PI 通信",
+        ]
+        guard forbiddenInternalText.allSatisfy({
+            !internalMessage.contains($0)
+        }) else {
+            throw CheckError.failed(
+                "Agent 内部路径或协议细节进入了用户失败气泡"
+            )
+        }
+
+        let authenticationFailure = PiAgentRuntimeError.agentFailed(
+            "HTTP 401 refresh_token_reused provider response"
+        )
+        let authenticationKind = AgentFailureKind.classify(
+            authenticationFailure
+        )
+        let authenticationMessage = authenticationKind.userMessage(
+            language: .chinese,
+            userFacingDetail: WorkspaceStore.userFacingAgentFailureDetail(
+                for: authenticationFailure
+            )
+        )
+        guard authenticationKind == .unauthorized,
+              authenticationMessage.contains("重新登录"),
+              authenticationMessage.contains("API Key"),
+              !authenticationMessage.contains("refresh_token_reused") else {
+            throw CheckError.failed(
+                "认证失败没有保留安全的重新登录指引"
+            )
+        }
+
+        let targetFailure = WorkspaceStore.AgentConversationTargetError(
+            message: "发送前 Chat 已经切换，这条问题没有发到其他 Chat。"
+        )
+        let targetMessage = AgentFailureKind.generic.userMessage(
+            language: .chinese,
+            userFacingDetail: WorkspaceStore.userFacingAgentFailureDetail(
+                for: targetFailure
+            )
+        )
+        guard targetMessage.contains("发送前 Chat 已经切换") else {
+            throw CheckError.failed(
+                "魏碑生成的可操作 Chat 状态没有进入安全失败气泡"
+            )
+        }
     }
 
     @MainActor
