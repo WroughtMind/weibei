@@ -589,63 +589,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
       document.documentElement.appendChild(style);
       window.WeiBeiSelectionAskMarks = {
         apply: function(marks) {
-          try {
-            const root = document.querySelector(".ProseMirror") || document.body;
-            root.querySelectorAll(".weibei-selection-ask-mark").forEach((el) => {
-              const parent = el.parentNode;
-              if (!parent) return;
-              while (el.firstChild) parent.insertBefore(el.firstChild, el);
-              parent.removeChild(el);
-              parent.normalize();
-            });
-            if (window.weiBeiMarkdownEditable) return;
-            const list = Array.isArray(marks) ? marks : [];
-            list.forEach((mark) => {
-              const needle = String(mark.text || "").trim();
-              const id = String(mark.id || "");
-              if (!needle || !id || needle.length < 4) return;
-              const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
-                acceptNode: function(node) {
-                  if (!node.parentElement) return NodeFilter.FILTER_REJECT;
-                  if (node.parentElement.closest(".weibei-selection-ask-mark, script, style")) {
-                    return NodeFilter.FILTER_REJECT;
-                  }
-                  return node.nodeValue && node.nodeValue.indexOf(needle) >= 0
-                    ? NodeFilter.FILTER_ACCEPT
-                    : NodeFilter.FILTER_SKIP;
-                }
-              });
-              const hits = [];
-              while (walker.nextNode()) hits.push(walker.currentNode);
-              hits.slice(0, 3).forEach((textNode) => {
-                const value = textNode.nodeValue || "";
-                const idx = value.indexOf(needle);
-                if (idx < 0) return;
-                const range = document.createRange();
-                range.setStart(textNode, idx);
-                range.setEnd(textNode, idx + needle.length);
-                const span = document.createElement("span");
-                span.className = "weibei-selection-ask-mark";
-                span.dataset.threadId = id;
-                span.title = "打开当时的选区问答";
-                try { range.surroundContents(span); } catch (e) {}
-              });
-            });
-            root.querySelectorAll(".weibei-selection-ask-mark").forEach((el) => {
-              el.onclick = function(ev) {
-                ev.preventDefault();
-                ev.stopPropagation();
-                const threadId = el.dataset.threadId || "";
-                if (window.webkit?.messageHandlers?.selectionAskMark) {
-                  window.webkit.messageHandlers.selectionAskMark.postMessage({
-                    threadId,
-                    text: el.textContent || "",
-                    documentID: window.weiBeiDocumentID || ""
-                  });
-                }
-              };
-            });
-          } catch (e) {}
+          window.WeiBeiEditor?.setSelectionAskMarks(marks);
         }
       };
     })();

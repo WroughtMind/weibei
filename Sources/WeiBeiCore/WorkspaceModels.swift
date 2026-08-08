@@ -877,6 +877,37 @@ public struct FloatingAgentCoordinate: Equatable {
     }
 }
 
+public struct FloatingAgentSize: Equatable {
+    public var width: Double
+    public var height: Double
+
+    public init(width: Double, height: Double) {
+        self.width = width
+        self.height = height
+    }
+}
+
+public struct FloatingAgentResizeResult: Equatable {
+    public var size: FloatingAgentSize
+    public var offset: FloatingAgentCoordinate
+
+    public init(size: FloatingAgentSize, offset: FloatingAgentCoordinate) {
+        self.size = size
+        self.offset = offset
+    }
+}
+
+public enum FloatingAgentResizeEdge {
+    case top
+    case bottom
+    case leading
+    case trailing
+    case topLeading
+    case topTrailing
+    case bottomLeading
+    case bottomTrailing
+}
+
 public enum SelectionAnchorCoordinate {
     public static func y(_ contentY: Double, contentHeight: Double, contentViewIsFlipped: Bool) -> Double {
         contentViewIsFlipped ? contentY : contentHeight - contentY
@@ -884,11 +915,83 @@ public enum SelectionAnchorCoordinate {
 }
 
 public enum SelectionFloatingAgentPlacement {
-    public static let expandedHalfWidth = 230.0
+    public static let minimumResizableWidth = 320.0
+    public static let maximumResizableWidth = 720.0
+    public static let minimumResizableContentHeight = 96.0
+    public static let maximumResizableContentHeight = 560.0
+    public static let minimumAutomaticContentHeight = 112.0
+    public static let maximumAutomaticContentHeight = 420.0
+    public static let expandedHalfWidth = 190.0
     public static let compactHalfWidth = 82.0
-    /// Approximate half-height used to keep an expanded panel on-canvas.
-    public static let expandedHalfHeight = 210.0
+    /// Bounds the expanded panel after its content-only downward growth offset.
+    public static let expandedHalfHeight = 230.0
     public static let compactHalfHeight = 28.0
+    /// A typed question may grow to five lines, but never consume the floating panel.
+    public static let expandedComposerMaxHeight = 96.0
+    public static let expandedComposerCollapsedHeight = 40.0
+
+    public static func composerControlHostMinimumHeight(composerMinimumHeight: Double) -> Double {
+        composerMinimumHeight
+    }
+
+    public static func automaticContentHeight(measuredContentHeight: Double) -> Double {
+        clamp(
+            measuredContentHeight,
+            min: minimumAutomaticContentHeight,
+            max: maximumAutomaticContentHeight
+        )
+    }
+
+    public static func resizedFrame(
+        current: FloatingAgentSize,
+        translation: FloatingAgentSize,
+        canvas: FloatingAgentSize,
+        edge: FloatingAgentResizeEdge
+    ) -> FloatingAgentResizeResult {
+        let maximumWidth = max(
+            minimumResizableWidth,
+            min(maximumResizableWidth, canvas.width - 36)
+        )
+        let maximumHeight = max(
+            minimumResizableContentHeight,
+            min(maximumResizableContentHeight, canvas.height - 160)
+        )
+        let resizesLeading = edge == .leading || edge == .topLeading || edge == .bottomLeading
+        let resizesTrailing = edge == .trailing || edge == .topTrailing || edge == .bottomTrailing
+        let resizesTop = edge == .top || edge == .topLeading || edge == .topTrailing
+        let resizesBottom = edge == .bottom || edge == .bottomLeading || edge == .bottomTrailing
+
+        let proposedWidth: Double
+        if resizesLeading {
+            proposedWidth = current.width - translation.width
+        } else if resizesTrailing {
+            proposedWidth = current.width + translation.width
+        } else {
+            proposedWidth = current.width
+        }
+
+        let proposedHeight: Double
+        if resizesTop {
+            proposedHeight = current.height - translation.height
+        } else if resizesBottom {
+            proposedHeight = current.height + translation.height
+        } else {
+            proposedHeight = current.height
+        }
+
+        let width = clamp(proposedWidth, min: minimumResizableWidth, max: maximumWidth)
+        let height = clamp(proposedHeight, min: minimumResizableContentHeight, max: maximumHeight)
+        let widthChange = width - current.width
+        let heightChange = height - current.height
+
+        return FloatingAgentResizeResult(
+            size: FloatingAgentSize(width: width, height: height),
+            offset: FloatingAgentCoordinate(
+                x: resizesLeading ? -widthChange / 2 : (resizesTrailing ? widthChange / 2 : 0),
+                y: resizesTop ? -heightChange / 2 : (resizesBottom ? heightChange / 2 : 0)
+            )
+        )
+    }
 
     public static func isVisible(
         surface: AgentSurface,
