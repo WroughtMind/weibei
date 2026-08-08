@@ -674,6 +674,75 @@ private func checkStudyAgentContext() throws {
         "study-agent context only carries bounded raster assets for the current material and remaps their ids"
     )
 
+    let projectIdentity = StudyAgentFileIdentity(
+        ImportedFileIdentity(
+            volumeID: 1,
+            fileID: 2,
+            birthTimeSeconds: 3,
+            birthTimeNanoseconds: 4
+        )
+    )
+    let globalChatID = UUID().uuidString.lowercased()
+    let globalProjectEnvelope = StudyAgentContextEnvelope(
+        request: StudyAgentRequest(
+            purpose: .conversation,
+            question: "解释当前材料",
+            materialTitle: "当前材料",
+            materialText: "",
+            noteTitle: "笔记",
+            noteText: "",
+            courseContext: StudyAgentCourseContext(
+                title: "当前课程",
+                items: [
+                    StudyAgentCourseItem(
+                        id: "current-material",
+                        title: "当前材料",
+                        subtitle: "Markdown",
+                        kind: "markdown",
+                        role: "material"
+                    ),
+                ]
+            ),
+            projectScope: StudyAgentProjectScope(
+                kind: .global,
+                chatID: globalChatID,
+                courseID: UUID().uuidString.lowercased(),
+                rootPath: "/private/tmp/course-root",
+                rootIdentity: projectIdentity,
+                items: [
+                    StudyAgentProjectItem(
+                        itemID: "current-material",
+                        title: "当前材料",
+                        kind: "markdown",
+                        role: "material",
+                        relativePath: "文稿/current.md",
+                        resolvedPath: "/private/tmp/course-root/文稿/current.md",
+                        entryIdentity: projectIdentity,
+                        targetIdentity: projectIdentity,
+                        isShared: false,
+                        courseIDs: ["course-id"],
+                        sourceRevision: "revision-1"
+                    ),
+                ]
+            ),
+            contextRevision: "global-project-boundary"
+        )
+    )
+    try piRequire(
+        globalProjectEnvelope.project.kind == .global
+            && globalProjectEnvelope.project.chatID == globalChatID
+            && globalProjectEnvelope.project.rootPath == nil
+            && globalProjectEnvelope.project.rootIdentity == nil
+            && globalProjectEnvelope.project.items.first?.itemID == "course-item-1"
+            && globalProjectEnvelope.project.items.first?.relativePath == ""
+            && globalProjectEnvelope.project.items.first?.resolvedPath == ""
+            && globalProjectEnvelope.project.items.first?.entryIdentity == nil
+            && globalProjectEnvelope.project.items.first?.targetIdentity == nil
+            && globalProjectEnvelope.project.items.first?.courseIDs == ["course-id"]
+            && globalProjectEnvelope.project.items.first?.sourceRevision == "revision-1",
+        "global Chat strips local course-file authorization while retaining the host-readable material identity"
+    )
+
     let privatePath = "/Users/student/Private Course/secret.pdf"
     let privateItem = StudyAgentCourseItem(
         id: "file:\(privatePath)",
