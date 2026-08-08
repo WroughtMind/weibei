@@ -948,21 +948,50 @@ expect(SelectionFloatingAgentPlacement.expandedHalfWidth == 190
 expect(SelectionFloatingAgentPlacement.expandedComposerMaxHeight > 48
     && SelectionFloatingAgentPlacement.expandedComposerMaxHeight < SelectionFloatingAgentPlacement.expandedHalfHeight,
     "selection agent composer grows for multiple lines without taking over the floating panel")
-expect(SelectionFloatingAgentPlacement.expandedComposerCollapsedHeight == 48,
-    "selection agent composer uses one compact row until its text actually needs more lines")
-let resizedFloatingAgent = SelectionFloatingAgentPlacement.resizedSize(
+expect(SelectionFloatingAgentPlacement.expandedComposerCollapsedHeight == 40,
+    "selection agent composer stays visually subordinate to the selected passage")
+expect(SelectionFloatingAgentPlacement.automaticContentHeight(measuredContentHeight: 360) == 360,
+    "selection agent follows the real answer height well beyond the old shallow stop")
+expect(SelectionFloatingAgentPlacement.automaticContentHeight(measuredContentHeight: 900)
+    == SelectionFloatingAgentPlacement.maximumAutomaticContentHeight,
+    "selection agent eventually stops automatic growth and scrolls inside a bounded frame")
+let resizedFloatingAgent = SelectionFloatingAgentPlacement.resizedFrame(
     current: FloatingAgentSize(width: 380, height: 420),
     translation: FloatingAgentSize(width: 90, height: 70),
-    canvas: FloatingAgentSize(width: 1_200, height: 800)
+    canvas: FloatingAgentSize(width: 1_200, height: 800),
+    edge: .bottomTrailing
 )
-expect(resizedFloatingAgent == FloatingAgentSize(width: 470, height: 490),
-    "selection agent resize drag changes both width and height")
-let clampedFloatingAgent = SelectionFloatingAgentPlacement.resizedSize(
+expect(resizedFloatingAgent == FloatingAgentResizeResult(
+    size: FloatingAgentSize(width: 470, height: 490),
+    offset: FloatingAgentCoordinate(x: 45, y: 35)
+), "selection agent resize follows the dragged corner while keeping the opposite corner still")
+let leadingEdgeResize = SelectionFloatingAgentPlacement.resizedFrame(
+    current: FloatingAgentSize(width: 380, height: 420),
+    translation: FloatingAgentSize(width: -90, height: 0),
+    canvas: FloatingAgentSize(width: 1_200, height: 800),
+    edge: .leading
+)
+expect(leadingEdgeResize == FloatingAgentResizeResult(
+    size: FloatingAgentSize(width: 470, height: 420),
+    offset: FloatingAgentCoordinate(x: -45, y: 0)
+), "dragging the leading border resizes outward instead of requiring a corner handle")
+let topEdgeResize = SelectionFloatingAgentPlacement.resizedFrame(
+    current: FloatingAgentSize(width: 380, height: 240),
+    translation: FloatingAgentSize(width: 0, height: -80),
+    canvas: FloatingAgentSize(width: 1_200, height: 800),
+    edge: .top
+)
+expect(topEdgeResize == FloatingAgentResizeResult(
+    size: FloatingAgentSize(width: 380, height: 320),
+    offset: FloatingAgentCoordinate(x: 0, y: -40)
+), "dragging the top border keeps the bottom edge stable without feedback jitter")
+let clampedFloatingAgent = SelectionFloatingAgentPlacement.resizedFrame(
     current: FloatingAgentSize(width: 380, height: 160),
     translation: FloatingAgentSize(width: -1_000, height: 1_000),
-    canvas: FloatingAgentSize(width: 500, height: 400)
+    canvas: FloatingAgentSize(width: 500, height: 400),
+    edge: .bottomTrailing
 )
-expect(clampedFloatingAgent == FloatingAgentSize(width: 320, height: 240),
+expect(clampedFloatingAgent.size == FloatingAgentSize(width: 320, height: 240),
     "selection agent resize stays usable inside the available canvas")
 let floatingPoint = SelectionFloatingAgentPlacement.position(
     anchor: FloatingAgentCoordinate(x: 320, y: 200),
