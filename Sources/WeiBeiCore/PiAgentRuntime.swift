@@ -6,20 +6,17 @@ import Security
 public struct PiAgentProviderConfiguration: Equatable, Sendable {
     public var provider: String?
     public var model: String?
-    public var apiKey: String?
     public var baseURL: String?
     public var thinkingLevel: String
 
     public init(
         provider: String? = nil,
         model: String? = nil,
-        apiKey: String? = nil,
         baseURL: String? = nil,
         thinkingLevel: String = "medium"
     ) {
         self.provider = provider?.trimmingCharacters(in: .whitespacesAndNewlines)
         self.model = model?.trimmingCharacters(in: .whitespacesAndNewlines)
-        self.apiKey = apiKey?.trimmingCharacters(in: .whitespacesAndNewlines)
         self.baseURL = baseURL?.trimmingCharacters(in: .whitespacesAndNewlines)
         self.thinkingLevel = thinkingLevel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             ? "medium"
@@ -32,6 +29,7 @@ public struct PiAgentResources: Sendable {
 
     public var rootURL: URL
     public var extensionURL: URL
+    public var managementExtensionURL: URL
     public var skillsURL: URL
     public var systemPrompt: String
 
@@ -46,6 +44,7 @@ public struct PiAgentResources: Sendable {
             throw PiAgentRuntimeError.resourcesMissing("AgentResources")
         }
         let extensionURL = rootURL.appendingPathComponent("extension.ts")
+        let managementExtensionURL = rootURL.appendingPathComponent("management-extension.ts")
         let skillsURL = rootURL.appendingPathComponent("skills", isDirectory: true)
         let systemURL = rootURL.appendingPathComponent("system.md")
         let hasRequiredSkills = allRequiredSkillNames.allSatisfy { skillName in
@@ -57,6 +56,7 @@ public struct PiAgentResources: Sendable {
             )
         }
         guard FileManager.default.fileExists(atPath: extensionURL.path),
+              FileManager.default.fileExists(atPath: managementExtensionURL.path),
               hasRequiredSkills,
               let systemPrompt = try? String(contentsOf: systemURL, encoding: .utf8),
               !systemPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
@@ -65,6 +65,7 @@ public struct PiAgentResources: Sendable {
         return PiAgentResources(
             rootURL: rootURL,
             extensionURL: extensionURL,
+            managementExtensionURL: managementExtensionURL,
             skillsURL: skillsURL,
             systemPrompt: systemPrompt
         )
@@ -227,26 +228,11 @@ public enum PiAgentRuntimeError: LocalizedError, Equatable, Sendable {
         }
     }
 
-    public var permitsAutomaticFallback: Bool {
-        switch self {
-        case .unavailable, .resourcesMissing, .busy, .launchFailed, .commandRejected:
-            return true
-        case let .commandTimedOut(command):
-            return command != "prompt" && command != "abort"
-        case .protocolFailure:
-            return true
-        case .agentFailed, .inFlightFailed, .cancelled:
-            return false
-        }
-    }
 }
 
 public enum PiAgentDiagnosticSanitizer {
-    public static func sanitize(_ value: String, secret: String? = nil) -> String {
+    public static func sanitize(_ value: String) -> String {
         var result = value
-        if let secret, !secret.isEmpty {
-            result = result.replacingOccurrences(of: secret, with: "[REDACTED]")
-        }
         let redactions = [
             (#"(?i)bearer\s+[A-Za-z0-9._~+/=-]{8,}"#, "Bearer [REDACTED]"),
             (#"\bsk-[A-Za-z0-9_-]{8,}\b"#, "[REDACTED]"),
@@ -351,6 +337,13 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         var timeoutTask: Task<Void, Never>
     }
 
+    private struct PendingManagement {
+        var interaction: PiManagementInteraction
+        var promptTasks: [String: Task<Void, Never>] = [:]
+        var continuation: CheckedContinuation<PiManagementEnvelope, Error>?
+        var completed: Result<PiManagementEnvelope, Error>?
+    }
+
     private struct HostToolResponseEnvelope: Encodable {
         var schemaVersion = 1
         var requestID: String
@@ -422,6 +415,7 @@ public actor PiAgentRuntime: StudyAgentRuntime {
 
     private let executableOverride: URL?
     private let runtimeDirectory: URL
+    private let persistentPiConfigurationDirectory: URL
     private let fallbackSessionID = UUID()
     private let runInactivityTimeoutNanoseconds: UInt64
     private var providerConfiguration = PiAgentProviderConfiguration()
@@ -432,6 +426,7 @@ public actor PiAgentRuntime: StudyAgentRuntime {
     private var stderrTask: Task<Void, Never>?
     private var processGeneration: UInt64 = 0
     private var pendingCommands: [String: PendingCommand] = [:]
+    private var pendingManagement: PendingManagement?
     private var activeRun: ActiveRun?
     private var hostToolTasks: [String: Task<Void, Never>] = [:]
     private var startingRunID: UUID?
@@ -444,14 +439,20 @@ public actor PiAgentRuntime: StudyAgentRuntime {
     public init(
         executableURL: URL? = nil,
         runtimeDirectory: URL? = nil,
+        persistentPiConfigurationDirectory: URL? = nil,
         // Idle hang detection: 90s without events (was 5 minutes).
         runInactivityTimeoutNanoseconds: UInt64 = 90_000_000_000
     ) {
         executableOverride = executableURL
-        self.runtimeDirectory = runtimeDirectory
+        let resolvedRuntimeDirectory = runtimeDirectory
             ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first?
                 .appendingPathComponent("WeiBei/AgentRuntime", isDirectory: true)
             ?? FileManager.default.temporaryDirectory.appendingPathComponent("WeiBeiAgentRuntime", isDirectory: true)
+        self.runtimeDirectory = resolvedRuntimeDirectory
+        self.persistentPiConfigurationDirectory = persistentPiConfigurationDirectory
+            ?? (executableURL == nil
+                ? WeiBeiAgentDataPaths.piAgentDirectory
+                : resolvedRuntimeDirectory.appendingPathComponent("PiAgent", isDirectory: true))
         self.runInactivityTimeoutNanoseconds = max(1, runInactivityTimeoutNanoseconds)
     }
 
@@ -476,6 +477,95 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         return process?.executableURL?.path ?? "pi"
     }
 
+    public func managementCatalog(refresh: Bool = false) async throws -> PiManagementCatalog {
+        let envelope = try await performManagement(
+            PiManagementRequest(action: .catalog, refresh: refresh),
+            interaction: .nonInteractive
+        )
+        guard envelope.action == .catalog, let catalog = envelope.catalog else {
+            throw PiAgentRuntimeError.protocolFailure("PI returned an invalid management catalog")
+        }
+        return catalog
+    }
+
+    public func login(
+        providerID: String,
+        type: PiCredentialType,
+        interaction: PiManagementInteraction
+    ) async throws -> PiManagementCredentialInfo {
+        let envelope = try await performManagement(
+            PiManagementRequest(
+                action: .login,
+                providerId: providerID,
+                authType: type
+            ),
+            interaction: interaction
+        )
+        guard envelope.action == .login,
+              let credential = envelope.credential,
+              credential.providerId == providerID,
+              credential.type == type else {
+            throw PiAgentRuntimeError.protocolFailure("PI returned an invalid login result")
+        }
+        return credential
+    }
+
+    public func logout(providerID: String) async throws {
+        let envelope = try await performManagement(
+            PiManagementRequest(action: .logout, providerId: providerID),
+            interaction: .nonInteractive
+        )
+        guard envelope.action == .logout, envelope.providerId == providerID else {
+            throw PiAgentRuntimeError.protocolFailure("PI returned an invalid logout result")
+        }
+    }
+
+    private func performManagement(
+        _ request: PiManagementRequest,
+        interaction: PiManagementInteraction
+    ) async throws -> PiManagementEnvelope {
+        guard activeRun == nil, startingRunID == nil, pendingManagement == nil else {
+            throw PiAgentRuntimeError.busy
+        }
+        idleShutdownTask?.cancel()
+        idleShutdownTask = nil
+        try FileManager.default.createDirectory(
+            at: runtimeDirectory,
+            withIntermediateDirectories: true
+        )
+        _ = try await ensureProcess(
+            binding: try makeProcessBinding(
+                sessionID: fallbackSessionID,
+                workingDirectory: runtimeDirectory,
+                scope: .global
+            )
+        )
+        let command = try PiManagementCodec.command(for: request)
+        pendingManagement = PendingManagement(interaction: interaction)
+
+        return try await withTaskCancellationHandler(operation: {
+            do {
+                _ = try await sendCommand(
+                    type: "prompt",
+                    fields: ["message": command],
+                    timeoutSeconds: 3_600
+                )
+                let envelope = try await waitForManagement()
+                let completedProcess = process
+                shutdownProcess(reason: PiAgentRuntimeError.cancelled)
+                await forceStopIfNeeded(completedProcess, graceNanoseconds: 750_000_000)
+                return envelope
+            } catch {
+                let runningProcess = process
+                shutdownProcess(reason: error)
+                await forceStopIfNeeded(runningProcess, graceNanoseconds: 750_000_000)
+                throw error
+            }
+        }, onCancel: {
+            Task { await self.cancelManagement() }
+        })
+    }
+
     public func respond(to request: StudyAgentRequest, progress: StudyAgentProgressHandler?) async throws -> StudyAgentReply {
         try await respond(
             to: request,
@@ -492,6 +582,16 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         hostToolHandler: StudyAgentHostToolHandler? = nil,
         progress: StudyAgentProgressHandler?
     ) async throws -> StudyAgentReply {
+        if let provider = providerConfiguration.provider,
+           !provider.isEmpty,
+           providerConfiguration.model?.isEmpty != false {
+            throw PiAgentRuntimeError.commandRejected(
+                request.language.text(
+                    "请先在设置中选择模型。",
+                    "Choose a model in Settings before sending."
+                )
+            )
+        }
         var request = request
         if request.projectScope.chatID
             .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -814,9 +914,14 @@ public actor PiAgentRuntime: StudyAgentRuntime {
                 repairsEmptySession: true
             )
         }
-        let sessionFileURL = URL(fileURLWithPath: sessionFile).standardizedFileURL
-        guard sessionFileURL.deletingLastPathComponent().path
-                == binding.sessionDirectory.standardizedFileURL.path else {
+        let sessionFileDirectory = URL(fileURLWithPath: sessionFile)
+            .deletingLastPathComponent()
+            .standardizedFileURL
+            .resolvingSymlinksInPath()
+        let requestedSessionDirectory = binding.sessionDirectory
+            .standardizedFileURL
+            .resolvingSymlinksInPath()
+        guard sessionFileDirectory.path == requestedSessionDirectory.path else {
             throw PiSessionStateFailure(
                 message: "get_state returned a session outside the requested Chat directory",
                 repairsEmptySession: true
@@ -973,6 +1078,7 @@ public actor PiAgentRuntime: StudyAgentRuntime {
             "--tools", Self.allowedToolNames(for: binding.scope).joined(separator: ","),
             "--no-extensions",
             "--extension", resources.extensionURL.path,
+            "--extension", resources.managementExtensionURL.path,
             "--no-skills",
             "--skill", resources.skillsURL.path,
             "--no-prompt-templates",
@@ -1548,6 +1654,8 @@ public actor PiAgentRuntime: StudyAgentRuntime {
             "PI_PACKAGE_DIR": executableDirectory,
             "PI_CODING_AGENT_DIR": piConfigurationURL.path,
             "PI_CODING_AGENT_SESSION_DIR": sessionDirectory.path,
+            "WEIBEI_PI_AUTH_PATH": piConfigurationURL
+                .appendingPathComponent("auth.json").path,
             "WEIBEI_AGENT_CONTEXT_FILE": contextURL.path,
             "WEIBEI_AGENT_TOOL_RESPONSE_DIR": hostToolResponseRoot.path,
             "WEIBEI_AGENT_RUNTIME": "1",
@@ -1562,34 +1670,9 @@ public actor PiAgentRuntime: StudyAgentRuntime {
             // rest of the host process environment.
             "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY",
             "http_proxy", "https_proxy", "all_proxy", "no_proxy",
-            // Cloud / multi-part provider credentials from the host shell.
-            "AWS_PROFILE", "AWS_REGION", "AWS_DEFAULT_REGION",
-            "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN",
-            "AWS_BEARER_TOKEN_BEDROCK", "AWS_ENDPOINT_URL_BEDROCK_RUNTIME",
-            "GOOGLE_CLOUD_PROJECT", "GCLOUD_PROJECT", "GOOGLE_CLOUD_LOCATION",
-            "GOOGLE_APPLICATION_CREDENTIALS",
-            "CLOUDFLARE_ACCOUNT_ID", "CLOUDFLARE_GATEWAY_ID", "CLOUDFLARE_API_KEY",
-            "AZURE_OPENAI_BASE_URL", "AZURE_OPENAI_RESOURCE_NAME",
-            "AZURE_OPENAI_API_VERSION", "AZURE_OPENAI_DEPLOYMENT_NAME_MAP",
         ] {
             if let value = hostEnvironment[key], !value.isEmpty, value.count <= 2048, !value.contains("\n") {
                 environment[key] = value
-            }
-        }
-        if let apiKey = providerConfiguration.apiKey, !apiKey.isEmpty {
-            // Inject into the provider's canonical env var (Pi resolution order).
-            if let providerID = providerConfiguration.provider.flatMap(AgentProviderID.init(rawValue:)) {
-                environment[providerID.environmentAPIKeyName] = apiKey
-            } else if let provider = providerConfiguration.provider?.lowercased() {
-                // Fallback map for ids that may not be in the enum yet.
-                let envName = Self.legacyEnvName(forPiProvider: provider) ?? "OPENAI_API_KEY"
-                environment[envName] = apiKey
-            } else {
-                environment["OPENAI_API_KEY"] = apiKey
-            }
-            // Many OpenAI-compatible stacks still read OPENAI_API_KEY.
-            if environment["OPENAI_API_KEY"] == nil {
-                environment["OPENAI_API_KEY"] = apiKey
             }
         }
         // Base URL: Azure uses dedicated env; OpenAI-compatible stacks still get models.json.
@@ -1600,28 +1683,6 @@ public actor PiAgentRuntime: StudyAgentRuntime {
             }
         }
         return environment
-    }
-
-    private static func legacyEnvName(forPiProvider provider: String) -> String? {
-        switch provider {
-        case "openai", "openai-codex": return "OPENAI_API_KEY"
-        case "anthropic": return "ANTHROPIC_API_KEY"
-        case "google": return "GEMINI_API_KEY"
-        case "openrouter": return "OPENROUTER_API_KEY"
-        case "github-copilot": return "COPILOT_GITHUB_TOKEN"
-        case "xai": return "XAI_API_KEY"
-        case "deepseek": return "DEEPSEEK_API_KEY"
-        case "groq": return "GROQ_API_KEY"
-        case "mistral": return "MISTRAL_API_KEY"
-        case "together": return "TOGETHER_API_KEY"
-        case "fireworks": return "FIREWORKS_API_KEY"
-        case "huggingface": return "HF_TOKEN"
-        case "moonshotai", "moonshotai-cn": return "MOONSHOT_API_KEY"
-        case "kimi-coding": return "KIMI_API_KEY"
-        case "minimax": return "MINIMAX_API_KEY"
-        case "minimax-cn": return "MINIMAX_CN_API_KEY"
-        default: return nil
-        }
     }
 
     /// Inject a custom / local OpenAI-compatible provider into PI_CODING_AGENT_DIR/models.json.
@@ -1637,12 +1698,13 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         }
         guard !trimmedBase.isEmpty else { return }
         do {
-            let destination = try preparePiConfigurationDirectory()
-            let modelsURL = destination.appendingPathComponent("models.json")
+            let piConfigurationURL = try preparePiConfigurationDirectory()
+            let modelsURL = piConfigurationURL.appendingPathComponent("models.json")
             let providerKey = providerID.piProviderName
-            let modelID = model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                ? providerID.defaultModelHint
-                : model.trimmingCharacters(in: .whitespacesAndNewlines)
+            let selectedModel = model.trimmingCharacters(in: .whitespacesAndNewlines)
+            let modelID = selectedModel.isEmpty
+                ? (providerID == .llamaCpp ? "local-model" : "model-id")
+                : selectedModel
             let payload: [String: Any] = [
                 "providers": [
                     providerKey: [
@@ -1659,6 +1721,7 @@ public actor PiAgentRuntime: StudyAgentRuntime {
             ]
             let data = try JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted, .sortedKeys])
             try data.write(to: modelsURL, options: .atomic)
+            try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: modelsURL.path)
             trace("wrote custom models.json provider=\(providerKey) baseUrl=\(trimmedBase)")
         } catch {
             trace("failed to write models.json: \(error.localizedDescription)")
@@ -1682,90 +1745,20 @@ public actor PiAgentRuntime: StudyAgentRuntime {
 
     private func preparePiConfigurationDirectory() throws -> URL {
         let fileManager = FileManager.default
-        let destination = runtimeDirectory.appendingPathComponent("PiConfig", isDirectory: true)
-        try fileManager.createDirectory(at: destination, withIntermediateDirectories: true)
-        try? fileManager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: destination.path)
-
-        // WeiBei-owned Pi agent dir only — do not read/write terminal `~/.pi/agent` each launch.
-        try WeiBeiAgentDataPaths.ensurePiAgentDirectory()
-        WeiBeiAgentDataPaths.migrateHomePiAuthIfNeeded()
-        let source = WeiBeiAgentDataPaths.piAgentDirectory
-
-        if source.standardizedFileURL != destination.standardizedFileURL {
-            syncLocalPiAuth(from: source, to: destination)
-            seedLocalPiSettings(from: source, to: destination)
+        try fileManager.createDirectory(
+            at: persistentPiConfigurationDirectory,
+            withIntermediateDirectories: true
+        )
+        try? fileManager.setAttributes(
+            [.posixPermissions: 0o700],
+            ofItemAtPath: persistentPiConfigurationDirectory.path
+        )
+        let remoteCatalogCacheURL = persistentPiConfigurationDirectory
+            .appendingPathComponent("models-store.json")
+        if fileManager.fileExists(atPath: remoteCatalogCacheURL.path) {
+            try fileManager.removeItem(at: remoteCatalogCacheURL)
         }
-        return destination
-    }
-
-    private func syncLocalPiAuth(from sourceDirectory: URL, to destinationDirectory: URL) {
-        let fileManager = FileManager.default
-        let destination = destinationDirectory.appendingPathComponent("auth.json")
-        let source = sourceDirectory.appendingPathComponent("auth.json")
-        guard let attributes = try? fileManager.attributesOfItem(atPath: source.path),
-              let size = attributes[.size] as? NSNumber,
-              size.intValue <= 1_048_576,
-              let sourceData = try? Data(contentsOf: source),
-              let sourceObject = try? JSONSerialization.jsonObject(with: sourceData) as? [String: Any]
-        else { return }
-
-        // Prefer WeiBei-owned auth; keep any destination-only keys for this workspace runtime.
-        var merged = sourceObject
-        if let existingData = try? Data(contentsOf: destination),
-           let existing = try? JSONSerialization.jsonObject(with: existingData) as? [String: Any] {
-            for (key, value) in existing where merged[key] == nil {
-                merged[key] = value
-            }
-            // WeiBei store wins for OAuth providers (subscription login from Settings).
-            for (key, value) in sourceObject {
-                if let entry = value as? [String: Any], entry["type"] as? String == "oauth" {
-                    merged[key] = value
-                }
-            }
-        }
-        do {
-            let data = try JSONSerialization.data(withJSONObject: merged, options: [.prettyPrinted, .sortedKeys])
-            try data.write(to: destination, options: [.atomic])
-            try? fileManager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: destination.path)
-        } catch {
-            trace("could not seed isolated PI auth: \(error.localizedDescription)")
-        }
-    }
-
-    private func piAuthDataContainsCredential(_ data: Data) -> Bool {
-        guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              !root.isEmpty else {
-            return false
-        }
-        let credentialKeys = ["access", "refresh", "key", "apiKey", "token"]
-        return root.values.contains { value in
-            guard let credential = value as? [String: Any] else { return false }
-            return credentialKeys.contains { key in
-                guard let candidate = credential[key] as? String else { return false }
-                return !candidate.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            }
-        }
-    }
-
-    private func seedLocalPiSettings(from sourceDirectory: URL, to destinationDirectory: URL) {
-        let source = sourceDirectory.appendingPathComponent("settings.json")
-        guard let data = try? Data(contentsOf: source),
-              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
-        let allowedKeys = ["defaultProvider", "defaultModel", "defaultThinkingLevel"]
-        let settings = allowedKeys.reduce(into: [String: Any]()) { result, key in
-            if let value = object[key] as? String {
-                result[key] = value
-            }
-        }
-        guard JSONSerialization.isValidJSONObject(settings),
-              let sanitized = try? JSONSerialization.data(withJSONObject: settings, options: [.sortedKeys]) else { return }
-        let destination = destinationDirectory.appendingPathComponent("settings.json")
-        do {
-            try sanitized.write(to: destination, options: [.atomic])
-            try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: destination.path)
-        } catch {
-            trace("could not seed isolated PI settings: \(error.localizedDescription)")
-        }
+        return persistentPiConfigurationDirectory
     }
 
     private func writeContext(_ context: StudyAgentContextEnvelope) throws {
@@ -1780,7 +1773,7 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         fields: [String: Any] = [:],
         timeoutSeconds: UInt64
     ) async throws -> PiRPCResponse {
-        guard let inputHandle, process?.isRunning == true else {
+        guard inputHandle != nil, process?.isRunning == true else {
             throw PiAgentRuntimeError.unavailable
         }
 
@@ -1788,8 +1781,6 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         var object = fields
         object["id"] = id
         object["type"] = type
-        var data = try JSONSerialization.data(withJSONObject: object)
-        data.append(0x0A)
         trace("send type=\(type) id=\(id)")
 
         return try await withTaskCancellationHandler(operation: {
@@ -1804,7 +1795,7 @@ public actor PiAgentRuntime: StudyAgentRuntime {
                 }
                 pendingCommands[id] = PendingCommand(continuation: continuation, timeoutTask: timeoutTask)
                 do {
-                    try inputHandle.write(contentsOf: data)
+                    try writeRPCObject(object)
                 } catch {
                     if let pending = pendingCommands.removeValue(forKey: id) {
                         pending.timeoutTask.cancel()
@@ -1817,6 +1808,15 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         })
     }
 
+    private func writeRPCObject(_ object: [String: Any]) throws {
+        guard let inputHandle, process?.isRunning == true else {
+            throw PiAgentRuntimeError.unavailable
+        }
+        var data = try JSONSerialization.data(withJSONObject: object)
+        data.append(0x0A)
+        try inputHandle.write(contentsOf: data)
+    }
+
     private func timeoutCommand(id: String, command: String) {
         guard let pending = pendingCommands.removeValue(forKey: id) else { return }
         trace("timeout type=\(command) id=\(id)")
@@ -1827,6 +1827,127 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         guard let pending = pendingCommands.removeValue(forKey: id) else { return }
         pending.timeoutTask.cancel()
         pending.continuation.resume(throwing: PiAgentRuntimeError.cancelled)
+    }
+
+    private func waitForManagement() async throws -> PiManagementEnvelope {
+        try await withCheckedThrowingContinuation { continuation in
+            guard var management = pendingManagement else {
+                continuation.resume(throwing: PiAgentRuntimeError.cancelled)
+                return
+            }
+            if let completed = management.completed {
+                pendingManagement = nil
+                continuation.resume(with: completed)
+            } else {
+                management.continuation = continuation
+                pendingManagement = management
+            }
+        }
+    }
+
+    private func finishManagement(with result: Result<PiManagementEnvelope, Error>) {
+        guard var management = pendingManagement else { return }
+        guard management.completed == nil else { return }
+        management.promptTasks.values.forEach { $0.cancel() }
+        management.promptTasks.removeAll()
+        if let continuation = management.continuation {
+            pendingManagement = nil
+            continuation.resume(with: result)
+        } else {
+            management.completed = result
+            pendingManagement = management
+        }
+    }
+
+    private func cancelManagement() {
+        guard pendingManagement != nil else { return }
+        finishManagement(with: .failure(PiAgentRuntimeError.cancelled))
+        shutdownProcess(reason: PiAgentRuntimeError.cancelled)
+    }
+
+    private func handleExtensionUIRequest(_ request: PiRPCExtensionUIRequest) async {
+        guard let management = pendingManagement else { return }
+        if request.method == "notify", let message = request.message {
+            do {
+                guard let envelope = try PiManagementCodec.envelope(from: message) else { return }
+                switch envelope.kind {
+                case "event":
+                    if let event = envelope.event {
+                        await management.interaction.notify(event)
+                    }
+                case "result":
+                    finishManagement(with: .success(envelope))
+                case "error":
+                    finishManagement(
+                        with: .failure(
+                            PiAgentRuntimeError.agentFailed(
+                                sanitizedDiagnostic(envelope.message ?? "PI management failed")
+                            )
+                        )
+                    )
+                default:
+                    break
+                }
+            } catch {
+                finishManagement(with: .failure(error))
+            }
+            return
+        }
+
+        guard ["input", "select"].contains(request.method),
+              let title = request.title else { return }
+        do {
+            let prompt = try PiManagementCodec.prompt(from: title)
+            guard (request.method == "select") == (prompt.type == .select) else {
+                throw PiAgentRuntimeError.protocolFailure("PI management prompt method did not match")
+            }
+            if prompt.type == .select,
+               request.options != (prompt.options?.map(\.label) ?? []) {
+                throw PiAgentRuntimeError.protocolFailure("PI management prompt options did not match")
+            }
+            let interaction = management.interaction
+            let task = Task { [weak self] in
+                do {
+                    let value = try await interaction.prompt(prompt)
+                    let rpcValue: String
+                    if prompt.type == .select {
+                        rpcValue = prompt.options?.first(where: { $0.id == value })?.label ?? value
+                    } else {
+                        rpcValue = value
+                    }
+                    try await self?.sendExtensionUIResponse(id: request.id, value: rpcValue)
+                } catch {
+                    try? await self?.sendExtensionUICancellation(id: request.id)
+                    await self?.finishManagement(with: .failure(error))
+                }
+            }
+            var updated = management
+            updated.promptTasks[request.id] = task
+            pendingManagement = updated
+        } catch {
+            finishManagement(with: .failure(error))
+        }
+    }
+
+    private func sendExtensionUIResponse(id: String, value: String) throws {
+        guard value.utf8.count <= 1_048_576 else {
+            throw PiAgentRuntimeError.protocolFailure("PI management input exceeded the size limit")
+        }
+        try writeRPCObject([
+            "type": "extension_ui_response",
+            "id": id,
+            "value": value,
+        ])
+        pendingManagement?.promptTasks.removeValue(forKey: id)
+    }
+
+    private func sendExtensionUICancellation(id: String) throws {
+        try writeRPCObject([
+            "type": "extension_ui_response",
+            "id": id,
+            "cancelled": true,
+        ])
+        pendingManagement?.promptTasks.removeValue(forKey: id)
     }
 
     private func waitForRun(id: UUID) async throws -> StudyAgentReply {
@@ -1933,6 +2054,9 @@ public actor PiAgentRuntime: StudyAgentRuntime {
             run.lastError = sanitizedDiagnostic(message)
             activeRun = run
             refreshRunWatchdog()
+
+        case let .extensionUIRequest(request):
+            await handleExtensionUIRequest(request)
 
         case let .toolStarted(id, name, argumentsJSON):
             guard var run = activeRun else { return }
@@ -2213,7 +2337,7 @@ public actor PiAgentRuntime: StudyAgentRuntime {
             if stopReason == "aborted" {
                 finishRun(id: run.id, with: .failure(PiAgentRuntimeError.cancelled))
             } else if stopReason == "error" {
-                let detail = modelError.map(userFacingFailureDetail)
+                let detail = modelError.map { boundedDiagnostic($0) }
                     ?? run.lastError
                     ?? "PI 模型请求失败，但运行时没有返回错误详情"
                 finishRun(id: run.id, with: .failure(PiAgentRuntimeError.agentFailed(detail)))
@@ -2224,7 +2348,7 @@ public actor PiAgentRuntime: StudyAgentRuntime {
             }
 
         case let .extensionError(message):
-            let message = userFacingFailureDetail(message)
+            let message = boundedDiagnostic(message)
             if let runID = activeRun?.id {
                 finishRun(id: runID, with: .failure(PiAgentRuntimeError.agentFailed(message)))
             } else {
@@ -2370,22 +2494,11 @@ public actor PiAgentRuntime: StudyAgentRuntime {
     }
 
     private func sanitizedDiagnostic(_ value: String) -> String {
-        PiAgentDiagnosticSanitizer.sanitize(value, secret: providerConfiguration.apiKey)
+        PiAgentDiagnosticSanitizer.sanitize(value)
     }
 
     private func boundedDiagnostic(_ value: String, limit: Int = 1_024) -> String {
         String(sanitizedDiagnostic(value).prefix(limit))
-    }
-
-    private func userFacingFailureDetail(_ value: String) -> String {
-        let sanitized = sanitizedDiagnostic(value)
-        if sanitized.contains("weibei.rich_answer.repair_fault")
-            || sanitized.contains("repair_fault")
-            || sanitized.contains("RichAnswerUI")
-            || sanitized.contains("payload") {
-            return "PI 模型未完成本轮回答"
-        }
-        return String(sanitized.prefix(1_024))
     }
 
     private func shutdownProcess(reason: Error) {
@@ -2419,6 +2532,15 @@ public actor PiAgentRuntime: StudyAgentRuntime {
             pending.continuation.resume(throwing: reason)
         }
         pendingCommands.removeAll()
+
+        if let management = pendingManagement {
+            let managementReason: Error = (reason as? PiAgentRuntimeError) == .cancelled
+                ? PiAgentRuntimeError.cancelled
+                : PiAgentRuntimeError.inFlightFailed(reason.localizedDescription)
+            management.promptTasks.values.forEach { $0.cancel() }
+            pendingManagement = nil
+            management.continuation?.resume(throwing: managementReason)
+        }
 
         if let runID = activeRun?.id {
             let activeReason: Error

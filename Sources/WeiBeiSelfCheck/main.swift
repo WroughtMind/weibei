@@ -3,7 +3,6 @@ import CoreText
 import Darwin
 import Foundation
 import PDFKit
-import Security
 import WeiBeiCore
 
 func expect(_ condition: @autoclosure () -> Bool, _ message: String) {
@@ -705,126 +704,6 @@ expect(
     "a failed native PDF batch is bisected to single pages instead of sending unattempted text pages to OCR"
 )
 
-let data = Data("""
-{"output":[{"content":[{"type":"output_text","text":"只根据当前材料回答。"}]}]}
-""".utf8)
-let text = try OpenAIResponsesClient.extractText(from: data)
-expect(text == "只根据当前材料回答。", "response parser")
-let groundedPrompt = OpenAIResponsesClient.composePrompt(
-    question: "解释金融体系",
-    materialTitle: "Mishkin 教材样例",
-    materialText: "金融体系把储蓄者的资金转移给有投资机会的人。",
-    noteTitle: "利率笔记",
-    noteText: "## 摘录\n金融体系和利率相关。",
-    selectionTitle: "Mishkin 教材样例，第 1 页选区",
-    selectionText: "储蓄者的资金转移给有投资机会的人"
-)
-expect(groundedPrompt.input.contains("当前材料：Mishkin 教材样例"), "agent prompt includes material title")
-expect(groundedPrompt.input.contains("当前笔记：利率笔记"), "agent prompt includes note title")
-expect(groundedPrompt.input.contains("当前选区（来源：Mishkin 教材样例，第 1 页选区）："), "agent prompt includes selection source")
-expect(groundedPrompt.instructions.contains("普通问题可以使用通用知识")
-    && groundedPrompt.instructions.contains("就近标注真实标题")
-    && !groundedPrompt.instructions.contains("回答末尾用“来源依据”"), "agent prompt answers ordinary questions and cites only material actually used")
-expect(groundedPrompt.instructions.contains("学习助手") && !groundedPrompt.instructions.contains("学习 Agent"), "agent prompt speaks as a study assistant instead of internal agent copy")
-let multiSelectionPrompt = OpenAIResponsesClient.composePrompt(
-    question: "比较这些片段",
-    materialTitle: "Mishkin 教材样例",
-    materialText: "金融体系与利率。",
-    noteTitle: "利率笔记",
-    noteText: "",
-    selectionTitle: "2 个已选文本片段",
-    selectionText: """
-    片段 1（来源：Mishkin 教材样例，第 1 页）：
-    金融体系转移资金。
-
-    片段 2（来源：利率笔记）：
-    利率是资金使用价格。
-    """
-)
-expect(multiSelectionPrompt.input.contains("当前选区（来源：2 个已选文本片段）：")
-    && multiSelectionPrompt.input.contains("片段 1（来源：Mishkin 教材样例，第 1 页）：")
-    && multiSelectionPrompt.input.contains("片段 2（来源：利率笔记）："), "agent prompt can carry multiple selected text attachments with source labels")
-let currentPagePrompt = OpenAIResponsesClient.composePrompt(
-    question: "解释当前页",
-    materialTitle: "Mishkin 教材样例，第 3 页",
-    materialText: "第 1 页\n旧页面内容\n\n第 3 页\n当前页内容\n\n第 4 页\n后续页面内容",
-    noteTitle: "利率笔记",
-    noteText: "",
-    selectionText: nil
-)
-expect(currentPagePrompt.input.contains("当前材料：Mishkin 教材样例，第 3 页")
-    && currentPagePrompt.input.contains("第 3 页\n当前页内容")
-    && !currentPagePrompt.input.contains("旧页面内容")
-    && !currentPagePrompt.input.contains("后续页面内容"), "agent prompt focuses PDF material text on the current reader page when the material title has a page reference")
-let noteOnlyPrompt = OpenAIResponsesClient.composePrompt(
-    question: "整理这段",
-    materialTitle: "未选择材料",
-    materialText: "",
-    noteTitle: "概念笔记",
-    noteText: "实际利率需要区分通胀预期。",
-    selectionText: "实际利率"
-)
-expect(noteOnlyPrompt.input.contains("当前材料：无") && noteOnlyPrompt.input.contains("当前选区（来源：概念笔记）："), "note-only prompt anchors selection to the current note")
-let englishPrompt = OpenAIResponsesClient.composePrompt(
-    question: "Summarize this",
-    materialTitle: "",
-    materialText: "",
-    noteTitle: "",
-    noteText: "Real interest rates account for expected inflation.",
-    selectionTitle: "",
-    selectionText: "real interest rates",
-    language: .english
-)
-expect(
-    englishPrompt.input.contains("Current material: none")
-        && englishPrompt.input.contains("Current note: Current note")
-        && englishPrompt.input.contains("Current selection (source: Current note):")
-        && englishPrompt.instructions.contains("Answer in English")
-        && englishPrompt.instructions.contains("general questions may use general knowledge")
-        && englishPrompt.instructions.contains("cite its real title next to the relevant sentence")
-        && !englishPrompt.instructions.contains("At the end, add a 'Sources used' section")
-        && !englishPrompt.input.contains("当前笔记"),
-    "agent prompt has a complete English note-only mode"
-)
-expect(OpenAIAPIKeyStore.cleaned("  sk-test\n") == "sk-test", "api key cleaning")
-
-do {
-    let temporaryKeychainURL = FileManager.default.temporaryDirectory
-        .appendingPathComponent("weibei-selfcheck-\(UUID().uuidString).keychain-db")
-    let temporaryKeychainPassword = Data("weibei-selfcheck-only".utf8)
-    var temporaryKeychain: SecKeychain?
-    let createStatus = temporaryKeychainURL.path.withCString { path in
-        temporaryKeychainPassword.withUnsafeBytes { password in
-            SecKeychainCreate(path, UInt32(password.count), password.baseAddress, false, nil, &temporaryKeychain)
-        }
-    }
-    expect(createStatus == errSecSuccess && temporaryKeychain != nil, "isolated self-check keychain is created without changing the user's default keychain")
-    guard let temporaryKeychain else { exit(1) }
-    defer {
-        SecKeychainDelete(temporaryKeychain)
-    }
-
-    let temporaryCredentialStore = WeiBeiCredentialStore(
-        service: "com.changfenhuang.weibei.selfcheck.\(UUID().uuidString)",
-        account: "OPENAI_API_KEY",
-        keychain: temporaryKeychain
-    )
-    try? temporaryCredentialStore.delete()
-    try temporaryCredentialStore.save("  sk-selfcheck\n")
-    expect(temporaryCredentialStore.load() == "sk-selfcheck", "isolated credential store save and load")
-    try temporaryCredentialStore.delete()
-    expect(temporaryCredentialStore.load().isEmpty, "isolated credential store delete")
-
-    // Production path: file under Application Support, no login-keychain UI.
-    let fileService = "com.changfenhuang.weibei.selfcheck.file.\(UUID().uuidString)"
-    let fileStore = WeiBeiCredentialStore(service: fileService, account: "TEST_KEY")
-    try? fileStore.delete()
-    try fileStore.save(" sk-file-store \n")
-    expect(fileStore.load() == "sk-file-store", "WeiBei app-data credential file save and load")
-    try fileStore.delete()
-    expect(fileStore.load().isEmpty, "WeiBei app-data credential file delete")
-}
-
 let calloutSelectionText = MarkdownSelectionSanitizer.clean("""
 [!quote] 选区摘录
 利率是资金使用价格的表达。
@@ -974,12 +853,45 @@ expect(WorkspaceLayout.documentAgentNotes.label(language: .chinese) == "阅读-�
     && WorkspaceLayout.documentNotesAgent.label(language: .chinese) == "阅读-笔记-对话"
     && WorkspaceLayout.documentNotesSplit.label(language: .english) == "Reader / Notes", "layout labels use localized task language instead of internal pane names")
 expect(WorkspaceLayout.immersiveConversation.systemImage == "bubble.left.and.text.bubble.right" && WorkspaceLayout.immersiveWriting.systemImage == "square.and.pencil", "immersive layouts expose semantic menu icons")
+func readSource(_ relativePath: String) -> String {
+    let url = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+        .appendingPathComponent(relativePath)
+    return (try? String(contentsOf: url, encoding: .utf8)) ?? ""
+}
+let agentDataPathsSource = readSource("Sources/WeiBeiCore/WeiBeiAgentDataPaths.swift")
+let workspaceStoreSource = readSource("Sources/WeiBei/Stores/WorkspaceStore.swift")
+let workspaceModelsSource = readSource("Sources/WeiBeiCore/WorkspaceModels.swift")
+let piAgentRuntimeSource = readSource("Sources/WeiBeiCore/PiAgentRuntime.swift")
+let piManagementSource = readSource("Sources/WeiBeiCore/AgentResources/management-extension.ts")
+let piOAuthSource = readSource("Sources/WeiBei/Support/PiOAuthService.swift")
+let credentialProfilesSource = readSource("Sources/WeiBeiCore/AgentCredentialProfiles.swift")
+expect(
+    piManagementSource.contains("const { ModelRuntime } = await import(PI_PACKAGE)")
+        && piManagementSource.contains("ModelRuntime.create")
+        && piManagementSource.contains("runtime.getProviders()")
+        && piManagementSource.contains("runtime.getModels()")
+        && piManagementSource.contains("runtime.listCredentials()")
+        && piManagementSource.contains("runtime.login(request.providerId, request.authType")
+        && piManagementSource.contains("runtime.logout(request.providerId)")
+        && piOAuthSource.contains("runtime.managementCatalog")
+        && piOAuthSource.contains("runtime.login(")
+        && piOAuthSource.contains("runtime.logout(")
+        && agentDataPathsSource.contains("piAgentDirectory")
+        && !agentDataPathsSource.contains("secretsDirectory")
+        && !agentDataPathsSource.contains("piAuthJSON")
+        && !agentDataPathsSource.contains("migrateHomePiAuthIfNeeded")
+        && piAgentRuntimeSource.contains("WeiBeiAgentDataPaths.piAgentDirectory")
+        && !piAgentRuntimeSource.contains("environment[providerID.environmentAPIKeyName]")
+        && !workspaceModelsSource.contains("ModelListProtocol")
+        && !workspaceStoreSource.contains("AgentModelListService")
+        && !credentialProfilesSource.contains("KeyHelp")
+        && !credentialProfilesSource.contains("environmentAPIKeyName"),
+    "embedded Pi exclusively owns credentials, provider login, and model discovery"
+)
 // Provider console metadata stays callable and preserves its public values.
 for provider in AgentProviderID.allCases {
     _ = AgentProviderConsoleLinks.loginURL(for: provider)
     _ = AgentProviderConsoleLinks.accountURL(for: provider)
-    _ = AgentProviderConsoleLinks.keyHelp(language: .chinese, provider: provider)
-    _ = AgentProviderConsoleLinks.keyHelp(language: .english, provider: provider)
     _ = AgentProviderConsoleLinks.metadata(for: provider)
 }
 expect(AgentProviderConsoleLinks.loginURL(for: .openai)?.absoluteString == "https://platform.openai.com/api-keys"
@@ -998,20 +910,7 @@ expect(AgentProviderConsoleLinks.loginURL(for: .openai)?.absoluteString == "http
     && AgentProviderConsoleLinks.loginURL(for: .llamaCpp) == nil
     && AgentProviderConsoleLinks.loginURL(for: .xiaomi) == nil
     && AgentProviderConsoleLinks.accountURL(for: .deepseek)?.absoluteString == "https://platform.deepseek.com/api_keys",
-    "provider console login/account URLs match the pre-L5 golden set")
-expect(AgentProviderConsoleLinks.keyHelp(language: .chinese, provider: .openaiCodex).contains("订阅 OAuth")
-    && AgentProviderConsoleLinks.keyHelp(language: .english, provider: .openaiCodex).contains("Subscription OAuth")
-    && AgentProviderConsoleLinks.keyHelp(language: .chinese, provider: .anthropic).contains("ANTHROPIC_API_KEY")
-    && AgentProviderConsoleLinks.keyHelp(language: .chinese, provider: .azureOpenAI).contains("AZURE_OPENAI_BASE_URL")
-    && AgentProviderConsoleLinks.keyHelp(language: .chinese, provider: .amazonBedrock).contains("AWS_BEARER_TOKEN_BEDROCK")
-    && AgentProviderConsoleLinks.keyHelp(language: .chinese, provider: .custom).contains("OpenAI 兼容")
-    && AgentProviderConsoleLinks.keyHelp(language: .chinese, provider: .llamaCpp).contains("llama.cpp")
-    && AgentProviderConsoleLinks.keyHelp(language: .chinese, provider: .openai).contains("OPENAI_API_KEY")
-    && AgentProviderConsoleLinks.metadata(for: .openai).help == .genericEnv
-    && AgentProviderConsoleLinks.metadata(for: .openaiCodex).help == .openaiCodex
-    && AgentProviderConsoleLinks.metadata(for: .cloudflareAIGateway).help == .cloudflareAIGateway
-    && AgentProviderConsoleLinks.metadata(for: .cloudflareWorkersAI).help == .cloudflareWorkersAI,
-    "provider key-help copy matches the pre-L5 golden set for special and generic cases")
+    "provider console login/account URLs match the golden set")
 // WP9: 行文进行中 V3 loading motion — no three-dot pulse card; hang-proof AppKit orbit.
 // Deleted overlay views (drawer / corner / quiet insight / compact previews) are gone.
 expect(LibraryNavigator.adjacentID(in: [], selectedID: nil, step: 1) == nil, "library navigation empty")
@@ -1075,12 +974,8 @@ let edgeFloatingPoint = SelectionFloatingAgentPlacement.position(
 )
 expect(edgeFloatingPoint.x == 918 && edgeFloatingPoint.y == 572, "selection agent flips to the left of text near the window edge")
 expect(AgentMessage(role: .assistant, text: "整理完成", source: nil).isUsableAgentAnswer, "usable agent answer")
-expect(!AgentMessage(role: .assistant, text: "未配置密钥。", source: nil).isUsableAgentAnswer, "credential setup message is not writable")
-expect(!AgentMessage(role: .assistant, text: "未配置 OPENAI_API_KEY。", source: nil).isUsableAgentAnswer, "api key setup message is not writable")
-expect(!AgentMessage(role: .assistant, text: "未配置 OPENAI_API_KEY 或钥匙串密钥。", source: nil).isUsableAgentAnswer, "keychain setup message is not writable")
-expect(!AgentMessage(role: .assistant, text: "请求失败：网络错误", source: nil).isUsableAgentAnswer, "agent error is not writable")
-expect(!AgentMessage(role: .assistant, text: "请求失败\n可直接重试。", source: nil).isUsableAgentAnswer, "generic failure header without colon is not writable")
-expect(!AgentMessage(role: .assistant, text: "Agent 请求失败：网络错误", source: nil).isUsableAgentAnswer, "legacy agent error is not writable")
+expect(!AgentMessage(role: .assistant, text: "认证已失效", source: nil, failureKind: .unauthorized).isUsableAgentAnswer, "structured authentication failures are not writable")
+expect(!AgentMessage(role: .assistant, text: "请求失败", source: nil, failureKind: .generic).isUsableAgentAnswer, "structured agent failures are not writable")
 expect(!AgentMessage(
     role: .assistant,
     text: "尚未完成",

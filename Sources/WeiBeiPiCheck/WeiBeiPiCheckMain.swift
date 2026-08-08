@@ -21,6 +21,44 @@ struct WeiBeiPiCheckMain {
             return
         }
 
+        if CommandLine.arguments.contains("--authentication-status") {
+            var status = AgentAuthenticationStatus()
+            status.recordFailure(
+                .offline,
+                provider: .openaiCodex,
+                authMethod: .subscription
+            )
+            status.recordFailure(
+                .unauthorized,
+                provider: .openaiCodex,
+                authMethod: .apiKey
+            )
+            guard !status.requiresLogin(for: .openaiCodex) else {
+                fputs("authentication-status-check failed: 非 OAuth 失效被误判为需要登录\n", stderr)
+                exit(1)
+            }
+            status.recordFailure(
+                .unauthorized,
+                provider: .openaiCodex,
+                authMethod: .subscription
+            )
+            guard status.requiresLogin(for: .openaiCodex) else {
+                fputs("authentication-status-check failed: OAuth 认证失败后仍显示已连接\n", stderr)
+                exit(1)
+            }
+            guard !status.requiresLogin(for: .anthropic) else {
+                fputs("authentication-status-check failed: 一个服务失效误伤其他服务\n", stderr)
+                exit(1)
+            }
+            status.recordSuccess(provider: .openaiCodex, authMethod: .subscription)
+            guard !status.requiresLogin(for: .openaiCodex) else {
+                fputs("authentication-status-check failed: 重新登录成功后仍要求登录\n", stderr)
+                exit(1)
+            }
+            print("authentication-status-check passed")
+            return
+        }
+
         do {
             if let mergeConfiguration = try RichAnswerEvidenceMergeConfiguration.from(environment: environment) {
                 let result = try RichAnswerEvidenceMerger.merge(configuration: mergeConfiguration)
@@ -164,9 +202,128 @@ struct WeiBeiPiCheckMain {
             exit(1)
         }
 
+        if CommandLine.arguments.contains("--management-protocol") {
+            let root = FileManager.default.temporaryDirectory
+                .appendingPathComponent("weibei-pi-management-check-\(UUID().uuidString)", isDirectory: true)
+            let piAgentURL = root.appendingPathComponent("PiAgent", isDirectory: true)
+            let remoteCatalogCacheURL = piAgentURL.appendingPathComponent("models-store.json")
+            let runtime = PiAgentRuntime(
+                executableURL: executableURL,
+                runtimeDirectory: root.appendingPathComponent("Runtime", isDirectory: true),
+                persistentPiConfigurationDirectory: piAgentURL
+            )
+            do {
+                try FileManager.default.createDirectory(at: piAgentURL, withIntermediateDirectories: true)
+                try Data(#"{"remote-catalog-cache":"must-not-survive"}"#.utf8)
+                    .write(to: remoteCatalogCacheURL, options: .atomic)
+                let catalog = try await runtime.managementCatalog()
+                let selectableProviderIDs = Set(AgentProviderID.allCases.map(\.piProviderName))
+                let missingProviderIDs = catalog.providers
+                    .map(\.id)
+                    .filter { !selectableProviderIDs.contains($0) }
+                let providersWithoutAuth = catalog.providers
+                    .filter(\.authTypes.isEmpty)
+                    .map(\.id)
+                let modelProviderIDs = Set(catalog.models.map(\.providerId))
+                let providersWithoutModels = catalog.providers
+                    .filter { !$0.authTypes.contains(.oauth) }
+                    .map(\.id)
+                    .filter { !modelProviderIDs.contains($0) }
+                guard catalog.providers.count >= 30,
+                      catalog.models.count >= 500,
+                      missingProviderIDs.isEmpty,
+                      providersWithoutAuth.isEmpty,
+                      providersWithoutModels.isEmpty,
+                      catalog.providers.contains(where: {
+                          $0.id == "openai" && $0.authTypes.contains(.apiKey)
+                      }),
+                      catalog.providers.contains(where: {
+                          $0.id == "openai-codex" && $0.authTypes.contains(.oauth)
+                      }),
+                      catalog.credentials.isEmpty,
+                      !FileManager.default.fileExists(atPath: remoteCatalogCacheURL.path) else {
+                    throw PiAgentRuntimeError.protocolFailure(
+                        "PI management catalog was incomplete; missing=\(missingProviderIDs.joined(separator: ",")) no-auth=\(providersWithoutAuth.joined(separator: ",")) no-models=\(providersWithoutModels.joined(separator: ","))"
+                    )
+                }
+                let bedrockCredential = try await runtime.login(
+                    providerID: "amazon-bedrock",
+                    type: .apiKey,
+                    interaction: PiManagementInteraction(
+                        prompt: { prompt in
+                            switch prompt.type {
+                            case .select:
+                                guard prompt.options?.contains(where: { $0.id == "aws-profile" }) == true else {
+                                    throw PiAgentRuntimeError.protocolFailure("PI Bedrock login options were incomplete")
+                                }
+                                return "aws-profile"
+                            case .text:
+                                return "weibei-pi-check-profile"
+                            default:
+                                throw PiAgentRuntimeError.protocolFailure("PI Bedrock login requested unexpected input")
+                            }
+                        },
+                        notify: { _ in }
+                    )
+                )
+                guard bedrockCredential.providerId == "amazon-bedrock",
+                      bedrockCredential.type == .apiKey,
+                      try await runtime.managementCatalog().credentials.contains(where: {
+                          $0.providerId == "amazon-bedrock" && $0.type == .apiKey
+                      }) else {
+                    throw PiAgentRuntimeError.protocolFailure("PI multi-step API login did not persist")
+                }
+                try await runtime.logout(providerID: "amazon-bedrock")
+                let credential = try await runtime.login(
+                    providerID: "openai",
+                    type: .apiKey,
+                    interaction: PiManagementInteraction(
+                        prompt: { _ in "weibei-pi-check-key" },
+                        notify: { _ in }
+                    )
+                )
+                guard credential.providerId == "openai", credential.type == .apiKey,
+                      try await runtime.managementCatalog().credentials.contains(where: {
+                          $0.providerId == "openai" && $0.type == .apiKey
+                      }) else {
+                    throw PiAgentRuntimeError.protocolFailure("PI API-key login did not persist")
+                }
+                let authURL = piAgentURL.appendingPathComponent("auth.json")
+                let directoryMode = (try FileManager.default.attributesOfItem(atPath: piAgentURL.path)[.posixPermissions] as? NSNumber)?.intValue
+                let authMode = (try FileManager.default.attributesOfItem(atPath: authURL.path)[.posixPermissions] as? NSNumber)?.intValue
+                guard directoryMode == 0o700, authMode == 0o600 else {
+                    throw PiAgentRuntimeError.protocolFailure("PI credential permissions were not private")
+                }
+                try await runtime.logout(providerID: "openai")
+                let postLogoutCatalog = try await runtime.managementCatalog()
+                let auth = try Data(contentsOf: authURL)
+                let authObject = try JSONSerialization.jsonObject(with: auth) as? [String: Any]
+                guard postLogoutCatalog.credentials.isEmpty,
+                      authObject?.isEmpty == true else {
+                    throw PiAgentRuntimeError.protocolFailure("PI logout did not remove the credential")
+                }
+                await runtime.shutdown()
+                try? FileManager.default.removeItem(at: root)
+                print(
+                    "pi-management-check passed: providers=\(catalog.providers.count) models=\(catalog.models.count) multi-step-login=passed api-key-login=passed logout=passed"
+                )
+                return
+            } catch {
+                await runtime.shutdown()
+                try? FileManager.default.removeItem(at: root)
+                fputs("pi-management-check failed: \(error.localizedDescription)\n", stderr)
+                exit(1)
+            }
+        }
+
         let runtimeRoot = FileManager.default.temporaryDirectory
             .appendingPathComponent("weibei-pi-check-\(UUID().uuidString)", isDirectory: true)
-        let runtime = PiAgentRuntime(executableURL: executableURL, runtimeDirectory: runtimeRoot)
+        let piAgentRoot = runtimeRoot.appendingPathComponent("PiAgent", isDirectory: true)
+        let runtime = PiAgentRuntime(
+            executableURL: executableURL,
+            runtimeDirectory: runtimeRoot,
+            persistentPiConfigurationDirectory: piAgentRoot
+        )
 
         do {
             let manifest = try PiBundledRuntime.validate(
@@ -174,13 +331,12 @@ struct WeiBeiPiCheckMain {
                 containingAppURL: containingAppURL
             )
             let launchedPath = try await runtime.healthCheck()
-            let isolatedConfig = runtimeRoot.appendingPathComponent("PiConfig", isDirectory: true)
-            guard FileManager.default.fileExists(atPath: isolatedConfig.path) else {
+            guard FileManager.default.fileExists(atPath: piAgentRoot.path) else {
                 throw PiCheckError.missingIsolatedConfiguration
             }
             print("pi-check ready: PI \(manifest.piVersion) at \(launchedPath)")
 
-            let isolatedAuth = isolatedConfig.appendingPathComponent("auth.json")
+            let isolatedAuth = piAgentRoot.appendingPathComponent("auth.json")
             let hasConfiguredAuth = ((try? isolatedAuth.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0) > 2
             let runsLiveCheck = runsEvaluation
                 || liveCheckSetting == "1"
