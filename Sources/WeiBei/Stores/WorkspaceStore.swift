@@ -343,6 +343,7 @@ final class WorkspaceStore: ObservableObject {
     /// Last failed user question for precise one-tap retry.
     @Published private(set) var lastFailedAgentQuestion: String?
     @Published private(set) var lastAgentFailureKind: AgentFailureKind?
+    @Published private(set) var agentAuthenticationStatus = AgentAuthenticationStatus()
     @Published private(set) var latestAgentNoteProposal: StudyAgentNoteProposal?
     @Published private(set) var latestAgentLearningUpdate: StudyAgentLearningUpdate?
     @Published private(set) var noteSourceLinks: [NoteSourceLink] = [] {
@@ -14368,6 +14369,16 @@ final class WorkspaceStore: ObservableObject {
         touchActiveAgentProfileMetadata()
     }
 
+    func recordAgentAuthenticationSuccess(
+        provider: AgentProviderID,
+        authMethod: AgentAuthMethod
+    ) {
+        agentAuthenticationStatus.recordSuccess(
+            provider: provider,
+            authMethod: authMethod
+        )
+    }
+
     func selectAgentCredentialProfile(_ id: UUID) {
         guard let profile = agentCredentialProfiles.first(where: { $0.id == id }) else { return }
         activeAgentProfileID = id
@@ -18757,6 +18768,8 @@ final class WorkspaceStore: ObservableObject {
             agentRequestTask = nil
             return
         }
+        let requestProvider = agentProviderID
+        let requestAuthMethod = agentAuthMethod
         if reusingLastUserMessage {
             guard let userMessage = messages.last,
                   userMessage.role == .user,
@@ -18885,6 +18898,7 @@ final class WorkspaceStore: ObservableObject {
 
         var didAppendUserMessage = reusingLastUserMessage
         var replyMessageID: UUID?
+        var didStartModelRequest = false
         do {
             if !reusingLastUserMessage {
                 let userMessage = AgentMessage(role: .user, text: question, source: sourceTitle)
@@ -19022,13 +19036,19 @@ final class WorkspaceStore: ObservableObject {
                 contextRevision: "\(requestWorkspaceRevision):\(requestID.uuidString.lowercased())"
             )
             agentActivityText = ui("正在思考", "Thinking")
+            didStartModelRequest = true
             let reply = try await executeStudyAgentRequest(
                 request,
+                provider: requestProvider,
                 target: target,
                 replyMessageID: assistantMessage.id,
                 hostToolHandler: hostToolHandler
             )
             guard activeAgentRequestID == request.id else { return }
+            recordAgentAuthenticationSuccess(
+                provider: requestProvider,
+                authMethod: requestAuthMethod
+            )
             try validateAgentConversationTarget(target, mustBeActive: false)
             if activeStudySessionID == target.sessionID {
                 latestAgentNoteProposal = reply.noteProposal
@@ -19131,6 +19151,13 @@ final class WorkspaceStore: ObservableObject {
             }
             // Always restore the failed question so composer matches the failure copy.
             let kind = AgentFailureKind.classify(error)
+            if didStartModelRequest {
+                agentAuthenticationStatus.recordFailure(
+                    kind,
+                    provider: requestProvider,
+                    authMethod: requestAuthMethod
+                )
+            }
             agentDraftsBySessionID[target.sessionID] = question
             if activeStudySessionID == target.sessionID {
                 agentDraft = question
@@ -19341,6 +19368,7 @@ final class WorkspaceStore: ObservableObject {
 
     private func executeStudyAgentRequest(
         _ request: StudyAgentRequest,
+        provider selectedProvider: AgentProviderID,
         target: AgentConversationTarget,
         replyMessageID: UUID,
         hostToolHandler: @escaping StudyAgentHostToolHandler
@@ -19355,7 +19383,6 @@ final class WorkspaceStore: ObservableObject {
             )
         }
 #endif
-        let selectedProvider = agentProviderID
         let selectedModel = modelName.trimmingCharacters(in: .whitespacesAndNewlines)
         await piRuntime.configure(
             PiAgentProviderConfiguration(

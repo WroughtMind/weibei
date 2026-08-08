@@ -34,6 +34,33 @@ public enum AgentAuthMethod: String, Codable, CaseIterable, Identifiable, Sendab
     }
 }
 
+public struct AgentAuthenticationStatus: Equatable, Sendable {
+    private var providerIDsRequiringLogin: Set<String> = []
+
+    public init() {}
+
+    public func requiresLogin(for provider: AgentProviderID) -> Bool {
+        providerIDsRequiringLogin.contains(provider.rawValue)
+    }
+
+    public mutating func recordFailure(
+        _ failure: AgentFailureKind,
+        provider: AgentProviderID,
+        authMethod: AgentAuthMethod
+    ) {
+        guard failure == .unauthorized, authMethod == .subscription else { return }
+        providerIDsRequiringLogin.insert(provider.rawValue)
+    }
+
+    public mutating func recordSuccess(
+        provider: AgentProviderID,
+        authMethod: AgentAuthMethod
+    ) {
+        guard authMethod == .subscription else { return }
+        providerIDsRequiringLogin.remove(provider.rawValue)
+    }
+}
+
 /// A named, switchable agent configuration (provider + model + optional base URL).
 /// Credentials are provider-owned entries in embedded Pi and never enter this payload.
 public struct AgentCredentialProfile: Identifiable, Codable, Equatable, Sendable {
