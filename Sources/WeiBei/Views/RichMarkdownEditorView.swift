@@ -555,7 +555,6 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         "imageAttachmentRequested",
         "imagePickerRequested",
         "contentHeightChanged",
-        "finalizedMarkdownReady",
         "activeHeadingChanged",
         "compactPreviewWheel",
         "appShortcut",
@@ -814,9 +813,9 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         }
 
         private func reportRenderFailure() {
-            // A failure can race the two-frame finalized callback scheduled by
-            // finishStreamingMarkdown. Invalidate that callback before exposing
-            // the native fallback so a broken WebView cannot become ready again.
+            // A failure can race the finalized JavaScript evaluation. Invalidate
+            // that completion before exposing the native fallback so a broken
+            // WebView cannot become ready again.
             finalizedRenderGeneration &+= 1
             isReady = false
             onRenderFailure()
@@ -931,14 +930,6 @@ struct RichMarkdownEditorView: NSViewRepresentable {
                         "instance=\(performanceInstanceID.uuidString.lowercased())"
                 )
                 onContentHeightChange(CGFloat(height))
-            case "finalizedMarkdownReady":
-                guard let body = message.body as? [String: Any],
-                      let generation = (body["generation"] as? NSNumber)?.intValue,
-                      generation == finalizedRenderGeneration,
-                      let height = body["height"] as? Double,
-                      height.isFinite,
-                      height > 0 else { return }
-                onFinalizedRenderReady(CGFloat(height))
             case "editorFailure":
                 reportRenderFailure()
             case "activeHeadingChanged":
@@ -995,22 +986,35 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         func finishStreamingMarkdown(_ text: String) {
             finalizedRenderGeneration &+= 1
             let generation = finalizedRenderGeneration
+            let finalizedDocumentID = documentID
             pendingExternalMarkdown = nil
             webMarkdown = text
-            evaluate("""
+            webView?.evaluateJavaScript("""
             (() => {
-              window.WeiBeiEditor?.finishStreamingMarkdown(\(Self.json(text)));
-              window.requestAnimationFrame(() => {
-                window.requestAnimationFrame(() => {
-                  window.webkit?.messageHandlers?.finalizedMarkdownReady?.postMessage({
-                    documentID: \(Self.json(documentID)),
-                    generation: \(generation),
-                    height: Number(window.WeiBeiCompactPreviewHeight || 1)
-                  });
-                });
-              });
+              const didFinish = window.WeiBeiEditor?.finishStreamingMarkdown(\(Self.json(text)));
+              return {
+                didFinish: didFinish === true,
+                height: Number(window.WeiBeiCompactPreviewHeight || 1)
+              };
             })();
-            """)
+            """) { [weak self] value, error in
+                guard let self,
+                      generation == self.finalizedRenderGeneration,
+                      finalizedDocumentID == self.documentID else { return }
+                guard error == nil,
+                      let result = value as? [String: Any],
+                      result["didFinish"] as? Bool == true,
+                      let height = (result["height"] as? NSNumber)?.doubleValue,
+                      height.isFinite,
+                      height > 0 else {
+                    self.reportRenderFailure()
+                    return
+                }
+                // The finalized DOM is now installed. Async widgets such as
+                // Mermaid can render once the WebView is visible; their later
+                // ResizeObserver reports keep the row height authoritative.
+                self.onFinalizedRenderReady(CGFloat(height))
+            }
         }
 
         func setEditable(_ editable: Bool) {
