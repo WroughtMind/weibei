@@ -279,6 +279,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
     var onSourceReference: (String) -> Void = { _ in }
     var onAppShortcut: (String, NSEvent.ModifierFlags) -> Bool = { _, _ in false }
     var onRenderReady: () -> Void = {}
+    var onFinalizedRenderReady: (CGFloat) -> Void = { _ in }
     var onRenderFailure: () -> Void = {}
     var onSearchResult: (String, Bool) -> Void = { _, _ in }
     /// JSON array of `{id,text}` for selection-ask underline marks (read-only surfaces).
@@ -309,6 +310,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             onSourceReference: onSourceReference,
             onAppShortcut: onAppShortcut,
             onRenderReady: onRenderReady,
+            onFinalizedRenderReady: onFinalizedRenderReady,
             onRenderFailure: onRenderFailure,
             onSearchResult: onSearchResult,
             onSelectionAskMark: onSelectionAskMark
@@ -484,6 +486,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         context.coordinator.onSourceReference = onSourceReference
         context.coordinator.onAppShortcut = onAppShortcut
         context.coordinator.onRenderReady = onRenderReady
+        context.coordinator.onFinalizedRenderReady = onFinalizedRenderReady
         context.coordinator.onRenderFailure = onRenderFailure
         context.coordinator.onSearchResult = onSearchResult
         let nextBaseURL = markdownBaseURL?.absoluteString ?? ""
@@ -552,6 +555,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         "imageAttachmentRequested",
         "imagePickerRequested",
         "contentHeightChanged",
+        "finalizedMarkdownReady",
         "activeHeadingChanged",
         "compactPreviewWheel",
         "appShortcut",
@@ -670,6 +674,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         var onSourceReference: (String) -> Void
         var onAppShortcut: (String, NSEvent.ModifierFlags) -> Bool
         var onRenderReady: () -> Void
+        var onFinalizedRenderReady: (CGFloat) -> Void
         var onRenderFailure: () -> Void
         var onSearchResult: (String, Bool) -> Void
         var onSelectionAskMark: (String) -> Void
@@ -695,6 +700,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         private var lastAppliedSearchQuery = ""
         private var lastAppliedFocusRequest = -1
         private var lastAppliedSelectionAskMarks = ""
+        private var finalizedRenderGeneration = 0
 
         init(
             documentID: String,
@@ -718,6 +724,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             onSourceReference: @escaping (String) -> Void,
             onAppShortcut: @escaping (String, NSEvent.ModifierFlags) -> Bool,
             onRenderReady: @escaping () -> Void,
+            onFinalizedRenderReady: @escaping (CGFloat) -> Void,
             onRenderFailure: @escaping () -> Void,
             onSearchResult: @escaping (String, Bool) -> Void,
             onSelectionAskMark: @escaping (String) -> Void
@@ -743,6 +750,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             self.onSourceReference = onSourceReference
             self.onAppShortcut = onAppShortcut
             self.onRenderReady = onRenderReady
+            self.onFinalizedRenderReady = onFinalizedRenderReady
             self.onRenderFailure = onRenderFailure
             self.onSearchResult = onSearchResult
             self.onSelectionAskMark = onSelectionAskMark
@@ -806,6 +814,10 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         }
 
         private func reportRenderFailure() {
+            // A failure can race the two-frame finalized callback scheduled by
+            // finishStreamingMarkdown. Invalidate that callback before exposing
+            // the native fallback so a broken WebView cannot become ready again.
+            finalizedRenderGeneration &+= 1
             isReady = false
             onRenderFailure()
         }
@@ -919,6 +931,14 @@ struct RichMarkdownEditorView: NSViewRepresentable {
                         "instance=\(performanceInstanceID.uuidString.lowercased())"
                 )
                 onContentHeightChange(CGFloat(height))
+            case "finalizedMarkdownReady":
+                guard let body = message.body as? [String: Any],
+                      let generation = (body["generation"] as? NSNumber)?.intValue,
+                      generation == finalizedRenderGeneration,
+                      let height = body["height"] as? Double,
+                      height.isFinite,
+                      height > 0 else { return }
+                onFinalizedRenderReady(CGFloat(height))
             case "editorFailure":
                 reportRenderFailure()
             case "activeHeadingChanged":
@@ -959,21 +979,38 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         }
 
         func setMarkdown(_ text: String) {
+            finalizedRenderGeneration &+= 1
             pendingExternalMarkdown = text
             webMarkdown = text
             evaluate("window.WeiBeiEditor?.setMarkdown(\(Self.json(text)))")
         }
 
         func updateStreamingMarkdown(_ text: String) {
+            finalizedRenderGeneration &+= 1
             pendingExternalMarkdown = nil
             webMarkdown = text
             evaluate("window.WeiBeiEditor?.updateStreamingMarkdown(\(Self.json(text)))")
         }
 
         func finishStreamingMarkdown(_ text: String) {
+            finalizedRenderGeneration &+= 1
+            let generation = finalizedRenderGeneration
             pendingExternalMarkdown = nil
             webMarkdown = text
-            evaluate("window.WeiBeiEditor?.finishStreamingMarkdown(\(Self.json(text)))")
+            evaluate("""
+            (() => {
+              window.WeiBeiEditor?.finishStreamingMarkdown(\(Self.json(text)));
+              window.requestAnimationFrame(() => {
+                window.requestAnimationFrame(() => {
+                  window.webkit?.messageHandlers?.finalizedMarkdownReady?.postMessage({
+                    documentID: \(Self.json(documentID)),
+                    generation: \(generation),
+                    height: Number(window.WeiBeiCompactPreviewHeight || 1)
+                  });
+                });
+              });
+            })();
+            """)
         }
 
         func setEditable(_ editable: Bool) {

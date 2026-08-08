@@ -557,9 +557,10 @@ final class WorkspaceStore: ObservableObject {
 #endif
     private var agentStopTask: Task<Void, Never>?
     private var pendingAgentSwitchTargetID: UUID?
+    private var pendingAgentSwitchCourseID: UUID?
     private var agentDraftsBySessionID: [UUID: String] = [:]
-    /// Session-local proof for the one allowed course-home reuse case.
-    /// Deliberately not persisted: reopening the App makes an old empty Chat non-fresh.
+    /// Session-local identity of the one reusable, newly created empty Chat.
+    /// Deliberately not persisted: reopening the App starts with a fresh empty Chat.
     private var freshlyCreatedEmptyStudySessionID: UUID?
     private var agentContextRevision: UInt64 = 0
     private var coursePortableStateRevisions: [UUID: UInt64] = [:]
@@ -1167,7 +1168,7 @@ final class WorkspaceStore: ObservableObject {
         if let chatID = result.chatID,
            !studySessions.contains(where: {
                $0.id == chatID
-                   && $0.courseID == point.courseID
+                   && $0.relatedCourseIDs.contains(point.courseID)
                    && $0.scopeNeedsReview == false
                    && !$0.messages.isEmpty
            }) {
@@ -12683,22 +12684,13 @@ final class WorkspaceStore: ObservableObject {
         )
         guard !question.isEmpty,
               !isStoppingAgent,
+              !isAgentRunningInActiveChat,
+              agentRequestTask == nil || isAskingAgent,
               course(withID: courseID) != nil else {
             return nil
         }
 
-        let reusableSession: StudySession? = {
-            guard let session = activeStudySession,
-                  session.id == freshlyCreatedEmptyStudySessionID,
-                  session.messages.isEmpty,
-                  agentDraft.trimmingCharacters(
-                    in: .whitespacesAndNewlines
-                  ).isEmpty else {
-                return nil
-            }
-            return session
-        }()
-        guard let session = reusableSession
+        guard let session = activeStudySession
                 ?? createStudySession(courseID: nil) else {
             return nil
         }
@@ -12708,7 +12700,7 @@ final class WorkspaceStore: ObservableObject {
         agentDraft = question
         agentDraftsBySessionID[session.id] = question
         openConversationInWorkspace(courseID: courseID)
-        submitAgentDraft()
+        submitAgentDraft(targetCourseID: courseID)
         return session.id
     }
 
@@ -18455,7 +18447,7 @@ final class WorkspaceStore: ObservableObject {
         return "## \(ui("整理建议", "Organization suggestion"))\n\(text)"
     }
 
-    func submitAgentDraft() {
+    func submitAgentDraft(targetCourseID: UUID? = nil) {
         if isAgentRunningInActiveChat {
             cancelAgentRequest()
             return
@@ -18464,15 +18456,17 @@ final class WorkspaceStore: ObservableObject {
         guard !question.isEmpty, !isStoppingAgent else { return }
         if isAskingAgent {
             pendingAgentSwitchTargetID = activeStudySessionID
+            pendingAgentSwitchCourseID = targetCourseID
             isAgentSwitchConfirmationPresented = true
             return
         }
-        askAgent()
+        askAgent(targetCourseID: targetCourseID)
     }
 
     func dismissAgentSwitchConfirmation() {
         isAgentSwitchConfirmationPresented = false
         pendingAgentSwitchTargetID = nil
+        pendingAgentSwitchCourseID = nil
     }
 
     func confirmAgentSwitchAndSend() {
@@ -18480,20 +18474,21 @@ final class WorkspaceStore: ObservableObject {
               let targetID = pendingAgentSwitchTargetID,
               activeStudySessionID == targetID,
               !agentDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        let targetCourseID = pendingAgentSwitchCourseID
         dismissAgentSwitchConfirmation()
         stopAgent(restoreDraft: false) { [weak self] in
             guard let self,
                   self.activeStudySessionID == targetID,
                   self.studySessions.contains(where: { $0.id == targetID }),
                   !self.agentDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-            self.askAgent()
+            self.askAgent(targetCourseID: targetCourseID)
         }
     }
 
     func askAgent(
         reusingLastUserMessage: Bool = false,
         replayingSelections: [SelectionContext]? = nil,
-        replayingCourseID: UUID? = nil
+        targetCourseID: UUID? = nil
     ) {
         flushStagedNoteDraftForAgentContext()
         guard agentRequestTask == nil,
@@ -18503,10 +18498,11 @@ final class WorkspaceStore: ObservableObject {
         let question = agentDraft.trimmingCharacters(in: .whitespacesAndNewlines)
         let target: AgentConversationTarget
         do {
-            if reusingLastUserMessage, let session = activeStudySession {
+            if (reusingLastUserMessage || targetCourseID != nil),
+               let session = activeStudySession {
                 target = try makeAgentConversationTarget(
                     sessionID: session.id,
-                    courseID: replayingCourseID
+                    courseID: targetCourseID
                 )
             } else {
                 target = try agentConversationTarget()
@@ -18515,7 +18511,8 @@ final class WorkspaceStore: ObservableObject {
             recordAgentTargetFailure(
                 question: question,
                 error: error,
-                appendUserMessage: !reusingLastUserMessage
+                appendUserMessage: !reusingLastUserMessage,
+                targetCourseID: targetCourseID
             )
             return
         }
@@ -18650,7 +18647,8 @@ final class WorkspaceStore: ObservableObject {
     private func recordAgentTargetFailure(
         question: String,
         error: Error,
-        appendUserMessage: Bool = true
+        appendUserMessage: Bool = true,
+        targetCourseID: UUID? = nil
     ) {
         ensureActiveStudySession()
         guard let session = activeStudySession else { return }
@@ -18677,7 +18675,7 @@ final class WorkspaceStore: ObservableObject {
             origin: AgentReplyOrigin(
                 requestID: requestID,
                 chatID: session.id,
-                courseID: session.courseID
+                courseID: targetCourseID ?? session.courseID
             ),
             failureKind: .generic,
             retryQuestion: question
@@ -18772,7 +18770,8 @@ final class WorkspaceStore: ObservableObject {
             recordAgentTargetFailure(
                 question: question,
                 error: error,
-                appendUserMessage: !reusingLastUserMessage
+                appendUserMessage: !reusingLastUserMessage,
+                targetCourseID: target.courseID
             )
             agentRequestTask = nil
             return
@@ -18895,6 +18894,7 @@ final class WorkspaceStore: ObservableObject {
                 didAppendUserMessage = true
             }
             if let courseID = target.courseID {
+                associateStudySession(target.sessionID, with: [courseID])
                 _ = captureCourseResumePoint(
                     courseID: courseID,
                     chatID: target.sessionID
@@ -19283,14 +19283,17 @@ final class WorkspaceStore: ObservableObject {
         }
     }
 
-    func retryAgentRequest(_ question: String) {
+    func retryAgentRequest(
+        _ question: String,
+        targetCourseID: UUID? = nil
+    ) {
         guard !isAgentRunningInActiveChat, !isStoppingAgent else { return }
         let cleaned = question.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !cleaned.isEmpty else { return }
         agentDraft = cleaned
         lastFailedAgentQuestion = nil
         lastAgentFailureKind = nil
-        submitAgentDraft()
+        submitAgentDraft(targetCourseID: targetCourseID)
     }
 
     func regenerateLastAssistantReply() {
@@ -19333,7 +19336,7 @@ final class WorkspaceStore: ObservableObject {
         askAgent(
             reusingLastUserMessage: true,
             replayingSelections: replayingSelections,
-            replayingCourseID: reply.origin?.courseID
+            targetCourseID: reply.origin?.courseID
         )
     }
 

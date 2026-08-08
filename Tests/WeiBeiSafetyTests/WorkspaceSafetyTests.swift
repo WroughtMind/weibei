@@ -9,8 +9,8 @@ final class WorkspaceSafetyTests: XCTestCase {
     }
 
     @MainActor
-    func testImportedFileIdentitySafety() throws {
-        try ImportedIdentitySelfCheck.run()
+    func testImportedFileIdentitySafety() async throws {
+        try await ImportedIdentitySelfCheck.run()
     }
 
     @MainActor
