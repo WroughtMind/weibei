@@ -2266,8 +2266,10 @@ window.WeiBeiEditor = {
   finishStreamingMarkdown: (markdown) => {
     try {
       finishStreamingMarkdownInternal(markdown);
+      return true;
     } catch (error) {
       showFailure(error);
+      return false;
     }
   },
   replaceSelection: (markdown) => {

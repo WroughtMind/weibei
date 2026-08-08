@@ -6,6 +6,7 @@ enum ImportedIdentitySelfCheck {
     @MainActor
     static func run() throws {
         try launchAndPrimaryEntriesStartBlank()
+        try agentFailureMessagesExposeOnlyUserFacingDetails()
         try storageModelsDecodeLegacySnapshotsAndRoundTrip()
         try legacyPathSnapshotMigratesItsEntireRelationshipGraph()
         try selectionThreadMigrationWaitsForWorkspaceCommit()
@@ -30,6 +31,72 @@ enum ImportedIdentitySelfCheck {
         try failedWorkspaceSaveRecoversRenameOnRestart()
         try duplicateLegacyIdentityMigratesInOneLaunch()
         try replacedAndCrossVolumeFilesReceiveNewIdentities()
+    }
+
+    @MainActor
+    private static func agentFailureMessagesExposeOnlyUserFacingDetails() throws {
+        let internalFailure = PiAgentRuntimeError.protocolFailure(
+            "before_agent_start failed in /private/tmp/AgentResources/extension.ts while running get_state"
+        )
+        let internalKind = AgentFailureKind.classify(internalFailure)
+        let internalMessage = internalKind.userMessage(
+            language: .chinese,
+            userFacingDetail: WorkspaceStore.userFacingAgentFailureDetail(
+                for: internalFailure
+            ),
+            draftPreserved: true
+        )
+        let forbiddenInternalText = [
+            "/private",
+            "/tmp",
+            "extension.ts",
+            "before_agent_start",
+            "get_state",
+            "PI 通信",
+        ]
+        guard forbiddenInternalText.allSatisfy({
+            !internalMessage.contains($0)
+        }) else {
+            throw CheckError.failed(
+                "Agent 内部路径或协议细节进入了用户失败气泡"
+            )
+        }
+
+        let authenticationFailure = PiAgentRuntimeError.agentFailed(
+            "HTTP 401 refresh_token_reused provider response"
+        )
+        let authenticationKind = AgentFailureKind.classify(
+            authenticationFailure
+        )
+        let authenticationMessage = authenticationKind.userMessage(
+            language: .chinese,
+            userFacingDetail: WorkspaceStore.userFacingAgentFailureDetail(
+                for: authenticationFailure
+            )
+        )
+        guard authenticationKind == .unauthorized,
+              authenticationMessage.contains("重新登录"),
+              authenticationMessage.contains("API Key"),
+              !authenticationMessage.contains("refresh_token_reused") else {
+            throw CheckError.failed(
+                "认证失败没有保留安全的重新登录指引"
+            )
+        }
+
+        let targetFailure = WorkspaceStore.AgentConversationTargetError(
+            message: "发送前 Chat 已经切换，这条问题没有发到其他 Chat。"
+        )
+        let targetMessage = AgentFailureKind.generic.userMessage(
+            language: .chinese,
+            userFacingDetail: WorkspaceStore.userFacingAgentFailureDetail(
+                for: targetFailure
+            )
+        )
+        guard targetMessage.contains("发送前 Chat 已经切换") else {
+            throw CheckError.failed(
+                "魏碑生成的可操作 Chat 状态没有进入安全失败气泡"
+            )
+        }
     }
 
     @MainActor
@@ -493,6 +560,181 @@ enum ImportedIdentitySelfCheck {
                 && reopened.courseResumePoint(for: courseB.id) == pointB,
             "重开后课程学习现场不一致"
         )
+
+        do {
+            var rejectsCourseQuestionSave = false
+            let courseQuestionStore = makeStore { data, url in
+                if rejectsCourseQuestionSave {
+                    throw CheckError.failed("预期中的课程首页问题保存失败")
+                }
+                try data.write(to: url, options: [.atomic])
+            }
+            courseQuestionStore.activateCourse(courseA.id)
+            courseQuestionStore.openCourseNote(note.id)
+            try check(
+                courseQuestionStore.activateStudySession(
+                    chatA2.id,
+                    expectedCourseID: courseA.id,
+                    expectedScopeNeedsReview: false
+                ),
+                "无法准备课程首页复用的全局 Chat"
+            )
+            let originalChatID = try require(
+                courseQuestionStore.activeStudySessionID,
+                "课程首页问题前没有活动 Chat"
+            )
+            let originalSessionCount = courseQuestionStore.studySessions.count
+            let originalMessages = try require(
+                courseQuestionStore.activeStudySession?.messages,
+                "课程首页问题前没有活动 Chat 历史"
+            )
+            courseQuestionStore.presentCourseWorkspace(
+                .hub,
+                courseID: courseB.id
+            )
+            try check(
+                courseQuestionStore.activeStudySessionID == originalChatID
+                    && courseQuestionStore.studySessions.count
+                        == originalSessionCount
+                    && courseQuestionStore.activeNotebookItemID == note.id,
+                "打开另一门课程改变了全局 Chat 或清掉了原课程焦点"
+            )
+
+            let question = "从课程 B 首页继续当前全局 Chat"
+            rejectsCourseQuestionSave = true
+            let routedChatID = courseQuestionStore.submitCourseHomeQuestion(
+                question,
+                in: courseB.id
+            )
+            let blockedPreparationQuestion = "准备期间不得覆盖的问题"
+            try check(
+                courseQuestionStore.submitCourseHomeQuestion(
+                    blockedPreparationQuestion,
+                    in: courseB.id
+                ) == nil
+                    && courseQuestionStore.agentDraft == question,
+                "课程首页在请求准备期间覆盖了原问题"
+            )
+            var routedFailure: AgentMessage?
+            let routedDeadline = Date(timeIntervalSinceNow: 20)
+            repeat {
+                routedFailure = courseQuestionStore.activeStudySession?
+                    .messages
+                    .last(where: {
+                        $0.role == .assistant
+                            && $0.retryQuestion == question
+                            && $0.completionState == .interrupted
+                    })
+                if routedFailure != nil, !courseQuestionStore.isAskingAgent {
+                    break
+                }
+                RunLoop.current.run(
+                    mode: .default,
+                    before: Date(timeIntervalSinceNow: 0.01)
+                )
+            } while Date() < routedDeadline
+            let routedMessages = try require(
+                courseQuestionStore.activeStudySession?.messages,
+                "课程首页问题后活动 Chat 丢失"
+            )
+            let failure = try require(
+                routedFailure,
+                "课程首页问题没有在本地保存失败处停止"
+            )
+            try check(
+                routedChatID == originalChatID
+                    && courseQuestionStore.activeStudySessionID == originalChatID
+                    && courseQuestionStore.studySessions.count
+                        == originalSessionCount
+                    && Array(routedMessages.prefix(originalMessages.count))
+                        == originalMessages
+                    && routedMessages.contains {
+                        $0.role == .user && $0.text == question
+                    },
+                "课程首页问题新建了第二个 Chat 或破坏了原历史"
+            )
+            try check(
+                failure.origin?.chatID == originalChatID
+                    && failure.origin?.courseID == courseB.id,
+                "课程首页问题失败后丢掉了原 Chat 或目标课程"
+            )
+            try check(
+                Set(
+                    courseQuestionStore.activeStudySession?
+                        .relatedCourseIDs ?? []
+                ) == Set([courseA.id, courseB.id]),
+                "全局 Chat 错记或漏记了本轮实际使用的课程"
+            )
+            try check(
+                courseQuestionStore.courseResumePoint(for: courseA.id)?
+                    .chatID == originalChatID
+                    && courseQuestionStore.courseResumePoint(for: courseB.id)?
+                        .chatID == originalChatID,
+                "A/B 课程恢复点没有指向同一条全局 Chat"
+            )
+
+            courseQuestionStore.retryAgentRequest(
+                question,
+                targetCourseID: failure.origin?.courseID
+            )
+            var retriedFailure: AgentMessage?
+            let retryDeadline = Date(timeIntervalSinceNow: 20)
+            repeat {
+                let matchingFailures = courseQuestionStore.activeStudySession?
+                    .messages
+                    .filter {
+                        $0.role == .assistant
+                            && $0.retryQuestion == question
+                            && $0.completionState == .interrupted
+                    } ?? []
+                if matchingFailures.count >= 2,
+                   !courseQuestionStore.isAskingAgent {
+                    retriedFailure = matchingFailures.last
+                    break
+                }
+                RunLoop.current.run(
+                    mode: .default,
+                    before: Date(timeIntervalSinceNow: 0.01)
+                )
+            } while Date() < retryDeadline
+            let retryFailure = try require(
+                retriedFailure,
+                "课程首页问题重试没有在本地保存失败处停止"
+            )
+            try check(
+                courseQuestionStore.activeStudySessionID == originalChatID
+                    && courseQuestionStore.studySessions.count
+                        == originalSessionCount
+                    && retryFailure.origin?.chatID == originalChatID
+                    && retryFailure.origin?.courseID == courseB.id,
+                "课程首页问题重试换了 Chat 或退回旧课程焦点"
+            )
+
+            rejectsCourseQuestionSave = false
+            try check(
+                courseQuestionStore.flushPendingWorkspaceSave(),
+                "全局 Chat 跨课程关联无法在失败恢复后落盘"
+            )
+            let reopenedCourseQuestionStore = makeStore()
+            try check(
+                reopenedCourseQuestionStore.studySessions.count
+                    == originalSessionCount
+                    && reopenedCourseQuestionStore.activeStudySessionID
+                        == originalChatID
+                    && Set(
+                        reopenedCourseQuestionStore.activeStudySession?
+                            .relatedCourseIDs ?? []
+                    ) == Set([courseA.id, courseB.id])
+                    && reopenedCourseQuestionStore.courseResumePoint(
+                        for: courseA.id
+                    )?.chatID == originalChatID
+                    && reopenedCourseQuestionStore.courseResumePoint(
+                        for: courseB.id
+                    )?.chatID == originalChatID,
+                "重开后全局 Chat 或 A/B 课程恢复点没有保持同一身份"
+            )
+        }
+
         let rollbackStore = makeStore { _, _ in
             throw CheckError.failed("预期中的课程关系保存失败")
         }

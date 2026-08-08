@@ -557,9 +557,10 @@ final class WorkspaceStore: ObservableObject {
 #endif
     private var agentStopTask: Task<Void, Never>?
     private var pendingAgentSwitchTargetID: UUID?
+    private var pendingAgentSwitchCourseID: UUID?
     private var agentDraftsBySessionID: [UUID: String] = [:]
-    /// Session-local proof for the one allowed course-home reuse case.
-    /// Deliberately not persisted: reopening the App makes an old empty Chat non-fresh.
+    /// Session-local identity of the one reusable, newly created empty Chat.
+    /// Deliberately not persisted: reopening the App starts with a fresh empty Chat.
     private var freshlyCreatedEmptyStudySessionID: UUID?
     private var agentContextRevision: UInt64 = 0
     private var coursePortableStateRevisions: [UUID: UInt64] = [:]
@@ -717,9 +718,19 @@ final class WorkspaceStore: ObservableObject {
         var courseRootIdentity: ImportedFileIdentity?
     }
 
-    private struct AgentConversationTargetError: LocalizedError {
+    struct AgentConversationTargetError: LocalizedError {
         var message: String
         var errorDescription: String? { message }
+    }
+
+    static func userFacingAgentFailureDetail(for error: Error) -> String? {
+        guard let targetError = error as? AgentConversationTargetError else {
+            return nil
+        }
+        let message = targetError.message.trimmingCharacters(
+            in: .whitespacesAndNewlines
+        )
+        return message.isEmpty ? nil : message
     }
 
     private struct ResolvedImportedFileBookmark {
@@ -768,7 +779,6 @@ final class WorkspaceStore: ObservableObject {
         var expectedCourse: Course
         var rootPath: String
         var rootIdentity: ImportedFileIdentity
-        var sessionIDs: [UUID]
         var isolationPath: String?
         var trashBookmarkData: Data?
         var trashPath: String?
@@ -1158,7 +1168,7 @@ final class WorkspaceStore: ObservableObject {
         if let chatID = result.chatID,
            !studySessions.contains(where: {
                $0.id == chatID
-                   && $0.courseID == point.courseID
+                   && $0.relatedCourseIDs.contains(point.courseID)
                    && $0.scopeNeedsReview == false
                    && !$0.messages.isEmpty
            }) {
@@ -8256,7 +8266,6 @@ final class WorkspaceStore: ObservableObject {
             token: prepared.token,
             succeeded: true
         )
-        await deleteCoursePiSessions(prepared.sessionIDs)
     }
 
     @discardableResult
@@ -8287,7 +8296,6 @@ final class WorkspaceStore: ObservableObject {
             expectedCourse: prepared.course,
             rootPath: root.path,
             rootIdentity: rootIdentity,
-            sessionIDs: prepared.sessionIDs,
             isolationPath: root.deletingLastPathComponent()
                 .appendingPathComponent(
                     ".weibei-course-removal-\(transactionID.uuidString.lowercased())",
@@ -8392,7 +8400,6 @@ final class WorkspaceStore: ObservableObject {
                 token: prepared.token,
                 succeeded: true
             )
-            await deleteCoursePiSessions(prepared.sessionIDs)
             return trashedRoot
         } catch {
             if importedFileIdentityResolver(root) == rootIdentity {
@@ -8666,7 +8673,6 @@ final class WorkspaceStore: ObservableObject {
         course: Course,
         root: URL?,
         rootIdentity: ImportedFileIdentity?,
-        sessionIDs: [UUID],
         token: UUID
     ) {
         guard let expectedCourse = course(withID: courseID) else {
@@ -8796,7 +8802,6 @@ final class WorkspaceStore: ObservableObject {
                 expectedCourse,
                 root,
                 rootIdentity,
-                [],
                 token
             )
         } catch {
@@ -9089,21 +9094,6 @@ final class WorkspaceStore: ObservableObject {
                 )
             } else {
                 activeCourseFileMutationCounts[courseID] = count - 1
-            }
-        }
-    }
-
-    private func deleteCoursePiSessions(
-        _ sessionIDs: [UUID]
-    ) async {
-        for sessionID in sessionIDs {
-            do {
-                try await piRuntime.deleteSession(sessionID)
-            } catch {
-                workspaceSaveError = ui(
-                    "课程已移除，但本机 Pi 会话缓存清理失败：\(error.localizedDescription)",
-                    "The course was removed, but a local Pi session cache could not be deleted: \(error.localizedDescription)"
-                )
             }
         }
     }
@@ -9447,7 +9437,6 @@ final class WorkspaceStore: ObservableObject {
             succeeded: true,
             restartMaintenance: false
         )
-        await deleteCoursePiSessions(journal.sessionIDs)
     }
 
     private func promoteCourseOwnedItemToCommon(
@@ -10950,6 +10939,26 @@ final class WorkspaceStore: ObservableObject {
             id,
             with: itemIDs.flatMap { courseMembershipIndex.courseIDs(for: $0) }
         )
+    }
+
+    /// Resolve course associations for one Agent turn. A shared item belongs to
+    /// the explicit target course for this turn; unrelated memberships must not
+    /// make the global Chat appear to have used those other courses.
+    private func agentContextCourseIDs(
+        for itemIDs: some Sequence<String>,
+        targetCourseID: UUID?
+    ) -> [UUID] {
+        var result = Set<UUID>()
+        for itemID in itemIDs {
+            let memberships = courseMembershipIndex.courseIDs(for: itemID)
+            if let targetCourseID,
+               memberships.contains(targetCourseID) {
+                result.insert(targetCourseID)
+            } else {
+                result.formUnion(memberships)
+            }
+        }
+        return result.sorted { $0.uuidString < $1.uuidString }
     }
 
     func deleteStudySession(_ id: UUID) {
@@ -12695,22 +12704,13 @@ final class WorkspaceStore: ObservableObject {
         )
         guard !question.isEmpty,
               !isStoppingAgent,
+              !isAgentRunningInActiveChat,
+              agentRequestTask == nil || isAskingAgent,
               course(withID: courseID) != nil else {
             return nil
         }
 
-        let reusableSession: StudySession? = {
-            guard let session = activeStudySession,
-                  session.id == freshlyCreatedEmptyStudySessionID,
-                  session.messages.isEmpty,
-                  agentDraft.trimmingCharacters(
-                    in: .whitespacesAndNewlines
-                  ).isEmpty else {
-                return nil
-            }
-            return session
-        }()
-        guard let session = reusableSession
+        guard let session = activeStudySession
                 ?? createStudySession(courseID: nil) else {
             return nil
         }
@@ -12720,7 +12720,7 @@ final class WorkspaceStore: ObservableObject {
         agentDraft = question
         agentDraftsBySessionID[session.id] = question
         openConversationInWorkspace(courseID: courseID)
-        submitAgentDraft()
+        submitAgentDraft(targetCourseID: courseID)
         return session.id
     }
 
@@ -18467,7 +18467,7 @@ final class WorkspaceStore: ObservableObject {
         return "## \(ui("整理建议", "Organization suggestion"))\n\(text)"
     }
 
-    func submitAgentDraft() {
+    func submitAgentDraft(targetCourseID: UUID? = nil) {
         if isAgentRunningInActiveChat {
             cancelAgentRequest()
             return
@@ -18476,15 +18476,17 @@ final class WorkspaceStore: ObservableObject {
         guard !question.isEmpty, !isStoppingAgent else { return }
         if isAskingAgent {
             pendingAgentSwitchTargetID = activeStudySessionID
+            pendingAgentSwitchCourseID = targetCourseID
             isAgentSwitchConfirmationPresented = true
             return
         }
-        askAgent()
+        askAgent(targetCourseID: targetCourseID)
     }
 
     func dismissAgentSwitchConfirmation() {
         isAgentSwitchConfirmationPresented = false
         pendingAgentSwitchTargetID = nil
+        pendingAgentSwitchCourseID = nil
     }
 
     func confirmAgentSwitchAndSend() {
@@ -18492,20 +18494,21 @@ final class WorkspaceStore: ObservableObject {
               let targetID = pendingAgentSwitchTargetID,
               activeStudySessionID == targetID,
               !agentDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        let targetCourseID = pendingAgentSwitchCourseID
         dismissAgentSwitchConfirmation()
         stopAgent(restoreDraft: false) { [weak self] in
             guard let self,
                   self.activeStudySessionID == targetID,
                   self.studySessions.contains(where: { $0.id == targetID }),
                   !self.agentDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-            self.askAgent()
+            self.askAgent(targetCourseID: targetCourseID)
         }
     }
 
     func askAgent(
         reusingLastUserMessage: Bool = false,
         replayingSelections: [SelectionContext]? = nil,
-        replayingCourseID: UUID? = nil
+        targetCourseID: UUID? = nil
     ) {
         flushStagedNoteDraftForAgentContext()
         guard agentRequestTask == nil,
@@ -18515,10 +18518,11 @@ final class WorkspaceStore: ObservableObject {
         let question = agentDraft.trimmingCharacters(in: .whitespacesAndNewlines)
         let target: AgentConversationTarget
         do {
-            if reusingLastUserMessage, let session = activeStudySession {
+            if (reusingLastUserMessage || targetCourseID != nil),
+               let session = activeStudySession {
                 target = try makeAgentConversationTarget(
                     sessionID: session.id,
-                    courseID: replayingCourseID
+                    courseID: targetCourseID
                 )
             } else {
                 target = try agentConversationTarget()
@@ -18527,7 +18531,8 @@ final class WorkspaceStore: ObservableObject {
             recordAgentTargetFailure(
                 question: question,
                 error: error,
-                appendUserMessage: !reusingLastUserMessage
+                appendUserMessage: !reusingLastUserMessage,
+                targetCourseID: targetCourseID
             )
             return
         }
@@ -18603,8 +18608,8 @@ final class WorkspaceStore: ObservableObject {
         } catch {
             throw AgentConversationTargetError(
                 message: ui(
-                    "魏碑无法准备 Chat 的本地工作目录：\(error.localizedDescription)",
-                    "WeiBei could not prepare the Chat workspace: \(error.localizedDescription)"
+                    "魏碑无法准备 Chat 的本地工作目录，请检查本机存储空间和文件权限。",
+                    "WeiBei could not prepare the Chat workspace. Check local storage and file permissions."
                 )
             )
         }
@@ -18662,7 +18667,8 @@ final class WorkspaceStore: ObservableObject {
     private func recordAgentTargetFailure(
         question: String,
         error: Error,
-        appendUserMessage: Bool = true
+        appendUserMessage: Bool = true,
+        targetCourseID: UUID? = nil
     ) {
         ensureActiveStudySession()
         guard let session = activeStudySession else { return }
@@ -18681,7 +18687,7 @@ final class WorkspaceStore: ObservableObject {
             role: .assistant,
             text: AgentFailureKind.generic.userMessage(
                 language: interfaceLanguage,
-                detail: error.localizedDescription,
+                userFacingDetail: Self.userFacingAgentFailureDetail(for: error),
                 draftPreserved: true
             ),
             source: sourceTitle,
@@ -18689,7 +18695,7 @@ final class WorkspaceStore: ObservableObject {
             origin: AgentReplyOrigin(
                 requestID: requestID,
                 chatID: session.id,
-                courseID: session.courseID
+                courseID: targetCourseID ?? session.courseID
             ),
             failureKind: .generic,
             retryQuestion: question
@@ -18784,7 +18790,8 @@ final class WorkspaceStore: ObservableObject {
             recordAgentTargetFailure(
                 question: question,
                 error: error,
-                appendUserMessage: !reusingLastUserMessage
+                appendUserMessage: !reusingLastUserMessage,
+                targetCourseID: target.courseID
             )
             agentRequestTask = nil
             return
@@ -18831,7 +18838,10 @@ final class WorkspaceStore: ObservableObject {
         let sentSelectionIDs = Set(sentSelections.map(\.id))
         associateStudySession(
             target.sessionID,
-            withItemIDs: sentSelections.compactMap(\.itemID)
+            with: agentContextCourseIDs(
+                for: sentSelections.compactMap(\.itemID),
+                targetCourseID: target.courseID
+            )
         )
         let shouldClearSentDocumentSelection = sentSelections.contains {
             $0.id == selectionContext?.id && $0.source == .document
@@ -18858,8 +18868,10 @@ final class WorkspaceStore: ObservableObject {
         let sentNoteItemID = sentNoteItem?.id
         associateStudySession(
             target.sessionID,
-            withItemIDs: [sentMaterialItemID, sentNoteItemID]
-                .compactMap { $0 }
+            with: agentContextCourseIDs(
+                for: [sentMaterialItemID, sentNoteItemID].compactMap { $0 },
+                targetCourseID: target.courseID
+            )
         )
         let sentLearningContext = makeLearningContext(target: target)
         let sentCourseProfile = makeCourseProfileContext(
@@ -18907,6 +18919,7 @@ final class WorkspaceStore: ObservableObject {
                 didAppendUserMessage = true
             }
             if let courseID = target.courseID {
+                associateStudySession(target.sessionID, with: [courseID])
                 _ = captureCourseResumePoint(
                     courseID: courseID,
                     chatID: target.sessionID
@@ -18916,11 +18929,10 @@ final class WorkspaceStore: ObservableObject {
             // MainActor while waiting for another MainActor Task, which deadlocks UI.
             guard await flushPendingWorkspaceSaveAsync() else {
                 throw AgentConversationTargetError(
-                    message: workspaceSaveError
-                        ?? ui(
-                            "问题尚未安全写入本地，魏碑没有把它发送给 Agent。",
-                            "The question was not safely saved, so WeiBei did not send it to the Agent."
-                        )
+                    message: ui(
+                        "问题尚未安全写入本地，魏碑没有把它发送给 Agent。",
+                        "The question was not safely saved, so WeiBei did not send it to the Agent."
+                    )
                 )
             }
 
@@ -18944,11 +18956,10 @@ final class WorkspaceStore: ObservableObject {
             appendMessageToActiveSelectionAskThread(assistantMessage.id)
             guard await flushPendingWorkspaceSaveAsync() else {
                 throw AgentConversationTargetError(
-                    message: workspaceSaveError
-                        ?? ui(
-                            "回答状态尚未安全写入本地，魏碑没有继续请求 Agent。",
-                            "The reply state was not saved safely, so WeiBei did not continue the request."
-                        )
+                    message: ui(
+                        "回答状态尚未安全写入本地，魏碑没有继续请求 Agent。",
+                        "The reply state was not saved safely, so WeiBei did not continue the request."
+                    )
                 )
             }
 
@@ -19118,11 +19129,17 @@ final class WorkspaceStore: ObservableObject {
             )
             associateStudySession(
                 target.sessionID,
-                withItemIDs: sources.compactMap(\.itemID)
+                with: agentContextCourseIDs(
+                    for: sources.compactMap(\.itemID),
+                    targetCourseID: target.courseID
+                )
             )
             associateStudySession(
                 target.sessionID,
-                withItemIDs: reply.readItemIDs
+                with: agentContextCourseIDs(
+                    for: reply.readItemIDs,
+                    targetCourseID: target.courseID
+                )
             )
             // The visible reply is durable before this request is considered finished.
             // A save error must not replace or hide the answer that already arrived.
@@ -19165,10 +19182,9 @@ final class WorkspaceStore: ObservableObject {
                 lastAgentFailureKind = kind
                 lastFailedAgentQuestion = question
             }
-            let detail = error.localizedDescription
             let failureText = kind.userMessage(
                 language: interfaceLanguage,
-                detail: detail,
+                userFacingDetail: Self.userFacingAgentFailureDetail(for: error),
                 draftPreserved: true
             )
             if let replyMessageID {
@@ -19298,14 +19314,17 @@ final class WorkspaceStore: ObservableObject {
         }
     }
 
-    func retryAgentRequest(_ question: String) {
+    func retryAgentRequest(
+        _ question: String,
+        targetCourseID: UUID? = nil
+    ) {
         guard !isAgentRunningInActiveChat, !isStoppingAgent else { return }
         let cleaned = question.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !cleaned.isEmpty else { return }
         agentDraft = cleaned
         lastFailedAgentQuestion = nil
         lastAgentFailureKind = nil
-        submitAgentDraft()
+        submitAgentDraft(targetCourseID: targetCourseID)
     }
 
     func regenerateLastAssistantReply() {
@@ -19348,7 +19367,7 @@ final class WorkspaceStore: ObservableObject {
         askAgent(
             reusingLastUserMessage: true,
             replayingSelections: replayingSelections,
-            replayingCourseID: reply.origin?.courseID
+            targetCourseID: reply.origin?.courseID
         )
     }
 

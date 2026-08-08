@@ -1551,6 +1551,9 @@ struct MarkdownPreviewView: View {
     /// When true, lock height after the first stable measure so chat LazyVStack
     /// does not thrash on ResizeObserver jitter (hang-proof for agent turns).
     var freezeHeightAfterMeasure = false
+    /// A finalized streaming snapshot remains live through its delayed font,
+    /// formula and image measurements before offscreen height freezing resumes.
+    var allowsHeightFreeze = true
     /// Seed from a session cache so recycled rows do not collapse then grow.
     var seedContentHeight: CGFloat? = nil
     /// Exact point-rounded layout width kept for diagnostics only. Unfreeze uses
@@ -1564,10 +1567,15 @@ struct MarkdownPreviewView: View {
     var preservesHeightAcrossMarkdownChanges = false
     /// Pass-through to Milkdown's cumulative document-diff streaming session.
     var streamsMarkdownUpdates = false
+    /// Ignore ordinary ResizeObserver events while a streaming answer is being
+    /// finalized. The generation-tagged final callback supplies the authoritative
+    /// height for that handoff instead.
+    var acceptsHeightMeasurements = true
     var onWikiLink: (String) -> Void = { _ in }
     var onSourceReference: (String) -> Void = { _ in }
     var onAppShortcut: (String, NSEvent.ModifierFlags) -> Bool = { _, _ in false }
     var onRenderReady: () -> Void = {}
+    var onFinalizedSnapshotReady: (CGFloat) -> Void = { _ in }
     var onRenderFailure: () -> Void = {}
     var onSelectionChange: (String, CGPoint?) -> Void = { _, _ in }
     var onContentHeightChange: () -> Void = {}
@@ -1597,6 +1605,13 @@ struct MarkdownPreviewView: View {
             onSelectionChange: onSelectionChange,
             onAskAgentWithSelection: onSelectionChange,
             onContentHeightChange: { height in
+                guard acceptsHeightMeasurements else {
+                    WeiBeiPerf.event(
+                        "webview.markdown_height_ignored",
+                        extra: "reason=finalizing"
+                    )
+                    return
+                }
                 guard compact && fitsContentHeight else {
                     WeiBeiPerf.event(
                         "webview.markdown_height_ignored",
@@ -1640,7 +1655,7 @@ struct MarkdownPreviewView: View {
                 // Ignore sub-pixel ResizeObserver jitter once we have a real measure.
                 if contentHeight >= Self.compactPreviewLoadingHeight,
                    abs(contentHeight - nextFrameHeight) < 2 {
-                    if freezeHeightAfterMeasure {
+                    if freezeHeightAfterMeasure, allowsHeightFreeze {
                         heightFrozen = true
                     }
                     WeiBeiPerf.event(
@@ -1658,7 +1673,9 @@ struct MarkdownPreviewView: View {
                 // partial-layout height clipped long answers mid-line
                 // (user report 2026-08-01 23:46).
                 acceptedMeasureCount += 1
-                if freezeHeightAfterMeasure && acceptedMeasureCount >= 12 {
+                if freezeHeightAfterMeasure,
+                   allowsHeightFreeze,
+                   acceptedMeasureCount >= 12 {
                     contentHeight = max(nextFrameHeight, maxObservedMeasuredHeight)
                     heightFrozen = true
                 }
@@ -1671,6 +1688,24 @@ struct MarkdownPreviewView: View {
             onSourceReference: onSourceReference,
             onAppShortcut: onAppShortcut,
             onRenderReady: onRenderReady,
+            onFinalizedRenderReady: { height in
+                guard compact && fitsContentHeight,
+                      height.isFinite,
+                      height > 0,
+                      height <= Self.compactPreviewMaximumHeight else { return }
+                let measuredHeight = ceil(height)
+                let nextFrameHeight = max(
+                    measuredHeight,
+                    Self.compactPreviewLoadingHeight
+                )
+                heightFrozen = false
+                acceptedMeasureCount = 0
+                contentHeight = nextFrameHeight
+                maxObservedMeasuredHeight = nextFrameHeight
+                onMeasuredHeight(measuredHeight)
+                onContentHeightChange()
+                onFinalizedSnapshotReady(measuredHeight)
+            },
             onRenderFailure: onRenderFailure
         )
         .background(compact ? Color.clear : WeiBeiTheme.paper)
@@ -3634,7 +3669,10 @@ private struct AgentBubble: View {
                         failureKind: message.failureKind
                     ), let question = message.retryQuestion {
                         Button(store.ui("重试", "Retry")) {
-                            store.retryAgentRequest(question)
+                            store.retryAgentRequest(
+                                question,
+                                targetCourseID: message.origin?.courseID
+                            )
                         }
                         .buttonStyle(WeiBeiTextActionButtonStyle(active: true))
                     }
@@ -3647,7 +3685,10 @@ private struct AgentBubble: View {
                         failureKind: message.failureKind
                     ), let question = message.retryQuestion {
                         Button(store.ui("重试", "Retry")) {
-                            store.retryAgentRequest(question)
+                            store.retryAgentRequest(
+                                question,
+                                targetCourseID: message.origin?.courseID
+                            )
                         }
                         .buttonStyle(WeiBeiTextActionButtonStyle(active: true))
                     }
@@ -5088,6 +5129,9 @@ private struct AgentMessageMarkdownText: View {
     var isStreaming = false
     @State private var finalizedRendererReady = false
     @State private var finalizedRendererFailed = false
+    @State private var awaitsFinalizedRendererReady = false
+    @State private var finalizedHeightSettling = false
+    @State private var finalizedHeightSettleGeneration = 0
     /// nil = newly mounted and not classified yet. Treat unknown as visible so
     /// an on-screen row never flashes the held offscreen width before the probe.
     @State private var isInScrollViewport: Bool?
@@ -5173,9 +5217,22 @@ private struct AgentMessageMarkdownText: View {
             // A live answer owns one renderer. Preserve its visible identity
             // while the same WebView accepts the next snapshot or final text.
             if !keepsMarkdownSurfaceMounted {
+                finalizedHeightSettleGeneration &+= 1
+                finalizedHeightSettling = false
                 finalizedRendererReady = false
                 finalizedRendererFailed = false
+                awaitsFinalizedRendererReady = false
             }
+        }
+        .onChange(of: isStreaming) { wasStreaming, isStreaming in
+            guard wasStreaming, !isStreaming,
+                  keepsMarkdownSurfaceMounted else { return }
+            // The streaming measurement only proves the previous DOM was ready.
+            // Keep this WebView mounted, but wait for the finalized snapshot's
+            // own measurement before letting it cover the native text.
+            finalizedRendererReady = false
+            finalizedRendererFailed = false
+            awaitsFinalizedRendererReady = true
         }
     }
 
@@ -5216,11 +5273,13 @@ private struct AgentMessageMarkdownText: View {
                     freezeHeightAfterMeasure: !isStreaming
                         && (!paneStructureTransitionActive || isInScrollViewport == false)
                         && isInScrollViewport == false,
+                    allowsHeightFreeze: !finalizedHeightSettling,
                     seedContentHeight: isStreaming ? nil : cachedFinalizedHeight,
                     layoutWidthKey: layoutWidthBucket,
                     isChatWideTypography: isChatWideTypography,
                     preservesHeightAcrossMarkdownChanges: keepsMarkdownSurfaceMounted,
                     streamsMarkdownUpdates: isStreaming,
+                    acceptsHeightMeasurements: !awaitsFinalizedRendererReady,
                     onWikiLink: { title in store.openOrCreateWikiNote(title: title) },
                     onSourceReference: { reference in
                         if let url = URL(string: reference),
@@ -5233,15 +5292,44 @@ private struct AgentMessageMarkdownText: View {
                     onRenderReady: {
                         finalizedRendererFailed = false
                     },
+                    onFinalizedSnapshotReady: { height in
+                        guard !isStreaming else { return }
+                        awaitsFinalizedRendererReady = false
+                        finalizedRendererFailed = false
+                        if !paneStructureTransitionActive {
+                            AgentFinalizedMarkdownHeightCache.store(
+                                height,
+                                for: cacheKey
+                            )
+                        }
+                        finalizedRendererReady = true
+                        finalizedHeightSettleGeneration &+= 1
+                        let settleGeneration = finalizedHeightSettleGeneration
+                        finalizedHeightSettling = true
+                        Task { @MainActor in
+                            try? await Task.sleep(nanoseconds: 650_000_000)
+                            guard settleGeneration
+                                    == finalizedHeightSettleGeneration else {
+                                return
+                            }
+                            finalizedHeightSettling = false
+                        }
+                    },
                     onRenderFailure: {
+                        finalizedHeightSettleGeneration &+= 1
+                        finalizedHeightSettling = false
+                        awaitsFinalizedRendererReady = false
                         finalizedRendererReady = false
                         finalizedRendererFailed = true
                     },
                     onMeasuredHeight: { height in
-                        if !isStreaming && !paneStructureTransitionActive {
+                        if !awaitsFinalizedRendererReady,
+                           !isStreaming,
+                           !paneStructureTransitionActive {
                             AgentFinalizedMarkdownHeightCache.store(height, for: cacheKey)
                         }
-                        if !finalizedRendererReady {
+                        if !awaitsFinalizedRendererReady,
+                           !finalizedRendererReady {
                             finalizedRendererReady = true
                         }
                     }
@@ -5254,17 +5342,20 @@ private struct AgentMessageMarkdownText: View {
                 .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
                 .allowsHitTesting(finalizedRendererReady && !isStreaming)
                 .accessibilityHidden(!finalizedRendererReady)
-                .opacity(keepsMarkdownSurfaceMounted || finalizedRendererReady ? 1 : 0.01)
+                .opacity(isStreaming || finalizedRendererReady ? 1 : 0.01)
                 .zIndex(0)
             }
-            // Never flash native/raw Markdown over a live stream. Native text is
-            // retained only as the established WebKit failure recovery path.
+            // Never flash native/raw Markdown over a live stream. Once streaming
+            // completes, keep native Markdown visible until this same WebView has
+            // measured the finalized snapshot; otherwise a cold Chat can show an
+            // empty answer until the user scrolls.
             if !finalizedRendererReady
-                && (!keepsMarkdownSurfaceMounted || finalizedRendererFailed) {
+                && (!isStreaming
+                    || !keepsMarkdownSurfaceMounted
+                    || finalizedRendererFailed) {
                 nativeBody
                     .background(WeiBeiTheme.paper)
                     .allowsHitTesting(false)
-                    .accessibilityHidden(true)
                     .zIndex(1)
             }
         }

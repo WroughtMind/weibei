@@ -25,20 +25,11 @@ public struct PiAgentProviderConfiguration: Equatable, Sendable {
 }
 
 public struct PiAgentResources: Sendable {
-    public static let requiredRichAnswerSkillNames = [
-        "rich-answer-director",
-        "professional-visualization",
-        "deep-interaction-components",
-        "generative-composition",
-    ]
-    public static var allRequiredSkillNames: [String] {
-        requiredRichAnswerSkillNames
-    }
+    public static let allRequiredSkillNames = ["visualize"]
 
     public var rootURL: URL
     public var extensionURL: URL
     public var managementExtensionURL: URL
-    public var pythonArtifactWorkerURL: URL
     public var skillsURL: URL
     public var systemPrompt: String
 
@@ -54,15 +45,11 @@ public struct PiAgentResources: Sendable {
         }
         let extensionURL = rootURL.appendingPathComponent("extension.ts")
         let managementExtensionURL = rootURL.appendingPathComponent("management-extension.ts")
-        let pythonArtifactWorkerURL = rootURL
-            .appendingPathComponent("python", isDirectory: true)
-            .appendingPathComponent("rich_answer_worker.py")
         let skillsURL = rootURL.appendingPathComponent("skills", isDirectory: true)
         let systemURL = rootURL.appendingPathComponent("system.md")
-        let hasRequiredRichAnswerSkills = requiredRichAnswerSkillNames.allSatisfy { skillName in
+        let hasRequiredSkills = allRequiredSkillNames.allSatisfy { skillName in
             FileManager.default.fileExists(
                 atPath: skillsURL
-                    .appendingPathComponent("rich-answer", isDirectory: true)
                     .appendingPathComponent(skillName, isDirectory: true)
                     .appendingPathComponent("SKILL.md")
                     .path
@@ -70,8 +57,7 @@ public struct PiAgentResources: Sendable {
         }
         guard FileManager.default.fileExists(atPath: extensionURL.path),
               FileManager.default.fileExists(atPath: managementExtensionURL.path),
-              FileManager.default.fileExists(atPath: pythonArtifactWorkerURL.path),
-              hasRequiredRichAnswerSkills,
+              hasRequiredSkills,
               let systemPrompt = try? String(contentsOf: systemURL, encoding: .utf8),
               !systemPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw PiAgentRuntimeError.resourcesMissing(rootURL.path)
@@ -80,7 +66,6 @@ public struct PiAgentResources: Sendable {
             rootURL: rootURL,
             extensionURL: extensionURL,
             managementExtensionURL: managementExtensionURL,
-            pythonArtifactWorkerURL: pythonArtifactWorkerURL,
             skillsURL: skillsURL,
             systemPrompt: systemPrompt
         )
@@ -300,21 +285,12 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         "read",
         "weibei_note_proposal",
         "weibei_relation_proposal",
-        "weibei_ui_catalog",
-        "weibei_compute_artifact",
-        "weibei_rich_answer",
     ]
     private static let hostToolNames: Set<String> = [
         "weibei_course_map",
         "weibei_course_search",
         "weibei_course_read",
     ]
-
-    private static func allowedToolNames(
-        for _: StudyAgentScopeKind
-    ) -> [String] {
-        sharedToolNames
-    }
 
     private struct ProgressDelivery: Sendable {
         let continuation: AsyncStream<StudyAgentProgress>.Continuation
@@ -377,7 +353,11 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         var sessionID: UUID
         var workingDirectory: URL
         var sessionDirectory: URL
-        var scope: StudyAgentScopeKind
+    }
+
+    private struct DirectoryIdentity: Equatable {
+        var device: dev_t
+        var fileID: ino_t
     }
 
     private struct PiSessionState {
@@ -386,7 +366,6 @@ public actor PiAgentRuntime: StudyAgentRuntime {
 
     private struct PiSessionStateFailure: Error {
         var message: String
-        var repairsEmptySession: Bool
     }
 
     private struct ActiveRun {
@@ -395,7 +374,6 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         var memoryRevision: UInt64
         var courseProfileRevision: UInt64
         var userQuestion: String
-        var answerFormPolicy: StudyAgentAnswerFormPolicy
         var updatableMemoryIDs: Set<String>
         var resolvableMemoryIDs: Set<String>
         var allowedSourceLabels: Set<String>
@@ -414,8 +392,6 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         var streamedText = ""
         var proposal: StudyAgentNoteProposal?
         var relationProposal: StudyAgentRelationProposal?
-        var richAnswer: RichAnswerPresentation?
-        var safeRichAnswerNarrative: String?
         var learningUpdate: StudyAgentLearningUpdate?
         var courseProfileUpdate: StudyAgentCourseProfileUpdate?
         var loadedSkills: [StudyAgentLoadedSkill] = []
@@ -491,8 +467,7 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         _ = try await ensureProcess(
             binding: try makeProcessBinding(
                 sessionID: fallbackSessionID,
-                workingDirectory: runtimeDirectory,
-                scope: .global
+                workingDirectory: runtimeDirectory
             )
         )
         return process?.executableURL?.path ?? "pi"
@@ -557,8 +532,7 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         _ = try await ensureProcess(
             binding: try makeProcessBinding(
                 sessionID: fallbackSessionID,
-                workingDirectory: runtimeDirectory,
-                scope: .global
+                workingDirectory: runtimeDirectory
             )
         )
         let command = try PiManagementCodec.command(for: request)
@@ -588,9 +562,16 @@ public actor PiAgentRuntime: StudyAgentRuntime {
     }
 
     public func respond(to request: StudyAgentRequest, progress: StudyAgentProgressHandler?) async throws -> StudyAgentReply {
-        try await respond(
+        let declaredChatID = request.projectScope.chatID
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let focusedChatID = request.focus?.chatID
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let sessionID = UUID(uuidString: declaredChatID)
+            ?? focusedChatID.flatMap(UUID.init(uuidString:))
+            ?? request.id
+        return try await respond(
             to: request,
-            sessionID: request.id,
+            sessionID: sessionID,
             workingDirectory: runtimeDirectory,
             progress: progress
         )
@@ -614,16 +595,25 @@ public actor PiAgentRuntime: StudyAgentRuntime {
             )
         }
         var request = request
-        if request.projectScope.chatID
+        let expectedChatID = sessionID.uuidString.lowercased()
+        let projectChatID = request.projectScope.chatID
             .trimmingCharacters(in: .whitespacesAndNewlines)
-            .isEmpty {
-            request.projectScope.chatID = sessionID.uuidString.lowercased()
+        guard projectChatID.isEmpty
+                || UUID(uuidString: projectChatID)?.uuidString.lowercased() == expectedChatID else {
+            throw PiAgentRuntimeError.protocolFailure(
+                "request Chat identity did not match the PI session"
+            )
         }
-        if request.focus?.chatID
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .isEmpty == true {
-            request.focus?.chatID = request.projectScope.chatID
+        request.projectScope.chatID = expectedChatID
+        if let focusChatID = request.focus?.chatID
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+           !focusChatID.isEmpty,
+           UUID(uuidString: focusChatID)?.uuidString.lowercased() != expectedChatID {
+            throw PiAgentRuntimeError.protocolFailure(
+                "request focus did not match the PI session"
+            )
         }
+        request.focus?.chatID = expectedChatID
         guard activeRun == nil, startingRunID == nil else { throw PiAgentRuntimeError.busy }
         startingRunID = request.id
         defer {
@@ -636,28 +626,12 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         idleShutdownTask = nil
         let binding = try makeProcessBinding(
             sessionID: sessionID,
-            workingDirectory: workingDirectory,
-            scope: request.projectScope.kind
+            workingDirectory: workingDirectory
         )
-        let hadStoredSession = sessionDirectoryHasContents(binding.sessionDirectory)
         do {
             _ = try await ensureProcess(binding: binding)
         } catch let failure as PiSessionStateFailure {
-            guard failure.repairsEmptySession || hadStoredSession else {
-                throw PiAgentRuntimeError.protocolFailure(failure.message)
-            }
-            try await resetSession(binding: binding)
-            let rebuiltState: PiSessionState
-            do {
-                rebuiltState = try await ensureProcess(binding: binding)
-            } catch let secondFailure as PiSessionStateFailure {
-                throw PiAgentRuntimeError.protocolFailure(secondFailure.message)
-            }
-            guard rebuiltState.messageCount == 0 else {
-                throw PiAgentRuntimeError.protocolFailure(
-                    "rebuilt PI session did not start empty"
-                )
-            }
+            throw PiAgentRuntimeError.protocolFailure(failure.message)
         }
         try requireStartingRun(request.id)
 
@@ -678,7 +652,6 @@ public actor PiAgentRuntime: StudyAgentRuntime {
             memoryRevision: request.learningContext.memoryRevision,
             courseProfileRevision: request.courseProfile.revision,
             userQuestion: request.question,
-            answerFormPolicy: request.answerFormPolicy,
             updatableMemoryIDs: Set(request.learningContext.memories.compactMap { memory in
                 guard memory.status == .active else { return nil }
                 return memory.id.uuidString.lowercased()
@@ -698,8 +671,8 @@ public actor PiAgentRuntime: StudyAgentRuntime {
             lastLocationSourceLabel: context.learning.lastLocation.map { "[材料：\($0.itemTitle)]" },
             allowedNoteSourceLabels: currentSourceLabels,
             contextSources: request.selectionSources,
-            allowedToolNames: Set(Self.allowedToolNames(for: binding.scope)),
-            allowsRelationProposal: binding.scope == .course,
+            allowedToolNames: Set(Self.sharedToolNames),
+            allowsRelationProposal: request.projectScope.courseID?.isEmpty == false,
             courseCatalogRolesByContextID: context.course.catalog.reduce(into: [:]) {
                 $0[$1.id] = $1.role
             },
@@ -791,8 +764,7 @@ public actor PiAgentRuntime: StudyAgentRuntime {
 
     private func makeProcessBinding(
         sessionID: UUID,
-        workingDirectory: URL,
-        scope: StudyAgentScopeKind
+        workingDirectory: URL
     ) throws -> ProcessBinding {
         let resolvedWorkingDirectory = workingDirectory
             .standardizedFileURL
@@ -810,8 +782,7 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         return ProcessBinding(
             sessionID: sessionID,
             workingDirectory: resolvedWorkingDirectory,
-            sessionDirectory: sessionDirectory,
-            scope: scope
+            sessionDirectory: sessionDirectory
         )
     }
 
@@ -831,14 +802,7 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         try FileManager.default.createDirectory(at: runtimeDirectory, withIntermediateDirectories: true)
         try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: runtimeDirectory.path)
         let piConfigurationURL = try preparePiConfigurationDirectory()
-        try FileManager.default.createDirectory(
-            at: binding.sessionDirectory,
-            withIntermediateDirectories: true
-        )
-        try? FileManager.default.setAttributes(
-            [.posixPermissions: 0o700],
-            ofItemAtPath: binding.sessionDirectory.path
-        )
+        try prepareSessionDirectory(binding.sessionDirectory)
 
         let contextURL = runtimeDirectory.appendingPathComponent("context.json")
         let process = Process()
@@ -913,8 +877,7 @@ public actor PiAgentRuntime: StudyAgentRuntime {
             )
         } catch {
             throw PiSessionStateFailure(
-                message: "could not read the requested Chat session: \(error.localizedDescription)",
-                repairsEmptySession: false
+                message: "could not read the requested Chat session: \(error.localizedDescription)"
             )
         }
         return try validatedSessionState(state, binding: binding)
@@ -932,38 +895,137 @@ public actor PiAgentRuntime: StudyAgentRuntime {
               messageCount >= 0,
               let sessionFile = object["sessionFile"] as? String else {
             throw PiSessionStateFailure(
-                message: "get_state did not match the requested Chat session",
-                repairsEmptySession: true
+                message: "get_state did not match the requested Chat session"
             )
         }
-        let sessionFileDirectory = URL(fileURLWithPath: sessionFile)
+        let reportedSessionDirectory = URL(fileURLWithPath: sessionFile)
             .deletingLastPathComponent()
-            .standardizedFileURL
-            .resolvingSymlinksInPath()
-        let requestedSessionDirectory = binding.sessionDirectory
-            .standardizedFileURL
-            .resolvingSymlinksInPath()
-        guard sessionFileDirectory.path == requestedSessionDirectory.path else {
+        let reportedIdentity = Self.directoryIdentity(at: reportedSessionDirectory)
+        let requestedIdentity = Self.directoryIdentity(at: binding.sessionDirectory)
+        guard let requestedIdentity, reportedIdentity == requestedIdentity else {
             throw PiSessionStateFailure(
-                message: "get_state returned a session outside the requested Chat directory",
-                repairsEmptySession: true
+                message: "get_state returned a session outside the requested Chat directory"
             )
         }
         return PiSessionState(messageCount: messageCount)
     }
 
-    private func resetSession(binding: ProcessBinding) async throws {
-        if let runningProcess = process, runningProcess.isRunning {
-            shutdownProcess(reason: PiAgentRuntimeError.cancelled)
-            await forceStopIfNeeded(runningProcess, graceNanoseconds: 750_000_000)
-        }
-        try removeSessionDirectory(binding.sessionDirectory)
+    private func sessionDirectory(for sessionID: UUID) -> URL {
+        sessionsRoot
+            .appendingPathComponent(sessionID.uuidString.lowercased(), isDirectory: true)
     }
 
-    private func sessionDirectory(for sessionID: UUID) -> URL {
-        runtimeDirectory
-            .appendingPathComponent("Sessions", isDirectory: true)
-            .appendingPathComponent(sessionID.uuidString.lowercased(), isDirectory: true)
+    private var sessionsRoot: URL {
+        runtimeDirectory.appendingPathComponent("Sessions", isDirectory: true)
+    }
+
+    private static func canonicalFileURL(_ url: URL) -> URL {
+        url.resolvingSymlinksInPath().standardizedFileURL
+    }
+
+    private static func directoryIdentity(at url: URL) -> DirectoryIdentity? {
+        let canonicalURL = canonicalFileURL(url)
+        var fileStat = Darwin.stat()
+        guard canonicalURL.withUnsafeFileSystemRepresentation({ path in
+            path.map { Darwin.lstat($0, &fileStat) == 0 } ?? false
+        }),
+        (fileStat.st_mode & mode_t(S_IFMT)) == mode_t(S_IFDIR) else {
+            return nil
+        }
+        return DirectoryIdentity(device: fileStat.st_dev, fileID: fileStat.st_ino)
+    }
+
+    private func checkedSessionsRoot(createIfMissing: Bool) throws -> DirectoryIdentity? {
+        let fileManager = FileManager.default
+        var rootStat = Darwin.stat()
+        var rootExists = sessionsRoot.withUnsafeFileSystemRepresentation { path in
+            path.map { Darwin.lstat($0, &rootStat) == 0 } ?? false
+        }
+        if !rootExists {
+            guard errno == ENOENT else {
+                throw PiAgentRuntimeError.protocolFailure(
+                    "could not inspect the PI session directory"
+                )
+            }
+            guard createIfMissing else { return nil }
+            try fileManager.createDirectory(
+                at: sessionsRoot,
+                withIntermediateDirectories: false
+            )
+            rootExists = sessionsRoot.withUnsafeFileSystemRepresentation { path in
+                path.map { Darwin.lstat($0, &rootStat) == 0 } ?? false
+            }
+        }
+        guard rootExists,
+              (rootStat.st_mode & mode_t(S_IFMT)) == mode_t(S_IFDIR),
+              Self.canonicalFileURL(sessionsRoot).deletingLastPathComponent()
+                == Self.canonicalFileURL(runtimeDirectory) else {
+            throw PiAgentRuntimeError.protocolFailure(
+                "PI session storage is not a safe local directory"
+            )
+        }
+        try? fileManager.setAttributes(
+            [.posixPermissions: 0o700],
+            ofItemAtPath: sessionsRoot.path
+        )
+        return DirectoryIdentity(device: rootStat.st_dev, fileID: rootStat.st_ino)
+    }
+
+    private func requireSessionsRootIdentity(_ identity: DirectoryIdentity) throws {
+        var rootStat = Darwin.stat()
+        guard sessionsRoot.withUnsafeFileSystemRepresentation({ path in
+            path.map { Darwin.lstat($0, &rootStat) == 0 } ?? false
+        }),
+        (rootStat.st_mode & mode_t(S_IFMT)) == mode_t(S_IFDIR),
+        DirectoryIdentity(device: rootStat.st_dev, fileID: rootStat.st_ino) == identity else {
+            throw PiAgentRuntimeError.protocolFailure(
+                "PI session storage changed during access"
+            )
+        }
+    }
+
+    private func prepareSessionDirectory(_ sessionDirectory: URL) throws {
+        guard sessionDirectory.deletingLastPathComponent().standardizedFileURL
+                == sessionsRoot.standardizedFileURL,
+              let rootIdentity = try checkedSessionsRoot(createIfMissing: true) else {
+            throw PiAgentRuntimeError.protocolFailure(
+                "refused to prepare a session outside WeiBei AgentRuntime"
+            )
+        }
+        var sessionStat = Darwin.stat()
+        let sessionExists = sessionDirectory.withUnsafeFileSystemRepresentation { path in
+            path.map { Darwin.lstat($0, &sessionStat) == 0 } ?? false
+        }
+        if sessionExists {
+            guard (sessionStat.st_mode & mode_t(S_IFMT)) == mode_t(S_IFDIR) else {
+                throw PiAgentRuntimeError.protocolFailure(
+                    "PI Chat session storage is not a local directory"
+                )
+            }
+        } else {
+            guard errno == ENOENT else {
+                throw PiAgentRuntimeError.protocolFailure(
+                    "could not inspect the PI Chat session directory"
+                )
+            }
+            try FileManager.default.createDirectory(
+                at: sessionDirectory,
+                withIntermediateDirectories: false
+            )
+            guard sessionDirectory.withUnsafeFileSystemRepresentation({ path in
+                path.map { Darwin.lstat($0, &sessionStat) == 0 } ?? false
+            }),
+            (sessionStat.st_mode & mode_t(S_IFMT)) == mode_t(S_IFDIR) else {
+                throw PiAgentRuntimeError.protocolFailure(
+                    "PI Chat session directory identity changed after creation"
+                )
+            }
+        }
+        try requireSessionsRootIdentity(rootIdentity)
+        try? FileManager.default.setAttributes(
+            [.posixPermissions: 0o700],
+            ofItemAtPath: sessionDirectory.path
+        )
     }
 
     private var hostToolResponseRoot: URL {
@@ -1062,29 +1124,35 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         try? FileManager.default.removeItem(at: directory)
     }
 
-    private func sessionDirectoryHasContents(_ sessionDirectory: URL) -> Bool {
-        guard let contents = try? FileManager.default.contentsOfDirectory(
-            at: sessionDirectory,
-            includingPropertiesForKeys: nil
-        ) else {
-            return false
-        }
-        return !contents.isEmpty
-    }
-
     private func removeSessionDirectory(_ sessionDirectory: URL) throws {
-        let sessionsRoot = runtimeDirectory
-            .appendingPathComponent("Sessions", isDirectory: true)
-            .standardizedFileURL
-        guard sessionDirectory.standardizedFileURL
-                .deletingLastPathComponent().path == sessionsRoot.path else {
+        guard sessionDirectory.deletingLastPathComponent().standardizedFileURL
+                == sessionsRoot.standardizedFileURL else {
             throw PiAgentRuntimeError.protocolFailure(
-                "refused to rebuild a session outside WeiBei AgentRuntime"
+                "refused to remove a session outside WeiBei AgentRuntime"
             )
         }
-        if FileManager.default.fileExists(atPath: sessionDirectory.path) {
-            try FileManager.default.removeItem(at: sessionDirectory)
+        guard let rootIdentity = try checkedSessionsRoot(createIfMissing: false) else {
+            return
         }
+        var sessionStat = Darwin.stat()
+        let sessionExists = sessionDirectory.withUnsafeFileSystemRepresentation { path in
+            path.map { Darwin.lstat($0, &sessionStat) == 0 } ?? false
+        }
+        guard sessionExists else {
+            guard errno == ENOENT else {
+                throw PiAgentRuntimeError.protocolFailure(
+                    "could not inspect the PI Chat session directory"
+                )
+            }
+            return
+        }
+        guard (sessionStat.st_mode & mode_t(S_IFMT)) == mode_t(S_IFDIR) else {
+            throw PiAgentRuntimeError.protocolFailure(
+                "refused to remove an invalid PI Chat session directory"
+            )
+        }
+        try requireSessionsRootIdentity(rootIdentity)
+        try FileManager.default.removeItem(at: sessionDirectory)
     }
 
     private func launchArguments(
@@ -1097,7 +1165,7 @@ public actor PiAgentRuntime: StudyAgentRuntime {
             "--session-id", binding.sessionID.uuidString.lowercased(),
             "--session-dir", binding.sessionDirectory.path,
             "--no-builtin-tools",
-            "--tools", Self.allowedToolNames(for: binding.scope).joined(separator: ","),
+            "--tools", Self.sharedToolNames.joined(separator: ","),
             "--no-extensions",
             "--extension", resources.extensionURL.path,
             "--extension", resources.managementExtensionURL.path,
@@ -2177,67 +2245,8 @@ public actor PiAgentRuntime: StudyAgentRuntime {
             activeRun = run
             refreshRunWatchdog()
 
-        case let .artifactComputed(
-            _,
-            contextRevision,
-            requestID,
-            operation,
-            workerVersion,
-            requestSHA256,
-            outputSHA256,
-            artifactSHA256s,
-            durationMS
-        ):
-            guard var run = activeRun, contextRevision == run.contextRevision else { return }
-            let artifacts = artifactSHA256s
-                .map { String($0.prefix(12)) }
-                .joined(separator: "+")
-            run.toolTrace.append(
-                "weibei_compute_artifact:request=\(requestID) operation=\(operation) worker=\(workerVersion) requestSHA=\(requestSHA256.prefix(12)) outputSHA=\(outputSHA256.prefix(12)) artifacts=\(artifacts) durationMS=\(durationMS)"
-            )
-            activeRun = run
-            refreshRunWatchdog()
-
-        case let .richAnswer(_, data):
-            guard var run = activeRun else { return }
-            trace("rich answer received bytes=\(data.count)")
-            if run.answerFormPolicy == .textOnly {
-                trace("rich answer rejected by text-only answer-form policy")
-                run.toolTrace.append("weibei_rich_answer:host_rejected=text_only_policy")
-                run.lastError = "PI 尝试在纯文本回合生成富回答"
-                run.richAnswer = nil
-                activeRun = run
-                refreshRunWatchdog()
-                return
-            }
-            let presentation = RichAnswerEngine.prepare(
-                data: data,
-                fallbackText: run.streamedText,
-                environment: RichAnswerEnvironment(
-                    contextRevision: run.contextRevision,
-                    allowedSourceLabels: run.allowedSourceLabels,
-                    allowedAssetIDs: run.allowedAssetIDs,
-                    verifiedAssetBytes: run.verifiedAssetBytesByContextID
-                )
-            ).resolvingAssetIDs(using: run.persistentAssetIDsByContextID)
-            let safeNarrative = presentation.narrative
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            run.safeRichAnswerNarrative = safeNarrative.isEmpty ? nil : safeNarrative
-            if presentation.mode == .rich {
-                run.richAnswer = presentation
-            } else {
-                let rejectionDetails = presentation.diagnostics.map {
-                    "\($0.code.rawValue):\($0.message)"
-                }.joined(separator: " | ")
-                trace("rich answer rejected diagnostics=\(rejectionDetails)")
-                run.toolTrace.append(
-                    "weibei_rich_answer:host_rejected=\(sanitizedDiagnostic(rejectionDetails).prefix(600))"
-                )
-                run.lastError = "PI 返回的可视化结果未通过本地安全与来源校验"
-                run.richAnswer = nil
-            }
-            activeRun = run
-            refreshRunWatchdog()
+        case .artifactComputed, .richAnswer:
+            break
 
         case let .noteProposal(_, proposal):
             guard var run = activeRun else { return }
@@ -2372,13 +2381,7 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         case let .toolFailed(_, name, message):
             guard var run = activeRun else { return }
             trace("tool failed name=\(name) message=\(sanitizedDiagnostic(message))")
-            if name == "weibei_rich_answer",
-               let faultTrace = richAnswerFaultTrace(message) {
-                run.toolTrace.append(faultTrace)
-            }
-            run.lastError = name == "weibei_rich_answer"
-                ? "PI 模型未完成本轮回答"
-                : "\(name): \(boundedDiagnostic(message))"
+            run.lastError = "\(name): \(boundedDiagnostic(message))"
             activeRun = run
             refreshRunWatchdog()
 
@@ -2393,17 +2396,7 @@ public actor PiAgentRuntime: StudyAgentRuntime {
             }
             let modelClosureText = (text.isEmpty ? run.streamedText : text)
                 .trimmingCharacters(in: .whitespacesAndNewlines)
-            let streamedClosureText = run.streamedText
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            let richNarrative = run.safeRichAnswerNarrative
-            let finalText: String
-            if !streamedClosureText.isEmpty {
-                finalText = modelClosureText
-            } else if let richNarrative, !richNarrative.isEmpty {
-                finalText = richNarrative
-            } else {
-                finalText = modelClosureText
-            }
+            let finalText = modelClosureText
             let citesCurrentSelection = run.allowedSourceLabels.contains {
                 $0.hasPrefix("[选区：") && finalText.contains($0)
             }
@@ -2416,12 +2409,12 @@ public actor PiAgentRuntime: StudyAgentRuntime {
             )
             trace(
                 "agent ended stop=\(stopReason ?? "unknown") closureChars=\(modelClosureText.count) "
-                    + "finalChars=\(finalText.count) rich=\(run.richAnswer?.mode == .rich)"
+                    + "finalChars=\(finalText.count)"
             )
             let replyCandidate = StudyAgentReply(
                 text: finalText,
                 backend: .pi,
-                richAnswer: run.richAnswer,
+                richAnswer: nil,
                 sources: run.sources,
                 noteProposal: run.proposal,
                 relationProposal: run.relationProposal,
@@ -2434,7 +2427,7 @@ public actor PiAgentRuntime: StudyAgentRuntime {
             if stopReason == "aborted" {
                 finishRun(id: run.id, with: .failure(PiAgentRuntimeError.cancelled))
             } else if stopReason == "error" {
-                let detail = modelError.map(userFacingFailureDetail)
+                let detail = modelError.map { boundedDiagnostic($0) }
                     ?? run.lastError
                     ?? "PI 模型请求失败，但运行时没有返回错误详情"
                 finishRun(id: run.id, with: .failure(PiAgentRuntimeError.agentFailed(detail)))
@@ -2445,7 +2438,7 @@ public actor PiAgentRuntime: StudyAgentRuntime {
             }
 
         case let .extensionError(message):
-            let message = userFacingFailureDetail(message)
+            let message = boundedDiagnostic(message)
             if let runID = activeRun?.id {
                 finishRun(id: runID, with: .failure(PiAgentRuntimeError.agentFailed(message)))
             } else {
@@ -2487,29 +2480,6 @@ public actor PiAgentRuntime: StudyAgentRuntime {
             run.completed = result
             activeRun = run
         }
-    }
-
-    private func richAnswerFaultTrace(_ message: String) -> String? {
-        guard message.contains("weibei.rich_answer.repair_fault"),
-              let start = message.firstIndex(of: "{") else {
-            return nil
-        }
-        let json = String(message[start...])
-        guard let data = json.data(using: .utf8),
-              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              object["type"] as? String == "weibei.rich_answer.repair_fault",
-              let code = object["code"] as? String else {
-            return "weibei_rich_answer:repair_fault=unparsed"
-        }
-        let path = (object["jsonPath"] as? String) ?? "$"
-        let remainingAttempts = (object["remainingAttempts"] as? NSNumber)?.intValue ?? -1
-        let reason = sanitizedDiagnostic((object["message"] as? String) ?? "unknown")
-            .replacingOccurrences(of: "\n", with: " ")
-            .replacingOccurrences(of: "\t", with: " ")
-        let hint = sanitizedDiagnostic((object["humanFixHint"] as? String) ?? "")
-            .replacingOccurrences(of: "\n", with: " ")
-            .replacingOccurrences(of: "\t", with: " ")
-        return "weibei_rich_answer:repair_fault=\(code):path=\(path):remaining=\(remainingAttempts):reason=\(reason.prefix(240)):hint=\(hint.prefix(240))"
     }
 
     private func discardRun(id: UUID) {
@@ -2619,17 +2589,6 @@ public actor PiAgentRuntime: StudyAgentRuntime {
 
     private func boundedDiagnostic(_ value: String, limit: Int = 1_024) -> String {
         String(sanitizedDiagnostic(value).prefix(limit))
-    }
-
-    private func userFacingFailureDetail(_ value: String) -> String {
-        let sanitized = sanitizedDiagnostic(value)
-        if sanitized.contains("weibei.rich_answer.repair_fault")
-            || sanitized.contains("repair_fault")
-            || sanitized.contains("RichAnswerUI")
-            || sanitized.contains("payload") {
-            return "PI 模型未完成本轮回答"
-        }
-        return String(sanitized.prefix(1_024))
     }
 
     private func shutdownProcess(reason: Error) {

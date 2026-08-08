@@ -495,6 +495,7 @@ struct CourseHubView: View {
 
     private var canSubmitCourseQuestion: Bool {
         !store.isStoppingAgent
+            && !store.isAgentRunningInActiveChat
             && !courseQuestion.trimmingCharacters(
                 in: .whitespacesAndNewlines
             ).isEmpty

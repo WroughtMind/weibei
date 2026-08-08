@@ -279,6 +279,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
     var onSourceReference: (String) -> Void = { _ in }
     var onAppShortcut: (String, NSEvent.ModifierFlags) -> Bool = { _, _ in false }
     var onRenderReady: () -> Void = {}
+    var onFinalizedRenderReady: (CGFloat) -> Void = { _ in }
     var onRenderFailure: () -> Void = {}
     var onSearchResult: (String, Bool) -> Void = { _, _ in }
     /// JSON array of `{id,text}` for selection-ask underline marks (read-only surfaces).
@@ -309,6 +310,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             onSourceReference: onSourceReference,
             onAppShortcut: onAppShortcut,
             onRenderReady: onRenderReady,
+            onFinalizedRenderReady: onFinalizedRenderReady,
             onRenderFailure: onRenderFailure,
             onSearchResult: onSearchResult,
             onSelectionAskMark: onSelectionAskMark
@@ -484,6 +486,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         context.coordinator.onSourceReference = onSourceReference
         context.coordinator.onAppShortcut = onAppShortcut
         context.coordinator.onRenderReady = onRenderReady
+        context.coordinator.onFinalizedRenderReady = onFinalizedRenderReady
         context.coordinator.onRenderFailure = onRenderFailure
         context.coordinator.onSearchResult = onSearchResult
         let nextBaseURL = markdownBaseURL?.absoluteString ?? ""
@@ -670,6 +673,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         var onSourceReference: (String) -> Void
         var onAppShortcut: (String, NSEvent.ModifierFlags) -> Bool
         var onRenderReady: () -> Void
+        var onFinalizedRenderReady: (CGFloat) -> Void
         var onRenderFailure: () -> Void
         var onSearchResult: (String, Bool) -> Void
         var onSelectionAskMark: (String) -> Void
@@ -695,6 +699,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         private var lastAppliedSearchQuery = ""
         private var lastAppliedFocusRequest = -1
         private var lastAppliedSelectionAskMarks = ""
+        private var finalizedRenderGeneration = 0
 
         init(
             documentID: String,
@@ -718,6 +723,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             onSourceReference: @escaping (String) -> Void,
             onAppShortcut: @escaping (String, NSEvent.ModifierFlags) -> Bool,
             onRenderReady: @escaping () -> Void,
+            onFinalizedRenderReady: @escaping (CGFloat) -> Void,
             onRenderFailure: @escaping () -> Void,
             onSearchResult: @escaping (String, Bool) -> Void,
             onSelectionAskMark: @escaping (String) -> Void
@@ -743,6 +749,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             self.onSourceReference = onSourceReference
             self.onAppShortcut = onAppShortcut
             self.onRenderReady = onRenderReady
+            self.onFinalizedRenderReady = onFinalizedRenderReady
             self.onRenderFailure = onRenderFailure
             self.onSearchResult = onSearchResult
             self.onSelectionAskMark = onSelectionAskMark
@@ -806,6 +813,10 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         }
 
         private func reportRenderFailure() {
+            // A failure can race the finalized JavaScript evaluation. Invalidate
+            // that completion before exposing the native fallback so a broken
+            // WebView cannot become ready again.
+            finalizedRenderGeneration &+= 1
             isReady = false
             onRenderFailure()
         }
@@ -959,21 +970,51 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         }
 
         func setMarkdown(_ text: String) {
+            finalizedRenderGeneration &+= 1
             pendingExternalMarkdown = text
             webMarkdown = text
             evaluate("window.WeiBeiEditor?.setMarkdown(\(Self.json(text)))")
         }
 
         func updateStreamingMarkdown(_ text: String) {
+            finalizedRenderGeneration &+= 1
             pendingExternalMarkdown = nil
             webMarkdown = text
             evaluate("window.WeiBeiEditor?.updateStreamingMarkdown(\(Self.json(text)))")
         }
 
         func finishStreamingMarkdown(_ text: String) {
+            finalizedRenderGeneration &+= 1
+            let generation = finalizedRenderGeneration
+            let finalizedDocumentID = documentID
             pendingExternalMarkdown = nil
             webMarkdown = text
-            evaluate("window.WeiBeiEditor?.finishStreamingMarkdown(\(Self.json(text)))")
+            webView?.evaluateJavaScript("""
+            (() => {
+              const didFinish = window.WeiBeiEditor?.finishStreamingMarkdown(\(Self.json(text)));
+              return {
+                didFinish: didFinish === true,
+                height: Number(window.WeiBeiCompactPreviewHeight || 1)
+              };
+            })();
+            """) { [weak self] value, error in
+                guard let self,
+                      generation == self.finalizedRenderGeneration,
+                      finalizedDocumentID == self.documentID else { return }
+                guard error == nil,
+                      let result = value as? [String: Any],
+                      result["didFinish"] as? Bool == true,
+                      let height = (result["height"] as? NSNumber)?.doubleValue,
+                      height.isFinite,
+                      height > 0 else {
+                    self.reportRenderFailure()
+                    return
+                }
+                // The finalized DOM is now installed. Async widgets such as
+                // Mermaid can render once the WebView is visible; their later
+                // ResizeObserver reports keep the row height authoritative.
+                self.onFinalizedRenderReady(CGFloat(height))
+            }
         }
 
         func setEditable(_ editable: Bool) {

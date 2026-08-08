@@ -267,13 +267,29 @@ enum CourseProjectRootSelfCheck {
         let chatToken = "A0C_GHOST_CHAT_TOKEN"
         let memoryToken = "A0C_COURSE_MEMORY_TOKEN"
         let globalMemoryToken = "A0C_GLOBAL_MEMORY_TOKEN"
-        _ = try store!.installCourseRemovalStateForSelfCheck(
+        let courseAChatID = try store!.installCourseRemovalStateForSelfCheck(
             courseID: courseA,
             materialItemID: ownedItem.id,
             noteItemID: noteID,
             messageText: chatToken,
             memoryText: memoryToken,
             globalMemoryText: globalMemoryToken
+        )
+        let piHistoryDirectory = fixture.workspaceDirectory
+            .appendingPathComponent("AgentRuntime/Sessions", isDirectory: true)
+            .appendingPathComponent(
+                courseAChatID.uuidString.lowercased(),
+                isDirectory: true
+            )
+        try FileManager.default.createDirectory(
+            at: piHistoryDirectory,
+            withIntermediateDirectories: true
+        )
+        let piHistoryMarker = piHistoryDirectory.appendingPathComponent(
+            "must-survive-course-removal"
+        )
+        try Data("PI_HISTORY_MUST_SURVIVE".utf8).write(
+            to: piHistoryMarker
         )
         try check(
             store!.flushPendingWorkspaceSave(),
@@ -335,7 +351,8 @@ enum CourseProjectRootSelfCheck {
                     }
                 && store!.courseResumePoint(
                     for: courseA
-                ) == nil,
+                ) == nil
+                && piHistoryMarker.exists,
             "普通移除没有解除课程关系、保留 Chat，或误删共享资料与全局状态"
         )
         let visibleAfterRemoval = try rootA.visibleFileSnapshot()
@@ -371,7 +388,8 @@ enum CourseProjectRootSelfCheck {
         try check(
             store!.studySessions.filter {
                 $0.messages.contains { $0.text == chatToken }
-            }.count == 1,
+            }.count == 1
+                && piHistoryMarker.exists,
             "重新纳入课程时丢失或复制了本机 Chat"
         )
         try check(
@@ -449,8 +467,21 @@ enum CourseProjectRootSelfCheck {
                     == rootBIdentity
                 && CourseProjectFileWorker.identity(at: sharedURL)
                     == sharedIdentity
-                && sharedDataAfterTrash == sharedData,
+                && sharedDataAfterTrash == sharedData
+                && piHistoryMarker.exists,
             "废纸篓崩溃窗口损坏了课程、其他课程或共享原件"
+        )
+        let pendingJournalURL = fixture.workspaceDirectory
+            .appendingPathComponent("pending-course-removal.json")
+        let pendingJournalObject = try require(
+            JSONSerialization.jsonObject(
+                with: Data(contentsOf: pendingJournalURL)
+            ) as? [String: Any],
+            "课程移除恢复记录不是对象"
+        )
+        try check(
+            pendingJournalObject["sessionIDs"] == nil,
+            "课程移除恢复记录仍携带 Chat/Pi 历史删除清单"
         )
         try expectFailure("未完成恢复期间拒绝第二门课移除") {
             try store!.removeCourseFromWeiBeiForSelfCheck(
@@ -483,7 +514,8 @@ enum CourseProjectRootSelfCheck {
                 && retainedChatCount == 1
                 && courseBRetained
                 && sharedItemRetained
-                && journalRemoved,
+                && journalRemoved
+                && piHistoryMarker.exists,
             "重开恢复结果不完整：课程甲已移除=\(courseARemoved)，保留 Chat 数=\(retainedChatCount)，课程乙保留=\(courseBRetained)，共享资料保留=\(sharedItemRetained)，恢复记录已清理=\(journalRemoved)"
         )
         recovered = nil
@@ -492,7 +524,8 @@ enum CourseProjectRootSelfCheck {
             recoveredAgain.course(withID: courseA) == nil
                 && recoveredAgain.course(withID: courseB) != nil
                 && CourseProjectFileWorker.identity(at: trashedRoot)
-                    == rootAIdentity,
+                    == rootAIdentity
+                && piHistoryMarker.exists,
             "第二次重开让已移除课程复活或改动了废纸篓目录"
         )
     }
