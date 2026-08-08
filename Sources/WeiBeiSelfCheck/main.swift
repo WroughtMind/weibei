@@ -945,6 +945,9 @@ expect(SelectionFloatingAgentPlacement.isVisible(surface: .selectionFloat, hasSe
 expect(SelectionFloatingAgentPlacement.expandedHalfWidth == 190
     && SelectionFloatingAgentPlacement.expandedHalfHeight == 230
     && SelectionFloatingAgentPlacement.compactHalfWidth == 82, "selection agent placement constants bound the narrow expanded surface and compact prompt")
+expect(SelectionFloatingAgentPlacement.expandedComposerMaxHeight > 48
+    && SelectionFloatingAgentPlacement.expandedComposerMaxHeight < SelectionFloatingAgentPlacement.expandedHalfHeight,
+    "selection agent composer grows for multiple lines without taking over the floating panel")
 let floatingPoint = SelectionFloatingAgentPlacement.position(
     anchor: FloatingAgentCoordinate(x: 320, y: 200),
     canvas: FloatingAgentCoordinate(x: 1200, y: 800)

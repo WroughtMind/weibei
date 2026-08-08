@@ -132,6 +132,8 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
     private var activatedWikiTitle: String?
     private var attachmentRequests = 0
     private var imagePickerRequests = 0
+    private var activatedSelectionAskThreadID: String?
+    private var editorFailures = 0
     private var markdownChanges: [(documentID: String, markdown: String)] = []
 
     override init() {
@@ -149,7 +151,7 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
         configuration.userContentController = controller
         webView = WKWebView(frame: CGRect(x: 0, y: 0, width: 960, height: 720), configuration: configuration)
         super.init()
-        for name in ["editorReady", "markdownChanged", "selectionChanged", "askAgentWithSelection", "wikiLinkActivated", "imageAttachmentRequested", "imagePickerRequested"] {
+        for name in ["editorReady", "markdownChanged", "selectionChanged", "askAgentWithSelection", "wikiLinkActivated", "imageAttachmentRequested", "imagePickerRequested", "selectionAskMark", "editorFailure"] {
             controller.add(self, name: name)
         }
     }
@@ -185,6 +187,10 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
             attachmentRequests += 1
         case "imagePickerRequested":
             imagePickerRequests += 1
+        case "selectionAskMark":
+            activatedSelectionAskThreadID = (message.body as? [String: Any])?["threadId"] as? String
+        case "editorFailure":
+            editorFailures += 1
         case "markdownChanged":
             guard let body = message.body as? [String: Any],
                   let documentID = body["documentID"] as? String,
@@ -213,8 +219,10 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
             DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
                 self.validateObsidianDecorations {
                     self.validateReadOnlyInkstoneDecorations {
-                        self.validateRenderedImageSource {
-                            self.validateWikiLinkActivation()
+                        self.validateSelectionAskMark {
+                            self.validateRenderedImageSource {
+                                self.validateWikiLinkActivation()
+                            }
                         }
                     }
                 }
@@ -850,6 +858,70 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
                 return
             }
             completion()
+        }
+    }
+
+    private func validateSelectionAskMark(completion: @escaping () -> Void) {
+        activatedSelectionAskThreadID = nil
+        let threadID = "8a311629-157e-43fd-9256-b9d67803fcff"
+        let selectedText = "利率是资金使用价格的表达。"
+        let script = """
+        (() => {
+          if (typeof window.WeiBeiEditor.setSelectionAskMarks !== 'function') {
+            throw new Error('selection ask marks are not owned by the editor');
+          }
+          window.WeiBeiEditor.setSelectionAskMarks([{
+            id: \(json(threadID)),
+            text: \(json(selectedText))
+          }]);
+          const mark = document.querySelector('.weibei-selection-ask-mark');
+          if (!mark) throw new Error('selection ask mark was not rendered');
+          mark.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+          return {
+            markCount: document.querySelectorAll('.weibei-selection-ask-mark').length,
+            editorAlive: !!document.querySelector('.ProseMirror')
+          };
+        })();
+        """
+        webView.evaluateJavaScript(script) { [weak self] value, error in
+            guard let self else { return }
+            if let error {
+                self.fail("selection ask mark check threw \(error.localizedDescription)")
+                return
+            }
+            guard let result = value as? [String: Any],
+                  (result["markCount"] as? Int ?? 0) >= 1,
+                  result["editorAlive"] as? Bool == true else {
+                self.fail("selection ask mark damaged the editor: \(String(describing: value))")
+                return
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                guard self.activatedSelectionAskThreadID == threadID else {
+                    self.fail("selection ask mark did not send its thread identity")
+                    return
+                }
+                guard self.editorFailures == 0 else {
+                    self.fail("selection ask mark triggered \(self.editorFailures) editor failure(s)")
+                    return
+                }
+                self.webView.evaluateJavaScript("""
+                ({
+                  markCount: document.querySelectorAll('.weibei-selection-ask-mark').length,
+                  editorAlive: !!document.querySelector('.ProseMirror'),
+                  failureText: document.querySelector('.editor-status.error')?.textContent || ''
+                })
+                """) { value, error in
+                    guard error == nil,
+                          let final = value as? [String: Any],
+                          (final["markCount"] as? Int ?? 0) >= 1,
+                          final["editorAlive"] as? Bool == true,
+                          (final["failureText"] as? String ?? "").isEmpty else {
+                        self.fail("selection ask mark click destabilized the editor: \(String(describing: value)); error=\(String(describing: error))")
+                        return
+                    }
+                    completion()
+                }
+            }
         }
     }
 

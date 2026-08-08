@@ -249,6 +249,8 @@ private struct AgentComposerField: View {
     var height: CGFloat
     /// Cap for immersive grow; nil means fixed compact height.
     var maxHeight: CGFloat? = nil
+    /// Optional safety cap for a compact composer hosted inside a floating surface.
+    var compactMaxHeight: CGFloat? = nil
     var sendButtonSize: CGFloat
     var trailingPadding: CGFloat
     var sendTrailing: CGFloat
@@ -301,23 +303,19 @@ private struct AgentComposerField: View {
                 .frame(maxWidth: .infinity, alignment: isWideComposer ? .leading : .topLeading)
                 .padding(.horizontal, horizontalPadding)
 
-                if showsControl && !showsModelFooter {
-                    VStack {
-                        Spacer(minLength: 0)
-                        HStack {
-                            Spacer(minLength: 0)
-                            sendButton
-                                .padding(.trailing, sendTrailing)
-                                .padding(.bottom, sendBottom)
-                        }
-                    }
-                }
             }
             .frame(
                 maxWidth: .infinity,
                 maxHeight: isWideComposer ? .infinity : nil,
                 alignment: isWideComposer ? .leading : .topLeading
             )
+            .overlay(alignment: .bottomTrailing) {
+                if showsControl && !showsModelFooter {
+                    sendButton
+                        .padding(.trailing, sendTrailing)
+                        .padding(.bottom, sendBottom)
+                }
+            }
 
             if showsModelFooter {
                 HStack(spacing: 10) {
@@ -335,7 +333,12 @@ private struct AgentComposerField: View {
                 .padding(.top, 2)
             }
         }
-        .frame(maxWidth: .infinity, minHeight: height, maxHeight: maxHeight, alignment: .topLeading)
+        .frame(
+            maxWidth: .infinity,
+            minHeight: height,
+            maxHeight: isWideComposer ? maxHeight : compactMaxHeight,
+            alignment: .topLeading
+        )
         .background {
             if showsChrome {
                 // ChatGPT-like: same paper as the thread, lifted only by a soft
@@ -3245,6 +3248,7 @@ struct FloatingSelectionAgentView: View {
                 promptFont: .system(size: 13.5),
                 lineLimit: 1...5,
                 height: 48,
+                compactMaxHeight: SelectionFloatingAgentPlacement.expandedComposerMaxHeight,
                 sendButtonSize: 26,
                 trailingPadding: 36,
                 sendTrailing: 8,

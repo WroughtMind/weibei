@@ -889,6 +889,8 @@ public enum SelectionFloatingAgentPlacement {
     /// Bounds the expanded panel after its content-only downward growth offset.
     public static let expandedHalfHeight = 230.0
     public static let compactHalfHeight = 28.0
+    /// A typed question may grow to five lines, but never consume the floating panel.
+    public static let expandedComposerMaxHeight = 116.0
 
     public static func isVisible(
         surface: AgentSurface,
