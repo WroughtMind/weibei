@@ -877,6 +877,16 @@ public struct FloatingAgentCoordinate: Equatable {
     }
 }
 
+public struct FloatingAgentSize: Equatable {
+    public var width: Double
+    public var height: Double
+
+    public init(width: Double, height: Double) {
+        self.width = width
+        self.height = height
+    }
+}
+
 public enum SelectionAnchorCoordinate {
     public static func y(_ contentY: Double, contentHeight: Double, contentViewIsFlipped: Bool) -> Double {
         contentViewIsFlipped ? contentY : contentHeight - contentY
@@ -884,6 +894,10 @@ public enum SelectionAnchorCoordinate {
 }
 
 public enum SelectionFloatingAgentPlacement {
+    public static let minimumResizableWidth = 320.0
+    public static let maximumResizableWidth = 720.0
+    public static let minimumResizableContentHeight = 96.0
+    public static let maximumResizableContentHeight = 560.0
     public static let expandedHalfWidth = 190.0
     public static let compactHalfWidth = 82.0
     /// Bounds the expanded panel after its content-only downward growth offset.
@@ -891,6 +905,34 @@ public enum SelectionFloatingAgentPlacement {
     public static let compactHalfHeight = 28.0
     /// A typed question may grow to five lines, but never consume the floating panel.
     public static let expandedComposerMaxHeight = 116.0
+    public static let expandedComposerCollapsedHeight = 48.0
+
+    public static func resizedSize(
+        current: FloatingAgentSize,
+        translation: FloatingAgentSize,
+        canvas: FloatingAgentSize
+    ) -> FloatingAgentSize {
+        let maximumWidth = max(
+            minimumResizableWidth,
+            min(maximumResizableWidth, canvas.width - 36)
+        )
+        let maximumHeight = max(
+            minimumResizableContentHeight,
+            min(maximumResizableContentHeight, canvas.height - 160)
+        )
+        return FloatingAgentSize(
+            width: clamp(
+                current.width + translation.width,
+                min: minimumResizableWidth,
+                max: maximumWidth
+            ),
+            height: clamp(
+                current.height + translation.height,
+                min: minimumResizableContentHeight,
+                max: maximumHeight
+            )
+        )
+    }
 
     public static func isVisible(
         surface: AgentSurface,

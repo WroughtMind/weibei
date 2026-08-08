@@ -948,6 +948,22 @@ expect(SelectionFloatingAgentPlacement.expandedHalfWidth == 190
 expect(SelectionFloatingAgentPlacement.expandedComposerMaxHeight > 48
     && SelectionFloatingAgentPlacement.expandedComposerMaxHeight < SelectionFloatingAgentPlacement.expandedHalfHeight,
     "selection agent composer grows for multiple lines without taking over the floating panel")
+expect(SelectionFloatingAgentPlacement.expandedComposerCollapsedHeight == 48,
+    "selection agent composer uses one compact row until its text actually needs more lines")
+let resizedFloatingAgent = SelectionFloatingAgentPlacement.resizedSize(
+    current: FloatingAgentSize(width: 380, height: 420),
+    translation: FloatingAgentSize(width: 90, height: 70),
+    canvas: FloatingAgentSize(width: 1_200, height: 800)
+)
+expect(resizedFloatingAgent == FloatingAgentSize(width: 470, height: 490),
+    "selection agent resize drag changes both width and height")
+let clampedFloatingAgent = SelectionFloatingAgentPlacement.resizedSize(
+    current: FloatingAgentSize(width: 380, height: 160),
+    translation: FloatingAgentSize(width: -1_000, height: 1_000),
+    canvas: FloatingAgentSize(width: 500, height: 400)
+)
+expect(clampedFloatingAgent == FloatingAgentSize(width: 320, height: 240),
+    "selection agent resize stays usable inside the available canvas")
 let floatingPoint = SelectionFloatingAgentPlacement.position(
     anchor: FloatingAgentCoordinate(x: 320, y: 200),
     canvas: FloatingAgentCoordinate(x: 1200, y: 800)

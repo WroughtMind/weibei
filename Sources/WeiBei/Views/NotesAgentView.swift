@@ -339,6 +339,7 @@ private struct AgentComposerField: View {
             maxHeight: isWideComposer ? maxHeight : compactMaxHeight,
             alignment: .topLeading
         )
+        .fixedSize(horizontal: false, vertical: !isWideComposer && compactMaxHeight != nil)
         .background {
             if showsChrome {
                 // ChatGPT-like: same paper as the thread, lifted only by a soft
@@ -3006,7 +3007,9 @@ struct FloatingSelectionAgentView: View {
     var routesToConversation = false
     @State private var dragOffset = CGSize.zero
     @State private var settledOffset = CGSize.zero
-    private let panelWidth = CGFloat(SelectionFloatingAgentPlacement.expandedHalfWidth * 2)
+    @State private var panelWidth = CGFloat(SelectionFloatingAgentPlacement.expandedHalfWidth * 2)
+    @State private var userFeedHeight: CGFloat?
+    @State private var resizeOrigin: FloatingAgentSize?
     @FocusState private var draftFocused: Bool
     @Namespace private var floatingNamespace
 
@@ -3236,7 +3239,7 @@ struct FloatingSelectionAgentView: View {
                     .padding(.vertical, 12)
                     .environment(\.agentChatLayoutWidth, max(panelWidth - 28, 1))
                 }
-                .frame(height: floatingFeedHeight)
+                .frame(height: resolvedFloatingFeedHeight)
             }
 
             AgentComposerField(
@@ -3247,11 +3250,11 @@ struct FloatingSelectionAgentView: View {
                 font: .system(size: 13.5),
                 promptFont: .system(size: 13.5),
                 lineLimit: 1...5,
-                height: 48,
+                height: SelectionFloatingAgentPlacement.expandedComposerCollapsedHeight,
                 compactMaxHeight: SelectionFloatingAgentPlacement.expandedComposerMaxHeight,
                 sendButtonSize: 26,
-                trailingPadding: 36,
-                sendTrailing: 8,
+                trailingPadding: 52,
+                sendTrailing: 24,
                 sendBottom: 6,
                 horizontalPadding: 2,
                 verticalPadding: 8,
@@ -3263,6 +3266,9 @@ struct FloatingSelectionAgentView: View {
             .padding(.bottom, 8)
         }
         .frame(width: panelWidth, alignment: .leading)
+        .overlay(alignment: .bottomTrailing) {
+            floatResizeHandle
+        }
         .onAppear {
             draftFocused = true
         }
@@ -3295,8 +3301,50 @@ struct FloatingSelectionAgentView: View {
         }
     }
 
+    private var resolvedFloatingFeedHeight: CGFloat {
+        userFeedHeight ?? floatingFeedHeight
+    }
+
     private var floatingFeedGrowthOffset: CGFloat {
-        showsFloatingFeed ? floatingFeedHeight / 2 : 0
+        showsFloatingFeed ? resolvedFloatingFeedHeight / 2 : 0
+    }
+
+    private var floatResizeHandle: some View {
+        Image(systemName: "arrow.up.left.and.arrow.down.right")
+            .font(.system(size: 9, weight: .bold))
+            .foregroundStyle(WeiBeiTheme.tertiaryInk.opacity(0.9))
+            .frame(width: 22, height: 22)
+            .contentShape(Rectangle())
+            .padding(4)
+            .highPriorityGesture(
+                DragGesture(minimumDistance: 1)
+                    .onChanged { value in
+                        let origin = resizeOrigin ?? FloatingAgentSize(
+                            width: Double(panelWidth),
+                            height: Double(resolvedFloatingFeedHeight)
+                        )
+                        if resizeOrigin == nil {
+                            resizeOrigin = origin
+                        }
+                        let screen = NSScreen.main?.visibleFrame.size ?? CGSize(width: 1_200, height: 800)
+                        let resized = SelectionFloatingAgentPlacement.resizedSize(
+                            current: origin,
+                            translation: FloatingAgentSize(
+                                width: Double(value.translation.width),
+                                height: Double(value.translation.height)
+                            ),
+                            canvas: FloatingAgentSize(width: Double(screen.width), height: Double(screen.height))
+                        )
+                        panelWidth = CGFloat(resized.width)
+                        userFeedHeight = CGFloat(resized.height)
+                    }
+                    .onEnded { _ in
+                        resizeOrigin = nil
+                    }
+            )
+            .help(store.ui("拖拽调整浮窗大小", "Drag to resize"))
+            .accessibilityLabel(Text(store.ui("调整浮窗大小", "Resize floating window")))
+            .accessibilityIdentifier("selection-float-resize-handle")
     }
 
     private func floatingText(for message: AgentMessage) -> String {
