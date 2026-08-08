@@ -2912,92 +2912,20 @@ private struct AgentSelectionAttachmentPill: View {
 }
 
 private struct FloatingSelectionPreview: View {
-    @EnvironmentObject private var store: WorkspaceStore
     let text: String
-    @State private var labelHovering = false
-    @State private var popoverHovering = false
-    @State private var closeToken = UUID()
 
     var body: some View {
-        Button {
-            closeToken = UUID()
-            labelHovering = true
-        } label: {
-            Text(cleanedText)
-                .font(.system(size: 11.5, weight: .medium))
-                .foregroundStyle(labelHovering ? WeiBeiTheme.ink : WeiBeiTheme.secondaryInk)
-                .lineLimit(1)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .onHover(perform: setLabelHovering)
-        .popover(isPresented: popoverPresented, arrowEdge: .bottom) {
-            ScrollView(showsIndicators: false) {
-                Text(text)
-                    .font(.system(size: 12.5))
-                    .foregroundStyle(WeiBeiTheme.ink)
-                    .lineSpacing(4)
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            .frame(maxHeight: 240)
-            .padding(14)
-            .frame(width: 320, alignment: .leading)
-            .background(WeiBeiTheme.paperRaised)
-            .onHover(perform: setPopoverHovering)
-        }
-        .accessibilityLabel(Text(store.ui("查看完整原文", "View full passage")))
-        .help(store.ui("查看完整原文", "View full passage"))
+        Text(cleanedText)
+            .font(.system(size: 11.5, weight: .medium))
+            .foregroundStyle(WeiBeiTheme.secondaryInk)
+            .lineLimit(1)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityLabel(Text(text))
     }
 
     private var cleanedText: String {
         text.trimmingCharacters(in: .whitespacesAndNewlines)
             .replacingOccurrences(of: "\n", with: " ")
-    }
-
-    private var popoverPresented: Binding<Bool> {
-        Binding(
-            get: { labelHovering || popoverHovering },
-            set: { presented in
-                if !presented {
-                    labelHovering = false
-                    popoverHovering = false
-                }
-            }
-        )
-    }
-
-    private func setLabelHovering(_ value: Bool) {
-        if value {
-            closeToken = UUID()
-            withAnimation(WeiBeiMotion.hover) { labelHovering = true }
-        } else {
-            schedulePopoverClose()
-        }
-    }
-
-    private func setPopoverHovering(_ value: Bool) {
-        if value {
-            closeToken = UUID()
-            popoverHovering = true
-        } else {
-            popoverHovering = false
-            schedulePopoverClose()
-        }
-    }
-
-    private func schedulePopoverClose() {
-        let token = UUID()
-        closeToken = token
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.22) {
-            guard closeToken == token, !popoverHovering else { return }
-            withAnimation(WeiBeiMotion.hover) {
-                labelHovering = false
-                popoverHovering = false
-            }
-        }
     }
 }
 
