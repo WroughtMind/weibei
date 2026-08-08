@@ -930,6 +930,10 @@ public enum SelectionFloatingAgentPlacement {
     public static let expandedComposerMaxHeight = 96.0
     public static let expandedComposerCollapsedHeight = 40.0
 
+    public static func composerControlHostMinimumHeight(composerMinimumHeight: Double) -> Double {
+        composerMinimumHeight
+    }
+
     public static func automaticContentHeight(measuredContentHeight: Double) -> Double {
         clamp(
             measuredContentHeight,

@@ -306,6 +306,11 @@ private struct AgentComposerField: View {
             }
             .frame(
                 maxWidth: .infinity,
+                minHeight: isWideComposer
+                    ? nil
+                    : CGFloat(SelectionFloatingAgentPlacement.composerControlHostMinimumHeight(
+                        composerMinimumHeight: Double(height)
+                    )),
                 maxHeight: isWideComposer ? .infinity : nil,
                 alignment: isWideComposer ? .leading : .topLeading
             )

@@ -950,6 +950,12 @@ expect(SelectionFloatingAgentPlacement.expandedComposerMaxHeight > 48
     "selection agent composer grows for multiple lines without taking over the floating panel")
 expect(SelectionFloatingAgentPlacement.expandedComposerCollapsedHeight == 40,
     "selection agent composer stays visually subordinate to the selected passage")
+let floatingComposerControlHostHeight = SelectionFloatingAgentPlacement.composerControlHostMinimumHeight(
+    composerMinimumHeight: SelectionFloatingAgentPlacement.expandedComposerCollapsedHeight
+)
+expect(floatingComposerControlHostHeight == SelectionFloatingAgentPlacement.expandedComposerCollapsedHeight
+    && floatingComposerControlHostHeight >= 26 + 4,
+    "selection agent send and stop controls stay fully inside the compact composer")
 expect(SelectionFloatingAgentPlacement.automaticContentHeight(measuredContentHeight: 360) == 360,
     "selection agent follows the real answer height well beyond the old shallow stop")
 expect(SelectionFloatingAgentPlacement.automaticContentHeight(measuredContentHeight: 900)
