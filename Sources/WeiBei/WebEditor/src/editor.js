@@ -85,6 +85,7 @@ const weiBeiSlash = slashFactory('WEIBEI_BLOCK_COMMAND');
 let currentDocumentGeneration = 0;
 let currentContentGeneration = 0;
 let streamingMarkdownBuffer = null;
+let selectionAskMarks = [];
 const insertionCursorMarker = '{{WEIBEI_CURSOR}}';
 const insertionSelectionStartMarker = '{{WEIBEI_SELECT_START}}';
 const insertionSelectionEndMarker = '{{WEIBEI_SELECT_END}}';
@@ -1071,6 +1072,38 @@ const addRangeDecoration = (decorations, from, to, className, attrs = {}) => {
   decorations.push(Decoration.inline(from, to, { ...attrs, class: className }));
 };
 
+const normalizeSelectionAskMarks = (marks) => (Array.isArray(marks) ? marks : [])
+  .map((mark) => ({
+    id: String(mark?.id || ''),
+    text: String(mark?.text || '').trim(),
+  }))
+  .filter((mark) => mark.id && mark.text.length >= 4);
+
+const decorateSelectionAskMarks = (decorations, text, pos, counts) => {
+  if (isEditable || selectionAskMarks.length === 0) return;
+  selectionAskMarks.forEach((mark) => {
+    let start = 0;
+    let count = counts.get(mark.id) || 0;
+    while (count < 3) {
+      const index = text.indexOf(mark.text, start);
+      if (index < 0) break;
+      addRangeDecoration(
+        decorations,
+        pos + index,
+        pos + index + mark.text.length,
+        'weibei-selection-ask-mark',
+        {
+          'data-thread-id': mark.id,
+          title: '打开当时的选区问答',
+        },
+      );
+      count += 1;
+      start = index + mark.text.length;
+    }
+    counts.set(mark.id, count);
+  });
+};
+
 const isInsideNode = (state, pos, typeName) => {
   const resolved = state.doc.resolve(pos);
   for (let depth = resolved.depth; depth >= 0; depth -= 1) {
@@ -1338,6 +1371,16 @@ const activateSourceReference = (target) => {
   const reference = sourceReferenceFromTarget(target);
   if (!reference) return false;
   post('sourceReferenceActivated', { reference });
+  return true;
+};
+
+const activateSelectionAskMark = (target) => {
+  const mark = target instanceof Element
+    ? target.closest('.weibei-selection-ask-mark[data-thread-id]')
+    : null;
+  const threadId = mark?.getAttribute('data-thread-id') || '';
+  if (!threadId) return false;
+  post('selectionAskMark', { threadId, text: mark.textContent || '' });
   return true;
 };
 
@@ -1880,7 +1923,8 @@ const weiBeiDialectPlugin = $prose(() => new Plugin({
       return true;
     },
     handleClick(view, pos, event) {
-      return activateWikiLink(event.target)
+      return activateSelectionAskMark(event.target)
+        || activateWikiLink(event.target)
         || activateSourceReference(event.target)
         || toggleFoldedCallout(event.target);
     },
@@ -1914,6 +1958,7 @@ const weiBeiDialectPlugin = $prose(() => new Plugin({
     decorations(state) {
       const decorations = [];
       const commentState = { open: false };
+      const selectionAskCounts = new Map();
       const focusedBlock = focusedMermaidBlock(state);
       synchronizeActiveMermaidPreview(focusedBlock);
 
@@ -1979,6 +2024,7 @@ const weiBeiDialectPlugin = $prose(() => new Plugin({
           decorateWikiLinks(decorations, text, textPos);
           decorateSourceReferences(decorations, text, textPos);
           decorateTagsAndBlocks(decorations, text, textPos);
+          decorateSelectionAskMarks(decorations, text, textPos, selectionAskCounts);
 
         }
 
@@ -2010,6 +2056,15 @@ const reportSelection = () => {
 
 const ensureEditor = () => {
   if (!editor) throw new Error('WeiBei editor is not ready');
+};
+
+const setSelectionAskMarksInternal = (marks) => {
+  selectionAskMarks = normalizeSelectionAskMarks(marks);
+  if (!editor) return;
+  editor.action((ctx) => {
+    const view = ctx.get(editorViewCtx);
+    view.dispatch(view.state.tr.setMeta('weibeiSelectionAskMarksChanged', true));
+  });
 };
 
 /** Removes WebKit-created line breaks when IME composition began in an empty text block. */
@@ -2350,7 +2405,14 @@ window.WeiBeiEditor = {
   setEditable: (next) => {
     isEditable = next !== false;
     syncEditableState();
+    if (editor) {
+      editor.action((ctx) => {
+        const view = ctx.get(editorViewCtx);
+        view.dispatch(view.state.tr.setMeta('weibeiEditableChanged', isEditable));
+      });
+    }
   },
+  setSelectionAskMarks: setSelectionAskMarksInternal,
   setDocumentID: (next) => {
     const nextID = next || '';
     if (nextID !== currentDocumentID) {
@@ -2359,6 +2421,7 @@ window.WeiBeiEditor = {
       currentContentGeneration += 1;
       pendingImagePickers.clear();
       pendingAttachments.clear();
+      setSelectionAskMarksInternal([]);
     }
   },
   setMarkdownBaseURL: (next) => {
@@ -2504,7 +2567,8 @@ Editor
       post('selectionChanged', { text: '', rect: null });
     }, true);
     document.addEventListener('click', (event) => {
-      if (!activateWikiLink(event.target)
+      if (!activateSelectionAskMark(event.target)
+          && !activateWikiLink(event.target)
           && !activateSourceReference(event.target)
           && !toggleFoldedCallout(event.target)) return;
       event.preventDefault();

@@ -249,6 +249,8 @@ private struct AgentComposerField: View {
     var height: CGFloat
     /// Cap for immersive grow; nil means fixed compact height.
     var maxHeight: CGFloat? = nil
+    /// Optional safety cap for a compact composer hosted inside a floating surface.
+    var compactMaxHeight: CGFloat? = nil
     var sendButtonSize: CGFloat
     var trailingPadding: CGFloat
     var sendTrailing: CGFloat
@@ -257,6 +259,8 @@ private struct AgentComposerField: View {
     var verticalPadding: CGFloat = 0
     /// Codex-style footer: model chip on the left, send on the right inside the card.
     var showsModelFooter: Bool = false
+    /// Floating paper surfaces already provide their own chrome.
+    var showsChrome = true
     var submit: () -> Void
 
     private var canSend: Bool {
@@ -299,23 +303,24 @@ private struct AgentComposerField: View {
                 .frame(maxWidth: .infinity, alignment: isWideComposer ? .leading : .topLeading)
                 .padding(.horizontal, horizontalPadding)
 
-                if showsControl && !showsModelFooter {
-                    VStack {
-                        Spacer(minLength: 0)
-                        HStack {
-                            Spacer(minLength: 0)
-                            sendButton
-                                .padding(.trailing, sendTrailing)
-                                .padding(.bottom, sendBottom)
-                        }
-                    }
-                }
             }
             .frame(
                 maxWidth: .infinity,
+                minHeight: isWideComposer
+                    ? nil
+                    : CGFloat(SelectionFloatingAgentPlacement.composerControlHostMinimumHeight(
+                        composerMinimumHeight: Double(height)
+                    )),
                 maxHeight: isWideComposer ? .infinity : nil,
                 alignment: isWideComposer ? .leading : .topLeading
             )
+            .overlay(alignment: .bottomTrailing) {
+                if showsControl && !showsModelFooter {
+                    sendButton
+                        .padding(.trailing, sendTrailing)
+                        .padding(.bottom, sendBottom)
+                }
+            }
 
             if showsModelFooter {
                 HStack(spacing: 10) {
@@ -333,22 +338,36 @@ private struct AgentComposerField: View {
                 .padding(.top, 2)
             }
         }
-        .frame(maxWidth: .infinity, minHeight: height, maxHeight: maxHeight, alignment: .topLeading)
+        .frame(
+            maxWidth: .infinity,
+            minHeight: height,
+            maxHeight: isWideComposer ? maxHeight : compactMaxHeight,
+            alignment: .topLeading
+        )
+        .fixedSize(horizontal: false, vertical: !isWideComposer && compactMaxHeight != nil)
         .background {
-            // ChatGPT-like: same paper as the thread, lifted only by a soft
-            // border and a whisper of shadow — no fill-color seam.
-            RoundedRectangle(cornerRadius: corner, style: .continuous)
-                .fill(WeiBeiTheme.paperRaised.opacity(store.appearanceMode.isDark ? 0.34 : 0.5))
+            if showsChrome {
+                // ChatGPT-like: same paper as the thread, lifted only by a soft
+                // border and a whisper of shadow — no fill-color seam.
+                RoundedRectangle(cornerRadius: corner, style: .continuous)
+                    .fill(WeiBeiTheme.paperRaised.opacity(store.appearanceMode.isDark ? 0.34 : 0.5))
+            }
         }
         .clipShape(RoundedRectangle(cornerRadius: corner, style: .continuous))
         .overlay {
-            RoundedRectangle(cornerRadius: corner, style: .continuous)
-                .stroke(
-                    focused.wrappedValue ? WeiBeiTheme.hairline.opacity(0.9) : WeiBeiTheme.hairline.opacity(0.55),
-                    lineWidth: 1
-                )
+            if showsChrome {
+                RoundedRectangle(cornerRadius: corner, style: .continuous)
+                    .stroke(
+                        focused.wrappedValue ? WeiBeiTheme.hairline.opacity(0.9) : WeiBeiTheme.hairline.opacity(0.55),
+                        lineWidth: 1
+                    )
+            }
         }
-        .shadow(color: WeiBeiTheme.ink.opacity(0.05), radius: 10, y: 3)
+        .shadow(
+            color: showsChrome ? WeiBeiTheme.ink.opacity(0.05) : .clear,
+            radius: showsChrome ? 10 : 0,
+            y: showsChrome ? 3 : 0
+        )
         .contentShape(Rectangle())
         .onTapGesture {
             focused.wrappedValue = true
@@ -2897,17 +2916,35 @@ private struct AgentSelectionAttachmentPill: View {
     }
 }
 
+private struct FloatingSelectionPreview: View {
+    let text: String
+
+    var body: some View {
+        Text(cleanedText)
+            .font(.system(size: 11.5, weight: .medium))
+            .foregroundStyle(WeiBeiTheme.secondaryInk)
+            .lineLimit(1)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityLabel(Text(text))
+    }
+
+    private var cleanedText: String {
+        text.trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "\n", with: " ")
+    }
+}
+
 struct FloatingSelectionAgentView: View {
     @EnvironmentObject private var store: WorkspaceStore
     @Binding var expanded: Bool
     var routesToConversation = false
     @State private var dragOffset = CGSize.zero
     @State private var settledOffset = CGSize.zero
-    /// User-resizable panel; default matches placement constant (half-width × 2).
     @State private var panelWidth = CGFloat(SelectionFloatingAgentPlacement.expandedHalfWidth * 2)
-    @State private var feedMaxHeight: CGFloat = 380
-    @State private var resizeOriginWidth: CGFloat = 0
-    @State private var resizeOriginFeedHeight: CGFloat = 0
+    @State private var userFeedHeight: CGFloat?
+    @State private var measuredFeedContentHeight = CGFloat(SelectionFloatingAgentPlacement.minimumAutomaticContentHeight)
+    @State private var resizeOrigin: FloatingAgentSize?
+    @State private var resizeOriginOffset: CGSize?
     @FocusState private var draftFocused: Bool
     @Namespace private var floatingNamespace
 
@@ -2921,27 +2958,14 @@ struct FloatingSelectionAgentView: View {
         }
         .matchedGeometryEffect(id: "selection-agent-surface", in: floatingNamespace)
         .transition(WeiBeiTransition.floating)
-        .modifier(SelectionFloatChrome(expanded: showsExpandedBody, pinned: store.pinnedFloatingAgent))
+        .modifier(SelectionFloatChrome(expanded: showsExpandedBody))
         .scaleEffect(showsExpandedBody ? 1 : 0.985)
         .animation(WeiBeiMotion.panel, value: expanded)
         .animation(WeiBeiMotion.panel, value: store.pinnedFloatingAgent)
         .animation(WeiBeiMotion.panel, value: store.isAgentRunningInActiveChat)
-        .offset(x: dragOffset.width + settledOffset.width, y: dragOffset.height + settledOffset.height)
-        .gesture(
-            DragGesture()
-                .onChanged { value in
-                    dragOffset = value.translation
-                }
-                .onEnded { value in
-                    withAnimation(WeiBeiMotion.panel) {
-                        settledOffset = CGSize(
-                            width: settledOffset.width + value.translation.width,
-                            height: settledOffset.height + value.translation.height
-                        )
-                        dragOffset = .zero
-                        // Dragging repositions; pin is only set by the pin control.
-                    }
-                }
+        .offset(
+            x: dragOffset.width + settledOffset.width,
+            y: dragOffset.height + settledOffset.height + floatingFeedGrowthOffset
         )
         .onChange(of: store.selectionContext) { previous, next in
             guard !store.pinnedFloatingAgent, !store.isAgentRunningInActiveChat else { return }
@@ -3017,8 +3041,8 @@ struct FloatingSelectionAgentView: View {
                 openExpandedComposer()
             }
             .foregroundStyle(WeiBeiTheme.link)
-            .accessibilityLabel(Text(store.ui("问当前选区", "Ask current selection")))
-            .help(store.ui("问当前选区", "Ask current selection"))
+            .accessibilityLabel(Text(store.ui("就这段提问", "Ask about this passage")))
+            .help(store.ui("就这段提问", "Ask about this passage"))
 
             if store.canOpenSelectedSourceReference {
                 promptSeparator
@@ -3051,24 +3075,11 @@ struct FloatingSelectionAgentView: View {
 
     private var expandedBody: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 6) {
-                Text(store.ui("选区对话", "Selection chat"))
-                    .font(.system(size: 12.5, weight: .semibold))
-                    .foregroundStyle(WeiBeiTheme.ink)
-                if store.pinnedFloatingAgent {
-                    Text(store.ui("已固定", "Pinned"))
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundStyle(WeiBeiTheme.cinnabar.opacity(0.9))
+            HStack(spacing: 8) {
+                if let selection = store.selectionContext?.text, !selection.isEmpty {
+                    FloatingSelectionPreview(text: selection)
                 }
                 Spacer(minLength: 4)
-                if store.isConversationSurfaceVisible, store.activeSelectionAskThreadID != nil {
-                    Button(store.ui("跳到对话", "Jump to chat")) {
-                        if let id = store.activeSelectionAskThreadID {
-                            store.openSelectionAskThread(id, jumpToConversation: true)
-                        }
-                    }
-                    .buttonStyle(WeiBeiTextActionButtonStyle())
-                }
                 Button {
                     withAnimation(WeiBeiMotion.micro) { togglePinnedFloatingAgent() }
                 } label: {
@@ -3079,9 +3090,9 @@ struct FloatingSelectionAgentView: View {
                 }
                 .buttonStyle(.plain)
                 .help(store.pinnedFloatingAgent
-                      ? store.ui("取消固定：选区变化时浮层可收起", "Unpin: float may dismiss when selection changes")
-                      : store.ui("固定浮层：选区变化时保持打开", "Pin float: keep open when selection changes"))
-                .accessibilityLabel(Text(store.pinnedFloatingAgent ? store.ui("取消固定浮层", "Unpin floating layer") : store.ui("固定浮层", "Pin floating layer")))
+                      ? store.ui("取消固定", "Unpin")
+                      : store.ui("固定在当前位置", "Keep in place"))
+                .accessibilityLabel(Text(store.pinnedFloatingAgent ? store.ui("取消固定", "Unpin") : store.ui("固定在当前位置", "Keep in place")))
 
                 Button {
                     closeFloatingAgent()
@@ -3096,151 +3107,107 @@ struct FloatingSelectionAgentView: View {
                 .accessibilityLabel(Text(store.ui("关闭", "Close")))
             }
             .padding(.horizontal, 12)
-            .padding(.top, 10)
-            .padding(.bottom, 8)
+            .padding(.top, 9)
+            .padding(.bottom, 7)
+            .contentShape(Rectangle())
+            .gesture(moveFloatingAgentGesture)
 
             Rectangle()
-                .fill(WeiBeiTheme.hairline.opacity(0.55))
+                .fill(WeiBeiTheme.hairline.opacity(0.35))
                 .frame(height: 1)
                 .padding(.horizontal, 12)
 
-            if let selection = store.selectionContext?.text, !selection.isEmpty {
-                HStack(spacing: 6) {
-                    Text(store.ui("选区", "Selection"))
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(WeiBeiTheme.cinnabar.opacity(0.9))
-                        .padding(.horizontal, 7)
-                        .frame(height: 20)
-                        .background(WeiBeiTheme.cinnabarSoft.opacity(0.62), in: Capsule())
-                    Text(Self.selectionTagLabel(selection))
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(WeiBeiTheme.secondaryInk)
-                        .lineLimit(1)
-                    Spacer(minLength: 0)
-                }
-                .padding(.horizontal, 12)
-                .padding(.top, 8)
-                .padding(.bottom, 2)
-            }
+            if showsFloatingFeed {
+                ScrollView(showsIndicators: false) {
+                    // Same order as immersive chat: messages → streaming → thinking.
+                    LazyVStack(alignment: .leading, spacing: 12) {
+                        ForEach(visibleFloatingMessages) { message in
+                            let displayText = store.agentDisplayText(for: message)
+                            if message.completionState == .generating
+                                && displayText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                                AgentThinkingIndicator()
+                                    .id(message.id)
+                                    .padding(.vertical, 4)
+                            } else {
+                                FloatingSelectionMessageBubble(
+                                    message: message,
+                                    text: floatingText(for: message),
+                                    isError: WorkspaceStore.isAgentFailureMessage(message.text)
+                                )
+                            }
+                        }
 
-            ScrollView(showsIndicators: false) {
-                // Same order as immersive chat: messages → streaming → thinking.
-                LazyVStack(alignment: .leading, spacing: 12) {
-                    if visibleFloatingMessages.isEmpty && !(store.isAgentRunningInActiveChat && store.agentStreamingText.isEmpty) {
-                        Text(store.ui("写下问题后发送，回答会出现在这里。", "Write a question and send — the reply appears here."))
-                            .font(.system(size: 12))
-                            .foregroundStyle(WeiBeiTheme.tertiaryInk)
-                            .padding(.vertical, 8)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
+                        if store.isAgentRunningInActiveChat
+                            && !store.hasPersistedGeneratingAgentReply
+                            && !store.agentStreamingText.isEmpty {
+                            AgentStreamingResponse(
+                                text: store.agentStreamingText,
+                                isChatWideTypography: false,
+                                compact: true
+                            )
+                            .id("selection-float-streaming")
+                        }
 
-                    ForEach(visibleFloatingMessages) { message in
-                        let displayText = store.agentDisplayText(for: message)
-                        if message.completionState == .generating
-                            && displayText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        if store.isAgentRunningInActiveChat
+                            && !store.hasPersistedGeneratingAgentReply
+                            && store.agentStreamingText.isEmpty {
                             AgentThinkingIndicator()
-                                .id(message.id)
+                                .id("selection-float-thinking")
                                 .padding(.vertical, 4)
-                        } else {
-                            FloatingSelectionMessageBubble(
-                                message: message,
-                                roleLabel: message.role == .user ? store.ui("你", "You") : "WeiBei",
-                                text: floatingText(for: message),
-                                isError: WorkspaceStore.isAgentFailureMessage(message.text)
+                        }
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 12)
+                    .environment(\.agentChatLayoutWidth, max(panelWidth - 28, 1))
+                    .background {
+                        GeometryReader { proxy in
+                            Color.clear.preference(
+                                key: FloatingSelectionFeedHeightKey.self,
+                                value: proxy.size.height
                             )
                         }
                     }
-
-                    if store.isAgentRunningInActiveChat
-                        && !store.hasPersistedGeneratingAgentReply
-                        && !store.agentStreamingText.isEmpty {
-                        AgentStreamingResponse(
-                            text: store.agentStreamingText,
-                            isChatWideTypography: false,
-                            compact: true
-                        )
-                            .id("selection-float-streaming")
-                    }
-
-                    if store.isAgentRunningInActiveChat
-                        && !store.hasPersistedGeneratingAgentReply
-                        && store.agentStreamingText.isEmpty {
-                        AgentThinkingIndicator()
-                            .id("selection-float-thinking")
-                            .padding(.vertical, 4)
+                }
+                .frame(height: resolvedFloatingFeedHeight)
+                .onPreferenceChange(FloatingSelectionFeedHeightKey.self) { height in
+                    guard userFeedHeight == nil, height > 1,
+                          abs(height - measuredFeedContentHeight) > 1 else { return }
+                    withAnimation(WeiBeiMotion.layout) {
+                        measuredFeedContentHeight = height
                     }
                 }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 12)
-                .environment(\.agentChatLayoutWidth, max(panelWidth - 28, 1))
             }
-            .frame(minHeight: floatingFeedHeight, maxHeight: feedMaxHeight)
 
-            VStack(spacing: 0) {
-                Rectangle()
-                    .fill(WeiBeiTheme.hairline.opacity(0.45))
-                    .frame(height: 1)
-                AgentComposerField(
-                    prompt: store.ui("问选区或继续追问", "Ask about selection…"),
-                    focused: $draftFocused,
-                    font: .system(size: 13.5),
-                    promptFont: .system(size: 13.5),
-                    lineLimit: 1...5,
-                    height: 56,
-                    sendButtonSize: 26,
-                    trailingPadding: 36,
-                    sendTrailing: 8,
-                    sendBottom: 8,
-                    horizontalPadding: 10,
-                    verticalPadding: 8
-                ) {
-                    sendDraft()
-                }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 10)
+            AgentComposerField(
+                prompt: showsFloatingFeed
+                    ? store.ui("再问一点…", "Ask a follow-up…")
+                    : store.ui("问点什么…", "Ask anything…"),
+                focused: $draftFocused,
+                font: .system(size: 13.5),
+                promptFont: .system(size: 13.5),
+                lineLimit: 1...5,
+                height: SelectionFloatingAgentPlacement.expandedComposerCollapsedHeight,
+                compactMaxHeight: SelectionFloatingAgentPlacement.expandedComposerMaxHeight,
+                sendButtonSize: 26,
+                trailingPadding: 38,
+                sendTrailing: 4,
+                sendBottom: 4,
+                horizontalPadding: 2,
+                verticalPadding: 4,
+                showsChrome: false
+            ) {
+                sendDraft()
             }
+            .padding(.horizontal, 14)
+            .padding(.bottom, 5)
         }
         .frame(width: panelWidth, alignment: .leading)
-        .frame(minWidth: 420)
-        .overlay(alignment: .bottomTrailing) {
-            floatResizeHandle
+        .overlay {
+            floatingResizeBorder
         }
         .onAppear {
             draftFocused = true
         }
-    }
-
-    private var floatResizeHandle: some View {
-        Image(systemName: "arrow.up.left.and.arrow.down.right")
-            .font(.system(size: 9, weight: .bold))
-            .foregroundStyle(WeiBeiTheme.tertiaryInk.opacity(0.9))
-            .frame(width: 22, height: 22)
-            .contentShape(Rectangle())
-            .padding(6)
-            .highPriorityGesture(
-                DragGesture(minimumDistance: 1)
-                    .onChanged { value in
-                        if resizeOriginWidth == 0 {
-                            resizeOriginWidth = panelWidth
-                            resizeOriginFeedHeight = feedMaxHeight
-                        }
-                        panelWidth = min(max(resizeOriginWidth + value.translation.width, 420), 720)
-                        feedMaxHeight = min(max(resizeOriginFeedHeight + value.translation.height, 160), 640)
-                    }
-                    .onEnded { _ in
-                        resizeOriginWidth = 0
-                        resizeOriginFeedHeight = 0
-                    }
-            )
-            .help(store.ui("拖拽调整选区对话大小", "Drag to resize selection chat"))
-            .accessibilityLabel(Text(store.ui("调整选区对话大小", "Resize selection chat")))
-    }
-
-    private static func selectionTagLabel(_ text: String, limit: Int = 18) -> String {
-        let cleaned = text.trimmingCharacters(in: .whitespacesAndNewlines)
-            .replacingOccurrences(of: "\n", with: " ")
-        guard cleaned.count > limit else { return cleaned }
-        return String(cleaned.prefix(limit)) + "…"
     }
 
     private var visibleFloatingMessages: [AgentMessage] {
@@ -3258,25 +3225,122 @@ struct FloatingSelectionAgentView: View {
         store.selectionContext?.isNoteSelection == true
     }
 
-    private var floatingFeedHeight: CGFloat {
-        if visibleFloatingMessages.isEmpty { return 88 }
-        switch visibleFloatingMessages.count {
-        case 1: return 130
-        case 2: return 200
-        case 3: return 260
-        default: return 320
+    private var showsFloatingFeed: Bool {
+        !visibleFloatingMessages.isEmpty || store.isAgentRunningInActiveChat
+    }
+
+    private var resolvedFloatingFeedHeight: CGFloat {
+        userFeedHeight ?? CGFloat(
+            SelectionFloatingAgentPlacement.automaticContentHeight(
+                measuredContentHeight: Double(measuredFeedContentHeight)
+            )
+        )
+    }
+
+    private var floatingFeedGrowthOffset: CGFloat {
+        showsFloatingFeed ? resolvedFloatingFeedHeight / 2 : 0
+    }
+
+    private var moveFloatingAgentGesture: some Gesture {
+        DragGesture(minimumDistance: 4, coordinateSpace: .global)
+            .onChanged { value in
+                dragOffset = value.translation
+            }
+            .onEnded { value in
+                withAnimation(WeiBeiMotion.panel) {
+                    settledOffset = CGSize(
+                        width: settledOffset.width + value.translation.width,
+                        height: settledOffset.height + value.translation.height
+                    )
+                    dragOffset = .zero
+                    // Dragging repositions; pin is only set by the pin control.
+                }
+            }
+    }
+
+    private var floatingResizeBorder: some View {
+        ZStack {
+            FloatingSelectionResizeHitRegion(edge: .top, cursor: .resizeUpDown, onChanged: resizeFloatingAgent)
+                .frame(height: 8)
+                .padding(.horizontal, 10)
+                .frame(maxHeight: .infinity, alignment: .top)
+            FloatingSelectionResizeHitRegion(edge: .bottom, cursor: .resizeUpDown, onChanged: resizeFloatingAgent)
+                .frame(height: 8)
+                .padding(.horizontal, 10)
+                .frame(maxHeight: .infinity, alignment: .bottom)
+            FloatingSelectionResizeHitRegion(edge: .leading, cursor: .resizeLeftRight, onChanged: resizeFloatingAgent)
+                .frame(width: 8)
+                .padding(.vertical, 10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            FloatingSelectionResizeHitRegion(edge: .trailing, cursor: .resizeLeftRight, onChanged: resizeFloatingAgent)
+                .frame(width: 8)
+                .padding(.vertical, 10)
+                .frame(maxWidth: .infinity, alignment: .trailing)
+
+            FloatingSelectionResizeHitRegion(edge: .topLeading, cursor: .crosshair, onChanged: resizeFloatingAgent)
+                .frame(width: 12, height: 12)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            FloatingSelectionResizeHitRegion(edge: .topTrailing, cursor: .crosshair, onChanged: resizeFloatingAgent)
+                .frame(width: 12, height: 12)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+            FloatingSelectionResizeHitRegion(edge: .bottomLeading, cursor: .crosshair, onChanged: resizeFloatingAgent)
+                .frame(width: 12, height: 12)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
+            FloatingSelectionResizeHitRegion(edge: .bottomTrailing, cursor: .crosshair, onChanged: resizeFloatingAgent)
+                .frame(width: 12, height: 12)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(Text(store.ui("拖动边框调整浮窗大小", "Drag the border to resize")))
+        .accessibilityIdentifier("selection-float-resize-border")
+    }
+
+    private func resizeFloatingAgent(edge: FloatingAgentResizeEdge, value: DragGesture.Value?) {
+        guard let value else {
+            resizeOrigin = nil
+            resizeOriginOffset = nil
+            return
+        }
+
+        let origin = resizeOrigin ?? FloatingAgentSize(
+            width: Double(panelWidth),
+            height: Double(resolvedFloatingFeedHeight)
+        )
+        let originOffset = resizeOriginOffset ?? settledOffset
+        if resizeOrigin == nil {
+            resizeOrigin = origin
+            resizeOriginOffset = originOffset
+        }
+
+        let screen = NSScreen.main?.visibleFrame.size ?? CGSize(width: 1_200, height: 800)
+        let resized = SelectionFloatingAgentPlacement.resizedFrame(
+            current: origin,
+            translation: FloatingAgentSize(
+                width: Double(value.translation.width),
+                height: Double(value.translation.height)
+            ),
+            canvas: FloatingAgentSize(width: Double(screen.width), height: Double(screen.height)),
+            edge: edge
+        )
+        let feedGrowthCorrection = (origin.height - resized.size.height) / 2
+
+        // Drag updates stay animation-free and use global coordinates. The old
+        // local-coordinate corner drag changed its own coordinate space while
+        // resizing, so the panel visibly shook under the pointer.
+        var transaction = Transaction()
+        transaction.animation = nil
+        withTransaction(transaction) {
+            panelWidth = CGFloat(resized.size.width)
+            userFeedHeight = CGFloat(resized.size.height)
+            settledOffset = CGSize(
+                width: originOffset.width + CGFloat(resized.offset.x),
+                height: originOffset.height + CGFloat(resized.offset.y + feedGrowthCorrection)
+            )
         }
     }
 
     private func floatingText(for message: AgentMessage) -> String {
         store.agentDisplayText(for: message)
-    }
-
-    private func isGeneratedSelectionPrompt(_ message: AgentMessage) -> Bool {
-        message.role == .user
-            && (message.text.hasPrefix("请解释当前已选文本片段")
-                || message.text.hasPrefix("请解释下面选区")
-                || message.text.hasPrefix("请解释当前选区"))
     }
 
     private func togglePinnedFloatingAgent() {
@@ -3332,10 +3396,57 @@ struct FloatingSelectionAgentView: View {
     }
 }
 
-/// Paper float chrome: quieter radius; cinnabar edge only when pinned.
+private struct FloatingSelectionFeedHeightKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        let next = nextValue()
+        if next > 1 {
+            value = next
+        }
+    }
+}
+
+private struct FloatingSelectionResizeHitRegion: View {
+    let edge: FloatingAgentResizeEdge
+    let cursor: NSCursor
+    let onChanged: (FloatingAgentResizeEdge, DragGesture.Value?) -> Void
+    @State private var cursorPushed = false
+
+    var body: some View {
+        Color.clear
+            .contentShape(Rectangle())
+            .highPriorityGesture(
+                DragGesture(minimumDistance: 1, coordinateSpace: .global)
+                    .onChanged { value in
+                        onChanged(edge, value)
+                    }
+                    .onEnded { _ in
+                        onChanged(edge, nil)
+                    }
+            )
+            .onHover { hovering in
+                if hovering, !cursorPushed {
+                    cursor.push()
+                    cursorPushed = true
+                } else if !hovering {
+                    popCursorIfNeeded()
+                }
+            }
+            .onDisappear(perform: popCursorIfNeeded)
+    }
+
+    private func popCursorIfNeeded() {
+        if cursorPushed {
+            NSCursor.pop()
+            cursorPushed = false
+        }
+    }
+}
+
+/// Paper float chrome: one quiet surface for both compact and expanded states.
 private struct SelectionFloatChrome: ViewModifier {
     var expanded: Bool
-    var pinned: Bool
 
     func body(content: Content) -> some View {
         content
@@ -3348,18 +3459,16 @@ private struct SelectionFloatChrome: ViewModifier {
             .overlay {
                 RoundedRectangle(cornerRadius: expanded ? 12 : 9, style: .continuous)
                     .strokeBorder(
-                        pinned ? WeiBeiTheme.cinnabar.opacity(0.34) : WeiBeiTheme.hairline.opacity(0.65),
+                        WeiBeiTheme.hairline.opacity(0.65),
                         lineWidth: 1
                     )
             }
-            .shadow(color: WeiBeiTheme.ink.opacity(pinned ? 0.1 : 0.06), radius: pinned ? 12 : 8, y: pinned ? 4 : 3)
+            .shadow(color: WeiBeiTheme.ink.opacity(0.06), radius: 8, y: 3)
     }
 }
 
 private struct FloatingSelectionMessageBubble: View {
-    @EnvironmentObject private var store: WorkspaceStore
     var message: AgentMessage
-    var roleLabel: String
     var text: String
     var isError = false
 
@@ -3368,8 +3477,7 @@ private struct FloatingSelectionMessageBubble: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            messageHeader
+        VStack(alignment: .leading, spacing: 0) {
             if isError {
                 Text(text)
                     .font(.system(size: 13))
@@ -3382,33 +3490,6 @@ private struct FloatingSelectionMessageBubble: View {
             }
         }
         .padding(.vertical, 3)
-    }
-
-    @ViewBuilder
-    private var messageHeader: some View {
-        if isUser {
-            Text(roleLabel)
-                .font(.system(size: 10, weight: .medium))
-                .foregroundStyle(WeiBeiTheme.link.opacity(0.85))
-        } else {
-            HStack(spacing: 6) {
-                Text("WeiBei")
-                    .font(WeiBeiTypography.englishBrandFont(size: 9.8, weight: .semibold))
-                    .foregroundStyle(isError ? WeiBeiTheme.cinnabar : WeiBeiTheme.cinnabar.opacity(0.76))
-                if !isError {
-                    Text("PI")
-                        .font(.system(size: 9.5, weight: .semibold))
-                        .foregroundStyle(WeiBeiTheme.secondaryInk)
-                    if message.completionState == .generating,
-                       let activity = store.agentActivityText {
-                        Text(activity)
-                            .font(.system(size: 9.5))
-                            .foregroundStyle(WeiBeiTheme.secondaryInk.opacity(0.82))
-                            .lineLimit(1)
-                    }
-                }
-            }
-        }
     }
 
     private var finalizedMessage: some View {
