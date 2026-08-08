@@ -5,7 +5,7 @@ import XCTest
 
 final class RichMarkdownEditorBridgeTests: XCTestCase {
     @MainActor
-    func testFinalizedMarkdownBridgeWithoutAnimationFrames() async {
+    func testFinalizedMarkdownBridgeWithoutAnimationFrames() async throws {
         let loaded = expectation(description: "test WebView loaded")
         let navigationProbe = FinalizedMarkdownNavigationProbe {
             loaded.fulfill()
@@ -49,24 +49,17 @@ final class RichMarkdownEditorBridgeTests: XCTestCase {
         await fulfillment(of: [finalized], timeout: 3)
         XCTAssertEqual(finalizedHeight, 137)
 
-        let markdownRead = expectation(description: "finalized Markdown reached the WebView")
-        var finalizedMarkdown: String?
-        webView.evaluateJavaScript("document.body.dataset.finalizedMarkdown") { value, error in
-            XCTAssertNil(error)
-            finalizedMarkdown = value as? String
-            markdownRead.fulfill()
-        }
-        await fulfillment(of: [markdownRead], timeout: 3)
+        let finalizedMarkdown = try await webView.evaluateJavaScript(
+            "document.body.dataset.finalizedMarkdown"
+        ) as? String
         XCTAssertEqual(finalizedMarkdown, mermaid)
 
-        let failureInstalled = expectation(description: "failed finalizer installed")
-        webView.evaluateJavaScript(
-            "window.WeiBeiEditor.finishStreamingMarkdown = () => false"
-        ) { _, error in
-            XCTAssertNil(error)
-            failureInstalled.fulfill()
-        }
-        await fulfillment(of: [failureInstalled], timeout: 3)
+        _ = try await webView.evaluateJavaScript("""
+        (() => {
+          window.WeiBeiEditor.finishStreamingMarkdown = () => false;
+          return true;
+        })()
+        """)
 
         let renderFailed = expectation(description: "failed finalizer rejected")
         var didUnexpectedlyBecomeReady = false
@@ -80,14 +73,12 @@ final class RichMarkdownEditorBridgeTests: XCTestCase {
         await fulfillment(of: [renderFailed], timeout: 3)
         XCTAssertFalse(didUnexpectedlyBecomeReady)
 
-        let successRestored = expectation(description: "successful finalizer restored")
-        webView.evaluateJavaScript(
-            "window.WeiBeiEditor.finishStreamingMarkdown = () => true"
-        ) { _, error in
-            XCTAssertNil(error)
-            successRestored.fulfill()
-        }
-        await fulfillment(of: [successRestored], timeout: 3)
+        _ = try await webView.evaluateJavaScript("""
+        (() => {
+          window.WeiBeiEditor.finishStreamingMarkdown = () => true;
+          return true;
+        })()
+        """)
 
         var staleDocumentBecameReady = false
         coordinator.documentID = "original-document"
@@ -97,12 +88,7 @@ final class RichMarkdownEditorBridgeTests: XCTestCase {
         coordinator.finishStreamingMarkdown(mermaid)
         coordinator.documentID = "replacement-document"
 
-        let staleCompletionBarrier = expectation(description: "stale completion drained")
-        webView.evaluateJavaScript("true") { _, error in
-            XCTAssertNil(error)
-            staleCompletionBarrier.fulfill()
-        }
-        await fulfillment(of: [staleCompletionBarrier], timeout: 3)
+        _ = try await webView.evaluateJavaScript("true")
         await Task.yield()
         XCTAssertFalse(staleDocumentBecameReady)
         withExtendedLifetime(navigationProbe) {}
