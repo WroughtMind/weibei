@@ -4,7 +4,7 @@ import WeiBeiCore
 
 enum ImportedIdentitySelfCheck {
     @MainActor
-    static func run() async throws {
+    static func run() throws {
         try launchAndPrimaryEntriesStartBlank()
         try agentFailureMessagesExposeOnlyUserFacingDetails()
         try storageModelsDecodeLegacySnapshotsAndRoundTrip()
@@ -16,7 +16,7 @@ enum ImportedIdentitySelfCheck {
         try legacyChatScopesMigrateOnceAndPersist()
         try failedLearningMemoryMigrationKeepsLegacySnapshotRecoverable()
         try learningMemoryEditsRejectTruncationAndRetrySave()
-        try await courseResumePointRestoresOneAtomicLearningScene()
+        try courseResumePointRestoresOneAtomicLearningScene()
         try sameVolumeMoveKeepsIdentityRelationsNavigationAndIndex()
         try temporarilyUnavailableNoteRetainsLatestEdit()
         try restoredPendingNoteErrorsStayWithAffectedNote()
@@ -313,7 +313,7 @@ enum ImportedIdentitySelfCheck {
     }
 
     @MainActor
-    private static func courseResumePointRestoresOneAtomicLearningScene() async throws {
+    private static func courseResumePointRestoresOneAtomicLearningScene() throws {
         let fixture = try WorkspaceFixture(name: "course-resume-point")
         defer { fixture.remove() }
 
@@ -562,7 +562,6 @@ enum ImportedIdentitySelfCheck {
         )
 
         do {
-            reportCourseQuestionStage("store-create")
             var rejectsCourseQuestionSave = false
             let courseQuestionStore = makeStore { data, url in
                 if rejectsCourseQuestionSave {
@@ -603,7 +602,6 @@ enum ImportedIdentitySelfCheck {
 
             let question = "从课程 B 首页继续当前全局 Chat"
             rejectsCourseQuestionSave = true
-            reportCourseQuestionStage("first-submit")
             let routedChatID = courseQuestionStore.submitCourseHomeQuestion(
                 question,
                 in: courseB.id
@@ -618,7 +616,8 @@ enum ImportedIdentitySelfCheck {
                 "课程首页在请求准备期间覆盖了原问题"
             )
             var routedFailure: AgentMessage?
-            for _ in 0..<2_000 {
+            let routedDeadline = Date(timeIntervalSinceNow: 20)
+            repeat {
                 routedFailure = courseQuestionStore.activeStudySession?
                     .messages
                     .last(where: {
@@ -629,10 +628,11 @@ enum ImportedIdentitySelfCheck {
                 if routedFailure != nil, !courseQuestionStore.isAskingAgent {
                     break
                 }
-                await Task.yield()
-                try await Task.sleep(nanoseconds: 1_000_000)
-            }
-            reportCourseQuestionStage("first-request-finished")
+                RunLoop.current.run(
+                    mode: .default,
+                    before: Date(timeIntervalSinceNow: 0.01)
+                )
+            } while Date() < routedDeadline
             let routedMessages = try require(
                 courseQuestionStore.activeStudySession?.messages,
                 "课程首页问题后活动 Chat 丢失"
@@ -673,13 +673,13 @@ enum ImportedIdentitySelfCheck {
                 "A/B 课程恢复点没有指向同一条全局 Chat"
             )
 
-            reportCourseQuestionStage("retry-submit")
             courseQuestionStore.retryAgentRequest(
                 question,
                 targetCourseID: failure.origin?.courseID
             )
             var retriedFailure: AgentMessage?
-            for _ in 0..<2_000 {
+            let retryDeadline = Date(timeIntervalSinceNow: 20)
+            repeat {
                 let matchingFailures = courseQuestionStore.activeStudySession?
                     .messages
                     .filter {
@@ -692,10 +692,11 @@ enum ImportedIdentitySelfCheck {
                     retriedFailure = matchingFailures.last
                     break
                 }
-                await Task.yield()
-                try await Task.sleep(nanoseconds: 1_000_000)
-            }
-            reportCourseQuestionStage("retry-finished")
+                RunLoop.current.run(
+                    mode: .default,
+                    before: Date(timeIntervalSinceNow: 0.01)
+                )
+            } while Date() < retryDeadline
             let retryFailure = try require(
                 retriedFailure,
                 "课程首页问题重试没有在本地保存失败处停止"
@@ -710,14 +711,11 @@ enum ImportedIdentitySelfCheck {
             )
 
             rejectsCourseQuestionSave = false
-            reportCourseQuestionStage("flush-start")
             try check(
                 courseQuestionStore.flushPendingWorkspaceSave(),
                 "全局 Chat 跨课程关联无法在失败恢复后落盘"
             )
-            reportCourseQuestionStage("flush-finished")
             let reopenedCourseQuestionStore = makeStore()
-            reportCourseQuestionStage("reopen-finished")
             try check(
                 reopenedCourseQuestionStore.studySessions.count
                     == originalSessionCount
@@ -735,7 +733,6 @@ enum ImportedIdentitySelfCheck {
                     )?.chatID == originalChatID,
                 "重开后全局 Chat 或 A/B 课程恢复点没有保持同一身份"
             )
-            reportCourseQuestionStage("scenario-finished")
         }
 
         let rollbackStore = makeStore { _, _ in
@@ -3329,12 +3326,6 @@ enum ImportedIdentitySelfCheck {
 
     private static func check(_ condition: @autoclosure () -> Bool, _ message: String) throws {
         guard condition() else { throw CheckError.failed(message) }
-    }
-
-    private static func reportCourseQuestionStage(_ stage: String) {
-        FileHandle.standardError.write(
-            Data("course-question-stage: \(stage)\n".utf8)
-        )
     }
 
     private enum CheckError: LocalizedError {
