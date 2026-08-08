@@ -647,18 +647,27 @@ enum ImportedIdentitySelfCheck {
                         == originalMessages
                     && routedMessages.contains {
                         $0.role == .user && $0.text == question
-                    }
-                    && failure.origin?.chatID == originalChatID
-                    && failure.origin?.courseID == courseB.id
-                    && Set(
-                        courseQuestionStore.activeStudySession?
-                            .relatedCourseIDs ?? []
-                    ) == Set([courseA.id, courseB.id])
-                    && courseQuestionStore.courseResumePoint(for: courseA.id)?
-                        .chatID == originalChatID
+                    },
+                "课程首页问题新建了第二个 Chat 或破坏了原历史"
+            )
+            try check(
+                failure.origin?.chatID == originalChatID
+                    && failure.origin?.courseID == courseB.id,
+                "课程首页问题失败后丢掉了原 Chat 或目标课程"
+            )
+            try check(
+                Set(
+                    courseQuestionStore.activeStudySession?
+                        .relatedCourseIDs ?? []
+                ) == Set([courseA.id, courseB.id]),
+                "全局 Chat 错记或漏记了本轮实际使用的课程"
+            )
+            try check(
+                courseQuestionStore.courseResumePoint(for: courseA.id)?
+                    .chatID == originalChatID
                     && courseQuestionStore.courseResumePoint(for: courseB.id)?
                         .chatID == originalChatID,
-                "课程首页问题新建了第二个 Chat、破坏了原历史，或沿用了旧课程焦点"
+                "A/B 课程恢复点没有指向同一条全局 Chat"
             )
 
             courseQuestionStore.retryAgentRequest(

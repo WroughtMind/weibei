@@ -10941,6 +10941,26 @@ final class WorkspaceStore: ObservableObject {
         )
     }
 
+    /// Resolve course associations for one Agent turn. A shared item belongs to
+    /// the explicit target course for this turn; unrelated memberships must not
+    /// make the global Chat appear to have used those other courses.
+    private func agentContextCourseIDs(
+        for itemIDs: some Sequence<String>,
+        targetCourseID: UUID?
+    ) -> [UUID] {
+        var result = Set<UUID>()
+        for itemID in itemIDs {
+            let memberships = courseMembershipIndex.courseIDs(for: itemID)
+            if let targetCourseID,
+               memberships.contains(targetCourseID) {
+                result.insert(targetCourseID)
+            } else {
+                result.formUnion(memberships)
+            }
+        }
+        return result.sorted { $0.uuidString < $1.uuidString }
+    }
+
     func deleteStudySession(_ id: UUID) {
         guard let index = studySessions.firstIndex(where: { $0.id == id }) else {
             return
@@ -18818,7 +18838,10 @@ final class WorkspaceStore: ObservableObject {
         let sentSelectionIDs = Set(sentSelections.map(\.id))
         associateStudySession(
             target.sessionID,
-            withItemIDs: sentSelections.compactMap(\.itemID)
+            with: agentContextCourseIDs(
+                for: sentSelections.compactMap(\.itemID),
+                targetCourseID: target.courseID
+            )
         )
         let shouldClearSentDocumentSelection = sentSelections.contains {
             $0.id == selectionContext?.id && $0.source == .document
@@ -18845,8 +18868,10 @@ final class WorkspaceStore: ObservableObject {
         let sentNoteItemID = sentNoteItem?.id
         associateStudySession(
             target.sessionID,
-            withItemIDs: [sentMaterialItemID, sentNoteItemID]
-                .compactMap { $0 }
+            with: agentContextCourseIDs(
+                for: [sentMaterialItemID, sentNoteItemID].compactMap { $0 },
+                targetCourseID: target.courseID
+            )
         )
         let sentLearningContext = makeLearningContext(target: target)
         let sentCourseProfile = makeCourseProfileContext(
@@ -19104,11 +19129,17 @@ final class WorkspaceStore: ObservableObject {
             )
             associateStudySession(
                 target.sessionID,
-                withItemIDs: sources.compactMap(\.itemID)
+                with: agentContextCourseIDs(
+                    for: sources.compactMap(\.itemID),
+                    targetCourseID: target.courseID
+                )
             )
             associateStudySession(
                 target.sessionID,
-                withItemIDs: reply.readItemIDs
+                with: agentContextCourseIDs(
+                    for: reply.readItemIDs,
+                    targetCourseID: target.courseID
+                )
             )
             // The visible reply is durable before this request is considered finished.
             // A save error must not replace or hide the answer that already arrived.
