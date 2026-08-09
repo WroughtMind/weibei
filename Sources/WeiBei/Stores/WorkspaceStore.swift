@@ -337,8 +337,7 @@ final class WorkspaceStore: ObservableObject {
     @Published var isAskingAgent = false
     @Published private(set) var isStoppingAgent = false
     @Published private(set) var isAgentSwitchConfirmationPresented = false
-    @Published var agentStreamingText = ""
-    @Published var agentActivityText: String?
+    let agentStreaming = AgentStreamingState()
     @Published var showLoadingIndicatorSamples = false
     /// Last failed user question for precise one-tap retry.
     @Published private(set) var lastFailedAgentQuestion: String?
@@ -18887,8 +18886,8 @@ final class WorkspaceStore: ObservableObject {
         activeAgentRequestID = requestID
         latestAgentStreamingText = ""
         lastAgentStreamingPublishNanoseconds = 0
-        agentStreamingText = ""
-        agentActivityText = ui("正在准备课程现场", "Preparing course context")
+        agentStreaming.text = ""
+        agentStreaming.activityText = ui("正在准备课程现场", "Preparing course context")
         defer {
             if activeAgentRequestID == requestID {
                 activeAgentRequestID = nil
@@ -18897,8 +18896,8 @@ final class WorkspaceStore: ObservableObject {
                 isAskingAgent = false
                 latestAgentStreamingText = ""
                 lastAgentStreamingPublishNanoseconds = 0
-                agentStreamingText = ""
-                agentActivityText = nil
+                agentStreaming.text = ""
+                agentStreaming.activityText = nil
                 agentRequestTask = nil
                 // Answer finished: keep float pinned so the user can scroll the reply.
                 if keepFloatingSelectionForAnswer, !isConversationSurfaceVisible {
@@ -19046,7 +19045,7 @@ final class WorkspaceStore: ObservableObject {
                 language: sentLanguage,
                 contextRevision: "\(requestWorkspaceRevision):\(requestID.uuidString.lowercased())"
             )
-            agentActivityText = ui("正在思考", "Thinking")
+            agentStreaming.activityText = ui("正在思考", "Thinking")
             didStartModelRequest = true
             let reply = try await executeStudyAgentRequest(
                 request,
@@ -19301,8 +19300,8 @@ final class WorkspaceStore: ObservableObject {
         isStoppingAgent = true
         latestAgentStreamingText = ""
         lastAgentStreamingPublishNanoseconds = 0
-        agentStreamingText = ""
-        agentActivityText = nil
+        agentStreaming.text = ""
+        agentStreaming.activityText = nil
         agentStopTask?.cancel()
         agentStopTask = Task { @MainActor [weak self] in
             guard let self else { return }
@@ -19462,7 +19461,7 @@ final class WorkspaceStore: ObservableObject {
         switch progress {
         case .preparing:
             if updatesVisibleChat {
-                agentActivityText = ui("正在思考", "Thinking")
+                agentStreaming.activityText = ui("正在思考", "Thinking")
             }
         case let .usingTool(name, detail):
             guard updatesVisibleChat else { return }
@@ -19488,9 +19487,9 @@ final class WorkspaceStore: ObservableObject {
             // Surface what the agent is actually touching, ChatGPT-style:
             // "正在搜索：泰勒展开" / "正在读取：导数.md".
             if let detail, !detail.isEmpty {
-                agentActivityText = base + ui("：", ": ") + detail
+                agentStreaming.activityText = base + ui("：", ": ") + detail
             } else {
-                agentActivityText = base
+                agentStreaming.activityText = base
             }
         case let .text(text):
             latestAgentStreamingText = text
@@ -19501,12 +19500,12 @@ final class WorkspaceStore: ObservableObject {
             if updatesVisibleChat,
                now &- lastAgentStreamingPublishNanoseconds >= 33_000_000 {
                 lastAgentStreamingPublishNanoseconds = now
-                agentStreamingText = text
+                agentStreaming.text = text
             }
             if updatesVisibleChat {
                 let activity = ui("正在组织回答", "Composing answer")
-                if agentActivityText != activity {
-                    agentActivityText = activity
+                if agentStreaming.activityText != activity {
+                    agentStreaming.activityText = activity
                 }
             }
         }
