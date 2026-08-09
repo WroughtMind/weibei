@@ -120,6 +120,24 @@ private func checkRPCDecoding() throws {
         "PI native skill reads preserve versioned evidence metadata"
     )
 
+    let visualization = try PiRPCMessageDecoder.decode(Data(#"{"type":"tool_execution_end","toolCallId":"tool-visualize","toolName":"weibei_visualize","isError":false,"result":{"details":{"kind":"weibei_visualization","id":"energy-flow","spec":{"items":[{"type":"button","label":"调整","action":"adjust"}]}}}}"#.utf8))
+    try piRequire(
+        visualization == .visualization(
+            id: "tool-visualize",
+            fragment: AgentVisualization(
+                id: "energy-flow",
+                specJSON: #"{"items":[{"action":"adjust","label":"调整","type":"button"}]}"#
+            )
+        ),
+        "PI Visualize results preserve stable id and component tree"
+    )
+    do {
+        _ = try PiRPCMessageDecoder.decode(Data(#"{"type":"tool_execution_end","toolCallId":"tool-visualize","toolName":"weibei_visualize","isError":false,"result":{"details":{"kind":"weibei_visualization","id":"Bad--ID","spec":{"items":[{"type":"button","label":"调整"}]}}}}"#.utf8))
+        throw PiAgentSelfCheckError.failed("PI Visualize rejects unstable ids")
+    } catch PiRPCProtocolError.invalidEnvelope {
+        // Expected: same-id updates require one canonical lowercase identifier.
+    }
+
     let artifactComputed = try PiRPCMessageDecoder.decode(Data(#"{"type":"tool_execution_end","toolCallId":"tool-python","toolName":"weibei_compute_artifact","isError":false,"result":{"details":{"kind":"compute_artifact","schemaVersion":1,"contextRevision":"revision-7","requestID":"stats-1","operation":"compute_statistics","workerVersion":"1.0.0","requestSHA256":"request-hash","outputSHA256":"output-hash","durationMS":23,"artifacts":[{"sha256":"artifact-hash"}]}}}"#.utf8))
     try piRequire(
         artifactComputed == .artifactComputed(
@@ -870,6 +888,15 @@ private func checkStudyAgentContext() throws {
     let message = AgentMessage(
         role: .assistant,
         text: "PI answer",
+        contentBlocks: [
+            .text("先看变化。"),
+            .visualization(AgentVisualization(
+                id: "energy-flow",
+                specJSON: #"{"items":[{"id":"energy","max":5,"min":0,"type":"slider","value":3}]}"#,
+                stateJSON: #"{"value":3}"#
+            )),
+            .text("再比较结果。"),
+        ],
         source: "材料",
         backend: .pi,
         richAnswer: richPresentation
@@ -879,8 +906,16 @@ private func checkStudyAgentContext() throws {
     try piRequire(
         decodedMessage.backend == .pi
             && decodedMessage.richAnswer?.mode == .rich
-            && decodedMessage.richAnswer?.scenes.first?.id == "message-scene",
-        "agent backend and validated rich-answer sidecar round-trip together"
+            && decodedMessage.richAnswer?.scenes.first?.id == "message-scene"
+            && decodedMessage.contentBlocks.count == 3
+            && decodedMessage.contentBlocks[1] == .visualization(
+                AgentVisualization(
+                    id: "energy-flow",
+                    specJSON: #"{"items":[{"id":"energy","max":5,"min":0,"type":"slider","value":3}]}"#,
+                    stateJSON: #"{"value":3}"#
+                )
+            ),
+        "agent backend, ordered Visualize blocks, and validated rich-answer sidecar round-trip together"
     )
     var legacyObject = try JSONSerialization.jsonObject(with: encoded) as? [String: Any] ?? [:]
     legacyObject.removeValue(forKey: "backend")

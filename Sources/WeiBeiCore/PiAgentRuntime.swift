@@ -282,6 +282,7 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         "weibei_learning_memory",
         "weibei_learning_update",
         "weibei_course_profile_update",
+        "weibei_visualize",
         // `read` is limited by the extension to bundled Skills.
         "read",
         "weibei_note_proposal",
@@ -392,6 +393,7 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         var contextSources: [AgentReplySource]
         var sources: [AgentReplySource] = []
         var streamedText = ""
+        var contentBlocks: [AgentMessageContentBlock] = []
         var proposal: StudyAgentNoteProposal?
         var relationProposal: StudyAgentRelationProposal?
         var learningUpdate: StudyAgentLearningUpdate?
@@ -673,7 +675,9 @@ public actor PiAgentRuntime: StudyAgentRuntime {
             lastLocationSourceLabel: context.learning.lastLocation.map { "[材料：\($0.itemTitle)]" },
             allowedNoteSourceLabels: currentSourceLabels,
             contextSources: request.selectionSources,
-            allowedToolNames: Set(Self.sharedToolNames),
+            allowedToolNames: Set(Self.sharedToolNames).subtracting(
+                request.interactiveVisualizationsEnabled ? [] : ["weibei_visualize"]
+            ),
             allowsRelationProposal: request.projectScope.courseID?.isEmpty == false,
             courseCatalogRolesByContextID: context.course.catalog.reduce(into: [:]) {
                 $0[$1.id] = $1.role
@@ -2184,9 +2188,14 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         case let .textDelta(delta):
             guard var run = activeRun else { return }
             run.streamedText += delta
+            if case let .text(existing)? = run.contentBlocks.last {
+                run.contentBlocks[run.contentBlocks.count - 1] = .text(existing + delta)
+            } else if !delta.isEmpty {
+                run.contentBlocks.append(.text(delta))
+            }
             activeRun = run
             refreshRunWatchdog()
-            run.progressDelivery?.yield(.text(run.streamedText))
+            run.progressDelivery?.yield(.text(run.streamedText, run.contentBlocks))
 
         case .runActivity:
             refreshRunWatchdog()
@@ -2299,6 +2308,22 @@ public actor PiAgentRuntime: StudyAgentRuntime {
 
         case .artifactComputed, .richAnswer:
             break
+
+        case let .visualization(_, fragment):
+            guard var run = activeRun else { return }
+            if let index = run.contentBlocks.firstIndex(where: { block in
+                if case let .visualization(existing) = block {
+                    return existing.id == fragment.id
+                }
+                return false
+            }) {
+                run.contentBlocks[index] = .visualization(fragment)
+            } else {
+                run.contentBlocks.append(.visualization(fragment))
+            }
+            activeRun = run
+            refreshRunWatchdog()
+            run.progressDelivery?.yield(.visualization(fragment, run.contentBlocks))
 
         case let .noteProposal(_, proposal):
             guard var run = activeRun else { return }
@@ -2448,7 +2473,35 @@ public actor PiAgentRuntime: StudyAgentRuntime {
             }
             let modelClosureText = (text.isEmpty ? run.streamedText : text)
                 .trimmingCharacters(in: .whitespacesAndNewlines)
-            let finalText = modelClosureText
+            let hasVisualization = run.contentBlocks.contains { block in
+                if case .visualization = block { return true }
+                return false
+            }
+            var finalContentBlocks = hasVisualization ? run.contentBlocks : []
+            let orderedText: String
+            if !hasVisualization {
+                orderedText = modelClosureText
+            } else if run.streamedText.isEmpty {
+                orderedText = modelClosureText
+                if !modelClosureText.isEmpty {
+                    finalContentBlocks.append(.text(modelClosureText))
+                }
+            } else if text.isEmpty || text == run.streamedText {
+                orderedText = run.streamedText.trimmingCharacters(in: .whitespacesAndNewlines)
+            } else if text.hasPrefix(run.streamedText) {
+                let tail = String(text.dropFirst(run.streamedText.count))
+                if !tail.isEmpty {
+                    if case let .text(existing)? = finalContentBlocks.last {
+                        finalContentBlocks[finalContentBlocks.count - 1] = .text(existing + tail)
+                    } else {
+                        finalContentBlocks.append(.text(tail))
+                    }
+                }
+                orderedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            } else {
+                orderedText = run.streamedText.trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+            let finalText = orderedText
             let citesCurrentSelection = run.allowedSourceLabels.contains {
                 $0.hasPrefix("[选区：") && finalText.contains($0)
             }
@@ -2465,6 +2518,7 @@ public actor PiAgentRuntime: StudyAgentRuntime {
             )
             let replyCandidate = StudyAgentReply(
                 text: finalText,
+                contentBlocks: finalContentBlocks,
                 backend: .pi,
                 richAnswer: nil,
                 sources: run.sources,
@@ -2483,7 +2537,7 @@ public actor PiAgentRuntime: StudyAgentRuntime {
                     ?? run.lastError
                     ?? "PI 模型请求失败，但运行时没有返回错误详情"
                 finishRun(id: run.id, with: .failure(PiAgentRuntimeError.agentFailed(detail)))
-            } else if finalText.isEmpty {
+            } else if finalText.isEmpty && !hasVisualization {
                 finishRun(id: run.id, with: .failure(PiAgentRuntimeError.agentFailed(run.lastError ?? "PI returned no readable text")))
             } else {
                 finishRun(id: run.id, with: .success(replyCandidate))
@@ -2510,7 +2564,7 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         switch result {
         case let .success(reply):
             if !run.streamedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                run.progressDelivery?.yield(.text(reply.text))
+                run.progressDelivery?.yield(.text(reply.text, reply.contentBlocks))
             }
             run.progressDelivery?.finish()
         case .failure:

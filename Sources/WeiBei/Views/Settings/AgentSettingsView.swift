@@ -60,6 +60,22 @@ extension SettingsView {
                 agentModelPicker()
             }
 
+            settingsRow(
+                title: store.ui("互动界面", "Interactive UI"),
+                detail: store.ui(
+                    "关闭后只停止新互动界面；Markdown、Mermaid 和已有内容不受影响。",
+                    "Disables only new interactive UI. Markdown, Mermaid, and existing content remain available."
+                )
+            ) {
+                settingsSwitch(
+                    isOn: Binding(
+                        get: { store.agentInteractiveVisualizationsEnabled },
+                        set: { store.setAgentInteractiveVisualizationsEnabled($0) }
+                    ),
+                    accessibilityLabel: store.ui("允许生成互动界面", "Allow interactive UI")
+                )
+            }
+
             // Base URL — flat (no longer hidden behind Advanced); only for providers
             // that need it, or once the user has set one.
             if store.agentProviderID.showsBaseURLField || !store.agentBaseURL.isEmpty {

@@ -516,6 +516,7 @@ public struct StudyAgentRequest: Sendable {
     public var courseProfile: StudyAgentCourseProfileContext
     public var language: WeiBeiInterfaceLanguage
     public var contextRevision: String
+    public var interactiveVisualizationsEnabled: Bool
 
     public init(
         id: UUID = UUID(),
@@ -537,7 +538,8 @@ public struct StudyAgentRequest: Sendable {
         learningContext: StudyAgentLearningContext = .empty,
         courseProfile: StudyAgentCourseProfileContext = .empty,
         language: WeiBeiInterfaceLanguage = .chinese,
-        contextRevision: String
+        contextRevision: String,
+        interactiveVisualizationsEnabled: Bool = true
     ) {
         self.id = id
         self.purpose = purpose
@@ -559,6 +561,7 @@ public struct StudyAgentRequest: Sendable {
         self.courseProfile = courseProfile
         self.language = language
         self.contextRevision = contextRevision
+        self.interactiveVisualizationsEnabled = interactiveVisualizationsEnabled
     }
 
 }
@@ -722,6 +725,7 @@ public struct StudyAgentLoadedSkill: Codable, Equatable, Sendable {
 
 public struct StudyAgentReply: Equatable, Sendable {
     public var text: String
+    public var contentBlocks: [AgentMessageContentBlock]
     public var backend: StudyAgentBackend
     public var richAnswer: RichAnswerPresentation?
     public var sources: [AgentReplySource]
@@ -735,6 +739,7 @@ public struct StudyAgentReply: Equatable, Sendable {
 
     public init(
         text: String,
+        contentBlocks: [AgentMessageContentBlock] = [],
         backend: StudyAgentBackend,
         richAnswer: RichAnswerPresentation? = nil,
         sources: [AgentReplySource] = [],
@@ -747,6 +752,7 @@ public struct StudyAgentReply: Equatable, Sendable {
         toolTrace: [String] = []
     ) {
         self.text = text
+        self.contentBlocks = contentBlocks
         self.backend = backend
         self.richAnswer = richAnswer
         self.sources = sources
@@ -765,7 +771,8 @@ public enum StudyAgentProgress: Equatable, Sendable {
     /// Tool name plus an optional human-readable argument excerpt
     /// (search query, file title…) surfaced in the chat status line.
     case usingTool(String, String?)
-    case text(String)
+    case text(String, [AgentMessageContentBlock])
+    case visualization(AgentVisualization, [AgentMessageContentBlock])
 }
 
 public typealias StudyAgentProgressHandler = @Sendable (StudyAgentProgress) async -> Void
@@ -967,6 +974,7 @@ public struct StudyAgentContextEnvelope: Codable, Equatable, Sendable {
     public var visualAssets: [StudyAgentVisualAsset]
     public var learning: StudyAgentLearningContext
     public var courseProfile: StudyAgentCourseProfileContext
+    public var interactiveVisualizationsEnabled: Bool
 
     public init(request: StudyAgentRequest) {
         schemaVersion = 2
@@ -1044,6 +1052,7 @@ public struct StudyAgentContextEnvelope: Codable, Equatable, Sendable {
             request.courseProfile,
             itemIDMap: boundedCourse.itemIDMap
         )
+        interactiveVisualizationsEnabled = request.interactiveVisualizationsEnabled
     }
 
     private static func boundedProjectScope(

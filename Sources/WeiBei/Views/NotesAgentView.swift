@@ -3724,17 +3724,24 @@ private struct AgentBubble: View {
                     }
                 }
             } else {
-                // One surface owns the answer from its first rendered token through
-                // completion. State changes may freeze/cache it, but never replace it.
-                AgentMessageMarkdownText(
-                    text: citationParse.displayText,
-                    rendersRichMarkdown: true,
-                    isChatWideTypography: isChatWideTypography,
-                    usesFinalizedKaTeX: !isFailureMessage,
-                    messageID: message.id,
-                    keepsMarkdownSurfaceMounted: !isFailureMessage,
-                    isStreaming: message.completionState == .generating
-                )
+                if message.contentBlocks.contains(where: {
+                    if case .visualization = $0 { return true }
+                    return false
+                }) {
+                    visualizedMessageFlow(fallbackText: citationParse.displayText)
+                } else {
+                    // One surface owns the answer from its first rendered token through
+                    // completion. State changes may freeze/cache it, but never replace it.
+                    AgentMessageMarkdownText(
+                        text: citationParse.displayText,
+                        rendersRichMarkdown: true,
+                        isChatWideTypography: isChatWideTypography,
+                        usesFinalizedKaTeX: !isFailureMessage,
+                        messageID: message.id,
+                        keepsMarkdownSurfaceMounted: !isFailureMessage,
+                        isStreaming: message.completionState == .generating
+                    )
+                }
                 if let richAnswer = message.richAnswer,
                    richAnswer.mode == .rich,
                    !richAnswer.scenes.isEmpty {
@@ -3836,6 +3843,47 @@ private struct AgentBubble: View {
     private func activateSource(_ source: AgentReplySource) {
         withAnimation(WeiBeiMotion.panel) {
             _ = store.openAgentReplySource(source)
+        }
+    }
+
+    @ViewBuilder
+    private func visualizedMessageFlow(fallbackText: String) -> some View {
+        let hasTextBlock = message.contentBlocks.contains {
+            if case let .text(text) = $0 {
+                return !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            }
+            return false
+        }
+        if !hasTextBlock, !fallbackText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            AgentMessageMarkdownText(
+                text: fallbackText,
+                rendersRichMarkdown: true,
+                isChatWideTypography: isChatWideTypography,
+                usesFinalizedKaTeX: !isFailureMessage,
+                keepsMarkdownSurfaceMounted: !isFailureMessage,
+                isStreaming: message.completionState == .generating
+            )
+        }
+        ForEach(Array(message.contentBlocks.enumerated()), id: \.offset) { _, block in
+            switch block {
+            case let .text(text):
+                if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    AgentMessageMarkdownText(
+                        text: AgentCitationParser.parse(text).displayText,
+                        rendersRichMarkdown: true,
+                        isChatWideTypography: isChatWideTypography,
+                        usesFinalizedKaTeX: !isFailureMessage,
+                        keepsMarkdownSurfaceMounted: !isFailureMessage,
+                        isStreaming: message.completionState == .generating
+                    )
+                }
+            case let .visualization(fragment):
+                AgentVisualizationView(
+                    messageID: message.id,
+                    visualization: fragment
+                )
+                .padding(.vertical, 4)
+            }
         }
     }
 

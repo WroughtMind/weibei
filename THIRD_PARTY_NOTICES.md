@@ -26,6 +26,10 @@ Exact package versions and declared licenses are recorded in:
 Generated JavaScript bundles retain embedded copyright and license notices.
 Rebuilds must preserve those notices.
 
+The safe mathematical expression evaluator used by the inline generative UI
+is adapted from `dsh-external/dsh-genui`, copyright 2026 dsh-external, under
+the MIT License.
+
 ## Website fonts
 
 The marketing website includes Noto Sans CJK and Noto Serif CJK web fonts.

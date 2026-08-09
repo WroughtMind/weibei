@@ -20,6 +20,7 @@ const LEARNING_UPDATE_TOOL = "weibei_learning_update";
 const COURSE_PROFILE_UPDATE_TOOL = "weibei_course_profile_update";
 const NOTE_PROPOSAL_TOOL = "weibei_note_proposal";
 const RELATION_PROPOSAL_TOOL = "weibei_relation_proposal";
+const VISUALIZE_TOOL = "weibei_visualize";
 const READ_TOOL = "read";
 const ALLOWED_TOOLS = new Set([
   COURSE_MAP_TOOL,
@@ -32,13 +33,14 @@ const ALLOWED_TOOLS = new Set([
   COURSE_PROFILE_UPDATE_TOOL,
   NOTE_PROPOSAL_TOOL,
   RELATION_PROPOSAL_TOOL,
+  VISUALIZE_TOOL,
   READ_TOOL,
 ]);
 
 const SKILLS = {
   visualize: {
     name: "Visualize",
-    version: "1.0.0",
+    version: "1.0.19",
     description: "在文字、Mermaid 与受控动态体验之间选择真正有助于理解的表达。",
     trigger: "视觉表达可能明显改善理解、比较或探索时加载。",
     relativePath: "skills/visualize/SKILL.md",
@@ -120,6 +122,7 @@ const LIMITS = {
   proposalEvidenceText: 500,
   visualAssetBytes: 6_000_000,
   visualAssets: 4,
+  visualizationSpec: 1_000_000,
 } as const;
 
 interface SourceSnapshot {
@@ -299,6 +302,7 @@ interface ContextSnapshotV2 {
   focus?: FocusSnapshot;
   learning: LearningSnapshot;
   courseProfile: CourseProfileSnapshot;
+  interactiveVisualizationsEnabled: boolean;
 }
 
 interface VisualAssetFileSnapshot {
@@ -412,6 +416,12 @@ interface RelationProposalDetails {
   noteItemID: string;
   sourceItemID: string;
   contextRevision: string;
+}
+
+interface VisualizationDetails {
+  kind: "weibei_visualization";
+  id: string;
+  spec: Record<string, unknown>;
 }
 
 
@@ -978,6 +988,10 @@ async function readCurrentSnapshot(): Promise<ContextSnapshotV2> {
     focus: readFocus(envelope.focus, project, catalogIDs),
     learning: readLearning(envelope.learning),
     courseProfile: readCourseProfile(envelope.courseProfile, catalogIDs),
+    interactiveVisualizationsEnabled:
+      typeof envelope.interactiveVisualizationsEnabled === "boolean"
+        ? envelope.interactiveVisualizationsEnabled
+        : true,
   };
 }
 
@@ -1678,6 +1692,7 @@ function learningLocationJumpReference(snapshot: ContextSnapshotV2): string | un
 export default function weibeiExtension(pi: ExtensionAPI) {
   let lastReadMemoryRevision: number | undefined;
   let courseProfileUpdated = false;
+  let interactiveVisualizationsEnabled = true;
   const searchedCourseItemIDs = new Set<string>();
   const hostCourseItemIDs = new Set<string>();
   const readCourseSourceRevisions = new Map<string, string>();
@@ -1708,6 +1723,56 @@ export default function weibeiExtension(pi: ExtensionAPI) {
         };
       }
       throw new Error("read 只接受魏碑已登记的 skill:// 路径");
+    },
+  });
+
+  pi.registerTool({
+    name: VISUALIZE_TOOL,
+    label: "显示互动界面",
+    description:
+      "把一个聚焦且充分利用正文空间的 Visualize 互动片段立即穿插显示在当前回答中。一次调用提交一个可直接使用的界面；重复 id 会原地更新已有界面。",
+    promptSnippet: "提交一个聚焦但不局促的 Visualize 片段；主视觉充分展开，必要控制和读数就近排布",
+    parameters: Type.Object(
+      {
+        id: Type.String({
+          minLength: 1,
+          maxLength: 128,
+          pattern: "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+          description: "稳定的短标识；更新已有界面时复用原 id",
+        }),
+        spec: Type.Object({
+          title: Type.Optional(Type.String({ maxLength: 240 })),
+          gap: Type.Optional(Type.Number({ minimum: 0, maximum: 64 })),
+          items: Type.Array(Type.Any(), { minItems: 1, maxItems: 200 }),
+        }, {
+          additionalProperties: false,
+          description: "Visualize 白名单组件树；根节点必须包含 items",
+        }),
+      },
+      { additionalProperties: false },
+    ),
+    executionMode: "sequential",
+    async execute(_toolCallID, params) {
+      const id = params.id.trim();
+      const spec = params.spec as Record<string, unknown>;
+      const specJSON = JSON.stringify(spec);
+      if (
+        !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(id)
+        || !Array.isArray(spec.items)
+        || spec.items.length === 0
+        || Buffer.byteLength(specJSON, "utf8") > LIMITS.visualizationSpec
+      ) {
+        throw new Error("Visualize 界面必须包含稳定 id 和完整组件树");
+      }
+      const details: VisualizationDetails = {
+        kind: "weibei_visualization",
+        id,
+        spec,
+      };
+      return {
+        content: [{ type: "text", text: `互动界面 ${id} 已显示。` }],
+        details,
+      };
     },
   });
 
@@ -2496,6 +2561,7 @@ export default function weibeiExtension(pi: ExtensionAPI) {
     readCourseSourceRevisions.clear();
 
     const snapshot = await readCurrentSnapshot();
+    interactiveVisualizationsEnabled = snapshot.interactiveVisualizationsEnabled;
     const selectionLabel = snapshot.selection?.text.trim()
       ? `[选区：${snapshot.selection.title}]`
       : undefined;
@@ -2513,6 +2579,9 @@ export default function weibeiExtension(pi: ExtensionAPI) {
       "学习记忆只能说明用户的学习状态，不能作为课程事实证据。",
       "课程知识档案只提供导航和已有认识，不是原文证据；精确事实、引文、公式和数字仍须读取材料。只在完成一节、完成主题、确认跨来源联系或准备切换上下文时批量更新一次，普通问答不要更新。长期学习记忆只在用户本轮明确确认理解、结论或保存学习成果时更新。",
       sourceAvailabilityInstruction,
+      snapshot.interactiveVisualizationsEnabled
+        ? "需要动态变化、空间运动或可调输入时，可以读取 Visualize Skill 并生成互动界面；文字足够时不要为了装饰而生成。"
+        : "用户已关闭新互动界面；不要调用 weibei_visualize。Markdown 与 Mermaid 不受影响。",
       "</weibei_turn>",
     ].join("\n");
 
@@ -2524,6 +2593,13 @@ export default function weibeiExtension(pi: ExtensionAPI) {
       return {
         block: true,
         reason: "魏碑 Agent 只允许当前作用域开放的课程能力、Skill 与待确认提案",
+      };
+    }
+
+    if (event.toolName === VISUALIZE_TOOL && !interactiveVisualizationsEnabled) {
+      return {
+        block: true,
+        reason: "用户已关闭新互动界面",
       };
     }
 
@@ -2586,6 +2662,7 @@ export default function weibeiExtension(pi: ExtensionAPI) {
       if (
         message.role === "toolResult" &&
         ALLOWED_TOOLS.has(message.toolName) &&
+        message.toolName !== VISUALIZE_TOOL &&
         !message.isError &&
         contextRevisionFromDetails(message.details) !== currentRevision
       ) {

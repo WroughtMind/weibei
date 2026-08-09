@@ -483,6 +483,7 @@ final class WorkspaceStore: ObservableObject {
     @Published var notebookRenameDraft: NotebookRenameDraft?
     private var notebookRenameInFlight = false
     @Published var modelName: String = ""
+    @Published private(set) var agentInteractiveVisualizationsEnabled = true
     @Published var agentProviderID: AgentProviderID = .openai
     @Published var agentBaseURL: String = ""
     @Published var agentAuthMethod: AgentAuthMethod = .apiKey
@@ -548,6 +549,7 @@ final class WorkspaceStore: ObservableObject {
     private var latestAgentStreamingText = ""
     private var lastAgentStreamingPublishNanoseconds: UInt64 = 0
     private var agentReplyIDsThatDisplayedStreamingText: Set<UUID> = []
+    private var agentVisualizationIDsUpdatingHistory: Set<String> = []
     private var activeAgentReplyChatID: UUID?
     private var agentRequestTask: Task<Void, Never>?
 #if DEBUG
@@ -949,6 +951,7 @@ final class WorkspaceStore: ObservableObject {
 
     private static let shortcutModifierMask: NSEvent.ModifierFlags = [.command, .option, .control, .shift]
     private static let legacySelectionAskThreadsDefaultsKey = "weibei.selectionAskThreads.v1"
+    private static let interactiveVisualizationsDefaultsKey = "weibei.agent.interactiveVisualizationsEnabled"
 
     convenience init() {
         let folder = Self.workspaceRootDirectory()
@@ -1015,6 +1018,13 @@ final class WorkspaceStore: ObservableObject {
         self.workspaceSnapshotWriter = workspaceSnapshotWriter
         self.coursePortableStateWriter = coursePortableStateWriter
         self.selectionAskThreadDefaults = selectionAskThreadDefaults
+        if selectionAskThreadDefaults.object(
+            forKey: Self.interactiveVisualizationsDefaultsKey
+        ) != nil {
+            agentInteractiveVisualizationsEnabled = selectionAskThreadDefaults.bool(
+                forKey: Self.interactiveVisualizationsDefaultsKey
+            )
+        }
         piRuntime = PiAgentRuntime(runtimeDirectory: folder.appendingPathComponent("AgentRuntime", isDirectory: true))
         let courseIndexDirectory = folder.appendingPathComponent("CourseIndex", isDirectory: true)
         Self.removeLegacyCourseIndex(in: courseIndexDirectory)
@@ -11093,6 +11103,53 @@ final class WorkspaceStore: ObservableObject {
         return updated
     }
 
+    func saveAgentVisualizationState(
+        messageID: UUID,
+        visualizationID: String,
+        stateJSON: String
+    ) {
+        guard stateJSON.utf8.count <= 262_144,
+              (try? JSONSerialization.jsonObject(
+                  with: Data(stateJSON.utf8),
+                  options: .fragmentsAllowed
+              )) != nil,
+              let chatID = studySessions.first(where: { session in
+                  session.messages.contains { $0.id == messageID }
+              })?.id else { return }
+        _ = updateAgentMessage(messageID, in: chatID) { message in
+            message.contentBlocks = message.contentBlocks.map { block in
+                guard case var .visualization(fragment) = block,
+                      fragment.id == visualizationID else { return block }
+                fragment.stateJSON = stateJSON
+                return .visualization(fragment)
+            }
+        }
+    }
+
+    func submitAgentVisualizationAction(_ action: String, payloadJSON: String) {
+        let action = String(action.prefix(200))
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !action.isEmpty,
+              payloadJSON.utf8.count <= 65_536,
+              (try? JSONSerialization.jsonObject(
+                  with: Data(payloadJSON.utf8),
+                  options: .fragmentsAllowed
+              )) != nil,
+              !isAgentRunningInActiveChat,
+              !isStoppingAgent else { return }
+        askAgent(
+            replayingSelections: [],
+            visibleQuestionOverride: ui(
+                "互动操作：\(action)",
+                "Interactive action: \(action)"
+            ),
+            questionOverride: ui(
+                "我在互动界面中执行了「\(action)」。当前界面数据：\(payloadJSON)",
+                "I used “\(action)” in the interactive view. Current view data: \(payloadJSON)"
+            )
+        )
+    }
+
     private func restoreAgentReplyState(from session: StudySession) {
         guard let reply = session.messages.last(where: { $0.role == .assistant }) else {
             latestAgentNoteProposal = nil
@@ -14314,6 +14371,15 @@ final class WorkspaceStore: ObservableObject {
         modelName = value
         touchActiveAgentProfileMetadata()
         save()
+    }
+
+    func setAgentInteractiveVisualizationsEnabled(_ enabled: Bool) {
+        guard agentInteractiveVisualizationsEnabled != enabled else { return }
+        agentInteractiveVisualizationsEnabled = enabled
+        selectionAskThreadDefaults.set(
+            enabled,
+            forKey: Self.interactiveVisualizationsDefaultsKey
+        )
     }
 
     func toggleAppearanceMode() {
@@ -18519,14 +18585,17 @@ final class WorkspaceStore: ObservableObject {
     func askAgent(
         reusingLastUserMessage: Bool = false,
         replayingSelections: [SelectionContext]? = nil,
-        targetCourseID: UUID? = nil
+        targetCourseID: UUID? = nil,
+        visibleQuestionOverride: String? = nil,
+        questionOverride: String? = nil
     ) {
         flushStagedNoteDraftForAgentContext()
+        let question = (questionOverride ?? agentDraft)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
         guard agentRequestTask == nil,
               !isStoppingAgent,
               !isAskingAgent,
-              !agentDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-        let question = agentDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+              !question.isEmpty else { return }
         let target: AgentConversationTarget
         do {
             if (reusingLastUserMessage || targetCourseID != nil),
@@ -18543,7 +18612,9 @@ final class WorkspaceStore: ObservableObject {
                 question: question,
                 error: error,
                 appendUserMessage: !reusingLastUserMessage,
-                targetCourseID: targetCourseID
+                targetCourseID: targetCourseID,
+                visibleQuestion: visibleQuestionOverride,
+                preserveComposerDraft: questionOverride != nil
             )
             return
         }
@@ -18551,7 +18622,9 @@ final class WorkspaceStore: ObservableObject {
             await self?.performAgentRequest(
                 target: target,
                 reusingLastUserMessage: reusingLastUserMessage,
-                replayingSelections: replayingSelections
+                replayingSelections: replayingSelections,
+                visibleQuestionOverride: visibleQuestionOverride,
+                questionOverride: questionOverride
             )
         }
     }
@@ -18679,7 +18752,9 @@ final class WorkspaceStore: ObservableObject {
         question: String,
         error: Error,
         appendUserMessage: Bool = true,
-        targetCourseID: UUID? = nil
+        targetCourseID: UUID? = nil,
+        visibleQuestion: String? = nil,
+        preserveComposerDraft: Bool = false
     ) {
         ensureActiveStudySession()
         guard let session = activeStudySession else { return }
@@ -18687,10 +18762,16 @@ final class WorkspaceStore: ObservableObject {
         let sourceTitle = agentMessageSourceTitle
         lastAgentFailureKind = .generic
         lastFailedAgentQuestion = question
-        agentDraftsBySessionID[session.id] = question
+        if !preserveComposerDraft {
+            agentDraftsBySessionID[session.id] = question
+        }
         focusedPane = .agent
         if appendUserMessage {
-            let userMessage = AgentMessage(role: .user, text: question, source: sourceTitle)
+            let userMessage = AgentMessage(
+                role: .user,
+                text: visibleQuestion ?? question,
+                source: sourceTitle
+            )
             appendAgentMessage(userMessage)
             appendMessageToActiveSelectionAskThread(userMessage.id)
         }
@@ -18773,14 +18854,17 @@ final class WorkspaceStore: ObservableObject {
     private func performAgentRequest(
         target: AgentConversationTarget,
         reusingLastUserMessage: Bool = false,
-        replayingSelections: [SelectionContext]? = nil
+        replayingSelections: [SelectionContext]? = nil,
+        visibleQuestionOverride: String? = nil,
+        questionOverride: String? = nil
     ) async {
         guard !Task.isCancelled, activeStudySessionID == target.sessionID else {
             agentRequestTask = nil
             return
         }
         flushStagedNoteDraftForAgentContext()
-        let question = agentDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        let question = (questionOverride ?? agentDraft)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
         guard !question.isEmpty, !isAskingAgent else {
             agentRequestTask = nil
             return
@@ -18802,7 +18886,9 @@ final class WorkspaceStore: ObservableObject {
                 question: question,
                 error: error,
                 appendUserMessage: !reusingLastUserMessage,
-                targetCourseID: target.courseID
+                targetCourseID: target.courseID,
+                visibleQuestion: visibleQuestionOverride,
+                preserveComposerDraft: questionOverride != nil
             )
             agentRequestTask = nil
             return
@@ -18898,6 +18984,7 @@ final class WorkspaceStore: ObservableObject {
         activeAgentRequestID = requestID
         latestAgentStreamingText = ""
         lastAgentStreamingPublishNanoseconds = 0
+        agentVisualizationIDsUpdatingHistory = []
         agentStreaming.text = ""
         agentStreaming.activityText = ui("正在准备课程现场", "Preparing course context")
         defer {
@@ -18908,6 +18995,7 @@ final class WorkspaceStore: ObservableObject {
                 isAskingAgent = false
                 latestAgentStreamingText = ""
                 lastAgentStreamingPublishNanoseconds = 0
+                agentVisualizationIDsUpdatingHistory = []
                 agentStreaming.text = ""
                 agentStreaming.activityText = nil
                 agentRequestTask = nil
@@ -18924,7 +19012,11 @@ final class WorkspaceStore: ObservableObject {
         var didStartModelRequest = false
         do {
             if !reusingLastUserMessage {
-                let userMessage = AgentMessage(role: .user, text: question, source: sourceTitle)
+                let userMessage = AgentMessage(
+                    role: .user,
+                    text: visibleQuestionOverride ?? question,
+                    source: sourceTitle
+                )
                 appendAgentMessage(userMessage)
                 appendMessageToActiveSelectionAskThread(userMessage.id)
                 didAppendUserMessage = true
@@ -18974,8 +19066,10 @@ final class WorkspaceStore: ObservableObject {
                 )
             }
 
-            agentDraft = ""
-            agentDraftsBySessionID[target.sessionID] = ""
+            if questionOverride == nil {
+                agentDraft = ""
+                agentDraftsBySessionID[target.sessionID] = ""
+            }
             lastFailedAgentQuestion = nil
             lastAgentFailureKind = nil
             latestAgentNoteProposal = nil
@@ -19055,7 +19149,8 @@ final class WorkspaceStore: ObservableObject {
                 learningContext: sentLearningContext,
                 courseProfile: sentCourseProfile,
                 language: sentLanguage,
-                contextRevision: "\(requestWorkspaceRevision):\(requestID.uuidString.lowercased())"
+                contextRevision: "\(requestWorkspaceRevision):\(requestID.uuidString.lowercased())",
+                interactiveVisualizationsEnabled: agentInteractiveVisualizationsEnabled
             )
             agentStreaming.activityText = ui("正在思考", "Thinking")
             didStartModelRequest = true
@@ -19121,8 +19216,10 @@ final class WorkspaceStore: ObservableObject {
             }
             let sources = reply.sources
             if let messageID = replyMessageID {
+                let visibleContentBlocks = currentAgentVisualizationBlocks(reply.contentBlocks)
                 _ = updateAgentMessage(messageID, in: target.sessionID) {
                     $0.text = reply.text
+                    $0.contentBlocks = visibleContentBlocks
                     $0.backend = reply.backend
                     $0.richAnswer = reply.richAnswer
                     $0.completionState = .completed
@@ -19132,6 +19229,11 @@ final class WorkspaceStore: ObservableObject {
                     $0.failureKind = nil
                     $0.retryQuestion = nil
                     $0.toolTrace = reply.toolTrace
+                }
+                if reply.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                   visibleContentBlocks.isEmpty,
+                   actions.isEmpty {
+                    removeAgentMessage(messageID, from: target.sessionID)
                 }
             }
             associateStudySession(
@@ -19162,11 +19264,15 @@ final class WorkspaceStore: ObservableObject {
                     requestID: requestID,
                     messageID: replyMessageID,
                     chatID: target.sessionID,
-                    kind: .cancelled
+                    kind: .cancelled,
+                    restoreDraft: questionOverride == nil
                 )
             }
-            agentDraftsBySessionID[target.sessionID] = question
-            if activeStudySessionID == target.sessionID,
+            if questionOverride == nil {
+                agentDraftsBySessionID[target.sessionID] = question
+            }
+            if questionOverride == nil,
+               activeStudySessionID == target.sessionID,
                agentDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 agentDraft = question
                 lastAgentFailureKind = .cancelled
@@ -19175,7 +19281,13 @@ final class WorkspaceStore: ObservableObject {
         } catch {
             guard activeAgentRequestID == requestID else { return }
             if !didAppendUserMessage {
-                appendAgentMessage(AgentMessage(role: .user, text: question, source: sourceTitle))
+                appendAgentMessage(
+                    AgentMessage(
+                        role: .user,
+                        text: visibleQuestionOverride ?? question,
+                        source: sourceTitle
+                    )
+                )
             }
             // Always restore the failed question so composer matches the failure copy.
             let kind = AgentFailureKind.classify(error)
@@ -19186,9 +19298,13 @@ final class WorkspaceStore: ObservableObject {
                     authMethod: requestAuthMethod
                 )
             }
-            agentDraftsBySessionID[target.sessionID] = question
+            if questionOverride == nil {
+                agentDraftsBySessionID[target.sessionID] = question
+            }
             if activeStudySessionID == target.sessionID {
-                agentDraft = question
+                if questionOverride == nil {
+                    agentDraft = question
+                }
                 focusedPane = .agent
                 lastAgentFailureKind = kind
                 lastFailedAgentQuestion = question
@@ -19204,7 +19320,8 @@ final class WorkspaceStore: ObservableObject {
                     messageID: replyMessageID,
                     chatID: target.sessionID,
                     kind: kind,
-                    fallbackText: failureText
+                    fallbackText: failureText,
+                    restoreDraft: questionOverride == nil
                 )
             } else {
                 appendAgentMessage(
@@ -19507,7 +19624,7 @@ final class WorkspaceStore: ObservableObject {
             } else {
                 agentStreaming.activityText = base
             }
-        case let .text(text):
+        case let .text(text, blocks):
             latestAgentStreamingText = text
             if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 agentReplyIDsThatDisplayedStreamingText.insert(replyMessageID)
@@ -19517,6 +19634,11 @@ final class WorkspaceStore: ObservableObject {
                now &- lastAgentStreamingPublishNanoseconds >= 33_000_000 {
                 lastAgentStreamingPublishNanoseconds = now
                 agentStreaming.text = text
+                updateStreamingAgentContentBlocks(
+                    currentAgentVisualizationBlocks(blocks),
+                    messageID: replyMessageID,
+                    chatID: chatID
+                )
             }
             if updatesVisibleChat {
                 let activity = ui("正在组织回答", "Composing answer")
@@ -19524,7 +19646,102 @@ final class WorkspaceStore: ObservableObject {
                     agentStreaming.activityText = activity
                 }
             }
+        case let .visualization(fragment, blocks):
+            if let historicalMessageID = historicalAgentMessageID(
+                containingVisualization: fragment.id,
+                in: chatID,
+                excluding: replyMessageID
+            ) {
+                _ = updateAgentMessage(historicalMessageID, in: chatID) { message in
+                    message.contentBlocks = message.contentBlocks.map { block in
+                        guard case let .visualization(existing) = block,
+                              existing.id == fragment.id else { return block }
+                        var replacement = fragment
+                        replacement.stateJSON = existing.stateJSON
+                        return .visualization(replacement)
+                    }
+                }
+                agentVisualizationIDsUpdatingHistory.insert(fragment.id)
+            }
+            _ = updateAgentMessage(replyMessageID, in: chatID) {
+                $0.contentBlocks = currentAgentVisualizationBlocks(blocks)
+            }
+            if updatesVisibleChat {
+                agentStreaming.activityText = ui("正在继续回答", "Continuing response")
+            }
         }
+    }
+
+    private func historicalAgentMessageID(
+        containingVisualization visualizationID: String,
+        in chatID: UUID,
+        excluding replyMessageID: UUID
+    ) -> UUID? {
+        studySessions
+            .first(where: { $0.id == chatID })?
+            .messages
+            .first(where: { message in
+                message.id != replyMessageID
+                    && message.contentBlocks.contains { block in
+                        if case let .visualization(fragment) = block {
+                            return fragment.id == visualizationID
+                        }
+                        return false
+                    }
+            })?
+            .id
+    }
+
+    private func updateStreamingAgentContentBlocks(
+        _ blocks: [AgentMessageContentBlock],
+        messageID: UUID,
+        chatID: UUID
+    ) {
+        guard blocks.contains(where: {
+            if case .visualization = $0 { return true }
+            return false
+        }),
+        let sessionIndex = studySessions.firstIndex(where: { $0.id == chatID }),
+        let messageIndex = studySessions[sessionIndex].messages.firstIndex(where: {
+            $0.id == messageID
+        }) else { return }
+        studySessions[sessionIndex].messages[messageIndex].contentBlocks = blocks
+        if activeStudySessionID == chatID {
+            messages = studySessions[sessionIndex].messages
+        }
+    }
+
+    private func removeAgentMessage(_ messageID: UUID, from chatID: UUID) {
+        guard let sessionIndex = studySessions.firstIndex(where: { $0.id == chatID }) else {
+            return
+        }
+        studySessions[sessionIndex].messages.removeAll { $0.id == messageID }
+        selectionAskThreads.indices.forEach {
+            selectionAskThreads[$0].messageIDs.removeAll { $0 == messageID }
+        }
+        if activeStudySessionID == chatID {
+            messages = studySessions[sessionIndex].messages
+        }
+        save()
+    }
+
+    private func currentAgentVisualizationBlocks(
+        _ blocks: [AgentMessageContentBlock]
+    ) -> [AgentMessageContentBlock] {
+        var result: [AgentMessageContentBlock] = []
+        for block in blocks {
+            if case let .visualization(fragment) = block,
+               agentVisualizationIDsUpdatingHistory.contains(fragment.id) {
+                continue
+            }
+            if case let .text(text) = block,
+               case let .text(previous)? = result.last {
+                result[result.count - 1] = .text(previous + text)
+            } else {
+                result.append(block)
+            }
+        }
+        return result
     }
 
     private func appOwnedFilesDirectory() -> URL {

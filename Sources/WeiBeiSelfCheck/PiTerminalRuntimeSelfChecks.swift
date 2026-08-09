@@ -32,7 +32,7 @@ private actor PiProgressProbe {
         if event == .preparing {
             reachedPreparing = true
         }
-        if case let .text(text) = event {
+        if case let .text(text, _) = event {
             latestText = text
         }
     }
