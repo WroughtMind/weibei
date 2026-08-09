@@ -1655,10 +1655,7 @@ struct MarkdownPreviewView: View {
                 if freezeHeightAfterMeasure, heightFrozen {
                     // Keep rejecting recycled-row shrink and jitter, but accept
                     // real late growth from Mermaid, formulas, fonts or images.
-                    if !allowsHeightFreeze,
-                       nextFrameHeight >= contentHeight + 2 {
-                        heightFrozen = false
-                    } else {
+                    if allowsHeightFreeze || nextFrameHeight < contentHeight + 2 {
                         // Report the height the row actually keeps, not a measurement
                         // produced while its pane is being clipped toward zero width.
                         // Caching the ignored narrow-width height created giant blank
