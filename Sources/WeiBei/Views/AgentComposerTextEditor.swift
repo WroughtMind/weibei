@@ -87,6 +87,7 @@ struct AgentComposerTextEditor: NSViewRepresentable {
             return (1, 1)
         }
         let resolvedWidth = max(width, 1)
+        textView.frame.size.width = resolvedWidth
         textContainer.containerSize = NSSize(
             width: resolvedWidth,
             height: CGFloat.greatestFiniteMagnitude
