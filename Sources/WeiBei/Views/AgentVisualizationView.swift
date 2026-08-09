@@ -6,7 +6,6 @@ struct AgentVisualizationView: View {
     @EnvironmentObject private var store: WorkspaceStore
     let messageID: UUID
     let visualization: AgentVisualization
-    let maximumHeight: CGFloat
 
     @State private var contentHeight: CGFloat = 180
     @State private var runtimeFailed = false
@@ -36,7 +35,7 @@ struct AgentVisualizationView: View {
                     },
                     onFailure: { runtimeFailed = true }
                 )
-                .frame(height: min(max(contentHeight, 120), maximumHeight))
+                .frame(height: max(contentHeight, 120))
             }
         }
         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
@@ -74,6 +73,10 @@ private struct AgentVisualizationWebView: NSViewRepresentable {
         view.setValue(false, forKey: "drawsBackground")
         view.underPageBackgroundColor = .clear
         view.allowsLinkPreview = false
+        view.scrollView.hasVerticalScroller = false
+        view.scrollView.hasHorizontalScroller = false
+        view.scrollView.verticalScrollElasticity = .none
+        view.scrollView.horizontalScrollElasticity = .none
         context.coordinator.webView = view
 
         guard let entry = WeiBeiResources.bundle.url(
@@ -162,8 +165,9 @@ private struct AgentVisualizationWebView: NSViewRepresentable {
                 sentFingerprint = nil
                 renderIfReady()
             case "height":
-                guard let value = body["height"] as? NSNumber else { return }
-                parent.onHeight(min(max(CGFloat(value.doubleValue), 120), 4_000))
+                guard let value = body["height"] as? NSNumber,
+                      value.doubleValue.isFinite else { return }
+                parent.onHeight(max(CGFloat(value.doubleValue), 120))
             case "state":
                 guard let state = body["state"],
                       let data = try? JSONSerialization.data(

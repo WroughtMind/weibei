@@ -1891,18 +1891,6 @@ struct AgentPaneView: View {
         store.messages.suffix(max(agentVisibleMessageLimit, 0))
     }
 
-    private var latestSideVisualization: (messageID: UUID, fragment: AgentVisualization)? {
-        for message in store.messages.reversed() {
-            for block in message.contentBlocks.reversed() {
-                if case let .visualization(fragment) = block,
-                   fragment.surface == .side {
-                    return (message.id, fragment)
-                }
-            }
-        }
-        return nil
-    }
-
     private var isImmersiveConversation: Bool {
         store.layout == .immersiveConversation
     }
@@ -2024,17 +2012,6 @@ struct AgentPaneView: View {
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .clipped()
                         .zIndex(0)
-
-                        if let side = latestSideVisualization {
-                            AgentVisualizationView(
-                                messageID: side.messageID,
-                                visualization: side.fragment,
-                                maximumHeight: wide ? 420 : 320
-                            )
-                            .padding(.horizontal, wide ? 24 : 10)
-                            .padding(.top, 8)
-                            .transition(WeiBeiTransition.floating)
-                        }
 
                         agentInputTray(wide: wide)
                             .zIndex(1)
@@ -3894,14 +3871,11 @@ private struct AgentBubble: View {
                     )
                 }
             case let .visualization(fragment):
-                if fragment.surface == .inline {
-                    AgentVisualizationView(
-                        messageID: message.id,
-                        visualization: fragment,
-                        maximumHeight: 720
-                    )
-                    .padding(.vertical, 4)
-                }
+                AgentVisualizationView(
+                    messageID: message.id,
+                    visualization: fragment
+                )
+                .padding(.vertical, 4)
             }
         }
     }

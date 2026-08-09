@@ -416,7 +416,6 @@ interface VisualizationDetails {
   kind: "weibei_visualization";
   id: string;
   spec: Record<string, unknown>;
-  surface: "inline" | "side";
 }
 
 
@@ -1702,7 +1701,7 @@ export default function weibeiExtension(pi: ExtensionAPI) {
     name: VISUALIZE_TOOL,
     label: "显示互动界面",
     description:
-      "把一个已经完成的 Visualize 组件树立即显示在当前回答或侧栏中。一次调用提交一个完整界面；重复 id 会原地更新已有界面。",
+      "把一个已经完成的 Visualize 组件树立即穿插显示在当前回答中。一次调用提交一个完整界面；重复 id 会原地更新已有界面。",
     promptSnippet: "提交一个完整 Visualize 界面，完成一个就立即提交一个",
     parameters: Type.Object(
       {
@@ -1720,12 +1719,6 @@ export default function weibeiExtension(pi: ExtensionAPI) {
           additionalProperties: false,
           description: "Visualize 白名单组件树；根节点必须包含 items",
         }),
-        surface: Type.Optional(
-          Type.Union([
-            Type.Literal("inline"),
-            Type.Literal("side"),
-          ], { description: "inline 按回答顺序出现；side 更新会话侧栏" }),
-        ),
       },
       { additionalProperties: false },
     ),
@@ -1746,7 +1739,6 @@ export default function weibeiExtension(pi: ExtensionAPI) {
         kind: "weibei_visualization",
         id,
         spec,
-        surface: params.surface ?? "inline",
       };
       return {
         content: [{ type: "text", text: `互动界面 ${id} 已显示。` }],

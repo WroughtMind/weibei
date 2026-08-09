@@ -19631,8 +19631,7 @@ final class WorkspaceStore: ObservableObject {
                 }
             }
         case let .visualization(fragment, blocks):
-            if fragment.surface == .inline,
-               let historicalMessageID = historicalAgentMessageID(
+            if let historicalMessageID = historicalAgentMessageID(
                 containingVisualization: fragment.id,
                 in: chatID,
                 excluding: replyMessageID

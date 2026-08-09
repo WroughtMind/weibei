@@ -120,17 +120,16 @@ private func checkRPCDecoding() throws {
         "PI native skill reads preserve versioned evidence metadata"
     )
 
-    let visualization = try PiRPCMessageDecoder.decode(Data(#"{"type":"tool_execution_end","toolCallId":"tool-visualize","toolName":"weibei_visualize","isError":false,"result":{"details":{"kind":"weibei_visualization","id":"energy-flow","spec":{"items":[{"type":"button","label":"调整","action":"adjust"}]},"surface":"side"}}}"#.utf8))
+    let visualization = try PiRPCMessageDecoder.decode(Data(#"{"type":"tool_execution_end","toolCallId":"tool-visualize","toolName":"weibei_visualize","isError":false,"result":{"details":{"kind":"weibei_visualization","id":"energy-flow","spec":{"items":[{"type":"button","label":"调整","action":"adjust"}]}}}"#.utf8))
     try piRequire(
         visualization == .visualization(
             id: "tool-visualize",
             fragment: AgentVisualization(
                 id: "energy-flow",
-                specJSON: #"{"items":[{"action":"adjust","label":"调整","type":"button"}]}"#,
-                surface: .side
+                specJSON: #"{"items":[{"action":"adjust","label":"调整","type":"button"}]}"#
             )
         ),
-        "PI Visualize results preserve stable id, component tree, and surface"
+        "PI Visualize results preserve stable id and component tree"
     )
     do {
         _ = try PiRPCMessageDecoder.decode(Data(#"{"type":"tool_execution_end","toolCallId":"tool-visualize","toolName":"weibei_visualize","isError":false,"result":{"details":{"kind":"weibei_visualization","id":"Bad--ID","spec":{"items":[{"type":"button","label":"调整"}]}}}}"#.utf8))

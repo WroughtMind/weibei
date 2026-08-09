@@ -276,10 +276,7 @@ public enum PiRPCMessageDecoder {
                     id: object["toolCallId"] as? String ?? "",
                     fragment: AgentVisualization(
                         id: id,
-                        specJSON: specJSON,
-                        surface: AgentVisualizationSurface(
-                            rawValue: details["surface"] as? String ?? "inline"
-                        ) ?? .inline
+                        specJSON: specJSON
                     )
                 )
             }
