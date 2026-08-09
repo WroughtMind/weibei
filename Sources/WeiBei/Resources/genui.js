@@ -213,7 +213,10 @@
       chart.replaceChildren(figure);
     };
     draw();
-    wrap.append(chart, legend(initial.map(entry => ({ label: entry.label, color: entry.color, value: '' }))));
+    const main = el('div', 'plot-main');
+    main.append(chart, legend(initial.map(entry => ({ label: entry.label, color: entry.color, value: '' }))));
+    const workspace = el('div', `plot-workspace${parameters.length ? ' has-params' : ''}`);
+    workspace.append(main);
     if (parameters.length) {
       const controls = el('div', 'plot-params');
       parameters.forEach(parameter => {
@@ -236,8 +239,9 @@
         row.append(name, input, output);
         controls.append(row);
       });
-      wrap.append(controls);
+      workspace.append(controls);
     }
+    wrap.append(workspace);
     return wrap;
   }
 
