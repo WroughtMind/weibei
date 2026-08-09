@@ -120,7 +120,7 @@ private func checkRPCDecoding() throws {
         "PI native skill reads preserve versioned evidence metadata"
     )
 
-    let visualization = try PiRPCMessageDecoder.decode(Data(#"{"type":"tool_execution_end","toolCallId":"tool-visualize","toolName":"weibei_visualize","isError":false,"result":{"details":{"kind":"weibei_visualization","id":"energy-flow","spec":{"items":[{"type":"button","label":"调整","action":"adjust"}]}}}"#.utf8))
+    let visualization = try PiRPCMessageDecoder.decode(Data(#"{"type":"tool_execution_end","toolCallId":"tool-visualize","toolName":"weibei_visualize","isError":false,"result":{"details":{"kind":"weibei_visualization","id":"energy-flow","spec":{"items":[{"type":"button","label":"调整","action":"adjust"}]}}}}"#.utf8))
     try piRequire(
         visualization == .visualization(
             id: "tool-visualize",
