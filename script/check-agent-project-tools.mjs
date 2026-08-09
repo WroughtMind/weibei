@@ -219,10 +219,20 @@ try {
     eventHandlers.get("before_agent_start"),
     "真实扩展没有注册 before_agent_start",
   );
-  const beforeResult = await beforeAgentStart({ systemPrompt: "base" });
+  const beforeResult = await beforeAgentStart(
+    { systemPrompt: "base" },
+    {
+      model: {
+        provider: "openai-codex",
+        api: "openai-codex-responses",
+        id: "gpt-5.3-codex-spark",
+      },
+    },
+  );
   requireValue(
       beforeResult.message === undefined &&
       beforeResult.systemPrompt.includes("直接回答用户的问题") &&
+      beforeResult.systemPrompt.includes("本轮模型服务已开放原生网页搜索") &&
       beforeResult.systemPrompt.includes("location.materialItemID") &&
       beforeResult.systemPrompt.includes("weibei_course_read") &&
       beforeResult.systemPrompt.includes("weibei_course_search") &&
@@ -238,6 +248,98 @@ try {
       !registeredTools.has("find") &&
       !registeredTools.has("grep"),
     "普通学习场景仍暴露重复的项目文件工具",
+  );
+  const providerRequestHook = requireValue(
+    eventHandlers.get("before_provider_request"),
+    "真实扩展没有注册模型原生网页搜索请求钩子",
+  );
+  const nativeSearchCases = [
+    {
+      name: "OpenAI Codex Responses",
+      model: {
+        provider: "openai-codex",
+        api: "openai-codex-responses",
+        id: "gpt-5.3-codex-spark",
+      },
+      toolType: "web_search",
+    },
+    {
+      name: "OpenAI Responses",
+      model: { provider: "openai", api: "openai-responses", id: "gpt-5.6" },
+      toolType: "web_search",
+    },
+  ];
+  for (const check of nativeSearchCases) {
+    const originalPayload = {
+      tools: [{ type: "function", name: "weibei_course_map", parameters: {} }],
+      include: ["reasoning.encrypted_content"],
+    };
+    const nextPayload = await providerRequestHook(
+      { payload: originalPayload },
+      { model: check.model },
+    );
+    const tools = nextPayload?.tools ?? [];
+    requireValue(
+      nextPayload !== originalPayload &&
+        originalPayload.tools.length === 1 &&
+        tools.some((tool) => tool?.type === check.toolType) &&
+        tools.some((tool) =>
+          tool?.type === "function" && tool?.name === "weibei_course_map"
+        ),
+      `${check.name} 没有收到模型服务自己的网页搜索工具`,
+    );
+    requireValue(
+      nextPayload.include?.includes("reasoning.encrypted_content") &&
+        nextPayload.include.includes("web_search_call.action.sources"),
+      `${check.name} 覆盖了原有响应内容，或没有要求模型服务返回真实搜索来源`,
+    );
+    const repeatedPayload = await providerRequestHook(
+      { payload: nextPayload },
+      { model: check.model },
+    );
+    requireValue(
+      JSON.stringify(repeatedPayload) === JSON.stringify(nextPayload),
+      `${check.name} 在同一请求中重复添加网页搜索工具`,
+    );
+  }
+  const unsupportedSearchModels = [
+    { provider: "openai", api: "openai-responses", id: "gpt-4o" },
+    { provider: "google", api: "google-generative-ai", id: "gemini-3.5-flash" },
+    { provider: "xai", api: "openai-responses", id: "grok-4.5" },
+    { provider: "groq", api: "openai-completions", id: "openai/gpt-oss-20b" },
+    { provider: "openrouter", api: "openai-completions", id: "openai/gpt-5.6" },
+    { provider: "weibei-custom", api: "openai-completions", id: "local-model" },
+  ];
+  for (const model of unsupportedSearchModels) {
+    const payload = { tools: [{ type: "function", name: "weibei_course_map" }] };
+    requireValue(
+      (await providerRequestHook({ payload }, { model })) === payload,
+      `${model.provider}/${model.id} 被错误开放了未验证的网页搜索`,
+    );
+  }
+  const backgroundPayload = {
+    input: [{ role: "user", content: "PRIVATE_COMPACTION_TRANSCRIPT" }],
+    tools: [{ type: "function", name: "summarize", parameters: {} }],
+  };
+  const backgroundSnapshot = JSON.stringify(backgroundPayload);
+  const backgroundResult = await providerRequestHook(
+    { payload: backgroundPayload },
+    { model: nativeSearchCases[0].model },
+  );
+  requireValue(
+    backgroundResult === backgroundPayload &&
+      JSON.stringify(backgroundPayload) === backgroundSnapshot &&
+      !backgroundResult.tools.some((tool) => tool?.type === "web_search") &&
+      backgroundResult.include === undefined,
+    "后台摘要请求被错误开放了网页搜索",
+  );
+  const webContract = await readFile(join(resourcesRoot, "system.md"), "utf8");
+  requireValue(
+    webContract.includes("模型自行判断是否需要搜索") &&
+      webContract.includes("可点击") &&
+      webContract.includes("搜索词只可包含回答当前问题所需的公开主题或实体") &&
+      !webContract.includes("不得联网"),
+    "网页搜索系统契约仍在禁用联网，或没有要求保留可点击来源",
   );
   requireValue(
     !registeredTools.has("weibei_ui_catalog") &&
