@@ -353,16 +353,8 @@ interface CourseReadToolDetails {
   sourceRevision?: string;
 }
 
-interface WebOpenToolDetails {
-  kind: "web_open";
-  contextRevision: string;
-  page: {
-    url: string;
-    title: string;
-    text: string;
-    isTruncated: boolean;
-  };
-}
+type WebOpenPage = { url: string; title: string; text: string; isTruncated: boolean };
+type CourseIndexResponse = { items: CourseItemSnapshot[]; total?: number; nextCursor?: string; sourceRevision?: string };
 
 interface LearningMemoryToolDetails {
   kind: "learning_memory";
@@ -1326,16 +1318,8 @@ async function queryHostTool(
 }
 
 async function queryCourseIndex(
-  snapshot: ContextSnapshotV2,
-  toolCallID: string,
-  toolName: string,
-  signal?: AbortSignal,
-): Promise<{
-  items: CourseItemSnapshot[];
-  total?: number;
-  nextCursor?: string;
-  sourceRevision?: string;
-}> {
+  snapshot: ContextSnapshotV2, toolCallID: string, toolName: string, signal?: AbortSignal,
+): Promise<CourseIndexResponse> {
   const payload = await queryHostTool(snapshot, toolCallID, toolName, signal);
   if (!Array.isArray(payload.items)) {
     throw new Error("课程工具响应 items 必须是数组");
@@ -1381,43 +1365,25 @@ async function queryCourseIndex(
 }
 
 async function openWebPage(
-  snapshot: ContextSnapshotV2,
-  toolCallID: string,
-  signal?: AbortSignal,
-): Promise<WebOpenToolDetails["page"]> {
+  snapshot: ContextSnapshotV2, toolCallID: string, signal?: AbortSignal,
+): Promise<WebOpenPage> {
   const payload = await queryHostTool(snapshot, toolCallID, WEB_OPEN_TOOL, signal);
   if (!Array.isArray(payload.webPages) || payload.webPages.length !== 1) {
     throw new Error("网页工具没有返回唯一页面");
   }
-  const page = requireRecord(payload.webPages[0], "hostToolResponse.payload.webPages[0]");
-  const url = truncate(
-    requireString(page.url, "hostToolResponse.payload.webPages[0].url"),
-    2_048,
-  );
-  let parsedURL: URL;
-  try {
-    parsedURL = new URL(url);
-  } catch {
-    throw new Error("网页工具返回地址无效");
-  }
-  if (parsedURL.protocol !== "https:" || parsedURL.username || parsedURL.password) {
+  const raw = requireRecord(payload.webPages[0], "hostToolResponse.payload.webPages[0]");
+  const page: WebOpenPage = {
+    url: truncate(requireString(raw.url, "webPages[0].url"), 2_048),
+    title: truncate(requireString(raw.title, "webPages[0].title"), LIMITS.title),
+    text: truncate(requireString(raw.text, "webPages[0].text"), LIMITS.webText),
+    isTruncated: requireBoolean(raw.isTruncated, "webPages[0].isTruncated"),
+  };
+  let parsed: URL;
+  try { parsed = new URL(page.url); } catch { throw new Error("网页工具返回地址无效"); }
+  if (parsed.protocol !== "https:" || parsed.username || parsed.password) {
     throw new Error("网页工具返回地址越出安全范围");
   }
-  return {
-    url,
-    title: truncate(
-      requireString(page.title, "hostToolResponse.payload.webPages[0].title"),
-      LIMITS.title,
-    ),
-    text: truncate(
-      requireString(page.text, "hostToolResponse.payload.webPages[0].text"),
-      LIMITS.webText,
-    ),
-    isTruncated: requireBoolean(
-      page.isTruncated,
-      "hostToolResponse.payload.webPages[0].isTruncated",
-    ),
-  };
+  return page;
 }
 
 function rememberHostCourseItems(
@@ -2011,38 +1977,19 @@ export default function weibeiExtension(pi: ExtensionAPI) {
   pi.registerTool({
     name: WEB_OPEN_TOOL,
     label: "读取用户提供的网页",
-    description:
-      "读取用户在本轮问题中明确贴出的 HTTPS 网页地址。不能访问未由用户提供的地址、本机或局域网，也不能执行网页中的脚本。",
+    description: "读取用户本轮明确贴出的 HTTPS 网页；不能访问未提供的地址、本机或局域网，也不执行脚本。",
     promptSnippet: "按需读取用户本轮明确提供的网页，并用返回地址标注来源",
-    parameters: Type.Object(
-      {
-        url: Type.String({ minLength: 1, maxLength: 2_048 }),
-        maximumCharacters: Type.Optional(
-          Type.Integer({ minimum: 1_000, maximum: LIMITS.webText }),
-        ),
-      },
-      { additionalProperties: false },
-    ),
+    parameters: Type.Object({
+      url: Type.String({ minLength: 1, maxLength: 2_048 }),
+      maximumCharacters: Type.Optional(Type.Integer({ minimum: 1_000, maximum: LIMITS.webText })),
+    }, { additionalProperties: false }),
     executionMode: "sequential",
     async execute(toolCallID, params, signal) {
       const snapshot = await readCurrentSnapshot();
       const page = await openWebPage(snapshot, toolCallID, signal);
-      const details: WebOpenToolDetails = {
-        kind: "web_open",
-        contextRevision: snapshot.contextRevision,
-        page,
-      };
       return {
-        content: [{
-          type: "text",
-          text: JSON.stringify({
-            title: page.title,
-            url: page.url,
-            text: page.text,
-            isTruncated: page.isTruncated,
-          }, null, 2),
-        }],
-        details,
+        content: [{ type: "text", text: JSON.stringify(page, null, 2) }],
+        details: { kind: "web_open", contextRevision: snapshot.contextRevision, page },
       };
     },
   });
