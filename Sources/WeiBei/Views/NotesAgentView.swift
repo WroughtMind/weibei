@@ -3959,17 +3959,10 @@ private struct AgentBubble: View {
             Text("WeiBei")
                 .font(WeiBeiTypography.englishBrandFont(size: 9.8, weight: .semibold))
                 .foregroundStyle(WeiBeiTheme.cinnabar.opacity(0.76))
-            if let backend = message.backend {
+            if let backend = message.backend, backend != .pi {
                 Text(backendLabel(backend))
                     .font(.system(size: 9.5, weight: .semibold))
                     .foregroundStyle(WeiBeiTheme.secondaryInk)
-            }
-            if message.completionState == .generating,
-               let activity = liveActivityText {
-                Text(activity)
-                    .font(.system(size: 9.5))
-                    .foregroundStyle(WeiBeiTheme.secondaryInk.opacity(0.82))
-                    .lineLimit(1)
             }
             // Do not render message.source here — long "课程 HTML，章节标识…" strings
             // add noise; materials / learning context use citation tags instead.
@@ -6250,9 +6243,6 @@ private struct AgentStreamingResponse: View {
                     Text("WeiBei")
                         .font(WeiBeiTypography.englishBrandFont(size: 9.8, weight: .semibold))
                         .foregroundStyle(WeiBeiTheme.cinnabar.opacity(0.76))
-                    Text("PI")
-                        .font(.system(size: 9.5, weight: .semibold))
-                        .foregroundStyle(WeiBeiTheme.secondaryInk)
                     // Status stays visible while tokens stream ("正在读取：…"),
                     // plain text only — WP9 forbids loading-card chrome here.
                     if let activity = activityText {
@@ -6278,6 +6268,6 @@ private struct AgentStreamingResponse: View {
         .padding(.leading, compact ? 0 : 20)
         .padding(.trailing, compact ? 0 : 8)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .accessibilityLabel(Text(store.ui("PI 正在回答", "PI is responding")))
+        .accessibilityLabel(Text(store.ui("魏碑正在回答", "WeiBei is responding")))
     }
 }
