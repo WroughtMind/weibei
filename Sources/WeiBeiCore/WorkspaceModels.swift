@@ -1550,10 +1550,35 @@ public struct AgentReplyOrigin: Codable, Hashable, Sendable {
     }
 }
 
+public struct AgentVisualization: Identifiable, Codable, Hashable, Sendable {
+    public var id: String
+    public var html: String
+    public var isWide: Bool
+    public var stateJSON: String?
+
+    public init(
+        id: String,
+        html: String,
+        isWide: Bool = false,
+        stateJSON: String? = nil
+    ) {
+        self.id = id
+        self.html = html
+        self.isWide = isWide
+        self.stateJSON = stateJSON
+    }
+}
+
+public enum AgentMessageContentBlock: Codable, Hashable, Sendable {
+    case text(String)
+    case visualization(AgentVisualization)
+}
+
 public struct AgentMessage: Identifiable, Codable, Hashable, Sendable {
     public var id: UUID
     public var role: AgentRole
     public var text: String
+    public var contentBlocks: [AgentMessageContentBlock]
     public var source: String?
     public var backend: StudyAgentBackend?
     public var richAnswer: RichAnswerPresentation?
@@ -1571,6 +1596,7 @@ public struct AgentMessage: Identifiable, Codable, Hashable, Sendable {
         id: UUID = UUID(),
         role: AgentRole,
         text: String,
+        contentBlocks: [AgentMessageContentBlock] = [],
         source: String?,
         backend: StudyAgentBackend? = nil,
         richAnswer: RichAnswerPresentation? = nil,
@@ -1587,6 +1613,7 @@ public struct AgentMessage: Identifiable, Codable, Hashable, Sendable {
         self.id = id
         self.role = role
         self.text = text
+        self.contentBlocks = contentBlocks
         self.source = source
         self.backend = backend
         self.richAnswer = richAnswer.map {
@@ -1607,6 +1634,7 @@ public struct AgentMessage: Identifiable, Codable, Hashable, Sendable {
         case id
         case role
         case text
+        case contentBlocks
         case source
         case backend
         case richAnswer
@@ -1644,6 +1672,11 @@ public struct AgentMessage: Identifiable, Codable, Hashable, Sendable {
                 return nil
             }
         }
+        contentBlocks = decodeLossy(
+            [AgentMessageContentBlock].self,
+            forKey: .contentBlocks,
+            marker: "reply-content:decode-failed"
+        ) ?? []
         source = decodeLossy(
             String.self,
             forKey: .source,
@@ -1711,6 +1744,9 @@ public struct AgentMessage: Identifiable, Codable, Hashable, Sendable {
         try container.encode(id, forKey: .id)
         try container.encode(role, forKey: .role)
         try container.encode(text, forKey: .text)
+        if !contentBlocks.isEmpty {
+            try container.encode(contentBlocks, forKey: .contentBlocks)
+        }
         try container.encodeIfPresent(source, forKey: .source)
         try container.encodeIfPresent(backend, forKey: .backend)
         try container.encodeIfPresent(richAnswer, forKey: .richAnswer)
@@ -1737,7 +1773,13 @@ public struct AgentMessage: Identifiable, Codable, Hashable, Sendable {
         role == .assistant
             && completionState != .generating
             && (failureKind == nil || (failureKind == .cancelled && completionState == .interrupted))
-            && !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && (
+                !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    || contentBlocks.contains {
+                        if case .visualization = $0 { return true }
+                        return false
+                    }
+            )
     }
 }
 
