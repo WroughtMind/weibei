@@ -1550,21 +1550,26 @@ public struct AgentReplyOrigin: Codable, Hashable, Sendable {
     }
 }
 
+public enum AgentVisualizationSurface: String, Codable, Hashable, Sendable {
+    case inline
+    case side
+}
+
 public struct AgentVisualization: Identifiable, Codable, Hashable, Sendable {
     public var id: String
-    public var html: String
-    public var isWide: Bool
+    public var specJSON: String
+    public var surface: AgentVisualizationSurface
     public var stateJSON: String?
 
     public init(
         id: String,
-        html: String,
-        isWide: Bool = false,
+        specJSON: String,
+        surface: AgentVisualizationSurface = .inline,
         stateJSON: String? = nil
     ) {
         self.id = id
-        self.html = html
-        self.isWide = isWide
+        self.specJSON = specJSON
+        self.surface = surface
         self.stateJSON = stateJSON
     }
 }

@@ -119,7 +119,7 @@ const LIMITS = {
   proposalEvidenceText: 500,
   visualAssetBytes: 6_000_000,
   visualAssets: 4,
-  visualizationHTML: 1_000_000,
+  visualizationSpec: 1_000_000,
 } as const;
 
 interface SourceSnapshot {
@@ -415,8 +415,8 @@ interface RelationProposalDetails {
 interface VisualizationDetails {
   kind: "weibei_visualization";
   id: string;
-  html: string;
-  wide: boolean;
+  spec: Record<string, unknown>;
+  surface: "inline" | "side";
 }
 
 
@@ -1702,7 +1702,7 @@ export default function weibeiExtension(pi: ExtensionAPI) {
     name: VISUALIZE_TOOL,
     label: "显示互动界面",
     description:
-      "把一个已经完成的 Visualize HTML 片段立即显示在当前回答中。一次调用提交一个完整界面；重复 id 会原地更新已有界面。",
+      "把一个已经完成的 Visualize 组件树立即显示在当前回答或侧栏中。一次调用提交一个完整界面；重复 id 会原地更新已有界面。",
     promptSnippet: "提交一个完整 Visualize 界面，完成一个就立即提交一个",
     parameters: Type.Object(
       {
@@ -1712,13 +1712,19 @@ export default function weibeiExtension(pi: ExtensionAPI) {
           pattern: "^[a-z0-9]+(?:-[a-z0-9]+)*$",
           description: "稳定的短标识；更新已有界面时复用原 id",
         }),
-        html: Type.String({
-          minLength: 1,
-          maxLength: LIMITS.visualizationHTML,
-          description: "原版 Visualize 的完整 HTML 片段",
+        spec: Type.Object({
+          title: Type.Optional(Type.String({ maxLength: 240 })),
+          gap: Type.Optional(Type.Number({ minimum: 0, maximum: 64 })),
+          items: Type.Array(Type.Any(), { minItems: 1, maxItems: 200 }),
+        }, {
+          additionalProperties: false,
+          description: "Visualize 白名单组件树；根节点必须包含 items",
         }),
-        wide: Type.Optional(
-          Type.Boolean({ description: "只有多个紧凑图表必须并排比较时设为 true" }),
+        surface: Type.Optional(
+          Type.Union([
+            Type.Literal("inline"),
+            Type.Literal("side"),
+          ], { description: "inline 按回答顺序出现；side 更新会话侧栏" }),
         ),
       },
       { additionalProperties: false },
@@ -1726,15 +1732,21 @@ export default function weibeiExtension(pi: ExtensionAPI) {
     executionMode: "sequential",
     async execute(_toolCallID, params) {
       const id = params.id.trim();
-      const html = params.html.trim();
-      if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(id) || !html) {
-        throw new Error("Visualize 界面必须包含稳定 id 和完整 HTML 片段");
+      const spec = params.spec as Record<string, unknown>;
+      const specJSON = JSON.stringify(spec);
+      if (
+        !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(id)
+        || !Array.isArray(spec.items)
+        || spec.items.length === 0
+        || Buffer.byteLength(specJSON, "utf8") > LIMITS.visualizationSpec
+      ) {
+        throw new Error("Visualize 界面必须包含稳定 id 和完整组件树");
       }
       const details: VisualizationDetails = {
         kind: "weibei_visualization",
         id,
-        html,
-        wide: params.wide ?? false,
+        spec,
+        surface: params.surface ?? "inline",
       };
       return {
         content: [{ type: "text", text: `互动界面 ${id} 已显示。` }],

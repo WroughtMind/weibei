@@ -11126,11 +11126,28 @@ final class WorkspaceStore: ObservableObject {
         }
     }
 
-    func prepareAgentVisualizationFollowUp(_ prompt: String) {
-        let value = String(prompt.prefix(8_192))
+    func submitAgentVisualizationAction(_ action: String, payloadJSON: String) {
+        let action = String(action.prefix(200))
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !value.isEmpty else { return }
-        agentDraft = value
+        guard !action.isEmpty,
+              payloadJSON.utf8.count <= 65_536,
+              (try? JSONSerialization.jsonObject(
+                  with: Data(payloadJSON.utf8),
+                  options: .fragmentsAllowed
+              )) != nil,
+              !isAgentRunningInActiveChat,
+              !isStoppingAgent else { return }
+        askAgent(
+            replayingSelections: [],
+            visibleQuestionOverride: ui(
+                "互动操作：\(action)",
+                "Interactive action: \(action)"
+            ),
+            questionOverride: ui(
+                "我在互动界面中执行了「\(action)」。当前界面数据：\(payloadJSON)",
+                "I used “\(action)” in the interactive view. Current view data: \(payloadJSON)"
+            )
+        )
     }
 
     private func restoreAgentReplyState(from session: StudySession) {
@@ -18556,14 +18573,17 @@ final class WorkspaceStore: ObservableObject {
     func askAgent(
         reusingLastUserMessage: Bool = false,
         replayingSelections: [SelectionContext]? = nil,
-        targetCourseID: UUID? = nil
+        targetCourseID: UUID? = nil,
+        visibleQuestionOverride: String? = nil,
+        questionOverride: String? = nil
     ) {
         flushStagedNoteDraftForAgentContext()
+        let question = (questionOverride ?? agentDraft)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
         guard agentRequestTask == nil,
               !isStoppingAgent,
               !isAskingAgent,
-              !agentDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-        let question = agentDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+              !question.isEmpty else { return }
         let target: AgentConversationTarget
         do {
             if (reusingLastUserMessage || targetCourseID != nil),
@@ -18580,7 +18600,9 @@ final class WorkspaceStore: ObservableObject {
                 question: question,
                 error: error,
                 appendUserMessage: !reusingLastUserMessage,
-                targetCourseID: targetCourseID
+                targetCourseID: targetCourseID,
+                visibleQuestion: visibleQuestionOverride,
+                preserveComposerDraft: questionOverride != nil
             )
             return
         }
@@ -18588,7 +18610,9 @@ final class WorkspaceStore: ObservableObject {
             await self?.performAgentRequest(
                 target: target,
                 reusingLastUserMessage: reusingLastUserMessage,
-                replayingSelections: replayingSelections
+                replayingSelections: replayingSelections,
+                visibleQuestionOverride: visibleQuestionOverride,
+                questionOverride: questionOverride
             )
         }
     }
@@ -18716,7 +18740,9 @@ final class WorkspaceStore: ObservableObject {
         question: String,
         error: Error,
         appendUserMessage: Bool = true,
-        targetCourseID: UUID? = nil
+        targetCourseID: UUID? = nil,
+        visibleQuestion: String? = nil,
+        preserveComposerDraft: Bool = false
     ) {
         ensureActiveStudySession()
         guard let session = activeStudySession else { return }
@@ -18724,10 +18750,16 @@ final class WorkspaceStore: ObservableObject {
         let sourceTitle = agentMessageSourceTitle
         lastAgentFailureKind = .generic
         lastFailedAgentQuestion = question
-        agentDraftsBySessionID[session.id] = question
+        if !preserveComposerDraft {
+            agentDraftsBySessionID[session.id] = question
+        }
         focusedPane = .agent
         if appendUserMessage {
-            let userMessage = AgentMessage(role: .user, text: question, source: sourceTitle)
+            let userMessage = AgentMessage(
+                role: .user,
+                text: visibleQuestion ?? question,
+                source: sourceTitle
+            )
             appendAgentMessage(userMessage)
             appendMessageToActiveSelectionAskThread(userMessage.id)
         }
@@ -18810,14 +18842,17 @@ final class WorkspaceStore: ObservableObject {
     private func performAgentRequest(
         target: AgentConversationTarget,
         reusingLastUserMessage: Bool = false,
-        replayingSelections: [SelectionContext]? = nil
+        replayingSelections: [SelectionContext]? = nil,
+        visibleQuestionOverride: String? = nil,
+        questionOverride: String? = nil
     ) async {
         guard !Task.isCancelled, activeStudySessionID == target.sessionID else {
             agentRequestTask = nil
             return
         }
         flushStagedNoteDraftForAgentContext()
-        let question = agentDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        let question = (questionOverride ?? agentDraft)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
         guard !question.isEmpty, !isAskingAgent else {
             agentRequestTask = nil
             return
@@ -18839,7 +18874,9 @@ final class WorkspaceStore: ObservableObject {
                 question: question,
                 error: error,
                 appendUserMessage: !reusingLastUserMessage,
-                targetCourseID: target.courseID
+                targetCourseID: target.courseID,
+                visibleQuestion: visibleQuestionOverride,
+                preserveComposerDraft: questionOverride != nil
             )
             agentRequestTask = nil
             return
@@ -18963,7 +19000,11 @@ final class WorkspaceStore: ObservableObject {
         var didStartModelRequest = false
         do {
             if !reusingLastUserMessage {
-                let userMessage = AgentMessage(role: .user, text: question, source: sourceTitle)
+                let userMessage = AgentMessage(
+                    role: .user,
+                    text: visibleQuestionOverride ?? question,
+                    source: sourceTitle
+                )
                 appendAgentMessage(userMessage)
                 appendMessageToActiveSelectionAskThread(userMessage.id)
                 didAppendUserMessage = true
@@ -19013,8 +19054,10 @@ final class WorkspaceStore: ObservableObject {
                 )
             }
 
-            agentDraft = ""
-            agentDraftsBySessionID[target.sessionID] = ""
+            if questionOverride == nil {
+                agentDraft = ""
+                agentDraftsBySessionID[target.sessionID] = ""
+            }
             lastFailedAgentQuestion = nil
             lastAgentFailureKind = nil
             latestAgentNoteProposal = nil
@@ -19209,11 +19252,15 @@ final class WorkspaceStore: ObservableObject {
                     requestID: requestID,
                     messageID: replyMessageID,
                     chatID: target.sessionID,
-                    kind: .cancelled
+                    kind: .cancelled,
+                    restoreDraft: questionOverride == nil
                 )
             }
-            agentDraftsBySessionID[target.sessionID] = question
-            if activeStudySessionID == target.sessionID,
+            if questionOverride == nil {
+                agentDraftsBySessionID[target.sessionID] = question
+            }
+            if questionOverride == nil,
+               activeStudySessionID == target.sessionID,
                agentDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 agentDraft = question
                 lastAgentFailureKind = .cancelled
@@ -19222,7 +19269,13 @@ final class WorkspaceStore: ObservableObject {
         } catch {
             guard activeAgentRequestID == requestID else { return }
             if !didAppendUserMessage {
-                appendAgentMessage(AgentMessage(role: .user, text: question, source: sourceTitle))
+                appendAgentMessage(
+                    AgentMessage(
+                        role: .user,
+                        text: visibleQuestionOverride ?? question,
+                        source: sourceTitle
+                    )
+                )
             }
             // Always restore the failed question so composer matches the failure copy.
             let kind = AgentFailureKind.classify(error)
@@ -19233,9 +19286,13 @@ final class WorkspaceStore: ObservableObject {
                     authMethod: requestAuthMethod
                 )
             }
-            agentDraftsBySessionID[target.sessionID] = question
+            if questionOverride == nil {
+                agentDraftsBySessionID[target.sessionID] = question
+            }
             if activeStudySessionID == target.sessionID {
-                agentDraft = question
+                if questionOverride == nil {
+                    agentDraft = question
+                }
                 focusedPane = .agent
                 lastAgentFailureKind = kind
                 lastFailedAgentQuestion = question
@@ -19251,7 +19308,8 @@ final class WorkspaceStore: ObservableObject {
                     messageID: replyMessageID,
                     chatID: target.sessionID,
                     kind: kind,
-                    fallbackText: failureText
+                    fallbackText: failureText,
+                    restoreDraft: questionOverride == nil
                 )
             } else {
                 appendAgentMessage(
@@ -19573,7 +19631,8 @@ final class WorkspaceStore: ObservableObject {
                 }
             }
         case let .visualization(fragment, blocks):
-            if let historicalMessageID = historicalAgentMessageID(
+            if fragment.surface == .inline,
+               let historicalMessageID = historicalAgentMessageID(
                 containingVisualization: fragment.id,
                 in: chatID,
                 excluding: replyMessageID

@@ -120,20 +120,20 @@ private func checkRPCDecoding() throws {
         "PI native skill reads preserve versioned evidence metadata"
     )
 
-    let visualization = try PiRPCMessageDecoder.decode(Data(#"{"type":"tool_execution_end","toolCallId":"tool-visualize","toolName":"weibei_visualize","isError":false,"result":{"details":{"kind":"weibei_visualization","id":"energy-flow","html":"<button>调整</button>","wide":true}}}"#.utf8))
+    let visualization = try PiRPCMessageDecoder.decode(Data(#"{"type":"tool_execution_end","toolCallId":"tool-visualize","toolName":"weibei_visualize","isError":false,"result":{"details":{"kind":"weibei_visualization","id":"energy-flow","spec":{"items":[{"type":"button","label":"调整","action":"adjust"}]},"surface":"side"}}}"#.utf8))
     try piRequire(
         visualization == .visualization(
             id: "tool-visualize",
             fragment: AgentVisualization(
                 id: "energy-flow",
-                html: "<button>调整</button>",
-                isWide: true
+                specJSON: #"{"items":[{"action":"adjust","label":"调整","type":"button"}]}"#,
+                surface: .side
             )
         ),
-        "PI Visualize results preserve stable id, HTML, and width"
+        "PI Visualize results preserve stable id, component tree, and surface"
     )
     do {
-        _ = try PiRPCMessageDecoder.decode(Data(#"{"type":"tool_execution_end","toolCallId":"tool-visualize","toolName":"weibei_visualize","isError":false,"result":{"details":{"kind":"weibei_visualization","id":"Bad--ID","html":"<button>调整</button>"}}}"#.utf8))
+        _ = try PiRPCMessageDecoder.decode(Data(#"{"type":"tool_execution_end","toolCallId":"tool-visualize","toolName":"weibei_visualize","isError":false,"result":{"details":{"kind":"weibei_visualization","id":"Bad--ID","spec":{"items":[{"type":"button","label":"调整"}]}}}}"#.utf8))
         throw PiAgentSelfCheckError.failed("PI Visualize rejects unstable ids")
     } catch PiRPCProtocolError.invalidEnvelope {
         // Expected: same-id updates require one canonical lowercase identifier.
@@ -893,7 +893,7 @@ private func checkStudyAgentContext() throws {
             .text("先看变化。"),
             .visualization(AgentVisualization(
                 id: "energy-flow",
-                html: "<input type=range>",
+                specJSON: #"{"items":[{"id":"energy","max":5,"min":0,"type":"slider","value":3}]}"#,
                 stateJSON: #"{"value":3}"#
             )),
             .text("再比较结果。"),
@@ -912,7 +912,7 @@ private func checkStudyAgentContext() throws {
             && decodedMessage.contentBlocks[1] == .visualization(
                 AgentVisualization(
                     id: "energy-flow",
-                    html: "<input type=range>",
+                    specJSON: #"{"items":[{"id":"energy","max":5,"min":0,"type":"slider","value":3}]}"#,
                     stateJSON: #"{"value":3}"#
                 )
             ),

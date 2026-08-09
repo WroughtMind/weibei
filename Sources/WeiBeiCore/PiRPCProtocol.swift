@@ -255,7 +255,15 @@ public enum PiRPCMessageDecoder {
                let details = result?["details"] as? [String: Any],
                details["kind"] as? String == "weibei_visualization",
                let id = details["id"] as? String,
-               let html = details["html"] as? String,
+               let spec = details["spec"] as? [String: Any],
+               let items = spec["items"] as? [Any],
+               !items.isEmpty,
+               JSONSerialization.isValidJSONObject(spec),
+               let specData = try? JSONSerialization.data(
+                   withJSONObject: spec,
+                   options: [.sortedKeys]
+               ),
+               let specJSON = String(data: specData, encoding: .utf8),
                !id.isEmpty,
                id.utf8.count <= 128,
                id == id.lowercased(),
@@ -263,14 +271,15 @@ public enum PiRPCMessageDecoder {
                id.last != "-",
                !id.contains("--"),
                id.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "-") }),
-               !html.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-               html.utf8.count <= 1_000_000 {
+               specData.count <= 1_000_000 {
                 return .visualization(
                     id: object["toolCallId"] as? String ?? "",
                     fragment: AgentVisualization(
                         id: id,
-                        html: html,
-                        isWide: details["wide"] as? Bool ?? false
+                        specJSON: specJSON,
+                        surface: AgentVisualizationSurface(
+                            rawValue: details["surface"] as? String ?? "inline"
+                        ) ?? .inline
                     )
                 )
             }
