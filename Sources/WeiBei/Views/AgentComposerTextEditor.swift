@@ -117,14 +117,11 @@ struct AgentComposerTextEditor: NSViewRepresentable {
     }
 
     private func updateFocus(of textView: NSTextView) {
-        if focused.wrappedValue {
-            guard textView.window?.firstResponder !== textView else { return }
-            DispatchQueue.main.async { [weak textView] in
-                guard let textView, self.focused.wrappedValue else { return }
-                textView.window?.makeFirstResponder(textView)
-            }
-        } else if textView.window?.firstResponder === textView {
-            textView.window?.makeFirstResponder(nil)
+        guard focused.wrappedValue,
+              textView.window?.firstResponder !== textView else { return }
+        DispatchQueue.main.async { [weak textView] in
+            guard let textView, self.focused.wrappedValue else { return }
+            textView.window?.makeFirstResponder(textView)
         }
     }
 
