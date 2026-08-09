@@ -1977,29 +1977,15 @@ struct AgentPaneView: View {
                                 }
                                 if store.isAgentRunningInActiveChat
                                     && !store.hasPersistedGeneratingAgentReply
-                                    && !store.agentStreamingText.isEmpty
                                 {
                                     agentReadingColumn(
                                         alignment: .leading
                                     ) {
-                                        AgentStreamingResponse(
-                                            text: store.agentStreamingText,
+                                        AgentLiveResponse(
+                                            streaming: store.agentStreaming,
                                             isChatWideTypography: comfy
                                         )
                                     }
-                                    .id("agent-streaming-response")
-                                    .transition(WeiBeiTransition.message)
-                                }
-                                if store.isAgentRunningInActiveChat
-                                    && !store.hasPersistedGeneratingAgentReply
-                                    && store.agentStreamingText.isEmpty
-                                {
-                                    agentReadingColumn(
-                                        alignment: .leading
-                                    ) {
-                                        AgentThinkingIndicator()
-                                    }
-                                    .id("agent-thinking")
                                     .transition(WeiBeiTransition.message)
                                 }
                                 Color.clear
@@ -2299,13 +2285,22 @@ struct AgentPaneView: View {
             canvasWide: needsWideCanvas,
             alignment: isUser ? .trailing : .leading
         ) {
-            AgentBubble(
-                message: message,
-                // Typography follows the real column width, not the layout enum —
-                // a full-window chat tab is not .immersiveConversation but reads wide.
-                isChatWideTypography: wide
-                    || contentWidth >= AgentChatLayoutMetrics.wideTypographyMinContentWidth
-            )
+            if message.completionState == .generating {
+                AgentGeneratingBubble(
+                    message: message,
+                    streaming: store.agentStreaming,
+                    isChatWideTypography: wide
+                        || contentWidth >= AgentChatLayoutMetrics.wideTypographyMinContentWidth
+                )
+            } else {
+                AgentBubble(
+                    message: message,
+                    streaming: store.agentStreaming,
+                    // Typography follows the real column width, not the layout enum.
+                    isChatWideTypography: wide
+                        || contentWidth >= AgentChatLayoutMetrics.wideTypographyMinContentWidth
+                )
+            }
         }
         .id(message.id)
         .transition(WeiBeiTransition.message)
@@ -3122,12 +3117,11 @@ struct FloatingSelectionAgentView: View {
                     // Same order as immersive chat: messages → streaming → thinking.
                     LazyVStack(alignment: .leading, spacing: 12) {
                         ForEach(visibleFloatingMessages) { message in
-                            let displayText = store.agentDisplayText(for: message)
-                            if message.completionState == .generating
-                                && displayText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                                AgentThinkingIndicator()
-                                    .id(message.id)
-                                    .padding(.vertical, 4)
+                            if message.completionState == .generating {
+                                FloatingSelectionGeneratingMessage(
+                                    message: message,
+                                    streaming: store.agentStreaming
+                                )
                             } else {
                                 FloatingSelectionMessageBubble(
                                     message: message,
@@ -3138,22 +3132,11 @@ struct FloatingSelectionAgentView: View {
                         }
 
                         if store.isAgentRunningInActiveChat
-                            && !store.hasPersistedGeneratingAgentReply
-                            && !store.agentStreamingText.isEmpty {
-                            AgentStreamingResponse(
-                                text: store.agentStreamingText,
-                                isChatWideTypography: false,
+                            && !store.hasPersistedGeneratingAgentReply {
+                            AgentLiveResponse(
+                                streaming: store.agentStreaming,
                                 compact: true
                             )
-                            .id("selection-float-streaming")
-                        }
-
-                        if store.isAgentRunningInActiveChat
-                            && !store.hasPersistedGeneratingAgentReply
-                            && store.agentStreamingText.isEmpty {
-                            AgentThinkingIndicator()
-                                .id("selection-float-thinking")
-                                .padding(.vertical, 4)
                         }
                     }
                     .padding(.horizontal, 14)
@@ -3506,10 +3489,51 @@ private struct FloatingSelectionMessageBubble: View {
     }
 }
 
+private struct FloatingSelectionGeneratingMessage: View {
+    @EnvironmentObject private var store: WorkspaceStore
+    var message: AgentMessage
+    @ObservedObject var streaming: AgentStreamingState
+
+    @ViewBuilder
+    var body: some View {
+        let text = store.agentDisplayText(for: message)
+        if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            AgentThinkingIndicator(activityText: streaming.activityText)
+                .id(message.id)
+                .padding(.vertical, 4)
+        } else {
+            FloatingSelectionMessageBubble(
+                message: message,
+                text: text,
+                isError: WorkspaceStore.isAgentFailureMessage(message.text)
+            )
+        }
+    }
+}
+
+private struct AgentGeneratingBubble: View {
+    var message: AgentMessage
+    @ObservedObject var streaming: AgentStreamingState
+    var isChatWideTypography = false
+
+    var body: some View {
+        AgentBubble(
+            message: message,
+            streaming: streaming,
+            liveStreamingText: streaming.text,
+            liveActivityText: streaming.activityText,
+            isChatWideTypography: isChatWideTypography
+        )
+    }
+}
+
 private struct AgentBubble: View {
     @EnvironmentObject private var store: WorkspaceStore
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     var message: AgentMessage
+    var streaming: AgentStreamingState
+    var liveStreamingText: String? = nil
+    var liveActivityText: String? = nil
     var isChatWideTypography = false
     @State private var hovering = false
     @State private var copiedMessage = false
@@ -3662,7 +3686,7 @@ private struct AgentBubble: View {
     }
 
     private var regularMessageContent: some View {
-        let answerText = store.agentDisplayText(for: message)
+        let answerText = liveStreamingText ?? store.agentDisplayText(for: message)
         let citationParse = AgentCitationParser.parse(answerText)
         let availableSources = message.sources.filter {
             store.canOpenAgentReplySource($0)
@@ -3681,7 +3705,7 @@ private struct AgentBubble: View {
 
             if message.completionState == .generating
                 && answerText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                AgentThinkingIndicator()
+                AgentThinkingIndicator(activityText: liveActivityText)
             } else if let richAnswer = message.richAnswer,
                richAnswer.mode == .rich,
                !richAnswer.scenes.isEmpty,
@@ -3887,7 +3911,7 @@ private struct AgentBubble: View {
                     .foregroundStyle(WeiBeiTheme.secondaryInk)
             }
             if message.completionState == .generating,
-               let activity = store.agentActivityText {
+               let activity = liveActivityText {
                 Text(activity)
                     .font(.system(size: 9.5))
                     .foregroundStyle(WeiBeiTheme.secondaryInk.opacity(0.82))
@@ -5529,8 +5553,31 @@ private struct AgentMessageTextWidthModifier: ViewModifier {
     }
 }
 
+private struct AgentLiveResponse: View {
+    @ObservedObject var streaming: AgentStreamingState
+    var isChatWideTypography = false
+    var compact = false
+
+    @ViewBuilder
+    var body: some View {
+        if streaming.text.isEmpty {
+            AgentThinkingIndicator(activityText: streaming.activityText)
+                .id(compact ? "selection-float-thinking" : "agent-thinking")
+                .padding(.vertical, compact ? 4 : 0)
+        } else {
+            AgentStreamingResponse(
+                text: streaming.text,
+                activityText: streaming.activityText,
+                isChatWideTypography: isChatWideTypography,
+                compact: compact
+            )
+            .id(compact ? "selection-float-streaming" : "agent-streaming-response")
+        }
+    }
+}
+
 /// Product loading motion — 「行文进行中 V3」.
-/// Driven solely by `store.agentActivityText` (no demo status carousel).
+/// Driven solely by `AgentStreamingState.activityText` (no demo status carousel).
 ///
 /// Hang-proof: motion runs in a fixed-size `NSView` + `CADisplayLink` that only
 /// `setNeedsDisplay()`. It never enters SwiftUI `TimelineView`, so parent
@@ -5554,6 +5601,7 @@ private struct AgentMessageTextWidthModifier: ViewModifier {
 /// grows by `lineWidth` total to avoid clipping.
 private struct AgentThinkingIndicator: View {
     @EnvironmentObject private var store: WorkspaceStore
+    var activityText: String?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var cachedText = ""
     @State private var cachedTextWidth: CGFloat = 1
@@ -5579,7 +5627,7 @@ private struct AgentThinkingIndicator: View {
     private static var pathHeight: CGFloat { textLineHeight + pathOuterInset * 2 }
 
     private var statusText: String {
-        store.agentActivityText ?? store.ui("正在思考", "Thinking")
+        activityText ?? store.ui("正在思考", "Thinking")
     }
 
     var body: some View {
@@ -6134,6 +6182,7 @@ private extension CGPath {
 private struct AgentStreamingResponse: View {
     @EnvironmentObject private var store: WorkspaceStore
     var text: String
+    var activityText: String?
     /// Bubble rows already carry the WeiBei metadata line — never draw a
     /// second brand mark inside the same bubble (user-reported duplication).
     var showsBrandHeader = true
@@ -6152,7 +6201,7 @@ private struct AgentStreamingResponse: View {
                         .foregroundStyle(WeiBeiTheme.secondaryInk)
                     // Status stays visible while tokens stream ("正在读取：…"),
                     // plain text only — WP9 forbids loading-card chrome here.
-                    if let activity = store.agentActivityText {
+                    if let activity = activityText {
                         Text(activity)
                             .font(.system(size: 11, weight: .regular))
                             .foregroundStyle(WeiBeiTheme.secondaryInk.opacity(0.82))
