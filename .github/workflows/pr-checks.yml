@@ -4,6 +4,7 @@ on:
   pull_request:
     branches:
       - main
+    types: [opened, synchronize, reopened, edited, labeled, unlabeled]
   push:
     branches:
       - main
@@ -43,13 +44,19 @@ jobs:
           PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
           PUSH_BEFORE_SHA: ${{ github.event.before }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          PR_BODY: ${{ github.event.pull_request.body || '' }}
+          GROWTH_EXEMPT_LABEL: ${{ contains(github.event.pull_request.labels.*.name, 'growth-exempt') }}
         run: |
           ./script/ci_changed_scopes.sh --self-check
+          ./script/check_file_growth.sh --self-check
           base="$PUSH_BEFORE_SHA"
           if [[ "$EVENT_NAME" == "pull_request" ]]; then
             base="$(git merge-base "$PR_BASE_SHA" "$HEAD_SHA")"
           elif [[ "$EVENT_NAME" == "workflow_dispatch" || "$base" =~ ^0+$ ]] || ! git cat-file -e "$base^{commit}" 2>/dev/null; then
             base="$(git rev-parse "$HEAD_SHA^")"
+          fi
+          if [[ "$EVENT_NAME" == "pull_request" ]]; then
+            ./script/check_file_growth.sh "$base" "$HEAD_SHA"
           fi
           scopes="$(./script/ci_changed_scopes.sh "$base" "$HEAD_SHA")"
           printf '%s\n' "$scopes"
