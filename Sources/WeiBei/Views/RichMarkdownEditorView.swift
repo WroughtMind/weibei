@@ -28,6 +28,7 @@ final class MarkdownImageSchemeHandler: NSObject, WKURLSchemeHandler, URLSession
     private var remoteTaskIDsBySchemeTask: [ObjectIdentifier: Int] = [:]
     private var pendingRemoteSchemeTaskIDs: Set<ObjectIdentifier> = []
     private var stoppedSchemeTaskIDs: Set<ObjectIdentifier> = []
+    private var isInvalidated = false
     private let remoteValidationQueue = DispatchQueue(
         label: "WeiBei.MarkdownRemoteImage.Validation",
         qos: .utility
@@ -38,7 +39,9 @@ final class MarkdownImageSchemeHandler: NSObject, WKURLSchemeHandler, URLSession
         queue.maxConcurrentOperationCount = 1
         return queue
     }()
-    private lazy var remoteSession: URLSession = {
+    private var remoteSession: URLSession?
+
+    private func makeRemoteSession() -> URLSession {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.httpCookieStorage = nil
         configuration.urlCredentialStorage = nil
@@ -53,7 +56,30 @@ final class MarkdownImageSchemeHandler: NSObject, WKURLSchemeHandler, URLSession
             delegate: self,
             delegateQueue: remoteDelegateQueue
         )
-    }()
+    }
+
+    func invalidate() {
+        loadLock.lock()
+        guard !isInvalidated else {
+            loadLock.unlock()
+            return
+        }
+        isInvalidated = true
+        let session = remoteSession
+        remoteSession = nil
+        remoteLoads.removeAll()
+        remoteTaskIDsBySchemeTask.removeAll()
+        pendingRemoteSchemeTaskIDs.removeAll()
+        stoppedSchemeTaskIDs.removeAll()
+        loadLock.unlock()
+        session?.invalidateAndCancel()
+    }
+
+    var hasActiveRemoteSession: Bool {
+        loadLock.lock()
+        defer { loadLock.unlock() }
+        return remoteSession != nil
+    }
 
     func update(markdownBaseURLString: String, attachmentDirectory: URL?, appearanceMode: WeiBeiAppearanceMode, interfaceLanguage: WeiBeiInterfaceLanguage) {
         self.markdownBaseURLString = markdownBaseURLString
@@ -113,6 +139,10 @@ final class MarkdownImageSchemeHandler: NSObject, WKURLSchemeHandler, URLSession
     private func loadRemoteImage(_ sourceURL: URL, requestURL: URL, task urlSchemeTask: WKURLSchemeTask) {
         let schemeTaskID = ObjectIdentifier(urlSchemeTask as AnyObject)
         loadLock.lock()
+        guard !isInvalidated else {
+            loadLock.unlock()
+            return
+        }
         pendingRemoteSchemeTaskIDs.insert(schemeTaskID)
         loadLock.unlock()
         remoteValidationQueue.async { [weak self] in
@@ -120,23 +150,26 @@ final class MarkdownImageSchemeHandler: NSObject, WKURLSchemeHandler, URLSession
             guard let request = Self.sanitizedRemoteRequest(for: sourceURL) else {
                 self.loadLock.lock()
                 self.pendingRemoteSchemeTaskIDs.remove(schemeTaskID)
-                let wasStopped = self.stoppedSchemeTaskIDs.remove(schemeTaskID) != nil
+                let shouldIgnore = self.isInvalidated
+                    || self.stoppedSchemeTaskIDs.remove(schemeTaskID) != nil
                 self.loadLock.unlock()
-                if !wasStopped {
+                if !shouldIgnore {
                     self.fail(urlSchemeTask, code: 3)
                 }
                 return
             }
-            let dataTask = self.remoteSession.dataTask(with: request)
             let load = RemoteLoad(schemeTask: urlSchemeTask, requestURL: requestURL)
-            load.dataTask = dataTask
             self.loadLock.lock()
             self.pendingRemoteSchemeTaskIDs.remove(schemeTaskID)
-            guard self.stoppedSchemeTaskIDs.remove(schemeTaskID) == nil else {
+            guard !self.isInvalidated,
+                  self.stoppedSchemeTaskIDs.remove(schemeTaskID) == nil else {
                 self.loadLock.unlock()
-                dataTask.cancel()
                 return
             }
+            let session = self.remoteSession ?? self.makeRemoteSession()
+            self.remoteSession = session
+            let dataTask = session.dataTask(with: request)
+            load.dataTask = dataTask
             self.remoteLoads[dataTask.taskIdentifier] = load
             self.remoteTaskIDsBySchemeTask[schemeTaskID] = dataTask.taskIdentifier
             self.loadLock.unlock()
@@ -833,6 +866,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
     }
 
     static func dismantleNSView(_ view: WKWebView, coordinator: Coordinator) {
+        coordinator.imageSchemeHandler.invalidate()
         WeiBeiPerf.event(
             "webview.markdown_destroy",
             extra:

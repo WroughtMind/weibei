@@ -1,6 +1,34 @@
 import XCTest
+import WebKit
 @testable import WeiBei
 import WeiBeiCore
+
+private final class RecordingURLSchemeTask: NSObject, WKURLSchemeTask {
+    let request: URLRequest
+    private let lock = NSLock()
+    private var completions = 0
+
+    init(request: URLRequest) {
+        self.request = request
+    }
+
+    func didReceive(_ response: URLResponse) {}
+    func didReceive(_ data: Data) {}
+    func didFinish() { recordCompletion() }
+    func didFailWithError(_ error: Error) { recordCompletion() }
+
+    var completionCount: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return completions
+    }
+
+    private func recordCompletion() {
+        lock.lock()
+        completions += 1
+        lock.unlock()
+    }
+}
 
 final class MarkdownResourceSafetyTests: XCTestCase {
     func testRootedImageReadRejectsOversizeAndSymlinkEscape() throws {
@@ -108,6 +136,40 @@ final class MarkdownResourceSafetyTests: XCTestCase {
                 value
             )
         }
+    }
+
+    @MainActor
+    func testRemoteImageSessionInvalidationBreaksDelegateRetention() async throws {
+        var components = URLComponents()
+        components.scheme = "weibeiimage"
+        components.host = "resource"
+        components.queryItems = [
+            URLQueryItem(name: "src", value: "https://8.8.8.8:65535/image.png")
+        ]
+        let task = RecordingURLSchemeTask(
+            request: URLRequest(url: try XCTUnwrap(components.url))
+        )
+        var handler: MarkdownImageSchemeHandler? = MarkdownImageSchemeHandler()
+        weak var weakHandler = handler
+        handler?.webView(WKWebView(), start: task)
+
+        for _ in 0..<100 {
+            if handler?.hasActiveRemoteSession == true { break }
+            try await Task.sleep(nanoseconds: 20_000_000)
+        }
+        XCTAssertTrue(handler?.hasActiveRemoteSession == true)
+
+        let completionsBeforeInvalidation = task.completionCount
+        handler?.invalidate()
+        handler?.invalidate()
+        handler = nil
+        for _ in 0..<100 {
+            if weakHandler == nil { break }
+            try await Task.sleep(nanoseconds: 20_000_000)
+        }
+        XCTAssertNil(weakHandler)
+        try await Task.sleep(nanoseconds: 50_000_000)
+        XCTAssertEqual(task.completionCount, completionsBeforeInvalidation)
     }
 
     func testAttachmentStoreRejectsOversizedImageBeforeWriting() throws {

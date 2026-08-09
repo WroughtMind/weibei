@@ -1,7 +1,7 @@
 declare module "@earendil-works/pi-coding-agent" {
   export interface ExtensionAPI {
     registerTool(tool: any): void;
-    on(event: string, handler: (event: any) => any): void;
+    on(event: string, handler: (event: any, context: any) => any): void;
   }
 }
 

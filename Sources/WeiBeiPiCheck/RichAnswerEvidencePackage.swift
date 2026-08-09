@@ -485,12 +485,18 @@ enum RichAnswerEvidencePackageBuilder {
     private static func assertPublicArtifactSanitizerBoundary() throws {
         let publicURL = "https://example.com/tmp/guide"
         guard sanitizePublicArtifactText(publicURL) == publicURL,
+              sanitizePublicArtifactText("/private/tmp/private-note.md")
+                == "<temporary-directory>/private-note.md",
+              sanitizePublicArtifactText("/tmp/private-note.md")
+                == "<temporary-directory>/private-note.md",
+              sanitizePublicArtifactText("file:///private/tmp/private-note.md")
+                == "<temporary-directory>/private-note.md",
               !sanitizePublicArtifactText(
                 FileManager.default.homeDirectoryForCurrentUser
                     .appendingPathComponent("private-note.md").path
               ).contains(FileManager.default.homeDirectoryForCurrentUser.path) else {
             throw RichAnswerEvidenceError.invalidConfiguration(
-                "public artifact sanitizer changed a web URL or exposed a local home path"
+                "public artifact sanitizer changed a web URL or exposed a local path"
             )
         }
     }
@@ -1340,6 +1346,8 @@ enum RichAnswerEvidencePackageBuilder {
 
         let patterns = [
             (#"(?<![A-Za-z0-9:/])/(?:private/)?var/folders/[^/\s\"'`]+/[^/\s\"'`]+/T"#, "<temporary-directory>"),
+            (#"(?i)file:///(?:private/)?tmp(?=/|[\s\"'`]|$)"#, "<temporary-directory>"),
+            (#"(?<![A-Za-z0-9:/])/(?:private/)?tmp(?=/|[\s\"'`]|$)"#, "<temporary-directory>"),
             (#"(?<![A-Za-z0-9:/])/Users/[^/\s\"'`]+"#, "<user-home>"),
             (#"(?<![A-Za-z0-9:/])/home/[^/\s\"'`]+"#, "<user-home>"),
             (#"(?i)[A-Z]:\\Users\\[^\\/\s\"'`]+"#, "<user-home>"),
