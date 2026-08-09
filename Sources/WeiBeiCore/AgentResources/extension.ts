@@ -1701,8 +1701,8 @@ export default function weibeiExtension(pi: ExtensionAPI) {
     name: VISUALIZE_TOOL,
     label: "显示互动界面",
     description:
-      "把一个已经完成的 Visualize 组件树立即穿插显示在当前回答中。一次调用提交一个完整界面；重复 id 会原地更新已有界面。",
-    promptSnippet: "提交一个完整 Visualize 界面，完成一个就立即提交一个",
+      "把一个小而聚焦的 Visualize 互动片段立即穿插显示在当前回答中。一次调用提交一个可直接使用的界面；重复 id 会原地更新已有界面。",
+    promptSnippet: "提交一个紧凑 Visualize 片段，只保留当前解释必需的主视觉和控制",
     parameters: Type.Object(
       {
         id: Type.String({

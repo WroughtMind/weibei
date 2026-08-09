@@ -67,7 +67,6 @@
     control.placeholder = string(node.placeholder, 500);
     control.value = string(read(key, node.value || ''), 4000);
     control.addEventListener('input', () => write(key, control.value));
-    control.addEventListener('change', () => action(node, key, { value: control.value }));
     label.append(control);
     return label;
   }
@@ -133,31 +132,112 @@
     return box;
   }
 
-  function plotNode(node) {
-    const series = array(node.series, 8).map((entry, index) => ({
-      label: string(entry?.label, 80) || `系列 ${index + 1}`,
-      color: color(entry?.color, index),
-      points: array(entry?.points, 240).filter(point => Array.isArray(point) && point.length >= 2).map(point => [number(point[0]), number(point[1])]),
-    })).filter(entry => entry.points.length);
+  function plotNode(node, key) {
+    const definitions = array(node.series, 8);
     const wrap = el('div', 'plot');
     if (node.title) wrap.append(el('div', 'learning-title', node.title));
-    if (!series.length) return wrap;
-    const all = series.flatMap(entry => entry.points);
-    const xs = all.map(point => point[0]), ys = all.map(point => point[1]);
-    let xMin = Math.min(...xs), xMax = Math.max(...xs), yMin = Math.min(...ys), yMax = Math.max(...ys);
-    if (xMin === xMax) { xMin -= 1; xMax += 1; } if (yMin === yMax) { yMin -= 1; yMax += 1; }
+    const explicitPoints = definitions.flatMap(entry => array(entry?.points, 240))
+      .filter(point => Array.isArray(point) && point.length >= 2 && Number.isFinite(Number(point[0])) && Number.isFinite(Number(point[1])))
+      .map(point => [Number(point[0]), Number(point[1])]);
+    let xMin = node.xMin === undefined ? (explicitPoints.length ? Math.min(...explicitPoints.map(point => point[0])) : -5) : number(node.xMin, -5);
+    let xMax = node.xMax === undefined ? (explicitPoints.length ? Math.max(...explicitPoints.map(point => point[0])) : 5) : number(node.xMax, 5);
+    if (xMax < xMin) { xMin = -5; xMax = 5; }
+    else if (xMax === xMin) { xMin -= 1; xMax += 1; }
+
+    const parameters = definitions.flatMap((entry, seriesIndex) => array(entry?.params, 8).flatMap(raw => {
+      const name = string(raw?.name, 24);
+      if (!/^[a-z]$/.test(name)) return [];
+      const min = number(raw?.min, 0);
+      const proposedMax = number(raw?.max, 10);
+      const max = proposedMax > min ? proposedMax : min + 1;
+      return [{
+        seriesIndex,
+        name,
+        label: string(raw?.label, 80) || `${string(entry?.label, 80) || string(entry?.expr, 80)} · ${name}`,
+        min,
+        max,
+        step: Math.max(number(raw?.step, (max - min) / 100), Number.EPSILON),
+        value: clamp(number(raw?.value, 1), min, max),
+        stateKey: `${key}:plot:${seriesIndex}:${name}`,
+      }];
+    })).slice(0, 16);
+
+    const resolveSeries = useDefaults => definitions.map((entry, seriesIndex) => {
+      const expr = string(entry?.expr, 500);
+      const params = {};
+      parameters.filter(parameter => parameter.seriesIndex === seriesIndex).forEach(parameter => {
+        params[parameter.name] = useDefaults ? parameter.value : clamp(read(parameter.stateKey, parameter.value), parameter.min, parameter.max);
+      });
+      const points = expr && globalThis.WeiBeiSafeMath
+        ? globalThis.WeiBeiSafeMath.sampleExpr(expr, xMin, xMax, 180, params)
+        : array(entry?.points, 240)
+          .filter(point => Array.isArray(point) && point.length >= 2 && Number.isFinite(Number(point[0])) && Number.isFinite(Number(point[1])))
+          .map(point => [Number(point[0]), Number(point[1])]);
+      return {
+        label: string(entry?.label, 80) || expr || `系列 ${seriesIndex + 1}`,
+        color: color(entry?.color, seriesIndex),
+        points,
+      };
+    }).filter(entry => entry.points.length > 1);
+
+    const initial = resolveSeries(true);
+    if (!initial.length) {
+      wrap.append(el('div', 'error', '函数或数据无法绘制。'));
+      return wrap;
+    }
+    const initialY = initial.flatMap(entry => entry.points.map(point => point[1]));
+    let yMin = node.yMin === undefined ? Math.min(...initialY) : number(node.yMin);
+    let yMax = node.yMax === undefined ? Math.max(...initialY) : number(node.yMax);
+    if (yMax < yMin) { yMin = -1; yMax = 1; }
+    if (yMin === yMax) { yMin -= 1; yMax += 1; }
+    if (node.yMin === undefined && node.yMax === undefined) {
+      const margin = (yMax - yMin) * .08;
+      yMin -= margin;
+      yMax += margin;
+    }
+
     const width = 640, height = 270, left = 52, right = 18, top = 14, bottom = 46;
     const x = value => left + (value - xMin) / (xMax - xMin) * (width - left - right);
     const y = value => top + (1 - (value - yMin) / (yMax - yMin)) * (height - top - bottom);
-    const figure = svg('svg', { viewBox: `0 0 ${width} ${height}`, role: 'img' });
-    figure.append(svg('rect', { x: left, y: top, width: width - left - right, height: height - top - bottom, class: 'chart-frame' }));
-    if (xMin <= 0 && xMax >= 0) figure.append(svg('line', { x1: x(0), x2: x(0), y1: top, y2: height - bottom, class: 'axis-line' }));
-    if (yMin <= 0 && yMax >= 0) figure.append(svg('line', { x1: left, x2: width - right, y1: y(0), y2: y(0), class: 'axis-line' }));
-    series.forEach(entry => figure.append(svg('polyline', { points: entry.points.map(point => `${x(point[0])},${y(point[1])}`).join(' '), fill: 'none', stroke: entry.color, 'stroke-width': 2.2, 'stroke-linecap': 'round', 'stroke-linejoin': 'round' })));
-    const xLabel = svg('text', { x: (left + width - right) / 2, y: height - 10, 'text-anchor': 'middle', class: 'axis-label' }); xLabel.textContent = string(node.xLabel, 80);
-    const yLabel = svg('text', { x: 13, y: (top + height - bottom) / 2, transform: `rotate(-90 13 ${(top + height - bottom) / 2})`, 'text-anchor': 'middle', class: 'axis-label' }); yLabel.textContent = string(node.yLabel, 80);
-    figure.append(xLabel, yLabel);
-    wrap.append(figure, legend(series.map(entry => ({ label: entry.label, color: entry.color, value: '' }))));
+    const chart = el('div');
+    const draw = () => {
+      const series = resolveSeries(false);
+      const figure = svg('svg', { viewBox: `0 0 ${width} ${height}`, role: 'img' });
+      figure.append(svg('rect', { x: left, y: top, width: width - left - right, height: height - top - bottom, class: 'chart-frame' }));
+      if (xMin <= 0 && xMax >= 0) figure.append(svg('line', { x1: x(0), x2: x(0), y1: top, y2: height - bottom, class: 'axis-line' }));
+      if (yMin <= 0 && yMax >= 0) figure.append(svg('line', { x1: left, x2: width - right, y1: y(0), y2: y(0), class: 'axis-line' }));
+      series.forEach(entry => figure.append(svg('polyline', { points: entry.points.map(point => `${x(point[0])},${y(point[1])}`).join(' '), fill: 'none', stroke: entry.color, 'stroke-width': 2.2, 'stroke-linecap': 'round', 'stroke-linejoin': 'round' })));
+      const xLabel = svg('text', { x: (left + width - right) / 2, y: height - 10, 'text-anchor': 'middle', class: 'axis-label' }); xLabel.textContent = string(node.xLabel, 80);
+      const yLabel = svg('text', { x: 13, y: (top + height - bottom) / 2, transform: `rotate(-90 13 ${(top + height - bottom) / 2})`, 'text-anchor': 'middle', class: 'axis-label' }); yLabel.textContent = string(node.yLabel, 80);
+      figure.append(xLabel, yLabel);
+      chart.replaceChildren(figure);
+    };
+    draw();
+    wrap.append(chart, legend(initial.map(entry => ({ label: entry.label, color: entry.color, value: '' }))));
+    if (parameters.length) {
+      const controls = el('div', 'plot-params');
+      parameters.forEach(parameter => {
+        const row = el('label', 'plot-param-row');
+        const name = el('span', 'plot-param-name', parameter.label);
+        const input = document.createElement('input');
+        const output = el('output', 'plot-param-value');
+        input.type = 'range';
+        input.min = parameter.min;
+        input.max = parameter.max;
+        input.step = parameter.step;
+        input.value = clamp(read(parameter.stateKey, parameter.value), parameter.min, parameter.max);
+        output.textContent = String(Math.round(Number(input.value) * 100) / 100);
+        input.oninput = () => {
+          state[parameter.stateKey] = Number(input.value);
+          output.textContent = String(Math.round(Number(input.value) * 100) / 100);
+          post({ type: 'state', state });
+          draw();
+        };
+        row.append(name, input, output);
+        controls.append(row);
+      });
+      wrap.append(controls);
+    }
     return wrap;
   }
 
@@ -197,7 +277,7 @@
       const buttons = el('span', 'move'); const up = el('button', 'control-button', '↑'); const down = el('button', 'control-button', '↓'); up.disabled = index === 0; down.disabled = index === items.length - 1; up.onclick = () => move(index, index - 1); down.onclick = () => move(index, index + 1);
       buttons.append(up, down); row.append(el('span', 'drag', '≡'), el('span', '', item), buttons); list.append(row);
     });
-    box.append(list, practiceFooter(node, key, () => items.every((item, index) => item === array(node.answer, 24)[index]), { items })); return box;
+    box.append(list, practiceFooter(key, () => items.every((item, index) => item === array(node.answer, 24)[index]))); return box;
   }
 
   function matchNode(node, key) {
@@ -207,7 +287,7 @@
     const pair = target => { if (!value.selected) return; value.matches[value.selected] = target; value.selected = null; write(key, value, true); };
     pairs.forEach(item => { const button = el('button', `match-button ${value.selected === item.left ? 'selected' : ''}`, item.left); button.draggable = true; button.onclick = () => { value.selected = item.left; write(key, value, true); }; button.ondragstart = event => event.dataTransfer.setData('text/plain', item.left); left.append(button); });
     [...pairs].reverse().forEach(item => { const button = el('button', 'match-button', item.right); const source = Object.entries(value.matches).find(([, target]) => target === item.right)?.[0]; if (source) button.append(el('small', 'match-paired', source)); button.ondragover = event => event.preventDefault(); button.ondrop = event => { value.selected = event.dataTransfer.getData('text/plain'); pair(item.right); }; button.onclick = () => pair(item.right); right.append(button); });
-    grid.append(left, right); box.append(grid, practiceFooter(node, key, () => pairs.every(item => value.matches[item.left] === item.right), { matches: value.matches })); return box;
+    grid.append(left, right); box.append(grid, practiceFooter(key, () => pairs.every(item => value.matches[item.left] === item.right))); return box;
   }
 
   function classifyNode(node, key) {
@@ -217,12 +297,12 @@
     const select = item => { value.selected = item; write(key, value, true); }; const place = group => { if (!value.selected) return; value.placed[value.selected] = group; value.selected = null; write(key, value, true); };
     all.filter(item => !value.placed[item]).forEach(item => { const button = el('button', `bank-button ${value.selected === item ? 'selected' : ''}`, item); button.draggable = true; button.onclick = () => select(item); button.ondragstart = event => event.dataTransfer.setData('text/plain', item); bank.append(button); });
     const buckets = el('div', 'classify-grid'); groups.forEach(group => { const bucket = el('div', 'bucket'); bucket.append(el('div', 'bucket-title', group.label)); bucket.ondragover = event => event.preventDefault(); bucket.ondrop = event => { value.selected = event.dataTransfer.getData('text/plain'); place(group.label); }; bucket.onclick = () => place(group.label); Object.entries(value.placed).filter(([, label]) => label === group.label).forEach(([item]) => { const button = el('button', 'bank-button', item); button.onclick = event => { event.stopPropagation(); delete value.placed[item]; write(key, value, true); }; bucket.append(button); }); buckets.append(bucket); });
-    box.append(bank, buckets, practiceFooter(node, key, () => groups.every(group => group.items.every(item => value.placed[item] === group.label)), { groups: value.placed })); return box;
+    box.append(bank, buckets, practiceFooter(key, () => groups.every(group => group.items.every(item => value.placed[item] === group.label)))); return box;
   }
 
-  function practiceFooter(node, key, check, payload) {
+  function practiceFooter(key, check) {
     const footer = el('div', 'practice-footer'); const button = el('button', 'control-button', '检查');
-    button.onclick = () => { const correct = check(); write(`${key}:result`, correct, true); action(node, key, { ...payload, correct }); };
+    button.onclick = () => write(`${key}:result`, check(), true);
     footer.append(button); const result = read(`${key}:result`, null); if (result !== null) footer.append(el('span', result ? 'correct' : 'incorrect', result ? '正确' : '再调整一下')); return footer;
   }
 
@@ -243,7 +323,7 @@
     const box = el('div', 'learning'); if (node.title) box.append(el('div', 'learning-title', node.title)); const steps = array(node.steps, 60); if (!steps.length) return box;
     const value = read(key, { current: clamp(node.current || 0, 0, steps.length - 1), playing: false }); value.current = clamp(value.current, 0, steps.length - 1); const current = steps[value.current];
     const stage = el('div', 'simulation-stage'); stage.append(el('strong', '', current?.label), el('p', '', current?.content)); box.append(stage);
-    const track = el('div', 'simulation-track'); steps.forEach((_, index) => { const button = el('button', index === value.current ? 'active' : ''); button.onclick = () => { value.current = index; write(key, value, true); action(node, key, { current: index, step: steps[index]?.label }); }; track.append(button); }); box.append(track);
+    const track = el('div', 'simulation-track'); steps.forEach((_, index) => { const button = el('button', index === value.current ? 'active' : ''); button.onclick = () => { value.current = index; write(key, value, true); }; track.append(button); }); box.append(track);
     const controls = el('div', 'learning-controls'), previous = el('button', 'control-button', '上一步'), play = el('button', 'control-button', value.playing ? '暂停' : '播放'), next = el('button', 'control-button', '下一步'); previous.disabled = value.current === 0; next.disabled = value.current === steps.length - 1; previous.onclick = () => { value.current -= 1; write(key, value, true); }; next.onclick = () => { value.current += 1; write(key, value, true); }; play.onclick = () => { value.playing = !value.playing; write(key, value, true); }; controls.append(previous, play, next); box.append(controls);
     if (value.playing) { const timer = setTimeout(() => { if (value.current < steps.length - 1) value.current += 1; else if (node.loop) value.current = 0; else value.playing = false; write(key, value, true); }, clamp(node.intervalMs || 1200, 250, 60000)); timers.set(key, timer); } return box;
   }
@@ -266,15 +346,15 @@
       case 'timeline': { const box=el('div','timeline'); array(node.items,24).forEach(item=>{const row=el('div','timeline-item'),body=el('div'); body.append(el('div','',item?.title)); if(item?.time) body.append(el('div','timeline-time',item.time)); if(item?.desc) body.append(el('div','timeline-desc',item.desc)); row.append(el('span','timeline-mark','·'),body); box.append(row);}); return box; }
       case 'button': { const button=el('button',`button ${node.tone || ''}`,node.label); button.onclick=()=>action(node,key,{type:'button',label:string(node.label,200)}); return button; }
       case 'input': return field(node,key,false); case 'textarea': return field(node,key,true);
-      case 'select': { const label=el('label','field'); if(node.label) label.append(el('span','',node.label)); const select=el('select'), options=array(node.options,50); options.forEach((option,index)=>{const item=el('option','',option); item.value=String(index); select.append(item);}); select.value=String(read(key,clamp(node.selected||0,0,options.length-1))); select.onchange=()=>{write(key,Number(select.value)); action(node,key,{type:'select',value:options[Number(select.value)]});}; label.append(select); return label; }
-      case 'checkbox': { const label=el('label','choice'),input=document.createElement('input'); input.type='checkbox'; input.checked=Boolean(read(key,node.checked===true)); input.onchange=()=>{write(key,input.checked); action(node,key,{type:'checkbox',checked:input.checked});}; label.append(input,document.createTextNode(string(node.label))); return label; }
-      case 'radio': { const box=el('div','field'); if(node.label) box.append(el('span','',node.label)); const selected=read(key,clamp(node.selected||0,0,array(node.options).length-1)); array(node.options,50).forEach((option,index)=>{const label=el('label','choice'),input=document.createElement('input'); input.type='radio'; input.name=`radio-${key}`; input.checked=index===selected; input.onchange=()=>{write(key,index,true); action(node,key,{type:'radio',value:option});}; label.append(input,document.createTextNode(string(option))); box.append(label);}); return box; }
-      case 'switch': { const button=el('button',`button ${read(key,node.checked===true) ? 'primary' : 'ghost'}`,`${node.label} · ${read(key,node.checked===true) ? '开' : '关'}`); button.setAttribute('role','switch'); button.setAttribute('aria-checked',String(Boolean(read(key,node.checked===true)))); button.onclick=()=>{const value=!read(key,node.checked===true); write(key,value,true); action(node,key,{type:'switch',checked:value});}; return button; }
-      case 'slider': { const label=el('label','field'),head=el('span','slider-head'),value=number(read(key,node.value),number(node.value)); head.append(el('span','',node.label),el('output','',`${value}${string(node.unit,30)}`)); const input=document.createElement('input'); input.type='range'; input.min=number(node.min); input.max=number(node.max,100); input.step=number(node.step,(input.max-input.min)/100); input.value=value; input.oninput=()=>{state[key]=Number(input.value); head.querySelector('output').textContent=`${input.value}${string(node.unit,30)}`; post({type:'state',state});}; input.onchange=()=>action(node,key,{type:'slider',value:Number(input.value)}); label.append(head,input); return label; }
+      case 'select': { const label=el('label','field'); if(node.label) label.append(el('span','',node.label)); const select=el('select'), options=array(node.options,50); options.forEach((option,index)=>{const item=el('option','',option); item.value=String(index); select.append(item);}); select.value=String(read(key,clamp(node.selected||0,0,options.length-1))); select.onchange=()=>write(key,Number(select.value)); label.append(select); return label; }
+      case 'checkbox': { const label=el('label','choice'),input=document.createElement('input'); input.type='checkbox'; input.checked=Boolean(read(key,node.checked===true)); input.onchange=()=>write(key,input.checked); label.append(input,document.createTextNode(string(node.label))); return label; }
+      case 'radio': { const box=el('div','field'); if(node.label) box.append(el('span','',node.label)); const selected=read(key,clamp(node.selected||0,0,array(node.options).length-1)); array(node.options,50).forEach((option,index)=>{const label=el('label','choice'),input=document.createElement('input'); input.type='radio'; input.name=`radio-${key}`; input.checked=index===selected; input.onchange=()=>write(key,index,true); label.append(input,document.createTextNode(string(option))); box.append(label);}); return box; }
+      case 'switch': { const button=el('button',`button ${read(key,node.checked===true) ? 'primary' : 'ghost'}`,`${node.label} · ${read(key,node.checked===true) ? '开' : '关'}`); button.setAttribute('role','switch'); button.setAttribute('aria-checked',String(Boolean(read(key,node.checked===true)))); button.onclick=()=>{const value=!read(key,node.checked===true); write(key,value,true);}; return button; }
+      case 'slider': { const label=el('label','field'),head=el('span','slider-head'),value=number(read(key,node.value),number(node.value)); head.append(el('span','',node.label),el('output','',`${value}${string(node.unit,30)}`)); const input=document.createElement('input'); input.type='range'; input.min=number(node.min); input.max=number(node.max,100); input.step=number(node.step,(input.max-input.min)/100); input.value=value; input.oninput=()=>{state[key]=Number(input.value); head.querySelector('output').textContent=`${input.value}${string(node.unit,30)}`; post({type:'state',state});}; label.append(head,input); return label; }
       case 'tabs': { const box=el('div','tabs'),tabs=array(node.tabs,12),active=clamp(read(key,0),0,tabs.length-1),bar=el('div','tabbar'); tabs.forEach((tab,index)=>{const button=el('button',`tab ${index===active?'active':''}`,tab?.label); button.onclick=()=>write(key,index,true); bar.append(button);}); box.append(bar); if(tabs[active]) box.append(renderItems(tabs[active].items,`${path}.tab${active}`,depth)); return box; }
       case 'accordion': { const box=el('div'),items=array(node.items,24),open=read(key,0); items.forEach((item,index)=>{const head=el('button','accordion-head'); head.append(el('span','',item?.title),el('span','',open===index?'−':'+')); head.onclick=()=>write(key,open===index?null:index,true); box.append(head); if(open===index){const body=el('div','accordion-body'); body.append(renderItems(item.items,`${path}.acc${index}`,depth)); box.append(body);}}); return box; }
       case 'copy': { const button=el('button','button',node.label||'复制'); button.onclick=()=>navigator.clipboard?.writeText(string(node.text,12000)).then(()=>{button.textContent='已复制'; setTimeout(()=>button.textContent=node.label||'复制',1200);}).catch(()=>{}); return button; }
-      case 'chart': return chartNode(node); case 'plot': return plotNode(node); case 'scene3d': return sceneNode(node,key);
+      case 'chart': return chartNode(node); case 'plot': return plotNode(node,key); case 'scene3d': return sceneNode(node,key);
       case 'formula': return formulaNode(node,key); case 'quiz': return quizNode(node,key); case 'sort': return sortNode(node,key); case 'match': return matchNode(node,key); case 'classify': return classifyNode(node,key); case 'simulation': return simulationNode(node,key);
       default: return null;
     }

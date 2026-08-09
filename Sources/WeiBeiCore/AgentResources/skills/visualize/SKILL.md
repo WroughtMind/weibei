@@ -11,7 +11,7 @@ Visualize 是魏碑唯一的生成式界面判断入口。先决定什么表达�
 2. 静态关系、顺序、层级或流程：使用普通 Mermaid 围栏。
 3. 确实需要动态变化、空间操作、可调输入、练习或模拟：调用 `weibei_visualize`。
 
-不要为了“看起来丰富”生成界面。需要时可以连续生成任意数量；每完成一个可用界面就立即提交，不等待整段回答结束，也不要求用户确认数量。
+不要为了“看起来丰富”生成界面。默认做成正文里的一个紧凑交互片段：只放理解当前问题真正需要的主视觉和控制，不复述前后文字，不套完整仪表盘。需要时可以连续生成任意数量；每完成一个可用界面就立即提交，不等待整段回答结束，也不要求用户确认数量。
 
 ## 提交方式
 
@@ -29,7 +29,7 @@ Visualize 是魏碑唯一的生成式界面判断入口。先决定什么表达�
 - `id` 使用小写 ASCII 与连字符。同一 `id` 会在原位置更新；新 `id` 按调用顺序加入回答。
 - 所有界面都按调用顺序穿插在回答正文里，并随内容完整展开；不要另做侧栏、常驻面板或分页界面。
 - `spec` 只使用下列白名单组件，不输出 HTML、CSS 或 JavaScript。
-- 界面中的 `action` 会把动作和当前值直接作为下一轮消息发给模型；用清楚的人话命名动作。
+- 滑块、输入、选择、练习和模拟都在当前界面内即时变化，不发送新消息。只有 `button` 明确带 `action` 时才把当前界面状态发给模型；按钮文案必须让用户看得出会继续对话，例如“让模型解释这个结果”。
 - 标签页、滑块、练习和模拟进度由魏碑自动保存，重开后恢复。
 
 ## 组件词汇
@@ -65,11 +65,13 @@ Visualize 是魏碑唯一的生成式界面判断入口。先决定什么表达�
 {"type":"chart","kind":"bars|line|donut","data":[{"label":"一月","value":12,"color":"#a94b35"?}]}
 ```
 
-- `plot`: 已采样的二维曲线；每条 series 的 points 为 `[x,y]`。
+- `plot`: 函数曲线或已采样的二维曲线。函数参数直接渲染为滑块，拖动时在本地即时重绘，不调用模型；纵轴默认按初始参数锁定，让变化肉眼可见。
 
 ```json
-{"type":"plot","title":"..."?,"xLabel":"时间 / s"?,"yLabel":"速度 / m·s⁻¹"?,"series":[{"label":"方案 A","points":[[0,0],[1,2]],"color":"#a94b35"?}]}
+{"type":"plot","title":"振幅变化"?,"xMin":-6.28,"xMax":6.28,"yMin":-4?,"yMax":4?,"series":[{"label":"a·sin(x)","expr":"a*sin(x)","params":[{"name":"a","label":"振幅","value":1,"min":0,"max":3,"step":0.1}],"color":"#a94b35"?}]}
 ```
+
+表达式支持 `+ - * / % ^`、括号、`sin cos tan asin acos atan sqrt cbrt exp log ln abs floor ceil round min max pow`、常量 `pi e tau`。静态数据仍可用 `{"points":[[0,0],[1,2]]}`。
 
 - `scene3d`: 可拖动旋转的轻量空间示意。
 
@@ -82,18 +84,18 @@ Visualize 是魏碑唯一的生成式界面判断入口。先决定什么表达�
 ### 基础交互
 
 - `button`: `{"type":"button","label":"...","tone":"primary|danger|success|ghost"?,"action":"..."?}`
-- `input`: `{"type":"input","label":"..."?,"placeholder":"..."?,"value":"..."?,"action":"..."?}`
-- `textarea`: `{"type":"textarea","label":"..."?,"rows":4?,"value":"..."?,"action":"..."?}`
-- `select`: `{"type":"select","label":"..."?,"options":["..."],"selected":0?,"action":"..."?}`
-- `checkbox`: `{"type":"checkbox","label":"...","checked":true?,"action":"..."?}`
-- `radio`: `{"type":"radio","label":"..."?,"options":["..."],"selected":0?,"action":"..."?}`
-- `switch`: `{"type":"switch","label":"...","checked":true?,"action":"..."?}`
-- `slider`: `{"type":"slider","label":"...","value":2,"min":0,"max":5,"step":0.5?,"unit":"m/s"?,"action":"..."?}`
+- `input`: `{"type":"input","label":"..."?,"placeholder":"..."?,"value":"..."?}`
+- `textarea`: `{"type":"textarea","label":"..."?,"rows":4?,"value":"..."?}`
+- `select`: `{"type":"select","label":"..."?,"options":["..."],"selected":0?}`
+- `checkbox`: `{"type":"checkbox","label":"...","checked":true?}`
+- `radio`: `{"type":"radio","label":"..."?,"options":["..."],"selected":0?}`
+- `switch`: `{"type":"switch","label":"...","checked":true?}`
+- `slider`: `{"type":"slider","label":"...","value":2,"min":0,"max":5,"step":0.5?,"unit":"m/s"?}`
 - `tabs`: `{"type":"tabs","tabs":[{"label":"...","items":[...]}]}`
 - `accordion`: `{"type":"accordion","items":[{"title":"...","items":[...]}]}`
 - `copy`: `{"type":"copy","label":"复制"?,"text":"..."}`
 
-只有需要模型继续分析、重算或改变整个界面时才设置 `action`。标签页、折叠、练习判定和模拟播放默认在本地即时完成。
+只有明确需要模型继续分析时，才增加一个带 `action` 的按钮。其他控件不使用 `action`；标签页、折叠、练习判定、函数重绘和模拟播放都在本地即时完成。
 
 ### 学习组件
 
@@ -112,30 +114,30 @@ Visualize 是魏碑唯一的生成式界面判断入口。先决定什么表达�
 - `sort`: 拖拽排序。
 
 ```json
-{"type":"sort","prompt":"按顺序排列"?,"items":["巡航","点火"],"answer":["点火","巡航"],"action":"..."?}
+{"type":"sort","prompt":"按顺序排列"?,"items":["巡航","点火"],"answer":["点火","巡航"]}
 ```
 
 - `match`: 拖拽或点击配对。
 
 ```json
-{"type":"match","prompt":"完成配对"?,"pairs":[{"left":"H₂O","right":"水"}],"action":"..."?}
+{"type":"match","prompt":"完成配对"?,"pairs":[{"left":"H₂O","right":"水"}]}
 ```
 
 - `classify`: 把项目拖入分类。
 
 ```json
-{"type":"classify","prompt":"完成归类"?,"groups":[{"label":"哺乳类","items":["鲸"]},{"label":"鱼类","items":["鲫鱼"]}],"action":"..."?}
+{"type":"classify","prompt":"完成归类"?,"groups":[{"label":"哺乳类","items":["鲸"]},{"label":"鱼类","items":["鲫鱼"]}]}
 ```
 
 - `simulation`: 可播放、暂停、跳转和逐步推进的过程。
 
 ```json
-{"type":"simulation","title":"星舟协议","steps":[{"label":"点火","content":"消耗 2 枚令牌"},{"label":"巡航","content":"生成 5 单位能量"}],"intervalMs":1200?,"loop":true?,"action":"..."?}
+{"type":"simulation","title":"星舟协议","steps":[{"label":"点火","content":"消耗 2 枚令牌"},{"label":"巡航","content":"生成 5 单位能量"}],"intervalMs":1200?,"loop":true?}
 ```
 
 ## 组合判断
 
-- 用最少的组件清楚表达，不拼模板式仪表盘。
+- 用最少的组件清楚表达，不拼模板式仪表盘；能用一个函数图解决，就不要再配统计卡、说明卡和重复标题。
 - 数量由内容决定；不强行限制卡片、图表或界面个数，也不为了填空增加指标。
 - 可调解释器以一个主视觉和紧凑控制为中心；实时值放在控制旁边。
 - 比较场景优先共享尺度、并排或小倍图；信息过密时自然换行，不缩小到难读。
