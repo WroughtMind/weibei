@@ -11103,6 +11103,36 @@ final class WorkspaceStore: ObservableObject {
         return updated
     }
 
+    func saveAgentVisualizationState(
+        messageID: UUID,
+        visualizationID: String,
+        stateJSON: String
+    ) {
+        guard stateJSON.utf8.count <= 262_144,
+              (try? JSONSerialization.jsonObject(
+                  with: Data(stateJSON.utf8),
+                  options: .fragmentsAllowed
+              )) != nil,
+              let chatID = studySessions.first(where: { session in
+                  session.messages.contains { $0.id == messageID }
+              })?.id else { return }
+        _ = updateAgentMessage(messageID, in: chatID) { message in
+            message.contentBlocks = message.contentBlocks.map { block in
+                guard case var .visualization(fragment) = block,
+                      fragment.id == visualizationID else { return block }
+                fragment.stateJSON = stateJSON
+                return .visualization(fragment)
+            }
+        }
+    }
+
+    func prepareAgentVisualizationFollowUp(_ prompt: String) {
+        let value = String(prompt.prefix(8_192))
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty else { return }
+        agentDraft = value
+    }
+
     private func restoreAgentReplyState(from session: StudySession) {
         guard let reply = session.messages.last(where: { $0.role == .assistant }) else {
             latestAgentNoteProposal = nil
@@ -19552,7 +19582,9 @@ final class WorkspaceStore: ObservableObject {
                     message.contentBlocks = message.contentBlocks.map { block in
                         guard case let .visualization(existing) = block,
                               existing.id == fragment.id else { return block }
-                        return .visualization(fragment)
+                        var replacement = fragment
+                        replacement.stateJSON = existing.stateJSON
+                        return .visualization(replacement)
                     }
                 }
                 agentVisualizationIDsUpdatingHistory.insert(fragment.id)
