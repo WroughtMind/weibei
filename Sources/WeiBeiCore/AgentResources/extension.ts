@@ -423,6 +423,46 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function openAINativeSearchModel(modelID: string): boolean {
+  return /^gpt-5(?:[.-]|$)/.test(modelID) ||
+    ["gpt-4.1", "gpt-4.1-mini", "gpt-4.1-nano", "o3", "o3-pro", "o4-mini"].includes(modelID);
+}
+
+function nativeWebSearchSupported(model: unknown): boolean {
+  if (!isRecord(model)) return false;
+  const provider = model.provider;
+  const api = model.api;
+  const modelID = model.id;
+  if (typeof provider !== "string" || typeof api !== "string" || typeof modelID !== "string") return false;
+  if (provider === "openai-codex" && api === "openai-codex-responses" && /^gpt-5(?:[.-]|$)/.test(modelID)) {
+    return true;
+  }
+  return provider === "openai" &&
+    api === "openai-responses" &&
+    openAINativeSearchModel(modelID);
+}
+
+function withNativeWebSearch(payload: unknown, model: unknown): unknown {
+  if (!isRecord(payload) || !nativeWebSearchSupported(model)) return payload;
+  if (!Array.isArray(payload.tools) || payload.include !== undefined && !Array.isArray(payload.include)) return payload;
+  const tools = payload.tools as unknown[];
+  if (!tools.some((candidate) => isRecord(candidate) &&
+    candidate.type === "function" && candidate.name === COURSE_MAP_TOOL)) {
+    return payload;
+  }
+  const tool = { type: "web_search" };
+  const alreadyPresent = tools.some((candidate) =>
+    isRecord(candidate) && candidate.type === tool.type,
+  );
+  let nextPayload = alreadyPresent ? payload : { ...payload, tools: [...tools, tool] };
+  const include = (payload.include ?? []) as unknown[];
+  const sources = "web_search_call.action.sources";
+  if (!include.includes(sources)) {
+    nextPayload = { ...nextPayload, include: [...include, sources] };
+  }
+  return nextPayload;
+}
+
 function requireRecord(value: unknown, field: string): Record<string, unknown> {
   if (!isRecord(value)) {
     throw new Error(`魏碑上下文字段 ${field} 必须是对象`);
@@ -2504,7 +2544,11 @@ export default function weibeiExtension(pi: ExtensionAPI) {
     },
   });
 
-  pi.on("before_agent_start", async (event) => {
+  pi.on("before_provider_request", (event, context) =>
+    withNativeWebSearch(event.payload, context.model),
+  );
+
+  pi.on("before_agent_start", async (event, context) => {
     lastReadMemoryRevision = undefined;
     courseProfileUpdated = false;
     searchedCourseItemIDs.clear();
@@ -2530,6 +2574,9 @@ export default function weibeiExtension(pi: ExtensionAPI) {
       "学习记忆只能说明用户的学习状态，不能作为课程事实证据。",
       "课程知识档案只提供导航和已有认识，不是原文证据；精确事实、引文、公式和数字仍须读取材料。只在完成一节、完成主题、确认跨来源联系或准备切换上下文时批量更新一次，普通问答不要更新。长期学习记忆只在用户本轮明确确认理解、结论或保存学习成果时更新。",
       sourceAvailabilityInstruction,
+      nativeWebSearchSupported(context.model)
+        ? "本轮模型服务已开放原生网页搜索；需要新近或可核实的外部事实时，由模型自行判断是否需要搜索，不要求用户先贴网址。"
+        : "本轮模型服务没有已验证的原生网页搜索；可以使用已有知识回答，但不得声称已经实时搜索或核实。",
       snapshot.interactiveVisualizationsEnabled
         ? "需要动态变化、空间运动或可调输入时，可以读取 Visualize Skill 并生成互动界面；文字足够时不要为了装饰而生成。"
         : "用户已关闭新互动界面；不要调用 weibei_visualize。Markdown 与 Mermaid 不受影响。",
