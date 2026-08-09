@@ -87,7 +87,9 @@ self_check() {
   printf 'blocked\n' >>"$file"
   git -C "$self_check_fixture" commit -qam blocked
   fail_head="$(git -C "$self_check_fixture" rev-parse HEAD)"
-  if (cd "$self_check_fixture" && "$script_path" "$base" "$fail_head") >/dev/null 2>&1; then
+  if (cd "$self_check_fixture" && \
+    GROWTH_EXEMPT_LABEL=false PR_BODY='' \
+    "$script_path" "$base" "$fail_head") >/dev/null 2>&1; then
     echo "file growth self-check failed: 51 lines were accepted" >&2
     return 1
   fi
