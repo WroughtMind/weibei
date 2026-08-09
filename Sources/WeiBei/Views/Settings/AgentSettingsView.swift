@@ -177,7 +177,7 @@ extension SettingsView {
     private func applyProvider(_ provider: AgentProviderID) {
         apiKeyDraft = ""
         store.setAgentProviderID(provider)
-        if let firstModel = oauthService.models(providerID: provider.piProviderName).first {
+        if let firstModel = oauthService.models(providerID: piProviderID(for: provider)).first {
             store.updateModelName(firstModel)
         }
         let authTypes = piAuthTypes(for: provider)
@@ -232,7 +232,7 @@ extension SettingsView {
 
                 HStack(spacing: 8) {
                     if oauthService.isConfigured(
-                        providerID: store.agentProviderID.piProviderName,
+                        providerID: activePiProviderID,
                         type: .apiKey
                     ) {
                         settingsPill(
@@ -246,7 +246,7 @@ extension SettingsView {
                             .buttonStyle(WeiBeiTextActionButtonStyle(active: !oauthService.isLoggingIn))
                     }
                     if !oauthService.isConfigured(
-                        providerID: store.agentProviderID.piProviderName,
+                        providerID: activePiProviderID,
                         type: .apiKey
                     ) {
                         Button(store.ui("由内置 Pi 配置", "Configure with embedded Pi")) {
@@ -255,7 +255,7 @@ extension SettingsView {
                         .buttonStyle(WeiBeiTextActionButtonStyle(active: !oauthService.isLoggingIn))
                     }
                     if oauthService.isConfigured(
-                        providerID: store.agentProviderID.piProviderName,
+                        providerID: activePiProviderID,
                         type: .apiKey
                     ) {
                         Button(store.ui("清除", "Clear")) { clearActiveAPICredential() }
@@ -354,7 +354,7 @@ extension SettingsView {
 
     private func piAuthTypes(for provider: AgentProviderID) -> [PiCredentialType] {
         if let types = oauthService.catalog?.providers.first(where: {
-            $0.id == provider.piProviderName
+            $0.id == piProviderID(for: provider)
         })?.authTypes, !types.isEmpty {
             return types
         }
@@ -415,7 +415,7 @@ extension SettingsView {
     private func clearActiveAPICredential() {
         apiKeyDraft = ""
         oauthService.logoutCredential(
-            providerID: store.agentProviderID.piProviderName,
+            providerID: activePiProviderID,
             displayName: store.agentProviderID.label(language: store.interfaceLanguage)
         )
     }
@@ -428,15 +428,35 @@ extension SettingsView {
         if !oauthLinked,
                   activeAgentAuthMethod != .subscription,
                   !oauthService.isConfigured(
-                      providerID: store.agentProviderID.piProviderName,
+                      providerID: activePiProviderID,
                       type: .apiKey
                   ),
                   apiKeyDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            settingsNote(
-                store.ui("尚未配置密钥，对话将无法连接。", "No key configured — chat won't connect."),
-                icon: "exclamationmark.triangle"
-            )
+            if hasLegacyEndpointCredential {
+                settingsNote(
+                    store.ui(
+                        "检测到旧版通用密钥。为避免把它发给错误服务，魏碑不会自动搬移；请为当前地址重新输入一次密钥。",
+                        "A legacy shared key was found. WeiBei will not move it to a new endpoint automatically; enter the key once for this address."
+                    ),
+                    icon: "exclamationmark.triangle"
+                )
+            } else {
+                settingsNote(
+                    store.ui("尚未配置密钥，对话将无法连接。", "No key configured — chat won't connect."),
+                    icon: "exclamationmark.triangle"
+                )
+            }
         }
+    }
+
+    private var hasLegacyEndpointCredential: Bool {
+        guard store.agentProviderID == .custom || store.agentProviderID == .llamaCpp else {
+            return false
+        }
+        return oauthService.isConfigured(
+            providerID: store.agentProviderID.piProviderName,
+            type: .apiKey
+        )
     }
 
     private var oauthLinked: Bool {
@@ -466,7 +486,7 @@ extension SettingsView {
                     get: { store.modelName },
                     set: { store.updateModelName($0) }
                 ),
-                prompt: Text(oauthService.models(providerID: store.agentProviderID.piProviderName).first ?? "model-id")
+                prompt: Text(oauthService.models(providerID: activePiProviderID).first ?? "model-id")
                     .font(.system(size: 13))
                     .foregroundStyle(WeiBeiTheme.placeholderInk)
             )

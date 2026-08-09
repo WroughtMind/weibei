@@ -10,8 +10,8 @@
 
 | 项 | 值 |
 |---|---|
-| Worktree | `/private/tmp/WeiBei-bun-restore`（不要用陈旧的 `~/projects/weibei` / `Documents/魏碑`） |
-| 测试 App | `/private/tmp/WeiBei-bun-restore/dist/魏碑.app` |
+| Worktree | `<temporary-directory>/WeiBei-bun-restore`（不要用陈旧的 `~/projects/weibei` / `Documents/魏碑`） |
+| 测试 App | `<temporary-directory>/WeiBei-bun-restore/dist/魏碑.app` |
 | Branch | `codex/fix-global-chat-open-material-focus` |
 | PR | https://github.com/weibei-app/weibei/pull/129 |
 | 文档落盘时 tip | `afc7f2c`（曾打包 build **666**） |

@@ -4,8 +4,8 @@
   "repositoryPolicy": {
     "allowedRoot": "Attachments/RichAnswerVerificationAssets/",
     "notAppResources": true,
-    "largeOriginalRule": "If original exceeds about 15MB or longest edge exceeds 4000px, keep the original only in /private/tmp for hash verification and commit only a no-crop/no-stretch derivative with longest edge 2400-3200px.",
-    "tmpSourceRoot": "/private/tmp/weibei-rich-answer-source-assets/ and /private/tmp/weibei-rich-reply-replay-rerun-20260718-142954/"
+    "largeOriginalRule": "If original exceeds about 15MB or longest edge exceeds 4000px, keep the original only in <temporary-directory> for hash verification and commit only a no-crop/no-stretch derivative with longest edge 2400-3200px.",
+    "tmpSourceRoot": "<temporary-directory>/weibei-rich-answer-source-assets/ and <temporary-directory>/weibei-rich-reply-replay-rerun-20260718-142954/"
   },
   "downloadNotes": [
     {
@@ -28,7 +28,7 @@
       "attributionText": "Credit: NASA/JPL-Caltech.",
       "original": {
         "keptInRepository": false,
-        "tmpPath": "/private/tmp/weibei-rich-answer-source-assets/kepler-16b-nasa-jpl-original.png",
+        "tmpPath": "<temporary-directory>/weibei-rich-answer-source-assets/kepler-16b-nasa-jpl-original.png",
         "width": 8100,
         "height": 11700,
         "bytes": 19196171,
@@ -41,7 +41,7 @@
         "height": 3200,
         "bytes": 879566,
         "sha256": "1b2fede241ce734508aa4b0a53a486a38d02670c029c55da4585654ffe91a50f",
-        "processing": "sips -s format jpeg -s formatOptions 92 -Z 3200 /private/tmp/weibei-rich-answer-source-assets/kepler-16b-nasa-jpl-original.png --out Attachments/RichAnswerVerificationAssets/processed/kepler-16b-nasa-jpl-derivative-3200.jpg",
+        "processing": "sips -s format jpeg -s formatOptions 92 -Z 3200 <temporary-directory>/weibei-rich-answer-source-assets/kepler-16b-nasa-jpl-original.png --out Attachments/RichAnswerVerificationAssets/processed/kepler-16b-nasa-jpl-derivative-3200.jpg",
         "crop": "none",
         "stretch": "none"
       }
@@ -59,7 +59,7 @@
       "attributionText": "Credit: Library of Congress, Geography and Map Division; Geological Survey (U.S.).",
       "original": {
         "keptInRepository": false,
-        "tmpPath": "/private/tmp/weibei-rich-answer-source-assets/grand-canyon-loc-usgs-west-original.jp2",
+        "tmpPath": "<temporary-directory>/weibei-rich-answer-source-assets/grand-canyon-loc-usgs-west-original.jp2",
         "width": 12136,
         "height": 13642,
         "bytes": 24849524,
@@ -72,7 +72,7 @@
         "height": 3200,
         "bytes": 4154971,
         "sha256": "01567f81b5ca1750de709cd40fe3424c0fc106894218c6e79ceb9b3a745d8d68",
-        "processing": "sips -s format jpeg -s formatOptions 92 -Z 3200 /private/tmp/weibei-rich-answer-source-assets/grand-canyon-loc-usgs-west-original.jp2 --out Attachments/RichAnswerVerificationAssets/processed/grand-canyon-loc-usgs-west-derivative-3200.jpg",
+        "processing": "sips -s format jpeg -s formatOptions 92 -Z 3200 <temporary-directory>/weibei-rich-answer-source-assets/grand-canyon-loc-usgs-west-original.jp2 --out Attachments/RichAnswerVerificationAssets/processed/grand-canyon-loc-usgs-west-derivative-3200.jpg",
         "crop": "none",
         "stretch": "none"
       }
@@ -171,8 +171,8 @@
       "id": "weibei-single-pendulum-color-contrast-screenshot",
       "title": "WeiBei single-pendulum rich-answer color contrast screenshot",
       "sourcePageUrl": "local://weibei/rich-answer-replay/learning-art-color-contrast-overlay",
-      "sourceRecordUrl": "/private/tmp/weibei-rich-reply-replay-rerun-20260718-142954/after.png",
-      "directOriginalUrl": "/private/tmp/weibei-rich-reply-replay-rerun-20260718-142954/after.png",
+      "sourceRecordUrl": "<temporary-directory>/weibei-rich-reply-replay-rerun-20260718-142954/after.png",
+      "directOriginalUrl": "<temporary-directory>/weibei-rich-reply-replay-rerun-20260718-142954/after.png",
       "institution": "WeiBei local verification run",
       "creator": "WeiBei app rich-answer replay",
       "license": "Internal verification screenshot; repository QA asset only.",
@@ -185,7 +185,7 @@
         "height": 1656,
         "bytes": 749798,
         "sha256": "c1c79970691385ff614f7c5a9eacedc21a094ba409bf242bb7c62d0716f06e1e",
-        "processing": "Exact byte copy from /private/tmp/weibei-rich-reply-replay-rerun-20260718-142954/after.png; no overlay, no crop, no recompression."
+        "processing": "Exact byte copy from <temporary-directory>/weibei-rich-reply-replay-rerun-20260718-142954/after.png; no overlay, no crop, no recompression."
       },
       "appResource": {
         "repositoryPath": "Sources/WeiBei/Resources/RichAnswerVerificationAssets/verification-only/weibei-single-pendulum-color-contrast-original.png",

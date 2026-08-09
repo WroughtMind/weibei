@@ -313,6 +313,21 @@ public enum StudyAgentHostToolRequest: Equatable, Sendable {
         cursor: String?,
         maximumCharacters: Int
     )
+    case webOpen(url: String, maximumCharacters: Int)
+}
+
+public struct StudyAgentWebPage: Codable, Equatable, Sendable {
+    public var url: String
+    public var title: String
+    public var text: String
+    public var isTruncated: Bool
+
+    public init(url: String, title: String, text: String, isTruncated: Bool) {
+        self.url = url
+        self.title = title
+        self.text = text
+        self.isTruncated = isTruncated
+    }
 }
 
 public struct StudyAgentHostToolItem: Codable, Equatable, Sendable {
@@ -340,6 +355,7 @@ public struct StudyAgentHostToolItem: Codable, Equatable, Sendable {
 public struct StudyAgentHostToolResult: Codable, Equatable, Sendable {
     public var query: String
     public var items: [StudyAgentHostToolItem]
+    public var webPages: [StudyAgentWebPage]
     public var total: Int?
     public var nextCursor: String?
     public var sourceRevision: String?
@@ -347,12 +363,14 @@ public struct StudyAgentHostToolResult: Codable, Equatable, Sendable {
     public init(
         query: String,
         items: [StudyAgentHostToolItem],
+        webPages: [StudyAgentWebPage] = [],
         total: Int? = nil,
         nextCursor: String? = nil,
         sourceRevision: String? = nil
     ) {
         self.query = query
         self.items = items
+        self.webPages = webPages
         self.total = total
         self.nextCursor = nextCursor
         self.sourceRevision = sourceRevision

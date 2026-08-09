@@ -972,12 +972,15 @@ const missingImageURL = () => {
 };
 
 const resolveMarkdownURL = (src) => {
-  if (!src || /^(?:https?:|data:|blob:|weibeiimage:)/i.test(src)) return src;
+  if (!src || /^(?:data:|blob:|weibeiimage:)/i.test(src)) return src;
+  if (/^https:/i.test(src)) return localImageURL(src);
+  if (/^http:/i.test(src)) return '';
   try {
     const resolved = new URL(src, markdownBaseURL || window.location.href).href;
-    return /^file:/i.test(resolved) ? localImageURL(resolved) : resolved;
+    if (/^(?:file:|https:)/i.test(resolved)) return localImageURL(resolved);
+    return /^(?:data:|blob:|weibeiimage:)/i.test(resolved) ? resolved : '';
   } catch {
-    return src;
+    return '';
   }
 };
 

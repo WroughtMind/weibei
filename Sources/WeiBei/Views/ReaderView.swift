@@ -918,7 +918,13 @@ struct ReaderView: View {
                 }
             case .markdown:
                 if let url = item.url {
-                    if let text = try? String(contentsOf: url, encoding: .utf8) {
+                    if let data = try? CourseProjectFileWorker
+                        .readBoundedRegularFile(
+                            at: url,
+                            maximumByteCount: CourseProjectFileWorker
+                                .markdownMaximumByteCount
+                        ),
+                       let text = String(data: data, encoding: .utf8) {
                         markdownReader(markdown: text, markdownBaseURL: url.deletingLastPathComponent())
                     } else {
                         MarkdownReadFailureView(fileName: url.lastPathComponent)
@@ -927,7 +933,14 @@ struct ReaderView: View {
                     MaterialReadFailureView(fileName: store.displayTitle(for: item))
                 }
             case .text:
-                if let url = item.url, let text = try? String(contentsOf: url, encoding: .utf8) {
+                if let url = item.url,
+                   let data = try? CourseProjectFileWorker
+                    .readBoundedRegularFile(
+                        at: url,
+                        maximumByteCount: CourseProjectFileWorker
+                            .markdownMaximumByteCount
+                    ),
+                   let text = String(data: data, encoding: .utf8) {
                     PlainTextReaderView(text: text, searchQuery: store.effectiveReaderSearch, appearanceMode: store.appearanceMode) { text, anchor in
                         store.updateSelection(text, source: .document, anchor: anchor)
                     }
@@ -2086,11 +2099,11 @@ private final class WebReaderResourceSchemeHandler: NSObject, WKURLSchemeHandler
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let result: Result<(Data, URLResponse), Error>
             do {
-                let values = try fileURL.resourceValues(forKeys: [.isRegularFileKey])
-                guard values.isRegularFile == true else {
-                    throw Self.unreadableResourceError
-                }
-                let data = try Data(contentsOf: fileURL)
+                let data = try CourseProjectFileWorker.readBoundedRegularFile(
+                    at: fileURL,
+                    inside: root,
+                    maximumByteCount: CourseProjectFileWorker.markdownMaximumByteCount
+                )
                 let response = URLResponse(
                     url: requestURL,
                     mimeType: Self.mimeType(for: fileURL),
@@ -2149,9 +2162,8 @@ private final class WebReaderResourceSchemeHandler: NSObject, WKURLSchemeHandler
         let candidate = components.reduce(root) { url, component in
             url.appendingPathComponent(String(component))
         }
-        let resolved = candidate.resolvingSymlinksInPath().standardizedFileURL
-        guard CourseProjectPathPolicy.contains(root, resolved, includingRoot: false) else { return nil }
-        return resolved
+        guard CourseProjectPathPolicy.contains(root, candidate, includingRoot: false) else { return nil }
+        return candidate.standardizedFileURL
     }
 
     private static func mimeType(for url: URL) -> String {
@@ -2911,7 +2923,12 @@ struct WebReaderRepresentable: NSViewRepresentable {
             htmlLoadRequestID = requestID
             let readTask = Task.detached(priority: .userInitiated) { () -> Data? in
                 guard !Task.isCancelled else { return nil }
-                guard let data = try? Data(contentsOf: url) else { return nil }
+                guard let data = try? CourseProjectFileWorker
+                    .readBoundedRegularFile(
+                        at: url,
+                        maximumByteCount: CourseProjectFileWorker
+                            .markdownMaximumByteCount
+                    ) else { return nil }
                 return Task.isCancelled ? nil : data
             }
             htmlReadTask = readTask
@@ -2930,14 +2947,14 @@ struct WebReaderRepresentable: NSViewRepresentable {
                         htmlLoadRequestID = nil
                     }
                 }
-                guard let data else {
-                    view.loadFileURL(url, allowingReadAccessTo: url.deletingLastPathComponent())
-                    return
-                }
-                guard let baseURL = htmlResourceSchemeHandler.activate(
-                    rootDirectory: url.deletingLastPathComponent()
-                ) else {
-                    view.loadFileURL(url, allowingReadAccessTo: url.deletingLastPathComponent())
+                guard let data,
+                      let baseURL = htmlResourceSchemeHandler.activate(
+                        rootDirectory: url.deletingLastPathComponent()
+                      ) else {
+                    view.loadHTMLString(
+                        "<p style=\"font: 15px -apple-system; padding: 24px\">无法安全读取这个 HTML 文件。请确认文件没有损坏且大小未超过限制。</p>",
+                        baseURL: nil
+                    )
                     return
                 }
                 view.load(

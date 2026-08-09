@@ -90,12 +90,23 @@ final class PiOAuthService: ObservableObject {
     ) {
         let cleaned = key.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !isLoggingIn else { return }
+        let endpoint: AgentProviderEndpoint
+        do {
+            endpoint = try AgentProviderEndpoint(provider: provider, baseURL: baseURL)
+        } catch {
+            suppliedAPIKey = nil
+            customProviderSetup = nil
+            statusMessage = nil
+            lastError = error.localizedDescription
+            return
+        }
         suppliedAPIKey = cleaned.isEmpty ? nil : cleaned
+        customProviderSetup = nil
         if provider == .custom || provider == .llamaCpp {
-            customProviderSetup = (provider, baseURL, model)
+            customProviderSetup = (provider, endpoint.baseURL ?? "", model)
         }
         startCredentialLogin(
-            providerID: provider.piProviderName,
+            providerID: endpoint.piProviderID,
             type: .apiKey,
             displayName: provider.label(language: .chinese),
             successNotification: .weiBeiPiCredentialsDidChange
@@ -121,7 +132,7 @@ final class PiOAuthService: ObservableObject {
             if let previousRefresh { _ = await previousRefresh.result }
             do {
                 if let setup = customProviderSetup {
-                    await runtime.writeCustomModelsJSONIfNeeded(
+                    try await runtime.writeCustomModelsJSONIfNeeded(
                         providerID: setup.provider,
                         baseURL: setup.baseURL,
                         model: setup.model

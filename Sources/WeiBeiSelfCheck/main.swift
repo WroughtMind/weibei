@@ -405,6 +405,41 @@ let courseIndexRoot = FileManager.default.temporaryDirectory
     .appendingPathComponent("weibei-course-index-check-\(UUID().uuidString)", isDirectory: true)
 try? FileManager.default.createDirectory(at: courseIndexRoot, withIntermediateDirectories: true)
 defer { try? FileManager.default.removeItem(at: courseIndexRoot) }
+let symlinkHTMLTarget = courseIndexRoot.appendingPathComponent("symlink-target.html")
+let symlinkHTMLURL = courseIndexRoot.appendingPathComponent("symlink-reader.html")
+let symlinkHTMLFixtureReady: Bool
+do {
+    try "<html><body>SYMLINK_HTML_MUST_NOT_LOAD</body></html>".write(
+        to: symlinkHTMLTarget,
+        atomically: true,
+        encoding: .utf8
+    )
+    try FileManager.default.createSymbolicLink(
+        at: symlinkHTMLURL,
+        withDestinationURL: symlinkHTMLTarget
+    )
+    symlinkHTMLFixtureReady = true
+} catch {
+    symlinkHTMLFixtureReady = false
+}
+let symlinkHTMLItem = StudyItem(
+    id: "file:\(symlinkHTMLURL.path)",
+    title: "Symlink HTML",
+    subtitle: symlinkHTMLURL.lastPathComponent,
+    kind: .html,
+    urlPath: symlinkHTMLURL.path,
+    isSample: false
+)
+let symlinkHTMLSnapshot = CourseDocumentSearchIndex(
+    databaseURL: courseIndexRoot.appendingPathComponent("symlink-html.sqlite3")
+).verifiedSnapshot(
+    of: symlinkHTMLItem,
+    maximumBytes: 32 * 1_024 * 1_024
+)
+expect(
+    symlinkHTMLFixtureReady && symlinkHTMLSnapshot == nil,
+    "bounded HTML reads reject symbolic-link files instead of following them"
+)
 let verifiedReadURL = courseIndexRoot.appendingPathComponent("verified-read.md")
 try? "# 原文\n\nORIGINAL_VERIFIED_CONTENT".write(
     to: verifiedReadURL,
@@ -1600,7 +1635,8 @@ expect(restored.learningMemoryStates?.first?.scope == .course(courseA.id)
 let attachmentRoot = URL(fileURLWithPath: NSTemporaryDirectory())
     .appendingPathComponent("weibei-self-check-\(UUID().uuidString)", isDirectory: true)
 let attachmentDirectory = attachmentRoot.appendingPathComponent(".weibei-assets", isDirectory: true)
-let dataURL = "data:image/png;base64,\(Data([0x89, 0x50, 0x4E, 0x47]).base64EncodedString())"
+let onePixelPNG = Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=")!
+let dataURL = "data:image/png;base64,\(onePixelPNG.base64EncodedString())"
 let firstAttachment = try MarkdownAttachmentStore.save(
     dataURL: dataURL,
     originalName: "图 1).png",
@@ -1623,13 +1659,13 @@ expect(secondAttachment.src == ".weibei-assets/图 1)-2.png", "attachment avoids
 expect(FileManager.default.fileExists(atPath: attachmentRoot.appendingPathComponent(firstAttachment.src).path), "first attachment written")
 expect(FileManager.default.fileExists(atPath: attachmentRoot.appendingPathComponent(secondAttachment.src).path), "second attachment written")
 let rawAttachment = try MarkdownAttachmentStore.save(
-    data: Data([1, 2, 3]),
-    originalName: "dragged.webp",
-    mime: "",
+    data: onePixelPNG,
+    originalName: "dragged.png",
+    mime: "image/png",
     attachmentDirectory: attachmentDirectory,
     markdownBaseURLString: attachmentRoot.absoluteString
 )
-expect(rawAttachment.src == ".weibei-assets/dragged.webp", "raw image data save keeps image extension")
+expect(rawAttachment.src == ".weibei-assets/dragged.png", "raw image data save keeps image extension")
 expect(MarkdownAttachmentStore.isSupportedImageExtension("HEIC"), "image extension check is case insensitive")
 expect(MarkdownAttachmentStore.mimeType(forFileExtension: "jpeg") == "image/jpeg", "mime from extension")
 expect(MarkdownAttachmentStore.isSupportedImageExtension("TIF") && MarkdownAttachmentStore.mimeType(forFileExtension: "tif") == "image/tiff" && MarkdownAttachmentStore.fileExtension(originalName: "scan.tif", mime: "image/tiff") == "tif", "TIFF images keep their .tif extension and MIME type")

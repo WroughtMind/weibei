@@ -1513,7 +1513,10 @@ struct MarkdownSourceEditor: NSViewRepresentable {
         }
 
         private func saveImageFile(_ url: URL) -> MarkdownAttachment? {
-            guard let data = try? Data(contentsOf: url) else {
+            guard let data = try? CourseProjectFileWorker.readBoundedRegularFile(
+                at: url,
+                maximumByteCount: CourseProjectFileWorker.markdownImageMaximumByteCount
+            ) else {
                 return nil
             }
             return saveImageData(

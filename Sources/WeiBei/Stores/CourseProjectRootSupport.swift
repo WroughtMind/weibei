@@ -225,6 +225,9 @@ enum CoursePortableExportError: LocalizedError {
 
 actor CourseProjectFileWorker {
     nonisolated static let portableStateMaximumByteCount = 32 * 1024 * 1024
+    nonisolated static let markdownMaximumByteCount = 32 * 1024 * 1024
+    nonisolated static let markdownImageMaximumByteCount =
+        MarkdownAttachmentStore.maximumImageByteCount
 
     private let fileManager = FileManager.default
     private var highestWorkspaceSaveGeneration: UInt64 = 0
@@ -1568,20 +1571,11 @@ actor CourseProjectFileWorker {
               ) else {
             throw CourseProjectFileWorkerError.verificationFailed
         }
-        let handle = try FileHandle(forReadingFrom: source.url)
-        defer { try? handle.close() }
-        var data = Data()
-        if source.byteCount <= UInt64(Int.max) {
-            data.reserveCapacity(Int(source.byteCount))
-        }
-        var hasher = SHA256()
-        var byteCount: UInt64 = 0
-        while let chunk = try handle.read(upToCount: 1_048_576),
-              !chunk.isEmpty {
-            data.append(chunk)
-            hasher.update(data: chunk)
-            byteCount += UInt64(chunk.count)
-        }
+        let data = try Self.readBoundedRegularFile(
+            at: source.url,
+            maximumByteCount: Self.markdownMaximumByteCount
+        )
+        let byteCount = UInt64(data.count)
         guard let markdown = String(data: data, encoding: .utf8),
               Self.identity(at: source.url) == expectedIdentity else {
             throw CourseProjectFileWorkerError.verificationFailed
@@ -1598,7 +1592,7 @@ actor CourseProjectFileWorker {
             markdown: markdown,
             snapshot: CourseFileSnapshot(
                 byteCount: byteCount,
-                sha256: hasher.finalize()
+                sha256: SHA256.hash(data: data)
                     .map { String(format: "%02x", $0) }
                     .joined()
             ),
@@ -1736,6 +1730,44 @@ actor CourseProjectFileWorker {
             maximumByteCount: maximumByteCount
         ),
         identity(at: directory) == directoryIdentity else {
+            throw CourseProjectFileWorkerError.verificationFailed
+        }
+        return data
+    }
+
+    nonisolated static func readBoundedRegularFile(
+        at url: URL,
+        inside root: URL,
+        maximumByteCount: Int
+    ) throws -> Data {
+        guard maximumByteCount >= 0,
+              let relativePath = CourseProjectPathPolicy.relativePath(
+                  of: url,
+                  inside: root
+              ),
+              let rootIdentity = identity(at: root) else {
+            throw CourseProjectFileWorkerError.unsafePath
+        }
+        let components = try safeRelativePathComponents(relativePath)
+        guard let name = components.last else {
+            throw CourseProjectFileWorkerError.unsafePath
+        }
+        let rootDescriptor = try openDirectory(
+            root,
+            expectedIdentity: rootIdentity
+        )
+        defer { Darwin.close(rootDescriptor) }
+        let parentDescriptor = try openDirectory(
+            atRelativePath: components.dropLast().joined(separator: "/"),
+            rootDescriptor: rootDescriptor
+        )
+        defer { Darwin.close(parentDescriptor) }
+        guard let data = try readRegularFile(
+            named: name,
+            relativeTo: parentDescriptor,
+            maximumByteCount: maximumByteCount
+        ),
+        identity(at: root) == rootIdentity else {
             throw CourseProjectFileWorkerError.verificationFailed
         }
         return data

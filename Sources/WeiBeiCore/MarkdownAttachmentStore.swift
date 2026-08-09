@@ -1,4 +1,6 @@
 import Foundation
+import ImageIO
+import UniformTypeIdentifiers
 
 public struct MarkdownAttachment: Equatable {
     public var src: String
@@ -11,6 +13,9 @@ public struct MarkdownAttachment: Equatable {
 }
 
 public enum MarkdownAttachmentStore {
+    public static let maximumImageByteCount = 20 * 1_024 * 1_024
+    public static let maximumDecodedPixelCount = 40_000_000
+
     public static func save(
         dataURL: String,
         originalName: String,
@@ -23,7 +28,12 @@ public enum MarkdownAttachmentStore {
         }
 
         let header = String(dataURL[..<commaIndex])
-        let encoded = String(dataURL[dataURL.index(after: commaIndex)...])
+        let encodedSlice = dataURL[dataURL.index(after: commaIndex)...]
+        let maximumBase64CharacterCount = ((maximumImageByteCount + 2) / 3) * 4
+        guard encodedSlice.utf8.count <= maximumBase64CharacterCount else {
+            throw NSError(domain: "WeiBei.MarkdownAttachment", code: 3, userInfo: [NSLocalizedDescriptionKey: "图片超过 20 MB 上限"])
+        }
+        let encoded = String(encodedSlice)
         guard header.contains(";base64"),
               let data = Data(base64Encoded: encoded) else {
             throw NSError(domain: "WeiBei.MarkdownAttachment", code: 2, userInfo: [NSLocalizedDescriptionKey: "图片数据不是有效的 base64"])
@@ -45,6 +55,16 @@ public enum MarkdownAttachmentStore {
         attachmentDirectory: URL,
         markdownBaseURLString: String
     ) throws -> MarkdownAttachment {
+        guard data.count <= maximumImageByteCount else {
+            throw NSError(domain: "WeiBei.MarkdownAttachment", code: 3, userInfo: [NSLocalizedDescriptionKey: "图片超过 20 MB 上限"])
+        }
+        guard validatedImageMIMEType(
+            data: data,
+            suggestedMIMEType: mime,
+            allowsSVG: false
+        ) != nil else {
+            throw NSError(domain: "WeiBei.MarkdownAttachment", code: 4, userInfo: [NSLocalizedDescriptionKey: "图片格式或尺寸无法安全读取"])
+        }
         try FileManager.default.createDirectory(at: attachmentDirectory, withIntermediateDirectories: true)
         let ext = fileExtension(originalName: originalName, mime: mime)
         let rawStem = originalName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -117,6 +137,49 @@ public enum MarkdownAttachmentStore {
         case "heic": return "image/heic"
         default: return "image/png"
         }
+    }
+
+    public static func validatedImageMIMEType(
+        data: Data,
+        suggestedMIMEType: String?,
+        allowsSVG: Bool
+    ) -> String? {
+        guard data.count <= maximumImageByteCount else { return nil }
+        let suggested = suggestedMIMEType?.lowercased()
+        if allowsSVG, suggested == "image/svg+xml" {
+            let prefix = String(decoding: data.prefix(4_096), as: UTF8.self)
+                .lowercased()
+            return prefix.contains("<svg") ? "image/svg+xml" : nil
+        }
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+              CGImageSourceGetCount(source) > 0,
+              let properties = CGImageSourceCopyPropertiesAtIndex(
+                  source,
+                  0,
+                  nil
+              ) as? [CFString: Any],
+              let width = (properties[kCGImagePropertyPixelWidth] as? NSNumber)?
+                .intValue,
+              let height = (properties[kCGImagePropertyPixelHeight] as? NSNumber)?
+                .intValue,
+              width > 0,
+              height > 0 else {
+            return nil
+        }
+        let (framePixels, frameOverflow) = width.multipliedReportingOverflow(
+            by: height
+        )
+        let (totalPixels, totalOverflow) = framePixels
+            .multipliedReportingOverflow(by: CGImageSourceGetCount(source))
+        guard !frameOverflow,
+              !totalOverflow,
+              totalPixels <= maximumDecodedPixelCount,
+              let type = CGImageSourceGetType(source),
+              let mimeType = UTType(type as String)?.preferredMIMEType,
+              mimeType.hasPrefix("image/") else {
+            return nil
+        }
+        return mimeType
     }
 
     public static func relativePath(to target: URL, markdownBaseURLString: String) -> String {

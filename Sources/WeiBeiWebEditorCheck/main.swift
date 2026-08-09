@@ -109,6 +109,7 @@ graph TD
 ```
 
 ![魏碑测试图|100x80](assets/weibei.svg)
+![远程测试图](https://example.com/weibei.png)
 ![[assets/weibei.svg|100]]
 ![[货币理论#利率]]
 """
@@ -927,7 +928,10 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
 
     private func validateRenderedImageSource(completion: @escaping () -> Void) {
         let script = """
-        Array.from(document.querySelectorAll('.ProseMirror img')).map((image) => image.getAttribute('src') || image.src || '').join('\\n')
+        Array.from(document.querySelectorAll('.ProseMirror img'))
+          .map((image) => image.getAttribute('src') || image.src || '')
+          .filter((source) => source.startsWith('weibeiimage://image'))
+          .join('\\n')
         """
         webView.evaluateJavaScript(script) { [weak self] value, error in
             guard let self else { return }
@@ -939,9 +943,15 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
                 self.fail("local markdown image did not use controlled scheme: \(String(describing: value))")
                 return
             }
-            let src = rawSrc.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard src.hasPrefix("weibeiimage://image") else {
-                self.fail("local markdown image did not use controlled scheme: \(src)")
+            let sources = rawSrc
+                .split(separator: "\n")
+                .map(String.init)
+            guard sources.count >= 2,
+                  sources.allSatisfy({ $0.hasPrefix("weibeiimage://image") }),
+                  sources.contains(where: {
+                      $0.contains("https%3A%2F%2Fexample.com%2Fweibei.png")
+                  }) else {
+                self.fail("markdown images did not use controlled scheme: \(rawSrc)")
                 return
             }
             completion()
@@ -1808,7 +1818,56 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
         webView.evaluateJavaScript(script) { [weak self] value, error in
             guard let self else { return }
             guard error == nil, value as? Bool == true else { self.fail("code language isolation failed: \(String(describing: error))"); return }
-            self.validateExternalMarkdownAcknowledgement()
+            self.validateMermaidResourceRegressions()
+        }
+    }
+
+    private func validateMermaidResourceRegressions() {
+        let markdown = """
+        ```mermaid
+        xychart
+          x-axis 1 --> 1
+          line [1, 2]
+        ```
+
+        ```mermaid
+        radar-beta
+          axis a, b
+          curve c {1, 1}
+          ticks 1000000000
+        ```
+        """
+        webView.evaluateJavaScript("""
+        window.WeiBeiEditor.setDocumentID('mermaid-resource-regressions');
+        window.WeiBeiEditor.setMarkdown(\(json(markdown)));
+        """) { [weak self] _, error in
+            guard let self else { return }
+            guard error == nil else {
+                self.fail("Mermaid resource regression setup failed: \(String(describing: error))")
+                return
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                self.webView.evaluateJavaScript("""
+                ({
+                  alive: !!document.querySelector('.ProseMirror'),
+                  blocks: document.querySelectorAll('.weibei-mermaid-block').length,
+                  markdown: window.WeiBeiEditor.getMarkdown()
+                })
+                """) { [weak self] value, error in
+                    guard let self else { return }
+                    guard error == nil,
+                          let result = value as? [String: Any],
+                          result["alive"] as? Bool == true,
+                          (result["blocks"] as? Int ?? 0) == 2,
+                          (result["markdown"] as? String)?
+                            .trimmingCharacters(in: .newlines)
+                            == markdown.trimmingCharacters(in: .newlines) else {
+                        self.fail("patched Mermaid inputs destabilized the editor: \(String(describing: value)); error=\(String(describing: error))")
+                        return
+                    }
+                    self.validateExternalMarkdownAcknowledgement()
+                }
+            }
         }
     }
 
@@ -1874,7 +1933,8 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
             ("escaped backtick prose syntax", "转义反引号 \\` 后面的 [[转义双链]] #escaped-tag $5"),
             ("code block html break", "<span>保留<br />源码</span>"),
             ("code block escaped syntax", "\\#literal \\[[x]] \\==x\\== \\$5 \\[!note]"),
-            ("image size", "![魏碑测试图|100x80](assets/weibei.svg)")
+            ("image size", "![魏碑测试图|100x80](assets/weibei.svg)"),
+            ("remote image", "![远程测试图](https://example.com/weibei.png)")
         ]
         for (name, fragment) in checks {
             if !markdown.contains(fragment) {

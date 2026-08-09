@@ -92,7 +92,7 @@ Building for production...
 [92/100] Linking WeiBeiWebEditorCheck
 [94/100] Compiling WeiBeiCore AgentOfflinePreview.swift
 [95/103] Compiling WeiBeiSelfCheck PiAgentSelfChecks.swift
-/Users/changfenhuang/Documents/魏碑-release-1.0/Sources/WeiBeiSelfCheck/main.swift:1503:13: warning: 'SecKeychainCreate' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+<repo-root>/Sources/WeiBeiSelfCheck/main.swift:1503:13: warning: 'SecKeychainCreate' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
 1501 |     let createStatus = temporaryKeychainURL.path.withCString { path in
 1502 |         temporaryKeychainPassword.withUnsafeBytes { password in
 1503 |             SecKeychainCreate(path, UInt32(password.count), password.baseAddress, false, nil, &temporaryKeychain)
@@ -100,7 +100,7 @@ Building for production...
 1504 |         }
 1505 |     }
 
-/Users/changfenhuang/Documents/魏碑-release-1.0/Sources/WeiBeiSelfCheck/main.swift:1509:9: warning: 'SecKeychainDelete' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+<repo-root>/Sources/WeiBeiSelfCheck/main.swift:1509:9: warning: 'SecKeychainDelete' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
 1507 |     guard let temporaryKeychain else { exit(1) }
 1508 |     defer {
 1509 |         SecKeychainDelete(temporaryKeychain)
@@ -118,9 +118,9 @@ Building for production...
 [101/103] Write Objects.LinkFileList
 [102/103] Linking WeiBei
 Build complete! (361.05s)
-/var/folders/yp/wx87z0l97wj89_yj8nw7_ptm0000gn/T//weibei-package-501/魏碑.app/Contents/Helpers/WeiBeiPDFTextWorker: replacing existing signature
-/var/folders/yp/wx87z0l97wj89_yj8nw7_ptm0000gn/T//weibei-package-501/魏碑.app: replacing existing signature
-pi-check ready: PI 0.80.2 at /var/folders/yp/wx87z0l97wj89_yj8nw7_ptm0000gn/T//weibei-package-501/魏碑.app/Contents/Resources/PiRuntime/bin/pi
+<temporary-directory>/weibei-package-501/魏碑.app/Contents/Helpers/WeiBeiPDFTextWorker: replacing existing signature
+<temporary-directory>/weibei-package-501/魏碑.app: replacing existing signature
+pi-check ready: PI 0.80.2 at <temporary-directory>/weibei-package-501/魏碑.app/Contents/Resources/PiRuntime/bin/pi
 release_metadata_version=0.1.0
 release_metadata_build=481
 release_metadata_commit=f3b48af3bda00f8d4492bd3af5da6bd6feefcbcc

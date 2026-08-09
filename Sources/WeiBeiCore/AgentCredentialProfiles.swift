@@ -1,3 +1,5 @@
+import CryptoKit
+import Darwin
 import Foundation
 
 /// How the user wants to attach a model provider for Pi.
@@ -88,6 +90,121 @@ public struct AgentCredentialProfile: Identifiable, Codable, Equatable, Sendable
         self.modelName = modelName
         self.baseURL = baseURL
         self.updatedAt = updatedAt
+    }
+}
+
+public enum AgentProviderEndpointError: LocalizedError, Equatable, Sendable {
+    case missing
+    case invalid
+    case insecurePublicHTTP
+
+    public var errorDescription: String? {
+        switch self {
+        case .missing:
+            return "请先填写模型服务地址。"
+        case .invalid:
+            return "模型服务地址必须是有效的 HTTP 或 HTTPS 地址，且不能包含账号、查询参数或片段。"
+        case .insecurePublicHTTP:
+            return "公网模型服务必须使用 HTTPS；HTTP 只允许本机或用户明确填写的局域网服务。"
+        }
+    }
+}
+
+/// The normalized model endpoint and the Pi provider id that owns its credential.
+/// Profiles may vary by model while credentials remain shared only by endpoint.
+public struct AgentProviderEndpoint: Equatable, Sendable {
+    public var piProviderID: String
+    public var baseURL: String?
+
+    public init(provider: AgentProviderID, baseURL rawBaseURL: String) throws {
+        let trimmed = rawBaseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard provider.showsBaseURLField else {
+            piProviderID = provider.piProviderName
+            baseURL = nil
+            return
+        }
+        guard !trimmed.isEmpty else {
+            if provider == .custom || provider == .llamaCpp {
+                throw AgentProviderEndpointError.missing
+            }
+            piProviderID = provider.piProviderName
+            baseURL = nil
+            return
+        }
+        guard trimmed.utf8.count <= 2_048,
+              var components = URLComponents(string: trimmed),
+              let rawScheme = components.scheme?.lowercased(),
+              rawScheme == "https" || rawScheme == "http",
+              let rawHost = components.host?.lowercased(),
+              !rawHost.isEmpty,
+              components.user == nil,
+              components.password == nil,
+              components.query == nil,
+              components.fragment == nil else {
+            throw AgentProviderEndpointError.invalid
+        }
+        if rawScheme == "http", !Self.isTrustedLocalHost(rawHost) {
+            throw AgentProviderEndpointError.insecurePublicHTTP
+        }
+
+        components.scheme = rawScheme
+        components.host = rawHost
+        if (rawScheme == "https" && components.port == 443)
+            || (rawScheme == "http" && components.port == 80) {
+            components.port = nil
+        }
+        while components.percentEncodedPath.count > 1,
+              components.percentEncodedPath.hasSuffix("/") {
+            components.percentEncodedPath.removeLast()
+        }
+        guard let normalized = components.string,
+              let normalizedURL = URL(string: normalized),
+              normalizedURL.host != nil else {
+            throw AgentProviderEndpointError.invalid
+        }
+
+        baseURL = normalized
+        switch provider {
+        case .custom, .llamaCpp:
+            let digest = SHA256.hash(data: Data(normalized.utf8))
+                .map { String(format: "%02x", $0) }
+                .joined()
+            let prefix = provider == .custom ? "weibei-custom" : "weibei-llama"
+            piProviderID = "\(prefix)-\(digest)"
+        default:
+            piProviderID = provider.piProviderName
+        }
+    }
+
+    private static func isTrustedLocalHost(_ rawHost: String) -> Bool {
+        let host = rawHost.trimmingCharacters(in: CharacterSet(charactersIn: "[]")).lowercased()
+        if host == "localhost" || host.hasSuffix(".localhost") || host.hasSuffix(".local") {
+            return true
+        }
+        if !host.contains(".") && !host.contains(":") {
+            return true
+        }
+
+        var ipv4 = in_addr()
+        if inet_pton(AF_INET, host, &ipv4) == 1 {
+            let value = UInt32(bigEndian: ipv4.s_addr)
+            return value >> 24 == 127
+                || value >> 24 == 10
+                || (value >= 0x6440_0000 && value <= 0x647F_FFFF)
+                || value >> 16 == 0xA9FE
+                || value >> 20 == 0xAC1
+                || value >> 16 == 0xC0A8
+        }
+
+        var ipv6 = in6_addr()
+        if inet_pton(AF_INET6, host, &ipv6) == 1 {
+            let bytes = withUnsafeBytes(of: &ipv6) { Array($0) }
+            let isLoopback = bytes.dropLast().allSatisfy { $0 == 0 } && bytes.last == 1
+            return isLoopback
+                || (bytes[0] & 0xFE) == 0xFC
+                || (bytes[0] == 0xFE && (bytes[1] & 0xC0) == 0x80)
+        }
+        return false
     }
 }
 

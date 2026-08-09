@@ -1,6 +1,6 @@
 # learning-art-color-contrast-overlay 像素采样报告
 
-- 源图：`/private/tmp/weibei-rich-reply-replay-rerun-20260718-142954/after.png`
+- 源图：`<temporary-directory>/weibei-rich-reply-replay-rerun-20260718-142954/after.png`
 - 坐标原点：左上角，单位为 PNG 像素。
 - 尺寸：2616×1656
 - SHA-256：`c1c79970691385ff614f7c5a9eacedc21a094ba409bf242bb7c62d0716f06e1e`

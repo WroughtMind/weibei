@@ -13,6 +13,7 @@ const TOOL_RESPONSE_DIR_ENV = "WEIBEI_AGENT_TOOL_RESPONSE_DIR";
 const COURSE_MAP_TOOL = "weibei_course_map";
 const COURSE_SEARCH_TOOL = "weibei_course_search";
 const COURSE_READ_TOOL = "weibei_course_read";
+const WEB_OPEN_TOOL = "weibei_web_open";
 const VISUAL_ASSET_TOOL = "weibei_visual_asset";
 const LEARNING_MEMORY_TOOL = "weibei_learning_memory";
 const LEARNING_UPDATE_TOOL = "weibei_learning_update";
@@ -24,6 +25,7 @@ const ALLOWED_TOOLS = new Set([
   COURSE_MAP_TOOL,
   COURSE_SEARCH_TOOL,
   COURSE_READ_TOOL,
+  WEB_OPEN_TOOL,
   VISUAL_ASSET_TOOL,
   LEARNING_MEMORY_TOOL,
   LEARNING_UPDATE_TOOL,
@@ -108,6 +110,7 @@ const LIMITS = {
   projectSearchItems: 8,
   projectSearchBytes: 256_000,
   projectReadBytes: 256_000,
+  webText: 20_000,
   learningMemories: 48,
   learningText: 500,
   learningEvidence: 400,
@@ -348,6 +351,17 @@ interface CourseReadToolDetails {
   jumpEvidence: Record<string, string>;
   nextCursor?: string;
   sourceRevision?: string;
+}
+
+interface WebOpenToolDetails {
+  kind: "web_open";
+  contextRevision: string;
+  page: {
+    url: string;
+    title: string;
+    text: string;
+    isTruncated: boolean;
+  };
 }
 
 interface LearningMemoryToolDetails {
@@ -1236,24 +1250,19 @@ function readHostCourseItem(
   };
 }
 
-async function queryCourseIndex(
+async function queryHostTool(
   snapshot: ContextSnapshotV2,
   toolCallID: string,
   toolName: string,
   signal?: AbortSignal,
-): Promise<{
-  items: CourseItemSnapshot[];
-  total?: number;
-  nextCursor?: string;
-  sourceRevision?: string;
-}> {
+): Promise<Record<string, unknown>> {
   const root = process.env[TOOL_RESPONSE_DIR_ENV]?.trim();
   if (!root || !isAbsolute(root)) {
     throw new Error(`缺少环境变量 ${TOOL_RESPONSE_DIR_ENV}`);
   }
   const canonicalRoot = await realpath(root);
   if (canonicalRoot !== resolve(root)) {
-    throw new Error("课程工具响应根目录发生了变化");
+    throw new Error("宿主工具响应根目录发生了变化");
   }
   const digest = createHash("sha256").update(toolCallID, "utf8").digest("hex");
   const requestDirectory = resolve(canonicalRoot, snapshot.requestID);
@@ -1262,20 +1271,20 @@ async function queryCourseIndex(
     canonicalRequestDirectory !== requestDirectory ||
     !canonicalRequestDirectory.startsWith(`${canonicalRoot}/`)
   ) {
-    throw new Error("课程工具本轮响应目录发生了变化");
+    throw new Error("宿主工具本轮响应目录发生了变化");
   }
   const responsePath = resolve(requestDirectory, `${digest}.json`);
   if (
     requestDirectory !== `${canonicalRoot}/${snapshot.requestID}` ||
     responsePath !== `${requestDirectory}/${digest}.json`
   ) {
-    throw new Error("课程工具响应路径无效");
+    throw new Error("宿主工具响应路径无效");
   }
 
   const startedAt = Date.now();
   let data: Buffer | undefined;
   while (Date.now() - startedAt < 12_000) {
-    if (signal?.aborted) throw new Error("课程工具查询已取消");
+    if (signal?.aborted) throw new Error("宿主工具查询已取消");
     try {
       data = await readFile(responsePath);
       break;
@@ -1284,10 +1293,10 @@ async function queryCourseIndex(
       await delay(40, undefined, signal ? { signal } : undefined);
     }
   }
-  if (!data) throw new Error("课程工具查询超时");
+  if (!data) throw new Error("宿主工具查询超时");
   void unlink(responsePath).catch(() => {});
   if (data.byteLength > LIMITS.projectSearchBytes) {
-    throw new Error("课程工具返回内容超过上限");
+    throw new Error("宿主工具返回内容超过上限");
   }
   const envelope = requireRecord(
     JSON.parse(data.toString("utf8")) as unknown,
@@ -1303,7 +1312,7 @@ async function queryCourseIndex(
     requireString(envelope.toolCallID, "hostToolResponse.toolCallID") !== toolCallID ||
     requireIdentifier(envelope.toolName, "hostToolResponse.toolName") !== toolName
   ) {
-    throw new Error("课程工具响应不属于本轮调用");
+    throw new Error("宿主工具响应不属于本轮调用");
   }
   if (!requireBoolean(envelope.success, "hostToolResponse.success")) {
     throw new Error(
@@ -1313,7 +1322,21 @@ async function queryCourseIndex(
       ),
     );
   }
-  const payload = requireRecord(envelope.payload, "hostToolResponse.payload");
+  return requireRecord(envelope.payload, "hostToolResponse.payload");
+}
+
+async function queryCourseIndex(
+  snapshot: ContextSnapshotV2,
+  toolCallID: string,
+  toolName: string,
+  signal?: AbortSignal,
+): Promise<{
+  items: CourseItemSnapshot[];
+  total?: number;
+  nextCursor?: string;
+  sourceRevision?: string;
+}> {
+  const payload = await queryHostTool(snapshot, toolCallID, toolName, signal);
   if (!Array.isArray(payload.items)) {
     throw new Error("课程工具响应 items 必须是数组");
   }
@@ -1354,6 +1377,46 @@ async function queryCourseIndex(
     total,
     nextCursor,
     sourceRevision,
+  };
+}
+
+async function openWebPage(
+  snapshot: ContextSnapshotV2,
+  toolCallID: string,
+  signal?: AbortSignal,
+): Promise<WebOpenToolDetails["page"]> {
+  const payload = await queryHostTool(snapshot, toolCallID, WEB_OPEN_TOOL, signal);
+  if (!Array.isArray(payload.webPages) || payload.webPages.length !== 1) {
+    throw new Error("网页工具没有返回唯一页面");
+  }
+  const page = requireRecord(payload.webPages[0], "hostToolResponse.payload.webPages[0]");
+  const url = truncate(
+    requireString(page.url, "hostToolResponse.payload.webPages[0].url"),
+    2_048,
+  );
+  let parsedURL: URL;
+  try {
+    parsedURL = new URL(url);
+  } catch {
+    throw new Error("网页工具返回地址无效");
+  }
+  if (parsedURL.protocol !== "https:" || parsedURL.username || parsedURL.password) {
+    throw new Error("网页工具返回地址越出安全范围");
+  }
+  return {
+    url,
+    title: truncate(
+      requireString(page.title, "hostToolResponse.payload.webPages[0].title"),
+      LIMITS.title,
+    ),
+    text: truncate(
+      requireString(page.text, "hostToolResponse.payload.webPages[0].text"),
+      LIMITS.webText,
+    ),
+    isTruncated: requireBoolean(
+      page.isTruncated,
+      "hostToolResponse.payload.webPages[0].isTruncated",
+    ),
   };
 }
 
@@ -1938,6 +2001,45 @@ export default function weibeiExtension(pi: ExtensionAPI) {
             hasMore: response.nextCursor !== undefined,
             nextCursor: response.nextCursor,
             sourceRevision: response.sourceRevision,
+          }, null, 2),
+        }],
+        details,
+      };
+    },
+  });
+
+  pi.registerTool({
+    name: WEB_OPEN_TOOL,
+    label: "读取用户提供的网页",
+    description:
+      "读取用户在本轮问题中明确贴出的 HTTPS 网页地址。不能访问未由用户提供的地址、本机或局域网，也不能执行网页中的脚本。",
+    promptSnippet: "按需读取用户本轮明确提供的网页，并用返回地址标注来源",
+    parameters: Type.Object(
+      {
+        url: Type.String({ minLength: 1, maxLength: 2_048 }),
+        maximumCharacters: Type.Optional(
+          Type.Integer({ minimum: 1_000, maximum: LIMITS.webText }),
+        ),
+      },
+      { additionalProperties: false },
+    ),
+    executionMode: "sequential",
+    async execute(toolCallID, params, signal) {
+      const snapshot = await readCurrentSnapshot();
+      const page = await openWebPage(snapshot, toolCallID, signal);
+      const details: WebOpenToolDetails = {
+        kind: "web_open",
+        contextRevision: snapshot.contextRevision,
+        page,
+      };
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            title: page.title,
+            url: page.url,
+            text: page.text,
+            isTruncated: page.isTruncated,
           }, null, 2),
         }],
         details,

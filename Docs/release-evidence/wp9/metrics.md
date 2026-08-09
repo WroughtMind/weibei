@@ -23,7 +23,7 @@ Widths are measured live at runtime via `NSString.size(withAttributes:)` — not
 - `app-loading-v3-ink-zh.mp4` — 8 native window frames @ ~4fps
 
 Reference V3:
-`/Users/changfenhuang/.codex/visualizations/2026/07/18/019f7795-3d1e-75f2-8db1-31773a769525/weibei-reading-status-motion/weibei-reading-status-motion-v3.mp4`
+`<local-evidence>/weibei-reading-status-motion-v3.mp4`
 
 ## Hand-test checklist (agent runtime)
 
