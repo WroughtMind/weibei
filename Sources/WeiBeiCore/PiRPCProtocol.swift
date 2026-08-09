@@ -121,6 +121,7 @@ public enum PiRPCIncomingMessage: Equatable, Sendable {
         durationMS: Int
     )
     case richAnswer(id: String, data: Data)
+    case visualization(id: String, fragment: AgentVisualization)
     case noteProposal(id: String, StudyAgentNoteProposal)
     case relationProposal(id: String, StudyAgentRelationProposal)
     case learningUpdate(id: String, StudyAgentLearningUpdate)
@@ -227,7 +228,10 @@ public enum PiRPCMessageDecoder {
                 throw PiRPCProtocolError.invalidEnvelope
             }
             let argumentsJSON = jsonData(object["args"])
-            guard argumentsJSON?.count ?? 0 <= 16_384 else {
+            let maximumArgumentBytes = name == "weibei_visualize"
+                ? 1_100_000
+                : 16_384
+            guard argumentsJSON?.count ?? 0 <= maximumArgumentBytes else {
                 throw PiRPCProtocolError.invalidEnvelope
             }
             return .toolStarted(
@@ -246,6 +250,38 @@ public enum PiRPCMessageDecoder {
                     name: name,
                     message: firstText(in: result) ?? "Tool failed"
                 )
+            }
+            if name == "weibei_visualize",
+               let details = result?["details"] as? [String: Any],
+               details["kind"] as? String == "weibei_visualization",
+               let id = details["id"] as? String,
+               let spec = details["spec"] as? [String: Any],
+               let items = spec["items"] as? [Any],
+               !items.isEmpty,
+               JSONSerialization.isValidJSONObject(spec),
+               let specData = try? JSONSerialization.data(
+                   withJSONObject: spec,
+                   options: [.sortedKeys]
+               ),
+               let specJSON = String(data: specData, encoding: .utf8),
+               !id.isEmpty,
+               id.utf8.count <= 128,
+               id == id.lowercased(),
+               id.first != "-",
+               id.last != "-",
+               !id.contains("--"),
+               id.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "-") }),
+               specData.count <= 1_000_000 {
+                return .visualization(
+                    id: object["toolCallId"] as? String ?? "",
+                    fragment: AgentVisualization(
+                        id: id,
+                        specJSON: specJSON
+                    )
+                )
+            }
+            if name == "weibei_visualize" {
+                throw PiRPCProtocolError.invalidEnvelope
             }
             if ["weibei_course_search", "weibei_course_read"].contains(name),
                let details = result?["details"] as? [String: Any],
