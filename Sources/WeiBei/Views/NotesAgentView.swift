@@ -241,10 +241,11 @@ struct PaneHeaderReorderModifier: ViewModifier {
 
 private struct AgentComposerField: View {
     @EnvironmentObject private var store: WorkspaceStore
+    @State private var editorHeight: CGFloat = 0
+    @State private var editorActive = false
     var prompt: String
     var focused: FocusState<Bool>.Binding
-    var font: Font
-    var promptFont: Font
+    var fontSize: CGFloat
     var lineLimit: ClosedRange<Int>
     var height: CGFloat
     /// Cap for immersive grow; nil means fixed compact height.
@@ -275,35 +276,36 @@ private struct AgentComposerField: View {
     private var isWideComposer: Bool { maxHeight != nil || showsModelFooter }
 
     var body: some View {
-        // Compact: fixed short field. Wide: min height, grow with lines up to maxHeight.
+        // Soft-wrapped text grows the whole surface until the configured cap.
         let corner: CGFloat = isWideComposer ? 24 : WeiBeiMetric.controlRadius
         VStack(alignment: .leading, spacing: 0) {
             ZStack(alignment: isWideComposer ? .leading : .topLeading) {
-                TextField(
-                    "",
+                AgentComposerTextEditor(
                     text: $store.agentDraft,
-                    prompt: Text(prompt)
-                        .font(promptFont)
-                        .foregroundStyle(WeiBeiTheme.placeholderInk),
-                    axis: .vertical
+                    measuredHeight: $editorHeight,
+                    active: $editorActive,
+                    focused: focused,
+                    fontSize: fontSize,
+                    lineLimit: lineLimit,
+                    appearanceMode: store.appearanceMode,
+                    accessibilityLabel: prompt,
+                    submit: submit
                 )
-                .textFieldStyle(.plain)
-                .lineLimit(lineLimit)
-                .fixedSize(horizontal: false, vertical: true)
-                .font(font)
-                .foregroundColor(WeiBeiTheme.ink)
-                .focused(focused)
-                .onSubmit(submit)
-                .padding(.top, verticalPadding)
-                .padding(.bottom, showsModelFooter ? 6 : verticalPadding)
-                .padding(.trailing, showsModelFooter ? 0 : (showsControl ? trailingPadding : 0))
-                // ChatGPT-like: a single line (and its placeholder) sits
-                // vertically centered in the collapsed pill; extra lines grow
-                // the card upward toward maxHeight.
-                .frame(maxWidth: .infinity, alignment: isWideComposer ? .leading : .topLeading)
-                .padding(.horizontal, horizontalPadding)
+                .frame(maxWidth: .infinity)
+                .frame(height: max(editorHeight, fontSize + 3))
 
+                if store.agentDraft.isEmpty && !editorActive {
+                    Text(prompt)
+                        .font(.system(size: fontSize))
+                        .foregroundStyle(WeiBeiTheme.placeholderInk)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .allowsHitTesting(false)
+                }
             }
+            .padding(.top, verticalPadding)
+            .padding(.bottom, showsModelFooter ? 6 : verticalPadding)
+            .padding(.trailing, showsModelFooter ? 0 : (showsControl ? trailingPadding : 0))
+            .padding(.horizontal, horizontalPadding)
             .frame(
                 maxWidth: .infinity,
                 minHeight: isWideComposer
@@ -333,8 +335,9 @@ private struct AgentComposerField: View {
                         sendButton
                     }
                 }
-                .padding(.horizontal, horizontalPadding)
-                .padding(.bottom, 10)
+                .padding(.leading, horizontalPadding)
+                .padding(.trailing, sendTrailing)
+                .padding(.bottom, sendBottom)
                 .padding(.top, 2)
             }
         }
@@ -344,7 +347,7 @@ private struct AgentComposerField: View {
             maxHeight: isWideComposer ? maxHeight : compactMaxHeight,
             alignment: .topLeading
         )
-        .fixedSize(horizontal: false, vertical: !isWideComposer && compactMaxHeight != nil)
+        .fixedSize(horizontal: false, vertical: true)
         .background {
             if showsChrome {
                 // ChatGPT-like: same paper as the thread, lifted only by a soft
@@ -397,7 +400,11 @@ private struct AgentComposerField: View {
         } label: {
             Image(systemName: store.isAgentRunningInActiveChat ? "stop.fill" : "paperplane.fill")
         }
-        .buttonStyle(WeiBeiIconButtonStyle(size: sendButtonSize, prominence: store.isAgentRunningInActiveChat ? .neutral : .primary))
+        .buttonStyle(WeiBeiIconButtonStyle(
+            size: sendButtonSize,
+            prominence: store.isAgentRunningInActiveChat ? .neutral : .primary,
+            cornerRadius: sendButtonSize / 2
+        ))
         .accessibilityLabel(Text(store.isAgentRunningInActiveChat ? store.ui("停止回答", "Stop response") : store.ui("发送", "Send")))
         .help(store.isAgentRunningInActiveChat ? store.ui("停止回答", "Stop response") : store.ui("发送", "Send"))
         .keyboardShortcut(.return, modifiers: [.command])
@@ -1819,6 +1826,7 @@ private enum AgentChatLayoutMetrics {
     /// Codex-style: modest side margin; column grows/shrinks with the window.
     static let wideSideGutter: CGFloat = 28
     static let compactComposerHeight: CGFloat = 52
+    static let compactComposerMaxHeight: CGFloat = 180
     /// Immersive min height — grows with typed lines; never a giant empty white void.
     static let wideComposerMinHeight: CGFloat = 88
     static let wideComposerMaxHeight: CGFloat = 340
@@ -1845,7 +1853,7 @@ private enum AgentChatLayoutMetrics {
     }
 
     static func composerMaxHeight(wide: Bool) -> CGFloat {
-        wide ? wideComposerMaxHeight : compactComposerHeight
+        wide ? wideComposerMaxHeight : compactComposerMaxHeight
     }
 
     static func composerFontSize(wide: Bool) -> CGFloat {
@@ -2534,15 +2542,14 @@ struct AgentPaneView: View {
                 AgentComposerField(
                     prompt: agentPrompt,
                     focused: $draftFocused,
-                    font: .system(size: fontSize),
-                    promptFont: .system(size: fontSize),
+                    fontSize: fontSize,
                     lineLimit: wide ? 1...10 : 1...6,
                     height: minHeight,
                     maxHeight: maxHeight,
                     sendButtonSize: wide ? 32 : 28,
                     trailingPadding: wide ? 48 : 40,
-                    sendTrailing: wide ? 12 : 10,
-                    sendBottom: wide ? 10 : 8,
+                    sendTrailing: wide ? 8 : 10,
+                    sendBottom: wide ? 8 : 10,
                     horizontalPadding: wide ? 16 : 12,
                     verticalPadding: wide ? 12 : 8,
                     showsModelFooter: wide
@@ -3170,8 +3177,7 @@ struct FloatingSelectionAgentView: View {
                     ? store.ui("再问一点…", "Ask a follow-up…")
                     : store.ui("问点什么…", "Ask anything…"),
                 focused: $draftFocused,
-                font: .system(size: 13.5),
-                promptFont: .system(size: 13.5),
+                fontSize: 13.5,
                 lineLimit: 1...5,
                 height: SelectionFloatingAgentPlacement.expandedComposerCollapsedHeight,
                 compactMaxHeight: SelectionFloatingAgentPlacement.expandedComposerMaxHeight,

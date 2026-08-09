@@ -951,6 +951,7 @@ struct WeiBeiIconButtonStyle: ButtonStyle {
     var active = false
     var size = WeiBeiMetric.iconButton
     var prominence: WeiBeiIconButtonProminence = .neutral
+    var cornerRadius: CGFloat = 6
 
     func makeBody(configuration: Configuration) -> some View {
         WeiBeiIconButtonBody(
@@ -958,7 +959,8 @@ struct WeiBeiIconButtonStyle: ButtonStyle {
             isEnabled: isEnabled,
             active: active,
             size: size,
-            prominence: prominence
+            prominence: prominence,
+            cornerRadius: cornerRadius
         )
     }
 }
@@ -970,6 +972,7 @@ private struct WeiBeiIconButtonBody: View {
     let active: Bool
     let size: CGFloat
     let prominence: WeiBeiIconButtonProminence
+    let cornerRadius: CGFloat
     @State private var hovering = false
 
     var body: some View {
@@ -978,9 +981,9 @@ private struct WeiBeiIconButtonBody: View {
             .frame(width: size, height: size)
             .foregroundStyle(foreground(isPressed: configuration.isPressed))
             .background(background(isPressed: configuration.isPressed))
-            .clipShape(RoundedRectangle(cornerRadius: 6))
+            .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
             .overlay {
-                RoundedRectangle(cornerRadius: 6)
+                RoundedRectangle(cornerRadius: cornerRadius)
                     .stroke(border, lineWidth: 1)
             }
             .scaleEffect(configuration.isPressed ? 0.94 : hovering ? 1.015 : 1)
