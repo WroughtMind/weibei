@@ -33,26 +33,28 @@ public enum WeiBeiWebResearchError: LocalizedError, Equatable, Sendable {
 public enum WeiBeiWebResearchURLPolicy {
     public static func isExplicitlyProvided(_ url: String, in userQuestion: String) -> Bool {
         guard let requested = canonicalAuthorizationURL(url),
-              let detector = try? NSRegularExpression(
-                pattern: #"https://[^\s<>\"']+"#,
-                options: [.caseInsensitive]
+              let detector = try? NSDataDetector(
+                types: NSTextCheckingResult.CheckingType.link.rawValue
               ) else {
             return false
         }
         let range = NSRange(userQuestion.startIndex..., in: userQuestion)
-        return detector.matches(in: userQuestion, range: range).contains { match in
-            guard let matchRange = Range(match.range, in: userQuestion) else { return false }
-            var provided = String(userQuestion[matchRange])
-            while let last = provided.last,
-                  ").,;!?}]，。；：！？、）】”’".contains(last) {
-                if last == "]",
-                   provided.filter({ $0 == "[" }).count
-                    >= provided.filter({ $0 == "]" }).count {
-                    break
-                }
-                provided.removeLast()
+        return detector.matches(in: userQuestion, options: [], range: range).contains { match in
+            guard match.resultType == .link,
+                  let matchRange = Range(match.range, in: userQuestion) else {
+                return false
             }
-            return canonicalAuthorizationURL(provided) == requested
+            let detected = String(userQuestion[matchRange])
+            var candidates = [detected]
+            if matchRange.lowerBound > userQuestion.startIndex {
+                let opener = userQuestion[userQuestion.index(before: matchRange.lowerBound)]
+                let closer: Character? = opener == "[" ? "]" : (opener == "`" ? "`" : nil)
+                if let closer,
+                   let boundary = detected.firstIndex(of: closer) {
+                    candidates.append(String(detected[..<boundary]))
+                }
+            }
+            return candidates.contains { canonicalAuthorizationURL($0) == requested }
         }
     }
 

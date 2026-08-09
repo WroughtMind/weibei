@@ -1652,20 +1652,24 @@ struct MarkdownPreviewView: View {
                 }
                 let measuredHeight = ceil(height)
                 let nextFrameHeight = max(measuredHeight, Self.compactPreviewLoadingHeight)
-                // Once frozen, never change the SwiftUI frame — LazyVStack recycle
-                // during chat scroller drags (sample build 663, NSScroller.trackKnob)
-                // was accepting late ResizeObserver growth and remasuring every row.
                 if freezeHeightAfterMeasure, heightFrozen {
-                    // Report the height the row actually keeps, not a measurement
-                    // produced while its pane is being clipped toward zero width.
-                    // Caching the ignored narrow-width height created giant blank
-                    // regions when the conversation pane was opened again.
-                    onMeasuredHeight(contentHeight)
-                    WeiBeiPerf.event(
-                        "webview.markdown_height_ignored",
-                        extra: "reason=frozen"
-                    )
-                    return
+                    // Keep rejecting recycled-row shrink and jitter, but accept
+                    // real late growth from Mermaid, formulas, fonts or images.
+                    if !allowsHeightFreeze,
+                       nextFrameHeight >= contentHeight + 2 {
+                        heightFrozen = false
+                    } else {
+                        // Report the height the row actually keeps, not a measurement
+                        // produced while its pane is being clipped toward zero width.
+                        // Caching the ignored narrow-width height created giant blank
+                        // regions when the conversation pane was opened again.
+                        onMeasuredHeight(contentHeight)
+                        WeiBeiPerf.event(
+                            "webview.markdown_height_ignored",
+                            extra: "reason=frozen"
+                        )
+                        return
+                    }
                 }
                 // Ignored measurements can come from the pane's clipped animation
                 // width. Never let them poison the later stability backstop.

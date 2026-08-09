@@ -109,6 +109,39 @@ final class AgentEndpointSecurityTests: XCTestCase {
                 in: "请读【https://EXAMPLE.com:443/guide#section】，并总结"
             )
         )
+        XCTAssertTrue(
+            WeiBeiWebResearchURLPolicy.isExplicitlyProvided(
+                "https://example.com/",
+                in: "请先实际读取 https://example.com/，用一句中文说明正文用途；再用 Mermaid 画流程图"
+            )
+        )
+        for question in [
+            "请读[https://example.com/guide]并总结",
+            "请读 `https://example.com/guide` 并总结",
+        ] {
+            XCTAssertTrue(
+                WeiBeiWebResearchURLPolicy.isExplicitlyProvided(
+                    "https://example.com/guide",
+                    in: question
+                )
+            )
+        }
+        for (requested, question) in [
+            ("https://example.com/guide?version=2", "请读 https://example.com/guide?version=1"),
+            ("https://example.com/guide", "请读 https://user@example.com/guide"),
+            ("https://example.com/guide", "请读 https://example.com.evil/guide"),
+            ("https://example.com/guide", "请读 https://example.com/guide]different"),
+            ("https://example.com/guide", "请读 https://example.com/guide`different"),
+            ("https://example.com/guide?token=abc", "请读 https://example.com/guide?token=abc]different"),
+            ("https://example.com/guide?token=abc", "请读 https://example.com/guide?token=abc`different"),
+        ] {
+            XCTAssertFalse(
+                WeiBeiWebResearchURLPolicy.isExplicitlyProvided(
+                    requested,
+                    in: question
+                )
+            )
+        }
         XCTAssertEqual(
             try WeiBeiWebResearchURLPolicy.validatedPublicHTTPSURL(
                 "https://93.184.216.34/guide#section"

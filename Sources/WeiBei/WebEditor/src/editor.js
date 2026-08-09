@@ -3,6 +3,7 @@ import { commonmark } from '@milkdown/kit/preset/commonmark';
 import { gfm } from '@milkdown/kit/preset/gfm';
 import { listener, listenerCtx } from '@milkdown/kit/plugin/listener';
 import { history } from '@milkdown/kit/plugin/history';
+import { clipboard } from '@milkdown/kit/plugin/clipboard';
 import {
   abortStreamingCmd,
   endStreamingCmd,
@@ -1277,15 +1278,20 @@ const mermaidWidget = (source) => {
   container.className = 'weibei-mermaid-render';
   container.textContent = editorLabel('mermaidRendering');
   window.setTimeout(async () => {
+    if (!container.isConnected) return;
     try {
       const id = `weibei-mermaid-${mermaidRenderID += 1}`;
       const { svg, bindFunctions } = await mermaid.render(id, source, container);
+      if (!container.isConnected) return;
       container.innerHTML = svg;
       bindFunctions?.(container);
       container.dataset.rendered = 'true';
+      scheduleContentHeightReports();
     } catch (error) {
+      if (!container.isConnected) return;
       container.classList.add('weibei-mermaid-error');
       container.textContent = editorLabel('mermaidFailed', { value: String(error?.message || error) });
+      scheduleContentHeightReports();
     }
   }, 0);
   return container;
@@ -2532,6 +2538,7 @@ Editor
   .use(commonmark)
   .use(gfm)
   .use(math)
+  .use(clipboard)
   .use(streaming)
   .use(upload)
   .use(listener)
