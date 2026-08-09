@@ -73,10 +73,6 @@ private struct AgentVisualizationWebView: NSViewRepresentable {
         view.setValue(false, forKey: "drawsBackground")
         view.underPageBackgroundColor = .clear
         view.allowsLinkPreview = false
-        view.scrollView.hasVerticalScroller = false
-        view.scrollView.hasHorizontalScroller = false
-        view.scrollView.verticalScrollElasticity = .none
-        view.scrollView.horizontalScrollElasticity = .none
         context.coordinator.webView = view
 
         guard let entry = WeiBeiResources.bundle.url(
@@ -161,6 +157,13 @@ private struct AgentVisualizationWebView: NSViewRepresentable {
                   let type = body["type"] as? String else { return }
             switch type {
             case "ready":
+                if let webView {
+                    WeiBeiQuietScrollers.configureRecursively(
+                        in: webView,
+                        hasVerticalScroller: false,
+                        hasHorizontalScroller: false
+                    )
+                }
                 isReady = true
                 sentFingerprint = nil
                 renderIfReady()
