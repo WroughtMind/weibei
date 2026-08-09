@@ -425,8 +425,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function openAINativeSearchModel(modelID: string): boolean {
   return /^gpt-5(?:[.-]|$)/.test(modelID) ||
-    ["gpt-4.1", "gpt-4.1-mini", "gpt-4.1-nano", "o3", "o3-pro", "o4-mini"]
-      .includes(modelID);
+    ["gpt-4.1", "gpt-4.1-mini", "gpt-4.1-nano", "o3", "o3-pro", "o4-mini"].includes(modelID);
 }
 
 function nativeWebSearchSupported(model: unknown): boolean {
@@ -434,9 +433,7 @@ function nativeWebSearchSupported(model: unknown): boolean {
   const provider = model.provider;
   const api = model.api;
   const modelID = model.id;
-  if (typeof provider !== "string" || typeof api !== "string" || typeof modelID !== "string") {
-    return false;
-  }
+  if (typeof provider !== "string" || typeof api !== "string" || typeof modelID !== "string") return false;
   if (provider === "openai-codex" && api === "openai-codex-responses" && /^gpt-5(?:[.-]|$)/.test(modelID)) {
     return true;
   }
@@ -447,12 +444,10 @@ function nativeWebSearchSupported(model: unknown): boolean {
 
 function withNativeWebSearch(payload: unknown, model: unknown): unknown {
   if (!isRecord(payload) || !nativeWebSearchSupported(model)) return payload;
-  if (!Array.isArray(payload.tools) ||
-    payload.include !== undefined && !Array.isArray(payload.include)) return payload;
+  if (!Array.isArray(payload.tools) || payload.include !== undefined && !Array.isArray(payload.include)) return payload;
   const tools = payload.tools as unknown[];
-  if (!tools.some((candidate) =>
-    isRecord(candidate) && candidate.type === "function" && candidate.name === COURSE_MAP_TOOL,
-  )) {
+  if (!tools.some((candidate) => isRecord(candidate) &&
+    candidate.type === "function" && candidate.name === COURSE_MAP_TOOL)) {
     return payload;
   }
   const tool = { type: "web_search" };
