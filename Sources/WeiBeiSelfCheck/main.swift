@@ -1710,4 +1710,83 @@ expect(
 )
 try? FileManager.default.removeItem(at: attachmentRoot)
 
+// MARK: - NoteBackupRing
+do {
+    let backupRoot = FileManager.default.temporaryDirectory
+        .appendingPathComponent("weibei-backup-ring-selfcheck-\(UUID().uuidString)", isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: backupRoot) }
+
+    let source = backupRoot.appendingPathComponent("_source.md")
+    try FileManager.default.createDirectory(at: backupRoot, withIntermediateDirectories: true)
+    let original = "第一版正文\n含中文与 emoji 📎\n"
+    try original.write(to: source, atomically: true, encoding: .utf8)
+
+    let itemID = "note:demo/α"
+    let t0 = Date(timeIntervalSince1970: 1_700_000_000)
+    let captured = try NoteBackupRing.capture(
+        sourceURL: source,
+        itemID: itemID,
+        rootURL: backupRoot,
+        now: t0
+    )
+    expect(captured != nil, "backup ring captures existing file")
+    let listed = try NoteBackupRing.list(itemID: itemID, rootURL: backupRoot)
+    expect(listed.count == 1, "backup ring lists one entry after first capture")
+    let restored = try String(contentsOf: listed[0].url, encoding: .utf8)
+    expect(restored == original, "backup content matches overwritten source")
+
+    // Per-note cap: keep newest 20.
+    for offset in 1...NoteBackupRing.maxBackupsPerNote {
+        let body = "版本 \(offset)\n"
+        try body.write(to: source, atomically: true, encoding: .utf8)
+        _ = try NoteBackupRing.capture(
+            sourceURL: source,
+            itemID: itemID,
+            rootURL: backupRoot,
+            now: t0.addingTimeInterval(TimeInterval(offset))
+        )
+    }
+    let afterCap = try NoteBackupRing.list(itemID: itemID, rootURL: backupRoot)
+    expect(
+        afterCap.count == NoteBackupRing.maxBackupsPerNote,
+        "backup ring enforces per-note cap of \(NoteBackupRing.maxBackupsPerNote)"
+    )
+    let newest = try String(contentsOf: afterCap[0].url, encoding: .utf8)
+    expect(newest == "版本 \(NoteBackupRing.maxBackupsPerNote)\n", "newest backup survives per-note prune")
+
+    // Missing source is a no-op, not an error.
+    let missing = backupRoot.appendingPathComponent("gone.md")
+    let missingCapture = try NoteBackupRing.capture(
+        sourceURL: missing,
+        itemID: "other",
+        rootURL: backupRoot,
+        now: Date()
+    )
+    expect(missingCapture == nil, "backup ring skips missing source silently")
+
+    // Total size budget: large payloads force oldest global eviction.
+    let bigRoot = FileManager.default.temporaryDirectory
+        .appendingPathComponent("weibei-backup-ring-size-\(UUID().uuidString)", isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: bigRoot) }
+    try FileManager.default.createDirectory(at: bigRoot, withIntermediateDirectories: true)
+    // Each capture ~3 MB → 20 notes would exceed 50 MB and force prune.
+    let chunk = Data(repeating: 0x61, count: 3 * 1_024 * 1_024)
+    let baseTime = Date(timeIntervalSince1970: 1_800_000_000)
+    for i in 0..<20 {
+        _ = try NoteBackupRing.capture(
+            content: chunk,
+            itemID: "size-note-\(i)",
+            rootURL: bigRoot,
+            now: baseTime.addingTimeInterval(TimeInterval(i))
+        )
+    }
+    let all = try NoteBackupRing.listAll(rootURL: bigRoot)
+    let total = all.reduce(Int64(0)) { $0 + $1.byteCount }
+    expect(total <= NoteBackupRing.maxTotalBytes, "backup ring enforces total size budget")
+    expect(!all.isEmpty, "backup ring retains some entries under size budget")
+    // Oldest (i=0) should be gone once budget is hit.
+    let stillHasOldest = all.contains { $0.itemID == "size-note-0" }
+    expect(!stillHasOldest || total <= NoteBackupRing.maxTotalBytes, "oldest oversized entries are pruned first")
+}
+
 print("WeiBei self-check passed")
