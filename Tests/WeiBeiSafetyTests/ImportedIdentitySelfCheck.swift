@@ -2552,6 +2552,7 @@ enum ImportedIdentitySelfCheck {
         try check(backupBodies.contains(externalEdit), "备份环未保留外部编辑内容")
     }
 
+    @MainActor
     private static func restoredPendingNoteErrorsStayWithAffectedNote() throws {
         let fixture = try WorkspaceFixture(name: "restored-pending-note-errors")
         defer { fixture.remove() }
@@ -2671,6 +2672,7 @@ enum ImportedIdentitySelfCheck {
         _ = reopened.transientNoteStatus
     }
 
+    @MainActor
     private static func offlineLaunchNoteRetainsEditWhenFileReturns() throws {
         let fixture = try WorkspaceFixture(name: "offline-launch-note")
         defer { fixture.remove() }
@@ -2772,6 +2774,7 @@ enum ImportedIdentitySelfCheck {
         try check(store?.noteFileError?.contains("冲突") != true, "写回不应弹出冲突横幅")
     }
 
+    @MainActor
     private static func inactiveQueuedDraftBlocksRenameWhenExternalChanged() throws {
         let fixture = try WorkspaceFixture(name: "inactive-queued-rename")
         defer { fixture.remove() }
@@ -2826,6 +2829,7 @@ enum ImportedIdentitySelfCheck {
         try check(store.noteFileError?.contains("冲突") != true, "迟到草稿场景不应弹出冲突横幅")
     }
 
+    @MainActor
     private static func renameRejectsChangedFileGeneration() throws {
         let fixture = try WorkspaceFixture(name: "rename-generation-change")
         defer { fixture.remove() }

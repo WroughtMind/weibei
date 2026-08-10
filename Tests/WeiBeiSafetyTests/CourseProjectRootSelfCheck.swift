@@ -6462,6 +6462,7 @@ enum CourseProjectRootSelfCheck {
         _ = backupRoot
     }
 
+    @MainActor
     private static func courseMarkdownPostPlacementReplacementPreservesAllContent() throws {
         // S2：原子写 + 备份环；不再有落位后 journal 竞态窗口。验证连续写回与无事务残留。
         let fixture = try Fixture(name: "markdown-post-placement-replacement")
@@ -6504,6 +6505,7 @@ enum CourseProjectRootSelfCheck {
         )
     }
 
+    @MainActor
     private static func firstScanAndFinderReconciliationPreserveIdentity() throws {
         let fixture = try Fixture(name: "owned-finder-reconcile")
         defer { fixture.remove() }
