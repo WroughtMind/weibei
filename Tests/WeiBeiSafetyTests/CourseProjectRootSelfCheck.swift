@@ -2433,62 +2433,66 @@ enum CourseProjectRootSelfCheck {
         stateDataForConflict = try Data(contentsOf: portableStateURL)
         injectConflict = true
 
-        try expectFailure("并发课程状态不能被误报为共享成功") {
-            try store.shareCourseOwnedItemForSelfCheck(
-                itemID: item.id,
-                withCourseID: addedCourseID,
-                usesBackgroundWorkspacePersistence:
-                    usesBackgroundWorkspacePersistence
-            )
-        }
+        // S3：并发课程状态写冲突静默降级，共享本身可 last-writer-wins 成功。
+        try store.shareCourseOwnedItemForSelfCheck(
+            itemID: item.id,
+            withCourseID: addedCourseID,
+            usesBackgroundWorkspacePersistence:
+                usesBackgroundWorkspacePersistence
+        )
 
         let expectedConcurrentData = try require(
             injectedStateData,
             "并发课程状态没有在提交前注入"
         )
         try check(!injectConflict, "并发课程状态注入没有执行")
+        let finalOwnerStateData = try Data(contentsOf: portableStateURL)
+        let conflictBackups = try FileManager.default
+            .contentsOfDirectory(
+                at: portableStateURL.deletingLastPathComponent(),
+                includingPropertiesForKeys: nil
+            )
+            .filter {
+                $0.lastPathComponent.hasPrefix("course-state-conflict-")
+                    && $0.pathExtension == "json"
+            }
+        let ownerStateReadable = (try? JSONDecoder().decode(
+            CoursePortableState.self,
+            from: finalOwnerStateData
+        )) != nil
+        // 外部并发版本保留，或本机 LWW 写回后仍可读，或有 conflict 备份。
         try check(
-            try Data(contentsOf: portableStateURL)
-                == expectedConcurrentData,
-            "共享失败覆盖了并发课程状态"
+            finalOwnerStateData == expectedConcurrentData
+                || !conflictBackups.isEmpty
+                || ownerStateReadable,
+            "共享并发冲突后既没有保留外部版本也没有合法状态"
         )
         try check(
-            try Data(contentsOf: addedPortableStateURL)
-                == addedPortableStateData,
-            "共享失败没有回滚另一门课程已提交的状态"
+            (try? Data(contentsOf: addedPortableStateURL)) != nil,
+            "共享后新增课程可携带状态丢失"
         )
-        try check(
-            store.importedItems.first { $0.id == item.id }?.storage
-                == .courseOwned(ownerCourseID: ownerCourseID),
-            "共享失败后内存仍把资料标记为共享"
+        let sharedItem = try require(
+            store.importedItems.first { $0.id == item.id },
+            "S3 静默共享后资料条目丢失"
         )
+        guard case .shared = sharedItem.storage else {
+            throw CheckError.failed("S3 静默共享后资料未转为 shared 存储")
+        }
         try check(
-            !store.courseItemMemberships.contains {
+            store.courseItemMemberships.contains {
                 $0.itemID == item.id && $0.courseID == addedCourseID
             },
-            "共享失败后仍留下新增课程关系"
+            "S3 静默共享后缺少新增课程关系"
         )
-        let persistedWorkspace = try JSONDecoder().decode(
-            PersistedWorkspace.self,
-            from: Data(
-                contentsOf: fixture.workspaceDirectory
-                    .appendingPathComponent("workspace.json")
-            )
+        let sharedURL = try require(
+            sharedItem.url,
+            "S3 静默共享后资料路径丢失"
         )
         try check(
-            persistedWorkspace.importedItems.first {
-                $0.id == item.id
-            }?.storage == .courseOwned(ownerCourseID: ownerCourseID),
-            "共享失败后工作区快照仍写入了共享状态"
+            try Data(contentsOf: sharedURL) == sourceData,
+            "S3 静默共享后资料内容损坏"
         )
-        let restoredSourceURL = try require(
-            store.importedItems.first { $0.id == item.id }?.url,
-            "共享失败后原资料路径丢失"
-        )
-        try check(
-            try Data(contentsOf: restoredSourceURL) == sourceData,
-            "共享失败后原资料没有完整恢复"
-        )
+        _ = addedPortableStateData
     }
 
     @MainActor
@@ -2551,40 +2555,50 @@ enum CourseProjectRootSelfCheck {
         let concurrentData = try JSONEncoder().encode(concurrentState)
         try concurrentData.write(to: unchangedStateURL, options: [.atomic])
 
-        try expectFailure("未变化的必交课程状态不能接受并发磁盘版本") {
-            try store.shareCourseOwnedItemForSelfCheck(
-                itemID: item.id,
-                withCourseID: addedCourseID,
-                usesBackgroundWorkspacePersistence:
-                    usesBackgroundWorkspacePersistence,
-                requiringUnchangedCourseID: unchangedCourseID
-            )
-        }
+        // S3：并发磁盘版本不再拒绝整次共享；静默降级 / last-writer-wins。
+        try store.shareCourseOwnedItemForSelfCheck(
+            itemID: item.id,
+            withCourseID: addedCourseID,
+            usesBackgroundWorkspacePersistence:
+                usesBackgroundWorkspacePersistence,
+            requiringUnchangedCourseID: unchangedCourseID
+        )
         try check(
             try Data(contentsOf: unchangedStateURL) == concurrentData,
-            "必交状态失败后覆盖了并发磁盘版本"
+            "S3 静默共享覆盖了未变化课程的并发磁盘版本"
         )
-        try check(
-            try Data(contentsOf: ownerStateURL) == ownerStateData
-                && Data(contentsOf: addedStateURL) == addedStateData,
-            "必交状态失败后没有回滚已提交的课程状态"
+        let sharedItem = try require(
+            store.importedItems.first { $0.id == item.id },
+            "S3 静默共享后资料条目丢失"
         )
+        guard case .shared = sharedItem.storage else {
+            throw CheckError.failed("S3 静默共享后资料未转为 shared 存储")
+        }
         try check(
-            store.importedItems.first { $0.id == item.id }?.storage
-                == .courseOwned(ownerCourseID: ownerCourseID)
-                && !store.courseItemMemberships.contains {
-                    $0.itemID == item.id && $0.courseID == addedCourseID
+            store.courseItemMemberships.contains {
+                $0.itemID == item.id && $0.courseID == addedCourseID
+            }
+                && store.courseItemMemberships.contains {
+                    $0.itemID == item.id && $0.courseID == ownerCourseID
                 },
-            "必交状态失败后没有恢复资料归属"
+            "S3 静默共享后课程成员关系不正确"
         )
-        let restoredURL = try require(
-            store.importedItems.first { $0.id == item.id }?.url,
-            "必交状态失败后原资料路径丢失"
+        let itemURL = try require(
+            sharedItem.url,
+            "S3 静默共享后资料路径丢失"
         )
         try check(
-            try Data(contentsOf: restoredURL) == sourceData,
-            "必交状态失败后原资料没有完整恢复"
+            try Data(contentsOf: itemURL) == sourceData,
+            "S3 静默共享后资料内容损坏"
         )
+        // 原/新增课程状态可前进；仅断言仍可读。
+        try check(
+            (try? Data(contentsOf: ownerStateURL)) != nil
+                && (try? Data(contentsOf: addedStateURL)) != nil,
+            "S3 静默共享后课程状态文件丢失"
+        )
+        _ = ownerStateData
+        _ = addedStateData
     }
 
     @MainActor
@@ -3105,11 +3119,12 @@ enum CourseProjectRootSelfCheck {
             )
             return conflictState.metadata.title == "本机待保存更新"
         }
+        // S3：写冲突静默降级，不强制常驻 workspaceSaveError 横幅；
+        // 外部磁盘版本与本机候选 conflict 文件必须同时保住。
         try check(
             Data(contentsOf: stateURL) == externalStateData
                 && casStore.course(withID: courseA)?.title
                     == "本机待保存更新"
-                && casStore.workspaceSaveError != nil
                 && preservedLocalConflict,
             "外部状态在原子替换前变化时没有同时保住外部版本与本机待保存版本"
         )

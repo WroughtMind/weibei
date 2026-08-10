@@ -10382,6 +10382,18 @@ final class WorkspaceStore: ObservableObject {
         Task { @MainActor in
             do {
                 result = .success(try await operation())
+            } catch is CancellationError {
+                // 析构/测试收尾 cancel 不应把 CancellationError 原样抛给 XCTest。
+                result = .failure(
+                    NSError(
+                        domain: "WeiBei.WorkspaceStore",
+                        code: NSUserCancelledError,
+                        userInfo: [
+                            NSLocalizedDescriptionKey:
+                                "course file operation cancelled",
+                        ]
+                    )
+                )
             } catch {
                 result = .failure(error)
             }
@@ -17784,12 +17796,22 @@ final class WorkspaceStore: ObservableObject {
 
     private func startCourseFileMaintenance() {
         courseReconciliationTask?.cancel()
-        courseReconciliationTask = Task { @MainActor [weak self] in
+        // Detached + 每次 weak self：避免强引用拉长 store 生命周期，
+        // 也避免 XCTest 把析构 cancel 记成用例失败。
+        courseReconciliationTask = Task.detached(priority: .utility) {
+            [weak self] in
             guard !Task.isCancelled else { return }
             await self?.reconcileCourseFilesNow()
-            self?.retryRestoredPendingNoteWrites()
+            guard !Task.isCancelled else { return }
+            await self?.retryRestoredPendingNoteWrites()
             while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 3_000_000_000)
+                do {
+                    try await Task.sleep(nanoseconds: 3_000_000_000)
+                } catch is CancellationError {
+                    return
+                } catch {
+                    return
+                }
                 guard !Task.isCancelled else { return }
                 await self?.reconcileCourseFilesNow()
             }
@@ -19898,8 +19920,11 @@ final class WorkspaceStore: ObservableObject {
                             .writeVerificationFailed
                     }
                 } catch CourseProjectFileWorkerError.contentConflict {
-                    // S3：写冲突静默记入 conflicted，稍后以磁盘为准降级，不抛拒绝。
+                    // S3：写冲突静默记入 conflicted/dirty/blocked，不抛拒绝。
                     conflictedCourseIDs.insert(courseID)
+                    dirtyPortableCourseIDs.insert(courseID)
+                    blockedPortableCourseIDs.insert(courseID)
+                    needsPortableCourseStateBootstrap = true
                     continue
                 } catch {
                     try restorePortableStateFile(

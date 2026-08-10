@@ -511,8 +511,12 @@ actor CourseProjectFileWorker {
                         throw CourseProjectFileWorkerError.verificationFailed
                     }
                 } catch CourseProjectFileWorkerError.contentConflict {
+                    // S3：写冲突静默记入 conflicted/dirty/blocked，不拒绝整次保存。
                     conflictedCourseIDs.insert(courseID)
-                    throw CourseProjectFileWorkerError.contentConflict
+                    dirty.insert(courseID)
+                    blocked.insert(courseID)
+                    needsBootstrap = true
+                    continue
                 } catch {
                     try Self.restorePortableState(
                         at: stateURL,
@@ -539,13 +543,16 @@ actor CourseProjectFileWorker {
                 request.requiredPortableCourseIDs.subtracting(
                     durablePortableCourseIDs
                 )
-            guard unresolvedRequiredCourseIDs.isEmpty else {
+            // S3：未完成的可携带写回静默记 dirty/blocked，不抛拒绝。
+            if !unresolvedRequiredCourseIDs.isEmpty {
                 conflictedCourseIDs.formUnion(
                     unresolvedRequiredCourseIDs
                         .intersection(blocked)
                         .subtracting(oversized)
                 )
-                throw CourseProjectFileWorkerError.contentConflict
+                dirty.formUnion(unresolvedRequiredCourseIDs)
+                blocked.formUnion(unresolvedRequiredCourseIDs)
+                needsBootstrap = true
             }
         } catch {
             let rollbackFailed = Self.rollbackPortableWrites(committedWrites)
