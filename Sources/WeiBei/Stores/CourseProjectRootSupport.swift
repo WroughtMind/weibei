@@ -171,6 +171,7 @@ struct WorkspacePersistenceRequest: Sendable {
     var workspace: PersistedWorkspace
     var storageURL: URL
     var portableInputs: [CoursePortableStateSaveInput]
+    var requiredPortableCourseIDs: Set<UUID>
     var blockedPortableCourseIDs: Set<UUID>
     var oversizedPortableCourseIDs: Set<UUID>
     var needsPortableBootstrap: Bool
@@ -379,7 +380,8 @@ actor CourseProjectFileWorker {
         let previousNeedsBootstrap = request.needsPortableBootstrap
         var needsBootstrap = request.needsPortableBootstrap
         var committedWrites: [PortableWorkspaceWrite] = []
-        var conflictedCourseID: UUID?
+        var conflictedCourseIDs = Set<UUID>()
+        var durablePortableCourseIDs = Set<UUID>()
 
         do {
             for input in request.portableInputs {
@@ -451,7 +453,22 @@ actor CourseProjectFileWorker {
                     continue
                 }
                 if knownDigest == payloadDigest, stateExists {
+                    if request.requiredPortableCourseIDs.contains(courseID) {
+                        guard let diskState = try? Self.readValidatedPortableState(
+                            at: stateURL,
+                            expectedDirectoryIdentity: directoryIdentity,
+                            expectedCourseID: courseID
+                        ),
+                        diskState.revision == currentRevision,
+                        (try? Self.portablePayloadDigest(diskState))
+                            == knownDigest else {
+                            dirty.insert(courseID)
+                            blocked.insert(courseID)
+                            continue
+                        }
+                    }
                     dirty.remove(courseID)
+                    durablePortableCourseIDs.insert(courseID)
                     continue
                 }
                 if stateExists {
@@ -494,7 +511,7 @@ actor CourseProjectFileWorker {
                         throw CourseProjectFileWorkerError.verificationFailed
                     }
                 } catch CourseProjectFileWorkerError.contentConflict {
-                    conflictedCourseID = courseID
+                    conflictedCourseIDs.insert(courseID)
                     throw CourseProjectFileWorkerError.contentConflict
                 } catch {
                     try Self.restorePortableState(
@@ -516,6 +533,19 @@ actor CourseProjectFileWorker {
                 revisions[courseID] = committed.revision
                 digests[courseID] = payloadDigest
                 dirty.remove(courseID)
+                durablePortableCourseIDs.insert(courseID)
+            }
+            let unresolvedRequiredCourseIDs =
+                request.requiredPortableCourseIDs.subtracting(
+                    durablePortableCourseIDs
+                )
+            guard unresolvedRequiredCourseIDs.isEmpty else {
+                conflictedCourseIDs.formUnion(
+                    unresolvedRequiredCourseIDs
+                        .intersection(blocked)
+                        .subtracting(oversized)
+                )
+                throw CourseProjectFileWorkerError.contentConflict
             }
         } catch {
             let rollbackFailed = Self.rollbackPortableWrites(committedWrites)
@@ -525,9 +555,9 @@ actor CourseProjectFileWorker {
             blocked = previousBlocked
             oversized = previousOversized
             needsBootstrap = previousNeedsBootstrap
-            if let conflictedCourseID {
-                dirty.insert(conflictedCourseID)
-                blocked.insert(conflictedCourseID)
+            if !conflictedCourseIDs.isEmpty {
+                dirty.formUnion(conflictedCourseIDs)
+                blocked.formUnion(conflictedCourseIDs)
                 needsBootstrap = true
             }
             return persistenceResult(

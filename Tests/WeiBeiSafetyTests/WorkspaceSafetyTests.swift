@@ -26,6 +26,11 @@ final class WorkspaceSafetyTests: XCTestCase {
     }
 
     @MainActor
+    func testSharedConversionRejectsConcurrentPortableState() throws {
+        try CourseProjectRootSelfCheck.runSharedConversionConflictOnly()
+    }
+
+    @MainActor
     func testAgentStreamingStateDoesNotInvalidateWorkspaceStore() {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("WeiBeiStreamingState-\(UUID().uuidString)", isDirectory: true)

@@ -996,7 +996,8 @@ final class WorkspaceStore: ObservableObject {
             () throws -> Void
         ) throws -> Void = CourseProjectFileWorker.writePortableState,
         selectionAskThreadDefaults: UserDefaults = .standard,
-        startsAtBlankEntries: Bool = false
+        startsAtBlankEntries: Bool = false,
+        startsCourseFileMaintenance: Bool = true
     ) {
         workspaceDirectory = folder.standardizedFileURL
         storageURL = folder.appendingPathComponent("workspace.json")
@@ -1096,7 +1097,7 @@ final class WorkspaceStore: ObservableObject {
             recordCurrentStudyLocation(incrementVisit: false)
         }
         isRestoringCourseResumePoint = false
-        startCourseFileMaintenance()
+        if startsCourseFileMaintenance { startCourseFileMaintenance() }
     }
 
     deinit {
@@ -4357,10 +4358,27 @@ final class WorkspaceStore: ObservableObject {
     func shareCourseOwnedItemForSelfCheck(
         itemID: String,
         withCourseID courseID: UUID,
-        conflictResolution: CourseFileConflictResolution = .cancel
+        conflictResolution: CourseFileConflictResolution = .cancel,
+        usesBackgroundWorkspacePersistence: Bool = false,
+        requiringUnchangedCourseID: UUID? = nil
     ) throws {
         precondition(WeiBeiSafetyTestMode.isEnabled)
+#if DEBUG
+        let previousPersistenceMode =
+            usesBackgroundWorkspacePersistenceForSelfCheck
+        usesBackgroundWorkspacePersistenceForSelfCheck =
+            usesBackgroundWorkspacePersistence
+        defer {
+            usesBackgroundWorkspacePersistenceForSelfCheck =
+                previousPersistenceMode
+        }
+#endif
+        let additionalRequiredCourseIDs = requiringUnchangedCourseID.map { Set([$0]) } ?? []
         try waitForCourseFileOperation {
+            if !additionalRequiredCourseIDs.isEmpty {
+                try self.beginCourseFileMutation(courseIDs: additionalRequiredCourseIDs)
+            }
+            defer { self.finishCourseFileMutation(courseIDs: additionalRequiredCourseIDs) }
             try await self.shareCourseOwnedItem(
                 itemID: itemID,
                 withCourseID: courseID,
@@ -23227,7 +23245,8 @@ final class WorkspaceStore: ObservableObject {
 
     @discardableResult
     private func persistCoursePortableStates(
-        courseIDs requestedCourseIDs: Set<UUID>? = nil
+        courseIDs requestedCourseIDs: Set<UUID>? = nil,
+        requiring requiredCourseIDs: Set<UUID> = []
     ) throws -> CoursePortableStateCommit {
         let courseIDs = requestedCourseIDs ?? Set(courses.map(\.id))
         let previousRevisions = coursePortableStateRevisions
@@ -23237,7 +23256,8 @@ final class WorkspaceStore: ObservableObject {
         let previousOversized = oversizedPortableCourseIDs
         let previousNeedsBootstrap = needsPortableCourseStateBootstrap
         var committedWrites: [CoursePortableStateWriteRecord] = []
-        var conflictedCourseID: UUID?
+        var conflictedCourseIDs = Set<UUID>()
+        var durablePortableCourseIDs = Set<UUID>()
         do {
             for courseID in courses.map(\.id)
             where courseIDs.contains(courseID) {
@@ -23333,7 +23353,19 @@ final class WorkspaceStore: ObservableObject {
                     continue
                 }
                 if knownDigest == payloadDigest, stateExists {
+                    if requiredCourseIDs.contains(courseID) {
+                        guard let diskState = try? readCoursePortableState(
+                            at: stateURL, expectedCourseID: courseID
+                        ),
+                        diskState.revision == currentRevision,
+                        (try? coursePortableStatePayloadDigest(diskState)) == knownDigest else {
+                            dirtyPortableCourseIDs.insert(courseID)
+                            blockedPortableCourseIDs.insert(courseID)
+                            continue
+                        }
+                    }
                     dirtyPortableCourseIDs.remove(courseID)
+                    durablePortableCourseIDs.insert(courseID)
                     continue
                 }
                 if stateExists {
@@ -23380,7 +23412,7 @@ final class WorkspaceStore: ObservableObject {
                             .writeVerificationFailed
                     }
                 } catch CourseProjectFileWorkerError.contentConflict {
-                    conflictedCourseID = courseID
+                    conflictedCourseIDs.insert(courseID)
                     throw CoursePortableStateError.stateConflict
                 } catch {
                     try restorePortableStateFile(
@@ -23403,6 +23435,16 @@ final class WorkspaceStore: ObservableObject {
                     committed.revision
                 coursePortableStateDigests[courseID] = payloadDigest
                 dirtyPortableCourseIDs.remove(courseID)
+                durablePortableCourseIDs.insert(courseID)
+            }
+            let unresolvedRequiredCourseIDs = requiredCourseIDs.subtracting(durablePortableCourseIDs)
+            guard unresolvedRequiredCourseIDs.isEmpty else {
+                conflictedCourseIDs.formUnion(
+                    unresolvedRequiredCourseIDs
+                        .intersection(blockedPortableCourseIDs)
+                        .subtracting(oversizedPortableCourseIDs)
+                )
+                throw CoursePortableStateError.stateConflict
             }
         } catch {
             var rollbackFailed = false
@@ -23425,9 +23467,9 @@ final class WorkspaceStore: ObservableObject {
             blockedPortableCourseIDs = previousBlocked
             oversizedPortableCourseIDs = previousOversized
             needsPortableCourseStateBootstrap = previousNeedsBootstrap
-            if let conflictedCourseID {
-                dirtyPortableCourseIDs.insert(conflictedCourseID)
-                blockedPortableCourseIDs.insert(conflictedCourseID)
+            if !conflictedCourseIDs.isEmpty {
+                dirtyPortableCourseIDs.formUnion(conflictedCourseIDs)
+                blockedPortableCourseIDs.formUnion(conflictedCourseIDs)
                 needsPortableCourseStateBootstrap = true
             }
             if rollbackFailed {
@@ -23906,6 +23948,9 @@ final class WorkspaceStore: ObservableObject {
                 workspace: persisted.snapshot,
                 storageURL: storageURL,
                 portableInputs: inputs,
+                requiredPortableCourseIDs:
+                    Set(activeCourseFileMutationCounts.keys)
+                        .intersection(requestedCourseIDs),
                 blockedPortableCourseIDs:
                     blockedPortableCourseIDs.subtracting(
                         removingCourseIDs
@@ -24404,12 +24449,16 @@ final class WorkspaceStore: ObservableObject {
         skippingPortableCourseIDs: Set<UUID> = []
     ) -> Bool {
         WeiBeiPerf.measure("workspace.save") {
+            let requestedCourseIDs =
+                persistedWorkspaceCourseIDs.intersection(
+                    Set(courses.map(\.id))
+                ).subtracting(skippingPortableCourseIDs)
             let portableCommit: CoursePortableStateCommit
             do {
                 portableCommit = try persistCoursePortableStates(
-                    courseIDs: persistedWorkspaceCourseIDs.intersection(
-                        Set(courses.map(\.id))
-                    ).subtracting(skippingPortableCourseIDs)
+                    courseIDs: requestedCourseIDs,
+                    requiring: Set(activeCourseFileMutationCounts.keys)
+                        .intersection(requestedCourseIDs)
                 )
             } catch {
                 workspaceSaveError = ui(

@@ -9,6 +9,22 @@ enum CourseProjectRootSelfCheck {
     }
 
     @MainActor
+    static func runSharedConversionConflictOnly() throws {
+        try unchangedRequiredStateRejectsConcurrentDiskChange(
+            usesBackgroundWorkspacePersistence: false
+        )
+        try unchangedRequiredStateRejectsConcurrentDiskChange(
+            usesBackgroundWorkspacePersistence: true
+        )
+        try sharedConversionRejectsConcurrentPortableState(
+            usesBackgroundWorkspacePersistence: false
+        )
+        try sharedConversionRejectsConcurrentPortableState(
+            usesBackgroundWorkspacePersistence: true
+        )
+    }
+
+    @MainActor
     static func run() throws {
         func step(
             _ name: String,
@@ -2374,6 +2390,230 @@ enum CourseProjectRootSelfCheck {
     }
 
     @MainActor
+    private static func sharedConversionRejectsConcurrentPortableState(
+        usesBackgroundWorkspacePersistence: Bool
+    ) throws {
+        let fixture = try Fixture(
+            name: usesBackgroundWorkspacePersistence
+                ? "shared-concurrent-state-background"
+                : "shared-concurrent-state-sync"
+        )
+        defer { fixture.remove() }
+        let library = try fixture.makeDirectory("课程资料库")
+        let imports = try fixture.makeDirectory("待导入")
+        var stateURLForConflict: URL?
+        var stateDataForConflict: Data?
+        var injectedStateData: Data?
+        var injectConflict = false
+        let store = makeStore(
+            fixture: fixture,
+            mutationHook: { stage in
+                guard injectConflict,
+                      stage == .afterSharedAddedLinkPlacementBeforeJournal,
+                      let stateURLForConflict,
+                      let stateDataForConflict else {
+                    return
+                }
+                var concurrentState = try JSONDecoder().decode(
+                    CoursePortableState.self,
+                    from: stateDataForConflict
+                )
+                concurrentState.revision &+= 1
+                concurrentState.savedAt = Date()
+                let data = try JSONEncoder().encode(concurrentState)
+                try data.write(to: stateURLForConflict, options: [.atomic])
+                injectedStateData = data
+                injectConflict = false
+            }
+        )
+        try store.configureCourseLibrary(at: library)
+        let ownerCourseID = try store.createCourseInLibrary(title: "原课程")
+        let addedCourseID = try store.createCourseInLibrary(title: "共享课程")
+        let sourceURL = imports.appendingPathComponent("并发资料.txt")
+        let sourceData = Data("CONCURRENT_SHARED_CONTENT".utf8)
+        try sourceData.write(to: sourceURL)
+        let item = try store.importFileIntoCourseForSelfCheck(
+            sourceURL,
+            courseID: ownerCourseID,
+            role: .material
+        ).item
+        try check(store.flushPendingWorkspaceSave(), "并发共享基线没有保存")
+        let ownerRoot = try require(
+            store.courseRootURL(for: ownerCourseID),
+            "并发共享缺少原课程根"
+        )
+        let addedRoot = try require(
+            store.courseRootURL(for: addedCourseID),
+            "并发共享缺少新增课程根"
+        )
+        let portableStateURL = ownerRoot.appendingPathComponent(
+            ".weibei/course-state.json"
+        )
+        let addedPortableStateURL = addedRoot.appendingPathComponent(
+            ".weibei/course-state.json"
+        )
+        let addedPortableStateData = try Data(
+            contentsOf: addedPortableStateURL
+        )
+        stateURLForConflict = portableStateURL
+        stateDataForConflict = try Data(contentsOf: portableStateURL)
+        injectConflict = true
+
+        try expectFailure("并发课程状态不能被误报为共享成功") {
+            try store.shareCourseOwnedItemForSelfCheck(
+                itemID: item.id,
+                withCourseID: addedCourseID,
+                usesBackgroundWorkspacePersistence:
+                    usesBackgroundWorkspacePersistence
+            )
+        }
+
+        let expectedConcurrentData = try require(
+            injectedStateData,
+            "并发课程状态没有在提交前注入"
+        )
+        try check(!injectConflict, "并发课程状态注入没有执行")
+        try check(
+            try Data(contentsOf: portableStateURL)
+                == expectedConcurrentData,
+            "共享失败覆盖了并发课程状态"
+        )
+        try check(
+            try Data(contentsOf: addedPortableStateURL)
+                == addedPortableStateData,
+            "共享失败没有回滚另一门课程已提交的状态"
+        )
+        try check(
+            store.importedItems.first { $0.id == item.id }?.storage
+                == .courseOwned(ownerCourseID: ownerCourseID),
+            "共享失败后内存仍把资料标记为共享"
+        )
+        try check(
+            !store.courseItemMemberships.contains {
+                $0.itemID == item.id && $0.courseID == addedCourseID
+            },
+            "共享失败后仍留下新增课程关系"
+        )
+        let persistedWorkspace = try JSONDecoder().decode(
+            PersistedWorkspace.self,
+            from: Data(
+                contentsOf: fixture.workspaceDirectory
+                    .appendingPathComponent("workspace.json")
+            )
+        )
+        try check(
+            persistedWorkspace.importedItems.first {
+                $0.id == item.id
+            }?.storage == .courseOwned(ownerCourseID: ownerCourseID),
+            "共享失败后工作区快照仍写入了共享状态"
+        )
+        let restoredSourceURL = try require(
+            store.importedItems.first { $0.id == item.id }?.url,
+            "共享失败后原资料路径丢失"
+        )
+        try check(
+            try Data(contentsOf: restoredSourceURL) == sourceData,
+            "共享失败后原资料没有完整恢复"
+        )
+    }
+
+    @MainActor
+    private static func unchangedRequiredStateRejectsConcurrentDiskChange(
+        usesBackgroundWorkspacePersistence: Bool
+    ) throws {
+        let fixture = try Fixture(
+            name: usesBackgroundWorkspacePersistence
+                ? "required-unchanged-state-background"
+                : "required-unchanged-state-sync"
+        )
+        defer { fixture.remove() }
+        let library = try fixture.makeDirectory("课程资料库")
+        let imports = try fixture.makeDirectory("待导入")
+        let store = makeStore(fixture: fixture)
+        try store.configureCourseLibrary(at: library)
+        let ownerCourseID = try store.createCourseInLibrary(title: "原课程")
+        let addedCourseID = try store.createCourseInLibrary(title: "共享课程")
+        let unchangedCourseID = try store.createCourseInLibrary(
+            title: "未变化课程"
+        )
+        let sourceURL = imports.appendingPathComponent("未变化冲突资料.txt")
+        let sourceData = Data("UNCHANGED_REQUIRED_CONTENT".utf8)
+        try sourceData.write(to: sourceURL)
+        let item = try store.importFileIntoCourseForSelfCheck(
+            sourceURL,
+            courseID: ownerCourseID,
+            role: .material
+        ).item
+        try check(store.flushPendingWorkspaceSave(), "课程状态基线没有保存")
+        let ownerRoot = try require(
+            store.courseRootURL(for: ownerCourseID),
+            "原课程根丢失"
+        )
+        let addedRoot = try require(
+            store.courseRootURL(for: addedCourseID),
+            "共享课程根丢失"
+        )
+        let unchangedRoot = try require(
+            store.courseRootURL(for: unchangedCourseID),
+            "未变化课程根丢失"
+        )
+        let ownerStateURL = ownerRoot.appendingPathComponent(
+            ".weibei/course-state.json"
+        )
+        let addedStateURL = addedRoot.appendingPathComponent(
+            ".weibei/course-state.json"
+        )
+        let unchangedStateURL = unchangedRoot.appendingPathComponent(
+            ".weibei/course-state.json"
+        )
+        let ownerStateData = try Data(contentsOf: ownerStateURL)
+        let addedStateData = try Data(contentsOf: addedStateURL)
+        var concurrentState = try JSONDecoder().decode(
+            CoursePortableState.self,
+            from: Data(contentsOf: unchangedStateURL)
+        ).validated(expectedCourseID: unchangedCourseID)
+        concurrentState.revision &+= 1
+        concurrentState.savedAt = Date()
+        let concurrentData = try JSONEncoder().encode(concurrentState)
+        try concurrentData.write(to: unchangedStateURL, options: [.atomic])
+
+        try expectFailure("未变化的必交课程状态不能接受并发磁盘版本") {
+            try store.shareCourseOwnedItemForSelfCheck(
+                itemID: item.id,
+                withCourseID: addedCourseID,
+                usesBackgroundWorkspacePersistence:
+                    usesBackgroundWorkspacePersistence,
+                requiringUnchangedCourseID: unchangedCourseID
+            )
+        }
+        try check(
+            try Data(contentsOf: unchangedStateURL) == concurrentData,
+            "必交状态失败后覆盖了并发磁盘版本"
+        )
+        try check(
+            try Data(contentsOf: ownerStateURL) == ownerStateData
+                && Data(contentsOf: addedStateURL) == addedStateData,
+            "必交状态失败后没有回滚已提交的课程状态"
+        )
+        try check(
+            store.importedItems.first { $0.id == item.id }?.storage
+                == .courseOwned(ownerCourseID: ownerCourseID)
+                && !store.courseItemMemberships.contains {
+                    $0.itemID == item.id && $0.courseID == addedCourseID
+                },
+            "必交状态失败后没有恢复资料归属"
+        )
+        let restoredURL = try require(
+            store.importedItems.first { $0.id == item.id }?.url,
+            "必交状态失败后原资料路径丢失"
+        )
+        try check(
+            try Data(contentsOf: restoredURL) == sourceData,
+            "必交状态失败后原资料没有完整恢复"
+        )
+    }
+
+    @MainActor
     private static func portableCourseStateIsScopedAtomicAndRestorable() throws {
         let fixture = try Fixture(name: "portable-state")
         defer { fixture.remove() }
@@ -2417,10 +2657,18 @@ enum CourseProjectRootSelfCheck {
             store.courseRootURL(for: courseA),
             "可携带课程根丢失"
         )
+        let courseBRoot = try require(
+            store.courseRootURL(for: courseB),
+            "隔离课程根丢失"
+        )
         let stateURL = courseARoot.appendingPathComponent(
             ".weibei/course-state.json"
         )
+        let courseBStateURL = courseBRoot.appendingPathComponent(
+            ".weibei/course-state.json"
+        )
         let stateData = try Data(contentsOf: stateURL)
+        let courseBStateData = try Data(contentsOf: courseBStateURL)
         let state = try JSONDecoder().decode(
             CoursePortableState.self,
             from: stateData
@@ -2602,6 +2850,10 @@ enum CourseProjectRootSelfCheck {
         )
 
         try stateData.write(to: stateURL, options: [.atomic])
+        try courseBStateData.write(
+            to: courseBStateURL,
+            options: [.atomic]
+        )
         try store.shareCourseOwnedItemForSelfCheck(
             itemID: material.id,
             withCourseID: courseB
@@ -8696,7 +8948,10 @@ enum CourseProjectRootSelfCheck {
             courseFileSourceRemover: courseFileSourceRemover,
             contentSourceTrashMover: contentSourceTrashMover,
             workspaceSnapshotWriter: workspaceWriter,
-            coursePortableStateWriter: portableStateWriter
+            coursePortableStateWriter: portableStateWriter,
+            // Recovery scenarios in this suite invoke maintenance explicitly;
+            // passive fixture stores must not write the same course roots.
+            startsCourseFileMaintenance: false
         )
     }
 
