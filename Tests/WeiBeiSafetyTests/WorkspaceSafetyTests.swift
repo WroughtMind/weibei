@@ -3,6 +3,7 @@ import Darwin
 import Foundation
 import XCTest
 @testable import WeiBei
+import WeiBeiCore
 
 final class WorkspaceSafetyTests: XCTestCase {
     override class func setUp() {
