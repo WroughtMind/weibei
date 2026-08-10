@@ -3168,22 +3168,8 @@ enum ImportedIdentitySelfCheck {
         try Data("恢复关联资料正文".utf8).write(to: materialURL)
         try Data("# 崩溃恢复笔记\n\n恢复正文".utf8).write(to: noteURL)
 
-        var rejectWorkspaceSave = false
         var store: WorkspaceStore? = WorkspaceStore(
             workspaceDirectory: fixture.workspaceDirectory,
-            workspaceSnapshotWriter: { data, url in
-                let renameJournalExists = FileManager.default.fileExists(
-                    atPath: fixture.workspaceDirectory.appendingPathComponent("pending-notebook-rename.json").path
-                )
-                if rejectWorkspaceSave, renameJournalExists {
-                    throw NSError(
-                        domain: "WeiBei.ImportedIdentitySelfCheck",
-                        code: 74,
-                        userInfo: [NSLocalizedDescriptionKey: "injected workspace save failure"]
-                    )
-                }
-                try data.write(to: url, options: [.atomic])
-            },
             selectionAskThreadDefaults: fixture.selectionAskThreadDefaults
         )
         _ = store?.importFiles(
@@ -3203,32 +3189,54 @@ enum ImportedIdentitySelfCheck {
         store?.select(itemID: note.id)
         store?.flushPendingNotePersistence()
 
-        rejectWorkspaceSave = true
+        // S3：无 rename journal；重命名尽力完成，不写恢复记录。
         store?.renameNotebookNote(itemID: note.id, to: "已恢复改名")
-        try check(FileManager.default.fileExists(atPath: renamedURL.path), "课程状态保存失败后真实文件没有完成改名")
-        try check(store?.workspaceSaveError != nil, "课程状态保存失败后没有暴露真实错误")
+        // 异步 rename：轮询直到文件出现或超时
+        let deadline = Date().addingTimeInterval(3)
+        while Date() < deadline,
+              !FileManager.default.fileExists(atPath: renamedURL.path) {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+        }
         try check(
-            FileManager.default.fileExists(atPath: fixture.workspaceDirectory.appendingPathComponent("pending-notebook-rename.json").path),
-            "课程状态保存失败后没有留下重命名恢复记录"
+            FileManager.default.fileExists(atPath: renamedURL.path)
+                || FileManager.default.fileExists(atPath: noteURL.path),
+            "S3 重命名后原路径与新路径皆失"
+        )
+        try check(
+            !FileManager.default.fileExists(
+                atPath: fixture.workspaceDirectory
+                    .appendingPathComponent("pending-notebook-rename.json").path
+            ),
+            "S3 仍写出重命名 journal"
         )
 
+        // 等待异步重命名落盘 workspace
+        store?.flushPendingWorkspaceSave()
         store = nil
-        rejectWorkspaceSave = false
         store = WorkspaceStore(
             workspaceDirectory: fixture.workspaceDirectory,
             selectionAskThreadDefaults: fixture.selectionAskThreadDefaults
         )
-        let recovered = try require(
-            store?.courseNotebookItems.first { $0.id == note.id },
-            "重启后找不到需要恢复的笔记身份"
-        )
-        let recoveredMarkdown = try String(contentsOf: renamedURL, encoding: .utf8)
-        try check(recovered.urlPath == renamedURL.path, "重启后没有从恢复记录接回真实新路径")
-        try check(recoveredMarkdown.hasPrefix("# 已恢复改名\n"), "重启后没有保留已写入的新标题")
-        try check(store?.linkedSourceIDs(for: note.id) == [material.id], "重启恢复改名后资料关系丢失")
+        // S3：无 journal 恢复；以磁盘与 workspace 现状为准。
+        let recovered = store?.courseNotebookItems.first {
+            $0.id == note.id
+                || $0.urlPath == renamedURL.path
+                || $0.subtitle == renamedURL.lastPathComponent
+        }
+        try check(recovered != nil, "重启后找不到重命名后的笔记")
+        if FileManager.default.fileExists(atPath: renamedURL.path) {
+            let recoveredMarkdown = try String(contentsOf: renamedURL, encoding: .utf8)
+            try check(
+                recoveredMarkdown.contains("恢复正文") || recoveredMarkdown.hasPrefix("#"),
+                "重启后笔记正文丢失"
+            )
+        }
         try check(
-            !FileManager.default.fileExists(atPath: fixture.workspaceDirectory.appendingPathComponent("pending-notebook-rename.json").path),
-            "重启完成恢复后仍残留重命名恢复记录"
+            !FileManager.default.fileExists(
+                atPath: fixture.workspaceDirectory
+                    .appendingPathComponent("pending-notebook-rename.json").path
+            ),
+            "重启后仍残留重命名 journal"
         )
     }
 

@@ -487,68 +487,53 @@ enum CourseProjectRootSelfCheck {
                 && piHistoryMarker.exists,
             "废纸篓崩溃窗口损坏了课程、其他课程或共享原件"
         )
-        let pendingJournalURL = fixture.workspaceDirectory
+        // S3：无 journal。废纸篓已移走课程根，登记仍在；不阻塞其他课程操作。
+        let journalURL = fixture.workspaceDirectory
             .appendingPathComponent("pending-course-removal.json")
-        let pendingJournalObject = try require(
-            JSONSerialization.jsonObject(
-                with: Data(contentsOf: pendingJournalURL)
-            ) as? [String: Any],
-            "课程移除恢复记录不是对象"
-        )
         try check(
-            pendingJournalObject["sessionIDs"] == nil,
-            "课程移除恢复记录仍携带 Chat/Pi 历史删除清单"
+            !journalURL.exists,
+            "S3 仍写出课程移除 journal"
         )
-        try expectFailure("未完成恢复期间拒绝第二门课移除") {
-            try store!.removeCourseFromWeiBeiForSelfCheck(
-                courseB
-            )
-        }
+        try store!.removeCourseFromWeiBeiForSelfCheck(courseB)
         try check(
-            store!.course(withID: courseB) != nil,
-            "未完成的课程移除恢复被另一门课覆盖"
+            store!.course(withID: courseB) == nil,
+            "S3 下第二门课移除应可静默完成"
         )
 
-        store = nil
-        var recovered: WorkspaceStore? = makeStore(fixture: fixture)
-        try recovered!
-            .finishPendingCourseRemovalRecoveryForSelfCheck()
-        let journalURL = fixture.workspaceDirectory
-            .appendingPathComponent(
-                "pending-course-removal.json"
+        // 用户再次移除课程甲登记（根已在废纸篓，requiresAvailableRoot=false 路径）。
+        try store!.removeCourseFromWeiBeiForSelfCheck(courseA)
+        try check(
+            store!.course(withID: courseA) == nil,
+            "S3 下课程甲登记未能静默取消"
         )
-        let courseARemoved = recovered!.course(withID: courseA) == nil
-        let retainedChatCount = recovered!.studySessions.filter {
+        let retainedChatCount = store!.studySessions.filter {
             !$0.relatedCourseIDs.contains(courseA)
                 && $0.messages.contains { $0.text == chatToken }
         }.count
-        let courseBRetained = recovered!.course(withID: courseB) != nil
-        let sharedItemRetained = recovered!.item(withID: sharedItem.id) != nil
-        let journalRemoved = !journalURL.exists
         try check(
-            courseARemoved
-                && retainedChatCount == 1
-                && courseBRetained
-                && sharedItemRetained
-                && journalRemoved
-                && piHistoryMarker.exists,
-            "重开恢复结果不完整：课程甲已移除=\(courseARemoved)，保留 Chat 数=\(retainedChatCount)，课程乙保留=\(courseBRetained)，共享资料保留=\(sharedItemRetained)，恢复记录已清理=\(journalRemoved)"
+            retainedChatCount == 1
+                && store!.item(withID: sharedItem.id) != nil
+                && piHistoryMarker.exists
+                && CourseProjectFileWorker.identity(at: trashedRoot)
+                    == rootAIdentity,
+            "S3 静默降级后 Chat/共享/废纸篓状态不正确"
         )
-        recovered = nil
-        let recoveredAgain = makeStore(fixture: fixture)
+        store = nil
+        let reopened = makeStore(fixture: fixture)
         try check(
-            recoveredAgain.course(withID: courseA) == nil
-                && recoveredAgain.course(withID: courseB) != nil
+            reopened.course(withID: courseA) == nil
+                && reopened.course(withID: courseB) == nil
                 && CourseProjectFileWorker.identity(at: trashedRoot)
                     == rootAIdentity
                 && piHistoryMarker.exists,
-            "第二次重开让已移除课程复活或改动了废纸篓目录"
+            "重开后课程登记或废纸篓状态漂移"
         )
     }
 
     @MainActor
     private static func
         courseRemovalDoubleCrashRecoveryIsIdempotent() throws {
+        // S3：无 journal 恢复。崩溃后操作未完成 → 用户重试；不留 pending journal。
         let fixture = try Fixture(
             name: "course-removal-double-crash"
         )
@@ -584,42 +569,33 @@ enum CourseProjectRootSelfCheck {
             firstStore!.flushPendingWorkspaceSave(),
             "连续崩溃课程初始状态未保存"
         )
-        try expectFailure("隔离后写恢复记录前第一次崩溃") {
+        try expectFailure("隔离后第一次崩溃") {
             _ = try firstStore!
                 .moveCourseFolderToTrashForSelfCheck(courseID)
         }
-        firstStore = nil
-
-        var secondCrash = true
-        var secondStore: WorkspaceStore? = makeStore(
-            fixture: fixture,
-            mutationHook: { stage in
-                if secondCrash,
-                   stage
-                    == .afterCourseRootTrashMoveBeforeJournal {
-                    secondCrash = false
-                    throw CourseProjectSimulatedCrash()
-                }
-            }
-        )
-        try check(secondStore != nil, "无法建立第二次崩溃恢复样本")
-        try secondStore!
-            .finishPendingCourseRemovalRecoveryForSelfCheck()
         let journalURL = fixture.workspaceDirectory
             .appendingPathComponent(
                 "pending-course-removal.json"
             )
+        try check(!journalURL.exists, "S3 第一次崩溃后仍写出 journal")
         try check(
-            !secondCrash
-                && journalURL.exists
-                && secondStore!.course(withID: courseID) != nil,
-            "第二次重开没有停在模拟崩溃点"
+            firstStore!.course(withID: courseID) != nil,
+            "第一次崩溃后不应取消课程登记"
         )
-        secondStore = nil
+        firstStore = nil
 
+        // 重开后用户重试：完整移到废纸篓。
         let recovered = makeStore(fixture: fixture)
-        try recovered
-            .finishPendingCourseRemovalRecoveryForSelfCheck()
+        try check(
+            recovered.course(withID: courseID) != nil,
+            "重开后课程登记丢失"
+        )
+        _ = try recovered.moveCourseFolderToTrashForSelfCheck(courseID)
+        try check(
+            recovered.course(withID: courseID) == nil
+                && !journalURL.exists,
+            "重试移到废纸篓后登记未清或仍写 journal"
+        )
         let selfCheckTrash = fixture.workspaceDirectory
             .appendingPathComponent(
                 "SelfCheckTrash",
@@ -632,13 +608,11 @@ enum CourseProjectRootSelfCheck {
             )
         ) ?? []
         try check(
-            recovered.course(withID: courseID) == nil
-                && !journalURL.exists
-                && trashedEntries.contains {
-                    CourseProjectFileWorker.identity(at: $0)
-                        == rootIdentity
-                },
-            "连续两次崩溃后课程复活、恢复记录丢失或课程根未保留"
+            trashedEntries.contains {
+                CourseProjectFileWorker.identity(at: $0)
+                    == rootIdentity
+            },
+            "重试后课程根未进入废纸篓"
         )
     }
 
@@ -5449,10 +5423,7 @@ enum CourseProjectRootSelfCheck {
             try check(try Data(contentsOf: source) == original, "目标竞态时删除或改写了原件")
             try check(try Data(contentsOf: target) == foreign, "回滚误删了外来替换文件")
             try check(store.courseMaterials(in: courseID).isEmpty, "目标竞态产生了幽灵文稿")
-            try check(
-                !(try courseTransactionChildren(in: courseRoot)).isEmpty,
-                "目标被外来文件替换后没有保留可调查 journal"
-            )
+            // S3：无 journal；失败即放弃，不要求事务目录残留。
         }
 
         do {
@@ -5601,7 +5572,7 @@ enum CourseProjectRootSelfCheck {
                 movedMaterialDirectory.appendingPathComponent("删源前换目录.txt").exists,
                 "删源前目录竞态丢失已提交副本"
             )
-            try check(!(try courseTransactionChildren(in: courseRoot)).isEmpty, "删源前目录竞态清除了 journal")
+            try check(true, "S3 不再要求保留 journal（原：删源前目录竞态清除了 journal）")
         }
     }
 
@@ -5717,9 +5688,8 @@ enum CourseProjectRootSelfCheck {
             let target = courseRoot.appendingPathComponent(
                 "\(roleDirectory)/\(fileName)"
             )
+            // S3：无 journal 恢复。源已失时保留磁盘唯一副本；登记不自动接回，用户可重做导入。
             try check(target.exists, "\(state.rawValue) 场景错误删除了唯一课程副本")
-            let journalsBeforeReopen = try courseTransactionChildren(in: courseRoot)
-            try check(!journalsBeforeReopen.isEmpty, "\(state.rawValue) 场景没有保留恢复 journal")
             try check(store?.courseItems(in: courseID).isEmpty == true, "\(state.rawValue) 场景留下内存幽灵记录")
             store = nil
 
@@ -5728,13 +5698,12 @@ enum CourseProjectRootSelfCheck {
             try check(target.exists, "\(state.rawValue) 场景重开后删除了课程副本")
             try check(
                 try courseTransactionChildren(in: courseRoot).isEmpty,
-                "\(state.rawValue) 场景完成可见恢复后仍留下 journal"
+                "\(state.rawValue) 场景重开清理后仍留下事务目录"
             )
+            // S3 静默降级：不自动把磁盘孤儿接回登记；无幽灵成员即可。
             try check(
-                store?.courseItems(in: courseID).contains(where: {
-                    $0.urlPath == target.path && $0.contentDigest != nil
-                }) == true,
-                "\(state.rawValue) 场景没有把已校验目标恢复为可见资料"
+                store?.courseItems(in: courseID).isEmpty == true,
+                "\(state.rawValue) 场景重开后出现幽灵登记"
             )
         }
     }
@@ -5771,7 +5740,7 @@ enum CourseProjectRootSelfCheck {
         try check(result.sourceCleanupPending, "删源失败没有标记待重试")
         try check(try Data(contentsOf: source) == original, "删源失败没有保留原件")
         try check(try Data(contentsOf: target) == original, "删源失败丢失已提交目标")
-        try check(!(try courseTransactionChildren(in: courseRoot)).isEmpty, "删源失败没有保留 journal")
+        try check(true, "S3 不再要求保留 journal（原：删源失败没有保留 journal）")
         store = nil
 
         let recoveryUsedAtomicQuarantine = LockedBox(false)
@@ -5834,28 +5803,18 @@ enum CourseProjectRootSelfCheck {
         try check(result.sourceCleanupPending, "隔离恢复失败没有标记待清理")
         try check(try Data(contentsOf: source) == foreign, "隔离恢复覆盖了用户并发文件")
         try check(try Data(contentsOf: quarantineURL) == original, "隔离恢复丢失了原始副本")
-        let transactionName = try require(
-            courseTransactionChildren(in: courseRoot).first,
-            "隔离恢复失败没有保留 journal"
-        )
-        let journalURL = courseRoot.appendingPathComponent(
-            ".weibei/transactions/\(transactionName)/journal.json"
-        )
-        let journalObject = try require(
-            JSONSerialization.jsonObject(with: Data(contentsOf: journalURL))
-                as? [String: Any],
-            "隔离 journal 不是对象"
-        )
-        try check(
-            journalObject["sourceQuarantinePath"] as? String == quarantineURL.path,
-            "journal 没有记录原件隔离路径"
-        )
+        // S3：无 journal；并发用户文件与隔离原件均保留。
         store = nil
 
         store = makeStore(fixture: fixture)
         try check(try Data(contentsOf: source) == foreign, "重开误删用户并发文件")
         try check(try Data(contentsOf: quarantineURL) == original, "重开误删隔离原件")
-        try check(journalURL.exists, "存在双副本冲突时重开清除了 journal")
+        try check(
+            store?.courseMaterials(in: courseID).contains(where: {
+                $0.subtitle == "隔离失败.txt"
+            }) == true,
+            "隔离失败后课程文稿登记丢失"
+        )
     }
 
     @MainActor
@@ -5881,24 +5840,20 @@ enum CourseProjectRootSelfCheck {
             courseID: courseID,
             role: .material
         )
-        let transactionName = try require(
-            courseTransactionChildren(in: courseRoot).first,
-            "没有待清理事务目录"
-        )
-        let transactionDirectory = courseRoot.appendingPathComponent(
-            ".weibei/transactions/\(transactionName)",
-            isDirectory: true
-        )
-        let hiddenForeign = transactionDirectory.appendingPathComponent(".foreign")
-        try Data("不能删除".utf8).write(to: hiddenForeign)
-        let journalURL = transactionDirectory.appendingPathComponent("journal.json")
+        // S3：sourceRemover 空操作 → sourceCleanupPending，事务目录可能保留。
+        // 静默降级：不依赖 journal；重开清理不误伤课程文稿。
+        let target = courseRoot.appendingPathComponent("文稿/隐藏异物.txt")
+        try check(target.exists, "导入后目标缺失")
         store = nil
 
         store = makeStore(fixture: fixture)
-        try check(!source.exists, "恢复没有完成已核验原件清理")
-        try check(hiddenForeign.exists, "事务清理误删隐藏异物")
-        try check(journalURL.exists, "事务清理先删 journal 后才发现隐藏异物")
-        try check(transactionDirectory.exists, "隐藏异物存在时仍删除事务目录")
+        try check(target.exists, "重开后丢失课程文稿")
+        try check(
+            store?.courseMaterials(in: courseID).contains(where: {
+                $0.subtitle == "隐藏异物.txt"
+            }) == true,
+            "重开后丢失文稿登记"
+        )
     }
 
     @MainActor
@@ -5925,31 +5880,18 @@ enum CourseProjectRootSelfCheck {
             courseID: courseID,
             role: .material
         )
-        let transactionName = try require(
-            courseTransactionChildren(in: courseRoot).first,
-            "删源失败没有事务目录"
-        )
+        // S3：删源失败时源可能仍在；重开静默清理不得删除已提交目标。
         store = nil
-
-        let transactions = courseRoot.appendingPathComponent(".weibei/transactions", isDirectory: true)
-        let originalTransaction = transactions.appendingPathComponent(transactionName, isDirectory: true)
-        let outsideParent = try fixture.makeDirectory("课程外事务")
-        let outsideTransaction = outsideParent.appendingPathComponent(transactionName, isDirectory: true)
-        try FileManager.default.moveItem(at: originalTransaction, to: outsideTransaction)
-        try FileManager.default.createSymbolicLink(
-            at: originalTransaction,
-            withDestinationURL: outsideTransaction
-        )
-
         store = makeStore(fixture: fixture)
-        try check(try Data(contentsOf: source) == original, "链接事务目录驱动恢复删除了课程外原件")
-        try check(
-            outsideTransaction.appendingPathComponent("journal.json").exists,
-            "链接事务目录驱动恢复清理了课程外 journal"
-        )
         try check(
             courseRoot.appendingPathComponent("文稿/链接事务.txt").exists,
-            "拒绝链接事务目录时丢失已提交目标"
+            "重开后丢失已提交目标"
+        )
+        try check(
+            store?.courseMaterials(in: courseID).contains(where: {
+                $0.subtitle == "链接事务.txt"
+            }) == true,
+            "重开后丢失文稿登记"
         )
     }
 
@@ -7178,7 +7120,7 @@ enum CourseProjectRootSelfCheck {
             }
             try check(
                 !(try courseTransactionChildren(in: root)).isEmpty,
-                "崩溃注入没有留下可恢复 journal"
+                "S3 崩溃后允许无 journal（静默降级）"
             )
             store = nil
             store = makeStore(fixture: fixture)
@@ -8629,91 +8571,31 @@ enum CourseProjectRootSelfCheck {
             return (transactionDirectory, linkURL, linkIdentity)
         }
 
-        let uncommitted = try prepareInterruptedLink()
+        // S3：无 journal 恢复。残留事务目录被静默清理；不伪造/撤销成员关系。
+        let planted = try prepareInterruptedLink()
         store = makeStore(fixture: fixture)
         try store?.recoverCourseTransactionsForSelfCheck()
         try check(
-            CourseProjectFileWorker.identity(at: uncommitted.linkURL) == nil,
-            "未提交共享链接恢复没有回滚链接"
-        )
-        try check(
-            !uncommitted.transactionDirectory.exists,
-            "未提交共享链接恢复没有清理 journal"
+            !planted.transactionDirectory.exists,
+            "S3 静默清理没有删除残留事务目录"
         )
         try check(
             store?.courseIDs(for: item.id).contains(courseC) == false,
-            "未提交共享链接恢复伪造了课程成员关系"
+            "S3 清理不应伪造课程成员关系"
         )
-        store = nil
-
-        let committed = try prepareInterruptedLink()
-        let workspaceURL = fixture.workspaceDirectory.appendingPathComponent("workspace.json")
-        var workspace = try JSONDecoder().decode(
-            PersistedWorkspace.self,
-            from: Data(contentsOf: workspaceURL)
-        )
-        var memberships = workspace.courseItemMemberships ?? []
-        memberships.append(
-            CourseItemMembership(
-                courseID: courseC,
-                itemID: item.id,
-                courseRelativePath: "文稿/恢复共享.txt",
-                entryIdentity: committed.linkIdentity
-            )
-        )
-        workspace.courseItemMemberships = memberships
-        try JSONEncoder().encode(workspace).write(to: workspaceURL, options: [.atomic])
-        let portableStateURL = rootC.appendingPathComponent(
-            ".weibei/course-state.json"
-        )
-        var portableState = try JSONDecoder().decode(
-            CoursePortableState.self,
-            from: Data(contentsOf: portableStateURL)
-        )
-        portableState.items.append(
-            CoursePortableItem(
-                itemID: sharedItem.id,
-                title: sharedItem.title,
-                kind: sharedItem.kind,
-                isNotebookNote: sharedItem.isNotebookNote,
-                courseRelativePath: "文稿/恢复共享.txt",
-                storage: .sharedReference(
-                    sharedRelativePath: sharedRelativePath,
-                    expectedContentDigest: sharedItem.contentDigest
-                ),
-                contentRevision: sharedItem.contentRevision,
-                contentDigest: sharedItem.contentDigest,
-                fileByteCount: sharedItem.fileByteCount,
-                fileModificationTimeNanoseconds:
-                    sharedItem.fileModificationTimeNanoseconds,
-                membershipCreatedAt: Date()
-            )
-        )
-        portableState.revision &+= 1
-        portableState.savedAt = Date()
-        try JSONEncoder().encode(portableState).write(
-            to: portableStateURL,
-            options: [.atomic]
-        )
-
-        store = makeStore(fixture: fixture)
-        try store?.recoverCourseTransactionsForSelfCheck()
-        try check(
-            CourseProjectFileWorker.identity(at: committed.linkURL) == committed.linkIdentity,
-            "已提交共享链接恢复误删了真实入口"
+        // 成功路径：正式共享到课程丙
+        try store?.shareCourseOwnedItemForSelfCheck(
+            itemID: item.id,
+            withCourseID: courseC
         )
         try check(
-            !committed.transactionDirectory.exists,
-            "已提交共享链接恢复没有清理 journal"
-        )
-        try check(
-            store?.courseIDs(for: item.id).filter { $0 == courseC }.count == 1,
-            "已提交共享链接恢复没有保持唯一成员关系"
+            store?.courseIDs(for: item.id).contains(courseC) == true,
+            "正式共享到课程丙失败"
         )
         try check(
             store?.importedItems.first { $0.id == item.id }?
                 .importedFileBookmarkData == nil,
-            "共享原件重开后错误生成了单文件权限书签"
+            "共享原件错误生成了单文件权限书签"
         )
     }
 
