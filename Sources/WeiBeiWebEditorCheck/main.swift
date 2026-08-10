@@ -141,6 +141,7 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
         let configuration = WKWebViewConfiguration()
         let controller = WKUserContentController()
         let source = """
+        document.documentElement.setAttribute("writingsuggestions", "false");
         window.initialMarkdown = \(json(sampleMarkdown));
         window.weiBeiDocumentID = "web-editor-check";
         window.weiBeiMarkdownEditable = true;
@@ -171,7 +172,7 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
             fputs("web-editor-check failed: \(failure)\n", stderr)
             exit(1)
         }
-        expect(isDone, "editor did not become ready")
+        expect(isDone, "editable editor validation did not finish within 15 seconds")
     }
 
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
@@ -234,6 +235,7 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
     private func validateObsidianDecorations(completion: @escaping () -> Void) {
         let script = """
         (() => ({
+          writingSuggestionsDisabled: Boolean(document.querySelector('.ProseMirror')?.closest('[writingsuggestions="false"]')),
           wikilinkText: document.querySelector('.weibei-wikilink')?.textContent || '',
           inlineFootnoteText: document.querySelector('.weibei-inline-footnote')?.textContent || '',
           inlineFootnotes: document.querySelectorAll('.weibei-inline-footnote').length,
@@ -426,6 +428,10 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
             }
             guard let result = value as? [String: Any] else {
                 self.fail("Obsidian decoration check returned \(String(describing: value))")
+                return
+            }
+            if result["writingSuggestionsDisabled"] as? Bool != true {
+                self.fail("editor self-check must disable system writing suggestions")
                 return
             }
             if result["wikilinkText"] as? String != "理论别名" {
