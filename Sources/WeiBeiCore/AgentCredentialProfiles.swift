@@ -156,8 +156,7 @@ public struct AgentProviderEndpoint: Equatable, Sendable {
             || (rawScheme == "http" && components.port == 80) {
             components.port = nil
         }
-        while components.percentEncodedPath.count > 1,
-              components.percentEncodedPath.hasSuffix("/") {
+        while components.percentEncodedPath.hasSuffix("/") {
             components.percentEncodedPath.removeLast()
         }
         guard let normalized = components.string,
