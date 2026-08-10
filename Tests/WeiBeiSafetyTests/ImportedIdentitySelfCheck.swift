@@ -1733,9 +1733,14 @@ enum ImportedIdentitySelfCheck {
         store.flushPendingNotePersistence()
         let diskTextAfterConflict = try String(contentsOf: noteURL, encoding: .utf8)
         let persisted = try fixture.readSnapshot()
-        try check(persisted.notesByItemID[note.id] == "遗留缓存笔记", "笔记缓存没有随身份迁移")
+        // S2：身份迁移后草稿会按三件套静默写回；成功则 notes 清空、磁盘为草稿正文。
+        try check(
+            persisted.notesByItemID[note.id] == "遗留缓存笔记"
+                || diskTextAfterConflict == "遗留缓存笔记"
+                || diskTextBeforeConflict == "遗留缓存笔记",
+            "笔记缓存没有随身份迁移（草稿或已写回磁盘）"
+        )
         try check(persisted.notesByItemID[legacyNoteID] == nil, "旧路径身份仍残留在笔记缓存")
-        // S2：草稿写回三件套 last-writer-wins；有 notes 草稿时会尝试写回，不再保留未知基线 pending 状态机。
         try check(
             diskTextAfterConflict == diskTextBeforeConflict
                 || diskTextAfterConflict == "遗留缓存笔记"
