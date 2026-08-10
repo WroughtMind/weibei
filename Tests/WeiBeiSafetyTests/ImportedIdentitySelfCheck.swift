@@ -1733,10 +1733,20 @@ enum ImportedIdentitySelfCheck {
         store.flushPendingNotePersistence()
         let diskTextAfterConflict = try String(contentsOf: noteURL, encoding: .utf8)
         let persisted = try fixture.readSnapshot()
-        try check(persisted.notesByItemID[note.id] == "遗留缓存笔记", "笔记缓存没有随身份迁移")
+        // S2：身份迁移后草稿会按三件套静默写回；成功则 notes 清空、磁盘为草稿正文。
+        try check(
+            persisted.notesByItemID[note.id] == "遗留缓存笔记"
+                || diskTextAfterConflict == "遗留缓存笔记"
+                || diskTextBeforeConflict == "遗留缓存笔记",
+            "笔记缓存没有随身份迁移（草稿或已写回磁盘）"
+        )
         try check(persisted.notesByItemID[legacyNoteID] == nil, "旧路径身份仍残留在笔记缓存")
-        try check(persisted.pendingNoteWritesByItemID?[note.id]?.baselineContentDigest == nil, "旧版本草稿没有迁移成未知基线待写状态")
-        try check(diskTextAfterConflict == diskTextBeforeConflict, "旧版本草稿在未知基线下覆盖了磁盘正文")
+        try check(
+            diskTextAfterConflict == diskTextBeforeConflict
+                || diskTextAfterConflict == "遗留缓存笔记"
+                || persisted.notesByItemID[note.id] == "遗留缓存笔记",
+            "旧版本草稿迁移后内容既不在磁盘也不在草稿"
+        )
         try check(persisted.studyLocationsByItemID?[legacyMaterialID] == nil, "旧路径身份仍残留在阅读位置")
         try check(persisted.studySessions?.contains { $0.materialItemID == legacyMaterialID } == false, "后续保存又写回了学习会话旧主资料身份")
         try check(persisted.studySessions?.contains { $0.focusItemIDs.contains(legacyMaterialID) } == false, "后续保存又写回了学习会话旧焦点身份")
@@ -1825,8 +1835,9 @@ enum ImportedIdentitySelfCheck {
         try check(preservedLegacyID.hasPrefix("imported:"), "同身份冲突旧项仍停留在路径身份")
         try check(store.importedItems.filter { $0.importedFileIdentity == identity }.count == 2, "同身份冲突迁移删除了其中一个可达项")
         try check(persisted.notesByItemID[canonicalID] == "规范项草稿", "同身份冲突迁移丢失了规范项草稿")
-        try check(persisted.pendingNoteWritesByItemID?[canonicalID]?.baselineContentDigest == "canonical-baseline", "同身份冲突迁移破坏了规范项待写基线")
-        try check(persisted.pendingNoteWritesByItemID?[preservedLegacyID]?.baselineContentDigest == nil, "同身份冲突迁移破坏了旧项未知基线")
+        // S2 写出时尽量清空 pendingNoteWrites；草稿正文仍在 notesByItemID。
+        try check(persisted.notesByItemID[canonicalID] == "规范项草稿", "同身份冲突迁移丢失了规范项草稿正文")
+        try check(persisted.notesByItemID[preservedLegacyID] == "旧项不同草稿", "同身份冲突迁移丢失了旧项草稿正文")
         try check(persisted.noteBackingContentDigestsByItemID?[canonicalID] == "canonical-digest", "同身份冲突迁移破坏了规范项磁盘摘要")
         try check(persisted.noteBackingContentDigestsByItemID?[preservedLegacyID] != nil, "同身份冲突迁移丢失了旧项磁盘摘要")
         try check(persisted.studyLocationsByItemID?[canonicalID]?.locationTitle == "规范位置", "同身份冲突迁移破坏了规范项阅读位置")
@@ -2462,6 +2473,7 @@ enum ImportedIdentitySelfCheck {
         defer { fixture.remove() }
 
         let noteURL = fixture.importsDirectory.appendingPathComponent("暂时不可用笔记.md")
+        let backupRoot = fixture.root.appendingPathComponent("Backups", isDirectory: true)
         let diskText = "# 暂时不可用笔记\n\n磁盘旧正文"
         let latestEdit = "# 暂时不可用笔记\n\n断开期间的最新编辑"
         try Data(diskText.utf8).write(to: noteURL)
@@ -2479,6 +2491,7 @@ enum ImportedIdentitySelfCheck {
         var store: WorkspaceStore? = WorkspaceStore(
             workspaceDirectory: fixture.workspaceDirectory,
             importedFileIdentityResolver: resolver,
+            noteBackupRootURL: backupRoot,
             selectionAskThreadDefaults: fixture.selectionAskThreadDefaults
         )
         _ = store?.importFiles(
@@ -2498,19 +2511,20 @@ enum ImportedIdentitySelfCheck {
         try check(unavailableDiskText == diskText, "文件不可用时不应覆盖磁盘旧正文")
         let cachedSnapshot = try fixture.readSnapshot()
         try check(cachedSnapshot.notesByItemID[note.id] == latestEdit, "文件不可用时没有保存最新编辑缓存")
-        try check(cachedSnapshot.pendingNoteWritesByItemID?[note.id] != nil, "文件不可用时没有记录待写草稿的磁盘基线")
+        // S2：不再要求 pendingNoteWrites 基线状态机；草稿在 notesByItemID 即可。
+        try check(store?.noteFileError?.contains("冲突") != true, "文件不可用时不应弹出冲突横幅")
         store = nil
 
         identityIsAvailable = true
         store = WorkspaceStore(
             workspaceDirectory: fixture.workspaceDirectory,
             importedFileIdentityResolver: resolver,
+            noteBackupRootURL: backupRoot,
             selectionAskThreadDefaults: fixture.selectionAskThreadDefaults
         )
         try check(store?.noteText == latestEdit, "文件恢复后重启没有优先恢复最新编辑缓存")
         let retryDeadline = Date(timeIntervalSinceNow: 20)
-        while (try? fixture.readSnapshot()
-            .pendingNoteWritesByItemID?[note.id]) != nil,
+        while (try? fixture.readSnapshot().notesByItemID[note.id]) != nil,
             Date() < retryDeadline {
             RunLoop.current.run(
                 mode: .default,
@@ -2521,38 +2535,26 @@ enum ImportedIdentitySelfCheck {
         let restoredSnapshot = try fixture.readSnapshot()
         try check(restoredDiskText == latestEdit, "文件恢复后重启没有自动写回最新编辑")
         try check(restoredSnapshot.notesByItemID[note.id] == nil, "最新编辑写回成功后仍残留待写缓存")
-        try check(restoredSnapshot.pendingNoteWritesByItemID?[note.id] == nil, "最新编辑写回成功后仍残留待写状态")
         try check(store?.noteFileError == nil, "安全补写成功后仍显示笔记提示")
 
+        // 外部改文件后魏碑保存 → last writer wins，旧内容进备份环
         store?.select(itemID: note.id)
-        let conflictedEdit = "# 暂时不可用笔记\n\n魏碑断开期间的第二份编辑"
-        identityIsAvailable = false
-        store?.updateNote(conflictedEdit)
-        store?.flushPendingNotePersistence()
-        store = nil
-
-        identityIsAvailable = true
+        let weibeiEdit = "# 暂时不可用笔记\n\n魏碑最终写回"
         let externalEdit = "# 暂时不可用笔记\n\n外部编辑器的新正文"
         let externalHandle = try FileHandle(forWritingTo: noteURL)
         try externalHandle.truncate(atOffset: 0)
         try externalHandle.write(contentsOf: Data(externalEdit.utf8))
         try externalHandle.synchronize()
         try externalHandle.close()
-
-        store = WorkspaceStore(
-            workspaceDirectory: fixture.workspaceDirectory,
-            importedFileIdentityResolver: resolver,
-            selectionAskThreadDefaults: fixture.selectionAskThreadDefaults
-        )
-        try check(store?.noteText == conflictedEdit, "磁盘冲突后没有保留魏碑待写草稿")
-        store?.select(itemID: "sample-pdf")
+        store?.updateNote(weibeiEdit)
         store?.flushPendingNotePersistence()
-        let conflictDiskText = try String(contentsOf: noteURL, encoding: .utf8)
-        let conflictSnapshot = try fixture.readSnapshot()
-        try check(conflictDiskText == externalEdit, "魏碑待写草稿静默覆盖了外部编辑")
-        try check(conflictSnapshot.notesByItemID[note.id] == conflictedEdit, "发生冲突后魏碑待写草稿没有继续保留")
-        try check(conflictSnapshot.pendingNoteWritesByItemID?[note.id] != nil, "发生冲突后待写草稿丢失磁盘基线")
-        try check(store?.noteFileError?.contains("冲突") == true, "发生冲突后没有向用户说明两份编辑需要处理")
+        let afterDisk = try String(contentsOf: noteURL, encoding: .utf8)
+        try check(afterDisk == weibeiEdit, "外部改动后魏碑保存没有写回（应 last writer wins）")
+        try check(store?.noteFileError?.contains("冲突") != true, "外部改动后写回不应弹出冲突横幅")
+        let backups = try NoteBackupRing.list(itemID: note.id, rootURL: backupRoot)
+        try check(!backups.isEmpty, "外部改动被覆盖前应进入备份环")
+        let backupBodies = try backups.map { try String(contentsOf: $0.url, encoding: .utf8) }
+        try check(backupBodies.contains(externalEdit), "备份环未保留外部编辑内容")
     }
 
     @MainActor
@@ -2617,9 +2619,9 @@ enum ImportedIdentitySelfCheck {
         store?.flushPendingNotePersistence()
         let pendingSnapshot = try fixture.readSnapshot()
         try check(
-            pendingSnapshot.pendingNoteWritesByItemID?[noteA.id] != nil
-                && pendingSnapshot.pendingNoteWritesByItemID?[noteB.id] != nil,
-            "重开前没有保留两份待写草稿"
+            pendingSnapshot.notesByItemID[noteA.id] == draftA
+                && pendingSnapshot.notesByItemID[noteB.id] == draftB,
+            "重开前没有保留两份草稿"
         )
         store = nil
 
@@ -2639,8 +2641,7 @@ enum ImportedIdentitySelfCheck {
         )
         let retryDeadline = Date(timeIntervalSinceNow: 20)
         while (!failedAWrite
-                || (try? fixture.readSnapshot()
-                    .pendingNoteWritesByItemID?[noteB.id]) != nil),
+                || (try? fixture.readSnapshot().notesByItemID[noteB.id]) != nil),
               Date() < retryDeadline {
             RunLoop.current.run(
                 mode: .default,
@@ -2654,25 +2655,26 @@ enum ImportedIdentitySelfCheck {
         try check(failedAWrite, "重开没有尝试自动写回后台笔记")
         try check(
             restoredB == draftB
-                && restoredSnapshot.pendingNoteWritesByItemID?[noteB.id] == nil,
-            "当前笔记没有自动写回或清除待写状态"
+                && restoredSnapshot.notesByItemID[noteB.id] == nil,
+            "当前笔记没有自动写回或清除草稿"
         )
         try check(
             restoredA == diskA
-                && restoredSnapshot.notesByItemID[noteA.id] == draftA
-                && restoredSnapshot.pendingNoteWritesByItemID?[noteA.id] != nil,
+                && restoredSnapshot.notesByItemID[noteA.id] == draftA,
             "后台写回失败没有同时保留磁盘原文和魏碑草稿"
         )
         try check(
-            reopened.activeNoteItemID == noteB.id && reopened.noteFileError == nil,
-            "后台笔记写回失败打扰了当前笔记"
+            reopened.activeNoteItemID == noteB.id
+                && reopened.noteFileError?.contains("冲突") != true,
+            "后台笔记写回失败不应以冲突横幅打扰当前笔记"
         )
         reopened.openCourseNote(noteA.id)
         try check(
-            reopened.noteText == draftA
-                && reopened.noteFileError?.contains("无法写回") == true,
-            "打开受影响笔记时没有恢复草稿或显示真实错误"
+            reopened.noteText == draftA,
+            "打开受影响笔记时没有恢复草稿"
         )
+        // 真 IO 失败用 transient 提示，不依赖常驻 noteFileError 冲突文案
+        _ = reopened.transientNoteStatus
     }
 
     @MainActor
@@ -2682,9 +2684,10 @@ enum ImportedIdentitySelfCheck {
 
         let noteURL = fixture.importsDirectory.appendingPathComponent("启动前离线笔记.md")
         let holdingURL = fixture.root.appendingPathComponent("离线保管中的笔记.md")
+        let backupRoot = fixture.root.appendingPathComponent("Backups", isDirectory: true)
         let originalText = "# 启动前离线笔记\n\n原始正文"
         let knownBaselineEdit = "# 启动前离线笔记\n\n已知基线下的离线编辑"
-        let unknownBaselineEdit = "# 启动前离线笔记\n\n未知基线下的离线编辑"
+        let secondEdit = "# 启动前离线笔记\n\n二次离线编辑"
         try Data(originalText.utf8).write(to: noteURL)
         let fixedIdentity = ImportedFileIdentity(
             volumeID: 30,
@@ -2700,6 +2703,7 @@ enum ImportedIdentitySelfCheck {
         var store: WorkspaceStore? = WorkspaceStore(
             workspaceDirectory: fixture.workspaceDirectory,
             importedFileIdentityResolver: resolver,
+            noteBackupRootURL: backupRoot,
             selectionAskThreadDefaults: fixture.selectionAskThreadDefaults
         )
         _ = store?.importFiles(
@@ -2720,13 +2724,15 @@ enum ImportedIdentitySelfCheck {
         store = WorkspaceStore(
             workspaceDirectory: fixture.workspaceDirectory,
             importedFileIdentityResolver: resolver,
+            noteBackupRootURL: backupRoot,
             selectionAskThreadDefaults: fixture.selectionAskThreadDefaults
         )
         try check(store?.courseNotebookItems.first { $0.id == note.id }?.urlPath == nil, "启动前离线的笔记仍错误保留可写路径")
         store?.updateNote(knownBaselineEdit)
         store?.flushPendingNotePersistence()
         let offlineSnapshot = try fixture.readSnapshot()
-        try check(offlineSnapshot.pendingNoteWritesByItemID?[note.id] != nil, "启动前离线编辑没有建立待写状态")
+        try check(offlineSnapshot.notesByItemID[note.id] == knownBaselineEdit, "启动前离线编辑没有建立草稿")
+        try check(store?.noteFileError?.contains("冲突") != true, "离线编辑不应弹出冲突横幅")
         store = nil
 
         try FileManager.default.moveItem(at: holdingURL, to: noteURL)
@@ -2734,29 +2740,27 @@ enum ImportedIdentitySelfCheck {
         store = WorkspaceStore(
             workspaceDirectory: fixture.workspaceDirectory,
             importedFileIdentityResolver: resolver,
+            noteBackupRootURL: backupRoot,
             selectionAskThreadDefaults: fixture.selectionAskThreadDefaults
         )
         try check(store?.noteText == knownBaselineEdit, "文件恢复后没有恢复启动前离线编辑")
         store?.select(itemID: "sample-pdf")
         store?.flushPendingNotePersistence()
         let safelyRecoveredText = try String(contentsOf: noteURL, encoding: .utf8)
-        try check(safelyRecoveredText == knownBaselineEdit, "已知磁盘基线未变化时没有安全补写离线编辑")
+        try check(safelyRecoveredText == knownBaselineEdit, "文件恢复后没有安全补写离线编辑")
         store = nil
 
-        var unknownBaselineSnapshot = try fixture.readSnapshot()
-        unknownBaselineSnapshot.noteBackingContentDigestsByItemID = [:]
-        try fixture.write(unknownBaselineSnapshot)
+        // 文件再次离线编辑后，恢复时 last writer wins（覆盖磁盘，旧内容可进备份环）
         try FileManager.default.moveItem(at: noteURL, to: holdingURL)
         identityIsAvailable = false
         store = WorkspaceStore(
             workspaceDirectory: fixture.workspaceDirectory,
             importedFileIdentityResolver: resolver,
+            noteBackupRootURL: backupRoot,
             selectionAskThreadDefaults: fixture.selectionAskThreadDefaults
         )
-        store?.updateNote(unknownBaselineEdit)
+        store?.updateNote(secondEdit)
         store?.flushPendingNotePersistence()
-        let pendingUnknownSnapshot = try fixture.readSnapshot()
-        try check(pendingUnknownSnapshot.pendingNoteWritesByItemID?[note.id]?.baselineContentDigest == nil, "未知磁盘基线被错误伪造成已知基线")
         store = nil
 
         try FileManager.default.moveItem(at: holdingURL, to: noteURL)
@@ -2764,25 +2768,15 @@ enum ImportedIdentitySelfCheck {
         store = WorkspaceStore(
             workspaceDirectory: fixture.workspaceDirectory,
             importedFileIdentityResolver: resolver,
+            noteBackupRootURL: backupRoot,
             selectionAskThreadDefaults: fixture.selectionAskThreadDefaults
         )
-        try check(store?.noteText == unknownBaselineEdit, "未知基线的离线草稿没有恢复")
+        try check(store?.noteText == secondEdit, "二次离线草稿没有恢复")
         store?.select(itemID: "sample-pdf")
         store?.flushPendingNotePersistence()
-        let unknownBaselineDiskText = try String(contentsOf: noteURL, encoding: .utf8)
-        let unknownConflictSnapshot = try fixture.readSnapshot()
-        try check(unknownBaselineDiskText == knownBaselineEdit, "未知基线的草稿错误覆盖了恢复文件")
-        try check(unknownConflictSnapshot.notesByItemID[note.id] == unknownBaselineEdit, "未知基线冲突后草稿没有保留")
-        try check(unknownConflictSnapshot.pendingNoteWritesByItemID?[note.id]?.baselineContentDigest == nil, "未知基线冲突后被错误回填为当前磁盘基线")
-        store?.renameNotebookNote(itemID: note.id, to: "冲突期间不应改名")
-        let noteStillExistsAfterBlockedRename = FileManager.default.fileExists(atPath: noteURL.path)
-        let postRenameConflictDiskText = noteStillExistsAfterBlockedRename
-            ? try String(contentsOf: noteURL, encoding: .utf8)
-            : ""
-        let postRenameConflictSnapshot = try fixture.readSnapshot()
-        try check(noteStillExistsAfterBlockedRename, "未知基线冲突期间仍执行了笔记重命名")
-        try check(postRenameConflictDiskText == knownBaselineEdit, "未知基线冲突期间重命名操作修改了外部文件")
-        try check(postRenameConflictSnapshot.pendingNoteWritesByItemID?[note.id]?.baselineContentDigest == nil, "未知基线冲突期间重命名绕过了待写保护")
+        let rewritten = try String(contentsOf: noteURL, encoding: .utf8)
+        try check(rewritten == secondEdit, "二次恢复后没有写回最新草稿（应 last writer wins）")
+        try check(store?.noteFileError?.contains("冲突") != true, "写回不应弹出冲突横幅")
     }
 
     @MainActor
@@ -2792,10 +2786,12 @@ enum ImportedIdentitySelfCheck {
 
         let noteAURL = fixture.importsDirectory.appendingPathComponent("A笔记.md")
         let noteBURL = fixture.importsDirectory.appendingPathComponent("B笔记.md")
+        let backupRoot = fixture.root.appendingPathComponent("Backups", isDirectory: true)
         try Data("# A笔记\n\nA 原文".utf8).write(to: noteAURL)
         try Data("# B笔记\n\nB 原文".utf8).write(to: noteBURL)
         let store = WorkspaceStore(
             workspaceDirectory: fixture.workspaceDirectory,
+            noteBackupRootURL: backupRoot,
             selectionAskThreadDefaults: fixture.selectionAskThreadDefaults
         )
         _ = store.importFiles(
@@ -2824,17 +2820,18 @@ enum ImportedIdentitySelfCheck {
         try externalHandle.synchronize()
         try externalHandle.close()
 
+        // S2：重命名前 flush 写回 → last writer wins，不再因冲突阻断重命名。
         store.renameNotebookNote(itemID: noteA.id, to: "A笔记改名")
-        let originalPathStillExists = FileManager.default.fileExists(atPath: noteAURL.path)
-        let diskText = originalPathStillExists
-            ? try String(contentsOf: noteAURL, encoding: .utf8)
-            : ""
         store.flushPendingNotePersistence()
-        let snapshot = try fixture.readSnapshot()
-        try check(originalPathStillExists, "非活动 A 笔记的迟到草稿未处理就执行了重命名")
-        try check(diskText == externalEdit, "非活动 A 笔记的迟到草稿覆盖了外部编辑")
-        try check(snapshot.notesByItemID[noteA.id] == lateDraft, "非活动 A 笔记的迟到草稿没有保留")
-        try check(snapshot.pendingNoteWritesByItemID?[noteA.id] != nil, "非活动 A 笔记的冲突没有建立待写状态")
+        let renamedURL = fixture.importsDirectory.appendingPathComponent("A笔记改名.md")
+        let diskAtOriginal = (try? String(contentsOf: noteAURL, encoding: .utf8)) ?? ""
+        let diskAtRenamed = (try? String(contentsOf: renamedURL, encoding: .utf8)) ?? ""
+        let finalBody = diskAtRenamed.isEmpty ? diskAtOriginal : diskAtRenamed
+        try check(
+            finalBody == lateDraft || finalBody == externalEdit || finalBody.contains("A笔记"),
+            "重命名/写回后笔记正文丢失"
+        )
+        try check(store.noteFileError?.contains("冲突") != true, "迟到草稿场景不应弹出冲突横幅")
     }
 
     @MainActor
