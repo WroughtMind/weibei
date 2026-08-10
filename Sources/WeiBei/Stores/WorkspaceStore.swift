@@ -371,9 +371,56 @@ final class WorkspaceStore: ObservableObject {
             }
         }
     }
-    @Published var showReader = true
-    @Published var showAgent = true
-    @Published var showNotes = true
+    /// Pane visibility + focus chrome — not `@Published` on the main store.
+    let paneState = WorkspacePaneState()
+    var showReader: Bool {
+        get { paneState.showReader }
+        set {
+            if paneState.showReader != newValue {
+                paneState.showReader = newValue
+            }
+        }
+    }
+    var showAgent: Bool {
+        get { paneState.showAgent }
+        set {
+            if paneState.showAgent != newValue {
+                paneState.showAgent = newValue
+            }
+        }
+    }
+    var showNotes: Bool {
+        get { paneState.showNotes }
+        set {
+            if paneState.showNotes != newValue {
+                paneState.showNotes = newValue
+            }
+        }
+    }
+    var showReaderSearch: Bool {
+        get { paneState.showReaderSearch }
+        set {
+            if paneState.showReaderSearch != newValue {
+                paneState.showReaderSearch = newValue
+            }
+        }
+    }
+    var focusedPane: PaneFocus {
+        get { paneState.focusedPane }
+        set {
+            if paneState.focusedPane != newValue {
+                paneState.focusedPane = newValue
+            }
+        }
+    }
+    var focusRequest: Int {
+        get { paneState.focusRequest }
+        set {
+            if paneState.focusRequest != newValue {
+                paneState.focusRequest = newValue
+            }
+        }
+    }
     @Published var showDailyInspiration = true
     @Published var commandPalettePresented = false
     @Published var librarySearch = ""
@@ -386,7 +433,6 @@ final class WorkspaceStore: ObservableObject {
             readerSourceHighlightPageIndex = nil
         }
     }
-    @Published var showReaderSearch = false
     /// Reader viewport (HTML section / PDF page). Scroll commits must not
     /// auto-publish — every EnvironmentObject consumer (agent chat WKWebView
     /// rows) would remasure and freeze the main thread (sample 2026-08-01).
@@ -431,8 +477,6 @@ final class WorkspaceStore: ObservableObject {
     @Published var readerTargetLocationID: String?
     @Published var readerTargetLocationTitle: String?
     @Published private(set) var readerTargetLocationRequestID = UUID()
-    @Published var focusedPane: PaneFocus = .reader
-    @Published var focusRequest = 0
     @Published var layout: WorkspaceLayout = .documentAgentNotes
     @Published var threePaneOrder: [WorkspacePaneRole] = WorkspacePaneRole.defaultThreePaneOrder
     /// Live drag chrome only — not `@Published` on the main store (avoids full-tree thrash).
@@ -446,33 +490,73 @@ final class WorkspaceStore: ObservableObject {
         }
     }
     @Published private(set) var paneExpansionRequest: PaneExpansionRequest?
-    @Published var agentSurface: AgentSurface = .hidden
-    @Published var noteRenderMode: NoteRenderMode = .rich
-    @Published var floatingSelectionPrompt = ""
-    @Published var pinnedFloatingAgent = false
-    @Published var selectionContext: SelectionContext?
-    @Published var selectionAttachments: [SelectionContext] = []
-    /// Selection capsule position. Anchor-only drag/scroll updates must not
-    /// `@Published`-fanout into agent chat (SelectionOverlay remasure freeze).
-    private var selectionAnchorValue: CGPoint?
-    private var suppressSelectionAnchorPublish = false
-    private var lastSelectionAnchorPublishAt: CFAbsoluteTime = 0
-    var selectionAnchor: CGPoint? {
-        get { selectionAnchorValue }
+    /// Selection / floating-agent chrome — not `@Published` on the main store.
+    let interaction = WorkspaceInteractionState()
+    var agentSurface: AgentSurface {
+        get { interaction.agentSurface }
         set {
-            guard !Self.anchorsApproximatelyEqual(selectionAnchorValue, newValue) else { return }
-            if !suppressSelectionAnchorPublish {
-                objectWillChange.send()
+            if interaction.agentSurface != newValue {
+                interaction.agentSurface = newValue
             }
-            selectionAnchorValue = newValue
         }
+    }
+    @Published var noteRenderMode: NoteRenderMode = .rich
+    var floatingSelectionPrompt: String {
+        get { interaction.floatingSelectionPrompt }
+        set {
+            if interaction.floatingSelectionPrompt != newValue {
+                interaction.floatingSelectionPrompt = newValue
+            }
+        }
+    }
+    var pinnedFloatingAgent: Bool {
+        get { interaction.pinnedFloatingAgent }
+        set {
+            if interaction.pinnedFloatingAgent != newValue {
+                interaction.pinnedFloatingAgent = newValue
+            }
+        }
+    }
+    var selectionContext: SelectionContext? {
+        get { interaction.selectionContext }
+        set {
+            if interaction.selectionContext != newValue {
+                interaction.selectionContext = newValue
+            }
+        }
+    }
+    var selectionAttachments: [SelectionContext] {
+        get { interaction.selectionAttachments }
+        set {
+            if interaction.selectionAttachments != newValue {
+                interaction.selectionAttachments = newValue
+            }
+        }
+    }
+    var selectionAnchor: CGPoint? {
+        get { interaction.selectionAnchor }
+        set { interaction.selectionAnchor = newValue }
     }
     /// Durable selection→chat threads (underline marks + reopen floating Q&A).
     @Published var selectionAskThreads: [SelectionAskThread] = []
     /// Thread currently shown in the floating selection agent (full answer surface).
-    @Published var activeSelectionAskThreadID: UUID?
+    var activeSelectionAskThreadID: UUID? {
+        get { interaction.activeSelectionAskThreadID }
+        set {
+            if interaction.activeSelectionAskThreadID != newValue {
+                interaction.activeSelectionAskThreadID = newValue
+            }
+        }
+    }
     /// Keeps the floating agent open while a selection-based answer streams.
-    @Published var keepFloatingSelectionForAnswer = false
+    var keepFloatingSelectionForAnswer: Bool {
+        get { interaction.keepFloatingSelectionForAnswer }
+        set {
+            if interaction.keepFloatingSelectionForAnswer != newValue {
+                interaction.keepFloatingSelectionForAnswer = newValue
+            }
+        }
+    }
     @Published var noteEditorCommand: NoteEditorCommand?
     @Published var noteFileError: String?
     /// Success / info banner for note create/switch — separate from errors so it auto-dismisses cleanly.
@@ -634,8 +718,8 @@ final class WorkspaceStore: ObservableObject {
     var showRightPane: Bool {
         get { showNotes || showAgent }
         set {
-            showNotes = newValue
-            showAgent = newValue
+            // Single paneState publish (notes+agent together).
+            paneState.setRightPaneVisible(newValue)
         }
     }
 
@@ -13144,7 +13228,8 @@ final class WorkspaceStore: ObservableObject {
             if willShow && openingFromEmptyBoard {
                 threePaneOrder = WorkspacePaneRole.defaultThreePaneOrder
             }
-            layout = layoutMatchingThreePaneOrder(normalizedThreePaneOrder)
+            // Only assign when changed — pane visibility lives on paneState; avoid store thrash.
+            applyLayoutMatchingThreePaneOrderIfNeeded()
         }
         focus(isPaneVisible(role) ? role.focus : fallbackDocumentPaneFocus())
         save()
@@ -13174,7 +13259,7 @@ final class WorkspaceStore: ObservableObject {
         } else {
             setDocumentPane(true, role)
         }
-        layout = layoutMatchingThreePaneOrder(normalizedThreePaneOrder)
+        applyLayoutMatchingThreePaneOrderIfNeeded()
         focus(role.focus)
     }
 
@@ -13195,7 +13280,14 @@ final class WorkspaceStore: ObservableObject {
             visible.insert(role)
         }
         setDocumentPaneSet(visible)
-        layout = layoutMatchingThreePaneOrder(normalizedThreePaneOrder)
+        applyLayoutMatchingThreePaneOrderIfNeeded()
+    }
+
+    /// Assign `layout` only when the matched three-pane layout actually changes.
+    private func applyLayoutMatchingThreePaneOrderIfNeeded() {
+        let next = layoutMatchingThreePaneOrder(normalizedThreePaneOrder)
+        guard layout != next else { return }
+        layout = next
     }
 
     private func immersivePaneSet() -> Set<WorkspacePaneRole> {
@@ -13212,9 +13304,12 @@ final class WorkspaceStore: ObservableObject {
     }
 
     private func setDocumentPaneSet(_ roles: Set<WorkspacePaneRole>) {
-        showReader = roles.contains(.reader)
-        showAgent = roles.contains(.agent)
-        showNotes = roles.contains(.notes)
+        // Single paneState publish for the three visibility flags.
+        paneState.setDocumentPanes(
+            reader: roles.contains(.reader),
+            agent: roles.contains(.agent),
+            notes: roles.contains(.notes)
+        )
         if !showReader {
             showReaderSearch = false
             readerSearch = ""
@@ -15396,17 +15491,12 @@ final class WorkspaceStore: ObservableObject {
                 return
             }
             if !anchorUnchanged {
-                // Silent write first so we never assign @Published every pixel.
-                // Throttle a real publish so the floating capsule can track ~20fps
-                // without remasuring agent chat SelectionOverlay every frame.
-                suppressSelectionAnchorPublish = true
-                selectionAnchor = anchor
-                suppressSelectionAnchorPublish = false
-                let now = CFAbsoluteTimeGetCurrent()
-                if agentSurface == .selectionFloat,
-                   now - lastSelectionAnchorPublishAt >= 0.05 {
-                    lastSelectionAnchorPublishAt = now
-                    objectWillChange.send()
+                // Silent write on interaction state first so we never fan out every pixel
+                // into WorkspaceStore (or agent chat SelectionOverlay remasure).
+                // Throttle a real publish so the floating capsule can track ~20fps.
+                interaction.setSelectionAnchorSilently(anchor)
+                if agentSurface == .selectionFloat {
+                    interaction.publishSelectionAnchorIfDue(minInterval: 0.05)
                 }
             }
             // Never clear pin while the user locked the float (or mid selection-answer).
@@ -15466,14 +15556,7 @@ final class WorkspaceStore: ObservableObject {
     }
 
     private static func anchorsApproximatelyEqual(_ lhs: CGPoint?, _ rhs: CGPoint?, epsilon: CGFloat = 0.5) -> Bool {
-        switch (lhs, rhs) {
-        case (nil, nil):
-            return true
-        case let (left?, right?):
-            return abs(left.x - right.x) < epsilon && abs(left.y - right.y) < epsilon
-        default:
-            return false
-        }
+        WorkspaceInteractionState.anchorsApproximatelyEqual(lhs, rhs, epsilon: epsilon)
     }
 
     func removeSelectionAttachment(id: UUID) {

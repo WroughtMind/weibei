@@ -3,6 +3,7 @@ import WeiBeiCore
 
 struct SidebarView: View {
     @EnvironmentObject private var store: WorkspaceStore
+    @EnvironmentObject private var paneState: WorkspacePaneState
     @FocusState private var librarySearchFocused: Bool
     @State private var courseEntryPresentation: CourseProjectEntryPresentation?
     @State private var courseToRename: Course?
@@ -83,11 +84,11 @@ struct SidebarView: View {
             .background(WeiBeiTheme.paperRaised.opacity(0.72))
         }
         .weibeiPanel()
-        .onChange(of: store.focusRequest) { _, _ in
-            librarySearchFocused = store.focusedPane == .library
+        .onChange(of: paneState.focusRequest) { _, _ in
+            librarySearchFocused = paneState.focusedPane == .library
         }
         .onAppear {
-            librarySearchFocused = store.focusedPane == .library
+            librarySearchFocused = paneState.focusedPane == .library
         }
         .sheet(item: $courseEntryPresentation) { presentation in
             CourseProjectEntrySheet(

@@ -1,3 +1,5 @@
+import Combine
+import CoreGraphics
 import Foundation
 @testable import WeiBei
 import WeiBeiCore
@@ -6,6 +8,7 @@ enum ImportedIdentitySelfCheck {
     @MainActor
     static func run() throws {
         try launchAndPrimaryEntriesStartBlank()
+        try paneAndInteractionStateDoNotInvalidateWorkspaceStore()
         try agentFailureMessagesExposeOnlyUserFacingDetails()
         try storageModelsDecodeLegacySnapshotsAndRoundTrip()
         try legacyPathSnapshotMigratesItsEntireRelationshipGraph()
@@ -247,6 +250,62 @@ enum ImportedIdentitySelfCheck {
             store.selectedMaterialItem == nil
                 && store.activeNoteItem?.id == note.id,
             "文稿内容页不能稳定返回文稿列表"
+        )
+    }
+
+    /// Phase 3 红线：pane / interaction 子对象变更绝不转发 WorkspaceStore.objectWillChange。
+    @MainActor
+    private static func paneAndInteractionStateDoNotInvalidateWorkspaceStore() throws {
+        let fixture = try WorkspaceFixture(name: "pane-interaction-isolation")
+        defer { fixture.remove() }
+        let store = WorkspaceStore(
+            workspaceDirectory: fixture.workspaceDirectory,
+            selectionAskThreadDefaults: fixture.selectionAskThreadDefaults,
+            startsAtBlankEntries: true
+        )
+
+        var workspaceChanges = 0
+        var paneChanges = 0
+        var interactionChanges = 0
+        let workspaceObservation = store.objectWillChange.sink { workspaceChanges += 1 }
+        let paneObservation = store.paneState.objectWillChange.sink { paneChanges += 1 }
+        let interactionObservation = store.interaction.objectWillChange.sink { interactionChanges += 1 }
+        defer {
+            withExtendedLifetime((workspaceObservation, paneObservation, interactionObservation)) {}
+        }
+
+        store.showReader = false
+        store.showAgent = true
+        store.showNotes = false
+        store.showRightPane = true
+        store.focusedPane = .agent
+        store.focusRequest += 1
+        store.showReaderSearch = true
+
+        store.selectionContext = SelectionContext(
+            text: "隔离自检选区",
+            source: .document,
+            ownerTitle: "资料"
+        )
+        store.pinnedFloatingAgent = true
+        store.keepFloatingSelectionForAnswer = true
+        store.agentSurface = .selectionFloat
+        store.selectionAnchor = CGPoint(x: 8, y: 16)
+
+        try check(workspaceChanges == 0, "pane/interaction 变更错误触发了 WorkspaceStore.objectWillChange")
+        try check(paneChanges > 0, "paneState 未发布可见性/焦点变更")
+        try check(interactionChanges > 0, "interaction 未发布选区/浮层变更")
+
+        // showRightPane 必须单次发布（notes+agent 批量写入）。
+        let beforeRight = paneChanges
+        store.showRightPane = false
+        try check(
+            paneChanges == beforeRight + 1,
+            "showRightPane 未收敛为单次 paneState 发布（实际 +\(paneChanges - beforeRight)）"
+        )
+        try check(
+            !store.showAgent && !store.showNotes && !store.showRightPane,
+            "showRightPane=false 后 notes/agent 未同时关闭"
         )
     }
 
