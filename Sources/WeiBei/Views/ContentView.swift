@@ -344,10 +344,12 @@ private struct UnifiedTopBarView: View {
                 .frame(width: 8)
         }
         .foregroundStyle(secondaryText)
+        .offset(y: isFullScreen ? 0 : -3)
         .frame(height: barHeight)
         .background(topBarBackground)
         .overlay {
             paneToggleCluster
+                .offset(y: isFullScreen ? 0 : -3)
         }
         .opacity(appeared ? 1 : 0)
         .offset(y: appeared ? 0 : -5)
