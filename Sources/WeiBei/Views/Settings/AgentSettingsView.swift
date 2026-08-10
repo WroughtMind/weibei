@@ -230,6 +230,10 @@ extension SettingsView {
 
     private var agentAPIKeyAuth: some View {
         settingsRow(title: store.ui("密钥", "API Key")) {
+            let hasStoredCredential = oauthService.isConfigured(
+                providerID: activePiProviderID,
+                type: .apiKey
+            )
             VStack(alignment: .trailing, spacing: 8) {
                 SecureField(
                     "",
@@ -247,10 +251,7 @@ extension SettingsView {
                 .onSubmit { saveActiveAPIKey() }
 
                 HStack(spacing: 8) {
-                    if oauthService.isConfigured(
-                        providerID: activePiProviderID,
-                        type: .apiKey
-                    ) {
+                    if activeAPICredentialIsConfigured {
                         settingsPill(
                             title: store.ui("已保存在内置 Pi", "Stored in embedded Pi"),
                             icon: "checkmark.seal.fill",
@@ -261,19 +262,13 @@ extension SettingsView {
                         Button(store.ui("保存", "Save")) { saveActiveAPIKey() }
                             .buttonStyle(WeiBeiTextActionButtonStyle(active: !oauthService.isLoggingIn))
                     }
-                    if !oauthService.isConfigured(
-                        providerID: activePiProviderID,
-                        type: .apiKey
-                    ) {
+                    if !activeAPICredentialIsConfigured {
                         Button(store.ui("由内置 Pi 配置", "Configure with embedded Pi")) {
                             startGuidedAPIConfiguration()
                         }
                         .buttonStyle(WeiBeiTextActionButtonStyle(active: !oauthService.isLoggingIn))
                     }
-                    if oauthService.isConfigured(
-                        providerID: activePiProviderID,
-                        type: .apiKey
-                    ) {
+                    if hasStoredCredential {
                         Button(store.ui("清除", "Clear")) { clearActiveAPICredential() }
                             .buttonStyle(WeiBeiTextActionButtonStyle())
                     }
@@ -443,12 +438,17 @@ extension SettingsView {
     private var agentStatusReminder: some View {
         if !oauthLinked,
                   activeAgentAuthMethod != .subscription,
-                  !oauthService.isConfigured(
-                      providerID: activePiProviderID,
-                      type: .apiKey
-                  ),
+                  !activeAPICredentialIsConfigured,
                   apiKeyDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            if hasLegacyEndpointCredential {
+            if hasStaleAzureCredential {
+                settingsNote(
+                    store.ui(
+                        "Azure 服务地址已变更，或旧密钥尚未绑定地址。为避免把旧密钥发给新地址，请确认当前地址后重新输入一次密钥。",
+                        "The Azure endpoint changed, or the stored key predates endpoint binding. Confirm the current endpoint and enter the key again."
+                    ),
+                    icon: "exclamationmark.triangle"
+                )
+            } else if hasLegacyEndpointCredential {
                 settingsNote(
                     store.ui(
                         "检测到旧版通用密钥。为避免把它发给错误服务，魏碑不会自动搬移；请为当前地址重新输入一次密钥。",
@@ -473,6 +473,32 @@ extension SettingsView {
             providerID: store.agentProviderID.piProviderName,
             type: .apiKey
         )
+    }
+
+    private var activeAPICredentialIsConfigured: Bool {
+        let isStored = oauthService.isConfigured(
+            providerID: activePiProviderID,
+            type: .apiKey
+        )
+        guard store.agentProviderID == .azureOpenAI else { return isStored }
+        guard let endpoint = try? AgentProviderEndpoint(
+            provider: .azureOpenAI,
+            baseURL: store.agentBaseURL
+        ) else { return false }
+        return isStored && oauthService.catalog?.credentials.contains(where: {
+            $0.providerId == AgentProviderID.azureOpenAI.piProviderName
+                && $0.type == .apiKey
+                && $0.boundEndpoint == endpoint.baseURL
+        }) == true
+    }
+
+    private var hasStaleAzureCredential: Bool {
+        store.agentProviderID == .azureOpenAI
+            && oauthService.isConfigured(
+                providerID: AgentProviderID.azureOpenAI.piProviderName,
+                type: .apiKey
+            )
+            && !activeAPICredentialIsConfigured
     }
 
     private var oauthLinked: Bool {

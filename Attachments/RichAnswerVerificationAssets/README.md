@@ -8,4 +8,4 @@
 - `ATTRIBUTION.md`：署名文本和使用注意。
 - `COLOR_CONTRAST_WEIBEI_SCREENSHOT_SPEC.md`：颜色对比题必须使用魏碑自身可复现界面截图的采样规范。
 
-体积边界：超过约 15MB 或长边超过 4000px 的原件只在 `<temporary-directory>/weibei-rich-answer-source-assets/` 下载和哈希核验，仓库只保存长边 2400–3200px 的高质量衍生图。
+体积边界：超过约 15MB 或长边超过 4000px 的原件只在 `/private/tmp/weibei-rich-answer-source-assets/` 下载和哈希核验，仓库只保存长边 2400–3200px 的高质量衍生图。

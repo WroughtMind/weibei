@@ -10,7 +10,7 @@
 ## 2. 生成命令
 
 ```bash
-# 在仓库根目录执行
+cd /Users/changfenhuang/.codex/worktrees/rich-answer-protocol/魏碑
 node Prototypes/RichAnswerEvidenceViewer/generate-offline-evidence-package.mjs \
   --run-dir Prototypes/RichAnswerEvidenceViewer/fixtures/demo-run \
   --output Prototypes/RichAnswerEvidenceViewer/out/demo-offline-viewer \

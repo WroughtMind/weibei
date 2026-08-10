@@ -491,6 +491,12 @@ enum RichAnswerEvidencePackageBuilder {
                 == "<temporary-directory>/private-note.md",
               sanitizePublicArtifactText("file:///private/tmp/private-note.md")
                 == "<temporary-directory>/private-note.md",
+              sanitizePublicArtifactText("artifact=/Volumes/ReviewDrive/run/output.json")
+                == "artifact=<local-path>",
+              sanitizePublicArtifactText("file:///Volumes/Review%20Drive/run/output.json")
+                == "<local-path>",
+              sanitizePublicArtifactText(#"C:\build\private\output.json"#)
+                == "<local-path>",
               !sanitizePublicArtifactText(
                 FileManager.default.homeDirectoryForCurrentUser
                     .appendingPathComponent("private-note.md").path
@@ -1352,6 +1358,9 @@ enum RichAnswerEvidencePackageBuilder {
             (#"(?<![A-Za-z0-9:/])/home/[^/\s\"'`]+"#, "<user-home>"),
             (#"(?i)[A-Z]:\\Users\\[^\\/\s\"'`]+"#, "<user-home>"),
             (#"(?:<user-home>[\\/])?\.codex[\\/](?:worktrees|visualizations)[\\/][^\s\"'`]+"#, "<local-evidence>"),
+            (#"(?i)file:///[^\s\"'`<>()\[\]{},;]+"#, "<local-path>"),
+            (#"(?<![A-Za-z0-9:/>])/(?!/)[^\s\"'`<>()\[\]{},;]+"#, "<local-path>"),
+            (#"(?i)(?<![A-Za-z0-9])[A-Z]:[\\/][^\s\"'`<>()\[\]{},;]+"#, "<local-path>"),
         ]
         for (pattern, replacement) in patterns {
             guard let expression = try? NSRegularExpression(pattern: pattern) else { continue }

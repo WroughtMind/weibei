@@ -2,7 +2,7 @@
 
 **Date:** 2026-07-19  
 **Branch:** `codex/release-1.0-integration`  
-**Worktree:** `<repo-root>`
+**Worktree:** `/Users/changfenhuang/Documents/魏碑-release-1.0`  
 **Base:** course `631b2dcc` + rich answer `91eb854d` integrated  
 
 **Status:** `READY_FOR_PRE_RELEASE_REVIEW`
@@ -83,7 +83,7 @@ Not done here (explicitly deferred): final LICENSE, privacy/NOTICE legal copy, D
 
 ```
 codex/release-1.0-integration
-worktree: <repo-root>
+worktree: /Users/changfenhuang/Documents/魏碑-release-1.0
 ```
 
 Do **not** push or merge without explicit release instruction.

@@ -1,9 +1,9 @@
 # Content Rail Design QA
 
-- Source visual truth: `<temporary-directory>/codex-clipboard-reference.png`
-- Light implementation screenshot: `<temporary-directory>/weibei-wave-qa-351.png`
-- Dark implementation screenshot: `<temporary-directory>/weibei-wave-dark-qa-352.png`
-- Focused comparison: `<temporary-directory>/weibei-content-rail-comparison-final.png`
+- Source visual truth: `/var/folders/yp/wx87z0l97wj89_yj8nw7_ptm0000gn/T/codex-clipboard-f9bffc1d-eecd-440f-9c92-ed91b8df9cc3.png`
+- Light implementation screenshot: `/private/tmp/weibei-wave-qa-351.png`
+- Dark implementation screenshot: `/private/tmp/weibei-wave-dark-qa-352.png`
+- Focused comparison: `/private/tmp/weibei-content-rail-comparison-final.png`
 - Viewport: 2560 x 1640 app capture; focused comparison normalized to 536 x 310 per side
 - State: second rail item hovered, preview visible, dark appearance
 
@@ -27,7 +27,7 @@ The reference rail measures 13, 22, 31, 44, 57, 44, 31, 22, 13 pixels around its
 
 1. P1: the previous peak measured 69 pixels and every neighbor stayed at 15 pixels. Fixed by reducing the peak and adding four-step distance weights.
 2. P1: the first dark capture used the pale on-cinnabar foreground for the hovered tick. Fixed by using cinnabar itself in both appearances. The final dark capture shows the selected rail in red.
-3. P1: the full-width transparent rail overlay exposed background window dragging at pane borders in non-fullscreen windows. Fixed by restoring the rail's 40-point hit surface while passing pane width as layout data only. `<temporary-directory>/weibei-divider-qa-401.png` confirms the overflow preview still renders with the narrow hit surface.
+3. P1: the full-width transparent rail overlay exposed background window dragging at pane borders in non-fullscreen windows. Fixed by restoring the rail's 40-point hit surface while passing pane width as layout data only. `/private/tmp/weibei-divider-qa-401.png` confirms the overflow preview still renders with the narrow hit surface.
 4. P1: the pane previously snapped to an 88-point rail-only shell even though the dormant rail itself is 40 points, and widths between the rail threshold and the old 220-point preview minimum could suppress the preview entirely. The rail-only state now equals the 40-point dormant surface, widths below 190 points resolve to that state, compact text previews fit from 190 points, and hover opens immediately instead of racing a delayed work item.
 
 ## Findings
@@ -46,9 +46,9 @@ final result: passed
 
 # Empty Workspace Design QA: Inspiration Disabled
 
-- Reference: `<temporary-directory>/codex-clipboard-reference.png`
-- Implementation capture: `<temporary-directory>/weibei-visual-verify-empty-workspace-inspiration-off.png`
-- Side-by-side comparison: `<temporary-directory>/weibei-empty-off-reference-comparison.png`
+- Reference: `/var/folders/yp/wx87z0l97wj89_yj8nw7_ptm0000gn/T/codex-clipboard-a2fc8532-c763-4611-aeef-eb42bcab300d.png`
+- Implementation capture: `/var/folders/yp/wx87z0l97wj89_yj8nw7_ptm0000gn/T/weibei-visual-verify-empty-workspace-inspiration-off.png`
+- Side-by-side comparison: `/private/tmp/weibei-empty-off-reference-comparison.png`
 - Comparison viewport: 1180 x 760 points, 2360 x 1520 pixels
 - State: light appearance, all work panes closed, daily inspiration disabled
 

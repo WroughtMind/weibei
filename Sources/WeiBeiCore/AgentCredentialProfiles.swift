@@ -97,6 +97,7 @@ public enum AgentProviderEndpointError: LocalizedError, Equatable, Sendable {
     case missing
     case invalid
     case insecurePublicHTTP
+    case azureCredentialRequiresReentry
 
     public var errorDescription: String? {
         switch self {
@@ -106,6 +107,8 @@ public enum AgentProviderEndpointError: LocalizedError, Equatable, Sendable {
             return "模型服务地址必须是有效的 HTTP 或 HTTPS 地址，且不能包含账号、查询参数或片段。"
         case .insecurePublicHTTP:
             return "公网模型服务必须使用 HTTPS；HTTP 只允许本机或用户明确填写的局域网服务。"
+        case .azureCredentialRequiresReentry:
+            return "Azure 服务地址与已保存密钥不一致。为避免把旧密钥发给新地址，请重新输入一次密钥。"
         }
     }
 }
@@ -124,7 +127,7 @@ public struct AgentProviderEndpoint: Equatable, Sendable {
             return
         }
         guard !trimmed.isEmpty else {
-            if provider == .custom || provider == .llamaCpp {
+            if provider == .custom || provider == .llamaCpp || provider == .azureOpenAI {
                 throw AgentProviderEndpointError.missing
             }
             piProviderID = provider.piProviderName

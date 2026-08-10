@@ -46,14 +46,20 @@ struct SettingsView: View {
     private var buildInfo: WeiBeiAppBuildInfo { .current() }
 
     var activePiProviderID: String {
-        (try? AgentProviderEndpoint(
+        guard store.agentProviderID == .custom || store.agentProviderID == .llamaCpp else {
+            return store.agentProviderID.piProviderName
+        }
+        return (try? AgentProviderEndpoint(
             provider: store.agentProviderID,
             baseURL: store.agentBaseURL
         ).piProviderID) ?? "weibei-invalid-endpoint"
     }
 
     func piProviderID(for provider: AgentProviderID) -> String {
-        (try? AgentProviderEndpoint(
+        guard provider == .custom || provider == .llamaCpp else {
+            return provider.piProviderName
+        }
+        return (try? AgentProviderEndpoint(
             provider: provider,
             baseURL: store.agentBaseURL
         ).piProviderID) ?? "weibei-invalid-endpoint"

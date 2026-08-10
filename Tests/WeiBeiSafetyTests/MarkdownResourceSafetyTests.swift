@@ -1,7 +1,9 @@
+import ImageIO
 import XCTest
+import UniformTypeIdentifiers
 import WebKit
 @testable import WeiBei
-import WeiBeiCore
+@testable import WeiBeiCore
 
 private final class RecordingURLSchemeTask: NSObject, WKURLSchemeTask {
     let request: URLRequest
@@ -186,6 +188,50 @@ final class MarkdownResourceSafetyTests: XCTestCase {
             )
         )
         XCTAssertFalse(FileManager.default.fileExists(atPath: attachments.path))
+    }
+
+    func testAttachmentStoreCountsEveryFrameAtItsActualSize() throws {
+        let data = NSMutableData()
+        let destination = try XCTUnwrap(
+            CGImageDestinationCreateWithData(
+                data,
+                UTType.tiff.identifier as CFString,
+                2,
+                nil
+            )
+        )
+        CGImageDestinationAddImage(destination, try makeImage(width: 1, height: 1), nil)
+        CGImageDestinationAddImage(destination, try makeImage(width: 4, height: 4), nil)
+        XCTAssertTrue(CGImageDestinationFinalize(destination))
+
+        let source = try XCTUnwrap(CGImageSourceCreateWithData(data, nil))
+        XCTAssertFalse(
+            MarkdownAttachmentStore.decodedPixelsAreWithinLimit(
+                source,
+                maximumPixelCount: 16
+            )
+        )
+        XCTAssertTrue(
+            MarkdownAttachmentStore.decodedPixelsAreWithinLimit(
+                source,
+                maximumPixelCount: 17
+            )
+        )
+    }
+
+    private func makeImage(width: Int, height: Int) throws -> CGImage {
+        let context = try XCTUnwrap(
+            CGContext(
+                data: nil,
+                width: width,
+                height: height,
+                bitsPerComponent: 8,
+                bytesPerRow: width * 4,
+                space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+            )
+        )
+        return try XCTUnwrap(context.makeImage())
     }
 
     private func makeFixtureDirectory() throws -> URL {

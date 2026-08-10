@@ -23,6 +23,21 @@ final class AgentEndpointSecurityTests: XCTestCase {
         XCTAssertTrue(first.piProviderID.hasPrefix("weibei-custom-"))
     }
 
+    func testAzureKeepsPiProviderIDWhileRequiringItsServiceAddress() throws {
+        let endpoint = try AgentProviderEndpoint(
+            provider: .azureOpenAI,
+            baseURL: "HTTPS://Example.openai.azure.com:443/"
+        )
+
+        XCTAssertEqual(endpoint.piProviderID, "azure-openai-responses")
+        XCTAssertEqual(endpoint.baseURL, "https://example.openai.azure.com")
+        XCTAssertThrowsError(
+            try AgentProviderEndpoint(provider: .azureOpenAI, baseURL: "")
+        ) { error in
+            XCTAssertEqual(error as? AgentProviderEndpointError, .missing)
+        }
+    }
+
     func testEndpointTransportAllowsLocalHTTPButRejectsPublicHTTP() throws {
         XCTAssertEqual(
             try AgentProviderEndpoint(

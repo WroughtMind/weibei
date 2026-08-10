@@ -19535,6 +19535,18 @@ final class WorkspaceStore: ObservableObject {
             provider: selectedProvider,
             baseURL: agentBaseURL
         )
+        if selectedProvider == .azureOpenAI {
+            let credentialIsBound = try await piRuntime.managementCatalog()
+                .credentials
+                .contains {
+                    $0.providerId == endpoint.piProviderID
+                        && $0.type == .apiKey
+                        && $0.boundEndpoint == endpoint.baseURL
+                }
+            guard credentialIsBound else {
+                throw AgentProviderEndpointError.azureCredentialRequiresReentry
+            }
+        }
         await piRuntime.configure(
             PiAgentProviderConfiguration(
                 provider: endpoint.piProviderID,

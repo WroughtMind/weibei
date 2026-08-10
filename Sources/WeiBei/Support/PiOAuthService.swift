@@ -108,6 +108,7 @@ final class PiOAuthService: ObservableObject {
         startCredentialLogin(
             providerID: endpoint.piProviderID,
             type: .apiKey,
+            endpoint: provider == .azureOpenAI ? endpoint.baseURL : nil,
             displayName: provider.label(language: .chinese),
             successNotification: .weiBeiPiCredentialsDidChange
         )
@@ -116,6 +117,7 @@ final class PiOAuthService: ObservableObject {
     private func startCredentialLogin(
         providerID: String,
         type: PiCredentialType,
+        endpoint: String? = nil,
         displayName: String,
         successNotification: Notification.Name
     ) {
@@ -142,6 +144,7 @@ final class PiOAuthService: ObservableObject {
                 let credential = try await runtime.login(
                     providerID: providerID,
                     type: type,
+                    endpoint: endpoint,
                     interaction: PiManagementInteraction(
                         prompt: { [weak self] prompt in
                             guard let self else { throw PiAgentRuntimeError.cancelled }

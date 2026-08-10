@@ -21,5 +21,5 @@ WeiBei web editor check passed
 Building for debugging...
 [0/3] Write swift-version--1AB21518FC5DEDBE.txt
 Build of product 'WeiBeiPiCheck' complete! (0.11s)
-pi-check ready: PI 0.80.2 at <repo-root>/.build/pi-runtime/0.80.2/darwin-arm64/PiRuntime/bin/pi
+pi-check ready: PI 0.80.2 at /Users/changfenhuang/Documents/魏碑-release-1.0/.build/pi-runtime/0.80.2/darwin-arm64/PiRuntime/bin/pi
 pi-live-check passed: proposal=46 chars evidence=2

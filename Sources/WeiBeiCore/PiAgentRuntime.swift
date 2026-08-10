@@ -491,13 +491,15 @@ public actor PiAgentRuntime: StudyAgentRuntime {
     public func login(
         providerID: String,
         type: PiCredentialType,
+        endpoint: String? = nil,
         interaction: PiManagementInteraction
     ) async throws -> PiManagementCredentialInfo {
         let envelope = try await performManagement(
             PiManagementRequest(
                 action: .login,
                 providerId: providerID,
-                authType: type
+                authType: type,
+                endpoint: endpoint
             ),
             interaction: interaction
         )
