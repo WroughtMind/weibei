@@ -901,8 +901,12 @@ let piManagementSource = readSource("Sources/WeiBeiCore/AgentResources/managemen
 let piOAuthSource = readSource("Sources/WeiBei/Support/PiOAuthService.swift")
 let credentialProfilesSource = readSource("Sources/WeiBeiCore/AgentCredentialProfiles.swift")
 expect(
-    piManagementSource.contains("const { ModelRuntime } = await import(PI_PACKAGE)")
+    piManagementSource.contains(
+        "const { ModelRuntime, readStoredCredential } = await import(PI_PACKAGE)"
+    )
         && piManagementSource.contains("ModelRuntime.create")
+        && piManagementSource.contains("runtime.registerNativeProvider")
+        && piManagementSource.contains("AZURE_OPENAI_BASE_URL")
         && piManagementSource.contains("runtime.getProviders()")
         && piManagementSource.contains("runtime.getModels()")
         && piManagementSource.contains("runtime.listCredentials()")
