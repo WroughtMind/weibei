@@ -3340,7 +3340,7 @@ final class WorkspaceStore: ObservableObject {
             }
             let sourceInfo = try await courseProjectFileWorker
                 .validatedRegularSource(sharedURL)
-            guard item.importedFileIdentity == sourceInfo.identity else {
+            guard item.importedFileIdentity?.matchesAcrossVolumeDrift(sourceInfo.identity) == true else {
                 throw CoursePortableStateError.stateConflict
             }
             let sourceSnapshot = try await courseProjectFileWorker
@@ -14671,15 +14671,26 @@ final class WorkspaceStore: ObservableObject {
                 for index in importedItems.indices
                 where importedItems[index].urlPath == url.path
                     && importedItems[index].importedFileIdentity != nil
-                    && importedItems[index].importedFileIdentity != identity {
+                    && importedItems[index].importedFileIdentity != identity
+                    // 仅 volumeID 漂移时不要拆路径；真正换代（inode/出生时间变了）才清掉绑定。
+                    && importedItems[index].importedFileIdentity?
+                        .matchesAcrossVolumeDrift(identity) != true {
                     importedItems[index].importedFileLastKnownPath = url.path
                     importedItems[index].urlPath = nil
                     didChangeItems = true
                 }
             }
+            // 导入去重：严格相等优先；仅当路径仍指向同一位置时才容忍 volumeID 漂移。
+            // 跨卷副本即便碰巧 inode+出生时间相同，也必须拿到新身份。
             let identityMatchingIndex = importedItems.firstIndex { item in
                 if let identity {
-                    return item.importedFileIdentity == identity
+                    if item.importedFileIdentity == identity {
+                        return true
+                    }
+                    let pathMatches = item.urlPath == url.path
+                        || item.importedFileLastKnownPath == url.path
+                    return pathMatches
+                        && item.importedFileIdentity?.matchesAcrossVolumeDrift(identity) == true
                 }
                 return item.importedFileIdentity == nil && item.urlPath == url.path
             }
@@ -15327,7 +15338,14 @@ final class WorkspaceStore: ObservableObject {
 
         if let index = importedItems.firstIndex(where: { item in
             if let existingIdentity {
-                return item.importedFileIdentity == existingIdentity
+                // 双链笔记路径固定，同路径下容忍 volume 漂移。
+                if item.importedFileIdentity == existingIdentity {
+                    return true
+                }
+                let pathMatches = item.urlPath == url.path
+                    || item.importedFileLastKnownPath == url.path
+                return pathMatches
+                    && item.importedFileIdentity?.matchesAcrossVolumeDrift(existingIdentity) == true
             }
             return item.importedFileIdentity == nil && item.urlPath == url.path
         }) {
@@ -15349,7 +15367,9 @@ final class WorkspaceStore: ObservableObject {
                 for index in importedItems.indices
                 where importedItems[index].urlPath == url.path
                     && importedItems[index].importedFileIdentity != nil
-                    && importedItems[index].importedFileIdentity != identity {
+                    && importedItems[index].importedFileIdentity != identity
+                    && importedItems[index].importedFileIdentity?
+                        .matchesAcrossVolumeDrift(identity) != true {
                     importedItems[index].importedFileLastKnownPath = url.path
                     importedItems[index].urlPath = nil
                 }
@@ -19952,7 +19972,7 @@ final class WorkspaceStore: ObservableObject {
                           isNotebookNote: importedItems[index].isNotebookNote
                       ),
                       importedItems[index].importedFileIdentity.map({
-                          $0 == resolved.identity
+                          $0.matchesAcrossVolumeDrift(resolved.identity)
                       }) ?? true else {
                     return markCourseOwnedItemUnavailable(at: index)
                 }
@@ -19988,7 +20008,7 @@ final class WorkspaceStore: ObservableObject {
         let currentURL = importedItems[index].urlPath
             .map { URL(fileURLWithPath: $0).standardizedFileURL }
         let currentPathIsValid = currentURL.map {
-            importedFileIdentityResolver($0) == storedIdentity
+            importedFileIdentityResolver($0)?.matchesAcrossVolumeDrift(storedIdentity) == true
         } ?? false
         let bookmarkResolution = currentPathIsValid
             ? nil
@@ -19999,13 +20019,20 @@ final class WorkspaceStore: ObservableObject {
             ?? bookmarkResolution?.url
             ?? fallbackPath.map { URL(fileURLWithPath: $0).standardizedFileURL }
         guard let candidateURL,
-              importedFileIdentityResolver(candidateURL) == storedIdentity else {
+              let candidateIdentity = importedFileIdentityResolver(candidateURL),
+              candidateIdentity.matchesAcrossVolumeDrift(storedIdentity) else {
             if let path = importedItems[index].urlPath {
                 importedItems[index].importedFileLastKnownPath = path
                 importedItems[index].urlPath = nil
                 changed = true
             }
             return (nil, changed)
+        }
+        if candidateIdentity != storedIdentity {
+            // volumeID 漂移：接受匹配的同时把存储身份刷新到当前值，自愈后
+            // 后续比对（含严格相等的调用方）不再受旧 volumeID 影响。
+            importedItems[index].importedFileIdentity = candidateIdentity
+            changed = true
         }
 
         let nextPath = candidateURL.path

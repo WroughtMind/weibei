@@ -1080,6 +1080,18 @@ public struct ImportedFileIdentity: Codable, Hashable, Sendable {
         self.birthTimeSeconds = birthTimeSeconds
         self.birthTimeNanoseconds = birthTimeNanoseconds
     }
+
+    /// APFS 的 st_dev 在重启/重新挂载后可能变化，持久化身份与现场 stat
+    /// 比对时不得要求 volumeID 相等，否则重启后所有绑定都会误判为文件已移动。
+    ///
+    /// 注意：inode 仅在同一卷内唯一。跨卷副本可能碰巧有相同 inode+出生时间，
+    /// 因此导入去重不得单独依赖此方法——调用方须再叠加路径/书签约束。
+    /// 已绑定文件的解析（`resolveTrackedImportedFile`）可以安全使用。
+    public func matchesAcrossVolumeDrift(_ other: ImportedFileIdentity) -> Bool {
+        fileID == other.fileID
+            && birthTimeSeconds == other.birthTimeSeconds
+            && birthTimeNanoseconds == other.birthTimeNanoseconds
+    }
 }
 
 public enum StudyItemStorage: Codable, Hashable, Sendable {
