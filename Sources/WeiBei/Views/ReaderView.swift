@@ -145,6 +145,7 @@ struct ReaderView: View {
     var floatingTitleReorderRole: WorkspacePaneRole? = nil
 
     @EnvironmentObject private var store: WorkspaceStore
+    @EnvironmentObject private var paneState: WorkspacePaneState
     @State private var pdfBrowseMode: PDFBrowseMode = .scroll
     @State private var pdfPageIndex = 0
     @State private var pdfPageCount = 0
@@ -253,7 +254,7 @@ struct ReaderView: View {
         .background(Color(nsColor: WeiBeiNativePalette.paper(for: store.appearanceMode)))
         .foregroundStyle(Color(nsColor: WeiBeiNativePalette.ink(for: store.appearanceMode)))
         .animation(WeiBeiMotion.panel, value: pdfBrowseMode)
-        .animation(WeiBeiMotion.panel, value: store.showReaderSearch)
+        .animation(WeiBeiMotion.panel, value: paneState.showReaderSearch)
         .animation(WeiBeiMotion.panel, value: pdfHasSelectableText)
         .onAppear {
             syncReaderLocationTitle()

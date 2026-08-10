@@ -37,12 +37,19 @@ struct StableDocumentWorkspace: NSViewRepresentable {
         let roleHosts = Dictionary(uniqueKeysWithValues: WorkspacePaneRole.allCases.map { role in
             (role, nativeHost(
                 PersistentPaneHost(role: role, registry: registry)
-                    .environmentObject(store),
+                    .environmentObject(store)
+                    .environmentObject(store.paneState)
+                    .environmentObject(store.interaction)
+                    .environmentObject(store.threePaneReorder)
+                    .environmentObject(store.libraryDrawer),
                 identifier: "stable-document-slot-\(role.rawValue)"
             ))
         })
         let emptyHost = nativeHost(
-            EmptyWorkspaceLauncherView().environmentObject(store),
+            EmptyWorkspaceLauncherView()
+                .environmentObject(store)
+                .environmentObject(store.paneState)
+                .environmentObject(store.interaction),
             identifier: "stable-document-empty-workspace"
         )
         splitView.install(roleHosts: roleHosts, emptyHost: emptyHost)

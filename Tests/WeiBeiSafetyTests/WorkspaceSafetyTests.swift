@@ -48,4 +48,45 @@ final class WorkspaceSafetyTests: XCTestCase {
         XCTAssertEqual(streamingChanges, 2)
         withExtendedLifetime((workspaceObservation, streamingObservation)) {}
     }
+
+    @MainActor
+    func testPaneAndInteractionStateDoNotInvalidateWorkspaceStore() {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("WeiBeiPaneState-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = WorkspaceStore(workspaceDirectory: root, startsAtBlankEntries: true)
+        var workspaceChanges = 0
+        var paneChanges = 0
+        var interactionChanges = 0
+        let workspaceObservation = store.objectWillChange.sink { workspaceChanges += 1 }
+        let paneObservation = store.paneState.objectWillChange.sink { paneChanges += 1 }
+        let interactionObservation = store.interaction.objectWillChange.sink { interactionChanges += 1 }
+
+        store.showReader = false
+        store.showAgent = false
+        store.showNotes = true
+        store.showRightPane = true
+        store.focusedPane = .agent
+        store.focusRequest += 1
+        store.showReaderSearch = true
+
+        store.selectionContext = SelectionContext(
+            text: "选区",
+            source: .document,
+            ownerTitle: "资料"
+        )
+        store.pinnedFloatingAgent = true
+        store.keepFloatingSelectionForAnswer = true
+        store.agentSurface = .selectionFloat
+        store.selectionAnchor = CGPoint(x: 12, y: 24)
+
+        XCTAssertEqual(workspaceChanges, 0, "pane/interaction chrome must not forward to WorkspaceStore")
+        XCTAssertGreaterThan(paneChanges, 0)
+        XCTAssertGreaterThan(interactionChanges, 0)
+        // showRightPane batches notes+agent into one publish (not two).
+        let beforeRight = paneChanges
+        store.showRightPane = false
+        XCTAssertEqual(paneChanges, beforeRight + 1)
+        withExtendedLifetime((workspaceObservation, paneObservation, interactionObservation)) {}
+    }
 }

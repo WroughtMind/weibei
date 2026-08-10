@@ -445,6 +445,7 @@ private struct AccessibilityFrameProbe: NSViewRepresentable {
 
 struct NotePaneView: View {
     @EnvironmentObject private var store: WorkspaceStore
+    @EnvironmentObject private var paneState: WorkspacePaneState
     @State private var hoveredNoteMode: NoteRenderMode?
     /// Local typing buffer so each keystroke does not republish WorkspaceStore.noteText to the whole tree.
     @State private var draftNoteText = ""
@@ -544,7 +545,7 @@ struct NotePaneView: View {
                 store.clearStagedNoteDraft(for: draftNoteItemID)
             }
         }
-        .onChange(of: store.focusedPane) { _, pane in
+        .onChange(of: paneState.focusedPane) { _, pane in
             if pane != .notes {
                 flushNoteDraft(immediate: true)
             }
@@ -880,8 +881,8 @@ struct NotePaneView: View {
             store.noteEditorCommand = value
         }),
         isEditable: true,
-        isFocused: store.focusedPane == .notes,
-        focusRequest: store.focusRequest,
+        isFocused: paneState.focusedPane == .notes,
+        focusRequest: paneState.focusRequest,
         markdownBaseURL: store.currentMarkdownBaseURL,
         attachmentDirectory: store.currentAttachmentDirectory,
         appearanceMode: store.appearanceMode,
@@ -915,8 +916,8 @@ struct NotePaneView: View {
         }, set: { value in
             store.noteEditorCommand = value
         }),
-        isFocused: store.focusedPane == .notes,
-        focusRequest: store.focusRequest,
+        isFocused: paneState.focusedPane == .notes,
+        focusRequest: paneState.focusRequest,
         markdownBaseURL: store.currentMarkdownBaseURL,
         attachmentDirectory: store.currentAttachmentDirectory,
         appearanceMode: store.appearanceMode,
@@ -1808,6 +1809,8 @@ private enum AgentChatLayoutMetrics {
 
 struct AgentPaneView: View {
     @EnvironmentObject private var store: WorkspaceStore
+    @EnvironmentObject private var paneState: WorkspacePaneState
+    @EnvironmentObject private var interaction: WorkspaceInteractionState
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     var showsPaneHeader = true
     var reorderRole: WorkspacePaneRole? = nil
@@ -2098,11 +2101,11 @@ struct AgentPaneView: View {
                 }
             }
         }
-        .onChange(of: store.focusRequest) { _, _ in
-            draftFocused = store.focusedPane == .agent
+        .onChange(of: paneState.focusRequest) { _, _ in
+            draftFocused = paneState.focusedPane == .agent
         }
         .onAppear {
-            draftFocused = store.focusedPane == .agent
+            draftFocused = paneState.focusedPane == .agent
             if usesWideChatLayout, measuredPaneWidth < 700 {
                 measuredPaneWidth = max(measuredPaneWidth, 1100)
             }
@@ -2691,19 +2694,20 @@ private struct AgentPaneWidthKey: PreferenceKey {
 
 private struct AgentSelectionAttachmentPill: View {
     @EnvironmentObject private var store: WorkspaceStore
+    @EnvironmentObject private var interaction: WorkspaceInteractionState
     @State private var pillHovering = false
     @State private var popoverHovering = false
     @State private var closeToken = UUID()
 
     var body: some View {
-        if store.hasSelectionAttachments {
+        if !interaction.selectionAttachments.isEmpty {
             HStack(spacing: 4) {
                 // Popover anchor is only the label — keep the clear button outside so the first
                 // click is not eaten by hover-popover dismissal.
                 HStack(spacing: 6) {
                     Image(systemName: "text.bubble")
                         .font(.system(size: 11, weight: .medium))
-                    Text(store.ui("\(store.selectionAttachments.count) 个已选文本片段", "\(store.selectionAttachments.count) selected text fragments"))
+                    Text(store.ui("\(interaction.selectionAttachments.count) 个已选文本片段", "\(interaction.selectionAttachments.count) selected text fragments"))
                         .font(.system(size: 12, weight: .medium))
                 }
                 .contentShape(Rectangle())
@@ -2730,7 +2734,7 @@ private struct AgentSelectionAttachmentPill: View {
                 RoundedRectangle(cornerRadius: 8)
                     .stroke(WeiBeiTheme.hairline.opacity(pillHovering ? 0.68 : 0.38), lineWidth: 1)
             }
-            .accessibilityLabel(Text(store.ui("\(store.selectionAttachments.count) 个已选文本片段", "\(store.selectionAttachments.count) selected text fragments")))
+            .accessibilityLabel(Text(store.ui("\(interaction.selectionAttachments.count) 个已选文本片段", "\(interaction.selectionAttachments.count) selected text fragments")))
             .help(store.ui("悬停查看选区", "Hover to preview selections"))
         }
     }
@@ -2757,7 +2761,7 @@ private struct AgentSelectionAttachmentPill: View {
     private var popoverContent: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Text(store.ui("\(store.selectionAttachments.count) 个已选文本片段", "\(store.selectionAttachments.count) selected text fragments"))
+                Text(store.ui("\(interaction.selectionAttachments.count) 个已选文本片段", "\(interaction.selectionAttachments.count) selected text fragments"))
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(WeiBeiTheme.ink)
                 Spacer()
@@ -2773,7 +2777,7 @@ private struct AgentSelectionAttachmentPill: View {
 
             ScrollView(showsIndicators: false) {
                 LazyVStack(alignment: .leading, spacing: 9) {
-                    ForEach(Array(store.selectionAttachments.enumerated()), id: \.element.id) { index, selection in
+                    ForEach(Array(interaction.selectionAttachments.enumerated()), id: \.element.id) { index, selection in
                         selectionAttachmentRow(index: index, selection: selection)
                     }
                 }
@@ -2800,7 +2804,7 @@ private struct AgentSelectionAttachmentPill: View {
                     .foregroundStyle(WeiBeiTheme.secondaryInk)
                 Spacer(minLength: 8)
                 Button {
-                    let shouldClose = store.selectionAttachments.count <= 1
+                    let shouldClose = interaction.selectionAttachments.count <= 1
                     closeToken = UUID()
                     store.removeSelectionAttachment(id: selection.id)
                     if shouldClose {
@@ -2887,6 +2891,8 @@ private struct FloatingSelectionPreview: View {
 
 struct FloatingSelectionAgentView: View {
     @EnvironmentObject private var store: WorkspaceStore
+    @EnvironmentObject private var paneState: WorkspacePaneState
+    @EnvironmentObject private var interaction: WorkspaceInteractionState
     @Binding var expanded: Bool
     var routesToConversation = false
     @State private var dragOffset = CGSize.zero
@@ -2912,22 +2918,22 @@ struct FloatingSelectionAgentView: View {
         .modifier(SelectionFloatChrome(expanded: showsExpandedBody))
         .scaleEffect(showsExpandedBody ? 1 : 0.985)
         .animation(WeiBeiMotion.panel, value: expanded)
-        .animation(WeiBeiMotion.panel, value: store.pinnedFloatingAgent)
+        .animation(WeiBeiMotion.panel, value: interaction.pinnedFloatingAgent)
         .animation(WeiBeiMotion.panel, value: store.isAgentRunningInActiveChat)
         .offset(
             x: dragOffset.width + settledOffset.width,
             y: dragOffset.height + settledOffset.height + floatingFeedGrowthOffset
         )
-        .onChange(of: store.selectionContext) { previous, next in
-            guard !store.pinnedFloatingAgent, !store.isAgentRunningInActiveChat else { return }
+        .onChange(of: interaction.selectionContext) { previous, next in
+            guard !interaction.pinnedFloatingAgent, !store.isAgentRunningInActiveChat else { return }
             let sameContent = previous?.text == next?.text
                 && previous?.source == next?.source
                 && previous?.ownerTitle == next?.ownerTitle
                 && previous?.isEditable == next?.isEditable
             guard !sameContent else { return }
             // Reopen uses SelectionContext.id == thread.id — expand beside the mark.
-            let isThreadReopen = next.map { store.activeSelectionAskThreadID == $0.id } ?? false
-            if isThreadReopen, store.keepFloatingSelectionForAnswer {
+            let isThreadReopen = next.map { interaction.activeSelectionAskThreadID == $0.id } ?? false
+            if isThreadReopen, interaction.keepFloatingSelectionForAnswer {
                 withAnimation(WeiBeiMotion.panel) {
                     expanded = true
                     dragOffset = .zero
@@ -2938,13 +2944,13 @@ struct FloatingSelectionAgentView: View {
             // Live reselection → capsule only.
             withAnimation(WeiBeiMotion.panel) {
                 expanded = false
-                store.keepFloatingSelectionForAnswer = false
-                store.activeSelectionAskThreadID = nil
+                interaction.keepFloatingSelectionForAnswer = false
+                interaction.activeSelectionAskThreadID = nil
                 dragOffset = .zero
                 settledOffset = .zero
             }
         }
-        .onChange(of: store.keepFloatingSelectionForAnswer) { _, keep in
+        .onChange(of: interaction.keepFloatingSelectionForAnswer) { _, keep in
             if keep {
                 withAnimation(WeiBeiMotion.panel) {
                     expanded = true
@@ -2953,8 +2959,8 @@ struct FloatingSelectionAgentView: View {
                 }
             }
         }
-        .onChange(of: store.activeSelectionAskThreadID) { _, id in
-            if id != nil, store.keepFloatingSelectionForAnswer {
+        .onChange(of: interaction.activeSelectionAskThreadID) { _, id in
+            if id != nil, interaction.keepFloatingSelectionForAnswer {
                 withAnimation(WeiBeiMotion.panel) {
                     expanded = true
                     dragOffset = .zero
@@ -2967,12 +2973,12 @@ struct FloatingSelectionAgentView: View {
                 withAnimation(WeiBeiMotion.panel) { expanded = true }
             }
         }
-        .onChange(of: store.focusRequest) { _, _ in
-            draftFocused = store.focusedPane == .agent
+        .onChange(of: paneState.focusRequest) { _, _ in
+            draftFocused = paneState.focusedPane == .agent
         }
         .onAppear {
-            draftFocused = store.focusedPane == .agent
-            if store.pinnedFloatingAgent || store.isAgentRunningInActiveChat || store.keepFloatingSelectionForAnswer {
+            draftFocused = paneState.focusedPane == .agent
+            if interaction.pinnedFloatingAgent || store.isAgentRunningInActiveChat || interaction.keepFloatingSelectionForAnswer {
                 expanded = true
             }
         }
@@ -2983,7 +2989,7 @@ struct FloatingSelectionAgentView: View {
 
     private var showsExpandedBody: Bool {
         // Capsule for bare selection; expand for 问 / pin / stream / 红线回访(keepOpen).
-        expanded || store.pinnedFloatingAgent || store.isAgentRunningInActiveChat || store.keepFloatingSelectionForAnswer
+        expanded || interaction.pinnedFloatingAgent || store.isAgentRunningInActiveChat || interaction.keepFloatingSelectionForAnswer
     }
 
     private var promptBody: some View {

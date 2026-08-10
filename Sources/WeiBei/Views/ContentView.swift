@@ -3,8 +3,8 @@ import SwiftUI
 import WeiBeiCore
 
 struct ContentView: View {
-    /// Intentionally does NOT observe `libraryDrawer` — drawer open must not rebuild this body
-    /// (reader / agent / notes live here).
+    /// Intentionally does NOT observe `libraryDrawer` / `paneState` / `interaction` —
+    /// those chrome surfaces rebuild dedicated child layers so reader/agent/notes stay put.
     @EnvironmentObject private var store: WorkspaceStore
     @FocusState private var focusedPane: PaneFocus?
     @FocusState private var topSearchFocused: Bool
@@ -42,33 +42,12 @@ struct ContentView: View {
                                 .zIndex(40)
                         }
 
-                        if showsGlobalFloatingAgent {
-                            FloatingSelectionAgentView(
-                                expanded: $floatingAgentExpanded,
-                                routesToConversation: store.isConversationSurfaceVisible
-                            )
-                                .position(floatingAgentPosition(in: geometry.size))
-                                .transition(WeiBeiTransition.floating)
-                                .zIndex(30)
-                                .onChange(of: store.keepFloatingSelectionForAnswer) { _, keep in
-                                    // Expand only when an intentional keep-open is requested
-                                    // (点「问」/回访红线/顶部已问), not on bare selection.
-                                    if keep { floatingAgentExpanded = true }
-                                }
-                                .onChange(of: store.activeSelectionAskThreadID) { _, id in
-                                    if id != nil, store.keepFloatingSelectionForAnswer {
-                                        floatingAgentExpanded = true
-                                    }
-                                }
-                                .onChange(of: store.selectionContext?.id) { _, _ in
-                                    // Live reselection collapses to capsule; reopen-with-keepOpen must stay expanded.
-                                    guard !store.pinnedFloatingAgent,
-                                          !store.isAgentRunningInActiveChat,
-                                          !store.keepFloatingSelectionForAnswer else { return }
-                                    floatingAgentExpanded = false
-                                }
-                        }
-
+                        // Selection float observes `interaction` only — drag must not rebuild ContentView.
+                        GlobalFloatingSelectionLayer(
+                            expanded: $floatingAgentExpanded,
+                            canvasSize: geometry.size
+                        )
+                        .zIndex(30)
                     }
                 }
                 .allowsHitTesting(!store.courseWorkspacePresented)
@@ -87,8 +66,6 @@ struct ContentView: View {
             .background {
                 LibraryAwareEscapeBridge(
                     courseWorkspacePresented: store.courseWorkspacePresented,
-                    showReaderSearch: store.showReaderSearch,
-                    showsGlobalFloatingAgent: showsGlobalFloatingAgent,
                     onToggleLibrary: { store.toggleLibrary() },
                     onDismissFloatingAgent: { store.dismissFloatingSelectionAgent() },
                     onHideReaderSearch: {
@@ -99,11 +76,12 @@ struct ContentView: View {
             }
         }
         .background(WindowFullScreenReader(isFullScreen: $windowIsFullScreen))
-        .onChange(of: store.focusedPane) { _, value in
-            focusedPane = value
-        }
-        .onChange(of: store.showReaderSearch) { _, visible in
-            topSearchFocused = visible
+        .background {
+            // Focus / reader-search sync observes paneState so ContentView does not.
+            PaneChromeFocusBridge(
+                focusedPane: $focusedPane,
+                topSearchFocused: $topSearchFocused
+            )
         }
         .onAppear {
             focusedPane = store.focusedPane
@@ -141,42 +119,9 @@ struct ContentView: View {
         }
     }
 
-    private var showsGlobalFloatingAgent: Bool {
-        // Show the selection capsule in multi-pane as well as immersive reading.
-        // When the chat pane is open, the float still appears; "问" routes into the
-        // conversation via `routesToConversation` (do not hide the capsule).
-        !store.courseWorkspacePresented
-            && store.canShowSelectionPromptSurface
-            && SelectionFloatingAgentPlacement.isVisible(
-                surface: store.agentSurface,
-                hasSelection: store.selectionContext != nil || store.keepFloatingSelectionForAnswer,
-                hasAnchor: store.selectionAnchor != nil,
-                pinned: store.pinnedFloatingAgent,
-                keepOpen: store.keepFloatingSelectionForAnswer
-            )
-    }
-
     private var isImmersiveLayout: Bool {
         [.immersiveReading, .immersiveConversation, .immersiveWriting].contains(store.layout)
     }
-
-    private func floatingAgentPosition(in size: CGSize) -> CGPoint {
-        let point = SelectionFloatingAgentPlacement.position(
-            anchor: store.selectionAnchor.map { FloatingAgentCoordinate(x: Double($0.x), y: Double($0.y)) },
-            canvas: FloatingAgentCoordinate(x: Double(size.width), y: Double(size.height)),
-            topInset: Double(topBarHeight),
-            surfaceHalfWidth: floatingAgentExpanded
-                ? SelectionFloatingAgentPlacement.expandedHalfWidth
-                : SelectionFloatingAgentPlacement.compactHalfWidth,
-            prefersAnchorCenter: !floatingAgentExpanded
-        )
-        return CGPoint(x: point.x, y: point.y)
-    }
-
-    private var topBarHeight: CGFloat {
-        WeiBeiMetric.topBarHeight
-    }
-
 }
 
 private struct WindowFullScreenReader: NSViewRepresentable {
@@ -256,12 +201,102 @@ private struct CourseLibraryDrawerLayer: View {
     }
 }
 
-/// Escape routing that can observe drawer open without forcing ContentView to do so.
+/// Syncs `@FocusState` from `WorkspacePaneState` without ContentView observing pane chrome.
+private struct PaneChromeFocusBridge: View {
+    @EnvironmentObject private var paneState: WorkspacePaneState
+    var focusedPane: FocusState<PaneFocus?>.Binding
+    var topSearchFocused: FocusState<Bool>.Binding
+
+    var body: some View {
+        Color.clear
+            .frame(width: 0, height: 0)
+            .accessibilityHidden(true)
+            .onChange(of: paneState.focusedPane) { _, value in
+                focusedPane.wrappedValue = value
+            }
+            .onChange(of: paneState.showReaderSearch) { _, visible in
+                topSearchFocused.wrappedValue = visible
+            }
+            .onAppear {
+                focusedPane.wrappedValue = paneState.focusedPane
+                topSearchFocused.wrappedValue = paneState.showReaderSearch
+            }
+    }
+}
+
+/// Selection float layer. Observes `WorkspaceInteractionState` (+ store for chat routing).
+private struct GlobalFloatingSelectionLayer: View {
+    @EnvironmentObject private var store: WorkspaceStore
+    @EnvironmentObject private var interaction: WorkspaceInteractionState
+    @Binding var expanded: Bool
+    let canvasSize: CGSize
+
+    var body: some View {
+        Group {
+            if showsGlobalFloatingAgent {
+                FloatingSelectionAgentView(
+                    expanded: $expanded,
+                    routesToConversation: store.isConversationSurfaceVisible
+                )
+                .position(floatingAgentPosition)
+                .transition(WeiBeiTransition.floating)
+                .onChange(of: interaction.keepFloatingSelectionForAnswer) { _, keep in
+                    // Expand only when an intentional keep-open is requested
+                    // (点「问」/回访红线/顶部已问), not on bare selection.
+                    if keep { expanded = true }
+                }
+                .onChange(of: interaction.activeSelectionAskThreadID) { _, id in
+                    if id != nil, interaction.keepFloatingSelectionForAnswer {
+                        expanded = true
+                    }
+                }
+                .onChange(of: interaction.selectionContext?.id) { _, _ in
+                    // Live reselection collapses to capsule; reopen-with-keepOpen must stay expanded.
+                    guard !interaction.pinnedFloatingAgent,
+                          !store.isAgentRunningInActiveChat,
+                          !interaction.keepFloatingSelectionForAnswer else { return }
+                    expanded = false
+                }
+            }
+        }
+    }
+
+    private var showsGlobalFloatingAgent: Bool {
+        // Show the selection capsule in multi-pane as well as immersive reading.
+        // When the chat pane is open, the float still appears; "问" routes into the
+        // conversation via `routesToConversation` (do not hide the capsule).
+        !store.courseWorkspacePresented
+            && store.canShowSelectionPromptSurface
+            && SelectionFloatingAgentPlacement.isVisible(
+                surface: interaction.agentSurface,
+                hasSelection: interaction.selectionContext != nil || interaction.keepFloatingSelectionForAnswer,
+                hasAnchor: interaction.selectionAnchor != nil,
+                pinned: interaction.pinnedFloatingAgent,
+                keepOpen: interaction.keepFloatingSelectionForAnswer
+            )
+    }
+
+    private var floatingAgentPosition: CGPoint {
+        let point = SelectionFloatingAgentPlacement.position(
+            anchor: interaction.selectionAnchor.map { FloatingAgentCoordinate(x: Double($0.x), y: Double($0.y)) },
+            canvas: FloatingAgentCoordinate(x: Double(canvasSize.width), y: Double(canvasSize.height)),
+            topInset: Double(WeiBeiMetric.topBarHeight),
+            surfaceHalfWidth: expanded
+                ? SelectionFloatingAgentPlacement.expandedHalfWidth
+                : SelectionFloatingAgentPlacement.compactHalfWidth,
+            prefersAnchorCenter: !expanded
+        )
+        return CGPoint(x: point.x, y: point.y)
+    }
+}
+
+/// Escape routing that can observe drawer / pane / selection chrome without forcing ContentView to do so.
 private struct LibraryAwareEscapeBridge: View {
     @EnvironmentObject private var libraryDrawer: LibraryDrawerState
+    @EnvironmentObject private var paneState: WorkspacePaneState
+    @EnvironmentObject private var interaction: WorkspaceInteractionState
+    @EnvironmentObject private var store: WorkspaceStore
     let courseWorkspacePresented: Bool
-    let showReaderSearch: Bool
-    let showsGlobalFloatingAgent: Bool
     let onToggleLibrary: () -> Void
     let onDismissFloatingAgent: () -> Void
     let onHideReaderSearch: () -> Void
@@ -272,16 +307,30 @@ private struct LibraryAwareEscapeBridge: View {
                 EscapeKeyBridge(onEscape: onToggleLibrary)
             } else if !courseWorkspacePresented && !libraryDrawer.isOpen && showsGlobalFloatingAgent {
                 EscapeKeyBridge(onEscape: onDismissFloatingAgent)
-            } else if !courseWorkspacePresented && !libraryDrawer.isOpen && showReaderSearch {
+            } else if !courseWorkspacePresented && !libraryDrawer.isOpen && paneState.showReaderSearch {
                 EscapeKeyBridge(onEscape: onHideReaderSearch)
             }
         }
+    }
+
+    private var showsGlobalFloatingAgent: Bool {
+        !courseWorkspacePresented
+            && store.canShowSelectionPromptSurface
+            && SelectionFloatingAgentPlacement.isVisible(
+                surface: interaction.agentSurface,
+                hasSelection: interaction.selectionContext != nil || interaction.keepFloatingSelectionForAnswer,
+                hasAnchor: interaction.selectionAnchor != nil,
+                pinned: interaction.pinnedFloatingAgent,
+                keepOpen: interaction.keepFloatingSelectionForAnswer
+            )
     }
 }
 
 private struct UnifiedTopBarView: View {
     @EnvironmentObject private var store: WorkspaceStore
     @EnvironmentObject private var libraryDrawer: LibraryDrawerState
+    @EnvironmentObject private var paneState: WorkspacePaneState
+    @EnvironmentObject private var interaction: WorkspaceInteractionState
     @Environment(\.openSettings) private var openSettings
     let isImmersiveLayout: Bool
     let isFullScreen: Bool
@@ -297,7 +346,7 @@ private struct UnifiedTopBarView: View {
 
             Spacer(minLength: 0)
 
-            if store.showReaderSearch && shouldShowSearchAction {
+            if paneState.showReaderSearch && shouldShowSearchAction {
                 TextField(
                     "",
                     text: $store.readerSearch,
@@ -322,7 +371,7 @@ private struct UnifiedTopBarView: View {
                 .transition(.move(edge: .trailing).combined(with: .opacity))
             }
 
-            if shouldShowSearchAction && !store.showReaderSearch {
+            if shouldShowSearchAction && !paneState.showReaderSearch {
                 searchButton
             }
 
@@ -373,8 +422,12 @@ private struct UnifiedTopBarView: View {
                 appeared = true
             }
         }
-        .animation(WeiBeiMotion.panel, value: store.showReaderSearch)
+        .animation(WeiBeiMotion.panel, value: paneState.showReaderSearch)
         .animation(WeiBeiMotion.layout, value: isImmersiveLayout)
+        // Pane toggle active states live on paneState — keep this chrome reactive without ContentView.
+        .animation(WeiBeiMotion.panel, value: paneState.showReader)
+        .animation(WeiBeiMotion.panel, value: paneState.showAgent)
+        .animation(WeiBeiMotion.panel, value: paneState.showNotes)
     }
 
     private var barHeight: CGFloat {
@@ -512,7 +565,7 @@ private struct UnifiedTopBarView: View {
         if store.isPaneToggleActive(.agent) {
             return store.ui("隐藏对话", "Hide chat")
         }
-        if store.selectionContext != nil {
+        if interaction.selectionContext != nil {
             return store.ui("用当前选区打开对话", "Open chat with current selection")
         }
         return store.ui("显示对话", "Show chat")
@@ -538,7 +591,7 @@ private struct UnifiedTopBarView: View {
 
     private func toggleReaderSearch() {
         withAnimation(WeiBeiMotion.panel) {
-            if store.showReaderSearch {
+            if paneState.showReaderSearch {
                 store.hideReaderSearch()
                 searchFocused.wrappedValue = false
             } else {
@@ -632,6 +685,9 @@ private struct ThreePaneWorkspaceChrome: View {
 
 private struct LayoutContentView: View {
     @EnvironmentObject private var store: WorkspaceStore
+    /// Pane visibility lives here so document-family show/hide rebuilds order without store thrash.
+    @EnvironmentObject private var paneState: WorkspacePaneState
+    @EnvironmentObject private var interaction: WorkspaceInteractionState
     @StateObject private var paneHostRegistry = PersistentPaneHostRegistry()
     @SceneStorage("documentThreePaneFirstSplit") private var firstSplitStorage: Double = 0.34
     @SceneStorage("documentThreePaneSecondSplit") private var secondSplitStorage: Double = 0.67
@@ -656,7 +712,11 @@ private struct LayoutContentView: View {
         .transition(WeiBeiTransition.layout)
         // Document-internal pane toggles must not re-trigger SwiftUI layout animation.
         .animation(WeiBeiMotion.layout, value: store.layout.isImmersiveFamily)
-        .animation(WeiBeiMotion.panel, value: store.agentSurface)
+        .animation(WeiBeiMotion.panel, value: interaction.agentSurface)
+        // Touch pane flags so SwiftUI rebuilds visibleOrder when only paneState publishes.
+        .animation(nil, value: paneState.showReader)
+        .animation(nil, value: paneState.showAgent)
+        .animation(nil, value: paneState.showNotes)
     }
 
     private var firstSplit: Binding<CGFloat> {
@@ -810,6 +870,10 @@ final class PersistentPaneHostRegistry: ObservableObject {
 
         let root = PersistentPaneRoot(role: role)
             .environmentObject(store)
+            .environmentObject(store.paneState)
+            .environmentObject(store.interaction)
+            .environmentObject(store.threePaneReorder)
+            .environmentObject(store.libraryDrawer)
         // Same rule as StableDocumentDividerView / ContentRail: pane content must not
         // initiate isMovableByWindowBackground. Reader/notes often hide this via nested
         // AppKit (PDFView/NSTextView); agent chat is mostly SwiftUI so it needs the host flag.

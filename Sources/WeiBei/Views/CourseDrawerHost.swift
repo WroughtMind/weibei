@@ -203,6 +203,8 @@ final class CourseDrawerContainerView: NSView {
             }
             .environmentObject(store)
             .environmentObject(store.libraryDrawer)
+            .environmentObject(store.paneState)
+            .environmentObject(store.interaction)
         )
     }
 }

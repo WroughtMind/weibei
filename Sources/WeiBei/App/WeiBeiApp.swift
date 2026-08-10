@@ -111,6 +111,8 @@ struct WeiBeiApp: App {
                 .environmentObject(store)
                 .environmentObject(store.libraryDrawer)
                 .environmentObject(store.threePaneReorder)
+                .environmentObject(store.paneState)
+                .environmentObject(store.interaction)
                 .preferredColorScheme(store.appearanceMode.colorScheme)
                 .modifier(WeiBeiAppearanceTransition(mode: store.appearanceMode))
                 .background(WindowChromeConfigurator(appearanceMode: store.appearanceMode))
