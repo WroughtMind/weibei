@@ -1818,4 +1818,20 @@ do {
     expect(restored == original, "S2 triple backup preserves external content")
 }
 
+// MARK: - Performance Phase 1: workspace save encode guardrail
+do {
+    // Warm-up encode so first-run JSONEncoder overhead does not dominate.
+    let warm = WeiBeiPerfBudgets.syntheticWorkspace(noteCount: 20)
+    _ = try WeiBeiPerfBudgets.measureWorkspaceEncodeMilliseconds(warm)
+
+    let synthetic = WeiBeiPerfBudgets.syntheticWorkspace(noteCount: 200)
+    expect(synthetic.importedItems.count == 200, "perf guardrail builds 200-note workspace")
+    expect(synthetic.notesByItemID.count == 200, "perf guardrail includes note bodies")
+    let encodeMS = try WeiBeiPerfBudgets.measureWorkspaceEncodeMilliseconds(synthetic)
+    expect(
+        encodeMS < WeiBeiPerfBudgets.workspaceSaveEncodeMS,
+        "200-note workspace JSON encode took \(String(format: "%.1f", encodeMS))ms (budget \(WeiBeiPerfBudgets.workspaceSaveEncodeMS)ms)"
+    )
+}
+
 print("WeiBei self-check passed")
