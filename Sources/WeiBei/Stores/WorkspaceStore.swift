@@ -529,6 +529,7 @@ final class WorkspaceStore: ObservableObject {
     private let courseProjectMutationHook: (CourseProjectMutationStage) throws -> Void
     private let notebookMarkdownReader: (URL) throws -> String
     private let notebookMarkdownWriter: (String, URL) throws -> Void
+    private let noteBackupRootURL: URL
     private let notebookFileMover: (URL, URL) throws -> Void
     private let courseFileSourceRemover: @Sendable (URL) throws -> Void
     private let contentSourceTrashMover: @Sendable (URL) throws -> URL
@@ -821,33 +822,6 @@ final class WorkspaceStore: ObservableObject {
         var stage: Stage
     }
 
-    private struct PendingCourseMarkdownWriteJournal: Codable, Sendable {
-        enum Stage: String, Codable, Sendable {
-            case prepared
-            case staged
-            case targetIsolated
-            case placed
-        }
-
-        var transactionID: UUID
-        var transactionDirectoryIdentity: ImportedFileIdentity
-        var courseID: UUID
-        var itemID: String
-        var targetPath: String
-        var targetRelativePath: String
-        var targetIdentity: ImportedFileIdentity
-        var targetSnapshot: CourseFileSnapshot
-        var replacementSnapshot: CourseFileSnapshot
-        var stagedIdentity: ImportedFileIdentity?
-        var stage: Stage
-    }
-
-    private struct CourseMarkdownWriteTransaction {
-        var result: CourseMarkdownWriteResult
-        var journal: PendingCourseMarkdownWriteJournal
-        var transactionDirectory: URL
-    }
-
     private struct CourseRecoveryInput: Sendable {
         var courseID: UUID
         var root: URL
@@ -972,6 +946,7 @@ final class WorkspaceStore: ObservableObject {
         courseProjectMutationHook: @escaping (CourseProjectMutationStage) throws -> Void = { _ in },
         notebookMarkdownReader: @escaping (URL) throws -> String = WorkspaceStore.readNotebookMarkdown,
         notebookMarkdownWriter: @escaping (String, URL) throws -> Void = WorkspaceStore.writeNotebookMarkdown,
+        noteBackupRootURL: URL? = nil,
         notebookFileMover: @escaping (URL, URL) throws -> Void = WorkspaceStore.moveNotebookFile,
         courseFileSourceRemover: @escaping @Sendable (URL) throws -> Void = {
             try FileManager.default.removeItem(at: $0)
@@ -1013,6 +988,7 @@ final class WorkspaceStore: ObservableObject {
         self.courseProjectMutationHook = courseProjectMutationHook
         self.notebookMarkdownReader = notebookMarkdownReader
         self.notebookMarkdownWriter = notebookMarkdownWriter
+        self.noteBackupRootURL = noteBackupRootURL ?? NoteBackupRing.defaultRootURL()
         self.notebookFileMover = notebookFileMover
         self.courseFileSourceRemover = courseFileSourceRemover
         self.contentSourceTrashMover = contentSourceTrashMover
@@ -4185,28 +4161,11 @@ final class WorkspaceStore: ObservableObject {
                 at: url,
                 expectedIdentity: identity
             )
-            let transaction = try await self.beginCourseMarkdownWrite(
-                markdown,
-                item: item,
-                expectedContentDigest: read.snapshot.sha256
-            )
-            let write = transaction.result
             self.lastCourseNoteReadRanOnMainThread = read.ranOnMainThread
-            self.lastCourseNoteWriteRanOnMainThread = write.ranOnMainThread
-            self.applyCourseMarkdownWriteResult(
-                write,
-                itemID: itemID,
-                markdown: markdown
-            )
-            guard self.performSaveNow() else {
-                await self.rollbackCourseMarkdownWrite(
-                    journal: transaction.journal,
-                    transactionDirectory: transaction.transactionDirectory
-                )
-                throw CourseOwnedFileError.workspaceSaveFailed
-            }
-            await self.finishCourseMarkdownWrite(transaction)
-            return (!read.ranOnMainThread, !write.ranOnMainThread)
+            // S2：写回改为同步原子写（主线程可接受）；读路径仍走后台 worker。
+            self.persistCourseOwnedNote(markdown, itemID: itemID)
+            self.lastCourseNoteWriteRanOnMainThread = true
+            return (!read.ranOnMainThread, true)
         }
     }
 
@@ -4217,59 +4176,17 @@ final class WorkspaceStore: ObservableObject {
         precondition(
             WeiBeiSafetyTestMode.isEnabled
         )
-        try waitForCourseFileOperation {
-            guard let item = self.importedItems.first(where: {
-                $0.id == itemID
-            }),
-            item.isNotebookNote,
-            case .courseOwned = item.storage else {
-                throw CourseOwnedFileError.verificationFailed
-            }
-            self.retainPendingNoteWrite(
-                markdown,
-                itemID: itemID,
-                fallbackURL: nil
-            )
-            guard self.performSaveNow() else {
-                throw CourseOwnedFileError.workspaceSaveFailed
-            }
-            let expectedDigest = self.pendingNoteWritesByItemID[itemID]?
-                .baselineContentDigest
-            let transaction = try await self.beginCourseMarkdownWrite(
-                markdown,
-                item: item,
-                expectedContentDigest: expectedDigest
-            )
-            let previousItems = self.importedItems
-            let previousMemberships = self.courseItemMemberships
-            let previousBackingDigests =
-                self.noteBackingContentDigestsByItemID
-            let previousLoadedNotes = self.loadedCourseNoteTextByItemID
-            self.applyCourseMarkdownWriteResult(
-                transaction.result,
-                itemID: itemID,
-                markdown: markdown
-            )
-            self.notesByItemID.removeValue(forKey: itemID)
-            self.pendingNoteWritesByItemID.removeValue(forKey: itemID)
-            guard self.performSaveNow() else {
-                self.importedItems = previousItems
-                self.courseItemMemberships = previousMemberships
-                self.noteBackingContentDigestsByItemID =
-                    previousBackingDigests
-                self.loadedCourseNoteTextByItemID = previousLoadedNotes
-                self.notesByItemID[itemID] = markdown
-                self.pendingNoteWritesByItemID[itemID] =
-                    PendingNoteWriteState(
-                        baselineContentDigest: expectedDigest
-                    )
-                await self.rollbackCourseMarkdownWrite(
-                    journal: transaction.journal,
-                    transactionDirectory: transaction.transactionDirectory
-                )
-                throw CourseOwnedFileError.workspaceSaveFailed
-            }
-            await self.finishCourseMarkdownWrite(transaction)
+        guard let item = importedItems.first(where: {
+            $0.id == itemID
+        }),
+        item.isNotebookNote,
+        case .courseOwned = item.storage else {
+            throw CourseOwnedFileError.verificationFailed
+        }
+        persistCourseOwnedNote(markdown, itemID: itemID)
+        if notesByItemID[itemID] != nil {
+            // 写回失败留下草稿时，测试侧可观察；成功则 notes 已清除。
+            throw CourseOwnedFileError.verificationFailed
         }
     }
 
@@ -4279,7 +4196,6 @@ final class WorkspaceStore: ObservableObject {
         precondition(
             WeiBeiSafetyTestMode.isEnabled
         )
-        guard pendingNoteWritesByItemID[itemID] != nil else { return nil }
         return notesByItemID[itemID]
     }
 
@@ -6233,168 +6149,43 @@ final class WorkspaceStore: ObservableObject {
         return nil
     }
 
+    /// S2：旧四阶段 course-note 事务不再恢复写路径；静默清理残留事务目录。
+    /// 若目标文件缺失且 original 仍在，尽力还原 original，避免用户丢文件。
     nonisolated private static func recoverCourseMarkdownWriteTransaction(
         at transactionDirectory: URL,
         input: CourseRecoveryInput,
         canonicalRoot: URL
     ) {
+        let fileManager = FileManager.default
         let journalURL = transactionDirectory.appendingPathComponent(
             "course-note.json"
         )
-        guard let data = try? Data(contentsOf: journalURL),
-              let journal = try? JSONDecoder().decode(
-                PendingCourseMarkdownWriteJournal.self,
-                from: data
-              ),
-              journal.courseID == input.courseID,
-              journal.transactionID.uuidString.caseInsensitiveCompare(
-                transactionDirectory.lastPathComponent
-              ) == .orderedSame,
-              CourseProjectFileWorker.identity(at: transactionDirectory)
-                == journal.transactionDirectoryIdentity,
-              let targetURL = backgroundRawRelativeURL(
-                journal.targetRelativePath,
-                inside: canonicalRoot
-              ),
-              CourseProjectPathPolicy.isSame(
-                targetURL,
-                backgroundCanonicalRawPath(
-                    URL(fileURLWithPath: journal.targetPath)
-                )
-              ) else {
-            return
-        }
-        let components = journal.targetRelativePath.split(
-            separator: "/",
-            omittingEmptySubsequences: true
-        )
-        guard components.count == 2,
-              components.first
-                == Substring(CourseOwnedFileRole.note.directoryName) else {
-            return
-        }
         let payloadURL = transactionDirectory.appendingPathComponent("payload")
         let originalURL = transactionDirectory.appendingPathComponent("original")
-        let stagedIdentity = journal.stagedIdentity
-        let targetMatchesReplacement = stagedIdentity.map {
-            backgroundFileMatches(
-                targetURL,
-                identity: $0,
-                snapshot: journal.replacementSnapshot
-            )
-        } ?? false
-        let payloadMatchesReplacement = stagedIdentity.map {
-            backgroundFileMatches(
-                payloadURL,
-                identity: $0,
-                snapshot: journal.replacementSnapshot
-            )
-        } ?? false
-        let originalMatches = backgroundFileMatches(
-            originalURL,
-            identity: journal.targetIdentity,
-            snapshot: journal.targetSnapshot
-        )
-        let itemCommitted = input.importedItems.contains { item in
-            guard item.id == journal.itemID,
-                  item.importedFileIdentity == stagedIdentity,
-                  item.contentDigest == journal.replacementSnapshot.sha256 else {
-                return false
-            }
-            if case .courseOwned(let ownerCourseID) = item.storage {
-                return ownerCourseID == journal.courseID
-            }
-            return false
-        }
-        let membershipCommitted = input.memberships.contains {
-            $0.courseID == journal.courseID
-                && $0.itemID == journal.itemID
-                && $0.courseRelativePath == journal.targetRelativePath
-                && $0.entryIdentity == stagedIdentity
-        }
-        let workspaceCommitted =
-            itemCommitted && membershipCommitted && targetMatchesReplacement
-
-        if workspaceCommitted {
-            if CourseProjectFileWorker.identity(at: originalURL) != nil {
-                guard originalMatches,
-                      backgroundRemoveVerified(
-                        originalURL,
-                        quarantineURL: transactionDirectory
-                            .appendingPathComponent("original-cleanup"),
-                        identity: journal.targetIdentity,
-                        snapshot: journal.targetSnapshot
-                      ) else {
-                    return
-                }
-            }
-            if CourseProjectFileWorker.identity(at: payloadURL) != nil {
-                guard payloadMatchesReplacement,
-                      let stagedIdentity,
-                      backgroundRemoveVerified(
-                        payloadURL,
-                        quarantineURL: transactionDirectory
-                            .appendingPathComponent("payload-cleanup"),
-                        identity: stagedIdentity,
-                        snapshot: journal.replacementSnapshot
-                      ) else {
-                    return
-                }
-            }
-            backgroundCleanupCourseMarkdownTransaction(
-                transactionDirectory,
-                expectedIdentity: journal.transactionDirectoryIdentity
-            )
-            return
-        }
-
-        if CourseProjectFileWorker.identity(at: targetURL) != nil {
-            guard targetMatchesReplacement,
-                  let stagedIdentity,
-                  backgroundRemoveVerified(
-                    targetURL,
-                    quarantineURL: transactionDirectory
-                        .appendingPathComponent("replacement-cleanup"),
-                    identity: stagedIdentity,
-                    snapshot: journal.replacementSnapshot
-                  ) else {
-                return
+        // 尽力解析 targetPath 并在目标缺失时还原 original。
+        if let data = try? Data(contentsOf: journalURL),
+           let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let targetPath = object["targetPath"] as? String {
+            let targetURL = URL(fileURLWithPath: targetPath).standardizedFileURL
+            if !fileManager.fileExists(atPath: targetURL.path),
+               fileManager.fileExists(atPath: originalURL.path) {
+                try? fileManager.moveItem(at: originalURL, to: targetURL)
             }
         }
-        if CourseProjectFileWorker.identity(at: payloadURL) != nil {
-            guard payloadMatchesReplacement,
-                  let stagedIdentity,
-                  backgroundRemoveVerified(
-                    payloadURL,
-                    quarantineURL: transactionDirectory
-                        .appendingPathComponent("payload-cleanup"),
-                    identity: stagedIdentity,
-                    snapshot: journal.replacementSnapshot
-                  ) else {
-                return
-            }
+        // 静默清理事务目录内容（失败忽略）。
+        for name in ["course-note.json", "payload", "original",
+                     "replacement-cleanup", "payload-cleanup", "original-cleanup"] {
+            let entry = transactionDirectory.appendingPathComponent(name)
+            try? fileManager.removeItem(at: entry)
         }
-        if CourseProjectFileWorker.identity(at: originalURL) != nil {
-            guard originalMatches,
-                  CourseProjectFileWorker.identity(at: targetURL) == nil,
-                  CourseProjectFileWorker.renameWithoutReplacement(
-                    from: originalURL,
-                    to: targetURL
-                  ) else {
-                return
-            }
+        if (try? fileManager.contentsOfDirectory(
+            atPath: transactionDirectory.path
+        ).isEmpty) == true {
+            try? fileManager.removeItem(at: transactionDirectory)
         }
-        guard backgroundFileMatches(
-            targetURL,
-            identity: journal.targetIdentity,
-            snapshot: journal.targetSnapshot
-        ) else {
-            return
-        }
-        backgroundCleanupCourseMarkdownTransaction(
-            transactionDirectory,
-            expectedIdentity: journal.transactionDirectoryIdentity
-        )
+        _ = input
+        _ = canonicalRoot
+        _ = payloadURL
     }
 
     nonisolated private static func recoverSharedLinkRemovalTransaction(
@@ -11817,7 +11608,7 @@ final class WorkspaceStore: ObservableObject {
         }
         let notePersisted: Bool
         if target.editsBackingMarkdownFile {
-            notePersisted = pendingNoteWritesByItemID[target.id] == nil
+            notePersisted = notesByItemID[target.id] == nil
                 && resultDigest != nil
                 && noteBackingContentDigestsByItemID[target.id] == resultDigest
         } else {
@@ -14939,14 +14730,8 @@ final class WorkspaceStore: ObservableObject {
         }
         flushPendingNotePersistence(for: itemID)
         persistCurrentNote()
-        if pendingNoteWritesByItemID[itemID] != nil {
-            noteFileError = ui(
-                "这份笔记还有待写草稿或外部冲突；两份内容都已保留，处理完成前不会重命名文件。",
-                "This note still has a pending draft or external conflict. Both versions were kept, and the file will not be renamed until it is resolved."
-            )
-            save()
-            return
-        }
+        // S2：写回三件套 last-writer-wins，不再用 pending 冲突阻断重命名。
+        // 若文件仍不可达且草稿在 notesByItemID，后续找不到 URL 时会安静返回。
         guard let index = importedItems.firstIndex(where: { $0.id == itemID && $0.isNotebookNote }) else { return }
         let resolution = resolveTrackedImportedFile(at: index)
         guard let oldURL = resolution.url else {
@@ -16978,7 +16763,6 @@ final class WorkspaceStore: ObservableObject {
 
     func pendingPortableNoteDraftForSelfCheck(itemID: String) -> String? {
         precondition(WeiBeiSafetyTestMode.isEnabled)
-        guard pendingNoteWritesByItemID[itemID] != nil else { return nil }
         return notesByItemID[itemID]
     }
 
@@ -21531,14 +21315,30 @@ final class WorkspaceStore: ObservableObject {
         noteFileError = message
     }
 
+    /// S2 启动迁移：旧 pendingNoteWrites 草稿按三件套写回一次；成功清除，失败转 notesByItemID 简单草稿。
     private func retryRestoredPendingNoteWrites() {
-        for item in importedItems where item.editsBackingMarkdownFile {
-            guard pendingNoteWritesByItemID[item.id]?
-                    .baselineContentDigest != nil,
-                  let markdown = notesByItemID[item.id] else {
+        let draftItemIDs = Set(pendingNoteWritesByItemID.keys)
+            .union(
+                importedItems.compactMap { item in
+                    item.editsBackingMarkdownFile && notesByItemID[item.id] != nil
+                        ? item.id
+                        : nil
+                }
+            )
+        for itemID in draftItemIDs {
+            guard let item = importedItems.first(where: {
+                $0.id == itemID && $0.editsBackingMarkdownFile
+            }),
+            let markdown = notesByItemID[itemID] else {
+                pendingNoteWritesByItemID.removeValue(forKey: itemID)
                 continue
             }
             persistNote(markdown, for: item)
+        }
+        // 写出时尽量清空已迁移的 pending 状态机字段。
+        if !pendingNoteWritesByItemID.isEmpty {
+            pendingNoteWritesByItemID = [:]
+            save()
         }
     }
 
@@ -21611,19 +21411,9 @@ final class WorkspaceStore: ObservableObject {
                     ].documentIdentifier =
                         result.documentIdentifier
                 }
-                if let pendingWrite = pendingNoteWritesByItemID[itemID] {
-                    let hasConflict =
-                        pendingWrite.baselineContentDigest == nil
-                        || pendingWrite.baselineContentDigest
-                            != result.snapshot.sha256
-                    if hasConflict {
-                        if activeNoteItemID == itemID {
-                            noteFileError = ui(
-                                "检测到笔记冲突：魏碑草稿和外部文件都已保留，请对照后再处理。",
-                                "A note conflict was detected. Both the WeiBei draft and external file were kept for review."
-                            )
-                        }
-                    } else if activeNoteItemID == itemID {
+                // 有草稿时不覆盖编辑器；无草稿则静默采用磁盘内容。
+                if notesByItemID[itemID] != nil {
+                    if activeNoteItemID == itemID {
                         noteFileError = noteOperationErrorsByItemID[itemID]
                     }
                 } else {
@@ -21657,30 +21447,12 @@ final class WorkspaceStore: ObservableObject {
             noteFileError = nil
             return defaultNote(for: nil)
         }
-        if let pendingWrite = pendingNoteWritesByItemID[item.id],
-           let cached = notesByItemID[item.id] {
-            let isCourseOwned: Bool
+        // 草稿优先：写回失败或文件不可达时 notesByItemID 保存最新编辑，不弹冲突。
+        if item.editsBackingMarkdownFile, let cached = notesByItemID[item.id] {
             if case .courseOwned = item.storage {
-                isCourseOwned = true
-            } else {
-                isCourseOwned = false
-            }
-            if isCourseOwned {
                 scheduleCourseNoteLoad(item)
             }
-            let diskDigest = isCourseOwned
-                ? noteBackingContentDigestsByItemID[item.id]
-                : item.url.flatMap(Self.noteContentDigest)
-            if let diskDigest {
-                noteBackingContentDigestsByItemID[item.id] = diskDigest
-            }
-            let hasConflict = diskDigest != nil
-                && (pendingWrite.baselineContentDigest == nil || pendingWrite.baselineContentDigest != diskDigest)
-            noteFileError = hasConflict ? ui(
-                    "检测到笔记冲突：魏碑草稿和外部文件都已保留，请对照后再处理。",
-                    "A note conflict was detected. Both the WeiBei draft and external file were kept for review."
-                )
-                : noteOperationErrorsByItemID[item.id]
+            noteFileError = noteOperationErrorsByItemID[item.id]
             return cleanLegacyPlaceholder(cached)
         }
         guard item.editsBackingMarkdownFile, let url = item.url else {
@@ -21720,7 +21492,7 @@ final class WorkspaceStore: ObservableObject {
         }
         if pendingNotePersistenceByItemID[item.id] != nil {
             flushPendingNotePersistence(for: item.id)
-        } else if pendingNoteWritesByItemID[item.id] != nil {
+        } else if notesByItemID[item.id] != nil, item.editsBackingMarkdownFile {
             persistNote(noteText, for: item)
         }
     }
@@ -21765,303 +21537,108 @@ final class WorkspaceStore: ObservableObject {
         pendingNotePersistenceTasks[itemID] = nil
     }
 
-    private func retainPendingNoteWrite(_ markdown: String, itemID: String, fallbackURL: URL?) {
-        let baseline: String?
-        if let existingPendingWrite = pendingNoteWritesByItemID[itemID] {
-            baseline = existingPendingWrite.baselineContentDigest
-        } else {
-            let permitsSynchronousFallback = !importedItems.contains {
-                guard $0.id == itemID else { return false }
-                if case .courseOwned = $0.storage { return true }
-                return false
-            }
-            baseline = noteBackingContentDigestsByItemID[itemID]
-                ?? importedItems.first(where: { $0.id == itemID })?
-                    .contentDigest
-                ?? (permitsSynchronousFallback
-                    ? fallbackURL.flatMap(Self.noteContentDigest)
-                    : nil)
-        }
-        notesByItemID[itemID] = markdown
-        pendingNoteWritesByItemID[itemID] = PendingNoteWriteState(
-            baselineContentDigest: baseline
-        )
-    }
-
-    private func beginCourseMarkdownWrite(
+    /// S2 三件套：备份（外部改动）→ 原子写 → 失败留草稿。
+    /// 返回是否成功写回磁盘。永不因 digest 冲突拒绝写回。
+    @discardableResult
+    private func writeNoteMarkdownTriple(
         _ markdown: String,
-        item: StudyItem,
-        expectedContentDigest: String?
-    ) async throws -> CourseMarkdownWriteTransaction {
-        guard item.isNotebookNote,
-              case .courseOwned(let courseID) = item.storage,
-              activeCourseRemovalTokens[courseID] == nil,
-              let targetURL = item.url,
-              let targetIdentity = item.importedFileIdentity,
-              let root = courseRootURL(for: courseID),
-              let canonicalRoot = try? CourseProjectPathPolicy.existingDirectory(
-                root
-              ),
-              let canonicalRootIdentity = importedFileIdentityResolver(
-                canonicalRoot
-              ),
-              let targetRelativePath = CourseProjectPathPolicy.relativePath(
-                of: targetURL,
-                inside: canonicalRoot
-              ) else {
-            throw CourseOwnedFileError.verificationFailed
+        itemID: String,
+        url: URL
+    ) -> Bool {
+        let lastDigest = noteBackingContentDigestsByItemID[itemID]
+        let currentDigest = Self.noteContentDigest(at: url)
+        if FileManager.default.fileExists(atPath: url.path),
+           currentDigest != lastDigest {
+            _ = try? NoteBackupRing.capture(
+                sourceURL: url,
+                itemID: itemID,
+                rootURL: noteBackupRootURL
+            )
         }
-        let targetComponents = targetRelativePath.split(
-            separator: "/",
-            omittingEmptySubsequences: true
-        )
-        guard targetComponents.count == 2,
-              targetComponents.first
-                == Substring(CourseOwnedFileRole.note.directoryName) else {
-            throw CourseOwnedFileError.unsafeCoursePath
-        }
-        let destinationDirectory = targetURL.deletingLastPathComponent()
-        guard let destinationDirectoryIdentity = importedFileIdentityResolver(
-            destinationDirectory
-        ) else {
-            throw CourseOwnedFileError.unsafeCoursePath
-        }
-        let targetSnapshot = try await courseProjectFileWorker.stableSnapshot(
-            at: targetURL,
-            expectedIdentity: targetIdentity
-        )
-        if let expectedContentDigest,
-           targetSnapshot.sha256 != expectedContentDigest {
-            throw CourseProjectFileWorkerError.contentConflict
-        }
-
-        let transactionID = UUID()
-        let transactionDirectory = try courseFileTransactionDirectory(
-            transactionID: transactionID,
-            inside: canonicalRoot
-        )
-        guard let transactionDirectoryIdentity = importedFileIdentityResolver(
-            transactionDirectory
-        ) else {
-            throw CourseOwnedFileError.unsafeCoursePath
-        }
-        let journalURL = transactionDirectory.appendingPathComponent(
-            "course-note.json"
-        )
-        let payloadURL = transactionDirectory.appendingPathComponent("payload")
-        let originalURL = transactionDirectory.appendingPathComponent("original")
-        let replacementSnapshot = await courseProjectFileWorker.snapshot(
-            of: Data(markdown.utf8)
-        )
-        var journal = PendingCourseMarkdownWriteJournal(
-            transactionID: transactionID,
-            transactionDirectoryIdentity: transactionDirectoryIdentity,
-            courseID: courseID,
-            itemID: item.id,
-            targetPath: targetURL.path,
-            targetRelativePath: targetRelativePath,
-            targetIdentity: targetIdentity,
-            targetSnapshot: targetSnapshot,
-            replacementSnapshot: replacementSnapshot,
-            stagedIdentity: nil,
-            stage: .prepared
-        )
         do {
-            try await courseProjectFileWorker.write(
-                JSONEncoder().encode(journal),
-                to: journalURL
-            )
-            let staged = try await courseProjectFileWorker.stageMarkdown(
-                markdown,
-                to: payloadURL
-            )
-            guard staged.snapshot == replacementSnapshot else {
-                throw CourseOwnedFileError.verificationFailed
-            }
-            journal.stagedIdentity = staged.identity
-            journal.stage = .staged
-            try await courseProjectFileWorker.write(
-                JSONEncoder().encode(journal),
-                to: journalURL
-            )
-
-            try courseProjectMutationHook(
-                .beforeCourseMarkdownTargetIsolation
-            )
-            guard await courseProjectFileWorker.isolateWithoutReplacement(
-                from: targetURL,
-                to: originalURL
-            ) else {
-                throw CourseProjectFileWorkerError.contentConflict
-            }
-            try courseProjectMutationHook(
-                .afterCourseMarkdownTargetIsolationBeforeJournal
-            )
-            do {
-                _ = try await courseProjectFileWorker.stableSnapshot(
-                    at: originalURL,
-                    expectedIdentity: targetIdentity,
-                    expectedSnapshot: targetSnapshot
-                )
-            } catch {
-                _ = await courseProjectFileWorker.restoreIsolatedFile(
-                    from: originalURL,
-                    to: targetURL
-                )
-                throw CourseProjectFileWorkerError.contentConflict
-            }
-            journal.stage = .targetIsolated
-            try await courseProjectFileWorker.write(
-                JSONEncoder().encode(journal),
-                to: journalURL
-            )
-
-            let placedIdentity: ImportedFileIdentity
-            do {
-                placedIdentity = try await courseProjectFileWorker
-                    .placeWithoutReplacement(
-                        from: payloadURL,
-                        to: targetURL,
-                        courseRoot: canonicalRoot,
-                        destinationDirectory: destinationDirectory,
-                        expectedDestinationIdentity:
-                            destinationDirectoryIdentity,
-                        expectedSnapshot: replacementSnapshot
-                    )
-            } catch CourseProjectFileWorkerError.targetExists {
-                _ = await courseProjectFileWorker.restoreIsolatedFile(
-                    from: originalURL,
-                    to: targetURL
-                )
-                throw CourseProjectFileWorkerError.contentConflict
-            }
-            try courseProjectMutationHook(
-                .afterCourseMarkdownTargetPlacementBeforeJournal
-            )
-            guard placedIdentity == staged.identity,
-                  importedFileIdentityResolver(canonicalRoot)
-                    == canonicalRootIdentity else {
-                throw CourseOwnedFileError.verificationFailed
-            }
-            journal.stage = .placed
-            try await courseProjectFileWorker.write(
-                JSONEncoder().encode(journal),
-                to: journalURL
-            )
-            let metadata = try await courseProjectFileWorker.stableMetadata(
-                at: targetURL,
-                expectedIdentity: placedIdentity,
-                expectedSnapshot: replacementSnapshot
-            )
-            let values = try targetURL.resourceValues(
-                forKeys: [.documentIdentifierKey]
-            )
-            return CourseMarkdownWriteTransaction(
-                result: CourseMarkdownWriteResult(
-                    snapshot: replacementSnapshot,
-                    metadata: metadata,
-                    documentIdentifier: values.documentIdentifier.flatMap {
-                        $0 >= 0 ? UInt64($0) : nil
-                    },
-                    ranOnMainThread: staged.ranOnMainThread
-                ),
-                journal: journal,
-                transactionDirectory: transactionDirectory
-            )
+            try notebookMarkdownWriter(markdown, url)
+            let writtenDigest = Self.noteContentDigest(Data(markdown.utf8))
+            noteBackingContentDigestsByItemID[itemID] = writtenDigest
+            notesByItemID.removeValue(forKey: itemID)
+            pendingNoteWritesByItemID.removeValue(forKey: itemID)
+            setNoteFileError(nil, for: itemID)
+            return true
         } catch {
-            if WeiBeiSafetyTestMode.isEnabled, error is CourseProjectSimulatedCrash {
-                throw error
-            }
-            await rollbackCourseMarkdownWrite(
-                journal: journal,
-                transactionDirectory: transactionDirectory
+            notesByItemID[itemID] = markdown
+            pendingNoteWritesByItemID.removeValue(forKey: itemID)
+            showTransientNoteStatus(
+                ui(
+                    "无法写回原 Markdown：\(url.lastPathComponent)",
+                    "Could not write original Markdown: \(url.lastPathComponent)"
+                )
             )
-            throw error
+            return false
         }
     }
 
-    private func rollbackCourseMarkdownWrite(
-        journal: PendingCourseMarkdownWriteJournal,
-        transactionDirectory: URL
-    ) async {
-        let targetURL = URL(fileURLWithPath: journal.targetPath)
-            .standardizedFileURL
-        let payloadURL = transactionDirectory.appendingPathComponent("payload")
-        let originalURL = transactionDirectory.appendingPathComponent("original")
-        if let stagedIdentity = journal.stagedIdentity {
-            if CourseProjectFileWorker.identity(at: targetURL)
-                == stagedIdentity {
-                _ = await courseProjectFileWorker.isolateAndRemoveVerifiedFile(
-                    at: targetURL,
-                    quarantineURL: transactionDirectory.appendingPathComponent(
-                        "replacement-cleanup"
-                    ),
-                    expectedIdentity: stagedIdentity,
-                    expectedSnapshot: journal.replacementSnapshot,
-                    remover: { try FileManager.default.removeItem(at: $0) }
-                )
-            }
-            if CourseProjectFileWorker.identity(at: payloadURL)
-                == stagedIdentity {
-                _ = await courseProjectFileWorker.isolateAndRemoveVerifiedFile(
-                    at: payloadURL,
-                    quarantineURL: transactionDirectory.appendingPathComponent(
-                        "payload-cleanup"
-                    ),
-                    expectedIdentity: stagedIdentity,
-                    expectedSnapshot: journal.replacementSnapshot,
-                    remover: { try FileManager.default.removeItem(at: $0) }
-                )
-            }
-        }
-        if CourseProjectFileWorker.identity(at: targetURL) == nil,
-           (try? await courseProjectFileWorker.stableSnapshot(
-            at: originalURL,
-            expectedIdentity: journal.targetIdentity,
-            expectedSnapshot: journal.targetSnapshot
-           )) != nil {
-            _ = await courseProjectFileWorker.restoreIsolatedFile(
-                from: originalURL,
-                to: targetURL
-            )
-        }
-        await safelyRemoveCourseMarkdownTransactionDirectoryInBackground(
-            transactionDirectory,
-            expectedIdentity: journal.transactionDirectoryIdentity
-        )
+    /// 文件不可达时静默保留草稿（无冲突横幅）。
+    private func retainUnreachableNoteDraft(
+        _ markdown: String,
+        itemID: String
+    ) {
+        notesByItemID[itemID] = markdown
+        pendingNoteWritesByItemID.removeValue(forKey: itemID)
     }
 
-    private func finishCourseMarkdownWrite(
-        _ transaction: CourseMarkdownWriteTransaction
-    ) async {
-        let targetURL = URL(
-            fileURLWithPath: transaction.journal.targetPath
-        ).standardizedFileURL
-        guard let stagedIdentity = transaction.journal.stagedIdentity,
-              (try? await courseProjectFileWorker.stableMetadata(
-                at: targetURL,
-                expectedIdentity: stagedIdentity,
-                expectedSnapshot: transaction.journal.replacementSnapshot
-              )) != nil else {
+    private func refreshCourseOwnedNoteMetadataAfterWrite(
+        itemID: String,
+        markdown: String,
+        url: URL
+    ) {
+        guard let index = importedItems.firstIndex(where: { $0.id == itemID }),
+              case .courseOwned = importedItems[index].storage else {
             return
         }
-        let originalURL = transaction.transactionDirectory
-            .appendingPathComponent("original")
-        if CourseProjectFileWorker.identity(at: originalURL) != nil {
-            _ = await courseProjectFileWorker.isolateAndRemoveVerifiedFile(
-                at: originalURL,
-                quarantineURL: transaction.transactionDirectory
-                    .appendingPathComponent("original-cleanup"),
-                expectedIdentity: transaction.journal.targetIdentity,
-                expectedSnapshot: transaction.journal.targetSnapshot,
-                remover: { try FileManager.default.removeItem(at: $0) }
-            )
+        let writtenDigest = Self.noteContentDigest(Data(markdown.utf8))
+        if importedItems[index].contentDigest != writtenDigest {
+            importedItems[index].contentRevision &+= 1
         }
-        await safelyRemoveCourseMarkdownTransactionDirectoryInBackground(
-            transaction.transactionDirectory,
-            expectedIdentity:
-                transaction.journal.transactionDirectoryIdentity
-        )
+        importedItems[index].contentDigest = writtenDigest
+        if let values = try? url.resourceValues(forKeys: [
+            .fileSizeKey,
+            .contentModificationDateKey,
+            .documentIdentifierKey,
+        ]) {
+            if let size = values.fileSize {
+                importedItems[index].fileByteCount = UInt64(size)
+            }
+            if let modified = values.contentModificationDate {
+                let nanoseconds = modified.timeIntervalSince1970 * 1_000_000_000
+                importedItems[index].fileModificationTimeNanoseconds =
+                    nanoseconds.isFinite ? Int64(nanoseconds) : nil
+            }
+            if let membershipIndex = courseItemMemberships.firstIndex(
+                where: { $0.itemID == itemID }
+            ) {
+                courseItemMemberships[membershipIndex].documentIdentifier =
+                    values.documentIdentifier.flatMap {
+                        $0 >= 0 ? UInt64($0) : nil
+                    }
+            }
+        }
+        if let identity = importedFileIdentityResolver(url) {
+            importedItems[index].importedFileIdentity = identity
+            if let membershipIndex = courseItemMemberships.firstIndex(
+                where: { $0.itemID == itemID }
+            ) {
+                courseItemMemberships[membershipIndex].entryIdentity = identity
+            }
+        }
+        importedItems[index].urlPath = url.path
+        importedItems[index].importedFileLastKnownPath = url.path
+        importedItems[index].title =
+            url.deletingPathExtension().lastPathComponent
+        importedItems[index].subtitle = url.lastPathComponent
+        importedItems[index].kind = StudyItemKind.detect(from: url)
+        noteBackingContentDigestsByItemID[itemID] = writtenDigest
+        loadedCourseNoteTextByItemID[itemID] =
+            cleanLegacyPlaceholder(markdown)
+        courseDocumentSearchIndex.schedule([importedItems[index]])
     }
 
     private func persistCourseOwnedNote(
@@ -22071,225 +21648,33 @@ final class WorkspaceStore: ObservableObject {
         guard let index = importedItems.firstIndex(where: { $0.id == itemID }),
               importedItems[index].isNotebookNote,
               case .courseOwned = importedItems[index].storage,
-              importedItems[index].url != nil,
-              importedItems[index].importedFileIdentity != nil else {
-            retainPendingNoteWrite(
-                markdown,
-                itemID: itemID,
-                fallbackURL: nil
-            )
-            setNoteFileError(
-                ui(
-                    "原 Markdown 已移动或不可用，最新编辑已安全保留在课程中。",
-                    "The original Markdown moved or is unavailable. The latest edit is safely retained in the course."
-                ),
-                for: itemID
-            )
+              let url = importedItems[index].url else {
+            retainUnreachableNoteDraft(markdown, itemID: itemID)
             save()
             return
         }
-        retainPendingNoteWrite(
-            markdown,
-            itemID: itemID,
-            fallbackURL: nil
-        )
-        if Self.mustSaveImmediately {
-            guard performSaveNow() else {
-                setNoteFileError(
-                    ui(
-                        "最新编辑尚未安全保存到工作区，暂不写回原 Markdown。",
-                        "The latest edit is not yet safely stored in the workspace, so the original Markdown was not changed."
-                    ),
-                    for: itemID
-                )
-                return
-            }
-            startCourseOwnedNoteWriteIfNeeded(itemID: itemID)
-            return
+        // 用上次成功写入 digest 做备份判定（不是冲突关卡）。
+        if noteBackingContentDigestsByItemID[itemID] == nil,
+           let digest = importedItems[index].contentDigest {
+            noteBackingContentDigestsByItemID[itemID] = digest
         }
-        Task { @MainActor [weak self] in
-            guard let self else { return }
-            guard await self.persistWorkspaceNow() else {
-                self.setNoteFileError(
-                    self.ui(
-                        "最新编辑尚未安全保存到工作区，暂不写回原 Markdown。",
-                        "The latest edit is not yet safely stored in the workspace, so the original Markdown was not changed."
-                    ),
-                    for: itemID
-                )
-                return
-            }
-            self.startCourseOwnedNoteWriteIfNeeded(itemID: itemID)
+        let wrote = writeNoteMarkdownTriple(markdown, itemID: itemID, url: url)
+        if wrote {
+            refreshCourseOwnedNoteMetadataAfterWrite(
+                itemID: itemID,
+                markdown: markdown,
+                url: url
+            )
+            lastCourseNoteWriteRanOnMainThread = true
         }
-    }
-
-    private func startCourseOwnedNoteWriteIfNeeded(itemID: String) {
-        guard !courseNoteWritesInFlight.contains(itemID),
-              let markdown = notesByItemID[itemID],
-              let pendingWrite = pendingNoteWritesByItemID[itemID],
-              let expectedDigest = pendingWrite.baselineContentDigest,
-              let item = importedItems.first(where: { $0.id == itemID }),
-              item.isNotebookNote,
-              case .courseOwned = item.storage,
-              let url = item.url,
-              item.importedFileIdentity != nil else {
-            return
-        }
-        courseNoteLoadGenerationByItemID[itemID, default: 0] &+= 1
-        let generation = courseNoteLoadGenerationByItemID[itemID] ?? 0
-        courseNoteLoadTasksByItemID[itemID]?.cancel()
-        courseNoteLoadTasksByItemID[itemID] = nil
-        courseNoteWritesInFlight.insert(itemID)
-        let task = Task { @MainActor [weak self] in
-            guard let self else { return }
-            do {
-                let transaction = try await beginCourseMarkdownWrite(
-                    markdown,
-                    item: item,
-                    expectedContentDigest: expectedDigest
-                )
-                guard courseNoteLoadGenerationByItemID[itemID]
-                        == generation else {
-                    await rollbackCourseMarkdownWrite(
-                        journal: transaction.journal,
-                        transactionDirectory:
-                            transaction.transactionDirectory
-                    )
-                    courseNoteWritesInFlight.remove(itemID)
-                    courseNoteWriteTasksByItemID[itemID] = nil
-                    if pendingNoteWritesByItemID[itemID] != nil {
-                        startCourseOwnedNoteWriteIfNeeded(itemID: itemID)
-                    }
-                    return
-                }
-                let result = transaction.result
-                let previousItems = importedItems
-                let previousMemberships = courseItemMemberships
-                let previousBackingDigests =
-                    noteBackingContentDigestsByItemID
-                let previousLoadedNotes = loadedCourseNoteTextByItemID
-                let previousNotes = notesByItemID
-                let previousPendingWrites = pendingNoteWritesByItemID
-                lastCourseNoteWriteRanOnMainThread = result.ranOnMainThread
-                applyCourseMarkdownWriteResult(
-                    result,
-                    itemID: itemID,
-                    markdown: markdown
-                )
-                if notesByItemID[itemID] == markdown {
-                    notesByItemID.removeValue(forKey: itemID)
-                    pendingNoteWritesByItemID.removeValue(forKey: itemID)
-                    setNoteFileError(nil, for: itemID)
-                } else {
-                    pendingNoteWritesByItemID[itemID] = PendingNoteWriteState(
-                        baselineContentDigest: result.snapshot.sha256
-                    )
-                }
-                guard await persistWorkspaceNow() else {
-                    importedItems = previousItems
-                    courseItemMemberships = previousMemberships
-                    noteBackingContentDigestsByItemID =
-                        previousBackingDigests
-                    loadedCourseNoteTextByItemID = previousLoadedNotes
-                    notesByItemID = previousNotes
-                    pendingNoteWritesByItemID = previousPendingWrites
-                    await rollbackCourseMarkdownWrite(
-                        journal: transaction.journal,
-                        transactionDirectory:
-                            transaction.transactionDirectory
-                    )
-                    throw CourseOwnedFileError.workspaceSaveFailed
-                }
-                await finishCourseMarkdownWrite(transaction)
-                courseNoteWritesInFlight.remove(itemID)
-                courseNoteWriteTasksByItemID[itemID] = nil
-                if pendingNoteWritesByItemID[itemID] != nil {
-                    startCourseOwnedNoteWriteIfNeeded(itemID: itemID)
-                }
-            } catch CourseProjectFileWorkerError.contentConflict {
-                guard courseNoteLoadGenerationByItemID[itemID]
-                        == generation else {
-                    return
-                }
-                courseNoteWritesInFlight.remove(itemID)
-                courseNoteWriteTasksByItemID[itemID] = nil
-                if activeNoteItemID == itemID {
-                    noteFileError = ui(
-                        "检测到笔记冲突：没有覆盖外部文件，魏碑草稿也已保留。请对照两份内容后再处理。",
-                        "A note conflict was detected. The external file was not overwritten, and the WeiBei draft was retained for review."
-                    )
-                }
-                scheduleCourseNoteLoad(item)
-                save()
-            } catch {
-                guard courseNoteLoadGenerationByItemID[itemID]
-                        == generation else {
-                    return
-                }
-                courseNoteWritesInFlight.remove(itemID)
-                courseNoteWriteTasksByItemID[itemID] = nil
-                setNoteFileError(
-                    ui(
-                        "无法写回原 Markdown：\(url.lastPathComponent)",
-                        "Could not write original Markdown: \(url.lastPathComponent)"
-                    ),
-                    for: itemID
-                )
-                save()
-            }
-        }
-        courseNoteWriteTasksByItemID[itemID] = task
-    }
-
-    private func applyCourseMarkdownWriteResult(
-        _ result: CourseMarkdownWriteResult,
-        itemID: String,
-        markdown: String
-    ) {
-        guard let index = importedItems.firstIndex(where: { $0.id == itemID }),
-              case .courseOwned = importedItems[index].storage else {
-            return
-        }
-        if importedItems[index].contentDigest != result.snapshot.sha256 {
-            importedItems[index].contentRevision &+= 1
-        }
-        importedItems[index].contentDigest = result.snapshot.sha256
-        importedItems[index].fileByteCount = result.metadata.byteCount
-        importedItems[index].fileModificationTimeNanoseconds =
-            result.metadata.modificationTimeNanoseconds
-        importedItems[index].importedFileIdentity = result.metadata.identity
-        importedItems[index].urlPath = result.metadata.url.path
-        importedItems[index].importedFileLastKnownPath =
-            result.metadata.url.path
-        importedItems[index].title =
-            result.metadata.url.deletingPathExtension().lastPathComponent
-        importedItems[index].subtitle = result.metadata.url.lastPathComponent
-        importedItems[index].kind = StudyItemKind.detect(
-            from: result.metadata.url
-        )
-        noteBackingContentDigestsByItemID[itemID] = result.snapshot.sha256
-        loadedCourseNoteTextByItemID[itemID] =
-            cleanLegacyPlaceholder(markdown)
-        if let membershipIndex = courseItemMemberships.firstIndex(
-            where: { $0.itemID == itemID }
-        ) {
-            courseItemMemberships[membershipIndex].entryIdentity =
-                result.metadata.identity
-            courseItemMemberships[membershipIndex].documentIdentifier =
-                result.documentIdentifier
-        }
-        courseDocumentSearchIndex.schedule([importedItems[index]])
+        save()
     }
 
     private func persistNote(_ markdown: String, for item: StudyItem) {
         let noteItemID = item.id
         if item.editsBackingMarkdownFile {
             guard let index = importedItems.firstIndex(where: { $0.id == noteItemID }) else {
-                retainPendingNoteWrite(markdown, itemID: noteItemID, fallbackURL: item.url)
-                setNoteFileError(
-                    ui("无法确认原 Markdown 的课程身份。", "Could not resolve the original Markdown identity."),
-                    for: noteItemID
-                )
+                retainUnreachableNoteDraft(markdown, itemID: noteItemID)
                 save()
                 return
             }
@@ -22299,64 +21684,22 @@ final class WorkspaceStore: ObservableObject {
             }
             let resolution = resolveTrackedImportedFile(at: index)
             guard let url = resolution.url else {
-                retainPendingNoteWrite(markdown, itemID: noteItemID, fallbackURL: item.url)
-                setNoteFileError(
-                    ui(
-                        "原 Markdown 已移动或不可用，最新编辑已安全保留在课程中。",
-                        "The original Markdown moved or is unavailable. The latest edit is safely retained in the course."
-                    ),
-                    for: noteItemID
-                )
+                retainUnreachableNoteDraft(markdown, itemID: noteItemID)
                 save()
                 return
             }
-            let pendingWrite = pendingNoteWritesByItemID[noteItemID]
-            let expectedDigest = pendingWrite == nil
-                ? noteBackingContentDigestsByItemID[noteItemID]
-                : pendingWrite?.baselineContentDigest
-            let currentDigest = Self.noteContentDigest(at: url)
-            let hasConflict: Bool
-            if pendingWrite != nil {
-                hasConflict = expectedDigest.flatMap { expected in
-                    currentDigest.map { $0 != expected }
-                } ?? true
-            } else if let expectedDigest {
-                hasConflict = currentDigest.map { $0 != expectedDigest } ?? true
-            } else {
-                hasConflict = false
+            if noteBackingContentDigestsByItemID[noteItemID] == nil,
+               let digest = importedItems[index].contentDigest {
+                noteBackingContentDigestsByItemID[noteItemID] = digest
             }
-            if hasConflict {
-                retainPendingNoteWrite(markdown, itemID: noteItemID, fallbackURL: url)
-                if activeNoteItemID == noteItemID {
-                    noteFileError = ui(
-                        "检测到笔记冲突：没有覆盖外部文件，魏碑草稿也已保留。请对照两份内容后再处理。",
-                        "A note conflict was detected. The external file was not overwritten, and the WeiBei draft was retained for review."
-                    )
-                }
-                save()
-                return
-            }
-            do {
-                try notebookMarkdownWriter(markdown, url)
-                notesByItemID.removeValue(forKey: noteItemID)
-                pendingNoteWritesByItemID.removeValue(forKey: noteItemID)
-                noteBackingContentDigestsByItemID[noteItemID] = Self.noteContentDigest(Data(markdown.utf8))
-                setNoteFileError(nil, for: noteItemID)
-                let refreshedItem = refreshImportedFileTracking(itemID: noteItemID, url: url)
-                    ?? importedItems[index]
+            if writeNoteMarkdownTriple(markdown, itemID: noteItemID, url: url) {
+                let refreshedItem = refreshImportedFileTracking(
+                    itemID: noteItemID,
+                    url: url
+                ) ?? importedItems[index]
                 courseDocumentSearchIndex.schedule([refreshedItem])
-                save()
-            } catch {
-                retainPendingNoteWrite(markdown, itemID: noteItemID, fallbackURL: url)
-                setNoteFileError(
-                    ui(
-                        "无法写回原 Markdown：\(url.lastPathComponent)",
-                        "Could not write original Markdown: \(url.lastPathComponent)"
-                    ),
-                    for: noteItemID
-                )
-                save()
             }
+            save()
             return
         }
         notesByItemID[noteItemID] = markdown
@@ -23568,16 +22911,17 @@ final class WorkspaceStore: ObservableObject {
         }
         importedItems = snapshot.importedItems
         notesByItemID = snapshot.notesByItemID.mapValues(cleanLegacyPlaceholder)
+        // 解码容忍旧 pendingNoteWrites；S2 写回路径不再依赖冲突状态机，启动时一次性迁移。
         if let persistedPendingNoteWrites = snapshot.pendingNoteWritesByItemID {
             pendingNoteWritesByItemID = persistedPendingNoteWrites
+            // 保证草稿正文在 notesByItemID（迁移源）。
+            for (itemID, _) in persistedPendingNoteWrites
+            where notesByItemID[itemID] == nil {
+                // 仅有 pending 标记无正文的旧数据：不伪造内容。
+                continue
+            }
         } else {
             pendingNoteWritesByItemID = [:]
-            for item in importedItems
-            where item.editsBackingMarkdownFile && notesByItemID[item.id] != nil {
-                pendingNoteWritesByItemID[item.id] = PendingNoteWriteState(
-                    baselineContentDigest: nil
-                )
-            }
         }
         noteBackingContentDigestsByItemID = snapshot.noteBackingContentDigestsByItemID ?? [:]
         selectedItemID = snapshot.selectedItemID
@@ -23751,9 +23095,13 @@ final class WorkspaceStore: ObservableObject {
             PersistedWorkspace(
                 importedItems: importedItems,
                 notesByItemID: notesByItemID,
-                pendingNoteWritesByItemID: pendingNoteWritesByItemID,
+                pendingNoteWritesByItemID: pendingNoteWritesByItemID.isEmpty
+                    ? nil
+                    : pendingNoteWritesByItemID,
                 noteBackingContentDigestsByItemID:
-                    noteBackingContentDigestsByItemID,
+                    noteBackingContentDigestsByItemID.isEmpty
+                    ? nil
+                    : noteBackingContentDigestsByItemID,
                 selectedItemID: selectedItemID,
                 activeNotebookItemID: activeNotebookItemID,
                 courses: courses,
@@ -24498,8 +23846,12 @@ final class WorkspaceStore: ObservableObject {
             let snapshot = PersistedWorkspace(
                 importedItems: importedItems,
                 notesByItemID: notesByItemID,
-                pendingNoteWritesByItemID: pendingNoteWritesByItemID,
-                noteBackingContentDigestsByItemID: noteBackingContentDigestsByItemID,
+                pendingNoteWritesByItemID: pendingNoteWritesByItemID.isEmpty
+                    ? nil
+                    : pendingNoteWritesByItemID,
+                noteBackingContentDigestsByItemID: noteBackingContentDigestsByItemID.isEmpty
+                    ? nil
+                    : noteBackingContentDigestsByItemID,
                 selectedItemID: selectedItemID,
                 activeNotebookItemID: activeNotebookItemID,
                 courses: courses,

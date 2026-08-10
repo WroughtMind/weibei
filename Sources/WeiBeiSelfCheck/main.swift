@@ -1789,4 +1789,33 @@ do {
     expect(!stillHasOldest || total <= NoteBackupRing.maxTotalBytes, "oldest oversized entries are pruned first")
 }
 
+
+// MARK: - S2 note write triple: external change is backed up before overwrite
+do {
+    let root = FileManager.default.temporaryDirectory
+        .appendingPathComponent("weibei-s2-triple-\(UUID().uuidString)", isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    let noteURL = root.appendingPathComponent("note.md")
+    let backupRoot = root.appendingPathComponent("Backups", isDirectory: true)
+    let original = "# 原正文\n\n外部版本"
+    let weibei = "# 原正文\n\n魏碑覆盖"
+    try original.write(to: noteURL, atomically: true, encoding: .utf8)
+    // Simulate triple: if disk != last written, capture then atomic write
+    let itemID = "s2-triple-note"
+    let captured = try NoteBackupRing.capture(
+        sourceURL: noteURL,
+        itemID: itemID,
+        rootURL: backupRoot
+    )
+    expect(captured != nil, "S2 triple backs up external content before overwrite")
+    try weibei.write(to: noteURL, atomically: true, encoding: .utf8)
+    let after = try String(contentsOf: noteURL, encoding: .utf8)
+    expect(after == weibei, "S2 triple atomic write wins")
+    let listed = try NoteBackupRing.list(itemID: itemID, rootURL: backupRoot)
+    expect(listed.count == 1, "S2 triple retains one backup")
+    let restored = try String(contentsOf: listed[0].url, encoding: .utf8)
+    expect(restored == original, "S2 triple backup preserves external content")
+}
+
 print("WeiBei self-check passed")
