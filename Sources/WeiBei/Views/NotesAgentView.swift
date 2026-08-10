@@ -577,8 +577,6 @@ struct NotePaneView: View {
                 reorderRole: reorderRole
             ) {
                 ContextualContentListButton(kind: .note)
-                LinkedSourcesControl()
-                writingAssistControl
                 noteModeControl
                 newNoteControl
             }
@@ -595,13 +593,11 @@ struct NotePaneView: View {
                 mark: "NOTES",
                 title: noteHeaderSubtitle,
                 appearanceMode: store.appearanceMode,
-                isPinned: store.notebookCreationDraft != nil || store.linkedSourcesPresented,
+                isPinned: store.notebookCreationDraft != nil,
                 actionsAlignedTrailing: true,
                 reorderRole: reorderRole
             ) {
                 ContextualContentListButton(kind: .note)
-                LinkedSourcesControl()
-                writingAssistControl
                 noteModeControl
                 newNoteControl
             }
@@ -634,57 +630,6 @@ struct NotePaneView: View {
                 }
             }
         )
-    }
-
-    private var writingAssistControl: some View {
-        Menu {
-            Button {
-                prepareWritingAssist(store.ui(
-                    "请根据\(store.agentPromptScope)，给出一版更清晰的笔记大纲。",
-                    "Use \(store.agentPromptScope) to produce a clearer note outline."
-                ))
-            } label: {
-                Label(store.ui("大纲建议", "Outline"), systemImage: "list.bullet.rectangle")
-            }
-            Button {
-                prepareWritingAssist(store.hasSelectedMaterial
-                    ? store.ui(
-                        "请检查当前笔记缺少来源的位置，并建议应该引用当前资料的哪些部分。",
-                        "Find where the current note needs sources and suggest which parts of the current material to cite."
-                    )
-                    : store.ui(
-                        "请检查当前笔记缺少来源的位置，并标出需要补证据的段落。",
-                        "Find where the current note needs sources and mark the paragraphs that need evidence."
-                    ))
-            } label: {
-                Label(store.ui("补来源", "Add Sources"), systemImage: "link")
-            }
-            Button {
-                prepareWritingAssist(store.ui(
-                    "请整理和润色当前笔记，保留原意，并标出缺少来源的位置。",
-                    "Organize and polish the current note, preserve the meaning, and mark where sources are missing."
-                ))
-            } label: {
-                Label(store.ui("润色表达", "Polish"), systemImage: "text.quote")
-            }
-        } label: {
-            Label(store.ui("整理", "Refine"), systemImage: "text.badge.checkmark")
-        }
-        .menuStyle(.borderlessButton)
-        .fixedSize()
-        .font(.system(size: 11, weight: .medium))
-        .foregroundStyle(WeiBeiTheme.secondaryInk)
-        .accessibilityLabel(Text(store.ui("整理当前笔记", "Refine current note")))
-        .help(store.ui("按需生成大纲、补来源或润色表达", "Create an outline, add sources, or polish on demand"))
-    }
-
-    private func prepareWritingAssist(_ prompt: String) {
-        flushNoteDraft(immediate: true)
-        withAnimation(WeiBeiMotion.layout) {
-            store.agentDraft = prompt
-            store.setLayout(.immersiveConversation)
-            store.revealRightPane(focusing: .agent)
-        }
     }
 
     @ViewBuilder

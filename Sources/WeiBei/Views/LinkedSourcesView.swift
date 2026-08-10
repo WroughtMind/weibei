@@ -1,32 +1,6 @@
 import SwiftUI
 import WeiBeiCore
 
-struct LinkedSourcesControl: View {
-    @EnvironmentObject private var store: WorkspaceStore
-
-    var body: some View {
-        Button {
-            store.linkedSourcesPresented.toggle()
-        } label: {
-            Label(
-                store.ui("资料 \(store.linkedSourceCount)", "Sources \(store.linkedSourceCount)"),
-                systemImage: "link"
-            )
-        }
-        .buttonStyle(WeiBeiTextActionButtonStyle(active: store.linkedSourcesPresented))
-        .disabled(store.activeNotebookItemID == nil)
-        .popover(isPresented: $store.linkedSourcesPresented, arrowEdge: .bottom) {
-            LinkedSourcesPopover(dismiss: { store.linkedSourcesPresented = false })
-                .environmentObject(store)
-        }
-        .accessibilityLabel(Text(store.ui(
-            "管理这份笔记的资料，当前 \(store.linkedSourceCount) 份",
-            "Manage sources for this note, \(store.linkedSourceCount) selected"
-        )))
-        .help(store.ui("为当前笔记选择长期关联的资料", "Choose durable source links for this note"))
-    }
-}
-
 struct LinkedSourcesPopover: View {
     @EnvironmentObject private var store: WorkspaceStore
     @State private var query = ""
