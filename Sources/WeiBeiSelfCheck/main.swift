@@ -53,6 +53,25 @@ func importedIdentity(at url: URL) -> ImportedFileIdentity? {
     )
 }
 
+// APFS st_dev 重启后会漂移：跨卷号匹配必须成立，否则重启后所有笔记绑定失效
+let volumeDriftBase = ImportedFileIdentity(
+    volumeID: 16777231, fileID: 102132581,
+    birthTimeSeconds: 1784335840, birthTimeNanoseconds: 247767953
+)
+var volumeDrifted = volumeDriftBase
+volumeDrifted.volumeID = 16777234
+var differentFile = volumeDrifted
+differentFile.fileID += 1
+var differentBirth = volumeDrifted
+differentBirth.birthTimeNanoseconds += 1
+expect(
+    volumeDriftBase.matchesAcrossVolumeDrift(volumeDrifted)
+        && volumeDriftBase.matchesAcrossVolumeDrift(volumeDriftBase)
+        && !volumeDriftBase.matchesAcrossVolumeDrift(differentFile)
+        && !volumeDriftBase.matchesAcrossVolumeDrift(differentBirth),
+    "imported file identity tolerates volume-ID drift but still requires inode and birth time"
+)
+
 final class OneShotFileReplacement: @unchecked Sendable {
     private let lock = NSLock()
     private var didRun = false

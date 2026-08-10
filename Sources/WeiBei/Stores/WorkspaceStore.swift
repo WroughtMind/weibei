@@ -3340,7 +3340,7 @@ final class WorkspaceStore: ObservableObject {
             }
             let sourceInfo = try await courseProjectFileWorker
                 .validatedRegularSource(sharedURL)
-            guard item.importedFileIdentity == sourceInfo.identity else {
+            guard item.importedFileIdentity?.matchesAcrossVolumeDrift(sourceInfo.identity) == true else {
                 throw CoursePortableStateError.stateConflict
             }
             let sourceSnapshot = try await courseProjectFileWorker
@@ -14679,7 +14679,7 @@ final class WorkspaceStore: ObservableObject {
             }
             let identityMatchingIndex = importedItems.firstIndex { item in
                 if let identity {
-                    return item.importedFileIdentity == identity
+                    return item.importedFileIdentity?.matchesAcrossVolumeDrift(identity) == true
                 }
                 return item.importedFileIdentity == nil && item.urlPath == url.path
             }
@@ -15327,7 +15327,7 @@ final class WorkspaceStore: ObservableObject {
 
         if let index = importedItems.firstIndex(where: { item in
             if let existingIdentity {
-                return item.importedFileIdentity == existingIdentity
+                return item.importedFileIdentity?.matchesAcrossVolumeDrift(existingIdentity) == true
             }
             return item.importedFileIdentity == nil && item.urlPath == url.path
         }) {
@@ -19952,7 +19952,7 @@ final class WorkspaceStore: ObservableObject {
                           isNotebookNote: importedItems[index].isNotebookNote
                       ),
                       importedItems[index].importedFileIdentity.map({
-                          $0 == resolved.identity
+                          $0.matchesAcrossVolumeDrift(resolved.identity)
                       }) ?? true else {
                     return markCourseOwnedItemUnavailable(at: index)
                 }
@@ -19988,7 +19988,7 @@ final class WorkspaceStore: ObservableObject {
         let currentURL = importedItems[index].urlPath
             .map { URL(fileURLWithPath: $0).standardizedFileURL }
         let currentPathIsValid = currentURL.map {
-            importedFileIdentityResolver($0) == storedIdentity
+            importedFileIdentityResolver($0)?.matchesAcrossVolumeDrift(storedIdentity) == true
         } ?? false
         let bookmarkResolution = currentPathIsValid
             ? nil
@@ -19999,13 +19999,20 @@ final class WorkspaceStore: ObservableObject {
             ?? bookmarkResolution?.url
             ?? fallbackPath.map { URL(fileURLWithPath: $0).standardizedFileURL }
         guard let candidateURL,
-              importedFileIdentityResolver(candidateURL) == storedIdentity else {
+              let candidateIdentity = importedFileIdentityResolver(candidateURL),
+              candidateIdentity.matchesAcrossVolumeDrift(storedIdentity) else {
             if let path = importedItems[index].urlPath {
                 importedItems[index].importedFileLastKnownPath = path
                 importedItems[index].urlPath = nil
                 changed = true
             }
             return (nil, changed)
+        }
+        if candidateIdentity != storedIdentity {
+            // volumeID 漂移：接受匹配的同时把存储身份刷新到当前值，自愈后
+            // 后续比对（含严格相等的调用方）不再受旧 volumeID 影响。
+            importedItems[index].importedFileIdentity = candidateIdentity
+            changed = true
         }
 
         let nextPath = candidateURL.path
