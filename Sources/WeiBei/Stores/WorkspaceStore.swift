@@ -21528,8 +21528,10 @@ final class WorkspaceStore: ObservableObject {
     private func flushPendingNotePersistence(for itemID: String) {
         cancelPendingNotePersistence(for: itemID)
         guard let pending = pendingNotePersistenceByItemID.removeValue(forKey: itemID) else { return }
-        persistNote(pending.markdown, for: pending.item)
-        save()
+        WeiBeiPerf.measure("note.persist.flush", extra: "item=\(itemID)") {
+            persistNote(pending.markdown, for: pending.item)
+            save()
+        }
     }
 
     private func cancelPendingNotePersistence(for itemID: String) {
