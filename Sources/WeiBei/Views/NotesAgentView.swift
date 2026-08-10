@@ -3711,8 +3711,6 @@ private struct AgentBubble: View {
         }
         let displayedStreamingText = store.agentReplyDisplayedStreamingText(message)
         return VStack(alignment: .leading, spacing: 8) {
-            messageMetadata
-
             if message.completionState == .generating
                 && answerText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 AgentThinkingIndicator(activityText: liveActivityText)
@@ -3958,29 +3956,6 @@ private struct AgentBubble: View {
         store.submitAgentDraft()
     }
 
-    private var messageMetadata: some View {
-        HStack(spacing: 6) {
-            Text("WeiBei")
-                .font(WeiBeiTypography.englishBrandFont(size: 9.8, weight: .semibold))
-                .foregroundStyle(WeiBeiTheme.cinnabar.opacity(0.76))
-            if let backend = message.backend {
-                Text(backendLabel(backend))
-                    .font(.system(size: 9.5, weight: .semibold))
-                    .foregroundStyle(WeiBeiTheme.secondaryInk)
-            }
-            if message.completionState == .generating,
-               let activity = liveActivityText {
-                Text(activity)
-                    .font(.system(size: 9.5))
-                    .foregroundStyle(WeiBeiTheme.secondaryInk.opacity(0.82))
-                    .lineLimit(1)
-            }
-            // Do not render message.source here — long "课程 HTML，章节标识…" strings
-            // add noise; materials / learning context use citation tags instead.
-            Spacer(minLength: 0)
-        }
-    }
-
     private func activateCitation(_ citation: AgentCitation) {
         switch citation.kind {
         case .material:
@@ -4040,13 +4015,6 @@ private struct AgentBubble: View {
         message.role == .assistant && WorkspaceStore.isAgentFailureMessage(message.text)
     }
 
-    private func backendLabel(_ backend: StudyAgentBackend) -> String {
-        switch backend {
-        case .pi: return "PI"
-        case .openAI: return "API"
-        case .offline: return store.ui("离线", "Offline")
-        }
-    }
 }
 
 private struct RichAnswerNarrativeText: View {
@@ -5625,7 +5593,6 @@ private struct AgentLiveResponse: View {
         } else {
             AgentStreamingResponse(
                 text: streaming.text,
-                activityText: streaming.activityText,
                 isChatWideTypography: isChatWideTypography,
                 compact: compact
             )
@@ -5722,6 +5689,7 @@ private struct AgentThinkingIndicator: View {
         .frame(width: orbitWidth, height: pathHeight, alignment: .leading)
         .frame(maxWidth: .infinity, alignment: .leading)
         .fixedSize(horizontal: true, vertical: true)
+        .offset(x: -Self.pathOuterInset)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(text)
         .onAppear {
@@ -6240,34 +6208,11 @@ private extension CGPath {
 private struct AgentStreamingResponse: View {
     @EnvironmentObject private var store: WorkspaceStore
     var text: String
-    var activityText: String?
-    /// Bubble rows already carry the WeiBei metadata line — never draw a
-    /// second brand mark inside the same bubble (user-reported duplication).
-    var showsBrandHeader = true
     var isChatWideTypography = false
     var compact = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
-            if showsBrandHeader {
-                HStack(spacing: 6) {
-                    Text("WeiBei")
-                        .font(WeiBeiTypography.englishBrandFont(size: 9.8, weight: .semibold))
-                        .foregroundStyle(WeiBeiTheme.cinnabar.opacity(0.76))
-                    Text("PI")
-                        .font(.system(size: 9.5, weight: .semibold))
-                        .foregroundStyle(WeiBeiTheme.secondaryInk)
-                    // Status stays visible while tokens stream ("正在读取：…"),
-                    // plain text only — WP9 forbids loading-card chrome here.
-                    if let activity = activityText {
-                        Text(activity)
-                            .font(.system(size: 11, weight: .regular))
-                            .foregroundStyle(WeiBeiTheme.secondaryInk.opacity(0.82))
-                            .lineLimit(1)
-                            .padding(.leading, 2)
-                    }
-                }
-            }
             AgentMessageMarkdownText(
                 text: text,
                 rendersRichMarkdown: true,
@@ -6282,6 +6227,6 @@ private struct AgentStreamingResponse: View {
         .padding(.leading, compact ? 0 : 20)
         .padding(.trailing, compact ? 0 : 8)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .accessibilityLabel(Text(store.ui("PI 正在回答", "PI is responding")))
+        .accessibilityLabel(Text(store.ui("魏碑正在回答", "WeiBei is responding")))
     }
 }
