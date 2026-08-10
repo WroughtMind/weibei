@@ -45,6 +45,26 @@ struct SettingsView: View {
 
     private var buildInfo: WeiBeiAppBuildInfo { .current() }
 
+    var activePiProviderID: String {
+        guard store.agentProviderID == .custom || store.agentProviderID == .llamaCpp else {
+            return store.agentProviderID.piProviderName
+        }
+        return (try? AgentProviderEndpoint(
+            provider: store.agentProviderID,
+            baseURL: store.agentBaseURL
+        ).piProviderID) ?? "weibei-invalid-endpoint"
+    }
+
+    func piProviderID(for provider: AgentProviderID) -> String {
+        guard provider == .custom || provider == .llamaCpp else {
+            return provider.piProviderName
+        }
+        return (try? AgentProviderEndpoint(
+            provider: provider,
+            baseURL: store.agentBaseURL
+        ).piProviderID) ?? "weibei-invalid-endpoint"
+    }
+
     /// Max width for long text fields (Base URL, API key) — not for every control.
     static let controlWidth: CGFloat = 260
 
@@ -82,7 +102,7 @@ struct SettingsView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: .weiBeiPiCredentialsDidChange)) { note in
             store.shutdownAgentRuntime()
-            guard note.userInfo?["provider"] as? String == store.agentProviderID.piProviderName else {
+            guard note.userInfo?["provider"] as? String == activePiProviderID else {
                 return
             }
             if note.userInfo?["type"] as? String == PiCredentialType.apiKey.rawValue {
@@ -91,7 +111,7 @@ struct SettingsView: View {
             oauthService.refreshCatalog(force: true)
         }
         .onChange(of: oauthService.catalog) { _, _ in
-            let models = oauthService.models(providerID: store.agentProviderID.piProviderName)
+            let models = oauthService.models(providerID: activePiProviderID)
             let current = store.modelName.trimmingCharacters(in: .whitespacesAndNewlines)
             if let firstModel = models.first,
                !models.contains(current),

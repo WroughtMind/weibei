@@ -7,10 +7,12 @@ const COMMAND = "weibei-management";
 const CHANNEL = "weibei.pi.management";
 const SCHEMA_VERSION = 1;
 const PI_PACKAGE: string = "@earendil-works/pi-coding-agent";
+const AZURE_PROVIDER = "azure-openai-responses";
+const AZURE_BASE_URL_ENV = "AZURE_OPENAI_BASE_URL";
 
 type ManagementRequest =
   | { action: "catalog"; refresh?: boolean }
-  | { action: "login"; providerId: string; authType: AuthType }
+  | { action: "login"; providerId: string; authType: AuthType; endpoint?: string }
   | { action: "logout"; providerId: string };
 
 function message(payload: Record<string, unknown>): string {
@@ -20,6 +22,30 @@ function message(payload: Record<string, unknown>): string {
 function errorMessage(error: unknown): string {
   const value = error instanceof Error ? error.message : String(error);
   return value.replace(/[\r\n\t]+/gu, " ").slice(0, 1_000) || "Pi 管理操作失败";
+}
+
+function credentialEndpoint(value: unknown): string {
+  if (typeof value !== "string" || new TextEncoder().encode(value).byteLength > 2_048) {
+    throw new Error("Pi 凭据地址无效");
+  }
+  const endpoint = value.trim();
+  let url: URL;
+  try {
+    url = new URL(endpoint);
+  } catch {
+    throw new Error("Pi 凭据地址无效");
+  }
+  if (
+    (url.protocol !== "https:" && url.protocol !== "http:") ||
+    !url.hostname ||
+    url.username ||
+    url.password ||
+    url.search ||
+    url.hash
+  ) {
+    throw new Error("Pi 凭据地址无效");
+  }
+  return endpoint;
 }
 
 function parseRequest(args: string): ManagementRequest {
@@ -37,7 +63,16 @@ function parseRequest(args: string): ManagementRequest {
   ) {
     if (value.action === "logout") return { action: "logout", providerId: value.providerId };
     if (value.authType === "api_key" || value.authType === "oauth") {
-      return { action: "login", providerId: value.providerId, authType: value.authType };
+      const endpoint = value.endpoint === undefined
+        ? undefined
+        : credentialEndpoint(value.endpoint);
+      if (
+        (value.providerId === AZURE_PROVIDER && value.authType === "api_key") !==
+        (endpoint !== undefined)
+      ) {
+        throw new Error("Pi 凭据地址无效");
+      }
+      return { action: "login", providerId: value.providerId, authType: value.authType, endpoint };
     }
   }
   throw new Error("Pi 管理请求无效");
@@ -85,7 +120,7 @@ async function run(args: string, ctx: ExtensionCommandContext): Promise<void> {
     const authPath = process.env.WEIBEI_PI_AUTH_PATH;
     if (!agentDirectory || !authPath) throw new Error("魏碑 Pi 配置目录不可用");
 
-    const { ModelRuntime } = await import(PI_PACKAGE);
+    const { ModelRuntime, readStoredCredential } = await import(PI_PACKAGE);
     const runtime = await ModelRuntime.create({
       authPath,
       modelsPath: join(agentDirectory, "models.json"),
@@ -93,6 +128,11 @@ async function run(args: string, ctx: ExtensionCommandContext): Promise<void> {
 
     if (request.action === "catalog") {
       const credentials = await runtime.listCredentials();
+      const azureCredential = readStoredCredential(AZURE_PROVIDER, authPath);
+      const boundAzureEndpoint = azureCredential?.type === "api_key" &&
+        typeof azureCredential.env?.[AZURE_BASE_URL_ENV] === "string"
+        ? azureCredential.env[AZURE_BASE_URL_ENV]
+        : undefined;
       ctx.ui.notify(message({
         kind: "result",
         action: request.action,
@@ -120,7 +160,12 @@ async function run(args: string, ctx: ExtensionCommandContext): Promise<void> {
             contextWindow: model.contextWindow,
             maxTokens: model.maxTokens,
           })),
-          credentials,
+          credentials: credentials.map((credential) => ({
+            ...credential,
+            boundEndpoint: credential.providerId === AZURE_PROVIDER
+              ? boundAzureEndpoint
+              : undefined,
+          })),
         },
       }));
       return;
@@ -138,11 +183,37 @@ async function run(args: string, ctx: ExtensionCommandContext): Promise<void> {
       ? provider.auth.apiKey !== undefined
       : provider.auth.oauth !== undefined;
     if (!supported) throw new Error(`供应商 ${request.providerId} 不支持 ${request.authType} 登录`);
+    if (request.providerId === AZURE_PROVIDER && request.endpoint) {
+      const apiKeyAuth = provider.auth.apiKey;
+      const login = apiKeyAuth?.login;
+      if (!apiKeyAuth || !login) throw new Error("Azure OpenAI API 密钥登录不可用");
+      const endpoint = request.endpoint;
+      runtime.registerNativeProvider({
+        ...provider,
+        auth: {
+          ...provider.auth,
+          apiKey: {
+            ...apiKeyAuth,
+            async login(interaction) {
+              const credential = await login(interaction);
+              return {
+                ...credential,
+                env: { ...credential.env, [AZURE_BASE_URL_ENV]: endpoint },
+              };
+            },
+          },
+        },
+      });
+    }
     await runtime.login(request.providerId, request.authType, interaction(ctx));
     ctx.ui.notify(message({
       kind: "result",
       action: request.action,
-      credential: { providerId: request.providerId, type: request.authType },
+      credential: {
+        providerId: request.providerId,
+        type: request.authType,
+        boundEndpoint: request.endpoint,
+      },
     }));
   } catch (error) {
     ctx.ui.notify(message({ kind: "error", action, message: errorMessage(error) }), "error");

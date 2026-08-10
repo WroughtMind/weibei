@@ -277,6 +277,7 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         "weibei_course_map",
         "weibei_course_search",
         "weibei_course_read",
+        "weibei_web_open",
         "weibei_visual_asset",
         "weibei_learning_memory",
         "weibei_learning_update",
@@ -291,6 +292,7 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         "weibei_course_map",
         "weibei_course_search",
         "weibei_course_read",
+        "weibei_web_open",
     ]
 
     private struct ProgressDelivery: Sendable {
@@ -489,13 +491,15 @@ public actor PiAgentRuntime: StudyAgentRuntime {
     public func login(
         providerID: String,
         type: PiCredentialType,
+        endpoint: String? = nil,
         interaction: PiManagementInteraction
     ) async throws -> PiManagementCredentialInfo {
         let envelope = try await performManagement(
             PiManagementRequest(
                 action: .login,
                 providerId: providerID,
-                authType: type
+                authType: type,
+                endpoint: endpoint
             ),
             interaction: interaction
         )
@@ -1571,6 +1575,22 @@ public actor PiAgentRuntime: StudyAgentRuntime {
             }
             return value
         }
+        func webMaximumCharacters() throws -> Int {
+            guard let raw = arguments["maximumCharacters"] else { return 12_000 }
+            guard !(raw is Bool), let number = raw as? NSNumber else {
+                throw PiAgentRuntimeError.protocolFailure(
+                    "网页工具 maximumCharacters 类型无效"
+                )
+            }
+            let value = number.intValue
+            guard number.doubleValue == Double(value),
+                  (1_000...20_000).contains(value) else {
+                throw PiAgentRuntimeError.protocolFailure(
+                    "网页工具 maximumCharacters 超出边界"
+                )
+            }
+            return value
+        }
 
         switch name {
         case "weibei_course_map":
@@ -1609,6 +1629,20 @@ public actor PiAgentRuntime: StudyAgentRuntime {
                 cursor: try string("cursor", required: false, maximum: 1_024),
                 maximumCharacters: try maximumCharacters()
             )
+        case "weibei_web_open":
+            let url = try string("url", required: true, maximum: 2_048) ?? ""
+            guard WeiBeiWebResearchURLPolicy.isExplicitlyProvided(
+                url,
+                in: run.userQuestion
+            ) else {
+                throw PiAgentRuntimeError.protocolFailure(
+                    "网页工具只能读取用户本轮明确提供的地址"
+                )
+            }
+            return .webOpen(
+                url: url,
+                maximumCharacters: try webMaximumCharacters()
+            )
         default:
             throw PiAgentRuntimeError.protocolFailure("不支持的课程宿主工具 \(name)")
         }
@@ -1631,6 +1665,25 @@ public actor PiAgentRuntime: StudyAgentRuntime {
               run.completed == nil,
               run.hostToolCallIDs.contains(id) else { return }
         let mappedResult = result.map { result in
+            if name == "weibei_web_open" {
+                return StudyAgentHostToolResult(
+                    query: String(result.query.prefix(2_048)),
+                    items: [],
+                    webPages: result.webPages.prefix(1).compactMap { page in
+                        guard let components = URLComponents(string: page.url),
+                              components.scheme?.lowercased() == "https",
+                              components.host?.isEmpty == false else {
+                            return nil
+                        }
+                        return StudyAgentWebPage(
+                            url: String(page.url.prefix(2_048)),
+                            title: String(page.title.prefix(300)),
+                            text: String(page.text.prefix(20_000)),
+                            isTruncated: page.isTruncated || page.text.count > 20_000
+                        )
+                    }
+                )
+            }
             let maximumItems = name == "weibei_course_map" ? 40 : 8
             return StudyAgentHostToolResult(
                 query: String(result.query.prefix(500)),
@@ -1785,41 +1838,42 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         providerID: AgentProviderID,
         baseURL: String,
         model: String
-    ) async {
-        let trimmedBase = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+    ) async throws {
         guard providerID == .custom || providerID == .llamaCpp else {
             return
         }
-        guard !trimmedBase.isEmpty else { return }
-        do {
-            let piConfigurationURL = try preparePiConfigurationDirectory()
-            let modelsURL = piConfigurationURL.appendingPathComponent("models.json")
-            let providerKey = providerID.piProviderName
-            let selectedModel = model.trimmingCharacters(in: .whitespacesAndNewlines)
-            let modelID = selectedModel.isEmpty
-                ? (providerID == .llamaCpp ? "local-model" : "model-id")
-                : selectedModel
-            let payload: [String: Any] = [
-                "providers": [
-                    providerKey: [
-                        "baseUrl": trimmedBase,
-                        "api": "openai-completions",
-                        "models": [
-                            [
-                                "id": modelID,
-                                "name": modelID,
-                            ],
+        let endpoint = try AgentProviderEndpoint(provider: providerID, baseURL: baseURL)
+        guard let normalizedBaseURL = endpoint.baseURL else {
+            throw AgentProviderEndpointError.missing
+        }
+        let piConfigurationURL = try preparePiConfigurationDirectory()
+        let modelsURL = piConfigurationURL.appendingPathComponent("models.json")
+        let selectedModel = model.trimmingCharacters(in: .whitespacesAndNewlines)
+        let modelID = selectedModel.isEmpty
+            ? (providerID == .llamaCpp ? "local-model" : "model-id")
+            : selectedModel
+        let payload: [String: Any] = [
+            "providers": [
+                endpoint.piProviderID: [
+                    "baseUrl": normalizedBaseURL,
+                    "api": "openai-completions",
+                    "models": [
+                        [
+                            "id": modelID,
+                            "name": modelID,
                         ],
                     ],
                 ],
-            ]
-            let data = try JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted, .sortedKeys])
-            try data.write(to: modelsURL, options: .atomic)
-            try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: modelsURL.path)
-            trace("wrote custom models.json provider=\(providerKey) baseUrl=\(trimmedBase)")
-        } catch {
-            trace("failed to write models.json: \(error.localizedDescription)")
-        }
+            ],
+        ]
+        let data = try JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted, .sortedKeys])
+        guard (try? Data(contentsOf: modelsURL)) != data else { return }
+        try data.write(to: modelsURL, options: .atomic)
+        try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: modelsURL.path)
+        trace("wrote custom models.json provider=\(endpoint.piProviderID)")
+        // Pi reads models.json at process creation; force the next login/respond
+        // to bind the endpoint-specific provider instead of a stale catalog.
+        shutdownProcess(reason: PiAgentRuntimeError.cancelled)
     }
 
     private func promptSubmissionFailure(from error: Error) -> PiAgentRuntimeError {

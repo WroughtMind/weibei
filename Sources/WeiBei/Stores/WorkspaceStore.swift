@@ -17350,7 +17350,7 @@ final class WorkspaceStore: ObservableObject {
 
         return { request in
             let task = Task.detached(priority: .userInitiated) {
-                try Self.executeAgentHostTool(
+                try await Self.executeAgentHostTool(
                     request,
                     title: title,
                     sources: sources,
@@ -17373,7 +17373,7 @@ final class WorkspaceStore: ObservableObject {
         sources: [AgentHostToolSource],
         links: [NoteSourceLink],
         searchIndex: CourseDocumentSearchIndex
-    ) throws -> StudyAgentHostToolResult {
+    ) async throws -> StudyAgentHostToolResult {
         try Task.checkCancellation()
         switch request {
         case let .courseMap(itemID, offset, limit):
@@ -17589,6 +17589,18 @@ final class WorkspaceStore: ObservableObject {
                 },
                 nextCursor: indexed.nextCursor,
                 sourceRevision: indexed.sourceRevision
+            )
+
+        case let .webOpen(url, maximumCharacters):
+            return StudyAgentHostToolResult(
+                query: url,
+                items: [],
+                webPages: [
+                    try await WeiBeiWebResearchClient.open(
+                        url,
+                        maximumCharacters: maximumCharacters
+                    ),
+                ]
             )
         }
     }
@@ -19519,16 +19531,32 @@ final class WorkspaceStore: ObservableObject {
         }
 #endif
         let selectedModel = modelName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let endpoint = try AgentProviderEndpoint(
+            provider: selectedProvider,
+            baseURL: agentBaseURL
+        )
+        if selectedProvider == .azureOpenAI {
+            let credentialIsBound = try await piRuntime.managementCatalog()
+                .credentials
+                .contains {
+                    $0.providerId == endpoint.piProviderID
+                        && $0.type == .apiKey
+                        && $0.boundEndpoint == endpoint.baseURL
+                }
+            guard credentialIsBound else {
+                throw AgentProviderEndpointError.azureCredentialRequiresReentry
+            }
+        }
         await piRuntime.configure(
             PiAgentProviderConfiguration(
-                provider: selectedProvider.piProviderName,
+                provider: endpoint.piProviderID,
                 model: selectedModel.isEmpty ? nil : selectedModel,
-                baseURL: agentBaseURL.isEmpty ? nil : agentBaseURL
+                baseURL: endpoint.baseURL
             )
         )
-        await piRuntime.writeCustomModelsJSONIfNeeded(
+        try await piRuntime.writeCustomModelsJSONIfNeeded(
             providerID: selectedProvider,
-            baseURL: agentBaseURL,
+            baseURL: endpoint.baseURL ?? "",
             model: selectedModel
         )
         return try await piRuntime.respond(

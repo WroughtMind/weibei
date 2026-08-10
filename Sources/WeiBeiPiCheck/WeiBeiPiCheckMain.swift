@@ -295,6 +295,37 @@ struct WeiBeiPiCheckMain {
                     throw PiAgentRuntimeError.protocolFailure("PI credential permissions were not private")
                 }
                 try await runtime.logout(providerID: "openai")
+                let azureEndpoint = "https://weibei-check.openai.azure.com/openai/v1"
+                let azureCredential = try await runtime.login(
+                    providerID: AgentProviderID.azureOpenAI.piProviderName,
+                    type: .apiKey,
+                    endpoint: azureEndpoint,
+                    interaction: PiManagementInteraction(
+                        prompt: { _ in "weibei-pi-check-azure-key" },
+                        notify: { _ in }
+                    )
+                )
+                let azureCatalog = try await runtime.managementCatalog()
+                let azureAuth = try Data(contentsOf: authURL)
+                let azureAuthObject = try JSONSerialization.jsonObject(with: azureAuth)
+                    as? [String: Any]
+                let storedAzureCredential = azureAuthObject?[AgentProviderID.azureOpenAI.piProviderName]
+                    as? [String: Any]
+                let storedAzureEnvironment = storedAzureCredential?["env"] as? [String: String]
+                guard azureCredential.providerId == AgentProviderID.azureOpenAI.piProviderName,
+                      azureCredential.type == .apiKey,
+                      azureCredential.boundEndpoint == azureEndpoint,
+                      azureCatalog.credentials.contains(where: {
+                          $0.providerId == AgentProviderID.azureOpenAI.piProviderName
+                              && $0.type == .apiKey
+                              && $0.boundEndpoint == azureEndpoint
+                      }),
+                      storedAzureEnvironment?["AZURE_OPENAI_BASE_URL"] == azureEndpoint else {
+                    throw PiAgentRuntimeError.protocolFailure(
+                        "PI Azure credential did not retain its endpoint binding"
+                    )
+                }
+                try await runtime.logout(providerID: AgentProviderID.azureOpenAI.piProviderName)
                 let postLogoutCatalog = try await runtime.managementCatalog()
                 let auth = try Data(contentsOf: authURL)
                 let authObject = try JSONSerialization.jsonObject(with: auth) as? [String: Any]
@@ -305,7 +336,7 @@ struct WeiBeiPiCheckMain {
                 await runtime.shutdown()
                 try? FileManager.default.removeItem(at: root)
                 print(
-                    "pi-management-check passed: providers=\(catalog.providers.count) models=\(catalog.models.count) multi-step-login=passed api-key-login=passed logout=passed"
+                    "pi-management-check passed: providers=\(catalog.providers.count) models=\(catalog.models.count) multi-step-login=passed api-key-login=passed azure-binding=passed logout=passed"
                 )
                 return
             } catch {

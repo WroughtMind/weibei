@@ -109,6 +109,7 @@ graph TD
 ```
 
 ![魏碑测试图|100x80](assets/weibei.svg)
+![远程测试图](https://example.com/weibei.png)
 ![[assets/weibei.svg|100]]
 ![[货币理论#利率]]
 """
@@ -927,7 +928,10 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
 
     private func validateRenderedImageSource(completion: @escaping () -> Void) {
         let script = """
-        Array.from(document.querySelectorAll('.ProseMirror img')).map((image) => image.getAttribute('src') || image.src || '').join('\\n')
+        Array.from(document.querySelectorAll('.ProseMirror img'))
+          .map((image) => image.getAttribute('src') || image.src || '')
+          .filter((source) => source.startsWith('weibeiimage://image'))
+          .join('\\n')
         """
         webView.evaluateJavaScript(script) { [weak self] value, error in
             guard let self else { return }
@@ -939,9 +943,15 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
                 self.fail("local markdown image did not use controlled scheme: \(String(describing: value))")
                 return
             }
-            let src = rawSrc.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard src.hasPrefix("weibeiimage://image") else {
-                self.fail("local markdown image did not use controlled scheme: \(src)")
+            let sources = rawSrc
+                .split(separator: "\n")
+                .map(String.init)
+            guard sources.count >= 2,
+                  sources.allSatisfy({ $0.hasPrefix("weibeiimage://image") }),
+                  sources.contains(where: {
+                      $0.contains("https%3A%2F%2Fexample.com%2Fweibei.png")
+                  }) else {
+                self.fail("markdown images did not use controlled scheme: \(rawSrc)")
                 return
             }
             completion()
@@ -1053,6 +1063,60 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
                 if self.attachmentRequests != 0 {
                     self.fail("readonly image paste should not request attachment save")
+                    return
+                }
+                self.validateEditableMarkdownPaste()
+            }
+        }
+    }
+
+    private func validateEditableMarkdownPaste() {
+        let script = """
+        (() => {
+          window.WeiBeiEditor.setMarkdown('![旧图](https://example.com/old.png)\\n\\n旧正文');
+          window.WeiBeiEditor.pressKeyForCheck('a', { metaKey: true });
+          window.WeiBeiEditor.pressKeyForCheck('Backspace');
+          const clearedMarkdown = window.WeiBeiEditor.getMarkdown();
+          const clearedImages = document.querySelectorAll('.ProseMirror img.weibei-image').length;
+          const data = new DataTransfer();
+          data.setData('text/plain', '# 图片安全验收\\n\\n![公网图](https://example.com/public.png)\\n\\n![本机图](https://127.0.0.1:9/private.png)');
+          const event = new ClipboardEvent('paste', { bubbles: true, cancelable: true, clipboardData: data });
+          document.querySelector('.ProseMirror')?.dispatchEvent(event);
+          const markdown = window.WeiBeiEditor.getMarkdown();
+          const text = document.querySelector('.ProseMirror')?.textContent || '';
+          return {
+            oldCleared: clearedMarkdown === '' && clearedImages === 0,
+            heading: document.querySelectorAll('.ProseMirror h1').length,
+            images: document.querySelectorAll('.ProseMirror img.weibei-image').length,
+            markdown,
+            text
+          };
+        })();
+        """
+        webView.evaluateJavaScript(script) { [weak self] value, error in
+            guard let self else { return }
+            if let error {
+                self.fail("editable Markdown paste check threw \(error.localizedDescription)")
+                return
+            }
+            guard let result = value as? [String: Any],
+                  result["oldCleared"] as? Bool == true,
+                  result["heading"] as? Int == 1,
+                  result["images"] as? Int == 2,
+                  let markdown = result["markdown"] as? String,
+                  let text = result["text"] as? String,
+                  markdown.contains("# 图片安全验收"),
+                  markdown.contains("https://example.com/public.png"),
+                  markdown.contains("https://127.0.0.1:9/private.png"),
+                  !markdown.contains("旧正文"),
+                  !markdown.contains("old.png"),
+                  !text.contains("![") else {
+                self.fail("editable Markdown paste did not replace and parse the document: \(String(describing: value))")
+                return
+            }
+            self.webView.evaluateJavaScript("window.WeiBeiEditor.setMarkdown(\(json(sampleMarkdown)))") { _, error in
+                if let error {
+                    self.fail("editable Markdown paste could not restore fixture: \(error.localizedDescription)")
                     return
                 }
                 self.validateSelectionReplacement()
@@ -1808,7 +1872,56 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
         webView.evaluateJavaScript(script) { [weak self] value, error in
             guard let self else { return }
             guard error == nil, value as? Bool == true else { self.fail("code language isolation failed: \(String(describing: error))"); return }
-            self.validateExternalMarkdownAcknowledgement()
+            self.validateMermaidResourceRegressions()
+        }
+    }
+
+    private func validateMermaidResourceRegressions() {
+        let markdown = """
+        ```mermaid
+        xychart
+          x-axis 1 --> 1
+          line [1, 2]
+        ```
+
+        ```mermaid
+        radar-beta
+          axis a, b
+          curve c {1, 1}
+          ticks 1000000000
+        ```
+        """
+        webView.evaluateJavaScript("""
+        window.WeiBeiEditor.setDocumentID('mermaid-resource-regressions');
+        window.WeiBeiEditor.setMarkdown(\(json(markdown)));
+        """) { [weak self] _, error in
+            guard let self else { return }
+            guard error == nil else {
+                self.fail("Mermaid resource regression setup failed: \(String(describing: error))")
+                return
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                self.webView.evaluateJavaScript("""
+                ({
+                  alive: !!document.querySelector('.ProseMirror'),
+                  blocks: document.querySelectorAll('.weibei-mermaid-block').length,
+                  markdown: window.WeiBeiEditor.getMarkdown()
+                })
+                """) { [weak self] value, error in
+                    guard let self else { return }
+                    guard error == nil,
+                          let result = value as? [String: Any],
+                          result["alive"] as? Bool == true,
+                          (result["blocks"] as? Int ?? 0) == 2,
+                          (result["markdown"] as? String)?
+                            .trimmingCharacters(in: .newlines)
+                            == markdown.trimmingCharacters(in: .newlines) else {
+                        self.fail("patched Mermaid inputs destabilized the editor: \(String(describing: value)); error=\(String(describing: error))")
+                        return
+                    }
+                    self.validateExternalMarkdownAcknowledgement()
+                }
+            }
         }
     }
 
@@ -1874,7 +1987,8 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
             ("escaped backtick prose syntax", "转义反引号 \\` 后面的 [[转义双链]] #escaped-tag $5"),
             ("code block html break", "<span>保留<br />源码</span>"),
             ("code block escaped syntax", "\\#literal \\[[x]] \\==x\\== \\$5 \\[!note]"),
-            ("image size", "![魏碑测试图|100x80](assets/weibei.svg)")
+            ("image size", "![魏碑测试图|100x80](assets/weibei.svg)"),
+            ("remote image", "![远程测试图](https://example.com/weibei.png)")
         ]
         for (name, fragment) in checks {
             if !markdown.contains(fragment) {
@@ -1923,6 +2037,14 @@ let greeting = "你好，Markdown"
 print(greeting)
 ```
 
+```mermaid
+flowchart LR
+A[用户贴网址] --> B[魏碑读取]
+B --> C[解析网页内容]
+C --> D[形成回答]
+D --> E[回答中附来源]
+```
+
 中文与 English mixed text should wrap naturally.
 
 [外部链接](https://example.com/weibei-link-check)
@@ -1953,10 +2075,13 @@ private final class FinalizedAgentMarkdownHarness: NSObject, WKScriptMessageHand
     private var didMeasureSameBucketResize = false
     private var didMeasureCrossBucketResize = false
     private var didMeasureShortBlock = false
+    private var didStartFinalizedStream = false
+    private var finalizedStreamHeightReports = 0
     private var measuredHeight: Double = 0
     private var initialReportedWidth: Double?
     private var sameBucketReportedWidth: Double?
     private var crossBucketReportedWidth: Double?
+    private var finishReportedHeight: Double = 0
     private var delayedGrowthHeight: Double = 0
     private var shortBlockHeight: Double = 0
     private var isDone = false
@@ -2045,7 +2170,7 @@ private final class FinalizedAgentMarkdownHarness: NSObject, WKScriptMessageHand
         switch message.name {
         case "editorReady":
             didReceiveEditorReady = true
-            validateDOM()
+            validateCompleteLoad(until: Date().addingTimeInterval(3))
         case "contentHeightChanged":
             guard didReceiveEditorReady else {
                 fail("finalized agent Markdown reported height before editorReady")
@@ -2055,6 +2180,9 @@ private final class FinalizedAgentMarkdownHarness: NSObject, WKScriptMessageHand
                 fail("finalized agent Markdown reported no height")
                 return
             }
+            if didStartFinalizedStream {
+                finalizedStreamHeightReports += 1
+            }
             handleMeasurement(height: height, width: Double(webView.frame.width))
         case "editorFailure":
             fail("finalized agent Markdown renderer failed")
@@ -2063,12 +2191,108 @@ private final class FinalizedAgentMarkdownHarness: NSObject, WKScriptMessageHand
         }
     }
 
-    private func validateDOM() {
+    private func validateCompleteLoad(until deadline: Date) {
+        webView.evaluateJavaScript("""
+        (() => {
+          const root = document.querySelector('.ProseMirror');
+          return {
+            ok: Boolean(root
+              && root.querySelector('h1')
+              && root.querySelectorAll('table tr').length >= 3
+              && root.textContent.includes('超长回答第 120 段')),
+            mermaidSvg: root?.querySelectorAll('.weibei-mermaid-render svg').length || 0,
+            mermaidError: root?.querySelector('.weibei-mermaid-error')?.textContent || ''
+          };
+        })();
+        """) { [weak self] value, error in
+            guard let self else { return }
+            guard error == nil,
+                  let result = value as? [String: Any],
+                  result["ok"] as? Bool == true else {
+                self.fail("complete finalized Agent Markdown did not reopen: \(String(describing: value))")
+                return
+            }
+            if !(result["mermaidError"] as? String ?? "").isEmpty {
+                self.fail("reopened finalized Agent Mermaid failed: \(String(describing: result["mermaidError"]))")
+                return
+            }
+            guard result["mermaidSvg"] as? Int == 1 else {
+                if Date() < deadline {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                        self.validateCompleteLoad(until: deadline)
+                    }
+                    return
+                }
+                self.fail("reopened finalized Agent Mermaid did not render")
+                return
+            }
+            self.installFinalizedMarkdownStream()
+        }
+    }
+
+    private func installFinalizedMarkdownStream() {
+        didStartFinalizedStream = true
+        let prefixScript = """
+        (() => {
+          const markdown = \(json(finalizedAgentMarkdown));
+          const mermaidStart = markdown.indexOf('```mermaid');
+          window.WeiBeiEditor.setMarkdown('');
+          window.WeiBeiEditor.updateStreamingMarkdown(markdown.slice(0, mermaidStart + 20));
+          return true;
+        })();
+        """
+        webView.evaluateJavaScript(prefixScript) { [weak self] value, error in
+            guard let self else { return }
+            guard error == nil, value as? Bool == true else {
+                self.fail("finalized Agent Markdown stream could not start")
+                return
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                self.webView.evaluateJavaScript("""
+                (() => {
+                  const markdown = \(json(finalizedAgentMarkdown));
+                  const mermaidStart = markdown.indexOf('```mermaid');
+                  window.WeiBeiEditor.updateStreamingMarkdown(markdown.slice(0, mermaidStart + 35));
+                })();
+                """) { _, error in
+                    guard error == nil else {
+                        self.fail("finalized Agent Markdown stream could not update")
+                        return
+                    }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                        self.finishFinalizedMarkdownStream()
+                    }
+                }
+            }
+        }
+    }
+
+    private func finishFinalizedMarkdownStream() {
+        webView.evaluateJavaScript("""
+        (() => {
+          window.WeiBeiEditor.finishStreamingMarkdown(\(json(finalizedAgentMarkdown)));
+          return Number(window.WeiBeiCompactPreviewHeight || 1);
+        })();
+        """) { [weak self] value, error in
+            guard let self else { return }
+            guard error == nil,
+                  let height = (value as? NSNumber)?.doubleValue,
+                  height > 0 else {
+                self.fail("finalized Agent Markdown stream could not finish")
+                return
+            }
+            self.finishReportedHeight = height
+            self.validateDOM(until: Date().addingTimeInterval(3))
+        }
+    }
+
+    private func validateDOM(until deadline: Date) {
         let script = """
         (() => {
           const root = document.querySelector('.ProseMirror');
           if (!root) return { ok: false, reason: 'missing ProseMirror root' };
           const code = root.querySelector('pre code')?.textContent || '';
+          const mermaidSource = root.querySelector('.weibei-mermaid-block');
           const measuredNodes = [
             document.querySelector('#editor'),
             document.querySelector('.milkdown'),
@@ -2089,6 +2313,10 @@ private final class FinalizedAgentMarkdownHarness: NSObject, WKScriptMessageHand
             paragraphCount: root.querySelectorAll('p').length,
             listItemCount: root.querySelectorAll('li').length,
             tableRowCount: root.querySelectorAll('table tr').length,
+            mermaidSvg: root.querySelectorAll('.weibei-mermaid-render svg').length,
+            mermaidError: root.querySelector('.weibei-mermaid-error')?.textContent || '',
+            mermaidSourceVisible: Boolean(mermaidSource && getComputedStyle(mermaidSource).display !== 'none' && mermaidSource.getBoundingClientRect().height > 0),
+            reportedHeight: Number(window.WeiBeiCompactPreviewHeight || 0),
             height,
             code
           };
@@ -2103,6 +2331,41 @@ private final class FinalizedAgentMarkdownHarness: NSObject, WKScriptMessageHand
             guard let result = value as? [String: Any],
                   result["ok"] as? Bool == true else {
                 self.fail("finalized agent Markdown lost block structure: \(String(describing: value))")
+                return
+            }
+            if !(result["mermaidError"] as? String ?? "").isEmpty {
+                self.fail("finalized Agent Mermaid failed: \(String(describing: result["mermaidError"]))")
+                return
+            }
+            guard result["mermaidSvg"] as? Int == 1 else {
+                if Date() < deadline {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                        self.validateDOM(until: deadline)
+                    }
+                    return
+                }
+                self.fail("finalized Agent Mermaid did not render: \(result)")
+                return
+            }
+            guard result["mermaidSourceVisible"] as? Bool == false else {
+                self.fail("finalized Agent Mermaid exposed source instead of the rendered diagram")
+                return
+            }
+            guard let reportedHeight = (result["reportedHeight"] as? NSNumber)?.doubleValue,
+                  let actualHeight = (result["height"] as? NSNumber)?.doubleValue,
+                  reportedHeight > self.finishReportedHeight,
+                  reportedHeight + 1 >= actualHeight else {
+                if Date() < deadline {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                        self.validateDOM(until: deadline)
+                    }
+                    return
+                }
+                self.fail("finalized Agent Mermaid growth was not reported: finish=\(self.finishReportedHeight), result=\(result)")
+                return
+            }
+            guard self.finalizedStreamHeightReports <= 20 else {
+                self.fail("finalized Agent Mermaid caused a height-report storm: \(self.finalizedStreamHeightReports)")
                 return
             }
             self.didValidateDOM = true

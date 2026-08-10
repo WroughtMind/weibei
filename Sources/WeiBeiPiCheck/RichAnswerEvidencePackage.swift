@@ -95,6 +95,7 @@ enum RichAnswerEvidencePackageBuilder {
 
     static func build(input: RichAnswerEvidencePackageBuildInput) throws -> RichAnswerEvidencePackageResult {
         try assertSucceededScreenshotRecordWinsDuplicateFixture()
+        try assertPublicArtifactSanitizerBoundary()
         let fileManager = FileManager.default
         let rootURL = input.mergedRootURL.appendingPathComponent("review-package", isDirectory: true)
         if fileManager.fileExists(atPath: rootURL.path) {
@@ -336,6 +337,7 @@ enum RichAnswerEvidencePackageBuilder {
         try writeText(indexMarkdown(document), to: rootURL.appendingPathComponent("index.md"))
         let indexURL = rootURL.appendingPathComponent("index.html")
         try writeText(indexHTML(document), to: indexURL)
+        try sanitizePublicArtifactTree(at: rootURL)
         return RichAnswerEvidencePackageResult(rootURL: rootURL, indexURL: indexURL, summary: summary)
     }
 
@@ -477,6 +479,31 @@ enum RichAnswerEvidencePackageBuilder {
                     "duplicate screenshot fixture failed: succeeded record must win regardless of order"
                 )
             }
+        }
+    }
+
+    private static func assertPublicArtifactSanitizerBoundary() throws {
+        let publicURL = "https://example.com/tmp/guide"
+        guard sanitizePublicArtifactText(publicURL) == publicURL,
+              sanitizePublicArtifactText("/private/tmp/private-note.md")
+                == "<temporary-directory>/private-note.md",
+              sanitizePublicArtifactText("/tmp/private-note.md")
+                == "<temporary-directory>/private-note.md",
+              sanitizePublicArtifactText("file:///private/tmp/private-note.md")
+                == "<temporary-directory>/private-note.md",
+              sanitizePublicArtifactText("artifact=/Volumes/ReviewDrive/run/output.json")
+                == "artifact=<local-path>",
+              sanitizePublicArtifactText("file:///Volumes/Review%20Drive/run/output.json")
+                == "<local-path>",
+              sanitizePublicArtifactText(#"C:\build\private\output.json"#)
+                == "<local-path>",
+              !sanitizePublicArtifactText(
+                FileManager.default.homeDirectoryForCurrentUser
+                    .appendingPathComponent("private-note.md").path
+              ).contains(FileManager.default.homeDirectoryForCurrentUser.path) else {
+            throw RichAnswerEvidenceError.invalidConfiguration(
+                "public artifact sanitizer changed a web URL or exposed a local path"
+            )
         }
     }
 
@@ -1261,6 +1288,90 @@ enum RichAnswerEvidencePackageBuilder {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
         try encoder.encode(value).write(to: url, options: .atomic)
+    }
+
+    private static func sanitizePublicArtifactTree(at rootURL: URL) throws {
+        let textExtensions = Set(["html", "json", "md", "txt"])
+        guard let enumerator = FileManager.default.enumerator(
+            at: rootURL,
+            includingPropertiesForKeys: [.isRegularFileKey],
+            options: [.skipsHiddenFiles]
+        ) else {
+            throw RichAnswerEvidenceError.invalidConfiguration(
+                "cannot enumerate distributable evidence package"
+            )
+        }
+
+        for case let url as URL in enumerator {
+            guard textExtensions.contains(url.pathExtension.lowercased()),
+                  (try url.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true else {
+                continue
+            }
+            let data = try Data(contentsOf: url)
+            if url.pathExtension.lowercased() == "json",
+               let value = try? JSONSerialization.jsonObject(with: data),
+               JSONSerialization.isValidJSONObject(value) {
+                let sanitized = sanitizePublicArtifactJSON(value)
+                let output = try JSONSerialization.data(
+                    withJSONObject: sanitized,
+                    options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+                )
+                try output.write(to: url, options: .atomic)
+            } else if let text = String(data: data, encoding: .utf8) {
+                try writeText(sanitizePublicArtifactText(text), to: url)
+            }
+        }
+    }
+
+    private static func sanitizePublicArtifactJSON(_ value: Any) -> Any {
+        switch value {
+        case let string as String:
+            sanitizePublicArtifactText(string)
+        case let array as [Any]:
+            array.map(sanitizePublicArtifactJSON)
+        case let dictionary as [String: Any]:
+            Dictionary(uniqueKeysWithValues: dictionary.map { key, value in
+                (key, sanitizePublicArtifactJSON(value))
+            })
+        default:
+            value
+        }
+    }
+
+    private static func sanitizePublicArtifactText(_ value: String) -> String {
+        var result = value
+        let literalRoots = [
+            (FileManager.default.currentDirectoryPath, "<repo-root>"),
+            (FileManager.default.homeDirectoryForCurrentUser.path, "<user-home>"),
+            (FileManager.default.temporaryDirectory.path, "<temporary-directory>"),
+        ].filter { !$0.0.isEmpty }
+            .sorted { $0.0.count > $1.0.count }
+        for (root, replacement) in literalRoots {
+            result = result.replacingOccurrences(of: root, with: replacement)
+        }
+
+        let patterns = [
+            (#"(?<![A-Za-z0-9:/])/(?:private/)?var/folders/[^/\s\"'`]+/[^/\s\"'`]+/T"#, "<temporary-directory>"),
+            (#"(?i)file:///(?:private/)?tmp(?=/|[\s\"'`]|$)"#, "<temporary-directory>"),
+            (#"(?<![A-Za-z0-9:/])/(?:private/)?tmp(?=/|[\s\"'`]|$)"#, "<temporary-directory>"),
+            (#"(?<![A-Za-z0-9:/])/Users/[^/\s\"'`]+"#, "<user-home>"),
+            (#"(?<![A-Za-z0-9:/])/home/[^/\s\"'`]+"#, "<user-home>"),
+            (#"(?i)[A-Z]:\\Users\\[^\\/\s\"'`]+"#, "<user-home>"),
+            (#"(?:<user-home>[\\/])?\.codex[\\/](?:worktrees|visualizations)[\\/][^\s\"'`]+"#, "<local-evidence>"),
+            (#"(?i)file:///[^\s\"'`<>()\[\]{},;]+"#, "<local-path>"),
+            (#"(?<![A-Za-z0-9:/>])/(?!/)[^\s\"'`<>()\[\]{},;]+"#, "<local-path>"),
+            (#"(?i)(?<![A-Za-z0-9])[A-Z]:[\\/][^\s\"'`<>()\[\]{},;]+"#, "<local-path>"),
+        ]
+        for (pattern, replacement) in patterns {
+            guard let expression = try? NSRegularExpression(pattern: pattern) else { continue }
+            let range = NSRange(result.startIndex..<result.endIndex, in: result)
+            result = expression.stringByReplacingMatches(
+                in: result,
+                range: range,
+                withTemplate: replacement
+            )
+        }
+        return result
     }
 
     private static func optionalBool(_ value: Bool?) -> String {

@@ -8,6 +8,7 @@ public enum PiCredentialType: String, Codable, Sendable {
 public struct PiManagementCredentialInfo: Decodable, Equatable, Sendable {
     public var providerId: String
     public var type: PiCredentialType
+    public var boundEndpoint: String?
 }
 
 public struct PiManagementProvider: Decodable, Equatable, Sendable {
@@ -110,6 +111,7 @@ struct PiManagementRequest: Encodable, Sendable {
     var refresh: Bool? = nil
     var providerId: String? = nil
     var authType: PiCredentialType? = nil
+    var endpoint: String? = nil
 }
 
 struct PiManagementEnvelope: Decodable, Sendable {
@@ -139,6 +141,10 @@ enum PiManagementCodec {
         if let providerId = request.providerId,
            !isValidProviderID(providerId) {
             throw PiAgentRuntimeError.protocolFailure("invalid PI provider id")
+        }
+        if let endpoint = request.endpoint,
+           endpoint.utf8.count > 2_048 {
+            throw PiAgentRuntimeError.protocolFailure("invalid PI credential endpoint")
         }
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]

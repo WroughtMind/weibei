@@ -88,7 +88,7 @@ extension SettingsView {
     private var effectiveModelEntries: [String] {
         if oauthService.isRefreshingCatalog, oauthService.catalog == nil { return [] }
         let current = store.modelName.trimmingCharacters(in: .whitespacesAndNewlines)
-        var entries = oauthService.models(providerID: store.agentProviderID.piProviderName)
+        var entries = oauthService.models(providerID: activePiProviderID)
         if !current.isEmpty, !entries.contains(current) {
             entries.insert(current, at: 0)
         }
@@ -108,7 +108,7 @@ extension SettingsView {
                 .frame(maxWidth: 260, alignment: .trailing)
                 .lineLimit(2)
         } else if oauthService.catalog != nil {
-            let count = oauthService.models(providerID: store.agentProviderID.piProviderName).count
+            let count = oauthService.models(providerID: activePiProviderID).count
             Text(store.ui("内置 Pi 提供 \(count) 个模型", "Embedded Pi provides \(count) models"))
                 .font(.system(size: 11))
                 .foregroundStyle(WeiBeiTheme.tertiaryInk)

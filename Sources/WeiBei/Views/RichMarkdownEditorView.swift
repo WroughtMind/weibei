@@ -3,11 +3,83 @@ import SwiftUI
 import WebKit
 import WeiBeiCore
 
-fileprivate final class MarkdownImageSchemeHandler: NSObject, WKURLSchemeHandler {
+final class MarkdownImageSchemeHandler: NSObject, WKURLSchemeHandler, URLSessionDataDelegate, URLSessionTaskDelegate {
+    private final class RemoteLoad {
+        let schemeTask: WKURLSchemeTask
+        let requestURL: URL
+        var dataTask: URLSessionDataTask?
+        var data = Data()
+        var mimeType = ""
+        var redirectCount = 0
+
+        init(schemeTask: WKURLSchemeTask, requestURL: URL) {
+            self.schemeTask = schemeTask
+            self.requestURL = requestURL
+        }
+    }
+
+    private static let maximumRedirectCount = 5
     var markdownBaseURLString = ""
     var attachmentDirectory: URL?
     var appearanceMode: WeiBeiAppearanceMode = .paper
     var interfaceLanguage: WeiBeiInterfaceLanguage = .chinese
+    private let loadLock = NSLock()
+    private var remoteLoads: [Int: RemoteLoad] = [:]
+    private var remoteTaskIDsBySchemeTask: [ObjectIdentifier: Int] = [:]
+    private var pendingRemoteSchemeTaskIDs: Set<ObjectIdentifier> = []
+    private var stoppedSchemeTaskIDs: Set<ObjectIdentifier> = []
+    private var isInvalidated = false
+    private let remoteValidationQueue = DispatchQueue(
+        label: "WeiBei.MarkdownRemoteImage.Validation",
+        qos: .utility
+    )
+    private let remoteDelegateQueue: OperationQueue = {
+        let queue = OperationQueue()
+        queue.name = "WeiBei.MarkdownRemoteImage"
+        queue.maxConcurrentOperationCount = 1
+        return queue
+    }()
+    private var remoteSession: URLSession?
+
+    private func makeRemoteSession() -> URLSession {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.httpCookieStorage = nil
+        configuration.urlCredentialStorage = nil
+        configuration.httpShouldSetCookies = false
+        configuration.urlCache = nil
+        configuration.requestCachePolicy = .reloadIgnoringLocalAndRemoteCacheData
+        configuration.timeoutIntervalForRequest = 15
+        configuration.timeoutIntervalForResource = 30
+        configuration.waitsForConnectivity = false
+        return URLSession(
+            configuration: configuration,
+            delegate: self,
+            delegateQueue: remoteDelegateQueue
+        )
+    }
+
+    func invalidate() {
+        loadLock.lock()
+        guard !isInvalidated else {
+            loadLock.unlock()
+            return
+        }
+        isInvalidated = true
+        let session = remoteSession
+        remoteSession = nil
+        remoteLoads.removeAll()
+        remoteTaskIDsBySchemeTask.removeAll()
+        pendingRemoteSchemeTaskIDs.removeAll()
+        stoppedSchemeTaskIDs.removeAll()
+        loadLock.unlock()
+        session?.invalidateAndCancel()
+    }
+
+    var hasActiveRemoteSession: Bool {
+        loadLock.lock()
+        defer { loadLock.unlock() }
+        return remoteSession != nil
+    }
 
     func update(markdownBaseURLString: String, attachmentDirectory: URL?, appearanceMode: WeiBeiAppearanceMode, interfaceLanguage: WeiBeiInterfaceLanguage) {
         self.markdownBaseURLString = markdownBaseURLString
@@ -18,24 +90,97 @@ fileprivate final class MarkdownImageSchemeHandler: NSObject, WKURLSchemeHandler
 
     func webView(_ webView: WKWebView, start urlSchemeTask: WKURLSchemeTask) {
         guard let requestURL = urlSchemeTask.request.url,
-              let fileURL = fileURL(from: requestURL),
-              isAllowed(fileURL) else {
-            urlSchemeTask.didFailWithError(NSError(
-                domain: "WeiBei.MarkdownImageScheme",
-                code: 1,
-                userInfo: [NSLocalizedDescriptionKey: interfaceLanguage.text("图片无法读取", "Image could not be read")]
-            ))
+              let sourceURL = sourceURL(from: requestURL) else {
+            fail(urlSchemeTask, code: 1)
             return
         }
 
-        guard let data = try? Data(contentsOf: fileURL) else {
+        if sourceURL.isFileURL {
+            loadLocalImage(sourceURL, requestURL: requestURL, task: urlSchemeTask)
+        } else if sourceURL.scheme?.lowercased() == "https" {
+            loadRemoteImage(sourceURL, requestURL: requestURL, task: urlSchemeTask)
+        } else {
+            fail(urlSchemeTask, code: 2)
+        }
+    }
+
+    func webView(_ webView: WKWebView, stop urlSchemeTask: WKURLSchemeTask) {
+        let schemeTaskID = ObjectIdentifier(urlSchemeTask as AnyObject)
+        loadLock.lock()
+        let remoteTaskID = remoteTaskIDsBySchemeTask.removeValue(forKey: schemeTaskID)
+        let load = remoteTaskID.flatMap { remoteLoads.removeValue(forKey: $0) }
+        if pendingRemoteSchemeTaskIDs.remove(schemeTaskID) != nil {
+            stoppedSchemeTaskIDs.insert(schemeTaskID)
+        }
+        loadLock.unlock()
+        load?.dataTask?.cancel()
+    }
+
+    private func loadLocalImage(_ fileURL: URL, requestURL: URL, task urlSchemeTask: WKURLSchemeTask) {
+        guard let root = allowedRoots().first(where: {
+            CourseProjectPathPolicy.relativePath(of: fileURL, inside: $0) != nil
+        }),
+        let data = try? CourseProjectFileWorker.readBoundedRegularFile(
+            at: fileURL,
+            inside: root,
+            maximumByteCount: CourseProjectFileWorker.markdownImageMaximumByteCount
+        ),
+        let mimeType = MarkdownAttachmentStore.validatedImageMIMEType(
+            data: data,
+            suggestedMIMEType: mimeType(for: fileURL),
+            allowsSVG: true
+        ) else {
             sendMissingImage(for: requestURL, task: urlSchemeTask)
             return
         }
+        send(data, mimeType: mimeType, for: requestURL, task: urlSchemeTask)
+    }
 
+    private func loadRemoteImage(_ sourceURL: URL, requestURL: URL, task urlSchemeTask: WKURLSchemeTask) {
+        let schemeTaskID = ObjectIdentifier(urlSchemeTask as AnyObject)
+        loadLock.lock()
+        guard !isInvalidated else {
+            loadLock.unlock()
+            return
+        }
+        pendingRemoteSchemeTaskIDs.insert(schemeTaskID)
+        loadLock.unlock()
+        remoteValidationQueue.async { [weak self] in
+            guard let self else { return }
+            guard let request = Self.sanitizedRemoteRequest(for: sourceURL) else {
+                self.loadLock.lock()
+                self.pendingRemoteSchemeTaskIDs.remove(schemeTaskID)
+                let shouldIgnore = self.isInvalidated
+                    || self.stoppedSchemeTaskIDs.remove(schemeTaskID) != nil
+                self.loadLock.unlock()
+                if !shouldIgnore {
+                    self.fail(urlSchemeTask, code: 3)
+                }
+                return
+            }
+            let load = RemoteLoad(schemeTask: urlSchemeTask, requestURL: requestURL)
+            self.loadLock.lock()
+            self.pendingRemoteSchemeTaskIDs.remove(schemeTaskID)
+            guard !self.isInvalidated,
+                  self.stoppedSchemeTaskIDs.remove(schemeTaskID) == nil else {
+                self.loadLock.unlock()
+                return
+            }
+            let session = self.remoteSession ?? self.makeRemoteSession()
+            self.remoteSession = session
+            let dataTask = session.dataTask(with: request)
+            load.dataTask = dataTask
+            self.remoteLoads[dataTask.taskIdentifier] = load
+            self.remoteTaskIDsBySchemeTask[schemeTaskID] = dataTask.taskIdentifier
+            self.loadLock.unlock()
+            dataTask.resume()
+        }
+    }
+
+    private func send(_ data: Data, mimeType: String, for requestURL: URL, task urlSchemeTask: WKURLSchemeTask) {
         let response = URLResponse(
             url: requestURL,
-            mimeType: mimeType(for: fileURL),
+            mimeType: mimeType,
             expectedContentLength: data.count,
             textEncodingName: nil
         )
@@ -44,25 +189,13 @@ fileprivate final class MarkdownImageSchemeHandler: NSObject, WKURLSchemeHandler
         urlSchemeTask.didFinish()
     }
 
-    func webView(_ webView: WKWebView, stop urlSchemeTask: WKURLSchemeTask) {}
-
-    private func fileURL(from requestURL: URL) -> URL? {
+    private func sourceURL(from requestURL: URL) -> URL? {
         guard let components = URLComponents(url: requestURL, resolvingAgainstBaseURL: false),
               let value = components.queryItems?.first(where: { $0.name == "src" })?.value,
-              let url = URL(string: value),
-              url.isFileURL else {
+              let url = URL(string: value) else {
             return nil
         }
-        return url.standardizedFileURL
-    }
-
-    private func isAllowed(_ fileURL: URL) -> Bool {
-        allowedRoots().contains { root in
-            let rootPath = root.standardizedFileURL.path
-            let filePath = fileURL.standardizedFileURL.path
-            let prefix = rootPath.hasSuffix("/") ? rootPath : "\(rootPath)/"
-            return filePath == rootPath || filePath.hasPrefix(prefix)
-        }
+        return url.isFileURL ? url.standardizedFileURL : url
     }
 
     private func allowedRoots() -> [URL] {
@@ -74,6 +207,153 @@ fileprivate final class MarkdownImageSchemeHandler: NSObject, WKURLSchemeHandler
             roots.append(attachmentDirectory)
         }
         return roots
+    }
+
+    static func sanitizedRemoteRequest(for url: URL) -> URLRequest? {
+        guard let validatedURL = try? WeiBeiWebResearchURLPolicy
+            .validatedPublicHTTPSURL(url.absoluteString) else {
+            return nil
+        }
+        var request = URLRequest(
+            url: validatedURL,
+            cachePolicy: .reloadIgnoringLocalAndRemoteCacheData,
+            timeoutInterval: 15
+        )
+        request.httpShouldHandleCookies = false
+        request.setValue("image/*", forHTTPHeaderField: "Accept")
+        return request
+    }
+
+    func urlSession(
+        _ session: URLSession,
+        dataTask: URLSessionDataTask,
+        didReceive response: URLResponse,
+        completionHandler: @escaping (URLSession.ResponseDisposition) -> Void
+    ) {
+        guard let httpResponse = response as? HTTPURLResponse,
+              (200...299).contains(httpResponse.statusCode),
+              response.expectedContentLength <= Int64(CourseProjectFileWorker.markdownImageMaximumByteCount),
+              let mimeType = response.mimeType?.lowercased(),
+              mimeType.hasPrefix("image/"),
+              mimeType != "image/svg+xml",
+              let load = remoteLoad(for: dataTask.taskIdentifier) else {
+            completionHandler(.cancel)
+            failRemoteLoad(taskIdentifier: dataTask.taskIdentifier, code: 4)
+            return
+        }
+        load.mimeType = mimeType
+        completionHandler(.allow)
+    }
+
+    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
+        guard let load = remoteLoad(for: dataTask.taskIdentifier),
+              data.count <= CourseProjectFileWorker.markdownImageMaximumByteCount,
+              load.data.count <= CourseProjectFileWorker.markdownImageMaximumByteCount - data.count else {
+            dataTask.cancel()
+            failRemoteLoad(taskIdentifier: dataTask.taskIdentifier, code: 5)
+            return
+        }
+        load.data.append(data)
+    }
+
+    func urlSession(
+        _ session: URLSession,
+        task: URLSessionTask,
+        willPerformHTTPRedirection response: HTTPURLResponse,
+        newRequest request: URLRequest,
+        completionHandler: @escaping (URLRequest?) -> Void
+    ) {
+        guard let load = remoteLoad(for: task.taskIdentifier) else {
+            completionHandler(nil)
+            return
+        }
+        load.redirectCount += 1
+        guard load.redirectCount <= Self.maximumRedirectCount,
+              let url = request.url,
+              let sanitized = Self.sanitizedRemoteRequest(for: url) else {
+            completionHandler(nil)
+            failRemoteLoad(taskIdentifier: task.taskIdentifier, code: 6)
+            return
+        }
+        completionHandler(sanitized)
+    }
+
+    func urlSession(
+        _ session: URLSession,
+        task: URLSessionTask,
+        didReceive challenge: URLAuthenticationChallenge,
+        completionHandler: @escaping @MainActor @Sendable (
+            URLSession.AuthChallengeDisposition,
+            URLCredential?
+        ) -> Void
+    ) {
+        if challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodServerTrust {
+            completionHandler(.performDefaultHandling, nil)
+        } else {
+            completionHandler(.cancelAuthenticationChallenge, nil)
+        }
+    }
+
+    func urlSession(
+        _ session: URLSession,
+        dataTask: URLSessionDataTask,
+        willCacheResponse proposedResponse: CachedURLResponse,
+        completionHandler: @escaping (CachedURLResponse?) -> Void
+    ) {
+        completionHandler(nil)
+    }
+
+    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+        guard error == nil else {
+            failRemoteLoad(taskIdentifier: task.taskIdentifier, code: 7)
+            return
+        }
+        guard let load = takeRemoteLoad(taskIdentifier: task.taskIdentifier) else {
+            return
+        }
+        guard let mimeType = MarkdownAttachmentStore.validatedImageMIMEType(
+            data: load.data,
+            suggestedMIMEType: load.mimeType,
+            allowsSVG: false
+        ) else {
+            fail(load.schemeTask, code: 7)
+            return
+        }
+        send(load.data, mimeType: mimeType, for: load.requestURL, task: load.schemeTask)
+    }
+
+    private func remoteLoad(for taskIdentifier: Int) -> RemoteLoad? {
+        loadLock.lock()
+        defer { loadLock.unlock() }
+        return remoteLoads[taskIdentifier]
+    }
+
+    private func takeRemoteLoad(taskIdentifier: Int) -> RemoteLoad? {
+        loadLock.lock()
+        defer { loadLock.unlock() }
+        guard let load = remoteLoads.removeValue(forKey: taskIdentifier) else { return nil }
+        remoteTaskIDsBySchemeTask.removeValue(
+            forKey: ObjectIdentifier(load.schemeTask as AnyObject)
+        )
+        return load
+    }
+
+    private func failRemoteLoad(taskIdentifier: Int, code: Int) {
+        guard let load = takeRemoteLoad(taskIdentifier: taskIdentifier) else { return }
+        fail(load.schemeTask, code: code)
+    }
+
+    private func fail(_ task: WKURLSchemeTask, code: Int) {
+        task.didFailWithError(NSError(
+            domain: "WeiBei.MarkdownImageScheme",
+            code: code,
+            userInfo: [
+                NSLocalizedDescriptionKey: interfaceLanguage.text(
+                    "图片无法读取",
+                    "Image could not be read"
+                )
+            ]
+        ))
     }
 
     private func sendMissingImage(for requestURL: URL, task urlSchemeTask: WKURLSchemeTask) {
@@ -115,6 +395,41 @@ fileprivate final class MarkdownImageSchemeHandler: NSObject, WKURLSchemeHandler
         switch fileURL.pathExtension.lowercased() {
         case "svg": return "image/svg+xml"
         default: return MarkdownAttachmentStore.mimeType(forFileExtension: fileURL.pathExtension)
+        }
+    }
+}
+
+private enum MarkdownWebNetworkGuard {
+    private static let identifier = "com.changfenhuang.weibei.markdown.block-network.v1"
+    private static let rules = """
+    [
+      {"trigger":{"url-filter":"^https?://.*"},"action":{"type":"block"}},
+      {"trigger":{"url-filter":"^wss?://.*"},"action":{"type":"block"}}
+    ]
+    """
+
+    static func install(
+        in controller: WKUserContentController,
+        completion: @escaping (Result<Void, Error>) -> Void
+    ) {
+        WKContentRuleListStore.default().compileContentRuleList(
+            forIdentifier: identifier,
+            encodedContentRuleList: rules
+        ) { ruleList, error in
+            DispatchQueue.main.async {
+                if let ruleList {
+                    controller.add(ruleList)
+                    completion(.success(()))
+                } else {
+                    completion(.failure(error ?? NSError(
+                        domain: "WeiBei.MarkdownWebNetworkGuard",
+                        code: 1,
+                        userInfo: [
+                            NSLocalizedDescriptionKey: "content rule list unavailable"
+                        ]
+                    )))
+                }
+            }
         }
     }
 }
@@ -420,11 +735,29 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             extra:
                 "instance=\(context.coordinator.performanceInstanceID.uuidString.lowercased())"
         )
-        if let url = WeiBeiResources.bundle.url(forResource: "index", withExtension: "html") {
-            let editorDirectory = url.deletingLastPathComponent()
-            view.loadFileURL(url, allowingReadAccessTo: editorDirectory.deletingLastPathComponent())
-        } else {
-            view.loadHTMLString("<p>\(interfaceLanguage.text("编辑器资源缺失。", "Editor resources are missing."))</p>", baseURL: nil)
+        let resourceURL = WeiBeiResources.bundle.url(
+            forResource: "index",
+            withExtension: "html"
+        )
+        MarkdownWebNetworkGuard.install(in: controller) {
+            [weak view, weak coordinator = context.coordinator] result in
+            guard let view else { return }
+            guard case .success = result else {
+                coordinator?.reportRenderFailure()
+                return
+            }
+            if let resourceURL {
+                let editorDirectory = resourceURL.deletingLastPathComponent()
+                view.loadFileURL(
+                    resourceURL,
+                    allowingReadAccessTo: editorDirectory.deletingLastPathComponent()
+                )
+            } else {
+                view.loadHTMLString(
+                    "<p>\(interfaceLanguage.text("编辑器资源缺失。", "Editor resources are missing."))</p>",
+                    baseURL: nil
+                )
+            }
         }
         return view
     }
@@ -533,6 +866,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
     }
 
     static func dismantleNSView(_ view: WKWebView, coordinator: Coordinator) {
+        coordinator.imageSchemeHandler.invalidate()
         WeiBeiPerf.event(
             "webview.markdown_destroy",
             extra:
@@ -756,7 +1090,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             return target.url == current.url
         }
 
-        private func reportRenderFailure() {
+        fileprivate func reportRenderFailure() {
             // A failure can race the finalized JavaScript evaluation. Invalidate
             // that completion before exposing the native fallback so a broken
             // WebView cannot become ready again.
@@ -1150,7 +1484,19 @@ struct RichMarkdownEditorView: NSViewRepresentable {
 
         /** Reads and saves a picker image on a background queue. */
         private static func saveImageAttachment(fromFileURL fileURL: URL, attachmentDirectory: URL, markdownBaseURLString: String) throws -> MarkdownAttachment {
-            try MarkdownAttachmentStore.save(data: Data(contentsOf: fileURL, options: [.mappedIfSafe]), originalName: fileURL.lastPathComponent, mime: MarkdownAttachmentStore.mimeType(forFileExtension: fileURL.pathExtension), attachmentDirectory: attachmentDirectory, markdownBaseURLString: markdownBaseURLString)
+            let data = try CourseProjectFileWorker.readBoundedRegularFile(
+                at: fileURL,
+                maximumByteCount: CourseProjectFileWorker.markdownImageMaximumByteCount
+            )
+            return try MarkdownAttachmentStore.save(
+                data: data,
+                originalName: fileURL.lastPathComponent,
+                mime: MarkdownAttachmentStore.mimeType(
+                    forFileExtension: fileURL.pathExtension
+                ),
+                attachmentDirectory: attachmentDirectory,
+                markdownBaseURLString: markdownBaseURLString
+            )
         }
 
         private func anchor(from rect: [String: Any]?) -> CGPoint? {
