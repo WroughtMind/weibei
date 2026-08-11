@@ -19258,7 +19258,8 @@ final class WorkspaceStore: ObservableObject {
 
     /// S4：跟踪当前活动笔记路径；外部改动且无脏输入时静默重载。
     private func refreshActiveNoteFileWatch() {
-        // 安全自检大量建/毁 store 与临时目录；监听器在测试模式关闭以免竞态。
+        // 安全自检大量建/毁 store 与临时目录：关闭监听器仅作降噪，
+        // 不再是生命周期正确性依赖（C3 cancel 按值捕获 fd 后 double-close 已消）。
         if WeiBeiSafetyTestMode.isEnabled {
             noteFileWatcher.stop()
             return
@@ -19325,6 +19326,8 @@ final class WorkspaceStore: ObservableObject {
     }
 
     private func isActiveNoteDirty(itemID: String) -> Bool {
+        // H4：staged 草稿层也算脏，避免连续打字 burst 期间静默重载丢输入。
+        if stagedNoteDraft?.itemID == itemID { return true }
         if notesByItemID[itemID] != nil { return true }
         if pendingNotePersistenceByItemID[itemID] != nil { return true }
         if let baseline = noteBackingContentDigestsByItemID[itemID] {
@@ -19332,6 +19335,18 @@ final class WorkspaceStore: ObservableObject {
         }
         // 无基线时：有缓存草稿或待写才算脏；否则允许外部重载。
         return false
+    }
+
+    /// H4 自检：暴露 isActiveNoteDirty（含 staged 草稿层）。
+    func isActiveNoteDirtyForSelfCheck(itemID: String) -> Bool {
+        precondition(WeiBeiSafetyTestMode.isEnabled)
+        return isActiveNoteDirty(itemID: itemID)
+    }
+
+    /// H4 自检：注入 stagedNoteDraft。
+    func stageNoteDraftForSelfCheck(itemID: String, value: String) {
+        precondition(WeiBeiSafetyTestMode.isEnabled)
+        stagedNoteDraft = (itemID, value)
     }
 
     /// 文件不可达时静默保留草稿（无冲突横幅）。

@@ -3,8 +3,8 @@
 状态：**实施中（用户已批准按计划串行推进）**。基于 2026-08-11 外部深度审查（审查范围 c2156e32 → origin/main 5d0ecb53，即 PR #176–#188 全部合并后的现状）。
 
 进度：
-- [x] PR-A `codex/fix-note-integrity` — C1 + C2 + H1（本分支）
-- [ ] PR-B `codex/fix-note-watcher` — C3 + H4 + H5
+- [x] PR-A `codex/fix-note-integrity` — C1 + C2 + H1（#189 已合入）
+- [x] PR-B `codex/fix-note-watcher` — C3 + H4 + H5（本分支）
 - [ ] PR-C `codex/fix-course-boundaries` — H2 + H3
 
 ## 一句话
