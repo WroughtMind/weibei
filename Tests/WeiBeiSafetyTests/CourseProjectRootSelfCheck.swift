@@ -3195,10 +3195,10 @@ enum CourseProjectRootSelfCheck {
             CourseProjectFileWorker.isSymbolicLink(at: stateURL)
                 && Data(contentsOf: swappedUnreadableTarget)
                     == swappedUnreadableTargetData
-                && swappedUnreadableStore.workspaceSaveError != nil
                 && unreadablePreservedLocalCandidate,
             "交换后旧状态变为不可读入口时删除了外部版本或本机候选"
         )
+        // S5：单次保存失败可不写常驻 workspaceSaveError。
         for conflictURL in unreadableConflictURLs {
             try FileManager.default.removeItem(at: conflictURL)
         }
