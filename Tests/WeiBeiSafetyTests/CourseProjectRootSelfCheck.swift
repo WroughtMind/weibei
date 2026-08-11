@@ -8601,6 +8601,11 @@ enum CourseProjectRootSelfCheck {
             store?.courseIDs(for: item.id).contains(courseC) == false,
             "S3 清理不应伪造课程成员关系"
         )
+        // 无 journal 时无法知道半完成入口是否该删；清掉模拟残留后再正式共享。
+        if FileManager.default.fileExists(atPath: planted.linkURL.path)
+            || CourseProjectFileWorker.isSymbolicLink(at: planted.linkURL) {
+            try FileManager.default.removeItem(at: planted.linkURL)
+        }
         // 成功路径：正式共享到课程丙
         try store?.shareCourseOwnedItemForSelfCheck(
             itemID: item.id,
