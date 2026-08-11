@@ -8360,13 +8360,22 @@ enum CourseProjectRootSelfCheck {
                     fromCourseID: courseB
                 )
             }
-            try check(
-                !entryB.exists,
-                "\(crashStage.rawValue) 没有落在入口已隔离窗口"
-            )
+            // S3：提交前崩溃即时回滚入口；提交后崩溃保留删除结果。
             let expectsRemoval =
                 crashStage
                 == .afterSharedLinkRemovalWorkspaceSaveBeforeJournal
+            if expectsRemoval {
+                try check(
+                    !entryB.exists,
+                    "\(crashStage.rawValue) 提交后入口应已隔离"
+                )
+            } else {
+                try check(
+                    entryB.exists
+                        || CourseProjectFileWorker.isSymbolicLink(at: entryB),
+                    "\(crashStage.rawValue) 提交前回滚后入口应恢复"
+                )
+            }
             try check(
                 store?.courseIDs(for: item.id).contains(courseB)
                     == !expectsRemoval,
@@ -8376,8 +8385,10 @@ enum CourseProjectRootSelfCheck {
             store = makeStore(fixture: fixture)
             try store?.recoverCourseTransactionsForSelfCheck()
             try check(
-                CourseProjectFileWorker.isSymbolicLink(at: entryB)
-                    == !expectsRemoval
+                (
+                    CourseProjectFileWorker.isSymbolicLink(at: entryB)
+                        || entryB.exists
+                ) == !expectsRemoval
                     && store?.courseIDs(for: item.id).contains(courseB)
                         == !expectsRemoval,
                 "\(crashStage.rawValue) 没有按 workspace 提交状态恢复"
