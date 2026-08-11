@@ -4,8 +4,8 @@
 
 进度：
 - [x] PR-A `codex/fix-note-integrity` — C1 + C2 + H1（#189 已合入）
-- [x] PR-B `codex/fix-note-watcher` — C3 + H4 + H5（本分支）
-- [ ] PR-C `codex/fix-course-boundaries` — H2 + H3
+- [x] PR-B `codex/fix-note-watcher` — C3 + H4 + H5（#190 已合入）
+- [x] PR-C `codex/fix-course-boundaries` — H2 + H3（本分支）
 
 ## 一句话
 

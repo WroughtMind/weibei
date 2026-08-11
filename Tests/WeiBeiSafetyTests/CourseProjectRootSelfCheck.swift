@@ -112,6 +112,12 @@ enum CourseProjectRootSelfCheck {
         try step("H4 staged 草稿算脏阻止静默重载") {
             try stagedNoteDraftCountsAsActiveDirty()
         }
+        try step("H2 分叉重绑 keepsLocalState 不自动确认") {
+            try forkedRebindUsesKeepsLocalStateImpact()
+        }
+        try step("H3 根外 symlink 不登记") {
+            try courseScanSkipsSymlinksOutsideRoot()
+        }
         try firstScanAndFinderReconciliationPreserveIdentity()
         try unavailableCourseMaterialKeepsCourseHomeOpenUntilRestored()
         try thousandFileReconciliationIsLinearAndHardLinksStayStable()
@@ -6630,6 +6636,175 @@ enum CourseProjectRootSelfCheck {
         try check(
             store.isActiveNoteDirtyForSelfCheck(itemID: noteID) == true,
             "H4：stagedNoteDraft 应使 isActiveNoteDirty == true"
+        )
+    }
+
+    @MainActor
+    private static func forkedRebindUsesKeepsLocalStateImpact() throws {
+        let fixture = try Fixture(name: "rebind-keeps-local-state")
+        defer { fixture.remove() }
+        let library = try fixture.makeDirectory("课程资料库")
+        let exports = try fixture.makeDirectory("课程副本")
+        let offline = try fixture.makeDirectory("失联原件")
+        let store = makeStore(fixture: fixture)
+        try store.configureCourseLibrary(at: library)
+        let courseID = try store.createCourseInLibrary(title: "分叉重绑课")
+        let noteID = try require(
+            store.createCourseNotebookNoteForSelfCheck(
+                courseID: courseID,
+                title: "分叉笔记"
+            ),
+            "没有分叉笔记"
+        )
+        let originalRoot = try require(
+            store.courseRootURL(for: courseID),
+            "没有分叉原课程根"
+        )
+        // 导出候选副本后，本机再改笔记 → dirty + digest 不等。
+        let candidate = exports.appendingPathComponent(
+            "分叉候选",
+            isDirectory: true
+        )
+        _ = try store.exportPortableCourseCopyForSelfCheck(
+            courseID: courseID,
+            to: candidate
+        )
+        try store.writeCourseMarkdownForSelfCheck(
+            itemID: noteID,
+            markdown: "# 本机分叉进度\n\n本地优先"
+        )
+        try check(
+            store.flushPendingWorkspaceSave(),
+            "分叉本机状态未保存"
+        )
+        try FileManager.default.moveItem(
+            at: originalRoot,
+            to: offline.appendingPathComponent("原课程", isDirectory: true)
+        )
+        let proposal: CourseProjectRebindProposal
+        switch try store.adoptCourseFolderOrProposeRebind(
+            at: candidate,
+            title: "分叉重绑"
+        ) {
+        case .opened:
+            throw CheckError.failed("H2：分叉候选被静默打开")
+        case .requiresRebind(let value):
+            proposal = value
+        }
+        try check(
+            proposal.impact == .keepsLocalState,
+            "H2：本机 dirty 分叉应 keepsLocalState 而非 unchanged"
+        )
+        // 确认后课程根指向候选；本机进度不被候选 state 覆盖（标题仍为本机）。
+        let localTitle = store.course(withID: courseID)?.title
+        _ = try store.confirmCourseProjectRebind(proposal)
+        try check(
+            store.courseRootURL(for: courseID) == candidate.canonicalFileURL,
+            "H2：确认后应绑定候选根"
+        )
+        try check(
+            store.course(withID: courseID)?.title == localTitle,
+            "H2：keepsLocalState 确认后应保留本机标题/进度"
+        )
+
+        // 对照：干净且 digest 相等 → unchanged（导出后不改本机）。
+        let fixture2 = try Fixture(name: "rebind-unchanged-equal")
+        defer { fixture2.remove() }
+        let library2 = try fixture2.makeDirectory("课程资料库")
+        let exports2 = try fixture2.makeDirectory("课程副本")
+        let offline2 = try fixture2.makeDirectory("失联原件")
+        let store2 = makeStore(fixture: fixture2)
+        try store2.configureCourseLibrary(at: library2)
+        let course2 = try store2.createCourseInLibrary(title: "无歧义课")
+        let root2 = try require(
+            store2.courseRootURL(for: course2),
+            "无歧义原根"
+        )
+        try check(store2.flushPendingWorkspaceSave(), "无歧义状态未保存")
+        let candidate2 = exports2.appendingPathComponent(
+            "无歧义候选",
+            isDirectory: true
+        )
+        _ = try store2.exportPortableCourseCopyForSelfCheck(
+            courseID: course2,
+            to: candidate2
+        )
+        try FileManager.default.moveItem(
+            at: root2,
+            to: offline2.appendingPathComponent("原课程", isDirectory: true)
+        )
+        switch try store2.adoptCourseFolderOrProposeRebind(
+            at: candidate2,
+            title: "无歧义"
+        ) {
+        case .opened:
+            break
+        case .requiresRebind(let p):
+            try check(
+                p.impact == .unchanged,
+                "H2：digest 相等应仍为 unchanged（可自动确认）"
+            )
+        }
+    }
+
+    @MainActor
+    private static func courseScanSkipsSymlinksOutsideRoot() throws {
+        let fixture = try Fixture(name: "scan-symlink-containment")
+        defer { fixture.remove() }
+        let library = try fixture.makeDirectory("课程资料库")
+        let outside = try fixture.makeDirectory("课程外")
+        let outsideFile = outside.appendingPathComponent("秘密.md")
+        try Data("# 根外秘密\n".utf8).write(to: outsideFile)
+        let store = makeStore(fixture: fixture)
+        try store.configureCourseLibrary(at: library)
+        let courseID = try store.createCourseInLibrary(title: "symlink 边界")
+        let root = try require(
+            store.courseRootURL(for: courseID),
+            "没有 symlink 课程根"
+        )
+        // 根内合法笔记
+        let notesDir = root.appendingPathComponent("笔记", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: notesDir,
+            withIntermediateDirectories: true
+        )
+        let insideNote = notesDir.appendingPathComponent("合法.md")
+        try Data("# 合法\n".utf8).write(to: insideNote)
+        // 根内 symlink 指向根内文件 — 应登记
+        let insideLink = notesDir.appendingPathComponent("根内链.md")
+        try FileManager.default.createSymbolicLink(
+            atPath: insideLink.path,
+            withDestinationPath: insideNote.path
+        )
+        // 根内 symlink 指向根外 — 不得登记
+        let outsideLink = notesDir.appendingPathComponent("根外链.md")
+        try FileManager.default.createSymbolicLink(
+            atPath: outsideLink.path,
+            withDestinationPath: outsideFile.path
+        )
+        try store.reconcileCourseFilesForSelfCheck(courseID: courseID)
+        let paths = Set(
+            store.importedItems.compactMap { item -> String? in
+                guard store.courseItemMemberships.contains(where: {
+                    $0.itemID == item.id && $0.courseID == courseID
+                }) else { return nil }
+                return item.urlPath
+            }
+        )
+        try check(
+            paths.contains(insideNote.path)
+                || paths.contains(insideLink.resolvingSymlinksInPath().path),
+            "H3：根内 symlink 应登记"
+        )
+        try check(
+            !paths.contains(outsideFile.path),
+            "H3：根外 symlink 目标不得登记为课程文件"
+        )
+        try check(
+            !store.importedItems.contains {
+                $0.subtitle == "根外链.md" || $0.urlPath == outsideLink.path
+            },
+            "H3：根外 symlink 入口本身也不应作为课程笔记出现"
         )
     }
 
