@@ -338,6 +338,11 @@ struct CourseProjectEntrySheet: View {
                     "魏碑认出了同一门课程，所选文件夹带有更新的课程状态。确认后会采用其中更新的对话、学习记忆、关系和阅读位置。",
                     "WeiBei recognized the same course with newer portable state. Confirm to use the newer chats, memory, links, and reading position from this folder."
                 )
+            case .keepsLocalState:
+                return store.ui(
+                    "候选文件夹包含与本机不同的课程进度；确认后以本机进度为准，候选中的差异会以冲突备份保留。",
+                    "The candidate folder has different course progress than this Mac. Confirm to keep local progress; differing files from the candidate will be kept as conflict backups."
+                )
             }
         }
         if needsLibrary {
@@ -631,8 +636,8 @@ struct CourseProjectEntrySheet: View {
             case .opened(let courseID):
                 openCourse(courseID)
             case .requiresRebind(let proposal):
-                // S6-5：无歧义（原根失联、状态一致）时单步自动确认；
-                // 需采用更新候选状态时才弹出一次确认。
+                // S6-5：无歧义（原根失联、状态 digest 相等）时单步自动确认；
+                // H2：keepsLocalState / useNewerCandidate 弹一次确认。
                 if proposal.impact == .unchanged {
                     let courseID = try await store.confirmCourseProjectRebindAsync(
                         proposal

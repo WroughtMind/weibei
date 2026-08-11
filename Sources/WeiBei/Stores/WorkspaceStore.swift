@@ -73,8 +73,12 @@ struct CourseHomeSearchOutcome: Sendable {
 }
 
 enum CourseProjectRebindImpact: Equatable {
+    /// 候选与本机 digest 相等，无歧义。
     case unchanged
+    /// 候选更新且本机干净，可采用候选状态。
     case useNewerCandidate
+    /// 候选与本机不同且本机 dirty / 不可比：保留本机进度，需用户确认一次。
+    case keepsLocalState
 }
 
 struct CourseProjectRebindProposal {
@@ -2516,6 +2520,7 @@ final class WorkspaceStore: ObservableObject {
             comparableLocalState
         )
         let statePayloadDigest = try coursePortableStatePayloadDigest(state)
+        // 真正 digest 相等：无歧义，S6-5 可自动确认。
         if statePayloadDigest == comparableLocalDigest {
             return (
                 state,
@@ -2531,7 +2536,8 @@ final class WorkspaceStore: ObservableObject {
             && !dirtyPortableCourseIDs.contains(existing.id)
             && !blockedPortableCourseIDs.contains(existing.id)
             && !oversizedPortableCourseIDs.contains(existing.id)
-        // S3：不能安全选用新候选时不再抛冲突，交由上层保留本机状态。
+        // H2：分叉 / 本机 dirty / revision 不可比 → keepsLocalState（需确认一次）；
+        // 仅当本机干净且候选 revision 更新时才 useNewerCandidate。
         guard localIsClean,
               let knownRevision,
               state.revision > knownRevision else {
@@ -2539,7 +2545,7 @@ final class WorkspaceStore: ObservableObject {
                 state,
                 statePayloadDigest,
                 localPayloadDigest,
-                .unchanged
+                .keepsLocalState
             )
         }
         return (
@@ -2971,24 +2977,51 @@ final class WorkspaceStore: ObservableObject {
                         forKey: itemID
                     )
                 }
-                try applyCoursePortableState(
-                    evaluation.state,
-                    courseID: proposal.courseID
-                )
-                if let activeNotebookItemID,
-                   reboundNoteItemIDs.contains(activeNotebookItemID) {
-                    noteText =
-                        notesByItemID[activeNotebookItemID] ?? ""
+                switch evaluation.impact {
+                case .keepsLocalState:
+                    // H2：以本机进度为准，不覆盖；候选 portable 状态 best-effort 冲突备份。
+                    if let candidateData = proposal.snapshot.portableStateData {
+                        let weibei = resolvedRoot.appendingPathComponent(
+                            ".weibei",
+                            isDirectory: true
+                        )
+                        try? FileManager.default.createDirectory(
+                            at: weibei,
+                            withIntermediateDirectories: true
+                        )
+                        let stamp = ISO8601DateFormatter().string(from: Date())
+                            .replacingOccurrences(of: ":", with: "-")
+                        let backupURL = weibei.appendingPathComponent(
+                            "rebind-candidate-conflict-\(stamp).json",
+                            isDirectory: false
+                        )
+                        try? candidateData.write(
+                            to: backupURL,
+                            options: [.atomic]
+                        )
+                    }
+                    dirtyPortableCourseIDs.insert(proposal.courseID)
+                    needsPortableCourseStateBootstrap = true
+                case .unchanged, .useNewerCandidate:
+                    try applyCoursePortableState(
+                        evaluation.state,
+                        courseID: proposal.courseID
+                    )
+                    if let activeNotebookItemID,
+                       reboundNoteItemIDs.contains(activeNotebookItemID) {
+                        noteText =
+                            notesByItemID[activeNotebookItemID] ?? ""
+                    }
+                    coursePortableStateRevisions[proposal.courseID] =
+                        evaluation.state.revision
+                    coursePortableStateDigests[proposal.courseID] =
+                        evaluation.statePayloadDigest
+                    dirtyPortableCourseIDs.remove(proposal.courseID)
+                    blockedPortableCourseIDs.remove(proposal.courseID)
+                    oversizedPortableCourseIDs.remove(proposal.courseID)
+                    needsPortableCourseStateBootstrap =
+                        !dirtyPortableCourseIDs.isEmpty
                 }
-                coursePortableStateRevisions[proposal.courseID] =
-                    evaluation.state.revision
-                coursePortableStateDigests[proposal.courseID] =
-                    evaluation.statePayloadDigest
-                dirtyPortableCourseIDs.remove(proposal.courseID)
-                blockedPortableCourseIDs.remove(proposal.courseID)
-                oversizedPortableCourseIDs.remove(proposal.courseID)
-                needsPortableCourseStateBootstrap =
-                    !dirtyPortableCourseIDs.isEmpty
                 guard await persistWorkspaceNow(
                     skippingPortableCourseIDs: [proposal.courseID]
                 ) else {

@@ -2602,11 +2602,24 @@ actor CourseProjectFileWorker {
                 continue
             }
             // S6-6：允许文件符号链接——按解析后的真实文件登记（同路径只记一次）。
+            // H3：解析后必须仍在课程根内，根外目标跳过登记（默认沉默）。
             let isLink = values.isSymbolicLink == true || values.isAliasFile == true
             let fileURL: URL
             let fileValues: URLResourceValues
             if isLink {
                 fileURL = rawURL.resolvingSymlinksInPath().standardizedFileURL
+                guard CourseProjectPathPolicy.contains(
+                        canonicalRoot,
+                        fileURL,
+                        includingRoot: false
+                      ) else {
+                    NSLog(
+                        "[WeiBei scan] skip course symlink outside root: %@ -> %@",
+                        rawURL.path,
+                        fileURL.path
+                    )
+                    continue
+                }
                 guard let resolvedValues = try? fileURL.resourceValues(forKeys: keys),
                       resolvedValues.isRegularFile == true,
                       resolvedValues.isSymbolicLink != true,
