@@ -605,8 +605,6 @@ final class WorkspaceStore: ObservableObject {
     private var courseNoteWriteTasksByItemID: [String: Task<Void, Never>] = [:]
     private var blankNoteMaterializationTask: Task<Void, Never>?
     private var pendingBlankNoteText = ""
-    /// S4：监听当前打开笔记的磁盘文件；无脏输入时静默重载。
-    private let noteFileWatcher = NoteFileWatcher()
     private var lastCourseNoteReadRanOnMainThread: Bool?
     private var lastCourseNoteWriteRanOnMainThread: Bool?
     private var lastCourseHomeSearchRanOnMainThread: Bool?
@@ -1008,7 +1006,6 @@ final class WorkspaceStore: ObservableObject {
     }
 
     deinit {
-        noteFileWatcher.stop()
         courseReconciliationTask?.cancel()
         courseNoteLoadTasksByItemID.values.forEach { $0.cancel() }
         courseNoteWriteTasksByItemID.values.forEach { $0.cancel() }
@@ -4248,6 +4245,22 @@ final class WorkspaceStore: ObservableObject {
             )
         }
         guard courseNoteWritesInFlight.isEmpty else {
+            throw CourseOwnedFileError.verificationFailed
+        }
+    }
+
+    func waitForCourseNoteLoadsForSelfCheck() throws {
+        precondition(
+            WeiBeiSafetyTestMode.isEnabled
+        )
+        let deadline = Date(timeIntervalSinceNow: 20)
+        while !courseNoteLoadTasksByItemID.isEmpty, Date() < deadline {
+            RunLoop.current.run(
+                mode: .default,
+                before: Date(timeIntervalSinceNow: 0.01)
+            )
+        }
+        guard courseNoteLoadTasksByItemID.isEmpty else {
             throw CourseOwnedFileError.verificationFailed
         }
     }
@@ -10079,7 +10092,7 @@ final class WorkspaceStore: ObservableObject {
             noteText = noteText(for: item)
             latestAgentNoteProposal = nil
             latestAgentLearningUpdate = nil
-            refreshActiveNoteFileWatch()
+            refreshActiveNoteFromBackingFile()
             if !isRestoringCourseResumePoint {
                 syncActiveStudySession()
             }
@@ -19255,6 +19268,10 @@ final class WorkspaceStore: ObservableObject {
     }
 
     func flushPendingNotePersistence(flushWorkspace: Bool) {
+        if let stagedNoteDraft {
+            self.stagedNoteDraft = nil
+            updateNote(stagedNoteDraft.value, for: stagedNoteDraft.itemID)
+        }
         let itemIDs = Array(pendingNotePersistenceByItemID.keys)
         itemIDs.forEach { flushPendingNotePersistence(for: $0) }
         studyProgressSaveTask?.cancel()
@@ -19311,8 +19328,6 @@ final class WorkspaceStore: ObservableObject {
                 rootURL: noteBackupRootURL
             )
         }
-        // S4：本机写回产生的 vnode 事件不触发外部重载。
-        noteFileWatcher.ignoreEvents(until: Date().addingTimeInterval(0.6))
         do {
             try notebookMarkdownWriter(markdown, url)
             let writtenDigest = Self.noteContentDigest(Data(markdown.utf8))
@@ -19321,9 +19336,6 @@ final class WorkspaceStore: ObservableObject {
             notesByItemID.removeValue(forKey: itemID)
             pendingNoteWritesByItemID.removeValue(forKey: itemID)
             setNoteFileError(nil, for: itemID)
-            if itemID == activeNotebookItemID {
-                refreshActiveNoteFileWatch()
-            }
             return true
         } catch {
             notesByItemID[itemID] = markdown
@@ -19338,55 +19350,46 @@ final class WorkspaceStore: ObservableObject {
         }
     }
 
-    /// S4：跟踪当前活动笔记路径；外部改动且无脏输入时静默重载。
-    private func refreshActiveNoteFileWatch() {
-        // 安全自检大量建/毁 store 与临时目录：关闭监听器仅作降噪，
-        // 不再是生命周期正确性依赖（C3 cancel 按值捕获 fd 后 double-close 已消）。
-        if WeiBeiSafetyTestMode.isEnabled {
-            noteFileWatcher.stop()
-            return
-        }
+    /// 从当前活动笔记的真实 Markdown 路径刷新。
+    /// 持续监听不属于产品承诺；选择笔记或应用重新激活时读盘即可。
+    func refreshActiveNoteFromBackingFile() {
         guard let item = activeNoteItem,
               item.editsBackingMarkdownFile,
               let url = item.url,
               FileManager.default.fileExists(atPath: url.path) else {
-            noteFileWatcher.stop()
             return
         }
         let itemID = item.id
-        let watchedPath = url.path
-        noteFileWatcher.watch(url: url) { [weak self] changedURL in
-            Task { @MainActor [weak self] in
-                self?.handleExternalNoteFileChange(
-                    itemID: itemID,
-                    url: changedURL,
-                    expectedPath: watchedPath
-                )
+        // 失焦会先冲刷输入。若仍有草稿或写入任务，说明落盘尚未完成，
+        // 继续保留本地内容，不用一次刷新制造数据丢失。
+        guard stagedNoteDraft?.itemID != itemID,
+              notesByItemID[itemID] == nil,
+              pendingNotePersistenceByItemID[itemID] == nil,
+              !courseNoteWritesInFlight.contains(itemID),
+              courseNoteWriteTasksByItemID[itemID] == nil else {
+            return
+        }
+
+        if case .courseOwned(let courseID) = item.storage,
+           let itemIndex = importedItems.firstIndex(where: { $0.id == itemID }) {
+            // 外部编辑器常用原子替换保存，inode 会变；课程内文件以相对路径
+            // 为准，先沿用既有解析逻辑刷新身份，再交给后台读取。
+            guard resolveCourseOwnedFile(
+                at: itemIndex,
+                ownerCourseID: courseID
+            ).url != nil else {
+                return
             }
-        }
-    }
-
-    private func handleExternalNoteFileChange(
-        itemID: String,
-        url: URL,
-        expectedPath: String
-    ) {
-        guard activeNotebookItemID == itemID else { return }
-        guard let item = activeNoteItem,
-              item.editsBackingMarkdownFile,
-              let currentURL = item.url,
-              currentURL.path == expectedPath || currentURL.path == url.path
-        else { return }
-
-        // 有未保存输入：不打断，写回时由备份环兜底。
-        if isActiveNoteDirty(itemID: itemID) {
+            courseNoteLoadGenerationByItemID[itemID, default: 0] &+= 1
+            courseNoteLoadTasksByItemID[itemID]?.cancel()
+            courseNoteLoadTasksByItemID[itemID] = nil
+            loadedCourseNoteTextByItemID.removeValue(forKey: itemID)
+            scheduleCourseNoteLoad(importedItems[itemIndex])
             return
         }
-        guard FileManager.default.fileExists(atPath: currentURL.path) else {
-            return
-        }
+
         do {
-            let data = try Data(contentsOf: currentURL)
+            let data = try Data(contentsOf: url)
             guard let markdown = String(data: data, encoding: .utf8) else {
                 return
             }
@@ -19405,30 +19408,6 @@ final class WorkspaceStore: ObservableObject {
         } catch {
             // 静默：读失败不打扰用户。
         }
-    }
-
-    private func isActiveNoteDirty(itemID: String) -> Bool {
-        // H4：staged 草稿层也算脏，避免连续打字 burst 期间静默重载丢输入。
-        if stagedNoteDraft?.itemID == itemID { return true }
-        if notesByItemID[itemID] != nil { return true }
-        if pendingNotePersistenceByItemID[itemID] != nil { return true }
-        if let baseline = noteBackingContentDigestsByItemID[itemID] {
-            return Self.noteContentDigest(Data(noteText.utf8)) != baseline
-        }
-        // 无基线时：有缓存草稿或待写才算脏；否则允许外部重载。
-        return false
-    }
-
-    /// H4 自检：暴露 isActiveNoteDirty（含 staged 草稿层）。
-    func isActiveNoteDirtyForSelfCheck(itemID: String) -> Bool {
-        precondition(WeiBeiSafetyTestMode.isEnabled)
-        return isActiveNoteDirty(itemID: itemID)
-    }
-
-    /// H4 自检：注入 stagedNoteDraft。
-    func stageNoteDraftForSelfCheck(itemID: String, value: String) {
-        precondition(WeiBeiSafetyTestMode.isEnabled)
-        stagedNoteDraft = (itemID, value)
     }
 
     /// 文件不可达时静默保留草稿（无冲突横幅）。

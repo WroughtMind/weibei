@@ -37,6 +37,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return false
     }
 
+    func applicationDidBecomeActive(_ notification: Notification) {
+        sharedWorkspaceStore.refreshActiveNoteFromBackingFile()
+    }
+
     func applicationShouldTerminate(
         _ sender: NSApplication
     ) -> NSApplication.TerminateReply {
