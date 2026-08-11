@@ -5430,10 +5430,33 @@ final class WorkspaceStore: ObservableObject {
 
 
     /// S3：不再从 journal 恢复未完成操作。启动时静默清理 `.weibei/transactions/*` 残留
-    /// 与旧版 pending journal 文件；含 `replaced-target` 等崩溃备份的目录走白名单，绝不误删。
+    /// 与旧版 pending journal 文件。
+    /// H1：含 `replaced-target` / `replacement-rollback` 等用户内容崩溃备份的目录绝不误删；
+    /// 其余仅当条目全部属于已知 staging/废件白名单时才清。
     private func silentlyCleanupOrphanCourseTransactions() {
         let fileManager = FileManager.default
-        let safeOrphanNames: Set<String> = ["journal.json", "payload"]
+        // 运行时各 safelyRemove* 白名单并集 + 无 journal 时代的 staging 名。
+        let safeOrphanNames: Set<String> = [
+            "journal.json",
+            "payload",
+            "course-note.json",
+            "shared.json",
+            "shared-link.json",
+            "shared-link-removal.json",
+            "prepared-link",
+            "prepared-owner-link",
+            "prepared-added-link",
+            "prepared-link-cleanup",
+            "isolated-link",
+            "isolated-link-cleanup",
+            "link-cleanup",
+            "target-quarantine",
+        ]
+        let protectedCrashBackupNames: Set<String> = [
+            "replaced-target",
+            "replacement-rollback",
+            "trashed-replaced-target",
+        ]
         for course in courses {
             guard let root = courseRootURL(for: course.id),
                   let canonical = try? CourseProjectPathPolicy.existingDirectory(root) else {
@@ -5469,11 +5492,7 @@ final class WorkspaceStore: ObservableObject {
                     continue
                 }
                 let names = Set(entries.map(\.lastPathComponent))
-                let hasCrashBackup =
-                    names.contains("replaced-target")
-                    || names.contains("replacement-rollback")
-                    || names.contains("trashed-replaced-target")
-                if hasCrashBackup {
+                if !names.isDisjoint(with: protectedCrashBackupNames) {
                     // best-effort 还原；任一步失败则保留整目录（数据不销毁）。
                     _ = tryRestoreReplacedTargetFromOrphanTransaction(
                         child,
@@ -5481,27 +5500,10 @@ final class WorkspaceStore: ObservableObject {
                     )
                     continue
                 }
-                // 白名单：仅当全部条目 ∈ {journal.json, payload} 才删。
-                guard entries.allSatisfy({
-                    safeOrphanNames.contains($0.lastPathComponent)
-                }) else {
+                // 白名单：全部条目均为已知 staging/废件才删；未知名保留。
+                guard names.isSubset(of: safeOrphanNames) else {
                     continue
                 }
-                var entriesAreSafeRegularFiles = true
-                for entry in entries {
-                    guard let entryValues = try? entry.resourceValues(forKeys: [
-                        .isRegularFileKey,
-                        .isSymbolicLinkKey,
-                        .isAliasFileKey,
-                    ]),
-                    entryValues.isRegularFile == true,
-                    entryValues.isSymbolicLink != true,
-                    entryValues.isAliasFile != true else {
-                        entriesAreSafeRegularFiles = false
-                        break
-                    }
-                }
-                guard entriesAreSafeRegularFiles else { continue }
                 try? fileManager.removeItem(at: child)
             }
             if let remaining = try? fileManager.contentsOfDirectory(
