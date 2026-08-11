@@ -3360,28 +3360,20 @@ struct ContextualContentPicker: View {
             }
             let courses = store.contextualPreferredCourses(kind)
             if !courses.isEmpty {
+                let counts = store.contextualBrowserItemCounts(kind)
                 return courses.map {
-                    PickerRow.course(
-                        $0,
-                        store.contextualBrowserItems(kind, courseID: $0.id).count
-                    )
+                    PickerRow.course($0, counts[$0.id] ?? 0)
                 }
             }
         }
         switch level {
         case .root:
-            var result = store.contextualBrowserCourses(kind).map {
-                PickerRow.course(
-                    $0,
-                    store.contextualBrowserItems(
-                        kind,
-                        courseID: $0.id
-                    ).count
-                )
+            var result = store.contextualBrowserCourseSummaries(kind).map {
+                PickerRow.course($0.course, $0.itemCount)
             }
-            let common = store.contextualBrowserItems(kind, courseID: nil)
-            if !common.isEmpty {
-                result.append(.common(common.count))
+            let commonCount = store.contextualBrowserCommonCount(kind)
+            if commonCount > 0 {
+                result.append(.common(commonCount))
             }
             return result
         case .course(let courseID):

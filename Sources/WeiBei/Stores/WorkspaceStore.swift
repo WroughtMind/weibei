@@ -8391,14 +8391,57 @@ final class WorkspaceStore: ObservableObject {
         }
     }
 
+    /// One-pass course → visible-item counts for the contextual browser.
+    /// Replaces per-course full-library rescans (`contextualBrowserItems`
+    /// re-filtered + ICU-sorted once per course) that made opening the
+    /// browser stutter on large libraries.
+    func contextualBrowserItemCounts(
+        _ kind: ContextualContentKind
+    ) -> [UUID: Int] {
+        var counts: [UUID: Int] = [:]
+        for item in allItems where item.isNotebookNote == (kind == .note) {
+            for courseID in courseMembershipIndex.courseIDs(for: item.id) {
+                counts[courseID, default: 0] += 1
+            }
+        }
+        return counts
+    }
+
+    /// Count of the browser's common (non-course) section without the display
+    /// sort — root rows only need the number, not the sorted list.
+    func contextualBrowserCommonCount(_ kind: ContextualContentKind) -> Int {
+        allItems.reduce(into: 0) { count, item in
+            guard item.isNotebookNote == (kind == .note) else { return }
+            switch item.storage {
+            case .shared:
+                count += 1
+            case .legacyExternal:
+                if courseMembershipIndex.courseIDs(for: item.id).isEmpty {
+                    count += 1
+                }
+            case .courseOwned, .bundledSample:
+                break
+            }
+        }
+    }
+
+    func contextualBrowserCourseSummaries(
+        _ kind: ContextualContentKind
+    ) -> [(course: Course, itemCount: Int)] {
+        let counts = contextualBrowserItemCounts(kind)
+        return courses.compactMap { course in
+            let count = counts[course.id] ?? 0
+            guard count > 0 else { return nil }
+            return (course, count)
+        }.sorted {
+            $0.course.title.localizedStandardCompare($1.course.title) == .orderedAscending
+        }
+    }
+
     func contextualBrowserCourses(
         _ kind: ContextualContentKind
     ) -> [Course] {
-        courses.filter {
-            !contextualBrowserItems(kind, courseID: $0.id).isEmpty
-        }.sorted {
-            $0.title.localizedStandardCompare($1.title) == .orderedAscending
-        }
+        contextualBrowserCourseSummaries(kind).map(\.course)
     }
 
     func contextualPreferredItems(
@@ -8433,11 +8476,8 @@ final class WorkspaceStore: ObservableObject {
         }
         let courseIDs = Set(courseMembershipIndex.courseIDs(for: noteID))
         guard courseIDs.count > 1 else { return [] }
-        return courses.filter {
-            courseIDs.contains($0.id)
-                && !contextualBrowserItems(.material, courseID: $0.id).isEmpty
-        }.sorted {
-            $0.title.localizedStandardCompare($1.title) == .orderedAscending
+        return contextualBrowserCourseSummaries(kind).compactMap { summary in
+            courseIDs.contains(summary.course.id) ? summary.course : nil
         }
     }
 
