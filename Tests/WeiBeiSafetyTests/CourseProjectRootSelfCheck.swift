@@ -109,8 +109,8 @@ enum CourseProjectRootSelfCheck {
         try step("H1 孤儿事务白名单与 replaced-target 保留") {
             try orphanTransactionCleanupHonorsWhitelistAndCrashBackups()
         }
-        try step("H4 staged 草稿算脏阻止静默重载") {
-            try stagedNoteDraftCountsAsActiveDirty()
+        try step("同一路径失焦写回并在激活时刷新") {
+            try appDeactivationFlushesThenActivationRefreshesSameFile()
         }
         try step("H2 分叉重绑 keepsLocalState 不自动确认") {
             try forkedRebindUsesKeepsLocalStateImpact()
@@ -6615,28 +6615,36 @@ enum CourseProjectRootSelfCheck {
     }
 
     @MainActor
-    private static func stagedNoteDraftCountsAsActiveDirty() throws {
-        let fixture = try Fixture(name: "staged-note-dirty")
+    private static func appDeactivationFlushesThenActivationRefreshesSameFile() throws {
+        let fixture = try Fixture(name: "same-file-activation-refresh")
         defer { fixture.remove() }
         let library = try fixture.makeDirectory("课程资料库")
         let store = makeStore(fixture: fixture)
         try store.configureCourseLibrary(at: library)
-        let courseID = try store.createCourseInLibrary(title: "staged 脏判定")
+        store.openOrCreateWikiNote(title: "同一路径刷新")
         let noteID = try require(
-            store.createCourseNotebookNoteForSelfCheck(
-                courseID: courseID,
-                title: "staged 笔记"
-            ),
-            "没有 staged 脏判定笔记"
+            store.activeNotebookItemID,
+            "没有创建同一路径刷新笔记"
         )
-        try check(
-            store.isActiveNoteDirtyForSelfCheck(itemID: noteID) == false,
-            "H4：无 staged/草稿时不应算脏"
+        let noteURL = try require(
+            store.importedItems.first(where: { $0.id == noteID })?.url,
+            "同一路径刷新笔记没有真实 Markdown"
         )
-        store.stageNoteDraftForSelfCheck(itemID: noteID, value: "打字中…")
+
+        let localDraft = "# 魏碑写入\n\n失焦前必须落盘"
+        store.stageNoteDraft(localDraft, for: noteID)
+        store.flushPendingNotePersistence(flushWorkspace: false)
         try check(
-            store.isActiveNoteDirtyForSelfCheck(itemID: noteID) == true,
-            "H4：stagedNoteDraft 应使 isActiveNoteDirty == true"
+            try String(contentsOf: noteURL, encoding: .utf8) == localDraft,
+            "失焦冲刷没有把当前输入写回同一 Markdown"
+        )
+
+        let externalText = "# 外部编辑器写入\n\n切回魏碑时采用这一份文件"
+        try Data(externalText.utf8).write(to: noteURL, options: .atomic)
+        store.refreshActiveNoteFromBackingFile()
+        try check(
+            store.noteText == externalText,
+            "重新激活没有从同一 Markdown 路径采用磁盘内容"
         )
     }
 
