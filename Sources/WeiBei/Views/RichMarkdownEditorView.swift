@@ -633,7 +633,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
     }
 
     func makeNSView(context: Context) -> WKWebView {
-        let configuration = WKWebViewConfiguration()
+        let configuration = WeiBeiWebViewConfiguration.make()
         let controller = WKUserContentController()
         context.coordinator.imageSchemeHandler.update(
             markdownBaseURLString: markdownBaseURL?.absoluteString ?? "",

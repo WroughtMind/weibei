@@ -2275,7 +2275,7 @@ struct WebReaderRepresentable: NSViewRepresentable {
     }
 
     func makeNSView(context: Context) -> WKWebView {
-        let configuration = WKWebViewConfiguration()
+        let configuration = WeiBeiWebViewConfiguration.make()
         let controller = WKUserContentController()
         for name in Self.scriptMessageNames {
             controller.add(context.coordinator, name: name)
