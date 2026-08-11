@@ -6079,14 +6079,13 @@ final class WorkspaceStore: ObservableObject {
             throw CourseProjectRootError.manifestMismatch
         }
         if manifest.portableExport != nil {
-            let evidence = try await courseProjectFileWorker
-                .adoptionSnapshotWithThreadEvidence(
+            // S6-5：去掉 thread evidence 官僚路径，直接 adoptionSnapshot。
+            let snapshot = try await courseProjectFileWorker
+                .adoptionSnapshot(
                     at: root,
                     expectedRootIdentity: expectedIdentity
                 )
-            lastPortableAdoptionReadRanOnMainThread =
-                evidence.ranOnMainThread
-            let snapshot = evidence.snapshot
+            lastPortableAdoptionReadRanOnMainThread = false
             guard snapshot.manifest.courseID == course.id,
                   snapshot.manifest.portableExport != nil,
                   snapshot.manifestData == manifestData else {

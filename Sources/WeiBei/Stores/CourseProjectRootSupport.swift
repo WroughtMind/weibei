@@ -1390,12 +1390,9 @@ actor CourseProjectFileWorker {
         try stageHook(.afterCompletionMarker)
         try stageHook(.beforeAtomicPlacement)
 
+        // S6-9：源树在导出期间若仅 digest/条目漂移，以已封存的 staging 为准继续落位；
+        // 源根身份变化或 staging 自损仍失败。
         guard Self.identity(at: sourceRoot) == request.sourceRootIdentity,
-              try portableExportSourceEntries(
-                  at: sourceRoot,
-                  expectedRootIdentity: request.sourceRootIdentity,
-                  sharedByCoursePath: sharedByCoursePath
-              ) == sourceEntries,
               Self.identity(at: targetParent) == targetParentIdentity,
               Self.identity(at: stagingRoot) == stagingIdentity,
               try Self.treeSnapshot(
@@ -1403,6 +1400,17 @@ actor CourseProjectFileWorker {
                   includeHidden: true
               ) == stagedTree else {
             throw CourseProjectFileWorkerError.verificationFailed
+        }
+        let liveSourceEntries = try? portableExportSourceEntries(
+            at: sourceRoot,
+            expectedRootIdentity: request.sourceRootIdentity,
+            sharedByCoursePath: sharedByCoursePath
+        )
+        if liveSourceEntries != sourceEntries {
+            NSLog(
+                "[WeiBei export] source tree drifted during export; using sealed staging (course=%@)",
+                request.courseID.uuidString
+            )
         }
         _ = try Self.renameWithoutReplacementAnchored(
             from: stagingRoot,
@@ -1466,15 +1474,21 @@ actor CourseProjectFileWorker {
                 ranOnMainThread: ranOnMainThread
             )
         }
+        // S6-6：跟随符号链接目录（解析后比对身份），canonical 路径防环。
+        var visitedCanonicalPaths = Set<String>()
         for case let candidate as URL in enumerator {
             let values = try? candidate.resourceValues(forKeys: keys)
             guard values?.isDirectory == true else { continue }
-            if values?.isSymbolicLink == true {
+            let canonical = candidate.resolvingSymlinksInPath()
+                .standardizedFileURL
+            if visitedCanonicalPaths.contains(canonical.path) {
                 enumerator.skipDescendants()
                 continue
             }
-            let canonical = candidate.resolvingSymlinksInPath()
-                .standardizedFileURL
+            visitedCanonicalPaths.insert(canonical.path)
+            if values?.isSymbolicLink == true {
+                enumerator.skipDescendants()
+            }
             if Self.identity(at: canonical) == identity {
                 return CourseDirectorySearchResult(
                     url: canonical,
@@ -2566,6 +2580,7 @@ actor CourseProjectFileWorker {
             )
         }
         var result: [CourseFileMetadata] = []
+        var visitedFileKeys = Set<String>()
         for case let rawURL as URL in enumerator {
             guard let relativePath = CourseProjectPathPolicy.relativePath(
                 of: rawURL,
@@ -2580,31 +2595,59 @@ actor CourseProjectFileWorker {
             }
             let values = try rawURL.resourceValues(forKeys: keys)
             if values.isDirectory == true {
+                // 目录符号链接不向下枚举（防环）；findDirectory 负责跟随目录链接定位。
                 if values.isSymbolicLink == true || values.isAliasFile == true {
                     enumerator.skipDescendants()
                 }
                 continue
             }
-            guard values.isRegularFile == true,
-                  values.isSymbolicLink != true,
-                  values.isAliasFile != true,
-                  Self.supportedExtensions.contains(rawURL.pathExtension.lowercased()),
-                  CourseProjectPathPolicy.isSame(rawURL, rawURL.resolvingSymlinksInPath()),
-                  let identity = Self.identity(at: rawURL) else {
+            // S6-6：允许文件符号链接——按解析后的真实文件登记（同路径只记一次）。
+            let isLink = values.isSymbolicLink == true || values.isAliasFile == true
+            let fileURL: URL
+            let fileValues: URLResourceValues
+            if isLink {
+                fileURL = rawURL.resolvingSymlinksInPath().standardizedFileURL
+                guard let resolvedValues = try? fileURL.resourceValues(forKeys: keys),
+                      resolvedValues.isRegularFile == true,
+                      resolvedValues.isSymbolicLink != true,
+                      resolvedValues.isAliasFile != true else {
+                    continue
+                }
+                fileValues = resolvedValues
+            } else {
+                guard values.isRegularFile == true else { continue }
+                fileURL = rawURL.standardizedFileURL
+                fileValues = values
+            }
+            guard Self.supportedExtensions.contains(
+                    fileURL.pathExtension.lowercased()
+                  ),
+                  let identity = Self.identity(at: fileURL) else {
                 continue
             }
-            let firstComponent = relativePath.split(separator: "/", omittingEmptySubsequences: true).first
-            let isMarkdown = ["md", "markdown"].contains(rawURL.pathExtension.lowercased())
+            let identityKey =
+                "\(identity.volumeID).\(identity.fileID).\(relativePath)"
+            if visitedFileKeys.contains(identityKey) {
+                continue
+            }
+            visitedFileKeys.insert(identityKey)
+            let firstComponent = relativePath
+                .split(separator: "/", omittingEmptySubsequences: true)
+                .first
+            let isMarkdown = ["md", "markdown"]
+                .contains(fileURL.pathExtension.lowercased())
             result.append(
                 CourseFileMetadata(
-                    url: rawURL.standardizedFileURL,
+                    url: fileURL,
                     relativePath: relativePath,
                     identity: identity,
-                    documentIdentifier: values.documentIdentifier.flatMap {
+                    documentIdentifier: fileValues.documentIdentifier.flatMap {
                         $0 >= 0 ? UInt64($0) : nil
                     },
-                    byteCount: UInt64(max(0, values.fileSize ?? 0)),
-                    modificationTimeNanoseconds: Self.nanoseconds(values.contentModificationDate),
+                    byteCount: UInt64(max(0, fileValues.fileSize ?? 0)),
+                    modificationTimeNanoseconds: Self.nanoseconds(
+                        fileValues.contentModificationDate
+                    ),
                     isNote: firstComponent == "笔记" && isMarkdown
                 )
             )

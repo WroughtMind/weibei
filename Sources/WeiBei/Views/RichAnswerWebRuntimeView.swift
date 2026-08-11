@@ -380,7 +380,9 @@ private struct RichAnswerWebViewRepresentable: NSViewRepresentable {
         let webView = container.webView
         container.onViewportLayout = nil
         coordinator.stop()
+        // Phase 4：闲置回收——卸下时清空页面，释放 JS 堆。
         webView.stopLoading()
+        webView.loadHTMLString("", baseURL: nil)
         webView.configuration.userContentController.removeScriptMessageHandler(
             forName: Coordinator.messageHandlerName
         )

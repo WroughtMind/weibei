@@ -9,6 +9,8 @@ struct AgentVisualizationView: View {
 
     @State private var contentHeight: CGFloat = 180
     @State private var runtimeFailed = false
+    /// Phase 4：离开可视区域时卸下 WebView，回到时再创建。
+    @State private var webViewAttached = true
 
     var body: some View {
         Group {
@@ -18,7 +20,7 @@ struct AgentVisualizationView: View {
                     .foregroundStyle(WeiBeiTheme.secondaryInk)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(12)
-            } else {
+            } else if webViewAttached {
                 AgentVisualizationWebView(
                     visualization: visualization,
                     appearance: store.appearanceMode.isDark ? "dark" : "light",
@@ -36,6 +38,8 @@ struct AgentVisualizationView: View {
                     onFailure: { runtimeFailed = true }
                 )
                 .frame(height: max(contentHeight, 120))
+            } else {
+                Color.clear.frame(height: max(contentHeight, 120))
             }
         }
         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
@@ -43,6 +47,8 @@ struct AgentVisualizationView: View {
             RoundedRectangle(cornerRadius: 10, style: .continuous)
                 .stroke(WeiBeiTheme.hairline.opacity(0.58), lineWidth: 1)
         }
+        .onAppear { webViewAttached = true }
+        .onDisappear { webViewAttached = false }
     }
 }
 
@@ -93,10 +99,12 @@ private struct AgentVisualizationWebView: NSViewRepresentable {
 
     static func dismantleNSView(_ view: WKWebView, coordinator: Coordinator) {
         view.stopLoading()
+        view.loadHTMLString("", baseURL: nil)
         view.configuration.userContentController.removeScriptMessageHandler(
             forName: Coordinator.handlerName
         )
         view.navigationDelegate = nil
+        coordinator.webView = nil
     }
 
     final class Coordinator: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
