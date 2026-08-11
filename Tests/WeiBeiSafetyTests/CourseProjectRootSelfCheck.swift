@@ -100,6 +100,15 @@ enum CourseProjectRootSelfCheck {
         try largeFileWorkStaysOffMainThread()
         try courseMarkdownConditionalWritePreservesFinderContentAndRecovers()
         try courseMarkdownPostPlacementReplacementPreservesAllContent()
+        try step("C1 外部改动备份环与连续自写不刷环") {
+            try courseNoteBackupUsesSelfWrittenBaselineAcrossReconcile()
+        }
+        try step("C2 写回失败草稿活过 course-state 与重启") {
+            try courseNoteDraftSurvivesPortableStateAndRelaunch()
+        }
+        try step("H1 孤儿事务白名单与 replaced-target 保留") {
+            try orphanTransactionCleanupHonorsWhitelistAndCrashBackups()
+        }
         try firstScanAndFinderReconciliationPreserveIdentity()
         try unavailableCourseMaterialKeepsCourseHomeOpenUntilRestored()
         try thousandFileReconciliationIsLinearAndHardLinksStayStable()
@@ -6356,9 +6365,11 @@ enum CourseProjectRootSelfCheck {
         defer { fixture.remove() }
         let library = try fixture.makeDirectory("课程资料库")
         let backupRoot = fixture.root.appendingPathComponent("Backups", isDirectory: true)
-        let store = makeStore(fixture: fixture)
-        // inject backup root via workspace store re-init is not wired through makeStore;
-        // writeCourseMarkdownForSelfCheck uses default backup root; verify write succeeds.
+        try FileManager.default.createDirectory(
+            at: backupRoot,
+            withIntermediateDirectories: true
+        )
+        let store = makeStore(fixture: fixture, noteBackupRootURL: backupRoot)
         try store.configureCourseLibrary(at: library)
         let courseID = try store.createCourseInLibrary(title: "Markdown 竞态")
         let noteID = try require(
@@ -6373,10 +6384,16 @@ enum CourseProjectRootSelfCheck {
             "没有 Markdown 竞态路径"
         )
         let original = try String(contentsOf: noteURL, encoding: .utf8)
+        // 先成功写回一次，建立 lastSelfWritten 基线。
+        let baseline = original + "\n基线\n"
+        try store.writeCourseMarkdownForSelfCheck(
+            itemID: noteID,
+            markdown: baseline
+        )
         let finderContent = "# Finder 新稿\n\n将被备份后覆盖"
         try Data(finderContent.utf8).write(to: noteURL)
-        // 模拟外部改动后，重置 last-written digest 以便触发备份判定
-        // （persist 会用 noteBackingContentDigests 与磁盘比对）
+        // 模拟 reconcile 把磁盘观察值刷成外部内容（旧 bug：备份基线被一起刷掉）。
+        try store.reconcileCourseFilesForSelfCheck(courseID: courseID)
         let draft = "# 魏碑草稿\n\n最后写入者赢"
         try store.writeCourseMarkdownForSelfCheck(
             itemID: noteID,
@@ -6388,6 +6405,14 @@ enum CourseProjectRootSelfCheck {
             store.pendingCourseMarkdownDraftForSelfCheck(itemID: noteID) == nil,
             "写回成功后仍残留草稿"
         )
+        let backups = try NoteBackupRing.list(itemID: noteID, rootURL: backupRoot)
+        let backupBodies = try backups.map {
+            try String(contentsOf: $0.url, encoding: .utf8)
+        }
+        try check(
+            backupBodies.contains(finderContent),
+            "C1：外部内容 B 在 reconcile 后写回应进入备份环"
+        )
         let root = try require(
             store.courseRootURL(for: courseID),
             "没有 Markdown 竞态课程根"
@@ -6396,8 +6421,187 @@ enum CourseProjectRootSelfCheck {
             try courseTransactionChildren(in: root).isEmpty,
             "S2 写回不应产生 course-note 事务目录"
         )
-        _ = original
-        _ = backupRoot
+    }
+
+    @MainActor
+    private static func courseNoteBackupUsesSelfWrittenBaselineAcrossReconcile() throws {
+        let fixture = try Fixture(name: "note-self-written-backup-baseline")
+        defer { fixture.remove() }
+        let library = try fixture.makeDirectory("课程资料库")
+        let backupRoot = fixture.root.appendingPathComponent("Backups", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: backupRoot,
+            withIntermediateDirectories: true
+        )
+        let store = makeStore(fixture: fixture, noteBackupRootURL: backupRoot)
+        try store.configureCourseLibrary(at: library)
+        let courseID = try store.createCourseInLibrary(title: "备份基线课")
+        let noteID = try require(
+            store.createCourseNotebookNoteForSelfCheck(
+                courseID: courseID,
+                title: "备份基线笔记"
+            ),
+            "没有备份基线笔记"
+        )
+        let noteURL = try require(
+            store.importedItems.first { $0.id == noteID }?.url,
+            "没有备份基线路径"
+        )
+        // 建立自写基线。
+        let v1 = "# v1\n\n自写一"
+        try store.writeCourseMarkdownForSelfCheck(itemID: noteID, markdown: v1)
+        let afterBaseline = try NoteBackupRing.list(itemID: noteID, rootURL: backupRoot).count
+
+        // 连续自写、无外部改动 → 备份环不新增。
+        for i in 2...4 {
+            try store.writeCourseMarkdownForSelfCheck(
+                itemID: noteID,
+                markdown: "# v\(i)\n\n自写\(i)"
+            )
+        }
+        let afterSelfWrites = try NoteBackupRing.list(itemID: noteID, rootURL: backupRoot).count
+        try check(
+            afterSelfWrites == afterBaseline,
+            "C1：连续自写无外部改动不应刷备份环（基线 \(afterBaseline) → \(afterSelfWrites)）"
+        )
+
+        // 外部写 B → reconcile → 魏碑写回 → 环中出现 B。
+        let externalB = "# external B\n\n外部版本"
+        try Data(externalB.utf8).write(to: noteURL)
+        try store.reconcileCourseFilesForSelfCheck(courseID: courseID)
+        try store.writeCourseMarkdownForSelfCheck(
+            itemID: noteID,
+            markdown: "# weibei after B\n\n覆盖"
+        )
+        let bodies = try NoteBackupRing.list(itemID: noteID, rootURL: backupRoot).map {
+            try String(contentsOf: $0.url, encoding: .utf8)
+        }
+        try check(
+            bodies.contains(externalB),
+            "C1：reconcile 后写回应备份外部 B"
+        )
+    }
+
+    @MainActor
+    private static func courseNoteDraftSurvivesPortableStateAndRelaunch() throws {
+        let fixture = try Fixture(name: "note-draft-survives-relaunch")
+        defer { fixture.remove() }
+        let library = try fixture.makeDirectory("课程资料库")
+        let store = makeStore(fixture: fixture)
+        try store.configureCourseLibrary(at: library)
+        let courseID = try store.createCourseInLibrary(title: "草稿存活课")
+        let noteID = try require(
+            store.createCourseNotebookNoteForSelfCheck(
+                courseID: courseID,
+                title: "草稿存活笔记"
+            ),
+            "没有草稿存活笔记"
+        )
+        let failedDraft = "# 写回失败草稿\n\n必须活过重启"
+        try store.leaveCourseNoteDraftAfterFailedWriteForSelfCheck(
+            itemID: noteID,
+            markdown: failedDraft
+        )
+        let exported = try store.portableNoteDraftsForSelfCheck(courseID: courseID)
+        try check(
+            exported.contains { $0.itemID == noteID && $0.markdown == failedDraft },
+            "C2：makeCoursePortableState 应导出 notes 草稿（无 pending 也要）"
+        )
+        // 落盘 course-state（含草稿）
+        try store.forcePersistPortableCourseStatesForSelfCheck(
+            courseIDs: [courseID]
+        )
+
+        // 重建 store 模拟重启
+        let relaunched = makeStore(fixture: fixture)
+        try check(
+            relaunched.pendingCourseMarkdownDraftForSelfCheck(itemID: noteID)
+                == failedDraft,
+            "C2：重启后应恢复写回失败草稿"
+        )
+
+        // 变体：本地已有草稿时，apply 不应用空 state 清掉
+        let localOnlyDraft = "# 本地未落盘\n\n优先于快照"
+        try relaunched.leaveCourseNoteDraftAfterFailedWriteForSelfCheck(
+            itemID: noteID,
+            markdown: localOnlyDraft
+        )
+        // 用空 drafts 的 state 再 apply：本地应保留
+        try relaunched.reapplyPortableCourseStateWithoutLocalDraftWipeForSelfCheck(
+            courseID: courseID
+        )
+        try check(
+            relaunched.pendingCourseMarkdownDraftForSelfCheck(itemID: noteID)
+                == localOnlyDraft,
+            "C2：apply 端本地草稿优先于快照（无对应 draft 时不清）"
+        )
+    }
+
+    @MainActor
+    private static func orphanTransactionCleanupHonorsWhitelistAndCrashBackups() throws {
+        let fixture = try Fixture(name: "orphan-transaction-whitelist")
+        defer { fixture.remove() }
+        let library = try fixture.makeDirectory("课程资料库")
+        let store = makeStore(fixture: fixture)
+        try store.configureCourseLibrary(at: library)
+        let courseID = try store.createCourseInLibrary(title: "事务清理课")
+        let root = try require(
+            store.courseRootURL(for: courseID),
+            "没有事务清理课程根"
+        )
+        let transactions = root.appendingPathComponent(
+            ".weibei/transactions",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(
+            at: transactions,
+            withIntermediateDirectories: true
+        )
+
+        // 纯白名单目录：应被清。
+        let safeDir = transactions.appendingPathComponent(
+            UUID().uuidString.lowercased(),
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(at: safeDir, withIntermediateDirectories: true)
+        try Data("{}".utf8).write(
+            to: safeDir.appendingPathComponent("journal.json")
+        )
+        try Data("payload".utf8).write(
+            to: safeDir.appendingPathComponent("payload")
+        )
+
+        // 含 replaced-target 的崩溃备份：应保留。
+        let crashDir = transactions.appendingPathComponent(
+            UUID().uuidString.lowercased(),
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(at: crashDir, withIntermediateDirectories: true)
+        let crashBody = "# 崩溃前被替换的目标\n\n不可丢"
+        try Data(crashBody.utf8).write(
+            to: crashDir.appendingPathComponent("replaced-target")
+        )
+        try Data("{}".utf8).write(
+            to: crashDir.appendingPathComponent("journal.json")
+        )
+
+        try store.recoverCourseTransactionsForSelfCheck()
+
+        try check(
+            !FileManager.default.fileExists(atPath: safeDir.path),
+            "H1：纯 {journal.json,payload} 孤儿事务应被清理"
+        )
+        try check(
+            FileManager.default.fileExists(
+                atPath: crashDir.appendingPathComponent("replaced-target").path
+            ),
+            "H1：含 replaced-target 的孤儿事务不得删除"
+        )
+        let restored = try String(
+            contentsOf: crashDir.appendingPathComponent("replaced-target"),
+            encoding: .utf8
+        )
+        try check(restored == crashBody, "H1：replaced-target 副本内容应完整保留")
     }
 
     @MainActor
@@ -7119,10 +7323,27 @@ enum CourseProjectRootSelfCheck {
                 try Data(contentsOf: source) == replacement,
                 "\(crashStage.rawValue) 中断误删了新来源"
             )
-            try check(
-                try courseTransactionChildren(in: root).isEmpty,
-                "\(crashStage.rawValue) 恢复后仍留下 journal"
-            )
+            // H1：含 replaced-target / replacement-rollback 的事务目录故意保留；
+            // 数据安全看旧目标已还原，不再要求 transactions 清空。
+            let remaining = try courseTransactionChildren(in: root)
+            for childName in remaining {
+                let child = root
+                    .appendingPathComponent(".weibei/transactions", isDirectory: true)
+                    .appendingPathComponent(childName, isDirectory: true)
+                let names = Set(
+                    (try? FileManager.default.contentsOfDirectory(atPath: child.path))
+                        ?? []
+                )
+                let hasCrashBackup =
+                    names.contains("replaced-target")
+                    || names.contains("replacement-rollback")
+                    || names.contains("trashed-replaced-target")
+                    || names.contains("target-quarantine")
+                try check(
+                    hasCrashBackup,
+                    "\(crashStage.rawValue) 残留事务应含崩溃备份，而非可清白名单废件"
+                )
+            }
         }
     }
 
@@ -8625,6 +8846,7 @@ enum CourseProjectRootSelfCheck {
     private static func makeStore(
         fixture: Fixture,
         workspaceDirectory: URL? = nil,
+        noteBackupRootURL: URL? = nil,
         startAccessing: @escaping (URL) -> Bool = { _ in true },
         stopAccessing: @escaping (URL) -> Void = { _ in },
         mutationHook: @escaping (CourseProjectMutationStage) throws -> Void = { _ in },
@@ -8675,6 +8897,7 @@ enum CourseProjectRootSelfCheck {
             courseSecurityScopeStarter: startAccessing,
             courseSecurityScopeStopper: stopAccessing,
             courseProjectMutationHook: mutationHook,
+            noteBackupRootURL: noteBackupRootURL,
             courseFileSourceRemover: courseFileSourceRemover,
             contentSourceTrashMover: contentSourceTrashMover,
             workspaceSnapshotWriter: workspaceWriter,

@@ -589,7 +589,11 @@ final class WorkspaceStore: ObservableObject {
     private var notesByItemID: [String: String] = [:]
     private var pendingNoteWritesByItemID: [String: PendingNoteWriteState] = [:]
     private var noteOperationErrorsByItemID: [String: String] = [:]
+    /// 磁盘观察值：reconcile / load 可刷新，用于外部改动检测。
     private var noteBackingContentDigestsByItemID: [String: String] = [:]
+    /// 上次魏碑自身成功写回（或静默采纳磁盘）的 digest，专供备份环判定。
+    /// 不持久化：重启后首次写回无基线会多备份一份，方向安全。
+    private var lastSelfWrittenNoteDigestsByItemID: [String: String] = [:]
     private var loadedCourseNoteTextByItemID: [String: String] = [:]
     private var courseNoteLoadTasksByItemID: [String: Task<Void, Never>] = [:]
     private var courseNoteLoadGenerationByItemID: [String: UInt64] = [:]
@@ -2882,6 +2886,8 @@ final class WorkspaceStore: ObservableObject {
             let previousNoteText = noteText
             let previousNoteBackingDigests =
                 noteBackingContentDigestsByItemID
+            let previousLastSelfWrittenDigests =
+                lastSelfWrittenNoteDigestsByItemID
             let previousPortableRevisions =
                 coursePortableStateRevisions
             let previousPortableDigests = coursePortableStateDigests
@@ -3008,6 +3014,8 @@ final class WorkspaceStore: ObservableObject {
                 noteText = previousNoteText
                 noteBackingContentDigestsByItemID =
                     previousNoteBackingDigests
+                lastSelfWrittenNoteDigestsByItemID =
+                    previousLastSelfWrittenDigests
                 coursePortableStateRevisions =
                     previousPortableRevisions
                 coursePortableStateDigests = previousPortableDigests
@@ -4109,6 +4117,83 @@ final class WorkspaceStore: ObservableObject {
         }
     }
 
+    /// 写回失败路径：强制留下 notes 草稿（清 pending），供 C2 验收。
+    func leaveCourseNoteDraftAfterFailedWriteForSelfCheck(
+        itemID: String,
+        markdown: String
+    ) throws {
+        precondition(WeiBeiSafetyTestMode.isEnabled)
+        guard importedItems.contains(where: {
+            $0.id == itemID && $0.isNotebookNote
+        }) else {
+            throw CourseOwnedFileError.verificationFailed
+        }
+        notesByItemID[itemID] = markdown
+        pendingNoteWritesByItemID.removeValue(forKey: itemID)
+        for membership in courseItemMemberships where membership.itemID == itemID {
+            dirtyPortableCourseIDs.insert(membership.courseID)
+        }
+        save()
+    }
+
+    func lastSelfWrittenNoteDigestForSelfCheck(itemID: String) -> String? {
+        precondition(WeiBeiSafetyTestMode.isEnabled)
+        return lastSelfWrittenNoteDigestsByItemID[itemID]
+    }
+
+    func seedLastSelfWrittenNoteDigestForSelfCheck(
+        itemID: String,
+        digest: String?
+    ) {
+        precondition(WeiBeiSafetyTestMode.isEnabled)
+        if let digest {
+            lastSelfWrittenNoteDigestsByItemID[itemID] = digest
+        } else {
+            lastSelfWrittenNoteDigestsByItemID.removeValue(forKey: itemID)
+        }
+    }
+
+    func portableNoteDraftsForSelfCheck(
+        courseID: UUID
+    ) throws -> [CoursePortableNoteDraft] {
+        precondition(WeiBeiSafetyTestMode.isEnabled)
+        let state = try makeCoursePortableState(
+            courseID: courseID,
+            revision: coursePortableStateRevisions[courseID] ?? 0,
+            savedAt: Date()
+        )
+        return state.pendingNoteDrafts
+    }
+
+    func forcePersistPortableCourseStatesForSelfCheck(
+        courseIDs: Set<UUID>
+    ) throws {
+        precondition(WeiBeiSafetyTestMode.isEnabled)
+        for courseID in courseIDs {
+            dirtyPortableCourseIDs.insert(courseID)
+        }
+        _ = try persistCoursePortableStates(
+            courseIDs: courseIDs,
+            requiring: courseIDs
+        )
+        _ = save()
+    }
+
+    /// 从磁盘再读 course-state 并 apply（验 C2：本地草稿不被清空）。
+    func reapplyPortableCourseStateWithoutLocalDraftWipeForSelfCheck(
+        courseID: UUID
+    ) throws {
+        precondition(WeiBeiSafetyTestMode.isEnabled)
+        guard let stateURL = coursePortableStateURL(for: courseID),
+              let data = try? Data(contentsOf: stateURL) else {
+            throw CourseOwnedFileError.verificationFailed
+        }
+        let state = try JSONDecoder()
+            .decode(CoursePortableState.self, from: data)
+            .validated(expectedCourseID: courseID)
+        try applyCoursePortableState(state, courseID: courseID)
+    }
+
     func pendingCourseMarkdownDraftForSelfCheck(
         itemID: String
     ) -> String? {
@@ -4332,6 +4417,7 @@ final class WorkspaceStore: ObservableObject {
         let previousNotes = notesByItemID
         let previousPendingNoteWrites = pendingNoteWritesByItemID
         let previousBackingDigests = noteBackingContentDigestsByItemID
+        let previousLastSelfWrittenDigests = lastSelfWrittenNoteDigestsByItemID
         let previousLoadedCourseNotes = loadedCourseNoteTextByItemID
         let previousSelectedItemID = selectedItemID
         let previousActiveNotebookItemID = activeNotebookItemID
@@ -4629,6 +4715,8 @@ final class WorkspaceStore: ObservableObject {
                 notesByItemID = previousNotes
                 pendingNoteWritesByItemID = previousPendingNoteWrites
                 noteBackingContentDigestsByItemID = previousBackingDigests
+                lastSelfWrittenNoteDigestsByItemID =
+                    previousLastSelfWrittenDigests
                 loadedCourseNoteTextByItemID = previousLoadedCourseNotes
                 selectedItemID = previousSelectedItemID
                 activeNotebookItemID = previousActiveNotebookItemID
@@ -5341,10 +5429,34 @@ final class WorkspaceStore: ObservableObject {
     }
 
 
-    /// S3：不再从 journal 恢复未完成操作。启动时静默删除 `.weibei/transactions/*` 残留
-    /// 与旧版 pending journal 文件；中途崩溃的后果是「操作未完成」，由用户重做。
+    /// S3：不再从 journal 恢复未完成操作。启动时静默清理 `.weibei/transactions/*` 残留
+    /// 与旧版 pending journal 文件。
+    /// H1：含 `replaced-target` / `replacement-rollback` 等用户内容崩溃备份的目录绝不误删；
+    /// 其余仅当条目全部属于已知 staging/废件白名单时才清。
     private func silentlyCleanupOrphanCourseTransactions() {
         let fileManager = FileManager.default
+        // 运行时各 safelyRemove* 白名单并集 + 无 journal 时代的 staging 名。
+        let safeOrphanNames: Set<String> = [
+            "journal.json",
+            "payload",
+            "course-note.json",
+            "shared.json",
+            "shared-link.json",
+            "shared-link-removal.json",
+            "prepared-link",
+            "prepared-owner-link",
+            "prepared-added-link",
+            "prepared-link-cleanup",
+            "isolated-link",
+            "isolated-link-cleanup",
+            "link-cleanup",
+            "target-quarantine",
+        ]
+        let protectedCrashBackupNames: Set<String> = [
+            "replaced-target",
+            "replacement-rollback",
+            "trashed-replaced-target",
+        ]
         for course in courses {
             guard let root = courseRootURL(for: course.id),
                   let canonical = try? CourseProjectPathPolicy.existingDirectory(root) else {
@@ -5362,6 +5474,36 @@ final class WorkspaceStore: ObservableObject {
             }
             for child in children {
                 // 仅清理事务目录本身；不触碰课程资料目标文件。
+                let values = try? child.resourceValues(forKeys: [.isDirectoryKey])
+                guard values?.isDirectory == true else {
+                    // 非目录残留：无身份含义，可静默清。
+                    try? fileManager.removeItem(at: child)
+                    continue
+                }
+                guard let entries = try? fileManager.contentsOfDirectory(
+                    at: child,
+                    includingPropertiesForKeys: [
+                        .isRegularFileKey,
+                        .isSymbolicLinkKey,
+                        .isAliasFileKey,
+                    ],
+                    options: []
+                ) else {
+                    continue
+                }
+                let names = Set(entries.map(\.lastPathComponent))
+                if !names.isDisjoint(with: protectedCrashBackupNames) {
+                    // best-effort 还原；任一步失败则保留整目录（数据不销毁）。
+                    _ = tryRestoreReplacedTargetFromOrphanTransaction(
+                        child,
+                        courseRoot: canonical
+                    )
+                    continue
+                }
+                // 白名单：全部条目均为已知 staging/废件才删；未知名保留。
+                guard names.isSubset(of: safeOrphanNames) else {
+                    continue
+                }
                 try? fileManager.removeItem(at: child)
             }
             if let remaining = try? fileManager.contentsOfDirectory(
@@ -5380,6 +5522,76 @@ final class WorkspaceStore: ObservableObject {
         try? fileManager.removeItem(
             at: workspaceDirectory.appendingPathComponent("pending-course-removal.json")
         )
+    }
+
+    /// 旧版 course-file journal 子集：仅启动还原需要的字段（解码容忍缺字段）。
+    private struct OrphanCourseFileTransactionJournal: Codable {
+        var targetRelativePath: String?
+        var replacedTargetIdentity: ImportedFileIdentity?
+        var replacedTargetSnapshot: CourseFileSnapshot?
+    }
+
+    /// 含 `replaced-target` 的孤儿事务：target 空缺且副本可核验时还原；否则保留目录。
+    @discardableResult
+    private func tryRestoreReplacedTargetFromOrphanTransaction(
+        _ transactionDirectory: URL,
+        courseRoot: URL
+    ) -> Bool {
+        let fileManager = FileManager.default
+        let journalURL = transactionDirectory
+            .appendingPathComponent("journal.json", isDirectory: false)
+        let replacedURL = transactionDirectory
+            .appendingPathComponent("replaced-target", isDirectory: false)
+        guard fileManager.fileExists(atPath: replacedURL.path),
+              let journalData = try? Data(contentsOf: journalURL),
+              let journal = try? JSONDecoder().decode(
+                OrphanCourseFileTransactionJournal.self,
+                from: journalData
+              ),
+              let relativePath = journal.targetRelativePath?
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+              !relativePath.isEmpty,
+              let targetURL = Self.backgroundRawRelativeURL(
+                relativePath,
+                inside: courseRoot
+              ) else {
+            return false
+        }
+        // target 仍在 → 不覆盖，保留事务目录。
+        guard !fileManager.fileExists(atPath: targetURL.path) else {
+            return false
+        }
+        if let expectedIdentity = journal.replacedTargetIdentity,
+           importedFileIdentityResolver(replacedURL) != expectedIdentity {
+            return false
+        }
+        if let expectedSnapshot = journal.replacedTargetSnapshot {
+            let data = (try? Data(contentsOf: replacedURL)) ?? Data()
+            let digest = Self.noteContentDigest(data)
+            let byteCount = UInt64(data.count)
+            guard digest == expectedSnapshot.sha256,
+                  byteCount == expectedSnapshot.byteCount else {
+                return false
+            }
+        }
+        // 同步路径：启动清理不 await actor。
+        guard CourseProjectFileWorker.renameWithoutReplacement(
+            from: replacedURL,
+            to: targetURL
+        ) else {
+            return false
+        }
+        // 还原成功后，若剩余仅白名单废件则可清；否则保留。
+        if let remaining = try? fileManager.contentsOfDirectory(
+            at: transactionDirectory,
+            includingPropertiesForKeys: nil
+        ) {
+            let safeNames: Set<String> = ["journal.json", "payload"]
+            if remaining.allSatisfy({ safeNames.contains($0.lastPathComponent) }) {
+                try? fileManager.removeItem(at: transactionDirectory)
+            }
+        }
+        return true
     }
 
     private func restoreOrphanCourseRootTrashIsolations() {
@@ -5436,14 +5648,15 @@ final class WorkspaceStore: ObservableObject {
                             // 原路径已恢复，清掉重复隔离副本。
                             try? fileManager.removeItem(at: child)
                         }
-                        if let remaining = try? fileManager
-                            .contentsOfDirectory(
-                                at: sibling,
-                                includingPropertiesForKeys: nil
-                            ),
-                           remaining.isEmpty {
-                            try? fileManager.removeItem(at: sibling)
-                        }
+                    }
+                    // LOW：空隔离目录检查从 for-child 体内移出，children 为空时也执行。
+                    if let remaining = try? fileManager
+                        .contentsOfDirectory(
+                            at: sibling,
+                            includingPropertiesForKeys: nil
+                        ),
+                       remaining.isEmpty {
+                        try? fileManager.removeItem(at: sibling)
                     }
                 }
             }
@@ -6788,6 +7001,7 @@ final class WorkspaceStore: ObservableObject {
             pendingNoteWritesByItemID.removeValue(forKey: itemID)
             noteOperationErrorsByItemID.removeValue(forKey: itemID)
             noteBackingContentDigestsByItemID.removeValue(forKey: itemID)
+            lastSelfWrittenNoteDigestsByItemID.removeValue(forKey: itemID)
             loadedCourseNoteTextByItemID.removeValue(forKey: itemID)
             studyLocationsByItemID.removeValue(forKey: itemID)
         }
@@ -7584,6 +7798,7 @@ final class WorkspaceStore: ObservableObject {
         pendingNoteWritesByItemID.removeValue(forKey: itemID)
         noteOperationErrorsByItemID.removeValue(forKey: itemID)
         noteBackingContentDigestsByItemID.removeValue(forKey: itemID)
+        lastSelfWrittenNoteDigestsByItemID.removeValue(forKey: itemID)
         loadedCourseNoteTextByItemID.removeValue(forKey: itemID)
         studyLocationsByItemID.removeValue(forKey: itemID)
         for courseKey in Array(studyLocationsByCourseID.keys) {
@@ -18475,6 +18690,10 @@ final class WorkspaceStore: ObservableObject {
            noteBackingContentDigestsByItemID[newID] == nil {
             noteBackingContentDigestsByItemID[newID] = backingDigest
         }
+        if let selfDigest = lastSelfWrittenNoteDigestsByItemID.removeValue(forKey: oldID),
+           lastSelfWrittenNoteDigestsByItemID[newID] == nil {
+            lastSelfWrittenNoteDigestsByItemID[newID] = selfDigest
+        }
         if let loadedNote = loadedCourseNoteTextByItemID.removeValue(
             forKey: oldID
         ), loadedCourseNoteTextByItemID[newID] == nil {
@@ -18869,6 +19088,9 @@ final class WorkspaceStore: ObservableObject {
                     if activeNoteItemID == itemID {
                     }
                 } else {
+                    // 静默采纳磁盘：同步备份基线，避免后续自写误备份自身已采纳内容。
+                    lastSelfWrittenNoteDigestsByItemID[itemID] =
+                        result.snapshot.sha256
                     if activeNoteItemID == itemID,
                        displayedText == noteText {
                         noteText = markdown
@@ -18922,7 +19144,10 @@ final class WorkspaceStore: ObservableObject {
             guard let markdown = String(data: data, encoding: .utf8) else {
                 throw CocoaError(.fileReadInapplicableStringEncoding)
             }
-            noteBackingContentDigestsByItemID[item.id] = Self.noteContentDigest(data)
+            let digest = Self.noteContentDigest(data)
+            noteBackingContentDigestsByItemID[item.id] = digest
+            // 无草稿同步读盘：采纳磁盘为当前基线。
+            lastSelfWrittenNoteDigestsByItemID[item.id] = digest
             return cleanLegacyPlaceholder(markdown)
         } catch {
             showTransientNoteStatus(ui("无法读取原 Markdown：\(url.lastPathComponent)", "Could not read original Markdown: \(url.lastPathComponent)"))
@@ -18993,10 +19218,11 @@ final class WorkspaceStore: ObservableObject {
         itemID: String,
         url: URL
     ) -> Bool {
-        let lastDigest = noteBackingContentDigestsByItemID[itemID]
+        // 备份判定只用「上次自写」基线，不受 reconcile/load 刷写的磁盘观察值影响。
+        let lastSelfDigest = lastSelfWrittenNoteDigestsByItemID[itemID]
         let currentDigest = Self.noteContentDigest(at: url)
         if FileManager.default.fileExists(atPath: url.path),
-           currentDigest != lastDigest {
+           currentDigest != lastSelfDigest {
             _ = try? NoteBackupRing.capture(
                 sourceURL: url,
                 itemID: itemID,
@@ -19009,6 +19235,7 @@ final class WorkspaceStore: ObservableObject {
             try notebookMarkdownWriter(markdown, url)
             let writtenDigest = Self.noteContentDigest(Data(markdown.utf8))
             noteBackingContentDigestsByItemID[itemID] = writtenDigest
+            lastSelfWrittenNoteDigestsByItemID[itemID] = writtenDigest
             notesByItemID.removeValue(forKey: itemID)
             pendingNoteWritesByItemID.removeValue(forKey: itemID)
             setNoteFileError(nil, for: itemID)
@@ -19087,6 +19314,8 @@ final class WorkspaceStore: ObservableObject {
             }
             noteText = cleanLegacyPlaceholder(markdown)
             noteBackingContentDigestsByItemID[itemID] = diskDigest
+            // 外部改动且无脏输入：静默采纳磁盘，同步备份基线。
+            lastSelfWrittenNoteDigestsByItemID[itemID] = diskDigest
             notesByItemID.removeValue(forKey: itemID)
             loadedCourseNoteTextByItemID[itemID] = noteText
             setNoteFileError(nil, for: itemID)
@@ -19165,6 +19394,7 @@ final class WorkspaceStore: ObservableObject {
         importedItems[index].subtitle = url.lastPathComponent
         importedItems[index].kind = StudyItemKind.detect(from: url)
         noteBackingContentDigestsByItemID[itemID] = writtenDigest
+        lastSelfWrittenNoteDigestsByItemID[itemID] = writtenDigest
         loadedCourseNoteTextByItemID[itemID] =
             cleanLegacyPlaceholder(markdown)
         courseDocumentSearchIndex.schedule([importedItems[index]])
@@ -19488,16 +19718,18 @@ final class WorkspaceStore: ObservableObject {
                 locations[itemID] = scoped
             }
         }
+        // C2：草稿以 notesByItemID 为准（写回失败会清 pending 但留 notes）；
+        // baseline 有 pending 则取，无则 nil。
         let drafts = noteItemIDs.sorted().compactMap {
             itemID -> CoursePortableNoteDraft? in
-            guard let pending = pendingNoteWritesByItemID[itemID],
-                  let markdown = notesByItemID[itemID] else {
+            guard let markdown = notesByItemID[itemID] else {
                 return nil
             }
             return CoursePortableNoteDraft(
                 itemID: itemID,
                 markdown: markdown,
-                baselineContentDigest: pending.baselineContentDigest
+                baselineContentDigest: pendingNoteWritesByItemID[itemID]?
+                    .baselineContentDigest
             )
         }
         return try CoursePortableState(
@@ -20132,16 +20364,32 @@ final class WorkspaceStore: ObservableObject {
         let restoredNoteIDs = Set(
             state.items.lazy.filter(\.isNotebookNote).map(\.itemID)
         )
+        // C2：本地有草稿的条目一律保留——未落盘输入永远优先于快照重放。
         for itemID in previousNoteIDs.union(restoredNoteIDs) {
+            if notesByItemID[itemID] != nil {
+                continue
+            }
             notesByItemID.removeValue(forKey: itemID)
             pendingNoteWritesByItemID.removeValue(forKey: itemID)
             noteBackingContentDigestsByItemID.removeValue(forKey: itemID)
+            lastSelfWrittenNoteDigestsByItemID.removeValue(forKey: itemID)
         }
         for item in state.items where item.isNotebookNote {
+            // 本地草稿笔记：不覆盖其备份基线；其余用 state 内容 digest 回填。
+            if notesByItemID[item.itemID] != nil {
+                continue
+            }
             noteBackingContentDigestsByItemID[item.itemID] =
                 item.contentDigest
+            if let digest = item.contentDigest {
+                lastSelfWrittenNoteDigestsByItemID[item.itemID] = digest
+            }
         }
         for draft in state.pendingNoteDrafts {
+            // state 中的 draft 仅在本地无草稿时回填。
+            if notesByItemID[draft.itemID] != nil {
+                continue
+            }
             notesByItemID[draft.itemID] = draft.markdown
             pendingNoteWritesByItemID[draft.itemID] =
                 PendingNoteWriteState(
