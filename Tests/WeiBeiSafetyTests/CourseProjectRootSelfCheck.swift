@@ -3474,27 +3474,26 @@ enum CourseProjectRootSelfCheck {
         let oversizedBackup = backupDirs.first {
             $0.lastPathComponent.hasPrefix(".weibei.backup-")
         }
+        try check(oversizedBackup != nil, "超大状态没有留下 .weibei 备份目录")
         if let oversizedBackup {
             let backupState = oversizedBackup.appendingPathComponent(
                 "course-state.json"
             )
+            let backupSize = (try? backupState.resourceValues(
+                forKeys: [.fileSizeKey]
+            ).fileSize) ?? 0
             try check(
                 FileManager.default.fileExists(atPath: backupState.path)
-                    && (try? backupState.resourceValues(forKeys: [.fileSizeKey])
-                        .fileSize) == oversizedSize,
+                    && backupSize == oversizedSize,
                 "超大状态备份丢失或体积变化"
             )
-            // 恢复原超大状态文件供后续用例使用。
-            if FileManager.default.fileExists(atPath: stateURL.path) {
-                try FileManager.default.removeItem(at: stateURL)
-            }
-            try FileManager.default.moveItem(
-                at: backupState,
-                to: stateURL
-            )
-        } else {
-            try oversizedOriginalData.write(to: stateURL, options: [.atomic])
         }
+        // 后续用例需要原超大状态文件在 stateURL；整份写回即可。
+        try FileManager.default.createDirectory(
+            at: stateURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try oversizedOriginalData.write(to: stateURL, options: [.atomic])
         _ = oversizedIdentity
         _ = oversizedPrefix
 
