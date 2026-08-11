@@ -322,7 +322,10 @@ struct ReaderView: View {
                     "text": String(thread.selectionText.prefix(240)),
                 ]
             }
-        guard let data = try? JSONSerialization.data(withJSONObject: Array(marks), options: []),
+        // .sortedKeys keeps the output stable for identical mark data; without it
+        // dictionary key order can reshuffle and defeat the dedup guard in
+        // applySelectionAskMarksIfNeeded, re-firing WebKit IPC on every frame.
+        guard let data = try? JSONSerialization.data(withJSONObject: Array(marks), options: [.sortedKeys]),
               let json = String(data: data, encoding: .utf8) else {
             return "[]"
         }
@@ -2345,8 +2348,7 @@ struct WebReaderRepresentable: NSViewRepresentable {
                 context.coordinator.lastAppliedSelectionAskMarks = ""
                 context.coordinator.loadUTF8HTML(at: url, signature: signature, into: view)
             } else {
-                context.coordinator.applySearch(in: view)
-                context.coordinator.applySelectionAskMarksIfNeeded()
+                context.coordinator.scheduleSearchAndMarksApply(in: view)
             }
         } else if let html {
             let signature = "html:\(html.hashValue)"
@@ -2357,8 +2359,7 @@ struct WebReaderRepresentable: NSViewRepresentable {
                 context.coordinator.lastAppliedSelectionAskMarks = ""
                 view.loadHTMLString(html, baseURL: nil)
             } else {
-                context.coordinator.applySearch(in: view)
-                context.coordinator.applySelectionAskMarksIfNeeded()
+                context.coordinator.scheduleSearchAndMarksApply(in: view)
             }
         }
         context.coordinator.applyContentRailTarget(in: view)
@@ -2894,6 +2895,7 @@ struct WebReaderRepresentable: NSViewRepresentable {
         private var lastAppliedSearchQuery = ""
         var lastAppliedSelectionAskMarks = ""
         private var lastAppliedContentRailTargetRequestID: UUID?
+        private var searchAndMarksApplyScheduled = false
         weak var webView: WKWebView?
 
         init(
@@ -2972,6 +2974,22 @@ struct WebReaderRepresentable: NSViewRepresentable {
             htmlLoadTask = nil
             htmlLoadRequestID = nil
             htmlResourceSchemeHandler.deactivate()
+        }
+
+        /// updateNSView re-enters on every animation frame, and each apply performs
+        /// WebKit IPC whose synchronous XPC segment can block the main thread for
+        /// tens of milliseconds. Coalesce per-frame requests into one async apply so
+        /// the render pass never pays that cost; the dedup guards in the apply
+        /// functions keep the IPC itself limited to real changes.
+        func scheduleSearchAndMarksApply(in view: WKWebView) {
+            guard !searchAndMarksApplyScheduled else { return }
+            searchAndMarksApplyScheduled = true
+            DispatchQueue.main.async { [weak self, weak view] in
+                guard let self, let view else { return }
+                self.searchAndMarksApplyScheduled = false
+                self.applySearch(in: view)
+                self.applySelectionAskMarksIfNeeded()
+            }
         }
 
         func applySelectionAskMarksIfNeeded() {
