@@ -4661,26 +4661,28 @@ enum CourseProjectRootSelfCheck {
             "附录/复制期间新增.txt"
         )
         let mutationStagingBefore = try stagingNames()
-        try expectFailure("导出期间源目录变化") {
-            _ = try store.exportPortableCourseCopyForSelfCheck(
-                courseID: courseA,
-                to: mutationTarget,
-                stageHook: { current in
-                    guard current == .beforeAtomicPlacement else { return }
-                    try Data("LATE_SOURCE".utf8).write(to: lateSourceFile)
-                }
-            )
-        }
+        // S6-9：源树在落位前漂移时以已封存 staging 为准继续导出。
+        _ = try store.exportPortableCourseCopyForSelfCheck(
+            courseID: courseA,
+            to: mutationTarget,
+            stageHook: { current in
+                guard current == .beforeAtomicPlacement else { return }
+                try Data("LATE_SOURCE".utf8).write(to: lateSourceFile)
+            }
+        )
         try check(
-            !mutationTarget.exists
-                && lateSourceFile.exists,
-            "源目录在复制期间变化后仍提交了不完整导出"
+            mutationTarget.exists && lateSourceFile.exists,
+            "S6-9 源目录漂移后应仍完成导出，且新源文件仍在"
         )
         try verifyAndRemoveRetainedStaging(
             since: mutationStagingBefore,
-            target: mutationTarget
+            target: mutationTarget,
+            expectTargetAbsent: false
         )
         try FileManager.default.removeItem(at: lateSourceFile)
+        if mutationTarget.exists {
+            try? FileManager.default.removeItem(at: mutationTarget)
+        }
 
         let existingTarget = exportParent.appendingPathComponent(
             "已有目标",

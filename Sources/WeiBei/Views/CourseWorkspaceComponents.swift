@@ -631,8 +631,17 @@ struct CourseProjectEntrySheet: View {
             case .opened(let courseID):
                 openCourse(courseID)
             case .requiresRebind(let proposal):
-                rebindProposal = proposal
-                title = proposal.courseTitle
+                // S6-5：无歧义（原根失联、状态一致）时单步自动确认；
+                // 需采用更新候选状态时才弹出一次确认。
+                if proposal.impact == .unchanged {
+                    let courseID = try await store.confirmCourseProjectRebindAsync(
+                        proposal
+                    )
+                    openCourse(courseID)
+                } else {
+                    rebindProposal = proposal
+                    title = proposal.courseTitle
+                }
             }
         }
     }
