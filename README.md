@@ -137,7 +137,7 @@ Live-provider checks require valid local credentials and are not silently replac
 - Course files and indexes are local-first, but live model responses may require a network connection.
 - Learning memory is written automatically into the Chat's global or course scope and shown with a light end-of-answer notice. Formal notes and relationships still use a confirmation card.
 - Large or difficult source files may be reported as partially indexed or incomplete.
-- The repository version is `0.1.0` and remains a pre-release candidate, not a signed and notarized 1.0 release.
+- The repository version is `1.0.0`. The downloadable community build is ad-hoc signed and is not Apple-notarized.
 
 ## Licensing
 
