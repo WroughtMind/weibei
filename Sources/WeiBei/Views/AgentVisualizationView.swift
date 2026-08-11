@@ -62,11 +62,11 @@ private struct AgentVisualizationWebView: NSViewRepresentable {
         let controller = WKUserContentController()
         controller.add(context.coordinator, name: Coordinator.handlerName)
 
-        let configuration = WKWebViewConfiguration()
-        configuration.websiteDataStore = .nonPersistent()
+        let configuration = WeiBeiWebViewConfiguration.make(
+            allowingInlineMedia: false,
+            nonPersistent: true
+        )
         configuration.userContentController = controller
-        configuration.defaultWebpagePreferences.allowsContentJavaScript = true
-        configuration.preferences.javaScriptCanOpenWindowsAutomatically = false
 
         let view = WKWebView(frame: .zero, configuration: configuration)
         view.navigationDelegate = context.coordinator

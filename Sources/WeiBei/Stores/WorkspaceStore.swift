@@ -990,7 +990,13 @@ final class WorkspaceStore: ObservableObject {
             recordCurrentStudyLocation(incrementVisit: false)
         }
         isRestoringCourseResumePoint = false
-        if startsCourseFileMaintenance { startCourseFileMaintenance() }
+        // Phase 4：课程文件维护延后到首帧之后，缩短冷启动到可交互。
+        if startsCourseFileMaintenance {
+            Task { @MainActor [weak self] in
+                await Task.yield()
+                self?.startCourseFileMaintenance()
+            }
+        }
     }
 
     deinit {
