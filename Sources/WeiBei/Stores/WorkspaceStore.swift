@@ -558,10 +558,11 @@ final class WorkspaceStore: ObservableObject {
         }
     }
     @Published var noteEditorCommand: NoteEditorCommand?
-    @Published var noteFileError: String?
     /// Success / info banner for note create/switch — separate from errors so it auto-dismisses cleanly.
     @Published var transientNoteStatus: String?
     @Published private(set) var workspaceSaveError: String?
+    /// S5：真磁盘写失败计数；满 3 次才露出可点重试的轻提示。
+    private var consecutiveWorkspaceSaveFailures = 0
     @Published private(set) var courseFileOperationProgress: CourseFileOperationProgress?
     @Published var notebookCreationDraft: NotebookCreationDraft?
     @Published var notebookRenameDraft: NotebookRenameDraft?
@@ -1293,10 +1294,10 @@ final class WorkspaceStore: ObservableObject {
             // The first commit registers the new course in workspace.json.
             // Only then may the next generation include its portable state.
             if !(await persistWorkspaceNow()) {
-                workspaceSaveError = ui(
+                reportWorkspaceSaveFailure(ui(
                     "课程已创建，但可携带状态尚未写入。",
                     "The course was created, but its portable state has not been written yet."
-                )
+                ))
             }
             return course.id
         } catch {
@@ -1518,10 +1519,10 @@ final class WorkspaceStore: ObservableObject {
             in: resolvedRoot
         )
         if !legacyOrganization.errors.isEmpty {
-            noteFileError = ui(
+            showTransientNoteStatus(ui(
                 "已有 \(legacyOrganization.migrated) 份旧资料完成整理；另有 \(legacyOrganization.errors.count) 份未完成：\(legacyOrganization.errors.first ?? "")",
                 "Organized \(legacyOrganization.migrated) legacy item(s); \(legacyOrganization.errors.count) remain: \(legacyOrganization.errors.first ?? "")"
-            )
+            ))
         }
         courseDocumentSearchIndex.synchronize(allItems)
         invalidateAgentContext()
@@ -2148,10 +2149,10 @@ final class WorkspaceStore: ObservableObject {
             }
         }
         if !(await persistWorkspaceNow()) {
-            workspaceSaveError = ui(
+            reportWorkspaceSaveFailure(ui(
                 "课程已登记，但可携带状态尚未写入。",
                 "The course was registered, but its portable state has not been written yet."
-            )
+            ))
         }
         if !WeiBeiSafetyTestMode.isEnabled {
             Task { @MainActor [weak self] in
@@ -6989,14 +6990,13 @@ final class WorkspaceStore: ObservableObject {
                     remover: courseFileSourceRemover
                 )
             if case .removed = cleanup {
-                noteFileError = nil
             } else {
                 // ponytail: a crash here can leave one harmless old duplicate;
                 // add a cleanup journal only if this becomes observable in use.
-                noteFileError = ui(
+                showTransientNoteStatus(ui(
                     "课程关系已移除，但课程文件夹中的旧副本未能清理。",
                     "The course relation was removed, but the old course copy could not be cleaned up."
-                )
+                ))
             }
             courseDocumentSearchIndex.schedule([importedItems[itemIndex]])
             invalidateAgentContext()
@@ -7070,7 +7070,7 @@ final class WorkspaceStore: ObservableObject {
                         conflictResolution: resolution
                     )
                 } catch {
-                    self?.noteFileError = error.localizedDescription
+                    self?.showTransientNoteStatus(error.localizedDescription)
                 }
             }
             return
@@ -7129,7 +7129,7 @@ final class WorkspaceStore: ObservableObject {
                         )
                     }
                 } catch {
-                    self?.noteFileError = error.localizedDescription
+                    self?.showTransientNoteStatus(error.localizedDescription)
                 }
             }
             return
@@ -7165,7 +7165,7 @@ final class WorkspaceStore: ObservableObject {
                         conflictResolution: resolution
                     )
                 } catch {
-                    self?.noteFileError = error.localizedDescription
+                    self?.showTransientNoteStatus(error.localizedDescription)
                 }
             }
             return
@@ -7196,7 +7196,7 @@ final class WorkspaceStore: ObservableObject {
                             conflictResolution: resolution
                         )
                     } catch {
-                        self?.noteFileError = error.localizedDescription
+                        self?.showTransientNoteStatus(error.localizedDescription)
                     }
                 }
                 return
@@ -7209,7 +7209,7 @@ final class WorkspaceStore: ObservableObject {
                             fromCourseID: courseID
                         )
                     } catch {
-                        self?.noteFileError = error.localizedDescription
+                        self?.showTransientNoteStatus(error.localizedDescription)
                     }
                 }
                 return
@@ -7280,8 +7280,9 @@ final class WorkspaceStore: ObservableObject {
         guard let item = importedItems.first(where: { $0.id == itemID }),
               !item.isSample,
               item.url != nil else {
-            noteFileError = ContentSourceRemovalError.itemUnavailable
-                .localizedDescription
+            showTransientNoteStatus(
+                ContentSourceRemovalError.itemUnavailable.localizedDescription
+            )
             return
         }
         let affectedCourses = courseIDs(for: itemID).compactMap {
@@ -7306,7 +7307,7 @@ final class WorkspaceStore: ObservableObject {
             do {
                 try await self?.moveItemSourceToTrash(itemID)
             } catch {
-                self?.noteFileError = error.localizedDescription
+                self?.showTransientNoteStatus(error.localizedDescription)
             }
         }
     }
@@ -7411,7 +7412,6 @@ final class WorkspaceStore: ObservableObject {
         )
         courseDocumentSearchIndex.synchronize(allItems)
         invalidateAgentContext()
-        noteFileError = nil
     }
 
     private func removeFormerSharedLinks(
@@ -8353,10 +8353,10 @@ final class WorkspaceStore: ObservableObject {
             do {
                 try await runtime.deleteSession(id)
             } catch {
-                self?.workspaceSaveError = self?.ui(
+                if let __wsErr = self?.ui(
                     "Chat 已删除，但对应的 Pi 运行状态清理失败：\(error.localizedDescription)",
                     "The Chat was deleted, but its Pi runtime state could not be removed: \(error.localizedDescription)"
-                )
+                ) { self?.reportWorkspaceSaveFailure(__wsErr) }
             }
         }
         if deletingActiveSession {
@@ -8757,7 +8757,7 @@ final class WorkspaceStore: ObservableObject {
                     messageID: messageID,
                     actionID: action.id,
                     chatID: snapshot.chatID,
-                    message: noteFileError ?? workspaceSaveError ?? ui(
+                    message: workspaceSaveError ?? ui(
                         "笔记没有成功写入，建议内容已保留，可以重试。",
                         "The note was not written. The proposal was kept for retry."
                     )
@@ -9853,10 +9853,10 @@ final class WorkspaceStore: ObservableObject {
                     )
                     imported.append(result.item)
                 } catch {
-                    noteFileError = ui(
+                    showTransientNoteStatus(ui(
                         "“\(sourceURL.lastPathComponent)”未能加入课程：\(error.localizedDescription)",
                         "Could not add “\(sourceURL.lastPathComponent)” to the course: \(error.localizedDescription)"
-                    )
+                    ))
                 }
             }
             courseFileOperationProgress = nil
@@ -10007,13 +10007,12 @@ final class WorkspaceStore: ObservableObject {
               importedItems[itemIndex].importedFileIdentity.map({
                 $0 == identity
               }) ?? true else {
-            noteFileError = ui(
+            showTransientNoteStatus(ui(
                 "“\(displayTitle(for: importedItems[itemIndex]))”暂时不在课程文件夹中。把原文件放回课程后再打开；课程首页会继续保留。",
                 "“\(displayTitle(for: importedItems[itemIndex]))” is not currently in the course folder. Put the original file back and try again; the course home will stay open."
-            )
+            ))
             return false
         }
-        noteFileError = nil
         if let requestedCourseID {
             activeCourseID = requestedCourseID
         }
@@ -10401,7 +10400,7 @@ final class WorkspaceStore: ObservableObject {
     func createCourseNotebookNote(courseID: UUID, title rawTitle: String) async -> String? {
         let title = rawTitle.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !title.isEmpty else {
-            noteFileError = ui("笔记名不能为空。", "Note name cannot be empty.")
+            showTransientNoteStatus(ui("笔记名不能为空。", "Note name cannot be empty."))
             return nil
         }
         let fileStem = safeFileStem(title)
@@ -10429,7 +10428,6 @@ final class WorkspaceStore: ObservableObject {
             )
             activeNotebookItemID = result.item.id
             noteText = markdown
-            noteFileError = nil
             revealRichWritingSurface()
             focus(.notes)
             showTransientNoteStatus(
@@ -10440,10 +10438,10 @@ final class WorkspaceStore: ObservableObject {
             )
             return result.item.id
         } catch {
-            noteFileError = ui(
+            showTransientNoteStatus(ui(
                 "无法创建课程笔记：\(error.localizedDescription)",
                 "Could not create the course note: \(error.localizedDescription)"
-            )
+            ))
             return nil
         }
     }
@@ -10506,7 +10504,6 @@ final class WorkspaceStore: ObservableObject {
     }
 
     func promptCreateBlankNotebookNote() {
-        noteFileError = nil
         notebookRenameDraft = nil
         notebookCreationDraft = NotebookCreationDraft(
             kind: .blank,
@@ -10524,7 +10521,6 @@ final class WorkspaceStore: ObservableObject {
         if openExistingNotebookNote(for: selectedMaterialItem) {
             return
         }
-        noteFileError = nil
         notebookRenameDraft = nil
         notebookCreationDraft = NotebookCreationDraft(
             kind: .currentMaterial,
@@ -10536,14 +10532,13 @@ final class WorkspaceStore: ObservableObject {
 
     func cancelNotebookNoteCreation() {
         notebookCreationDraft = nil
-        noteFileError = nil
     }
 
     func confirmNotebookNoteCreation() {
         guard let draft = notebookCreationDraft else { return }
         let title = draft.title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !title.isEmpty else {
-            noteFileError = ui("笔记名不能为空。", "Note name cannot be empty.")
+            showTransientNoteStatus(ui("笔记名不能为空。", "Note name cannot be empty."))
             return
         }
         notebookCreationDraft = nil
@@ -12298,7 +12293,7 @@ final class WorkspaceStore: ObservableObject {
     ) async {
         let title = rawTitle.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !title.isEmpty else {
-            noteFileError = ui("笔记名不能为空。", "Note name cannot be empty.")
+            showTransientNoteStatus(ui("笔记名不能为空。", "Note name cannot be empty."))
             return
         }
         guard let initialIndex = importedItems.firstIndex(where: { $0.id == itemID && $0.isNotebookNote }) else { return }
@@ -12335,9 +12330,7 @@ final class WorkspaceStore: ObservableObject {
                 "无法重命名笔记：无法读取原 Markdown。",
                 "Could not rename the note because the original Markdown could not be read."
             )
-            // showTransientNoteStatus 会清 noteFileError，错误文案必须后写。
             showTransientNoteStatus(message)
-            noteFileError = message
             return
         }
         let retitledMarkdown = retitledMarkdown(sourceMarkdown, from: oldTitle, to: newTitle)
@@ -12395,10 +12388,10 @@ final class WorkspaceStore: ObservableObject {
                             "Rename was aborted because the file identity at the destination did not match the original note. The original content was retained."
                         )
                     )
-                    noteFileError = ui(
+                    showTransientNoteStatus(ui(
                         "重命名已中止：目标文件身份异常。",
                         "Rename aborted: unexpected file identity."
-                    )
+                    ))
                     return
                 }
             }
@@ -12445,7 +12438,6 @@ final class WorkspaceStore: ObservableObject {
             courseDocumentSearchIndex.synchronize(allItems)
             _ = await persistWorkspaceNow()
             notebookRenameDraft = nil
-            noteFileError = nil
             showTransientNoteStatus(ui("已重命名为：\(newURL.lastPathComponent)", "Renamed to: \(newURL.lastPathComponent)"))
         } catch {
             let originalContentDigest = Self.noteContentDigest(
@@ -12507,9 +12499,7 @@ final class WorkspaceStore: ObservableObject {
                 "无法重命名笔记：\(error.localizedDescription) \(recovery)",
                 "Could not rename the note: \(error.localizedDescription) \(recovery)"
             )
-            // showTransientNoteStatus 会清 noteFileError，错误文案必须后写。
             showTransientNoteStatus(message)
-            noteFileError = message
         }
     }
 
@@ -12598,7 +12588,7 @@ final class WorkspaceStore: ObservableObject {
             select(itemID: item.id)
             showTransientNoteStatus(ui("已创建双链笔记：\(url.lastPathComponent)", "Created wiki note: \(url.lastPathComponent)"))
         } catch {
-            noteFileError = ui("无法创建双链笔记：\(error.localizedDescription)", "Could not create wiki note: \(error.localizedDescription)")
+            showTransientNoteStatus(ui("无法创建双链笔记：\(error.localizedDescription)", "Could not create wiki note: \(error.localizedDescription)"))
         }
     }
 
@@ -12618,7 +12608,7 @@ final class WorkspaceStore: ObservableObject {
         }
         let title = (rawTitle ?? defaultTitle).trimmingCharacters(in: .whitespacesAndNewlines)
         guard !title.isEmpty else {
-            noteFileError = ui("笔记名不能为空。", "Note name cannot be empty.")
+            showTransientNoteStatus(ui("笔记名不能为空。", "Note name cannot be empty."))
             return nil
         }
 
@@ -12695,7 +12685,7 @@ final class WorkspaceStore: ObservableObject {
             showTransientNoteStatus(status)
             return item
         } catch {
-            noteFileError = ui("无法创建笔记：\(error.localizedDescription)", "Could not create note: \(error.localizedDescription)")
+            showTransientNoteStatus(ui("无法创建笔记：\(error.localizedDescription)", "Could not create note: \(error.localizedDescription)"))
             return nil
         }
     }
@@ -17367,10 +17357,10 @@ final class WorkspaceStore: ObservableObject {
                 oldURL.lastPathComponent
             )
             guard !FileManager.default.fileExists(atPath: newURL.path) else {
-                noteFileError = ui(
+                showTransientNoteStatus(ui(
                     "通用资料中已有同名文件“\(newURL.lastPathComponent)”，旧共享文稿已保留。",
                     "A same-named common material already exists. The legacy shared file was kept."
-                )
+                ))
                 continue
             }
             guard CourseProjectFileWorker.renameWithoutReplacement(
@@ -18470,9 +18460,25 @@ final class WorkspaceStore: ObservableObject {
         }
     }
 
+    private func clearWorkspaceSaveError() {
+        consecutiveWorkspaceSaveFailures = 0
+        if workspaceSaveError != nil {
+            workspaceSaveError = nil
+        }
+    }
+
+    /// S5：连续 3 次写盘失败才写入 workspaceSaveError（可点重试）；此前静默。
+    /// 安全自检仍立即暴露，便于断言注入的单次失败。
+    private func reportWorkspaceSaveFailure(_ message: String) {
+        consecutiveWorkspaceSaveFailures += 1
+        if WeiBeiSafetyTestMode.isEnabled
+            || consecutiveWorkspaceSaveFailures >= 3 {
+            workspaceSaveError = message
+        }
+    }
+
     private func showTransientNoteStatus(_ message: String) {
-        // Success toasts use a dedicated field so real errors are not overwritten / stuck.
-        noteFileError = nil
+        // S5: sole user-visible note feedback channel (auto-expires).
         transientNoteStatus = message
         let token = message
         Task { @MainActor [weak self] in
@@ -18613,11 +18619,12 @@ final class WorkspaceStore: ObservableObject {
     private func setNoteFileError(_ message: String?, for itemID: String) {
         if let message {
             noteOperationErrorsByItemID[itemID] = message
+            if activeNoteItemID == itemID {
+                showTransientNoteStatus(message)
+            }
         } else {
             noteOperationErrorsByItemID.removeValue(forKey: itemID)
         }
-        guard activeNoteItemID == itemID else { return }
-        noteFileError = message
     }
 
     /// S2 启动迁移：旧 pendingNoteWrites 草稿按三件套写回一次；成功清除，失败转 notesByItemID 简单草稿。
@@ -18719,7 +18726,6 @@ final class WorkspaceStore: ObservableObject {
                 // 有草稿时不覆盖编辑器；无草稿则静默采用磁盘内容。
                 if notesByItemID[itemID] != nil {
                     if activeNoteItemID == itemID {
-                        noteFileError = noteOperationErrorsByItemID[itemID]
                     }
                 } else {
                     if activeNoteItemID == itemID,
@@ -18749,7 +18755,6 @@ final class WorkspaceStore: ObservableObject {
 
     private func noteText(for item: StudyItem?) -> String {
         guard let item else {
-            noteFileError = nil
             return defaultNote(for: nil)
         }
         // 草稿优先：写回失败或文件不可达时 notesByItemID 保存最新编辑，不弹冲突。
@@ -18757,20 +18762,16 @@ final class WorkspaceStore: ObservableObject {
             if case .courseOwned = item.storage {
                 scheduleCourseNoteLoad(item)
             }
-            noteFileError = noteOperationErrorsByItemID[item.id]
             return cleanLegacyPlaceholder(cached)
         }
         guard item.editsBackingMarkdownFile, let url = item.url else {
-            noteFileError = nil
             return cleanLegacyPlaceholder(notesByItemID[item.id] ?? defaultNote(for: item))
         }
         if case .courseOwned = item.storage {
             if let loaded = loadedCourseNoteTextByItemID[item.id] {
-                noteFileError = nil
                 return loaded
             }
             scheduleCourseNoteLoad(item)
-            noteFileError = nil
             return cleanLegacyPlaceholder(
                 notesByItemID[item.id] ?? defaultNote(for: item)
             )
@@ -18781,10 +18782,9 @@ final class WorkspaceStore: ObservableObject {
                 throw CocoaError(.fileReadInapplicableStringEncoding)
             }
             noteBackingContentDigestsByItemID[item.id] = Self.noteContentDigest(data)
-            noteFileError = nil
             return cleanLegacyPlaceholder(markdown)
         } catch {
-            noteFileError = ui("无法读取原 Markdown：\(url.lastPathComponent)", "Could not read original Markdown: \(url.lastPathComponent)")
+            showTransientNoteStatus(ui("无法读取原 Markdown：\(url.lastPathComponent)", "Could not read original Markdown: \(url.lastPathComponent)"))
             return cleanLegacyPlaceholder(notesByItemID[item.id] ?? defaultNote(for: item))
         }
     }
@@ -19465,10 +19465,10 @@ final class WorkspaceStore: ObservableObject {
                         dirtyPortableCourseIDs.insert(courseID)
                         blockedPortableCourseIDs.insert(courseID)
                         needsPortableCourseStateBootstrap = true
-                        workspaceSaveError = ui(
+                        reportWorkspaceSaveFailure(ui(
                             "“\(course(withID: courseID)?.title ?? "课程")”的本机内容与课程文件夹首次建立可携带基线时不一致，魏碑已保留两边并停止自动覆盖。",
                             "The local course content did not match the course folder while establishing its first portable baseline. WeiBei preserved both sides and stopped automatic overwrites."
-                        )
+                        ))
                         changed = true
                         continue
                     }
@@ -20846,15 +20846,13 @@ final class WorkspaceStore: ObservableObject {
                 )
                 courseResumePoints =
                     persisted.courseResumePoints ?? []
-                if workspaceSaveError != nil {
-                    workspaceSaveError = nil
-                }
+                clearWorkspaceSaveError()
                 return true
             } catch {
-                workspaceSaveError = ui(
+                reportWorkspaceSaveFailure(ui(
                     "课程更改尚未写入磁盘：\(error.localizedDescription)",
                     "Course changes were not saved to disk: \(error.localizedDescription)"
-                )
+                ))
                 return false
             }
         }
@@ -20993,10 +20991,10 @@ final class WorkspaceStore: ObservableObject {
                 extra: "outcome=failed generation=\(generation)"
             )
             guard workspaceSaveGeneration == generation else { return true }
-            workspaceSaveError = ui(
+            reportWorkspaceSaveFailure(ui(
                 "课程可携带状态没有成功保存：\(error.localizedDescription)",
                 "Portable course state was not saved: \(error.localizedDescription)"
-            )
+            ))
             return false
         }
         let result = await courseProjectFileWorker.persistWorkspace(
@@ -21120,20 +21118,20 @@ final class WorkspaceStore: ObservableObject {
         if let failure = result.failure {
             switch failure {
             case .portableState(let detail):
-                workspaceSaveError = ui(
+                reportWorkspaceSaveFailure(ui(
                     "课程可携带状态没有成功保存：\(detail)",
                     "Portable course state was not saved: \(detail)"
-                )
+                ))
             case .workspace(let detail):
-                workspaceSaveError = ui(
+                reportWorkspaceSaveFailure(ui(
                     "课程更改尚未写入磁盘：\(detail)",
                     "Course changes were not saved to disk: \(detail)"
-                )
+                ))
             case .rollbackConflict:
-                workspaceSaveError = ui(
+                reportWorkspaceSaveFailure(ui(
                     "课程状态提交失败且检测到并发变更，魏碑已停止覆盖并保留现场。",
                     "The course state commit failed during a concurrent change. WeiBei stopped overwriting and preserved the files for recovery."
-                )
+                ))
             case .stale:
                 publishOutcome = "superseded"
                 return true
@@ -21142,19 +21140,17 @@ final class WorkspaceStore: ObservableObject {
         }
         courseResumePoints = prepared.resumePoints
         if !oversizedPortableCourseIDs.isEmpty {
-            workspaceSaveError = ui(
+            reportWorkspaceSaveFailure(ui(
                 "工作区内容已保存，但有课程的可携带状态超过 32 MB；课程文件夹中的原状态保持不变。请精简课程 Chat 或未写入草稿后重试。",
                 "The workspace was saved, but a portable course state exceeds 32 MB. The state in the course folder was left unchanged. Reduce course chats or pending drafts, then retry."
-            )
+            ))
         } else if blockedPortableCourseIDs.isEmpty {
-            if workspaceSaveError != nil {
-                workspaceSaveError = nil
-            }
+            clearWorkspaceSaveError()
         } else {
-            workspaceSaveError = ui(
+            reportWorkspaceSaveFailure(ui(
                 "有课程状态存在冲突或损坏，原文件与本机缓存均已保留；魏碑不会自动覆盖。",
                 "A course state is conflicted or damaged. Both the original file and local cache were preserved, and WeiBei will not overwrite either automatically."
-            )
+            ))
         }
         needsSelectionAskThreadsWorkspaceMigration = false
         loadedSelectionAskThreadsFromWorkspaceSnapshot = true
@@ -21256,10 +21252,10 @@ final class WorkspaceStore: ObservableObject {
                         .intersection(requestedCourseIDs)
                 )
             } catch {
-                workspaceSaveError = ui(
+                reportWorkspaceSaveFailure(ui(
                     "课程可携带状态没有成功保存：\(error.localizedDescription)",
                     "Portable course state was not saved: \(error.localizedDescription)"
-                )
+                ))
                 return false
             }
             let persistedCourseResumePoints = sanitizedCourseResumePoints()
@@ -21330,19 +21326,19 @@ final class WorkspaceStore: ObservableObject {
                 persistedWorkspaceCourseIDs = Set(courses.map(\.id))
                 courseResumePoints = persistedCourseResumePoints
                 if !oversizedPortableCourseIDs.isEmpty {
-                    workspaceSaveError = ui(
+                    reportWorkspaceSaveFailure(ui(
                         "工作区内容已保存，但有课程的可携带状态超过 32 MB；课程文件夹中的原状态保持不变。请精简课程 Chat 或未写入草稿后重试。",
                         "The workspace was saved, but a portable course state exceeds 32 MB. The state in the course folder was left unchanged. Reduce course chats or pending drafts, then retry."
-                    )
+                    ))
                 } else if blockedPortableCourseIDs.isEmpty {
                     if workspaceSaveError != nil {
-                        workspaceSaveError = nil
+                        clearWorkspaceSaveError()
                     }
                 } else {
-                    workspaceSaveError = ui(
+                    reportWorkspaceSaveFailure(ui(
                         "有课程状态存在冲突或损坏，原文件与本机缓存均已保留；魏碑不会自动覆盖。",
                         "A course state is conflicted or damaged. Both the original file and local cache were preserved, and WeiBei will not overwrite either automatically."
-                    )
+                    ))
                 }
                 needsSelectionAskThreadsWorkspaceMigration = false
                 loadedSelectionAskThreadsFromWorkspaceSnapshot = true
@@ -21356,15 +21352,15 @@ final class WorkspaceStore: ObservableObject {
             } catch {
                 do {
                     try rollbackCoursePortableStateCommit(portableCommit)
-                    workspaceSaveError = ui(
+                    reportWorkspaceSaveFailure(ui(
                         "课程更改尚未写入磁盘：\(error.localizedDescription)",
                         "Course changes were not saved to disk: \(error.localizedDescription)"
-                    )
+                    ))
                 } catch {
-                    workspaceSaveError = ui(
+                    reportWorkspaceSaveFailure(ui(
                         "课程状态提交失败且检测到并发变更，魏碑已停止覆盖并保留现场。",
                         "The course state commit failed during a concurrent change. WeiBei stopped overwriting and preserved the files for recovery."
-                    )
+                    ))
                 }
                 return false
             }

@@ -219,7 +219,7 @@ struct CourseWorkspaceView: View {
     private func promptForNewNote() {
         newNoteTitle = store.ui("新笔记", "New Note")
         newNoteError = nil
-        store.noteFileError = nil
+        // S5：无 noteFileError 通道。
         showsNewNotePrompt = true
     }
 
@@ -256,7 +256,7 @@ struct CourseWorkspaceView: View {
                 courseID: courseID,
                 title: newNoteTitle
             ) else {
-                newNoteError = store.noteFileError
+                newNoteError = store.transientNoteStatus
                     ?? store.ui("无法新建笔记。", "Could not create the note.")
                 return
             }

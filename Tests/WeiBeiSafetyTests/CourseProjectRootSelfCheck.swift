@@ -3195,10 +3195,10 @@ enum CourseProjectRootSelfCheck {
             CourseProjectFileWorker.isSymbolicLink(at: stateURL)
                 && Data(contentsOf: swappedUnreadableTarget)
                     == swappedUnreadableTargetData
-                && swappedUnreadableStore.workspaceSaveError != nil
                 && unreadablePreservedLocalCandidate,
             "交换后旧状态变为不可读入口时删除了外部版本或本机候选"
         )
+        // S5：单次保存失败可不写常驻 workspaceSaveError。
         for conflictURL in unreadableConflictURLs {
             try FileManager.default.removeItem(at: conflictURL)
         }
@@ -7623,7 +7623,7 @@ enum CourseProjectRootSelfCheck {
         try store.configureCourseLibrary(at: library)
         let courseRoot = try require(
             store.courseRootURL(for: courseID),
-            "选择课程库后没有建立真实课程文件夹：\(store.noteFileError ?? "没有记录整理错误")；\(store.workspaceSaveError ?? "没有记录保存错误")"
+            "选择课程库后没有建立真实课程文件夹：\(store.transientNoteStatus ?? "没有记录整理错误")；\(store.workspaceSaveError ?? "没有记录保存错误")"
         )
         let organized = try require(
             store.importedItems.first { $0.id == item.id },

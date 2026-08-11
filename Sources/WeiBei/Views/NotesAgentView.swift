@@ -471,14 +471,8 @@ struct NotePaneView: View {
                         noteHeader
                     }
 
-                    if let noteFileError = store.noteFileError {
-                        Text(noteFileError)
-                            .font(.caption)
-                            .foregroundStyle(noteFileStatusColor(for: noteFileError))
-                            .lineLimit(1)
-                            .padding(.horizontal, 14)
-                            .padding(.bottom, 8)
-                    } else if let transientNoteStatus = store.transientNoteStatus {
+                    // S5：仅 transient 提示（自动过期），无常驻 noteFileError 横幅。
+                    if let transientNoteStatus = store.transientNoteStatus {
                         Text(transientNoteStatus)
                             .font(.caption)
                             .foregroundStyle(WeiBeiTheme.secondaryInk)
@@ -753,10 +747,6 @@ struct NotePaneView: View {
 
     private var noteHeaderSubtitle: String {
         store.agentNoteTitle
-    }
-
-    private func noteFileStatusColor(for message: String) -> Color {
-        message.hasPrefix("无法") || message.hasPrefix("Could not") ? WeiBeiTheme.cinnabar : WeiBeiTheme.secondaryInk
     }
 
     @ViewBuilder
