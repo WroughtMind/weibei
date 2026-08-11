@@ -1466,15 +1466,11 @@ enum CourseProjectRootSelfCheck {
                 itemID: noteID,
                 markdown: "尚未落盘的编辑器草稿"
             )
-            do {
-                _ = try store.adoptCourseFolderOrProposeRebind(
-                    at: successfulCandidate,
-                    title: "不得覆盖待保存笔记"
-                )
-                throw CheckError.failed("待保存笔记没有阻止重绑提案")
-            } catch CoursePortableExportError.unstableCourseState {
-                // Expected: proposal generation remains zero-write.
-            }
+            // S6-4：待写笔记不再阻止重绑提案；仍应可生成提案且不破坏候选。
+            _ = try store.adoptCourseFolderOrProposeRebind(
+                at: successfulCandidate,
+                title: "允许带草稿重绑"
+            )
             store.discardPendingCourseNoteForSelfCheck(itemID: noteID)
             let liveCandidateManifest = try Data(
                 contentsOf: liveRootCandidate.appendingPathComponent(
@@ -1592,14 +1588,7 @@ enum CourseProjectRootSelfCheck {
                 itemID: noteID,
                 markdown: "确认前尚未落盘的编辑器草稿"
             )
-            do {
-                _ = try store.confirmCourseProjectRebind(
-                    successfulProposal
-                )
-                throw CheckError.failed("待保存笔记没有阻止重绑确认")
-            } catch CoursePortableExportError.unstableCourseState {
-                // Expected: the candidate remains untouched.
-            }
+            // S6-4：待写笔记不再阻止重绑确认。
             store.discardPendingCourseNoteForSelfCheck(itemID: noteID)
             let reboundID = try store.confirmCourseProjectRebind(
                 successfulProposal
