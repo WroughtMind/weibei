@@ -5276,6 +5276,8 @@ final class WorkspaceStore: ObservableObject {
                 try? fileManager.removeItem(at: transactions)
             }
         }
+        // 硬崩溃后可能残留 `.weibei-course-removal-*` 隔离目录：按身份还原到登记路径。
+        restoreOrphanCourseRootTrashIsolations()
         // 旧版 workspace 级 journal 路径（已在 init 删除一份；此处再保险）。
         try? fileManager.removeItem(
             at: workspaceDirectory.appendingPathComponent("pending-notebook-rename.json")
@@ -5283,6 +5285,74 @@ final class WorkspaceStore: ObservableObject {
         try? fileManager.removeItem(
             at: workspaceDirectory.appendingPathComponent("pending-course-removal.json")
         )
+    }
+
+    private func restoreOrphanCourseRootTrashIsolations() {
+        let fileManager = FileManager.default
+        for course in courses {
+            guard let expectedIdentity = course.sourceRootIdentity else { continue }
+            let originalCandidates: [URL] = [
+                courseRootURL(for: course.id),
+                course.sourceRootPath.map {
+                    URL(fileURLWithPath: $0, isDirectory: true)
+                },
+            ].compactMap { $0 }
+            let parentPaths = Set(
+                originalCandidates.map {
+                    $0.deletingLastPathComponent().standardizedFileURL.path
+                }
+            )
+            for parentPath in parentPaths {
+                let parent = URL(fileURLWithPath: parentPath, isDirectory: true)
+                // 隔离目录以 `.` 开头，必须包含 hidden。
+                guard let siblings = try? fileManager.contentsOfDirectory(
+                    at: parent,
+                    includingPropertiesForKeys: [.isDirectoryKey],
+                    options: []
+                ) else { continue }
+                for sibling in siblings {
+                    guard sibling.lastPathComponent
+                        .hasPrefix(".weibei-course-removal-") else {
+                        continue
+                    }
+                    guard let children = try? fileManager.contentsOfDirectory(
+                        at: sibling,
+                        includingPropertiesForKeys: [.isDirectoryKey],
+                        options: []
+                    ) else { continue }
+                    for child in children {
+                        guard importedFileIdentityResolver(child)
+                            == expectedIdentity else {
+                            continue
+                        }
+                        let restoreTarget = originalCandidates.first {
+                            !fileManager.fileExists(atPath: $0.path)
+                        }
+                        if let restoreTarget {
+                            // 同步路径：启动清理不 await actor；走静态 rename。
+                            _ = CourseProjectFileWorker
+                                .renameWithoutReplacement(
+                                    from: child,
+                                    to: restoreTarget
+                                )
+                        } else if originalCandidates.contains(where: {
+                            importedFileIdentityResolver($0) == expectedIdentity
+                        }) {
+                            // 原路径已恢复，清掉重复隔离副本。
+                            try? fileManager.removeItem(at: child)
+                        }
+                        if let remaining = try? fileManager
+                            .contentsOfDirectory(
+                                at: sibling,
+                                includingPropertiesForKeys: nil
+                            ),
+                           remaining.isEmpty {
+                            try? fileManager.removeItem(at: sibling)
+                        }
+                    }
+                }
+            }
+        }
     }
 
 
@@ -6032,6 +6102,9 @@ final class WorkspaceStore: ObservableObject {
             throw CourseRemovalError.courseRootUnavailable
         }
 
+        // S3：无 journal。隔离 → 进废纸篓 → 清登记；
+        // 隔离后任一步失败（含崩溃注入）都尽力把根目录还原回原路径，便于用户重试。
+        var isolation: CourseRootTrashIsolation?
         do {
             try courseProjectMutationHook(.beforeCourseRootTrashMove)
             guard course(withID: courseID) == prepared.course,
@@ -6053,8 +6126,7 @@ final class WorkspaceStore: ObservableObject {
                     transactionID.uuidString,
                     isDirectory: true
                 )
-            // S3：无 journal。隔离 → 进废纸篓 → 清登记；失败则留在原状态。
-            let isolation = try await courseProjectFileWorker
+            isolation = try await courseProjectFileWorker
                 .isolateCourseRootForTrash(
                     at: currentRoot,
                     expectedIdentity: rootIdentity,
@@ -6069,12 +6141,17 @@ final class WorkspaceStore: ObservableObject {
             try courseProjectMutationHook(
                 .afterCourseRootTrashIsolationBeforeJournal
             )
+            guard let activeIsolation = isolation else {
+                throw CourseRemovalError.courseRootUnavailable
+            }
             let trashedRoot = try await courseProjectFileWorker
                 .moveIsolatedCourseRootToTrash(
-                    isolation,
+                    activeIsolation,
                     expectedCourseID: courseID,
                     selfCheckDestination: selfCheckDestination
                 )
+            // 已进入废纸篓：不再回滚隔离目录。
+            isolation = nil
             try courseProjectMutationHook(
                 .afterCourseRootTrashMoveBeforeJournal
             )
@@ -6108,6 +6185,11 @@ final class WorkspaceStore: ObservableObject {
             )
             return trashedRoot
         } catch {
+            if let isolation {
+                await courseProjectFileWorker.restoreCourseRootTrashIsolation(
+                    isolation
+                )
+            }
             finishCourseRemovalAttempt(
                 courseID,
                 token: prepared.token,
@@ -12244,12 +12326,12 @@ final class WorkspaceStore: ObservableObject {
         do {
             sourceMarkdown = wasActiveNotebook ? noteText : try notebookMarkdownReader(oldURL)
         } catch {
-            showTransientNoteStatus(
-                ui(
-                    "无法重命名笔记：无法读取原 Markdown。",
-                    "Could not rename the note because the original Markdown could not be read."
-                )
+            let message = ui(
+                "无法重命名笔记：无法读取原 Markdown。",
+                "Could not rename the note because the original Markdown could not be read."
             )
+            noteFileError = message
+            showTransientNoteStatus(message)
             return
         }
         let retitledMarkdown = retitledMarkdown(sourceMarkdown, from: oldTitle, to: newTitle)
@@ -12358,12 +12440,12 @@ final class WorkspaceStore: ObservableObject {
             }
             courseDocumentSearchIndex.synchronize(allItems)
             _ = await persistWorkspaceNow()
-            showTransientNoteStatus(
-                ui(
-                    "无法重命名笔记：\(error.localizedDescription)",
-                    "Could not rename the note: \(error.localizedDescription)"
-                )
+            let message = ui(
+                "无法重命名笔记：\(error.localizedDescription)",
+                "Could not rename the note: \(error.localizedDescription)"
             )
+            noteFileError = message
+            showTransientNoteStatus(message)
         }
     }
 

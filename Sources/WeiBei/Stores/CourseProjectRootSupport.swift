@@ -2174,6 +2174,28 @@ actor CourseProjectFileWorker {
         }
     }
 
+    /// S3：隔离后后续步骤失败时，把课程根尽力还原到原路径并清掉空事务目录。
+    func restoreCourseRootTrashIsolation(
+        _ isolation: CourseRootTrashIsolation
+    ) {
+        let isolatedStillPresent =
+            Self.identity(at: isolation.isolatedURL) == isolation.identity
+        let originalStillPresent =
+            Self.identity(at: isolation.originalURL) == isolation.identity
+        if isolatedStillPresent, !originalStillPresent {
+            _ = Self.renameWithoutReplacement(
+                from: isolation.isolatedURL,
+                to: isolation.originalURL
+            )
+        }
+        if !fileManager.fileExists(atPath: isolation.isolatedURL.path) {
+            removeEmptyDirectory(
+                isolation.transactionDirectory,
+                expectedIdentity: isolation.transactionDirectoryIdentity
+            )
+        }
+    }
+
     func moveIsolatedCourseRootToTrash(
         _ isolation: CourseRootTrashIsolation,
         expectedCourseID: UUID,
