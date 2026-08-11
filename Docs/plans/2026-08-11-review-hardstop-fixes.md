@@ -1,11 +1,13 @@
 # 魏碑审查 hard stop 修复方案：宣发阻断批次（2026-08-11）
 
-状态：**实施中（用户已批准按计划串行推进）**。基于 2026-08-11 外部深度审查（审查范围 c2156e32 → origin/main 5d0ecb53，即 PR #176–#188 全部合并后的现状）。
+状态：**已完成实现合入；待用户人工验收**。基于 2026-08-11 外部深度审查（审查范围 c2156e32 → origin/main 5d0ecb53，即 PR #176–#188 全部合并后的现状）。
 
 进度：
 - [x] PR-A `codex/fix-note-integrity` — C1 + C2 + H1（#189 已合入）
 - [x] PR-B `codex/fix-note-watcher` — C3 + H4 + H5（#190 已合入）
-- [x] PR-C `codex/fix-course-boundaries` — H2 + H3（本分支）
+- [x] PR-C `codex/fix-course-boundaries` — H2 + H3（#191 已合入）
+- [x] 干净 main 候选构建 + Agent 冒烟 → 见 `2026-08-11-hardstop-smoke-and-acceptance.md`
+- [ ] 用户按场景清单人工验收
 
 ## 一句话
 
