@@ -1848,31 +1848,41 @@ final class WorkspaceStore: ObservableObject {
                 .isSymbolicLinkKey,
                 .isAliasFileKey,
             ])
-            guard metadataValues?.isDirectory == true,
-                  metadataValues?.isSymbolicLink != true,
-                  metadataValues?.isAliasFile != true,
-                  !CourseProjectFileWorker.isSymbolicLink(at: metadataURL),
-                  CourseProjectPathPolicy.isSame(
+            let metadataLooksSafe =
+                metadataValues?.isDirectory == true
+                && metadataValues?.isSymbolicLink != true
+                && metadataValues?.isAliasFile != true
+                && !CourseProjectFileWorker.isSymbolicLink(at: metadataURL)
+                && CourseProjectPathPolicy.isSame(
                     metadataURL,
                     metadataURL.resolvingSymlinksInPath()
-                  ),
-                  importedFileIdentityResolver(canonicalRoot) == identity else {
-                if let externalScopeURL { courseSecurityScopeStopper(externalScopeURL) }
-                throw CourseProjectRootError.metadataConflict
-            }
-            do {
-                let snapshot = try await courseProjectFileWorker
-                    .adoptionSnapshot(
-                        at: canonicalRoot,
-                        expectedRootIdentity: identity
-                    )
+                )
+                && importedFileIdentityResolver(canonicalRoot) == identity
+            if metadataLooksSafe,
+               let snapshot = try? await courseProjectFileWorker
+                .adoptionSnapshot(
+                    at: canonicalRoot,
+                    expectedRootIdentity: identity
+                ) {
                 adoptionSnapshot = snapshot
                 courseID = snapshot.manifest.courseID
-            } catch {
-                if let externalScopeURL {
-                    courseSecurityScopeStopper(externalScopeURL)
-                }
-                throw CourseProjectRootError.metadataConflict
+            } else {
+                // S6-1：未知/损坏 .weibei → 改名备份后按新课继续，不拒绝。
+                let backup = metadataURL
+                    .deletingLastPathComponent()
+                    .appendingPathComponent(
+                        ".weibei.backup-\(Int(Date().timeIntervalSince1970))",
+                        isDirectory: true
+                    )
+                try? FileManager.default.moveItem(at: metadataURL, to: backup)
+                adoptionSnapshot = nil
+                courseID = UUID()
+                showTransientNoteStatus(
+                    ui(
+                        "原课程元数据已备份为 \(backup.lastPathComponent)，将按新课程纳入。",
+                        "Previous course metadata was backed up as \(backup.lastPathComponent); adopting as a new course."
+                    )
+                )
             }
             if let existing = courses.first(where: { $0.id == courseID }) {
                 do {
@@ -2333,8 +2343,8 @@ final class WorkspaceStore: ObservableObject {
     }
 
     private func courseHasUnstableState(_ courseID: UUID) -> Bool {
+        // S6-4：仅移除进行中阻塞导出/重绑；Agent/笔记待写不再拒绝用户操作。
         activeCourseRemovalTokens[courseID] != nil
-            || courseHasPendingWork(courseID)
     }
 
     private func itemIsInRemovingCourse(_ itemID: String) -> Bool {
@@ -6179,9 +6189,9 @@ final class WorkspaceStore: ObservableObject {
         var isolation: CourseRootTrashIsolation?
         do {
             try courseProjectMutationHook(.beforeCourseRootTrashMove)
+            // S6-4：不再因 Agent/笔记 pending 拒绝废纸篓。
             guard course(withID: courseID) == prepared.course,
                   activeCourseRemovalTokens[courseID] == prepared.token,
-                  !courseHasPendingWork(courseID),
                   coursePortableStateMatchesLastSaved(courseID),
                   let currentRoot = courseRootURL(for: courseID),
                   CourseProjectPathPolicy.isSame(currentRoot, root),
@@ -6576,14 +6586,14 @@ final class WorkspaceStore: ObservableObject {
             courseReconciliationTask = nil
             await reconciliationTask?.value
 
+            // S6-4：已取消 Agent 并等文件突变归零；不再因笔记/Agent 待写拒绝移除。
             guard course(withID: courseID) == expectedCourse,
                   activeCourseRemovalTransactionID == token,
                   activeCourseRemovalTokens[courseID] == token,
                   activeCourseFileMutationCounts[
                     courseID,
                     default: 0
-                  ] == 0,
-                  !courseHasPendingWork(courseID) else {
+                  ] == 0 else {
                 throw CourseRemovalError.courseBusy
             }
 
