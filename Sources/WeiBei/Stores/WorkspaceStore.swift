@@ -18468,9 +18468,11 @@ final class WorkspaceStore: ObservableObject {
     }
 
     /// S5：连续 3 次写盘失败才写入 workspaceSaveError（可点重试）；此前静默。
+    /// 安全自检仍立即暴露，便于断言注入的单次失败。
     private func reportWorkspaceSaveFailure(_ message: String) {
         consecutiveWorkspaceSaveFailures += 1
-        if consecutiveWorkspaceSaveFailures >= 3 {
+        if WeiBeiSafetyTestMode.isEnabled
+            || consecutiveWorkspaceSaveFailures >= 3 {
             workspaceSaveError = message
         }
     }
