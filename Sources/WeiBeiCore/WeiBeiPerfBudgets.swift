@@ -2,11 +2,11 @@ import Foundation
 
 /// Shared performance budgets used by DEBUG probes and self-checks.
 ///
-/// Numbers are post-S2 (simplified note write). `workspaceSaveEncodeMS` is the
-/// main-thread JSON encode budget for a synthetic 200-note workspace — the
-/// dominant cost of `performSaveNow` until Phase 2 moves encoding off-main.
+/// Post S2 + Phase 2: production encode/write runs on `CourseProjectFileWorker`
+/// (actor, off main). `workspaceSaveEncodeMS` still measures pure encode cost
+/// for regressions in snapshot size / Codable complexity.
 public enum WeiBeiPerfBudgets {
-    /// Full workspace JSON encode for ~200 notes on main (DEBUG self-check).
+    /// Pure JSON encode for ~200 notes (self-check cost guardrail, not main-thread SLA).
     public static let workspaceSaveEncodeMS: Double = 200
 
     public static let notePersistMS: Double = 50
