@@ -1834,4 +1834,48 @@ do {
     )
 }
 
+// MARK: - S4 NoteFileWatcher
+do {
+    let root = FileManager.default.temporaryDirectory
+        .appendingPathComponent("weibei-s4-watcher-\(UUID().uuidString)", isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    let noteURL = root.appendingPathComponent("watched.md")
+    try "v1".write(to: noteURL, atomically: true, encoding: .utf8)
+
+    let watcher = NoteFileWatcher()
+    let lock = NSLock()
+    var hitCount = 0
+    let expectation = DispatchSemaphore(value: 0)
+    watcher.watch(url: noteURL) { _ in
+        lock.lock()
+        hitCount += 1
+        lock.unlock()
+        expectation.signal()
+    }
+    expect(watcher.isWatching, "S4 watcher arms on existing file")
+    expect(watcher.currentlyWatchedPath == noteURL.path, "S4 watcher tracks path")
+
+    try "v2".write(to: noteURL, atomically: true, encoding: .utf8)
+    let timedOut = expectation.wait(timeout: .now() + 2.0) == .timedOut
+    expect(!timedOut, "S4 watcher fires within 2s of external write")
+    lock.lock()
+    let hits = hitCount
+    lock.unlock()
+    expect(hits >= 1, "S4 watcher records at least one change event")
+
+    // ignore window suppresses self-writes.
+    hitCount = 0
+    watcher.ignoreEvents(until: Date().addingTimeInterval(1.0))
+    try "v3".write(to: noteURL, atomically: true, encoding: .utf8)
+    _ = expectation.wait(timeout: .now() + 0.4)
+    lock.lock()
+    let suppressed = hitCount
+    lock.unlock()
+    expect(suppressed == 0, "S4 ignore window suppresses events")
+
+    watcher.stop()
+    expect(!watcher.isWatching, "S4 watcher stops cleanly")
+}
+
 print("WeiBei self-check passed")
