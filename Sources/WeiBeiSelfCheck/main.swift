@@ -1851,7 +1851,7 @@ do {
     expect(hoppedOffMain, "Phase 2 encode hop leaves main thread")
 }
 
-// MARK: - S4 NoteFileWatcher
+// MARK: - S4 NoteFileWatcher (+ hard stop C3/H5 lifecycle)
 do {
     let root = FileManager.default.temporaryDirectory
         .appendingPathComponent("weibei-s4-watcher-\(UUID().uuidString)", isDirectory: true)
@@ -1873,6 +1873,7 @@ do {
     expect(watcher.isWatching, "S4 watcher arms on existing file")
     expect(watcher.currentlyWatchedPath == noteURL.path, "S4 watcher tracks path")
 
+    // 1) Atomic write still fires.
     try "v2".write(to: noteURL, atomically: true, encoding: .utf8)
     let timedOut = expectation.wait(timeout: .now() + 2.0) == .timedOut
     expect(!timedOut, "S4 watcher fires within 2s of external write")
@@ -1890,6 +1891,63 @@ do {
     let suppressed = hitCount
     lock.unlock()
     expect(suppressed == 0, "S4 ignore window suppresses events")
+
+    // 2) C3: re-watch (same / other URL) then external write still fires.
+    hitCount = 0
+    let afterIgnore = DispatchSemaphore(value: 0)
+    // Drain remaining ignore window.
+    Thread.sleep(forTimeInterval: 1.1)
+    watcher.watch(url: noteURL) { _ in
+        lock.lock()
+        hitCount += 1
+        lock.unlock()
+        afterIgnore.signal()
+    }
+    expect(watcher.isWatching, "C3 re-watch arms watcher")
+    try "v4-after-rebind".write(to: noteURL, atomically: true, encoding: .utf8)
+    let rebindTimedOut = afterIgnore.wait(timeout: .now() + 2.0) == .timedOut
+    expect(!rebindTimedOut, "C3 re-watch still delivers external write events")
+    lock.lock()
+    let rebindHits = hitCount
+    lock.unlock()
+    expect(rebindHits >= 1, "C3 re-watch records change after re-arm")
+
+    // 3) H5: in-place append (FileHandle) is visible.
+    hitCount = 0
+    let inplace = DispatchSemaphore(value: 0)
+    watcher.watch(url: noteURL) { _ in
+        lock.lock()
+        hitCount += 1
+        lock.unlock()
+        inplace.signal()
+    }
+    let handle = try FileHandle(forWritingTo: noteURL)
+    try handle.seekToEnd()
+    try handle.write(contentsOf: Data("\nin-place-append".utf8))
+    try handle.synchronize()
+    try handle.close()
+    let inplaceTimedOut = inplace.wait(timeout: .now() + 2.0) == .timedOut
+    expect(!inplaceTimedOut, "H5 in-place FileHandle write is visible within 2s")
+    lock.lock()
+    let inplaceHits = hitCount
+    lock.unlock()
+    expect(inplaceHits >= 1, "H5 records in-place write event")
+
+    // 4) Rapid watch/stop cycles: no crash, final state correct.
+    for i in 0..<8 {
+        let alt = root.appendingPathComponent("alt-\(i).md")
+        try "alt\(i)".write(to: alt, atomically: true, encoding: .utf8)
+        watcher.watch(url: alt) { _ in }
+        if i % 2 == 0 {
+            watcher.stop()
+        }
+    }
+    watcher.watch(url: noteURL) { _ in }
+    expect(watcher.isWatching, "lifecycle ends watching after rapid toggle")
+    expect(
+        watcher.currentlyWatchedPath == noteURL.path,
+        "lifecycle final path is last watch target"
+    )
 
     watcher.stop()
     expect(!watcher.isWatching, "S4 watcher stops cleanly")

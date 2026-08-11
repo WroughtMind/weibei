@@ -109,6 +109,9 @@ enum CourseProjectRootSelfCheck {
         try step("H1 孤儿事务白名单与 replaced-target 保留") {
             try orphanTransactionCleanupHonorsWhitelistAndCrashBackups()
         }
+        try step("H4 staged 草稿算脏阻止静默重载") {
+            try stagedNoteDraftCountsAsActiveDirty()
+        }
         try firstScanAndFinderReconciliationPreserveIdentity()
         try unavailableCourseMaterialKeepsCourseHomeOpenUntilRestored()
         try thousandFileReconciliationIsLinearAndHardLinksStayStable()
@@ -6602,6 +6605,32 @@ enum CourseProjectRootSelfCheck {
             encoding: .utf8
         )
         try check(restored == crashBody, "H1：replaced-target 副本内容应完整保留")
+    }
+
+    @MainActor
+    private static func stagedNoteDraftCountsAsActiveDirty() throws {
+        let fixture = try Fixture(name: "staged-note-dirty")
+        defer { fixture.remove() }
+        let library = try fixture.makeDirectory("课程资料库")
+        let store = makeStore(fixture: fixture)
+        try store.configureCourseLibrary(at: library)
+        let courseID = try store.createCourseInLibrary(title: "staged 脏判定")
+        let noteID = try require(
+            store.createCourseNotebookNoteForSelfCheck(
+                courseID: courseID,
+                title: "staged 笔记"
+            ),
+            "没有 staged 脏判定笔记"
+        )
+        try check(
+            store.isActiveNoteDirtyForSelfCheck(itemID: noteID) == false,
+            "H4：无 staged/草稿时不应算脏"
+        )
+        store.stageNoteDraftForSelfCheck(itemID: noteID, value: "打字中…")
+        try check(
+            store.isActiveNoteDirtyForSelfCheck(itemID: noteID) == true,
+            "H4：stagedNoteDraft 应使 isActiveNoteDirty == true"
+        )
     }
 
     @MainActor

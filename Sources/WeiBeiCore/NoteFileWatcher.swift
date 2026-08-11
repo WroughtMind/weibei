@@ -1,17 +1,23 @@
 import Darwin
 import Foundation
 
-/// Watches the directory of the active Markdown note for external changes (S4).
+/// Watches the active Markdown note for external changes (S4 + hard stop C3/H5).
 ///
-/// Atomic writes replace the file inode, so a file-level vnode source misses the
-/// update. Watching the parent directory and filtering by last path component
-/// catches write/rename/delete while remaining a single lightweight kqueue source.
+/// Dual kqueue sources:
+/// - **Directory** fd: catches atomic replace (rename/delete/create of the child).
+/// - **File** fd: catches in-place writes (`sed -i`, append) that directory kqueue
+///   often misses.
+///
+/// Events from both sources coalesce through the same 0.12s work item. After a
+/// directory event the file fd is reopened (inode may have been replaced).
 public final class NoteFileWatcher: @unchecked Sendable {
     public typealias ChangeHandler = @Sendable (URL) -> Void
 
     private let queue: DispatchQueue
-    private var fileDescriptor: CInt = -1
-    private var source: DispatchSourceFileSystemObject?
+    private var directoryFileDescriptor: CInt = -1
+    private var fileFileDescriptor: CInt = -1
+    private var directorySource: DispatchSourceFileSystemObject?
+    private var fileSource: DispatchSourceFileSystemObject?
     private var watchedFileURL: URL?
     private var watchedFileName: String?
     private var changeHandler: ChangeHandler?
@@ -25,31 +31,34 @@ public final class NoteFileWatcher: @unchecked Sendable {
 
     deinit {
         // Avoid queue.sync from deinit (can trap under MainActor teardown).
+        // Close is owned exclusively by cancel handlers (captures fd by value).
         pendingReloadWorkItem?.cancel()
         pendingReloadWorkItem = nil
-        if let source {
-            source.setEventHandler {}
-            source.cancel()
-        }
-        if fileDescriptor >= 0 {
-            close(fileDescriptor)
-            fileDescriptor = -1
-        }
-        source = nil
+        directorySource?.setEventHandler {}
+        fileSource?.setEventHandler {}
+        directorySource?.cancel()
+        fileSource?.cancel()
+        directorySource = nil
+        fileSource = nil
         watchedFileURL = nil
         watchedFileName = nil
         changeHandler = nil
+        // Do not close() here — cancel handlers close their captured fds.
+        directoryFileDescriptor = -1
+        fileFileDescriptor = -1
     }
 
     public var isWatching: Bool {
-        queue.sync { source != nil && fileDescriptor >= 0 }
+        queue.sync {
+            directorySource != nil && directoryFileDescriptor >= 0
+        }
     }
 
     public var currentlyWatchedPath: String? {
         queue.sync { watchedFileURL?.path }
     }
 
-    /// Begin watching the file at `url` (parent directory is monitored).
+    /// Begin watching the file at `url` (directory + file dual sources).
     public func watch(url: URL, onChange: @escaping ChangeHandler) {
         queue.sync {
             self.startLocked(fileURL: url.standardizedFileURL, onChange: onChange)
@@ -76,56 +85,97 @@ public final class NoteFileWatcher: @unchecked Sendable {
         stopLocked()
         let directory = fileURL.deletingLastPathComponent()
         let dirPath = directory.path
-        let fd = open(dirPath, O_EVTONLY)
-        guard fd >= 0 else {
+        let dirFD = open(dirPath, O_EVTONLY)
+        guard dirFD >= 0 else {
             return
         }
-        fileDescriptor = fd
+        directoryFileDescriptor = dirFD
         watchedFileURL = fileURL
         watchedFileName = fileURL.lastPathComponent
         changeHandler = onChange
 
+        let dirSource = DispatchSource.makeFileSystemObjectSource(
+            fileDescriptor: dirFD,
+            eventMask: [.write, .extend, .attrib, .rename, .delete, .link, .revoke],
+            queue: queue
+        )
+        // C3: capture fd by value so re-watch close targets this source's fd only.
+        dirSource.setEventHandler { [weak self] in
+            self?.handleDirectoryEventLocked()
+        }
+        dirSource.setCancelHandler {
+            close(dirFD)
+        }
+        directorySource = dirSource
+        dirSource.resume()
+
+        // H5: file-level source for in-place writes. Open failure (iCloud placeholder
+        // etc.) degrades to directory-only — same as pre-H5 behaviour.
+        openFileSourceLocked(fileURL: fileURL)
+    }
+
+    private func openFileSourceLocked(fileURL: URL) {
+        // Tear down previous file source first (cancel handler closes its fd).
+        if let fileSource {
+            fileSource.cancel()
+            self.fileSource = nil
+        }
+        fileFileDescriptor = -1
+
+        let fileFD = open(fileURL.path, O_EVTONLY)
+        guard fileFD >= 0 else {
+            return
+        }
+        fileFileDescriptor = fileFD
         let source = DispatchSource.makeFileSystemObjectSource(
-            fileDescriptor: fd,
+            fileDescriptor: fileFD,
             eventMask: [.write, .extend, .attrib, .rename, .delete, .link, .revoke],
             queue: queue
         )
         source.setEventHandler { [weak self] in
-            self?.handleDirectoryEventLocked()
+            self?.scheduleCoalescedChangeLocked()
         }
-        source.setCancelHandler { [weak self] in
-            if let self, self.fileDescriptor >= 0 {
-                close(self.fileDescriptor)
-                self.fileDescriptor = -1
-            }
+        source.setCancelHandler {
+            close(fileFD)
         }
-        self.source = source
+        fileSource = source
         source.resume()
     }
 
     private func stopLocked() {
         pendingReloadWorkItem?.cancel()
         pendingReloadWorkItem = nil
-        if let source {
-            source.cancel()
-            self.source = nil
-        } else if fileDescriptor >= 0 {
-            close(fileDescriptor)
-            fileDescriptor = -1
+        if let fileSource {
+            fileSource.cancel()
+            self.fileSource = nil
         }
+        if let directorySource {
+            directorySource.cancel()
+            self.directorySource = nil
+        } else if directoryFileDescriptor >= 0 {
+            // No source yet (open failed after fd assigned) — close ourselves.
+            close(directoryFileDescriptor)
+        }
+        // FDs are closed by cancel handlers (or the else branch above).
+        directoryFileDescriptor = -1
+        fileFileDescriptor = -1
         watchedFileURL = nil
         watchedFileName = nil
         changeHandler = nil
     }
 
     private func handleDirectoryEventLocked() {
+        // Directory event may mean the watched file was atomically replaced;
+        // re-open the file fd on the new inode inside the coalesce window.
+        scheduleCoalescedChangeLocked(reopenFileDescriptor: true)
+    }
+
+    private func scheduleCoalescedChangeLocked(reopenFileDescriptor: Bool = false) {
         guard Date() >= ignoreUntil else { return }
         guard let fileURL = watchedFileURL,
               let fileName = watchedFileName,
-              let handler = changeHandler else { return }
+              changeHandler != nil else { return }
 
-        // Directory events do not name the child; poll mtime/size of the target.
-        // Coalesce bursty kqueue events from atomic write (temp + rename).
         pendingReloadWorkItem?.cancel()
         let work = DispatchWorkItem { [weak self] in
             guard let self else { return }
@@ -134,9 +184,9 @@ public final class NoteFileWatcher: @unchecked Sendable {
                 guard self.watchedFileName == fileName,
                       let fileURL = self.watchedFileURL,
                       let handler = self.changeHandler else { return }
-                // Fire even if the file was deleted (caller decides); for present
-                // files this is the silent-reload path.
-                _ = fileName
+                if reopenFileDescriptor {
+                    self.openFileSourceLocked(fileURL: fileURL)
+                }
                 handler(fileURL)
             }
         }
