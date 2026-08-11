@@ -7323,10 +7323,27 @@ enum CourseProjectRootSelfCheck {
                 try Data(contentsOf: source) == replacement,
                 "\(crashStage.rawValue) 中断误删了新来源"
             )
-            try check(
-                try courseTransactionChildren(in: root).isEmpty,
-                "\(crashStage.rawValue) 恢复后仍留下 journal"
-            )
+            // H1：含 replaced-target / replacement-rollback 的事务目录故意保留；
+            // 数据安全看旧目标已还原，不再要求 transactions 清空。
+            let remaining = try courseTransactionChildren(in: root)
+            for childName in remaining {
+                let child = root
+                    .appendingPathComponent(".weibei/transactions", isDirectory: true)
+                    .appendingPathComponent(childName, isDirectory: true)
+                let names = Set(
+                    (try? FileManager.default.contentsOfDirectory(atPath: child.path))
+                        ?? []
+                )
+                let hasCrashBackup =
+                    names.contains("replaced-target")
+                    || names.contains("replacement-rollback")
+                    || names.contains("trashed-replaced-target")
+                    || names.contains("target-quarantine")
+                try check(
+                    hasCrashBackup,
+                    "\(crashStage.rawValue) 残留事务应含崩溃备份，而非可清白名单废件"
+                )
+            }
         }
     }
 
