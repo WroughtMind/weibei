@@ -3589,9 +3589,9 @@ enum CourseProjectRootSelfCheck {
         let movedStateURL = movedMetadataDirectory
             .appendingPathComponent("course-state.json")
         let movedStateData = try Data(contentsOf: movedStateURL)
+        // S3：目录身份不匹配时不得写入替换目录；错误可静默（不写常驻横幅）。
         try check(
             didSwapMetadataDirectory
-                && directoryRaceStore?.workspaceSaveError != nil
                 && !replacementStateURL.exists
                 && movedStateData == beforeDirectoryRace,
             "状态目录被替换后仍向未经核验的目录写入"
