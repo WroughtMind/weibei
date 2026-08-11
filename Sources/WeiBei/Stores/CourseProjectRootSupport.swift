@@ -511,8 +511,12 @@ actor CourseProjectFileWorker {
                         throw CourseProjectFileWorkerError.verificationFailed
                     }
                 } catch CourseProjectFileWorkerError.contentConflict {
+                    // S3：写冲突静默记入 conflicted/dirty/blocked，不拒绝整次保存。
                     conflictedCourseIDs.insert(courseID)
-                    throw CourseProjectFileWorkerError.contentConflict
+                    dirty.insert(courseID)
+                    blocked.insert(courseID)
+                    needsBootstrap = true
+                    continue
                 } catch {
                     try Self.restorePortableState(
                         at: stateURL,
@@ -539,13 +543,16 @@ actor CourseProjectFileWorker {
                 request.requiredPortableCourseIDs.subtracting(
                     durablePortableCourseIDs
                 )
-            guard unresolvedRequiredCourseIDs.isEmpty else {
+            // S3：未完成的可携带写回静默记 dirty/blocked，不抛拒绝。
+            if !unresolvedRequiredCourseIDs.isEmpty {
                 conflictedCourseIDs.formUnion(
                     unresolvedRequiredCourseIDs
                         .intersection(blocked)
                         .subtracting(oversized)
                 )
-                throw CourseProjectFileWorkerError.contentConflict
+                dirty.formUnion(unresolvedRequiredCourseIDs)
+                blocked.formUnion(unresolvedRequiredCourseIDs)
+                needsBootstrap = true
             }
         } catch {
             let rollbackFailed = Self.rollbackPortableWrites(committedWrites)
@@ -2164,6 +2171,28 @@ actor CourseProjectFileWorker {
                 )
             }
             throw error
+        }
+    }
+
+    /// S3：隔离后后续步骤失败时，把课程根尽力还原到原路径并清掉空事务目录。
+    func restoreCourseRootTrashIsolation(
+        _ isolation: CourseRootTrashIsolation
+    ) {
+        let isolatedStillPresent =
+            Self.identity(at: isolation.isolatedURL) == isolation.identity
+        let originalStillPresent =
+            Self.identity(at: isolation.originalURL) == isolation.identity
+        if isolatedStillPresent, !originalStillPresent {
+            _ = Self.renameWithoutReplacement(
+                from: isolation.isolatedURL,
+                to: isolation.originalURL
+            )
+        }
+        if !fileManager.fileExists(atPath: isolation.isolatedURL.path) {
+            removeEmptyDirectory(
+                isolation.transactionDirectory,
+                expectedIdentity: isolation.transactionDirectoryIdentity
+            )
         }
     }
 

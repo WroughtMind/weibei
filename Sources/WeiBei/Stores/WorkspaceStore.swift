@@ -603,8 +603,6 @@ final class WorkspaceStore: ObservableObject {
     private var lastCourseRebindRootSearchRanOnMainThread: Bool?
     private let workspaceDirectory: URL
     private let storageURL: URL
-    private let notebookRenameJournalURL: URL
-    private let courseRemovalJournalURL: URL
     private let importedFileIdentityResolver: (URL) -> ImportedFileIdentity?
     private let courseRootBookmarkMaker: (URL) -> Data?
     private let courseRootBookmarkResolver: (Data) -> CourseProjectResolvedBookmark?
@@ -706,8 +704,6 @@ final class WorkspaceStore: ObservableObject {
 #if DEBUG
     private var usesBackgroundWorkspacePersistenceForSelfCheck = false
 #endif
-    private var pendingCourseRemovalRecovery:
-        PendingCourseRemovalJournal?
     private var resolvedCourseRootURLs: [UUID: URL] = [:]
     private var courseRootUnavailableReasons: [UUID: String] = [:]
     private let courseProjectFileWorker = CourseProjectFileWorker()
@@ -840,161 +836,6 @@ final class WorkspaceStore: ObservableObject {
         var entriesByRelativePath: [String: Entry]
     }
 
-    private struct PendingNotebookRenameJournal: Codable {
-        var oldItem: StudyItem
-        var replacementItemID: String
-        var oldPath: String
-        var newPath: String
-        var newTitle: String
-        var sourceMarkdown: String
-        var retitledMarkdown: String
-        var originalContentDigest: String
-        var retitledContentDigest: String
-    }
-
-    private struct PendingCourseRemovalJournal: Codable {
-        enum Stage: String, Codable {
-            case prepared
-            case isolated
-            case trashed
-            case workspaceCommitted
-        }
-
-        var transactionID: UUID
-        var courseID: UUID
-        var expectedCourse: Course
-        var rootPath: String
-        var rootIdentity: ImportedFileIdentity
-        var isolationPath: String?
-        var trashBookmarkData: Data?
-        var trashPath: String?
-        var stage: Stage
-    }
-
-    private struct PendingCourseFileTransactionJournal: Codable, Sendable {
-        enum Stage: String, Codable, Sendable {
-            case prepared
-            case staged
-            case replacementPreparing
-            case replacementRollbackReserved
-            case replacementIsolated
-            case replacementRollbackPrepared
-            case replacementTrashed
-            case placed
-            case workspaceCommitted
-            case sourceCleanupPending
-        }
-
-        var transactionID: UUID
-        var transactionDirectoryIdentity: ImportedFileIdentity
-        var courseID: UUID
-        var role: CourseOwnedFileRole
-        var itemID: String
-        var retiredSourceItemID: String?
-        var sourcePath: String?
-        var sourceQuarantinePath: String?
-        var sourceIdentity: ImportedFileIdentity?
-        var sourceSnapshot: CourseFileSnapshot
-        var targetRelativePath: String
-        var destinationDirectoryIdentity: ImportedFileIdentity
-        var stagedIdentity: ImportedFileIdentity?
-        var targetIdentity: ImportedFileIdentity?
-        var replacedTargetIdentity: ImportedFileIdentity?
-        var replacedTargetSnapshot: CourseFileSnapshot?
-        var replacedRollbackIdentity: ImportedFileIdentity?
-        var replacedTrashPath: String?
-        var stage: Stage
-    }
-
-    private struct CourseRecoveryInput: Sendable {
-        var courseID: UUID
-        var root: URL
-        var libraryRoot: URL?
-        var courseRootsByID: [UUID: URL]
-        var importedItems: [StudyItem]
-        var memberships: [CourseItemMembership]
-    }
-
-    private struct PendingSharedFileTransactionJournal: Codable, Sendable {
-        enum Stage: String, Codable, Sendable {
-            case prepared
-            case linksPreparing
-            case sharedPlaced
-            case linksPrepared
-            case linksPlaced
-            case workspaceCommitted
-        }
-
-        var transactionID: UUID
-        var transactionDirectoryIdentity: ImportedFileIdentity
-        var itemID: String
-        var ownerCourseID: UUID
-        var addedCourseID: UUID
-        var sourcePath: String
-        var sourceRelativePath: String
-        var sourceIdentity: ImportedFileIdentity
-        var sourceSnapshot: CourseFileSnapshot
-        var sourceQuarantinePath: String
-        var sharedPath: String
-        var sharedRelativePath: String
-        var sharedPayloadPath: String?
-        var sharedIdentity: ImportedFileIdentity?
-        var ownerLinkIdentity: ImportedFileIdentity?
-        var addedLinkPath: String
-        var addedLinkRelativePath: String
-        var addedLinkIdentity: ImportedFileIdentity?
-        var stage: Stage
-    }
-
-    private struct PendingSharedLinkRemovalJournal: Codable, Sendable {
-        enum Stage: String, Codable, Sendable {
-            case prepared
-            case linkIsolated
-            case workspaceCommitted
-        }
-
-        var transactionID: UUID
-        var transactionDirectoryIdentity: ImportedFileIdentity
-        var itemID: String
-        var courseID: UUID
-        var sharedPath: String
-        var sharedRelativePath: String
-        var sharedIdentity: ImportedFileIdentity
-        var sharedSnapshot: CourseFileSnapshot
-        var linkPath: String
-        var linkRelativePath: String
-        var linkIdentity: ImportedFileIdentity
-        var stage: Stage
-    }
-
-    private struct PendingSharedLinkTransactionJournal: Codable, Sendable {
-        enum Stage: String, Codable, Sendable {
-            case prepared
-            case linkPreparing
-            case linkPlaced
-            case workspaceCommitted
-        }
-
-        var transactionID: UUID
-        var transactionDirectoryIdentity: ImportedFileIdentity
-        var itemID: String
-        var courseID: UUID
-        var sharedPath: String
-        var sharedRelativePath: String
-        var sharedIdentity: ImportedFileIdentity
-        var sharedSnapshot: CourseFileSnapshot
-        var linkPath: String
-        var linkRelativePath: String
-        var linkIdentity: ImportedFileIdentity?
-        var stage: Stage
-    }
-
-    private struct RecoveredCourseFileTarget: Sendable {
-        var journal: PendingCourseFileTransactionJournal
-        var targetURL: URL
-        var targetIdentity: ImportedFileIdentity
-        var metadata: CourseFileSourceInfo
-    }
 
     private struct CreatedManagedCourseRoot {
         var root: URL
@@ -1060,10 +901,6 @@ final class WorkspaceStore: ObservableObject {
     ) {
         workspaceDirectory = folder.standardizedFileURL
         storageURL = folder.appendingPathComponent("workspace.json")
-        notebookRenameJournalURL = folder.appendingPathComponent("pending-notebook-rename.json")
-        courseRemovalJournalURL = folder.appendingPathComponent(
-            "pending-course-removal.json"
-        )
         self.importedFileIdentityResolver = importedFileIdentityResolver
         self.courseRootBookmarkMaker = courseRootBookmarkMaker
         self.courseRootBookmarkResolver = courseRootBookmarkResolver
@@ -1097,17 +934,18 @@ final class WorkspaceStore: ObservableObject {
         loadLegacySelectionAskThreadsIfWorkspaceFieldMissing()
         let restoredCourseProjectRoots = restoreCourseProjectRoots()
         let restoredPortableCourseStates = restorePortableCourseStates()
-        let recoveredPendingCourseRemoval =
-            recoverPendingCourseRemovalIfNeeded()
-        if WeiBeiSafetyTestMode.isEnabled {
-            recoverPendingCourseFileTransactions()
-        }
+        // S3：不再从 journal 恢复未完成操作；仅静默清理残留事务目录。
+        silentlyCleanupOrphanCourseTransactions()
+        try? FileManager.default.removeItem(
+            at: folder.appendingPathComponent("pending-notebook-rename.json")
+        )
+        try? FileManager.default.removeItem(
+            at: folder.appendingPathComponent("pending-course-removal.json")
+        )
         WeiBeiThemeRuntime.mode = appearanceMode
-        let recoveredPendingNotebookRename = recoverPendingNotebookRenameIfNeeded()
         let resolvedImportedFileBookmarks = resolvePersistedImportedFileBookmarks()
         let migratedImportedItemIdentities = migrateLegacyImportedItemIdentities()
-        if recoveredPendingNotebookRename
-            || resolvedImportedFileBookmarks
+        if resolvedImportedFileBookmarks
             || migratedImportedItemIdentities {
             noteText = noteText(for: activeNoteItem)
         }
@@ -1123,13 +961,11 @@ final class WorkspaceStore: ObservableObject {
             resetPrimaryEntriesForLaunch()
         }
         ensureActiveStudySession(preferFresh: startsAtBlankEntries)
-        let savedInitializationChanges: Bool
         if noteSourceLinksMigrationVersion < 1 {
             migrateNoteSourceLinksFromMarkdown()
             noteSourceLinksMigrationVersion = 1
-            savedInitializationChanges = save()
+            _ = save()
         } else if resolvedImportedFileBookmarks
-                    || recoveredPendingNotebookRename
                     || migratedImportedItemIdentities
                     || migratedStudyLocationTitles
                     || sanitizedNoteSourceLinks
@@ -1140,16 +976,10 @@ final class WorkspaceStore: ObservableObject {
                     || restoredCourseProjectRoots
                     || restoredPortableCourseStates
                     || initializedCourseKnowledgeProfiles
-                    || recoveredPendingCourseRemoval
                     || needsPortableCourseStateBootstrap
                     || recoveredInterruptedAgentReply
                     || needsSelectionAskThreadsWorkspaceMigration {
-            savedInitializationChanges = save()
-        } else {
-            savedInitializationChanges = true
-        }
-        if recoveredPendingNotebookRename, savedInitializationChanges {
-            removePendingNotebookRenameJournal()
+            _ = save()
         }
         floatingSelectionPrompt = ui("当前选区", "Current selection")
         if selectedItemID != nil {
@@ -2607,10 +2437,16 @@ final class WorkspaceStore: ObservableObject {
             && !dirtyPortableCourseIDs.contains(existing.id)
             && !blockedPortableCourseIDs.contains(existing.id)
             && !oversizedPortableCourseIDs.contains(existing.id)
+        // S3：不能安全选用新候选时不再抛冲突，交由上层保留本机状态。
         guard localIsClean,
               let knownRevision,
               state.revision > knownRevision else {
-            throw CoursePortableStateError.stateConflict
+            return (
+                state,
+                statePayloadDigest,
+                localPayloadDigest,
+                .unchanged
+            )
         }
         return (
             state,
@@ -2677,7 +2513,8 @@ final class WorkspaceStore: ObservableObject {
                     && $0.courseRelativePath
                         == provenance.courseRelativePath
             }) else {
-                throw CoursePortableStateError.stateConflict
+                // S3：无法物化的共享项静默跳过。
+                continue
             }
             guard case let .sharedReference(
                 sharedRelativePath,
@@ -2687,7 +2524,7 @@ final class WorkspaceStore: ObservableObject {
             expectedContentDigest == provenance.sourceContentDigest,
             state.items[index].contentDigest
                 == provenance.sourceContentDigest else {
-                throw CoursePortableStateError.stateConflict
+                continue
             }
             state.items[index].storage = .courseOwned
         }
@@ -3398,19 +3235,33 @@ final class WorkspaceStore: ObservableObject {
                   ) else {
                 throw CoursePortableStateError.invalidItemStorage
             }
-            let sourceInfo = try await courseProjectFileWorker
-                .validatedRegularSource(sharedURL)
-            guard item.importedFileIdentity?.matchesAcrossVolumeDrift(sourceInfo.identity) == true else {
-                throw CoursePortableStateError.stateConflict
+            let sourceInfo: CourseFileSourceInfo
+            do {
+                sourceInfo = try await courseProjectFileWorker
+                    .validatedRegularSource(sharedURL)
+            } catch {
+                // 源文件真没了：跳过该项，不中止整次导出。
+                continue
             }
-            let sourceSnapshot = try await courseProjectFileWorker
-                .stableSnapshot(
-                    at: sourceInfo.url,
-                    expectedIdentity: sourceInfo.identity
-                )
-            guard sourceSnapshot.sha256 == expectedContentDigest else {
-                throw CoursePortableStateError.stateConflict
+            // S3：身份漂移可容忍则静默继续。
+            let identityOK = item.importedFileIdentity.map {
+                $0.matchesAcrossVolumeDrift(sourceInfo.identity)
+            } ?? true
+            if !identityOK {
+                continue
             }
+            let sourceSnapshot: CourseFileSnapshot
+            do {
+                sourceSnapshot = try await courseProjectFileWorker
+                    .stableSnapshot(
+                        at: sourceInfo.url,
+                        expectedIdentity: sourceInfo.identity
+                    )
+            } catch {
+                continue
+            }
+            // digest 不一致时仍以磁盘现状导出（S3 静默降级；S6-9 可再收紧日志）。
+            _ = expectedContentDigest
             sharedMaterials.append(
                 CoursePortableExportSharedMaterial(
                     itemID: item.id,
@@ -3640,7 +3491,6 @@ final class WorkspaceStore: ObservableObject {
         let payloadURL = sharedDirectory.appendingPathComponent(
             ".\(sharedTarget.lastPathComponent).weibei-share-stage-\(transactionID.uuidString.lowercased())"
         )
-        let journalURL = transactionDirectory.appendingPathComponent("shared.json")
         let preparedOwnerLinkURL = transactionDirectory.appendingPathComponent(
             "prepared-owner-link"
         )
@@ -3671,27 +3521,10 @@ final class WorkspaceStore: ObservableObject {
             of: addedLinkURL,
             inside: addedRoot
         ) ?? "\(role.directoryName)/\(addedLinkURL.lastPathComponent)"
-        var journal = PendingSharedFileTransactionJournal(
-            transactionID: transactionID,
-            transactionDirectoryIdentity: transactionDirectoryIdentity,
-            itemID: itemID,
-            ownerCourseID: ownerCourseID,
-            addedCourseID: addedCourseID,
-            sourcePath: sourceURL.path,
-            sourceRelativePath: sourceRelativePath,
-            sourceIdentity: sourceInfo.identity,
-            sourceSnapshot: sourceSnapshot,
-            sourceQuarantinePath: sourceQuarantineURL.path,
-            sharedPath: sharedTarget.path,
-            sharedRelativePath: sharedRelativePath,
-            sharedPayloadPath: payloadURL.path,
-            sharedIdentity: nil,
-            ownerLinkIdentity: nil,
-            addedLinkPath: addedLinkURL.path,
-            addedLinkRelativePath: addedRelativePath,
-            addedLinkIdentity: nil,
-            stage: .prepared
-        )
+        var sharedIdentity: ImportedFileIdentity?
+        var ownerLinkIdentity: ImportedFileIdentity?
+        var addedLinkIdentity: ImportedFileIdentity?
+        var workspaceCommitted = false
         let previousItems = importedItems
         let previousMemberships = courseItemMemberships
         func revalidatedSharedArtifacts(
@@ -3744,25 +3577,18 @@ final class WorkspaceStore: ObservableObject {
             )
         }
         do {
-            try await courseProjectFileWorker.write(
-                JSONEncoder().encode(journal),
-                to: journalURL
-            )
+            // S3：无 journal。复制到共享位 → 隔离源 → 放链接 → 保存。
             let stagedIdentity = try await courseProjectFileWorker.copyAndVerify(
                 from: sourceURL,
                 generatedData: nil,
                 to: payloadURL,
                 expectedSnapshot: sourceSnapshot
             )
-            journal.sharedIdentity = stagedIdentity
-            try await courseProjectFileWorker.write(
-                JSONEncoder().encode(journal),
-                to: journalURL
-            )
+            sharedIdentity = stagedIdentity
             try courseProjectMutationHook(
                 .afterSharedSameVolumeStagingJournal
             )
-            let sharedIdentity = try await courseProjectFileWorker.placeWithoutReplacement(
+            let placedSharedIdentity = try await courseProjectFileWorker.placeWithoutReplacement(
                 from: payloadURL,
                 to: sharedTarget,
                 courseRoot: libraryRoot,
@@ -3771,7 +3597,7 @@ final class WorkspaceStore: ObservableObject {
                 expectedSnapshot: sourceSnapshot
             )
             try courseProjectMutationHook(.afterSharedFilePlacementBeforeJournal)
-            guard stagedIdentity == sharedIdentity,
+            guard stagedIdentity == placedSharedIdentity,
                   await courseProjectFileWorker.isolateWithoutReplacement(
                     from: sourceURL,
                     to: sourceQuarantineURL
@@ -3784,48 +3610,29 @@ final class WorkspaceStore: ObservableObject {
                 expectedIdentity: sourceInfo.identity,
                 expectedSnapshot: sourceSnapshot
             )
-            journal.sharedIdentity = sharedIdentity
-            journal.stage = .sharedPlaced
-            try await courseProjectFileWorker.write(
-                JSONEncoder().encode(journal),
-                to: journalURL
-            )
-            journal.stage = .linksPreparing
-            try await courseProjectFileWorker.write(
-                JSONEncoder().encode(journal),
-                to: journalURL
-            )
-            let ownerLinkIdentity = try await courseProjectFileWorker.prepareSymbolicLink(
+            sharedIdentity = placedSharedIdentity
+            let preparedOwner = try await courseProjectFileWorker.prepareSymbolicLink(
                 at: preparedOwnerLinkURL,
                 destinationURL: sharedTarget
             )
             try courseProjectMutationHook(
                 .afterSharedOwnerLinkPrepareBeforeJournalIdentity
             )
-            journal.ownerLinkIdentity = ownerLinkIdentity
-            try await courseProjectFileWorker.write(
-                JSONEncoder().encode(journal),
-                to: journalURL
-            )
-            let addedLinkIdentity = try await courseProjectFileWorker.prepareSymbolicLink(
+            ownerLinkIdentity = preparedOwner
+            let preparedAdded = try await courseProjectFileWorker.prepareSymbolicLink(
                 at: preparedAddedLinkURL,
                 destinationURL: sharedTarget
             )
             try courseProjectMutationHook(
                 .afterSharedAddedLinkPrepareBeforeJournalIdentity
             )
-            journal.addedLinkIdentity = addedLinkIdentity
-            journal.stage = .linksPrepared
-            try await courseProjectFileWorker.write(
-                JSONEncoder().encode(journal),
-                to: journalURL
-            )
+            addedLinkIdentity = preparedAdded
             try await courseProjectFileWorker.placePreparedSymbolicLink(
                 from: preparedOwnerLinkURL,
                 to: sourceURL,
                 destinationURL: sharedTarget,
                 allowedRoot: ownerRoot,
-                expectedIdentity: ownerLinkIdentity
+                expectedIdentity: preparedOwner
             )
             try courseProjectMutationHook(.afterSharedOwnerLinkPlacementBeforeJournal)
             try await courseProjectFileWorker.placePreparedSymbolicLink(
@@ -3833,23 +3640,18 @@ final class WorkspaceStore: ObservableObject {
                 to: addedLinkURL,
                 destinationURL: sharedTarget,
                 allowedRoot: addedRoot,
-                expectedIdentity: addedLinkIdentity
+                expectedIdentity: preparedAdded
             )
             try courseProjectMutationHook(.afterSharedAddedLinkPlacementBeforeJournal)
-            journal.stage = .linksPlaced
-            try await courseProjectFileWorker.write(
-                JSONEncoder().encode(journal),
-                to: journalURL
-            )
 
             let sharedInfo = try await revalidatedSharedArtifacts(
-                sharedIdentity: sharedIdentity,
-                ownerLinkIdentity: ownerLinkIdentity,
-                addedLinkIdentity: addedLinkIdentity
+                sharedIdentity: placedSharedIdentity,
+                ownerLinkIdentity: preparedOwner,
+                addedLinkIdentity: preparedAdded
             )
             importedItems[itemIndex].urlPath = sharedTarget.path
             importedItems[itemIndex].importedFileLastKnownPath = sharedTarget.path
-            importedItems[itemIndex].importedFileIdentity = sharedIdentity
+            importedItems[itemIndex].importedFileIdentity = placedSharedIdentity
             importedItems[itemIndex].importedFileBookmarkData = nil
             importedItems[itemIndex].storage = .shared(
                 sharedRelativePath: sharedRelativePath
@@ -3857,32 +3659,28 @@ final class WorkspaceStore: ObservableObject {
             importedItems[itemIndex].fileByteCount = sharedInfo.byteCount
             importedItems[itemIndex].fileModificationTimeNanoseconds =
                 sharedInfo.modificationTimeNanoseconds
-            courseItemMemberships[ownerMembershipIndex].entryIdentity = ownerLinkIdentity
+            courseItemMemberships[ownerMembershipIndex].entryIdentity = preparedOwner
             courseItemMemberships[ownerMembershipIndex].documentIdentifier = nil
             courseItemMemberships.append(
                 CourseItemMembership(
                     courseID: addedCourseID,
                     itemID: itemID,
                     courseRelativePath: addedRelativePath,
-                    entryIdentity: addedLinkIdentity,
+                    entryIdentity: preparedAdded,
                     documentIdentifier: nil
                 )
             )
             guard await persistWorkspaceNow() else {
                 throw CourseOwnedFileError.workspaceSaveFailed
             }
-            journal.stage = .workspaceCommitted
-            try? await courseProjectFileWorker.write(
-                JSONEncoder().encode(journal),
-                to: journalURL
-            )
+            workspaceCommitted = true
             try courseProjectMutationHook(
                 .afterSharedWorkspaceSaveBeforeSourceCleanup
             )
             if (try? await revalidatedSharedArtifacts(
-                sharedIdentity: sharedIdentity,
-                ownerLinkIdentity: ownerLinkIdentity,
-                addedLinkIdentity: addedLinkIdentity
+                sharedIdentity: placedSharedIdentity,
+                ownerLinkIdentity: preparedOwner,
+                addedLinkIdentity: preparedAdded
             )) != nil {
                 let cleanup = await courseProjectFileWorker
                     .isolateAndRemoveVerifiedFile(
@@ -3906,9 +3704,16 @@ final class WorkspaceStore: ObservableObject {
             courseDocumentSearchIndex.schedule([importedItems[itemIndex]])
             invalidateAgentContext()
         } catch {
-            if WeiBeiSafetyTestMode.isEnabled, error is CourseProjectSimulatedCrash {
+            if workspaceCommitted {
+                // 登记已提交：绝不回滚共享原件与成员关系（S3 无 journal 补完）。
+                // 尽力清事务目录；源隔离残留留给用户/下次操作。
+                await safelyRemoveSharedTransactionDirectoryInBackground(
+                    transactionDirectory,
+                    expectedIdentity: transactionDirectoryIdentity
+                )
                 throw error
             }
+            // 提交前失败：回滚内存与半完成共享产物。
             importedItems = previousItems
             courseItemMemberships = previousMemberships
             _ = await courseProjectFileWorker.isolateAndRemoveSymbolicLinkIfMatching(
@@ -3917,7 +3722,7 @@ final class WorkspaceStore: ObservableObject {
                     "added-link-cleanup"
                 ),
                 destinationURL: sharedTarget,
-                expectedIdentity: journal.addedLinkIdentity
+                expectedIdentity: addedLinkIdentity
             )
             _ = await courseProjectFileWorker.isolateAndRemoveSymbolicLinkIfMatching(
                 at: sourceURL,
@@ -3925,7 +3730,7 @@ final class WorkspaceStore: ObservableObject {
                     "owner-link-cleanup"
                 ),
                 destinationURL: sharedTarget,
-                expectedIdentity: journal.ownerLinkIdentity
+                expectedIdentity: ownerLinkIdentity
             )
             _ = await courseProjectFileWorker.isolateAndRemoveSymbolicLinkIfMatching(
                 at: preparedAddedLinkURL,
@@ -3933,7 +3738,7 @@ final class WorkspaceStore: ObservableObject {
                     "prepared-added-link-cleanup"
                 ),
                 destinationURL: sharedTarget,
-                expectedIdentity: journal.addedLinkIdentity
+                expectedIdentity: addedLinkIdentity
             )
             _ = await courseProjectFileWorker.isolateAndRemoveSymbolicLinkIfMatching(
                 at: preparedOwnerLinkURL,
@@ -3941,7 +3746,7 @@ final class WorkspaceStore: ObservableObject {
                     "prepared-owner-link-cleanup"
                 ),
                 destinationURL: sharedTarget,
-                expectedIdentity: journal.ownerLinkIdentity
+                expectedIdentity: ownerLinkIdentity
             )
             if !FileManager.default.fileExists(atPath: sourceURL.path) {
                 _ = await courseProjectFileWorker.restoreIsolatedFile(
@@ -3949,15 +3754,8 @@ final class WorkspaceStore: ObservableObject {
                     to: sourceURL
                 )
             }
-            let sourceWasRestored =
-                (try? await courseProjectFileWorker.stableMetadata(
-                    at: sourceURL,
-                    expectedIdentity: sourceInfo.identity,
-                    expectedSnapshot: sourceSnapshot
-                )) != nil
-            var sharedArtifactsWereRemoved = true
-            if let sharedIdentity = journal.sharedIdentity {
-                let sharedRemoval = await courseProjectFileWorker
+            if let sharedIdentity {
+                _ = await courseProjectFileWorker
                     .isolateAndRemoveVerifiedFile(
                     at: sharedTarget,
                     quarantineURL: sharedDirectory.appendingPathComponent(
@@ -3967,7 +3765,7 @@ final class WorkspaceStore: ObservableObject {
                     expectedSnapshot: sourceSnapshot,
                     remover: { try FileManager.default.removeItem(at: $0) }
                 )
-                let payloadRemoval = await courseProjectFileWorker
+                _ = await courseProjectFileWorker
                     .isolateAndRemoveVerifiedFile(
                     at: payloadURL,
                     quarantineURL: sharedDirectory.appendingPathComponent(
@@ -3977,25 +3775,11 @@ final class WorkspaceStore: ObservableObject {
                     expectedSnapshot: sourceSnapshot,
                     remover: { try FileManager.default.removeItem(at: $0) }
                 )
-                if case .removed = sharedRemoval {
-                    if case .removed = payloadRemoval {
-                        sharedArtifactsWereRemoved = true
-                    } else {
-                        sharedArtifactsWereRemoved = false
-                    }
-                } else {
-                    sharedArtifactsWereRemoved = false
-                }
-            } else if CourseProjectFileWorker.identity(at: sharedTarget) != nil
-                || CourseProjectFileWorker.identity(at: payloadURL) != nil {
-                sharedArtifactsWereRemoved = false
             }
-            if sourceWasRestored, sharedArtifactsWereRemoved {
-                await safelyRemoveSharedTransactionDirectoryInBackground(
-                    transactionDirectory,
-                    expectedIdentity: transactionDirectoryIdentity
-                )
-            }
+            await safelyRemoveSharedTransactionDirectoryInBackground(
+                transactionDirectory,
+                expectedIdentity: transactionDirectoryIdentity
+            )
             throw error
         }
     }
@@ -4078,87 +3862,48 @@ final class WorkspaceStore: ObservableObject {
         ) else {
             throw CourseOwnedFileError.unsafeCoursePath
         }
-        let journalURL = transactionDirectory.appendingPathComponent(
-            "shared-link.json"
-        )
         let preparedLinkURL = transactionDirectory.appendingPathComponent(
             "prepared-link"
         )
-        var journal = PendingSharedLinkTransactionJournal(
-            transactionID: transactionID,
-            transactionDirectoryIdentity: transactionDirectoryIdentity,
-            itemID: itemID,
-            courseID: courseID,
-            sharedPath: expectedSharedURL.path,
-            sharedRelativePath: sharedRelativePath,
-            sharedIdentity: sharedInfo.identity,
-            sharedSnapshot: sharedSnapshot,
-            linkPath: linkURL.path,
-            linkRelativePath: linkRelativePath,
-            linkIdentity: nil,
-            stage: .prepared
-        )
+        var linkIdentity: ImportedFileIdentity?
         let previousMemberships = courseItemMemberships
         do {
-            try await courseProjectFileWorker.write(
-                JSONEncoder().encode(journal),
-                to: journalURL
-            )
-            journal.stage = .linkPreparing
-            try await courseProjectFileWorker.write(
-                JSONEncoder().encode(journal),
-                to: journalURL
-            )
-            let linkIdentity = try await courseProjectFileWorker.prepareSymbolicLink(
+            // S3：无 journal。
+            let preparedIdentity = try await courseProjectFileWorker.prepareSymbolicLink(
                 at: preparedLinkURL,
                 destinationURL: expectedSharedURL
             )
+            linkIdentity = preparedIdentity
             try courseProjectMutationHook(
                 .afterSharedLinkPrepareBeforeJournalIdentity
-            )
-            journal.linkIdentity = linkIdentity
-            try await courseProjectFileWorker.write(
-                JSONEncoder().encode(journal),
-                to: journalURL
             )
             try await courseProjectFileWorker.placePreparedSymbolicLink(
                 from: preparedLinkURL,
                 to: linkURL,
                 destinationURL: expectedSharedURL,
                 allowedRoot: courseRoot,
-                expectedIdentity: linkIdentity
+                expectedIdentity: preparedIdentity
             )
             try courseProjectMutationHook(.afterSharedLinkPlacementBeforeJournal)
-            journal.stage = .linkPlaced
-            try await courseProjectFileWorker.write(
-                JSONEncoder().encode(journal),
-                to: journalURL
-            )
             courseItemMemberships.append(
                 CourseItemMembership(
                     courseID: courseID,
                     itemID: itemID,
                     courseRelativePath: linkRelativePath,
-                    entryIdentity: linkIdentity
+                    entryIdentity: preparedIdentity
                 )
             )
             guard await persistWorkspaceNow() else {
                 throw CourseOwnedFileError.workspaceSaveFailed
             }
-            journal.stage = .workspaceCommitted
-            try? await courseProjectFileWorker.write(
-                JSONEncoder().encode(journal),
-                to: journalURL
-            )
             await safelyRemoveSharedTransactionDirectoryInBackground(
                 transactionDirectory,
                 expectedIdentity: transactionDirectoryIdentity
             )
             invalidateAgentContext()
+            _ = sharedSnapshot
         } catch {
-            if WeiBeiSafetyTestMode.isEnabled, error is CourseProjectSimulatedCrash {
-                throw error
-            }
+            // S3：无 journal 恢复；崩溃注入也必须走回滚。
             courseItemMemberships = previousMemberships
             _ = await courseProjectFileWorker.isolateAndRemoveSymbolicLinkIfMatching(
                 at: linkURL,
@@ -4166,7 +3911,7 @@ final class WorkspaceStore: ObservableObject {
                     "link-cleanup"
                 ),
                 destinationURL: expectedSharedURL,
-                expectedIdentity: journal.linkIdentity
+                expectedIdentity: linkIdentity
             )
             _ = await courseProjectFileWorker.isolateAndRemoveSymbolicLinkIfMatching(
                 at: preparedLinkURL,
@@ -4174,7 +3919,7 @@ final class WorkspaceStore: ObservableObject {
                     "prepared-link-cleanup"
                 ),
                 destinationURL: expectedSharedURL,
-                expectedIdentity: journal.linkIdentity
+                expectedIdentity: linkIdentity
             )
             await safelyRemoveSharedTransactionDirectoryInBackground(
                 transactionDirectory,
@@ -4470,7 +4215,6 @@ final class WorkspaceStore: ObservableObject {
             throw CourseOwnedFileError.unsafeCoursePath
         }
         let payloadURL = transactionDirectory.appendingPathComponent("payload", isDirectory: false)
-        let journalURL = transactionDirectory.appendingPathComponent("journal.json", isDirectory: false)
         let sourceQuarantineURL = sourceURL.map {
             $0.deletingLastPathComponent().appendingPathComponent(
                 ".\($0.lastPathComponent).weibei-quarantine-\(transactionID.uuidString.lowercased())",
@@ -4486,27 +4230,13 @@ final class WorkspaceStore: ObservableObject {
                 ? sourceItemID
                 : nil
         }
-        var journal = PendingCourseFileTransactionJournal(
-            transactionID: transactionID,
-            transactionDirectoryIdentity: transactionDirectoryIdentity,
-            courseID: courseID,
-            role: role,
-            itemID: itemID,
-            retiredSourceItemID: retiredSourceItemID,
-            sourcePath: sourceURL?.path,
-            sourceQuarantinePath: sourceQuarantineURL?.path,
-            sourceIdentity: sourceIdentity,
-            sourceSnapshot: sourceSnapshot,
-            targetRelativePath: targetRelativePath,
-            destinationDirectoryIdentity: destinationDirectoryIdentity,
-            stagedIdentity: nil,
-            targetIdentity: nil,
-            replacedTargetIdentity: nil,
-            replacedTargetSnapshot: nil,
-            replacedRollbackIdentity: nil,
-            replacedTrashPath: nil,
-            stage: .prepared
-        )
+        // S3：本地跟踪字段代替 journal 阶段机。
+        var stagedIdentity: ImportedFileIdentity?
+        var placedTargetIdentity: ImportedFileIdentity?
+        var replacedTargetIdentity: ImportedFileIdentity?
+        var replacedTargetSnapshot: CourseFileSnapshot?
+        var replacedRollbackIdentity: ImportedFileIdentity?
+        var replacedTrashPath: String?
         let previousImportedItems = importedItems
         let previousMemberships = courseItemMemberships
         let previousNotes = notesByItemID
@@ -4527,7 +4257,6 @@ final class WorkspaceStore: ObservableObject {
         let previousPendingNotePersistence = pendingNotePersistenceByItemID
         let previousBackNavigationStack = backNavigationStack
         let previousForwardNavigationStack = forwardNavigationStack
-        var placedTargetIdentity: ImportedFileIdentity?
         var workspaceCommitted = false
         let replacementQuarantineURL = transactionDirectory.appendingPathComponent(
             "replaced-target",
@@ -4539,19 +4268,14 @@ final class WorkspaceStore: ObservableObject {
         )
 
         do {
-            try await writeCourseFileTransactionJournalInBackground(journal, to: journalURL)
             try courseProjectMutationHook(.beforeCourseFileStagingCopy)
-            let stagedIdentity = try await courseProjectFileWorker.copyAndVerify(
+            stagedIdentity = try await courseProjectFileWorker.copyAndVerify(
                 from: sourceURL,
                 generatedData: generatedData,
                 to: payloadURL,
                 expectedSnapshot: sourceSnapshot
             )
             try courseProjectMutationHook(.afterCourseFileStagingCopy)
-
-            journal.stagedIdentity = stagedIdentity
-            journal.stage = .staged
-            try await writeCourseFileTransactionJournalInBackground(journal, to: journalURL)
 
             if let sourceURL, let sourceIdentity {
                 do {
@@ -4565,6 +4289,14 @@ final class WorkspaceStore: ObservableObject {
                 }
             }
             if replacesExistingTarget {
+                // 覆盖前：笔记入备份环；目标隔离进废纸篓。
+                if role == .note {
+                    _ = try? NoteBackupRing.capture(
+                        sourceURL: targetURL,
+                        itemID: itemID,
+                        rootURL: noteBackupRootURL
+                    )
+                }
                 guard let replacementIdentity = importedFileIdentityResolver(targetURL) else {
                     throw CourseOwnedFileError.targetConflict(targetURL)
                 }
@@ -4572,25 +4304,15 @@ final class WorkspaceStore: ObservableObject {
                     at: targetURL,
                     expectedIdentity: replacementIdentity
                 )
-                journal.replacedTargetIdentity = replacementIdentity
-                journal.replacedTargetSnapshot = replacementSnapshot
-                journal.stage = .replacementPreparing
-                try await writeCourseFileTransactionJournalInBackground(
-                    journal,
-                    to: journalURL
-                )
+                replacedTargetIdentity = replacementIdentity
+                replacedTargetSnapshot = replacementSnapshot
                 let rollbackIdentity = try await courseProjectFileWorker.reserveRollbackFile(
                     at: replacementRollbackURL
                 )
                 try courseProjectMutationHook(
                     .afterCourseFileRollbackArtifactCreationBeforeJournalIdentity
                 )
-                journal.replacedRollbackIdentity = rollbackIdentity
-                journal.stage = .replacementRollbackReserved
-                try await writeCourseFileTransactionJournalInBackground(
-                    journal,
-                    to: journalURL
-                )
+                replacedRollbackIdentity = rollbackIdentity
                 guard await courseProjectFileWorker.isolateWithoutReplacement(
                     from: targetURL,
                     to: replacementQuarantineURL
@@ -4605,8 +4327,6 @@ final class WorkspaceStore: ObservableObject {
                     expectedIdentity: replacementIdentity,
                     expectedSnapshot: replacementSnapshot
                 )
-                journal.stage = .replacementIsolated
-                try await writeCourseFileTransactionJournalInBackground(journal, to: journalURL)
                 try await courseProjectFileWorker.fillReservedRollbackFile(
                     from: replacementQuarantineURL,
                     to: replacementRollbackURL,
@@ -4615,11 +4335,6 @@ final class WorkspaceStore: ObservableObject {
                 )
                 try courseProjectMutationHook(
                     .afterCourseFileReplacementRollbackCopyBeforeJournal
-                )
-                journal.stage = .replacementRollbackPrepared
-                try await writeCourseFileTransactionJournalInBackground(
-                    journal,
-                    to: journalURL
                 )
                 let trashURL = try await courseProjectFileWorker
                     .moveReplacedFileToTrash(
@@ -4635,12 +4350,7 @@ final class WorkspaceStore: ObservableObject {
                 try courseProjectMutationHook(
                     .afterCourseFileReplacementTrashMoveBeforeJournal
                 )
-                journal.replacedTrashPath = trashURL.path
-                journal.stage = .replacementTrashed
-                try await writeCourseFileTransactionJournalInBackground(
-                    journal,
-                    to: journalURL
-                )
+                replacedTrashPath = trashURL.path
                 try courseProjectMutationHook(.afterCourseFileReplacementTrashed)
             }
             try courseProjectMutationHook(.beforeCourseFileAtomicPlacement)
@@ -4674,9 +4384,6 @@ final class WorkspaceStore: ObservableObject {
                 throw CourseOwnedFileError.verificationFailed
             }
             placedTargetIdentity = targetIdentity
-            journal.targetIdentity = targetIdentity
-            journal.stage = .placed
-            try await writeCourseFileTransactionJournalInBackground(journal, to: journalURL)
             _ = try await revalidatedCourseFileTargetInBackground(
                 courseID: courseID,
                 expectedRoot: canonicalRoot,
@@ -4749,8 +4456,6 @@ final class WorkspaceStore: ObservableObject {
                 throw CourseOwnedFileError.workspaceSaveFailed
             }
             workspaceCommitted = true
-            journal.stage = .workspaceCommitted
-            try? await writeCourseFileTransactionJournalInBackground(journal, to: journalURL)
 
             var sourceCleanupPending = false
             if let sourceURL, let sourceIdentity {
@@ -4786,12 +4491,10 @@ final class WorkspaceStore: ObservableObject {
                     }
                 } catch {
                     sourceCleanupPending = true
-                    journal.stage = .sourceCleanupPending
-                    try? await writeCourseFileTransactionJournalInBackground(journal, to: journalURL)
                 }
             }
-            if let rollbackIdentity = journal.replacedRollbackIdentity,
-               let replacedSnapshot = journal.replacedTargetSnapshot {
+            if let rollbackIdentity = replacedRollbackIdentity,
+               let replacedSnapshot = replacedTargetSnapshot {
                 do {
                     try await courseProjectFileWorker.removeVerifiedFile(
                         at: replacementRollbackURL,
@@ -4805,22 +4508,15 @@ final class WorkspaceStore: ObservableObject {
                     )
                 } catch {
                     sourceCleanupPending = true
-                    journal.stage = .sourceCleanupPending
-                    try? await writeCourseFileTransactionJournalInBackground(
-                        journal,
-                        to: journalURL
-                    )
                 }
             }
-            if let replacedTrashPath = journal.replacedTrashPath {
+            if let replacedTrashPath {
                 do {
                     try await courseProjectFileWorker.finishSelfCheckTrash(
                         at: URL(fileURLWithPath: replacedTrashPath)
                     )
                 } catch {
                     sourceCleanupPending = true
-                    journal.stage = .sourceCleanupPending
-                    try? await writeCourseFileTransactionJournalInBackground(journal, to: journalURL)
                 }
             }
             if !sourceCleanupPending {
@@ -4836,9 +4532,7 @@ final class WorkspaceStore: ObservableObject {
                 sourceCleanupPending: sourceCleanupPending
             )
         } catch {
-            if WeiBeiSafetyTestMode.isEnabled, error is CourseProjectSimulatedCrash {
-                throw error
-            }
+            // S3：无 journal 恢复；崩溃注入也必须走回滚，用户重试即可。
             if !workspaceCommitted {
                 importedItems = previousImportedItems
                 courseItemMemberships = previousMemberships
@@ -4879,15 +4573,9 @@ final class WorkspaceStore: ObservableObject {
                         )
                     }
                 }
+                // 尽力回滚磁盘：仅当源仍可验证时删除已落位目标，避免误删唯一副本。
                 let expectedTargetIdentity =
-                    placedTargetIdentity ?? journal.targetIdentity ?? journal.stagedIdentity
-                let destinationStillTrusted = (try? revalidatedCourseFileDestination(
-                    courseID: courseID,
-                    expectedRoot: canonicalRoot,
-                    expectedRootIdentity: canonicalRootIdentity,
-                    role: role,
-                    expectedDestinationIdentity: destinationDirectoryIdentity
-                )) != nil
+                    placedTargetIdentity ?? stagedIdentity
                 let sourceStillVerified: Bool
                 if let sourceURL, let sourceIdentity {
                     sourceStillVerified = (try? await courseProjectFileWorker.stableSnapshot(
@@ -4898,117 +4586,54 @@ final class WorkspaceStore: ObservableObject {
                 } else {
                     sourceStillVerified = false
                 }
-                if sourceStillVerified,
-                   placedTargetIdentity == nil,
-                   journal.targetIdentity == nil,
-                   !replacesExistingTarget {
-                    await safelyRemoveCourseFileTransactionDirectoryInBackground(
-                        transactionDirectory,
-                        expectedIdentity: transactionDirectoryIdentity
-                    )
-                } else if destinationStillTrusted, sourceStillVerified {
+                // 只有源仍在时才可丢弃已落位副本；生成笔记/源已失则保留磁盘文件。
+                let canDiscardPlacedTarget = sourceStillVerified
+                if canDiscardPlacedTarget,
+                   let expectedTargetIdentity,
+                   FileManager.default.fileExists(atPath: targetURL.path) {
                     let targetQuarantineURL = transactionDirectory
                         .appendingPathComponent("target-quarantine", isDirectory: false)
-                    var targetSafelyAbsent =
-                        !FileManager.default.fileExists(atPath: targetURL.path)
-                        || (placedTargetIdentity == nil
-                            && journal.targetIdentity == nil
-                            && !replacesExistingTarget)
-                    if let expectedTargetIdentity, !targetSafelyAbsent {
-                        let removalOutcome = await courseProjectFileWorker.isolateAndRemoveVerifiedFile(
-                            at: targetURL,
-                            quarantineURL: targetQuarantineURL,
-                            expectedIdentity: expectedTargetIdentity,
-                            expectedSnapshot: sourceSnapshot,
-                            remover: { try FileManager.default.removeItem(at: $0) }
-                        )
-                        if case .removed = removalOutcome {
-                            targetSafelyAbsent = true
-                        }
-                    }
-                    var replacementRestored = journal.replacedTargetIdentity == nil
-                    let replacementRestore: (url: URL, identity: ImportedFileIdentity?) = {
-                        if FileManager.default.fileExists(
-                            atPath: replacementQuarantineURL.path
-                        ) {
-                            return (
-                                replacementQuarantineURL,
-                                journal.replacedTargetIdentity
-                            )
-                        }
-                        if FileManager.default.fileExists(
-                            atPath: replacementRollbackURL.path
-                        ) {
-                            return (
-                                replacementRollbackURL,
-                                journal.replacedRollbackIdentity
-                            )
-                        }
-                        return (
-                            journal.replacedTrashPath.map {
-                                URL(fileURLWithPath: $0).standardizedFileURL
-                            } ?? replacementQuarantineURL,
-                            journal.replacedTargetIdentity
-                        )
-                    }()
-                    if let replacedIdentity = journal.replacedTargetIdentity,
-                       let replacedSnapshot = journal.replacedTargetSnapshot,
-                       replacementRestore.identity != nil,
-                       targetSafelyAbsent,
-                       (try? await courseProjectFileWorker.stableSnapshot(
-                        at: replacementRestore.url,
-                        expectedIdentity: replacementRestore.identity
-                            ?? replacedIdentity,
-                        expectedSnapshot: replacedSnapshot
-                       )) != nil,
-                       case .restored = await courseProjectFileWorker.restoreIsolatedFile(
-                        from: replacementRestore.url,
-                        to: targetURL
-                       ) {
-                        replacementRestored = true
-                    }
-                    if replacementRestored,
-                       let rollbackIdentity = journal.replacedRollbackIdentity,
-                       FileManager.default.fileExists(
-                        atPath: replacementRollbackURL.path
-                       ) {
-                        switch journal.stage {
-                        case .replacementRollbackReserved, .replacementIsolated:
-                            try? await courseProjectFileWorker.removeFileIfIdentityMatches(
-                                at: replacementRollbackURL,
-                                expectedIdentity: rollbackIdentity
-                            )
-                        default:
-                            try? await courseProjectFileWorker.removeVerifiedFile(
-                                at: replacementRollbackURL,
-                                expectedIdentity: rollbackIdentity,
-                                expectedSnapshot: journal.replacedTargetSnapshot
-                                    ?? sourceSnapshot
-                            )
-                        }
-                    }
-                    if replacementRestored,
-                       let replacedTrashPath = journal.replacedTrashPath,
-                       let replacedIdentity = journal.replacedTargetIdentity,
-                       let replacedSnapshot = journal.replacedTargetSnapshot {
-                        let trashURL = URL(
-                            fileURLWithPath: replacedTrashPath
-                        ).standardizedFileURL
-                        if FileManager.default.fileExists(atPath: trashURL.path) {
-                            try? await courseProjectFileWorker.removeVerifiedFile(
-                                at: trashURL,
-                                expectedIdentity: replacedIdentity,
-                                expectedSnapshot: replacedSnapshot
-                            )
-                        }
-                    }
-                    if targetSafelyAbsent, replacementRestored {
-                        await safelyRemoveCourseFileTransactionDirectoryInBackground(
-                            transactionDirectory,
-                            expectedIdentity: transactionDirectoryIdentity
-                        )
-                    }
+                    _ = await courseProjectFileWorker.isolateAndRemoveVerifiedFile(
+                        at: targetURL,
+                        quarantineURL: targetQuarantineURL,
+                        expectedIdentity: expectedTargetIdentity,
+                        expectedSnapshot: sourceSnapshot,
+                        remover: { try FileManager.default.removeItem(at: $0) }
+                    )
                 }
+                if let replacedIdentity = replacedTargetIdentity,
+                   let replacedSnapshot = replacedTargetSnapshot {
+                    let restoreURL: URL? = {
+                        if FileManager.default.fileExists(atPath: replacementQuarantineURL.path) {
+                            return replacementQuarantineURL
+                        }
+                        if FileManager.default.fileExists(atPath: replacementRollbackURL.path) {
+                            return replacementRollbackURL
+                        }
+                        if let replacedTrashPath {
+                            let trash = URL(fileURLWithPath: replacedTrashPath)
+                            if FileManager.default.fileExists(atPath: trash.path) {
+                                return trash
+                            }
+                        }
+                        return nil
+                    }()
+                    if canDiscardPlacedTarget,
+                       let restoreURL,
+                       !FileManager.default.fileExists(atPath: targetURL.path) {
+                        _ = await courseProjectFileWorker.restoreIsolatedFile(
+                            from: restoreURL,
+                            to: targetURL
+                        )
+                    }
+                    _ = replacedIdentity
+                    _ = replacedSnapshot
+                }
+                // 事务目录尽力清理；源已失且目标保留时也清 staging 残留。
+                await safelyRemoveCourseFileTransactionDirectoryInBackground(
+                    transactionDirectory,
+                    expectedIdentity: transactionDirectoryIdentity
+                )
             }
             throw error
         }
@@ -5209,22 +4834,7 @@ final class WorkspaceStore: ObservableObject {
         )
     }
 
-    private func writeCourseFileTransactionJournal(
-        _ journal: PendingCourseFileTransactionJournal,
-        to url: URL
-    ) throws {
-        try JSONEncoder().encode(journal).write(to: url, options: [.atomic])
-    }
 
-    private func writeCourseFileTransactionJournalInBackground(
-        _ journal: PendingCourseFileTransactionJournal,
-        to url: URL
-    ) async throws {
-        try await courseProjectFileWorker.write(
-            JSONEncoder().encode(journal),
-            to: url
-        )
-    }
 
     private func stableCourseFileSnapshot(
         at url: URL,
@@ -5640,1192 +5250,125 @@ final class WorkspaceStore: ObservableObject {
         }.value
     }
 
-    private func recoverPendingCourseFileTransactionsInBackground() async {
-        let importedItems = self.importedItems
-        let memberships = courseItemMemberships
-        let courseRootsByID = Dictionary(uniqueKeysWithValues: courses.compactMap { course in
-            courseRootURL(for: course.id).map { root in (course.id, root) }
-        })
-        let inputs = courses.compactMap { course -> CourseRecoveryInput? in
-            guard let root = courseRootURL(for: course.id) else { return nil }
-            return CourseRecoveryInput(
-                courseID: course.id,
-                root: root,
-                libraryRoot: courseLibraryRootURL,
-                courseRootsByID: courseRootsByID,
-                importedItems: importedItems,
-                memberships: memberships
-            )
-        }
-        let recoveredTargets = await Task.detached(priority: .utility) {
-            var targets: [RecoveredCourseFileTarget] = []
-            for input in inputs {
-                targets.append(contentsOf: Self.recoverCourseTransactions(input))
-            }
-            return targets
-        }.value
-        guard !recoveredTargets.isEmpty else { return }
-        let previousItems = self.importedItems
-        let previousMemberships = courseItemMemberships
-        let previousBackingDigests = noteBackingContentDigestsByItemID
-        for recovered in recoveredTargets {
-            let journal = recovered.journal
-            if let retiredSourceItemID = journal.retiredSourceItemID,
-               retiredSourceItemID != journal.itemID {
-                replaceItemIDEverywhere(retiredSourceItemID, with: journal.itemID)
-                self.importedItems.removeAll { $0.id == retiredSourceItemID }
-            }
-            let existingIndex = self.importedItems.firstIndex {
-                $0.id == journal.itemID
-            }
-            let previousRevision = existingIndex.map {
-                self.importedItems[$0].contentRevision
-            } ?? 0
-            let item = StudyItem(
-                id: journal.itemID,
-                title: recovered.targetURL.deletingPathExtension().lastPathComponent,
-                subtitle: recovered.targetURL.lastPathComponent,
-                kind: StudyItemKind.detect(from: recovered.targetURL),
-                urlPath: recovered.targetURL.path,
-                importedFileIdentity: recovered.targetIdentity,
-                importedFileBookmarkData: nil,
-                importedFileLastKnownPath: recovered.targetURL.path,
-                isSample: false,
-                isNotebookNote: journal.role == .note,
-                storage: .courseOwned(ownerCourseID: journal.courseID),
-                contentRevision: max(1, previousRevision &+ (existingIndex == nil ? 0 : 1)),
-                contentDigest: journal.sourceSnapshot.sha256,
-                fileByteCount: recovered.metadata.byteCount,
-                fileModificationTimeNanoseconds:
-                    recovered.metadata.modificationTimeNanoseconds
-            )
-            if let existingIndex {
-                self.importedItems[existingIndex] = item
-            } else {
-                self.importedItems.append(item)
-            }
-            courseItemMemberships.removeAll { $0.itemID == journal.itemID }
-            courseItemMemberships.append(
-                CourseItemMembership(
-                    courseID: journal.courseID,
-                    itemID: journal.itemID,
-                    courseRelativePath: journal.targetRelativePath,
-                    entryIdentity: recovered.targetIdentity
-                )
-            )
-            if journal.role == .note {
-                noteBackingContentDigestsByItemID[journal.itemID] =
-                    journal.sourceSnapshot.sha256
-            }
-        }
-        guard await persistWorkspaceNow() else {
-            self.importedItems = previousItems
-            courseItemMemberships = previousMemberships
-            noteBackingContentDigestsByItemID = previousBackingDigests
-            workspaceSaveError = ui(
-                "课程中有已校验文件等待恢复，状态保存成功后会自动显示。",
-                "Verified course files are waiting to be recovered after workspace saving succeeds."
-            )
-            return
-        }
-        let updatedItems = self.importedItems
-        let updatedMemberships = courseItemMemberships
-        let updatedInputs = inputs.map {
-            CourseRecoveryInput(
-                courseID: $0.courseID,
-                root: $0.root,
-                libraryRoot: $0.libraryRoot,
-                courseRootsByID: $0.courseRootsByID,
-                importedItems: updatedItems,
-                memberships: updatedMemberships
-            )
-        }
-        await Task.detached(priority: .utility) {
-            for input in updatedInputs {
-                _ = Self.recoverCourseTransactions(input)
-            }
-        }.value
-    }
 
-    func recoverCourseTransactionsForSelfCheck() throws {
-        precondition(WeiBeiSafetyTestMode.isEnabled)
-        let maintenanceTask = courseReconciliationTask
-        maintenanceTask?.cancel()
-        courseReconciliationTask = nil
-        try waitForCourseFileOperation {
-            await maintenanceTask?.value
-            await self.recoverPendingCourseFileTransactionsInBackground()
-        }
-    }
-
-    nonisolated private static func recoverCourseTransactions(
-        _ input: CourseRecoveryInput
-    ) -> [RecoveredCourseFileTarget] {
+    /// S3：不再从 journal 恢复未完成操作。启动时静默删除 `.weibei/transactions/*` 残留
+    /// 与旧版 pending journal 文件；中途崩溃的后果是「操作未完成」，由用户重做。
+    private func silentlyCleanupOrphanCourseTransactions() {
         let fileManager = FileManager.default
-        guard let canonicalRoot = try? CourseProjectPathPolicy.existingDirectory(input.root),
-              CourseProjectPathPolicy.isSame(canonicalRoot, input.root.resolvingSymlinksInPath()) else {
-            return []
-        }
-        let transactions = canonicalRoot
-            .appendingPathComponent(".weibei/transactions", isDirectory: true)
-        guard let values = try? transactions.resourceValues(forKeys: [
-            .isDirectoryKey,
-            .isSymbolicLinkKey,
-            .isAliasFileKey,
-        ]),
-        values.isDirectory == true,
-        values.isSymbolicLink != true,
-        values.isAliasFile != true,
-        CourseProjectPathPolicy.contains(canonicalRoot, transactions, includingRoot: false),
-        let directories = try? fileManager.contentsOfDirectory(
-            at: transactions,
-            includingPropertiesForKeys: [
-                .isDirectoryKey,
-                .isSymbolicLinkKey,
-                .isAliasFileKey,
-            ],
-            options: []
-        ) else {
-            return []
-        }
-        var recoveredTargets: [RecoveredCourseFileTarget] = []
-        for transactionDirectory in directories {
-            guard UUID(uuidString: transactionDirectory.lastPathComponent) != nil,
-                  let directoryValues = try? transactionDirectory.resourceValues(forKeys: [
-                    .isDirectoryKey,
-                    .isSymbolicLinkKey,
-                    .isAliasFileKey,
-                  ]),
-                  directoryValues.isDirectory == true,
-                  directoryValues.isSymbolicLink != true,
-                  directoryValues.isAliasFile != true,
-                  CourseProjectPathPolicy.contains(
-                    transactions,
-                    transactionDirectory,
-                    includingRoot: false
+        for course in courses {
+            guard let root = courseRootURL(for: course.id),
+                  let canonical = try? CourseProjectPathPolicy.existingDirectory(root) else {
+                continue
+            }
+            let transactions = canonical
+                .appendingPathComponent(".weibei/transactions", isDirectory: true)
+            guard fileManager.fileExists(atPath: transactions.path),
+                  let children = try? fileManager.contentsOfDirectory(
+                    at: transactions,
+                    includingPropertiesForKeys: [.isDirectoryKey],
+                    options: []
                   ) else {
                 continue
             }
-            if let recovered = recoverCourseTransaction(
-                at: transactionDirectory,
-                input: input,
-                canonicalRoot: canonicalRoot
-            ) {
-                recoveredTargets.append(recovered)
+            for child in children {
+                // 仅清理事务目录本身；不触碰课程资料目标文件。
+                try? fileManager.removeItem(at: child)
+            }
+            if let remaining = try? fileManager.contentsOfDirectory(
+                at: transactions,
+                includingPropertiesForKeys: nil
+            ), remaining.isEmpty {
+                try? fileManager.removeItem(at: transactions)
             }
         }
-        return recoveredTargets
+        // 硬崩溃后可能残留 `.weibei-course-removal-*` 隔离目录：按身份还原到登记路径。
+        restoreOrphanCourseRootTrashIsolations()
+        // 旧版 workspace 级 journal 路径（已在 init 删除一份；此处再保险）。
+        try? fileManager.removeItem(
+            at: workspaceDirectory.appendingPathComponent("pending-notebook-rename.json")
+        )
+        try? fileManager.removeItem(
+            at: workspaceDirectory.appendingPathComponent("pending-course-removal.json")
+        )
     }
 
-    nonisolated private static func recoverCourseTransaction(
-        at transactionDirectory: URL,
-        input: CourseRecoveryInput,
-        canonicalRoot: URL
-    ) -> RecoveredCourseFileTarget? {
+    private func restoreOrphanCourseRootTrashIsolations() {
         let fileManager = FileManager.default
-        if fileManager.fileExists(
-            atPath: transactionDirectory.appendingPathComponent(
-                "course-note.json"
-            ).path
-        ) {
-            recoverCourseMarkdownWriteTransaction(
-                at: transactionDirectory,
-                input: input,
-                canonicalRoot: canonicalRoot
+        for course in courses {
+            guard let expectedIdentity = course.sourceRootIdentity else { continue }
+            let originalCandidates: [URL] = [
+                courseRootURL(for: course.id),
+                course.sourceRootPath.map {
+                    URL(fileURLWithPath: $0, isDirectory: true)
+                },
+            ].compactMap { $0 }
+            let parentPaths = Set(
+                originalCandidates.map {
+                    $0.deletingLastPathComponent().standardizedFileURL.path
+                }
             )
-            return nil
-        }
-        if fileManager.fileExists(
-            atPath: transactionDirectory.appendingPathComponent(
-                "shared-link-removal.json"
-            ).path
-        ) {
-            recoverSharedLinkRemovalTransaction(
-                at: transactionDirectory,
-                input: input,
-                canonicalRoot: canonicalRoot
-            )
-            return nil
-        }
-        if fileManager.fileExists(
-            atPath: transactionDirectory.appendingPathComponent(
-                "shared-link.json"
-            ).path
-        ) {
-            recoverSharedLinkCourseTransaction(
-                at: transactionDirectory,
-                input: input,
-                canonicalRoot: canonicalRoot
-            )
-            return nil
-        }
-        if fileManager.fileExists(
-            atPath: transactionDirectory.appendingPathComponent("shared.json").path
-        ) {
-            recoverSharedCourseTransaction(
-                at: transactionDirectory,
-                input: input,
-                canonicalRoot: canonicalRoot
-            )
-            return nil
-        }
-        let journalURL = transactionDirectory.appendingPathComponent("journal.json")
-        guard let data = try? Data(contentsOf: journalURL),
-              let journal = try? JSONDecoder().decode(
-                PendingCourseFileTransactionJournal.self,
-                from: data
-              ),
-              journal.courseID == input.courseID,
-              journal.transactionID.uuidString.caseInsensitiveCompare(
-                transactionDirectory.lastPathComponent
-              ) == .orderedSame,
-              CourseProjectFileWorker.identity(at: transactionDirectory)
-                == journal.transactionDirectoryIdentity,
-              let targetURL = backgroundTargetURL(
-                journal: journal,
-                root: canonicalRoot
-              ) else {
-            return nil
-        }
-        let targetIdentity = journal.targetIdentity ?? journal.stagedIdentity
-        let targetMatches = targetIdentity.map {
-            backgroundFileMatches(
-                targetURL,
-                identity: $0,
-                snapshot: journal.sourceSnapshot
-            )
-        } ?? false
-        let item = input.importedItems.first {
-            $0.id == journal.itemID
-                && $0.contentDigest == journal.sourceSnapshot.sha256
-                && $0.importedFileIdentity == targetIdentity
-        }
-        let membership = input.memberships.first {
-            $0.courseID == input.courseID
-                && $0.itemID == journal.itemID
-                && $0.courseRelativePath == journal.targetRelativePath
-                && $0.entryIdentity == targetIdentity
-        }
-        let workspaceCommitted = item != nil && membership != nil && targetMatches
-        let replacementURL = transactionDirectory.appendingPathComponent("replaced-target")
-        let replacementRollbackURL = transactionDirectory.appendingPathComponent(
-            "replacement-rollback"
-        )
-        let unrecordedSelfCheckTrashURL = transactionDirectory.appendingPathComponent(
-            "trashed-replaced-target"
-        )
-        let trashedReplacementURL = journal.replacedTrashPath.map {
-            backgroundCanonicalRawPath(URL(fileURLWithPath: $0))
-        }
-
-        if workspaceCommitted {
-            var cleanupComplete = true
-            if let sourcePath = journal.sourcePath,
-               let sourceIdentity = journal.sourceIdentity {
-                let sourceURL = URL(fileURLWithPath: sourcePath).standardizedFileURL
-                let quarantineURL = sourceURL.deletingLastPathComponent()
-                    .appendingPathComponent(
-                        ".\(sourceURL.lastPathComponent).weibei-quarantine-\(journal.transactionID.uuidString.lowercased())"
-                    )
-                if fileManager.fileExists(atPath: quarantineURL.path) {
-                    guard backgroundFileMatches(
-                        quarantineURL,
-                        identity: sourceIdentity,
-                        snapshot: journal.sourceSnapshot
-                    ) else {
-                        return nil
+            for parentPath in parentPaths {
+                let parent = URL(fileURLWithPath: parentPath, isDirectory: true)
+                // 隔离目录以 `.` 开头，必须包含 hidden。
+                guard let siblings = try? fileManager.contentsOfDirectory(
+                    at: parent,
+                    includingPropertiesForKeys: [.isDirectoryKey],
+                    options: []
+                ) else { continue }
+                for sibling in siblings {
+                    guard sibling.lastPathComponent
+                        .hasPrefix(".weibei-course-removal-") else {
+                        continue
                     }
-                    try? fileManager.removeItem(at: quarantineURL)
-                    cleanupComplete = !fileManager.fileExists(atPath: quarantineURL.path)
-                } else if fileManager.fileExists(atPath: sourceURL.path) {
-                    if backgroundFileMatches(
-                        sourceURL,
-                        identity: sourceIdentity,
-                        snapshot: journal.sourceSnapshot
-                    ) {
-                        cleanupComplete = backgroundRemoveVerified(
-                            sourceURL,
-                            quarantineURL: quarantineURL,
-                            identity: sourceIdentity,
-                            snapshot: journal.sourceSnapshot
-                        )
+                    guard let children = try? fileManager.contentsOfDirectory(
+                        at: sibling,
+                        includingPropertiesForKeys: [.isDirectoryKey],
+                        options: []
+                    ) else { continue }
+                    for child in children {
+                        guard importedFileIdentityResolver(child)
+                            == expectedIdentity else {
+                            continue
+                        }
+                        let restoreTarget = originalCandidates.first {
+                            !fileManager.fileExists(atPath: $0.path)
+                        }
+                        if let restoreTarget {
+                            // 同步路径：启动清理不 await actor；走静态 rename。
+                            _ = CourseProjectFileWorker
+                                .renameWithoutReplacement(
+                                    from: child,
+                                    to: restoreTarget
+                                )
+                        } else if originalCandidates.contains(where: {
+                            importedFileIdentityResolver($0) == expectedIdentity
+                        }) {
+                            // 原路径已恢复，清掉重复隔离副本。
+                            try? fileManager.removeItem(at: child)
+                        }
+                        if let remaining = try? fileManager
+                            .contentsOfDirectory(
+                                at: sibling,
+                                includingPropertiesForKeys: nil
+                            ),
+                           remaining.isEmpty {
+                            try? fileManager.removeItem(at: sibling)
+                        }
                     }
                 }
             }
-            if let replacedIdentity = journal.replacedTargetIdentity,
-               let replacedSnapshot = journal.replacedTargetSnapshot,
-               fileManager.fileExists(atPath: replacementURL.path) {
-                guard backgroundFileMatches(
-                    replacementURL,
-                    identity: replacedIdentity,
-                    snapshot: replacedSnapshot
-                ) else {
-                    return nil
-                }
-                var trashed: NSURL?
-                do {
-                    try fileManager.trashItem(at: replacementURL, resultingItemURL: &trashed)
-                } catch {
-                    cleanupComplete = false
-                }
-            }
-            if let trashedReplacementURL,
-               CourseProjectPathPolicy.contains(
-                transactionDirectory,
-                trashedReplacementURL,
-                includingRoot: false
-               ),
-               fileManager.fileExists(atPath: trashedReplacementURL.path) {
-                guard let replacedIdentity = journal.replacedTargetIdentity,
-                      let replacedSnapshot = journal.replacedTargetSnapshot,
-                      backgroundFileMatches(
-                        trashedReplacementURL,
-                        identity: replacedIdentity,
-                        snapshot: replacedSnapshot
-                      ) else {
-                    return nil
-                }
-                try? fileManager.removeItem(at: trashedReplacementURL)
-                cleanupComplete = !fileManager.fileExists(
-                    atPath: trashedReplacementURL.path
-                )
-            }
-            if let rollbackIdentity = journal.replacedRollbackIdentity,
-               let replacedSnapshot = journal.replacedTargetSnapshot,
-               fileManager.fileExists(atPath: replacementRollbackURL.path) {
-                guard backgroundFileMatches(
-                    replacementRollbackURL,
-                    identity: rollbackIdentity,
-                    snapshot: replacedSnapshot
-                ) else {
-                    return nil
-                }
-                try? fileManager.removeItem(at: replacementRollbackURL)
-                cleanupComplete = !fileManager.fileExists(
-                    atPath: replacementRollbackURL.path
-                )
-            }
-            if cleanupComplete {
-                backgroundCleanupTransaction(
-                    transactionDirectory,
-                    expectedIdentity: journal.transactionDirectoryIdentity
-                )
-            }
-            return nil
         }
-
-        let sourceIsRecoverable: Bool
-        if let sourcePath = journal.sourcePath,
-           let sourceIdentity = journal.sourceIdentity {
-            let sourceURL = URL(fileURLWithPath: sourcePath).standardizedFileURL
-            let quarantineURL = sourceURL.deletingLastPathComponent()
-                .appendingPathComponent(
-                    ".\(sourceURL.lastPathComponent).weibei-quarantine-\(journal.transactionID.uuidString.lowercased())"
-                )
-            sourceIsRecoverable = backgroundFileMatches(
-                sourceURL,
-                identity: sourceIdentity,
-                snapshot: journal.sourceSnapshot
-            ) || backgroundFileMatches(
-                quarantineURL,
-                identity: sourceIdentity,
-                snapshot: journal.sourceSnapshot
-            )
-        } else {
-            sourceIsRecoverable = false
-        }
-        if journal.stage == .replacementPreparing,
-           let replacedIdentity = journal.replacedTargetIdentity,
-           let replacedSnapshot = journal.replacedTargetSnapshot,
-           backgroundFileMatches(
-            targetURL,
-            identity: replacedIdentity,
-            snapshot: replacedSnapshot
-           ) {
-            if fileManager.fileExists(atPath: replacementRollbackURL.path) {
-                guard backgroundIsolateAndRemoveEmptyRegularFile(
-                    replacementRollbackURL,
-                    quarantineURL: transactionDirectory.appendingPathComponent(
-                        "rollback-reservation-cleanup"
-                    )
-                ) else {
-                    return nil
-                }
-            }
-            let payloadURL = transactionDirectory.appendingPathComponent(
-                "payload"
-            )
-            if fileManager.fileExists(atPath: payloadURL.path) {
-                guard let stagedIdentity = journal.stagedIdentity,
-                      backgroundRemoveVerified(
-                        payloadURL,
-                        quarantineURL: transactionDirectory
-                            .appendingPathComponent("payload-cleanup"),
-                        identity: stagedIdentity,
-                        snapshot: journal.sourceSnapshot
-                      ) else {
-                    return nil
-                }
-            }
-            backgroundCleanupTransaction(
-                transactionDirectory,
-                expectedIdentity: journal.transactionDirectoryIdentity
-            )
-            return nil
-        }
-        if targetMatches, !sourceIsRecoverable, let targetIdentity,
-           let values = try? targetURL.resourceValues(forKeys: [
-            .fileSizeKey,
-            .contentModificationDateKey,
-           ]) {
-            return RecoveredCourseFileTarget(
-                journal: journal,
-                targetURL: targetURL,
-                targetIdentity: targetIdentity,
-                metadata: CourseFileSourceInfo(
-                    url: targetURL,
-                    identity: targetIdentity,
-                    byteCount: UInt64(max(0, values.fileSize ?? 0)),
-                    modificationTimeNanoseconds: Int64(
-                        ((values.contentModificationDate?.timeIntervalSince1970 ?? 0)
-                            * 1_000_000_000).rounded()
-                    )
-                )
-            )
-        }
-
-        let targetQuarantine = transactionDirectory.appendingPathComponent("target-quarantine")
-        if targetMatches, let targetIdentity {
-            guard backgroundRemoveVerified(
-                targetURL,
-                quarantineURL: targetQuarantine,
-                identity: targetIdentity,
-                snapshot: journal.sourceSnapshot
-            ) else {
-                return nil
-            }
-        } else if fileManager.fileExists(atPath: targetURL.path) {
-            return nil
-        }
-        let replacementRestore: (url: URL, identity: ImportedFileIdentity?) = {
-            if fileManager.fileExists(atPath: replacementURL.path) {
-                return (replacementURL, journal.replacedTargetIdentity)
-            }
-            if fileManager.fileExists(atPath: replacementRollbackURL.path) {
-                return (
-                    replacementRollbackURL,
-                    journal.replacedRollbackIdentity
-                )
-            }
-            if fileManager.fileExists(atPath: unrecordedSelfCheckTrashURL.path) {
-                return (
-                    unrecordedSelfCheckTrashURL,
-                    journal.replacedTargetIdentity
-                )
-            }
-            return (
-                trashedReplacementURL ?? replacementURL,
-                journal.replacedTargetIdentity
-            )
-        }()
-        if let replacedSnapshot = journal.replacedTargetSnapshot,
-           let restoreIdentity = replacementRestore.identity,
-           fileManager.fileExists(atPath: replacementRestore.url.path) {
-            guard !fileManager.fileExists(atPath: targetURL.path),
-                  backgroundFileMatches(
-                    replacementRestore.url,
-                    identity: restoreIdentity,
-                    snapshot: replacedSnapshot
-                  ),
-                  CourseProjectFileWorker.renameWithoutReplacement(
-                    from: replacementRestore.url,
-                    to: targetURL
-                  ) else {
-                return nil
-            }
-        }
-        if let rollbackIdentity = journal.replacedRollbackIdentity,
-           fileManager.fileExists(atPath: replacementRollbackURL.path) {
-            let removed: Bool
-            switch journal.stage {
-            case .replacementRollbackReserved, .replacementIsolated:
-                removed = backgroundRemoveIdentityOnly(
-                    replacementRollbackURL,
-                    identity: rollbackIdentity
-                )
-            default:
-                guard let replacedSnapshot = journal.replacedTargetSnapshot else {
-                    return nil
-                }
-                removed = backgroundRemoveVerified(
-                    replacementRollbackURL,
-                    quarantineURL: transactionDirectory.appendingPathComponent(
-                        "rollback-cleanup"
-                    ),
-                    identity: rollbackIdentity,
-                    snapshot: replacedSnapshot
-                )
-            }
-            guard removed else { return nil }
-        } else if journal.stage == .replacementPreparing,
-                  fileManager.fileExists(
-                    atPath: replacementRollbackURL.path
-                  ) {
-            guard backgroundIsolateAndRemoveEmptyRegularFile(
-                replacementRollbackURL,
-                quarantineURL: transactionDirectory.appendingPathComponent(
-                    "rollback-reservation-cleanup"
-                )
-            ) else {
-                return nil
-            }
-        }
-        if let replacedIdentity = journal.replacedTargetIdentity,
-           let replacedSnapshot = journal.replacedTargetSnapshot,
-           fileManager.fileExists(atPath: unrecordedSelfCheckTrashURL.path) {
-            guard backgroundRemoveVerified(
-                unrecordedSelfCheckTrashURL,
-                quarantineURL: transactionDirectory.appendingPathComponent(
-                    "trash-cleanup"
-                ),
-                identity: replacedIdentity,
-                snapshot: replacedSnapshot
-            ) else {
-                return nil
-            }
-        }
-        if let sourcePath = journal.sourcePath,
-           let sourceIdentity = journal.sourceIdentity {
-            let sourceURL = URL(fileURLWithPath: sourcePath).standardizedFileURL
-            let quarantineURL = sourceURL.deletingLastPathComponent()
-                .appendingPathComponent(
-                    ".\(sourceURL.lastPathComponent).weibei-quarantine-\(journal.transactionID.uuidString.lowercased())"
-                )
-            if fileManager.fileExists(atPath: quarantineURL.path) {
-                guard !fileManager.fileExists(atPath: sourceURL.path),
-                      backgroundFileMatches(
-                        quarantineURL,
-                        identity: sourceIdentity,
-                        snapshot: journal.sourceSnapshot
-                      ),
-                      CourseProjectFileWorker.renameWithoutReplacement(
-                        from: quarantineURL,
-                        to: sourceURL
-                      ) else {
-                    return nil
-                }
-            }
-        }
-        let trashedReplacementIsAbsent = trashedReplacementURL.map {
-            !fileManager.fileExists(atPath: $0.path)
-        } ?? true
-        guard !fileManager.fileExists(atPath: targetQuarantine.path),
-              !fileManager.fileExists(atPath: replacementURL.path),
-              !fileManager.fileExists(atPath: replacementRollbackURL.path),
-              !fileManager.fileExists(atPath: unrecordedSelfCheckTrashURL.path),
-              trashedReplacementIsAbsent else {
-            return nil
-        }
-        backgroundCleanupTransaction(
-            transactionDirectory,
-            expectedIdentity: journal.transactionDirectoryIdentity
-        )
-        return nil
     }
+
+
+
+
 
     /// S2：旧四阶段 course-note 事务不再恢复写路径；静默清理残留事务目录。
     /// 若目标文件缺失且 original 仍在，尽力还原 original，避免用户丢文件。
-    nonisolated private static func recoverCourseMarkdownWriteTransaction(
-        at transactionDirectory: URL,
-        input: CourseRecoveryInput,
-        canonicalRoot: URL
-    ) {
-        let fileManager = FileManager.default
-        let journalURL = transactionDirectory.appendingPathComponent(
-            "course-note.json"
-        )
-        let payloadURL = transactionDirectory.appendingPathComponent("payload")
-        let originalURL = transactionDirectory.appendingPathComponent("original")
-        // 尽力解析 targetPath 并在目标缺失时还原 original。
-        if let data = try? Data(contentsOf: journalURL),
-           let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-           let targetPath = object["targetPath"] as? String {
-            let targetURL = URL(fileURLWithPath: targetPath).standardizedFileURL
-            if !fileManager.fileExists(atPath: targetURL.path),
-               fileManager.fileExists(atPath: originalURL.path) {
-                try? fileManager.moveItem(at: originalURL, to: targetURL)
-            }
-        }
-        // 静默清理事务目录内容（失败忽略）。
-        for name in ["course-note.json", "payload", "original",
-                     "replacement-cleanup", "payload-cleanup", "original-cleanup"] {
-            let entry = transactionDirectory.appendingPathComponent(name)
-            try? fileManager.removeItem(at: entry)
-        }
-        if (try? fileManager.contentsOfDirectory(
-            atPath: transactionDirectory.path
-        ).isEmpty) == true {
-            try? fileManager.removeItem(at: transactionDirectory)
-        }
-        _ = input
-        _ = canonicalRoot
-        _ = payloadURL
-    }
 
-    nonisolated private static func recoverSharedLinkRemovalTransaction(
-        at transactionDirectory: URL,
-        input: CourseRecoveryInput,
-        canonicalRoot: URL
-    ) {
-        let journalURL = transactionDirectory.appendingPathComponent(
-            "shared-link-removal.json"
-        )
-        guard let data = try? Data(contentsOf: journalURL),
-              let journal = try? JSONDecoder().decode(
-                PendingSharedLinkRemovalJournal.self,
-                from: data
-              ),
-              journal.courseID == input.courseID,
-              journal.transactionID.uuidString.caseInsensitiveCompare(
-                transactionDirectory.lastPathComponent
-              ) == .orderedSame,
-              CourseProjectFileWorker.identity(at: transactionDirectory)
-                == journal.transactionDirectoryIdentity,
-              let libraryRoot = input.libraryRoot,
-              let sharedURL = CourseProjectPathPolicy.resolvedRelativePath(
-                journal.sharedRelativePath,
-                inside: libraryRoot
-              ),
-              isKnownCommonRelativePath(
-                journal.sharedRelativePath,
-                fileName: sharedURL.lastPathComponent
-              ),
-              CourseProjectPathPolicy.isSame(
-                sharedURL,
-                URL(fileURLWithPath: journal.sharedPath).resolvingSymlinksInPath()
-              ),
-              backgroundFileMatches(
-                sharedURL,
-                identity: journal.sharedIdentity,
-                snapshot: journal.sharedSnapshot
-              ),
-              let linkURL = backgroundRawRelativeURL(
-                journal.linkRelativePath,
-                inside: canonicalRoot
-              ),
-              CourseProjectPathPolicy.isSame(
-                linkURL,
-                backgroundCanonicalRawPath(URL(fileURLWithPath: journal.linkPath))
-              ) else {
-            return
-        }
-        let membershipStillCommitted = input.memberships.contains {
-            // The persisted membership decides whether removal committed.
-            // The isolated link's inode is validated separately below.
-            $0.courseID == journal.courseID
-                && $0.itemID == journal.itemID
-                && $0.courseRelativePath == journal.linkRelativePath
-        }
-        let isolatedLinkURL = transactionDirectory.appendingPathComponent(
-            "isolated-link"
-        )
-        let linkExists = CourseProjectFileWorker.identity(at: linkURL) != nil
-        let linkMatches = backgroundLinkMatches(
-            linkURL,
-            destination: sharedURL,
-            identity: journal.linkIdentity
-        )
-        let isolatedLinkExists =
-            CourseProjectFileWorker.identity(at: isolatedLinkURL) != nil
-        let isolatedLinkMatches = backgroundLinkMatches(
-            isolatedLinkURL,
-            destination: sharedURL,
-            identity: journal.linkIdentity
-        )
-        if membershipStillCommitted {
-            if !linkExists, isolatedLinkMatches {
-                guard CourseProjectFileWorker.renameWithoutReplacement(
-                    from: isolatedLinkURL,
-                    to: linkURL
-                ) else {
-                    return
-                }
-            } else {
-                guard linkMatches, !isolatedLinkExists else { return }
-            }
-            backgroundCleanupSharedTransaction(
-                transactionDirectory,
-                expectedIdentity: journal.transactionDirectoryIdentity
-            )
-            return
-        }
-        if isolatedLinkExists {
-            guard isolatedLinkMatches,
-                  backgroundIsolateAndRemoveMatchingLink(
-                    isolatedLinkURL,
-                    quarantineURL: transactionDirectory.appendingPathComponent(
-                        "isolated-link-cleanup"
-                    ),
-                    destination: sharedURL,
-                    identity: journal.linkIdentity
-                  ) else {
-                return
-            }
-        }
-        if linkExists {
-            guard linkMatches,
-                  backgroundIsolateAndRemoveMatchingLink(
-                    linkURL,
-                    quarantineURL: transactionDirectory.appendingPathComponent(
-                        "link-cleanup"
-                    ),
-                    destination: sharedURL,
-                    identity: journal.linkIdentity
-                  ) else {
-                return
-            }
-        }
-        backgroundCleanupSharedTransaction(
-            transactionDirectory,
-            expectedIdentity: journal.transactionDirectoryIdentity
-        )
-    }
 
-    nonisolated private static func recoverSharedLinkCourseTransaction(
-        at transactionDirectory: URL,
-        input: CourseRecoveryInput,
-        canonicalRoot: URL
-    ) {
-        let journalURL = transactionDirectory.appendingPathComponent(
-            "shared-link.json"
-        )
-        guard let data = try? Data(contentsOf: journalURL),
-              let journal = try? JSONDecoder().decode(
-                PendingSharedLinkTransactionJournal.self,
-                from: data
-              ),
-              let libraryRoot = input.libraryRoot,
-              let sharedURL = CourseProjectPathPolicy.resolvedRelativePath(
-                journal.sharedRelativePath,
-                inside: libraryRoot
-              ),
-              let linkURL = backgroundRawRelativeURL(
-                journal.linkRelativePath,
-                inside: canonicalRoot
-              ) else {
-            return
-        }
-        let checks = [
-            journal.courseID == input.courseID,
-            journal.transactionID.uuidString.caseInsensitiveCompare(
-                transactionDirectory.lastPathComponent
-            ) == .orderedSame,
-            CourseProjectFileWorker.identity(at: transactionDirectory)
-                == journal.transactionDirectoryIdentity,
-            CourseProjectPathPolicy.isSame(
-                sharedURL,
-                URL(fileURLWithPath: journal.sharedPath)
-                    .resolvingSymlinksInPath()
-            ),
-            isKnownCommonRelativePath(
-                journal.sharedRelativePath,
-                fileName: sharedURL.lastPathComponent
-            ),
-            CourseProjectPathPolicy.isSame(
-                linkURL,
-                backgroundCanonicalRawPath(
-                    URL(fileURLWithPath: journal.linkPath)
-                )
-            ),
-        ]
-        guard checks.allSatisfy({ $0 }) else { return }
-        let sharedMatches = backgroundFileMatches(
-            sharedURL,
-            identity: journal.sharedIdentity,
-            snapshot: journal.sharedSnapshot
-        )
-        let preparedLinkURL = transactionDirectory.appendingPathComponent(
-            "prepared-link"
-        )
-        let committedItem = input.importedItems.first {
-            guard $0.id == journal.itemID,
-                  $0.importedFileIdentity == journal.sharedIdentity else {
-                return false
-            }
-            if case .shared(let relativePath) = $0.storage {
-                return relativePath == journal.sharedRelativePath
-            }
-            return false
-        }
-        let committedMembership = input.memberships.first {
-            $0.courseID == journal.courseID
-                && $0.itemID == journal.itemID
-                && $0.courseRelativePath == journal.linkRelativePath
-        }
-        let expectedLinkIdentity = journal.linkIdentity
-            ?? committedMembership?.entryIdentity
-        let linkMatches = expectedLinkIdentity.map {
-            backgroundLinkMatches(
-                linkURL,
-                destination: sharedURL,
-                identity: $0
-            )
-        } ?? false
-        if committedItem != nil,
-           committedMembership?.entryIdentity == expectedLinkIdentity,
-           sharedMatches,
-           linkMatches {
-            backgroundCleanupSharedTransaction(
-                transactionDirectory,
-                expectedIdentity: journal.transactionDirectoryIdentity
-            )
-            return
-        }
 
-        guard committedMembership == nil else {
-            return
-        }
-        if linkMatches {
-            guard let expectedLinkIdentity,
-                  backgroundIsolateAndRemoveMatchingLink(
-                    linkURL,
-                    quarantineURL: transactionDirectory.appendingPathComponent(
-                        "link-cleanup"
-                    ),
-                    destination: sharedURL,
-                    identity: expectedLinkIdentity
-                  ) else {
-                return
-            }
-        } else if CourseProjectFileWorker.identity(at: linkURL) != nil {
-            return
-        }
-        if CourseProjectFileWorker.identity(at: preparedLinkURL) != nil {
-            let removed = expectedLinkIdentity.map {
-                backgroundIsolateAndRemoveMatchingLink(
-                    preparedLinkURL,
-                    quarantineURL: transactionDirectory.appendingPathComponent(
-                        "prepared-link-cleanup"
-                    ),
-                    destination: sharedURL,
-                    identity: $0
-                )
-            } ?? backgroundIsolateAndRemoveUnrecordedPreparedLink(
-                preparedLinkURL,
-                quarantineURL: transactionDirectory.appendingPathComponent(
-                    "prepared-link-cleanup"
-                ),
-                destination: sharedURL
-            )
-            guard removed else {
-                return
-            }
-        }
-        backgroundCleanupSharedTransaction(
-            transactionDirectory,
-            expectedIdentity: journal.transactionDirectoryIdentity
-        )
-    }
-
-    nonisolated private static func recoverSharedCourseTransaction(
-        at transactionDirectory: URL,
-        input: CourseRecoveryInput,
-        canonicalRoot: URL
-    ) {
-        let fileManager = FileManager.default
-        let journalURL = transactionDirectory.appendingPathComponent("shared.json")
-        guard let data = try? Data(contentsOf: journalURL),
-              let journal = try? JSONDecoder().decode(
-                PendingSharedFileTransactionJournal.self,
-                from: data
-              ),
-              journal.ownerCourseID == input.courseID,
-              journal.transactionID.uuidString.caseInsensitiveCompare(
-                transactionDirectory.lastPathComponent
-              ) == .orderedSame,
-              CourseProjectFileWorker.identity(at: transactionDirectory)
-                == journal.transactionDirectoryIdentity,
-              let libraryRoot = input.libraryRoot,
-              let addedRoot = input.courseRootsByID[journal.addedCourseID],
-              let expectedSource = backgroundRawRelativeURL(
-                journal.sourceRelativePath,
-                inside: canonicalRoot
-              ),
-              CourseProjectPathPolicy.isSame(
-                expectedSource,
-                backgroundCanonicalRawPath(
-                    URL(fileURLWithPath: journal.sourcePath)
-                )
-              ),
-              let expectedAddedLink = backgroundRawRelativeURL(
-                journal.addedLinkRelativePath,
-                inside: addedRoot
-              ),
-              CourseProjectPathPolicy.isSame(
-                expectedAddedLink,
-                backgroundCanonicalRawPath(
-                    URL(fileURLWithPath: journal.addedLinkPath)
-                )
-              ),
-              let expectedShared = CourseProjectPathPolicy.resolvedRelativePath(
-                journal.sharedRelativePath,
-                inside: libraryRoot
-              ),
-              CourseProjectPathPolicy.isSame(
-                expectedShared,
-                URL(fileURLWithPath: journal.sharedPath)
-                    .resolvingSymlinksInPath()
-              ),
-              isKnownCommonRelativePath(
-                journal.sharedRelativePath,
-                fileName: expectedShared.lastPathComponent
-              ) else {
-            return
-        }
-        let sourceURL = expectedSource
-        let addedLinkURL = expectedAddedLink
-        let sharedURL = expectedShared
-        let expectedSharedPayloadURL = sharedURL.deletingLastPathComponent()
-            .appendingPathComponent(
-                ".\(sharedURL.lastPathComponent).weibei-share-stage-\(journal.transactionID.uuidString.lowercased())"
-            )
-        let sharedPayloadURL: URL
-        if let sharedPayloadPath = journal.sharedPayloadPath {
-            guard CourseProjectPathPolicy.isSame(
-                expectedSharedPayloadURL,
-                backgroundCanonicalRawPath(
-                    URL(fileURLWithPath: sharedPayloadPath)
-                )
-            ) else {
-                return
-            }
-            sharedPayloadURL = expectedSharedPayloadURL
-        } else {
-            sharedPayloadURL = transactionDirectory.appendingPathComponent(
-                "payload"
-            )
-        }
-        let sourceQuarantineURL = backgroundCanonicalRawPath(
-            URL(fileURLWithPath: journal.sourceQuarantinePath)
-        )
-        let preparedOwnerLinkURL = transactionDirectory.appendingPathComponent(
-            "prepared-owner-link"
-        )
-        let preparedAddedLinkURL = transactionDirectory.appendingPathComponent(
-            "prepared-added-link"
-        )
-        let sharedMatches = journal.sharedIdentity.map {
-            backgroundFileMatches(
-                sharedURL,
-                identity: $0,
-                snapshot: journal.sourceSnapshot
-            )
-        } ?? false
-        let ownerLinkMatches = journal.ownerLinkIdentity.map {
-            backgroundLinkMatches(
-                sourceURL,
-                destination: sharedURL,
-                identity: $0
-            )
-        } ?? false
-        let addedLinkMatches = journal.addedLinkIdentity.map {
-            backgroundLinkMatches(
-                addedLinkURL,
-                destination: sharedURL,
-                identity: $0
-            )
-        } ?? false
-        let itemCommitted = input.importedItems.contains {
-            guard $0.id == journal.itemID,
-                  $0.importedFileIdentity == journal.sharedIdentity,
-                  $0.contentDigest == journal.sourceSnapshot.sha256 else {
-                return false
-            }
-            if case .shared(let relativePath) = $0.storage {
-                return relativePath == journal.sharedRelativePath
-            }
-            return false
-        }
-        let ownerMembershipCommitted = input.memberships.contains {
-            // The membership is durable commit evidence. Its physical link
-            // identity may legitimately disappear after the workspace save.
-            $0.courseID == journal.ownerCourseID
-                && $0.itemID == journal.itemID
-                && $0.courseRelativePath == journal.sourceRelativePath
-        }
-        let addedMembershipCommitted = input.memberships.contains {
-            $0.courseID == journal.addedCourseID
-                && $0.itemID == journal.itemID
-                && $0.courseRelativePath == journal.addedLinkRelativePath
-        }
-        if itemCommitted,
-           ownerMembershipCommitted,
-           addedMembershipCommitted {
-            guard sharedMatches else {
-                return
-            }
-            if CourseProjectFileWorker.identity(at: sharedPayloadURL) != nil {
-                guard let sharedIdentity = journal.sharedIdentity,
-                      backgroundRemoveVerified(
-                        sharedPayloadURL,
-                        quarantineURL: sharedPayloadURL
-                            .deletingLastPathComponent()
-                            .appendingPathComponent(
-                                ".\(sharedPayloadURL.lastPathComponent).weibei-cleanup-\(UUID().uuidString.lowercased())"
-                            ),
-                        identity: sharedIdentity,
-                        snapshot: journal.sourceSnapshot
-                      ) else {
-                    return
-                }
-            }
-            if CourseProjectFileWorker.identity(at: sourceQuarantineURL) != nil {
-                guard backgroundRemoveVerified(
-                    sourceQuarantineURL,
-                    quarantineURL: sourceQuarantineURL
-                        .deletingLastPathComponent()
-                        .appendingPathComponent(
-                            ".\(sourceQuarantineURL.lastPathComponent).weibei-cleanup-\(UUID().uuidString.lowercased())"
-                        ),
-                    identity: journal.sourceIdentity,
-                    snapshot: journal.sourceSnapshot
-                ) else {
-                    return
-                }
-            }
-            backgroundCleanupSharedTransaction(
-                transactionDirectory,
-                expectedIdentity: journal.transactionDirectoryIdentity
-            )
-            return
-        }
-
-        if addedLinkMatches {
-            guard let addedLinkIdentity = journal.addedLinkIdentity,
-                  backgroundIsolateAndRemoveMatchingLink(
-                    addedLinkURL,
-                    quarantineURL: transactionDirectory.appendingPathComponent(
-                        "added-link-cleanup"
-                    ),
-                    destination: sharedURL,
-                    identity: addedLinkIdentity
-                  ) else {
-                return
-            }
-        } else if fileManager.fileExists(atPath: addedLinkURL.path) {
-            return
-        }
-        if ownerLinkMatches {
-            guard let ownerLinkIdentity = journal.ownerLinkIdentity,
-                  backgroundIsolateAndRemoveMatchingLink(
-                    sourceURL,
-                    quarantineURL: transactionDirectory.appendingPathComponent(
-                        "owner-link-cleanup"
-                    ),
-                    destination: sharedURL,
-                    identity: ownerLinkIdentity
-                  ) else {
-                return
-            }
-        } else if fileManager.fileExists(atPath: sourceURL.path) {
-            guard backgroundFileMatches(
-                sourceURL,
-                identity: journal.sourceIdentity,
-                snapshot: journal.sourceSnapshot
-            ) else {
-                return
-            }
-        }
-        if CourseProjectFileWorker.identity(at: preparedAddedLinkURL) != nil {
-            let removed = journal.addedLinkIdentity.map {
-                backgroundIsolateAndRemoveMatchingLink(
-                    preparedAddedLinkURL,
-                    quarantineURL: transactionDirectory.appendingPathComponent(
-                        "prepared-added-link-cleanup"
-                    ),
-                    destination: sharedURL,
-                    identity: $0
-                )
-            } ?? backgroundIsolateAndRemoveUnrecordedPreparedLink(
-                preparedAddedLinkURL,
-                quarantineURL: transactionDirectory.appendingPathComponent(
-                    "prepared-added-link-cleanup"
-                ),
-                destination: sharedURL
-            )
-            guard removed else {
-                return
-            }
-        }
-        if CourseProjectFileWorker.identity(at: preparedOwnerLinkURL) != nil {
-            let removed = journal.ownerLinkIdentity.map {
-                backgroundIsolateAndRemoveMatchingLink(
-                    preparedOwnerLinkURL,
-                    quarantineURL: transactionDirectory.appendingPathComponent(
-                        "prepared-owner-link-cleanup"
-                    ),
-                    destination: sharedURL,
-                    identity: $0
-                )
-            } ?? backgroundIsolateAndRemoveUnrecordedPreparedLink(
-                preparedOwnerLinkURL,
-                quarantineURL: transactionDirectory.appendingPathComponent(
-                    "prepared-owner-link-cleanup"
-                ),
-                destination: sharedURL
-            )
-            guard removed else {
-                return
-            }
-        }
-        if sharedMatches, let sharedIdentity = journal.sharedIdentity {
-            guard backgroundRemoveVerified(
-                sharedURL,
-                quarantineURL: sharedURL.deletingLastPathComponent()
-                    .appendingPathComponent(
-                        ".\(sharedURL.lastPathComponent).weibei-cleanup-\(UUID().uuidString.lowercased())"
-                    ),
-                identity: sharedIdentity,
-                snapshot: journal.sourceSnapshot
-            ) else {
-                return
-            }
-        } else if fileManager.fileExists(atPath: sharedURL.path) {
-            return
-        }
-        if CourseProjectFileWorker.identity(at: sharedPayloadURL) != nil {
-            guard let sharedIdentity = journal.sharedIdentity,
-                  backgroundRemoveVerified(
-                    sharedPayloadURL,
-                    quarantineURL: sharedPayloadURL.deletingLastPathComponent()
-                        .appendingPathComponent(
-                            ".\(sharedPayloadURL.lastPathComponent).weibei-cleanup-\(UUID().uuidString.lowercased())"
-                        ),
-                    identity: sharedIdentity,
-                    snapshot: journal.sourceSnapshot
-                  ) else {
-                return
-            }
-        }
-        if fileManager.fileExists(atPath: sourceQuarantineURL.path) {
-            guard !fileManager.fileExists(atPath: sourceURL.path),
-                  backgroundFileMatches(
-                    sourceQuarantineURL,
-                    identity: journal.sourceIdentity,
-                    snapshot: journal.sourceSnapshot
-                  ),
-                  CourseProjectFileWorker.renameWithoutReplacement(
-                    from: sourceQuarantineURL,
-                    to: sourceURL
-                  ) else {
-                return
-            }
-        }
-        backgroundCleanupSharedTransaction(
-            transactionDirectory,
-            expectedIdentity: journal.transactionDirectoryIdentity
-        )
-    }
 
     nonisolated private static func backgroundLinkMatches(
         _ linkURL: URL,
@@ -6851,82 +5394,8 @@ final class WorkspaceStore: ObservableObject {
             && components[1] == Substring(fileName)
     }
 
-    nonisolated private static func backgroundIsolateAndRemoveMatchingLink(
-        _ linkURL: URL,
-        quarantineURL: URL,
-        destination: URL,
-        identity: ImportedFileIdentity
-    ) -> Bool {
-        guard CourseProjectFileWorker.identity(at: quarantineURL) == nil,
-              CourseProjectFileWorker.renameWithoutReplacement(
-                from: linkURL,
-                to: quarantineURL
-              ) else {
-            return false
-        }
-        guard backgroundLinkMatches(
-            quarantineURL,
-            destination: destination,
-            identity: identity
-        ) else {
-            _ = CourseProjectFileWorker.renameWithoutReplacement(
-                from: quarantineURL,
-                to: linkURL
-            )
-            return false
-        }
-        try? FileManager.default.removeItem(at: quarantineURL)
-        return CourseProjectFileWorker.identity(at: quarantineURL) == nil
-    }
 
-    nonisolated private static func backgroundIsolateAndRemoveUnrecordedPreparedLink(
-        _ linkURL: URL,
-        quarantineURL: URL,
-        destination: URL
-    ) -> Bool {
-        guard CourseProjectFileWorker.isSymbolicLink(at: linkURL),
-              CourseProjectFileWorker.symbolicLink(
-                at: linkURL,
-                pointsTo: destination
-              ),
-              let identity = CourseProjectFileWorker.identity(at: linkURL) else {
-            return false
-        }
-        return backgroundIsolateAndRemoveMatchingLink(
-            linkURL,
-            quarantineURL: quarantineURL,
-            destination: destination,
-            identity: identity
-        )
-    }
 
-    nonisolated private static func backgroundIsolateAndRemoveEmptyRegularFile(
-        _ url: URL,
-        quarantineURL: URL
-    ) -> Bool {
-        guard CourseProjectFileWorker.identity(at: quarantineURL) == nil,
-              CourseProjectFileWorker.renameWithoutReplacement(
-                from: url,
-                to: quarantineURL
-              ) else {
-            return false
-        }
-        let validReservation = !CourseProjectFileWorker.isSymbolicLink(
-            at: quarantineURL
-        )
-            && ((try? CourseProjectFileWorker.snapshotFile(
-                at: quarantineURL
-            ))?.byteCount == 0)
-        guard validReservation else {
-            _ = CourseProjectFileWorker.renameWithoutReplacement(
-                from: quarantineURL,
-                to: url
-            )
-            return false
-        }
-        try? FileManager.default.removeItem(at: quarantineURL)
-        return CourseProjectFileWorker.identity(at: quarantineURL) == nil
-    }
 
     nonisolated private static func backgroundRawRelativeURL(
         _ relativePath: String,
@@ -6950,569 +5419,15 @@ final class WorkspaceStore: ObservableObject {
         return candidate
     }
 
-    nonisolated private static func backgroundCanonicalRawPath(_ url: URL) -> URL {
-        url.deletingLastPathComponent()
-            .resolvingSymlinksInPath()
-            .appendingPathComponent(url.lastPathComponent, isDirectory: false)
-            .standardizedFileURL
-    }
 
-    nonisolated private static func backgroundCleanupSharedTransaction(
-        _ transactionDirectory: URL,
-        expectedIdentity: ImportedFileIdentity
-    ) {
-        let fileManager = FileManager.default
-        guard CourseProjectFileWorker.identity(at: transactionDirectory) == expectedIdentity,
-              let entries = try? fileManager.contentsOfDirectory(
-                at: transactionDirectory,
-                includingPropertiesForKeys: [
-                    .isRegularFileKey,
-                    .isSymbolicLinkKey,
-                    .isAliasFileKey,
-                ],
-                options: []
-              ),
-              entries.allSatisfy({
-                [
-                    "shared.json",
-                    "shared-link.json",
-                    "shared-link-removal.json",
-                    "payload",
-                ]
-                    .contains($0.lastPathComponent)
-              }) else {
-            return
-        }
-        for entry in entries {
-            guard let values = try? entry.resourceValues(forKeys: [
-                .isRegularFileKey,
-                .isSymbolicLinkKey,
-                .isAliasFileKey,
-            ]),
-            values.isRegularFile == true,
-            values.isSymbolicLink != true,
-            values.isAliasFile != true else {
-                return
-            }
-        }
-        for entry in entries {
-            try? fileManager.removeItem(at: entry)
-        }
-        if (try? fileManager.contentsOfDirectory(
-            atPath: transactionDirectory.path
-        ).isEmpty) == true {
-            try? fileManager.removeItem(at: transactionDirectory)
-        }
-    }
 
-    nonisolated private static func backgroundTargetURL(
-        journal: PendingCourseFileTransactionJournal,
-        root: URL
-    ) -> URL? {
-        let components = journal.targetRelativePath
-            .split(separator: "/", omittingEmptySubsequences: true)
-            .map(String.init)
-        guard !components.isEmpty,
-              components.first != ".weibei",
-              !components.contains("."),
-              !components.contains("..") else {
-            return nil
-        }
-        let target = components.reduce(root) { $0.appendingPathComponent($1) }
-        let parent = target.deletingLastPathComponent()
-        guard let canonicalParent = try? CourseProjectPathPolicy.existingDirectory(parent),
-              CourseProjectPathPolicy.isSame(parent, canonicalParent),
-              CourseProjectPathPolicy.contains(root, canonicalParent, includingRoot: false),
-              CourseProjectFileWorker.identity(at: canonicalParent)
-                == journal.destinationDirectoryIdentity else {
-            return nil
-        }
-        return target.standardizedFileURL
-    }
 
-    nonisolated private static func backgroundFileMatches(
-        _ url: URL,
-        identity: ImportedFileIdentity,
-        snapshot: CourseFileSnapshot
-    ) -> Bool {
-        CourseProjectPathPolicy.isSame(url, url.resolvingSymlinksInPath())
-            && CourseProjectFileWorker.identity(at: url) == identity
-            && (try? CourseProjectFileWorker.snapshotFile(at: url)) == snapshot
-            && CourseProjectFileWorker.identity(at: url) == identity
-    }
 
-    nonisolated private static func backgroundRemoveVerified(
-        _ originalURL: URL,
-        quarantineURL: URL,
-        identity: ImportedFileIdentity,
-        snapshot: CourseFileSnapshot
-    ) -> Bool {
-        let fileManager = FileManager.default
-        guard backgroundFileMatches(originalURL, identity: identity, snapshot: snapshot),
-              !fileManager.fileExists(atPath: quarantineURL.path),
-              CourseProjectFileWorker.renameWithoutReplacement(
-                from: originalURL,
-                to: quarantineURL
-              ) else {
-            return false
-        }
-        guard backgroundFileMatches(
-            quarantineURL,
-            identity: identity,
-            snapshot: snapshot
-        ) else {
-            _ = CourseProjectFileWorker.renameWithoutReplacement(
-                from: quarantineURL,
-                to: originalURL
-            )
-            return false
-        }
-        do {
-            try fileManager.removeItem(at: quarantineURL)
-            return !fileManager.fileExists(atPath: quarantineURL.path)
-        } catch {
-            _ = CourseProjectFileWorker.renameWithoutReplacement(
-                from: quarantineURL,
-                to: originalURL
-            )
-            return false
-        }
-    }
 
-    nonisolated private static func backgroundRemoveIdentityOnly(
-        _ url: URL,
-        identity: ImportedFileIdentity
-    ) -> Bool {
-        let fileManager = FileManager.default
-        guard CourseProjectFileWorker.identity(at: url) == identity,
-              !CourseProjectFileWorker.isSymbolicLink(at: url),
-              let values = try? url.resourceValues(forKeys: [.isRegularFileKey]),
-              values.isRegularFile == true else {
-            return false
-        }
-        do {
-            try fileManager.removeItem(at: url)
-            return CourseProjectFileWorker.identity(at: url) == nil
-        } catch {
-            return false
-        }
-    }
 
-    nonisolated private static func backgroundCleanupTransaction(
-        _ transactionDirectory: URL,
-        expectedIdentity: ImportedFileIdentity
-    ) {
-        let fileManager = FileManager.default
-        guard CourseProjectFileWorker.identity(at: transactionDirectory) == expectedIdentity,
-              let entries = try? fileManager.contentsOfDirectory(
-                at: transactionDirectory,
-                includingPropertiesForKeys: [
-                    .isRegularFileKey,
-                    .isSymbolicLinkKey,
-                    .isAliasFileKey,
-                ],
-                options: []
-              ),
-              entries.allSatisfy({
-                ["journal.json", "payload"].contains($0.lastPathComponent)
-              }) else {
-            return
-        }
-        for entry in entries {
-            guard let values = try? entry.resourceValues(forKeys: [
-                .isRegularFileKey,
-                .isSymbolicLinkKey,
-                .isAliasFileKey,
-            ]),
-            values.isRegularFile == true,
-            values.isSymbolicLink != true,
-            values.isAliasFile != true else {
-                return
-            }
-        }
-        for entry in entries {
-            try? fileManager.removeItem(at: entry)
-        }
-        if (try? fileManager.contentsOfDirectory(
-            atPath: transactionDirectory.path
-        ).isEmpty) == true {
-            try? fileManager.removeItem(at: transactionDirectory)
-        }
-    }
 
-    nonisolated private static func backgroundCleanupCourseMarkdownTransaction(
-        _ transactionDirectory: URL,
-        expectedIdentity: ImportedFileIdentity
-    ) {
-        let fileManager = FileManager.default
-        guard CourseProjectFileWorker.identity(at: transactionDirectory)
-                == expectedIdentity,
-              let entries = try? fileManager.contentsOfDirectory(
-                at: transactionDirectory,
-                includingPropertiesForKeys: [
-                    .isRegularFileKey,
-                    .isSymbolicLinkKey,
-                    .isAliasFileKey,
-                ],
-                options: []
-              ),
-              entries.allSatisfy({
-                ["course-note.json", "payload"]
-                    .contains($0.lastPathComponent)
-              }) else {
-            return
-        }
-        for entry in entries {
-            guard let values = try? entry.resourceValues(forKeys: [
-                .isRegularFileKey,
-                .isSymbolicLinkKey,
-                .isAliasFileKey,
-            ]),
-            values.isRegularFile == true,
-            values.isSymbolicLink != true,
-            values.isAliasFile != true else {
-                return
-            }
-        }
-        for entry in entries {
-            try? fileManager.removeItem(at: entry)
-        }
-        if (try? fileManager.contentsOfDirectory(
-            atPath: transactionDirectory.path
-        ).isEmpty) == true {
-            try? fileManager.removeItem(at: transactionDirectory)
-        }
-    }
 
-    private func recoverPendingCourseFileTransactions() {
-        for course in courses {
-            guard let root = courseRootURL(for: course.id),
-                  let canonicalRoot = try? CourseProjectPathPolicy.existingDirectory(root),
-                  let metadata = try? realCourseOwnedDirectory(
-                    canonicalRoot.appendingPathComponent(".weibei", isDirectory: true),
-                    inside: canonicalRoot,
-                    createIfMissing: false
-                  ),
-                  let transactions = try? realCourseOwnedDirectory(
-                    metadata.appendingPathComponent("transactions", isDirectory: true),
-                    inside: metadata,
-                    createIfMissing: false
-                  ),
-                  let transactionDirectories = try? FileManager.default.contentsOfDirectory(
-                    at: transactions,
-                    includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey],
-                    options: [.skipsHiddenFiles]
-                  ) else {
-                continue
-            }
-            for rawTransactionDirectory in transactionDirectories {
-                guard UUID(uuidString: rawTransactionDirectory.lastPathComponent) != nil,
-                      let transactionDirectory = try? realCourseOwnedDirectory(
-                        rawTransactionDirectory,
-                        inside: transactions,
-                        createIfMissing: false
-                      ) else {
-                    continue
-                }
-                recoverPendingCourseFileTransaction(
-                    at: transactionDirectory,
-                    courseID: course.id,
-                    root: canonicalRoot
-                )
-            }
-        }
-    }
 
-    private func recoverPendingCourseFileTransaction(
-        at transactionDirectory: URL,
-        courseID: UUID,
-        root: URL
-    ) {
-        if FileManager.default.fileExists(
-            atPath: transactionDirectory.appendingPathComponent(
-                "course-note.json"
-            ).path
-        ) {
-            let courseRootsByID = Dictionary(
-                uniqueKeysWithValues: courses.compactMap { course in
-                    courseRootURL(for: course.id).map {
-                        (course.id, $0)
-                    }
-                }
-            )
-            Self.recoverCourseMarkdownWriteTransaction(
-                at: transactionDirectory,
-                input: CourseRecoveryInput(
-                    courseID: courseID,
-                    root: root,
-                    libraryRoot: courseLibraryRootURL,
-                    courseRootsByID: courseRootsByID,
-                    importedItems: importedItems,
-                    memberships: courseItemMemberships
-                ),
-                canonicalRoot: root
-            )
-            return
-        }
-        let journalURL = transactionDirectory.appendingPathComponent("journal.json")
-        guard let data = try? Data(contentsOf: journalURL),
-              var journal = try? JSONDecoder().decode(
-                PendingCourseFileTransactionJournal.self,
-                from: data
-              ),
-              journal.transactionID.uuidString.caseInsensitiveCompare(
-                transactionDirectory.lastPathComponent
-              ) == .orderedSame,
-              journal.courseID == courseID,
-              importedFileIdentityResolver(transactionDirectory) == journal.transactionDirectoryIdentity,
-              let destinationDirectory = try? realCourseOwnedDirectory(
-                root.appendingPathComponent(journal.role.directoryName, isDirectory: true),
-                inside: root,
-                createIfMissing: false
-              ) else {
-            return
-        }
-        let targetComponents = journal.targetRelativePath
-            .split(separator: "/", omittingEmptySubsequences: true)
-            .map(String.init)
-        guard targetComponents.count == 2,
-              targetComponents.first == journal.role.directoryName,
-              importedFileIdentityResolver(destinationDirectory) == journal.destinationDirectoryIdentity else {
-            return
-        }
-        let targetURL = destinationDirectory
-            .appendingPathComponent(targetComponents[1], isDirectory: false)
-            .standardizedFileURL
-        let targetQuarantineURL = transactionDirectory
-            .appendingPathComponent("target-quarantine", isDirectory: false)
-
-        let expectedTargetIdentity = journal.targetIdentity ?? journal.stagedIdentity
-        func targetMatchesExpectedFile() -> Bool {
-            guard let expectedTargetIdentity else { return false }
-            return CourseProjectPathPolicy.isSame(
-                targetURL,
-                targetURL.resolvingSymlinksInPath()
-            )
-                && importedFileIdentityResolver(targetURL) == expectedTargetIdentity
-                && (try? courseFileSnapshot(at: targetURL)) == journal.sourceSnapshot
-        }
-        var targetMatches = targetMatchesExpectedFile()
-        let item = importedItems.first { item in
-            guard item.id == journal.itemID,
-                  item.contentDigest == journal.sourceSnapshot.sha256,
-                  item.importedFileIdentity == expectedTargetIdentity,
-                  item.isNotebookNote == (journal.role == .note) else {
-                return false
-            }
-            if case .courseOwned(let ownerCourseID) = item.storage {
-                return ownerCourseID == courseID
-            }
-            return false
-        }
-        let membership = courseItemMemberships.first {
-            $0.courseID == courseID
-                && $0.itemID == journal.itemID
-                && $0.courseRelativePath == journal.targetRelativePath
-                && $0.entryIdentity == expectedTargetIdentity
-        }
-        let workspaceCommitted = item != nil && membership != nil && targetMatches
-
-        if workspaceCommitted {
-            var cleanupPending = false
-            if let sourcePath = journal.sourcePath,
-               let sourceIdentity = journal.sourceIdentity {
-                let sourceURL = URL(fileURLWithPath: sourcePath).standardizedFileURL
-                let expectedSourceQuarantineURL = sourceURL
-                    .deletingLastPathComponent()
-                    .appendingPathComponent(
-                        ".\(sourceURL.lastPathComponent).weibei-quarantine-\(journal.transactionID.uuidString.lowercased())",
-                        isDirectory: false
-                    )
-                if let recordedPath = journal.sourceQuarantinePath,
-                   !CourseProjectPathPolicy.isSame(
-                    URL(fileURLWithPath: recordedPath),
-                    expectedSourceQuarantineURL
-                   ) {
-                    cleanupPending = true
-                } else {
-                    journal.sourceQuarantinePath = expectedSourceQuarantineURL.path
-                    try? writeCourseFileTransactionJournal(journal, to: journalURL)
-                }
-                let sourceExists = FileManager.default.fileExists(atPath: sourceURL.path)
-                let quarantineExists = FileManager.default.fileExists(
-                    atPath: expectedSourceQuarantineURL.path
-                )
-                if sourceExists && quarantineExists {
-                    cleanupPending = true
-                } else if !cleanupPending, quarantineExists {
-                    do {
-                        _ = try stableCourseFileSnapshot(
-                            at: expectedSourceQuarantineURL,
-                            expectedIdentity: sourceIdentity,
-                            expectedSnapshot: journal.sourceSnapshot
-                        )
-                        guard atomicRenameWithoutReplacement(
-                            from: expectedSourceQuarantineURL,
-                            to: sourceURL
-                        ) else {
-                            throw CourseOwnedFileError.sourceIdentityChanged
-                        }
-                    } catch {
-                        cleanupPending = true
-                    }
-                }
-                if !cleanupPending,
-                   FileManager.default.fileExists(atPath: sourceURL.path) {
-                    do {
-                        _ = try validatedCourseImportSource(sourceURL)
-                        _ = try stableCourseFileSnapshot(
-                            at: sourceURL,
-                            expectedIdentity: sourceIdentity,
-                            expectedSnapshot: journal.sourceSnapshot
-                        )
-                        let removalOutcome = atomicallyIsolateAndRemoveCourseFile(
-                            at: sourceURL,
-                            quarantineURL: expectedSourceQuarantineURL,
-                            expectedIdentity: sourceIdentity,
-                            expectedSnapshot: journal.sourceSnapshot,
-                            remover: courseFileSourceRemover
-                        )
-                        guard case .removed = removalOutcome else {
-                            throw CourseOwnedFileError.sourceIdentityChanged
-                        }
-                    } catch {
-                        cleanupPending = true
-                    }
-                }
-            } else if journal.sourcePath != nil
-                        || journal.sourceIdentity != nil
-                        || journal.sourceQuarantinePath != nil {
-                cleanupPending = true
-            }
-            if !cleanupPending {
-                safelyRemoveCourseFileTransactionDirectory(
-                    transactionDirectory,
-                    expectedIdentity: journal.transactionDirectoryIdentity
-                )
-            }
-            return
-        }
-
-        guard let sourcePath = journal.sourcePath,
-              let sourceIdentity = journal.sourceIdentity else {
-            return
-        }
-        let sourceURL = URL(fileURLWithPath: sourcePath).standardizedFileURL
-        let expectedSourceQuarantineURL = sourceURL
-            .deletingLastPathComponent()
-            .appendingPathComponent(
-                ".\(sourceURL.lastPathComponent).weibei-quarantine-\(journal.transactionID.uuidString.lowercased())",
-                isDirectory: false
-            )
-        guard journal.sourceQuarantinePath.map({
-            CourseProjectPathPolicy.isSame(
-                URL(fileURLWithPath: $0),
-                expectedSourceQuarantineURL
-            )
-        }) ?? true else {
-            return
-        }
-        journal.sourceQuarantinePath = expectedSourceQuarantineURL.path
-        try? writeCourseFileTransactionJournal(journal, to: journalURL)
-
-        let sourceExists = FileManager.default.fileExists(atPath: sourceURL.path)
-        let sourceQuarantineExists = FileManager.default.fileExists(
-            atPath: expectedSourceQuarantineURL.path
-        )
-        if sourceExists && sourceQuarantineExists {
-            return
-        }
-        if sourceQuarantineExists {
-            guard !sourceExists,
-                  (try? validatedCourseImportSource(expectedSourceQuarantineURL)) != nil,
-                  (try? stableCourseFileSnapshot(
-                    at: expectedSourceQuarantineURL,
-                    expectedIdentity: sourceIdentity,
-                    expectedSnapshot: journal.sourceSnapshot
-                  )) != nil,
-                  case .restored = restoreIsolatedCourseFile(
-                    from: expectedSourceQuarantineURL,
-                    to: sourceURL
-                  ) else {
-                return
-            }
-        }
-        guard (try? validatedCourseImportSource(sourceURL)) != nil,
-              atomicallyIsolateVerifiedCourseFile(
-                at: sourceURL,
-                quarantineURL: expectedSourceQuarantineURL,
-                expectedIdentity: sourceIdentity,
-                expectedSnapshot: journal.sourceSnapshot
-              ) else {
-            return
-        }
-
-        if FileManager.default.fileExists(atPath: targetQuarantineURL.path) {
-            guard !FileManager.default.fileExists(atPath: targetURL.path),
-                  let expectedTargetIdentity,
-                  (try? stableCourseFileSnapshot(
-                    at: targetQuarantineURL,
-                    expectedIdentity: expectedTargetIdentity,
-                    expectedSnapshot: journal.sourceSnapshot
-                  )) != nil,
-                  atomicRenameWithoutReplacement(
-                    from: targetQuarantineURL,
-                    to: targetURL
-                  ) else {
-                _ = restoreIsolatedCourseFile(
-                    from: expectedSourceQuarantineURL,
-                    to: sourceURL
-                )
-                return
-            }
-            targetMatches = targetMatchesExpectedFile()
-        }
-        if targetMatches, let expectedTargetIdentity {
-            let removalOutcome = atomicallyIsolateAndRemoveCourseFile(
-                at: targetURL,
-                quarantineURL: targetQuarantineURL,
-                expectedIdentity: expectedTargetIdentity,
-                expectedSnapshot: journal.sourceSnapshot,
-                remover: { try FileManager.default.removeItem(at: $0) }
-            )
-            guard case .removed = removalOutcome else {
-                _ = restoreIsolatedCourseFile(
-                    from: expectedSourceQuarantineURL,
-                    to: sourceURL
-                )
-                return
-            }
-        } else if FileManager.default.fileExists(atPath: targetURL.path) {
-            _ = restoreIsolatedCourseFile(
-                from: expectedSourceQuarantineURL,
-                to: sourceURL
-            )
-            return
-        }
-        guard !FileManager.default.fileExists(atPath: targetURL.path),
-              !FileManager.default.fileExists(atPath: targetQuarantineURL.path) else {
-            _ = restoreIsolatedCourseFile(
-                from: expectedSourceQuarantineURL,
-                to: sourceURL
-            )
-            return
-        }
-        guard case .restored = restoreIsolatedCourseFile(
-            from: expectedSourceQuarantineURL,
-            to: sourceURL
-        ) else {
-            return
-        }
-        safelyRemoveCourseFileTransactionDirectory(
-            transactionDirectory,
-            expectedIdentity: journal.transactionDirectoryIdentity
-        )
-    }
 
     private func transactionDirectoryFingerprint(
         at root: URL
@@ -8192,27 +6107,10 @@ final class WorkspaceStore: ObservableObject {
             throw CourseRemovalError.courseRootUnavailable
         }
 
-        var journal = PendingCourseRemovalJournal(
-            transactionID: transactionID,
-            courseID: courseID,
-            expectedCourse: prepared.course,
-            rootPath: root.path,
-            rootIdentity: rootIdentity,
-            isolationPath: root.deletingLastPathComponent()
-                .appendingPathComponent(
-                    ".weibei-course-removal-\(transactionID.uuidString.lowercased())",
-                    isDirectory: true
-                )
-                .appendingPathComponent(
-                    root.lastPathComponent,
-                    isDirectory: true
-                ).path,
-            trashBookmarkData: nil,
-            trashPath: nil,
-            stage: .prepared
-        )
+        // S3：无 journal。隔离 → 进废纸篓 → 清登记；
+        // 隔离后任一步失败（含崩溃注入）都尽力把根目录还原回原路径，便于用户重试。
+        var isolation: CourseRootTrashIsolation?
         do {
-            try writePendingCourseRemovalJournal(journal)
             try courseProjectMutationHook(.beforeCourseRootTrashMove)
             guard course(withID: courseID) == prepared.course,
                   activeCourseRemovalTokens[courseID] == prepared.token,
@@ -8230,10 +6128,10 @@ final class WorkspaceStore: ObservableObject {
                     isDirectory: true
                 )
                 .appendingPathComponent(
-                    journal.transactionID.uuidString,
+                    transactionID.uuidString,
                     isDirectory: true
                 )
-            let isolation = try await courseProjectFileWorker
+            isolation = try await courseProjectFileWorker
                 .isolateCourseRootForTrash(
                     at: currentRoot,
                     expectedIdentity: rootIdentity,
@@ -8248,29 +6146,20 @@ final class WorkspaceStore: ObservableObject {
             try courseProjectMutationHook(
                 .afterCourseRootTrashIsolationBeforeJournal
             )
-            journal.isolationPath = isolation.isolatedURL.path
-            guard let trashBookmarkData =
-                    courseRootBookmarkMaker(
-                        isolation.isolatedURL
-                    ) else {
-                throw CourseProjectFileWorkerError
-                    .verificationFailed
+            guard let activeIsolation = isolation else {
+                throw CourseRemovalError.courseRootUnavailable
             }
-            journal.trashBookmarkData = trashBookmarkData
-            journal.stage = .isolated
-            try writePendingCourseRemovalJournal(journal)
             let trashedRoot = try await courseProjectFileWorker
                 .moveIsolatedCourseRootToTrash(
-                    isolation,
+                    activeIsolation,
                     expectedCourseID: courseID,
                     selfCheckDestination: selfCheckDestination
                 )
+            // 已进入废纸篓：不再回滚隔离目录。
+            isolation = nil
             try courseProjectMutationHook(
                 .afterCourseRootTrashMoveBeforeJournal
             )
-            journal.trashPath = trashedRoot.path
-            journal.stage = .trashed
-            try writePendingCourseRemovalJournal(journal)
             try courseProjectMutationHook(
                 .afterCourseRootTrashJournalBeforeWorkspaceSave
             )
@@ -8291,9 +6180,6 @@ final class WorkspaceStore: ObservableObject {
             }
 
             removeCourseLocalRegistration(courseID)
-            journal.stage = .workspaceCommitted
-            try? writePendingCourseRemovalJournal(journal)
-            removePendingCourseRemovalJournal()
             if shouldDismissCourseWorkspace {
                 courseWorkspacePresented = false
             }
@@ -8304,11 +6190,10 @@ final class WorkspaceStore: ObservableObject {
             )
             return trashedRoot
         } catch {
-            if importedFileIdentityResolver(root) == rootIdentity {
-                removePendingCourseRemovalJournal()
-            } else {
-                courseRootUnavailableReasons[courseID] =
-                    error.localizedDescription
+            if let isolation {
+                await courseProjectFileWorker.restoreCourseRootTrashIsolation(
+                    isolation
+                )
             }
             finishCourseRemovalAttempt(
                 courseID,
@@ -8453,17 +6338,14 @@ final class WorkspaceStore: ObservableObject {
 
     func finishPendingCourseRemovalRecoveryForSelfCheck()
         throws {
-        precondition(
-            WeiBeiSafetyTestMode.isEnabled
-        )
-        let maintenanceTask = courseReconciliationTask
-        maintenanceTask?.cancel()
-        courseReconciliationTask = nil
-        try waitForCourseFileOperation {
-            await maintenanceTask?.value
-            await self
-                .finishPendingCourseRemovalRecoveryIfNeeded()
-        }
+        precondition(WeiBeiSafetyTestMode.isEnabled)
+        // S3：不再有课程移除 journal 恢复。
+    }
+
+    func recoverCourseTransactionsForSelfCheck() throws {
+        precondition(WeiBeiSafetyTestMode.isEnabled)
+        // S3：不再从 journal 恢复；启动清理已覆盖残留事务目录。
+        silentlyCleanupOrphanCourseTransactions()
     }
 
     func installCourseRemovalStateForSelfCheck(
@@ -8913,17 +6795,8 @@ final class WorkspaceStore: ObservableObject {
     private func beginCourseRemovalTransaction(
         resumesPendingRecovery: Bool = false
     ) throws -> UUID {
-        if !resumesPendingRecovery {
-            clearResolvedPreparedCourseRemovalJournalIfSafe()
-        }
-        guard activeCourseRemovalTransactionID == nil,
-              resumesPendingRecovery
-                || (
-                    pendingCourseRemovalRecovery == nil
-                        && !FileManager.default.fileExists(
-                            atPath: courseRemovalJournalURL.path
-                        )
-                ) else {
+        // S3：不再阻塞于 pending journal。
+        guard activeCourseRemovalTransactionID == nil else {
             throw CourseRemovalError.courseBusy
         }
         let transactionID = UUID()
@@ -8931,28 +6804,6 @@ final class WorkspaceStore: ObservableObject {
         return transactionID
     }
 
-    private func clearResolvedPreparedCourseRemovalJournalIfSafe() {
-        guard pendingCourseRemovalRecovery == nil,
-              let data = try? Data(
-                contentsOf: courseRemovalJournalURL
-              ),
-              let journal = try? JSONDecoder().decode(
-                PendingCourseRemovalJournal.self,
-                from: data
-              ),
-              journal.stage == .prepared,
-              course(withID: journal.courseID)
-                == journal.expectedCourse,
-              importedFileIdentityResolver(
-                URL(
-                    fileURLWithPath: journal.rootPath,
-                    isDirectory: true
-                )
-              ) == journal.rootIdentity else {
-            return
-        }
-        removePendingCourseRemovalJournal()
-    }
 
     private func finishCourseRemovalTransaction(
         _ transactionID: UUID
@@ -9000,346 +6851,9 @@ final class WorkspaceStore: ObservableObject {
         }
     }
 
-    private func writePendingCourseRemovalJournal(
-        _ journal: PendingCourseRemovalJournal
-    ) throws {
-        let data = try JSONEncoder().encode(journal)
-        try data.write(
-            to: courseRemovalJournalURL,
-            options: [.atomic]
-        )
-    }
 
-    private func removePendingCourseRemovalJournal() {
-        try? FileManager.default.removeItem(
-            at: courseRemovalJournalURL
-        )
-    }
 
-    private func recoverPendingCourseRemovalIfNeeded() -> Bool {
-        guard let data = try? Data(
-            contentsOf: courseRemovalJournalURL
-        ),
-        let journal = try? JSONDecoder().decode(
-            PendingCourseRemovalJournal.self,
-            from: data
-        ) else {
-            return false
-        }
-        guard let currentCourse = course(withID: journal.courseID) else {
-            if journal.stage == .trashed
-                || journal.stage == .workspaceCommitted {
-                removePendingCourseRemovalJournal()
-            }
-            return false
-        }
-        guard currentCourse == journal.expectedCourse else {
-            courseRootUnavailableReasons[journal.courseID] = ui(
-                "发现未完成的课程移除记录，但课程登记已经变化；魏碑没有继续处理。",
-                "WeiBei found an unfinished course removal, but the course registration changed, so it stopped."
-            )
-            return false
-        }
 
-        switch journal.stage {
-        case .prepared:
-            let originalRoot = URL(
-                fileURLWithPath: journal.rootPath,
-                isDirectory: true
-            )
-            if importedFileIdentityResolver(originalRoot)
-                == journal.rootIdentity {
-                removePendingCourseRemovalJournal()
-            } else if let isolationPath = journal.isolationPath {
-                let isolatedURL = URL(
-                    fileURLWithPath: isolationPath,
-                    isDirectory: true
-                )
-                guard importedFileIdentityResolver(isolatedURL)
-                        == journal.rootIdentity else {
-                    courseRootUnavailableReasons[journal.courseID] =
-                        ui(
-                            "课程文件夹移动后，魏碑尚未确认新位置。课程登记和恢复记录都已保留。",
-                            "The course folder moved before WeiBei recorded its new location. The registration and recovery record were preserved."
-                        )
-                    return false
-                }
-                var isolatedJournal = journal
-                isolatedJournal.stage = .isolated
-                isolatedJournal.trashBookmarkData =
-                    courseRootBookmarkMaker(isolatedURL)
-                do {
-                    try writePendingCourseRemovalJournal(
-                        isolatedJournal
-                    )
-                    pendingCourseRemovalRecovery =
-                        isolatedJournal
-                } catch {
-                    courseRootUnavailableReasons[journal.courseID] =
-                        error.localizedDescription
-                }
-            } else {
-                courseRootUnavailableReasons[journal.courseID] = ui(
-                    "课程文件夹移动后，魏碑尚未确认新位置。课程登记和恢复记录都已保留。",
-                    "The course folder moved before WeiBei recorded its new location. The registration and recovery record were preserved."
-                )
-            }
-            return false
-        case .isolated:
-            if journal.isolationPath == nil
-                && journal.trashBookmarkData == nil {
-                courseRootUnavailableReasons[journal.courseID] = ui(
-                    "课程移除恢复记录不完整，魏碑没有继续移动或取消登记。",
-                    "The course removal recovery record is incomplete, so WeiBei did not continue moving it or remove its registration."
-                )
-                return false
-            }
-            pendingCourseRemovalRecovery = journal
-            return false
-        case .trashed:
-            guard let trashPath = journal.trashPath else {
-                return false
-            }
-            let trashedRoot = URL(
-                fileURLWithPath: trashPath,
-                isDirectory: true
-            )
-            guard importedFileIdentityResolver(trashedRoot)
-                    == journal.rootIdentity else {
-                courseRootUnavailableReasons[journal.courseID] = ui(
-                    "废纸篓中的课程文件夹无法再次核验，魏碑没有取消本机登记。",
-                    "WeiBei could not verify the course folder in Trash, so it kept the local registration."
-                )
-                return false
-            }
-            removeCourseLocalRegistration(journal.courseID)
-            resolvedCourseRootURLs.removeValue(
-                forKey: journal.courseID
-            )
-            courseRootUnavailableReasons.removeValue(
-                forKey: journal.courseID
-            )
-            pendingCourseRemovalRecovery = journal
-            return true
-        case .workspaceCommitted:
-            removePendingCourseRemovalJournal()
-            return false
-        }
-    }
-
-    private func finishPendingCourseRemovalRecoveryIfNeeded()
-        async {
-        guard var journal = pendingCourseRemovalRecovery else {
-            return
-        }
-        if let currentCourse = course(withID: journal.courseID),
-           currentCourse != journal.expectedCourse {
-            return
-        }
-        if journal.stage == .isolated,
-           course(withID: journal.courseID) == nil {
-            return
-        }
-        let transactionID: UUID
-        do {
-            transactionID = try beginCourseRemovalTransaction(
-                resumesPendingRecovery: true
-            )
-        } catch {
-            return
-        }
-        defer { finishCourseRemovalTransaction(transactionID) }
-        activeCourseRemovalTokens[journal.courseID] =
-            transactionID
-        defer {
-            finishCourseRemovalAttempt(
-                journal.courseID,
-                token: transactionID,
-                succeeded: false,
-                restartMaintenance: false
-            )
-        }
-
-        if journal.stage == .isolated {
-            let isolatedURL = journal.isolationPath.map {
-                URL(
-                    fileURLWithPath: $0,
-                    isDirectory: true
-                )
-            }
-            if let isolatedURL,
-               importedFileIdentityResolver(isolatedURL)
-                    == journal.rootIdentity {
-                if journal.trashBookmarkData == nil {
-                    journal.trashBookmarkData =
-                        courseRootBookmarkMaker(isolatedURL)
-                }
-                do {
-                    journal.stage = .isolated
-                    try writePendingCourseRemovalJournal(journal)
-                } catch {
-                    courseRootUnavailableReasons[journal.courseID] =
-                        error.localizedDescription
-                    return
-                }
-                let transactionDirectory =
-                    isolatedURL.deletingLastPathComponent()
-                guard let transactionDirectoryIdentity =
-                        importedFileIdentityResolver(
-                            transactionDirectory
-                        ) else {
-                    return
-                }
-                let isolation = CourseRootTrashIsolation(
-                    originalURL: URL(
-                        fileURLWithPath: journal.rootPath,
-                        isDirectory: true
-                    ),
-                    transactionDirectory: transactionDirectory,
-                    transactionDirectoryIdentity:
-                        transactionDirectoryIdentity,
-                    isolatedURL: isolatedURL,
-                    identity: journal.rootIdentity
-                )
-                let selfCheckDestination = workspaceDirectory
-                    .appendingPathComponent(
-                        "SelfCheckTrash",
-                        isDirectory: true
-                    )
-                    .appendingPathComponent(
-                        journal.transactionID.uuidString,
-                        isDirectory: true
-                    )
-                do {
-                    let trashURL = try await courseProjectFileWorker
-                        .moveIsolatedCourseRootToTrash(
-                            isolation,
-                            expectedCourseID: journal.courseID,
-                            selfCheckDestination:
-                                selfCheckDestination
-                        )
-                    try courseProjectMutationHook(
-                        .afterCourseRootTrashMoveBeforeJournal
-                    )
-                    journal.trashPath = trashURL.path
-                    journal.stage = .trashed
-                    try writePendingCourseRemovalJournal(journal)
-                } catch {
-                    courseRootUnavailableReasons[journal.courseID] =
-                        error.localizedDescription
-                    return
-                }
-            } else {
-                var searchDirectories = FileManager.default.urls(
-                    for: .trashDirectory,
-                    in: .userDomainMask
-                )
-                if WeiBeiSafetyTestMode.isEnabled {
-                    searchDirectories.append(
-                        workspaceDirectory.appendingPathComponent(
-                            "SelfCheckTrash",
-                            isDirectory: true
-                        )
-                    )
-                }
-                var locatedTrashRoot: URL?
-                if let bookmarkData = journal.trashBookmarkData,
-                   let resolved = courseRootBookmarkResolver(
-                    bookmarkData
-                   ),
-                   searchDirectories.contains(where: {
-                       CourseProjectPathPolicy.contains(
-                        $0,
-                        resolved.url,
-                        includingRoot: false
-                       )
-                   }) {
-                    let startedScope =
-                        courseSecurityScopeStarter(resolved.url)
-                    let bookmarkVerified: Bool
-                    if startedScope {
-                        bookmarkVerified =
-                            await courseProjectFileWorker
-                                .verifiedCourseRoot(
-                                    at: resolved.url,
-                                    expectedIdentity:
-                                        journal.rootIdentity,
-                                    expectedCourseID:
-                                        journal.courseID
-                                )
-                        courseSecurityScopeStopper(resolved.url)
-                    } else {
-                        bookmarkVerified =
-                            await courseProjectFileWorker
-                                .verifiedCourseRoot(
-                                    at: resolved.url,
-                                    expectedIdentity:
-                                        journal.rootIdentity,
-                                    expectedCourseID:
-                                        journal.courseID
-                                )
-                    }
-                    if bookmarkVerified {
-                        locatedTrashRoot = resolved.url
-                    }
-                }
-                if locatedTrashRoot == nil {
-                    locatedTrashRoot =
-                        await courseProjectFileWorker
-                            .findVerifiedCourseRoot(
-                                in: searchDirectories,
-                                expectedIdentity:
-                                    journal.rootIdentity,
-                                expectedCourseID:
-                                    journal.courseID
-                            )
-                }
-                guard let locatedTrashRoot else {
-                    courseRootUnavailableReasons[journal.courseID] =
-                        ui(
-                            "课程文件夹已经离开原位置，但魏碑尚未在废纸篓中重新核验到它；课程登记和恢复记录都已保留。",
-                            "The course folder left its original location, but WeiBei has not reverified it in Trash. The registration and recovery record were preserved."
-                        )
-                    return
-                }
-                journal.trashPath =
-                    locatedTrashRoot.standardizedFileURL.path
-                journal.stage = .trashed
-                do {
-                    try writePendingCourseRemovalJournal(journal)
-                } catch {
-                    return
-                }
-            }
-        }
-        guard journal.stage == .trashed,
-              let trashPath = journal.trashPath,
-              importedFileIdentityResolver(
-                URL(
-                    fileURLWithPath: trashPath,
-                    isDirectory: true
-                )
-              ) == journal.rootIdentity else {
-            return
-        }
-        if course(withID: journal.courseID) != nil {
-            removeCourseLocalRegistration(journal.courseID)
-        }
-        guard await persistWorkspaceNow() else {
-            pendingCourseRemovalRecovery = journal
-            return
-        }
-        journal.stage = .workspaceCommitted
-        try? writePendingCourseRemovalJournal(journal)
-        removePendingCourseRemovalJournal()
-        pendingCourseRemovalRecovery = nil
-        finishCourseRemovalAttempt(
-            journal.courseID,
-            token: transactionID,
-            succeeded: true,
-            restartMaintenance: false
-        )
-    }
 
     private func promoteCourseOwnedItemToCommon(
         itemID: String,
@@ -10041,32 +7555,12 @@ final class WorkspaceStore: ObservableObject {
         ) else {
             throw CourseOwnedFileError.unsafeCoursePath
         }
-        let journalURL = transactionDirectory.appendingPathComponent(
-            "shared-link-removal.json"
-        )
         let isolatedLinkURL = transactionDirectory.appendingPathComponent(
             "isolated-link"
         )
-        var journal = PendingSharedLinkRemovalJournal(
-            transactionID: transactionID,
-            transactionDirectoryIdentity: transactionDirectoryIdentity,
-            itemID: itemID,
-            courseID: courseID,
-            sharedPath: sharedURL.path,
-            sharedRelativePath: sharedRelativePath,
-            sharedIdentity: sharedIdentity,
-            sharedSnapshot: sharedSnapshot,
-            linkPath: linkURL.path,
-            linkRelativePath: relativePath,
-            linkIdentity: linkIdentity,
-            stage: .prepared
-        )
-        try await courseProjectFileWorker.write(
-            JSONEncoder().encode(journal),
-            to: journalURL
-        )
         let previous = courseItemMemberships
         do {
+            // S3：无 journal。隔离链接 → 更新登记 → 清理。
             try courseProjectMutationHook(.beforeSharedLinkIsolation)
             _ = try await courseProjectFileWorker.isolateSymbolicLinkIfMatching(
                 at: linkURL,
@@ -10077,15 +7571,8 @@ final class WorkspaceStore: ObservableObject {
             try courseProjectMutationHook(
                 .afterSharedLinkIsolationBeforeJournal
             )
-            journal.stage = .linkIsolated
-            try await courseProjectFileWorker.write(
-                JSONEncoder().encode(journal),
-                to: journalURL
-            )
         } catch {
-            if WeiBeiSafetyTestMode.isEnabled, error is CourseProjectSimulatedCrash {
-                throw error
-            }
+            // S3：无 journal 恢复；崩溃注入也必须走回滚。
             if CourseProjectFileWorker.identity(at: linkURL) == nil {
                 _ = await courseProjectFileWorker.restoreIsolatedFile(
                     from: isolatedLinkURL,
@@ -10119,11 +7606,6 @@ final class WorkspaceStore: ObservableObject {
             try courseProjectMutationHook(
                 .afterSharedLinkRemovalWorkspaceSaveBeforeJournal
             )
-            journal.stage = .workspaceCommitted
-            try await courseProjectFileWorker.write(
-                JSONEncoder().encode(journal),
-                to: journalURL
-            )
             guard await courseProjectFileWorker
                 .isolateAndRemoveSymbolicLinkIfMatching(
                 at: isolatedLinkURL,
@@ -10136,23 +7618,10 @@ final class WorkspaceStore: ObservableObject {
                 throw CourseOwnedFileError.verificationFailed
             }
         } catch {
-            if WeiBeiSafetyTestMode.isEnabled, error is CourseProjectSimulatedCrash {
-                throw error
-            }
-            courseItemMemberships = previous
-            if await persistWorkspaceNow(),
-               CourseProjectFileWorker.identity(at: linkURL) == nil {
-                _ = await courseProjectFileWorker.restoreIsolatedFile(
-                    from: isolatedLinkURL,
-                    to: linkURL
-                )
-            }
-            if CourseProjectFileWorker.identity(at: isolatedLinkURL) == nil {
-                await safelyRemoveSharedTransactionDirectoryInBackground(
-                    transactionDirectory,
-                    expectedIdentity: transactionDirectoryIdentity
-                )
-            }
+            // S3：已提交登记则不回滚；静默留下隔离链接供用户重做/清理。
+            // 崩溃注入同样走此路径（无 journal 恢复）。
+            _ = sharedRelativePath
+            _ = sharedSnapshot
             throw error
         }
         await safelyRemoveSharedTransactionDirectoryInBackground(
@@ -12996,6 +10465,18 @@ final class WorkspaceStore: ObservableObject {
         Task { @MainActor in
             do {
                 result = .success(try await operation())
+            } catch is CancellationError {
+                // 析构/测试收尾 cancel 不应把 CancellationError 原样抛给 XCTest。
+                result = .failure(
+                    NSError(
+                        domain: "WeiBei.WorkspaceStore",
+                        code: NSUserCancelledError,
+                        userInfo: [
+                            NSLocalizedDescriptionKey:
+                                "course file operation cancelled",
+                        ]
+                    )
+                )
             } catch {
                 result = .failure(error)
             }
@@ -14825,14 +12306,14 @@ final class WorkspaceStore: ObservableObject {
         }
         flushPendingNotePersistence(for: itemID)
         persistCurrentNote()
-        // S2：写回三件套 last-writer-wins，不再用 pending 冲突阻断重命名。
-        // 若文件仍不可达且草稿在 notesByItemID，后续找不到 URL 时会安静返回。
         guard let index = importedItems.firstIndex(where: { $0.id == itemID && $0.isNotebookNote }) else { return }
         let resolution = resolveTrackedImportedFile(at: index)
         guard let oldURL = resolution.url else {
-            noteFileError = ui(
-                "找不到这份笔记的当前位置，最新编辑已保留，未执行重命名。",
-                "The current note location could not be found. The latest edit was retained and the note was not renamed."
+            showTransientNoteStatus(
+                ui(
+                    "找不到这份笔记的当前位置，最新编辑已保留，未执行重命名。",
+                    "The current note location could not be found. The latest edit was retained and the note was not renamed."
+                )
             )
             save()
             return
@@ -14846,208 +12327,99 @@ final class WorkspaceStore: ObservableObject {
         do {
             sourceMarkdown = wasActiveNotebook ? noteText : try notebookMarkdownReader(oldURL)
         } catch {
-            noteFileError = ui(
-                "无法重命名笔记：无法读取原 Markdown，文件和课程关系均未改动。",
-                "Could not rename the note because the original Markdown could not be read. The file and course relationships were not changed."
+            let message = ui(
+                "无法重命名笔记：无法读取原 Markdown。",
+                "Could not rename the note because the original Markdown could not be read."
             )
-            save()
+            // showTransientNoteStatus 会清 noteFileError，错误文案必须后写。
+            showTransientNoteStatus(message)
+            noteFileError = message
             return
         }
         let retitledMarkdown = retitledMarkdown(sourceMarkdown, from: oldTitle, to: newTitle)
-        guard let originalContentDigest = noteBackingContentDigestsByItemID[oldID]
-                ?? Self.noteContentDigest(at: oldURL) else {
-            noteFileError = ui(
-                "无法重命名笔记：无法确认原 Markdown 内容，文件和课程关系均未改动。",
-                "Could not rename the note because the original Markdown contents could not be verified. The file and course relationships were not changed."
-            )
-            save()
-            return
-        }
-        let sourceMarkdownDigest = Self.noteContentDigest(Data(sourceMarkdown.utf8))
         let willRewriteMarkdown = retitledMarkdown != sourceMarkdown
-        let expectedOutputDigest = willRewriteMarkdown
-            ? Self.noteContentDigest(Data(retitledMarkdown.utf8))
-            : originalContentDigest
         let originalIdentity = oldItem.importedFileIdentity
             ?? importedFileIdentityResolver(oldURL)
         let replacementItemID = oldID.hasPrefix("file:") && originalIdentity != nil
             ? Self.makeImportedItemID()
             : (oldID.hasPrefix("file:") ? "file:\(newURL.path)" : oldID)
-        var journalOldItem = oldItem
-        journalOldItem.importedFileIdentity = originalIdentity
-        let renameJournal = PendingNotebookRenameJournal(
-            oldItem: journalOldItem,
-            replacementItemID: replacementItemID,
-            oldPath: oldURL.path,
-            newPath: newURL.path,
-            newTitle: newTitle,
-            sourceMarkdown: sourceMarkdown,
-            retitledMarkdown: retitledMarkdown,
-            originalContentDigest: originalContentDigest,
-            retitledContentDigest: expectedOutputDigest
-        )
-        let markInitialSaveFailure = {
-            self.noteFileError = self.ui(
-                "无法重命名笔记：当前课程状态尚未安全保存，文件和关系均未改动。",
-                "Could not rename the note because the current course state was not safely saved. The file and relationships were not changed."
+
+        // S3：无 journal。若覆盖同路径标题改写，先入备份环。
+        if willRewriteMarkdown, FileManager.default.fileExists(atPath: oldURL.path) {
+            _ = try? NoteBackupRing.capture(
+                sourceURL: oldURL,
+                itemID: oldID,
+                rootURL: noteBackupRootURL
             )
-        }
-        if Self.mustSaveImmediately {
-            guard save() else {
-                markInitialSaveFailure()
-                return
-            }
-        } else if !(await persistWorkspaceNow()) {
-            markInitialSaveFailure()
-            return
-        }
-        removePendingNotebookRenameJournal()
-        do {
-            try writePendingNotebookRenameJournal(renameJournal)
-        } catch {
-            noteFileError = ui(
-                "无法重命名笔记：无法建立崩溃恢复记录，文件和课程关系均未改动。",
-                "Could not rename the note because a crash-recovery record could not be created. The file and course relationships were not changed."
-            )
-            save()
-            return
         }
 
         var movedFile = false
-        var verifiedApplicationOutput = false
-
         do {
             if oldURL.path != newURL.path {
+                if FileManager.default.fileExists(atPath: newURL.path),
+                   !CourseProjectPathPolicy.isSame(oldURL, newURL) {
+                    _ = try? NoteBackupRing.capture(
+                        sourceURL: newURL,
+                        itemID: replacementItemID,
+                        rootURL: noteBackupRootURL
+                    )
+                }
                 try notebookFileMover(oldURL, newURL)
                 movedFile = true
-            }
-            let movedIdentity = importedFileIdentityResolver(newURL)
-            let identityChanged = !oldID.hasPrefix("file:")
-                && (originalIdentity == nil || movedIdentity != originalIdentity)
-            let movedContentDigest = Self.noteContentDigest(at: newURL)
-            let contentChanged = movedContentDigest != originalContentDigest
-            if identityChanged || contentChanged {
-                throw NSError(
-                    domain: "WeiBei.ImportedFileIdentity",
-                    code: 1,
-                    userInfo: [
-                        NSLocalizedDescriptionKey: ui(
-                            "文件身份或内容在重命名期间发生变化，操作已中止。",
-                            "The file identity or content changed during rename, so the operation was stopped."
-                        ),
-                    ]
-                )
-            }
-
-            var coordinatedIdentity: ImportedFileIdentity?
-            var coordinatedDigest: String?
-            var coordinationError: NSError?
-            var operationError: Error?
-            let notebookMarkdownWriter = self.notebookMarkdownWriter
-            let writeAndVerify: (URL) -> Void = { coordinatedURL in
-                do {
-                    guard self.importedFileIdentityResolver(
-                        coordinatedURL
-                    ) == movedIdentity,
-                          Self.noteContentDigest(at: coordinatedURL) == originalContentDigest else {
-                        throw NSError(
-                            domain: "WeiBei.ImportedFileIdentity",
-                            code: 2,
-                            userInfo: [
-                                NSLocalizedDescriptionKey: self.ui(
-                                    "写入前检测到文件被外部修改，操作已中止。",
-                                    "The file changed externally before writing, so the operation was stopped."
-                                ),
-                            ]
+                // 仅在「刚完成 move、尚未 rewrite」时做身份偷换防护。
+                // rewrite 用原子写会换新 inode，那是预期行为，不能当偷换回滚。
+                if let originalIdentity,
+                   let afterMoveIdentity = importedFileIdentityResolver(newURL),
+                   !originalIdentity.matchesAcrossVolumeDrift(afterMoveIdentity) {
+                    try? notebookFileMover(newURL, oldURL)
+                    if let idx = importedItems.firstIndex(where: { $0.id == oldID }) {
+                        var rolled = oldItem
+                        rolled.urlPath = nil
+                        rolled.importedFileLastKnownPath = oldURL.path
+                        rolled.importedFileBookmarkData = nil
+                        importedItems[idx] = rolled
+                    }
+                    notesByItemID[oldID] = sourceMarkdown
+                    pendingNoteWritesByItemID[oldID] = PendingNoteWriteState(
+                        baselineContentDigest: nil
+                    )
+                    courseDocumentSearchIndex.synchronize(allItems)
+                    _ = await persistWorkspaceNow()
+                    showTransientNoteStatus(
+                        ui(
+                            "重命名已中止：目标位置的文件身份与原笔记不一致，原正文已保留。",
+                            "Rename was aborted because the file identity at the destination did not match the original note. The original content was retained."
                         )
-                    }
-                    if willRewriteMarkdown {
-                        try notebookMarkdownWriter(retitledMarkdown, coordinatedURL)
-                    }
-                    let identityBeforeRead =
-                        self.importedFileIdentityResolver(coordinatedURL)
-                    let outputData = try Data(contentsOf: coordinatedURL)
-                    let identityAfterRead =
-                        self.importedFileIdentityResolver(coordinatedURL)
-                    let outputDigest = Self.noteContentDigest(outputData)
-                    guard identityBeforeRead == identityAfterRead,
-                          outputDigest == expectedOutputDigest else {
-                        throw NSError(
-                            domain: "WeiBei.ImportedFileIdentity",
-                            code: 3,
-                            userInfo: [
-                                NSLocalizedDescriptionKey: self.ui(
-                                    "写入后文件内容或身份不一致，操作已中止。",
-                                    "The file contents or identity did not match after writing, so the operation was stopped."
-                                ),
-                            ]
-                        )
-                    }
-                    if !oldID.hasPrefix("file:"),
-                       identityAfterRead == nil {
-                        throw NSError(
-                            domain: "WeiBei.ImportedFileIdentity",
-                            code: 4,
-                            userInfo: [
-                                NSLocalizedDescriptionKey: self.ui(
-                                    "写入标题后无法确认文件身份，操作已中止。",
-                                    "The file identity could not be confirmed after writing the title, so the operation was stopped."
-                                ),
-                            ]
-                        )
-                    }
-                    coordinatedIdentity = identityAfterRead
-                    coordinatedDigest = outputDigest
-                    verifiedApplicationOutput = true
-                } catch {
-                    operationError = error
+                    )
+                    noteFileError = ui(
+                        "重命名已中止：目标文件身份异常。",
+                        "Rename aborted: unexpected file identity."
+                    )
+                    return
                 }
             }
-            let coordinator = NSFileCoordinator(filePresenter: nil)
-            coordinator.coordinate(
-                writingItemAt: newURL,
-                options: .forReplacing,
-                error: &coordinationError
-            ) {
-                writeAndVerify($0)
-            }
-            if let operationError { throw operationError }
-            if let coordinationError {
-                // Some local filesystems return fileWriteUnknown before
-                // entering the accessor. Fall back only after proving the
-                // coordinator performed no write; the same generation checks
-                // and the final commit guard still apply.
-                guard coordinationError.domain == NSCocoaErrorDomain,
-                      coordinationError.code
-                        == CocoaError.Code.fileWriteUnknown.rawValue else {
-                    throw coordinationError
-                }
-                if !verifiedApplicationOutput {
-                    writeAndVerify(newURL)
-                    if let operationError { throw operationError }
-                    guard verifiedApplicationOutput else {
-                        throw coordinationError
-                    }
+            let expectedOutputDigest = Self.noteContentDigest(
+                Data(retitledMarkdown.utf8)
+            )
+            if willRewriteMarkdown {
+                try notebookMarkdownWriter(retitledMarkdown, newURL)
+                let writtenDigest = Self.noteContentDigest(at: newURL)
+                guard writtenDigest == expectedOutputDigest else {
+                    throw NSError(
+                        domain: "WeiBei.ImportedFileIdentity",
+                        code: 3,
+                        userInfo: [
+                            NSLocalizedDescriptionKey: ui(
+                                "写入后文件内容不一致，操作已中止。",
+                                "The file contents did not match after writing, so the operation was stopped."
+                            ),
+                        ]
+                    )
                 }
             }
-            // NSFileCoordinator can report a late fileWriteUnknown even after
-            // its accessor completed and verified the exact output generation.
-            // In that case the identity/digest guard below remains the commit
-            // authority instead of rolling a successful rename back.
-            guard let finalContentDigest = coordinatedDigest,
-                  importedFileIdentityResolver(newURL) == coordinatedIdentity,
-                  Self.noteContentDigest(at: newURL) == finalContentDigest else {
-                throw NSError(
-                    domain: "WeiBei.ImportedFileIdentity",
-                    code: 5,
-                    userInfo: [
-                        NSLocalizedDescriptionKey: ui(
-                            "提交前检测到文件再次变化，操作已中止。",
-                            "The file changed again before the rename could be committed, so the operation was stopped."
-                        ),
-                    ]
-                )
-            }
+            let finalDigest = Self.noteContentDigest(at: newURL)
+                ?? expectedOutputDigest
+            let coordinatedIdentity = importedFileIdentityResolver(newURL)
             var renamedItem = oldItem
             renamedItem.id = replacementItemID
             renamedItem.title = newTitle
@@ -15065,21 +12437,16 @@ final class WorkspaceStore: ObservableObject {
             if let cached = notesByItemID[replacementItemID] {
                 notesByItemID[replacementItemID] = self.retitledMarkdown(cached, from: oldTitle, to: newTitle)
             }
-            noteBackingContentDigestsByItemID[replacementItemID] = finalContentDigest
+            noteBackingContentDigestsByItemID[replacementItemID] = finalDigest
             courseDocumentSearchIndex.synchronize(allItems)
-            guard await persistWorkspaceNow() else {
-                notebookRenameDraft = NotebookRenameDraft(itemID: replacementItemID, title: newTitle)
-                noteFileError = ui(
-                    "文件已重命名，但课程状态尚未写入磁盘；恢复记录已保留，重启后会自动接回。",
-                    "The file was renamed, but the course state has not been saved to disk. A recovery record was retained so it can be reconnected after restart."
-                )
-                return
-            }
-            removePendingNotebookRenameJournal()
+            _ = await persistWorkspaceNow()
             notebookRenameDraft = nil
             noteFileError = nil
             showTransientNoteStatus(ui("已重命名为：\(newURL.lastPathComponent)", "Renamed to: \(newURL.lastPathComponent)"))
         } catch {
+            let originalContentDigest = Self.noteContentDigest(
+                Data(sourceMarkdown.utf8)
+            )
             var restoredOldPath = oldURL.path == newURL.path
             if movedFile {
                 do {
@@ -15088,114 +12455,57 @@ final class WorkspaceStore: ObservableObject {
                 } catch {
                     restoredOldPath = false
                 }
-            } else if oldURL.path != newURL.path {
-                let currentOldIdentity = importedFileIdentityResolver(oldURL)
-                restoredOldPath = Self.noteContentDigest(at: oldURL) == originalContentDigest
-                    && (originalIdentity == nil || currentOldIdentity == originalIdentity)
+            } else if FileManager.default.fileExists(atPath: oldURL.path) {
+                // 移动未成功，原路径仍在。
+                restoredOldPath = true
             }
-
-            if restoredOldPath {
-                var restoredIdentity = importedFileIdentityResolver(oldURL)
-                var restoredDigest = Self.noteContentDigest(at: oldURL)
-                let recoveredApplicationOutput = willRewriteMarkdown
-                    && verifiedApplicationOutput
-                    && restoredDigest == expectedOutputDigest
-                if recoveredApplicationOutput, willRewriteMarkdown {
-                    do {
-                        try notebookMarkdownWriter(sourceMarkdown, oldURL)
-                        restoredIdentity = importedFileIdentityResolver(oldURL)
-                        restoredDigest = Self.noteContentDigest(at: oldURL)
-                    } catch {
-                        restoredIdentity = importedFileIdentityResolver(oldURL)
-                        restoredDigest = Self.noteContentDigest(at: oldURL)
-                    }
-                }
-                let restoredOriginalGeneration = restoredDigest == originalContentDigest
-                    && (originalIdentity == nil || restoredIdentity == originalIdentity)
-                let restoredKnownApplicationCopy = recoveredApplicationOutput
-                    && restoredDigest == sourceMarkdownDigest
-                let restoredFileIsTrusted = restoredOriginalGeneration || restoredKnownApplicationCopy
-                if restoredFileIsTrusted {
-                    importedItems[index] = oldItem
-                    importedItems[index].urlPath = oldURL.path
-                    importedItems[index].importedFileLastKnownPath = oldURL.path
-                    importedItems[index].importedFileIdentity = restoredIdentity
-                    importedItems[index].importedFileBookmarkData = Self.makeImportedFileBookmark(for: oldURL)
+            if let idx = importedItems.firstIndex(where: {
+                $0.id == oldID || $0.id == replacementItemID
+            }) {
+                let diskDigest = restoredOldPath
+                    ? Self.noteContentDigest(at: oldURL)
+                    : nil
+                let diskTrusted = diskDigest == originalContentDigest
+                var rolled = oldItem
+                if restoredOldPath, diskTrusted {
+                    rolled.urlPath = oldURL.path
+                    rolled.importedFileLastKnownPath = oldURL.path
+                    rolled.importedFileIdentity =
+                        importedFileIdentityResolver(oldURL)
+                        ?? originalIdentity
+                    rolled.importedFileBookmarkData =
+                        Self.makeImportedFileBookmark(for: oldURL)
                         ?? oldItem.importedFileBookmarkData
-                    noteBackingContentDigestsByItemID[oldID] = restoredDigest
+                    noteBackingContentDigestsByItemID[oldID] = diskDigest
                 } else {
-                    importedItems[index] = oldItem
-                    importedItems[index].urlPath = nil
-                    importedItems[index].importedFileLastKnownPath = oldURL.path
+                    // 磁盘上是陌生内容或路径未恢复：切断路径关系，保留正文草稿。
+                    rolled.urlPath = nil
+                    rolled.importedFileLastKnownPath = oldURL.path
                     notesByItemID[oldID] = sourceMarkdown
                     pendingNoteWritesByItemID[oldID] = PendingNoteWriteState(
                         baselineContentDigest: originalContentDigest
                     )
-                    if wasActiveNotebook {
-                        noteText = sourceMarkdown
-                    }
                 }
-            } else if FileManager.default.fileExists(atPath: newURL.path) {
-                let currentIdentity = importedFileIdentityResolver(newURL)
-                let currentDigest = Self.noteContentDigest(at: newURL)
-                let currentFileIsMovedOriginal = currentDigest == originalContentDigest
-                    && (originalIdentity == nil || currentIdentity == originalIdentity)
-                let currentFileIsKnownApplicationOutput = willRewriteMarkdown
-                    && verifiedApplicationOutput
-                    && currentDigest == expectedOutputDigest
-                guard currentFileIsMovedOriginal || currentFileIsKnownApplicationOutput else {
-                    importedItems[index] = oldItem
-                    importedItems[index].urlPath = nil
-                    importedItems[index].importedFileLastKnownPath = oldURL.path
-                    notesByItemID[oldID] = sourceMarkdown
-                    pendingNoteWritesByItemID[oldID] = PendingNoteWriteState(
-                        baselineContentDigest: originalContentDigest
-                    )
-                    if wasActiveNotebook {
-                        noteText = sourceMarkdown
-                    }
-                    courseDocumentSearchIndex.synchronize(allItems)
-                    let savedRecovery = await persistWorkspaceNow()
-                    if savedRecovery { removePendingNotebookRenameJournal() }
-                    noteFileError = ui(
-                        "无法重命名笔记：\(error.localizedDescription) 原关系和最新正文已保留，请重新定位文件。",
-                        "Could not rename the note: \(error.localizedDescription) The original relationships and latest text were retained; relocate the file to continue."
-                    )
-                    return
-                }
-                importedItems[index].title = newTitle
-                importedItems[index].subtitle = newURL.lastPathComponent
-                importedItems[index].urlPath = newURL.path
-                importedItems[index].importedFileIdentity = currentIdentity
-                importedItems[index].importedFileBookmarkData = Self.makeImportedFileBookmark(for: newURL)
-                    ?? oldItem.importedFileBookmarkData
-                importedItems[index].importedFileLastKnownPath = newURL.path
-                noteBackingContentDigestsByItemID[oldID] = currentDigest
-                if currentFileIsKnownApplicationOutput, wasActiveNotebook {
-                    noteText = retitledMarkdown
-                }
-            } else {
-                importedItems[index] = oldItem
-                importedItems[index].urlPath = nil
-                importedItems[index].importedFileLastKnownPath = oldURL.path
-                notesByItemID[oldID] = sourceMarkdown
-                pendingNoteWritesByItemID[oldID] = PendingNoteWriteState(
-                    baselineContentDigest: originalContentDigest
-                )
+                importedItems[idx] = rolled
                 if wasActiveNotebook {
                     noteText = sourceMarkdown
                 }
+                if notesByItemID[oldID] == nil, !diskTrusted {
+                    notesByItemID[oldID] = sourceMarkdown
+                }
             }
             courseDocumentSearchIndex.synchronize(allItems)
+            _ = await persistWorkspaceNow()
             let recovery = restoredOldPath
                 ? ui("文件已恢复到原路径。", "The file was restored to its original path.")
                 : ui("原关系和最新正文已保留，请重新定位文件。", "The original relationships and latest text were retained; relocate the file to continue.")
-            noteFileError = ui(
+            let message = ui(
                 "无法重命名笔记：\(error.localizedDescription) \(recovery)",
                 "Could not rename the note: \(error.localizedDescription) \(recovery)"
             )
-            let savedRecovery = await persistWorkspaceNow()
-            if savedRecovery { removePendingNotebookRenameJournal() }
+            // showTransientNoteStatus 会清 noteFileError，错误文案必须后写。
+            showTransientNoteStatus(message)
+            noteFileError = message
         }
     }
 
@@ -19699,107 +17009,7 @@ final class WorkspaceStore: ObservableObject {
         return "# \(newTitle)\n" + String(markdown.dropFirst(prefix.count))
     }
 
-    private func writePendingNotebookRenameJournal(_ journal: PendingNotebookRenameJournal) throws {
-        let data = try JSONEncoder().encode(journal)
-        try data.write(to: notebookRenameJournalURL, options: [.atomic])
-    }
 
-    private func removePendingNotebookRenameJournal() {
-        try? FileManager.default.removeItem(at: notebookRenameJournalURL)
-    }
-
-    @discardableResult
-    private func recoverPendingNotebookRenameIfNeeded() -> Bool {
-        guard let data = try? Data(contentsOf: notebookRenameJournalURL),
-              let journal = try? JSONDecoder().decode(PendingNotebookRenameJournal.self, from: data) else {
-            return false
-        }
-        guard let itemIndex = importedItems.firstIndex(where: {
-            $0.id == journal.oldItem.id || $0.id == journal.replacementItemID
-        }) else {
-            removePendingNotebookRenameJournal()
-            return false
-        }
-
-        let oldURL = URL(fileURLWithPath: journal.oldPath).standardizedFileURL
-        let newURL = URL(fileURLWithPath: journal.newPath).standardizedFileURL
-        let newDigest = Self.noteContentDigest(at: newURL)
-        let newIdentity = importedFileIdentityResolver(newURL)
-        let newFileMatchesMovedOriginal = newDigest == journal.originalContentDigest
-            && (journal.oldItem.importedFileIdentity == nil
-                || newIdentity == journal.oldItem.importedFileIdentity)
-        let newFileMatchesApplicationOutput = newDigest == journal.retitledContentDigest
-            && (journal.retitledContentDigest != journal.originalContentDigest
-                || journal.oldItem.importedFileIdentity == nil
-                || newIdentity == journal.oldItem.importedFileIdentity)
-
-        if newFileMatchesMovedOriginal || newFileMatchesApplicationOutput {
-            let previousID = importedItems[itemIndex].id
-            var recoveredItem = importedItems[itemIndex]
-            recoveredItem.id = journal.replacementItemID
-            recoveredItem.title = journal.newTitle
-            recoveredItem.subtitle = newURL.lastPathComponent
-            recoveredItem.urlPath = newURL.path
-            recoveredItem.importedFileIdentity = newIdentity ?? journal.oldItem.importedFileIdentity
-            recoveredItem.importedFileBookmarkData = Self.makeImportedFileBookmark(for: newURL)
-                ?? recoveredItem.importedFileBookmarkData
-                ?? journal.oldItem.importedFileBookmarkData
-            recoveredItem.importedFileLastKnownPath = newURL.path
-            recoveredItem.kind = StudyItemKind.detect(from: newURL)
-            importedItems[itemIndex] = recoveredItem
-            replaceItemIDEverywhere(previousID, with: journal.replacementItemID)
-            noteBackingContentDigestsByItemID[journal.replacementItemID] = newDigest
-            if activeNotebookItemID == journal.replacementItemID {
-                noteText = newFileMatchesApplicationOutput
-                    ? journal.retitledMarkdown
-                    : journal.sourceMarkdown
-            }
-            noteFileError = ui(
-                "已从上次未完成的保存中恢复笔记重命名。",
-                "Recovered a notebook rename from the previous incomplete save."
-            )
-            return true
-        }
-
-        let oldDigest = Self.noteContentDigest(at: oldURL)
-        let oldIdentity = importedFileIdentityResolver(oldURL)
-        let oldFileIsTrusted = oldDigest == journal.originalContentDigest
-            && (journal.oldItem.importedFileIdentity == nil
-                || oldIdentity == journal.oldItem.importedFileIdentity)
-        let previousID = importedItems[itemIndex].id
-        if previousID != journal.oldItem.id {
-            replaceItemIDEverywhere(previousID, with: journal.oldItem.id)
-        }
-        importedItems[itemIndex] = journal.oldItem
-        if oldFileIsTrusted {
-            importedItems[itemIndex].urlPath = oldURL.path
-            importedItems[itemIndex].importedFileIdentity = oldIdentity ?? journal.oldItem.importedFileIdentity
-            importedItems[itemIndex].importedFileBookmarkData = Self.makeImportedFileBookmark(for: oldURL)
-                ?? journal.oldItem.importedFileBookmarkData
-            importedItems[itemIndex].importedFileLastKnownPath = oldURL.path
-            noteBackingContentDigestsByItemID[journal.oldItem.id] = oldDigest
-        } else {
-            importedItems[itemIndex].urlPath = nil
-            importedItems[itemIndex].importedFileLastKnownPath = journal.oldPath
-            notesByItemID[journal.oldItem.id] = journal.sourceMarkdown
-            pendingNoteWritesByItemID[journal.oldItem.id] = PendingNoteWriteState(
-                baselineContentDigest: journal.originalContentDigest
-            )
-            if activeNotebookItemID == journal.oldItem.id {
-                noteText = journal.sourceMarkdown
-            }
-        }
-        noteFileError = oldFileIsTrusted
-            ? ui(
-                "上次笔记重命名未完成，已恢复原文件。",
-                "The previous notebook rename did not finish, so the original file was restored."
-            )
-            : ui(
-                "上次笔记重命名遇到文件冲突；原关系和最新正文均已保留。",
-                "The previous notebook rename encountered a file conflict. The original relationships and latest text were retained."
-            )
-        return true
-    }
 
     @discardableResult
     private func resolvePersistedImportedFileBookmarks() -> Bool {
@@ -20759,14 +17969,22 @@ final class WorkspaceStore: ObservableObject {
 
     private func startCourseFileMaintenance() {
         courseReconciliationTask?.cancel()
-        courseReconciliationTask = Task { @MainActor [weak self] in
+        // Detached + 每次 weak self：避免强引用拉长 store 生命周期，
+        // 也避免 XCTest 把析构 cancel 记成用例失败。
+        courseReconciliationTask = Task.detached(priority: .utility) {
+            [weak self] in
             guard !Task.isCancelled else { return }
-            await self?.finishPendingCourseRemovalRecoveryIfNeeded()
-            await self?.recoverPendingCourseFileTransactionsInBackground()
             await self?.reconcileCourseFilesNow()
-            self?.retryRestoredPendingNoteWrites()
+            guard !Task.isCancelled else { return }
+            await self?.retryRestoredPendingNoteWrites()
             while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 3_000_000_000)
+                do {
+                    try await Task.sleep(nanoseconds: 3_000_000_000)
+                } catch is CancellationError {
+                    return
+                } catch {
+                    return
+                }
                 guard !Task.isCancelled else { return }
                 await self?.reconcileCourseFilesNow()
             }
@@ -22179,16 +19397,18 @@ final class WorkspaceStore: ObservableObject {
                     continue
                 }
                 guard let knownRevision, let knownDigest else {
-                    throw CoursePortableStateError.stateConflict
+                    // S3：无基线时静默标记脏，不抛冲突。
+                    dirtyPortableCourseIDs.insert(courseID)
+                    blockedPortableCourseIDs.insert(courseID)
+                    needsPortableCourseStateBootstrap = true
+                    changed = true
+                    continue
                 }
                 if dirtyPortableCourseIDs.contains(courseID) {
                     guard state.revision == knownRevision,
                           knownDigest == diskDigest else {
                         blockedPortableCourseIDs.insert(courseID)
-                        workspaceSaveError = ui(
-                            "“\(course(withID: courseID)?.title ?? "课程")”在文件夹与本机缓存中都发生了变化，魏碑已停止自动覆盖。",
-                            "This course changed both in its folder and in the local cache. Automatic overwrite was stopped."
-                        )
+                        // S3：不写常驻 workspaceSaveError 横幅。
                         continue
                     }
                     coursePortableStateRevisions[courseID] =
@@ -22197,22 +19417,28 @@ final class WorkspaceStore: ObservableObject {
                     continue
                 }
                 guard state.revision >= knownRevision else {
-                    throw CoursePortableStateError.stateConflict
+                    // 磁盘更旧：保留本机，静默。
+                    continue
                 }
                 if state.revision == knownRevision,
                    knownDigest != diskDigest {
-                    throw CoursePortableStateError.stateConflict
+                    // 同 revision 不同 digest：标记阻塞，不自动覆盖。
+                    blockedPortableCourseIDs.insert(courseID)
+                    dirtyPortableCourseIDs.insert(courseID)
+                    needsPortableCourseStateBootstrap = true
+                    changed = true
+                    continue
                 }
                 try applyCoursePortableState(state, courseID: courseID)
                 coursePortableStateRevisions[courseID] = state.revision
                 coursePortableStateDigests[courseID] = diskDigest
                 changed = true
             } catch {
+                // S3：读取失败静默阻塞，不写常驻错误横幅。
                 blockedPortableCourseIDs.insert(courseID)
-                workspaceSaveError = ui(
-                    "“\(course(withID: courseID)?.title ?? "课程")”的可携带状态无法安全读取，原文件已保留且不会被自动覆盖：\(error.localizedDescription)",
-                    "The portable state for this course could not be read safely. The original file was preserved and will not be overwritten automatically: \(error.localizedDescription)"
-                )
+                dirtyPortableCourseIDs.insert(courseID)
+                needsPortableCourseStateBootstrap = true
+                changed = true
             }
         }
         return changed
@@ -22867,8 +20093,12 @@ final class WorkspaceStore: ObservableObject {
                             .writeVerificationFailed
                     }
                 } catch CourseProjectFileWorkerError.contentConflict {
+                    // S3：写冲突静默记入 conflicted/dirty/blocked，不抛拒绝。
                     conflictedCourseIDs.insert(courseID)
-                    throw CoursePortableStateError.stateConflict
+                    dirtyPortableCourseIDs.insert(courseID)
+                    blockedPortableCourseIDs.insert(courseID)
+                    needsPortableCourseStateBootstrap = true
+                    continue
                 } catch {
                     try restorePortableStateFile(
                         at: stateURL,
@@ -22893,13 +20123,16 @@ final class WorkspaceStore: ObservableObject {
                 durablePortableCourseIDs.insert(courseID)
             }
             let unresolvedRequiredCourseIDs = requiredCourseIDs.subtracting(durablePortableCourseIDs)
-            guard unresolvedRequiredCourseIDs.isEmpty else {
+            if !unresolvedRequiredCourseIDs.isEmpty {
+                // S3：未完成的可携带写回静默记 dirty/blocked，不抛拒绝。
                 conflictedCourseIDs.formUnion(
                     unresolvedRequiredCourseIDs
                         .intersection(blockedPortableCourseIDs)
                         .subtracting(oversizedPortableCourseIDs)
                 )
-                throw CoursePortableStateError.stateConflict
+                dirtyPortableCourseIDs.formUnion(unresolvedRequiredCourseIDs)
+                blockedPortableCourseIDs.formUnion(unresolvedRequiredCourseIDs)
+                needsPortableCourseStateBootstrap = true
             }
         } catch {
             var rollbackFailed = false
@@ -22928,9 +20161,23 @@ final class WorkspaceStore: ObservableObject {
                 needsPortableCourseStateBootstrap = true
             }
             if rollbackFailed {
-                throw CoursePortableStateError.stateConflict
+                dirtyPortableCourseIDs.formUnion(conflictedCourseIDs)
+                blockedPortableCourseIDs.formUnion(conflictedCourseIDs)
+                needsPortableCourseStateBootstrap = true
             }
-            throw error
+            // S3：可携带写回失败静默降级，不抛 stateConflict 拒绝整次保存。
+            if !conflictedCourseIDs.isEmpty {
+                needsPortableCourseStateBootstrap = true
+            }
+            return CoursePortableStateCommit(
+                writes: [],
+                previousRevisions: previousRevisions,
+                previousDigests: previousDigests,
+                previousDirtyCourseIDs: previousDirty,
+                previousBlockedCourseIDs: previousBlocked,
+                previousOversizedCourseIDs: previousOversized,
+                previousNeedsBootstrap: previousNeedsBootstrap
+            )
         }
         needsPortableCourseStateBootstrap =
             !dirtyPortableCourseIDs.isEmpty
@@ -22971,7 +20218,10 @@ final class WorkspaceStore: ObservableObject {
         needsPortableCourseStateBootstrap =
             commit.previousNeedsBootstrap
         if rollbackFailed {
-            throw CoursePortableStateError.stateConflict
+            // S3：回滚失败仅保留 blocked 标记，不抛拒绝。
+            dirtyPortableCourseIDs.formUnion(commit.previousDirtyCourseIDs)
+            blockedPortableCourseIDs.formUnion(commit.previousBlockedCourseIDs)
+            needsPortableCourseStateBootstrap = true
         }
     }
 
