@@ -10390,12 +10390,12 @@ final class WorkspaceStore: ObservableObject {
             courseDocumentSearchIndex.schedule([importedItems[itemIndex]])
             invalidateAgentContext()
         }
+        // identity 只用于尽力找回、永不用于拒绝（存储简化红线）：
+        // resolveTrackedImportedFile 解析出可读文件就打开；identity 漂移
+        // 已在解析路径内按 #176 自愈刷新（见 resolution.changed 的保存）。
+        // 仅当文件物理上解析不到/不可读时才提示用户放回原文件。
         guard let resolvedURL = resolution.url,
-              FileManager.default.isReadableFile(atPath: resolvedURL.path),
-              let identity = importedFileIdentityResolver(resolvedURL),
-              importedItems[itemIndex].importedFileIdentity.map({
-                $0 == identity
-              }) ?? true else {
+              FileManager.default.isReadableFile(atPath: resolvedURL.path) else {
             showTransientNoteStatus(ui(
                 "“\(displayTitle(for: importedItems[itemIndex]))”暂时不在课程文件夹中。把原文件放回课程后再打开；课程首页会继续保留。",
                 "“\(displayTitle(for: importedItems[itemIndex]))” is not currently in the course folder. Put the original file back and try again; the course home will stay open."
@@ -17541,10 +17541,19 @@ final class WorkspaceStore: ObservableObject {
             return markCourseOwnedItemUnavailable(at: index)
         }
 
-        guard let identity = importedFileIdentityResolver(candidate),
-              importedItems[index].importedFileIdentity.map({ $0 == identity }) ?? true,
-              courseItemMemberships[membershipIndex].entryIdentity.map({ $0 == identity }) ?? true else {
+        guard let identity = importedFileIdentityResolver(candidate) else {
             return markCourseOwnedItemUnavailable(at: index)
+        }
+        // identity 只用于尽力找回、永不用于拒绝（存储简化红线）：课程内文件
+        // 以课程相对路径为准，路径下文件可读即接受。identity 不一致（iCloud
+        // 驱逐重下换 inode、APFS 卷号漂移等）时沿用既有自愈逻辑刷新记录，
+        // 与 applyCourseFileObservations 的对账语义一致，最多记一条日志。
+        if importedItems[index].importedFileIdentity.map({ $0 != identity }) ?? false
+            || courseItemMemberships[membershipIndex].entryIdentity.map({ $0 != identity }) ?? false {
+            NSLog(
+                "WeiBei: course-owned file identity drifted at %@; refreshed stored identity instead of refusing",
+                candidate.path
+            )
         }
 
         var changed = false

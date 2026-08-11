@@ -120,6 +120,7 @@ enum CourseProjectRootSelfCheck {
         }
         try firstScanAndFinderReconciliationPreserveIdentity()
         try unavailableCourseMaterialKeepsCourseHomeOpenUntilRestored()
+        try courseMaterialOpensAndHealsWhenIdentityDrifts()
         try thousandFileReconciliationIsLinearAndHardLinksStayStable()
         try exclusivePlacementRejectsConcurrentTargetAndSymlinkSwap()
         try conflictChoicesPreserveDataAndRelations()
@@ -6957,6 +6958,76 @@ enum CourseProjectRootSelfCheck {
         try check(
             store.selectedMaterialItem?.id == item.id,
             "原文稿恢复后没有打开正确资料"
+        )
+    }
+
+    /// 红线回归：记录 identity 与磁盘不一致（iCloud 驱逐重下换 inode）但文件
+    /// 可读时，openCourseMaterial 不得拒绝，且记录必须按自愈路径刷新。
+    @MainActor
+    private static func courseMaterialOpensAndHealsWhenIdentityDrifts() throws {
+        let fixture = try Fixture(name: "owned-identity-drift-open")
+        defer { fixture.remove() }
+        let library = try fixture.makeDirectory("课程资料库")
+        let incoming = try fixture.makeDirectory("待导入")
+        let source = incoming.appendingPathComponent("新概念笔记.txt")
+        try Data("身份漂移也要能直接打开".utf8).write(to: source)
+
+        let store = makeStore(fixture: fixture)
+        try store.configureCourseLibrary(at: library)
+        let courseID = try store.createCourseInLibrary(title: "漂移打开课")
+        let item = try store.importFileIntoCourseForSelfCheck(
+            source,
+            courseID: courseID,
+            role: .material
+        ).item
+        let courseURL = try require(item.url, "课程资料没有真实路径")
+        let originalIdentity = try require(
+            store.importedItems.first { $0.id == item.id }?.importedFileIdentity,
+            "课程资料没有记录文件身份"
+        )
+
+        // 模拟 iCloud 驱逐后重新下载：同路径换代（新 inode/出生时间），内容不变。
+        try FileManager.default.removeItem(at: courseURL)
+        try Data("身份漂移也要能直接打开".utf8).write(to: courseURL)
+        let driftedIdentity = try require(
+            CourseProjectFileWorker.identity(at: courseURL),
+            "重建后的课程资料无法 stat"
+        )
+        try check(
+            driftedIdentity != originalIdentity,
+            "同路径重建没有产生新文件身份"
+        )
+
+        store.presentCourseWorkspace(.hub, courseID: courseID)
+        try check(
+            store.openCourseMaterial(item.id),
+            "identity 漂移但文件可读时被拒绝打开（红线：identity 只用于尽力找回，永不用于拒绝）"
+        )
+        try check(
+            store.selectedMaterialItem?.id == item.id,
+            "identity 漂移后没有打开正确资料"
+        )
+        try check(
+            !store.courseWorkspacePresented,
+            "identity 漂移打开后仍停在课程首页"
+        )
+        let healed = try require(
+            store.importedItems.first { $0.id == item.id },
+            "打开后课程资料记录丢失"
+        )
+        try check(
+            healed.urlPath == courseURL.path,
+            "自愈后课程资料路径丢失"
+        )
+        try check(
+            healed.importedFileIdentity == driftedIdentity,
+            "自愈没有刷新记录的文件身份"
+        )
+        try check(
+            store.courseItemMemberships.first {
+                $0.itemID == item.id && $0.courseID == courseID
+            }?.entryIdentity == driftedIdentity,
+            "自愈没有刷新成员关系的文件身份"
         )
     }
 
