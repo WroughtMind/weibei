@@ -5161,26 +5161,26 @@ enum CourseProjectRootSelfCheck {
         let store = makeStore(fixture: fixture)
         try store.configureCourseLibrary(at: library)
 
-        try expectFailure("符号链接 metadata") {
-            _ = try store.adoptCourseFolder(
-                at: external,
-                title: "外部课程"
-            )
-        }
-        try check(store.courses.isEmpty, "符号链接 metadata 产生了幽灵课程")
-        try check(
-            try FileManager.default.contentsOfDirectory(atPath: external.path)
-                == externalEntriesBefore,
-            "拒绝符号链接 metadata 前写入了课程根"
+        // S6-1：符号链接 .weibei → 备份后按新课纳入，不拒绝。
+        let adoptedID = try store.adoptCourseFolder(
+            at: external,
+            title: "外部课程"
         )
+        try check(store.course(withID: adoptedID) != nil, "符号链接 metadata 软纳入失败")
         try check(
             try Data(contentsOf: manifestURL) == manifestData,
-            "拒绝符号链接 metadata 时改写了外部清单"
+            "软纳入改写了外部清单"
+        )
+        // 原符号链接入口应被移到 .weibei.backup-* 或保留在备份中。
+        let externalAfter = try FileManager.default.contentsOfDirectory(
+            atPath: external.path
         )
         try check(
-            CourseProjectFileWorker.isSymbolicLink(at: linkedMetadata),
-            "拒绝符号链接 metadata 时替换了用户入口"
+            externalAfter.contains(where: { $0.hasPrefix(".weibei.backup-") })
+                || !CourseProjectFileWorker.isSymbolicLink(at: linkedMetadata),
+            "软纳入未备份符号链接 metadata"
         )
+        _ = externalEntriesBefore
     }
 
     @MainActor
