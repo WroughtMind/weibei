@@ -134,7 +134,7 @@ enum CourseProjectRootSelfCheck {
         try step("旧课程首次整理") {
             try rootlessLegacyCourseIsOrganizedByCopy()
         }
-        try rootlessLegacyCourseDeleteRequiresRealFolder()
+        try rootlessLegacyCourseDeleteRemovesRegistration()
         try sharedRepairFailurePreservesMembershipUntilEntryDisappears()
         try sharedConversionStagesBesideSharedDestination()
         try sharedPostPlacementReplacementPreservesVerifiedOriginal()
@@ -222,6 +222,7 @@ enum CourseProjectRootSelfCheck {
 
         var swapRootBeforeTrash = false
         var crashAfterTrashMove = false
+        let failWorkspaceWrite = LockedBox(false)
         var courseARootForHook: URL?
         var displacedCourseRoot: URL?
         let lureName = "DO_NOT_TRASH.txt"
@@ -258,6 +259,12 @@ enum CourseProjectRootSelfCheck {
                     crashAfterTrashMove = false
                     throw CourseProjectSimulatedCrash()
                 }
+            },
+            workspaceWriter: { data, url in
+                if failWorkspaceWrite.get() {
+                    throw CheckError.injectedFailure
+                }
+                try data.write(to: url, options: [.atomic])
             }
         )
         try check(store != nil, "无法创建课程移除样本")
@@ -513,39 +520,76 @@ enum CourseProjectRootSelfCheck {
             !journalURL.exists,
             "S3 仍写出课程移除 journal"
         )
-        try store!.removeCourseFromWeiBeiForSelfCheck(courseB)
-        try check(
-            store!.course(withID: courseB) == nil,
-            "S3 下第二门课移除应可静默完成"
+        let receiptDirectory = try require(
+            (try FileManager.default.contentsOfDirectory(
+                at: library,
+                includingPropertiesForKeys: nil,
+                options: []
+            )).first(where: {
+                $0.lastPathComponent
+                    .hasPrefix(".weibei-course-removal-")
+                    && $0.appendingPathComponent(
+                        "trash-receipt.json"
+                    ).exists
+            }),
+            "课程根进废纸篓后没有留下重启收尾凭据"
         )
-
-        // 用户再次移除课程甲登记（根已在废纸篓，requiresAvailableRoot=false 路径）。
-        try store!.removeCourseFromWeiBeiForSelfCheck(courseA)
+        failWorkspaceWrite.set(true)
+        let trashedRootB = try store!
+            .moveCourseFolderToTrashForSelfCheck(courseB)
         try check(
-            store!.course(withID: courseA) == nil,
-            "S3 下课程甲登记未能静默取消"
+            store!.course(withID: courseB) == nil
+                && !rootB.exists
+                && CourseProjectFileWorker.identity(at: trashedRootB)
+                    == rootBIdentity,
+            "工作区保存失败后没有完成真实课程删除"
         )
-        let retainedChatCount = store!.studySessions.filter {
+        failWorkspaceWrite.set(false)
+        try check(
+            store!.flushPendingWorkspaceSave(),
+            "工作区恢复可写后没有补存课程删除"
+        )
+        let receiptsAfterSave = try FileManager.default
+            .contentsOfDirectory(
+                at: library,
+                includingPropertiesForKeys: nil,
+                options: []
+            )
+            .filter {
+                $0.lastPathComponent
+                    .hasPrefix(".weibei-course-removal-")
+                    && $0.appendingPathComponent(
+                        "trash-receipt.json"
+                    ).exists
+            }
+        try check(
+            receiptsAfterSave == [receiptDirectory],
+            "工作区补存后没有清掉第二门课程的收尾凭据"
+        )
+        store = nil
+        let reopened = makeStore(fixture: fixture)
+        let retainedChatCount = reopened.studySessions.filter {
             !$0.relatedCourseIDs.contains(courseA)
                 && $0.messages.contains { $0.text == chatToken }
         }.count
         try check(
-            retainedChatCount == 1
-                && store!.item(withID: sharedItem.id) != nil
-                && piHistoryMarker.exists
-                && CourseProjectFileWorker.identity(at: trashedRoot)
-                    == rootAIdentity,
-            "S3 静默降级后 Chat/共享/废纸篓状态不正确"
-        )
-        store = nil
-        let reopened = makeStore(fixture: fixture)
-        try check(
             reopened.course(withID: courseA) == nil
                 && reopened.course(withID: courseB) == nil
+                && retainedChatCount == 1
+                && reopened.item(withID: sharedItem.id) != nil
                 && CourseProjectFileWorker.identity(at: trashedRoot)
                     == rootAIdentity
-                && piHistoryMarker.exists,
-            "重开后课程登记或废纸篓状态漂移"
+                && piHistoryMarker.exists
+                && !receiptDirectory.exists
+                && (try FileManager.default.contentsOfDirectory(
+                    at: library,
+                    includingPropertiesForKeys: nil,
+                    options: []
+                )).allSatisfy {
+                    !$0.lastPathComponent
+                        .hasPrefix(".weibei-course-removal-")
+                },
+            "重开后没有自动收尾课程登记、凭据或废纸篓状态"
         )
     }
 
@@ -7949,11 +7993,18 @@ enum CourseProjectRootSelfCheck {
         let incoming = try fixture.makeDirectory("待导入")
         let trash = try fixture.makeDirectory("测试废纸篓")
         let shouldFailTrash = LockedBox(false)
+        let shouldPauseTrash = LockedBox(false)
+        let trashMoveStarted = LockedBox(false)
+        let resumeTrashMove = DispatchSemaphore(value: 0)
         var store = makeStore(
             fixture: fixture,
             contentSourceTrashMover: { sourceURL in
                 if shouldFailTrash.get() {
                     throw CheckError.injectedFailure
+                }
+                if shouldPauseTrash.get() {
+                    trashMoveStarted.set(true)
+                    resumeTrashMove.wait()
                 }
                 let target = trash.appendingPathComponent(
                     "\(UUID().uuidString)-\(sourceURL.lastPathComponent)"
@@ -7995,7 +8046,55 @@ enum CourseProjectRootSelfCheck {
                 && store.courseIDs(for: promoted.id).isEmpty,
             "从课程移除没有保住唯一原件或仍残留课程关系"
         )
-        try store.moveItemSourceToTrashForSelfCheck(promoted.id)
+        shouldPauseTrash.set(true)
+        let deletionFinished = LockedBox(false)
+        let deletionFailure = LockedBox<String?>(nil)
+        Task { @MainActor in
+            do {
+                try await store.moveItemSourceToTrashAsyncForSelfCheck(
+                    promoted.id
+                )
+            } catch {
+                deletionFailure.set(error.localizedDescription)
+            }
+            deletionFinished.set(true)
+        }
+        let deletionDeadline = Date(timeIntervalSinceNow: 10)
+        while !trashMoveStarted.get(),
+              !deletionFinished.get(),
+              Date() < deletionDeadline {
+            RunLoop.current.run(
+                mode: .default,
+                before: Date(timeIntervalSinceNow: 0.01)
+            )
+        }
+        let trashDidStart = trashMoveStarted.get()
+        if !trashDidStart {
+            resumeTrashMove.signal()
+        }
+        try check(
+            trashDidStart,
+            "独立资料删除没有进入受控废纸篓阶段：\(deletionFailure.get() ?? "没有错误")"
+        )
+        store.assignItemIDs([promoted.id], to: courseA)
+        try check(
+            store.courseIDs(for: promoted.id).isEmpty,
+            "独立资料删除进行中仍能加入课程"
+        )
+        shouldPauseTrash.set(false)
+        resumeTrashMove.signal()
+        let deletionCompletionDeadline = Date(timeIntervalSinceNow: 10)
+        while !deletionFinished.get(),
+              Date() < deletionCompletionDeadline {
+            RunLoop.current.run(
+                mode: .default,
+                before: Date(timeIntervalSinceNow: 0.01)
+            )
+        }
+        try check(
+            deletionFinished.get() && deletionFailure.get() == nil,
+            "独立资料删除没有完成：\(deletionFailure.get() ?? "超时")"
+        )
         try check(
             !commonMaterialURL.exists
                 && !store.importedItems.contains { $0.id == promoted.id }
@@ -8155,7 +8254,7 @@ enum CourseProjectRootSelfCheck {
     }
 
     @MainActor
-    private static func rootlessLegacyCourseDeleteRequiresRealFolder() throws {
+    private static func rootlessLegacyCourseDeleteRemovesRegistration() throws {
         let fixture = try Fixture(name: "rootless-course-removal")
         defer { fixture.remove() }
         let source = fixture.root.appendingPathComponent("旧课程外部资料.txt")
@@ -8174,24 +8273,22 @@ enum CourseProjectRootSelfCheck {
         )
         store.assignItemIDs([item.id], to: courseID)
 
-        try expectFailure("无真实文件夹的课程不能假装删除") {
-            _ = try store.moveCourseFolderToTrashForSelfCheck(courseID)
-        }
+        try store.deleteCourseForSelfCheck(courseID)
         try check(
-            store.course(withID: courseID) != nil
-                && store.courseIDs(for: item.id) == [courseID]
+            store.course(withID: courseID) == nil
+                && store.courseIDs(for: item.id).isEmpty
                 && store.item(withID: item.id) != nil
                 && (try Data(contentsOf: source)) == sourceData,
-            "无文件夹课程删除失败后丢失登记、关系或原文件"
+            "无文件夹旧课程删除后仍有课程关系或误删外部原文件"
         )
 
         store = makeStore(fixture: fixture)
         try check(
-            store.course(withID: courseID) != nil
-                && store.courseIDs(for: item.id) == [courseID]
+            store.course(withID: courseID) == nil
+                && store.courseIDs(for: item.id).isEmpty
                 && store.item(withID: item.id) != nil
                 && (try Data(contentsOf: source)) == sourceData,
-            "重开后无文件夹课程没有保持删除前状态"
+            "重开后无文件夹旧课程或关系复活"
         )
 
         let guardedFixture = try Fixture(name: "rootless-owned-item-removal")

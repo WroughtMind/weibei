@@ -337,7 +337,7 @@ struct SidebarView: View {
         coursePendingDeletion = nil
         Task { @MainActor in
             do {
-                _ = try await store.moveCourseFolderToTrash(course.id)
+                try await store.deleteCourse(course.id)
             } catch {
                 courseDeletionError = error.localizedDescription
             }
@@ -346,9 +346,15 @@ struct SidebarView: View {
 
     private func courseDeletionMessage(for course: Course) -> String {
         guard let root = store.courseRootURL(for: course.id) else {
+            if store.courseHasNeverHadFolder(course.id) {
+                return store.ui(
+                    "这门旧课程从未有课程文件夹。删除会移除课程和全部关系；外部原文件会留在独立资料或笔记中，可从侧边栏分别删除。",
+                    "This legacy course never had a course folder. Deleting removes the course and all relations; external source files remain as independent materials or notes and can be deleted from the sidebar."
+                )
+            }
             return store.ui(
-                "课程文件夹当前不可访问；魏碑不会只移除登记。重新授权文件夹后才能删除。",
-                "The course folder is unavailable. WeiBei won’t merely remove its registration; reauthorize the folder before deleting it."
+                "课程文件夹当前不可访问；魏碑不会假装删除。请先用“纳入已有文件夹”重新连接真实课程文件夹。",
+                "The course folder is unavailable. WeiBei won’t pretend to delete it; reconnect the real folder with Add Existing Folder first."
             )
         }
         return store.ui(

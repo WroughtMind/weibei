@@ -230,6 +230,7 @@ enum CourseOwnedFileError: LocalizedError {
     case unsafeCoursePath
     case targetConflict(URL)
     case replacementTargetIsShared
+    case itemBusy
     case verificationFailed
     case workspaceSaveFailed
 
@@ -253,6 +254,8 @@ enum CourseOwnedFileError: LocalizedError {
             "课程中已经存在“\(url.lastPathComponent)”。魏碑没有覆盖它。"
         case .replacementTargetIsShared:
             "这份共享原件正被其他课程使用，不能替换；可以取消或改名保留两份。"
+        case .itemBusy:
+            "这份文件正在进行另一项操作，请稍后重试。"
         case .verificationFailed:
             "复制后的文件校验失败，原文件保持不变。"
         case .workspaceSaveFailed:
@@ -268,7 +271,6 @@ enum CourseRemovalError: LocalizedError {
     case courseRootUnavailable
     case courseRootChanged
     case workspaceSaveFailed
-    case workspaceSaveFailedAfterTrash(URL)
 
     var errorDescription: String? {
         switch self {
@@ -284,8 +286,6 @@ enum CourseRemovalError: LocalizedError {
             "课程文件夹已发生变化，魏碑已停止操作。"
         case .workspaceSaveFailed:
             "魏碑没有保存移除结果，课程仍保持登记。"
-        case .workspaceSaveFailedAfterTrash(let trashURL):
-            "课程文件夹已移到废纸篓，但魏碑没有保存取消登记结果。课程仍会显示为不可用：\(trashURL.path)"
         }
     }
 }
@@ -707,7 +707,10 @@ final class WorkspaceStore: ObservableObject {
     private var activeCourseRebindTokens: [UUID: UUID] = [:]
     private var activeCourseRemovalTokens: [UUID: UUID] = [:]
     private var activeCourseRemovalTransactionID: UUID?
+    private var pendingCourseTrashReceiptCleanups:
+        [CourseTrashReceiptCleanup] = []
     private var activeCourseFileMutationCounts: [UUID: Int] = [:]
+    private var activeItemFileMutationIDs = Set<String>()
     private var workspacePersistenceRemovingCourseID: UUID?
     private var workspaceRemovalCommitObserved = false
 #if DEBUG
@@ -853,6 +856,19 @@ final class WorkspaceStore: ObservableObject {
         var fingerprint: TransactionDirectoryFingerprint
     }
 
+    private struct CourseTrashReceipt: Codable {
+        var courseID: UUID
+        var rootIdentity: ImportedFileIdentity
+        var transactionDirectoryIdentity: ImportedFileIdentity
+    }
+
+    private struct CourseTrashReceiptCleanup {
+        var courseID: UUID
+        var receiptURL: URL
+        var transactionDirectory: URL
+        var transactionDirectoryIdentity: ImportedFileIdentity
+    }
+
     private var lastUsableAgentAnswer: AgentMessage? {
         return messages.last { $0.isUsableAgentAnswer }
     }
@@ -944,7 +960,8 @@ final class WorkspaceStore: ObservableObject {
         let restoredCourseProjectRoots = restoreCourseProjectRoots()
         let restoredPortableCourseStates = restorePortableCourseStates()
         // S3：不再从 journal 恢复未完成操作；仅静默清理残留事务目录。
-        silentlyCleanupOrphanCourseTransactions()
+        let recoveredCourseTrash =
+            silentlyCleanupOrphanCourseTransactions()
         try? FileManager.default.removeItem(
             at: folder.appendingPathComponent("pending-notebook-rename.json")
         )
@@ -984,6 +1001,7 @@ final class WorkspaceStore: ObservableObject {
                     || sanitizedCourseResumePoints
                     || restoredCourseProjectRoots
                     || restoredPortableCourseStates
+                    || recoveredCourseTrash
                     || initializedCourseKnowledgeProfiles
                     || needsPortableCourseStateBootstrap
                     || recoveredInterruptedAgentReply
@@ -3569,9 +3587,16 @@ final class WorkspaceStore: ObservableObject {
             ownerCourseID,
             addedCourseID,
         ]
-        try beginCourseFileMutation(courseIDs: affectedCourseIDs)
+        let affectedItemIDs: Set<String> = [itemID]
+        try beginCourseFileMutation(
+            courseIDs: affectedCourseIDs,
+            itemIDs: affectedItemIDs
+        )
         defer {
-            finishCourseFileMutation(courseIDs: affectedCourseIDs)
+            finishCourseFileMutation(
+                courseIDs: affectedCourseIDs,
+                itemIDs: affectedItemIDs
+            )
         }
         let sourceInfo = try await courseProjectFileWorker.validatedRegularSource(sourceURL)
         let sourceSnapshot = try await courseProjectFileWorker.stableSnapshot(
@@ -3918,9 +3943,16 @@ final class WorkspaceStore: ObservableObject {
         conflictResolution: CourseFileConflictResolution
     ) async throws {
         let affectedCourseIDs: Set<UUID> = [courseID]
-        try beginCourseFileMutation(courseIDs: affectedCourseIDs)
+        let affectedItemIDs: Set<String> = [itemID]
+        try beginCourseFileMutation(
+            courseIDs: affectedCourseIDs,
+            itemIDs: affectedItemIDs
+        )
         defer {
-            finishCourseFileMutation(courseIDs: affectedCourseIDs)
+            finishCourseFileMutation(
+                courseIDs: affectedCourseIDs,
+                itemIDs: affectedItemIDs
+            )
         }
         guard conflictResolution != .replace else {
             throw CourseOwnedFileError.replacementTargetIsShared
@@ -4365,9 +4397,18 @@ final class WorkspaceStore: ObservableObject {
         additionalCourseIDs: Set<UUID> = []
     ) async throws -> CourseOwnedFileImportResult {
         let affectedCourseIDs = additionalCourseIDs.union([courseID])
-        try beginCourseFileMutation(courseIDs: affectedCourseIDs)
+        let affectedItemIDs = preservingItemID.map {
+            Set([$0])
+        } ?? []
+        try beginCourseFileMutation(
+            courseIDs: affectedCourseIDs,
+            itemIDs: affectedItemIDs
+        )
         defer {
-            finishCourseFileMutation(courseIDs: affectedCourseIDs)
+            finishCourseFileMutation(
+                courseIDs: affectedCourseIDs,
+                itemIDs: affectedItemIDs
+            )
         }
         guard let root = courseRootURL(for: courseID),
               let canonicalRoot = try? CourseProjectPathPolicy.existingDirectory(root),
@@ -5479,7 +5520,8 @@ final class WorkspaceStore: ObservableObject {
     /// 与旧版 pending journal 文件。
     /// H1：含 `replaced-target` / `replacement-rollback` 等用户内容崩溃备份的目录绝不误删；
     /// 其余仅当条目全部属于已知 staging/废件白名单时才清。
-    private func silentlyCleanupOrphanCourseTransactions() {
+    @discardableResult
+    private func silentlyCleanupOrphanCourseTransactions() -> Bool {
         let fileManager = FileManager.default
         // 运行时各 safelyRemove* 白名单并集 + 无 journal 时代的 staging 名。
         let safeOrphanNames: Set<String> = [
@@ -5560,7 +5602,8 @@ final class WorkspaceStore: ObservableObject {
             }
         }
         // 硬崩溃后可能残留 `.weibei-course-removal-*` 隔离目录：按身份还原到登记路径。
-        restoreOrphanCourseRootTrashIsolations()
+        let recoveredCourseTrash =
+            restoreOrphanCourseRootTrashIsolations()
         // 旧版 workspace 级 journal 路径（已在 init 删除一份；此处再保险）。
         try? fileManager.removeItem(
             at: workspaceDirectory.appendingPathComponent("pending-notebook-rename.json")
@@ -5568,6 +5611,7 @@ final class WorkspaceStore: ObservableObject {
         try? fileManager.removeItem(
             at: workspaceDirectory.appendingPathComponent("pending-course-removal.json")
         )
+        return recoveredCourseTrash
     }
 
     /// 旧版 course-file journal 子集：仅启动还原需要的字段（解码容忍缺字段）。
@@ -5640,12 +5684,87 @@ final class WorkspaceStore: ObservableObject {
         return true
     }
 
-    private func restoreOrphanCourseRootTrashIsolations() {
+    private func writeCourseTrashReceipt(
+        for isolation: CourseRootTrashIsolation,
+        courseID: UUID
+    ) throws -> CourseTrashReceiptCleanup {
+        let receiptURL = isolation.transactionDirectory
+            .appendingPathComponent(
+                "trash-receipt.json",
+                isDirectory: false
+            )
+        let receipt = CourseTrashReceipt(
+            courseID: courseID,
+            rootIdentity: isolation.identity,
+            transactionDirectoryIdentity:
+                isolation.transactionDirectoryIdentity
+        )
+        try JSONEncoder().encode(receipt).write(
+            to: receiptURL,
+            options: [.atomic]
+        )
+        return CourseTrashReceiptCleanup(
+            courseID: courseID,
+            receiptURL: receiptURL,
+            transactionDirectory: isolation.transactionDirectory,
+            transactionDirectoryIdentity:
+                isolation.transactionDirectoryIdentity
+        )
+    }
+
+    @discardableResult
+    private func cleanupCourseTrashReceipt(
+        _ cleanup: CourseTrashReceiptCleanup
+    ) -> Bool {
+        guard importedFileIdentityResolver(
+            cleanup.transactionDirectory
+        )?.matchesAcrossVolumeDrift(
+            cleanup.transactionDirectoryIdentity
+        ) == true else {
+            return false
+        }
+        try? FileManager.default.removeItem(at: cleanup.receiptURL)
+        guard CourseProjectFileWorker.entryPresence(
+            at: cleanup.receiptURL
+        ) == .absent else {
+            return false
+        }
+        _ = cleanup.transactionDirectory
+            .withUnsafeFileSystemRepresentation { path in
+                guard let path else { return Int32(-1) }
+                return Darwin.rmdir(path)
+            }
+        return true
+    }
+
+    private func cleanupPersistedCourseTrashReceipts() {
+        pendingCourseTrashReceiptCleanups.removeAll { cleanup in
+            guard !persistedWorkspaceCourseIDs.contains(
+                cleanup.courseID
+            ) else {
+                return false
+            }
+            return cleanupCourseTrashReceipt(cleanup)
+        }
+    }
+
+    @discardableResult
+    private func restoreOrphanCourseRootTrashIsolations() -> Bool {
         let fileManager = FileManager.default
+        var recoveredReceipts: [CourseTrashReceiptCleanup] = []
+        var recoveredCourseIDs = Set<UUID>()
         for course in courses {
             guard let expectedIdentity = course.sourceRootIdentity else { continue }
             let originalCandidates: [URL] = [
                 courseRootURL(for: course.id),
+                course.sourceRootRelativePath.flatMap { relativePath in
+                    courseLibraryRootURL.flatMap { libraryRoot in
+                        CourseProjectPathPolicy.resolvedRelativePath(
+                            relativePath,
+                            inside: libraryRoot
+                        )
+                    }
+                },
                 course.sourceRootPath.map {
                     URL(fileURLWithPath: $0, isDirectory: true)
                 },
@@ -5668,14 +5787,41 @@ final class WorkspaceStore: ObservableObject {
                         .hasPrefix(".weibei-course-removal-") else {
                         continue
                     }
+                    let receiptURL = sibling.appendingPathComponent(
+                        "trash-receipt.json",
+                        isDirectory: false
+                    )
+                    let siblingIdentity = importedFileIdentityResolver(
+                        sibling
+                    )
+                    let receipt = try? JSONDecoder().decode(
+                        CourseTrashReceipt.self,
+                        from: CourseProjectFileWorker
+                            .readBoundedRegularFile(
+                                at: receiptURL,
+                                maximumByteCount: 65_536
+                            )
+                    )
+                    let hasVerifiedReceipt: Bool
+                    if let receipt, let siblingIdentity {
+                        hasVerifiedReceipt = receipt.courseID == course.id
+                            && receipt.rootIdentity == expectedIdentity
+                            && siblingIdentity.matchesAcrossVolumeDrift(
+                                receipt.transactionDirectoryIdentity
+                            )
+                    } else {
+                        hasVerifiedReceipt = false
+                    }
                     guard let children = try? fileManager.contentsOfDirectory(
                         at: sibling,
                         includingPropertiesForKeys: [.isDirectoryKey],
                         options: []
                     ) else { continue }
                     for child in children {
-                        guard importedFileIdentityResolver(child)
-                            == expectedIdentity else {
+                        guard importedFileIdentityResolver(child)?
+                            .matchesAcrossVolumeDrift(
+                                expectedIdentity
+                            ) == true else {
                             continue
                         }
                         let restoreTarget = originalCandidates.first {
@@ -5689,24 +5835,73 @@ final class WorkspaceStore: ObservableObject {
                                     to: restoreTarget
                                 )
                         } else if originalCandidates.contains(where: {
-                            importedFileIdentityResolver($0) == expectedIdentity
+                            importedFileIdentityResolver($0)?
+                                .matchesAcrossVolumeDrift(
+                                    expectedIdentity
+                                ) == true
                         }) {
                             // 原路径已恢复，清掉重复隔离副本。
                             try? fileManager.removeItem(at: child)
                         }
                     }
-                    // LOW：空隔离目录检查从 for-child 体内移出，children 为空时也执行。
-                    if let remaining = try? fileManager
+                    let originalRootPresences = originalCandidates.map {
+                        CourseProjectFileWorker.entryPresence(at: $0)
+                    }
+                    let originalRootsAreDefinitelyAbsent =
+                        !originalRootPresences.isEmpty
+                        && originalRootPresences.allSatisfy {
+                            $0 == .absent
+                        }
+                    if hasVerifiedReceipt,
+                       originalRootsAreDefinitelyAbsent,
+                       !recoveredCourseIDs.contains(course.id),
+                       let siblingIdentity,
+                       let remaining = try? fileManager
                         .contentsOfDirectory(
                             at: sibling,
                             includingPropertiesForKeys: nil
                         ),
-                       remaining.isEmpty {
+                       remaining.map(\.lastPathComponent)
+                        == [receiptURL.lastPathComponent] {
+                        recoveredCourseIDs.insert(course.id)
+                        recoveredReceipts.append(
+                            CourseTrashReceiptCleanup(
+                                courseID: course.id,
+                                receiptURL: receiptURL,
+                                transactionDirectory: sibling,
+                                transactionDirectoryIdentity:
+                                    siblingIdentity
+                            )
+                        )
+                    } else if originalCandidates.contains(where: {
+                        importedFileIdentityResolver($0)?
+                            .matchesAcrossVolumeDrift(expectedIdentity)
+                            == true
+                    }), hasVerifiedReceipt, let siblingIdentity {
+                        cleanupCourseTrashReceipt(
+                            CourseTrashReceiptCleanup(
+                                courseID: course.id,
+                                receiptURL: receiptURL,
+                                transactionDirectory: sibling,
+                                transactionDirectoryIdentity:
+                                    siblingIdentity
+                            )
+                        )
+                    } else if let remaining = try? fileManager
+                        .contentsOfDirectory(
+                            at: sibling,
+                            includingPropertiesForKeys: nil
+                        ), remaining.isEmpty {
                         try? fileManager.removeItem(at: sibling)
                     }
                 }
             }
         }
+        for recovery in recoveredReceipts {
+            removeCourseLocalRegistration(recovery.courseID)
+            pendingCourseTrashReceiptCleanups.append(recovery)
+        }
+        return !recoveredReceipts.isEmpty
     }
 
 
@@ -6433,6 +6628,25 @@ final class WorkspaceStore: ObservableObject {
         )
     }
 
+    func courseHasNeverHadFolder(_ courseID: UUID) -> Bool {
+        guard let course = course(withID: courseID) else { return false }
+        return course.sourceRootRelativePath == nil
+            && course.sourceRootPath == nil
+            && course.sourceRootIdentity == nil
+            && course.sourceRootBookmarkData == nil
+    }
+
+    func deleteCourse(_ courseID: UUID) async throws {
+        guard course(withID: courseID) != nil else {
+            throw CourseRemovalError.courseNotFound
+        }
+        if courseHasNeverHadFolder(courseID) {
+            try await removeCourseFromWeiBei(courseID)
+        } else {
+            _ = try await moveCourseFolderToTrash(courseID)
+        }
+    }
+
     @discardableResult
     func moveCourseFolderToTrash(_ courseID: UUID) async throws -> URL {
         let transactionID = try beginCourseRemovalTransaction()
@@ -6455,9 +6669,10 @@ final class WorkspaceStore: ObservableObject {
             throw CourseRemovalError.courseRootUnavailable
         }
 
-        // S3：无 journal。隔离 → 进废纸篓 → 清登记；
-        // 隔离后任一步失败（含崩溃注入）都尽力把根目录还原回原路径，便于用户重试。
+        // 同卷 receipt 只负责区分“隔离待还原”和“已进废纸篓待清登记”；
+        // 不恢复 workspace 级 journal。
         var isolation: CourseRootTrashIsolation?
+        var receiptCleanup: CourseTrashReceiptCleanup?
         do {
             try courseProjectMutationHook(.beforeCourseRootTrashMove)
             // S6-4：不再因 Agent/笔记 pending 拒绝废纸篓。
@@ -6497,6 +6712,10 @@ final class WorkspaceStore: ObservableObject {
             guard let activeIsolation = isolation else {
                 throw CourseRemovalError.courseRootUnavailable
             }
+            receiptCleanup = try writeCourseTrashReceipt(
+                for: activeIsolation,
+                courseID: courseID
+            )
             let trashedRoot = try await courseProjectFileWorker
                 .moveIsolatedCourseRootToTrash(
                     activeIsolation,
@@ -6513,21 +6732,33 @@ final class WorkspaceStore: ObservableObject {
             )
 
             guard await persistWorkspaceRemovingCourse(courseID) else {
-                courseRootUnavailableReasons[courseID] =
-                    CourseRemovalError.workspaceSaveFailedAfterTrash(
-                        trashedRoot
-                    ).localizedDescription
+                removeCourseLocalRegistration(courseID)
+                if let receiptCleanup {
+                    pendingCourseTrashReceiptCleanups.append(
+                        receiptCleanup
+                    )
+                }
+                _ = save()
+                if shouldDismissCourseWorkspace {
+                    courseWorkspacePresented = false
+                }
                 finishCourseRemovalAttempt(
                     courseID,
                     token: prepared.token,
-                    succeeded: false
+                    succeeded: true
                 )
-                throw CourseRemovalError.workspaceSaveFailedAfterTrash(
-                    trashedRoot
-                )
+                return trashedRoot
             }
 
             removeCourseLocalRegistration(courseID)
+            // ponytail: a crash after the workspace commit can leave one tiny
+            // receipt; add a trusted cleanup index only if this becomes observable.
+            if let receiptCleanup,
+               !cleanupCourseTrashReceipt(receiptCleanup) {
+                pendingCourseTrashReceiptCleanups.append(
+                    receiptCleanup
+                )
+            }
             if shouldDismissCourseWorkspace {
                 courseWorkspacePresented = false
             }
@@ -6542,6 +6773,10 @@ final class WorkspaceStore: ObservableObject {
                 await courseProjectFileWorker.restoreCourseRootTrashIsolation(
                     isolation
                 )
+                if importedFileIdentityResolver(root) == rootIdentity,
+                   let receiptCleanup {
+                    cleanupCourseTrashReceipt(receiptCleanup)
+                }
             }
             finishCourseRemovalAttempt(
                 courseID,
@@ -6565,6 +6800,13 @@ final class WorkspaceStore: ObservableObject {
         )
         try waitForCourseFileOperation {
             try await self.removeCourseFromWeiBei(courseID)
+        }
+    }
+
+    func deleteCourseForSelfCheck(_ courseID: UUID) throws {
+        precondition(WeiBeiSafetyTestMode.isEnabled)
+        try waitForCourseFileOperation {
+            try await self.deleteCourse(courseID)
         }
     }
 
@@ -7164,7 +7406,8 @@ final class WorkspaceStore: ObservableObject {
     }
 
     private func beginCourseFileMutation(
-        courseIDs: Set<UUID>
+        courseIDs: Set<UUID>,
+        itemIDs: Set<String> = []
     ) throws {
         guard courseIDs.allSatisfy({ courseID in
                 courses.contains(where: { $0.id == courseID })
@@ -7176,13 +7419,23 @@ final class WorkspaceStore: ObservableObject {
         }) else {
             throw CoursePortableExportError.unstableCourseState
         }
+        guard itemIDs.allSatisfy({ itemID in
+            importedItems.contains(where: { $0.id == itemID })
+        }) else {
+            throw CourseOwnedFileError.unsupportedFile
+        }
+        guard itemIDs.isDisjoint(with: activeItemFileMutationIDs) else {
+            throw CourseOwnedFileError.itemBusy
+        }
         for courseID in courseIDs {
             activeCourseFileMutationCounts[courseID, default: 0] += 1
         }
+        activeItemFileMutationIDs.formUnion(itemIDs)
     }
 
     private func finishCourseFileMutation(
-        courseIDs: Set<UUID>
+        courseIDs: Set<UUID>,
+        itemIDs: Set<String> = []
     ) {
         for courseID in courseIDs {
             let count = activeCourseFileMutationCounts[
@@ -7197,6 +7450,7 @@ final class WorkspaceStore: ObservableObject {
                 activeCourseFileMutationCounts[courseID] = count - 1
             }
         }
+        activeItemFileMutationIDs.subtract(itemIDs)
     }
 
 
@@ -7232,8 +7486,16 @@ final class WorkspaceStore: ObservableObject {
             throw CourseOwnedFileError.verificationFailed
         }
 
-        try beginCourseFileMutation(courseIDs: [ownerCourseID])
-        defer { finishCourseFileMutation(courseIDs: [ownerCourseID]) }
+        try beginCourseFileMutation(
+            courseIDs: [ownerCourseID],
+            itemIDs: [itemID]
+        )
+        defer {
+            finishCourseFileMutation(
+                courseIDs: [ownerCourseID],
+                itemIDs: [itemID]
+            )
+        }
 
         let sourceInfo = try await courseProjectFileWorker
             .validatedRegularSource(sourceURL)
@@ -7377,7 +7639,10 @@ final class WorkspaceStore: ObservableObject {
     }
 
     func setCourseIDs(_ courseIDs: Set<UUID>, for itemID: String) {
-        guard let item = importedItems.first(where: { $0.id == itemID }) else { return }
+        guard !activeItemFileMutationIDs.contains(itemID),
+              let item = importedItems.first(where: { $0.id == itemID }) else {
+            return
+        }
         let validCourseIDs = Set(courses.map(\.id))
         let requested = courseIDs.intersection(validCourseIDs)
         let current = Set(self.courseIDs(for: itemID))
@@ -7623,7 +7888,7 @@ final class WorkspaceStore: ObservableObject {
     func confirmMoveItemSourceToTrash(_ itemID: String) {
         guard let item = importedItems.first(where: { $0.id == itemID }),
               !item.isSample,
-              item.url != nil else {
+              let sourceURL = item.url else {
             showTransientNoteStatus(
                 ContentSourceRemovalError.itemUnavailable.localizedDescription
             )
@@ -7641,8 +7906,8 @@ final class WorkspaceStore: ObservableObject {
             "Move the Source File to Trash?"
         )
         alert.informativeText = ui(
-            "这会移动唯一原文件，并从所有课程中移除。受影响课程：\(courseSummary)",
-            "This moves the only source file and removes it from every course. Affected courses: \(courseSummary)"
+            "这会把唯一原文件移到废纸篓，并从所有课程中删除。\n文件：\(displayTitle(for: item))\n路径：\(sourceURL.path)\n受影响课程：\(courseSummary)",
+            "This moves the only source file to Trash and deletes it from every course.\nFile: \(displayTitle(for: item))\nPath: \(sourceURL.path)\nAffected courses: \(courseSummary)"
         )
         alert.addButton(withTitle: ui("取消", "Cancel"))
         alert.addButton(withTitle: ui("移到废纸篓", "Move to Trash"))
@@ -7702,8 +7967,16 @@ final class WorkspaceStore: ObservableObject {
         } else {
             formerSharedLinks = []
         }
-        try beginCourseFileMutation(courseIDs: affectedCourseIDs)
-        defer { finishCourseFileMutation(courseIDs: affectedCourseIDs) }
+        try beginCourseFileMutation(
+            courseIDs: affectedCourseIDs,
+            itemIDs: [itemID]
+        )
+        defer {
+            finishCourseFileMutation(
+                courseIDs: affectedCourseIDs,
+                itemIDs: [itemID]
+            )
+        }
 
         let sourceSnapshot: CourseFileSnapshot
         do {
@@ -7872,9 +8145,15 @@ final class WorkspaceStore: ObservableObject {
         fromCourseID courseID: UUID
     ) async throws {
         let affectedCourseIDs: Set<UUID> = [courseID]
-        try beginCourseFileMutation(courseIDs: affectedCourseIDs)
+        try beginCourseFileMutation(
+            courseIDs: affectedCourseIDs,
+            itemIDs: [itemID]
+        )
         defer {
-            finishCourseFileMutation(courseIDs: affectedCourseIDs)
+            finishCourseFileMutation(
+                courseIDs: affectedCourseIDs,
+                itemIDs: [itemID]
+            )
         }
         guard let item = importedItems.first(where: { $0.id == itemID }),
               case .shared(let sharedRelativePath) = item.storage,
@@ -8013,6 +8292,13 @@ final class WorkspaceStore: ObservableObject {
         }
     }
 
+    func moveItemSourceToTrashAsyncForSelfCheck(
+        _ itemID: String
+    ) async throws {
+        precondition(WeiBeiSafetyTestMode.isEnabled)
+        try await moveItemSourceToTrash(itemID)
+    }
+
     func installRootlessCourseForSelfCheck(title: String) -> UUID {
         precondition(
             WeiBeiSafetyTestMode.isEnabled
@@ -8031,7 +8317,10 @@ final class WorkspaceStore: ObservableObject {
     }
 
     func assignItemIDs(_ itemIDs: Set<String>, to courseID: UUID) {
-        guard courses.contains(where: { $0.id == courseID }) else { return }
+        guard courses.contains(where: { $0.id == courseID }),
+              itemIDs.isDisjoint(with: activeItemFileMutationIDs) else {
+            return
+        }
         let validItemIDs = Set(importedItems.map(\.id))
         var memberships = courseMembershipIndex
         memberships.assign(itemIDs: itemIDs.intersection(validItemIDs), to: courseID)
@@ -21518,6 +21807,7 @@ final class WorkspaceStore: ObservableObject {
         }
         if result.failure == nil {
             persistedWorkspaceCourseIDs = result.persistedCourseIDs
+            cleanupPersistedCourseTrashReceipts()
         }
         guard workspaceSaveGeneration == generation else {
             publishOutcome = "superseded"
@@ -21732,6 +22022,7 @@ final class WorkspaceStore: ObservableObject {
                 let data = try JSONEncoder().encode(snapshot)
                 try workspaceSnapshotWriter(data, storageURL)
                 persistedWorkspaceCourseIDs = Set(courses.map(\.id))
+                cleanupPersistedCourseTrashReceipts()
                 courseResumePoints = persistedCourseResumePoints
                 if !oversizedPortableCourseIDs.isEmpty {
                     reportWorkspaceSaveFailure(ui(
