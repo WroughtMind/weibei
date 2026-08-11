@@ -24,7 +24,21 @@ public final class NoteFileWatcher: @unchecked Sendable {
     }
 
     deinit {
-        stop()
+        // Avoid queue.sync from deinit (can trap under MainActor teardown).
+        pendingReloadWorkItem?.cancel()
+        pendingReloadWorkItem = nil
+        if let source {
+            source.setEventHandler {}
+            source.cancel()
+        }
+        if fileDescriptor >= 0 {
+            close(fileDescriptor)
+            fileDescriptor = -1
+        }
+        source = nil
+        watchedFileURL = nil
+        watchedFileName = nil
+        changeHandler = nil
     }
 
     public var isWatching: Bool {

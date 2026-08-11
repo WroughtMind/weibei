@@ -18890,6 +18890,11 @@ final class WorkspaceStore: ObservableObject {
 
     /// S4：跟踪当前活动笔记路径；外部改动且无脏输入时静默重载。
     private func refreshActiveNoteFileWatch() {
+        // 安全自检大量建/毁 store 与临时目录；监听器在测试模式关闭以免竞态。
+        if WeiBeiSafetyTestMode.isEnabled {
+            noteFileWatcher.stop()
+            return
+        }
         guard let item = activeNoteItem,
               item.editsBackingMarkdownFile,
               let url = item.url,
