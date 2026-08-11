@@ -1444,9 +1444,16 @@ final class WorkspaceStore: ObservableObject {
         guard let identity = importedFileIdentityResolver(canonicalRoot) else {
             throw CourseProjectRootError.rootIdentityUnavailable
         }
+        // S6-2：资料库身份变化不再拒绝；静默改绑到新文件夹（课程记录保留）。
+        // 原先 libraryIdentityMismatch 拒绝「换库」；产品改为允许迁移绑定。
         if let persistedIdentity = courseLibraryRootIdentity,
            persistedIdentity != identity {
-            throw CourseProjectRootError.libraryIdentityMismatch
+            showTransientNoteStatus(
+                ui(
+                    "已将课程资料库改绑到所选文件夹，课程记录保留。",
+                    "The course library was re-bound to the selected folder. Course records were kept."
+                )
+            )
         }
         guard let bookmark = courseRootBookmarkMaker(canonicalRoot) else {
             throw CourseProjectRootError.bookmarkUnavailable
@@ -6093,22 +6100,78 @@ final class WorkspaceStore: ObservableObject {
     func moveCourseFolderToTrash(_ courseID: UUID) async throws -> URL {
         let transactionID = try beginCourseRemovalTransaction()
         defer { finishCourseRemovalTransaction(transactionID) }
-        let prepared = try await prepareCourseRemoval(
-            courseID,
-            token: transactionID,
-            requiresAvailableRoot: true
+        // S6-3：根不可访问时改为只取消本机登记（文件夹本身动不了）。
+        let prepared: (
+            course: Course,
+            root: URL?,
+            rootIdentity: ImportedFileIdentity?,
+            token: UUID
         )
+        do {
+            prepared = try await prepareCourseRemoval(
+                courseID,
+                token: transactionID,
+                requiresAvailableRoot: true
+            )
+        } catch CourseRemovalError.courseRootUnavailable {
+            let shouldDismiss =
+                courseWorkspacePresented
+                    && courseWorkspaceCourseID == courseID
+            guard await persistWorkspaceRemovingCourse(courseID) else {
+                finishCourseRemovalAttempt(
+                    courseID,
+                    token: transactionID,
+                    succeeded: false
+                )
+                throw CourseRemovalError.workspaceSaveFailed
+            }
+            removeCourseLocalRegistration(courseID)
+            if shouldDismiss {
+                courseWorkspacePresented = false
+            }
+            finishCourseRemovalAttempt(
+                courseID,
+                token: transactionID,
+                succeeded: true
+            )
+            showTransientNoteStatus(
+                ui(
+                    "课程文件夹当前不可访问，已只取消本机登记；磁盘上的文件夹未移动。",
+                    "The course folder is currently inaccessible. Local registration was removed; the on-disk folder was not moved."
+                )
+            )
+            return workspaceDirectory
+        }
         let shouldDismissCourseWorkspace =
             courseWorkspacePresented
                 && courseWorkspaceCourseID == courseID
         guard let root = prepared.root,
               let rootIdentity = prepared.rootIdentity else {
+            let shouldDismiss = shouldDismissCourseWorkspace
+            guard await persistWorkspaceRemovingCourse(courseID) else {
+                finishCourseRemovalAttempt(
+                    courseID,
+                    token: prepared.token,
+                    succeeded: false
+                )
+                throw CourseRemovalError.workspaceSaveFailed
+            }
+            removeCourseLocalRegistration(courseID)
+            if shouldDismiss {
+                courseWorkspacePresented = false
+            }
             finishCourseRemovalAttempt(
                 courseID,
                 token: prepared.token,
-                succeeded: false
+                succeeded: true
             )
-            throw CourseRemovalError.courseRootUnavailable
+            showTransientNoteStatus(
+                ui(
+                    "课程文件夹当前不可访问，已只取消本机登记；磁盘上的文件夹未移动。",
+                    "The course folder is currently inaccessible. Local registration was removed; the on-disk folder was not moved."
+                )
+            )
+            return workspaceDirectory
         }
 
         // S3：无 journal。隔离 → 进废纸篓 → 清登记；

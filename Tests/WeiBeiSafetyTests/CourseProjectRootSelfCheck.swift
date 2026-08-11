@@ -7673,23 +7673,14 @@ enum CourseProjectRootSelfCheck {
         )
         store.assignItemIDs([item.id], to: courseID)
 
-        try expectFailure("无文件夹课程移到废纸篓") {
-            try store.moveCourseFolderToTrashForSelfCheck(courseID)
-        }
-        try check(
-            store.course(withID: courseID) != nil
-                && store.courseIDs(for: item.id) == [courseID]
-                && (try Data(contentsOf: source)) == sourceData,
-            "无文件夹课程误进废纸篓路径或改动了原文件"
-        )
-
-        try store.removeCourseFromWeiBeiForSelfCheck(courseID)
+        // S6-3：无文件夹/不可访问时废纸篓动作退化为只取消登记。
+        _ = try store.moveCourseFolderToTrashForSelfCheck(courseID)
         try check(
             store.course(withID: courseID) == nil
                 && store.courseIDs(for: item.id).isEmpty
                 && store.item(withID: item.id) != nil
                 && (try Data(contentsOf: source)) == sourceData,
-            "普通移除没有只解除旧课程关系，或改动了原文件"
+            "无文件夹课程取消登记失败或改动了原文件"
         )
 
         store = makeStore(fixture: fixture)
