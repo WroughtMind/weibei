@@ -1818,7 +1818,7 @@ do {
     expect(restored == original, "S2 triple backup preserves external content")
 }
 
-// MARK: - Performance Phase 1: workspace save encode guardrail
+// MARK: - Performance Phase 1+2: workspace encode guardrail + off-main hop
 do {
     // Warm-up encode so first-run JSONEncoder overhead does not dominate.
     let warm = WeiBeiPerfBudgets.syntheticWorkspace(noteCount: 20)
@@ -1832,6 +1832,23 @@ do {
         encodeMS < WeiBeiPerfBudgets.workspaceSaveEncodeMS,
         "200-note workspace JSON encode took \(String(format: "%.1f", encodeMS))ms (budget \(WeiBeiPerfBudgets.workspaceSaveEncodeMS)ms)"
     )
+
+    // Phase 2：Task.detached 编码路径不在主线程（与 CourseProjectFileWorker hop 一致）。
+    let hopDone = DispatchSemaphore(value: 0)
+    let hopLock = NSLock()
+    var stillMainAfterHop = true
+    Task.detached(priority: .utility) {
+        let stillMain = pthread_main_np() != 0
+        hopLock.lock()
+        stillMainAfterHop = stillMain
+        hopLock.unlock()
+        hopDone.signal()
+    }
+    _ = hopDone.wait(timeout: .now() + 2)
+    hopLock.lock()
+    let hoppedOffMain = stillMainAfterHop == false
+    hopLock.unlock()
+    expect(hoppedOffMain, "Phase 2 encode hop leaves main thread")
 }
 
 // MARK: - S4 NoteFileWatcher

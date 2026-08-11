@@ -622,11 +622,18 @@ actor CourseProjectFileWorker {
             )
             let data: Data
             do {
-                data = try JSONEncoder().encode(workspace)
+                // Phase 2：编码必须离开主线程。actor 通常已离主；若误入主线程则强制 hop。
+                if pthread_main_np() != 0 {
+                    data = try await Task.detached(priority: .utility) {
+                        try JSONEncoder().encode(workspace)
+                    }.value
+                } else {
+                    data = try JSONEncoder().encode(workspace)
+                }
                 WeiBeiPerf.end(
                     encodeSpan,
                     extra:
-                        "outcome=completed generation=\(request.generation)"
+                        "outcome=completed generation=\(request.generation) offMain=1"
                 )
             } catch {
                 WeiBeiPerf.end(
@@ -640,15 +647,34 @@ actor CourseProjectFileWorker {
                 "workspace.save_disk_commit_and_verify"
             )
             do {
-                try data.write(to: request.storageURL, options: [.atomic])
-                let verified = try Data(contentsOf: request.storageURL)
-                guard verified == data else {
-                    throw CourseProjectFileWorkerError.verificationFailed
+                if pthread_main_np() != 0 {
+                    try await Task.detached(priority: .utility) {
+                        try data.write(
+                            to: request.storageURL,
+                            options: [.atomic]
+                        )
+                        let verified = try Data(
+                            contentsOf: request.storageURL
+                        )
+                        guard verified == data else {
+                            throw CourseProjectFileWorkerError
+                                .verificationFailed
+                        }
+                    }.value
+                } else {
+                    try data.write(
+                        to: request.storageURL,
+                        options: [.atomic]
+                    )
+                    let verified = try Data(contentsOf: request.storageURL)
+                    guard verified == data else {
+                        throw CourseProjectFileWorkerError.verificationFailed
+                    }
                 }
                 WeiBeiPerf.end(
                     diskSpan,
                     extra:
-                        "outcome=completed generation=\(request.generation)"
+                        "outcome=completed generation=\(request.generation) offMain=1"
                 )
             } catch {
                 WeiBeiPerf.end(
