@@ -361,7 +361,7 @@ enum ImportedIdentitySelfCheck {
         )
         try check(
             moveCount == 1,
-            "连续确认启动了多个笔记重命名事务；移动次数=\(moveCount)，错误=\(store?.noteFileError ?? "nil")"
+            "连续确认启动了多个笔记重命名事务；移动次数=\(moveCount)，错误=\(store?.transientNoteStatus ?? "nil")"
         )
         try check(
             store?.courseNotebookItems.first(where: {
@@ -2502,7 +2502,7 @@ enum ImportedIdentitySelfCheck {
         )
         try check(
             appRenamedNote.urlPath?.hasSuffix("第二讲最终笔记.md") == true,
-            "应用内重命名没有更新笔记路径；实际路径=\(appRenamedNote.urlPath ?? "nil")；错误=\(store?.noteFileError ?? "nil")"
+            "应用内重命名没有更新笔记路径；实际路径=\(appRenamedNote.urlPath ?? "nil")；错误=\(store?.transientNoteStatus ?? "nil")"
         )
         store?.flushPendingNotePersistence()
         store = nil
@@ -2571,7 +2571,7 @@ enum ImportedIdentitySelfCheck {
         let cachedSnapshot = try fixture.readSnapshot()
         try check(cachedSnapshot.notesByItemID[note.id] == latestEdit, "文件不可用时没有保存最新编辑缓存")
         // S2：不再要求 pendingNoteWrites 基线状态机；草稿在 notesByItemID 即可。
-        try check(store?.noteFileError?.contains("冲突") != true, "文件不可用时不应弹出冲突横幅")
+        try check(store?.transientNoteStatus?.contains("冲突") != true, "文件不可用时不应弹出冲突横幅")
         store = nil
 
         identityIsAvailable = true
@@ -2594,7 +2594,7 @@ enum ImportedIdentitySelfCheck {
         let restoredSnapshot = try fixture.readSnapshot()
         try check(restoredDiskText == latestEdit, "文件恢复后重启没有自动写回最新编辑")
         try check(restoredSnapshot.notesByItemID[note.id] == nil, "最新编辑写回成功后仍残留待写缓存")
-        try check(store?.noteFileError == nil, "安全补写成功后仍显示笔记提示")
+        try check(store?.transientNoteStatus == nil, "安全补写成功后仍显示笔记提示")
 
         // 外部改文件后魏碑保存 → last writer wins，旧内容进备份环
         store?.select(itemID: note.id)
@@ -2609,7 +2609,7 @@ enum ImportedIdentitySelfCheck {
         store?.flushPendingNotePersistence()
         let afterDisk = try String(contentsOf: noteURL, encoding: .utf8)
         try check(afterDisk == weibeiEdit, "外部改动后魏碑保存没有写回（应 last writer wins）")
-        try check(store?.noteFileError?.contains("冲突") != true, "外部改动后写回不应弹出冲突横幅")
+        try check(store?.transientNoteStatus?.contains("冲突") != true, "外部改动后写回不应弹出冲突横幅")
         let backups = try NoteBackupRing.list(itemID: note.id, rootURL: backupRoot)
         try check(!backups.isEmpty, "外部改动被覆盖前应进入备份环")
         let backupBodies = try backups.map { try String(contentsOf: $0.url, encoding: .utf8) }
@@ -2724,7 +2724,7 @@ enum ImportedIdentitySelfCheck {
         )
         try check(
             reopened.activeNoteItemID == noteB.id
-                && reopened.noteFileError?.contains("冲突") != true,
+                && reopened.transientNoteStatus?.contains("冲突") != true,
             "后台笔记写回失败不应以冲突横幅打扰当前笔记"
         )
         reopened.openCourseNote(noteA.id)
@@ -2791,7 +2791,7 @@ enum ImportedIdentitySelfCheck {
         store?.flushPendingNotePersistence()
         let offlineSnapshot = try fixture.readSnapshot()
         try check(offlineSnapshot.notesByItemID[note.id] == knownBaselineEdit, "启动前离线编辑没有建立草稿")
-        try check(store?.noteFileError?.contains("冲突") != true, "离线编辑不应弹出冲突横幅")
+        try check(store?.transientNoteStatus?.contains("冲突") != true, "离线编辑不应弹出冲突横幅")
         store = nil
 
         try FileManager.default.moveItem(at: holdingURL, to: noteURL)
@@ -2835,7 +2835,7 @@ enum ImportedIdentitySelfCheck {
         store?.flushPendingNotePersistence()
         let rewritten = try String(contentsOf: noteURL, encoding: .utf8)
         try check(rewritten == secondEdit, "二次恢复后没有写回最新草稿（应 last writer wins）")
-        try check(store?.noteFileError?.contains("冲突") != true, "写回不应弹出冲突横幅")
+        try check(store?.transientNoteStatus?.contains("冲突") != true, "写回不应弹出冲突横幅")
     }
 
     @MainActor
@@ -2890,7 +2890,7 @@ enum ImportedIdentitySelfCheck {
             finalBody == lateDraft || finalBody == externalEdit || finalBody.contains("A笔记"),
             "重命名/写回后笔记正文丢失"
         )
-        try check(store.noteFileError?.contains("冲突") != true, "迟到草稿场景不应弹出冲突横幅")
+        try check(store.transientNoteStatus?.contains("冲突") != true, "迟到草稿场景不应弹出冲突横幅")
     }
 
     @MainActor
@@ -2950,7 +2950,7 @@ enum ImportedIdentitySelfCheck {
         try check(retained.importedFileIdentity == originalIdentity, "重命名后身份变化时新文件继承了原关系身份")
         // S3：提示可为 noteFileError 或 transientNoteStatus，文案含「身份」即可。
         let explained =
-            (store.noteFileError?.contains("身份") == true)
+            (store.transientNoteStatus?.contains("身份") == true)
             || (store.transientNoteStatus?.contains("身份") == true)
         try check(explained, "重命名后身份变化时没有向用户说明已中止")
         let snapshot = try fixture.readSnapshot()
@@ -3016,7 +3016,7 @@ enum ImportedIdentitySelfCheck {
         try check(store.linkedSourceIDs(for: note.id) == [material.id], "活动笔记标题写入失败后关系图被提前迁移")
         let diskMarkdown = try String(contentsOf: noteURL, encoding: .utf8)
         try check(diskMarkdown == originalMarkdown, "活动笔记标题写入失败后磁盘正文发生变化")
-        try check(store.noteFileError?.contains("无法重命名") == true, "活动笔记标题写入失败后仍显示成功")
+        try check(store.transientNoteStatus?.contains("无法重命名") == true, "活动笔记标题写入失败后仍显示成功")
     }
 
     @MainActor
@@ -3069,7 +3069,7 @@ enum ImportedIdentitySelfCheck {
         try check(!FileManager.default.fileExists(atPath: renamedURL.path), "非活动笔记读取失败后仍移动了文件")
         try check(retained.urlPath == noteURL.path, "非活动笔记读取失败后课程状态提前采用了新路径")
         try check(store.linkedSourceIDs(for: note.id) == [material.id], "非活动笔记读取失败后关系图被提前迁移")
-        try check(store.noteFileError?.contains("无法重命名") == true, "非活动笔记读取失败后仍显示成功")
+        try check(store.transientNoteStatus?.contains("无法重命名") == true, "非活动笔记读取失败后仍显示成功")
     }
 
     @MainActor
@@ -3117,7 +3117,7 @@ enum ImportedIdentitySelfCheck {
         try check(restoredMarkdown.contains("陌生正文"), "错误写入返回成功后覆盖或删除了外部磁盘内容")
         try check(snapshot.notesByItemID[note.id] == originalMarkdown, "错误写入返回成功后没有保留魏碑原正文")
         try check(snapshot.pendingNoteWritesByItemID?[note.id] != nil, "错误写入返回成功后没有建立待写保护")
-        try check(store.noteFileError?.contains("无法重命名") == true, "错误写入返回成功后仍显示重命名成功")
+        try check(store.transientNoteStatus?.contains("无法重命名") == true, "错误写入返回成功后仍显示重命名成功")
     }
 
     @MainActor

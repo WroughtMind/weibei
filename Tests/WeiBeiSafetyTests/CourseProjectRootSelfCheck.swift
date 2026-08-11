@@ -7623,7 +7623,7 @@ enum CourseProjectRootSelfCheck {
         try store.configureCourseLibrary(at: library)
         let courseRoot = try require(
             store.courseRootURL(for: courseID),
-            "选择课程库后没有建立真实课程文件夹：\(store.noteFileError ?? "没有记录整理错误")；\(store.workspaceSaveError ?? "没有记录保存错误")"
+            "选择课程库后没有建立真实课程文件夹：\(store.transientNoteStatus ?? "没有记录整理错误")；\(store.workspaceSaveError ?? "没有记录保存错误")"
         )
         let organized = try require(
             store.importedItems.first { $0.id == item.id },
