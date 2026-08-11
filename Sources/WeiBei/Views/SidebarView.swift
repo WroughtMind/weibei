@@ -168,14 +168,19 @@ struct SidebarView: View {
     private var filteredCourses: [Course] {
         let query = store.librarySearch.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !query.isEmpty else { return store.courses }
+        // Hoist out of the per-element closure: every access to the computed
+        // `filteredItemIDs` rebuilds Set(store.filteredItems) — inside a filter
+        // closure that made each sidebar body evaluation quadratic in library size.
+        let ids = filteredItemIDs
         return store.courses.filter { course in
             course.title.localizedCaseInsensitiveContains(query)
-                || store.courseItems(in: course.id).contains { filteredItemIDs.contains($0.id) }
+                || store.courseItems(in: course.id).contains { ids.contains($0.id) }
         }
     }
 
     private var unassignedMaterials: [StudyItem] {
-        store.unassignedCourseMaterials.filter { filteredItemIDs.contains($0.id) }
+        let ids = filteredItemIDs
+        return store.unassignedCourseMaterials.filter { ids.contains($0.id) }
     }
 
     private var notebookItems: [StudyItem] {
@@ -187,28 +192,33 @@ struct SidebarView: View {
     }
 
     private func materials(in courseID: UUID) -> [StudyItem] {
-        store.courseMaterials(in: courseID).filter { filteredItemIDs.contains($0.id) }
+        let ids = filteredItemIDs
+        return store.courseMaterials(in: courseID).filter { ids.contains($0.id) }
     }
 
     private func notes(in courseID: UUID) -> [StudyItem] {
-        store.courseNotes(in: courseID).filter { filteredItemIDs.contains($0.id) }
+        let ids = filteredItemIDs
+        return store.courseNotes(in: courseID).filter { ids.contains($0.id) }
     }
 
     private var courseSection: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        // Evaluate once per body pass: with an active search this re-scans
+        // courses × items, so the isEmpty check and ForEach must share one result.
+        let courses = filteredCourses
+        return VStack(alignment: .leading, spacing: 6) {
             Text(store.ui("课程", "Courses"))
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(WeiBeiTheme.tertiaryInk)
                 .padding(.horizontal, 8)
 
-            if filteredCourses.isEmpty {
+            if courses.isEmpty {
                 Text(store.ui("还没有匹配课程", "No matching courses"))
                     .font(.system(size: 12))
                     .foregroundStyle(WeiBeiTheme.secondaryInk)
                     .padding(.horizontal, 9)
                     .frame(height: 40)
             } else {
-                ForEach(filteredCourses) { course in
+                ForEach(courses) { course in
                     VStack(alignment: .leading, spacing: 0) {
                         HStack(spacing: 4) {
                             Button {
