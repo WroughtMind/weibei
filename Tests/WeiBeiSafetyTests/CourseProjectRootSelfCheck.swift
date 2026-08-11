@@ -4713,17 +4713,16 @@ enum CourseProjectRootSelfCheck {
             "生成中导出",
             isDirectory: true
         )
-        try expectFailure("回答生成中导出") {
-            _ = try store.exportPortableCourseCopyForSelfCheck(
-                courseID: courseA,
-                to: generatingTarget
-            )
-        }
+        // S6-4：Agent 生成中不再拒绝导出；允许以当前磁盘状态导出。
+        _ = try store.exportPortableCourseCopyForSelfCheck(
+            courseID: courseA,
+            to: generatingTarget
+        )
         try store.setCourseReplyGeneratingForSelfCheck(
             courseID: courseA,
             generating: false
         )
-        try check(!generatingTarget.exists, "回答生成中仍抓取了半轮课程状态")
+        try check(generatingTarget.exists, "S6-4 生成中导出应成功落盘")
 
         let unsafeLink = sourceRoot.appendingPathComponent(
             "附录/普通外链.txt"
