@@ -6621,10 +6621,13 @@ enum CourseProjectRootSelfCheck {
         let library = try fixture.makeDirectory("课程资料库")
         let store = makeStore(fixture: fixture)
         try store.configureCourseLibrary(at: library)
-        store.openOrCreateWikiNote(title: "同一路径刷新")
+        let courseID = try store.createCourseInLibrary(title: "同一路径刷新课")
         let noteID = try require(
-            store.activeNotebookItemID,
-            "没有创建同一路径刷新笔记"
+            store.createCourseNotebookNoteForSelfCheck(
+                courseID: courseID,
+                title: "同一路径刷新"
+            ),
+            "没有创建课程内同一路径刷新笔记"
         )
         let noteURL = try require(
             store.importedItems.first(where: { $0.id == noteID })?.url,
@@ -6634,14 +6637,17 @@ enum CourseProjectRootSelfCheck {
         let localDraft = "# 魏碑写入\n\n失焦前必须落盘"
         store.stageNoteDraft(localDraft, for: noteID)
         store.flushPendingNotePersistence(flushWorkspace: false)
+        try store.waitForCourseNoteWritesForSelfCheck()
+        let afterFlush = try String(contentsOf: noteURL, encoding: .utf8)
         try check(
-            try String(contentsOf: noteURL, encoding: .utf8) == localDraft,
-            "失焦冲刷没有把当前输入写回同一 Markdown"
+            afterFlush == localDraft,
+            "失焦冲刷没有把当前输入写回同一 Markdown；实际内容：\(afterFlush)"
         )
 
         let externalText = "# 外部编辑器写入\n\n切回魏碑时采用这一份文件"
         try Data(externalText.utf8).write(to: noteURL, options: .atomic)
         store.refreshActiveNoteFromBackingFile()
+        try store.waitForCourseNoteLoadsForSelfCheck()
         try check(
             store.noteText == externalText,
             "重新激活没有从同一 Markdown 路径采用磁盘内容"

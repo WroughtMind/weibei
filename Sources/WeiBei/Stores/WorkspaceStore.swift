@@ -4249,6 +4249,22 @@ final class WorkspaceStore: ObservableObject {
         }
     }
 
+    func waitForCourseNoteLoadsForSelfCheck() throws {
+        precondition(
+            WeiBeiSafetyTestMode.isEnabled
+        )
+        let deadline = Date(timeIntervalSinceNow: 20)
+        while !courseNoteLoadTasksByItemID.isEmpty, Date() < deadline {
+            RunLoop.current.run(
+                mode: .default,
+                before: Date(timeIntervalSinceNow: 0.01)
+            )
+        }
+        guard courseNoteLoadTasksByItemID.isEmpty else {
+            throw CourseOwnedFileError.verificationFailed
+        }
+    }
+
     func stagePendingCourseNoteForSelfCheck(
         itemID: String,
         markdown: String
