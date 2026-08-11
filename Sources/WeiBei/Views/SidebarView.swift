@@ -8,10 +8,10 @@ struct SidebarView: View {
     @State private var courseEntryPresentation: CourseProjectEntryPresentation?
     @State private var courseToRename: Course?
     @State private var renameCourseTitle = ""
-    @State private var coursePendingRemoval: Course?
+    @State private var coursePendingDeletion: Course?
     @State private var courseManagementPresentation:
         CourseManagementPresentation?
-    @State private var courseRemovalError: String?
+    @State private var courseDeletionError: String?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -121,43 +121,42 @@ struct SidebarView: View {
         }
         .confirmationDialog(
             store.ui(
-                "从魏碑移除这门课程？",
-                "Remove this course from WeiBei?"
+                "删除这门课程？",
+                "Delete this course?"
             ),
             isPresented: Binding(
-                get: { coursePendingRemoval != nil },
-                set: { if !$0 { coursePendingRemoval = nil } }
+                get: { coursePendingDeletion != nil },
+                set: { if !$0 { coursePendingDeletion = nil } }
             ),
             titleVisibility: .visible,
-            presenting: coursePendingRemoval
+            presenting: coursePendingDeletion
         ) { course in
-            Button(store.ui(
-                "从魏碑移除“\(course.title)”",
-                "Remove “\(course.title)” from WeiBei"
-            )) {
-                removeCourseFromWeiBei(course)
+            Button(role: .destructive) {
+                deleteCourse(course)
+            } label: {
+                Text(store.ui(
+                    "删除“\(course.title)”",
+                    "Delete “\(course.title)”"
+                ))
             }
             Button(store.ui("取消", "Cancel"), role: .cancel) {
-                coursePendingRemoval = nil
+                coursePendingDeletion = nil
             }
-        } message: { _ in
-            Text(store.ui(
-                "只会从魏碑中移除这门课程。资料、笔记原文件和 Chat 都会保留，不会移到废纸篓。",
-                "This only removes the course from WeiBei. Material files, note files, and Chats are kept and are not moved to Trash."
-            ))
+        } message: { course in
+            Text(courseDeletionMessage(for: course))
         }
         .alert(
-            store.ui("无法移除课程", "Could Not Remove Course"),
+            store.ui("无法删除课程", "Could Not Delete Course"),
             isPresented: Binding(
-                get: { courseRemovalError != nil },
+                get: { courseDeletionError != nil },
                 set: {
-                    if !$0 { courseRemovalError = nil }
+                    if !$0 { courseDeletionError = nil }
                 }
             )
         ) {
             Button(store.ui("好", "OK"), role: .cancel) {}
         } message: {
-            Text(courseRemovalError ?? "")
+            Text(courseDeletionError ?? "")
         }
     }
 
@@ -250,25 +249,21 @@ struct SidebarView: View {
                             .buttonStyle(.plain)
                             .help(store.ui("进入课程空间", "Enter course space"))
                             .accessibilityLabel(Text(store.ui("进入课程空间", "Enter course space")))
+
+                            Menu {
+                                courseContextMenu(for: course)
+                            } label: {
+                                Image(systemName: "ellipsis")
+                                    .frame(width: 22, height: 28)
+                            }
+                            .menuStyle(.borderlessButton)
+                            .menuIndicator(.hidden)
+                            .fixedSize()
+                            .accessibilityLabel(Text(store.ui("管理课程", "Manage course")))
+                            .help(store.ui("管理课程", "Manage course"))
                         }
                         .contextMenu {
-                            Button(store.ui("进入课程空间", "Enter course space")) {
-                                store.openCourseSpace(course.id)
-                            }
-                            Button(store.ui("重命名课程", "Rename course")) {
-                                renameCourseTitle = course.title
-                                courseToRename = course
-                            }
-                            Divider()
-                            Button(store.ui("课程设置…", "Course Settings…")) {
-                                courseManagementPresentation =
-                                    CourseManagementPresentation(
-                                        courseID: course.id
-                                    )
-                            }
-                            Button(store.ui("从魏碑移除…", "Remove from WeiBei…")) {
-                                coursePendingRemoval = course
-                            }
+                            courseContextMenu(for: course)
                         }
 
                         if store.activeCourseID == course.id {
@@ -316,15 +311,50 @@ struct SidebarView: View {
         .padding(.bottom, 9)
     }
 
-    private func removeCourseFromWeiBei(_ course: Course) {
-        coursePendingRemoval = nil
+    @ViewBuilder
+    private func courseContextMenu(for course: Course) -> some View {
+        Button(store.ui("进入课程空间", "Enter course space")) {
+            store.openCourseSpace(course.id)
+        }
+        Button(store.ui("重命名课程", "Rename course")) {
+            renameCourseTitle = course.title
+            courseToRename = course
+        }
+        Button(store.ui("课程设置…", "Course Settings…")) {
+            courseManagementPresentation = CourseManagementPresentation(
+                courseID: course.id
+            )
+        }
+        Divider()
+        Button(role: .destructive) {
+            coursePendingDeletion = course
+        } label: {
+            Text(store.ui("删除课程…", "Delete Course…"))
+        }
+    }
+
+    private func deleteCourse(_ course: Course) {
+        coursePendingDeletion = nil
         Task { @MainActor in
             do {
-                try await store.removeCourseFromWeiBei(course.id)
+                _ = try await store.moveCourseFolderToTrash(course.id)
             } catch {
-                courseRemovalError = error.localizedDescription
+                courseDeletionError = error.localizedDescription
             }
         }
+    }
+
+    private func courseDeletionMessage(for course: Course) -> String {
+        guard let root = store.courseRootURL(for: course.id) else {
+            return store.ui(
+                "课程文件夹当前不可访问；魏碑不会只移除登记。重新授权文件夹后才能删除。",
+                "The course folder is unavailable. WeiBei won’t merely remove its registration; reauthorize the folder before deleting it."
+            )
+        }
+        return store.ui(
+            "会把整个课程文件夹及其中内容移到 macOS 废纸篓，并从魏碑删除：\n\(root.path)",
+            "The entire course folder and its contents will be moved to the macOS Trash and deleted from WeiBei:\n\(root.path)"
+        )
     }
 
     private func courseItemGroup(
@@ -392,14 +422,30 @@ struct SidebarView: View {
             NotebookRenameRow(item: item, selected: selected, compact: compact, accent: accent ?? WeiBeiTheme.cinnabar)
                 .transition(WeiBeiTransition.message)
         } else {
-            Button {
-                withAnimation(WeiBeiMotion.micro) {
-                    open(item)
+            HStack(spacing: 2) {
+                Button {
+                    withAnimation(WeiBeiMotion.micro) {
+                        open(item)
+                    }
+                } label: {
+                    LibraryRow(item: item, selected: selected, compact: compact, accent: accent)
                 }
-            } label: {
-                LibraryRow(item: item, selected: selected, compact: compact, accent: accent)
+                .buttonStyle(.plain)
+
+                if !item.isSample {
+                    Menu {
+                        itemContextMenu(for: item)
+                    } label: {
+                        Image(systemName: "ellipsis")
+                            .frame(width: 22, height: compact ? 28 : 32)
+                    }
+                    .menuStyle(.borderlessButton)
+                    .menuIndicator(.hidden)
+                    .fixedSize()
+                    .accessibilityLabel(Text(store.ui("管理文件", "Manage file")))
+                    .help(store.ui("管理文件", "Manage file"))
+                }
             }
-            .buttonStyle(.plain)
             .contextMenu {
                 itemContextMenu(for: item)
             }
@@ -434,11 +480,12 @@ struct SidebarView: View {
         }
         if !item.isSample, item.url != nil {
             Divider()
-            Button(store.ui(
-                "将原文件移到废纸篓…",
-                "Move Source File to Trash…"
-            )) {
+            Button(role: .destructive) {
                 store.confirmMoveItemSourceToTrash(item.id)
+            } label: {
+                Text(item.isNotebookNote
+                    ? store.ui("删除笔记…", "Delete Note…")
+                    : store.ui("删除资料…", "Delete Material…"))
             }
         }
     }
