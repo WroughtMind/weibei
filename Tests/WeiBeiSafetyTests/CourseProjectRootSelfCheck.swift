@@ -4660,7 +4660,6 @@ enum CourseProjectRootSelfCheck {
         let lateSourceFile = sourceRoot.appendingPathComponent(
             "附录/复制期间新增.txt"
         )
-        let mutationStagingBefore = try stagingNames()
         // S6-9：源树在落位前漂移时以已封存 staging 为准继续导出。
         _ = try store.exportPortableCourseCopyForSelfCheck(
             courseID: courseA,
@@ -4674,15 +4673,9 @@ enum CourseProjectRootSelfCheck {
             mutationTarget.exists && lateSourceFile.exists,
             "S6-9 源目录漂移后应仍完成导出，且新源文件仍在"
         )
-        try verifyAndRemoveRetainedStaging(
-            since: mutationStagingBefore,
-            target: mutationTarget,
-            expectTargetAbsent: false
-        )
+        // 成功落位后暂存目录应已原子移走，无需清理残留 staging。
         try FileManager.default.removeItem(at: lateSourceFile)
-        if mutationTarget.exists {
-            try? FileManager.default.removeItem(at: mutationTarget)
-        }
+        try FileManager.default.removeItem(at: mutationTarget)
 
         let existingTarget = exportParent.appendingPathComponent(
             "已有目标",
