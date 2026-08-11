@@ -3524,6 +3524,7 @@ final class WorkspaceStore: ObservableObject {
         var sharedIdentity: ImportedFileIdentity?
         var ownerLinkIdentity: ImportedFileIdentity?
         var addedLinkIdentity: ImportedFileIdentity?
+        var workspaceCommitted = false
         let previousItems = importedItems
         let previousMemberships = courseItemMemberships
         func revalidatedSharedArtifacts(
@@ -3672,6 +3673,7 @@ final class WorkspaceStore: ObservableObject {
             guard await persistWorkspaceNow() else {
                 throw CourseOwnedFileError.workspaceSaveFailed
             }
+            workspaceCommitted = true
             try courseProjectMutationHook(
                 .afterSharedWorkspaceSaveBeforeSourceCleanup
             )
@@ -3702,7 +3704,16 @@ final class WorkspaceStore: ObservableObject {
             courseDocumentSearchIndex.schedule([importedItems[itemIndex]])
             invalidateAgentContext()
         } catch {
-            // S3：无 journal 恢复；崩溃注入也必须走回滚，不能留下半完成状态。
+            if workspaceCommitted {
+                // 登记已提交：绝不回滚共享原件与成员关系（S3 无 journal 补完）。
+                // 尽力清事务目录；源隔离残留留给用户/下次操作。
+                await safelyRemoveSharedTransactionDirectoryInBackground(
+                    transactionDirectory,
+                    expectedIdentity: transactionDirectoryIdentity
+                )
+                throw error
+            }
+            // 提交前失败：回滚内存与半完成共享产物。
             importedItems = previousItems
             courseItemMemberships = previousMemberships
             _ = await courseProjectFileWorker.isolateAndRemoveSymbolicLinkIfMatching(
