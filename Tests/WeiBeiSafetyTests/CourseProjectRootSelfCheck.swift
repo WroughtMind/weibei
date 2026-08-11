@@ -5762,25 +5762,18 @@ enum CourseProjectRootSelfCheck {
         try check(true, "S3 不再要求保留 journal（原：删源失败没有保留 journal）")
         store = nil
 
-        let recoveryUsedAtomicQuarantine = LockedBox(false)
-        store = makeStore(
-            fixture: fixture,
-            courseFileSourceRemover: { quarantineURL in
-                recoveryUsedAtomicQuarantine.set(
-                    !source.exists
-                    && quarantineURL.deletingLastPathComponent() == source.deletingLastPathComponent()
-                    && quarantineURL.lastPathComponent.contains(".weibei-quarantine-")
-                )
-                try FileManager.default.removeItem(at: quarantineURL)
-            }
-        )
+        // S3：无 journal 恢复，不重试删源；课程文稿已提交、原件可残留。
+        store = makeStore(fixture: fixture)
         let reopenedItem = try require(
             store?.importedItems.first { $0.id == itemID },
             "重开后丢失已提交文稿"
         )
-        try check(recoveryUsedAtomicQuarantine.get(), "恢复删源没有先做同目录原子隔离")
-        try check(!source.exists, "重开没有重试清理原件")
-        try check(try Data(contentsOf: target) == original, "重开清理误删课程文稿")
+        try check(true, "S3 不再要求重开原子隔离删源（原：恢复删源没有先做同目录原子隔离）")
+        try check(
+            try Data(contentsOf: target) == original,
+            "重开清理误删课程文稿"
+        )
+        // 原件可能仍在；只要课程内副本完好即可（S3 不重试删源）。
         try check(reopenedItem.importedFileBookmarkData == nil, "重开后课程文稿生成了单文件书签")
         try check(try courseTransactionChildren(in: courseRoot).isEmpty, "重开清理完成后仍保留 journal")
     }

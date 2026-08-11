@@ -12387,11 +12387,27 @@ final class WorkspaceStore: ObservableObject {
                     return
                 }
             }
+            let expectedOutputDigest = Self.noteContentDigest(
+                Data(retitledMarkdown.utf8)
+            )
             if willRewriteMarkdown {
                 try notebookMarkdownWriter(retitledMarkdown, newURL)
+                let writtenDigest = Self.noteContentDigest(at: newURL)
+                guard writtenDigest == expectedOutputDigest else {
+                    throw NSError(
+                        domain: "WeiBei.ImportedFileIdentity",
+                        code: 3,
+                        userInfo: [
+                            NSLocalizedDescriptionKey: ui(
+                                "写入后文件内容不一致，操作已中止。",
+                                "The file contents did not match after writing, so the operation was stopped."
+                            ),
+                        ]
+                    )
+                }
             }
             let finalDigest = Self.noteContentDigest(at: newURL)
-                ?? Self.noteContentDigest(Data(retitledMarkdown.utf8))
+                ?? expectedOutputDigest
             let coordinatedIdentity = importedFileIdentityResolver(newURL)
             var renamedItem = oldItem
             renamedItem.id = replacementItemID
@@ -12417,23 +12433,61 @@ final class WorkspaceStore: ObservableObject {
             noteFileError = nil
             showTransientNoteStatus(ui("已重命名为：\(newURL.lastPathComponent)", "Renamed to: \(newURL.lastPathComponent)"))
         } catch {
+            let originalContentDigest = Self.noteContentDigest(
+                Data(sourceMarkdown.utf8)
+            )
+            var restoredOldPath = oldURL.path == newURL.path
             if movedFile {
-                try? notebookFileMover(newURL, oldURL)
+                do {
+                    try notebookFileMover(newURL, oldURL)
+                    restoredOldPath = true
+                } catch {
+                    restoredOldPath = false
+                }
             }
             if let idx = importedItems.firstIndex(where: {
                 $0.id == oldID || $0.id == replacementItemID
             }) {
-                importedItems[idx] = oldItem
+                let diskDigest = restoredOldPath
+                    ? Self.noteContentDigest(at: oldURL)
+                    : nil
+                let diskTrusted = diskDigest == originalContentDigest
+                var rolled = oldItem
+                if restoredOldPath, diskTrusted {
+                    rolled.urlPath = oldURL.path
+                    rolled.importedFileLastKnownPath = oldURL.path
+                    rolled.importedFileIdentity =
+                        importedFileIdentityResolver(oldURL)
+                        ?? originalIdentity
+                    rolled.importedFileBookmarkData =
+                        Self.makeImportedFileBookmark(for: oldURL)
+                        ?? oldItem.importedFileBookmarkData
+                    noteBackingContentDigestsByItemID[oldID] = diskDigest
+                } else {
+                    // 磁盘上是陌生内容或路径未恢复：切断路径关系，保留正文草稿。
+                    rolled.urlPath = nil
+                    rolled.importedFileLastKnownPath = oldURL.path
+                    notesByItemID[oldID] = sourceMarkdown
+                    pendingNoteWritesByItemID[oldID] = PendingNoteWriteState(
+                        baselineContentDigest: originalContentDigest
+                    )
+                }
+                importedItems[idx] = rolled
                 if wasActiveNotebook {
                     noteText = sourceMarkdown
                 }
-                notesByItemID[oldID] = sourceMarkdown
+                if notesByItemID[oldID] == nil, !diskTrusted {
+                    notesByItemID[oldID] = sourceMarkdown
+                }
             }
             courseDocumentSearchIndex.synchronize(allItems)
             _ = await persistWorkspaceNow()
+            let recovery = restoredOldPath
+                ? ui("文件已恢复到原路径。", "The file was restored to its original path.")
+                : ui("原关系和最新正文已保留，请重新定位文件。", "The original relationships and latest text were retained; relocate the file to continue.")
             let message = ui(
-                "无法重命名笔记：\(error.localizedDescription)",
-                "Could not rename the note: \(error.localizedDescription)"
+                "无法重命名笔记：\(error.localizedDescription) \(recovery)",
+                "Could not rename the note: \(error.localizedDescription) \(recovery)"
             )
             // showTransientNoteStatus 会清 noteFileError，错误文案必须后写。
             showTransientNoteStatus(message)
