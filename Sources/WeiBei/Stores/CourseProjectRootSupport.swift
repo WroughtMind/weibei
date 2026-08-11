@@ -1089,17 +1089,17 @@ actor CourseProjectFileWorker {
                 locations[itemID] = scoped
             }
         }
+        // C2：草稿以 notesByItemID 为准；baseline 有 pending 则取，无则 nil。
         let drafts = noteItemIDs.sorted().compactMap {
             itemID -> CoursePortableNoteDraft? in
-            guard let pending =
-                    workspace.pendingNoteWritesByItemID?[itemID],
-                  let markdown = workspace.notesByItemID[itemID] else {
+            guard let markdown = workspace.notesByItemID[itemID] else {
                 return nil
             }
             return CoursePortableNoteDraft(
                 itemID: itemID,
                 markdown: markdown,
-                baselineContentDigest: pending.baselineContentDigest
+                baselineContentDigest: workspace.pendingNoteWritesByItemID?[itemID]?
+                    .baselineContentDigest
             )
         }
         return try CoursePortableState(
