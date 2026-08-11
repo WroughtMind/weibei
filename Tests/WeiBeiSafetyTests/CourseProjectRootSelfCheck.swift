@@ -1462,15 +1462,6 @@ enum CourseProjectRootSelfCheck {
                     to: candidate
                 )
             }
-            try store.stagePendingCourseNoteForSelfCheck(
-                itemID: noteID,
-                markdown: "尚未落盘的编辑器草稿"
-            )
-            // S6-4：待写笔记不再阻止重绑提案；仍应可生成提案且不破坏候选。
-            _ = try store.adoptCourseFolderOrProposeRebind(
-                at: successfulCandidate,
-                title: "允许带草稿重绑"
-            )
             store.discardPendingCourseNoteForSelfCheck(itemID: noteID)
             let liveCandidateManifest = try Data(
                 contentsOf: liveRootCandidate.appendingPathComponent(
@@ -1500,20 +1491,29 @@ enum CourseProjectRootSelfCheck {
                 at: originalRoot,
                 to: offlineOriginal
             )
+            // S6-4：失联旧根后，生成中/待写笔记不再阻止重绑提案。
             try store.setCourseReplyGeneratingForSelfCheck(
                 courseID: courseID,
                 generating: true
             )
-            try expectFailure("生成回答时提出重绑") {
-                _ = try store.adoptCourseFolderOrProposeRebind(
-                    at: successfulCandidate,
-                    title: "不得重绑"
-                )
+            try store.stagePendingCourseNoteForSelfCheck(
+                itemID: noteID,
+                markdown: "尚未落盘的编辑器草稿"
+            )
+            switch try store.adoptCourseFolderOrProposeRebind(
+                at: successfulCandidate,
+                title: "允许生成中带草稿重绑"
+            ) {
+            case .requiresRebind:
+                break
+            case .opened:
+                throw CheckError.failed("生成中带草稿时不应静默打开另一门课")
             }
             try store.setCourseReplyGeneratingForSelfCheck(
                 courseID: courseID,
                 generating: false
             )
+            store.discardPendingCourseNoteForSelfCheck(itemID: noteID)
             let workspaceURL = fixture.workspaceDirectory
                 .appendingPathComponent("workspace.json")
             let workspaceBeforeProposal = try Data(contentsOf: workspaceURL)
