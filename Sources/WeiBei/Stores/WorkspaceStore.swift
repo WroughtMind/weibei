@@ -1858,17 +1858,24 @@ final class WorkspaceStore: ObservableObject {
                     metadataURL.resolvingSymlinksInPath()
                 )
                 && importedFileIdentityResolver(canonicalRoot) == identity
-            var shouldCreateFreshMetadata = false
-            if metadataLooksSafe,
-               let snapshot = try? await courseProjectFileWorker
-                .adoptionSnapshot(
-                    at: canonicalRoot,
-                    expectedRootIdentity: identity
-                ) {
-                adoptionSnapshot = snapshot
-                courseID = snapshot.manifest.courseID
+            if metadataLooksSafe {
+                do {
+                    let snapshot = try await courseProjectFileWorker
+                        .adoptionSnapshot(
+                            at: canonicalRoot,
+                            expectedRootIdentity: identity
+                        )
+                    adoptionSnapshot = snapshot
+                    courseID = snapshot.manifest.courseID
+                } catch {
+                    // 布局安全但状态不可读（如超大）：保留磁盘原样并拒绝，避免改写共享课程根。
+                    if let externalScopeURL {
+                        courseSecurityScopeStopper(externalScopeURL)
+                    }
+                    throw CourseProjectRootError.metadataConflict
+                }
             } else {
-                // S6-1：未知/损坏 .weibei → 改名备份后按新课继续，不拒绝。
+                // S6-1：结构异常的 .weibei（symlink/非目录）→ 改名备份后按新课继续。
                 let backup = metadataURL
                     .deletingLastPathComponent()
                     .appendingPathComponent(
@@ -1878,16 +1885,67 @@ final class WorkspaceStore: ObservableObject {
                 try? FileManager.default.moveItem(at: metadataURL, to: backup)
                 adoptionSnapshot = nil
                 courseID = UUID()
-                shouldCreateFreshMetadata = true
                 showTransientNoteStatus(
                     ui(
                         "原课程元数据已备份为 \(backup.lastPathComponent)，将按新课程纳入。",
                         "Previous course metadata was backed up as \(backup.lastPathComponent); adopting as a new course."
                     )
                 )
+                try validateCourseProjectRoot(
+                    canonicalRoot,
+                    identity: identity,
+                    mustBeInsideLibrary: false
+                )
+                // 落入下方 else 同款创建逻辑：用 staged 写新 manifest。
+                let stagedMetadataURL = canonicalRoot.appendingPathComponent(
+                    ".weibei-adopt-staging-\(courseID.uuidString.lowercased())",
+                    isDirectory: true
+                )
+                do {
+                    try FileManager.default.createDirectory(
+                        at: stagedMetadataURL,
+                        withIntermediateDirectories: false
+                    )
+                    guard let emptyFingerprint = transactionDirectoryFingerprint(
+                        at: stagedMetadataURL
+                    ) else {
+                        throw CourseProjectRootError.rootIdentityUnavailable
+                    }
+                    createdMetadataFingerprint = emptyFingerprint
+                    try CourseProjectManifest(courseID: courseID)
+                        .encoded()
+                        .write(
+                            to: stagedMetadataURL.appendingPathComponent(
+                                "course.json"
+                            ),
+                            options: [.atomic]
+                        )
+                    guard let completeFingerprint =
+                            transactionDirectoryFingerprint(at: stagedMetadataURL)
+                    else {
+                        throw CourseProjectRootError.rootIdentityUnavailable
+                    }
+                    createdMetadataFingerprint = completeFingerprint
+                    try FileManager.default.moveItem(
+                        at: stagedMetadataURL,
+                        to: metadataURL
+                    )
+                    createdMetadata = true
+                } catch {
+                    if let createdMetadataFingerprint {
+                        safelyRemoveTransactionDirectory(
+                            at: stagedMetadataURL,
+                            expected: createdMetadataFingerprint
+                        )
+                    }
+                    if let externalScopeURL {
+                        courseSecurityScopeStopper(externalScopeURL)
+                    }
+                    throw error
+                }
             }
-            if !shouldCreateFreshMetadata,
-               let existing = courses.first(where: { $0.id == courseID }) {
+            if let existing = courses.first(where: { $0.id == courseID }),
+               adoptionSnapshot != nil {
                 do {
                     try validateCourseProjectRoot(
                         canonicalRoot,
@@ -1915,68 +1973,12 @@ final class WorkspaceStore: ObservableObject {
                     throw error
                 }
             }
-            try validateCourseProjectRoot(
-                canonicalRoot,
-                identity: identity,
-                mustBeInsideLibrary: false
-            )
-            if shouldCreateFreshMetadata {
-                let stagedMetadataURL = canonicalRoot.appendingPathComponent(
-                    ".weibei-adopt-staging-\(courseID.uuidString.lowercased())",
-                    isDirectory: true
+            if adoptionSnapshot != nil {
+                try validateCourseProjectRoot(
+                    canonicalRoot,
+                    identity: identity,
+                    mustBeInsideLibrary: false
                 )
-                do {
-                    guard importedFileIdentityResolver(canonicalRoot) == identity else {
-                        throw CourseProjectRootError.rootIdentityUnavailable
-                    }
-                    try FileManager.default.createDirectory(
-                        at: stagedMetadataURL,
-                        withIntermediateDirectories: false
-                    )
-                    guard let emptyFingerprint = transactionDirectoryFingerprint(
-                        at: stagedMetadataURL
-                    ) else {
-                        throw CourseProjectRootError.rootIdentityUnavailable
-                    }
-                    createdMetadataFingerprint = emptyFingerprint
-                    try CourseProjectManifest(courseID: courseID)
-                        .encoded()
-                        .write(
-                            to: stagedMetadataURL.appendingPathComponent(
-                                "course.json"
-                            ),
-                            options: [.atomic]
-                        )
-                    guard let completeFingerprint =
-                            transactionDirectoryFingerprint(at: stagedMetadataURL)
-                    else {
-                        throw CourseProjectRootError.rootIdentityUnavailable
-                    }
-                    createdMetadataFingerprint = completeFingerprint
-                    guard importedFileIdentityResolver(canonicalRoot) == identity,
-                          !FileManager.default.fileExists(atPath: metadataURL.path)
-                    else {
-                        throw CourseProjectRootError.rootIdentityUnavailable
-                    }
-                    try FileManager.default.moveItem(
-                        at: stagedMetadataURL,
-                        to: metadataURL
-                    )
-                    createdMetadata = true
-                } catch {
-                    if let createdMetadataFingerprint {
-                        safelyRemoveTransactionDirectory(
-                            at: createdMetadata
-                                ? metadataURL
-                                : stagedMetadataURL,
-                            expected: createdMetadataFingerprint
-                        )
-                    }
-                    if let externalScopeURL {
-                        courseSecurityScopeStopper(externalScopeURL)
-                    }
-                    throw error
-                }
             }
         } else {
             try validateCourseProjectRoot(
