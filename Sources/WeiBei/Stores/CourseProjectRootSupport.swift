@@ -205,6 +205,13 @@ struct CourseRootTrashIsolation: Sendable {
     var identity: ImportedFileIdentity
 }
 
+struct CourseTrashReceiptCleanup: Sendable {
+    let courseID: UUID
+    fileprivate let receiptURL: URL
+    fileprivate let transactionDirectory: URL
+    fileprivate let transactionDirectoryIdentity: ImportedFileIdentity
+}
+
 struct CourseDirectorySearchResult: Sendable {
     var url: URL?
     var ranOnMainThread: Bool
@@ -4817,6 +4824,176 @@ actor CourseProjectFileWorker {
     private static let supportedExtensions = Set([
         "pdf", "html", "htm", "md", "markdown", "txt", "text",
     ])
+}
+
+extension CourseProjectFileWorker {
+    private struct CourseTrashReceipt: Codable {
+        var courseID: UUID
+        var rootIdentity: ImportedFileIdentity
+        var transactionDirectoryIdentity: ImportedFileIdentity
+    }
+
+    nonisolated static func writeCourseTrashReceipt(
+        for isolation: CourseRootTrashIsolation,
+        courseID: UUID
+    ) throws -> CourseTrashReceiptCleanup {
+        let receiptURL = isolation.transactionDirectory.appendingPathComponent(
+            "trash-receipt.json",
+            isDirectory: false
+        )
+        let receipt = CourseTrashReceipt(
+            courseID: courseID,
+            rootIdentity: isolation.identity,
+            transactionDirectoryIdentity: isolation.transactionDirectoryIdentity
+        )
+        try JSONEncoder().encode(receipt).write(to: receiptURL, options: [.atomic])
+        return CourseTrashReceiptCleanup(
+            courseID: courseID,
+            receiptURL: receiptURL,
+            transactionDirectory: isolation.transactionDirectory,
+            transactionDirectoryIdentity: isolation.transactionDirectoryIdentity
+        )
+    }
+
+    @discardableResult
+    nonisolated static func cleanupCourseTrashReceipt(
+        _ cleanup: CourseTrashReceiptCleanup,
+        identityResolver: (URL) -> ImportedFileIdentity?
+    ) -> Bool {
+        guard identityResolver(cleanup.transactionDirectory)?
+            .matchesAcrossVolumeDrift(cleanup.transactionDirectoryIdentity) == true else {
+            return false
+        }
+        try? FileManager.default.removeItem(at: cleanup.receiptURL)
+        guard entryPresence(at: cleanup.receiptURL) == .absent else {
+            return false
+        }
+        _ = cleanup.transactionDirectory.withUnsafeFileSystemRepresentation { path in
+            guard let path else { return Int32(-1) }
+            return Darwin.rmdir(path)
+        }
+        return true
+    }
+
+    nonisolated static func recoverCourseTrashReceipt(
+        for course: Course,
+        resolvedRootURL: URL?,
+        courseLibraryRootURL: URL?,
+        identityResolver: (URL) -> ImportedFileIdentity?
+    ) -> CourseTrashReceiptCleanup? {
+        guard let expectedIdentity = course.sourceRootIdentity else { return nil }
+        let originalCandidates: [URL] = [
+            resolvedRootURL,
+            course.sourceRootRelativePath.flatMap { relativePath in
+                courseLibraryRootURL.flatMap { libraryRoot in
+                    CourseProjectPathPolicy.resolvedRelativePath(
+                        relativePath,
+                        inside: libraryRoot
+                    )
+                }
+            },
+            course.sourceRootPath.map {
+                URL(fileURLWithPath: $0, isDirectory: true)
+            },
+        ].compactMap { $0 }
+        let parentPaths = Set(originalCandidates.map {
+            $0.deletingLastPathComponent().standardizedFileURL.path
+        })
+        let fileManager = FileManager.default
+        var recoveredReceipt: CourseTrashReceiptCleanup?
+        for parentPath in parentPaths {
+            let parent = URL(fileURLWithPath: parentPath, isDirectory: true)
+            guard let siblings = try? fileManager.contentsOfDirectory(
+                at: parent,
+                includingPropertiesForKeys: [.isDirectoryKey],
+                options: []
+            ) else { continue }
+            for sibling in siblings where sibling.lastPathComponent
+                .hasPrefix(".weibei-course-removal-") {
+                let receiptURL = sibling.appendingPathComponent(
+                    "trash-receipt.json",
+                    isDirectory: false
+                )
+                let siblingIdentity = identityResolver(sibling)
+                let receipt = try? JSONDecoder().decode(
+                    CourseTrashReceipt.self,
+                    from: readBoundedRegularFile(
+                        at: receiptURL,
+                        maximumByteCount: 65_536
+                    )
+                )
+                let hasVerifiedReceipt: Bool
+                if let receipt, let siblingIdentity {
+                    hasVerifiedReceipt = receipt.courseID == course.id
+                        && receipt.rootIdentity == expectedIdentity
+                        && siblingIdentity.matchesAcrossVolumeDrift(
+                            receipt.transactionDirectoryIdentity
+                        )
+                } else {
+                    hasVerifiedReceipt = false
+                }
+                guard let children = try? fileManager.contentsOfDirectory(
+                    at: sibling,
+                    includingPropertiesForKeys: [.isDirectoryKey],
+                    options: []
+                ) else { continue }
+                for child in children where identityResolver(child)?
+                    .matchesAcrossVolumeDrift(expectedIdentity) == true {
+                    if let restoreTarget = originalCandidates.first(where: {
+                        !fileManager.fileExists(atPath: $0.path)
+                    }) {
+                        _ = renameWithoutReplacement(from: child, to: restoreTarget)
+                    } else if originalCandidates.contains(where: {
+                        identityResolver($0)?
+                            .matchesAcrossVolumeDrift(expectedIdentity) == true
+                    }) {
+                        try? fileManager.removeItem(at: child)
+                    }
+                }
+                let originalRootsAreDefinitelyAbsent = !originalCandidates.isEmpty
+                    && originalCandidates.allSatisfy {
+                        entryPresence(at: $0) == .absent
+                    }
+                if hasVerifiedReceipt,
+                   originalRootsAreDefinitelyAbsent,
+                   recoveredReceipt == nil,
+                   let siblingIdentity,
+                   let remaining = try? fileManager.contentsOfDirectory(
+                    at: sibling,
+                    includingPropertiesForKeys: nil
+                   ),
+                   remaining.map(\.lastPathComponent) == [receiptURL.lastPathComponent] {
+                    recoveredReceipt = CourseTrashReceiptCleanup(
+                        courseID: course.id,
+                        receiptURL: receiptURL,
+                        transactionDirectory: sibling,
+                        transactionDirectoryIdentity: siblingIdentity
+                    )
+                } else if hasVerifiedReceipt,
+                          let siblingIdentity,
+                          originalCandidates.contains(where: {
+                              identityResolver($0)?
+                                  .matchesAcrossVolumeDrift(expectedIdentity) == true
+                          }) {
+                    cleanupCourseTrashReceipt(
+                        CourseTrashReceiptCleanup(
+                            courseID: course.id,
+                            receiptURL: receiptURL,
+                            transactionDirectory: sibling,
+                            transactionDirectoryIdentity: siblingIdentity
+                        ),
+                        identityResolver: identityResolver
+                    )
+                } else if let remaining = try? fileManager.contentsOfDirectory(
+                    at: sibling,
+                    includingPropertiesForKeys: nil
+                ), remaining.isEmpty {
+                    try? fileManager.removeItem(at: sibling)
+                }
+            }
+        }
+        return recoveredReceipt
+    }
 }
 
 enum CourseProjectMutationStage: String, CaseIterable {

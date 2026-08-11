@@ -856,19 +856,6 @@ final class WorkspaceStore: ObservableObject {
         var fingerprint: TransactionDirectoryFingerprint
     }
 
-    private struct CourseTrashReceipt: Codable {
-        var courseID: UUID
-        var rootIdentity: ImportedFileIdentity
-        var transactionDirectoryIdentity: ImportedFileIdentity
-    }
-
-    private struct CourseTrashReceiptCleanup {
-        var courseID: UUID
-        var receiptURL: URL
-        var transactionDirectory: URL
-        var transactionDirectoryIdentity: ImportedFileIdentity
-    }
-
     private var lastUsableAgentAnswer: AgentMessage? {
         return messages.last { $0.isUsableAgentAnswer }
     }
@@ -5684,59 +5671,6 @@ final class WorkspaceStore: ObservableObject {
         return true
     }
 
-    private func writeCourseTrashReceipt(
-        for isolation: CourseRootTrashIsolation,
-        courseID: UUID
-    ) throws -> CourseTrashReceiptCleanup {
-        let receiptURL = isolation.transactionDirectory
-            .appendingPathComponent(
-                "trash-receipt.json",
-                isDirectory: false
-            )
-        let receipt = CourseTrashReceipt(
-            courseID: courseID,
-            rootIdentity: isolation.identity,
-            transactionDirectoryIdentity:
-                isolation.transactionDirectoryIdentity
-        )
-        try JSONEncoder().encode(receipt).write(
-            to: receiptURL,
-            options: [.atomic]
-        )
-        return CourseTrashReceiptCleanup(
-            courseID: courseID,
-            receiptURL: receiptURL,
-            transactionDirectory: isolation.transactionDirectory,
-            transactionDirectoryIdentity:
-                isolation.transactionDirectoryIdentity
-        )
-    }
-
-    @discardableResult
-    private func cleanupCourseTrashReceipt(
-        _ cleanup: CourseTrashReceiptCleanup
-    ) -> Bool {
-        guard importedFileIdentityResolver(
-            cleanup.transactionDirectory
-        )?.matchesAcrossVolumeDrift(
-            cleanup.transactionDirectoryIdentity
-        ) == true else {
-            return false
-        }
-        try? FileManager.default.removeItem(at: cleanup.receiptURL)
-        guard CourseProjectFileWorker.entryPresence(
-            at: cleanup.receiptURL
-        ) == .absent else {
-            return false
-        }
-        _ = cleanup.transactionDirectory
-            .withUnsafeFileSystemRepresentation { path in
-                guard let path else { return Int32(-1) }
-                return Darwin.rmdir(path)
-            }
-        return true
-    }
-
     private func cleanupPersistedCourseTrashReceipts() {
         pendingCourseTrashReceiptCleanups.removeAll { cleanup in
             guard !persistedWorkspaceCourseIDs.contains(
@@ -5744,157 +5678,26 @@ final class WorkspaceStore: ObservableObject {
             ) else {
                 return false
             }
-            return cleanupCourseTrashReceipt(cleanup)
+            return CourseProjectFileWorker.cleanupCourseTrashReceipt(
+                cleanup,
+                identityResolver: importedFileIdentityResolver
+            )
         }
     }
 
     @discardableResult
     private func restoreOrphanCourseRootTrashIsolations() -> Bool {
-        let fileManager = FileManager.default
         var recoveredReceipts: [CourseTrashReceiptCleanup] = []
         var recoveredCourseIDs = Set<UUID>()
         for course in courses {
-            guard let expectedIdentity = course.sourceRootIdentity else { continue }
-            let originalCandidates: [URL] = [
-                courseRootURL(for: course.id),
-                course.sourceRootRelativePath.flatMap { relativePath in
-                    courseLibraryRootURL.flatMap { libraryRoot in
-                        CourseProjectPathPolicy.resolvedRelativePath(
-                            relativePath,
-                            inside: libraryRoot
-                        )
-                    }
-                },
-                course.sourceRootPath.map {
-                    URL(fileURLWithPath: $0, isDirectory: true)
-                },
-            ].compactMap { $0 }
-            let parentPaths = Set(
-                originalCandidates.map {
-                    $0.deletingLastPathComponent().standardizedFileURL.path
-                }
-            )
-            for parentPath in parentPaths {
-                let parent = URL(fileURLWithPath: parentPath, isDirectory: true)
-                // 隔离目录以 `.` 开头，必须包含 hidden。
-                guard let siblings = try? fileManager.contentsOfDirectory(
-                    at: parent,
-                    includingPropertiesForKeys: [.isDirectoryKey],
-                    options: []
-                ) else { continue }
-                for sibling in siblings {
-                    guard sibling.lastPathComponent
-                        .hasPrefix(".weibei-course-removal-") else {
-                        continue
-                    }
-                    let receiptURL = sibling.appendingPathComponent(
-                        "trash-receipt.json",
-                        isDirectory: false
-                    )
-                    let siblingIdentity = importedFileIdentityResolver(
-                        sibling
-                    )
-                    let receipt = try? JSONDecoder().decode(
-                        CourseTrashReceipt.self,
-                        from: CourseProjectFileWorker
-                            .readBoundedRegularFile(
-                                at: receiptURL,
-                                maximumByteCount: 65_536
-                            )
-                    )
-                    let hasVerifiedReceipt: Bool
-                    if let receipt, let siblingIdentity {
-                        hasVerifiedReceipt = receipt.courseID == course.id
-                            && receipt.rootIdentity == expectedIdentity
-                            && siblingIdentity.matchesAcrossVolumeDrift(
-                                receipt.transactionDirectoryIdentity
-                            )
-                    } else {
-                        hasVerifiedReceipt = false
-                    }
-                    guard let children = try? fileManager.contentsOfDirectory(
-                        at: sibling,
-                        includingPropertiesForKeys: [.isDirectoryKey],
-                        options: []
-                    ) else { continue }
-                    for child in children {
-                        guard importedFileIdentityResolver(child)?
-                            .matchesAcrossVolumeDrift(
-                                expectedIdentity
-                            ) == true else {
-                            continue
-                        }
-                        let restoreTarget = originalCandidates.first {
-                            !fileManager.fileExists(atPath: $0.path)
-                        }
-                        if let restoreTarget {
-                            // 同步路径：启动清理不 await actor；走静态 rename。
-                            _ = CourseProjectFileWorker
-                                .renameWithoutReplacement(
-                                    from: child,
-                                    to: restoreTarget
-                                )
-                        } else if originalCandidates.contains(where: {
-                            importedFileIdentityResolver($0)?
-                                .matchesAcrossVolumeDrift(
-                                    expectedIdentity
-                                ) == true
-                        }) {
-                            // 原路径已恢复，清掉重复隔离副本。
-                            try? fileManager.removeItem(at: child)
-                        }
-                    }
-                    let originalRootPresences = originalCandidates.map {
-                        CourseProjectFileWorker.entryPresence(at: $0)
-                    }
-                    let originalRootsAreDefinitelyAbsent =
-                        !originalRootPresences.isEmpty
-                        && originalRootPresences.allSatisfy {
-                            $0 == .absent
-                        }
-                    if hasVerifiedReceipt,
-                       originalRootsAreDefinitelyAbsent,
-                       !recoveredCourseIDs.contains(course.id),
-                       let siblingIdentity,
-                       let remaining = try? fileManager
-                        .contentsOfDirectory(
-                            at: sibling,
-                            includingPropertiesForKeys: nil
-                        ),
-                       remaining.map(\.lastPathComponent)
-                        == [receiptURL.lastPathComponent] {
-                        recoveredCourseIDs.insert(course.id)
-                        recoveredReceipts.append(
-                            CourseTrashReceiptCleanup(
-                                courseID: course.id,
-                                receiptURL: receiptURL,
-                                transactionDirectory: sibling,
-                                transactionDirectoryIdentity:
-                                    siblingIdentity
-                            )
-                        )
-                    } else if originalCandidates.contains(where: {
-                        importedFileIdentityResolver($0)?
-                            .matchesAcrossVolumeDrift(expectedIdentity)
-                            == true
-                    }), hasVerifiedReceipt, let siblingIdentity {
-                        cleanupCourseTrashReceipt(
-                            CourseTrashReceiptCleanup(
-                                courseID: course.id,
-                                receiptURL: receiptURL,
-                                transactionDirectory: sibling,
-                                transactionDirectoryIdentity:
-                                    siblingIdentity
-                            )
-                        )
-                    } else if let remaining = try? fileManager
-                        .contentsOfDirectory(
-                            at: sibling,
-                            includingPropertiesForKeys: nil
-                        ), remaining.isEmpty {
-                        try? fileManager.removeItem(at: sibling)
-                    }
-                }
+            if let recovery = CourseProjectFileWorker
+                .recoverCourseTrashReceipt(
+                    for: course,
+                    resolvedRootURL: courseRootURL(for: course.id),
+                    courseLibraryRootURL: courseLibraryRootURL,
+                    identityResolver: importedFileIdentityResolver
+                ), recoveredCourseIDs.insert(recovery.courseID).inserted {
+                recoveredReceipts.append(recovery)
             }
         }
         for recovery in recoveredReceipts {
@@ -6712,7 +6515,7 @@ final class WorkspaceStore: ObservableObject {
             guard let activeIsolation = isolation else {
                 throw CourseRemovalError.courseRootUnavailable
             }
-            receiptCleanup = try writeCourseTrashReceipt(
+            receiptCleanup = try CourseProjectFileWorker.writeCourseTrashReceipt(
                 for: activeIsolation,
                 courseID: courseID
             )
@@ -6754,7 +6557,10 @@ final class WorkspaceStore: ObservableObject {
             // ponytail: a crash after the workspace commit can leave one tiny
             // receipt; add a trusted cleanup index only if this becomes observable.
             if let receiptCleanup,
-               !cleanupCourseTrashReceipt(receiptCleanup) {
+               !CourseProjectFileWorker.cleanupCourseTrashReceipt(
+                receiptCleanup,
+                identityResolver: importedFileIdentityResolver
+               ) {
                 pendingCourseTrashReceiptCleanups.append(
                     receiptCleanup
                 )
@@ -6775,7 +6581,10 @@ final class WorkspaceStore: ObservableObject {
                 )
                 if importedFileIdentityResolver(root) == rootIdentity,
                    let receiptCleanup {
-                    cleanupCourseTrashReceipt(receiptCleanup)
+                    CourseProjectFileWorker.cleanupCourseTrashReceipt(
+                        receiptCleanup,
+                        identityResolver: importedFileIdentityResolver
+                    )
                 }
             }
             finishCourseRemovalAttempt(
