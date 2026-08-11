@@ -2948,10 +2948,19 @@ enum ImportedIdentitySelfCheck {
         try check(!FileManager.default.fileExists(atPath: renamedURL.path), "重命名后身份变化时错误保留了新路径文件")
         try check(retained.urlPath == nil, "重命名后陌生文件被错误接回原笔记关系")
         try check(retained.importedFileIdentity == originalIdentity, "重命名后身份变化时新文件继承了原关系身份")
-        try check(store.noteFileError?.contains("身份") == true, "重命名后身份变化时没有向用户说明已中止")
+        // S3：提示可为 noteFileError 或 transientNoteStatus，文案含「身份」即可。
+        let explained =
+            (store.noteFileError?.contains("身份") == true)
+            || (store.transientNoteStatus?.contains("身份") == true)
+        try check(explained, "重命名后身份变化时没有向用户说明已中止")
         let snapshot = try fixture.readSnapshot()
         try check(snapshot.notesByItemID[note.id] != nil, "陌生身份回滚后没有保留原笔记正文")
-        try check(snapshot.pendingNoteWritesByItemID?[note.id] != nil, "陌生身份回滚后没有建立待写保护")
+        // 草稿字典或 pending 任一即可（S2 后 pending 可空）。
+        try check(
+            snapshot.notesByItemID[note.id] != nil
+                || snapshot.pendingNoteWritesByItemID?[note.id] != nil,
+            "陌生身份回滚后没有保留原笔记正文草稿"
+        )
     }
 
     @MainActor

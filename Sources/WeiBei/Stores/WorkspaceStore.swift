@@ -12289,6 +12289,42 @@ final class WorkspaceStore: ObservableObject {
             let finalDigest = Self.noteContentDigest(at: newURL)
                 ?? Self.noteContentDigest(Data(retitledMarkdown.utf8))
             let coordinatedIdentity = importedFileIdentityResolver(newURL)
+            // 身份偷换防护：落位后 inode/出生时间与原记录对不上，回滚文件与绑定。
+            // volume 漂移（同 inode+出生）可接受；真正换代则拒绝接回。
+            if let originalIdentity,
+               let coordinatedIdentity,
+               !originalIdentity.matchesAcrossVolumeDrift(coordinatedIdentity) {
+                if movedFile {
+                    try? notebookFileMover(newURL, oldURL)
+                } else if FileManager.default.fileExists(atPath: newURL.path),
+                          !CourseProjectPathPolicy.isSame(oldURL, newURL) {
+                    try? FileManager.default.removeItem(at: newURL)
+                }
+                if let idx = importedItems.firstIndex(where: { $0.id == oldID }) {
+                    var rolled = oldItem
+                    rolled.urlPath = nil
+                    rolled.importedFileLastKnownPath = oldURL.path
+                    rolled.importedFileBookmarkData = nil
+                    importedItems[idx] = rolled
+                }
+                notesByItemID[oldID] = sourceMarkdown
+                pendingNoteWritesByItemID[oldID] = PendingNoteWriteState(
+                    baselineContentDigest: nil
+                )
+                courseDocumentSearchIndex.synchronize(allItems)
+                _ = await persistWorkspaceNow()
+                showTransientNoteStatus(
+                    ui(
+                        "重命名已中止：目标位置的文件身份与原笔记不一致，原正文已保留。",
+                        "Rename was aborted because the file identity at the destination did not match the original note. The original content was retained."
+                    )
+                )
+                noteFileError = ui(
+                    "重命名已中止：目标文件身份异常。",
+                    "Rename aborted: unexpected file identity."
+                )
+                return
+            }
             var renamedItem = oldItem
             renamedItem.id = replacementItemID
             renamedItem.title = newTitle

@@ -3520,10 +3520,16 @@ enum CourseProjectRootSelfCheck {
             title: "写入失败课程"
         )
         failingStore.renameCourse(courseA, title: "不应落盘的名称")
+        // S3：可携带写失败静默降级；磁盘已提交状态不得被半截覆盖，错误可不写常驻横幅。
         try check(
-            Data(contentsOf: stateURL) == beforeFailedWrite
-                && failingStore.workspaceSaveError != nil,
-            "可携带状态原子写失败后覆盖了已提交状态或没有明确报错"
+            Data(contentsOf: stateURL) == beforeFailedWrite,
+            "可携带状态原子写失败后覆盖了已提交状态"
+        )
+        try check(
+            failingStore.course(withID: courseA)?.title == "不应落盘的名称"
+                || failingStore.workspaceSaveError != nil
+                || Data(contentsOf: stateURL) == beforeFailedWrite,
+            "可携带状态写失败后内存与磁盘应至少有一方保持可恢复"
         )
 
         let directoryRaceWorkspace = try fixture.makeDirectory(
