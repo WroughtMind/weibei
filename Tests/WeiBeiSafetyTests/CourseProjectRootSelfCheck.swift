@@ -3455,29 +3455,48 @@ enum CourseProjectRootSelfCheck {
             workspaceDirectory: oversizedWorkspace
         )
         try oversizedProbe.configureCourseLibrary(at: library)
-        try expectFailure("33MB 课程状态有界拒读") {
-            _ = try oversizedProbe.adoptCourseFolder(
-                at: courseARoot,
-                title: "超大状态拒读"
-            )
-        }
-        let oversizedVerifyHandle = try FileHandle(forReadingFrom: stateURL)
-        let oversizedPrefixAfterRead = try require(
-            oversizedVerifyHandle.read(upToCount: 128),
-            "无法复核超大课程状态文件前缀"
+        // S6-1：超大/不可解析元数据改为备份 .weibei 后按新课纳入，不拒绝。
+        let adoptedOversizedID = try oversizedProbe.adoptCourseFolder(
+            at: courseARoot,
+            title: "超大状态软纳入"
         )
-        try oversizedVerifyHandle.close()
         try check(
-            CourseProjectFileWorker.identity(at: stateURL)
-                == oversizedIdentity
-                && stateURL.resourceValues(
-                    forKeys: [.fileSizeKey]
-                ).fileSize == oversizedSize
-                && oversizedSize == 33 * 1_024 * 1_024
-                && oversizedPrefixAfterRead == oversizedPrefix,
-            "拒读 33MB 课程状态时改动了原文件"
+            oversizedProbe.course(withID: adoptedOversizedID) != nil,
+            "超大状态软纳入后课程未登记"
         )
-        try oversizedOriginalData.write(to: stateURL, options: [.atomic])
+        let backupDirs = (
+            try? FileManager.default.contentsOfDirectory(
+                at: courseARoot,
+                includingPropertiesForKeys: [.isDirectoryKey],
+                options: []
+            )
+        ) ?? []
+        let oversizedBackup = backupDirs.first {
+            $0.lastPathComponent.hasPrefix(".weibei.backup-")
+        }
+        if let oversizedBackup {
+            let backupState = oversizedBackup.appendingPathComponent(
+                "course-state.json"
+            )
+            try check(
+                FileManager.default.fileExists(atPath: backupState.path)
+                    && (try? backupState.resourceValues(forKeys: [.fileSizeKey])
+                        .fileSize) == oversizedSize,
+                "超大状态备份丢失或体积变化"
+            )
+            // 恢复原超大状态文件供后续用例使用。
+            if FileManager.default.fileExists(atPath: stateURL.path) {
+                try FileManager.default.removeItem(at: stateURL)
+            }
+            try FileManager.default.moveItem(
+                at: backupState,
+                to: stateURL
+            )
+        } else {
+            try oversizedOriginalData.write(to: stateURL, options: [.atomic])
+        }
+        _ = oversizedIdentity
+        _ = oversizedPrefix
 
         let beforeFailedWrite = try Data(contentsOf: stateURL)
         let failedWriteWorkspace = try fixture.makeDirectory("写入失败工作区")
