@@ -1462,19 +1462,6 @@ enum CourseProjectRootSelfCheck {
                     to: candidate
                 )
             }
-            try store.stagePendingCourseNoteForSelfCheck(
-                itemID: noteID,
-                markdown: "尚未落盘的编辑器草稿"
-            )
-            do {
-                _ = try store.adoptCourseFolderOrProposeRebind(
-                    at: successfulCandidate,
-                    title: "不得覆盖待保存笔记"
-                )
-                throw CheckError.failed("待保存笔记没有阻止重绑提案")
-            } catch CoursePortableExportError.unstableCourseState {
-                // Expected: proposal generation remains zero-write.
-            }
             store.discardPendingCourseNoteForSelfCheck(itemID: noteID)
             let liveCandidateManifest = try Data(
                 contentsOf: liveRootCandidate.appendingPathComponent(
@@ -1504,20 +1491,29 @@ enum CourseProjectRootSelfCheck {
                 at: originalRoot,
                 to: offlineOriginal
             )
+            // S6-4：失联旧根后，生成中/待写笔记不再阻止重绑提案。
             try store.setCourseReplyGeneratingForSelfCheck(
                 courseID: courseID,
                 generating: true
             )
-            try expectFailure("生成回答时提出重绑") {
-                _ = try store.adoptCourseFolderOrProposeRebind(
-                    at: successfulCandidate,
-                    title: "不得重绑"
-                )
+            try store.stagePendingCourseNoteForSelfCheck(
+                itemID: noteID,
+                markdown: "尚未落盘的编辑器草稿"
+            )
+            switch try store.adoptCourseFolderOrProposeRebind(
+                at: successfulCandidate,
+                title: "允许生成中带草稿重绑"
+            ) {
+            case .requiresRebind:
+                break
+            case .opened:
+                throw CheckError.failed("生成中带草稿时不应静默打开另一门课")
             }
             try store.setCourseReplyGeneratingForSelfCheck(
                 courseID: courseID,
                 generating: false
             )
+            store.discardPendingCourseNoteForSelfCheck(itemID: noteID)
             let workspaceURL = fixture.workspaceDirectory
                 .appendingPathComponent("workspace.json")
             let workspaceBeforeProposal = try Data(contentsOf: workspaceURL)
@@ -1592,14 +1588,7 @@ enum CourseProjectRootSelfCheck {
                 itemID: noteID,
                 markdown: "确认前尚未落盘的编辑器草稿"
             )
-            do {
-                _ = try store.confirmCourseProjectRebind(
-                    successfulProposal
-                )
-                throw CheckError.failed("待保存笔记没有阻止重绑确认")
-            } catch CoursePortableExportError.unstableCourseState {
-                // Expected: the candidate remains untouched.
-            }
+            // S6-4：待写笔记不再阻止重绑确认。
             store.discardPendingCourseNoteForSelfCheck(itemID: noteID)
             let reboundID = try store.confirmCourseProjectRebind(
                 successfulProposal
@@ -3466,6 +3455,7 @@ enum CourseProjectRootSelfCheck {
             workspaceDirectory: oversizedWorkspace
         )
         try oversizedProbe.configureCourseLibrary(at: library)
+        // 布局安全但状态超大不可读：仍拒绝纳入，且不改动原文件（保护共享课程根）。
         try expectFailure("33MB 课程状态有界拒读") {
             _ = try oversizedProbe.adoptCourseFolder(
                 at: courseARoot,
@@ -4723,17 +4713,16 @@ enum CourseProjectRootSelfCheck {
             "生成中导出",
             isDirectory: true
         )
-        try expectFailure("回答生成中导出") {
-            _ = try store.exportPortableCourseCopyForSelfCheck(
-                courseID: courseA,
-                to: generatingTarget
-            )
-        }
+        // S6-4：Agent 生成中不再拒绝导出；允许以当前磁盘状态导出。
+        _ = try store.exportPortableCourseCopyForSelfCheck(
+            courseID: courseA,
+            to: generatingTarget
+        )
         try store.setCourseReplyGeneratingForSelfCheck(
             courseID: courseA,
             generating: false
         )
-        try check(!generatingTarget.exists, "回答生成中仍抓取了半轮课程状态")
+        try check(generatingTarget.exists, "S6-4 生成中导出应成功落盘")
 
         let unsafeLink = sourceRoot.appendingPathComponent(
             "附录/普通外链.txt"
@@ -5172,26 +5161,26 @@ enum CourseProjectRootSelfCheck {
         let store = makeStore(fixture: fixture)
         try store.configureCourseLibrary(at: library)
 
-        try expectFailure("符号链接 metadata") {
-            _ = try store.adoptCourseFolder(
-                at: external,
-                title: "外部课程"
-            )
-        }
-        try check(store.courses.isEmpty, "符号链接 metadata 产生了幽灵课程")
-        try check(
-            try FileManager.default.contentsOfDirectory(atPath: external.path)
-                == externalEntriesBefore,
-            "拒绝符号链接 metadata 前写入了课程根"
+        // S6-1：符号链接 .weibei → 备份后按新课纳入，不拒绝。
+        let adoptedID = try store.adoptCourseFolder(
+            at: external,
+            title: "外部课程"
         )
+        try check(store.course(withID: adoptedID) != nil, "符号链接 metadata 软纳入失败")
         try check(
             try Data(contentsOf: manifestURL) == manifestData,
-            "拒绝符号链接 metadata 时改写了外部清单"
+            "软纳入改写了外部清单"
+        )
+        // 原符号链接入口应被移到 .weibei.backup-* 或保留在备份中。
+        let externalAfter = try FileManager.default.contentsOfDirectory(
+            atPath: external.path
         )
         try check(
-            CourseProjectFileWorker.isSymbolicLink(at: linkedMetadata),
-            "拒绝符号链接 metadata 时替换了用户入口"
+            externalAfter.contains(where: { $0.hasPrefix(".weibei.backup-") })
+                || !CourseProjectFileWorker.isSymbolicLink(at: linkedMetadata),
+            "软纳入未备份符号链接 metadata"
         )
+        _ = externalEntriesBefore
     }
 
     @MainActor

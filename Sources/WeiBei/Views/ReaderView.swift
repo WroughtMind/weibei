@@ -2922,14 +2922,12 @@ struct WebReaderRepresentable: NSViewRepresentable {
             cancelHTMLLoad()
             let requestID = UUID()
             htmlLoadRequestID = requestID
+            // S6-7：HTML 不再因大小上限拒绝；大文件异步整读。
             let readTask = Task.detached(priority: .userInitiated) { () -> Data? in
                 guard !Task.isCancelled else { return nil }
-                guard let data = try? CourseProjectFileWorker
-                    .readBoundedRegularFile(
-                        at: url,
-                        maximumByteCount: CourseProjectFileWorker
-                            .markdownMaximumByteCount
-                    ) else { return nil }
+                guard let data = try? Data(contentsOf: url, options: [.mappedIfSafe]) else {
+                    return nil
+                }
                 return Task.isCancelled ? nil : data
             }
             htmlReadTask = readTask
@@ -2953,7 +2951,7 @@ struct WebReaderRepresentable: NSViewRepresentable {
                         rootDirectory: url.deletingLastPathComponent()
                       ) else {
                     view.loadHTMLString(
-                        "<p style=\"font: 15px -apple-system; padding: 24px\">无法安全读取这个 HTML 文件。请确认文件没有损坏且大小未超过限制。</p>",
+                        "<p style=\"font: 15px -apple-system; padding: 24px\">无法读取这个 HTML 文件。请确认文件存在且可访问。</p>",
                         baseURL: nil
                     )
                     return

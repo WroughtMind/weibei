@@ -1848,33 +1848,104 @@ final class WorkspaceStore: ObservableObject {
                 .isSymbolicLinkKey,
                 .isAliasFileKey,
             ])
-            guard metadataValues?.isDirectory == true,
-                  metadataValues?.isSymbolicLink != true,
-                  metadataValues?.isAliasFile != true,
-                  !CourseProjectFileWorker.isSymbolicLink(at: metadataURL),
-                  CourseProjectPathPolicy.isSame(
+            let metadataLooksSafe =
+                metadataValues?.isDirectory == true
+                && metadataValues?.isSymbolicLink != true
+                && metadataValues?.isAliasFile != true
+                && !CourseProjectFileWorker.isSymbolicLink(at: metadataURL)
+                && CourseProjectPathPolicy.isSame(
                     metadataURL,
                     metadataURL.resolvingSymlinksInPath()
-                  ),
-                  importedFileIdentityResolver(canonicalRoot) == identity else {
-                if let externalScopeURL { courseSecurityScopeStopper(externalScopeURL) }
-                throw CourseProjectRootError.metadataConflict
-            }
-            do {
-                let snapshot = try await courseProjectFileWorker
-                    .adoptionSnapshot(
-                        at: canonicalRoot,
-                        expectedRootIdentity: identity
-                    )
-                adoptionSnapshot = snapshot
-                courseID = snapshot.manifest.courseID
-            } catch {
-                if let externalScopeURL {
-                    courseSecurityScopeStopper(externalScopeURL)
+                )
+                && importedFileIdentityResolver(canonicalRoot) == identity
+            if metadataLooksSafe {
+                do {
+                    let snapshot = try await courseProjectFileWorker
+                        .adoptionSnapshot(
+                            at: canonicalRoot,
+                            expectedRootIdentity: identity
+                        )
+                    adoptionSnapshot = snapshot
+                    courseID = snapshot.manifest.courseID
+                } catch {
+                    // 布局安全但状态不可读（如超大）：保留磁盘原样并拒绝，避免改写共享课程根。
+                    if let externalScopeURL {
+                        courseSecurityScopeStopper(externalScopeURL)
+                    }
+                    throw CourseProjectRootError.metadataConflict
                 }
-                throw CourseProjectRootError.metadataConflict
+            } else {
+                // S6-1：结构异常的 .weibei（symlink/非目录）→ 改名备份后按新课继续。
+                let backup = metadataURL
+                    .deletingLastPathComponent()
+                    .appendingPathComponent(
+                        ".weibei.backup-\(Int(Date().timeIntervalSince1970))",
+                        isDirectory: true
+                    )
+                try? FileManager.default.moveItem(at: metadataURL, to: backup)
+                adoptionSnapshot = nil
+                courseID = UUID()
+                showTransientNoteStatus(
+                    ui(
+                        "原课程元数据已备份为 \(backup.lastPathComponent)，将按新课程纳入。",
+                        "Previous course metadata was backed up as \(backup.lastPathComponent); adopting as a new course."
+                    )
+                )
+                try validateCourseProjectRoot(
+                    canonicalRoot,
+                    identity: identity,
+                    mustBeInsideLibrary: false
+                )
+                // 落入下方 else 同款创建逻辑：用 staged 写新 manifest。
+                let stagedMetadataURL = canonicalRoot.appendingPathComponent(
+                    ".weibei-adopt-staging-\(courseID.uuidString.lowercased())",
+                    isDirectory: true
+                )
+                do {
+                    try FileManager.default.createDirectory(
+                        at: stagedMetadataURL,
+                        withIntermediateDirectories: false
+                    )
+                    guard let emptyFingerprint = transactionDirectoryFingerprint(
+                        at: stagedMetadataURL
+                    ) else {
+                        throw CourseProjectRootError.rootIdentityUnavailable
+                    }
+                    createdMetadataFingerprint = emptyFingerprint
+                    try CourseProjectManifest(courseID: courseID)
+                        .encoded()
+                        .write(
+                            to: stagedMetadataURL.appendingPathComponent(
+                                "course.json"
+                            ),
+                            options: [.atomic]
+                        )
+                    guard let completeFingerprint =
+                            transactionDirectoryFingerprint(at: stagedMetadataURL)
+                    else {
+                        throw CourseProjectRootError.rootIdentityUnavailable
+                    }
+                    createdMetadataFingerprint = completeFingerprint
+                    try FileManager.default.moveItem(
+                        at: stagedMetadataURL,
+                        to: metadataURL
+                    )
+                    createdMetadata = true
+                } catch {
+                    if let createdMetadataFingerprint {
+                        safelyRemoveTransactionDirectory(
+                            at: stagedMetadataURL,
+                            expected: createdMetadataFingerprint
+                        )
+                    }
+                    if let externalScopeURL {
+                        courseSecurityScopeStopper(externalScopeURL)
+                    }
+                    throw error
+                }
             }
-            if let existing = courses.first(where: { $0.id == courseID }) {
+            if let existing = courses.first(where: { $0.id == courseID }),
+               adoptionSnapshot != nil {
                 do {
                     try validateCourseProjectRoot(
                         canonicalRoot,
@@ -1902,11 +1973,13 @@ final class WorkspaceStore: ObservableObject {
                     throw error
                 }
             }
-            try validateCourseProjectRoot(
-                canonicalRoot,
-                identity: identity,
-                mustBeInsideLibrary: false
-            )
+            if adoptionSnapshot != nil {
+                try validateCourseProjectRoot(
+                    canonicalRoot,
+                    identity: identity,
+                    mustBeInsideLibrary: false
+                )
+            }
         } else {
             try validateCourseProjectRoot(
                 canonicalRoot,
@@ -2333,8 +2406,8 @@ final class WorkspaceStore: ObservableObject {
     }
 
     private func courseHasUnstableState(_ courseID: UUID) -> Bool {
+        // S6-4：仅移除进行中阻塞导出/重绑；Agent/笔记待写不再拒绝用户操作。
         activeCourseRemovalTokens[courseID] != nil
-            || courseHasPendingWork(courseID)
     }
 
     private func itemIsInRemovingCourse(_ itemID: String) -> Bool {
@@ -6179,9 +6252,9 @@ final class WorkspaceStore: ObservableObject {
         var isolation: CourseRootTrashIsolation?
         do {
             try courseProjectMutationHook(.beforeCourseRootTrashMove)
+            // S6-4：不再因 Agent/笔记 pending 拒绝废纸篓。
             guard course(withID: courseID) == prepared.course,
                   activeCourseRemovalTokens[courseID] == prepared.token,
-                  !courseHasPendingWork(courseID),
                   coursePortableStateMatchesLastSaved(courseID),
                   let currentRoot = courseRootURL(for: courseID),
                   CourseProjectPathPolicy.isSame(currentRoot, root),
@@ -6576,14 +6649,14 @@ final class WorkspaceStore: ObservableObject {
             courseReconciliationTask = nil
             await reconciliationTask?.value
 
+            // S6-4：已取消 Agent 并等文件突变归零；不再因笔记/Agent 待写拒绝移除。
             guard course(withID: courseID) == expectedCourse,
                   activeCourseRemovalTransactionID == token,
                   activeCourseRemovalTokens[courseID] == token,
                   activeCourseFileMutationCounts[
                     courseID,
                     default: 0
-                  ] == 0,
-                  !courseHasPendingWork(courseID) else {
+                  ] == 0 else {
                 throw CourseRemovalError.courseBusy
             }
 

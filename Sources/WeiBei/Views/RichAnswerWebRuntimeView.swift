@@ -1001,13 +1001,13 @@ private struct RichAnswerWebViewRepresentable: NSViewRepresentable {
                   allowedAssetIDs.contains(assetID) else { return }
 
             guard let image = assetPreview(assetID) else {
-                errors.append("\(path) 引用的本地图片资产不可预览：\(assetID)")
+                // S6-8：单图失败不阻断整份导出/渲染。
                 return
             }
-            guard let embeddedRaster = Self.embeddedRaster(from: image) else {
-                errors.append("\(path) 引用的本地图片资产无法压缩到安全内嵌预算：\(assetID)")
-                return
-            }
+            // 先压缩；失败则原样内嵌（可超预算），继续其余资产。
+            let embeddedRaster = Self.embeddedRaster(from: image)
+                ?? Self.embeddedRasterUncompressed(from: image)
+            guard let embeddedRaster else { return }
 
             source["kind"] = "dataUrl"
             source["source"] = "data:image/\(embeddedRaster.mimeSubtype);base64,\(embeddedRaster.data.base64EncodedString())"
@@ -1132,6 +1132,32 @@ private struct RichAnswerWebViewRepresentable: NSViewRepresentable {
             }
 
             return nil
+        }
+
+        /// S6-8：压缩失败时的原样 PNG 回退（可超过安全预算）。
+        private static func embeddedRasterUncompressed(from image: NSImage) -> EmbeddedRaster? {
+            var proposedRect = NSRect(origin: .zero, size: image.size)
+            guard let sourceImage = image.cgImage(
+                forProposedRect: &proposedRect,
+                context: nil,
+                hints: nil
+            ) else { return nil }
+            let width = max(1, sourceImage.width)
+            let height = max(1, sourceImage.height)
+            guard let bitmap = rasterizedBitmap(
+                sourceImage,
+                width: min(width, 2_400),
+                height: min(height, 2_400),
+                background: nil
+            ),
+            let pngData = bitmap.representation(using: .png, properties: [:])
+            else { return nil }
+            return EmbeddedRaster(
+                data: pngData,
+                mimeSubtype: "png",
+                width: bitmap.pixelsWide,
+                height: bitmap.pixelsHigh
+            )
         }
 
         private static func rasterizedBitmap(
