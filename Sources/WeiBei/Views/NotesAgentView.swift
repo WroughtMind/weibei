@@ -2890,6 +2890,8 @@ struct FloatingSelectionAgentView: View {
     @State private var panelWidth = CGFloat(SelectionFloatingAgentPlacement.expandedHalfWidth * 2)
     @State private var userFeedHeight: CGFloat?
     @State private var measuredFeedContentHeight = CGFloat(SelectionFloatingAgentPlacement.minimumAutomaticContentHeight)
+    @State private var previousFeedContentHeight: CGFloat?
+    @State private var feedHeightLocked = false
     @State private var resizeOrigin: FloatingAgentSize?
     @State private var resizeOriginOffset: CGSize?
     @FocusState private var draftFocused: Bool
@@ -3105,11 +3107,19 @@ struct FloatingSelectionAgentView: View {
                 }
                 .frame(height: resolvedFloatingFeedHeight)
                 .onPreferenceChange(FloatingSelectionFeedHeightKey.self) { height in
-                    guard userFeedHeight == nil, height > 1,
+                    guard userFeedHeight == nil, !feedHeightLocked, height > 1,
                           abs(height - measuredFeedContentHeight) > 1 else { return }
-                    withAnimation(WeiBeiMotion.layout) {
-                        measuredFeedContentHeight = height
+                    // Two-state oscillation lock: the LazyVStack row set depends on the
+                    // frame height, so an A/B alternation means this measure-writeback
+                    // loop cannot converge. Lock instead of churning layout (and
+                    // re-entering the AttributeGraph cycle) on every frame.
+                    if let previousFeedContentHeight,
+                       abs(height - previousFeedContentHeight) <= 1 {
+                        feedHeightLocked = true
+                        return
                     }
+                    previousFeedContentHeight = measuredFeedContentHeight
+                    measuredFeedContentHeight = height
                 }
             }
 
@@ -3139,9 +3149,20 @@ struct FloatingSelectionAgentView: View {
         .overlay {
             floatingResizeBorder
         }
+        .onChange(of: showsFloatingFeed) { _, _ in
+            unlockFeedHeightFeedback()
+        }
+        .onChange(of: visibleFloatingMessages.count) { _, _ in
+            unlockFeedHeightFeedback()
+        }
         .onAppear {
             draftFocused = true
         }
+    }
+
+    private func unlockFeedHeightFeedback() {
+        feedHeightLocked = false
+        previousFeedContentHeight = nil
     }
 
     private var visibleFloatingMessages: [AgentMessage] {
