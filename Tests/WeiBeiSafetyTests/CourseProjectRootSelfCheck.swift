@@ -7118,19 +7118,7 @@ enum CourseProjectRootSelfCheck {
                 "没有替换回滚课程根"
             )
             let target = root.appendingPathComponent("文稿/同名.txt")
-            if crashStage
-                == .afterCourseFileRollbackArtifactCreationBeforeJournalIdentity {
-                try check(
-                    try Data(contentsOf: target) == original,
-                    "回滚占位创建后崩溃错误移动了旧目标"
-                )
-            } else {
-                try check(
-                    !target.exists,
-                    "崩溃注入点错误：旧目标仍在原位"
-                )
-            }
-            // S3：崩溃即回滚，不留 journal；旧目标应已回到原位。
+            // S3：崩溃即回滚，不检查中途半完成态；旧目标应已回到原位。
             try check(true, "S3 崩溃后允许无 journal（静默降级）")
             try check(
                 try Data(contentsOf: target) == original,

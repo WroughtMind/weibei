@@ -12444,6 +12444,9 @@ final class WorkspaceStore: ObservableObject {
                 } catch {
                     restoredOldPath = false
                 }
+            } else if FileManager.default.fileExists(atPath: oldURL.path) {
+                // 移动未成功，原路径仍在。
+                restoredOldPath = true
             }
             if let idx = importedItems.firstIndex(where: {
                 $0.id == oldID || $0.id == replacementItemID
