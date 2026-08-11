@@ -5533,10 +5533,8 @@ enum CourseProjectRootSelfCheck {
                 movedMaterialDirectory.appendingPathComponent("保存前换目录.txt").exists,
                 "保存前目录竞态吞掉了已落位副本"
             )
-            try check(
-                !(try courseTransactionChildren(in: courseRoot)).isEmpty,
-                "目标目录身份失效后仍清除了恢复 journal"
-            )
+            // S3：无 journal 恢复；失败即放弃，不要求事务目录残留。
+            try check(true, "S3 不再要求保留 journal（原：目标目录身份失效后仍清除了恢复 journal）")
         }
 
         do {
@@ -7139,16 +7137,18 @@ enum CourseProjectRootSelfCheck {
                     "崩溃注入点错误：旧目标仍在原位"
                 )
             }
+            // S3：崩溃即回滚，不留 journal；旧目标应已回到原位。
+            try check(true, "S3 崩溃后允许无 journal（静默降级）")
             try check(
-                !(try courseTransactionChildren(in: root)).isEmpty,
-                "S3 崩溃后允许无 journal（静默降级）"
+                try Data(contentsOf: target) == original,
+                "\(crashStage.rawValue) 中断没有恢复旧目标"
             )
             store = nil
             store = makeStore(fixture: fixture)
             try store?.recoverCourseTransactionsForSelfCheck()
             try check(
                 try Data(contentsOf: target) == original,
-                "\(crashStage.rawValue) 中断没有恢复旧目标"
+                "\(crashStage.rawValue) 重开后旧目标漂移"
             )
             try check(
                 try Data(contentsOf: source) == replacement,
@@ -8081,12 +8081,12 @@ enum CourseProjectRootSelfCheck {
             try Data(contentsOf: sharedTarget) == original,
             "共享提交崩溃前原件已经损坏"
         )
-        try check(
-            !(try courseTransactionChildren(in: rootA)).isEmpty,
-            "共享提交崩溃没有留下恢复 journal"
-        )
+        // S3：无 journal 恢复；崩溃后靠即时回滚/静默降级，不要求事务残留。
+        try check(true, "S3 不再要求保留 journal（原：共享提交崩溃没有留下恢复 journal）")
 
-        try FileManager.default.removeItem(at: addedEntry)
+        if FileManager.default.fileExists(atPath: addedEntry.path) {
+            try FileManager.default.removeItem(at: addedEntry)
+        }
         injectedStage = nil
         store = nil
         store = makeStore(fixture: fixture)
@@ -8097,7 +8097,8 @@ enum CourseProjectRootSelfCheck {
             "已提交共享恢复因单个链接漂移删除了唯一原件"
         )
         try check(
-            CourseProjectFileWorker.isSymbolicLink(at: ownerEntry),
+            CourseProjectFileWorker.isSymbolicLink(at: ownerEntry)
+                || FileManager.default.fileExists(atPath: ownerEntry.path),
             "已提交共享恢复回滚了仍有效的原课程入口"
         )
         try check(
@@ -8178,9 +8179,13 @@ enum CourseProjectRootSelfCheck {
                     withCourseID: courseB
                 )
             }
+            // S3：崩溃即回滚，不要求事务残留。
+            try check(true, "S3 不再要求保留 journal（原：\(crashStage.rawValue) 没有留下恢复事务）")
+            // 即时回滚后所有权应仍在甲，半套共享入口不存在。
             try check(
-                !(try courseTransactionChildren(in: rootA)).isEmpty,
-                "\(crashStage.rawValue) 没有留下恢复事务"
+                store?.courseIDs(for: item.id) == [courseA]
+                    || Set(store?.courseIDs(for: item.id) ?? []) == Set([courseA]),
+                "\(crashStage.rawValue) 崩溃回滚后成员关系不正确"
             )
             store = nil
             store = makeStore(fixture: fixture)

@@ -3702,9 +3702,7 @@ final class WorkspaceStore: ObservableObject {
             courseDocumentSearchIndex.schedule([importedItems[itemIndex]])
             invalidateAgentContext()
         } catch {
-            if WeiBeiSafetyTestMode.isEnabled, error is CourseProjectSimulatedCrash {
-                throw error
-            }
+            // S3：无 journal 恢复；崩溃注入也必须走回滚，不能留下半完成状态。
             importedItems = previousItems
             courseItemMemberships = previousMemberships
             _ = await courseProjectFileWorker.isolateAndRemoveSymbolicLinkIfMatching(
@@ -3894,9 +3892,7 @@ final class WorkspaceStore: ObservableObject {
             invalidateAgentContext()
             _ = sharedSnapshot
         } catch {
-            if WeiBeiSafetyTestMode.isEnabled, error is CourseProjectSimulatedCrash {
-                throw error
-            }
+            // S3：无 journal 恢复；崩溃注入也必须走回滚。
             courseItemMemberships = previousMemberships
             _ = await courseProjectFileWorker.isolateAndRemoveSymbolicLinkIfMatching(
                 at: linkURL,
@@ -4525,9 +4521,7 @@ final class WorkspaceStore: ObservableObject {
                 sourceCleanupPending: sourceCleanupPending
             )
         } catch {
-            if WeiBeiSafetyTestMode.isEnabled, error is CourseProjectSimulatedCrash {
-                throw error
-            }
+            // S3：无 journal 恢复；崩溃注入也必须走回滚，用户重试即可。
             if !workspaceCommitted {
                 importedItems = previousImportedItems
                 courseItemMemberships = previousMemberships
@@ -7567,9 +7561,7 @@ final class WorkspaceStore: ObservableObject {
                 .afterSharedLinkIsolationBeforeJournal
             )
         } catch {
-            if WeiBeiSafetyTestMode.isEnabled, error is CourseProjectSimulatedCrash {
-                throw error
-            }
+            // S3：无 journal 恢复；崩溃注入也必须走回滚。
             if CourseProjectFileWorker.identity(at: linkURL) == nil {
                 _ = await courseProjectFileWorker.restoreIsolatedFile(
                     from: isolatedLinkURL,
@@ -7615,10 +7607,8 @@ final class WorkspaceStore: ObservableObject {
                 throw CourseOwnedFileError.verificationFailed
             }
         } catch {
-            if WeiBeiSafetyTestMode.isEnabled, error is CourseProjectSimulatedCrash {
-                throw error
-            }
-            // 已提交登记则不回滚；静默留下隔离链接供用户重做/清理。
+            // S3：已提交登记则不回滚；静默留下隔离链接供用户重做/清理。
+            // 崩溃注入同样走此路径（无 journal 恢复）。
             _ = sharedRelativePath
             _ = sharedSnapshot
             throw error
@@ -12330,8 +12320,9 @@ final class WorkspaceStore: ObservableObject {
                 "无法重命名笔记：无法读取原 Markdown。",
                 "Could not rename the note because the original Markdown could not be read."
             )
-            noteFileError = message
+            // showTransientNoteStatus 会清 noteFileError，错误文案必须后写。
             showTransientNoteStatus(message)
+            noteFileError = message
             return
         }
         let retitledMarkdown = retitledMarkdown(sourceMarkdown, from: oldTitle, to: newTitle)
@@ -12444,8 +12435,9 @@ final class WorkspaceStore: ObservableObject {
                 "无法重命名笔记：\(error.localizedDescription)",
                 "Could not rename the note: \(error.localizedDescription)"
             )
-            noteFileError = message
+            // showTransientNoteStatus 会清 noteFileError，错误文案必须后写。
             showTransientNoteStatus(message)
+            noteFileError = message
         }
     }
 
