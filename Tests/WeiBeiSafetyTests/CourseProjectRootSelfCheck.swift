@@ -134,7 +134,7 @@ enum CourseProjectRootSelfCheck {
         try step("旧课程首次整理") {
             try rootlessLegacyCourseIsOrganizedByCopy()
         }
-        try rootlessLegacyCourseCanBeRemovedFromWeiBei()
+        try rootlessLegacyCourseDeleteRequiresRealFolder()
         try sharedRepairFailurePreservesMembershipUntilEntryDisappears()
         try sharedConversionStagesBesideSharedDestination()
         try sharedPostPlacementReplacementPreservesVerifiedOriginal()
@@ -7995,6 +7995,13 @@ enum CourseProjectRootSelfCheck {
                 && store.courseIDs(for: promoted.id).isEmpty,
             "从课程移除没有保住唯一原件或仍残留课程关系"
         )
+        try store.moveItemSourceToTrashForSelfCheck(promoted.id)
+        try check(
+            !commonMaterialURL.exists
+                && !store.importedItems.contains { $0.id == promoted.id }
+                && store.courseIDs(for: promoted.id).isEmpty,
+            "独立资料删除后仍残留原件、登记或课程关系"
+        )
 
         let noteSource = incoming.appendingPathComponent("同一份笔记.md")
         let noteData = Data("# 同一份笔记\n\n两门课程共用。\n".utf8)
@@ -8148,7 +8155,7 @@ enum CourseProjectRootSelfCheck {
     }
 
     @MainActor
-    private static func rootlessLegacyCourseCanBeRemovedFromWeiBei() throws {
+    private static func rootlessLegacyCourseDeleteRequiresRealFolder() throws {
         let fixture = try Fixture(name: "rootless-course-removal")
         defer { fixture.remove() }
         let source = fixture.root.appendingPathComponent("旧课程外部资料.txt")
@@ -8167,22 +8174,24 @@ enum CourseProjectRootSelfCheck {
         )
         store.assignItemIDs([item.id], to: courseID)
 
-        // S6-3：无文件夹/不可访问时废纸篓动作退化为只取消登记。
-        _ = try store.moveCourseFolderToTrashForSelfCheck(courseID)
+        try expectFailure("无真实文件夹的课程不能假装删除") {
+            _ = try store.moveCourseFolderToTrashForSelfCheck(courseID)
+        }
         try check(
-            store.course(withID: courseID) == nil
-                && store.courseIDs(for: item.id).isEmpty
+            store.course(withID: courseID) != nil
+                && store.courseIDs(for: item.id) == [courseID]
                 && store.item(withID: item.id) != nil
                 && (try Data(contentsOf: source)) == sourceData,
-            "无文件夹课程取消登记失败或改动了原文件"
+            "无文件夹课程删除失败后丢失登记、关系或原文件"
         )
 
         store = makeStore(fixture: fixture)
         try check(
-            store.course(withID: courseID) == nil
+            store.course(withID: courseID) != nil
+                && store.courseIDs(for: item.id) == [courseID]
                 && store.item(withID: item.id) != nil
                 && (try Data(contentsOf: source)) == sourceData,
-            "旧课程在重开后复活，或外部资料没有保留"
+            "重开后无文件夹课程没有保持删除前状态"
         )
 
         let guardedFixture = try Fixture(name: "rootless-owned-item-removal")

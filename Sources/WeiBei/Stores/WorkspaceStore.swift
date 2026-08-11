@@ -6437,78 +6437,22 @@ final class WorkspaceStore: ObservableObject {
     func moveCourseFolderToTrash(_ courseID: UUID) async throws -> URL {
         let transactionID = try beginCourseRemovalTransaction()
         defer { finishCourseRemovalTransaction(transactionID) }
-        // S6-3：根不可访问时改为只取消本机登记（文件夹本身动不了）。
-        let prepared: (
-            course: Course,
-            root: URL?,
-            rootIdentity: ImportedFileIdentity?,
-            token: UUID
+        let prepared = try await prepareCourseRemoval(
+            courseID,
+            token: transactionID,
+            requiresAvailableRoot: true
         )
-        do {
-            prepared = try await prepareCourseRemoval(
-                courseID,
-                token: transactionID,
-                requiresAvailableRoot: true
-            )
-        } catch CourseRemovalError.courseRootUnavailable {
-            let shouldDismiss =
-                courseWorkspacePresented
-                    && courseWorkspaceCourseID == courseID
-            guard await persistWorkspaceRemovingCourse(courseID) else {
-                finishCourseRemovalAttempt(
-                    courseID,
-                    token: transactionID,
-                    succeeded: false
-                )
-                throw CourseRemovalError.workspaceSaveFailed
-            }
-            removeCourseLocalRegistration(courseID)
-            if shouldDismiss {
-                courseWorkspacePresented = false
-            }
-            finishCourseRemovalAttempt(
-                courseID,
-                token: transactionID,
-                succeeded: true
-            )
-            showTransientNoteStatus(
-                ui(
-                    "课程文件夹当前不可访问，已只取消本机登记；磁盘上的文件夹未移动。",
-                    "The course folder is currently inaccessible. Local registration was removed; the on-disk folder was not moved."
-                )
-            )
-            return workspaceDirectory
-        }
         let shouldDismissCourseWorkspace =
             courseWorkspacePresented
                 && courseWorkspaceCourseID == courseID
         guard let root = prepared.root,
               let rootIdentity = prepared.rootIdentity else {
-            let shouldDismiss = shouldDismissCourseWorkspace
-            guard await persistWorkspaceRemovingCourse(courseID) else {
-                finishCourseRemovalAttempt(
-                    courseID,
-                    token: prepared.token,
-                    succeeded: false
-                )
-                throw CourseRemovalError.workspaceSaveFailed
-            }
-            removeCourseLocalRegistration(courseID)
-            if shouldDismiss {
-                courseWorkspacePresented = false
-            }
             finishCourseRemovalAttempt(
                 courseID,
                 token: prepared.token,
-                succeeded: true
+                succeeded: false
             )
-            showTransientNoteStatus(
-                ui(
-                    "课程文件夹当前不可访问，已只取消本机登记；磁盘上的文件夹未移动。",
-                    "The course folder is currently inaccessible. Local registration was removed; the on-disk folder was not moved."
-                )
-            )
-            return workspaceDirectory
+            throw CourseRemovalError.courseRootUnavailable
         }
 
         // S3：无 journal。隔离 → 进废纸篓 → 清登记；
@@ -7222,8 +7166,7 @@ final class WorkspaceStore: ObservableObject {
     private func beginCourseFileMutation(
         courseIDs: Set<UUID>
     ) throws {
-        guard !courseIDs.isEmpty,
-              courseIDs.allSatisfy({ courseID in
+        guard courseIDs.allSatisfy({ courseID in
                 courses.contains(where: { $0.id == courseID })
               }) else {
             throw CourseOwnedFileError.courseNotFound
