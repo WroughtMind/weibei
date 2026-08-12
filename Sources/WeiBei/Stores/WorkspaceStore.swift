@@ -9674,6 +9674,43 @@ final class WorkspaceStore: ObservableObject {
         return title.isEmpty ? "Study Session" : String(title.prefix(36))
     }
 
+    static func semanticSessionTitle(
+        from suggestion: String?,
+        replacing currentTitle: String,
+        messages: [AgentMessage]
+    ) -> String? {
+        let userMessages = messages.filter { $0.role == .user }
+        guard userMessages.count == 1,
+              currentTitle == sessionTitle(from: userMessages[0].text),
+              let suggestion,
+              !suggestion.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return nil
+        }
+        let title = sessionTitle(from: suggestion)
+        let genericTitles = [
+            "WeiBei", "Study Session", "New Chat", "New Conversation", "新对话", "新会话",
+        ]
+        guard title != currentTitle,
+              !genericTitles.contains(where: {
+                  $0.caseInsensitiveCompare(title) == .orderedSame
+              }) else { return nil }
+        return title
+    }
+
+    private func applySemanticSessionTitle(
+        _ suggestion: String?,
+        to sessionID: UUID
+    ) {
+        guard let index = studySessions.firstIndex(where: { $0.id == sessionID }),
+              let title = Self.semanticSessionTitle(
+                  from: suggestion,
+                  replacing: studySessions[index].title,
+                  messages: studySessions[index].messages
+              ) else { return }
+        studySessions[index].title = title
+        studySessions[index].updatedAt = Date()
+    }
+
     private static func interruptedAgentReplyText(streamed: String, persisted: String) -> String {
         streamed.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             ? persisted
@@ -16938,6 +16975,10 @@ final class WorkspaceStore: ObservableObject {
             }
             let sources = reply.sources
             if let messageID = replyMessageID {
+                applySemanticSessionTitle(
+                    reply.sessionTitle,
+                    to: target.sessionID
+                )
                 let visibleContentBlocks = currentAgentVisualizationBlocks(reply.contentBlocks)
                 _ = updateAgentMessage(messageID, in: target.sessionID) {
                     $0.text = reply.text
