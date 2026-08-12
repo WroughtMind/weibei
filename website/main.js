@@ -1,13 +1,9 @@
 const run = document.querySelector(".scroll-run");
 const stage = document.querySelector(".stage");
 const scenes = [...document.querySelectorAll(".scene")];
-const railButtons = [...document.querySelectorAll(".chapter-rail [data-progress]")];
 const progressButtons = [...document.querySelectorAll("[data-progress]")];
 const workflowVideos = [...document.querySelectorAll(".workspace-flow")];
 const relationsVideo = document.querySelector(".workspace-relations");
-const flowLabel = document.querySelector("[data-flow-label]");
-const proofSteps = [...document.querySelectorAll("[data-proof]")];
-const workspacePhase = document.querySelector("[data-workspace-phase]");
 const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
 const desktopStory = matchMedia("(min-width: 761px)").matches;
 const captureMode = new URLSearchParams(location.search).has("capture");
@@ -24,23 +20,13 @@ const stops = [
 ];
 
 const workspaceStates = [
-  { x: 0, y: 540, scale: 0.86, mediaX: 0, lensLeft: 0, lensWidth: 100, lensOpacity: 0, dark: 0 },
-  { x: 0, y: 140, scale: 0.96, mediaX: 0, lensLeft: 0, lensWidth: 100, lensOpacity: 0, dark: 0 },
-  { x: -120, y: 130, scale: 1.02, mediaX: -90, lensLeft: 31, lensWidth: 38, lensOpacity: 0.72, dark: 0 },
-  { x: 520, y: 90, scale: 0.82, mediaX: -520, lensLeft: 27, lensWidth: 48, lensOpacity: 0.58, dark: 1 },
-  { x: -80, y: 145, scale: 1, mediaX: -250, lensLeft: 66, lensWidth: 32, lensOpacity: 0.66, dark: 0 },
-  { x: 0, y: 100, scale: 0.95, mediaX: 0, lensLeft: 0, lensWidth: 100, lensOpacity: 0, dark: 0 },
-  { x: 470, y: 600, scale: 0.72, mediaX: 0, lensLeft: 0, lensWidth: 100, lensOpacity: 0, dark: 0 },
-];
-
-const workspaceLabels = [
-  "三栏同时在场",
-  "原文、Agent、笔记",
-  "问题贴着当前材料",
-  "回答带着出处回来",
-  "等待你确认写入",
-  "资料与笔记形成关联",
-  "工作流留在一处",
+  { x: 0, y: 380, scale: 0.86 },
+  { x: 0, y: 112, scale: 0.96 },
+  { x: -36, y: 90, scale: 0.98 },
+  { x: 78, y: 104, scale: 0.94 },
+  { x: -28, y: 118, scale: 0.98 },
+  { x: 0, y: 96, scale: 0.95 },
+  { x: 84, y: 430, scale: 0.78 },
 ];
 
 let targetProgress = 0;
@@ -151,15 +137,6 @@ function updateWorkflow(progress) {
           : mix(13.25, 16.4, smoothstep((progress - 0.68) / 0.16));
   workflowScrubbers.forEach(scrub => scrub(flowTime));
 
-  const phase = progress < 0.43 ? "answer" : progress < 0.6 ? "source" : "note";
-  const labels = {
-    answer: "正在读取当前上下文",
-    source: "回答保留材料出处",
-    note: "笔记建议等待你确认",
-  };
-  if (flowLabel) flowLabel.textContent = labels[phase];
-  proofSteps.forEach(step => step.classList.toggle("is-active", step.dataset.proof === phase));
-
   const relationFlow = clamp((progress - 0.77) / 0.07);
   relationsScrubber(mix(0.4, 4.25, smoothstep(relationFlow)));
 }
@@ -174,34 +151,24 @@ function updatePersistentWorkspace(progress, lower, upper, local) {
   root.setProperty("--workspace-x", `${value("x").toFixed(2)}px`);
   root.setProperty("--workspace-y", `${value("y").toFixed(2)}px`);
   root.setProperty("--workspace-scale", value("scale").toFixed(4));
-  root.setProperty("--workspace-media-x", `${value("mediaX").toFixed(2)}px`);
-  root.setProperty("--lens-left", `${value("lensLeft").toFixed(2)}%`);
-  root.setProperty("--lens-width", `${value("lensWidth").toFixed(2)}%`);
-  root.setProperty("--lens-opacity", value("lensOpacity").toFixed(3));
+  root.setProperty("--stage-mark-opacity", (0.92 * (1 - smoothstep(progress / 0.12))).toFixed(3));
 
   const workflowIn = smoothstep((progress - 0.19) / 0.11);
   const relationsIn = smoothstep((progress - 0.77) / 0.08);
   const finishIn = smoothstep((progress - 0.94) / 0.06);
   const workflowReady = workflowVideos.every(video => video.dataset.frameReady === "true");
   const relationsReady = relationsVideo?.dataset.frameReady === "true";
-  const workflowOpacity = workflowIn * Number(workflowReady) * (1 - relationsIn) * (1 - finishIn);
+  const workflowOpacity = workflowIn * Number(workflowReady) * (1 - finishIn);
   const relationsOpacity = relationsIn * Number(relationsReady) * (1 - finishIn);
-  const staticOpacity = clamp(1 - workflowOpacity - relationsOpacity);
-  root.setProperty("--workspace-static-opacity", staticOpacity.toFixed(3));
+  root.setProperty("--workspace-static-opacity", "1");
   root.setProperty("--workspace-flow-opacity", workflowOpacity.toFixed(3));
   root.setProperty("--workspace-relations-opacity", relationsOpacity.toFixed(3));
-
-  const dark = value("dark");
-  root.setProperty("--stage-dark", dark.toFixed(3));
-  stage?.classList.toggle("is-dark", dark > 0.52);
-
-  const active = local < 0.5 ? lower : upper;
-  if (workspacePhase) workspacePhase.textContent = workspaceLabels[active];
 }
 
 function setActiveScene(index) {
   if (activeSceneIndex === index) return;
   activeSceneIndex = index;
+  stage?.classList.toggle("is-dark", index === 3);
   scenes.forEach((scene, sceneIndex) => {
     const active = sceneIndex === index;
     if (!active && scene.contains(document.activeElement)) document.activeElement.blur();
@@ -213,41 +180,22 @@ function setActiveScene(index) {
 
 function paint(progress) {
   const { lower, upper, local } = sceneBlend(progress);
-  const crossfade = smoothstep((local - 0.31) / 0.38);
   const activeIndex = local < 0.5 ? lower : upper;
 
   scenes.forEach((scene, index) => {
-    const opacity = lower === upper
-      ? Number(index === lower)
-      : index === lower
-        ? 1 - crossfade
-        : index === upper
-          ? crossfade
-          : 0;
-    const drift = index === lower
-      ? mix(0, -34, crossfade)
-      : index === upper
-        ? mix(34, 0, crossfade)
-        : 0;
+    const opacity = Number(index === activeIndex);
     scene.style.setProperty("--scene-opacity", opacity.toFixed(4));
     scene.style.setProperty("--scene-z", String(opacity > 0 ? 8 : 0));
-    scene.style.setProperty("--scene-drift-x", `${drift.toFixed(2)}px`);
   });
 
   setActiveScene(activeIndex);
-  document.documentElement.style.setProperty("--scroll-cue-opacity", clamp(1 - progress * 13).toFixed(3));
-
-  const nearest = nearestStop(progress);
-  railButtons.forEach(button => {
-    button.classList.toggle("is-active", Math.abs(Number(button.dataset.progress) - nearest.at) < 0.035);
-  });
 
   updatePersistentWorkspace(progress, lower, upper, local);
   updateWorkflow(progress);
 }
 
 function frame() {
-  const response = reducedMotion || captureMode ? 1 : 0.18;
+  const response = reducedMotion || captureMode || snappingTo !== null ? 1 : 0.18;
   renderedProgress += (targetProgress - renderedProgress) * response;
   if (Math.abs(targetProgress - renderedProgress) < 0.0001) renderedProgress = targetProgress;
   paint(renderedProgress);
@@ -269,7 +217,7 @@ function snapToNearest() {
   const progress = progressFromScroll();
   const nearest = nearestStop(progress);
   const distance = Math.abs(nearest.at - progress);
-  if (distance <= 0.003 || distance > 0.055) return;
+  if (distance <= 0.003 || distance > 0.035) return;
   snappingTo = nearest.at;
   scrollToProgress(nearest.at);
 }
@@ -277,7 +225,7 @@ function snapToNearest() {
 function scheduleSnap() {
   clearTimeout(snapTimer);
   if (reducedMotion || Math.abs(scrollVelocity) > 42) return;
-  snapTimer = setTimeout(snapToNearest, 180);
+  snapTimer = setTimeout(snapToNearest, 240);
 }
 
 addEventListener("scroll", () => {

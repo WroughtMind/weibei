@@ -4,26 +4,20 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="theme-color" content="#f2e2ca" />
-    <meta
-      name="description"
-      content="魏碑是一款本地优先的 macOS 学习工作台。打开资料，围绕原文提问，把确认过的内容写进笔记。"
-    />
-    <meta property="og:title" content="魏碑 WeiBei · 读、问、记，在同一张纸上" />
-    <meta
-      property="og:description"
-      content="打开资料，围绕原文提问，把确认过的内容写进笔记。"
-    />
+    <meta name="description" content="魏碑，一款为阅读、思考与写作而生的 macOS 应用。" />
+    <meta property="og:title" content="魏碑 WeiBei" />
+    <meta property="og:description" content="资料在左，问题在旁，笔记在手。" />
     <meta property="og:image" content="https://weibei-app.github.io/weibei/assets/brand/og-image.png" />
     <meta property="og:type" content="website" />
     <meta name="twitter:card" content="summary_large_image" />
     <link rel="canonical" href="https://weibei-app.github.io/weibei/" />
-    <title>魏碑 WeiBei · 读、问、记，在同一张纸上</title>
+    <title>魏碑 WeiBei</title>
     <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
     <link rel="icon" href="./favicon.ico" sizes="any" />
     <link rel="apple-touch-icon" href="./apple-touch-icon.png" />
     <link rel="preload" href="./assets/WeiBeiStele.ttf" as="font" type="font/ttf" crossorigin />
     <link rel="preload" href="./assets/WeiBeiSteleMono.ttf" as="font" type="font/ttf" crossorigin />
-    <link rel="stylesheet" href="./styles.css?v=5-persistent-2" />
+    <link rel="stylesheet" href="./styles.css?v=8-clean-story" />
   </head>
   <body>
     <a class="skip-link" href="#story">跳到产品故事</a>
@@ -31,7 +25,9 @@
     <main>
       <section class="scroll-run" id="story" aria-label="魏碑真实工作流">
         <div class="stage">
-          <section class="frame scene hero" data-scene="hero" aria-labelledby="hero-title">
+          <img class="stage-mark" src="./assets/mark-cutout.png" alt="" />
+
+          <section class="frame scene hero" data-scene="hero">
             <header class="site-head">
               <a class="brand" href="#story" data-progress="0" aria-label="魏碑首页">
                 <img src="./assets/app-icon.png" alt="" />
@@ -46,25 +42,18 @@
             </header>
 
             <div class="hero-copy">
-              <p class="eyebrow">本地学习工作台</p>
-              <h1 id="hero-title">读、问、记，<br />在同一张纸上。</h1>
-              <p class="lead">打开资料，围绕原文提问，把可靠内容写进笔记。</p>
               <div class="actions">
-                <button class="button-seal" type="button" data-progress="0.17">看 30 秒工作流</button>
                 <a class="button-line" data-download-link href="https://github.com/weibei-app/weibei/releases">
                   下载 macOS 版 <span>→</span>
                 </a>
               </div>
             </div>
-
-            <img class="hero-mark" src="./assets/mark-cutout.png" alt="" />
-            <p class="vertical-note">真实应用界面 · 本地优先</p>
           </section>
 
           <section
             class="frame scene panes"
             data-scene="panes"
-            aria-labelledby="panes-title"
+            aria-label="读、问、记"
             aria-hidden="true"
             inert
           >
@@ -74,21 +63,17 @@
               </a>
               <span class="folio">02 / 07</span>
             </header>
-            <h2 id="panes-title">三栏，刚好是一条路。</h2>
-            <p class="panes-sub">不是三个并排窗口。原文、理解和笔记始终能互相看见。</p>
             <div class="pane-names" aria-label="三栏跳转">
               <button type="button" data-progress="0.34"><b>读</b><small>资料</small></button>
               <button type="button" data-progress="0.52"><b>问</b><small>Agent</small></button>
               <button type="button" data-progress="0.68"><b>记</b><small>笔记</small></button>
             </div>
-            <div class="learning-thread" aria-hidden="true"><i></i><i></i><i></i></div>
-            <p class="margin-caption">滚动不是换页<br />而是沿真实工作流推进</p>
           </section>
 
           <section
             class="frame scene context"
             data-scene="context"
-            aria-labelledby="context-title"
+            aria-label="应用演示"
             aria-hidden="true"
             inert
           >
@@ -98,19 +83,12 @@
               </a>
               <span class="folio">03 / 07</span>
             </header>
-            <h2 id="context-title">问题不离开上下文。</h2>
-            <p class="context-sub">正在读的原文仍在左边；问题带着当前材料进入中间的 Agent。</p>
-            <span class="ask-glyph" aria-hidden="true">问</span>
-            <div class="context-thread" aria-hidden="true">
-              <span>当前原文</span><i></i><span>带入问题</span><i></i><span>生成理解</span>
-            </div>
-            <p class="context-side">继续滚动，录屏时间随页面推进；<br />不是一张假装会动的截图。</p>
           </section>
 
           <section
             class="frame scene provenance"
             data-scene="provenance"
-            aria-labelledby="provenance-title"
+            aria-label="应用演示"
             aria-hidden="true"
             inert
           >
@@ -120,24 +98,12 @@
               </a>
               <span class="folio">04 / 07</span>
             </header>
-            <div class="provenance-copy">
-              <p class="eyebrow">从材料出发</p>
-              <span class="evidence-glyph" aria-hidden="true">据</span>
-              <h2 id="provenance-title">答案带着<br />出处回来。</h2>
-              <p>回答可以点回当前材料；Agent 能提出笔记建议，但最后写不写，仍由你确认。</p>
-              <ol class="proof-steps" aria-label="回答到笔记的流程">
-                <li data-proof="answer"><b>01</b> 回答当前问题</li>
-                <li data-proof="source"><b>02</b> 保留原文出处</li>
-                <li data-proof="note"><b>03</b> 等你确认写入</li>
-              </ol>
-            </div>
-            <div class="source-rule" aria-hidden="true"><i></i><span data-flow-label>回答正在形成</span></div>
           </section>
 
           <section
             class="frame scene writeback"
             data-scene="writeback"
-            aria-labelledby="writeback-title"
+            aria-label="应用演示"
             aria-hidden="true"
             inert
           >
@@ -147,19 +113,12 @@
               </a>
               <span class="folio">05 / 07</span>
             </header>
-            <h2 id="writeback-title">最后一步，仍由你确认。</h2>
-            <p class="writeback-sub">Agent 可以整理笔记建议；你先对照原文，再决定是否写入。</p>
-            <span class="note-glyph" aria-hidden="true">记</span>
-            <div class="writeback-thread" aria-hidden="true">
-              <span>Agent 建议</span><i></i><span>对照原文</span><i></i><span>确认写入</span>
-            </div>
-            <p class="writeback-side">不是自动替你落笔。<br />人的判断留在最后一步。</p>
           </section>
 
           <section
             class="frame scene relations"
             data-scene="relations"
-            aria-labelledby="relations-title"
+            aria-label="资料关系台"
             aria-hidden="true"
             inert
           >
@@ -169,10 +128,6 @@
               </a>
               <span class="folio">06 / 07</span>
             </header>
-            <p class="relations-small">打开只是此刻。</p>
-            <h2 id="relations-title">关联会留下。</h2>
-            <p class="relations-note">一份资料和一则笔记，之后还能顺着关系接着读。</p>
-            <span class="relation-seal" aria-hidden="true"></span>
           </section>
 
           <section
@@ -197,12 +152,7 @@
                 <span>下载 macOS 版</span>
                 <b>→</b>
               </a>
-              <button class="replay" type="button" data-progress="0">再看一遍</button>
             </div>
-            <footer>
-              <span>魏碑 · 本地优先的 macOS 学习工作台</span>
-              <span>文件、笔记和索引留在你的设备上</span>
-            </footer>
           </section>
 
           <div class="persistent-canvas" aria-hidden="true">
@@ -220,6 +170,11 @@
                 playsinline
                 preload="none"
               ></video>
+              <img
+                class="workspace-media workspace-relations-still"
+                src="./assets/course-relations-live.png"
+                alt=""
+              />
               <video
                 class="workspace-media workspace-relations"
                 src="./assets/relations-live-scrub.mp4"
@@ -228,27 +183,7 @@
                 playsinline
                 preload="none"
               ></video>
-              <div class="workspace-lens"></div>
-              <figcaption class="workspace-status">
-                <span>真实应用 · 滚动驱动</span>
-                <b data-workspace-phase>三栏同时在场</b>
-              </figcaption>
             </figure>
-          </div>
-
-          <nav class="chapter-rail" aria-label="工作流章节">
-            <button type="button" data-progress="0"><span>01</span><b>开</b></button>
-            <button type="button" data-progress="0.17"><span>02</span><b>栏</b></button>
-            <button type="button" data-progress="0.34"><span>03</span><b>问</b></button>
-            <button type="button" data-progress="0.52"><span>04</span><b>据</b></button>
-            <button type="button" data-progress="0.68"><span>05</span><b>记</b></button>
-            <button type="button" data-progress="0.84"><span>06</span><b>联</b></button>
-            <button type="button" data-progress="1"><span>07</span><b>落</b></button>
-          </nav>
-
-          <div class="scroll-cue" aria-hidden="true">
-            <i></i>
-            <span>滚动推进真实工作流</span>
           </div>
         </div>
       </section>
@@ -257,23 +192,23 @@
         <article class="mobile-card mobile-hero">
           <img class="mobile-mark" src="./assets/mark-cutout.png" alt="" />
           <p>魏碑 · WEIBEI</p>
-          <h2>读、问、记，<br />在同一张纸上。</h2>
+          <h2>资料在左，问题在旁，笔记在手。</h2>
         </article>
         <article class="mobile-card">
           <img src="./assets/three-pane-live.png" alt="魏碑三栏工作台" />
-          <div><small>02 / 三栏</small><h2>原文、理解和笔记互相看得见。</h2></div>
+          <div><small>02 / 三栏</small><h2>读、问、记。</h2></div>
         </article>
         <article class="mobile-card mobile-crop-agent">
           <img src="./assets/three-pane-live.png" alt="魏碑 Agent 与笔记界面" />
-          <div><small>03 / 上下文</small><h2>问题贴着原文，答案带着出处。</h2></div>
+          <div><small>03 / 应用</small><h2>同一个窗口，内容继续变化。</h2></div>
         </article>
         <article class="mobile-card">
           <img src="./assets/course-relations-live.png" alt="魏碑资料关系台" />
-          <div><small>04 / 关联</small><h2>窗口会合上，关系不会消失。</h2></div>
+          <div><small>04 / 资料</small><h2>一切仍在魏碑里。</h2></div>
         </article>
       </section>
     </main>
 
-    <script src="./main.js?v=7-media-fix-3"></script>
+    <script src="./main.js?v=8-clean-story"></script>
   </body>
 </html>
