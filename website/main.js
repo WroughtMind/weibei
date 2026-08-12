@@ -20,13 +20,13 @@ const stops = [
 ];
 
 const workspaceStates = [
-  { x: 0, y: 380, scale: 0.86 },
-  { x: 0, y: 112, scale: 0.96 },
-  { x: -36, y: 90, scale: 0.98 },
+  { x: 0, y: 275, scale: 0.86 },
+  { x: 0, y: 225, scale: 0.88 },
+  { x: -36, y: 94, scale: 0.96 },
   { x: 78, y: 104, scale: 0.94 },
-  { x: -28, y: 118, scale: 0.98 },
-  { x: 0, y: 96, scale: 0.95 },
-  { x: 84, y: 430, scale: 0.78 },
+  { x: -28, y: 110, scale: 0.96 },
+  { x: 0, y: 98, scale: 0.95 },
+  { x: 84, y: 395, scale: 0.78 },
 ];
 
 let targetProgress = 0;
