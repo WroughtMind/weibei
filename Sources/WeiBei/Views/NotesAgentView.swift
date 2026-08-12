@@ -501,6 +501,11 @@ struct NotePaneView: View {
                     .zIndex(4)
                 }
             }
+            .overlay(alignment: .top) {
+                if !showsPaneHeader && hasNoteContent && !railOnly {
+                    immersiveNoteHeader
+                }
+            }
         }
         .frame(minHeight: 280)
         .foregroundStyle(WeiBeiTheme.ink)
@@ -509,11 +514,6 @@ struct NotePaneView: View {
             AccessibilityFrameProbe(identifier: "stable-document-slot-reader")
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .allowsHitTesting(false)
-        }
-        .overlay(alignment: .top) {
-            if !showsPaneHeader && hasNoteContent {
-                immersiveNoteHeader
-            }
         }
         .animation(WeiBeiMotion.panel, value: store.notebookCreationDraft?.id)
         .onAppear {
@@ -589,7 +589,6 @@ struct NotePaneView: View {
                 title: noteHeaderSubtitle,
                 appearanceMode: store.appearanceMode,
                 isPinned: store.notebookCreationDraft != nil,
-                actionsAlignedTrailing: true,
                 reorderRole: reorderRole
             ) {
                 ContextualContentListButton(kind: .note)
@@ -2003,6 +2002,30 @@ struct AgentPaneView: View {
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                 .clipped()
+                .overlay(alignment: .top) {
+                    if showsPaneHeader {
+                        LinearGradient(
+                            colors: [
+                                WeiBeiTheme.glassHighlight.opacity(0.18),
+                                .clear
+                            ],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                        .frame(height: 10)
+                        .allowsHitTesting(false)
+                    } else if !railOnly {
+                        // Match notes: floating slip overlay only — no extra clear ZStack.
+                        ImmersiveHoverTitleView(
+                            mark: "CHAT",
+                            title: store.agentConversationSubtitle,
+                            appearanceMode: store.appearanceMode,
+                            reorderRole: reorderRole
+                        ) {
+                            sessionMenu
+                        }
+                    }
+                }
                 .onChange(of: store.messages.map(\.id)) { oldIDs, newIDs in
                     // Only a true append to this conversation widens the mounted window.
                     // Initial restore used to look like a 0 -> N append and mounted the
@@ -2065,31 +2088,6 @@ struct AgentPaneView: View {
             AccessibilityFrameProbe(identifier: "stable-document-slot-agent")
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .allowsHitTesting(false)
-        }
-        .overlay(alignment: .top) {
-            if showsPaneHeader {
-                LinearGradient(
-                    colors: [
-                        WeiBeiTheme.glassHighlight.opacity(0.18),
-                        .clear
-                    ],
-                    startPoint: .top,
-                    endPoint: .bottom
-                )
-                .frame(height: 10)
-                .allowsHitTesting(false)
-            } else {
-                // Match notes: floating slip overlay only — no extra clear ZStack.
-                ImmersiveHoverTitleView(
-                    mark: "CHAT",
-                    title: store.agentConversationSubtitle,
-                    appearanceMode: store.appearanceMode,
-                    actionsAlignedTrailing: true,
-                    reorderRole: reorderRole
-                ) {
-                    agentSessionCatalogMenu
-                }
-            }
         }
         .onChange(of: paneState.focusRequest) { _, _ in
             draftFocused = paneState.focusedPane == .agent
@@ -2550,26 +2548,6 @@ struct AgentPaneView: View {
 
     private var agentRailBottomInset: CGFloat {
         usesWideChatLayout ? 120 : 100
-    }
-
-    /// Compact catalog for immersive hover tab + pane header.
-    private var agentSessionCatalogMenu: some View {
-        Menu {
-            sessionCatalogContent
-        } label: {
-            Label {
-                Text(store.activeStudySessionScopeTitle)
-                    .font(.system(size: 11, weight: .medium))
-                    .lineLimit(1)
-            } icon: {
-                Image(systemName: "list.bullet.rectangle")
-            }
-            .labelStyle(.titleAndIcon)
-        }
-        .menuStyle(.borderlessButton)
-        .fixedSize()
-        .accessibilityLabel(Text(store.ui("对话目录", "Conversation catalog")))
-        .help(store.ui("新建或切换对话", "Create or switch Chats"))
     }
 
     private var sessionMenu: some View {
