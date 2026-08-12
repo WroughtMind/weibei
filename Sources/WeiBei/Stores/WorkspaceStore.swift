@@ -10335,10 +10335,14 @@ final class WorkspaceStore: ObservableObject {
         }
         Task { @MainActor [weak self] in
             guard let self else { return }
-            let expanded = await courseProjectFileWorker.expandedSupportedFiles(
+            guard let expanded = CourseProjectFileWorker.expandedSupportedFiles(
                 from: urls,
                 markdownOnly: asNotes
-            )
+            ) else {
+                showImportLimitExceededAlert()
+                completion([])
+                return
+            }
             guard !expanded.isEmpty,
                   confirmCourseImportPlan(
                     expanded,
@@ -10409,6 +10413,18 @@ final class WorkspaceStore: ObservableObject {
         alert.addButton(withTitle: ui("取消", "Cancel"))
         alert.addButton(withTitle: ui("移入课程", "Move into Course"))
         return alert.runModal() == .alertSecondButtonReturn
+    }
+
+    private func showImportLimitExceededAlert() {
+        guard !WeiBeiSafetyTestMode.isEnabled else { return }
+        let alert = NSAlert()
+        alert.messageText = ui("没有导入", "Nothing Imported")
+        alert.informativeText = ui(
+            "所选内容包含超过500个可导入文件。为避免只导入其中一部分，魏碑没有写入任何资料。请选择更小的文件夹，或直接选择需要的文件。",
+            "The selection contains more than 500 importable files. To avoid a partial import, WeiBei did not add anything. Choose a smaller folder or select the files you need directly."
+        )
+        alert.addButton(withTitle: ui("知道了", "OK"))
+        alert.runModal()
     }
 
     private func courseImportConflictResolution(
@@ -12528,16 +12544,13 @@ final class WorkspaceStore: ObservableObject {
         markdownNotePaths: Set<String>? = nil,
         reclassifiesExistingMarkdown: Bool = false
     ) -> [StudyItem] {
-        let supportedURLs = urls
-            .flatMap(Self.supportedCourseFiles(at:))
-            .reduce(into: [URL]()) { result, url in
-                if !result.contains(where: { $0.standardizedFileURL == url.standardizedFileURL }) {
-                    result.append(url)
-                }
-            }
-        let expandedURLs = markdownOnly
-            ? supportedURLs.filter(Self.isMarkdownFile)
-            : supportedURLs
+        guard let expandedURLs = CourseProjectFileWorker.expandedSupportedFiles(
+            from: urls,
+            markdownOnly: markdownOnly
+        ) else {
+            showImportLimitExceededAlert()
+            return []
+        }
         let isNotebookNote: (URL) -> Bool = { url in
             guard Self.isMarkdownFile(url) else { return false }
             return markdownNotePaths?.contains(url.path) ?? markdownAsNotes
@@ -12735,35 +12748,13 @@ final class WorkspaceStore: ObservableObject {
         "imported:\(UUID().uuidString.lowercased())"
     }
 
-    private static func supportedCourseFiles(at url: URL) -> [URL] {
-        var isDirectory: ObjCBool = false
-        guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory) else { return [] }
-        if !isDirectory.boolValue {
-            return isSupportedCourseFile(url) ? [url] : []
-        }
-
-        guard let enumerator = FileManager.default.enumerator(
-            at: url,
-            includingPropertiesForKeys: [.isRegularFileKey],
-            options: [.skipsHiddenFiles, .skipsPackageDescendants]
-        ) else { return [] }
-        var files: [URL] = []
-        for case let fileURL as URL in enumerator {
-            guard isSupportedCourseFile(fileURL),
-                  (try? fileURL.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true else { continue }
-            files.append(fileURL)
-            if files.count == 500 { break }
-        }
-        return files.sorted { $0.path.localizedStandardCompare($1.path) == .orderedAscending }
+    private static func isMarkdownFile(_ url: URL) -> Bool {
+        ["md", "markdown"].contains(url.pathExtension.lowercased())
     }
 
     private static func isSupportedCourseFile(_ url: URL) -> Bool {
         ["pdf", "html", "htm", "md", "markdown", "txt", "text"]
             .contains(url.pathExtension.lowercased())
-    }
-
-    private static func isMarkdownFile(_ url: URL) -> Bool {
-        ["md", "markdown"].contains(url.pathExtension.lowercased())
     }
 
     func promptRenameNotebookNote(itemID: String) {
@@ -18387,6 +18378,10 @@ final class WorkspaceStore: ObservableObject {
             let item = importedItems[itemIndex]
             let membership = courseItemMemberships[membershipIndex]
             guard let observationIndex = matchedObservationByItemID[itemID] else {
+                if let relativePath = membership.courseRelativePath,
+                   snapshot.preservesExistingRecord(at: relativePath) {
+                    continue
+                }
                 if markCourseOwnedItemUnavailable(at: itemIndex).changed {
                     changed = true
                 }

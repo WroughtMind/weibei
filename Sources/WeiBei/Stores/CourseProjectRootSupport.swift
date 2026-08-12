@@ -28,6 +28,15 @@ struct CourseFileScanSnapshot: Sendable {
     var indexByRelativePath: [String: Int]
     var indexesByIdentity: [ImportedFileIdentity: [Int]]
     var indexesByDocumentIdentifier: [UInt64: [Int]]
+    var ignoredDirectoryRelativePaths: Set<String> = []
+
+    func preservesExistingRecord(at relativePath: String) -> Bool {
+        let candidate = relativePath.lowercased()
+        return ignoredDirectoryRelativePaths.contains {
+            let ignored = $0.lowercased()
+            return candidate == ignored || candidate.hasPrefix("\(ignored)/")
+        }
+    }
 }
 
 struct CourseSharedLinkObservation: Equatable, Sendable {
@@ -236,6 +245,10 @@ actor CourseProjectFileWorker {
     nonisolated static let markdownMaximumByteCount = 32 * 1024 * 1024
     nonisolated static let markdownImageMaximumByteCount =
         MarkdownAttachmentStore.maximumImageByteCount
+
+    nonisolated private static func ignoresImportDirectory(_ url: URL) -> Bool {
+        url.lastPathComponent.caseInsensitiveCompare("node_modules") == .orderedSame
+    }
 
     private let fileManager = FileManager.default
     private var highestWorkspaceSaveGeneration: UInt64 = 0
@@ -2589,6 +2602,7 @@ actor CourseProjectFileWorker {
             )
         }
         var result: [CourseFileMetadata] = []
+        var ignoredDirectoryRelativePaths = Set<String>()
         var visitedFileKeys = Set<String>()
         for case let rawURL as URL in enumerator {
             guard let relativePath = CourseProjectPathPolicy.relativePath(
@@ -2604,6 +2618,11 @@ actor CourseProjectFileWorker {
             }
             let values = try rawURL.resourceValues(forKeys: keys)
             if values.isDirectory == true {
+                if Self.ignoresImportDirectory(rawURL) {
+                    ignoredDirectoryRelativePaths.insert(relativePath)
+                    enumerator.skipDescendants()
+                    continue
+                }
                 // 目录符号链接不向下枚举（防环）；findDirectory 负责跟随目录链接定位。
                 if values.isSymbolicLink == true || values.isAliasFile == true {
                     enumerator.skipDescendants()
@@ -2691,7 +2710,8 @@ actor CourseProjectFileWorker {
             observations: observations,
             indexByRelativePath: indexByRelativePath,
             indexesByIdentity: indexesByIdentity,
-            indexesByDocumentIdentifier: indexesByDocumentIdentifier
+            indexesByDocumentIdentifier: indexesByDocumentIdentifier,
+            ignoredDirectoryRelativePaths: ignoredDirectoryRelativePaths
         )
     }
 
@@ -2896,6 +2916,11 @@ actor CourseProjectFileWorker {
                 enumerator.skipDescendants()
                 continue
             }
+            if (try? rawURL.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true,
+               Self.ignoresImportDirectory(rawURL) {
+                enumerator.skipDescendants()
+                continue
+            }
             if Self.isSymbolicLink(at: rawURL) {
                 enumerator.skipDescendants()
                 guard Self.supportedExtensions.contains(rawURL.pathExtension.lowercased()),
@@ -2937,10 +2962,12 @@ actor CourseProjectFileWorker {
         }
     }
 
-    func expandedSupportedFiles(
+    nonisolated static func expandedSupportedFiles(
         from urls: [URL],
-        markdownOnly: Bool
-    ) -> [URL] {
+        markdownOnly: Bool,
+        maximumCount: Int = 500
+    ) -> [URL]? {
+        let fileManager = FileManager.default
         var seen = Set<String>()
         var result: [URL] = []
         for rawURL in urls {
@@ -2950,8 +2977,12 @@ actor CourseProjectFileWorker {
             }
             if !isDirectory.boolValue {
                 appendSupported(rawURL, markdownOnly: markdownOnly, seen: &seen, result: &result)
+                if result.count > maximumCount {
+                    return nil
+                }
                 continue
             }
+            guard !Self.ignoresImportDirectory(rawURL) else { continue }
             guard let enumerator = fileManager.enumerator(
                 at: rawURL,
                 includingPropertiesForKeys: [
@@ -2965,10 +2996,16 @@ actor CourseProjectFileWorker {
                 continue
             }
             for case let fileURL as URL in enumerator {
+                if Self.ignoresImportDirectory(fileURL),
+                   (try? fileURL.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true {
+                    enumerator.skipDescendants()
+                    continue
+                }
                 appendSupported(fileURL, markdownOnly: markdownOnly, seen: &seen, result: &result)
-                if result.count == 500 { break }
+                if result.count > maximumCount {
+                    return nil
+                }
             }
-            if result.count == 500 { break }
         }
         return result.sorted { $0.path.localizedStandardCompare($1.path) == .orderedAscending }
     }
@@ -3382,7 +3419,7 @@ actor CourseProjectFileWorker {
         }
     }
 
-    private func appendSupported(
+    nonisolated private static func appendSupported(
         _ rawURL: URL,
         markdownOnly: Bool,
         seen: inout Set<String>,
