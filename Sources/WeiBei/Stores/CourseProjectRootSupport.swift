@@ -1647,6 +1647,7 @@ actor CourseProjectFileWorker {
         at url: URL,
         expectedIdentity: ImportedFileIdentity
     ) throws -> CourseMarkdownReadResult {
+        try Task.checkCancellation()
         let ranOnMainThread = Thread.isMainThread
         let source = try validatedRegularSource(url)
         guard source.identity == expectedIdentity,
@@ -1659,6 +1660,7 @@ actor CourseProjectFileWorker {
             at: source.url,
             maximumByteCount: Self.markdownMaximumByteCount
         )
+        try Task.checkCancellation()
         let byteCount = UInt64(data.count)
         guard let markdown = String(data: data, encoding: .utf8),
               Self.identity(at: source.url) == expectedIdentity else {

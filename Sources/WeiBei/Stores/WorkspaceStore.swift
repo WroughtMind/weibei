@@ -426,7 +426,7 @@ final class WorkspaceStore: ObservableObject {
     }
     @Published var showDailyInspiration = true
     @Published var commandPalettePresented = false
-    @Published var librarySearch = ""
+    var librarySearch = ""
     @Published private(set) var readerSourceHighlight = ""
     @Published private(set) var readerSourceHighlightPageIndex: Int?
     @Published var readerSearch = "" {
@@ -590,6 +590,7 @@ final class WorkspaceStore: ObservableObject {
     @Published private var forwardNavigationStack: [NavigationSnapshot] = []
 
     private var notesByItemID: [String: String] = [:]
+    let courseSidebarTags = CourseSidebarTagState()
     private var pendingNoteWritesByItemID: [String: PendingNoteWriteState] = [:]
     private var noteOperationErrorsByItemID: [String: String] = [:]
     /// 磁盘观察值：reconcile / load 可刷新，用于外部改动检测。
@@ -2128,7 +2129,7 @@ final class WorkspaceStore: ObservableObject {
             studySessions = previousStudySessions
             activeStudySessionID = previousActiveStudySessionID
             messages = previousMessages
-            notesByItemID = previousNotesByItemID
+            replaceNoteDrafts(previousNotesByItemID)
             pendingNoteWritesByItemID = previousPendingNoteWrites
             noteBackingContentDigestsByItemID =
                 previousNoteBackingDigests
@@ -3039,7 +3040,7 @@ final class WorkspaceStore: ObservableObject {
                 studySessions = previousStudySessions
                 activeStudySessionID = previousActiveStudySessionID
                 messages = previousMessages
-                notesByItemID = previousNotesByItemID
+                replaceNoteDrafts(previousNotesByItemID)
                 pendingNoteWritesByItemID =
                     previousPendingNoteWrites
                 loadedCourseNoteTextByItemID =
@@ -4175,7 +4176,7 @@ final class WorkspaceStore: ObservableObject {
         }) else {
             throw CourseOwnedFileError.verificationFailed
         }
-        notesByItemID[itemID] = markdown
+        setNoteDraft(markdown, for: itemID)
         pendingNoteWritesByItemID.removeValue(forKey: itemID)
         for membership in courseItemMemberships where membership.itemID == itemID {
             dirtyPortableCourseIDs.insert(membership.courseID)
@@ -4784,7 +4785,7 @@ final class WorkspaceStore: ObservableObject {
             if !workspaceCommitted {
                 importedItems = previousImportedItems
                 courseItemMemberships = previousMemberships
-                notesByItemID = previousNotes
+                replaceNoteDrafts(previousNotes)
                 pendingNoteWritesByItemID = previousPendingNoteWrites
                 noteBackingContentDigestsByItemID = previousBackingDigests
                 lastSelfWrittenNoteDigestsByItemID =
@@ -7010,7 +7011,7 @@ final class WorkspaceStore: ObservableObject {
             pendingNotePersistenceByItemID.removeValue(forKey: itemID)
             courseNoteLoadGenerationByItemID.removeValue(forKey: itemID)
             courseNoteWritesInFlight.remove(itemID)
-            notesByItemID.removeValue(forKey: itemID)
+            setNoteDraft(nil, for: itemID)
             pendingNoteWritesByItemID.removeValue(forKey: itemID)
             noteOperationErrorsByItemID.removeValue(forKey: itemID)
             noteBackingContentDigestsByItemID.removeValue(forKey: itemID)
@@ -7839,7 +7840,7 @@ final class WorkspaceStore: ObservableObject {
         pendingNotePersistenceByItemID.removeValue(forKey: itemID)
         courseNoteLoadGenerationByItemID.removeValue(forKey: itemID)
         courseNoteWritesInFlight.remove(itemID)
-        notesByItemID.removeValue(forKey: itemID)
+        setNoteDraft(nil, for: itemID)
         pendingNoteWritesByItemID.removeValue(forKey: itemID)
         noteOperationErrorsByItemID.removeValue(forKey: itemID)
         noteBackingContentDigestsByItemID.removeValue(forKey: itemID)
@@ -10064,6 +10065,47 @@ final class WorkspaceStore: ObservableObject {
         return Array(MarkdownTagSearch.tags(in: noteMarkdownText(for: item)).prefix(limit))
     }
 
+    func sidebarTagMarkdown(itemID: String) async -> String? {
+        guard let item = importedItems.first(where: {
+            $0.id == itemID && $0.isNotebookNote
+        }) else { return nil }
+        if case .legacyExternal = item.storage,
+           item.editsBackingMarkdownFile,
+           item.importedFileIdentity == nil,
+           activeNoteItemID != item.id,
+           notesByItemID[item.id] == nil,
+           loadedCourseNoteTextByItemID[item.id] == nil,
+           let url = item.url?.standardizedFileURL,
+           let identity = importedFileIdentityResolver(url),
+           let result = try? await courseProjectFileWorker.readMarkdown(
+               at: url,
+               expectedIdentity: identity
+           ) {
+            guard let current = importedItems.first(where: { $0.id == item.id }),
+                  current.importedFileIdentity == nil,
+                  current.url?.standardizedFileURL == url,
+                  importedFileIdentityResolver(url)?.matchesAcrossVolumeDrift(identity) == true else {
+                return nil
+            }
+            return cleanLegacyPlaceholder(result.markdown)
+        }
+        return try? await agentActionNoteMarkdown(item)
+    }
+
+    private func setNoteDraft(_ markdown: String?, for itemID: String) {
+        if let markdown {
+            notesByItemID[itemID] = markdown
+        } else {
+            notesByItemID.removeValue(forKey: itemID)
+        }
+        courseSidebarTags.noteDraftChanged(itemID: itemID, exists: markdown != nil)
+    }
+
+    private func replaceNoteDrafts(_ drafts: [String: String]) {
+        notesByItemID = drafts
+        courseSidebarTags.replacedNoteDrafts(keeping: Set(drafts.keys))
+    }
+
     private func itemMatchesLibrarySearch(_ item: StudyItem, query: String) -> Bool {
         displayTitle(for: item).localizedCaseInsensitiveContains(query)
             || displaySubtitle(for: item).localizedCaseInsensitiveContains(query)
@@ -10766,7 +10808,7 @@ final class WorkspaceStore: ObservableObject {
             )
         }
         if !item.editsBackingMarkdownFile {
-            notesByItemID[item.id] = value
+            setNoteDraft(value, for: item.id)
         }
         scheduleNotePersistence(value, for: item)
     }
@@ -10864,7 +10906,7 @@ final class WorkspaceStore: ObservableObject {
             return
         }
         if !item.editsBackingMarkdownFile {
-            notesByItemID[item.id] = value
+            setNoteDraft(value, for: item.id)
         }
         scheduleNotePersistence(value, for: item)
     }
@@ -12853,7 +12895,7 @@ final class WorkspaceStore: ObservableObject {
                         rolled.importedFileBookmarkData = nil
                         importedItems[idx] = rolled
                     }
-                    notesByItemID[oldID] = sourceMarkdown
+                    setNoteDraft(sourceMarkdown, for: oldID)
                     pendingNoteWritesByItemID[oldID] = PendingNoteWriteState(
                         baselineContentDigest: nil
                     )
@@ -12909,7 +12951,10 @@ final class WorkspaceStore: ObservableObject {
                 noteText = retitledMarkdown
             }
             if let cached = notesByItemID[replacementItemID] {
-                notesByItemID[replacementItemID] = self.retitledMarkdown(cached, from: oldTitle, to: newTitle)
+                setNoteDraft(
+                    self.retitledMarkdown(cached, from: oldTitle, to: newTitle),
+                    for: replacementItemID
+                )
             }
             noteBackingContentDigestsByItemID[replacementItemID] = finalDigest
             courseDocumentSearchIndex.synchronize(allItems)
@@ -12954,7 +12999,7 @@ final class WorkspaceStore: ObservableObject {
                     // 磁盘上是陌生内容或路径未恢复：切断路径关系，保留正文草稿。
                     rolled.urlPath = nil
                     rolled.importedFileLastKnownPath = oldURL.path
-                    notesByItemID[oldID] = sourceMarkdown
+                    setNoteDraft(sourceMarkdown, for: oldID)
                     pendingNoteWritesByItemID[oldID] = PendingNoteWriteState(
                         baselineContentDigest: originalContentDigest
                     )
@@ -12964,7 +13009,7 @@ final class WorkspaceStore: ObservableObject {
                     noteText = sourceMarkdown
                 }
                 if notesByItemID[oldID] == nil, !diskTrusted {
-                    notesByItemID[oldID] = sourceMarkdown
+                    setNoteDraft(sourceMarkdown, for: oldID)
                 }
             }
             courseDocumentSearchIndex.synchronize(allItems)
@@ -14365,7 +14410,7 @@ final class WorkspaceStore: ObservableObject {
             }
         }
         courseNoteLoadTasksByItemID.removeValue(forKey: itemID)?.cancel()
-        notesByItemID.removeValue(forKey: itemID)
+        setNoteDraft(nil, for: itemID)
         loadedCourseNoteTextByItemID[itemID] = memoryText
         activeNotebookItemID = itemID
         noteText = memoryText
@@ -14610,7 +14655,7 @@ final class WorkspaceStore: ObservableObject {
                 savedAt: now
             )
         )
-        notesByItemID[noteItemID] = draft
+        setNoteDraft(draft, for: noteItemID)
         pendingNoteWritesByItemID[noteItemID] = PendingNoteWriteState(
             baselineContentDigest: importedItems.first {
                 $0.id == noteItemID
@@ -14725,7 +14770,7 @@ final class WorkspaceStore: ObservableObject {
                 savedAt: now
             )
         )
-        notesByItemID[noteItemID] = noteText
+        setNoteDraft(noteText, for: noteItemID)
         loadedCourseNoteTextByItemID[noteItemID] = noteText
         pendingNoteWritesByItemID[noteItemID] = PendingNoteWriteState(
             baselineContentDigest: importedItems.first {
@@ -18809,8 +18854,11 @@ final class WorkspaceStore: ObservableObject {
     private func replaceItemIDEverywhere(_ oldID: String, with newID: String) {
         guard oldID != newID else { return }
 
-        if let oldNote = notesByItemID.removeValue(forKey: oldID), notesByItemID[newID] == nil {
-            notesByItemID[newID] = oldNote
+        if let oldNote = notesByItemID[oldID] {
+            setNoteDraft(nil, for: oldID)
+            if notesByItemID[newID] == nil {
+                setNoteDraft(oldNote, for: newID)
+            }
         }
         if let pendingWrite = pendingNoteWritesByItemID.removeValue(forKey: oldID),
            pendingNoteWritesByItemID[newID] == nil {
@@ -19368,12 +19416,12 @@ final class WorkspaceStore: ObservableObject {
             let writtenDigest = Self.noteContentDigest(Data(markdown.utf8))
             noteBackingContentDigestsByItemID[itemID] = writtenDigest
             lastSelfWrittenNoteDigestsByItemID[itemID] = writtenDigest
-            notesByItemID.removeValue(forKey: itemID)
+            setNoteDraft(nil, for: itemID)
             pendingNoteWritesByItemID.removeValue(forKey: itemID)
             setNoteFileError(nil, for: itemID)
             return true
         } catch {
-            notesByItemID[itemID] = markdown
+            setNoteDraft(markdown, for: itemID)
             pendingNoteWritesByItemID.removeValue(forKey: itemID)
             showTransientNoteStatus(
                 ui(
@@ -19437,7 +19485,7 @@ final class WorkspaceStore: ObservableObject {
             noteBackingContentDigestsByItemID[itemID] = diskDigest
             // 外部改动且无脏输入：静默采纳磁盘，同步备份基线。
             lastSelfWrittenNoteDigestsByItemID[itemID] = diskDigest
-            notesByItemID.removeValue(forKey: itemID)
+            setNoteDraft(nil, for: itemID)
             loadedCourseNoteTextByItemID[itemID] = noteText
             setNoteFileError(nil, for: itemID)
         } catch {
@@ -19450,7 +19498,7 @@ final class WorkspaceStore: ObservableObject {
         _ markdown: String,
         itemID: String
     ) {
-        notesByItemID[itemID] = markdown
+        setNoteDraft(markdown, for: itemID)
         pendingNoteWritesByItemID.removeValue(forKey: itemID)
     }
 
@@ -19572,7 +19620,7 @@ final class WorkspaceStore: ObservableObject {
             save()
             return
         }
-        notesByItemID[noteItemID] = markdown
+        setNoteDraft(markdown, for: noteItemID)
     }
 
     private func coursePortableStateURL(for courseID: UUID) -> URL? {
@@ -20480,7 +20528,7 @@ final class WorkspaceStore: ObservableObject {
             if notesByItemID[itemID] != nil {
                 continue
             }
-            notesByItemID.removeValue(forKey: itemID)
+            setNoteDraft(nil, for: itemID)
             pendingNoteWritesByItemID.removeValue(forKey: itemID)
             noteBackingContentDigestsByItemID.removeValue(forKey: itemID)
             lastSelfWrittenNoteDigestsByItemID.removeValue(forKey: itemID)
@@ -20501,7 +20549,7 @@ final class WorkspaceStore: ObservableObject {
             if notesByItemID[draft.itemID] != nil {
                 continue
             }
-            notesByItemID[draft.itemID] = draft.markdown
+            setNoteDraft(draft.markdown, for: draft.itemID)
             pendingNoteWritesByItemID[draft.itemID] =
                 PendingNoteWriteState(
                     baselineContentDigest: draft.baselineContentDigest
@@ -20830,7 +20878,7 @@ final class WorkspaceStore: ObservableObject {
             return
         }
         importedItems = snapshot.importedItems
-        notesByItemID = snapshot.notesByItemID.mapValues(cleanLegacyPlaceholder)
+        replaceNoteDrafts(snapshot.notesByItemID.mapValues(cleanLegacyPlaceholder))
         // 解码容忍旧 pendingNoteWrites；S2 写回路径不再依赖冲突状态机，启动时一次性迁移。
         if let persistedPendingNoteWrites = snapshot.pendingNoteWritesByItemID {
             pendingNoteWritesByItemID = persistedPendingNoteWrites

@@ -29,7 +29,7 @@ classify_path() {
   esac
 
   case "$path" in
-    Sources/WeiBei/Stores/CourseProjectRootSupport.swift|Tests/WeiBeiSafetyTests/*|Sources/WeiBeiCore/CourseDocumentSearchIndex.swift|Sources/WeiBeiCore/CourseLibraryModels.swift|Sources/WeiBeiCore/LearningModels.swift|Sources/WeiBeiCore/NoteSourceRelations.swift|Sources/WeiBeiCore/WorkspaceModels.swift)
+    Sources/WeiBei/Stores/CourseProjectRootSupport.swift|Sources/WeiBei/Views/*Sidebar*.swift|Sources/WeiBei/Views/CourseDrawerHost.swift|Sources/WeiBei/Views/CourseImmersiveDrawerView.swift|Tests/WeiBeiSafetyTests/*|Sources/WeiBeiCore/CourseDocumentSearchIndex.swift|Sources/WeiBeiCore/CourseLibraryModels.swift|Sources/WeiBeiCore/LearningModels.swift|Sources/WeiBeiCore/NoteSourceRelations.swift|Sources/WeiBeiCore/WorkspaceModels.swift)
       data_safety=true
       ;;
   esac
@@ -95,6 +95,10 @@ if [[ "${1:-}" == "--self-check" ]]; then
   expect_scopes \
     "code=true pi=false editor=false data_safety=true release=false " \
     "Tests/WeiBeiSafetyTests/CourseProjectRootSelfCheck.swift"
+  expect_scopes \
+    "code=true pi=false editor=false data_safety=true release=false " \
+    "Sources/WeiBei/Views/SidebarView.swift" \
+    "Sources/WeiBei/Views/CourseDrawerHost.swift"
   expect_scopes \
     "code=true pi=false editor=false data_safety=true release=false " \
     "Sources/WeiBeiCore/LearningModels.swift" \
