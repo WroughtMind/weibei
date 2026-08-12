@@ -925,7 +925,9 @@ expect(
     !readerViewSource.contains("actionsAlignedTrailing")
         && readerViewSource.contains(".frame(height: 34)")
         && !notesAgentViewSource.contains("agentSessionCatalogMenu")
-        && !notesAgentViewSource.contains("activeStudySessionScopeTitle"),
+        && !notesAgentViewSource.contains("activeStudySessionScopeTitle")
+        && notesAgentViewSource.contains("if !showsPaneHeader && hasNoteContent && !railOnly")
+        && notesAgentViewSource.contains("} else if !railOnly {"),
     "floating pane tabs stay compact and show the Chat title only once"
 )
 expect(

@@ -501,6 +501,11 @@ struct NotePaneView: View {
                     .zIndex(4)
                 }
             }
+            .overlay(alignment: .top) {
+                if !showsPaneHeader && hasNoteContent && !railOnly {
+                    immersiveNoteHeader
+                }
+            }
         }
         .frame(minHeight: 280)
         .foregroundStyle(WeiBeiTheme.ink)
@@ -509,11 +514,6 @@ struct NotePaneView: View {
             AccessibilityFrameProbe(identifier: "stable-document-slot-reader")
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .allowsHitTesting(false)
-        }
-        .overlay(alignment: .top) {
-            if !showsPaneHeader && hasNoteContent {
-                immersiveNoteHeader
-            }
         }
         .animation(WeiBeiMotion.panel, value: store.notebookCreationDraft?.id)
         .onAppear {
@@ -2002,6 +2002,30 @@ struct AgentPaneView: View {
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                 .clipped()
+                .overlay(alignment: .top) {
+                    if showsPaneHeader {
+                        LinearGradient(
+                            colors: [
+                                WeiBeiTheme.glassHighlight.opacity(0.18),
+                                .clear
+                            ],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                        .frame(height: 10)
+                        .allowsHitTesting(false)
+                    } else if !railOnly {
+                        // Match notes: floating slip overlay only — no extra clear ZStack.
+                        ImmersiveHoverTitleView(
+                            mark: "CHAT",
+                            title: store.agentConversationSubtitle,
+                            appearanceMode: store.appearanceMode,
+                            reorderRole: reorderRole
+                        ) {
+                            sessionMenu
+                        }
+                    }
+                }
                 .onChange(of: store.messages.map(\.id)) { oldIDs, newIDs in
                     // Only a true append to this conversation widens the mounted window.
                     // Initial restore used to look like a 0 -> N append and mounted the
@@ -2064,30 +2088,6 @@ struct AgentPaneView: View {
             AccessibilityFrameProbe(identifier: "stable-document-slot-agent")
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .allowsHitTesting(false)
-        }
-        .overlay(alignment: .top) {
-            if showsPaneHeader {
-                LinearGradient(
-                    colors: [
-                        WeiBeiTheme.glassHighlight.opacity(0.18),
-                        .clear
-                    ],
-                    startPoint: .top,
-                    endPoint: .bottom
-                )
-                .frame(height: 10)
-                .allowsHitTesting(false)
-            } else {
-                // Match notes: floating slip overlay only — no extra clear ZStack.
-                ImmersiveHoverTitleView(
-                    mark: "CHAT",
-                    title: store.agentConversationSubtitle,
-                    appearanceMode: store.appearanceMode,
-                    reorderRole: reorderRole
-                ) {
-                    sessionMenu
-                }
-            }
         }
         .onChange(of: paneState.focusRequest) { _, _ in
             draftFocused = paneState.focusedPane == .agent
