@@ -31,10 +31,17 @@ assert.match(script, /--stage-mark-opacity/);
 assert.match(script, /\{ x: -36, y: 90, scale: 0\.98 \}/);
 assert.match(script, /\{ x: 78, y: 104, scale: 0\.94 \}/);
 assert.match(script, /function resolvePublishedDownload/);
-assert.match(script, /response = reducedMotion \|\| captureMode \|\| snappingTo !== null \? 1 : 0\.18/);
+assert.match(script, /event\.preventDefault\(\);/);
+assert.match(script, /gestureLocked/);
+assert.match(script, /gestureDelta >= 24/);
+assert.match(script, /gestureDelta >= 80/);
+assert.match(script, /stepStory\(direction\)/);
+assert.match(script, /gestureDirection = 0/);
+assert.match(script, /addEventListener\("scrollend"/);
+assert.match(script, /const nearestIndex = stops\.indexOf\(nearestStop\(progressFromScroll\(\)\)\)/);
 assert.doesNotMatch(script, /35\.4|11\.7/);
 assert.doesNotMatch(script, /--stage-dark|--lens-opacity|--workspace-media-x/);
-assert.match(script, /distance > 0\.035/);
+assert.doesNotMatch(script, /snapToNearest|scheduleSnap|scrollVelocity/);
 assert.match(styles, /\.stage-mark/);
 assert.match(script, /classList\.toggle\("is-dark", index === 3\)/);
 assert.match(styles, /\.stage\.is-dark/);
@@ -44,4 +51,4 @@ assert.doesNotMatch(styles, /opacity: var\(--stage-dark\)|box-shadow: 0 0 0 3000
 assert.ok(workflow.size > 1_000_000);
 assert.ok(relations.size > 500_000);
 
-console.log("宣传页检查通过：固定应用窗口、干净媒体切换、精简文案与柔和停靠均已接入。");
+console.log("宣传页检查通过：固定应用窗口、逐页手势、干净媒体切换与精简文案均已接入。");

@@ -31,10 +31,11 @@ const workspaceStates = [
 
 let targetProgress = 0;
 let renderedProgress = 0;
-let lastScrollY = scrollY;
-let scrollVelocity = 0;
-let snapTimer = 0;
-let snappingTo = null;
+let currentStopIndex = 0;
+let gestureLocked = false;
+let gestureDirection = 0;
+let gestureDelta = 0;
+let gestureTimer = 0;
 let activeSceneIndex = -1;
 
 const clamp = (value, min = 0, max = 1) => Math.min(max, Math.max(min, value));
@@ -195,61 +196,71 @@ function paint(progress) {
 }
 
 function frame() {
-  const response = reducedMotion || captureMode || snappingTo !== null ? 1 : 0.18;
+  const response = reducedMotion || captureMode ? 1 : 0.18;
   renderedProgress += (targetProgress - renderedProgress) * response;
   if (Math.abs(targetProgress - renderedProgress) < 0.0001) renderedProgress = targetProgress;
   paint(renderedProgress);
   requestAnimationFrame(frame);
 }
 
-function scrollToProgress(progress, behavior = reducedMotion ? "auto" : "smooth") {
+function scrollToStop(index, behavior = reducedMotion ? "auto" : "smooth") {
   if (!run) return;
-  const next = clamp(progress);
-  if (behavior === "smooth") snappingTo = next;
+  currentStopIndex = clamp(index, 0, stops.length - 1);
+  const next = stops[currentStopIndex].at;
   scrollTo({
     top: run.offsetTop + next * (run.offsetHeight - innerHeight),
     behavior,
   });
 }
 
-function snapToNearest() {
-  if (snappingTo !== null) return;
-  const progress = progressFromScroll();
-  const nearest = nearestStop(progress);
-  const distance = Math.abs(nearest.at - progress);
-  if (distance <= 0.003 || distance > 0.035) return;
-  snappingTo = nearest.at;
-  scrollToProgress(nearest.at);
-}
-
-function scheduleSnap() {
-  clearTimeout(snapTimer);
-  if (reducedMotion || Math.abs(scrollVelocity) > 42) return;
-  snapTimer = setTimeout(snapToNearest, 240);
+function stepStory(direction) {
+  const nextIndex = clamp(currentStopIndex + direction, 0, stops.length - 1);
+  if (nextIndex !== currentStopIndex) scrollToStop(nextIndex);
 }
 
 addEventListener("scroll", () => {
-  const nextScrollY = scrollY;
-  scrollVelocity = nextScrollY - lastScrollY;
-  lastScrollY = nextScrollY;
   targetProgress = progressFromScroll();
-  if (snappingTo !== null) {
-    if (Math.abs(targetProgress - snappingTo) < 0.002) snappingTo = null;
-    return;
-  }
-  scheduleSnap();
 }, { passive: true });
 
-if ("onscrollend" in window) {
-  addEventListener("scrollend", snapToNearest, { passive: true });
-}
+addEventListener("wheel", event => {
+  if (!desktopStory || Math.abs(event.deltaY) < Math.abs(event.deltaX)) return;
+  event.preventDefault();
+  if (Math.abs(event.deltaY) < 0.5) return;
+  const direction = Math.sign(event.deltaY);
+  clearTimeout(gestureTimer);
+  if (!gestureLocked) {
+    if (direction !== gestureDirection) gestureDelta = 0;
+    gestureDirection = direction;
+    gestureDelta += Math.abs(event.deltaY);
+    if (gestureDelta >= 24) {
+      gestureLocked = true;
+      gestureDelta = 0;
+      stepStory(direction);
+    }
+  } else if (direction !== gestureDirection) {
+    gestureDelta += Math.abs(event.deltaY);
+    if (gestureDelta >= 80) {
+      gestureDirection = direction;
+      gestureDelta = 0;
+      stepStory(direction);
+    }
+  } else {
+    gestureDelta = 0;
+  }
+  gestureTimer = setTimeout(() => {
+    gestureLocked = false;
+    gestureDirection = 0;
+    gestureDelta = 0;
+  }, 420);
+}, { passive: false });
 
-["wheel", "touchstart", "pointerdown"].forEach(type => {
-  addEventListener(type, () => {
-    snappingTo = null;
-    clearTimeout(snapTimer);
-  }, { passive: true });
-});
+addEventListener("scrollend", () => {
+  const nearestIndex = stops.indexOf(nearestStop(progressFromScroll()));
+  const nearestProgress = stops[nearestIndex].at;
+  if (nearestIndex !== currentStopIndex || Math.abs(progressFromScroll() - nearestProgress) > 0.002) {
+    scrollToStop(nearestIndex);
+  }
+}, { passive: true });
 
 addEventListener("resize", () => {
   updateCanvasScale();
@@ -259,18 +270,16 @@ addEventListener("resize", () => {
 progressButtons.forEach(button => {
   button.addEventListener("click", event => {
     event.preventDefault();
-    scrollToProgress(Number(button.dataset.progress));
+    const index = stops.findIndex(stop => stop.at === Number(button.dataset.progress));
+    if (index >= 0) scrollToStop(index);
   });
 });
 
 addEventListener("keydown", event => {
   if (!["ArrowRight", "ArrowDown", "ArrowLeft", "ArrowUp"].includes(event.key)) return;
   const direction = event.key === "ArrowRight" || event.key === "ArrowDown" ? 1 : -1;
-  const currentIndex = stops.indexOf(nearestStop(targetProgress));
-  const next = stops[clamp(currentIndex + direction, 0, stops.length - 1)];
-  if (!next) return;
   event.preventDefault();
-  scrollToProgress(next.at);
+  stepStory(direction);
 });
 
 [...workflowVideos, relationsVideo].filter(Boolean).forEach(video => {
@@ -280,6 +289,7 @@ addEventListener("keydown", event => {
 updateCanvasScale();
 targetProgress = progressFromScroll();
 renderedProgress = targetProgress;
+currentStopIndex = stops.indexOf(nearestStop(targetProgress));
 paint(renderedProgress);
 requestAnimationFrame(frame);
 
