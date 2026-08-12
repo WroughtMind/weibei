@@ -50,8 +50,8 @@ struct CourseWorkspaceView: View {
     @State private var showsNewNotePrompt = false
     @State private var courseManagementPresentation:
         CourseManagementPresentation?
-    @State private var coursePendingRemoval: Course?
-    @State private var courseRemovalError: String?
+    @State private var coursePendingDeletion: Course?
+    @State private var courseDeletionError: String?
     @FocusState private var searchFocused: Bool
 
     var body: some View {
@@ -75,8 +75,8 @@ struct CourseWorkspaceView: View {
                     },
                     createNote: promptForNewNote,
                     manageCourse: presentCourseSettings,
-                    requestCourseRemoval:
-                        presentCourseRemovalConfirmation
+                    requestCourseDeletion:
+                        presentCourseDeletionConfirmation
                 )
 
                 Rectangle()
@@ -126,48 +126,47 @@ struct CourseWorkspaceView: View {
         }
         .confirmationDialog(
             store.ui(
-                "从魏碑移除这门课程？",
-                "Remove this course from WeiBei?"
+                "删除这门课程？",
+                "Delete this course?"
             ),
             isPresented: Binding(
-                get: { coursePendingRemoval != nil },
+                get: { coursePendingDeletion != nil },
                 set: {
-                    if !$0 { coursePendingRemoval = nil }
+                    if !$0 { coursePendingDeletion = nil }
                 }
             ),
             titleVisibility: .visible,
-            presenting: coursePendingRemoval
+            presenting: coursePendingDeletion
         ) { course in
-            Button(store.ui(
-                "从魏碑移除“\(course.title)”",
-                "Remove “\(course.title)” from WeiBei"
-            )) {
-                removeCourseFromWeiBei(course)
+            Button(role: .destructive) {
+                deleteCourse(course)
+            } label: {
+                Text(store.ui(
+                    "删除“\(course.title)”",
+                    "Delete “\(course.title)”"
+                ))
             }
             Button(
                 store.ui("取消", "Cancel"),
                 role: .cancel
             ) {
-                coursePendingRemoval = nil
+                coursePendingDeletion = nil
             }
-        } message: { _ in
-            Text(store.ui(
-                "只会从魏碑中移除这门课程。资料、笔记原文件和 Chat 都会保留，不会移到废纸篓。",
-                "This only removes the course from WeiBei. Material files, note files, and Chats are kept and are not moved to Trash."
-            ))
+        } message: { course in
+            Text(courseDeletionMessage(for: course))
         }
         .alert(
-            store.ui("无法移除课程", "Could Not Remove Course"),
+            store.ui("无法删除课程", "Could Not Delete Course"),
             isPresented: Binding(
-                get: { courseRemovalError != nil },
+                get: { courseDeletionError != nil },
                 set: {
-                    if !$0 { courseRemovalError = nil }
+                    if !$0 { courseDeletionError = nil }
                 }
             )
         ) {
             Button(store.ui("好", "OK"), role: .cancel) {}
         } message: {
-            Text(courseRemovalError ?? "")
+            Text(courseDeletionError ?? "")
         }
     }
 
@@ -231,19 +230,38 @@ struct CourseWorkspaceView: View {
             CourseManagementPresentation(courseID: courseID)
     }
 
-    private func presentCourseRemovalConfirmation() {
-        coursePendingRemoval = store.courseWorkspaceCourse
+    private func presentCourseDeletionConfirmation() {
+        coursePendingDeletion = store.courseWorkspaceCourse
     }
 
-    private func removeCourseFromWeiBei(_ course: Course) {
-        coursePendingRemoval = nil
+    private func deleteCourse(_ course: Course) {
+        coursePendingDeletion = nil
         Task { @MainActor in
             do {
-                try await store.removeCourseFromWeiBei(course.id)
+                try await store.deleteCourse(course.id)
             } catch {
-                courseRemovalError = error.localizedDescription
+                courseDeletionError = error.localizedDescription
             }
         }
+    }
+
+    private func courseDeletionMessage(for course: Course) -> String {
+        guard let root = store.courseRootURL(for: course.id) else {
+            if store.courseHasNeverHadFolder(course.id) {
+                return store.ui(
+                    "这门旧课程从未有课程文件夹。删除会移除课程和全部关系；外部原文件会留在独立资料或笔记中，可从侧边栏分别删除。",
+                    "This legacy course never had a course folder. Deleting removes the course and all relations; external source files remain as independent materials or notes and can be deleted from the sidebar."
+                )
+            }
+            return store.ui(
+                "课程文件夹当前不可访问；魏碑不会假装删除。请先用“纳入已有文件夹”重新连接真实课程文件夹。",
+                "The course folder is unavailable. WeiBei won’t pretend to delete it; reconnect the real folder with Add Existing Folder first."
+            )
+        }
+        return store.ui(
+            "会把整个课程文件夹及其中内容移到 macOS 废纸篓，并从魏碑删除：\n\(root.path)",
+            "The entire course folder and its contents will be moved to the macOS Trash and deleted from WeiBei:\n\(root.path)"
+        )
     }
 
     private func createNewNote() {
@@ -360,7 +378,7 @@ struct CourseWorkspaceHeader: View {
     let importNotes: () -> Void
     let createNote: () -> Void
     let manageCourse: () -> Void
-    let requestCourseRemoval: () -> Void
+    let requestCourseDeletion: () -> Void
 
     var body: some View {
         HStack(spacing: 14) {
@@ -498,13 +516,11 @@ struct CourseWorkspaceHeader: View {
                     ),
                     action: manageCourse
                 )
-                Button(
-                    store.ui(
-                        "从魏碑移除…",
-                        "Remove from WeiBei…"
-                    ),
-                    action: requestCourseRemoval
-                )
+                Button(role: .destructive) {
+                    requestCourseDeletion()
+                } label: {
+                    Text(store.ui("删除课程…", "Delete Course…"))
+                }
             }
         } label: {
             HStack(spacing: 6) {
