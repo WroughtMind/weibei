@@ -736,7 +736,6 @@ public struct StudyAgentReply: Equatable, Sendable {
     public var loadedSkills: [StudyAgentLoadedSkill]
     public var readItemIDs: [String]
     public var toolTrace: [String]
-    public var sessionTitle: String?
 
     public init(
         text: String,
@@ -750,8 +749,7 @@ public struct StudyAgentReply: Equatable, Sendable {
         courseProfileUpdate: StudyAgentCourseProfileUpdate? = nil,
         loadedSkills: [StudyAgentLoadedSkill] = [],
         readItemIDs: [String] = [],
-        toolTrace: [String] = [],
-        sessionTitle: String? = nil
+        toolTrace: [String] = []
     ) {
         self.text = text
         self.contentBlocks = contentBlocks
@@ -765,7 +763,6 @@ public struct StudyAgentReply: Equatable, Sendable {
         self.loadedSkills = loadedSkills
         self.readItemIDs = readItemIDs
         self.toolTrace = toolTrace
-        self.sessionTitle = sessionTitle
     }
 }
 
@@ -779,6 +776,7 @@ public enum StudyAgentProgress: Equatable, Sendable {
 }
 
 public typealias StudyAgentProgressHandler = @Sendable (StudyAgentProgress) async -> Void
+public typealias StudyAgentSessionTitleHandler = @Sendable (String) async -> Void
 
 /// User-facing classification for Pi request failures.
 public enum AgentFailureKind: String, Codable, Equatable, Sendable {

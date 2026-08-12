@@ -1734,6 +1734,7 @@ export default function weibeiExtension(pi: ExtensionAPI) {
   let lastReadMemoryRevision: number | undefined;
   let courseProfileUpdated = false;
   let interactiveVisualizationsEnabled = true;
+  let currentQuestion = "";
   const searchedCourseItemIDs = new Set<string>();
   const hostCourseItemIDs = new Set<string>();
   const readCourseSourceRevisions = new Map<string, string>();
@@ -2606,6 +2607,7 @@ export default function weibeiExtension(pi: ExtensionAPI) {
     readCourseSourceRevisions.clear();
 
     const snapshot = await readCurrentSnapshot();
+    currentQuestion = snapshot.question;
     interactiveVisualizationsEnabled = snapshot.interactiveVisualizationsEnabled;
     const selectionLabel = snapshot.selection?.text.trim()
       ? `[选区：${snapshot.selection.title}]`
@@ -2636,29 +2638,33 @@ export default function weibeiExtension(pi: ExtensionAPI) {
     return { systemPrompt: `${event.systemPrompt}\n\n${turnContract}` };
   });
 
-  pi.on("agent_end", async (event, context) => {
-    try {
-      if (pi.getSessionName() || !context.model) return;
-      const userMessageCount = context.sessionManager.getBranch().filter(
-        (entry) => entry.type === "message" && entry.message.role === "user",
-      ).length;
-      const snapshot = await readCurrentSnapshot();
-      if (userMessageCount !== 1 || snapshot.learning.session?.turnCount !== 0) return;
+  pi.on("agent_end", (event, context) => {
+    const question = currentQuestion;
+    void (async () => {
+      try {
+        if (pi.getSessionName() || !context.model) return;
+        const completedAssistantCount = context.sessionManager.getBranch().filter(
+          (entry) => entry.type === "message"
+            && entry.message.role === "assistant"
+            && (entry.message.stopReason === "stop" || entry.message.stopReason === "length"),
+        ).length;
+        if (completedAssistantCount !== 1) return;
 
-      const assistant = [...event.messages].reverse().find(
-        (message) => message.role === "assistant",
-      );
-      if (!assistant || assistant.stopReason === "error" || assistant.stopReason === "aborted") {
-        return;
+        const assistant = [...event.messages].reverse().find(
+          (message) => message.role === "assistant",
+        );
+        if (!assistant || assistant.stopReason === "error" || assistant.stopReason === "aborted") {
+          return;
+        }
+        const answer = assistant.content
+          .flatMap((item) => item.type === "text" ? [item.text] : [])
+          .join("\n");
+        const title = await generateSessionTitle(context, question, answer);
+        if (title) pi.setSessionName(title);
+      } catch {
+        // Naming is best-effort; it must never turn a valid answer into an error.
       }
-      const answer = assistant.content
-        .flatMap((item) => item.type === "text" ? [item.text] : [])
-        .join("\n");
-      const title = await generateSessionTitle(context, snapshot.question, answer);
-      if (title) pi.setSessionName(title);
-    } catch {
-      // Naming is best-effort; it must never turn a valid answer into an error.
-    }
+    })();
   });
 
   pi.on("tool_call", (event) => {

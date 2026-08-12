@@ -27,6 +27,14 @@ function requireValue(value, message) {
   return value;
 }
 
+async function waitFor(predicate) {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    if (predicate()) return true;
+    await new Promise((resolve) => setTimeout(resolve, 1));
+  }
+  return predicate();
+}
+
 async function identity(path) {
   const stats = await lstat(path, { bigint: true });
   return {
@@ -56,8 +64,10 @@ try {
         }));
         builder.onLoad({ filter: /.*/, namespace: "self-check" }, (args) => {
           const contents = args.path === "pi-ai-compat"
-            ? `export async function completeSimple() {
+            ? `export async function completeSimple(...args) {
                 globalThis.__weibeiTitleCalls = (globalThis.__weibeiTitleCalls ?? 0) + 1;
+                globalThis.__weibeiTitleInputs = args;
+                if (globalThis.__weibeiTitleError) throw new Error("title failed");
                 return globalThis.__weibeiTitleResult;
               }`
             : `export const Type = new Proxy({}, { get: () => (...args) => ({ args }) });
@@ -259,6 +269,8 @@ try {
       beforeResult.systemPrompt.includes("weibei_course_map"),
     "本轮现场仍被写成持久消息，或本轮规则没有交给 Pi",
   );
+  hookEnvelope.question = "第二问不能覆盖标题输入";
+  await writeFile(contextFile, JSON.stringify(hookEnvelope));
   const agentEnd = requireValue(
     eventHandlers.get("agent_end"),
     "真实扩展没有注册首轮会话命名钩子",
@@ -268,6 +280,10 @@ try {
     stopReason: "stop",
     content: [{ type: "text", text: "标题： 利率为何不同。" }],
   };
+  let titleBranch = [
+    { type: "message", message: { role: "user" } },
+    { type: "message", message: { role: "assistant", stopReason: "stop" } },
+  ];
   const titleContext = {
     model: {
       provider: "openai-codex",
@@ -275,13 +291,13 @@ try {
       id: "gpt-5.3-codex-spark",
     },
     sessionManager: {
-      getBranch: () => [{ type: "message", message: { role: "user" } }],
+      getBranch: () => titleBranch,
     },
     modelRegistry: {
       getApiKeyAndHeaders: async () => ({ ok: true, apiKey: "self-check" }),
     },
   };
-  await agentEnd(
+  const titleHookResult = agentEnd(
     {
       messages: [{
         role: "assistant",
@@ -291,7 +307,17 @@ try {
     },
     titleContext,
   );
-  await agentEnd(
+  requireValue(
+    titleHookResult === undefined,
+    "会话标题网络请求仍在阻塞主回答结束事件",
+  );
+  await waitFor(() => sessionName === "利率为何不同");
+  const titleInputs = JSON.stringify(globalThis.__weibeiTitleInputs);
+  requireValue(
+    titleInputs.includes("解释当前材料") && !titleInputs.includes("第二问不能覆盖标题输入"),
+    "迟到标题读取了下一轮已经覆盖的上下文",
+  );
+  agentEnd(
     {
       messages: [{
         role: "assistant",
@@ -301,9 +327,70 @@ try {
     },
     titleContext,
   );
+  await new Promise((resolve) => setTimeout(resolve, 5));
   requireValue(
     sessionName === "利率为何不同" && globalThis.__weibeiTitleCalls === 1,
     "首轮会话标题没有清洗落库，或已命名会话发生了重复请求",
+  );
+  sessionName = undefined;
+  globalThis.__weibeiTitleError = true;
+  agentEnd(
+    {
+      messages: [{
+        role: "assistant",
+        stopReason: "stop",
+        content: [{ type: "text", text: "正文必须保持成功。" }],
+      }],
+    },
+    titleContext,
+  );
+  await waitFor(() => globalThis.__weibeiTitleCalls === 2);
+  requireValue(
+    sessionName === undefined && globalThis.__weibeiTitleCalls === 2,
+    "标题请求失败影响了正文流程或写入了无效标题",
+  );
+  globalThis.__weibeiTitleError = false;
+  titleBranch = [
+    { type: "message", message: { role: "user" } },
+    { type: "message", message: { role: "assistant", stopReason: "error" } },
+    { type: "message", message: { role: "user" } },
+    { type: "message", message: { role: "assistant", stopReason: "stop" } },
+  ];
+  agentEnd(
+    {
+      messages: [{
+        role: "assistant",
+        stopReason: "stop",
+        content: [{ type: "text", text: "重试后正文成功。" }],
+      }],
+    },
+    titleContext,
+  );
+  await waitFor(() => sessionName === "利率为何不同");
+  requireValue(
+    sessionName === "利率为何不同" && globalThis.__weibeiTitleCalls === 3,
+    "首轮失败后的首次成功回答没有生成会话标题",
+  );
+  sessionName = undefined;
+  titleBranch = [
+    ...titleBranch,
+    { type: "message", message: { role: "user" } },
+    { type: "message", message: { role: "assistant", stopReason: "stop" } },
+  ];
+  agentEnd(
+    {
+      messages: [{
+        role: "assistant",
+        stopReason: "stop",
+        content: [{ type: "text", text: "旧会话不能回填标题。" }],
+      }],
+    },
+    titleContext,
+  );
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  requireValue(
+    sessionName === undefined && globalThis.__weibeiTitleCalls === 3,
+    "已有成功回答的旧会话被自动改名",
   );
   requireValue(
     !registeredTools.has("weibei_context"),

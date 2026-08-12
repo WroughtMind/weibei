@@ -50,6 +50,22 @@ private actor PiProgressProbe {
     }
 }
 
+private actor PiSessionTitleProbe {
+    private var title: String?
+
+    func record(_ title: String) {
+        self.title = title
+    }
+
+    func waitForTitle() async -> String? {
+        for _ in 0..<100 {
+            if let title { return title }
+            try? await Task.sleep(nanoseconds: 20_000_000)
+        }
+        return nil
+    }
+}
+
 func runPiTerminalRuntimeSelfChecks() async throws {
     let fixture = try makePiTerminalRuntimeFixture()
     defer { try? FileManager.default.removeItem(at: fixture.rootURL) }
@@ -875,6 +891,7 @@ private func checkConversationBindingLaunchContract(
             model: "gpt-5.5"
         )
     )
+    let titleProbe = PiSessionTitleProbe()
 
     for turn in 1...2 {
         let request = StudyAgentRequest(
@@ -917,13 +934,22 @@ private func checkConversationBindingLaunchContract(
             to: request,
             sessionID: sessionID,
             workingDirectory: projectDirectory,
+            sessionTitleHandler: { title in
+                await titleProbe.record(title)
+            },
             progress: nil
         )
-        guard reply.text == "[材料：测试材料] 第 \(turn) 次回答",
-              reply.sessionTitle == "利率为何不同" else {
+        guard reply.text == "[材料：测试材料] 第 \(turn) 次回答" else {
             await runtime.shutdown()
             throw PiTerminalRuntimeSelfCheckError.failed(
-                "同一 Chat 第 \(turn) 轮没有正常完成或回读语义标题"
+                "同一 Chat 第 \(turn) 轮没有正常完成"
+            )
+        }
+        if turn == 1,
+           await titleProbe.waitForTitle() != "利率为何不同" {
+            await runtime.shutdown()
+            throw PiTerminalRuntimeSelfCheckError.failed(
+                "正文完成后没有异步交付语义标题"
             )
         }
     }
@@ -971,23 +997,23 @@ private func checkConversationBindingLaunchContract(
             ? String(projectDirectory.path.dropFirst("/private".count))
             : "/private\(projectDirectory.path)",
     ]
-    guard trace.components(separatedBy: "launch\n").count - 1 == 4,
+    guard trace.components(separatedBy: "launch\n").count - 1 == 3,
           expectedWorkingDirectories.contains(where: { trace.contains("cwd=\($0)\n") }),
           trace.components(
               separatedBy: "arg=--session-id\narg=\(sessionID.uuidString.lowercased())\n"
-          ).count - 1 == 3,
+          ).count - 1 == 2,
           trace.contains("arg=--session-id\narg=\(secondSessionID.uuidString.lowercased())\n"),
-          trace.components(separatedBy: "arg=--session-dir\n").count - 1 == 4,
+          trace.components(separatedBy: "arg=--session-dir\n").count - 1 == 3,
           trace.components(
               separatedBy: "/Sessions/\(sessionID.uuidString.lowercased())\n"
-          ).count - 1 == 3,
+          ).count - 1 == 2,
           trace.contains("/Sessions/\(secondSessionID.uuidString.lowercased())\n"),
           trace.components(
               separatedBy: "arg=--provider\narg=openai-codex\n"
-          ).count - 1 == 4,
+          ).count - 1 == 3,
           trace.components(
               separatedBy: "arg=--model\narg=gpt-5.5\n"
-          ).count - 1 == 4,
+          ).count - 1 == 3,
           trace.contains("prompt-message=[选中文字：第一讲选区]") &&
           trace.contains("注意力只处理当前上下文") &&
           trace.contains("[选区：第一讲]；条目 ID：course-item-1；第 18 页") &&
@@ -1030,7 +1056,7 @@ private func checkMissingSessionStartsFreshNativeHistory(
         noteText: "",
         contextRevision: "recovery-turn"
     )
-    let reply = try await runtime.respond(
+    _ = try await runtime.respond(
         to: request,
         sessionID: sessionID,
         workingDirectory: projectDirectory,
@@ -1042,8 +1068,7 @@ private func checkMissingSessionStartsFreshNativeHistory(
         contentsOf: projectDirectory.appendingPathComponent(".fake-pi-trace.log"),
         encoding: .utf8
     )
-    guard reply.sessionTitle == nil,
-          trace.components(separatedBy: "launch\n").count - 1 == 1,
+    guard trace.components(separatedBy: "launch\n").count - 1 == 1,
           trace.contains("state-message-count=0\n"),
           trace.contains("recent=absent\n") else {
         throw PiTerminalRuntimeSelfCheckError.failed(
@@ -1682,8 +1707,7 @@ int main(int argc, char **argv) {
                 session_id,
                 session_turn * 2,
                 strstr(cwd, "RecoveryProject") != NULL
-                    ? "\"sessionName\":\"WeiBei\","
-                    : (session_mode ? "\"sessionName\":\"利率为何不同\"," : ""),
+                    ? "\"sessionName\":\"WeiBei\"," : "",
                 reported_session_directory
             );
             respond(id, type, state);
@@ -1709,6 +1733,11 @@ int main(int argc, char **argv) {
                 free(context);
                 printf("{\"type\":\"agent_end\",\"messages\":[{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"[材料：测试材料] 第 %d 次回答\"}],\"stopReason\":\"stop\"}]}\n", session_turn);
                 fflush(stdout);
+                if (strstr(cwd, "SessionProject") != NULL && session_turn == 1) {
+                    usleep(50000);
+                    printf("{\"type\":\"session_info_changed\",\"name\":\"利率为何不同\"}\n");
+                    fflush(stdout);
+                }
             } else {
                 start_emitter();
             }

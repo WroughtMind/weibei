@@ -54,9 +54,10 @@ final class WorkspaceSafetyTests: XCTestCase {
     func testSemanticSessionTitleOnlyReplacesFirstTurnFallback() {
         let firstQuestion = AgentMessage(
             role: .user,
-            text: "请帮我解释利率为什么变化"
+            text: "请帮我解释利率为什么变化",
+            source: nil
         )
-        let secondQuestion = AgentMessage(role: .user, text: "再举个例子")
+        let secondQuestion = AgentMessage(role: .user, text: "再举个例子", source: nil)
 
         XCTAssertEqual(
             WorkspaceStore.semanticSessionTitle(
@@ -73,12 +74,13 @@ final class WorkspaceSafetyTests: XCTestCase {
                 messages: [firstQuestion]
             )
         )
-        XCTAssertNil(
+        XCTAssertEqual(
             WorkspaceStore.semanticSessionTitle(
                 from: "利率变化机制",
                 replacing: firstQuestion.text,
                 messages: [firstQuestion, secondQuestion]
-            )
+            ),
+            "利率变化机制"
         )
         XCTAssertNil(
             WorkspaceStore.semanticSessionTitle(
@@ -86,6 +88,22 @@ final class WorkspaceSafetyTests: XCTestCase {
                 replacing: firstQuestion.text,
                 messages: [firstQuestion]
             )
+        )
+
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("WeiBeiSessionTitle-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = WorkspaceStore(workspaceDirectory: root, startsAtBlankEntries: true)
+        let session = store.createStudySession(courseID: nil)!
+        store.messages = [firstQuestion]
+        store.syncActiveStudySession(titleSeed: firstQuestion.text)
+        store.applySemanticSessionTitle("利率变化机制", to: session.id)
+        XCTAssertTrue(store.flushPendingWorkspaceSave())
+
+        let reopened = WorkspaceStore(workspaceDirectory: root)
+        XCTAssertEqual(
+            reopened.studySessions.first(where: { $0.id == session.id })?.title,
+            "利率变化机制"
         )
     }
 

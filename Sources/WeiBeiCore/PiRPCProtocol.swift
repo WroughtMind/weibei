@@ -128,6 +128,7 @@ public enum PiRPCIncomingMessage: Equatable, Sendable {
     case courseProfileUpdate(id: String, StudyAgentCourseProfileUpdate)
     case toolFailed(id: String, name: String, message: String)
     case agentEnded(text: String, stopReason: String?, error: String?, provider: String?, model: String?)
+    case sessionNameChanged(String?)
     case extensionError(String)
     case event(String)
 }
@@ -210,6 +211,11 @@ public enum PiRPCMessageDecoder {
 
         case "auto_retry_start", "auto_retry_end":
             return .runActivity(.retrying)
+
+        case "session_info_changed":
+            let name = object["name"] as? String
+            guard name?.utf8.count ?? 0 <= 1_024 else { return .event(type) }
+            return .sessionNameChanged(name)
 
         case "tool_execution_update":
             return .runActivity(.tool)
