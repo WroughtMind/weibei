@@ -3257,16 +3257,28 @@ struct ContextualContentPicker: View {
     @State private var level: Level = .root
     @State private var showsAll = false
 
-    private enum Level: Hashable {
+    enum Level: Hashable {
         case root
         case course(UUID)
         case common
     }
 
+    init(kind: ContextualContentKind) {
+        self.kind = kind
+    }
+
+#if DEBUG
+    init(kind: ContextualContentKind, initialLevelForTesting: Level) {
+        self.kind = kind
+        _level = State(initialValue: initialLevelForTesting)
+    }
+#endif
+
     var body: some View {
         GeometryReader { geometry in
+            let visibleRows = rows
             ScrollView {
-                VStack(spacing: 13) {
+                LazyVStack(spacing: 13) {
                     if level != .root {
                         backButton
                     }
@@ -3276,13 +3288,13 @@ struct ContextualContentPicker: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.bottom, 3)
 
-                    if rows.isEmpty {
+                    if visibleRows.isEmpty {
                         Text(emptyText)
                             .font(.system(size: 12))
                             .foregroundStyle(WeiBeiTheme.secondaryInk)
                             .frame(height: 54)
                     } else {
-                        ForEach(rows) { row in
+                        ForEach(visibleRows) { row in
                             rowButton(row)
                         }
                     }
@@ -3300,7 +3312,7 @@ struct ContextualContentPicker: View {
                 }
                 .frame(maxWidth: min(420, max(240, geometry.size.width - 48)))
                 .padding(.horizontal, 24)
-                .padding(.top, topPadding(in: geometry.size.height))
+                .padding(.top, topPadding(in: geometry.size.height, rowCount: visibleRows.count))
                 .padding(.bottom, 36)
                 .frame(maxWidth: .infinity)
             }
@@ -3387,9 +3399,9 @@ struct ContextualContentPicker: View {
             || !store.contextualPreferredCourses(kind).isEmpty
     }
 
-    private func topPadding(in height: CGFloat) -> CGFloat {
-        rows.count <= 6
-            ? max(36, (height - CGFloat(rows.count + 1) * 67) / 2 - 34)
+    private func topPadding(in height: CGFloat, rowCount: Int) -> CGFloat {
+        rowCount <= 6
+            ? max(36, (height - CGFloat(rowCount + 1) * 67) / 2 - 34)
             : 36
     }
 
@@ -3407,7 +3419,8 @@ struct ContextualContentPicker: View {
     }
 
     private func rowButton(_ row: PickerRow) -> some View {
-        Button {
+        ContextualContentPickerDiagnostics.recordRowBodyForTesting()
+        return Button {
             switch row {
             case .course(let course, _):
                 level = .course(course.id)
@@ -3533,6 +3546,24 @@ struct ContextualContentPicker: View {
         }
     }
 }
+
+#if DEBUG
+enum ContextualContentPickerDiagnostics {
+    private(set) static var rowBodyCountForTesting = 0
+
+    static func resetForTesting() {
+        rowBodyCountForTesting = 0
+    }
+
+    static func recordRowBodyForTesting() {
+        rowBodyCountForTesting &+= 1
+    }
+}
+#else
+enum ContextualContentPickerDiagnostics {
+    static func recordRowBodyForTesting() {}
+}
+#endif
 
 struct ContextualContentListButton: View {
     @EnvironmentObject private var store: WorkspaceStore
