@@ -1,7 +1,7 @@
 const run = document.querySelector(".scroll-run");
 const stage = document.querySelector(".stage");
 const scenes = [...document.querySelectorAll(".scene")];
-const progressButtons = [...document.querySelectorAll("[data-progress]")];
+const progressButtons = [...document.querySelectorAll("[data-progress], [data-stop]")];
 const workflowVideos = [...document.querySelectorAll(".workspace-flow")];
 const relationsVideo = document.querySelector(".workspace-relations");
 const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -11,11 +11,11 @@ const releasesUrl = "https://github.com/weibei-app/weibei/releases";
 
 const stops = [
   { name: "hero", at: 0 },
-  { name: "panes", at: 0.17 },
-  { name: "context", at: 0.34 },
-  { name: "provenance", at: 0.52 },
-  { name: "writeback", at: 0.68 },
-  { name: "relations", at: 0.84 },
+  { name: "panes", at: 1 / 6 },
+  { name: "context", at: 2 / 6 },
+  { name: "provenance", at: 3 / 6 },
+  { name: "writeback", at: 4 / 6 },
+  { name: "relations", at: 5 / 6 },
   { name: "finish", at: 1 },
 ];
 
@@ -32,10 +32,6 @@ const workspaceStates = [
 let targetProgress = 0;
 let renderedProgress = 0;
 let currentStopIndex = 0;
-let gestureLocked = false;
-let gestureDirection = 0;
-let gestureDelta = 0;
-let gestureTimer = 0;
 let activeSceneIndex = -1;
 
 const clamp = (value, min = 0, max = 1) => Math.min(max, Math.max(min, value));
@@ -222,39 +218,6 @@ addEventListener("scroll", () => {
   targetProgress = progressFromScroll();
 }, { passive: true });
 
-document.addEventListener("wheel", event => {
-  if (!desktopStory || event.deltaY === 0) return;
-  event.preventDefault();
-  if (Math.abs(event.deltaY) < 0.5) return;
-  const direction = Math.sign(event.deltaY);
-  const delta = Math.abs(event.deltaY) * (event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? innerHeight : 1);
-  clearTimeout(gestureTimer);
-  if (!gestureLocked) {
-    if (direction !== gestureDirection) gestureDelta = 0;
-    gestureDirection = direction;
-    gestureDelta += delta;
-    if (gestureDelta >= 24) {
-      gestureLocked = true;
-      gestureDelta = 0;
-      stepStory(direction);
-    }
-  } else if (direction !== gestureDirection) {
-    gestureDelta += delta;
-    if (gestureDelta >= 80) {
-      gestureDirection = direction;
-      gestureDelta = 0;
-      stepStory(direction);
-    }
-  } else {
-    gestureDelta = 0;
-  }
-  gestureTimer = setTimeout(() => {
-    gestureLocked = false;
-    gestureDirection = 0;
-    gestureDelta = 0;
-  }, 420);
-}, { capture: true, passive: false });
-
 addEventListener("scrollend", () => {
   const nearestIndex = stops.indexOf(nearestStop(progressFromScroll()));
   const nearestProgress = stops[nearestIndex].at;
@@ -271,7 +234,9 @@ addEventListener("resize", () => {
 progressButtons.forEach(button => {
   button.addEventListener("click", event => {
     event.preventDefault();
-    const index = stops.findIndex(stop => stop.at === Number(button.dataset.progress));
+    const index = button.dataset.stop === undefined
+      ? stops.findIndex(stop => stop.at === Number(button.dataset.progress))
+      : Number(button.dataset.stop);
     if (index >= 0) scrollToStop(index);
   });
 });

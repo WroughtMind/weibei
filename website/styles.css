@@ -817,6 +817,7 @@ img {
 
 html {
   scroll-behavior: auto;
+  scroll-snap-type: y mandatory;
 }
 
 body {
@@ -856,14 +857,28 @@ a:focus-visible {
 }
 
 .scroll-run {
+  position: relative;
   height: 700vh;
+}
+
+.snap-points {
+  display: grid;
+  height: 700vh;
+  margin-top: -100svh;
+  pointer-events: none;
+}
+
+.snap-points i {
+  height: 100vh;
+  scroll-snap-align: start;
+  scroll-snap-stop: always;
 }
 
 .stage {
   position: sticky;
   top: 0;
   height: 100svh;
-  min-height: 620px;
+  min-height: 100svh;
   overflow: hidden;
   isolation: isolate;
   background-color: var(--paper);
