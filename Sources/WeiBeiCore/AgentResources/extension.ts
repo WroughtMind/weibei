@@ -2642,7 +2642,8 @@ export default function weibeiExtension(pi: ExtensionAPI) {
       const userMessageCount = context.sessionManager.getBranch().filter(
         (entry) => entry.type === "message" && entry.message.role === "user",
       ).length;
-      if (userMessageCount !== 1) return;
+      const snapshot = await readCurrentSnapshot();
+      if (userMessageCount !== 1 || snapshot.learning.session?.turnCount !== 0) return;
 
       const assistant = [...event.messages].reverse().find(
         (message) => message.role === "assistant",
@@ -2650,7 +2651,6 @@ export default function weibeiExtension(pi: ExtensionAPI) {
       if (!assistant || assistant.stopReason === "error" || assistant.stopReason === "aborted") {
         return;
       }
-      const snapshot = await readCurrentSnapshot();
       const answer = assistant.content
         .flatMap((item) => item.type === "text" ? [item.text] : [])
         .join("\n");

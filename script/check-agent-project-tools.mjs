@@ -168,6 +168,14 @@ try {
     project: { ...snapshot.project, items: [item] },
     learning: {
       memoryRevision: 2,
+      session: {
+        id: "chat-a",
+        title: "新学习会话",
+        summary: "",
+        phase: "orient",
+        focusItemIDs: [],
+        turnCount: 0,
+      },
       memories: [
         {
           id: "memory-progress",
