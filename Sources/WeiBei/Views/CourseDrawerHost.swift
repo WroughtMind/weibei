@@ -6,11 +6,11 @@ import SwiftUI
 /// Why AppKit:
 /// 1. `NSAnimationContext` starts the slide on the next CA transaction — no wait for
 ///    SwiftUI to re-layout reader/agent/notes.
-/// 2. Sidebar content is only installed while open (or kept warm but not store-synced
-///    while closed), so pane toggles no longer re-render a hidden course tree.
+/// 2. Sidebar content exists only while open, so pane toggles cannot re-render a
+///    hidden course tree after the drawer closes.
 struct CourseDrawerHost: NSViewRepresentable {
     @ObservedObject var drawer: LibraryDrawerState
-    @EnvironmentObject private var store: WorkspaceStore
+    let store: WorkspaceStore
     var onDismiss: () -> Void
 
     func makeCoordinator() -> Coordinator {
@@ -53,10 +53,12 @@ final class CourseDrawerContainerView: NSView {
     private let scrim = NSView()
     private let panel = NSView()
     private var hostingView: NSHostingView<AnyView>?
+    private var sidebarModel: CourseSidebarModel?
     private var isOpen = false
-    private var hasWarmContent = false
-    private var appearanceMode: WeiBeiAppearanceMode = .paper
-    private weak var store: WorkspaceStore?
+    private var transitionGeneration = 0
+
+    var sidebarModelForTesting: CourseSidebarModel? { sidebarModel }
+    var activeSidebarHostCountForTesting: Int { hostingView == nil ? 0 : 1 }
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -84,8 +86,12 @@ final class CourseDrawerContainerView: NSView {
         super.layout()
         scrim.frame = bounds
         let height = max(bounds.height, 1)
-        let x = isOpen ? 0 : -Self.panelWidth
-        panel.frame = CGRect(x: x, y: 0, width: Self.panelWidth, height: height)
+        panel.frame = CGRect(
+            x: panel.frame.minX,
+            y: 0,
+            width: Self.panelWidth,
+            height: height
+        )
         hostingView?.frame = panel.bounds
     }
 
@@ -103,26 +109,17 @@ final class CourseDrawerContainerView: NSView {
     }
 
     func apply(isOpen open: Bool, store: WorkspaceStore, animated: Bool) {
-        self.store = store
         applyPaperChrome(for: store.appearanceMode)
 
         if open {
-            // Paint sidebar onto the paper panel *before* sliding — avoids the first-open
-            // black/empty flash from mounting content mid-animation.
             installHostingIfNeeded(store: store)
-            syncHosting(store: store)
-            // One layout pass so the first frame of the slide already has content.
-            layoutSubtreeIfNeeded()
-            hostingView?.layoutSubtreeIfNeeded()
             startSlide(open: true, animated: animated)
         } else {
             startSlide(open: false, animated: animated)
-            // Keep warm content for next open, but do not sync store-driven rebuilds while closed.
         }
     }
 
     private func applyPaperChrome(for mode: WeiBeiAppearanceMode) {
-        appearanceMode = mode
         let paper = Self.panelPaperColor(for: mode)
         panel.layer?.backgroundColor = paper.cgColor
         scrim.layer?.backgroundColor = Self.scrimColor(for: mode).cgColor
@@ -145,11 +142,10 @@ final class CourseDrawerContainerView: NSView {
     }
 
     private func startSlide(open: Bool, animated: Bool) {
-        guard isOpen != open || panel.frame.minX != (open ? 0 : -Self.panelWidth) else {
-            isOpen = open
-            return
-        }
+        guard isOpen != open else { return }
         isOpen = open
+        transitionGeneration &+= 1
+        let generation = transitionGeneration
         let targetX: CGFloat = open ? 0 : -Self.panelWidth
         let height = max(bounds.height, 1)
         let targetPanel = CGRect(x: targetX, y: 0, width: Self.panelWidth, height: height)
@@ -164,47 +160,57 @@ final class CourseDrawerContainerView: NSView {
                 panel.animator().frame = targetPanel
                 scrim.animator().alphaValue = targetScrimAlpha
             }, completionHandler: { [weak self] in
-                guard let self else { return }
-                if !self.isOpen {
-                    self.scrim.isHidden = true
-                }
+                guard let self,
+                      self.transitionGeneration == generation,
+                      self.isOpen == open else { return }
+                guard !open else { return }
+                self.scrim.isHidden = true
+                self.removeSidebarContent()
             })
         } else {
             panel.frame = targetPanel
             scrim.alphaValue = targetScrimAlpha
             scrim.isHidden = !open
+            if !open {
+                removeSidebarContent()
+            }
         }
     }
 
     private func installHostingIfNeeded(store: WorkspaceStore) {
         guard hostingView == nil else { return }
         let paper = Self.panelPaperColor(for: store.appearanceMode)
-        let root = makeRootView(store: store)
+        let model = CourseSidebarModel(store: store)
+        let root = makeRootView(store: store, model: model)
         let host = NSHostingView(rootView: root)
         host.wantsLayer = true
         host.layer?.backgroundColor = paper.cgColor
         host.frame = panel.bounds
         host.autoresizingMask = [.width, .height]
         panel.addSubview(host)
+        sidebarModel = model
         hostingView = host
-        hasWarmContent = true
     }
 
-    private func syncHosting(store: WorkspaceStore) {
-        // Called only on the open path (or first mount); closed path skips apply's sync.
-        guard let hostingView else { return }
-        hostingView.rootView = makeRootView(store: store)
+    private func removeSidebarContent() {
+        sidebarModel?.stop()
+        hostingView?.rootView = AnyView(EmptyView())
+        hostingView?.removeFromSuperview()
+        hostingView = nil
+        sidebarModel = nil
     }
 
-    private func makeRootView(store: WorkspaceStore) -> AnyView {
+    private func makeRootView(
+        store: WorkspaceStore,
+        model: CourseSidebarModel
+    ) -> AnyView {
         AnyView(
-            CourseImmersiveDrawerView { [weak self] in
+            CourseImmersiveDrawerView(
+                store: store,
+                model: model
+            ) { [weak self] in
                 self?.onDismiss?()
             }
-            .environmentObject(store)
-            .environmentObject(store.libraryDrawer)
-            .environmentObject(store.paneState)
-            .environmentObject(store.interaction)
         )
     }
 }

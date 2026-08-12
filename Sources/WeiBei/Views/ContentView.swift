@@ -31,7 +31,7 @@ struct ContentView: View {
                             .animation(WeiBeiMotion.layout, value: store.layout.isImmersiveFamily)
 
                         // AppKit drawer: slide starts immediately; sidebar not store-synced while closed.
-                        CourseLibraryDrawerLayer {
+                        CourseLibraryDrawerLayer(store: store) {
                             store.toggleLibrary()
                         }
                         .zIndex(35)
@@ -188,13 +188,19 @@ private struct WindowFullScreenReader: NSViewRepresentable {
     }
 }
 
-/// AppKit course drawer layer. Observes only `LibraryDrawerState` (+ store for content).
+/// AppKit course drawer layer. Observes only `LibraryDrawerState`; the store reference
+/// is passed through without subscribing this chrome layer to the whole workspace.
 private struct CourseLibraryDrawerLayer: View {
     @EnvironmentObject private var libraryDrawer: LibraryDrawerState
+    let store: WorkspaceStore
     let dismiss: () -> Void
 
     var body: some View {
-        CourseDrawerHost(drawer: libraryDrawer, onDismiss: dismiss)
+        CourseDrawerHost(
+            drawer: libraryDrawer,
+            store: store,
+            onDismiss: dismiss
+        )
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .allowsHitTesting(libraryDrawer.isOpen)
             .accessibilityHidden(!libraryDrawer.isOpen)

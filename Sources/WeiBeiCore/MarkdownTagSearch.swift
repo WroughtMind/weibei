@@ -13,10 +13,25 @@ public enum MarkdownTagSearch {
     }
 
     public static func tags(in markdown: String) -> [String] {
+        tags(in: markdown, cancellationCheck: {})
+    }
+
+    public static func cancellableTags(in markdown: String) throws -> [String] {
+        try tags(in: markdown) {
+            try Task.checkCancellation()
+        }
+    }
+
+    private static func tags(
+        in markdown: String,
+        cancellationCheck: () throws -> Void
+    ) rethrows -> [String] {
+        try cancellationCheck()
         let (frontmatter, body) = splitFrontmatter(markdown)
         var foundTags = frontmatterTags(in: frontmatter)
         var inFence = false
         for rawLine in body.components(separatedBy: .newlines) {
+            try cancellationCheck()
             let trimmed = rawLine.trimmingCharacters(in: .whitespaces)
             if trimmed.range(of: #"^(`{3,}|~{3,})"#, options: .regularExpression) != nil {
                 inFence.toggle()
@@ -26,6 +41,7 @@ public enum MarkdownTagSearch {
             let line = rawLine.replacingOccurrences(of: #"`[^`\n]*`"#, with: "", options: .regularExpression)
             foundTags.append(contentsOf: tags(inLine: line))
         }
+        try cancellationCheck()
         return Array(Set(foundTags)).sorted()
     }
 
