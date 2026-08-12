@@ -135,7 +135,6 @@ private struct CoursePortableStateCommit {
     let previousNeedsBootstrap: Bool
 }
 
-
 enum CourseWorkspaceDestination: String, CaseIterable, Sendable {
     case hub
     case relations
@@ -847,7 +846,6 @@ final class WorkspaceStore: ObservableObject {
         var rootIdentity: ImportedFileIdentity
         var entriesByRelativePath: [String: Entry]
     }
-
 
     private struct CreatedManagedCourseRoot {
         var root: URL
@@ -5086,8 +5084,6 @@ final class WorkspaceStore: ObservableObject {
         )
     }
 
-
-
     private func stableCourseFileSnapshot(
         at url: URL,
         expectedIdentity: ImportedFileIdentity,
@@ -5502,7 +5498,6 @@ final class WorkspaceStore: ObservableObject {
         }.value
     }
 
-
     /// S3：不再从 journal 恢复未完成操作。启动时静默清理 `.weibei/transactions/*` 残留
     /// 与旧版 pending journal 文件。
     /// H1：含 `replaced-target` / `replacement-rollback` 等用户内容崩溃备份的目录绝不误删；
@@ -5707,16 +5702,8 @@ final class WorkspaceStore: ObservableObject {
         return !recoveredReceipts.isEmpty
     }
 
-
-
-
-
     /// S2：旧四阶段 course-note 事务不再恢复写路径；静默清理残留事务目录。
     /// 若目标文件缺失且 original 仍在，尽力还原 original，避免用户丢文件。
-
-
-
-
     nonisolated private static func backgroundLinkMatches(
         _ linkURL: URL,
         destination: URL,
@@ -5740,10 +5727,6 @@ final class WorkspaceStore: ObservableObject {
                 .contains(String(components[0]))
             && components[1] == Substring(fileName)
     }
-
-
-
-
     nonisolated private static func backgroundRawRelativeURL(
         _ relativePath: String,
         inside root: URL
@@ -5765,17 +5748,6 @@ final class WorkspaceStore: ObservableObject {
         }
         return candidate
     }
-
-
-
-
-
-
-
-
-
-
-
     private func transactionDirectoryFingerprint(
         at root: URL
     ) -> TransactionDirectoryFingerprint? {
@@ -7731,6 +7703,20 @@ final class WorkspaceStore: ObservableObject {
     }
 
     private func moveItemSourceToTrash(_ itemID: String) async throws {
+        guard importedItems.contains(where: { $0.id == itemID }) else {
+            throw ContentSourceRemovalError.itemUnavailable
+        }
+        let affectedCourseIDs = Set(courseIDs(for: itemID))
+        try beginCourseFileMutation(
+            courseIDs: affectedCourseIDs,
+            itemIDs: [itemID]
+        )
+        defer {
+            finishCourseFileMutation(
+                courseIDs: affectedCourseIDs,
+                itemIDs: [itemID]
+            )
+        }
         if stagedNoteDraft?.itemID == itemID,
            let draft = stagedNoteDraft {
             stagedNoteDraft = nil
@@ -7740,7 +7726,7 @@ final class WorkspaceStore: ObservableObject {
         while let task = courseNoteWriteTasksByItemID[itemID] {
             await task.value
         }
-        guard flushPendingWorkspaceSave(),
+        guard await flushPendingWorkspaceSaveAsync(),
               let itemIndex = importedItems.firstIndex(where: {
                   $0.id == itemID
               }) else {
@@ -7754,7 +7740,6 @@ final class WorkspaceStore: ObservableObject {
                 .importedFileIdentity else {
             throw ContentSourceRemovalError.itemUnavailable
         }
-        let affectedCourseIDs = Set(courseIDs(for: itemID))
         let formerSharedLinks: [(url: URL, identity: ImportedFileIdentity)]
         if case .shared = importedItems[itemIndex].storage {
             formerSharedLinks = courseItemMemberships.compactMap {
@@ -7776,17 +7761,6 @@ final class WorkspaceStore: ObservableObject {
         } else {
             formerSharedLinks = []
         }
-        try beginCourseFileMutation(
-            courseIDs: affectedCourseIDs,
-            itemIDs: [itemID]
-        )
-        defer {
-            finishCourseFileMutation(
-                courseIDs: affectedCourseIDs,
-                itemIDs: [itemID]
-            )
-        }
-
         let sourceSnapshot: CourseFileSnapshot
         do {
             sourceSnapshot = try await courseProjectFileWorker
@@ -8101,12 +8075,32 @@ final class WorkspaceStore: ObservableObject {
         }
     }
 
-    func moveItemSourceToTrashAsyncForSelfCheck(
-        _ itemID: String
+#if DEBUG
+    func moveItemSourceToTrashWithBlockedBackgroundSaveForSelfCheck(
+        _ itemID: String,
+        whileBlocked: @escaping @MainActor () -> Void
     ) async throws {
         precondition(WeiBeiSafetyTestMode.isEnabled)
-        try await moveItemSourceToTrash(itemID)
+        let previousMode = usesBackgroundWorkspacePersistenceForSelfCheck
+        usesBackgroundWorkspacePersistenceForSelfCheck = true
+        defer { usesBackgroundWorkspacePersistenceForSelfCheck = previousMode }
+        let generation = workspaceSaveGeneration &+ 1
+        await courseProjectFileWorker.prepareWorkspacePersistenceGateForSelfCheck(
+            generation: generation
+        )
+        let deletion = Task { @MainActor in
+            try await self.moveItemSourceToTrash(itemID)
+        }
+        await courseProjectFileWorker.waitUntilWorkspacePersistenceEnteredForSelfCheck(
+            generation: generation
+        )
+        whileBlocked()
+        await courseProjectFileWorker.releaseWorkspacePersistenceForSelfCheck(
+            generation: generation
+        )
+        try await deletion.value
     }
+#endif
 
     func installRootlessCourseForSelfCheck(title: String) -> UUID {
         precondition(
@@ -21285,7 +21279,13 @@ final class WorkspaceStore: ObservableObject {
         pendingWorkspaceSaveTask = nil
         workspaceSaveGeneration &+= 1
         workspacePersistenceSkippingCourseIDs = []
-        if Self.mustSaveImmediately {
+#if DEBUG
+        let shouldSaveImmediately = Self.mustSaveImmediately
+            && !usesBackgroundWorkspacePersistenceForSelfCheck
+#else
+        let shouldSaveImmediately = Self.mustSaveImmediately
+#endif
+        if shouldSaveImmediately {
             return performSaveNow()
         }
         return (try? waitForCourseFileOperation {

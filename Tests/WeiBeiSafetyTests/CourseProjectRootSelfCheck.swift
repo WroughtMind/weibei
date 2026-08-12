@@ -222,6 +222,7 @@ enum CourseProjectRootSelfCheck {
 
         var swapRootBeforeTrash = false
         var crashAfterTrashMove = false
+        var failPostTrashWorkspaceWrite = false
         let failWorkspaceWrite = LockedBox(false)
         var courseARootForHook: URL?
         var displacedCourseRoot: URL?
@@ -258,6 +259,12 @@ enum CourseProjectRootSelfCheck {
                     == .afterCourseRootTrashMoveBeforeJournal {
                     crashAfterTrashMove = false
                     throw CourseProjectSimulatedCrash()
+                }
+                if failPostTrashWorkspaceWrite,
+                   stage
+                    == .afterCourseRootTrashJournalBeforeWorkspaceSave {
+                    failPostTrashWorkspaceWrite = false
+                    failWorkspaceWrite.set(true)
                 }
             },
             workspaceWriter: { data, url in
@@ -534,7 +541,7 @@ enum CourseProjectRootSelfCheck {
             }),
             "课程根进废纸篓后没有留下重启收尾凭据"
         )
-        failWorkspaceWrite.set(true)
+        failPostTrashWorkspaceWrite = true
         let trashedRootB = try store!
             .moveCourseFolderToTrashForSelfCheck(courseB)
         try check(
@@ -7995,6 +8002,7 @@ enum CourseProjectRootSelfCheck {
         let shouldFailTrash = LockedBox(false)
         let shouldPauseTrash = LockedBox(false)
         let trashMoveStarted = LockedBox(false)
+        let mutationBlockedBeforeTrash = LockedBox(false)
         let resumeTrashMove = DispatchSemaphore(value: 0)
         var store = makeStore(
             fixture: fixture,
@@ -8051,9 +8059,15 @@ enum CourseProjectRootSelfCheck {
         let deletionFailure = LockedBox<String?>(nil)
         Task { @MainActor in
             do {
-                try await store.moveItemSourceToTrashAsyncForSelfCheck(
-                    promoted.id
-                )
+                try await store
+                    .moveItemSourceToTrashWithBlockedBackgroundSaveForSelfCheck(
+                        promoted.id
+                    ) {
+                        store.assignItemIDs([promoted.id], to: courseA)
+                        mutationBlockedBeforeTrash.set(
+                            store.courseIDs(for: promoted.id).isEmpty
+                        )
+                    }
             } catch {
                 deletionFailure.set(error.localizedDescription)
             }
@@ -8076,10 +8090,9 @@ enum CourseProjectRootSelfCheck {
             trashDidStart,
             "独立资料删除没有进入受控废纸篓阶段：\(deletionFailure.get() ?? "没有错误")"
         )
-        store.assignItemIDs([promoted.id], to: courseA)
         try check(
-            store.courseIDs(for: promoted.id).isEmpty,
-            "独立资料删除进行中仍能加入课程"
+            mutationBlockedBeforeTrash.get(),
+            "独立资料保存进行中仍能加入课程或没有走后台保存"
         )
         shouldPauseTrash.set(false)
         resumeTrashMove.signal()
