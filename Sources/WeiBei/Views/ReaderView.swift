@@ -14,7 +14,6 @@ struct ImmersiveHoverTitleView<Actions: View>: View {
     let title: String
     let appearanceMode: WeiBeiAppearanceMode
     var isPinned = false
-    var actionsAlignedTrailing = false
     var reorderRole: WorkspacePaneRole?
     @ViewBuilder var actions: () -> Actions
 
@@ -26,7 +25,6 @@ struct ImmersiveHoverTitleView<Actions: View>: View {
         title: String,
         appearanceMode: WeiBeiAppearanceMode,
         isPinned: Bool = false,
-        actionsAlignedTrailing: Bool = false,
         reorderRole: WorkspacePaneRole? = nil,
         @ViewBuilder actions: @escaping () -> Actions
     ) {
@@ -34,7 +32,6 @@ struct ImmersiveHoverTitleView<Actions: View>: View {
         self.title = title
         self.appearanceMode = appearanceMode
         self.isPinned = isPinned
-        self.actionsAlignedTrailing = actionsAlignedTrailing
         self.reorderRole = reorderRole
         self.actions = actions
     }
@@ -52,7 +49,7 @@ struct ImmersiveHoverTitleView<Actions: View>: View {
                 .onHover(perform: updateVisibility)
 
             if visible || isPinned {
-                HStack(alignment: .center, spacing: actionsAlignedTrailing ? 10 : 8) {
+                HStack(alignment: .center, spacing: 8) {
                     ViewThatFits(in: .horizontal) {
                         HStack(alignment: .firstTextBaseline, spacing: 9) {
                             hoverMark
@@ -68,14 +65,10 @@ struct ImmersiveHoverTitleView<Actions: View>: View {
                         hoverMark
                     }
                     .frame(minWidth: 0, alignment: .leading)
-                    if actionsAlignedTrailing {
-                        Spacer(minLength: 14)
-                    }
                     actions()
                 }
-                .padding(.horizontal, actionsAlignedTrailing ? 14 : 12)
-                .frame(maxWidth: actionsAlignedTrailing ? .infinity : nil, alignment: .leading)
-                .frame(minHeight: 30)
+                .padding(.horizontal, 12)
+                .frame(height: 34)
                 .background {
                     RoundedRectangle(cornerRadius: 7)
                         .fill(WeiBeiTheme.paperRaised.opacity(appearanceMode.isDark ? 0.88 : 0.92))
@@ -85,7 +78,6 @@ struct ImmersiveHoverTitleView<Actions: View>: View {
                         }
                 }
                 .shadow(color: WeiBeiTheme.ink.opacity(appearanceMode.isDark ? 0.28 : 0.08), radius: 9, y: 4)
-                .padding(.horizontal, actionsAlignedTrailing ? 14 : 0)
                 .padding(.top, 7)
                 .contentShape(Rectangle())
                 .onHover(perform: updateVisibility)

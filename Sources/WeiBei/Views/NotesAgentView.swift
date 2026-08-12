@@ -589,7 +589,6 @@ struct NotePaneView: View {
                 title: noteHeaderSubtitle,
                 appearanceMode: store.appearanceMode,
                 isPinned: store.notebookCreationDraft != nil,
-                actionsAlignedTrailing: true,
                 reorderRole: reorderRole
             ) {
                 ContextualContentListButton(kind: .note)
@@ -2084,10 +2083,9 @@ struct AgentPaneView: View {
                     mark: "CHAT",
                     title: store.agentConversationSubtitle,
                     appearanceMode: store.appearanceMode,
-                    actionsAlignedTrailing: true,
                     reorderRole: reorderRole
                 ) {
-                    agentSessionCatalogMenu
+                    sessionMenu
                 }
             }
         }
@@ -2550,26 +2548,6 @@ struct AgentPaneView: View {
 
     private var agentRailBottomInset: CGFloat {
         usesWideChatLayout ? 120 : 100
-    }
-
-    /// Compact catalog for immersive hover tab + pane header.
-    private var agentSessionCatalogMenu: some View {
-        Menu {
-            sessionCatalogContent
-        } label: {
-            Label {
-                Text(store.activeStudySessionScopeTitle)
-                    .font(.system(size: 11, weight: .medium))
-                    .lineLimit(1)
-            } icon: {
-                Image(systemName: "list.bullet.rectangle")
-            }
-            .labelStyle(.titleAndIcon)
-        }
-        .menuStyle(.borderlessButton)
-        .fixedSize()
-        .accessibilityLabel(Text(store.ui("对话目录", "Conversation catalog")))
-        .help(store.ui("新建或切换对话", "Create or switch Chats"))
     }
 
     private var sessionMenu: some View {
