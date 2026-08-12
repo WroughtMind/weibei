@@ -50,15 +50,20 @@ try {
     plugins: [{
       name: "pi-ai-self-check-stub",
       setup(builder) {
-        builder.onResolve({ filter: /^@earendil-works\/pi-ai$/ }, () => ({
-          path: "pi-ai",
+        builder.onResolve({ filter: /^@earendil-works\/pi-ai(?:\/compat)?$/ }, (args) => ({
+          path: args.path.endsWith("/compat") ? "pi-ai-compat" : "pi-ai",
           namespace: "self-check",
         }));
-        builder.onLoad({ filter: /.*/, namespace: "self-check" }, () => ({
-          loader: "js",
-          contents:
-            "export const Type = new Proxy({}, { get: () => (...args) => ({ args }) });",
-        }));
+        builder.onLoad({ filter: /.*/, namespace: "self-check" }, (args) => {
+          const contents = args.path === "pi-ai-compat"
+            ? `export async function completeSimple() {
+                globalThis.__weibeiTitleCalls = (globalThis.__weibeiTitleCalls ?? 0) + 1;
+                return globalThis.__weibeiTitleResult;
+              }`
+            : `export const Type = new Proxy({}, { get: () => (...args) => ({ args }) });
+               export const uuidv7 = () => "title-session-id";`;
+          return { loader: "js", contents };
+        });
       },
     }],
   });
@@ -207,12 +212,19 @@ try {
   process.env.WEIBEI_AGENT_CONTEXT_FILE = contextFile;
   const eventHandlers = new Map();
   const registeredTools = new Map();
+  let sessionName;
   extension.default({
     registerTool(tool) {
       registeredTools.set(tool.name, tool);
     },
     on(name, handler) {
       eventHandlers.set(name, handler);
+    },
+    getSessionName() {
+      return sessionName;
+    },
+    setSessionName(value) {
+      sessionName = value;
     },
   });
   const beforeAgentStart = requireValue(
@@ -238,6 +250,52 @@ try {
       beforeResult.systemPrompt.includes("weibei_course_search") &&
       beforeResult.systemPrompt.includes("weibei_course_map"),
     "本轮现场仍被写成持久消息，或本轮规则没有交给 Pi",
+  );
+  const agentEnd = requireValue(
+    eventHandlers.get("agent_end"),
+    "真实扩展没有注册首轮会话命名钩子",
+  );
+  globalThis.__weibeiTitleCalls = 0;
+  globalThis.__weibeiTitleResult = {
+    stopReason: "stop",
+    content: [{ type: "text", text: "标题： 利率为何不同。" }],
+  };
+  const titleContext = {
+    model: {
+      provider: "openai-codex",
+      api: "openai-codex-responses",
+      id: "gpt-5.3-codex-spark",
+    },
+    sessionManager: {
+      getBranch: () => [{ type: "message", message: { role: "user" } }],
+    },
+    modelRegistry: {
+      getApiKeyAndHeaders: async () => ({ ok: true, apiKey: "self-check" }),
+    },
+  };
+  await agentEnd(
+    {
+      messages: [{
+        role: "assistant",
+        stopReason: "stop",
+        content: [{ type: "text", text: "利率会随资金供需变化。" }],
+      }],
+    },
+    titleContext,
+  );
+  await agentEnd(
+    {
+      messages: [{
+        role: "assistant",
+        stopReason: "stop",
+        content: [{ type: "text", text: "不应重复命名。" }],
+      }],
+    },
+    titleContext,
+  );
+  requireValue(
+    sessionName === "利率为何不同" && globalThis.__weibeiTitleCalls === 1,
+    "首轮会话标题没有清洗落库，或已命名会话发生了重复请求",
   );
   requireValue(
     !registeredTools.has("weibei_context"),

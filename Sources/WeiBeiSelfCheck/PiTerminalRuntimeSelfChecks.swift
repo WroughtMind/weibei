@@ -919,10 +919,11 @@ private func checkConversationBindingLaunchContract(
             workingDirectory: projectDirectory,
             progress: nil
         )
-        guard reply.text == "[材料：测试材料] 第 \(turn) 次回答" else {
+        guard reply.text == "[材料：测试材料] 第 \(turn) 次回答",
+              reply.sessionTitle == "利率为何不同" else {
             await runtime.shutdown()
             throw PiTerminalRuntimeSelfCheckError.failed(
-                "同一 Chat 第 \(turn) 轮没有正常完成（\(reply.text)）"
+                "同一 Chat 第 \(turn) 轮没有正常完成或回读语义标题"
             )
         }
     }
@@ -999,6 +1000,7 @@ private func checkConversationBindingLaunchContract(
           !trace.contains("weibei_rich_answer"),
           !trace.contains("prompt-message=/skill:"),
           !trace.contains("arg=--no-session\n"),
+          !trace.contains("arg=--name\n"),
           !trace.contains("command=new_session\n"),
           trace.components(separatedBy: "command=prompt\n").count - 1 == 4,
           trace.components(separatedBy: "recent=absent\n").count - 1 == 4 else {
@@ -1028,7 +1030,7 @@ private func checkMissingSessionStartsFreshNativeHistory(
         noteText: "",
         contextRevision: "recovery-turn"
     )
-    _ = try await runtime.respond(
+    let reply = try await runtime.respond(
         to: request,
         sessionID: sessionID,
         workingDirectory: projectDirectory,
@@ -1040,7 +1042,8 @@ private func checkMissingSessionStartsFreshNativeHistory(
         contentsOf: projectDirectory.appendingPathComponent(".fake-pi-trace.log"),
         encoding: .utf8
     )
-    guard trace.components(separatedBy: "launch\n").count - 1 == 1,
+    guard reply.sessionTitle == nil,
+          trace.components(separatedBy: "launch\n").count - 1 == 1,
           trace.contains("state-message-count=0\n"),
           trace.contains("recent=absent\n") else {
         throw PiTerminalRuntimeSelfCheckError.failed(
@@ -1617,7 +1620,8 @@ int main(int argc, char **argv) {
                 trace_line("arg", argv[index + 1]);
             } else if ((strcmp(argv[index], "--provider") == 0
                         || strcmp(argv[index], "--model") == 0
-                        || strcmp(argv[index], "--tools") == 0)
+                        || strcmp(argv[index], "--tools") == 0
+                        || strcmp(argv[index], "--name") == 0)
                        && index + 1 < argc) {
                 trace_line("arg", argv[index]);
                 trace_line("arg", argv[index + 1]);
@@ -1674,9 +1678,12 @@ int main(int argc, char **argv) {
             snprintf(
                 state,
                 sizeof(state),
-                "{\"isStreaming\":false,\"sessionId\":\"%s\",\"messageCount\":%d,\"pendingMessageCount\":0,\"sessionFile\":\"%s/session.jsonl\"}",
+                "{\"isStreaming\":false,\"sessionId\":\"%s\",\"messageCount\":%d,\"pendingMessageCount\":0,%s\"sessionFile\":\"%s/session.jsonl\"}",
                 session_id,
                 session_turn * 2,
+                strstr(cwd, "RecoveryProject") != NULL
+                    ? "\"sessionName\":\"WeiBei\","
+                    : (session_mode ? "\"sessionName\":\"利率为何不同\"," : ""),
                 reported_session_directory
             );
             respond(id, type, state);

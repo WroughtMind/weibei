@@ -365,6 +365,7 @@ public actor PiAgentRuntime: StudyAgentRuntime {
 
     private struct PiSessionState {
         var messageCount: Int
+        var sessionName: String?
     }
 
     private struct PiSessionStateFailure: Error {
@@ -710,7 +711,7 @@ public actor PiAgentRuntime: StudyAgentRuntime {
             throw failure
         }
 
-        let reply = try await waitForRun(id: request.id)
+        var reply = try await waitForRun(id: request.id)
         await withTaskCancellationHandler {
             await progressDelivery?.waitUntilFinished()
         } onCancel: {
@@ -720,7 +721,9 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         // PI emits agent_end before every post-turn hook is guaranteed to be flushed.
         // An ordered state read gives those hooks a chance to finish before the
         // process boundary prevents late events from entering the next turn.
-        _ = try? await readSessionState(binding: binding)
+        if let state = try? await readSessionState(binding: binding) {
+            reply.sessionTitle = state.sessionName
+        }
         let completedProcess = process
         shutdownProcess(reason: PiAgentRuntimeError.cancelled)
         await forceStopIfNeeded(completedProcess, graceNanoseconds: 750_000_000)
@@ -915,7 +918,16 @@ public actor PiAgentRuntime: StudyAgentRuntime {
                 message: "get_state returned a session outside the requested Chat directory"
             )
         }
-        return PiSessionState(messageCount: messageCount)
+        let rawSessionName = (object["sessionName"] as? String)?
+            .split(whereSeparator: { $0.isWhitespace })
+            .joined(separator: " ")
+        let sessionName = rawSessionName.flatMap { name in
+            name.isEmpty || name == "WeiBei" ? nil : String(name.prefix(36))
+        }
+        return PiSessionState(
+            messageCount: messageCount,
+            sessionName: sessionName
+        )
     }
 
     private func sessionDirectory(for sessionID: UUID) -> URL {
@@ -1184,7 +1196,6 @@ public actor PiAgentRuntime: StudyAgentRuntime {
             "--no-context-files",
             "--no-approve",
             "--system-prompt", resources.systemPrompt,
-            "--name", "WeiBei",
         ]
         if let provider = providerConfiguration.provider, !provider.isEmpty {
             arguments.append(contentsOf: ["--provider", provider])

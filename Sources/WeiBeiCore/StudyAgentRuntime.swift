@@ -736,6 +736,7 @@ public struct StudyAgentReply: Equatable, Sendable {
     public var loadedSkills: [StudyAgentLoadedSkill]
     public var readItemIDs: [String]
     public var toolTrace: [String]
+    public var sessionTitle: String?
 
     public init(
         text: String,
@@ -749,7 +750,8 @@ public struct StudyAgentReply: Equatable, Sendable {
         courseProfileUpdate: StudyAgentCourseProfileUpdate? = nil,
         loadedSkills: [StudyAgentLoadedSkill] = [],
         readItemIDs: [String] = [],
-        toolTrace: [String] = []
+        toolTrace: [String] = [],
+        sessionTitle: String? = nil
     ) {
         self.text = text
         self.contentBlocks = contentBlocks
@@ -763,6 +765,7 @@ public struct StudyAgentReply: Equatable, Sendable {
         self.loadedSkills = loadedSkills
         self.readItemIDs = readItemIDs
         self.toolTrace = toolTrace
+        self.sessionTitle = sessionTitle
     }
 }
 
