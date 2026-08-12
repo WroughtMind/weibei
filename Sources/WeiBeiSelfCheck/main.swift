@@ -919,6 +919,15 @@ let piAgentRuntimeSource = readSource("Sources/WeiBeiCore/PiAgentRuntime.swift")
 let piManagementSource = readSource("Sources/WeiBeiCore/AgentResources/management-extension.ts")
 let piOAuthSource = readSource("Sources/WeiBei/Support/PiOAuthService.swift")
 let credentialProfilesSource = readSource("Sources/WeiBeiCore/AgentCredentialProfiles.swift")
+let readerViewSource = readSource("Sources/WeiBei/Views/ReaderView.swift")
+let notesAgentViewSource = readSource("Sources/WeiBei/Views/NotesAgentView.swift")
+expect(
+    !readerViewSource.contains("actionsAlignedTrailing")
+        && readerViewSource.contains(".frame(height: 34)")
+        && !notesAgentViewSource.contains("agentSessionCatalogMenu")
+        && !notesAgentViewSource.contains("activeStudySessionScopeTitle"),
+    "floating pane tabs stay compact and show the Chat title only once"
+)
 expect(
     piManagementSource.contains(
         "const { ModelRuntime, readStoredCredential } = await import(PI_PACKAGE)"
