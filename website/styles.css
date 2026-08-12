@@ -952,6 +952,10 @@ a:focus-visible {
   transform-origin: center;
 }
 
+.persistent-canvas * {
+  pointer-events: none;
+}
+
 .persistent-workspace {
   position: absolute;
   top: 260px;

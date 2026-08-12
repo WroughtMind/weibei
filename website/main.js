@@ -222,23 +222,24 @@ addEventListener("scroll", () => {
   targetProgress = progressFromScroll();
 }, { passive: true });
 
-addEventListener("wheel", event => {
-  if (!desktopStory || Math.abs(event.deltaY) < Math.abs(event.deltaX)) return;
+document.addEventListener("wheel", event => {
+  if (!desktopStory || event.deltaY === 0) return;
   event.preventDefault();
   if (Math.abs(event.deltaY) < 0.5) return;
   const direction = Math.sign(event.deltaY);
+  const delta = Math.abs(event.deltaY) * (event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? innerHeight : 1);
   clearTimeout(gestureTimer);
   if (!gestureLocked) {
     if (direction !== gestureDirection) gestureDelta = 0;
     gestureDirection = direction;
-    gestureDelta += Math.abs(event.deltaY);
+    gestureDelta += delta;
     if (gestureDelta >= 24) {
       gestureLocked = true;
       gestureDelta = 0;
       stepStory(direction);
     }
   } else if (direction !== gestureDirection) {
-    gestureDelta += Math.abs(event.deltaY);
+    gestureDelta += delta;
     if (gestureDelta >= 80) {
       gestureDirection = direction;
       gestureDelta = 0;
@@ -252,7 +253,7 @@ addEventListener("wheel", event => {
     gestureDirection = 0;
     gestureDelta = 0;
   }, 420);
-}, { passive: false });
+}, { capture: true, passive: false });
 
 addEventListener("scrollend", () => {
   const nearestIndex = stops.indexOf(nearestStop(progressFromScroll()));
