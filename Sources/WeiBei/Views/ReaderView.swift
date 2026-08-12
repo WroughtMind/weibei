@@ -628,6 +628,7 @@ struct ReaderView: View {
                     .background(WeiBeiTheme.cinnabarSoft.opacity(0.55), in: Capsule())
             }
             .menuStyle(.borderlessButton)
+            .fixedSize(horizontal: true, vertical: false)
             .help(store.ui("打开已问选区列表", "Open asked-selection list"))
             .accessibilityLabel(Text(store.ui("已问选区", "Asked selections")))
         }
