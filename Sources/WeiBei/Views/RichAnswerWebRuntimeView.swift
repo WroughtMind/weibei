@@ -183,6 +183,7 @@ struct RichAnswerWebRuntimeView: View {
 final class ConversationWebClippingView: NSView {
     let webView: WKWebView
     var onViewportLayout: ((CGSize) -> Void)?
+    private var scrollWheelMonitor: Any?
 
     init(webView: WKWebView) {
         self.webView = webView
@@ -200,6 +201,10 @@ final class ConversationWebClippingView: NSView {
         nil
     }
 
+    deinit {
+        removeScrollWheelMonitor()
+    }
+
     override func viewDidMoveToSuperview() {
         super.viewDidMoveToSuperview()
         webView.isHidden = false
@@ -211,6 +216,7 @@ final class ConversationWebClippingView: NSView {
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
+        updateScrollWheelMonitor()
         webView.isHidden = false
         enforceScrollClipping()
         DispatchQueue.main.async { [weak self] in
@@ -245,6 +251,31 @@ final class ConversationWebClippingView: NSView {
             return nil
         }
         return super.hitTest(point)
+    }
+
+    private func updateScrollWheelMonitor() {
+        guard window != nil else {
+            removeScrollWheelMonitor()
+            return
+        }
+        guard scrollWheelMonitor == nil else { return }
+        scrollWheelMonitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
+            guard let self,
+                  event.window === window,
+                  abs(event.scrollingDeltaY) >= abs(event.scrollingDeltaX),
+                  bounds.contains(convert(event.locationInWindow, from: nil)),
+                  let outer = nearestConversationScrollView() else {
+                return event
+            }
+            outer.scrollWheel(with: event)
+            return nil
+        }
+    }
+
+    private func removeScrollWheelMonitor() {
+        guard let scrollWheelMonitor else { return }
+        NSEvent.removeMonitor(scrollWheelMonitor)
+        self.scrollWheelMonitor = nil
     }
 
     private func nearestConversationScrollView() -> NSScrollView? {

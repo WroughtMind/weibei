@@ -30,6 +30,40 @@ final class AgentVisualizationSizingTests: XCTestCase {
     }
 
     @MainActor
+    func testGenUIWheelInsideWebContentReachesConversationScroller() throws {
+        let conversationScroller = ConversationScrollProbe()
+        let documentView = NSView(frame: NSRect(x: 0, y: 0, width: 640, height: 1_200))
+        conversationScroller.documentView = documentView
+
+        let container = ConversationWebClippingView(webView: WKWebView())
+        container.frame = NSRect(x: 0, y: 0, width: 640, height: 600)
+        documentView.addSubview(container)
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 640, height: 600),
+            styleMask: .borderless,
+            backing: .buffered,
+            defer: false
+        )
+        window.contentView = conversationScroller
+
+        let cgEvent = try XCTUnwrap(CGEvent(
+            scrollWheelEvent2Source: nil,
+            units: .pixel,
+            wheelCount: 1,
+            wheel1: 24,
+            wheel2: 0,
+            wheel3: 0
+        ))
+        cgEvent.location = CGPoint(x: 320, y: 300)
+        let event = try XCTUnwrap(NSEvent(cgEvent: cgEvent))
+
+        window.sendEvent(event)
+
+        XCTAssertEqual(conversationScroller.receivedWheelEventCount, 1)
+        withExtendedLifetime(window) {}
+    }
+
+    @MainActor
     func testGenUIHeightShrinksWhenACompressedPaneReopens() async throws {
         let messages = WKUserContentController()
         let heightProbe = GenUIHeightProbe()
