@@ -64,7 +64,7 @@ private struct AgentVisualizationWebView: NSViewRepresentable {
         Coordinator(parent: self)
     }
 
-    func makeNSView(context: Context) -> WKWebView {
+    func makeNSView(context: Context) -> ConversationWebClippingView {
         let controller = WKUserContentController()
         controller.add(context.coordinator, name: Coordinator.handlerName)
 
@@ -86,18 +86,19 @@ private struct AgentVisualizationWebView: NSViewRepresentable {
             withExtension: "html"
         ) else {
             onFailure()
-            return view
+            return ConversationWebClippingView(webView: view)
         }
         view.loadFileURL(entry, allowingReadAccessTo: entry.deletingLastPathComponent())
-        return view
+        return ConversationWebClippingView(webView: view)
     }
 
-    func updateNSView(_ view: WKWebView, context: Context) {
+    func updateNSView(_ container: ConversationWebClippingView, context: Context) {
         context.coordinator.update(parent: self)
         context.coordinator.renderIfReady()
     }
 
-    static func dismantleNSView(_ view: WKWebView, coordinator: Coordinator) {
+    static func dismantleNSView(_ container: ConversationWebClippingView, coordinator: Coordinator) {
+        let view = container.webView
         view.stopLoading()
         view.loadHTMLString("", baseURL: nil)
         view.configuration.userContentController.removeScriptMessageHandler(

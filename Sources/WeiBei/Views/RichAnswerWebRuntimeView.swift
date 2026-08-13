@@ -180,7 +180,7 @@ struct RichAnswerWebRuntimeView: View {
     }
 }
 
-private final class RichAnswerWebClippingView: NSView {
+final class ConversationWebClippingView: NSView {
     let webView: WKWebView
     var onViewportLayout: ((CGSize) -> Void)?
 
@@ -228,7 +228,7 @@ private final class RichAnswerWebClippingView: NSView {
         webView.isHidden = false
     }
 
-    /// Let the conversation ScrollView own vertical wheel — rich-answer UI is not a nested scroller.
+    /// Let the conversation ScrollView own vertical wheel — embedded web UI is not a nested scroller.
     override func scrollWheel(with event: NSEvent) {
         if abs(event.scrollingDeltaY) >= abs(event.scrollingDeltaX),
            let outer = nearestConversationScrollView() {
@@ -308,7 +308,7 @@ private struct RichAnswerWebViewRepresentable: NSViewRepresentable {
         )
     }
 
-    func makeNSView(context: Context) -> RichAnswerWebClippingView {
+    func makeNSView(context: Context) -> ConversationWebClippingView {
         let controller = WKUserContentController()
         controller.add(context.coordinator, name: Coordinator.messageHandlerName)
         controller.addUserScript(
@@ -335,7 +335,7 @@ private struct RichAnswerWebViewRepresentable: NSViewRepresentable {
         webView.layer?.masksToBounds = true
         webView.allowsLinkPreview = false
         context.coordinator.webView = webView
-        let clippingView = RichAnswerWebClippingView(webView: webView)
+        let clippingView = ConversationWebClippingView(webView: webView)
         context.coordinator.clippingView = clippingView
         clippingView.onViewportLayout = { [weak coordinator = context.coordinator] size in
             coordinator?.viewportDidLayout(size)
@@ -361,7 +361,7 @@ private struct RichAnswerWebViewRepresentable: NSViewRepresentable {
         return clippingView
     }
 
-    func updateNSView(_ container: RichAnswerWebClippingView, context: Context) {
+    func updateNSView(_ container: ConversationWebClippingView, context: Context) {
         context.coordinator.update(
             entries: entries,
             evidenceByID: evidenceByID,
@@ -376,7 +376,7 @@ private struct RichAnswerWebViewRepresentable: NSViewRepresentable {
         context.coordinator.sendEntriesIfReady()
     }
 
-    static func dismantleNSView(_ container: RichAnswerWebClippingView, coordinator: Coordinator) {
+    static func dismantleNSView(_ container: ConversationWebClippingView, coordinator: Coordinator) {
         let webView = container.webView
         container.onViewportLayout = nil
         coordinator.stop()
@@ -410,7 +410,7 @@ private struct RichAnswerWebViewRepresentable: NSViewRepresentable {
         static let messageHandlerName = "weibeiRichAnswer"
 
         weak var webView: WKWebView?
-        weak var clippingView: RichAnswerWebClippingView?
+        weak var clippingView: ConversationWebClippingView?
         private var entries: [RichAnswerWebRuntimeEntry]
         private var evidenceByID: [String: RichAnswerEvidence]
         private var heightLimit: CGFloat

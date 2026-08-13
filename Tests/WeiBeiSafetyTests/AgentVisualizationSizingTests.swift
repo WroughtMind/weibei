@@ -1,8 +1,34 @@
+import AppKit
 import WebKit
 import XCTest
 @testable import WeiBei
 
 final class AgentVisualizationSizingTests: XCTestCase {
+    @MainActor
+    func testGenUIVerticalWheelReachesConversationScroller() throws {
+        let conversationScroller = ConversationScrollProbe()
+        let documentView = NSView(frame: NSRect(x: 0, y: 0, width: 640, height: 1_200))
+        conversationScroller.documentView = documentView
+
+        let container = ConversationWebClippingView(webView: WKWebView())
+        container.frame = NSRect(x: 0, y: 0, width: 640, height: 600)
+        documentView.addSubview(container)
+
+        let cgEvent = try XCTUnwrap(CGEvent(
+            scrollWheelEvent2Source: nil,
+            units: .pixel,
+            wheelCount: 1,
+            wheel1: 24,
+            wheel2: 0,
+            wheel3: 0
+        ))
+        let event = try XCTUnwrap(NSEvent(cgEvent: cgEvent))
+
+        container.scrollWheel(with: event)
+
+        XCTAssertEqual(conversationScroller.receivedWheelEventCount, 1)
+    }
+
     @MainActor
     func testGenUIHeightShrinksWhenACompressedPaneReopens() async throws {
         let messages = WKUserContentController()
@@ -75,6 +101,14 @@ final class AgentVisualizationSizingTests: XCTestCase {
             try await Task.sleep(nanoseconds: 20_000_000)
         }
         XCTFail("GenUI did not report a height in the expected range: \(probe.heights)")
+    }
+}
+
+private final class ConversationScrollProbe: NSScrollView {
+    private(set) var receivedWheelEventCount = 0
+
+    override func scrollWheel(with event: NSEvent) {
+        receivedWheelEventCount += 1
     }
 }
 
