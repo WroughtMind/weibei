@@ -9651,7 +9651,7 @@ final class WorkspaceStore: ObservableObject {
         return notePersisted && flushPendingWorkspaceSave()
     }
 
-    private func syncActiveStudySession(titleSeed: String? = nil) {
+    func syncActiveStudySession(titleSeed: String? = nil) {
         guard let activeStudySessionID,
               let index = studySessions.firstIndex(where: { $0.id == activeStudySessionID }) else { return }
         studySessions[index].messages = messages
@@ -9672,6 +9672,43 @@ final class WorkspaceStore: ObservableObject {
             .split(whereSeparator: { $0.isWhitespace })
             .joined(separator: " ")
         return title.isEmpty ? "Study Session" : String(title.prefix(36))
+    }
+
+    static func semanticSessionTitle(
+        from suggestion: String?,
+        replacing currentTitle: String,
+        messages: [AgentMessage]
+    ) -> String? {
+        guard let firstQuestion = messages.first(where: { $0.role == .user }),
+              currentTitle == sessionTitle(from: firstQuestion.text),
+              let suggestion,
+              !suggestion.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return nil
+        }
+        let title = sessionTitle(from: suggestion)
+        let genericTitles = ["WeiBei", "Study Session", "New Chat", "New Conversation", "新对话", "新会话"]
+        guard title != currentTitle,
+              !genericTitles.contains(where: { $0.caseInsensitiveCompare(title) == .orderedSame }) else { return nil }
+        return title
+    }
+
+    @discardableResult
+    func applySemanticSessionTitle(_ suggestion: String?, to sessionID: UUID) -> Bool {
+        guard let index = studySessions.firstIndex(where: { $0.id == sessionID }),
+              let title = Self.semanticSessionTitle(
+                  from: suggestion,
+                  replacing: studySessions[index].title,
+                  messages: studySessions[index].messages
+              ) else { return false }
+        studySessions[index].title = title
+        studySessions[index].updatedAt = Date()
+        return true
+    }
+
+    private func applySemanticSessionTitleAndSave(_ suggestion: String, to sessionID: UUID) async {
+        guard applySemanticSessionTitle(suggestion, to: sessionID) else { return }
+        save()
+        _ = await flushPendingWorkspaceSaveAsync()
     }
 
     private static func interruptedAgentReplyText(streamed: String, persisted: String) -> String {
@@ -17285,7 +17322,10 @@ final class WorkspaceStore: ObservableObject {
             to: request,
             sessionID: target.sessionID,
             workingDirectory: target.workingDirectory,
-            hostToolHandler: hostToolHandler
+            hostToolHandler: hostToolHandler,
+            sessionTitleHandler: { [weak self] title in
+                await self?.applySemanticSessionTitleAndSave(title, to: target.sessionID)
+            }
         ) { [weak self] progress in
             await self?.applyAgentProgress(
                 progress,

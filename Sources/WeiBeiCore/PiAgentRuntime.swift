@@ -367,6 +367,11 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         var messageCount: Int
     }
 
+    private struct PendingSessionTitleDelivery {
+        var sessionID: UUID
+        var handler: StudyAgentSessionTitleHandler
+    }
+
     private struct PiSessionStateFailure: Error {
         var message: String
     }
@@ -428,6 +433,7 @@ public actor PiAgentRuntime: StudyAgentRuntime {
     private var processGeneration: UInt64 = 0
     private var pendingCommands: [String: PendingCommand] = [:]
     private var pendingManagement: PendingManagement?
+    private var pendingSessionTitleDelivery: PendingSessionTitleDelivery?
     private var activeRun: ActiveRun?
     private var hostToolTasks: [String: Task<Void, Never>] = [:]
     private var startingRunID: UUID?
@@ -588,6 +594,7 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         sessionID: UUID,
         workingDirectory: URL,
         hostToolHandler: StudyAgentHostToolHandler? = nil,
+        sessionTitleHandler: StudyAgentSessionTitleHandler? = nil,
         progress: StudyAgentProgressHandler?
     ) async throws -> StudyAgentReply {
         if let provider = providerConfiguration.provider,
@@ -640,6 +647,9 @@ public actor PiAgentRuntime: StudyAgentRuntime {
             throw PiAgentRuntimeError.protocolFailure(failure.message)
         }
         try requireStartingRun(request.id)
+        pendingSessionTitleDelivery = sessionTitleHandler.map {
+            PendingSessionTitleDelivery(sessionID: sessionID, handler: $0)
+        }
 
         let context = StudyAgentContextEnvelope(request: request)
         try writeContext(context)
@@ -717,13 +727,7 @@ public actor PiAgentRuntime: StudyAgentRuntime {
             progressDelivery?.cancel()
         }
         try Task.checkCancellation()
-        // PI emits agent_end before every post-turn hook is guaranteed to be flushed.
-        // An ordered state read gives those hooks a chance to finish before the
-        // process boundary prevents late events from entering the next turn.
-        _ = try? await readSessionState(binding: binding)
-        let completedProcess = process
-        shutdownProcess(reason: PiAgentRuntimeError.cancelled)
-        await forceStopIfNeeded(completedProcess, graceNanoseconds: 750_000_000)
+        scheduleIdleShutdown(nanoseconds: 6_000_000_000)
         return reply
     }
 
@@ -1184,7 +1188,6 @@ public actor PiAgentRuntime: StudyAgentRuntime {
             "--no-context-files",
             "--no-approve",
             "--system-prompt", resources.systemPrompt,
-            "--name", "WeiBei",
         ]
         if let provider = providerConfiguration.provider, !provider.isEmpty {
             arguments.append(contentsOf: ["--provider", provider])
@@ -2545,6 +2548,13 @@ public actor PiAgentRuntime: StudyAgentRuntime {
                 finishRun(id: run.id, with: .success(replyCandidate))
             }
 
+        case let .sessionNameChanged(rawName):
+            guard let delivery = pendingSessionTitleDelivery,
+                  delivery.sessionID == processBinding?.sessionID,
+                  let title = Self.normalizedSessionName(rawName) else { return }
+            pendingSessionTitleDelivery = nil
+            Task.detached(priority: .utility) { await delivery.handler(title) }
+
         case let .extensionError(message):
             let message = boundedDiagnostic(message)
             if let runID = activeRun?.id {
@@ -2651,11 +2661,13 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         }
     }
 
-    private func scheduleIdleShutdown() {
+    private func scheduleIdleShutdown(
+        nanoseconds: UInt64 = 300 * 1_000_000_000
+    ) {
         idleShutdownTask?.cancel()
         idleShutdownTask = Task { [weak self] in
             do {
-                try await Task.sleep(nanoseconds: 300 * 1_000_000_000)
+                try await Task.sleep(nanoseconds: nanoseconds)
             } catch {
                 return
             }
@@ -2664,7 +2676,10 @@ public actor PiAgentRuntime: StudyAgentRuntime {
     }
 
     private func shutdownIfIdle() {
-        guard activeRun == nil else { return }
+        guard activeRun == nil,
+              startingRunID == nil,
+              pendingManagement == nil,
+              pendingCommands.isEmpty else { return }
         shutdownProcess(reason: PiAgentRuntimeError.cancelled)
     }
 
@@ -2699,6 +2714,15 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         String(sanitizedDiagnostic(value).prefix(limit))
     }
 
+    private static func normalizedSessionName(_ rawName: String?) -> String? {
+        guard let name = rawName?
+            .split(whereSeparator: { $0.isWhitespace })
+            .joined(separator: " "),
+            !name.isEmpty,
+            name != "WeiBei" else { return nil }
+        return String(name.prefix(36))
+    }
+
     private func shutdownProcess(reason: Error) {
         trace("shutdown: \(reason.localizedDescription)")
         processGeneration &+= 1
@@ -2713,6 +2737,7 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         let runningProcess = process
         process = nil
         processBinding = nil
+        pendingSessionTitleDelivery = nil
         try? inputHandle?.close()
         inputHandle = nil
         if let processToStop = runningProcess, processToStop.isRunning {

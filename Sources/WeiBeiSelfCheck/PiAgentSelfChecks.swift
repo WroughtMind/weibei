@@ -76,6 +76,14 @@ private func checkJSONLFraming() throws {
 }
 
 private func checkRPCDecoding() throws {
+    let named = try PiRPCMessageDecoder.decode(
+        Data(#"{"type":"session_info_changed","name":"利率为何不同"}"#.utf8)
+    )
+    try piRequire(
+        named == .sessionNameChanged("利率为何不同"),
+        "PI session name events preserve semantic titles"
+    )
+
     let state = try PiRPCMessageDecoder.decode(Data(#"{"id":"state-1","type":"response","command":"get_state","success":true,"data":{"isStreaming":false}}"#.utf8))
     guard case let .response(response) = state else {
         throw PiAgentSelfCheckError.failed("PI get_state response did not decode")

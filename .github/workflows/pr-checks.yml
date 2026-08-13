@@ -79,10 +79,17 @@ jobs:
         if: (github.event_name == 'pull_request' && steps.scope.outputs.pi == 'true') || (github.event_name == 'workflow_dispatch' && inputs.full_suite)
         run: WEIBEI_PI_TERMINAL_SELF_CHECK_ONLY=1 swift run WeiBeiSelfCheck
 
+      - name: 安装 Node 依赖
+        if: (github.event_name == 'pull_request' && (steps.scope.outputs.pi == 'true' || steps.scope.outputs.editor == 'true')) || (github.event_name == 'workflow_dispatch' && inputs.full_suite)
+        run: npm ci
+
+      - name: 运行 Agent 扩展自检
+        if: (github.event_name == 'pull_request' && steps.scope.outputs.pi == 'true') || (github.event_name == 'workflow_dispatch' && inputs.full_suite)
+        run: node script/check-agent-project-tools.mjs
+
       - name: 运行编辑器自检
         if: (github.event_name == 'pull_request' && steps.scope.outputs.editor == 'true') || (github.event_name == 'workflow_dispatch' && inputs.full_suite)
         run: |
-          npm ci
           npm run build:editor
           git diff --exit-code -- Sources/WeiBei/Resources/Editor
           swift run WeiBeiWebEditorCheck

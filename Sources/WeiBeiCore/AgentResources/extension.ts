@@ -8,6 +8,8 @@ import { fileURLToPath } from "node:url";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "@earendil-works/pi-ai";
 
+import { generateSessionTitle } from "./session-title.ts";
+
 const CONTEXT_FILE_ENV = "WEIBEI_AGENT_CONTEXT_FILE";
 const TOOL_RESPONSE_DIR_ENV = "WEIBEI_AGENT_TOOL_RESPONSE_DIR";
 const COURSE_MAP_TOOL = "weibei_course_map";
@@ -1728,11 +1730,11 @@ function learningLocationJumpReference(snapshot: ContextSnapshotV2): string | un
   return courseJumpReference(snapshot.course, item);
 }
 
-
 export default function weibeiExtension(pi: ExtensionAPI) {
   let lastReadMemoryRevision: number | undefined;
   let courseProfileUpdated = false;
   let interactiveVisualizationsEnabled = true;
+  let currentQuestion = "";
   const searchedCourseItemIDs = new Set<string>();
   const hostCourseItemIDs = new Set<string>();
   const readCourseSourceRevisions = new Map<string, string>();
@@ -2605,6 +2607,7 @@ export default function weibeiExtension(pi: ExtensionAPI) {
     readCourseSourceRevisions.clear();
 
     const snapshot = await readCurrentSnapshot();
+    currentQuestion = event.prompt;
     interactiveVisualizationsEnabled = snapshot.interactiveVisualizationsEnabled;
     const selectionLabel = snapshot.selection?.text.trim()
       ? `[选区：${snapshot.selection.title}]`
@@ -2633,6 +2636,35 @@ export default function weibeiExtension(pi: ExtensionAPI) {
     ].join("\n");
 
     return { systemPrompt: `${event.systemPrompt}\n\n${turnContract}` };
+  });
+
+  pi.on("agent_end", (event, context) => {
+    const question = currentQuestion;
+    void (async () => {
+      try {
+        if (pi.getSessionName() || !context.model) return;
+        const completedAssistantCount = context.sessionManager.getBranch().filter(
+          (entry) => entry.type === "message"
+            && entry.message.role === "assistant"
+            && (entry.message.stopReason === "stop" || entry.message.stopReason === "length"),
+        ).length;
+        if (completedAssistantCount !== 1) return;
+
+        const assistant = [...event.messages].reverse().find(
+          (message) => message.role === "assistant",
+        );
+        if (!assistant || assistant.stopReason === "error" || assistant.stopReason === "aborted") {
+          return;
+        }
+        const answer = assistant.content
+          .flatMap((item) => item.type === "text" ? [item.text] : [])
+          .join("\n");
+        const title = await generateSessionTitle(context, question, answer);
+        if (title) pi.setSessionName(title);
+      } catch {
+        // Naming is best-effort; it must never turn a valid answer into an error.
+      }
+    })();
   });
 
   pi.on("tool_call", (event) => {

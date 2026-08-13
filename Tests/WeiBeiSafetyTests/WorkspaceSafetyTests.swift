@@ -51,6 +51,63 @@ final class WorkspaceSafetyTests: XCTestCase {
     }
 
     @MainActor
+    func testSemanticSessionTitleOnlyReplacesFirstTurnFallback() {
+        let firstQuestion = AgentMessage(
+            role: .user,
+            text: "请帮我解释利率为什么变化",
+            source: nil
+        )
+        let secondQuestion = AgentMessage(role: .user, text: "再举个例子", source: nil)
+
+        XCTAssertEqual(
+            WorkspaceStore.semanticSessionTitle(
+                from: "利率变化机制",
+                replacing: firstQuestion.text,
+                messages: [firstQuestion]
+            ),
+            "利率变化机制"
+        )
+        XCTAssertNil(
+            WorkspaceStore.semanticSessionTitle(
+                from: "利率变化机制",
+                replacing: "用户手动命名",
+                messages: [firstQuestion]
+            )
+        )
+        XCTAssertEqual(
+            WorkspaceStore.semanticSessionTitle(
+                from: "利率变化机制",
+                replacing: firstQuestion.text,
+                messages: [firstQuestion, secondQuestion]
+            ),
+            "利率变化机制"
+        )
+        XCTAssertNil(
+            WorkspaceStore.semanticSessionTitle(
+                from: "WeiBei",
+                replacing: firstQuestion.text,
+                messages: [firstQuestion]
+            )
+        )
+
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("WeiBeiSessionTitle-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = WorkspaceStore(workspaceDirectory: root, startsAtBlankEntries: true)
+        let session = store.createStudySession(courseID: nil)!
+        store.messages = [firstQuestion]
+        store.syncActiveStudySession(titleSeed: firstQuestion.text)
+        store.applySemanticSessionTitle("利率变化机制", to: session.id)
+        XCTAssertTrue(store.flushPendingWorkspaceSave())
+
+        let reopened = WorkspaceStore(workspaceDirectory: root)
+        XCTAssertEqual(
+            reopened.studySessions.first(where: { $0.id == session.id })?.title,
+            "利率变化机制"
+        )
+    }
+
+    @MainActor
     func testPaneAndInteractionStateDoNotInvalidateWorkspaceStore() {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("WeiBeiPaneState-\(UUID().uuidString)", isDirectory: true)

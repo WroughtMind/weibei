@@ -27,6 +27,28 @@ function requireValue(value, message) {
   return value;
 }
 
+function hasUnpairedSurrogate(value) {
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    if (code >= 0xd800 && code <= 0xdbff) {
+      const next = value.charCodeAt(index + 1);
+      if (next < 0xdc00 || next > 0xdfff) return true;
+      index += 1;
+    } else if (code >= 0xdc00 && code <= 0xdfff) {
+      return true;
+    }
+  }
+  return false;
+}
+
+async function waitFor(predicate) {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    if (predicate()) return true;
+    await new Promise((resolve) => setTimeout(resolve, 1));
+  }
+  return predicate();
+}
+
 async function identity(path) {
   const stats = await lstat(path, { bigint: true });
   return {
@@ -50,15 +72,22 @@ try {
     plugins: [{
       name: "pi-ai-self-check-stub",
       setup(builder) {
-        builder.onResolve({ filter: /^@earendil-works\/pi-ai$/ }, () => ({
-          path: "pi-ai",
+        builder.onResolve({ filter: /^@earendil-works\/pi-ai(?:\/compat)?$/ }, (args) => ({
+          path: args.path.endsWith("/compat") ? "pi-ai-compat" : "pi-ai",
           namespace: "self-check",
         }));
-        builder.onLoad({ filter: /.*/, namespace: "self-check" }, () => ({
-          loader: "js",
-          contents:
-            "export const Type = new Proxy({}, { get: () => (...args) => ({ args }) });",
-        }));
+        builder.onLoad({ filter: /.*/, namespace: "self-check" }, (args) => {
+          const contents = args.path === "pi-ai-compat"
+            ? `export async function completeSimple(...args) {
+                globalThis.__weibeiTitleCalls = (globalThis.__weibeiTitleCalls ?? 0) + 1;
+                globalThis.__weibeiTitleInputs = args;
+                if (globalThis.__weibeiTitleError) throw new Error("title failed");
+                return globalThis.__weibeiTitleResult;
+              }`
+            : `export const Type = new Proxy({}, { get: () => (...args) => ({ args }) });
+               export const uuidv7 = () => "title-session-id";`;
+          return { loader: "js", contents };
+        });
       },
     }],
   });
@@ -163,6 +192,14 @@ try {
     project: { ...snapshot.project, items: [item] },
     learning: {
       memoryRevision: 2,
+      session: {
+        id: "chat-a",
+        title: "新学习会话",
+        summary: "",
+        phase: "orient",
+        focusItemIDs: [],
+        turnCount: 0,
+      },
       memories: [
         {
           id: "memory-progress",
@@ -207,6 +244,7 @@ try {
   process.env.WEIBEI_AGENT_CONTEXT_FILE = contextFile;
   const eventHandlers = new Map();
   const registeredTools = new Map();
+  let sessionName;
   extension.default({
     registerTool(tool) {
       registeredTools.set(tool.name, tool);
@@ -214,13 +252,19 @@ try {
     on(name, handler) {
       eventHandlers.set(name, handler);
     },
+    getSessionName() {
+      return sessionName;
+    },
+    setSessionName(value) {
+      sessionName = value;
+    },
   });
   const beforeAgentStart = requireValue(
     eventHandlers.get("before_agent_start"),
     "真实扩展没有注册 before_agent_start",
   );
   const beforeResult = await beforeAgentStart(
-    { systemPrompt: "base" },
+    { prompt: "解释当前材料", systemPrompt: "base" },
     {
       model: {
         provider: "openai-codex",
@@ -238,6 +282,185 @@ try {
       beforeResult.systemPrompt.includes("weibei_course_search") &&
       beforeResult.systemPrompt.includes("weibei_course_map"),
     "本轮现场仍被写成持久消息，或本轮规则没有交给 Pi",
+  );
+  hookEnvelope.question = "第二问不能覆盖标题输入";
+  await writeFile(contextFile, JSON.stringify(hookEnvelope));
+  const agentEnd = requireValue(
+    eventHandlers.get("agent_end"),
+    "真实扩展没有注册首轮会话命名钩子",
+  );
+  globalThis.__weibeiTitleCalls = 0;
+  globalThis.__weibeiTitleResult = {
+    stopReason: "stop",
+    content: [{ type: "text", text: "标题： 利率为何不同。" }],
+  };
+  let titleBranch = [
+    { type: "message", message: { role: "user" } },
+    { type: "message", message: { role: "assistant", stopReason: "stop" } },
+  ];
+  const titleContext = {
+    model: {
+      provider: "openai-codex",
+      api: "openai-codex-responses",
+      id: "gpt-5.3-codex-spark",
+    },
+    sessionManager: {
+      getBranch: () => titleBranch,
+    },
+    modelRegistry: {
+      getApiKeyAndHeaders: async () => ({ ok: true, apiKey: "self-check" }),
+    },
+  };
+  const titleHookResult = agentEnd(
+    {
+      messages: [{
+        role: "assistant",
+        stopReason: "stop",
+        content: [{ type: "text", text: "利率会随资金供需变化。" }],
+      }],
+    },
+    titleContext,
+  );
+  requireValue(
+    titleHookResult === undefined,
+    "会话标题网络请求仍在阻塞主回答结束事件",
+  );
+  await waitFor(() => sessionName === "利率为何不同");
+  const titleInputs = JSON.stringify(globalThis.__weibeiTitleInputs);
+  requireValue(
+    titleInputs.includes("解释当前材料") && !titleInputs.includes("第二问不能覆盖标题输入"),
+    "迟到标题读取了下一轮已经覆盖的上下文",
+  );
+  agentEnd(
+    {
+      messages: [{
+        role: "assistant",
+        stopReason: "stop",
+        content: [{ type: "text", text: "不应重复命名。" }],
+      }],
+    },
+    titleContext,
+  );
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  requireValue(
+    sessionName === "利率为何不同" && globalThis.__weibeiTitleCalls === 1,
+    "首轮会话标题没有清洗落库，或已命名会话发生了重复请求",
+  );
+  sessionName = undefined;
+  globalThis.__weibeiTitleError = true;
+  agentEnd(
+    {
+      messages: [{
+        role: "assistant",
+        stopReason: "stop",
+        content: [{ type: "text", text: "正文必须保持成功。" }],
+      }],
+    },
+    titleContext,
+  );
+  await waitFor(() => globalThis.__weibeiTitleCalls === 2);
+  requireValue(
+    sessionName === undefined && globalThis.__weibeiTitleCalls === 2,
+    "标题请求失败影响了正文流程或写入了无效标题",
+  );
+  globalThis.__weibeiTitleError = false;
+  titleBranch = [
+    { type: "message", message: { role: "user" } },
+    { type: "message", message: { role: "assistant", stopReason: "error" } },
+    { type: "message", message: { role: "user" } },
+    { type: "message", message: { role: "assistant", stopReason: "stop" } },
+  ];
+  agentEnd(
+    {
+      messages: [{
+        role: "assistant",
+        stopReason: "stop",
+        content: [{ type: "text", text: "重试后正文成功。" }],
+      }],
+    },
+    titleContext,
+  );
+  await waitFor(() => sessionName === "利率为何不同");
+  requireValue(
+    sessionName === "利率为何不同" && globalThis.__weibeiTitleCalls === 3,
+    "首轮失败后的首次成功回答没有生成会话标题",
+  );
+  sessionName = undefined;
+  titleBranch = [
+    ...titleBranch,
+    { type: "message", message: { role: "user" } },
+    { type: "message", message: { role: "assistant", stopReason: "stop" } },
+  ];
+  agentEnd(
+    {
+      messages: [{
+        role: "assistant",
+        stopReason: "stop",
+        content: [{ type: "text", text: "旧会话不能回填标题。" }],
+      }],
+    },
+    titleContext,
+  );
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  requireValue(
+    sessionName === undefined && globalThis.__weibeiTitleCalls === 3,
+    "已有成功回答的旧会话被自动改名",
+  );
+  const excerptMarker = "\n…（中间内容已省略）…\n";
+  const retainedExcerptLength = 4_000 - excerptMarker.length;
+  const headExcerptLength = Math.floor(retainedExcerptLength / 2);
+  const tailExcerptLength = retainedExcerptLength - headExcerptLength;
+  const questionStart = "问题开头标记";
+  const questionEnd = "最终诉求：比较两个方案";
+  const longQuestion = `${questionStart}${"甲".repeat(headExcerptLength - questionStart.length - 1)}😀问题中间标记${"乙".repeat(3_000)}${questionEnd}`;
+  const answerStart = "回答开头标记";
+  const answerEnd = "回答结尾标记";
+  const answerSuffix = `${"丁".repeat(tailExcerptLength - answerEnd.length - 1)}${answerEnd}`;
+  const longAnswer = `${answerStart}${"丙".repeat(headExcerptLength - answerStart.length)}回答中间标记${"戊".repeat(3_000)}😀${answerSuffix}`;
+  await beforeAgentStart(
+    { prompt: longQuestion, systemPrompt: "base" },
+    titleContext,
+  );
+  sessionName = undefined;
+  titleBranch = [
+    { type: "message", message: { role: "user" } },
+    { type: "message", message: { role: "assistant", stopReason: "stop" } },
+  ];
+  globalThis.__weibeiTitleResult = {
+    stopReason: "stop",
+    content: [{ type: "text", text: "长内容方案比较" }],
+  };
+  agentEnd(
+    {
+      messages: [{
+        role: "assistant",
+        stopReason: "stop",
+        content: [{ type: "text", text: longAnswer }],
+      }],
+    },
+    titleContext,
+  );
+  await waitFor(() => sessionName === "长内容方案比较");
+  const longTitlePrompt = globalThis.__weibeiTitleInputs[1].messages[0].content;
+  const longTitleParts = requireValue(
+    /^用户问题：\n([\s\S]*)\n\n首轮回答：\n([\s\S]*)$/u.exec(longTitlePrompt),
+    "超长会话标题请求结构无效",
+  );
+  const [, questionExcerpt, answerExcerpt] = longTitleParts;
+  requireValue(
+    questionExcerpt.length <= 4_000 &&
+      answerExcerpt.length <= 4_000 &&
+      questionExcerpt.includes(questionStart) &&
+      questionExcerpt.includes(questionEnd) &&
+      !questionExcerpt.includes("问题中间标记") &&
+      answerExcerpt.includes(answerStart) &&
+      answerExcerpt.includes(answerEnd) &&
+      !answerExcerpt.includes("回答中间标记") &&
+      questionExcerpt.includes(excerptMarker) &&
+      answerExcerpt.includes(excerptMarker) &&
+      !hasUnpairedSurrogate(questionExcerpt) &&
+      !hasUnpairedSurrogate(answerExcerpt),
+    "超长会话标题没有在原预算内安全保留问题和回答的首尾",
   );
   requireValue(
     !registeredTools.has("weibei_context"),

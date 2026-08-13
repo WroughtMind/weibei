@@ -776,6 +776,7 @@ public enum StudyAgentProgress: Equatable, Sendable {
 }
 
 public typealias StudyAgentProgressHandler = @Sendable (StudyAgentProgress) async -> Void
+public typealias StudyAgentSessionTitleHandler = @Sendable (String) async -> Void
 
 /// User-facing classification for Pi request failures.
 public enum AgentFailureKind: String, Codable, Equatable, Sendable {
