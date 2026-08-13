@@ -2,6 +2,19 @@ import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { uuidv7 } from "@earendil-works/pi-ai";
 import { completeSimple } from "@earendil-works/pi-ai/compat";
 
+function titleExcerpt(value: string): string {
+  const limit = 4_000;
+  if (value.length <= limit) return value;
+
+  const marker = "\n…（中间内容已省略）…\n";
+  const retained = limit - marker.length;
+  let head = value.slice(0, Math.floor(retained / 2));
+  if (/[\uD800-\uDBFF]$/u.test(head)) head = head.slice(0, -1);
+  let tail = value.slice(-(retained - head.length));
+  if (/^[\uDC00-\uDFFF]/u.test(tail)) tail = tail.slice(1);
+  return `${head}${marker}${tail}`;
+}
+
 function normalizedTitle(value: string): string | undefined {
   const firstLine = value.split(/\r?\n/).find((line) => line.trim()) ?? "";
   const title = Array.from(
@@ -40,7 +53,7 @@ export async function generateSessionTitle(
         ].join("\n"),
         messages: [{
           role: "user",
-          content: `用户问题：\n${question.slice(0, 4_000)}\n\n首轮回答：\n${answer.slice(0, 4_000)}`,
+          content: `用户问题：\n${titleExcerpt(question)}\n\n首轮回答：\n${titleExcerpt(answer)}`,
           timestamp: Date.now(),
         }],
       },

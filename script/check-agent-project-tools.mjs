@@ -27,6 +27,20 @@ function requireValue(value, message) {
   return value;
 }
 
+function hasUnpairedSurrogate(value) {
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    if (code >= 0xd800 && code <= 0xdbff) {
+      const next = value.charCodeAt(index + 1);
+      if (next < 0xdc00 || next > 0xdfff) return true;
+      index += 1;
+    } else if (code >= 0xdc00 && code <= 0xdfff) {
+      return true;
+    }
+  }
+  return false;
+}
+
 async function waitFor(predicate) {
   for (let attempt = 0; attempt < 100; attempt += 1) {
     if (predicate()) return true;
@@ -250,7 +264,7 @@ try {
     "真实扩展没有注册 before_agent_start",
   );
   const beforeResult = await beforeAgentStart(
-    { systemPrompt: "base" },
+    { prompt: "解释当前材料", systemPrompt: "base" },
     {
       model: {
         provider: "openai-codex",
@@ -391,6 +405,62 @@ try {
   requireValue(
     sessionName === undefined && globalThis.__weibeiTitleCalls === 3,
     "已有成功回答的旧会话被自动改名",
+  );
+  const excerptMarker = "\n…（中间内容已省略）…\n";
+  const retainedExcerptLength = 4_000 - excerptMarker.length;
+  const headExcerptLength = Math.floor(retainedExcerptLength / 2);
+  const tailExcerptLength = retainedExcerptLength - headExcerptLength;
+  const questionStart = "问题开头标记";
+  const questionEnd = "最终诉求：比较两个方案";
+  const longQuestion = `${questionStart}${"甲".repeat(headExcerptLength - questionStart.length - 1)}😀问题中间标记${"乙".repeat(3_000)}${questionEnd}`;
+  const answerStart = "回答开头标记";
+  const answerEnd = "回答结尾标记";
+  const answerSuffix = `${"丁".repeat(tailExcerptLength - answerEnd.length - 1)}${answerEnd}`;
+  const longAnswer = `${answerStart}${"丙".repeat(headExcerptLength - answerStart.length)}回答中间标记${"戊".repeat(3_000)}😀${answerSuffix}`;
+  await beforeAgentStart(
+    { prompt: longQuestion, systemPrompt: "base" },
+    titleContext,
+  );
+  sessionName = undefined;
+  titleBranch = [
+    { type: "message", message: { role: "user" } },
+    { type: "message", message: { role: "assistant", stopReason: "stop" } },
+  ];
+  globalThis.__weibeiTitleResult = {
+    stopReason: "stop",
+    content: [{ type: "text", text: "长内容方案比较" }],
+  };
+  agentEnd(
+    {
+      messages: [{
+        role: "assistant",
+        stopReason: "stop",
+        content: [{ type: "text", text: longAnswer }],
+      }],
+    },
+    titleContext,
+  );
+  await waitFor(() => sessionName === "长内容方案比较");
+  const longTitlePrompt = globalThis.__weibeiTitleInputs[1].messages[0].content;
+  const longTitleParts = requireValue(
+    /^用户问题：\n([\s\S]*)\n\n首轮回答：\n([\s\S]*)$/u.exec(longTitlePrompt),
+    "超长会话标题请求结构无效",
+  );
+  const [, questionExcerpt, answerExcerpt] = longTitleParts;
+  requireValue(
+    questionExcerpt.length <= 4_000 &&
+      answerExcerpt.length <= 4_000 &&
+      questionExcerpt.includes(questionStart) &&
+      questionExcerpt.includes(questionEnd) &&
+      !questionExcerpt.includes("问题中间标记") &&
+      answerExcerpt.includes(answerStart) &&
+      answerExcerpt.includes(answerEnd) &&
+      !answerExcerpt.includes("回答中间标记") &&
+      questionExcerpt.includes(excerptMarker) &&
+      answerExcerpt.includes(excerptMarker) &&
+      !hasUnpairedSurrogate(questionExcerpt) &&
+      !hasUnpairedSurrogate(answerExcerpt),
+    "超长会话标题没有在原预算内安全保留问题和回答的首尾",
   );
   requireValue(
     !registeredTools.has("weibei_context"),

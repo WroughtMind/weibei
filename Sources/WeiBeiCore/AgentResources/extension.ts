@@ -2607,7 +2607,7 @@ export default function weibeiExtension(pi: ExtensionAPI) {
     readCourseSourceRevisions.clear();
 
     const snapshot = await readCurrentSnapshot();
-    currentQuestion = snapshot.question;
+    currentQuestion = event.prompt;
     interactiveVisualizationsEnabled = snapshot.interactiveVisualizationsEnabled;
     const selectionLabel = snapshot.selection?.text.trim()
       ? `[选区：${snapshot.selection.title}]`
