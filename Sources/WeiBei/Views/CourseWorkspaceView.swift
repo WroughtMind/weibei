@@ -278,7 +278,9 @@ struct CourseWorkspaceView: View {
                     ?? store.ui("无法新建笔记。", "Could not create the note.")
                 return
             }
+            selectedMaterialID = nil
             selectedNoteID = noteID
+            relationLens = .notes
             page = .relations
             showsNewNotePrompt = false
         }
