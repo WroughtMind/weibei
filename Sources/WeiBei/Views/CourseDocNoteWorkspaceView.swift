@@ -563,13 +563,38 @@ struct CourseDocNoteWorkspaceView: View {
             .frame(maxWidth: 460)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .padding(32)
+        } else if explicitLinkCount == 0 {
+            VStack(spacing: 18) {
+                CourseEmptyState(
+                    title: store.ui(
+                        "还没有文档与笔记的明确关联",
+                        "No explicit doc–note links yet"
+                    ),
+                    detail: store.ui(
+                        "先回到列表，选择一份文档，再勾选相关笔记。关系图只展示真实保存的关联。",
+                        "Return to List, select a doc, and check its related notes. The map only shows saved links."
+                    ),
+                    systemImage: "point.3.connected.trianglepath.dotted"
+                )
+
+                Button(store.ui("返回列表建立关联", "Link in List")) {
+                    withAnimation(WeiBeiMotion.panel) {
+                        presentation = .list
+                    }
+                }
+                .buttonStyle(WeiBeiTextActionButtonStyle(active: true))
+            }
+            .frame(maxWidth: 460)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .padding(32)
         } else {
             CourseRelationPaperView(
                 lens: $lens,
                 search: search,
                 selectedNoteID: $selectedNoteID,
                 selectedMaterialID: $selectedMaterialID,
-                isCompact: isCompact
+                isCompact: isCompact,
+                allowsWorkspaceScopes: false
             )
         }
     }
