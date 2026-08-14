@@ -959,8 +959,10 @@ expect(
         && workspaceStoreSource.contains("setNoteCustomDisplayTitle")
         && workspaceStoreSource.contains("NoteTabDisplayTitle.resolve")
         && notesAgentViewSource.contains("HoverTitleRename")
-        && readerViewSource.contains("struct HoverTitleRename"),
-    "note floating tab title renames inline and persists the custom name on the note item"
+        && readerViewSource.contains("struct HoverTitleRename")
+        && readerViewSource.contains("renameField")
+        && readerViewSource.contains("titleRename?.isEditing == true ? nil : reorderRole"),
+    "note floating tab title renames inline, persists the custom name, and keeps the editing field out of ViewThatFits and pane-reorder drags"
 )
 expect(
     !readerViewSource.contains("actionsAlignedTrailing")

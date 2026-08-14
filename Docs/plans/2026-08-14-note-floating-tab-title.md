@@ -43,3 +43,9 @@
 - 草稿 MR：https://github.com/weibei-app/weibei/pull/210
 - 教训：`ImmersiveHoverTitleView` 是泛型 View，嵌套类型在外部引用必须带泛型参数，
   独立顶层结构（`HoverTitleRename`）更省事。
+- 验收回归修复（光标卡死在文本开头、无法输入）：编辑态 TextField 原先放在
+  `ViewThatFits` 候选里，测量反复重建 NSTextField，selection 每次被重置；
+  同时整条 tab 的 `PaneHeaderReorderModifier` 高优先级 DragGesture 会劫持
+  文本框内点选。修复：编辑态走独立固定宽度布局（`renameField`，不进
+  ViewThatFits），聚焦改在 `onAppear` 执行，编辑期间 reorderRole 置 nil 禁用
+  拖拽。草稿始终只写本地 `@State`，提交/失焦/取消才写回 store。

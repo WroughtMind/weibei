@@ -14,9 +14,7 @@ struct HoverTitleRename {
     let draft: Binding<String>
     let isEditing: Bool
     let hint: String
-    let begin: () -> Void
-    let commit: () -> Void
-    let cancel: () -> Void
+    let begin, commit, cancel: () -> Void
 }
 
 struct ImmersiveHoverTitleView<Actions: View>: View {
@@ -64,16 +62,25 @@ struct ImmersiveHoverTitleView<Actions: View>: View {
 
             if visible || isPinned || titleRename?.isEditing == true {
                 HStack(alignment: .center, spacing: 8) {
-                    ViewThatFits(in: .horizontal) {
+                    // 编辑态不走 ViewThatFits：测量候选会反复重建 NSTextField，
+                    // selection 被重置回文本开头，光标卡死、无法输入。
+                    if let titleRename, titleRename.isEditing {
                         HStack(alignment: .firstTextBaseline, spacing: 9) {
                             hoverMark
-                            titleView
+                            renameField(titleRename)
                         }
                         .fixedSize(horizontal: true, vertical: false)
-
-                        hoverMark
+                    } else {
+                        ViewThatFits(in: .horizontal) {
+                            HStack(alignment: .firstTextBaseline, spacing: 9) {
+                                hoverMark
+                                titleView
+                            }
+                            .fixedSize(horizontal: true, vertical: false)
+                            hoverMark
+                        }
+                        .frame(minWidth: 0, alignment: .leading)
                     }
-                    .frame(minWidth: 0, alignment: .leading)
                     actions()
                 }
                 .padding(.horizontal, 12)
@@ -90,22 +97,19 @@ struct ImmersiveHoverTitleView<Actions: View>: View {
                 .padding(.top, 7)
                 .contentShape(Rectangle())
                 .onHover(perform: updateVisibility)
-                .modifier(PaneHeaderReorderModifier(role: reorderRole))
+                // 编辑期间禁用整条拖拽重排，避免高优先级 DragGesture 劫持文本框内的点选。
+                .modifier(PaneHeaderReorderModifier(role: titleRename?.isEditing == true ? nil : reorderRole))
                 .transition(WeiBeiTransition.floating)
             }
         }
         .frame(maxWidth: .infinity, alignment: .top)
         .fixedSize(horizontal: false, vertical: true)
         .onChange(of: titleRename?.isEditing) { _, editing in
-            if editing == true {
-                titleFieldFocused = true
-            }
+            if editing == true { titleFieldFocused = true }
         }
         .onChange(of: titleFieldFocused) { _, focused in
             // 失焦视为提交；Esc 取消路径已先把 isEditing 置 false，不会误入这里。
-            if !focused, titleRename?.isEditing == true {
-                titleRename?.commit()
-            }
+            if !focused, titleRename?.isEditing == true { titleRename?.commit() }
         }
         .onDisappear {
             hideTask?.cancel()
@@ -140,37 +144,29 @@ struct ImmersiveHoverTitleView<Actions: View>: View {
             .foregroundStyle(WeiBeiTheme.cinnabar.opacity(0.82))
     }
 
-    @ViewBuilder
+    private func renameField(_ titleRename: HoverTitleRename) -> some View {
+        TextField(title, text: titleRename.draft)
+            .textFieldStyle(.plain)
+            .font(.system(size: 11.8, weight: .medium))
+            .foregroundStyle(WeiBeiTheme.ink)
+            .frame(width: 220)
+            .focused($titleFieldFocused)
+            .onSubmit(titleRename.commit)
+            .onExitCommand(perform: titleRename.cancel)
+            .help(titleRename.hint)
+            .onAppear { titleFieldFocused = true }
+    }
+
     private var titleView: some View {
-        if let titleRename, titleRename.isEditing {
-            TextField(title, text: titleRename.draft)
-                .textFieldStyle(.plain)
-                .font(.system(size: 11.8, weight: .medium))
-                .lineLimit(1)
-                .foregroundStyle(WeiBeiTheme.ink)
-                .layoutPriority(-1)
-                .focused($titleFieldFocused)
-                .onSubmit(titleRename.commit)
-                .onExitCommand(perform: titleRename.cancel)
-                .help(titleRename.hint)
-        } else if let titleRename {
-            Text(title)
-                .font(.system(size: 11.8, weight: .medium))
-                .lineLimit(1)
-                .truncationMode(.tail)
-                .foregroundStyle(WeiBeiTheme.secondaryInk)
-                .layoutPriority(-1)
-                .contentShape(Rectangle())
-                .onTapGesture { titleRename.begin() }
-                .help(titleRename.hint)
-        } else {
-            Text(title)
-                .font(.system(size: 11.8, weight: .medium))
-                .lineLimit(1)
-                .truncationMode(.tail)
-                .foregroundStyle(WeiBeiTheme.secondaryInk)
-                .layoutPriority(-1)
-        }
+        Text(title)
+            .font(.system(size: 11.8, weight: .medium))
+            .lineLimit(1)
+            .truncationMode(.tail)
+            .foregroundStyle(WeiBeiTheme.secondaryInk)
+            .layoutPriority(-1)
+            .contentShape(Rectangle())
+            .onTapGesture { titleRename?.begin() }
+            .help(titleRename?.hint ?? "")
     }
 }
 
