@@ -669,15 +669,17 @@ struct NotePaneView: View {
             isEditing: editingNoteTabTitle,
             hint: store.ui("点击重命名显示名；清空后恢复自动跟随", "Click to rename the tab title; clear it to resume auto-follow"),
             begin: {
-                noteTabTitleDraft = store.activeNoteItem?.customDisplayTitle ?? ""
-                editingNoteTabTitle = true
+                // 预填解析后的当前显示名（自定义名 / title / 正文回退），从现有名字开始编辑。
+                noteTabTitleDraft = store.agentNoteTitle
+                withAnimation(WeiBeiMotion.panel) { editingNoteTabTitle = true }
             },
             commit: {
+                // 空白提交 = 清除自定义名，恢复自动跟随 title / 正文。
                 store.setNoteCustomDisplayTitle(noteTabTitleDraft, for: noteID)
-                editingNoteTabTitle = false
+                withAnimation(WeiBeiMotion.panel) { editingNoteTabTitle = false }
             },
             cancel: {
-                editingNoteTabTitle = false
+                withAnimation(WeiBeiMotion.panel) { editingNoteTabTitle = false }
             }
         )
     }

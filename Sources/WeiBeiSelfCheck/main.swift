@@ -955,14 +955,20 @@ expect(
     "note render-mode buttons are gone from the floating tab, menu, and palette; the store pins rich"
 )
 expect(
+    NoteTabDisplayTitle.resolve(customTitle: "", noteTitle: "利率笔记", body: "正文") == "利率笔记",
+    "submitting an empty rename clears the custom name and resumes auto-follow"
+)
+expect(
     workspaceModelsSource.contains("customDisplayTitle")
         && workspaceStoreSource.contains("setNoteCustomDisplayTitle")
         && workspaceStoreSource.contains("NoteTabDisplayTitle.resolve")
         && notesAgentViewSource.contains("HoverTitleRename")
+        && notesAgentViewSource.contains("noteTabTitleDraft = store.agentNoteTitle")
+        && notesAgentViewSource.contains("withAnimation(WeiBeiMotion.panel) { editingNoteTabTitle = true }")
         && readerViewSource.contains("struct HoverTitleRename")
         && readerViewSource.contains("renameField")
         && readerViewSource.contains("titleRename?.isEditing == true ? nil : reorderRole"),
-    "note floating tab title renames inline, persists the custom name, and keeps the editing field out of ViewThatFits and pane-reorder drags"
+    "note floating tab rename prefills the resolved display title, animates the swap, and keeps the field out of ViewThatFits and pane-reorder drags"
 )
 expect(
     !readerViewSource.contains("actionsAlignedTrailing")

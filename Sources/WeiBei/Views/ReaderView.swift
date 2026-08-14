@@ -70,6 +70,7 @@ struct ImmersiveHoverTitleView<Actions: View>: View {
                             renameField(titleRename)
                         }
                         .fixedSize(horizontal: true, vertical: false)
+                        .transition(.opacity)
                     } else {
                         ViewThatFits(in: .horizontal) {
                             HStack(alignment: .firstTextBaseline, spacing: 9) {
@@ -80,6 +81,7 @@ struct ImmersiveHoverTitleView<Actions: View>: View {
                             hoverMark
                         }
                         .frame(minWidth: 0, alignment: .leading)
+                        .transition(.opacity)
                     }
                     actions()
                 }
@@ -104,9 +106,6 @@ struct ImmersiveHoverTitleView<Actions: View>: View {
         }
         .frame(maxWidth: .infinity, alignment: .top)
         .fixedSize(horizontal: false, vertical: true)
-        .onChange(of: titleRename?.isEditing) { _, editing in
-            if editing == true { titleFieldFocused = true }
-        }
         .onChange(of: titleFieldFocused) { _, focused in
             // 失焦视为提交；Esc 取消路径已先把 isEditing 置 false，不会误入这里。
             if !focused, titleRename?.isEditing == true { titleRename?.commit() }
