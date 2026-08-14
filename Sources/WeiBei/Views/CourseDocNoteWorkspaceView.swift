@@ -550,7 +550,7 @@ struct CourseDocNoteWorkspaceView: View {
                         Button(store.ui("导入笔记", "Import notes")) {
                             store.importCourseNotesFromPanel(courseID: courseID)
                         }
-                        .buttonStyle(WeiBeiTextActionButtonStyle(active: documents.isEmpty == false))
+                        .buttonStyle(WeiBeiTextActionButtonStyle(active: !documents.isEmpty))
                     }
                     Button(store.ui("返回列表", "Back to List")) {
                         withAnimation(WeiBeiMotion.panel) {
@@ -706,21 +706,25 @@ struct CourseDocNoteWorkspaceView: View {
         switch kind {
         case .materials:
             var linkedNoteIDs = Set(store.linkedNoteIDs(for: item.id))
-            if !linkedNoteIDs.remove(counterpart.id) {
+            if linkedNoteIDs.contains(counterpart.id) {
+                linkedNoteIDs.remove(counterpart.id)
+            } else {
                 linkedNoteIDs.insert(counterpart.id)
             }
             store.setLinkedNoteIDs(linkedNoteIDs, for: item.id)
             selectedMaterialID = item.id
-            selectedNoteID = counterpart.id
+            selectedNoteID = nil
 
         case .notes:
             var linkedDocumentIDs = Set(store.linkedCourseSourceIDs(for: item.id))
-            if !linkedDocumentIDs.remove(counterpart.id) {
+            if linkedDocumentIDs.contains(counterpart.id) {
+                linkedDocumentIDs.remove(counterpart.id)
+            } else {
                 linkedDocumentIDs.insert(counterpart.id)
             }
             store.setLinkedCourseSourceIDs(linkedDocumentIDs, for: item.id)
             selectedNoteID = item.id
-            selectedMaterialID = counterpart.id
+            selectedMaterialID = nil
         }
     }
 
