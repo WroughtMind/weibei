@@ -10028,13 +10028,33 @@ final class WorkspaceStore: ObservableObject {
     }
 
     var agentNoteTitle: String {
-        if activeNoteItem?.isNotebookNote == true {
-            return activeNoteItem.map(displayTitle) ?? ui("当前笔记", "Current note")
+        if let note = activeNoteItem {
+            // 正文抬头优先于文件名：只要有正文就可能提供显示名；自定义名存在时不必读正文。
+            // 活动笔记的正文本就在内存（noteText），不会触发额外加载。
+            let hasCustomTitle = note.customDisplayTitle?
+                .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+            let body = hasCustomTitle ? "" : noteText(for: note)
+            let resolved = NoteTabDisplayTitle.resolve(
+                customTitle: note.customDisplayTitle,
+                noteTitle: note.title,
+                body: body
+            )
+            return resolved.isEmpty ? ui("未命名笔记", "Untitled note") : resolved
         }
         if let item = selectedMaterialItem {
             return ui("\(displayTitle(for: item)) 的笔记", "Notes for \(displayTitle(for: item))")
         }
         return ui("当前笔记", "Current note")
+    }
+
+    /// 浮动 tab 的行内重命名只写自定义显示名；提交空白则清除，恢复自动跟随 title / 正文。
+    func setNoteCustomDisplayTitle(_ rawTitle: String, for itemID: String) {
+        guard let index = importedItems.firstIndex(where: { $0.id == itemID && $0.isNotebookNote }) else { return }
+        let trimmed = rawTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        let next: String? = trimmed.isEmpty ? nil : trimmed
+        guard importedItems[index].customDisplayTitle != next else { return }
+        importedItems[index].customDisplayTitle = next
+        save()
     }
 
     var agentConversationSubtitle: String {
@@ -11982,7 +12002,9 @@ final class WorkspaceStore: ObservableObject {
     }
 
     func setNoteRenderMode(_ mode: NoteRenderMode) {
-        let nextMode = mode.visibleMode
+        // 笔记固定为所见即所得（rich）写作：NoteRenderMode 机制保留用于持久化与旧数据
+        // 兼容，但所有模式切换入口已移除，任何请求都收敛为展示并聚焦 rich 笔记面板。
+        let nextMode = NoteRenderMode.rich
         if noteRenderMode != nextMode || layout == .immersiveReading || layout == .immersiveConversation || !showNotes {
             recordNavigationPoint()
         }
@@ -17550,6 +17572,46 @@ final class WorkspaceStore: ObservableObject {
         return url
     }
 
+    /// 正文抬头驱动文件名：无自定义名且正文首个 ATX 标题与当前文件名不一致时，
+    /// 纯 move 改文件名——一个字节内容都不碰，inode 不变，指纹与 bookmark 保持有效。
+    /// 只在成功落盘后调用；课程文件有自己的命名约束，不走这条路。
+    private func synchronizeNoteFileNameWithHeading(itemID: String, markdown: String, currentURL: URL) {
+        guard let index = importedItems.firstIndex(where: { $0.id == itemID }) else { return }
+        let item = importedItems[index]
+        guard item.isNotebookNote else { return }
+        guard item.customDisplayTitle?
+            .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false else { return }
+        guard let heading = NoteTabDisplayTitle.bodyHeading(from: markdown),
+              heading != currentURL.deletingPathExtension().lastPathComponent else { return }
+        let newURL = renamedNotebookURL(
+            in: currentURL.deletingLastPathComponent(),
+            title: heading,
+            currentURL: currentURL
+        )
+        guard newURL.path != currentURL.path else { return }
+        do {
+            try FileManager.default.moveItem(at: currentURL, to: newURL)
+        } catch {
+            showTransientNoteStatus(
+                ui(
+                    "无法按正文抬头重命名笔记文件：\(error.localizedDescription)",
+                    "Could not rename the note file to match its heading: \(error.localizedDescription)"
+                )
+            )
+            return
+        }
+        importedItems[index].title = newURL.deletingPathExtension().lastPathComponent
+        importedItems[index].subtitle = newURL.lastPathComponent
+        importedItems[index].urlPath = newURL.path
+        importedItems[index].importedFileLastKnownPath = newURL.path
+        if let bookmark = Self.makeImportedFileBookmark(for: newURL) {
+            importedItems[index].importedFileBookmarkData = bookmark
+        }
+        if let refreshed = refreshImportedFileTracking(itemID: itemID, url: newURL) {
+            courseDocumentSearchIndex.schedule([refreshed])
+        }
+    }
+
     private func retitledMarkdown(_ markdown: String, from oldTitle: String, to newTitle: String) -> String {
         let prefix = "# \(oldTitle)\n"
         guard markdown.hasPrefix(prefix) else { return markdown }
@@ -19651,6 +19713,7 @@ final class WorkspaceStore: ObservableObject {
                     url: url
                 ) ?? importedItems[index]
                 courseDocumentSearchIndex.schedule([refreshedItem])
+                synchronizeNoteFileNameWithHeading(itemID: noteItemID, markdown: markdown, currentURL: url)
             }
             save()
             return

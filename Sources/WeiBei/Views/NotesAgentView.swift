@@ -446,7 +446,8 @@ private struct AccessibilityFrameProbe: NSViewRepresentable {
 struct NotePaneView: View {
     @EnvironmentObject private var store: WorkspaceStore
     @EnvironmentObject private var paneState: WorkspacePaneState
-    @State private var hoveredNoteMode: NoteRenderMode?
+    @State private var noteTabTitleDraft = ""
+    @State private var editingNoteTabTitle = false
     /// Local typing buffer so each keystroke does not republish WorkspaceStore.noteText to the whole tree.
     @State private var draftNoteText = ""
     @State private var draftNoteItemID: String?
@@ -523,6 +524,7 @@ struct NotePaneView: View {
             flushNoteDraft(immediate: true)
         }
         .onChange(of: store.activeNoteItemID) { previousID, _ in
+            editingNoteTabTitle = false
             if let previousID, previousID == draftNoteItemID {
                 flushNoteDraft(for: previousID, immediate: true)
             }
@@ -572,7 +574,6 @@ struct NotePaneView: View {
                 reorderRole: reorderRole
             ) {
                 ContextualContentListButton(kind: .note)
-                noteModeControl
                 newNoteControl
             }
             .transition(.asymmetric(
@@ -589,10 +590,10 @@ struct NotePaneView: View {
                 title: noteHeaderSubtitle,
                 appearanceMode: store.appearanceMode,
                 isPinned: store.notebookCreationDraft != nil,
-                reorderRole: reorderRole
+                reorderRole: reorderRole,
+                titleRename: noteTabRename
             ) {
                 ContextualContentListButton(kind: .note)
-                noteModeControl
                 newNoteControl
             }
 
@@ -660,88 +661,27 @@ struct NotePaneView: View {
         }
     }
 
-    private var noteModeControl: some View {
-        HStack(spacing: 3) {
-            ForEach(NoteRenderMode.visibleCases) { mode in
-                noteModeButton(for: mode)
+    /// 浮动 tab 的笔记名支持行内重命名；自定义名持久化在笔记条目上，清空即恢复自动跟随。
+    private var noteTabRename: HoverTitleRename? {
+        guard let noteID = store.activeNoteItem?.id else { return nil }
+        return HoverTitleRename(
+            draft: $noteTabTitleDraft,
+            isEditing: editingNoteTabTitle,
+            hint: store.ui("点击重命名显示名；清空后恢复自动跟随", "Click to rename the tab title; clear it to resume auto-follow"),
+            begin: {
+                // 预填解析后的当前显示名（自定义名 / title / 正文回退），从现有名字开始编辑。
+                noteTabTitleDraft = store.agentNoteTitle
+                withAnimation(WeiBeiMotion.panel) { editingNoteTabTitle = true }
+            },
+            commit: {
+                // 空白提交 = 清除自定义名，恢复自动跟随 title / 正文。
+                store.setNoteCustomDisplayTitle(noteTabTitleDraft, for: noteID)
+                withAnimation(WeiBeiMotion.panel) { editingNoteTabTitle = false }
+            },
+            cancel: {
+                withAnimation(WeiBeiMotion.panel) { editingNoteTabTitle = false }
             }
-        }
-        .fixedSize(horizontal: true, vertical: false)
-        .frame(height: 28)
-        .weibeiHeaderAccessoryGroup()
-    }
-
-    private func noteModeButton(for mode: NoteRenderMode) -> some View {
-        let selected = store.noteRenderMode.visibleMode == mode
-        let label = mode.label(language: store.interfaceLanguage)
-        return Button {
-            withAnimation(WeiBeiMotion.layout) {
-                store.setNoteRenderMode(mode)
-            }
-        } label: {
-            noteModeButtonLabel(mode: mode, selected: selected, hovering: hoveredNoteMode == mode)
-        }
-        .buttonStyle(.plain)
-        .onHover { hovering in
-            withAnimation(WeiBeiMotion.hover) {
-                hoveredNoteMode = hovering ? mode : (hoveredNoteMode == mode ? nil : hoveredNoteMode)
-            }
-        }
-        .accessibilityLabel(Text(label))
-        .help(label)
-    }
-
-    private func noteModeButtonLabel(mode: NoteRenderMode, selected: Bool, hovering: Bool) -> some View {
-        let foreground = selected ? WeiBeiTheme.cinnabar : hovering ? WeiBeiTheme.ink : WeiBeiTheme.secondaryInk
-        return Image(systemName: noteModeIcon(for: mode))
-            .font(.system(size: 11.6, weight: selected ? .semibold : .medium))
-            .frame(width: 28, height: 24)
-            .foregroundStyle(foreground)
-            .background {
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .fill(noteModeButtonFill(selected: selected, hovering: hovering))
-            }
-            .overlay {
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .stroke(noteModeButtonStroke(selected: selected, hovering: hovering), lineWidth: selected ? 0.7 : 0.45)
-            }
-            .scaleEffect(hovering && !selected ? 1.012 : 1)
-            .contentShape(Rectangle())
-            .animation(WeiBeiMotion.micro, value: selected)
-            .animation(WeiBeiMotion.hover, value: hovering)
-    }
-
-    private func noteModeIcon(for mode: NoteRenderMode) -> String {
-        switch mode {
-        case .rich:
-            return "square.and.pencil"
-        case .split:
-            return "rectangle.split.2x1"
-        case .source:
-            return "chevron.left.forwardslash.chevron.right"
-        case .preview:
-            return "eye"
-        }
-    }
-
-    private func noteModeButtonFill(selected: Bool, hovering: Bool) -> Color {
-        if selected {
-            return WeiBeiTheme.cinnabarSoft.opacity(store.appearanceMode.isDark ? 0.44 : 0.62)
-        }
-        if hovering {
-            return WeiBeiTheme.paperRaised.opacity(store.appearanceMode.isDark ? 0.16 : 0.20)
-        }
-        return Color.clear
-    }
-
-    private func noteModeButtonStroke(selected: Bool, hovering: Bool) -> Color {
-        if selected {
-            return WeiBeiTheme.cinnabar.opacity(store.appearanceMode.isDark ? 0.34 : 0.24)
-        }
-        if hovering {
-            return WeiBeiTheme.hairline.opacity(store.appearanceMode.isDark ? 0.30 : 0.18)
-        }
-        return Color.clear
+        )
     }
 
     private var noteHeaderSubtitle: String {
@@ -754,44 +694,14 @@ struct NotePaneView: View {
             && store.blankNoteDraftMaterialID == nil {
             ContextualContentPicker(kind: .note)
         } else {
-            Group {
-            switch store.noteRenderMode.visibleMode {
-            case .rich:
-                richEditor
-            case .split:
-                HSplitView {
-                    noteEditor
-                        .frame(minWidth: 220)
-                    MarkdownPreviewView(
-                        markdown: draftNoteText,
-                        markdownBaseURL: store.currentMarkdownBaseURL,
-                        appearanceMode: store.appearanceMode,
-                        interfaceLanguage: store.interfaceLanguage,
-                        compact: true,
-                        fitsContentHeight: false,
-                        onWikiLink: { title in store.openOrCreateWikiNote(title: title) },
-                        onSourceReference: { reference in store.openSourceReference(reference) },
-                        onAppShortcut: { key, modifiers in store.handleAppShortcut(key: key, modifiers: modifiers) },
-                        onSelectionChange: { text, anchor in
-                            store.updateSelection(text, source: .note, anchor: anchor, isEditable: false)
-                        }
-                    )
-                        .frame(minWidth: 220)
+            // 笔记固定为所见即所得（rich）写作，源码 / 对照模式入口已全部移除。
+            richEditor
+                .overlay(alignment: .topLeading) {
+                    if noteIsEmpty {
+                        emptyNoteHint
+                            .transition(WeiBeiTransition.message)
+                    }
                 }
-            case .source:
-                noteEditor
-            case .preview:
-                richEditor
-            }
-            }
-            .transition(WeiBeiTransition.layout)
-            .animation(WeiBeiMotion.layout, value: store.noteRenderMode.visibleMode)
-            .overlay(alignment: .topLeading) {
-                if noteIsEmpty {
-                    emptyNoteHint
-                        .transition(WeiBeiTransition.message)
-                }
-            }
         }
     }
 
@@ -895,26 +805,6 @@ struct NotePaneView: View {
                 flushNoteDraft(immediate: true)
             }
             return store.handleAppShortcut(key: key, modifiers: modifiers)
-        })
-        .background(WeiBeiTheme.paper)
-    }
-
-    private var noteEditor: some View {
-        MarkdownSourceEditor(text: noteMarkdownBinding, command: Binding(get: {
-            store.noteEditorCommand
-        }, set: { value in
-            store.noteEditorCommand = value
-        }),
-        isFocused: paneState.focusedPane == .notes,
-        focusRequest: paneState.focusRequest,
-        markdownBaseURL: store.currentMarkdownBaseURL,
-        attachmentDirectory: store.currentAttachmentDirectory,
-        appearanceMode: store.appearanceMode,
-        onSelectionChange: { text, anchor in
-            store.updateSelection(text, source: .note, anchor: anchor)
-        }, onWikiLink: { title in
-            flushNoteDraft(immediate: true)
-            store.openOrCreateWikiNote(title: title)
         })
         .background(WeiBeiTheme.paper)
     }

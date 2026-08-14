@@ -921,6 +921,80 @@ let piOAuthSource = readSource("Sources/WeiBei/Support/PiOAuthService.swift")
 let credentialProfilesSource = readSource("Sources/WeiBeiCore/AgentCredentialProfiles.swift")
 let readerViewSource = readSource("Sources/WeiBei/Views/ReaderView.swift")
 let notesAgentViewSource = readSource("Sources/WeiBei/Views/NotesAgentView.swift")
+let weiBeiAppSource = readSource("Sources/WeiBei/App/WeiBeiApp.swift")
+let commandPaletteViewSource = readSource("Sources/WeiBei/Views/CommandPaletteView.swift")
+expect(
+    NoteTabDisplayTitle.resolve(customTitle: nil, noteTitle: "利率笔记", body: "无关正文") == "利率笔记",
+    "note tab title follows the live note title before any manual rename"
+)
+expect(
+    NoteTabDisplayTitle.resolve(customTitle: nil, noteTitle: "旧文件名", body: "# 货币银行学\n\n第二章 利率") == "货币银行学",
+    "body heading outranks the file name so editing the heading renames the tab live"
+)
+expect(
+    NoteTabDisplayTitle.resolve(customTitle: nil, noteTitle: "利率笔记", body: "无关正文") == "利率笔记",
+    "body without a leading heading falls back to the file name"
+)
+expect(
+    NoteTabDisplayTitle.bodyHeading(from: "\n\n# 假想的男人\n正文") == "假想的男人"
+        && NoteTabDisplayTitle.bodyHeading(from: "无标题正文\n# 后面的标题") == nil
+        && NoteTabDisplayTitle.bodyHeading(from: "#无空格不是标题") == nil
+        && NoteTabDisplayTitle.bodyHeading(from: "") == nil,
+    "only a leading ATX heading counts as the note heading"
+)
+expect(
+    NoteTabDisplayTitle.resolve(customTitle: nil, noteTitle: "", body: "- 实际利率**非常高**，名义利率`r`参见 [[货币理论|Money]]")
+        == "实际利率非常高，名义利率r参见 Mone",
+    "body fallback strips Markdown and stays within the character limit"
+)
+expect(
+    NoteTabDisplayTitle.resolve(customTitle: "我的速记", noteTitle: "新标题", body: "无关正文") == "我的速记",
+    "manual rename sticks and stops following the note title or body"
+)
+expect(
+    NoteTabDisplayTitle.resolve(customTitle: "   ", noteTitle: "利率笔记", body: "无关正文") == "利率笔记",
+    "clearing the custom name restores auto-follow"
+)
+expect(
+    !notesAgentViewSource.contains("noteModeControl")
+        && !notesAgentViewSource.contains("noteModeButton")
+        && !notesAgentViewSource.contains("hoveredNoteMode")
+        && !notesAgentViewSource.contains("setNoteRenderMode")
+        && !weiBeiAppSource.contains("setNoteRenderMode")
+        && !commandPaletteViewSource.contains("setNoteRenderMode")
+        && workspaceStoreSource.contains("let nextMode = NoteRenderMode.rich"),
+    "note render-mode buttons are gone from the floating tab, menu, and palette; the store pins rich"
+)
+expect(
+    NoteTabDisplayTitle.resolve(customTitle: "", noteTitle: "利率笔记", body: "正文") == "利率笔记",
+    "submitting an empty rename clears the custom name and resumes auto-follow"
+)
+expect(
+    workspaceModelsSource.contains("customDisplayTitle")
+        && workspaceStoreSource.contains("setNoteCustomDisplayTitle")
+        && workspaceStoreSource.contains("NoteTabDisplayTitle.resolve")
+        && notesAgentViewSource.contains("HoverTitleRename")
+        && notesAgentViewSource.contains("noteTabTitleDraft = store.agentNoteTitle")
+        && notesAgentViewSource.contains("withAnimation(WeiBeiMotion.panel) { editingNoteTabTitle = true }")
+        && readerViewSource.contains("struct HoverTitleRename")
+        && readerViewSource.contains("renameField")
+        && readerViewSource.contains("titleRename?.isEditing == true ? nil : reorderRole")
+        && workspaceStoreSource.contains("synchronizeNoteFileNameWithHeading(itemID: noteItemID, markdown: markdown, currentURL: url)")
+        && workspaceStoreSource.contains("try FileManager.default.moveItem(at: currentURL, to: newURL)"),
+    "note floating tab rename prefills the resolved display title, animates the swap, and keeps the field out of ViewThatFits and pane-reorder drags; a leading body heading also renames the backing file via a pure move"
+)
+expect(
+    readerViewSource.contains("renameFieldAlive = true")
+        && readerViewSource.contains("focusTitleField()")
+        && readerViewSource.contains("DispatchQueue.main.async { titleFieldFocused = true }")
+        && readerViewSource.contains("asyncAfter(deadline: .now() + 0.35)")
+        && readerViewSource.contains("guard renameFieldAlive else { return }")
+        && readerViewSource.contains("guard !(NSApp.keyWindow?.firstResponder is NSTextView) else { return }")
+        && readerViewSource.contains("isReassertingTitleFocus = true")
+        && readerViewSource.contains("if !focused, !isReassertingTitleFocus, titleRename?.isEditing == true")
+        && !readerViewSource.contains(".onAppear { titleFieldFocused = true }"),
+    "rename field focus is deferred past the insertion transition and re-asserted via a false-to-true toggle, so keystrokes cannot fall into the note body and the re-assert does not trip blur-to-commit"
+)
 expect(
     !readerViewSource.contains("actionsAlignedTrailing")
         && readerViewSource.contains(".frame(height: 34)")

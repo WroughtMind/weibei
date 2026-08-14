@@ -9,16 +9,31 @@ extension Notification.Name {
     static let weiBeiScrollAgentToMessage = Notification.Name("WeiBeiScrollAgentToMessage")
 }
 
+/// 浮动标题可选的行内重命名支持：传入后标题可点击进入编辑，提交 / 取消由调用方负责。
+struct HoverTitleRename {
+    let draft: Binding<String>
+    let isEditing: Bool
+    let hint: String
+    let begin, commit, cancel: () -> Void
+}
+
 struct ImmersiveHoverTitleView<Actions: View>: View {
     let mark: String
     let title: String
     let appearanceMode: WeiBeiAppearanceMode
     var isPinned = false
     var reorderRole: WorkspacePaneRole?
+    var titleRename: HoverTitleRename?
     @ViewBuilder var actions: () -> Actions
 
     @State private var visible = false
     @State private var hideTask: DispatchWorkItem?
+    @FocusState private var titleFieldFocused: Bool
+    /// 重命名文本框是否仍在视图树里（@State 在逃逸闭包里读到的是实时值，
+    /// 而 titleRename 是值类型捕获，不能用它判断编辑是否已结束）。
+    @State private var renameFieldAlive = false
+    /// 重新申请焦点时的程序化 false→true 切换不应触发“失焦即提交”。
+    @State private var isReassertingTitleFocus = false
 
     init(
         mark: String,
@@ -26,6 +41,7 @@ struct ImmersiveHoverTitleView<Actions: View>: View {
         appearanceMode: WeiBeiAppearanceMode,
         isPinned: Bool = false,
         reorderRole: WorkspacePaneRole? = nil,
+        titleRename: HoverTitleRename? = nil,
         @ViewBuilder actions: @escaping () -> Actions
     ) {
         self.mark = mark
@@ -33,6 +49,7 @@ struct ImmersiveHoverTitleView<Actions: View>: View {
         self.appearanceMode = appearanceMode
         self.isPinned = isPinned
         self.reorderRole = reorderRole
+        self.titleRename = titleRename
         self.actions = actions
     }
 
@@ -48,23 +65,29 @@ struct ImmersiveHoverTitleView<Actions: View>: View {
                 .contentShape(Rectangle())
                 .onHover(perform: updateVisibility)
 
-            if visible || isPinned {
+            if visible || isPinned || titleRename?.isEditing == true {
                 HStack(alignment: .center, spacing: 8) {
-                    ViewThatFits(in: .horizontal) {
+                    // 编辑态不走 ViewThatFits：测量候选会反复重建 NSTextField，
+                    // selection 被重置回文本开头，光标卡死、无法输入。
+                    if let titleRename, titleRename.isEditing {
                         HStack(alignment: .firstTextBaseline, spacing: 9) {
                             hoverMark
-                            Text(title)
-                                .font(.system(size: 11.8, weight: .medium))
-                                .lineLimit(1)
-                                .truncationMode(.tail)
-                                .foregroundStyle(WeiBeiTheme.secondaryInk)
-                                .layoutPriority(-1)
+                            renameField(titleRename)
                         }
                         .fixedSize(horizontal: true, vertical: false)
-
-                        hoverMark
+                        .transition(.opacity)
+                    } else {
+                        ViewThatFits(in: .horizontal) {
+                            HStack(alignment: .firstTextBaseline, spacing: 9) {
+                                hoverMark
+                                titleView
+                            }
+                            .fixedSize(horizontal: true, vertical: false)
+                            hoverMark
+                        }
+                        .frame(minWidth: 0, alignment: .leading)
+                        .transition(.opacity)
                     }
-                    .frame(minWidth: 0, alignment: .leading)
                     actions()
                 }
                 .padding(.horizontal, 12)
@@ -81,12 +104,18 @@ struct ImmersiveHoverTitleView<Actions: View>: View {
                 .padding(.top, 7)
                 .contentShape(Rectangle())
                 .onHover(perform: updateVisibility)
-                .modifier(PaneHeaderReorderModifier(role: reorderRole))
+                // 编辑期间禁用整条拖拽重排，避免高优先级 DragGesture 劫持文本框内的点选。
+                .modifier(PaneHeaderReorderModifier(role: titleRename?.isEditing == true ? nil : reorderRole))
                 .transition(WeiBeiTransition.floating)
             }
         }
         .frame(maxWidth: .infinity, alignment: .top)
         .fixedSize(horizontal: false, vertical: true)
+        .onChange(of: titleFieldFocused) { _, focused in
+            // 失焦视为提交；Esc 取消路径已先把 isEditing 置 false，不会误入这里。
+            // 重新申请焦点的程序化 false→true 切换（isReassertingTitleFocus）也不算失焦。
+            if !focused, !isReassertingTitleFocus, titleRename?.isEditing == true { titleRename?.commit() }
+        }
         .onDisappear {
             hideTask?.cancel()
         }
@@ -118,6 +147,59 @@ struct ImmersiveHoverTitleView<Actions: View>: View {
             .lineLimit(1)
             .fixedSize(horizontal: true, vertical: false)
             .foregroundStyle(WeiBeiTheme.cinnabar.opacity(0.82))
+    }
+
+    private func renameField(_ titleRename: HoverTitleRename) -> some View {
+        TextField(title, text: titleRename.draft)
+            .textFieldStyle(.plain)
+            .font(.system(size: 11.8, weight: .medium))
+            .foregroundStyle(WeiBeiTheme.ink)
+            .frame(width: 220)
+            .focused($titleFieldFocused)
+            .onSubmit(titleRename.commit)
+            .onExitCommand(perform: titleRename.cancel)
+            .help(titleRename.hint)
+            .onAppear {
+                renameFieldAlive = true
+                focusTitleField()
+            }
+            .onDisappear { renameFieldAlive = false }
+    }
+
+    /// 编辑态文本框随 `.transition(.opacity)` 动画插入，onAppear 里同步设置
+    /// `@FocusState` 时 NSTextField 尚未挂进窗口的响应链，焦点请求被静默丢弃；
+    /// 而 `@FocusState` 内部已记录为 true，不会再重试——first responder 一直留在
+    /// 笔记正文编辑器（WKWebView），键盘输入全部落进正文。这里推迟到下一
+    /// runloop 再申请，并在插入动画（WeiBeiMotion.panel ≈ 0.26s）结束后复查一次：
+    /// 若窗口 first responder 仍不是文本编辑（field editor 是 NSTextView），
+    /// 先置 false 再置 true 强制重新申请（重复赋 true 会被当作无变化忽略）；
+    /// 程序化切换由 isReassertingTitleFocus 挡住“失焦即提交”。
+    private func focusTitleField() {
+        DispatchQueue.main.async { titleFieldFocused = true }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+            // 编辑已结束（提交/取消/切换笔记）就不再去抢焦点。
+            guard renameFieldAlive else { return }
+            // 焦点已在某个文本框里就不再打扰用户输入。
+            guard !(NSApp.keyWindow?.firstResponder is NSTextView) else { return }
+            isReassertingTitleFocus = true
+            titleFieldFocused = false
+            DispatchQueue.main.async {
+                titleFieldFocused = true
+                DispatchQueue.main.async { isReassertingTitleFocus = false }
+            }
+        }
+    }
+
+    private var titleView: some View {
+        Text(title)
+            .font(.system(size: 11.8, weight: .medium))
+            .lineLimit(1)
+            .truncationMode(.tail)
+            .foregroundStyle(WeiBeiTheme.secondaryInk)
+            .layoutPriority(-1)
+            .contentShape(Rectangle())
+            .onTapGesture { titleRename?.begin() }
+            .help(titleRename?.hint ?? "")
     }
 }
 
