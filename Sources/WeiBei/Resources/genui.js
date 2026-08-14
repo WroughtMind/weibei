@@ -370,7 +370,7 @@
     const block = el('section','genui'); block.style.gap=`${clamp(spec.gap ?? 12,0,64)}px`; if(spec.title) block.append(el('div','banner',spec.title)); block.append(renderItems(spec.items,'root',0));
     if (!block.children.length) block.append(el('div','error','这个互动界面没有可显示的组件。')); root.append(block); reportHeight();
   }
-  function reportHeight() { requestAnimationFrame(() => post({ type: 'height', height: Math.ceil(document.documentElement.scrollHeight) })); }
+  function reportHeight() { requestAnimationFrame(() => post({ type: 'height', height: Math.ceil(Math.max(root.scrollHeight, root.getBoundingClientRect().height)) })); }
   new ResizeObserver(reportHeight).observe(root);
 
   window.WeiBeiGenUIHost = {

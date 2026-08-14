@@ -180,9 +180,10 @@ struct RichAnswerWebRuntimeView: View {
     }
 }
 
-private final class RichAnswerWebClippingView: NSView {
+final class ConversationWebClippingView: NSView {
     let webView: WKWebView
     var onViewportLayout: ((CGSize) -> Void)?
+    private var scrollWheelMonitor: Any?
 
     init(webView: WKWebView) {
         self.webView = webView
@@ -200,6 +201,10 @@ private final class RichAnswerWebClippingView: NSView {
         nil
     }
 
+    deinit {
+        removeScrollWheelMonitor()
+    }
+
     override func viewDidMoveToSuperview() {
         super.viewDidMoveToSuperview()
         webView.isHidden = false
@@ -211,6 +216,7 @@ private final class RichAnswerWebClippingView: NSView {
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
+        updateScrollWheelMonitor()
         webView.isHidden = false
         enforceScrollClipping()
         DispatchQueue.main.async { [weak self] in
@@ -228,7 +234,7 @@ private final class RichAnswerWebClippingView: NSView {
         webView.isHidden = false
     }
 
-    /// Let the conversation ScrollView own vertical wheel — rich-answer UI is not a nested scroller.
+    /// Let the conversation ScrollView own vertical wheel — embedded web UI is not a nested scroller.
     override func scrollWheel(with event: NSEvent) {
         if abs(event.scrollingDeltaY) >= abs(event.scrollingDeltaX),
            let outer = nearestConversationScrollView() {
@@ -238,13 +244,33 @@ private final class RichAnswerWebClippingView: NSView {
         super.scrollWheel(with: event)
     }
 
-    override func hitTest(_ point: NSPoint) -> NSView? {
-        // While the user is scrolling, don't trap the event inside WKWebView.
-        if let event = NSApp.currentEvent, event.type == .scrollWheel,
-           abs(event.scrollingDeltaY) >= abs(event.scrollingDeltaX) {
+    private func updateScrollWheelMonitor() {
+        guard window != nil else {
+            removeScrollWheelMonitor()
+            return
+        }
+        guard scrollWheelMonitor == nil else { return }
+        scrollWheelMonitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
+            guard let self,
+                  event.window === window,
+                  abs(event.scrollingDeltaY) >= abs(event.scrollingDeltaX),
+                  let contentView = window?.contentView,
+                  let hitView = contentView.hitTest(
+                      contentView.convert(event.locationInWindow, from: nil)
+                  ),
+                  hitView === self || hitView.isDescendant(of: self),
+                  let outer = nearestConversationScrollView() else {
+                return event
+            }
+            outer.scrollWheel(with: event)
             return nil
         }
-        return super.hitTest(point)
+    }
+
+    private func removeScrollWheelMonitor() {
+        guard let scrollWheelMonitor else { return }
+        NSEvent.removeMonitor(scrollWheelMonitor)
+        self.scrollWheelMonitor = nil
     }
 
     private func nearestConversationScrollView() -> NSScrollView? {
@@ -308,7 +334,7 @@ private struct RichAnswerWebViewRepresentable: NSViewRepresentable {
         )
     }
 
-    func makeNSView(context: Context) -> RichAnswerWebClippingView {
+    func makeNSView(context: Context) -> ConversationWebClippingView {
         let controller = WKUserContentController()
         controller.add(context.coordinator, name: Coordinator.messageHandlerName)
         controller.addUserScript(
@@ -335,7 +361,7 @@ private struct RichAnswerWebViewRepresentable: NSViewRepresentable {
         webView.layer?.masksToBounds = true
         webView.allowsLinkPreview = false
         context.coordinator.webView = webView
-        let clippingView = RichAnswerWebClippingView(webView: webView)
+        let clippingView = ConversationWebClippingView(webView: webView)
         context.coordinator.clippingView = clippingView
         clippingView.onViewportLayout = { [weak coordinator = context.coordinator] size in
             coordinator?.viewportDidLayout(size)
@@ -361,7 +387,7 @@ private struct RichAnswerWebViewRepresentable: NSViewRepresentable {
         return clippingView
     }
 
-    func updateNSView(_ container: RichAnswerWebClippingView, context: Context) {
+    func updateNSView(_ container: ConversationWebClippingView, context: Context) {
         context.coordinator.update(
             entries: entries,
             evidenceByID: evidenceByID,
@@ -376,7 +402,7 @@ private struct RichAnswerWebViewRepresentable: NSViewRepresentable {
         context.coordinator.sendEntriesIfReady()
     }
 
-    static func dismantleNSView(_ container: RichAnswerWebClippingView, coordinator: Coordinator) {
+    static func dismantleNSView(_ container: ConversationWebClippingView, coordinator: Coordinator) {
         let webView = container.webView
         container.onViewportLayout = nil
         coordinator.stop()
@@ -410,7 +436,7 @@ private struct RichAnswerWebViewRepresentable: NSViewRepresentable {
         static let messageHandlerName = "weibeiRichAnswer"
 
         weak var webView: WKWebView?
-        weak var clippingView: RichAnswerWebClippingView?
+        weak var clippingView: ConversationWebClippingView?
         private var entries: [RichAnswerWebRuntimeEntry]
         private var evidenceByID: [String: RichAnswerEvidence]
         private var heightLimit: CGFloat
