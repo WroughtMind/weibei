@@ -4,6 +4,7 @@ import WeiBeiCore
 func runPiAgentSelfChecks() throws {
     try checkCourseDocumentSearchReadiness()
     try checkPiProviderConfiguration()
+    try checkPiProxyEnvironmentResolution()
     try checkJSONLFraming()
     try checkRPCDecoding()
     try checkStudyAgentContext()
@@ -30,6 +31,81 @@ private func checkPiProviderConfiguration() throws {
 
 private func piRequire(_ condition: @autoclosure () throws -> Bool, _ message: String) throws {
     guard try condition() else { throw PiAgentSelfCheckError.failed(message) }
+}
+
+private func checkPiProxyEnvironmentResolution() throws {
+    // Explicit host variables always win over the macOS system proxy.
+    let hostWins = PiProxyEnvironmentResolver.resolve(
+        hostEnvironment: ["HTTPS_PROXY": "http://127.0.0.1:7890"],
+        systemProxySettings: ["HTTPSEnable": 1, "HTTPSProxy": "10.0.0.2", "HTTPSPort": 8080]
+    )
+    try piRequire(
+        hostWins.source == .hostEnvironment
+            && hostWins.variables == ["HTTPS_PROXY": "http://127.0.0.1:7890"],
+        "PI proxy keeps explicit host variables ahead of the system proxy"
+    )
+
+    // Without host variables, an enabled system HTTPS proxy is injected along
+    // with its bypass list as NO_PROXY.
+    let systemInjected = PiProxyEnvironmentResolver.resolve(
+        hostEnvironment: [:],
+        systemProxySettings: [
+            "HTTPSEnable": 1, "HTTPSProxy": "10.0.0.2", "HTTPSPort": 8080,
+            "ExceptionsList": ["*.local", "192.168.0.0/16"],
+        ]
+    )
+    try piRequire(
+        systemInjected.source == .systemProxy
+            && systemInjected.variables["HTTPS_PROXY"] == "http://10.0.0.2:8080"
+            && systemInjected.variables["NO_PROXY"] == "*.local,192.168.0.0/16",
+        "PI proxy injects the macOS system proxy when no host variables exist"
+    )
+
+    // A SOCKS-only system proxy maps to ALL_PROXY.
+    let socksOnly = PiProxyEnvironmentResolver.resolve(
+        hostEnvironment: [:],
+        systemProxySettings: ["SOCKSEnable": 1, "SOCKSProxy": "10.0.0.3", "SOCKSPort": 1080]
+    )
+    try piRequire(
+        socksOnly.source == .systemProxy
+            && socksOnly.variables == ["ALL_PROXY": "socks5://10.0.0.3:1080"],
+        "PI proxy maps a SOCKS-only system proxy to ALL_PROXY"
+    )
+
+    // A disabled or unreadable system proxy stays direct and injects nothing.
+    let disabled = PiProxyEnvironmentResolver.resolve(
+        hostEnvironment: [:],
+        systemProxySettings: ["HTTPEnable": 0, "HTTPSEnable": 0, "SOCKSEnable": 0]
+    )
+    let missing = PiProxyEnvironmentResolver.resolve(hostEnvironment: [:], systemProxySettings: nil)
+    try piRequire(
+        disabled.source == .direct && disabled.variables.isEmpty
+            && missing.source == .direct && missing.variables.isEmpty,
+        "PI proxy stays direct when the system proxy is off or unreadable"
+    )
+
+    // PAC cannot be translated into plain proxy variables and falls back to direct.
+    let pac = PiProxyEnvironmentResolver.resolve(
+        hostEnvironment: [:],
+        systemProxySettings: [
+            "ProxyAutoConfigEnable": 1,
+            "HTTPSEnable": 1, "HTTPSProxy": "10.0.0.2", "HTTPSPort": 8080,
+        ]
+    )
+    try piRequire(
+        pac.source == .direct && pac.variables.isEmpty,
+        "PI proxy skips PAC-based system proxy settings"
+    )
+
+    // Malformed host values are rejected with the same rule as before.
+    let invalid = PiProxyEnvironmentResolver.resolve(
+        hostEnvironment: ["HTTPS_PROXY": "http://bad\nhost"],
+        systemProxySettings: nil
+    )
+    try piRequire(
+        invalid.source == .direct && invalid.variables.isEmpty,
+        "PI proxy rejects malformed host proxy variables"
+    )
 }
 
 private func checkJSONLFraming() throws {

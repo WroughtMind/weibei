@@ -1814,17 +1814,32 @@ public actor PiAgentRuntime: StudyAgentRuntime {
             "TERM": "dumb",
         ]
         let hostEnvironment = ProcessInfo.processInfo.environment
-        for key in [
-            "LANG", "LC_ALL",
-            // Respect the user's standard network route without inheriting the
-            // rest of the host process environment.
-            "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY",
-            "http_proxy", "https_proxy", "all_proxy", "no_proxy",
-        ] {
+        for key in ["LANG", "LC_ALL"] {
             if let value = hostEnvironment[key], !value.isEmpty, value.count <= 2048, !value.contains("\n") {
                 environment[key] = value
             }
         }
+        // Respect the user's standard network route without inheriting the rest
+        // of the host process environment: explicit proxy variables win, then
+        // the macOS system proxy (Finder launches carry no proxy exports), then
+        // a direct connection.
+        let systemProxySettings = PiProxyEnvironmentResolver.currentSystemProxySettings()
+        let proxyResolution = PiProxyEnvironmentResolver.resolve(
+            hostEnvironment: hostEnvironment,
+            systemProxySettings: systemProxySettings
+        )
+        for (key, value) in proxyResolution.variables {
+            environment[key] = value
+        }
+        var proxyTrace = "Pi proxy source: \(proxyResolution.source.rawValue)"
+        if !proxyResolution.variables.isEmpty {
+            proxyTrace += " (\(proxyResolution.variables.keys.sorted().joined(separator: ", ")))"
+        } else if let systemProxySettings,
+                  PiProxyEnvironmentResolver.usesProxyAutoConfiguration(systemProxySettings) {
+            // PAC cannot be translated into plain proxy variables; skip it.
+            proxyTrace += " (system proxy uses PAC, which cannot be translated)"
+        }
+        trace(proxyTrace)
         // Base URL: Azure uses dedicated env; OpenAI-compatible stacks still get models.json.
         if let base = providerConfiguration.baseURL, !base.isEmpty {
             let provider = providerConfiguration.provider?.lowercased() ?? ""
