@@ -49,3 +49,9 @@
   文本框内点选。修复：编辑态走独立固定宽度布局（`renameField`，不进
   ViewThatFits），聚焦改在 `onAppear` 执行，编辑期间 reorderRole 置 nil 禁用
   拖拽。草稿始终只写本地 `@State`，提交/失焦/取消才写回 store。
+- 复测修复（f1c8403）：① 重命名预填改为解析后的当前显示名
+  （`noteTabTitleDraft = store.agentNoteTitle`），此前预填可能为空的
+  customDisplayTitle，空框 + placeholder 旧标题造成"光标卡开头、打字盖住旧文字"
+  的假象；② 删空回车恢复自动跟随路径补断言确认（空白=清除自定义名）；
+  ③ 进入/退出编辑改用 `withAnimation(WeiBeiMotion.panel)` + `.transition(.opacity)`
+  平滑过渡，宽度随动画插值。
