@@ -244,15 +244,6 @@ final class ConversationWebClippingView: NSView {
         super.scrollWheel(with: event)
     }
 
-    override func hitTest(_ point: NSPoint) -> NSView? {
-        // While the user is scrolling, don't trap the event inside WKWebView.
-        if let event = NSApp.currentEvent, event.type == .scrollWheel,
-           abs(event.scrollingDeltaY) >= abs(event.scrollingDeltaX) {
-            return nil
-        }
-        return super.hitTest(point)
-    }
-
     private func updateScrollWheelMonitor() {
         guard window != nil else {
             removeScrollWheelMonitor()
@@ -263,7 +254,11 @@ final class ConversationWebClippingView: NSView {
             guard let self,
                   event.window === window,
                   abs(event.scrollingDeltaY) >= abs(event.scrollingDeltaX),
-                  bounds.contains(convert(event.locationInWindow, from: nil)),
+                  let contentView = window?.contentView,
+                  let hitView = contentView.hitTest(
+                      contentView.convert(event.locationInWindow, from: nil)
+                  ),
+                  hitView === self || hitView.isDescendant(of: self),
                   let outer = nearestConversationScrollView() else {
                 return event
             }

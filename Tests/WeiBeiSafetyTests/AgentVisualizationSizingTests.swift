@@ -10,9 +10,11 @@ final class AgentVisualizationSizingTests: XCTestCase {
         let documentView = NSView(frame: NSRect(x: 0, y: 0, width: 640, height: 1_200))
         conversationScroller.documentView = documentView
 
+        let visibleHost = NSView(frame: NSRect(x: 0, y: 0, width: 80, height: 600))
+        documentView.addSubview(visibleHost)
         let container = ConversationWebClippingView(webView: WKWebView())
         container.frame = NSRect(x: 0, y: 0, width: 640, height: 600)
-        documentView.addSubview(container)
+        visibleHost.addSubview(container)
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 640, height: 600),
             styleMask: .borderless,
@@ -23,13 +25,19 @@ final class AgentVisualizationSizingTests: XCTestCase {
         container.layoutSubtreeIfNeeded()
         XCTAssertEqual(container.webView.frame, container.bounds)
 
-        let pointInWindow = container.convert(
+        let visiblePoint = container.convert(
+            CGPoint(x: visibleHost.bounds.midX, y: container.bounds.midY),
+            to: nil
+        )
+        NSApp.sendEvent(ConversationScrollWheelEvent(window: window, location: visiblePoint))
+
+        XCTAssertEqual(conversationScroller.receivedWheelEventCount, 1)
+
+        let clippedPoint = container.convert(
             CGPoint(x: container.bounds.midX, y: container.bounds.midY),
             to: nil
         )
-        let event = ConversationScrollWheelEvent(window: window, location: pointInWindow)
-
-        NSApp.sendEvent(event)
+        NSApp.sendEvent(ConversationScrollWheelEvent(window: window, location: clippedPoint))
 
         XCTAssertEqual(conversationScroller.receivedWheelEventCount, 1)
         withExtendedLifetime(window) {}
