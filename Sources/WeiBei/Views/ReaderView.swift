@@ -29,6 +29,11 @@ struct ImmersiveHoverTitleView<Actions: View>: View {
     @State private var visible = false
     @State private var hideTask: DispatchWorkItem?
     @FocusState private var titleFieldFocused: Bool
+    /// 重命名文本框是否仍在视图树里（@State 在逃逸闭包里读到的是实时值，
+    /// 而 titleRename 是值类型捕获，不能用它判断编辑是否已结束）。
+    @State private var renameFieldAlive = false
+    /// 重新申请焦点时的程序化 false→true 切换不应触发“失焦即提交”。
+    @State private var isReassertingTitleFocus = false
 
     init(
         mark: String,
@@ -108,7 +113,8 @@ struct ImmersiveHoverTitleView<Actions: View>: View {
         .fixedSize(horizontal: false, vertical: true)
         .onChange(of: titleFieldFocused) { _, focused in
             // 失焦视为提交；Esc 取消路径已先把 isEditing 置 false，不会误入这里。
-            if !focused, titleRename?.isEditing == true { titleRename?.commit() }
+            // 重新申请焦点的程序化 false→true 切换（isReassertingTitleFocus）也不算失焦。
+            if !focused, !isReassertingTitleFocus, titleRename?.isEditing == true { titleRename?.commit() }
         }
         .onDisappear {
             hideTask?.cancel()
@@ -153,7 +159,35 @@ struct ImmersiveHoverTitleView<Actions: View>: View {
             .onSubmit(titleRename.commit)
             .onExitCommand(perform: titleRename.cancel)
             .help(titleRename.hint)
-            .onAppear { titleFieldFocused = true }
+            .onAppear {
+                renameFieldAlive = true
+                focusTitleField()
+            }
+            .onDisappear { renameFieldAlive = false }
+    }
+
+    /// 编辑态文本框随 `.transition(.opacity)` 动画插入，onAppear 里同步设置
+    /// `@FocusState` 时 NSTextField 尚未挂进窗口的响应链，焦点请求被静默丢弃；
+    /// 而 `@FocusState` 内部已记录为 true，不会再重试——first responder 一直留在
+    /// 笔记正文编辑器（WKWebView），键盘输入全部落进正文。这里推迟到下一
+    /// runloop 再申请，并在插入动画（WeiBeiMotion.panel ≈ 0.26s）结束后复查一次：
+    /// 若窗口 first responder 仍不是文本编辑（field editor 是 NSTextView），
+    /// 先置 false 再置 true 强制重新申请（重复赋 true 会被当作无变化忽略）；
+    /// 程序化切换由 isReassertingTitleFocus 挡住“失焦即提交”。
+    private func focusTitleField() {
+        DispatchQueue.main.async { titleFieldFocused = true }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+            // 编辑已结束（提交/取消/切换笔记）就不再去抢焦点。
+            guard renameFieldAlive else { return }
+            // 焦点已在某个文本框里就不再打扰用户输入。
+            guard !(NSApp.keyWindow?.firstResponder is NSTextView) else { return }
+            isReassertingTitleFocus = true
+            titleFieldFocused = false
+            DispatchQueue.main.async {
+                titleFieldFocused = true
+                DispatchQueue.main.async { isReassertingTitleFocus = false }
+            }
+        }
     }
 
     private var titleView: some View {

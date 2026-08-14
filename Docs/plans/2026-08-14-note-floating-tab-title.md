@@ -55,3 +55,16 @@
   的假象；② 删空回车恢复自动跟随路径补断言确认（空白=清除自定义名）；
   ③ 进入/退出编辑改用 `withAnimation(WeiBeiMotion.panel)` + `.transition(.opacity)`
   平滑过渡，宽度随动画插值。
+- 复测修复（焦点从未进文本框，键盘输入落进正文）：根因是编辑态 TextField 随
+  `.transition(.opacity)` 动画插入，`onAppear` 里同步设置 `@FocusState` 时
+  NSTextField 尚未挂进窗口响应链，焦点请求被静默丢弃；且 `@FocusState` 内部已
+  记录为 true，后续重复赋 true 被当作无变化，不会重试——first responder 一直
+  留在正文编辑器（WKWebView）。修复（`ReaderView.swift`）：聚焦推迟到下一
+  runloop，并在插入动画结束（+0.35s）后复查，若窗口 first responder 仍不是
+  文本编辑（field editor 是 NSTextView）则 false→true 切换强制重新申请；
+  复查用 `@State renameFieldAlive` 判断编辑是否已结束（逃逸闭包里值类型捕获的
+  `titleRename.isEditing` 是旧值），程序化切换用 `isReassertingTitleFocus`
+  挡住“失焦即提交”。`WeiBeiSelfCheck` 补对应源码断言。
+  取证附记：诗歌笔记（El hombre imaginario）正文在磁盘 workspace.json 中完好
+  （与 /tmp/workspace-before-repro.json 全量 diff 无差异），未发生误删持久化；
+  卡死的测试实例（dist/魏碑.app, PID 49817）已 kill -9 防止退出时写回脏内存。

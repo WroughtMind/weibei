@@ -971,6 +971,18 @@ expect(
     "note floating tab rename prefills the resolved display title, animates the swap, and keeps the field out of ViewThatFits and pane-reorder drags"
 )
 expect(
+    readerViewSource.contains("renameFieldAlive = true")
+        && readerViewSource.contains("focusTitleField()")
+        && readerViewSource.contains("DispatchQueue.main.async { titleFieldFocused = true }")
+        && readerViewSource.contains("asyncAfter(deadline: .now() + 0.35)")
+        && readerViewSource.contains("guard renameFieldAlive else { return }")
+        && readerViewSource.contains("guard !(NSApp.keyWindow?.firstResponder is NSTextView) else { return }")
+        && readerViewSource.contains("isReassertingTitleFocus = true")
+        && readerViewSource.contains("if !focused, !isReassertingTitleFocus, titleRename?.isEditing == true")
+        && !readerViewSource.contains(".onAppear { titleFieldFocused = true }"),
+    "rename field focus is deferred past the insertion transition and re-asserted via a false-to-true toggle, so keystrokes cannot fall into the note body and the re-assert does not trip blur-to-commit"
+)
+expect(
     !readerViewSource.contains("actionsAlignedTrailing")
         && readerViewSource.contains(".frame(height: 34)")
         && !notesAgentViewSource.contains("agentSessionCatalogMenu")
