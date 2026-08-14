@@ -37,4 +37,9 @@
 
 ## 结果
 
-（合并前补记）
+- `swift build` ✅；`swift run WeiBeiSelfCheck` ✅；`swift run WeiBeiWebEditorCheck` ✅；`WeiBeiPiCheck` ✅。
+- `swift test --filter WeiBeiSafetyTests` 本机无 Xcode（仅 CLT），`XCTest` 模块不可用，属环境限制。
+- `script/build_and_run.sh package` ✅，候选包：`dist/魏碑.app`（commit 5fe5678，签名验证通过）。
+- 草稿 MR：https://github.com/weibei-app/weibei/pull/210
+- 教训：`ImmersiveHoverTitleView` 是泛型 View，嵌套类型在外部引用必须带泛型参数，
+  独立顶层结构（`HoverTitleRename`）更省事。
