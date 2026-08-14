@@ -1,0 +1,56 @@
+name: Verify Course Space course-local map fix
+
+on:
+  push:
+    branches:
+      - codex/course-space-doc-note-redesign
+    paths:
+      - .github/codex-course-space-scope-fix.patch.gz
+      - .github/workflows/codex-course-space-scope-fix.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply-and-verify:
+    runs-on: macos-latest
+    steps:
+      - name: Check out implementation branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: codex/course-space-doc-note-redesign
+
+      - name: Verify and apply scope fix
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "827a2ade1deacfd967b98d32b0ccf1eba44238efc32ab373b63d457b50b4d825  .github/codex-course-space-scope-fix.patch.gz" | shasum -a 256 -c -
+          gzip -dc .github/codex-course-space-scope-fix.patch.gz > /tmp/course-space-scope-fix.patch
+          git apply --check /tmp/course-space-scope-fix.patch
+          git apply /tmp/course-space-scope-fix.patch
+
+      - name: Parse changed Swift files
+        shell: bash
+        run: |
+          set -euo pipefail
+          swiftc -frontend -parse Sources/WeiBei/Views/CourseRelationPaperView.swift
+          swiftc -frontend -parse Sources/WeiBei/Views/CourseDocNoteWorkspaceView.swift
+
+      - name: Build Weibei
+        shell: bash
+        run: |
+          set -euo pipefail
+          swift build
+
+      - name: Commit verified fix
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f .github/codex-course-space-scope-fix.patch.gz
+          rm -f .github/workflows/codex-course-space-scope-fix.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "fix: keep Course Space Doc Note map course-local"
+          git push origin HEAD:codex/course-space-doc-note-redesign
