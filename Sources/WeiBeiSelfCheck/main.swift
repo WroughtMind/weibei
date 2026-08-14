@@ -921,6 +921,47 @@ let piOAuthSource = readSource("Sources/WeiBei/Support/PiOAuthService.swift")
 let credentialProfilesSource = readSource("Sources/WeiBeiCore/AgentCredentialProfiles.swift")
 let readerViewSource = readSource("Sources/WeiBei/Views/ReaderView.swift")
 let notesAgentViewSource = readSource("Sources/WeiBei/Views/NotesAgentView.swift")
+let weiBeiAppSource = readSource("Sources/WeiBei/App/WeiBeiApp.swift")
+let commandPaletteViewSource = readSource("Sources/WeiBei/Views/CommandPaletteView.swift")
+expect(
+    NoteTabDisplayTitle.resolve(customTitle: nil, noteTitle: "利率笔记", body: "无关正文") == "利率笔记",
+    "note tab title follows the live note title before any manual rename"
+)
+expect(
+    NoteTabDisplayTitle.resolve(customTitle: nil, noteTitle: "  ", body: "# 货币银行学\n\n第二章 利率") == "货币银行学 第二章 利率",
+    "untitled note tab falls back to the first body characters without Markdown markers"
+)
+expect(
+    NoteTabDisplayTitle.resolve(customTitle: nil, noteTitle: "", body: "- 实际利率**非常高**，名义利率`r`参见 [[货币理论|Money]]")
+        == "实际利率非常高，名义利率r参见 Mone",
+    "body fallback strips Markdown and stays within the character limit"
+)
+expect(
+    NoteTabDisplayTitle.resolve(customTitle: "我的速记", noteTitle: "新标题", body: "无关正文") == "我的速记",
+    "manual rename sticks and stops following the note title or body"
+)
+expect(
+    NoteTabDisplayTitle.resolve(customTitle: "   ", noteTitle: "利率笔记", body: "无关正文") == "利率笔记",
+    "clearing the custom name restores auto-follow"
+)
+expect(
+    !notesAgentViewSource.contains("noteModeControl")
+        && !notesAgentViewSource.contains("noteModeButton")
+        && !notesAgentViewSource.contains("hoveredNoteMode")
+        && !notesAgentViewSource.contains("setNoteRenderMode")
+        && !weiBeiAppSource.contains("setNoteRenderMode")
+        && !commandPaletteViewSource.contains("setNoteRenderMode")
+        && workspaceStoreSource.contains("let nextMode = NoteRenderMode.rich"),
+    "note render-mode buttons are gone from the floating tab, menu, and palette; the store pins rich"
+)
+expect(
+    workspaceModelsSource.contains("customDisplayTitle")
+        && workspaceStoreSource.contains("setNoteCustomDisplayTitle")
+        && workspaceStoreSource.contains("NoteTabDisplayTitle.resolve")
+        && notesAgentViewSource.contains("HoverTitleRename")
+        && readerViewSource.contains("struct HoverTitleRename"),
+    "note floating tab title renames inline and persists the custom name on the note item"
+)
 expect(
     !readerViewSource.contains("actionsAlignedTrailing")
         && readerViewSource.contains(".frame(height: 34)")

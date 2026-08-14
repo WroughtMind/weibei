@@ -220,15 +220,6 @@ struct WeiBeiApp: App {
                 Button(AgentSurface.hidden.actionLabel(language: store.interfaceLanguage)) { setAgentSurface(.hidden) }
                     .keyboardShortcut("0", modifiers: [.control, .option])
 
-                Divider()
-
-                Button(store.ui("笔记原地写作", "Live Markdown Writing")) { setNoteRenderMode(.rich) }
-                    .keyboardShortcut("1", modifiers: [.control, .command])
-                Button(store.ui("笔记源码对照", "Source Compare")) { setNoteRenderMode(.split) }
-                    .keyboardShortcut("2", modifiers: [.control, .command])
-                Button(store.ui("笔记源码", "Note Source")) { setNoteRenderMode(.source) }
-                    .keyboardShortcut("3", modifiers: [.control, .command])
-
                 if store.canApplyAgentAnswer {
                     Divider()
 
@@ -306,12 +297,6 @@ struct WeiBeiApp: App {
     private func setAgentSurface(_ surface: AgentSurface) {
         animatePanel {
             store.setAgentSurface(surface)
-        }
-    }
-
-    private func setNoteRenderMode(_ mode: NoteRenderMode) {
-        animatePanel {
-            store.setNoteRenderMode(mode)
         }
     }
 }

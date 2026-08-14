@@ -1159,6 +1159,8 @@ public struct StudyItem: Identifiable, Codable, Hashable, Sendable {
     public var importedFileLastKnownPath: String?
     public var isSample: Bool
     public var isNotebookNote: Bool
+    /// 浮动 tab 行内重命名写入的自定义显示名；为空时 tab 自动跟随 title / 正文。
+    public var customDisplayTitle: String?
     public var storage: StudyItemStorage
     public var contentRevision: UInt64
     public var contentDigest: String?
@@ -1176,6 +1178,7 @@ public struct StudyItem: Identifiable, Codable, Hashable, Sendable {
         importedFileLastKnownPath: String? = nil,
         isSample: Bool,
         isNotebookNote: Bool = false,
+        customDisplayTitle: String? = nil,
         storage: StudyItemStorage? = nil,
         contentRevision: UInt64 = 1,
         contentDigest: String? = nil,
@@ -1192,6 +1195,7 @@ public struct StudyItem: Identifiable, Codable, Hashable, Sendable {
         self.importedFileLastKnownPath = importedFileLastKnownPath ?? urlPath
         self.isSample = isSample
         self.isNotebookNote = isNotebookNote
+        self.customDisplayTitle = customDisplayTitle
         self.storage = storage ?? (isSample ? .bundledSample : .legacyExternal)
         self.contentRevision = contentRevision
         self.contentDigest = contentDigest
@@ -1210,6 +1214,7 @@ public struct StudyItem: Identifiable, Codable, Hashable, Sendable {
         case importedFileLastKnownPath
         case isSample
         case isNotebookNote
+        case customDisplayTitle
         case storage
         case contentRevision
         case contentDigest
@@ -1229,6 +1234,7 @@ public struct StudyItem: Identifiable, Codable, Hashable, Sendable {
         importedFileLastKnownPath = try container.decodeIfPresent(String.self, forKey: .importedFileLastKnownPath) ?? urlPath
         isSample = try container.decode(Bool.self, forKey: .isSample)
         isNotebookNote = try container.decodeIfPresent(Bool.self, forKey: .isNotebookNote) ?? false
+        customDisplayTitle = try container.decodeIfPresent(String.self, forKey: .customDisplayTitle)
         storage = try container.decodeIfPresent(StudyItemStorage.self, forKey: .storage)
             ?? (isSample ? .bundledSample : .legacyExternal)
         contentRevision = try container.decodeIfPresent(UInt64.self, forKey: .contentRevision) ?? 1

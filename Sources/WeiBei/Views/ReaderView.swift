@@ -9,16 +9,28 @@ extension Notification.Name {
     static let weiBeiScrollAgentToMessage = Notification.Name("WeiBeiScrollAgentToMessage")
 }
 
+/// 浮动标题可选的行内重命名支持：传入后标题可点击进入编辑，提交 / 取消由调用方负责。
+struct HoverTitleRename {
+    let draft: Binding<String>
+    let isEditing: Bool
+    let hint: String
+    let begin: () -> Void
+    let commit: () -> Void
+    let cancel: () -> Void
+}
+
 struct ImmersiveHoverTitleView<Actions: View>: View {
     let mark: String
     let title: String
     let appearanceMode: WeiBeiAppearanceMode
     var isPinned = false
     var reorderRole: WorkspacePaneRole?
+    var titleRename: HoverTitleRename?
     @ViewBuilder var actions: () -> Actions
 
     @State private var visible = false
     @State private var hideTask: DispatchWorkItem?
+    @FocusState private var titleFieldFocused: Bool
 
     init(
         mark: String,
@@ -26,6 +38,7 @@ struct ImmersiveHoverTitleView<Actions: View>: View {
         appearanceMode: WeiBeiAppearanceMode,
         isPinned: Bool = false,
         reorderRole: WorkspacePaneRole? = nil,
+        titleRename: HoverTitleRename? = nil,
         @ViewBuilder actions: @escaping () -> Actions
     ) {
         self.mark = mark
@@ -33,6 +46,7 @@ struct ImmersiveHoverTitleView<Actions: View>: View {
         self.appearanceMode = appearanceMode
         self.isPinned = isPinned
         self.reorderRole = reorderRole
+        self.titleRename = titleRename
         self.actions = actions
     }
 
@@ -48,17 +62,12 @@ struct ImmersiveHoverTitleView<Actions: View>: View {
                 .contentShape(Rectangle())
                 .onHover(perform: updateVisibility)
 
-            if visible || isPinned {
+            if visible || isPinned || titleRename?.isEditing == true {
                 HStack(alignment: .center, spacing: 8) {
                     ViewThatFits(in: .horizontal) {
                         HStack(alignment: .firstTextBaseline, spacing: 9) {
                             hoverMark
-                            Text(title)
-                                .font(.system(size: 11.8, weight: .medium))
-                                .lineLimit(1)
-                                .truncationMode(.tail)
-                                .foregroundStyle(WeiBeiTheme.secondaryInk)
-                                .layoutPriority(-1)
+                            titleView
                         }
                         .fixedSize(horizontal: true, vertical: false)
 
@@ -87,6 +96,17 @@ struct ImmersiveHoverTitleView<Actions: View>: View {
         }
         .frame(maxWidth: .infinity, alignment: .top)
         .fixedSize(horizontal: false, vertical: true)
+        .onChange(of: titleRename?.isEditing) { _, editing in
+            if editing == true {
+                titleFieldFocused = true
+            }
+        }
+        .onChange(of: titleFieldFocused) { _, focused in
+            // 失焦视为提交；Esc 取消路径已先把 isEditing 置 false，不会误入这里。
+            if !focused, titleRename?.isEditing == true {
+                titleRename?.commit()
+            }
+        }
         .onDisappear {
             hideTask?.cancel()
         }
@@ -118,6 +138,39 @@ struct ImmersiveHoverTitleView<Actions: View>: View {
             .lineLimit(1)
             .fixedSize(horizontal: true, vertical: false)
             .foregroundStyle(WeiBeiTheme.cinnabar.opacity(0.82))
+    }
+
+    @ViewBuilder
+    private var titleView: some View {
+        if let titleRename, titleRename.isEditing {
+            TextField(title, text: titleRename.draft)
+                .textFieldStyle(.plain)
+                .font(.system(size: 11.8, weight: .medium))
+                .lineLimit(1)
+                .foregroundStyle(WeiBeiTheme.ink)
+                .layoutPriority(-1)
+                .focused($titleFieldFocused)
+                .onSubmit(titleRename.commit)
+                .onExitCommand(perform: titleRename.cancel)
+                .help(titleRename.hint)
+        } else if let titleRename {
+            Text(title)
+                .font(.system(size: 11.8, weight: .medium))
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .foregroundStyle(WeiBeiTheme.secondaryInk)
+                .layoutPriority(-1)
+                .contentShape(Rectangle())
+                .onTapGesture { titleRename.begin() }
+                .help(titleRename.hint)
+        } else {
+            Text(title)
+                .font(.system(size: 11.8, weight: .medium))
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .foregroundStyle(WeiBeiTheme.secondaryInk)
+                .layoutPriority(-1)
+        }
     }
 }
 
