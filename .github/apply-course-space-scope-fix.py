@@ -14,7 +14,7 @@ paper = "Sources/WeiBei/Views/CourseRelationPaperView.swift"
 replace_once(
     paper,
     "    let isCompact: Bool\n\n    @State private var scope: CourseRelationPaperScope?",
-    "    let isCompact: Bool\n    let allowsWorkspaceScopes: Bool = true\n\n    @State private var scope: CourseRelationPaperScope?",
+    "    let isCompact: Bool\n    var allowsWorkspaceScopes: Bool = true\n\n    @State private var scope: CourseRelationPaperScope?",
 )
 replace_once(
     paper,
@@ -54,11 +54,11 @@ replace_once(
             VStack(spacing: 18) {
                 CourseEmptyState(
                     title: store.ui(
-                        "还没有文稿与笔记的明确关联",
+                        "还没有文档与笔记的明确关联",
                         "No explicit doc–note links yet"
                     ),
                     detail: store.ui(
-                        "先回到列表，选择一份文稿，再勾选相关笔记。关系图只展示真实保存的关联。",
+                        "先回到列表，选择一份文档，再勾选相关笔记。关系图只展示真实保存的关联。",
                         "Return to List, select a doc, and check its related notes. The map only shows saved links."
                     ),
                     systemImage: "point.3.connected.trianglepath.dotted"
