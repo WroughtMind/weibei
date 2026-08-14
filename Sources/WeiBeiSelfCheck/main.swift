@@ -1903,6 +1903,232 @@ do {
     expect(restored == original, "S2 triple backup preserves external content")
 }
 
+// MARK: - P0 note persistence hardening: template shape judgment
+do {
+    // 与 WorkspaceStore.defaultNotebookNote 的输出结构一致（excerptSeed 为空、中英双语）。
+    let zhTemplate = "# 诗歌\n\n## 核心要点\n\n## 摘录\n\n\n## 待追问"
+    let enTemplate = "# Poem\n\n## Key Points\n\n## Excerpts\n\n\n## Follow-up Questions"
+    expect(
+        NoteTemplateShape.isDefaultTemplateShape(zhTemplate, title: "诗歌"),
+        "zh default template is recognized as template shape"
+    )
+    expect(
+        NoteTemplateShape.isDefaultTemplateShape(enTemplate, title: "Poem"),
+        "en default template is recognized as template shape"
+    )
+    expect(
+        NoteTemplateShape.isDefaultTemplateShape(zhTemplate + "\n\n", title: "诗歌"),
+        "trailing blank lines do not break template shape"
+    )
+    expect(
+        !NoteTemplateShape.isDefaultTemplateShape(
+            "# 诗歌\n\n## 核心要点\n\n真的正文\n\n## 摘录\n\n\n## 待追问",
+            title: "诗歌"
+        ),
+        "a filled section body is real content, not template shape"
+    )
+    expect(
+        !NoteTemplateShape.isDefaultTemplateShape(zhTemplate, title: "别的标题"),
+        "template shape requires the heading to match the note title"
+    )
+    expect(
+        !NoteTemplateShape.isDefaultTemplateShape("# 诗歌\n\n只有标题", title: "诗歌")
+            && !NoteTemplateShape.isDefaultTemplateShape("", title: "诗歌"),
+        "a bare heading or empty text is not template shape"
+    )
+    expect(
+        workspaceStoreSource.contains("## \\(ui(\"核心要点\", \"Key Points\"))")
+            && workspaceStoreSource.contains("## \\(ui(\"摘录\", \"Excerpts\"))")
+            && workspaceStoreSource.contains("## \\(ui(\"待追问\", \"Follow-up Questions\"))"),
+        "WorkspaceStore default note template stays in sync with NoteTemplateShape.sectionHeadingVariants"
+    )
+}
+
+// MARK: - P0 note divergence repair planner (temp-dir fixture)
+do {
+    let root = FileManager.default.temporaryDirectory
+        .appendingPathComponent("weibei-p0-repair-\(UUID().uuidString)", isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    let noteURL = root.appendingPathComponent("诗歌.md")
+    let template = "# 诗歌\n\n## 核心要点\n\n## 摘录\n\n\n## 待追问"
+    let templateDigest = NoteDivergenceRepairPlanner.contentDigest(of: template)
+    let realBody = "# 诗歌\n\n明月几时有，把酒问青天。\n"
+    let realDigest = NoteDivergenceRepairPlanner.contentDigest(of: realBody)
+    func digest(of string: String) -> String {
+        NoteDivergenceRepairPlanner.contentDigest(of: string)
+    }
+
+    // 1. 事故现场：磁盘=模板（被旧版覆盖），草稿=真实正文，指纹漂移（原子重写换了
+    //    inode）。磁盘内容可按模板 digest 辨认 → restoreDraft。
+    try template.write(to: noteURL, atomically: true, encoding: .utf8)
+    var state = NoteRepairItemState(
+        draftDigest: realDigest,
+        draftIsTemplateShape: false,
+        diskDigest: digest(of: try String(contentsOf: noteURL, encoding: .utf8)),
+        templateDigest: templateDigest,
+        identityDrifted: true,
+        liveIdentityAvailable: true,
+        lastSelfWrittenDigest: nil,
+        recordedContentDigest: nil
+    )
+    expect(
+        NoteDivergenceRepairPlanner.action(for: state) == .restoreDraft,
+        "accident scene (real draft vs on-disk template, drifted identity) plans restoreDraft"
+    )
+
+    // 2. 模拟执行 restore：备份 → 原子写草稿 → 再判定收敛为 discardRedundantDraft（幂等）。
+    let backupRoot = root.appendingPathComponent("Backups", isDirectory: true)
+    _ = try NoteBackupRing.capture(sourceURL: noteURL, itemID: "poem", rootURL: backupRoot)
+    try realBody.write(to: noteURL, atomically: true, encoding: .utf8)
+    state.diskDigest = digest(of: try String(contentsOf: noteURL, encoding: .utf8))
+    expect(
+        NoteDivergenceRepairPlanner.action(for: state) == .discardRedundantDraft,
+        "after restoreDraft the plan converges to discardRedundantDraft"
+    )
+    let backups = try NoteBackupRing.list(itemID: "poem", rootURL: backupRoot)
+    let firstBackupBody = try String(contentsOf: backups[0].url, encoding: .utf8)
+    expect(
+        backups.count == 1 && firstBackupBody == template,
+        "restoreDraft backs up the on-disk template before overwriting"
+    )
+
+    // 3. 清掉冗余草稿后：无草稿+指纹漂移+内容可信（==记录 digest）→ 只刷指纹。
+    state = NoteRepairItemState(
+        draftDigest: nil,
+        draftIsTemplateShape: false,
+        diskDigest: realDigest,
+        templateDigest: templateDigest,
+        identityDrifted: true,
+        liveIdentityAvailable: true,
+        lastSelfWrittenDigest: nil,
+        recordedContentDigest: realDigest
+    )
+    expect(
+        NoteDivergenceRepairPlanner.action(for: state) == .refreshIdentityOnly,
+        "drifted identity with trusted disk content plans refreshIdentityOnly"
+    )
+
+    // 4. 完全收敛：无草稿+指纹一致 → none（幂等稳态，重复启动无副作用）。
+    state.identityDrifted = false
+    expect(
+        NoteDivergenceRepairPlanner.action(for: state) == .none,
+        "fully converged state is a no-op"
+    )
+
+    // 5. 嫌疑模板草稿：草稿=模板形态而磁盘另有真实内容 → 丢弃草稿，绝不写盘。
+    state = NoteRepairItemState(
+        draftDigest: templateDigest,
+        draftIsTemplateShape: true,
+        diskDigest: realDigest,
+        templateDigest: templateDigest,
+        identityDrifted: false,
+        liveIdentityAvailable: true,
+        lastSelfWrittenDigest: nil,
+        recordedContentDigest: nil
+    )
+    expect(
+        NoteDivergenceRepairPlanner.action(for: state) == .discardSuspectTemplateDraft,
+        "template-shaped draft over real on-disk content is discarded, never written"
+    )
+
+    // 6. 盲态保护：指纹漂移+磁盘内容不可辨认+草稿非模板 → 不动，留草稿等下次。
+    state = NoteRepairItemState(
+        draftDigest: digest(of: "# 诗歌\n\n另一段正文"),
+        draftIsTemplateShape: false,
+        diskDigest: digest(of: "# 陌生文件\n\n不认识的内容"),
+        templateDigest: templateDigest,
+        identityDrifted: true,
+        liveIdentityAvailable: true,
+        lastSelfWrittenDigest: nil,
+        recordedContentDigest: nil
+    )
+    expect(
+        NoteDivergenceRepairPlanner.action(for: state) == .none,
+        "blind state (drifted identity + unrecognized disk content) is left untouched"
+    )
+
+    // 7. 文件不可读：有草稿也不决策。
+    state.diskDigest = nil
+    expect(
+        NoteDivergenceRepairPlanner.action(for: state) == .none,
+        "unreadable file keeps the draft without acting"
+    )
+
+    // 8. 无草稿+指纹漂移+磁盘内容不可信 → none（不给陌生文件上指纹）。
+    state = NoteRepairItemState(
+        draftDigest: nil,
+        draftIsTemplateShape: false,
+        diskDigest: digest(of: "陌生内容"),
+        templateDigest: templateDigest,
+        identityDrifted: true,
+        liveIdentityAvailable: true,
+        lastSelfWrittenDigest: nil,
+        recordedContentDigest: realDigest
+    )
+    expect(
+        NoteDivergenceRepairPlanner.action(for: state) == .none,
+        "untrusted disk content does not get an identity refresh"
+    )
+
+    // 9. 磁盘==草稿且指纹漂移 → 清草稿（discardRedundantDraft），执行侧顺带刷指纹。
+    state = NoteRepairItemState(
+        draftDigest: realDigest,
+        draftIsTemplateShape: false,
+        diskDigest: realDigest,
+        templateDigest: templateDigest,
+        identityDrifted: true,
+        liveIdentityAvailable: true,
+        lastSelfWrittenDigest: nil,
+        recordedContentDigest: nil
+    )
+    expect(
+        NoteDivergenceRepairPlanner.action(for: state) == .discardRedundantDraft,
+        "disk==draft with drifted identity plans discardRedundantDraft (content untouched)"
+    )
+}
+
+// MARK: - P0 note persistence hardening: WorkspaceStore wiring (source assertions)
+do {
+    let repairCall = workspaceStoreSource.range(
+        of: "await self?.repairDivergedNotebookNotesIfNeeded()"
+    )
+    let retryCall = workspaceStoreSource.range(
+        of: "await self?.retryRestoredPendingNoteWrites()"
+    )
+    expect(
+        repairCall != nil && retryCall != nil && repairCall!.lowerBound < retryCall!.lowerBound,
+        "startup repair runs before retryRestoredPendingNoteWrites so suspect template drafts cannot be flushed to disk"
+    )
+    expect(
+        workspaceStoreSource.contains("guard !noteDivergenceRepairDidRun else { return }")
+            && workspaceStoreSource.contains("WeiBeiNoteRepairDisabled")
+            && workspaceStoreSource.contains("NoteDivergenceRepairPlanner.action(for: state)")
+            && workspaceStoreSource.contains("WeiBei note repair: item=%@ action=%@ path=%@%@"),
+        "repair routine is one-shot per launch, dry-runnable, planner-driven, and NSLog-only"
+    )
+    expect(
+        workspaceStoreSource.contains("WeiBei note repair: backup failed, skip restore item=%@ error=%@")
+            && workspaceStoreSource.contains("// 备份先行；备份失败绝不写盘。"),
+        "restoreDraft captures the on-disk content into NoteBackupRing before writing and skips the write when backup fails"
+    )
+    expect(
+        workspaceStoreSource.contains("正文展示已降级为模板；已暂停自动写回以保护磁盘内容。"),
+        "noteText(for:) template fallbacks record the degraded marker"
+    )
+    expect(
+        workspaceStoreSource.contains("已拦截模板写回")
+            && workspaceStoreSource.contains("currentDigest != templateDigest")
+            && workspaceStoreSource.contains("currentDigest != lastSelfDigest"),
+        "writeNoteMarkdownTriple refuses template write-back over foreign disk content while degraded, except over its own last write"
+    )
+    expect(
+        workspaceStoreSource.contains("正文未能完整读取，为保护内容未执行重命名。")
+            && workspaceStoreSource.contains("NoteTemplateShape.isDefaultTemplateShape(sourceMarkdown, title: oldTitle)"),
+        "rename sentinel aborts when the in-memory body is template-shaped but the disk holds other content"
+    )
+}
+
 // MARK: - Performance Phase 1+2: workspace encode guardrail + off-main hop
 do {
     // Warm-up encode so first-run JSONEncoder overhead does not dominate.
