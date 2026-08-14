@@ -2,12 +2,32 @@ import Foundation
 import SwiftUI
 import WeiBeiCore
 
-/// Learning-session list grouped by course (color tag per course).
+private enum CourseConversationSection: String, CaseIterable, Identifiable {
+    case chats
+    case memory
+
+    var id: String { rawValue }
+
+    func label(language: WeiBeiInterfaceLanguage, count: Int) -> String {
+        switch self {
+        case .chats:
+            return language.text("对话 \(count)", "Chats \(count)")
+        case .memory:
+            return language.text("课程记忆 \(count)", "Course Memory \(count)")
+        }
+    }
+}
+
+/// Course-associated Chats and course-scoped Memory are intentionally shown as
+/// two different sections. A Chat is global history that can touch more than
+/// one course; Memory is editable state scoped to this course.
 struct CourseRecordsView: View {
     @EnvironmentObject private var store: WorkspaceStore
     let search: String
     @Binding var selectedSessionID: UUID?
     let isCompact: Bool
+
+    @State private var section: CourseConversationSection = .chats
 
     private struct SessionGroup: Identifiable {
         let id: String
@@ -16,22 +36,35 @@ struct CourseRecordsView: View {
         let sessions: [StudySession]
     }
 
-    private var filteredSessions: [StudySession] {
+    private var courseSessions: [StudySession] {
         guard let courseID = store.courseWorkspaceCourseID else { return [] }
+        return store.sessionsTouchingCourse(courseID)
+            .sorted { lhs, rhs in
+                if lhs.updatedAt != rhs.updatedAt {
+                    return lhs.updatedAt > rhs.updatedAt
+                }
+                return lhs.id.uuidString < rhs.id.uuidString
+            }
+    }
+
+    private var filteredSessions: [StudySession] {
         let cleaned = search.trimmingCharacters(in: .whitespacesAndNewlines)
-        let sessions = store.sessionsTouchingCourse(courseID)
-        guard !cleaned.isEmpty else { return sessions }
-        return sessions.filter { session in
+        guard !cleaned.isEmpty else { return courseSessions }
+        return courseSessions.filter { session in
             session.title.localizedCaseInsensitiveContains(cleaned)
                 || session.summary.localizedCaseInsensitiveContains(cleaned)
-                || session.messages.contains { $0.text.localizedCaseInsensitiveContains(cleaned) }
+                || session.messages.contains {
+                    $0.text.localizedCaseInsensitiveContains(cleaned)
+                }
         }
     }
 
     private var groups: [SessionGroup] {
         guard let courseID = store.courseWorkspaceCourseID,
               let course = store.course(withID: courseID),
-              !filteredSessions.isEmpty else { return [] }
+              !filteredSessions.isEmpty else {
+            return []
+        }
         return [
             SessionGroup(
                 id: course.id.uuidString,
@@ -46,104 +79,230 @@ struct CourseRecordsView: View {
         store.courseWorkspaceCourseID.map(LearningMemoryScope.course)
     }
 
-    private var hasMemories: Bool {
-        memoryScope.map { !store.learningMemoryEntries(in: $0).isEmpty } ?? false
+    private var memoryCount: Int {
+        memoryScope.map { store.learningMemoryEntries(in: $0).count } ?? 0
+    }
+
+    private var cleanedSearch: String {
+        search.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     var body: some View {
-        Group {
-            if groups.isEmpty && !hasMemories {
-                CourseEmptyState(
-                    title: store.ui("还没有学习记录", "No learning records yet"),
-                    detail: store.ui(
-                        "本课的学习记忆和真实对话会出现在这里。",
-                        "Learning memories and real Chats for this course will appear here."
-                    ),
-                    systemImage: "bubble.left.and.text.bubble.right"
-                )
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .padding(30)
-            } else {
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 0) {
-                        if let memoryScope {
-                            LearningMemoryListSection(
-                                scope: memoryScope,
-                                title: store.ui("本课记忆", "Course Memory"),
-                                search: search
-                            )
-                            if !groups.isEmpty {
-                                CourseHairline()
+        VStack(spacing: 0) {
+            conversationHeader
+            CourseHairline()
+
+            switch section {
+            case .chats:
+                chatsContent
+            case .memory:
+                memoryContent
+            }
+        }
+        .background(WeiBeiTheme.paper)
+        .onAppear(perform: normalizeInitialSection)
+        .onChange(of: store.courseWorkspaceCourseID) { _, _ in
+            selectedSessionID = nil
+            section = courseSessions.isEmpty && memoryCount > 0 ? .memory : .chats
+            normalizeSelectedSession()
+        }
+        .onChange(of: courseSessions.map(\.id)) { _, _ in
+            normalizeSelectedSession()
+        }
+    }
+
+    private var conversationHeader: some View {
+        HStack(spacing: 16) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(store.ui("对话", "Conversations"))
+                    .font(WeiBeiTypography.brandFont(
+                        language: store.interfaceLanguage,
+                        size: 17,
+                        weight: .semibold
+                    ))
+                    .foregroundStyle(WeiBeiTheme.ink)
+
+                Text(store.ui(
+                    "对话保存在全局；这里显示与当前课程有关的对话。",
+                    "Chats stay global; this view shows Chats associated with the current course."
+                ))
+                .font(.system(size: 10.5))
+                .foregroundStyle(WeiBeiTheme.secondaryInk)
+                .lineLimit(1)
+            }
+
+            Spacer(minLength: 12)
+
+            if !isCompact {
+                Text(store.ui(
+                    "课程记忆是可编辑的当前状态，不是聊天记录。",
+                    "Course Memory is editable current state, not Chat history."
+                ))
+                .font(.system(size: 10.5))
+                .foregroundStyle(WeiBeiTheme.tertiaryInk)
+                .lineLimit(1)
+            }
+
+            Picker("", selection: $section) {
+                ForEach(CourseConversationSection.allCases) { candidate in
+                    Text(candidate.label(
+                        language: store.interfaceLanguage,
+                        count: candidate == .chats
+                            ? courseSessions.count
+                            : memoryCount
+                    ))
+                    .tag(candidate)
+                }
+            }
+            .labelsHidden()
+            .pickerStyle(.segmented)
+            .frame(width: isCompact ? 220 : 260)
+        }
+        .padding(.horizontal, 18)
+        .frame(minHeight: 58)
+        .background(WeiBeiTheme.paperRaised.opacity(0.24))
+    }
+
+    @ViewBuilder
+    private var chatsContent: some View {
+        if store.courseWorkspaceCourseID == nil {
+            CourseEmptyState(
+                title: store.ui("先选择一门课程", "Choose a course first"),
+                detail: store.ui(
+                    "选择课程后，这里会显示与它有关的全局对话。",
+                    "Choose a course to see the global Chats associated with it."
+                ),
+                systemImage: "bubble.left.and.text.bubble.right"
+            )
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .padding(30)
+        } else if filteredSessions.isEmpty {
+            CourseEmptyState(
+                title: cleanedSearch.isEmpty
+                    ? store.ui("这门课还没有关联对话", "No Chats associated with this course")
+                    : store.ui("没有匹配的对话", "No matching Chats"),
+                detail: cleanedSearch.isEmpty
+                    ? store.ui(
+                        "从课程概览提问或开始新对话后，对话会出现在这里。对话本身仍保存在全局。",
+                        "Ask from the course overview or start a new Chat. The Chat itself remains global."
+                    )
+                    : store.ui("换一个搜索词再试。", "Try another search term."),
+                systemImage: "bubble.left.and.text.bubble.right"
+            )
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .padding(30)
+        } else {
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 0) {
+                    ForEach(groups) { group in
+                        groupHeader(group)
+                        ForEach(group.sessions) { session in
+                            CourseWorkspaceRow(
+                                icon: "bubble.left.and.text.bubble.right",
+                                title: session.title,
+                                detail: sessionDetail(session),
+                                status: courseRelativeDate(
+                                    session.updatedAt,
+                                    language: store.interfaceLanguage
+                                ),
+                                selected: session.id == selectedSessionID
+                            ) {
+                                selectedSessionID = session.id
+                                store.continueCourseSession(
+                                    session.id,
+                                    expectedCourseID: store.courseWorkspaceCourseID,
+                                    expectedScopeNeedsReview: false
+                                )
                             }
-                        }
-                        ForEach(groups) { group in
-                            groupHeader(group)
-                            ForEach(group.sessions) { session in
-                                CourseWorkspaceRow(
-                                    icon: "bubble.left.and.text.bubble.right",
-                                    title: session.title,
-                                    detail: store.ui(
-                                        "\(session.messages.count) 条消息 · \(coursePhaseLabel(session.flow.phase, store: store))",
-                                        "\(session.messages.count) messages · \(coursePhaseLabel(session.flow.phase, store: store))"
-                                    ),
-                                    status: courseRelativeDate(session.updatedAt, language: store.interfaceLanguage),
-                                    selected: session.id == selectedSessionID
-                                ) {
-                                    selectedSessionID = session.id
-                                    store.continueCourseSession(
-                                        session.id,
-                                        expectedCourseID: store.courseWorkspaceCourseID,
-                                        expectedScopeNeedsReview: false
-                                    )
-                                }
-                                CourseHairline()
-                            }
+                            CourseHairline()
                         }
                     }
-                    .padding(.vertical, 6)
                 }
-                .background(WeiBeiTheme.paperRaised.opacity(0.18))
+                .padding(.vertical, 6)
             }
+            .background(WeiBeiTheme.paperRaised.opacity(0.12))
         }
-        .overlay(alignment: .bottom) {
-            if !groups.isEmpty {
-                Text(store.ui(
-                    "点击一行继续本课对话",
-                    "Click a row to continue this course Chat"
-                ))
-                .font(.system(size: 11))
-                .foregroundStyle(WeiBeiTheme.tertiaryInk)
-                .padding(.horizontal, 16)
-                .padding(.vertical, 10)
-                .frame(maxWidth: .infinity)
-                .background(WeiBeiTheme.paper.opacity(0.92))
+    }
+
+    @ViewBuilder
+    private var memoryContent: some View {
+        if let memoryScope {
+            ScrollView {
+                LearningMemoryListSection(
+                    scope: memoryScope,
+                    title: store.ui("当前课程记忆", "Current Course Memory"),
+                    search: search
+                )
             }
-        }
-        .onAppear {
-            if selectedSessionID == nil {
-                selectedSessionID = groups.first?.sessions.first?.id
-            }
+            .background(WeiBeiTheme.paperRaised.opacity(0.12))
+        } else {
+            CourseEmptyState(
+                title: store.ui("先选择一门课程", "Choose a course first"),
+                detail: store.ui(
+                    "课程记忆按当前课程单独保存。",
+                    "Course Memory is stored separately for each course."
+                ),
+                systemImage: "brain.head.profile"
+            )
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .padding(30)
         }
     }
 
     private func groupHeader(_ group: SessionGroup) -> some View {
-        let accent = group.course.map { courseWorkspaceAccent(colorIndex: $0.colorIndex) } ?? WeiBeiTheme.tertiaryInk
+        let accent = group.course.map {
+            courseWorkspaceAccent(colorIndex: $0.colorIndex)
+        } ?? WeiBeiTheme.tertiaryInk
+
         return HStack(spacing: 8) {
-            Capsule()
+            Circle()
                 .fill(accent)
-                .frame(width: 8, height: 8)
+                .frame(width: 7, height: 7)
             Text(group.title)
-                .font(WeiBeiTypography.brandFont(language: store.interfaceLanguage, size: 13, weight: .semibold))
+                .font(WeiBeiTypography.brandFont(
+                    language: store.interfaceLanguage,
+                    size: 13,
+                    weight: .semibold
+                ))
                 .foregroundStyle(WeiBeiTheme.ink)
-            Text(store.ui("\(group.sessions.count) 段", "\(group.sessions.count)"))
-                .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(WeiBeiTheme.secondaryInk)
+            Text(store.ui(
+                "\(group.sessions.count) 段对话",
+                "\(group.sessions.count) Chats"
+            ))
+            .font(.system(size: 11, weight: .medium))
+            .foregroundStyle(WeiBeiTheme.secondaryInk)
             Spacer(minLength: 0)
         }
         .padding(.horizontal, 16)
         .padding(.top, 14)
         .padding(.bottom, 8)
-        .background(accent.opacity(0.06))
+        .background(accent.opacity(0.05))
+    }
+
+    private func sessionDetail(_ session: StudySession) -> String {
+        let summary = session.summary
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let lastMessage = session.messages.last?.text
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let preview = summary.isEmpty ? lastMessage : summary
+        let metadata = store.ui(
+            "\(session.messages.count) 条消息 · \(coursePhaseLabel(session.flow.phase, store: store))",
+            "\(session.messages.count) messages · \(coursePhaseLabel(session.flow.phase, store: store))"
+        )
+        guard !preview.isEmpty else { return metadata }
+        return "\(preview.replacingOccurrences(of: "\n", with: " ")) · \(metadata)"
+    }
+
+    private func normalizeInitialSection() {
+        section = courseSessions.isEmpty && memoryCount > 0 ? .memory : .chats
+        normalizeSelectedSession()
+    }
+
+    private func normalizeSelectedSession() {
+        let sessionIDs = Set(courseSessions.map(\.id))
+        if selectedSessionID.map({ sessionIDs.contains($0) }) != true {
+            selectedSessionID = courseSessions.first?.id
+        }
     }
 }
 
