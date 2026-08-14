@@ -10029,11 +10029,11 @@ final class WorkspaceStore: ObservableObject {
 
     var agentNoteTitle: String {
         if let note = activeNoteItem {
-            // 只有 title 与自定义名都为空时才需要读正文做回退，避免渲染期触发笔记加载。
-            let trimmedTitle = note.title.trimmingCharacters(in: .whitespacesAndNewlines)
+            // 正文抬头优先于文件名：只要有正文就可能提供显示名；自定义名存在时不必读正文。
+            // 活动笔记的正文本就在内存（noteText），不会触发额外加载。
             let hasCustomTitle = note.customDisplayTitle?
                 .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
-            let body = trimmedTitle.isEmpty && !hasCustomTitle ? noteText(for: note) : ""
+            let body = hasCustomTitle ? "" : noteText(for: note)
             let resolved = NoteTabDisplayTitle.resolve(
                 customTitle: note.customDisplayTitle,
                 noteTitle: note.title,
@@ -17572,6 +17572,46 @@ final class WorkspaceStore: ObservableObject {
         return url
     }
 
+    /// 正文抬头驱动文件名：无自定义名且正文首个 ATX 标题与当前文件名不一致时，
+    /// 纯 move 改文件名——一个字节内容都不碰，inode 不变，指纹与 bookmark 保持有效。
+    /// 只在成功落盘后调用；课程文件有自己的命名约束，不走这条路。
+    private func synchronizeNoteFileNameWithHeading(itemID: String, markdown: String, currentURL: URL) {
+        guard let index = importedItems.firstIndex(where: { $0.id == itemID }) else { return }
+        let item = importedItems[index]
+        guard item.isNotebookNote else { return }
+        guard item.customDisplayTitle?
+            .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false else { return }
+        guard let heading = NoteTabDisplayTitle.bodyHeading(from: markdown),
+              heading != currentURL.deletingPathExtension().lastPathComponent else { return }
+        let newURL = renamedNotebookURL(
+            in: currentURL.deletingLastPathComponent(),
+            title: heading,
+            currentURL: currentURL
+        )
+        guard newURL.path != currentURL.path else { return }
+        do {
+            try FileManager.default.moveItem(at: currentURL, to: newURL)
+        } catch {
+            showTransientNoteStatus(
+                ui(
+                    "无法按正文抬头重命名笔记文件：\(error.localizedDescription)",
+                    "Could not rename the note file to match its heading: \(error.localizedDescription)"
+                )
+            )
+            return
+        }
+        importedItems[index].title = newURL.deletingPathExtension().lastPathComponent
+        importedItems[index].subtitle = newURL.lastPathComponent
+        importedItems[index].urlPath = newURL.path
+        importedItems[index].importedFileLastKnownPath = newURL.path
+        if let bookmark = Self.makeImportedFileBookmark(for: newURL) {
+            importedItems[index].importedFileBookmarkData = bookmark
+        }
+        if let refreshed = refreshImportedFileTracking(itemID: itemID, url: newURL) {
+            courseDocumentSearchIndex.schedule([refreshed])
+        }
+    }
+
     private func retitledMarkdown(_ markdown: String, from oldTitle: String, to newTitle: String) -> String {
         let prefix = "# \(oldTitle)\n"
         guard markdown.hasPrefix(prefix) else { return markdown }
@@ -19673,6 +19713,7 @@ final class WorkspaceStore: ObservableObject {
                     url: url
                 ) ?? importedItems[index]
                 courseDocumentSearchIndex.schedule([refreshedItem])
+                synchronizeNoteFileNameWithHeading(itemID: noteItemID, markdown: markdown, currentURL: url)
             }
             save()
             return

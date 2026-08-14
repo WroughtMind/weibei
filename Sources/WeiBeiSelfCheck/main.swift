@@ -928,8 +928,19 @@ expect(
     "note tab title follows the live note title before any manual rename"
 )
 expect(
-    NoteTabDisplayTitle.resolve(customTitle: nil, noteTitle: "  ", body: "# 货币银行学\n\n第二章 利率") == "货币银行学 第二章 利率",
-    "untitled note tab falls back to the first body characters without Markdown markers"
+    NoteTabDisplayTitle.resolve(customTitle: nil, noteTitle: "旧文件名", body: "# 货币银行学\n\n第二章 利率") == "货币银行学",
+    "body heading outranks the file name so editing the heading renames the tab live"
+)
+expect(
+    NoteTabDisplayTitle.resolve(customTitle: nil, noteTitle: "利率笔记", body: "无关正文") == "利率笔记",
+    "body without a leading heading falls back to the file name"
+)
+expect(
+    NoteTabDisplayTitle.bodyHeading(from: "\n\n# 假想的男人\n正文") == "假想的男人"
+        && NoteTabDisplayTitle.bodyHeading(from: "无标题正文\n# 后面的标题") == nil
+        && NoteTabDisplayTitle.bodyHeading(from: "#无空格不是标题") == nil
+        && NoteTabDisplayTitle.bodyHeading(from: "") == nil,
+    "only a leading ATX heading counts as the note heading"
 )
 expect(
     NoteTabDisplayTitle.resolve(customTitle: nil, noteTitle: "", body: "- 实际利率**非常高**，名义利率`r`参见 [[货币理论|Money]]")
@@ -967,8 +978,10 @@ expect(
         && notesAgentViewSource.contains("withAnimation(WeiBeiMotion.panel) { editingNoteTabTitle = true }")
         && readerViewSource.contains("struct HoverTitleRename")
         && readerViewSource.contains("renameField")
-        && readerViewSource.contains("titleRename?.isEditing == true ? nil : reorderRole"),
-    "note floating tab rename prefills the resolved display title, animates the swap, and keeps the field out of ViewThatFits and pane-reorder drags"
+        && readerViewSource.contains("titleRename?.isEditing == true ? nil : reorderRole")
+        && workspaceStoreSource.contains("synchronizeNoteFileNameWithHeading(itemID: noteItemID, markdown: markdown, currentURL: url)")
+        && workspaceStoreSource.contains("try FileManager.default.moveItem(at: currentURL, to: newURL)"),
+    "note floating tab rename prefills the resolved display title, animates the swap, and keeps the field out of ViewThatFits and pane-reorder drags; a leading body heading also renames the backing file via a pure move"
 )
 expect(
     readerViewSource.contains("renameFieldAlive = true")

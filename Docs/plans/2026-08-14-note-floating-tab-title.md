@@ -68,3 +68,19 @@
   取证附记：诗歌笔记（El hombre imaginario）正文在磁盘 workspace.json 中完好
   （与 /tmp/workspace-before-repro.json 全量 diff 无差异），未发生误删持久化；
   卡死的测试实例（dist/魏碑.app, PID 49817）已 kill -9 防止退出时写回脏内存。
+- 认知模型修正（本轮）：tab 显示名优先级从「自定义名 > 文件名 > 正文前几个字」
+  改为「自定义名 > 正文抬头（文档首个 ATX 标题）> 文件名 > 正文前几个字」。
+  用户认知里的"笔记标题"是正文大标题，文件名只是兜底；此前跟随文件名导致
+  改正文抬头 tab 不跟随（诗歌笔记事故放大此问题：文件名是不可见的脏数据
+  "的撒打算的"）。`NoteTabDisplayTitle` 新增 `bodyHeading(from:)`（只认文档
+  顶部的 ATX 标题），`agentNoteTitle` 在无自定义名时始终取正文参与解析。
+- 正文抬头驱动文件名：新增 `synchronizeNoteFileNameWithHeading`，在
+  `persistNote` 成功落盘后检查——无自定义名且正文首个标题与文件名不一致时
+  纯 `moveItem` 改名（不重写内容、inode 不变、指纹与 bookmark 保持有效，
+  冲突时按 `renamedNotebookURL` 规则追加序号；课程文件不动）。用户设过
+  自定义名则不跟随（不干涉原则）。
+- 数据层修复（不进仓库）：诗歌笔记磁盘文件已由"的撒打算的.md（内容为默认
+  模板）"修复为 `El hombre imaginario.md`（内容为真实诗歌正文），
+  workspace.json 的 title/subtitle/lastKnownPath 同步；修复前已备份。
+  系统性根因（双真相源分叉、fileID 漂移、模板覆盖通道）的审计报告与
+  P0/P1/P2 加固计划见主会话，后续单开任务处理。
