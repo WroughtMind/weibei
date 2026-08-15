@@ -24,6 +24,7 @@ struct CourseManagementSheet: View {
     let courseID: UUID
 
     @State private var trashConfirmationPresented = false
+    @State private var unregisterConfirmationPresented = false
     @State private var isWorking = false
     @State private var errorMessage: String?
 
@@ -111,24 +112,45 @@ struct CourseManagementSheet: View {
                 Text(store.ui("危险操作", "Danger Zone"))
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(WeiBeiTheme.cinnabar)
-                Text(store.ui(
-                    "这会把整个真实课程文件夹及其中内容移到 macOS 废纸篓。只有移动成功后，课程才会从魏碑移除。",
-                    "This moves the entire real course folder to the macOS Trash. WeiBei removes the course only after the move succeeds."
-                ))
-                .font(.system(size: 11.5))
-                .foregroundStyle(WeiBeiTheme.secondaryInk)
-                .fixedSize(horizontal: false, vertical: true)
-
-                Button(
-                    store.ui(
-                        "将课程文件夹移到废纸篓…",
-                        "Move Course Folder to Trash…"
-                    ),
-                    role: .destructive
+                if UnavailableCourseUnregister.shouldOfferUnregister(
+                    rootURL: rootURL,
+                    unavailableReason: rootUnavailableReason
                 ) {
-                    trashConfirmationPresented = true
+                    Text(store.ui(
+                        UnavailableCourseUnregister.confirmationMessage(chinese: true),
+                        UnavailableCourseUnregister.confirmationMessage(chinese: false)
+                    ))
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(WeiBeiTheme.secondaryInk)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                    Button(
+                        store.ui("只从魏碑移除…", "Remove from WeiBei Only…"),
+                        role: .destructive
+                    ) {
+                        unregisterConfirmationPresented = true
+                    }
+                    .disabled(isWorking)
+                } else {
+                    Text(store.ui(
+                        "这会把整个真实课程文件夹及其中内容移到 macOS 废纸篓。只有移动成功后，课程才会从魏碑移除。",
+                        "This moves the entire real course folder to the macOS Trash. WeiBei removes the course only after the move succeeds."
+                    ))
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(WeiBeiTheme.secondaryInk)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                    Button(
+                        store.ui(
+                            "将课程文件夹移到废纸篓…",
+                            "Move Course Folder to Trash…"
+                        ),
+                        role: .destructive
+                    ) {
+                        trashConfirmationPresented = true
+                    }
+                    .disabled(!canUseCourseFolder)
                 }
-                .disabled(!canUseCourseFolder)
             }
 
             if isWorking {
@@ -195,6 +217,31 @@ struct CourseManagementSheet: View {
                 "The entire folder will be moved:\n\(rootURL.path)\n\nWeiBei will verify its identity and path again before moving it."
             ))
         }
+        .confirmationDialog(
+            store.ui(
+                UnavailableCourseUnregister.confirmationTitle(chinese: true),
+                UnavailableCourseUnregister.confirmationTitle(chinese: false)
+            ),
+            isPresented: $unregisterConfirmationPresented,
+            titleVisibility: .visible
+        ) {
+            Button(
+                store.ui("只从魏碑移除", "Remove from WeiBei Only"),
+                role: .destructive
+            ) {
+                unregisterFromWeiBei()
+            }
+            .disabled(isWorking)
+            Button(
+                store.ui("取消", "Cancel"),
+                role: .cancel
+            ) {}
+        } message: {
+            Text(store.ui(
+                UnavailableCourseUnregister.confirmationMessage(chinese: true),
+                UnavailableCourseUnregister.confirmationMessage(chinese: false)
+            ))
+        }
     }
 
     private func moveToTrash() {
@@ -206,6 +253,20 @@ struct CourseManagementSheet: View {
                 _ = try await store.moveCourseFolderToTrash(
                     courseID
                 )
+                dismiss()
+            } catch {
+                errorMessage = error.localizedDescription
+                isWorking = false
+            }
+        }
+    }
+
+    private func unregisterFromWeiBei() {
+        isWorking = true
+        errorMessage = nil
+        Task { @MainActor in
+            do {
+                try await store.removeCourseFromWeiBei(courseID)
                 dismiss()
             } catch {
                 errorMessage = error.localizedDescription
