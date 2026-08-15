@@ -69,7 +69,7 @@ public struct CourseHomeLearningHighlights: Equatable, Sendable {
             }
         let sessions = studySessions
             .filter {
-                $0.courseID == courseID
+                $0.relatedCourseIDs.contains(courseID)
                     && $0.scopeNeedsReview == false
                     && !$0.messages.isEmpty
             }

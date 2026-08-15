@@ -12,11 +12,11 @@ enum CourseWorkspacePage: String, CaseIterable, Identifiable {
     func label(language: WeiBeiInterfaceLanguage) -> String {
         switch self {
         case .hub:
-            language.text("课程首页", "Course Home")
+            language.text("概览", "Overview")
         case .relations:
-            language.text("关系台", "Relations")
+            language.text("文稿与笔记", "Docs & Notes")
         case .records:
-            language.text("学习记录", "Learning Records")
+            language.text("对话", "Conversations")
         }
     }
 }
@@ -32,7 +32,7 @@ enum CourseRelationLens: String, CaseIterable, Identifiable {
         case .notes:
             language.text("笔记", "Notes")
         case .materials:
-            language.text("资料", "Materials")
+            language.text("文稿", "Docs")
         }
     }
 }
@@ -278,8 +278,10 @@ struct CourseWorkspaceView: View {
                     ?? store.ui("无法新建笔记。", "Could not create the note.")
                 return
             }
+            selectedMaterialID = nil
             selectedNoteID = noteID
-            page = .hub
+            relationLens = .notes
+            page = .relations
             showsNewNotePrompt = false
         }
     }
@@ -451,14 +453,14 @@ struct CourseWorkspaceHeader: View {
 
             Menu {
                 Button(action: importMaterials) {
-                    Label(store.ui("导入资料", "Import materials"), systemImage: "doc.badge.plus")
+                    Label(store.ui("导入文稿", "Import Docs"), systemImage: "doc.badge.plus")
                 }
                 Button(action: importNotes) {
-                    Label(store.ui("导入 Markdown 笔记", "Import Markdown notes"), systemImage: "note.text.badge.plus")
+                    Label(store.ui("导入 Markdown 笔记", "Import Markdown Notes"), systemImage: "note.text.badge.plus")
                 }
                 Divider()
                 Button(action: createNote) {
-                    Label(store.ui("新建笔记", "New note"), systemImage: "square.and.pencil")
+                    Label(store.ui("新建笔记", "New Note"), systemImage: "square.and.pencil")
                 }
             } label: {
                 Label(store.ui("添加", "Add"), systemImage: "plus")
@@ -471,7 +473,7 @@ struct CourseWorkspaceHeader: View {
             }
             .menuStyle(.borderlessButton)
             .fixedSize()
-            .help(store.ui("添加文稿或笔记", "Add materials or notes"))
+            .help(store.ui("添加文稿或笔记", "Add Docs or Notes"))
         }
         .padding(.horizontal, 16)
         .frame(height: 52)
@@ -481,11 +483,11 @@ struct CourseWorkspaceHeader: View {
     private var searchPrompt: String {
         switch page {
         case .hub:
-            store.ui("搜索本课文稿、对话与笔记", "Search this course")
+            store.ui("搜索本课文稿、笔记与对话", "Search this course")
         case .relations:
-            store.ui("搜索工作区资料与笔记", "Search workspace materials and notes")
+            store.ui("搜索本课文稿与笔记", "Search Docs and Notes in this course")
         case .records:
-            store.ui("搜索学习记录", "Search learning records")
+            store.ui("搜索本课对话与课程记忆", "Search Chats and Course Memory")
         }
     }
 

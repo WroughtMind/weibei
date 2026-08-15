@@ -8,6 +8,7 @@ struct CourseRelationPaperView: View {
     @Binding var selectedNoteID: String?
     @Binding var selectedMaterialID: String?
     let isCompact: Bool
+    var allowsWorkspaceScopes: Bool = true
 
     @State private var scope: CourseRelationPaperScope?
     @State private var mode: CourseRelationPaperMode = .viewing
@@ -32,6 +33,12 @@ struct CourseRelationPaperView: View {
     }
 
     private var effectiveScope: CourseRelationPaperScope {
+        if !allowsWorkspaceScopes,
+           let courseID = store.courseWorkspaceCourseID,
+           store.courses.contains(where: { $0.id == courseID }) {
+            return .course(courseID)
+        }
+
         let candidate = scope ?? defaultScope
         if case .course(let courseID) = candidate,
            !store.courses.contains(where: { $0.id == courseID }) {
@@ -84,7 +91,9 @@ struct CourseRelationPaperView: View {
             header(model: graphModel)
             CourseHairline()
             GeometryReader { proxy in
-                let showCourseRail = !isCompact && proxy.size.width >= 760
+                let showCourseRail = allowsWorkspaceScopes
+                    && !isCompact
+                    && proxy.size.width >= 760
                 HStack(spacing: 0) {
                     if showCourseRail {
                         courseScopeRail
@@ -119,6 +128,14 @@ struct CourseRelationPaperView: View {
             }
         }
         .onChange(of: store.courseWorkspaceCourseID) { _, newID in
+            if !allowsWorkspaceScopes {
+                if let newID,
+                   store.courses.contains(where: { $0.id == newID }) {
+                    scope = .course(newID)
+                }
+                return
+            }
+
             // Follow course switches from the title menu unless user picked a non-course filter.
             switch effectiveScope {
             case .all, .unassigned, .unlinked:
@@ -152,7 +169,7 @@ struct CourseRelationPaperView: View {
             Spacer(minLength: 8)
 
             // Narrow widths hide the rail — keep a compact course picker.
-            if isCompact {
+            if isCompact && allowsWorkspaceScopes {
                 scopeMenu
             }
 

@@ -8,7 +8,7 @@ struct CourseRelationsView: View {
     let isCompact: Bool
 
     var body: some View {
-        CourseRelationPaperView(
+        CourseDocNoteWorkspaceView(
             lens: $lens,
             search: search,
             selectedNoteID: $selectedNoteID,
