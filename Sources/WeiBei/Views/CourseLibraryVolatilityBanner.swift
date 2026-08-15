@@ -55,3 +55,47 @@ struct CourseLibraryVolatilityBanner: View {
         )))
     }
 }
+
+struct MissingImportedItemBanner: View {
+    @EnvironmentObject private var store: WorkspaceStore
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 12) {
+            Image(systemName: "doc.badge.ellipsis")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(WeiBeiTheme.cinnabar)
+                .accessibilityHidden(true)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(store.ui("源文件缺失", "Source file missing"))
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(WeiBeiTheme.ink)
+                Text(store.ui(
+                    "“\(store.missingImportedSourceDisplayTitle)” 的原文件当前无法打开。重新选择文件只会更新这一条记录。",
+                    "“\(store.missingImportedSourceDisplayTitle)” cannot be opened. Choosing a file again updates this item only."
+                ))
+                .font(.system(size: 11))
+                .foregroundStyle(WeiBeiTheme.secondaryInk)
+                .fixedSize(horizontal: false, vertical: true)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            Button(
+                store.ui("重新选择文件", "Choose File Again"),
+                action: store.presentRebindPanelForSelectedMissingImportedItem
+            )
+            .buttonStyle(WeiBeiTextActionButtonStyle(active: true))
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(WeiBeiTheme.cinnabarSoft.opacity(0.72))
+        .overlay(alignment: .bottom) {
+            Rectangle()
+                .fill(WeiBeiTheme.cinnabar.opacity(0.28))
+                .frame(height: 1)
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(Text(store.ui("源文件缺失", "Source file missing")))
+    }
+}

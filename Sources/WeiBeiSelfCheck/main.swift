@@ -109,6 +109,7 @@ if ProcessInfo.processInfo.environment["WEIBEI_PI_TERMINAL_SELF_CHECK_ONLY"] == 
 
 try runPiAgentSelfChecks()
 checkCourseLibraryVolatility()
+checkImportedFileRecovery()
 
 expect(EmptyWorkspaceDayPeriod(hour: 5) == .morning
     && EmptyWorkspaceDayPeriod(hour: 10) == .morning
