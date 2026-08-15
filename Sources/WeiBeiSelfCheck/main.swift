@@ -947,6 +947,14 @@ expect(
     "title line is the first non-blank line with leading hashes and HTML tags stripped, capped at the character limit"
 )
 expect(
+    NoteTabDisplayTitle.bodyStrictHeading(from: "# 严格标题\n正文") == "严格标题"
+        && NoteTabDisplayTitle.bodyStrictHeading(from: "普通首行\n# 后面的标题") == nil
+        && NoteTabDisplayTitle.bodyStrictHeading(from: "#无空格不算") == nil
+        && NoteTabDisplayTitle.bodyStrictHeading(from: "") == nil
+        && workspaceStoreSource.contains("NoteTabDisplayTitle.bodyStrictHeading(from: markdown)"),
+    "file renames are driven only by an explicit ATX heading; plain first lines affect display only"
+)
+expect(
     NoteTabDisplayTitle.resolve(customTitle: nil, noteTitle: "", body: "- 实际利率**非常高**，名义利率`r`参见 [[货币理论|Money]]")
         == "实际利率非常高，名义利率r参见 Mone",
     "title-line extraction strips Markdown and stays within the character limit"

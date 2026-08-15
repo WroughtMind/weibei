@@ -17590,9 +17590,9 @@ final class WorkspaceStore: ObservableObject {
         return url
     }
 
-    /// 正文抬头驱动文件名：无自定义名且正文抬头（第一个能剥出文字的非空行，
-    /// 不强制 Markdown 标题语法）与当前文件名不一致时，
-    /// 纯 move 改文件名——一个字节内容都不碰，inode 不变，指纹与 bookmark 保持有效。
+    /// 正文抬头驱动文件名：无自定义名且正文有严格 ATX 标题（`# …`）且与当前
+    /// 文件名不一致时，纯 move 改文件名——一个字节内容都不碰，inode 不变，
+    /// 指纹与 bookmark 保持有效。普通首行文字只影响 tab 显示，不改文件名。
     /// 只在成功落盘后调用；课程文件有自己的命名约束，不走这条路。
     private func synchronizeNoteFileNameWithHeading(itemID: String, markdown: String, currentURL: URL) {
         guard let index = importedItems.firstIndex(where: { $0.id == itemID }) else { return }
@@ -17600,7 +17600,7 @@ final class WorkspaceStore: ObservableObject {
         guard item.isNotebookNote else { return }
         guard item.customDisplayTitle?
             .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false else { return }
-        guard let heading = NoteTabDisplayTitle.bodyTitleLine(from: markdown),
+        guard let heading = NoteTabDisplayTitle.bodyStrictHeading(from: markdown),
               heading != currentURL.deletingPathExtension().lastPathComponent else { return }
         let newURL = renamedNotebookURL(
             in: currentURL.deletingLastPathComponent(),

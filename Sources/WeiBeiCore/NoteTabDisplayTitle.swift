@@ -41,6 +41,24 @@ public enum NoteTabDisplayTitle {
         return nil
     }
 
+    /// 严格抬头：仅认第一个非空行是 ATX 标题（`# …`，井号+空格）的情况。
+    /// 用于驱动文件重命名这类落盘动作——只有用户显式写了标题才动文件名；
+    /// 普通首行文字只影响显示（见 `bodyTitleLine`），不改名，避免把
+    /// 无标题草稿/首句正文误当标题把文件改飞。
+    public static func bodyStrictHeading(from body: String) -> String? {
+        for rawLine in body.components(separatedBy: .newlines) {
+            let line = rawLine.trimmingCharacters(in: .whitespaces)
+            guard !line.isEmpty else { continue }
+            let headingMarks = line.prefix { $0 == "#" }.count
+            guard headingMarks > 0,
+                  line.dropFirst(headingMarks).first?.isWhitespace == true else { return nil }
+            let text = strippedLine(line)
+            guard !text.isEmpty else { return nil }
+            return String(text.prefix(fallbackCharacterLimit))
+        }
+        return nil
+    }
+
     /// 正文回退：去掉空白与 Markdown 标记后取前 `limit` 个字符。
     public static func bodyExcerpt(from body: String, limit: Int = fallbackCharacterLimit) -> String {
         var excerpt = ""
