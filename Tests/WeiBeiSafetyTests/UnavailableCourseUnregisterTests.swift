@@ -44,7 +44,7 @@ final class UnavailableCourseUnregisterTests: XCTestCase {
             startsCourseFileMaintenance: false
         )
         XCTAssertNotNil(store.course(withID: courseID))
-        try store.removeCourseFromWeiBeiForSelfCheck(courseID)
+        try await store.removeCourseFromWeiBei(courseID)
         XCTAssertNil(store.course(withID: courseID))
         XCTAssertTrue(FileManager.default.fileExists(atPath: marker.path))
         XCTAssertEqual(try Data(contentsOf: marker), beforeBytes)
@@ -87,9 +87,12 @@ final class UnavailableCourseUnregisterTests: XCTestCase {
             startsAtBlankEntries: false,
             startsCourseFileMaintenance: false
         )
-        XCTAssertThrowsError(
-            try store.removeCourseFromWeiBeiForSelfCheck(courseID)
-        )
+        do {
+            try await store.removeCourseFromWeiBei(courseID)
+            XCTFail("unregister should fail when workspace save fails")
+        } catch CourseRemovalError.workspaceSaveFailed {
+            // expected
+        }
         XCTAssertNotNil(store.course(withID: courseID))
         XCTAssertEqual(try Data(contentsOf: marker), markerData)
     }
