@@ -243,20 +243,20 @@ struct CourseSidebarList: View {
         .task(id: model.searchTagTaskID) { [weak store = store, weak model = model] in
             guard let requests = model?.missingTagRequestsForSearch(),
                   !requests.isEmpty else { return }
-            var results: [(request: CourseSidebarTagRequest, tags: [String])] = []
+            var results: [(request: CourseSidebarTagRequest, meta: CourseSidebarNoteMeta)] = []
             for request in requests {
                 guard !Task.isCancelled else { return }
-                if let tags = await store?.loadSidebarTags(for: request) {
-                    results.append((request, tags))
+                if let meta = await store?.loadSidebarNoteMeta(for: request) {
+                    results.append((request, meta))
                     if results.count == 32 {
-                        model?.acceptLoadedTags(results)
+                        model?.acceptLoadedNoteMeta(results)
                         results.removeAll(keepingCapacity: true)
                         await Task.yield()
                     }
                 }
             }
             guard !Task.isCancelled else { return }
-            if !results.isEmpty { model?.acceptLoadedTags(results) }
+            if !results.isEmpty { model?.acceptLoadedNoteMeta(results) }
         }
     }
 
@@ -384,6 +384,7 @@ struct CourseSidebarList: View {
                     Button { open(item) } label: {
                         LibraryRow(
                             item: item,
+                            resolvedTitle: row.resolvedTitle,
                             tags: row.tags,
                             selected: selected,
                             compact: compact,
@@ -415,17 +416,18 @@ struct CourseSidebarList: View {
         ))
         .listRowBackground(Color.clear)
         .listRowSeparator(.hidden)
+        // 显示名与标签共用同一条异步正文管线：compact 行（课程分组内）不展示标签，
+        // 但展示解析后的笔记名，所以笔记行无论 compact 与否都要加载。
         .task(id: row.tagRequest) { [weak store = store, weak model = model] in
-            guard !compact,
-                  let request = row.tagRequest else { return }
+            guard let request = row.tagRequest else { return }
             if request.draftToken == nil,
-               store?.cachedSidebarTags(for: request) != nil {
+               store?.cachedSidebarNoteMeta(for: request) != nil {
                 return
             }
             guard
-                  let tags = await store?.loadSidebarTags(for: request),
+                  let meta = await store?.loadSidebarNoteMeta(for: request),
                   !Task.isCancelled else { return }
-            model?.acceptLoadedTags([(request, tags)])
+            model?.acceptLoadedNoteMeta([(request, meta)])
         }
     }
 
@@ -701,6 +703,8 @@ private struct NotebookRenameRow: View {
 
 private struct LibraryRow: View {
     let item: StudyItem
+    /// 解析后的显示名（自定义名 / 正文抬头）；nil 时显示文件名。
+    let resolvedTitle: String?
     let tags: [String]
     let selected: Bool
     let compact: Bool
@@ -716,7 +720,7 @@ private struct LibraryRow: View {
                 .scaleEffect(selected || hovering ? 1.08 : 1)
                 .opacity(selected || hovering ? 1 : 0.78)
             VStack(alignment: .leading, spacing: compact ? 1 : 2) {
-                Text(item.title)
+                Text(resolvedTitle ?? item.title)
                     .font(.system(size: compact ? 12.5 : 13, weight: compact ? .medium : .regular))
                     .lineLimit(1)
                     .foregroundStyle(WeiBeiTheme.ink)

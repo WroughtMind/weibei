@@ -11,9 +11,9 @@ private actor CourseSidebarTagParser {
 final class CourseSidebarTagState {
     private var draftRevisionsByItemID: [String: UInt64] = [:]
     private var draftRevision: UInt64 = 0
-    private var tagsByItemID: [String: (
+    private var metaByItemID: [String: (
         request: CourseSidebarTagRequest,
-        tags: [String]
+        meta: CourseSidebarNoteMeta
     )] = [:]
     private let parser = CourseSidebarTagParser()
 
@@ -32,7 +32,7 @@ final class CourseSidebarTagState {
     }
 
     func noteDraftChanged(itemID: String, exists: Bool) {
-        tagsByItemID.removeValue(forKey: itemID)
+        metaByItemID.removeValue(forKey: itemID)
         draftRevision &+= 1
         if exists {
             draftRevisionsByItemID[itemID] = draftRevision
@@ -42,31 +42,31 @@ final class CourseSidebarTagState {
     }
 
     func replacedNoteDrafts(keeping itemIDs: Set<String>) {
-        tagsByItemID.removeAll()
+        metaByItemID.removeAll()
         draftRevision &+= 1
         draftRevisionsByItemID = Dictionary(
             uniqueKeysWithValues: itemIDs.map { ($0, draftRevision) }
         )
     }
 
-    func cachedTags(for request: CourseSidebarTagRequest) -> [String]? {
+    func cachedMeta(for request: CourseSidebarTagRequest) -> CourseSidebarNoteMeta? {
         guard request.draftToken == nil,
-              let entry = tagsByItemID[request.itemID],
+              let entry = metaByItemID[request.itemID],
               entry.request == request else { return nil }
-        return entry.tags
+        return entry.meta
     }
 
-    func cache(_ tags: [String], for request: CourseSidebarTagRequest) {
+    func cache(_ meta: CourseSidebarNoteMeta, for request: CourseSidebarTagRequest) {
         guard request.draftToken == nil else { return }
-        tagsByItemID[request.itemID] = (request, tags)
+        metaByItemID[request.itemID] = (request, meta)
     }
 
     func pruneCache(keeping itemIDs: Set<String>) {
-        tagsByItemID = tagsByItemID.filter { itemIDs.contains($0.key) }
+        metaByItemID = metaByItemID.filter { itemIDs.contains($0.key) }
     }
 
     func clearCache() {
-        tagsByItemID.removeAll()
+        metaByItemID.removeAll()
     }
 
     func tags(in markdown: String) async -> [String]? {
@@ -75,8 +75,8 @@ final class CourseSidebarTagState {
 }
 
 extension WorkspaceStore {
-    func cachedSidebarTags(for request: CourseSidebarTagRequest) -> [String]? {
-        courseSidebarTags.cachedTags(for: request)
+    func cachedSidebarNoteMeta(for request: CourseSidebarTagRequest) -> CourseSidebarNoteMeta? {
+        courseSidebarTags.cachedMeta(for: request)
     }
 
     func sidebarTagRequest(
@@ -98,8 +98,11 @@ extension WorkspaceStore {
         courseSidebarTags.clearCache()
     }
 
-    func loadSidebarTags(for request: CourseSidebarTagRequest) async -> [String]? {
-        if let cached = cachedSidebarTags(for: request) { return cached }
+    /// 加载一条笔记的侧边栏元信息：标签 + 与浮动 tab 同口径的显示名。
+    /// 正文经 `sidebarTagMarkdown` 异步获取（内存草稿 / 活动笔记 / 读盘），
+    /// 显示名用 `NoteTabDisplayTitle.resolve` 解析，绝不回退同步读盘。
+    func loadSidebarNoteMeta(for request: CourseSidebarTagRequest) async -> CourseSidebarNoteMeta? {
+        if let cached = cachedSidebarNoteMeta(for: request) { return cached }
         guard let item = importedItems.first(where: { $0.id == request.itemID }),
               sidebarTagRequest(for: item, draftToken: request.draftToken) == request,
               (request.draftToken != nil) == (request.itemID == activeNoteItemID),
@@ -112,7 +115,16 @@ extension WorkspaceStore {
               (request.draftToken != nil) == (request.itemID == activeNoteItemID) else {
             return nil
         }
-        courseSidebarTags.cache(tags, for: request)
-        return tags
+        let resolved = NoteTabDisplayTitle.resolve(
+            customTitle: current.customDisplayTitle,
+            noteTitle: current.title,
+            body: markdown
+        )
+        // 解析结果为空或等于文件名时不存覆盖，行视图直接显示 item.title，
+        // 也避免投影因 nil/等值字符串的差别反复抖动。
+        let resolvedTitle = (resolved.isEmpty || resolved == current.title) ? nil : resolved
+        let meta = CourseSidebarNoteMeta(tags: tags, resolvedTitle: resolvedTitle)
+        courseSidebarTags.cache(meta, for: request)
+        return meta
     }
 }

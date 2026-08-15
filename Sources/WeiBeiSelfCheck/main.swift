@@ -983,6 +983,35 @@ expect(
     NoteTabDisplayTitle.resolve(customTitle: "", noteTitle: "利率笔记", body: "正文") == "正文",
     "submitting an empty rename clears the custom name and resumes auto-follow"
 )
+let courseSidebarModelSource = readSource("Sources/WeiBei/Views/CourseSidebarModel.swift")
+let courseSidebarTagSupportSource = readSource("Sources/WeiBei/Views/CourseSidebarTagSupport.swift")
+let sidebarViewSource = readSource("Sources/WeiBei/Views/SidebarView.swift")
+expect(
+    NoteTabDisplayTitle.normalizedCustomTitle("  我的速记  ") == "我的速记"
+        && NoteTabDisplayTitle.normalizedCustomTitle("   ") == nil
+        && NoteTabDisplayTitle.normalizedCustomTitle(nil) == nil,
+    "the sidebar can detect a usable custom title synchronously with the same normalization as the tab"
+)
+expect(
+    courseSidebarTagSupportSource.contains("NoteTabDisplayTitle.resolve(")
+        && courseSidebarTagSupportSource.contains("customTitle: current.customDisplayTitle")
+        && courseSidebarTagSupportSource.contains("let meta = CourseSidebarNoteMeta(tags: tags, resolvedTitle: resolvedTitle)")
+        && courseSidebarTagSupportSource.contains("func loadSidebarNoteMeta(for request: CourseSidebarTagRequest) async -> CourseSidebarNoteMeta?"),
+    "the sidebar content pipeline resolves row display names with the same NoteTabDisplayTitle resolver as the floating tab"
+)
+expect(
+    sidebarViewSource.contains("Text(resolvedTitle ?? item.title)")
+        && sidebarViewSource.contains("resolvedTitle: row.resolvedTitle")
+        && !sidebarViewSource.contains("guard !compact,"),
+    "every LibraryRow (library list and course note groups, compact or not) renders the resolved name and loads note meta"
+)
+expect(
+    courseSidebarModelSource.contains("let customDisplayTitle: String?")
+        && courseSidebarModelSource.contains("let title: String")
+        && courseSidebarModelSource.contains("customDisplayTitle = item.customDisplayTitle")
+        && courseSidebarModelSource.contains("NoteTabDisplayTitle.normalizedCustomTitle(item.customDisplayTitle)"),
+    "customDisplayTitle and the file name are part of the sidebar cache request, so renaming a note (custom or heading-driven) invalidates the cached display name and the row refreshes"
+)
 expect(
     workspaceModelsSource.contains("customDisplayTitle")
         && workspaceStoreSource.contains("setNoteCustomDisplayTitle")
