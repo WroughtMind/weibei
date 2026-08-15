@@ -5,15 +5,26 @@ import WeiBeiCore
 struct CourseSidebarItemRow: Identifiable, Equatable {
     let item: StudyItem
     let tags: [String]
+    /// 解析后的显示名（自定义名 / 正文抬头），nil 表示直接显示 `item.title`。
+    let resolvedTitle: String?
     let tagRequest: CourseSidebarTagRequest?
     let courseIDs: Set<UUID>
 
     var id: String { item.id }
 }
 
+/// 一条笔记正文加载管线的产出：标签 + 与浮动 tab 同口径的显示名。
+struct CourseSidebarNoteMeta: Equatable, Sendable {
+    let tags: [String]
+    /// 相对 `item.title` 的显示名覆盖；nil 表示没有更好的名字。
+    let resolvedTitle: String?
+}
+
 struct CourseSidebarTagRequest: Hashable, Sendable {
     let itemID: String
     let storage: StudyItemStorage
+    let title: String
+    let customDisplayTitle: String?
     let urlPath: String?
     let importedFileIdentity: ImportedFileIdentity?
     let contentRevision: UInt64
@@ -30,6 +41,8 @@ struct CourseSidebarTagRequest: Hashable, Sendable {
     ) {
         itemID = item.id
         storage = item.storage
+        title = item.title
+        customDisplayTitle = item.customDisplayTitle
         urlPath = item.urlPath
         importedFileIdentity = item.importedFileIdentity
         contentRevision = item.contentRevision
@@ -74,7 +87,7 @@ final class CourseSidebarModel: ObservableObject {
     private var subscriptions: Set<AnyCancellable> = []
     private var rebuildTask: Task<Void, Never>?
     private var activeDraftToken = UUID()
-    private var transientTags: [CourseSidebarTagRequest: [String]] = [:]
+    private var transientNoteMeta: [CourseSidebarTagRequest: CourseSidebarNoteMeta] = [:]
 
     private(set) var projectionBuildCountForTesting = 0
 
@@ -98,7 +111,7 @@ final class CourseSidebarModel: ObservableObject {
         subscriptions.removeAll()
         rebuildTask?.cancel()
         rebuildTask = nil
-        transientTags.removeAll()
+        transientNoteMeta.removeAll()
         store?.clearSidebarTagCache()
         store = nil
     }
@@ -131,7 +144,7 @@ final class CourseSidebarModel: ObservableObject {
             guard let self else { return }
             self.activeNotebookItemID = itemID
             self.activeDraftToken = UUID()
-            self.transientTags.removeAll()
+            self.transientNoteMeta.removeAll()
             self.tagInputGeneration &+= 1
             self.scheduleRebuild()
         }.store(in: &subscriptions)
@@ -155,7 +168,7 @@ final class CourseSidebarModel: ObservableObject {
             .sink { [weak self] _ in
                 guard let self else { return }
                 self.activeDraftToken = UUID()
-                self.transientTags.removeAll()
+                self.transientNoteMeta.removeAll()
                 self.tagInputGeneration &+= 1
                 self.scheduleRebuild()
             }
@@ -183,11 +196,13 @@ final class CourseSidebarModel: ObservableObject {
 
         let rows = store.importedItems.map { item in
             let request = tagRequest(for: item, store: store)
+            let meta = request.flatMap {
+                transientNoteMeta[$0] ?? store.cachedSidebarNoteMeta(for: $0)
+            }
             return CourseSidebarItemRow(
                 item: item,
-                tags: request.flatMap {
-                    transientTags[$0] ?? store.cachedSidebarTags(for: $0)
-                } ?? [],
+                tags: meta?.tags ?? [],
+                resolvedTitle: resolvedSidebarTitle(for: item, meta: meta),
                 tagRequest: request,
                 courseIDs: courseIDsByItemID[item.id] ?? []
             )
@@ -255,6 +270,7 @@ final class CourseSidebarModel: ObservableObject {
             in: CharacterSet(charactersIn: "#")
         )
         return row.item.title.localizedCaseInsensitiveContains(query)
+            || (row.resolvedTitle?.localizedCaseInsensitiveContains(query) ?? false)
             || row.item.subtitle.localizedCaseInsensitiveContains(query)
             || row.item.kind.label(language: language)
                 .localizedCaseInsensitiveContains(query)
@@ -270,29 +286,42 @@ final class CourseSidebarModel: ObservableObject {
         }
         return store.importedItems.compactMap { item in
             guard let request = tagRequest(for: item, store: store),
-                  transientTags[request] == nil,
-                  store.cachedSidebarTags(for: request) == nil else {
+                  transientNoteMeta[request] == nil,
+                  store.cachedSidebarNoteMeta(for: request) == nil else {
                 return nil
             }
             return request
         }
     }
 
-    func acceptLoadedTags(
-        _ results: [(request: CourseSidebarTagRequest, tags: [String])]
+    /// 笔记行的显示名与浮动 tab 同口径：自定义名立即可见（不读正文），
+    /// 否则用正文管线解析出的名字，都没有就回退 `item.title`（在行视图兜底）。
+    private func resolvedSidebarTitle(
+        for item: StudyItem,
+        meta: CourseSidebarNoteMeta?
+    ) -> String? {
+        guard item.isNotebookNote else { return nil }
+        if let custom = NoteTabDisplayTitle.normalizedCustomTitle(item.customDisplayTitle) {
+            return custom
+        }
+        return meta?.resolvedTitle
+    }
+
+    func acceptLoadedNoteMeta(
+        _ results: [(request: CourseSidebarTagRequest, meta: CourseSidebarNoteMeta)]
     ) {
         guard let store else { return }
         var changed = false
-        for (request, tags) in results {
+        for (request, meta) in results {
             guard let item = store.importedItems.first(where: { $0.id == request.itemID }),
                   tagRequest(for: item, store: store) == request else {
                 continue
             }
-            if request.draftToken != nil, transientTags[request] != tags {
-                transientTags[request] = tags
+            if request.draftToken != nil, transientNoteMeta[request] != meta {
+                transientNoteMeta[request] = meta
                 changed = true
             } else if request.draftToken == nil,
-                      store.cachedSidebarTags(for: request) != nil {
+                      store.cachedSidebarNoteMeta(for: request) != nil {
                 changed = true
             }
         }

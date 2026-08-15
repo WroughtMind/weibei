@@ -3623,7 +3623,10 @@ struct ContextualContentPicker: View {
                 kind == .note
                     ? store.ui("通用笔记", "Common Notes")
                     : store.ui("通用资料", "Common Materials")
-            case .item(let item): store.displayTitle(for: item)
+            case .item(let item):
+                kind == .note
+                    ? store.noteListDisplayTitle(for: item)
+                    : store.displayTitle(for: item)
             }
         }
     }

@@ -10119,6 +10119,20 @@ final class WorkspaceStore: ObservableObject {
         item.title
     }
 
+    /// "选择其他笔记"列表的显示名，与浮动 tab 同口径：
+    /// 自定义名 > 正文抬头 > 文件名 > 正文前几个字。
+    /// 仅用于笔记列表展示；`displayTitle(for:)` 保持原名语义，
+    /// 引用匹配、排序、重命名草稿等仍按文件标题走。
+    func noteListDisplayTitle(for item: StudyItem) -> String {
+        guard item.isNotebookNote else { return item.title }
+        let resolved = NoteTabDisplayTitle.resolve(
+            customTitle: item.customDisplayTitle,
+            noteTitle: item.title,
+            body: noteMarkdownText(for: item)
+        )
+        return resolved.isEmpty ? item.title : resolved
+    }
+
     func displaySubtitle(for item: StudyItem) -> String {
         item.subtitle
     }

@@ -76,6 +76,12 @@ public enum NoteTabDisplayTitle {
         return String(excerpt.prefix(limit))
     }
 
+    /// 归一化自定义名：全空白视为未设置。侧边栏等不读正文的场景用它
+    /// 同步判断"用户是否给过自定义名"，与 `resolve` 的判定口径保持一致。
+    public static func normalizedCustomTitle(_ value: String?) -> String? {
+        normalized(value)
+    }
+
     private static func normalized(_ value: String?) -> String? {
         guard let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines),
               !trimmed.isEmpty else { return nil }

@@ -241,16 +241,16 @@ final class SidebarPerformanceTests: XCTestCase {
 
         model.updateQuery("#zeta")
         let request = try XCTUnwrap(model.missingTagRequestsForSearch().first)
-        let loadedTags = await fixture.store.loadSidebarTags(for: request)
-        let tags = try XCTUnwrap(loadedTags)
-        XCTAssertEqual(tags, ["#alpha", "#beta", "#gamma", "#zeta"])
+        let loadedMeta = await fixture.store.loadSidebarNoteMeta(for: request)
+        let meta = try XCTUnwrap(loadedMeta)
+        XCTAssertEqual(meta.tags, ["#alpha", "#beta", "#gamma", "#zeta"])
 
-        model.acceptLoadedTags([(request, tags)])
+        model.acceptLoadedNoteMeta([(request, meta)])
         try await Task.sleep(nanoseconds: 50_000_000)
 
         let row = try XCTUnwrap(model.unassignedNotes.first)
         XCTAssertEqual(row.item.id, note.id, "the fourth tag must keep the note searchable")
-        XCTAssertEqual(row.tags, tags, "the projection must retain every loaded tag")
+        XCTAssertEqual(row.tags, meta.tags, "the projection must retain every loaded tag")
     }
 
     @MainActor
@@ -272,16 +272,16 @@ final class SidebarPerformanceTests: XCTestCase {
         fixture.store.importedItems = [note]
 
         let request = fixture.store.sidebarTagRequest(for: note, draftToken: nil)
-        let tags = await fixture.store.loadSidebarTags(for: request)
+        let meta = await fixture.store.loadSidebarNoteMeta(for: request)
 
-        XCTAssertEqual(tags, ["#legacy-tag"])
+        XCTAssertEqual(meta?.tags, ["#legacy-tag"])
 
         let model = CourseSidebarModel(store: fixture.store)
         try Data("#edited-tag".utf8).write(to: noteURL)
         model.stop()
 
-        let reloadedTags = await fixture.store.loadSidebarTags(for: request)
-        XCTAssertEqual(reloadedTags, ["#edited-tag"])
+        let reloadedMeta = await fixture.store.loadSidebarNoteMeta(for: request)
+        XCTAssertEqual(reloadedMeta?.tags, ["#edited-tag"])
     }
 
     @MainActor
@@ -301,11 +301,11 @@ final class SidebarPerformanceTests: XCTestCase {
             activeNoteItemID: nil,
             draftToken: nil
         )
-        state.cache(["#stale"], for: request)
+        state.cache(CourseSidebarNoteMeta(tags: ["#stale"], resolvedTitle: nil), for: request)
 
         state.noteDraftChanged(itemID: note.id, exists: true)
 
-        XCTAssertNil(state.cachedTags(for: request))
+        XCTAssertNil(state.cachedMeta(for: request))
     }
 
     @MainActor
