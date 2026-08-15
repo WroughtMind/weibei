@@ -10672,7 +10672,10 @@ final class WorkspaceStore: ObservableObject {
         // 仅当文件物理上解析不到/不可读时才提示用户放回原文件。
         guard let resolvedURL = resolution.url,
               FileManager.default.isReadableFile(atPath: resolvedURL.path) else {
-            select(itemID: itemID)
+            showTransientNoteStatus(ui(
+                "“\(displayTitle(for: importedItems[itemIndex]))”暂时不在课程文件夹中。把原文件放回课程后再打开；课程首页会继续保留。",
+                "“\(displayTitle(for: importedItems[itemIndex]))” is not currently in the course folder. Put the original file back and try again; the course home will stay open."
+            ))
             return false
         }
         if let requestedCourseID {
