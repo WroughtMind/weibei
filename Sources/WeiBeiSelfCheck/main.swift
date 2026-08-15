@@ -1070,6 +1070,13 @@ expect(
     "creating a note from the current material always creates a new note; the force-open-existing short-circuit is gone so repeated creation is allowed"
 )
 expect(
+    workspaceStoreSource.contains("case pendingChangesUnsaved")
+        && workspaceStoreSource.contains("throw ContentSourceRemovalError.pendingChangesUnsaved")
+        && workspaceStoreSource.contains("func backfillSharedItemLocation(itemID: String) -> Bool")
+        && workspaceStoreSource.contains("weibei-save-errors.log"),
+    "deletion distinguishes unsaved-changes refusal from missing-file refusal, backfills shared item locations before trashing, and every workspace save failure is appended to a log file"
+)
+expect(
     workspaceModelsSource.contains("customDisplayTitle")
         && workspaceStoreSource.contains("setNoteCustomDisplayTitle")
         && workspaceStoreSource.contains("NoteTabDisplayTitle.resolve")
@@ -2038,8 +2045,8 @@ do {
     )
     expect(
         !workspaceStoreSource.contains("## \\(ui(\"核心要点\", \"Key Points\"))")
-            && workspaceStoreSource.contains("private func defaultNotebookNote(sourceItem: StudyItem?) -> String"),
-        "new notes start blank: WorkspaceStore.defaultNotebookNote no longer seeds template sections; NoteTemplateShape stays for legacy data detection only"
+            && workspaceStoreSource.contains("private func defaultNotebookNote() -> String"),
+        "new notes start blank: WorkspaceStore.defaultNotebookNote returns an empty body with no template sections and no source seed line; NoteTemplateShape stays for legacy data detection only"
     )
 }
 

@@ -294,6 +294,7 @@ enum ContentSourceRemovalError: LocalizedError {
     case sourceChanged
     case trashMoveFailed
     case workspaceSaveFailed
+    case pendingChangesUnsaved
 
     var errorDescription: String? {
         switch self {
@@ -305,6 +306,8 @@ enum ContentSourceRemovalError: LocalizedError {
             "原文件没有成功移到 macOS 废纸篓，课程关系保持不变。"
         case .workspaceSaveFailed:
             "魏碑没有保存删除结果，原文件已从废纸篓恢复。"
+        case .pendingChangesUnsaved:
+            "有尚未写入磁盘的更改，为保护内容魏碑没有执行删除。请稍后重试。"
         }
     }
 }
@@ -7691,6 +7694,8 @@ final class WorkspaceStore: ObservableObject {
     }
 
     func confirmMoveItemSourceToTrash(_ itemID: String) {
+        // 共享条目可能只存相对路径（历史数据），先从课程库根目录回填真实路径。
+        _ = backfillSharedItemLocation(itemID: itemID)
         guard let item = importedItems.first(where: { $0.id == itemID }),
               !item.isSample,
               let sourceURL = item.url else {
@@ -7726,6 +7731,32 @@ final class WorkspaceStore: ObservableObject {
         }
     }
 
+    /// 共享条目可能只存相对路径而没有 urlPath / 文件身份（历史数据）。
+    /// 删除等需要真实路径的操作前，从课程库根目录解析并就地回填。
+    @discardableResult
+    private func backfillSharedItemLocation(itemID: String) -> Bool {
+        guard let itemIndex = importedItems.firstIndex(where: {
+            $0.id == itemID
+        }),
+              case .shared(let relativePath) = importedItems[itemIndex].storage,
+              let root = courseLibraryRootURL,
+              let resolved = CourseProjectPathPolicy.resolvedRelativePath(
+                  relativePath,
+                  inside: root
+              ) else {
+            return false
+        }
+        if importedItems[itemIndex].urlPath == nil {
+            importedItems[itemIndex].urlPath = resolved.path
+            importedItems[itemIndex].importedFileLastKnownPath = resolved.path
+        }
+        if importedItems[itemIndex].importedFileIdentity == nil {
+            importedItems[itemIndex].importedFileIdentity =
+                importedFileIdentityResolver(resolved)
+        }
+        return importedItems[itemIndex].url != nil
+    }
+
     private func moveItemSourceToTrash(_ itemID: String) async throws {
         guard importedItems.contains(where: { $0.id == itemID }) else {
             throw ContentSourceRemovalError.itemUnavailable
@@ -7750,12 +7781,17 @@ final class WorkspaceStore: ObservableObject {
         while let task = courseNoteWriteTasksByItemID[itemID] {
             await task.value
         }
-        guard await flushPendingWorkspaceSaveAsync(),
-              let itemIndex = importedItems.firstIndex(where: {
-                  $0.id == itemID
-              }) else {
+        guard await flushPendingWorkspaceSaveAsync() else {
+            // 有待保存的更改没能写入磁盘时拒绝删除；这不是"找不到原文件"，
+            // 分开报错避免误导（保存失败的具体原因见 workspaceSaveError / 日志）。
+            throw ContentSourceRemovalError.pendingChangesUnsaved
+        }
+        guard let itemIndex = importedItems.firstIndex(where: {
+            $0.id == itemID
+        }) else {
             throw ContentSourceRemovalError.itemUnavailable
         }
+        _ = backfillSharedItemLocation(itemID: itemID)
         if case .legacyExternal = importedItems[itemIndex].storage {
             _ = resolveTrackedImportedFile(at: itemIndex)
         }
@@ -11036,7 +11072,7 @@ final class WorkspaceStore: ObservableObject {
         return await createCourseNotebookNote(
             courseID: courseID,
             title: fileStem,
-            markdown: defaultNotebookNote(sourceItem: nil)
+            markdown: defaultNotebookNote()
         )
     }
 
@@ -19187,9 +19223,26 @@ final class WorkspaceStore: ObservableObject {
     /// 安全自检仍立即暴露，便于断言注入的单次失败。
     private func reportWorkspaceSaveFailure(_ message: String) {
         consecutiveWorkspaceSaveFailures += 1
+        // 保存失败连续 3 次才上横幅，但每次都落日志——删除、退出等下游
+        // 操作会因保存失败被拒绝，没有日志就完全无法事后定位。
+        appendWorkspaceSaveFailureLog(message)
         if WeiBeiSafetyTestMode.isEnabled
             || consecutiveWorkspaceSaveFailures >= 3 {
             workspaceSaveError = message
+        }
+    }
+
+    private func appendWorkspaceSaveFailureLog(_ message: String) {
+        let line = "\(ISO8601DateFormatter().string(from: Date())) \(message)\n"
+        guard let data = line.data(using: .utf8) else { return }
+        let url = storageURL.deletingLastPathComponent()
+            .appendingPathComponent("weibei-save-errors.log")
+        if let handle = try? FileHandle(forWritingTo: url) {
+            handle.seekToEndOfFile()
+            handle.write(data)
+            try? handle.close()
+        } else {
+            try? data.write(to: url)
         }
     }
 
@@ -19285,17 +19338,14 @@ final class WorkspaceStore: ObservableObject {
     }
 
     private func defaultNote(for item: StudyItem?) -> String {
-        let sourceItem = item?.isNotebookNote == true ? nil : item
-        return defaultNotebookNote(sourceItem: sourceItem)
+        defaultNotebookNote()
     }
 
-    /// 新建笔记的正文：空白，不再预置"核心要点 / 摘录 / 待追问"模板。
-    /// 从资料建笔记时只保留来源行；笔记名交给显示名解析（正文抬头）
-    /// 与抬头驱动的文件改名负责，不再靠模板里预置的标题。
-    private func defaultNotebookNote(sourceItem: StudyItem?) -> String {
-        sourceItem.map {
-            ui("> 来源：\(displayTitle(for: $0))\n", "> Source: \(displayTitle(for: $0))\n")
-        } ?? ""
+    /// 新建笔记的正文：完全空白——不预置模板小节，也不预置来源行。
+    /// 笔记名交给显示名解析（正文抬头）与抬头驱动的文件改名负责；
+    /// 资料关联由 noteSourceLink 表达，不靠正文里的来源行。
+    private func defaultNotebookNote() -> String {
+        ""
     }
 
     private static func noteContentDigest(_ data: Data) -> String {
