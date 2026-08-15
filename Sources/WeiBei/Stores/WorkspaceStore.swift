@@ -600,6 +600,10 @@ final class WorkspaceStore: ObservableObject {
     private var lastSelfWrittenNoteDigestsByItemID: [String: String] = [:]
     /// P0：启动修复例程每次启动只跑一轮（幂等，重复启动无副作用）。
     private var noteDivergenceRepairDidRun = false
+    /// 文件名跟随抬头的基线：上次由抬头体系登记/同步的文件名（不含扩展名）。
+    /// 只有基线==当前文件名时才跟随抬头改名；对不上说明文件名被外部动过，
+    /// 先登记、不动文件。内存态即可：重启丢基线只少一次自动改名，方向安全。
+    private var headingSyncedNoteStemByItemID: [String: String] = [:]
     private var loadedCourseNoteTextByItemID: [String: String] = [:]
     private var courseNoteLoadTasksByItemID: [String: Task<Void, Never>] = [:]
     private var courseNoteLoadGenerationByItemID: [String: UInt64] = [:]
@@ -13235,6 +13239,8 @@ final class WorkspaceStore: ObservableObject {
                 ?? defaultNotebookNote(title: item.title, sourceItem: sourceItem)
             try markdown.write(to: url, atomically: true, encoding: .utf8)
             noteBackingContentDigestsByItemID[item.id] = Self.noteContentDigest(Data(markdown.utf8))
+            // 新建笔记的文件名是应用生成的，登记为抬头体系管辖的基线。
+            headingSyncedNoteStemByItemID[item.id] = url.deletingPathExtension().lastPathComponent
             item.importedFileIdentity = importedFileIdentityResolver(url)
             item.importedFileBookmarkData = commonNotesDirectory == nil
                 ? item.importedFileIdentity.flatMap { _ in
@@ -17600,8 +17606,20 @@ final class WorkspaceStore: ObservableObject {
         guard item.isNotebookNote else { return }
         guard item.customDisplayTitle?
             .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false else { return }
-        guard let heading = NoteTabDisplayTitle.bodyStrictHeading(from: markdown),
-              heading != currentURL.deletingPathExtension().lastPathComponent else { return }
+        let stem = currentURL.deletingPathExtension().lastPathComponent
+        guard let heading = NoteTabDisplayTitle.bodyStrictHeading(from: markdown) else { return }
+        // 基线机制：只在「文件名是我们/抬头体系在管」（基线==当前文件名）时才跟随抬头改名。
+        // 抬头与文件名一致时登记基线；基线缺失或对不上（典型：用户在 Finder 里
+        // 自己改了文件名）时只登记、不动文件——下次编辑抬头才开始跟随。
+        // 这样外部改名不会被立刻改回去（CI：Finder 移动后不允许在旧路径重建副本）。
+        guard heading != stem else {
+            headingSyncedNoteStemByItemID[itemID] = stem
+            return
+        }
+        guard headingSyncedNoteStemByItemID[itemID] == stem else {
+            headingSyncedNoteStemByItemID[itemID] = stem
+            return
+        }
         let newURL = renamedNotebookURL(
             in: currentURL.deletingLastPathComponent(),
             title: heading,
@@ -17619,7 +17637,9 @@ final class WorkspaceStore: ObservableObject {
             )
             return
         }
-        importedItems[index].title = newURL.deletingPathExtension().lastPathComponent
+        let newStem = newURL.deletingPathExtension().lastPathComponent
+        headingSyncedNoteStemByItemID[itemID] = newStem
+        importedItems[index].title = newStem
         importedItems[index].subtitle = newURL.lastPathComponent
         importedItems[index].urlPath = newURL.path
         importedItems[index].importedFileLastKnownPath = newURL.path

@@ -951,8 +951,10 @@ expect(
         && NoteTabDisplayTitle.bodyStrictHeading(from: "普通首行\n# 后面的标题") == nil
         && NoteTabDisplayTitle.bodyStrictHeading(from: "#无空格不算") == nil
         && NoteTabDisplayTitle.bodyStrictHeading(from: "") == nil
-        && workspaceStoreSource.contains("NoteTabDisplayTitle.bodyStrictHeading(from: markdown)"),
-    "file renames are driven only by an explicit ATX heading; plain first lines affect display only"
+        && workspaceStoreSource.contains("NoteTabDisplayTitle.bodyStrictHeading(from: markdown)")
+        && workspaceStoreSource.contains("guard headingSyncedNoteStemByItemID[itemID] == stem else {")
+        && workspaceStoreSource.contains("headingSyncedNoteStemByItemID[item.id] = url.deletingPathExtension().lastPathComponent"),
+    "file renames are driven only by an explicit ATX heading; plain first lines affect display only; a recorded stem baseline keeps external/Finder renames from being fought"
 )
 expect(
     NoteTabDisplayTitle.resolve(customTitle: nil, noteTitle: "", body: "- 实际利率**非常高**，名义利率`r`参见 [[货币理论|Money]]")
