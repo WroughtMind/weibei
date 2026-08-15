@@ -924,38 +924,39 @@ let notesAgentViewSource = readSource("Sources/WeiBei/Views/NotesAgentView.swift
 let weiBeiAppSource = readSource("Sources/WeiBei/App/WeiBeiApp.swift")
 let commandPaletteViewSource = readSource("Sources/WeiBei/Views/CommandPaletteView.swift")
 expect(
-    NoteTabDisplayTitle.resolve(customTitle: nil, noteTitle: "利率笔记", body: "无关正文") == "利率笔记",
-    "note tab title follows the live note title before any manual rename"
-)
-expect(
     NoteTabDisplayTitle.resolve(customTitle: nil, noteTitle: "旧文件名", body: "# 货币银行学\n\n第二章 利率") == "货币银行学",
     "body heading outranks the file name so editing the heading renames the tab live"
 )
 expect(
-    NoteTabDisplayTitle.resolve(customTitle: nil, noteTitle: "利率笔记", body: "无关正文") == "利率笔记",
-    "body without a leading heading falls back to the file name"
+    NoteTabDisplayTitle.resolve(customTitle: nil, noteTitle: "利率笔记", body: "无关正文") == "无关正文",
+    "a plain first line also counts as the note title; Markdown heading syntax is not required"
 )
 expect(
-    NoteTabDisplayTitle.bodyHeading(from: "\n\n# 假想的男人\n正文") == "假想的男人"
-        && NoteTabDisplayTitle.bodyHeading(from: "无标题正文\n# 后面的标题") == nil
-        && NoteTabDisplayTitle.bodyHeading(from: "#无空格不是标题") == nil
-        && NoteTabDisplayTitle.bodyHeading(from: "") == nil
-        && NoteTabDisplayTitle.bodyHeading(
+    NoteTabDisplayTitle.resolve(customTitle: nil, noteTitle: "利率笔记", body: "  \n   ") == "利率笔记",
+    "only a completely blank body falls back to the file name"
+)
+expect(
+    NoteTabDisplayTitle.bodyTitleLine(from: "\n\n# 假想的男人\n正文") == "假想的男人"
+        && NoteTabDisplayTitle.bodyTitleLine(from: "无标题正文\n# 后面的标题") == "无标题正文"
+        && NoteTabDisplayTitle.bodyTitleLine(from: "#无空格也认") == "无空格也认"
+        && NoteTabDisplayTitle.bodyTitleLine(from: "<br />\n\n真正的第一行") == "真正的第一行"
+        && NoteTabDisplayTitle.bodyTitleLine(from: "") == nil
+        && NoteTabDisplayTitle.bodyTitleLine(
             from: "# 这是一个特别特别长的笔记标题它一定会超过二十个字符的限制\n正文"
         ) == "这是一个特别特别长的笔记标题它一定会超过",
-    "only a leading ATX heading counts as the note heading"
+    "title line is the first non-blank line with leading hashes and HTML tags stripped, capped at the character limit"
 )
 expect(
     NoteTabDisplayTitle.resolve(customTitle: nil, noteTitle: "", body: "- 实际利率**非常高**，名义利率`r`参见 [[货币理论|Money]]")
         == "实际利率非常高，名义利率r参见 Mone",
-    "body fallback strips Markdown and stays within the character limit"
+    "title-line extraction strips Markdown and stays within the character limit"
 )
 expect(
     NoteTabDisplayTitle.resolve(customTitle: "我的速记", noteTitle: "新标题", body: "无关正文") == "我的速记",
     "manual rename sticks and stops following the note title or body"
 )
 expect(
-    NoteTabDisplayTitle.resolve(customTitle: "   ", noteTitle: "利率笔记", body: "无关正文") == "利率笔记",
+    NoteTabDisplayTitle.resolve(customTitle: "   ", noteTitle: "利率笔记", body: "无关正文") == "无关正文",
     "clearing the custom name restores auto-follow"
 )
 expect(
@@ -969,7 +970,7 @@ expect(
     "note render-mode buttons are gone from the floating tab, menu, and palette; the store pins rich"
 )
 expect(
-    NoteTabDisplayTitle.resolve(customTitle: "", noteTitle: "利率笔记", body: "正文") == "利率笔记",
+    NoteTabDisplayTitle.resolve(customTitle: "", noteTitle: "利率笔记", body: "正文") == "正文",
     "submitting an empty rename clears the custom name and resumes auto-follow"
 )
 expect(
