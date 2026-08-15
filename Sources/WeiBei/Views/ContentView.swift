@@ -21,6 +21,10 @@ struct ContentView: View {
                         searchFocused: $topSearchFocused
                     )
 
+                    if store.isCourseLibraryRootVolatile {
+                        CourseLibraryVolatilityBanner()
+                    }
+
                     ZStack(alignment: .top) {
                         LayoutContentView()
                             .frame(maxWidth: .infinity, maxHeight: .infinity)

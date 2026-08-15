@@ -79,6 +79,10 @@ struct CourseWorkspaceView: View {
                         presentCourseDeletionConfirmation
                 )
 
+                if store.isCourseLibraryRootVolatile {
+                    CourseLibraryVolatilityBanner()
+                }
+
                 Rectangle()
                     .fill(WeiBeiTheme.hairline.opacity(0.72))
                     .frame(height: 1)

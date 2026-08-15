@@ -575,9 +575,11 @@ struct CourseProjectEntrySheet: View {
         panel.canCreateDirectories = true
         guard panel.runModal() == .OK, let url = panel.url else { return }
         perform {
-            try await store.configureCourseLibraryAsync(at: url)
-            configuredLibraryThisTime = true
-            updateFocus()
+            try await store.confirmAndConfigureCourseLibrary(at: url)
+            if store.courseLibraryRootURL != nil {
+                configuredLibraryThisTime = true
+                updateFocus()
+            }
         }
     }
 
