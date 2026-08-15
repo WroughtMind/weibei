@@ -99,7 +99,6 @@ img {
   height: 98px;
   align-items: center;
   justify-content: space-between;
-  border-bottom: 1px solid var(--rule);
 }
 
 .brand,
@@ -158,6 +157,30 @@ img {
 .folio {
   color: var(--ink-soft);
   font-size: 20px;
+}
+
+.head-right {
+  display: inline-flex;
+  align-items: center;
+  gap: 34px;
+}
+
+.nav-github {
+  display: inline-flex;
+  color: var(--ink);
+}
+
+.nav-download {
+  color: var(--ink);
+  font-family: var(--serif);
+  font-size: 26px;
+  letter-spacing: 0.08em;
+  text-decoration: none;
+}
+
+.dark .nav-github,
+.dark .nav-download {
+  color: var(--paper-light);
 }
 
 .eyebrow {
