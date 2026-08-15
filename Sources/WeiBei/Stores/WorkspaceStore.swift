@@ -19342,7 +19342,12 @@ final class WorkspaceStore: ObservableObject {
             // 有意不走 resolveTrackedImportedFile：指纹漂移的笔记在那里会被判
             // 不可达，而本例程的职责正是修复这类漂移。直接用最后已知路径+lstat，
             // 是否可信由 planner 按 digest 内容寻址判断。
-            guard let url = item.url?.standardizedFileURL else { continue }
+            // 注意 item.url 只来自 urlPath，老笔记可能只有 importedFileLastKnownPath，
+            // 必须回退，否则这类笔记会被整批漏修。
+            guard let url = item.url?.standardizedFileURL
+                ?? item.importedFileLastKnownPath.map({
+                    URL(fileURLWithPath: $0).standardizedFileURL
+                }) else { continue }
             let draft = notesByItemID[item.id]
             let diskDigest = Self.noteContentDigest(at: url)
             let liveIdentity = importedFileIdentityResolver(url)

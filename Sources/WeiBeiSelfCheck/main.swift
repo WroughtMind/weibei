@@ -2104,8 +2104,9 @@ do {
         workspaceStoreSource.contains("guard !noteDivergenceRepairDidRun else { return }")
             && workspaceStoreSource.contains("WeiBeiNoteRepairDisabled")
             && workspaceStoreSource.contains("NoteDivergenceRepairPlanner.action(for: state)")
+            && workspaceStoreSource.contains("?? item.importedFileLastKnownPath.map({")
             && workspaceStoreSource.contains("WeiBei note repair: item=%@ action=%@ path=%@%@"),
-        "repair routine is one-shot per launch, dry-runnable, planner-driven, and NSLog-only"
+        "repair routine is one-shot per launch, dry-runnable, planner-driven, NSLog-only, and falls back to importedFileLastKnownPath so legacy notes without urlPath are not skipped"
     )
     expect(
         workspaceStoreSource.contains("WeiBei note repair: backup failed, skip restore item=%@ error=%@")
