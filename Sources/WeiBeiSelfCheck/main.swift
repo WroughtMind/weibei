@@ -1027,6 +1027,10 @@ expect(
     "sidebar search matches the resolved display name (custom title or body heading), not just the raw file name"
 )
 expect(
+    workspaceStoreSource.contains("memberships.assign(itemIDs: [item.id], to: courseID)"),
+    "a note created from a course material inherits that course's membership even for local (legacyExternal) storage, instead of falling into common notes"
+)
+expect(
     workspaceModelsSource.contains("customDisplayTitle")
         && workspaceStoreSource.contains("setNoteCustomDisplayTitle")
         && workspaceStoreSource.contains("NoteTabDisplayTitle.resolve")

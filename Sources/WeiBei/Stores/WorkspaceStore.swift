@@ -13281,6 +13281,14 @@ final class WorkspaceStore: ObservableObject {
                             )
                         }
                     }
+                } else if !courseIDs.isEmpty {
+                    // 本地（legacyExternal）笔记没有共享目录可链接，直接登记课程归属，
+                    // 让从课程资料新建的笔记归入该课程，而不是掉进通用笔记。
+                    var memberships = courseMembershipIndex
+                    for courseID in courseIDs {
+                        memberships.assign(itemIDs: [item.id], to: courseID)
+                    }
+                    courseItemMemberships = memberships.values
                 }
             }
             invalidateAgentContext()
