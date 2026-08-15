@@ -11019,7 +11019,7 @@ final class WorkspaceStore: ObservableObject {
         return await createCourseNotebookNote(
             courseID: courseID,
             title: fileStem,
-            markdown: defaultNotebookNote(title: fileStem, sourceItem: nil)
+            markdown: defaultNotebookNote(sourceItem: nil)
         )
     }
 
@@ -13250,7 +13250,7 @@ final class WorkspaceStore: ObservableObject {
                     )
             )
             let markdown = initialMarkdown
-                ?? defaultNotebookNote(title: item.title, sourceItem: sourceItem)
+                ?? defaultNotebookNote(sourceItem: sourceItem)
             try markdown.write(to: url, atomically: true, encoding: .utf8)
             noteBackingContentDigestsByItemID[item.id] = Self.noteContentDigest(Data(markdown.utf8))
             // 新建笔记的文件名是应用生成的，登记为抬头体系管辖的基线。
@@ -19261,23 +19261,17 @@ final class WorkspaceStore: ObservableObject {
     }
 
     private func defaultNote(for item: StudyItem?) -> String {
-        let title = item.map(displayTitle) ?? ui("新笔记", "New Note")
         let sourceItem = item?.isNotebookNote == true ? nil : item
-        return defaultNotebookNote(title: title, sourceItem: sourceItem)
+        return defaultNotebookNote(sourceItem: sourceItem)
     }
 
-    private func defaultNotebookNote(title: String, sourceItem: StudyItem?) -> String {
-        let excerptSeed = sourceItem.map { ui("> 来源：\(displayTitle(for: $0))\n", "> Source: \(displayTitle(for: $0))\n") } ?? ""
-        return """
-        # \(title)
-
-        ## \(ui("核心要点", "Key Points"))
-
-        ## \(ui("摘录", "Excerpts"))
-        \(excerptSeed)
-
-        ## \(ui("待追问", "Follow-up Questions"))
-        """
+    /// 新建笔记的正文：空白，不再预置"核心要点 / 摘录 / 待追问"模板。
+    /// 从资料建笔记时只保留来源行；笔记名交给显示名解析（正文抬头）
+    /// 与抬头驱动的文件改名负责，不再靠模板里预置的标题。
+    private func defaultNotebookNote(sourceItem: StudyItem?) -> String {
+        sourceItem.map {
+            ui("> 来源：\(displayTitle(for: $0))\n", "> Source: \(displayTitle(for: $0))\n")
+        } ?? ""
     }
 
     private static func noteContentDigest(_ data: Data) -> String {

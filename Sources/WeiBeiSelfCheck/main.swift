@@ -1994,10 +1994,9 @@ do {
         "a bare heading or empty text is not template shape"
     )
     expect(
-        workspaceStoreSource.contains("## \\(ui(\"核心要点\", \"Key Points\"))")
-            && workspaceStoreSource.contains("## \\(ui(\"摘录\", \"Excerpts\"))")
-            && workspaceStoreSource.contains("## \\(ui(\"待追问\", \"Follow-up Questions\"))"),
-        "WorkspaceStore default note template stays in sync with NoteTemplateShape.sectionHeadingVariants"
+        !workspaceStoreSource.contains("## \\(ui(\"核心要点\", \"Key Points\"))")
+            && workspaceStoreSource.contains("private func defaultNotebookNote(sourceItem: StudyItem?) -> String"),
+        "new notes start blank: WorkspaceStore.defaultNotebookNote no longer seeds template sections; NoteTemplateShape stays for legacy data detection only"
     )
 }
 
