@@ -22,13 +22,13 @@ const stops = [
 ];
 
 const workspaceStates = [
-  { x: 540, y: 390, scale: 0.74 },
+  { x: 0, y: 275, scale: 0.86 },
   { x: 0, y: 225, scale: 0.88 },
   { x: -36, y: 94, scale: 0.96 },
-  { x: 560, y: 90, scale: 0.82 },
+  { x: 78, y: 104, scale: 0.94 },
   { x: -28, y: 110, scale: 0.96 },
   { x: 0, y: 98, scale: 0.95 },
-  { x: 84, y: 505, scale: 0.78 },
+  { x: 84, y: 395, scale: 0.78 },
 ];
 
 let targetProgress = captureStop === null
@@ -169,7 +169,6 @@ function updatePersistentWorkspace(progress, lower, upper, local) {
 function setActiveScene(index) {
   if (activeSceneIndex === index) return;
   activeSceneIndex = index;
-  stage?.classList.toggle("is-dark", index === 3);
   scenes.forEach((scene, sceneIndex) => {
     const active = sceneIndex === index;
     if (!active && scene.contains(document.activeElement)) document.activeElement.blur();
@@ -190,6 +189,9 @@ function paint(progress) {
   });
 
   setActiveScene(activeIndex);
+
+  const darkness = smoothstep(clamp(1 - Math.abs(progress - 0.5) / 0.09));
+  document.documentElement.style.setProperty("--stage-dark", darkness.toFixed(4));
 
   updatePersistentWorkspace(progress, lower, upper, local);
   updateWorkflow(progress);
