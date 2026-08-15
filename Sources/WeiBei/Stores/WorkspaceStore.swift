@@ -3975,9 +3975,12 @@ final class WorkspaceStore: ObservableObject {
         }
         if courseItemMemberships.contains(where: {
             $0.courseID == courseID && $0.itemID == itemID
+                && $0.courseRelativePath != nil
         }) {
             return
         }
+        // 纯归属兜底登记（无 courseRelativePath）不幂等返回：继续走链接流程，
+        // 成功后原地补全链接条目。
         let sharedInfo = try await courseProjectFileWorker.validatedRegularSource(
             expectedSharedURL
         )
@@ -3985,6 +3988,11 @@ final class WorkspaceStore: ObservableObject {
             at: sharedInfo.url,
             expectedIdentity: sharedInfo.identity
         )
+        if importedItems[itemIndex].contentDigest == nil {
+            // 新建的共享笔记还没有内容摘要；可携带状态校验要求 sharedReference
+            // 带 SHA256 摘要，缺失会让写回校验失败并回滚整个链接登记。
+            importedItems[itemIndex].contentDigest = sharedSnapshot.sha256
+        }
         let materialDirectory = try await courseProjectFileWorker.ensureRealDirectory(
             courseRoot.appendingPathComponent(
                 role.directoryName,
@@ -4037,14 +4045,24 @@ final class WorkspaceStore: ObservableObject {
                 expectedIdentity: preparedIdentity
             )
             try courseProjectMutationHook(.afterSharedLinkPlacementBeforeJournal)
-            courseItemMemberships.append(
-                CourseItemMembership(
-                    courseID: courseID,
-                    itemID: itemID,
-                    courseRelativePath: linkRelativePath,
-                    entryIdentity: preparedIdentity
+            if let fallbackIndex = courseItemMemberships.firstIndex(where: {
+                $0.courseID == courseID && $0.itemID == itemID
+                    && $0.courseRelativePath == nil
+            }) {
+                courseItemMemberships[fallbackIndex].courseRelativePath =
+                    linkRelativePath
+                courseItemMemberships[fallbackIndex].entryIdentity =
+                    preparedIdentity
+            } else {
+                courseItemMemberships.append(
+                    CourseItemMembership(
+                        courseID: courseID,
+                        itemID: itemID,
+                        courseRelativePath: linkRelativePath,
+                        entryIdentity: preparedIdentity
+                    )
                 )
-            )
+            }
             guard await persistWorkspaceNow() else {
                 throw CourseOwnedFileError.workspaceSaveFailed
             }
@@ -4053,7 +4071,6 @@ final class WorkspaceStore: ObservableObject {
                 expectedIdentity: transactionDirectoryIdentity
             )
             invalidateAgentContext()
-            _ = sharedSnapshot
         } catch {
             // S3：无 journal 恢复；崩溃注入也必须走回滚。
             courseItemMemberships = previousMemberships
@@ -11109,9 +11126,7 @@ final class WorkspaceStore: ObservableObject {
             createBlankNotebookNote()
             return
         }
-        if openExistingNotebookNote(for: selectedMaterialItem) {
-            return
-        }
+        // 同一资料允许重复新建多篇笔记，noteSourceLink 保留关联。
         createNotebookNote(seed: .currentMaterial(selectedMaterialItem))
     }
 
@@ -11128,9 +11143,6 @@ final class WorkspaceStore: ObservableObject {
     func promptCreateNotebookNoteFromCurrentMaterial() {
         guard let selectedMaterialItem else {
             promptCreateBlankNotebookNote()
-            return
-        }
-        if openExistingNotebookNote(for: selectedMaterialItem) {
             return
         }
         notebookRenameDraft = nil
@@ -13271,15 +13283,38 @@ final class WorkspaceStore: ObservableObject {
                 )
                 if case .shared = item.storage, !courseIDs.isEmpty {
                     Task { @MainActor [weak self] in
+                        guard let self else { return }
+                        var linkFailedCourseTitles: [String] = []
                         for courseID in courseIDs {
-                            try? await self?.linkSharedItem(
-                                itemID: item.id,
-                                toCourseID: courseID,
-                                conflictResolution: .keepBoth(
-                                    preferredFileName: nil
+                            do {
+                                try await self.linkSharedItem(
+                                    itemID: item.id,
+                                    toCourseID: courseID,
+                                    conflictResolution: .keepBoth(
+                                        preferredFileName: nil
+                                    )
                                 )
-                            )
+                            } catch {
+                                linkFailedCourseTitles.append(
+                                    self.course(withID: courseID)?.title
+                                        ?? courseID.uuidString
+                                )
+                            }
                         }
+                        guard !linkFailedCourseTitles.isEmpty else { return }
+                        // 链接进课程目录失败时不能静默吞掉：兜底登记纯课程归属
+                        // （无课程内链接条目），笔记仍然归到课程下。
+                        var memberships = self.courseMembershipIndex
+                        for courseID in courseIDs {
+                            memberships.assign(itemIDs: [item.id], to: courseID)
+                        }
+                        self.courseItemMemberships = memberships.values
+                        self.invalidateAgentContext()
+                        self.save()
+                        self.showTransientNoteStatus(ui(
+                            "无法把笔记链接进课程目录（\(linkFailedCourseTitles.joined(separator: "、"))），但已归入课程。",
+                            "Could not link the note into the course folder (\(linkFailedCourseTitles.joined(separator: ", "))), but it was still assigned to the course."
+                        ))
                     }
                 } else if !courseIDs.isEmpty {
                     // 本地（legacyExternal）笔记没有共享目录可链接，直接登记课程归属，
@@ -13305,31 +13340,6 @@ final class WorkspaceStore: ObservableObject {
         } catch {
             showTransientNoteStatus(ui("无法创建笔记：\(error.localizedDescription)", "Could not create note: \(error.localizedDescription)"))
             return nil
-        }
-    }
-
-    @discardableResult
-    private func openExistingNotebookNote(for material: StudyItem) -> Bool {
-        guard let item = existingNotebookNote(for: material) else { return false }
-        invalidateAgentContext()
-        activeNotebookItemID = item.id
-        noteText = noteText(for: item)
-        revealRichWritingSurface()
-        focus(.notes)
-        save()
-        showTransientNoteStatus(ui("已打开现有资料笔记：\(item.subtitle)", "Opened existing material note: \(item.subtitle)"))
-        return true
-    }
-
-    private func existingNotebookNote(for material: StudyItem) -> StudyItem? {
-        let currentTitle = suggestedNotebookTitle(for: .currentMaterial(material))
-        let chineseTitle = "\(material.title) 笔记"
-        let englishTitle = "\(material.title) Notes"
-        let displayChineseTitle = "\(displayTitle(for: material)) 笔记"
-        let displayEnglishTitle = "\(displayTitle(for: material)) Notes"
-        let titles = Set([currentTitle, chineseTitle, englishTitle, displayChineseTitle, displayEnglishTitle])
-        return allItems.first { item in
-            item.isNotebookNote && titles.contains(item.title)
         }
     }
 
@@ -18370,6 +18380,12 @@ final class WorkspaceStore: ObservableObject {
                   sharedItemIDs.contains(membership.itemID) else {
                 continue
             }
+            // 纯归属兜底登记（无课程内链接条目）没有可对账的链接，
+            // 不参与链接对账，直接保留。
+            guard membership.courseRelativePath != nil
+                    || membership.entryIdentity != nil else {
+                continue
+            }
             let identityMatch = membership.entryIdentity.flatMap {
                 observationIndexByLinkIdentity[$0]
             }.flatMap { index in
@@ -20028,12 +20044,15 @@ final class WorkspaceStore: ObservableObject {
             }
         var portableItems: [CoursePortableItem] = []
         for membership in memberships {
-            guard let relativePath = membership.courseRelativePath else {
-                throw CoursePortableStateError.missingCourseItem
-            }
             guard let item = importedItems.first(where: {
                 $0.id == membership.itemID
             }) else {
+                throw CoursePortableStateError.missingCourseItem
+            }
+            guard let relativePath = membership.courseRelativePath else {
+                // 纯归属兜底登记（链接进课程目录失败时写入）没有课程内链接
+                // 条目，可携带状态无法表示；跳过它而不是让整次保存失败。
+                if case .shared = item.storage { continue }
                 throw CoursePortableStateError.missingCourseItem
             }
             let storage: CoursePortableItemStorage
@@ -20628,6 +20647,12 @@ final class WorkspaceStore: ObservableObject {
             $0.courseID == courseID
         }
         let previousItemIDs = Set(previousMemberships.map(\.itemID))
+        // 纯归属兜底登记（无课程内链接条目）无法写进可携带状态；重放磁盘
+        // 快照时保留这些归属与其共享条目，不随快照一起抹掉。
+        let pathlessMemberships = previousMemberships.filter {
+            $0.courseRelativePath == nil
+        }
+        let pathlessItemIDs = Set(pathlessMemberships.map(\.itemID))
         let previousNoteIDs = Set(
             importedItems.lazy.filter {
                 previousItemIDs.contains($0.id) && $0.isNotebookNote
@@ -20812,6 +20837,7 @@ final class WorkspaceStore: ObservableObject {
         importedItems.removeAll { item in
             previousItemIDs.contains(item.id)
                 && !otherCourseItemIDs.contains(item.id)
+                && !pathlessItemIDs.contains(item.id)
         }
         for item in restoredItemsByID.values.sorted(by: {
             $0.id < $1.id
@@ -20826,6 +20852,12 @@ final class WorkspaceStore: ObservableObject {
         }
         courseItemMemberships.removeAll { $0.courseID == courseID }
         courseItemMemberships.append(contentsOf: restoredMemberships)
+        for membership in pathlessMemberships
+        where !restoredMemberships.contains(where: {
+            $0.itemID == membership.itemID
+        }) {
+            courseItemMemberships.append(membership)
+        }
 
         var restoredCourse = courses[courseIndex]
         restoredCourse.title = state.metadata.title
@@ -20881,6 +20913,7 @@ final class WorkspaceStore: ObservableObject {
 
         noteSourceLinks.removeAll {
             previousNoteIDs.contains($0.noteItemID)
+                && !pathlessItemIDs.contains($0.noteItemID)
         }
         noteSourceLinks.append(contentsOf: state.noteSourceLinks)
         studyLocationsByCourseID[courseID.uuidString] =
