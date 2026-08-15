@@ -25,7 +25,29 @@ public enum CourseLibraryVolatility {
     }
 
     static func canonicalize(_ url: URL) -> URL {
-        url.resolvingSymlinksInPath().standardizedFileURL
+        let standardized = url.standardizedFileURL
+        if FileManager.default.fileExists(atPath: standardized.path) {
+            return standardized.resolvingSymlinksInPath().standardizedFileURL
+        }
+
+        var existing = standardized
+        var missing: [String] = []
+        while existing.path != "/", existing.path != "",
+              !FileManager.default.fileExists(atPath: existing.path) {
+            let component = existing.lastPathComponent
+            if !component.isEmpty, component != "/" {
+                missing.insert(component, at: 0)
+            }
+            let parent = existing.deletingLastPathComponent()
+            if parent.path == existing.path { break }
+            existing = parent
+        }
+
+        var resolved = existing.resolvingSymlinksInPath().standardizedFileURL
+        for component in missing {
+            resolved.appendPathComponent(component, isDirectory: true)
+        }
+        return resolved.standardizedFileURL
     }
 
     static func isSameOrInside(root: URL, candidate: URL) -> Bool {

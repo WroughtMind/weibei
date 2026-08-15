@@ -44,13 +44,25 @@ func checkCourseLibraryVolatility() {
         ),
         "/tmp must resolve to the /private/tmp volatile root"
     )
+    let missingTmpChild = URL(fileURLWithPath: "/private/tmp", isDirectory: true)
+        .appendingPathComponent("weibei-vol-missing-\(unique)", isDirectory: true)
     expect(
-        CourseLibraryVolatility.isVolatilePersistenceRoot(
-            URL(fileURLWithPath: "/private/tmp", isDirectory: true)
-                .appendingPathComponent("weibei-vol-\(unique)", isDirectory: true)
-        ),
-        "a subdirectory of /private/tmp is volatile"
+        CourseLibraryVolatility.isVolatilePersistenceRoot(missingTmpChild),
+        "a missing subdirectory of /private/tmp is still volatile after prefix normalization"
     )
+
+    let existingTmpChild = URL(fileURLWithPath: "/private/tmp", isDirectory: true)
+        .appendingPathComponent("weibei-vol-\(unique)", isDirectory: true)
+    do {
+        try fileManager.createDirectory(at: existingTmpChild, withIntermediateDirectories: true)
+        defer { try? fileManager.removeItem(at: existingTmpChild) }
+        expect(
+            CourseLibraryVolatility.isVolatilePersistenceRoot(existingTmpChild),
+            "a subdirectory of /private/tmp is volatile"
+        )
+    } catch {
+        expect(false, "could not create /private/tmp subdirectory fixture: \(error)")
+    }
 
     expect(
         CourseLibraryVolatility.isVolatilePersistenceRoot(
