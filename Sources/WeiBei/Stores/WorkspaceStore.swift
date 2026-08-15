@@ -13298,7 +13298,7 @@ final class WorkspaceStore: ObservableObject {
                     )
             )
             let markdown = initialMarkdown
-                ?? defaultNotebookNote(sourceItem: sourceItem)
+                ?? defaultNotebookNote()
             try markdown.write(to: url, atomically: true, encoding: .utf8)
             noteBackingContentDigestsByItemID[item.id] = Self.noteContentDigest(Data(markdown.utf8))
             // 新建笔记的文件名是应用生成的，登记为抬头体系管辖的基线。
