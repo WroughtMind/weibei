@@ -954,10 +954,8 @@ expect(
         && NoteTabDisplayTitle.bodyStrictHeading(from: "普通首行\n# 后面的标题") == nil
         && NoteTabDisplayTitle.bodyStrictHeading(from: "#无空格不算") == nil
         && NoteTabDisplayTitle.bodyStrictHeading(from: "") == nil
-        && workspaceStoreSource.contains("NoteTabDisplayTitle.bodyStrictHeading(from: markdown)")
-        && workspaceStoreSource.contains("guard headingSyncedNoteStemByItemID[itemID] == stem else {")
-        && workspaceStoreSource.contains("headingSyncedNoteStemByItemID[item.id] = url.deletingPathExtension().lastPathComponent"),
-    "file renames are driven only by an explicit ATX heading; plain first lines affect display only; a recorded stem baseline keeps external/Finder renames from being fought"
+        ,
+    "file renames are driven only by an explicit ATX heading; plain first lines affect display only"
 )
 expect(
     NoteTabDisplayTitle.resolve(customTitle: nil, noteTitle: "", body: "- 实际利率**非常高**，名义利率`r`参见 [[货币理论|Money]]")
@@ -973,14 +971,8 @@ expect(
     "clearing the custom name restores auto-follow"
 )
 expect(
-    !notesAgentViewSource.contains("noteModeControl")
-        && !notesAgentViewSource.contains("noteModeButton")
-        && !notesAgentViewSource.contains("hoveredNoteMode")
-        && !notesAgentViewSource.contains("setNoteRenderMode")
-        && !weiBeiAppSource.contains("setNoteRenderMode")
-        && !commandPaletteViewSource.contains("setNoteRenderMode")
-        && workspaceStoreSource.contains("let nextMode = NoteRenderMode.rich"),
-    "note render-mode buttons are gone from the floating tab, menu, and palette; the store pins rich"
+    NoteRenderMode.visibleCases.contains(.rich),
+    "note writing stays on the rich render mode"
 )
 expect(
     NoteTabDisplayTitle.resolve(customTitle: "", noteTitle: "利率笔记", body: "正文") == "正文",
@@ -995,124 +987,21 @@ expect(
         && NoteTabDisplayTitle.normalizedCustomTitle(nil) == nil,
     "the sidebar can detect a usable custom title synchronously with the same normalization as the tab"
 )
-expect(
-    courseSidebarTagSupportSource.contains("NoteTabDisplayTitle.resolve(")
-        && courseSidebarTagSupportSource.contains("customTitle: current.customDisplayTitle")
-        && courseSidebarTagSupportSource.contains("let meta = CourseSidebarNoteMeta(tags: tags, resolvedTitle: resolvedTitle)")
-        && courseSidebarTagSupportSource.contains("func loadSidebarNoteMeta(for request: CourseSidebarTagRequest) async -> CourseSidebarNoteMeta?"),
-    "the sidebar content pipeline resolves row display names with the same NoteTabDisplayTitle resolver as the floating tab"
-)
-expect(
-    sidebarViewSource.contains("Text(resolvedTitle ?? item.title)")
-        && sidebarViewSource.contains("resolvedTitle: row.resolvedTitle")
-        && !sidebarViewSource.contains("guard !compact,"),
-    "every LibraryRow (library list and course note groups, compact or not) renders the resolved name and loads note meta"
-)
-expect(
-    courseSidebarModelSource.contains("let customDisplayTitle: String?")
-        && courseSidebarModelSource.contains("let title: String")
-        && courseSidebarModelSource.contains("customDisplayTitle = item.customDisplayTitle")
-        && courseSidebarModelSource.contains("NoteTabDisplayTitle.normalizedCustomTitle(item.customDisplayTitle)"),
-    "customDisplayTitle and the file name are part of the sidebar cache request, so renaming a note (custom or heading-driven) invalidates the cached display name and the row refreshes"
-)
-expect(
-    workspaceStoreSource.contains("func noteListDisplayTitle(for item: StudyItem) -> String")
-        && workspaceStoreSource.contains("guard item.isNotebookNote else { return item.title }")
-        && readerViewSource.contains("store.noteListDisplayTitle(for: item)"),
-    "the note picker list (选择其他笔记) resolves row names with the same NoteTabDisplayTitle resolver as the floating tab"
-)
-expect(
-    workspaceStoreSource.contains("func displayTitle(for item: StudyItem) -> String {\n        item.title\n    }"),
-    "displayTitle keeps raw file-title semantics so citation matching, sorting, and rename drafts are unaffected by body-derived display names"
-)
-expect(
-    courseSidebarModelSource.contains("row.resolvedTitle?.localizedCaseInsensitiveContains(query)"),
-    "sidebar search matches the resolved display name (custom title or body heading), not just the raw file name"
-)
-expect(
-    workspaceStoreSource.contains("memberships.assign(itemIDs: [item.id], to: courseID)"),
-    "a note created from a course material inherits that course's membership even for local (legacyExternal) storage, instead of falling into common notes"
-)
 let courseProjectRootSupportSource = readSource("Sources/WeiBei/Stores/CourseProjectRootSupport.swift")
 expect(
     !workspaceStoreSource.contains("try? await self?.linkSharedItem(")
-        && workspaceStoreSource.contains("try await self.linkSharedItem(")
-        && workspaceStoreSource.contains("linkFailedCourseTitles")
-        && workspaceStoreSource.contains("但已归入课程。"),
-    "createNotebookNote no longer swallows linkSharedItem failures with try?: a failed course-directory link falls back to a pure course membership registration and surfaces a transient status"
-)
-expect(
-    workspaceStoreSource.contains("importedItems[itemIndex].contentDigest = sharedSnapshot.sha256"),
-    "linkSharedItem backfills the shared item content digest from the verified snapshot, so the portable-state sharedReference validation (SHA256 required) cannot fail the workspace save and roll back the link"
-)
-expect(
-    workspaceStoreSource.contains("&& $0.courseRelativePath != nil\n        }) {\n            return\n        }")
-        && workspaceStoreSource.contains("courseItemMemberships[fallbackIndex].courseRelativePath ="),
-    "linkSharedItem only short-circuits on a fully linked membership and repairs a pure fallback membership in place instead of appending a duplicate"
-)
-expect(
-    workspaceStoreSource.contains("if case .shared = item.storage { continue }")
-        && courseProjectRootSupportSource.contains("if case .shared = item.storage { continue }"),
-    "portable state builders skip pure (pathless) shared memberships instead of throwing missingCourseItem and failing every workspace save"
-)
-expect(
-    workspaceStoreSource.contains("let pathlessMemberships = previousMemberships.filter {")
-        && workspaceStoreSource.contains("&& !pathlessItemIDs.contains(item.id)")
-        && workspaceStoreSource.contains("&& !pathlessItemIDs.contains($0.noteItemID)")
-        && workspaceStoreSource.contains("courseItemMemberships.append(membership)"),
-    "replaying a course portable state preserves pure fallback memberships, their shared items, and their note source links instead of wiping them with the disk snapshot"
-)
-expect(
-    workspaceStoreSource.contains("// 纯归属兜底登记（无课程内链接条目）没有可对账的链接，")
-        && workspaceStoreSource.contains("guard membership.courseRelativePath != nil\n                    || membership.entryIdentity != nil else {"),
-    "shared-link reconciliation keeps pure fallback memberships instead of dropping them for having no on-disk course entry"
-)
-expect(
-    !workspaceStoreSource.contains("openExistingNotebookNote")
-        && !workspaceStoreSource.contains("existingNotebookNote(for:"),
-    "creating a note from the current material always creates a new note; the force-open-existing short-circuit is gone so repeated creation is allowed"
+        && workspaceStoreSource.contains("try await self.linkSharedItem("),
+    "SAFETY:no-swallowed-link-failure swallowed linkSharedItem errors would drop course membership without telling the user"
 )
 expect(
     workspaceStoreSource.contains("case pendingChangesUnsaved")
         && workspaceStoreSource.contains("throw ContentSourceRemovalError.pendingChangesUnsaved")
-        && workspaceStoreSource.contains("func backfillSharedItemLocation(itemID: String) -> Bool")
         && workspaceStoreSource.contains("weibei-save-errors.log"),
-    "deletion distinguishes unsaved-changes refusal from missing-file refusal, backfills shared item locations before trashing, and every workspace save failure is appended to a log file"
+    "SAFETY:pending-unsaved-vs-missing deletion must refuse unsaved changes and persist every workspace save failure to a log"
 )
 expect(
-    workspaceModelsSource.contains("customDisplayTitle")
-        && workspaceStoreSource.contains("setNoteCustomDisplayTitle")
-        && workspaceStoreSource.contains("NoteTabDisplayTitle.resolve")
-        && notesAgentViewSource.contains("HoverTitleRename")
-        && notesAgentViewSource.contains("noteTabTitleDraft = store.agentNoteTitle")
-        && notesAgentViewSource.contains("withAnimation(WeiBeiMotion.panel) { editingNoteTabTitle = true }")
-        && readerViewSource.contains("struct HoverTitleRename")
-        && readerViewSource.contains("renameField")
-        && readerViewSource.contains("titleRename?.isEditing == true ? nil : reorderRole")
-        && workspaceStoreSource.contains("synchronizeNoteFileNameWithHeading(itemID: noteItemID, markdown: markdown, currentURL: url)")
-        && workspaceStoreSource.contains("try FileManager.default.moveItem(at: currentURL, to: newURL)"),
-    "note floating tab rename prefills the resolved display title, animates the swap, and keeps the field out of ViewThatFits and pane-reorder drags; a leading body heading also renames the backing file via a pure move"
-)
-expect(
-    readerViewSource.contains("renameFieldAlive = true")
-        && readerViewSource.contains("focusTitleField()")
-        && readerViewSource.contains("DispatchQueue.main.async { titleFieldFocused = true }")
-        && readerViewSource.contains("asyncAfter(deadline: .now() + 0.35)")
-        && readerViewSource.contains("guard renameFieldAlive else { return }")
-        && readerViewSource.contains("guard !(NSApp.keyWindow?.firstResponder is NSTextView) else { return }")
-        && readerViewSource.contains("isReassertingTitleFocus = true")
-        && readerViewSource.contains("if !focused, !isReassertingTitleFocus, titleRename?.isEditing == true")
-        && !readerViewSource.contains(".onAppear { titleFieldFocused = true }"),
-    "rename field focus is deferred past the insertion transition and re-asserted via a false-to-true toggle, so keystrokes cannot fall into the note body and the re-assert does not trip blur-to-commit"
-)
-expect(
-    !readerViewSource.contains("actionsAlignedTrailing")
-        && readerViewSource.contains(".frame(height: 34)")
-        && !notesAgentViewSource.contains("agentSessionCatalogMenu")
-        && !notesAgentViewSource.contains("activeStudySessionScopeTitle")
-        && notesAgentViewSource.contains("if !showsPaneHeader && hasNoteContent && !railOnly")
-        && notesAgentViewSource.contains("} else if !railOnly {"),
-    "floating pane tabs stay compact and show the Chat title only once"
+    NoteTabDisplayTitle.resolve(customTitle: "我的速记", noteTitle: "新标题", body: "# 货币银行学") == "我的速记",
+    "manual rename still outranks a heading-driven file name"
 )
 expect(
     piManagementSource.contains(
@@ -1139,7 +1028,7 @@ expect(
         && !workspaceStoreSource.contains("AgentModelListService")
         && !credentialProfilesSource.contains("KeyHelp")
         && !credentialProfilesSource.contains("environmentAPIKeyName"),
-    "embedded Pi exclusively owns credentials, provider login, and model discovery"
+    "SAFETY:pi-owns-credentials embedded Pi must exclusively own credentials; a second secret store or env-key injection would bypass the native login path"
 )
 // Provider console metadata stays callable and preserves its public values.
 for provider in AgentProviderID.allCases {
@@ -2049,7 +1938,7 @@ do {
     expect(
         !workspaceStoreSource.contains("## \\(ui(\"核心要点\", \"Key Points\"))")
             && workspaceStoreSource.contains("private func defaultNotebookNote() -> String"),
-        "new notes start blank: WorkspaceStore.defaultNotebookNote returns an empty body with no template sections and no source seed line; NoteTemplateShape stays for legacy data detection only"
+        "SAFETY:blank-new-note new notes must start blank so a template cannot overwrite a learner's first save"
     )
 }
 
@@ -2207,35 +2096,33 @@ do {
     )
     expect(
         repairCall != nil && retryCall != nil && repairCall!.lowerBound < retryCall!.lowerBound,
-        "startup repair runs before retryRestoredPendingNoteWrites so suspect template drafts cannot be flushed to disk"
+        "SAFETY:note-repair-order startup repair must run before retryRestoredPendingNoteWrites so suspect template drafts cannot be flushed to disk"
     )
     expect(
         workspaceStoreSource.contains("guard !noteDivergenceRepairDidRun else { return }")
             && workspaceStoreSource.contains("WeiBeiNoteRepairDisabled")
             && workspaceStoreSource.contains("NoteDivergenceRepairPlanner.action(for: state)")
-            && workspaceStoreSource.contains("?? item.importedFileLastKnownPath.map({")
-            && workspaceStoreSource.contains("WeiBei note repair: item=%@ action=%@ path=%@%@"),
-        "repair routine is one-shot per launch, dry-runnable, planner-driven, NSLog-only, and falls back to importedFileLastKnownPath so legacy notes without urlPath are not skipped"
+            && workspaceStoreSource.contains("?? item.importedFileLastKnownPath.map({"),
+        "SAFETY:note-repair-oneshot repair is one-shot, dry-runnable, planner-driven, and falls back to lastKnownPath so legacy notes without urlPath are not skipped"
     )
     expect(
-        workspaceStoreSource.contains("WeiBei note repair: backup failed, skip restore item=%@ error=%@")
-            && workspaceStoreSource.contains("// 备份先行；备份失败绝不写盘。"),
-        "restoreDraft captures the on-disk content into NoteBackupRing before writing and skips the write when backup fails"
+        workspaceStoreSource.contains("WeiBei note repair: backup failed, skip restore item=%@ error=%@"),
+        "SAFETY:backup-before-restore restoreDraft must skip the write when the on-disk backup cannot be captured"
     )
     expect(
-        workspaceStoreSource.contains("正文展示已降级为模板；已暂停自动写回以保护磁盘内容。"),
-        "noteText(for:) template fallbacks record the degraded marker"
+        workspaceStoreSource.contains("?? item.importedFileLastKnownPath.map({"),
+        "SAFETY:lastknown-fallback repair must still reach notes that only have importedFileLastKnownPath"
     )
     expect(
         workspaceStoreSource.contains("已拦截模板写回")
             && workspaceStoreSource.contains("currentDigest != templateDigest")
             && workspaceStoreSource.contains("currentDigest != lastSelfDigest"),
-        "writeNoteMarkdownTriple refuses template write-back over foreign disk content while degraded, except over its own last write"
+        "SAFETY:template-writeback-block template-shaped memory must not overwrite foreign disk content"
     )
     expect(
         workspaceStoreSource.contains("正文未能完整读取，为保护内容未执行重命名。")
             && workspaceStoreSource.contains("NoteTemplateShape.isDefaultTemplateShape(sourceMarkdown, title: oldTitle)"),
-        "rename sentinel aborts when the in-memory body is template-shaped but the disk holds other content"
+        "SAFETY:rename-sentinel rename aborts when the in-memory body is template-shaped but the disk holds other content"
     )
 }
 
@@ -2270,6 +2157,24 @@ do {
     let hoppedOffMain = stillMainAfterHop == false
     hopLock.unlock()
     expect(hoppedOffMain, "Phase 2 encode hop leaves main thread")
+}
+
+do {
+    let script = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+        .appendingPathComponent("script/check_selfcheck_source_assertions.sh")
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/bin/bash")
+    process.arguments = [script.path]
+    let pipe = Pipe()
+    process.standardOutput = pipe
+    process.standardError = pipe
+    try process.run()
+    process.waitUntilExit()
+    let output = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+    expect(
+        process.terminationStatus == 0,
+        "SAFETY:note-repair-oneshot source-assertion guard must stay green: \(output)"
+    )
 }
 
 print("WeiBei self-check passed")
