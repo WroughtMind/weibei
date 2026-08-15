@@ -1027,6 +1027,56 @@ expect(
     "sidebar search matches the resolved display name (custom title or body heading), not just the raw file name"
 )
 expect(
+    workspaceStoreSource.contains("memberships.assign(itemIDs: [item.id], to: courseID)"),
+    "a note created from a course material inherits that course's membership even for local (legacyExternal) storage, instead of falling into common notes"
+)
+let courseProjectRootSupportSource = readSource("Sources/WeiBei/Stores/CourseProjectRootSupport.swift")
+expect(
+    !workspaceStoreSource.contains("try? await self?.linkSharedItem(")
+        && workspaceStoreSource.contains("try await self.linkSharedItem(")
+        && workspaceStoreSource.contains("linkFailedCourseTitles")
+        && workspaceStoreSource.contains("但已归入课程。"),
+    "createNotebookNote no longer swallows linkSharedItem failures with try?: a failed course-directory link falls back to a pure course membership registration and surfaces a transient status"
+)
+expect(
+    workspaceStoreSource.contains("importedItems[itemIndex].contentDigest = sharedSnapshot.sha256"),
+    "linkSharedItem backfills the shared item content digest from the verified snapshot, so the portable-state sharedReference validation (SHA256 required) cannot fail the workspace save and roll back the link"
+)
+expect(
+    workspaceStoreSource.contains("&& $0.courseRelativePath != nil\n        }) {\n            return\n        }")
+        && workspaceStoreSource.contains("courseItemMemberships[fallbackIndex].courseRelativePath ="),
+    "linkSharedItem only short-circuits on a fully linked membership and repairs a pure fallback membership in place instead of appending a duplicate"
+)
+expect(
+    workspaceStoreSource.contains("if case .shared = item.storage { continue }")
+        && courseProjectRootSupportSource.contains("if case .shared = item.storage { continue }"),
+    "portable state builders skip pure (pathless) shared memberships instead of throwing missingCourseItem and failing every workspace save"
+)
+expect(
+    workspaceStoreSource.contains("let pathlessMemberships = previousMemberships.filter {")
+        && workspaceStoreSource.contains("&& !pathlessItemIDs.contains(item.id)")
+        && workspaceStoreSource.contains("&& !pathlessItemIDs.contains($0.noteItemID)")
+        && workspaceStoreSource.contains("courseItemMemberships.append(membership)"),
+    "replaying a course portable state preserves pure fallback memberships, their shared items, and their note source links instead of wiping them with the disk snapshot"
+)
+expect(
+    workspaceStoreSource.contains("// 纯归属兜底登记（无课程内链接条目）没有可对账的链接，")
+        && workspaceStoreSource.contains("guard membership.courseRelativePath != nil\n                    || membership.entryIdentity != nil else {"),
+    "shared-link reconciliation keeps pure fallback memberships instead of dropping them for having no on-disk course entry"
+)
+expect(
+    !workspaceStoreSource.contains("openExistingNotebookNote")
+        && !workspaceStoreSource.contains("existingNotebookNote(for:"),
+    "creating a note from the current material always creates a new note; the force-open-existing short-circuit is gone so repeated creation is allowed"
+)
+expect(
+    workspaceStoreSource.contains("case pendingChangesUnsaved")
+        && workspaceStoreSource.contains("throw ContentSourceRemovalError.pendingChangesUnsaved")
+        && workspaceStoreSource.contains("func backfillSharedItemLocation(itemID: String) -> Bool")
+        && workspaceStoreSource.contains("weibei-save-errors.log"),
+    "deletion distinguishes unsaved-changes refusal from missing-file refusal, backfills shared item locations before trashing, and every workspace save failure is appended to a log file"
+)
+expect(
     workspaceModelsSource.contains("customDisplayTitle")
         && workspaceStoreSource.contains("setNoteCustomDisplayTitle")
         && workspaceStoreSource.contains("NoteTabDisplayTitle.resolve")
@@ -1994,10 +2044,9 @@ do {
         "a bare heading or empty text is not template shape"
     )
     expect(
-        workspaceStoreSource.contains("## \\(ui(\"核心要点\", \"Key Points\"))")
-            && workspaceStoreSource.contains("## \\(ui(\"摘录\", \"Excerpts\"))")
-            && workspaceStoreSource.contains("## \\(ui(\"待追问\", \"Follow-up Questions\"))"),
-        "WorkspaceStore default note template stays in sync with NoteTemplateShape.sectionHeadingVariants"
+        !workspaceStoreSource.contains("## \\(ui(\"核心要点\", \"Key Points\"))")
+            && workspaceStoreSource.contains("private func defaultNotebookNote() -> String"),
+        "new notes start blank: WorkspaceStore.defaultNotebookNote returns an empty body with no template sections and no source seed line; NoteTemplateShape stays for legacy data detection only"
     )
 }
 
