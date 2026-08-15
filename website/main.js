@@ -6,7 +6,9 @@ const workflowVideos = [...document.querySelectorAll(".workspace-flow")];
 const relationsVideo = document.querySelector(".workspace-relations");
 const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
 const desktopStory = matchMedia("(min-width: 761px)").matches;
-const captureMode = new URLSearchParams(location.search).has("capture");
+const captureParams = new URLSearchParams(location.search);
+const captureMode = captureParams.has("capture");
+const captureStop = captureParams.get("stop");
 const releasesUrl = "https://github.com/weibei-app/weibei/releases";
 
 const stops = [
@@ -20,17 +22,19 @@ const stops = [
 ];
 
 const workspaceStates = [
-  { x: 0, y: 275, scale: 0.86 },
+  { x: 540, y: 390, scale: 0.74 },
   { x: 0, y: 225, scale: 0.88 },
   { x: -36, y: 94, scale: 0.96 },
-  { x: 78, y: 104, scale: 0.94 },
+  { x: 560, y: 90, scale: 0.82 },
   { x: -28, y: 110, scale: 0.96 },
   { x: 0, y: 98, scale: 0.95 },
-  { x: 84, y: 395, scale: 0.78 },
+  { x: 84, y: 505, scale: 0.78 },
 ];
 
-let targetProgress = 0;
-let renderedProgress = 0;
+let targetProgress = captureStop === null
+  ? 0
+  : stops[Math.min(Math.max(Number(captureStop) || 0, 0), stops.length - 1)].at;
+let renderedProgress = targetProgress;
 let currentStopIndex = 0;
 let activeSceneIndex = -1;
 
@@ -215,10 +219,12 @@ function stepStory(direction) {
 }
 
 addEventListener("scroll", () => {
+  if (captureStop !== null) return;
   targetProgress = progressFromScroll();
 }, { passive: true });
 
 addEventListener("scrollend", () => {
+  if (captureStop !== null) return;
   const nearestIndex = stops.indexOf(nearestStop(progressFromScroll()));
   const nearestProgress = stops[nearestIndex].at;
   if (nearestIndex !== currentStopIndex || Math.abs(progressFromScroll() - nearestProgress) > 0.002) {
@@ -228,6 +234,7 @@ addEventListener("scrollend", () => {
 
 addEventListener("resize", () => {
   updateCanvasScale();
+  if (captureStop !== null) return;
   targetProgress = progressFromScroll();
 }, { passive: true });
 
@@ -253,7 +260,9 @@ addEventListener("keydown", event => {
 });
 
 updateCanvasScale();
-targetProgress = progressFromScroll();
+if (captureStop === null) {
+  targetProgress = progressFromScroll();
+}
 renderedProgress = targetProgress;
 currentStopIndex = stops.indexOf(nearestStop(targetProgress));
 paint(renderedProgress);

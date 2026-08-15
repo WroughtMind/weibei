@@ -17,7 +17,7 @@
     <link rel="apple-touch-icon" href="./apple-touch-icon.png" />
     <link rel="preload" href="./assets/WeiBeiStele.ttf" as="font" type="font/ttf" crossorigin />
     <link rel="preload" href="./assets/WeiBeiSteleMono.ttf" as="font" type="font/ttf" crossorigin />
-    <link rel="stylesheet" href="./styles.css?v=11-full-window" />
+    <link rel="stylesheet" href="./styles.css?v=12-window-depth" />
   </head>
   <body>
     <a class="skip-link" href="#story">跳到产品故事</a>
@@ -42,12 +42,18 @@
             </header>
 
             <div class="hero-copy">
+              <p class="eyebrow">本地学习工作台</p>
+              <h1 id="hero-title">读、问、记，<br />在同一张纸上。</h1>
+              <p class="lead">打开资料，围绕原文提问，把可靠内容写进笔记。</p>
               <div class="actions">
+                <button class="button-seal" type="button" data-stop="1">看 30 秒工作流</button>
                 <a class="button-line" data-download-link href="https://github.com/weibei-app/weibei/releases">
                   下载 macOS 版 <span>→</span>
                 </a>
               </div>
             </div>
+
+            <p class="vertical-note">真实应用界面 · 本地优先</p>
           </section>
 
           <section
@@ -63,11 +69,15 @@
               </a>
               <span class="folio">02 / 07</span>
             </header>
+            <h2 id="panes-title">三栏，刚好是一条路。</h2>
+            <p class="panes-sub">不是三个并排窗口。原文、理解和笔记始终能互相看见。</p>
             <div class="pane-names" aria-label="三栏跳转">
               <button type="button" data-stop="2"><b>读</b><small>资料</small></button>
               <button type="button" data-stop="3"><b>问</b><small>Agent</small></button>
               <button type="button" data-stop="4"><b>记</b><small>笔记</small></button>
             </div>
+            <div class="learning-thread" aria-hidden="true"><i></i><i></i><i></i></div>
+            <p class="margin-caption">滚动不是换页<br />而是沿真实工作流推进</p>
           </section>
 
           <section
@@ -83,6 +93,13 @@
               </a>
               <span class="folio">03 / 07</span>
             </header>
+            <h2 id="context-title">问题不离开上下文。</h2>
+            <p class="context-sub">正在读的原文仍在左边；问题带着当前材料进入中间的 Agent。</p>
+            <span class="ask-glyph" aria-hidden="true">问</span>
+            <div class="context-thread" aria-hidden="true">
+              <span>当前原文</span><i></i><span>带入问题</span><i></i><span>生成理解</span>
+            </div>
+            <p class="context-side">继续滚动，录屏时间随页面推进；<br />不是一张假装会动的截图。</p>
           </section>
 
           <section
@@ -98,6 +115,17 @@
               </a>
               <span class="folio">04 / 07</span>
             </header>
+            <div class="provenance-copy">
+              <p class="eyebrow">从材料出发</p>
+              <span class="evidence-glyph" aria-hidden="true">据</span>
+              <h2 id="provenance-title">答案带着<br />出处回来。</h2>
+              <p>回答可以点回当前材料；Agent 能提出笔记建议，但最后写不写，仍由你确认。</p>
+              <ol class="proof-steps" aria-label="回答到笔记的流程">
+                <li data-proof="answer"><b>01</b> 回答当前问题</li>
+                <li data-proof="source"><b>02</b> 保留原文出处</li>
+                <li data-proof="note"><b>03</b> 等你确认写入</li>
+              </ol>
+            </div>
           </section>
 
           <section
@@ -113,6 +141,13 @@
               </a>
               <span class="folio">05 / 07</span>
             </header>
+            <h2 id="writeback-title">最后一步，仍由你确认。</h2>
+            <p class="writeback-sub">Agent 可以整理笔记建议；你先对照原文，再决定是否写入。</p>
+            <span class="note-glyph" aria-hidden="true">记</span>
+            <div class="writeback-thread" aria-hidden="true">
+              <span>Agent 建议</span><i></i><span>对照原文</span><i></i><span>确认写入</span>
+            </div>
+            <p class="writeback-side">不是自动替你落笔。<br />人的判断留在最后一步。</p>
           </section>
 
           <section
@@ -128,6 +163,10 @@
               </a>
               <span class="folio">06 / 07</span>
             </header>
+            <p class="relations-small">打开只是此刻。</p>
+            <h2 id="relations-title">关联会留下。</h2>
+            <p class="relations-note">一份资料和一则笔记，之后还能顺着关系接着读。</p>
+            <span class="relation-seal" aria-hidden="true"></span>
           </section>
 
           <section
@@ -212,6 +251,6 @@
       </section>
     </main>
 
-    <script src="./main.js?v=11-full-window"></script>
+    <script src="./main.js?v=12-window-depth"></script>
   </body>
 </html>
