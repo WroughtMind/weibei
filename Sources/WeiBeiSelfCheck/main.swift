@@ -1013,6 +1013,16 @@ expect(
     "customDisplayTitle and the file name are part of the sidebar cache request, so renaming a note (custom or heading-driven) invalidates the cached display name and the row refreshes"
 )
 expect(
+    workspaceStoreSource.contains("func noteListDisplayTitle(for item: StudyItem) -> String")
+        && workspaceStoreSource.contains("guard item.isNotebookNote else { return item.title }")
+        && readerViewSource.contains("store.noteListDisplayTitle(for: item)"),
+    "the note picker list (选择其他笔记) resolves row names with the same NoteTabDisplayTitle resolver as the floating tab"
+)
+expect(
+    workspaceStoreSource.contains("func displayTitle(for item: StudyItem) -> String {\n        item.title\n    }"),
+    "displayTitle keeps raw file-title semantics so citation matching, sorting, and rename drafts are unaffected by body-derived display names"
+)
+expect(
     workspaceModelsSource.contains("customDisplayTitle")
         && workspaceStoreSource.contains("setNoteCustomDisplayTitle")
         && workspaceStoreSource.contains("NoteTabDisplayTitle.resolve")
