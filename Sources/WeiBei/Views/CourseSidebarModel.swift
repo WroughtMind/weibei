@@ -270,6 +270,7 @@ final class CourseSidebarModel: ObservableObject {
             in: CharacterSet(charactersIn: "#")
         )
         return row.item.title.localizedCaseInsensitiveContains(query)
+            || (row.resolvedTitle?.localizedCaseInsensitiveContains(query) ?? false)
             || row.item.subtitle.localizedCaseInsensitiveContains(query)
             || row.item.kind.label(language: language)
                 .localizedCaseInsensitiveContains(query)

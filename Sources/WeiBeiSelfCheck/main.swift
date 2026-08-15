@@ -1023,6 +1023,10 @@ expect(
     "displayTitle keeps raw file-title semantics so citation matching, sorting, and rename drafts are unaffected by body-derived display names"
 )
 expect(
+    courseSidebarModelSource.contains("row.resolvedTitle?.localizedCaseInsensitiveContains(query)"),
+    "sidebar search matches the resolved display name (custom title or body heading), not just the raw file name"
+)
+expect(
     workspaceModelsSource.contains("customDisplayTitle")
         && workspaceStoreSource.contains("setNoteCustomDisplayTitle")
         && workspaceStoreSource.contains("NoteTabDisplayTitle.resolve")
