@@ -24,6 +24,7 @@ public enum NoteTabDisplayTitle {
 
     /// 正文抬头：第一个非空行若是 ATX 标题（`# …`）则取其文本，否则返回 nil。
     /// 只有文档顶部才算"抬头"，不往正文深处找。
+    /// 结果按 `fallbackCharacterLimit` 截断，避免长标题撑爆 tab 和文件名。
     public static func bodyHeading(from body: String) -> String? {
         for rawLine in body.components(separatedBy: .newlines) {
             let line = rawLine.trimmingCharacters(in: .whitespaces)
@@ -32,7 +33,8 @@ public enum NoteTabDisplayTitle {
             guard headingMarks > 0,
                   line.dropFirst(headingMarks).first?.isWhitespace == true else { return nil }
             let text = strippedLine(line)
-            return text.isEmpty ? nil : text
+            guard !text.isEmpty else { return nil }
+            return String(text.prefix(fallbackCharacterLimit))
         }
         return nil
     }

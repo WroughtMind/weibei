@@ -939,7 +939,10 @@ expect(
     NoteTabDisplayTitle.bodyHeading(from: "\n\n# 假想的男人\n正文") == "假想的男人"
         && NoteTabDisplayTitle.bodyHeading(from: "无标题正文\n# 后面的标题") == nil
         && NoteTabDisplayTitle.bodyHeading(from: "#无空格不是标题") == nil
-        && NoteTabDisplayTitle.bodyHeading(from: "") == nil,
+        && NoteTabDisplayTitle.bodyHeading(from: "") == nil
+        && NoteTabDisplayTitle.bodyHeading(
+            from: "# 这是一个特别特别长的笔记标题它一定会超过二十个字符的限制\n正文"
+        ) == "这是一个特别特别长的笔记标题它一定会超过",
     "only a leading ATX heading counts as the note heading"
 )
 expect(
