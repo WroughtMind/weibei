@@ -388,7 +388,10 @@ struct CourseSidebarList: View {
                             tags: row.tags,
                             selected: selected,
                             compact: compact,
-                            accent: accent
+                            accent: accent,
+                            sourceMissingLabel: store.isImportedSourceMissing(item)
+                                ? store.ui("源文件缺失", "Source file missing")
+                                : nil
                         )
                     }
                     .buttonStyle(.plain)
@@ -474,6 +477,11 @@ struct CourseSidebarList: View {
                         Label(course.title, systemImage: assigned ? "checkmark" : "circle")
                     }
                 }
+            }
+        }
+        if store.isImportedSourceMissing(item) {
+            Button(ui("重新选择文件", "Choose File Again")) {
+                store.presentRebindPanelForMissingImportedItem(item.id)
             }
         }
         if !item.isSample, item.url != nil {
@@ -709,6 +717,7 @@ private struct LibraryRow: View {
     let selected: Bool
     let compact: Bool
     let accent: Color?
+    var sourceMissingLabel: String? = nil
     @State private var hovering = false
 
     var body: some View {
@@ -724,9 +733,9 @@ private struct LibraryRow: View {
                     .font(.system(size: compact ? 12.5 : 13, weight: compact ? .medium : .regular))
                     .lineLimit(1)
                     .foregroundStyle(WeiBeiTheme.ink)
-                Text(item.subtitle)
+                Text(sourceMissingLabel.map { compact ? $0 : "\($0) · \(item.subtitle)" } ?? item.subtitle)
                     .font(compact ? .system(size: 10.5) : .caption)
-                    .foregroundStyle(WeiBeiTheme.secondaryInk)
+                    .foregroundStyle(sourceMissingLabel == nil ? WeiBeiTheme.secondaryInk : WeiBeiTheme.cinnabar)
                     .lineLimit(1)
                 if !compact, !tags.isEmpty {
                     Text(tags.prefix(3).joined(separator: " "))

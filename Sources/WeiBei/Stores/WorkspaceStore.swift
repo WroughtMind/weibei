@@ -621,7 +621,7 @@ final class WorkspaceStore: ObservableObject {
     private var lastCourseRebindRootSearchRanOnMainThread: Bool?
     private let workspaceDirectory: URL
     private let storageURL: URL
-    private let importedFileIdentityResolver: (URL) -> ImportedFileIdentity?
+    let importedFileIdentityResolver: (URL) -> ImportedFileIdentity?
     private let courseRootBookmarkMaker: (URL) -> Data?
     private let courseRootBookmarkResolver: (Data) -> CourseProjectResolvedBookmark?
     private let courseSecurityScopeStarter: (URL) -> Bool
@@ -12824,7 +12824,7 @@ final class WorkspaceStore: ObservableObject {
         )
     }
 
-    nonisolated private static func makeImportedFileBookmark(for url: URL) -> Data? {
+    nonisolated static func makeImportedFileBookmark(for url: URL) -> Data? {
         let resourceKeys: Set<URLResourceKey> = [
             .fileResourceIdentifierKey,
             .volumeIdentifierKey,
@@ -17798,62 +17798,57 @@ final class WorkspaceStore: ObservableObject {
         }
 
         var changed = false
-        let currentURL = importedItems[index].urlPath
-            .map { URL(fileURLWithPath: $0).standardizedFileURL }
-        let currentPathIsValid = currentURL.map {
-            importedFileIdentityResolver($0)?.matchesAcrossVolumeDrift(storedIdentity) == true
-        } ?? false
-        let bookmarkResolution = currentPathIsValid
-            ? nil
-            : importedItems[index].importedFileBookmarkData.flatMap(Self.resolveImportedFileBookmark)
-        let fallbackPath = importedItems[index].urlPath
-            ?? importedItems[index].importedFileLastKnownPath
-        let candidateURL = (currentPathIsValid ? currentURL : nil)
-            ?? bookmarkResolution?.url
-            ?? fallbackPath.map { URL(fileURLWithPath: $0).standardizedFileURL }
-        guard let candidateURL,
-              let candidateIdentity = importedFileIdentityResolver(candidateURL),
-              candidateIdentity.matchesAcrossVolumeDrift(storedIdentity) else {
+        let bookmarkResolution = importedItems[index].importedFileBookmarkData
+            .flatMap(Self.resolveImportedFileBookmark)
+        switch ImportedFileRecovery.resolve(
+            storedIdentity: storedIdentity,
+            currentPath: importedItems[index].urlPath,
+            lastKnownPath: importedItems[index].importedFileLastKnownPath,
+            bookmarkURL: bookmarkResolution?.url,
+            identityAt: importedFileIdentityResolver
+        ) {
+        case .missing, .identityConflict:
             if let path = importedItems[index].urlPath {
                 importedItems[index].importedFileLastKnownPath = path
                 importedItems[index].urlPath = nil
                 changed = true
             }
             return (nil, changed)
-        }
-        if candidateIdentity != storedIdentity {
-            // volumeID 漂移：接受匹配的同时把存储身份刷新到当前值，自愈后
-            // 后续比对（含严格相等的调用方）不再受旧 volumeID 影响。
-            importedItems[index].importedFileIdentity = candidateIdentity
-            changed = true
-        }
+        case .resolved(let candidateURL, let candidateIdentity, let via):
+            if candidateIdentity != storedIdentity {
+                // volumeID 漂移：接受匹配的同时把存储身份刷新到当前值，自愈后
+                // 后续比对（含严格相等的调用方）不再受旧 volumeID 影响。
+                importedItems[index].importedFileIdentity = candidateIdentity
+                changed = true
+            }
 
-        let nextPath = candidateURL.path
-        let nextTitle = candidateURL.deletingPathExtension().lastPathComponent
-        let nextSubtitle = candidateURL.lastPathComponent
-        let nextKind = StudyItemKind.detect(from: candidateURL)
-        if importedItems[index].urlPath != nextPath
-            || importedItems[index].importedFileLastKnownPath != nextPath
-            || importedItems[index].title != nextTitle
-            || importedItems[index].subtitle != nextSubtitle
-            || importedItems[index].kind != nextKind {
-            importedItems[index].urlPath = nextPath
-            importedItems[index].importedFileLastKnownPath = nextPath
-            importedItems[index].title = nextTitle
-            importedItems[index].subtitle = nextSubtitle
-            importedItems[index].kind = nextKind
-            changed = true
+            let nextPath = candidateURL.path
+            let nextTitle = candidateURL.deletingPathExtension().lastPathComponent
+            let nextSubtitle = candidateURL.lastPathComponent
+            let nextKind = StudyItemKind.detect(from: candidateURL)
+            if importedItems[index].urlPath != nextPath
+                || importedItems[index].importedFileLastKnownPath != nextPath
+                || importedItems[index].title != nextTitle
+                || importedItems[index].subtitle != nextSubtitle
+                || importedItems[index].kind != nextKind {
+                importedItems[index].urlPath = nextPath
+                importedItems[index].importedFileLastKnownPath = nextPath
+                importedItems[index].title = nextTitle
+                importedItems[index].subtitle = nextSubtitle
+                importedItems[index].kind = nextKind
+                changed = true
+            }
+            let resolvedThroughFallback = via == .lastKnownPath
+            if importedItems[index].importedFileBookmarkData == nil
+                || bookmarkResolution?.isStale == true
+                || resolvedThroughFallback,
+               let refreshedBookmark = Self.makeImportedFileBookmark(for: candidateURL),
+               importedItems[index].importedFileBookmarkData != refreshedBookmark {
+                importedItems[index].importedFileBookmarkData = refreshedBookmark
+                changed = true
+            }
+            return (candidateURL, changed)
         }
-        let resolvedThroughFallback = !currentPathIsValid && bookmarkResolution == nil
-        if importedItems[index].importedFileBookmarkData == nil
-            || bookmarkResolution?.isStale == true
-            || resolvedThroughFallback,
-           let refreshedBookmark = Self.makeImportedFileBookmark(for: candidateURL),
-           importedItems[index].importedFileBookmarkData != refreshedBookmark {
-            importedItems[index].importedFileBookmarkData = refreshedBookmark
-            changed = true
-        }
-        return (candidateURL, changed)
     }
 
     private func resolveCourseOwnedFile(
@@ -21801,7 +21796,7 @@ final class WorkspaceStore: ObservableObject {
     }
 
     @discardableResult
-    private func persistWorkspaceNow(
+    func persistWorkspaceNow(
         skippingPortableCourseIDs: Set<UUID> = []
     ) async -> Bool {
         pendingWorkspaceSaveTask?.cancel()
