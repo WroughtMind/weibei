@@ -109,27 +109,33 @@ img {
   color: var(--ink);
 }
 
-.brand {
+.brand,
+.mini-brand {
   gap: 18px;
 }
 
-.brand img {
+.brand img,
+.mini-brand img {
   width: 76px;
   height: 76px;
 }
 
-.brand span {
+.brand span,
+.mini-brand span {
   display: grid;
   gap: 2px;
 }
 
-.brand strong {
+.brand strong,
+.mini-brand strong {
   font-family: var(--serif);
   font-size: 38px;
   letter-spacing: 0.15em;
+  font-weight: 600;
 }
 
-.brand small {
+.brand small,
+.mini-brand small {
   font-family: var(--stele);
   font-size: 15px;
   letter-spacing: 0.36em;
@@ -140,18 +146,6 @@ img {
   gap: 88px;
   font-family: var(--serif);
   font-size: 26px;
-}
-
-.mini-brand {
-  gap: 13px;
-  font-family: var(--serif);
-  font-size: 28px;
-  letter-spacing: 0.12em;
-}
-
-.mini-brand img {
-  width: 54px;
-  height: 54px;
 }
 
 .folio,
@@ -981,11 +975,11 @@ a:focus-visible {
   border: 1px solid rgba(35, 31, 27, 0.34);
   border-radius: 30px;
   box-shadow:
-    0 0 4px rgba(40, 28, 16, 0.45),
-    0 3px 12px rgba(40, 28, 16, 0.38),
-    0 12px 36px rgba(40, 28, 16, 0.28),
-    0 32px 80px rgba(40, 28, 16, 0.22),
-    0 80px 200px rgba(40, 28, 16, 0.16);
+    0 0 4px rgba(40, 28, 16, 0.28),
+    0 4px 14px rgba(40, 28, 16, 0.22),
+    0 14px 40px rgba(40, 28, 16, 0.18),
+    0 36px 90px rgba(40, 28, 16, 0.16),
+    0 90px 220px rgba(40, 28, 16, 0.12);
   transform:
     translate3d(var(--workspace-x), var(--workspace-y), 0)
     scale(var(--workspace-scale));
