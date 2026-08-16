@@ -1123,12 +1123,12 @@ final class WorkspaceStore: ObservableObject {
             result.chatID = nil
         }
         if let noteItemID = result.noteItemID,
-           !importedItems.contains(where: {
-               $0.id == noteItemID
-                   && $0.isNotebookNote
+           !importedItems.contains(where: { item in
+               item.id == noteItemID
+                   && item.isNotebookNote
                    && (
-                       $0.storage.ownerCourseID == point.courseID
-                           || { if case .common = $0.storage { return true }; return false }()
+                       item.storage.ownerCourseID == point.courseID
+                           || { if case .common = item.storage { return true }; return false }()
                    )
            }) {
             result.noteItemID = nil
