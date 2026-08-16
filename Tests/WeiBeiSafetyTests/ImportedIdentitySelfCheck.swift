@@ -2380,7 +2380,8 @@ enum ImportedIdentitySelfCheck {
             "在线旧笔记没有完成稳定身份迁移"
         )
 
-        let library = try fixture.makeDirectory("资料库")
+        let library = fixture.root.appendingPathComponent("资料库", isDirectory: true)
+        try FileManager.default.createDirectory(at: library, withIntermediateDirectories: true)
         try store?.configureCourseLibrary(at: library)
         try Data("恢复后的离线资料".utf8).write(to: materialURL)
         let restoredMaterial = try require(
