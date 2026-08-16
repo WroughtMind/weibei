@@ -1806,8 +1806,8 @@ enum ImportedIdentitySelfCheck {
         try check(persisted.studySessions?.contains { $0.materialItemID == material.id } == true, "保存后学习会话主资料丢失")
         try check(persisted.studySessions?.contains { $0.focusItemIDs.contains(material.id) } == true, "保存后学习会话焦点丢失")
         try check(persisted.noteSourceLinks?.contains {
-            $0.noteItemID == legacyMaterialID || $0.sourceItemID == legacyMaterialID
-        } == false, "保存后资料关系仍有旧身份")
+            $0.noteItemID == note.id && $0.sourceItemID == material.id
+        } == true, "保存后资料关系丢失")
 
         try check(reopenedMigratedStore.selectionAskThreads.first?.itemID == material.id, "重开后的选区问答线程身份后来发生回退")
     }

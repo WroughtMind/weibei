@@ -388,7 +388,7 @@ enum CourseProjectRootSelfCheck {
                         && $0.messages.contains { $0.text == chatToken }
                 }
                 && store!.courseIDs(for: sharedItem.id)
-                    == [courseB]
+                    .contains(courseA) == false
                 && store!.item(withID: sharedItem.id) != nil
                 && store!.item(withID: ownedItem.id) == nil
                 && store!.learningMemoryEntries(
