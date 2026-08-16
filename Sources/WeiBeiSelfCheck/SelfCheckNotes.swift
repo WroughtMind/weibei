@@ -73,10 +73,12 @@ func checkNotePersistenceScenes() throws {
             """.utf8
         )
     )
+    let reencodedLegacy = String(data: try JSONEncoder().encode(legacyNote), encoding: .utf8) ?? ""
     expect(
         legacyNote.isNotebookNote == false
-            && legacyNote.urlPath == nil
-            && !legacyNote.editsBackingMarkdownFile,
+            && !legacyNote.editsBackingMarkdownFile
+            && !reencodedLegacy.contains("urlPath")
+            && !reencodedLegacy.contains("importedFileLastKnownPath"),
         "decoded items do not persist a second file address"
     )
 
