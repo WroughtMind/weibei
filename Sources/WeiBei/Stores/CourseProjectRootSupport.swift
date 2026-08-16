@@ -84,7 +84,7 @@ struct CourseMarkdownStagingResult: Sendable {
 struct CoursePortableExportSharedMaterial: Sendable {
     var itemID: String
     var courseRelativePath: String
-    var sharedRelativePath: String
+    var relativePath: String
     var linkIdentity: ImportedFileIdentity
     var sourceURL: URL
     var sourceIdentity: ImportedFileIdentity
@@ -864,17 +864,17 @@ actor CourseProjectFileWorker {
             guard let relativePath = membership.courseRelativePath else {
                 // 纯归属兜底登记（链接进课程目录失败时写入）没有课程内链接
                 // 条目，可携带状态无法表示；跳过它而不是让整次保存失败。
-                if case .shared = item.storage { continue }
+                if case .common = item.storage { continue }
                 throw CoursePortableStateError.missingCourseItem
             }
             let storage: CoursePortableItemStorage
             switch item.storage {
-            case .courseOwned(let ownerCourseID)
+            case .courseOwned(let ownerCourseID, _)
                 where ownerCourseID == courseID:
                 storage = .courseOwned
-            case let .shared(sharedRelativePath):
+            case let .common(sharedRelativePath):
                 storage = .sharedReference(
-                    sharedRelativePath: sharedRelativePath,
+                    relativePath: sharedRelativePath,
                     expectedContentDigest: item.contentDigest
                 )
             default:
@@ -1360,7 +1360,7 @@ actor CourseProjectFileWorker {
             CourseProjectSharedMaterialProvenance(
                 itemID: $0.itemID,
                 courseRelativePath: $0.courseRelativePath,
-                sharedRelativePath: $0.sharedRelativePath,
+                relativePath: $0.relativePath,
                 sourceIdentity: $0.sourceIdentity,
                 sourceContentDigest: $0.sourceSnapshot.sha256
             )
@@ -5088,7 +5088,7 @@ struct CourseProjectSimulatedCrash: Error {}
 struct CourseProjectSharedMaterialProvenance: Codable, Equatable, Sendable {
     var itemID: String
     var courseRelativePath: String
-    var sharedRelativePath: String
+    var relativePath: String
     var sourceIdentity: ImportedFileIdentity
     var sourceContentDigest: String
 }
@@ -5228,7 +5228,7 @@ struct CourseProjectManifest: Codable, Equatable {
               portableExport.materializedSharedItems.allSatisfy({
                   !$0.itemID.isEmpty
                       && isSafeRelativePath($0.courseRelativePath)
-                      && isStrictCommonContentPath($0.sharedRelativePath)
+                      && isStrictCommonContentPath($0.relativePath)
                       && isSHA256($0.sourceContentDigest)
               }) else {
             throw CourseProjectRootError.manifestMismatch

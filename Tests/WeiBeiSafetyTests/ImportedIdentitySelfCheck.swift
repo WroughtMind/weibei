@@ -426,7 +426,7 @@ enum ImportedIdentitySelfCheck {
             urlPath: materialURL.path,
             importedFileIdentity: materialIdentity,
             isSample: false,
-            storage: .shared(sharedRelativePath: "shared.html")
+            storage: .common(relativePath: "shared.html")
         )
         let note = StudyItem(
             id: "resume-course-a-note",
@@ -1470,9 +1470,10 @@ enum ImportedIdentitySelfCheck {
             """.utf8
         )
         let legacyExternal = try JSONDecoder().decode(StudyItem.self, from: legacyExternalData)
-        try check(legacyExternal.storage == .legacyExternal, "旧外部资料没有迁移为 legacyExternal")
+        try check(legacyExternal.storage == .common(relativePath: "legacy.txt"), "缺少 storage 的条目应按文件名记相对路径")
         try check(legacyExternal.contentRevision == 1, "旧资料没有获得首版内容修订号")
         try check(legacyExternal.contentDigest == nil, "旧资料被伪造了内容摘要")
+        try check(legacyExternal.urlPath == nil, "解码后不应保留第二套绝对路径")
 
         let legacySampleData = Data(
             """
@@ -1497,7 +1498,7 @@ enum ImportedIdentitySelfCheck {
             kind: .pdf,
             urlPath: "/tmp/课程/文稿/课程文稿.pdf",
             isSample: false,
-            storage: .courseOwned(ownerCourseID: ownerCourseID),
+            storage: .courseOwned(ownerCourseID: ownerCourseID, relativePath: "文稿/课程文稿.pdf"),
             contentRevision: 7,
             contentDigest: "sha256:owned"
         )
@@ -1508,7 +1509,7 @@ enum ImportedIdentitySelfCheck {
             kind: .pdf,
             urlPath: "/tmp/共享文稿/共享文稿.pdf",
             isSample: false,
-            storage: .shared(sharedRelativePath: "共享文稿/共享文稿.pdf"),
+            storage: .common(relativePath: "共享文稿/共享文稿.pdf"),
             contentRevision: 3,
             contentDigest: "sha256:shared"
         )
@@ -1517,7 +1518,13 @@ enum ImportedIdentitySelfCheck {
                 StudyItem.self,
                 from: JSONEncoder().encode(item)
             )
-            try check(decoded == item, "资料存储归属、修订号或摘要编码往返不一致")
+            try check(
+                decoded.storage == item.storage
+                    && decoded.contentRevision == item.contentRevision
+                    && decoded.contentDigest == item.contentDigest
+                    && decoded.urlPath == nil,
+                "资料存储归属、修订号或摘要编码往返不一致"
+            )
         }
 
         struct LegacyMembership: Encodable {
@@ -1722,11 +1729,8 @@ enum ImportedIdentitySelfCheck {
 
         try check(material.id.hasPrefix("imported:"), "旧资料仍在使用路径身份")
         try check(note.id.hasPrefix("imported:"), "旧笔记仍在使用路径身份")
-        try check(material.importedFileIdentity != nil, "旧资料没有补入文件身份")
-        try check(note.importedFileIdentity != nil, "旧笔记没有补入文件身份")
-        try check(material.importedFileBookmarkData != nil, "旧资料没有补入持久文件书签")
-        try check(note.importedFileBookmarkData != nil, "旧笔记没有补入持久文件书签")
-        try check(material.importedFileLastKnownPath == materialURL.path, "旧资料没有保留最后路径")
+        try check(material.storage.relativePath != nil, "资料没有资料库相对路径")
+        try check(note.storage.relativePath != nil, "笔记没有资料库相对路径")
         try check(store.selectedItemID == material.id, "当前资料没有迁移到新身份")
         try check(store.activeNotebookItemID == note.id, "当前笔记没有迁移到新身份")
         try check(store.noteText == "遗留缓存笔记", "升级后没有优先恢复旧版本未写回草稿")
@@ -1841,7 +1845,6 @@ enum ImportedIdentitySelfCheck {
                     kind: .markdown,
                     urlPath: noteURL.path,
                     importedFileIdentity: identity,
-                    importedFileLastKnownPath: noteURL.path,
                     isSample: false,
                     isNotebookNote: true
                 ),
@@ -1852,7 +1855,6 @@ enum ImportedIdentitySelfCheck {
                     kind: .markdown,
                     urlPath: noteURL.path,
                     importedFileIdentity: identity,
-                    importedFileLastKnownPath: noteURL.path,
                     isSample: false,
                     isNotebookNote: true
                 ),
@@ -2135,7 +2137,7 @@ enum ImportedIdentitySelfCheck {
                             urlPath: url.path,
                             importedFileIdentity: identity,
                             isSample: false,
-                            storage: .courseOwned(ownerCourseID: courseID),
+                            storage: .courseOwned(ownerCourseID: courseID, relativePath: ""),
                             contentRevision: 2,
                             contentDigest: "digest:course"
                         ),
@@ -2147,7 +2149,7 @@ enum ImportedIdentitySelfCheck {
                             urlPath: url.path,
                             importedFileIdentity: identity,
                             isSample: false,
-                            storage: .legacyExternal,
+                            storage: .common(relativePath: ""),
                             contentRevision: 1,
                             contentDigest: nil
                         ),
@@ -2163,8 +2165,8 @@ enum ImportedIdentitySelfCheck {
             )
             try check(store.importedItems.count == 2, "同文件身份但存储归属或内容版本冲突的资料被静默合并")
             try check(Set(store.importedItems.map(\.storage)) == [
-                .courseOwned(ownerCourseID: courseID),
-                .legacyExternal,
+                .courseOwned(ownerCourseID: courseID, relativePath: ""),
+                .common(relativePath: ""),
             ], "存储归属冲突迁移丢失了一方")
         }
 
@@ -2416,7 +2418,7 @@ enum ImportedIdentitySelfCheck {
             "首次导入没有返回笔记"
         )
         try check(firstMaterial.id.hasPrefix("imported:"), "新导入资料没有使用稳定身份")
-        try check(firstMaterial.importedFileBookmarkData != nil, "新导入资料没有持久文件书签")
+        try check(firstMaterial.storage.relativePath != nil, "新导入资料没有资料库相对路径")
 
         store?.setLinkedSourceIDs([firstMaterial.id], for: note.id)
         store?.select(itemID: note.id)

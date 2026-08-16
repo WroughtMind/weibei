@@ -2,7 +2,7 @@ import Foundation
 
 public enum CoursePortableItemStorage: Codable, Equatable, Sendable {
     case courseOwned
-    case sharedReference(sharedRelativePath: String, expectedContentDigest: String?)
+    case sharedReference(relativePath: String, expectedContentDigest: String?)
 
     private enum Kind: String, Codable {
         case courseOwned
@@ -22,7 +22,7 @@ public enum CoursePortableItemStorage: Codable, Equatable, Sendable {
             self = .courseOwned
         case .sharedReference:
             self = .sharedReference(
-                sharedRelativePath: try container.decode(
+                relativePath: try container.decode(
                     String.self,
                     forKey: .sharedRelativePath
                 ),

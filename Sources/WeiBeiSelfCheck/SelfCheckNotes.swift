@@ -15,7 +15,6 @@ func checkNotePersistenceScenes() throws {
                 subtitle: "利率笔记.md",
                 kind: .markdown,
                 urlPath: "/tmp/利率笔记.md",
-                importedFileLastKnownPath: "/tmp/利率笔记.md",
                 isSample: false,
                 isNotebookNote: true,
                 customDisplayTitle: "我的速记"
@@ -76,10 +75,9 @@ func checkNotePersistenceScenes() throws {
     )
     expect(
         legacyNote.isNotebookNote == false
-            && legacyNote.importedFileLastKnownPath == "/tmp/old-note.md"
-            && legacyNote.canBecomeNotebookNote
+            && legacyNote.urlPath == nil
             && !legacyNote.editsBackingMarkdownFile,
-        "a legacy markdown file does not become a notebook note and keeps lastKnownPath from urlPath"
+        "decoded items do not persist a second file address"
     )
 
     let material = StudyItem(

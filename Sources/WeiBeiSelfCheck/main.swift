@@ -109,10 +109,10 @@ if ProcessInfo.processInfo.environment["WEIBEI_PI_TERMINAL_SELF_CHECK_ONLY"] == 
 
 try runPiAgentSelfChecks()
 checkCourseLibraryVolatility()
-checkImportedFileRecovery()
 checkUnavailableCourseUnregister()
 try checkNotePersistenceScenes()
 try checkImportIdentityScenes()
+try checkLibraryRelativeStorage()
 try checkWorkspaceSafetyScenes()
 
 expect(EmptyWorkspaceDayPeriod(hour: 5) == .morning
@@ -479,7 +479,7 @@ let verifiedReadItem = StudyItem(
     urlPath: verifiedReadURL.path,
     importedFileIdentity: importedIdentity(at: verifiedReadURL),
     isSample: false,
-    storage: .courseOwned(ownerCourseID: UUID())
+    storage: .courseOwned(ownerCourseID: UUID(), relativePath: "文稿/x.md")
 )
 let verifiedReadReplacement = OneShotFileReplacement(url: verifiedReadURL)
 let verifiedReadIndex = CourseDocumentSearchIndex(
@@ -505,7 +505,7 @@ let visualSnapshotItem = StudyItem(
     urlPath: visualSnapshotURL.path,
     importedFileIdentity: importedIdentity(at: visualSnapshotURL),
     isSample: false,
-    storage: .courseOwned(ownerCourseID: UUID())
+    storage: .courseOwned(ownerCourseID: UUID(), relativePath: "文稿/x.md")
 )
 let visualReplacement = OneShotFileReplacement(url: visualSnapshotURL)
 let visualSnapshotIndex = CourseDocumentSearchIndex(
@@ -994,8 +994,8 @@ expect(
 let courseProjectRootSupportSource = readSource("Sources/WeiBei/Stores/CourseProjectRootSupport.swift")
 expect(
     !workspaceStoreSource.contains("try? await self?.linkSharedItem(")
-        && workspaceStoreSource.contains("try await self.linkSharedItem("),
-    "SAFETY:no-swallowed-link-failure swallowed linkSharedItem errors would drop course membership without telling the user"
+        && !workspaceStoreSource.contains("try? await self.linkSharedItem("),
+    "SAFETY:no-swallowed-link-failure must not swallow link failures"
 )
 expect(
     workspaceStoreSource.contains("case pendingChangesUnsaved")
@@ -2107,16 +2107,16 @@ do {
         notesPersistenceSource.contains("guard !noteDivergenceRepairDidRun else { return }")
             && notesPersistenceSource.contains("WeiBeiNoteRepairDisabled")
             && notesPersistenceSource.contains("NoteDivergenceRepairPlanner.action(for: state)")
-            && notesPersistenceSource.contains("?? item.importedFileLastKnownPath.map({"),
-        "SAFETY:note-repair-oneshot repair is one-shot, dry-runnable, planner-driven, and falls back to lastKnownPath so legacy notes without urlPath are not skipped"
+            && notesPersistenceSource.contains("resolvedLibraryURL(for: item)"),
+        "SAFETY:note-repair-oneshot repair is one-shot, dry-runnable, planner-driven, and locates notes from the library-relative path"
     )
     expect(
         notesPersistenceSource.contains("WeiBei note repair: backup failed, skip restore item=%@ error=%@"),
         "SAFETY:backup-before-restore restoreDraft must skip the write when the on-disk backup cannot be captured"
     )
     expect(
-        notesPersistenceSource.contains("?? item.importedFileLastKnownPath.map({"),
-        "SAFETY:lastknown-fallback repair must still reach notes that only have importedFileLastKnownPath"
+        notesPersistenceSource.contains("resolvedLibraryURL(for: item)"),
+        "SAFETY:lastknown-fallback repair locates notes from library-relative paths"
     )
     expect(
         notesPersistenceSource.contains("已拦截模板写回")

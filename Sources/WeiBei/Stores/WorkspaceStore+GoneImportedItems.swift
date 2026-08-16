@@ -3,35 +3,41 @@ import WeiBeiCore
 
 @MainActor
 extension WorkspaceStore {
-    func parentLocationIsAvailable(for item: StudyItem) -> Bool {
-        switch parentLocationPresence(for: item) {
-        case .present:
-            return true
-        case .absent, .inaccessible, .none:
-            return false
-        }
-    }
-
-    /// 只有文件确认不存在、且父位置仍在时，才拿掉这一条登记。
     @discardableResult
     func forgetGoneImportedItem(at index: Int) -> (url: URL?, changed: Bool) {
         guard importedItems.indices.contains(index) else { return (nil, false) }
         let item = importedItems[index]
-        let fileURL = candidateFileURL(for: item)
-        let filePresence = locationAvailability(
-            CourseProjectFileWorker.entryPresence(at: fileURL)
-        )
-        let parentPresence = parentLocationPresence(for: item)
-            ?? .inaccessible
-        if !ImportedFileRecovery.shouldForgetGoneSource(
-            file: filePresence,
-            parent: parentPresence,
-            isSample: item.isSample
-        ) {
+        if item.isSample {
+            return (item.url, false)
+        }
+        guard let libraryRoot = courseLibraryRootURL else {
             return keepUnavailableImportedItem(at: index)
         }
-        removeItemRegistration(item.id)
-        return (nil, true)
+        switch CourseProjectFileWorker.entryPresence(at: libraryRoot) {
+        case .absent, .inaccessible:
+            return keepUnavailableImportedItem(at: index)
+        case .present:
+            break
+        }
+        let candidate = resolvedLibraryURL(for: item) ?? item.url
+        guard let candidate else {
+            return keepUnavailableImportedItem(at: index)
+        }
+        switch CourseProjectFileWorker.entryPresence(at: candidate) {
+        case .present:
+            return (candidate.standardizedFileURL, false)
+        case .inaccessible:
+            return keepUnavailableImportedItem(at: index)
+        case .absent:
+            let parent = candidate.deletingLastPathComponent()
+            switch CourseProjectFileWorker.entryPresence(at: parent) {
+            case .present:
+                removeItemRegistration(item.id)
+                return (nil, true)
+            case .absent, .inaccessible:
+                return keepUnavailableImportedItem(at: index)
+            }
+        }
     }
 
     func forgetGoneImportedItems(ids: [String]) -> Bool {
@@ -50,83 +56,23 @@ extension WorkspaceStore {
     func keepUnavailableImportedItem(at index: Int) -> (url: URL?, changed: Bool) {
         guard importedItems.indices.contains(index) else { return (nil, false) }
         var changed = false
-        if let currentPath = importedItems[index].urlPath {
-            importedItems[index].importedFileLastKnownPath = currentPath
+        if importedItems[index].urlPath != nil {
             importedItems[index].urlPath = nil
-            changed = true
-        }
-        if importedItems[index].importedFileBookmarkData != nil {
-            importedItems[index].importedFileBookmarkData = nil
             changed = true
         }
         return (nil, changed)
     }
 
-    private func candidateFileURL(for item: StudyItem) -> URL {
+    func resolvedLibraryURL(for item: StudyItem) -> URL? {
         switch item.storage {
-        case .courseOwned(let courseID):
-            if let root = courseRootURL(for: courseID),
-               let relativePath = courseItemMemberships.first(where: {
-                   $0.itemID == item.id && $0.courseID == courseID
-               })?.courseRelativePath {
-                return urlByAppendingRelativePath(relativePath, to: root)
-            }
-        case .shared(let relativePath):
-            if let root = courseLibraryRootURL {
-                return urlByAppendingRelativePath(relativePath, to: root)
-            }
-        case .legacyExternal, .bundledSample:
-            break
+        case .bundledSample:
+            return item.url
+        case .common(let relativePath):
+            guard let root = courseLibraryRootURL, !relativePath.isEmpty else { return nil }
+            return root.appendingPathComponent(relativePath)
+        case .courseOwned(let courseID, let relativePath):
+            guard let root = courseRootURL(for: courseID), !relativePath.isEmpty else { return nil }
+            return root.appendingPathComponent(relativePath)
         }
-        let path = item.urlPath ?? item.importedFileLastKnownPath ?? ""
-        return URL(fileURLWithPath: path)
-    }
-
-    private func parentLocationPresence(
-        for item: StudyItem
-    ) -> ImportedFileRecovery.LocationAvailability? {
-        let parentURL: URL?
-        switch item.storage {
-        case .courseOwned(let courseID):
-            parentURL = courseRootURL(for: courseID)
-        case .shared:
-            parentURL = courseLibraryRootURL
-        case .legacyExternal, .bundledSample:
-            parentURL = candidateFileURL(for: item).deletingLastPathComponent()
-        }
-        guard let parentURL, !parentURL.path.isEmpty, parentURL.path != "/" else {
-            return nil
-        }
-        return locationAvailability(
-            CourseProjectFileWorker.entryPresence(at: parentURL)
-        )
-    }
-
-    private func locationAvailability(
-        _ presence: CourseFileEntryPresence
-    ) -> ImportedFileRecovery.LocationAvailability {
-        switch presence {
-        case .present:
-            return .present
-        case .absent:
-            return .absent
-        case .inaccessible:
-            return .inaccessible
-        }
-    }
-
-    private func urlByAppendingRelativePath(_ relativePath: String, to root: URL) -> URL {
-        let components = relativePath
-            .split(separator: "/", omittingEmptySubsequences: true)
-            .map(String.init)
-        guard !components.isEmpty else { return root }
-        var url = root
-        for (index, component) in components.enumerated() {
-            url.appendPathComponent(
-                component,
-                isDirectory: index + 1 < components.count
-            )
-        }
-        return url
     }
 }

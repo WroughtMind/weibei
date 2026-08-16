@@ -1,176 +1,77 @@
 import Foundation
 import WeiBeiCore
 
-/// Local no-Xcode mirrors for import-identity and membership scenes from
-/// `ImportedIdentitySelfCheck.storageModelsDecodeLegacySnapshotsAndRoundTrip`
-/// plus `MarkdownAttachmentStore` size rejection.
 func checkImportIdentityScenes() throws {
-    let legacyExternal = try JSONDecoder().decode(
-        StudyItem.self,
-        from: Data(
-            """
-            {
-              "id":"file:/tmp/legacy.txt",
-              "title":"旧资料",
-              "subtitle":"legacy.txt",
-              "kind":"text",
-              "urlPath":"/tmp/legacy.txt",
-              "isSample":false,
-              "isNotebookNote":false
-            }
-            """.utf8
-        )
-    )
-    expect(
-        legacyExternal.storage == .legacyExternal
-            && legacyExternal.contentRevision == 1
-            && legacyExternal.contentDigest == nil,
-        "legacy external materials migrate to legacyExternal without inventing a digest"
-    )
-
-    let legacySample = try JSONDecoder().decode(
-        StudyItem.self,
-        from: Data(
-            """
-            {
-              "id":"sample",
-              "title":"内置样例",
-              "subtitle":"样例",
-              "kind":"html",
-              "urlPath":null,
-              "isSample":true
-            }
-            """.utf8
-        )
-    )
-    expect(
-        legacySample.storage == .bundledSample,
-        "legacy bundled samples stay bundledSample"
-    )
-
     let ownerCourseID = UUID()
-    let identity = ImportedFileIdentity(
-        volumeID: 12,
-        fileID: 34,
-        birthTimeSeconds: 56,
-        birthTimeNanoseconds: 78
-    )
     let ownedItem = StudyItem(
         id: "imported:owned",
         title: "课程文稿",
         subtitle: "课程文稿.pdf",
         kind: .pdf,
         urlPath: "/tmp/课程/文稿/课程文稿.pdf",
-        importedFileIdentity: identity,
-        importedFileLastKnownPath: "/tmp/课程/文稿/课程文稿.pdf",
         isSample: false,
-        storage: .courseOwned(ownerCourseID: ownerCourseID),
+        storage: .courseOwned(
+            ownerCourseID: ownerCourseID,
+            relativePath: "文稿/课程文稿.pdf"
+        ),
         contentRevision: 7,
         contentDigest: "sha256:owned"
     )
-    let sharedItem = StudyItem(
-        id: "imported:shared",
-        title: "共享文稿",
-        subtitle: "共享文稿.pdf",
+    let commonItem = StudyItem(
+        id: "imported:common",
+        title: "讲义",
+        subtitle: "讲义.pdf",
         kind: .pdf,
-        urlPath: "/tmp/共享文稿/共享文稿.pdf",
+        urlPath: "/tmp/通用资料/讲义.pdf",
         isSample: false,
-        storage: .shared(sharedRelativePath: "共享文稿/共享文稿.pdf"),
+        storage: .common(relativePath: "通用资料/讲义.pdf"),
         contentRevision: 3,
-        contentDigest: "sha256:shared"
+        contentDigest: "sha256:common"
     )
-    for item in [ownedItem, sharedItem, legacyExternal, legacySample] {
-        let decoded = try JSONDecoder().decode(
-            StudyItem.self,
-            from: JSONEncoder().encode(item)
+    let sample = StudyItem(
+        id: "sample",
+        title: "样例",
+        subtitle: "样例",
+        kind: .html,
+        urlPath: nil,
+        isSample: true
+    )
+    expect(sample.storage == .bundledSample, "samples stay bundledSample")
+
+    for item in [ownedItem, commonItem, sample] {
+        let data = try JSONEncoder().encode(item)
+        let text = String(data: data, encoding: .utf8) ?? ""
+        expect(
+            !text.contains("urlPath")
+                && !text.contains("importedFileLastKnownPath")
+                && !text.contains("importedFileBookmarkData")
+                && !text.contains("legacyExternal")
+                && !text.contains("sharedRelativePath"),
+            "persisted items omit the old external-file address model"
         )
-        expect(decoded == item, "item storage, identity, revision, and digest round-trip")
+        let decoded = try JSONDecoder().decode(StudyItem.self, from: data)
+        expect(
+            decoded.storage == item.storage
+                && decoded.contentRevision == item.contentRevision
+                && decoded.contentDigest == item.contentDigest
+                && decoded.urlPath == nil
+                && decoded.importedFileIdentity == nil,
+            "storage and content fields round-trip; addresses stay runtime-only"
+        )
     }
-    expect(
-        ownedItem.importedFileIdentity == identity,
-        "imported file identity stays attached to the same item"
-    )
 
-    struct LegacyMembership: Encodable {
-        var id: UUID
-        var courseID: UUID
-        var itemID: String
-        var createdAt: Date
-    }
-    let legacyMembership = LegacyMembership(
-        id: UUID(),
-        courseID: ownerCourseID,
-        itemID: ownedItem.id,
-        createdAt: Date(timeIntervalSince1970: 1_700_000_000)
+    let workspace = PersistedWorkspace(
+        importedItems: [ownedItem, commonItem],
+        notesByItemID: [:],
+        courses: [
+            Course(id: ownerCourseID, title: "课程", sourceRootRelativePath: "课程")
+        ]
     )
-    let decodedLegacyMembership = try JSONDecoder().decode(
-        CourseItemMembership.self,
-        from: JSONEncoder().encode(legacyMembership)
-    )
+    let workspaceText = String(data: try JSONEncoder().encode(workspace), encoding: .utf8) ?? ""
     expect(
-        decodedLegacyMembership.courseRelativePath == nil
-            && decodedLegacyMembership.entryIdentity == nil
-            && decodedLegacyMembership.documentIdentifier == nil,
-        "legacy course memberships do not invent path or identity fields"
-    )
-
-    let membership = CourseItemMembership(
-        courseID: ownerCourseID,
-        itemID: sharedItem.id,
-        courseRelativePath: "文稿/共享文稿.pdf",
-        entryIdentity: identity,
-        documentIdentifier: 9_001,
-        createdAt: Date(timeIntervalSince1970: 1_700_000_200)
-    )
-    let decodedMembership = try JSONDecoder().decode(
-        CourseItemMembership.self,
-        from: JSONEncoder().encode(membership)
-    )
-    expect(
-        decodedMembership == membership
-            && decodedMembership.entryIdentity == identity,
-        "course entry path and identity round-trip"
-    )
-
-    let oldestMembershipID = UUID()
-    let partialMemberships = CourseItemMemberships(values: [
-        CourseItemMembership(
-            id: oldestMembershipID,
-            courseID: ownerCourseID,
-            itemID: sharedItem.id,
-            courseRelativePath: "文稿/共享文稿.pdf",
-            createdAt: Date(timeIntervalSince1970: 1)
-        ),
-        CourseItemMembership(
-            courseID: ownerCourseID,
-            itemID: sharedItem.id,
-            entryIdentity: identity,
-            documentIdentifier: 9_001,
-            createdAt: Date(timeIntervalSince1970: 2)
-        ),
-    ])
-    expect(
-        partialMemberships.values.count == 1
-            && partialMemberships.values.first?.id == oldestMembershipID
-            && partialMemberships.values.first?.courseRelativePath == "文稿/共享文稿.pdf"
-            && partialMemberships.values.first?.entryIdentity == identity
-            && partialMemberships.values.first?.documentIdentifier == 9_001,
-        "complementary membership metadata merges onto the oldest relationship"
-    )
-
-    let conflictingMemberships = CourseItemMemberships(values: [
-        membership,
-        CourseItemMembership(
-            courseID: ownerCourseID,
-            itemID: sharedItem.id,
-            courseRelativePath: "文稿/另一个入口.pdf",
-            entryIdentity: identity,
-            documentIdentifier: 9_001
-        ),
-    ])
-    expect(
-        conflictingMemberships.values.count == 2,
-        "conflicting membership metadata is kept, not silently dropped"
+        !workspaceText.contains("courseItemMemberships")
+            || workspaceText.contains("\"courseItemMemberships\":null"),
+        "new workspace does not persist the multi-course mount table"
     )
 
     let root = FileManager.default.temporaryDirectory

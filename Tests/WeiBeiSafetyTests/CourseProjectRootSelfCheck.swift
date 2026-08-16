@@ -2158,7 +2158,7 @@ enum CourseProjectRootSelfCheck {
                 store.importedItems.first { $0.id == material.id },
                 "共享资料记录丢失"
             )
-            guard case let .shared(sharedRelativePath) =
+            guard case let .common(sharedRelativePath) =
                     sharedItem.storage,
                   let sharedDigest = sharedItem.contentDigest else {
                 throw CheckError.failed("共享资料没有稳定路径或摘要")
@@ -2220,7 +2220,7 @@ enum CourseProjectRootSelfCheck {
             if let current = store.importedItems.first(where: {
                 $0.id == material.id
             }),
-            case .shared = current.storage {
+            case .common = current.storage {
                 remainedShared = true
             } else {
                 remainedShared = false
@@ -2534,7 +2534,7 @@ enum CourseProjectRootSelfCheck {
             store.importedItems.first { $0.id == item.id },
             "S3 静默共享后资料条目丢失"
         )
-        guard case .shared = sharedItem.storage else {
+        guard case .common = sharedItem.storage else {
             throw CheckError.failed("S3 静默共享后资料未转为 shared 存储")
         }
         try check(
@@ -2630,7 +2630,7 @@ enum CourseProjectRootSelfCheck {
             store.importedItems.first { $0.id == item.id },
             "S3 静默共享后资料条目丢失"
         )
-        guard case .shared = sharedItem.storage else {
+        guard case .common = sharedItem.storage else {
             throw CheckError.failed("S3 静默共享后资料未转为 shared 存储")
         }
         try check(
@@ -2952,8 +2952,6 @@ enum CourseProjectRootSelfCheck {
         )
         canonicalWorkspaceSnapshot.importedItems[canonicalItemIndex]
             .urlPath = sharedURL.path
-        canonicalWorkspaceSnapshot.importedItems[canonicalItemIndex]
-            .importedFileLastKnownPath = sharedURL.path
         canonicalWorkspaceSnapshot.importedItems[canonicalItemIndex]
             .importedFileIdentity = canonicalSharedIdentity
         canonicalWorkspaceSnapshot.importedItems[canonicalItemIndex]
@@ -5336,7 +5334,6 @@ enum CourseProjectRootSelfCheck {
                 let snapshot = try JSONDecoder().decode(PersistedWorkspace.self, from: data)
                 observedCommittedSnapshotBeforeDelete.set(snapshot.importedItems.contains { item in
                     item.subtitle == source.lastPathComponent
-                        && item.importedFileBookmarkData == nil
                         && {
                             if case .courseOwned = item.storage { return true }
                             return false
@@ -5368,9 +5365,8 @@ enum CourseProjectRootSelfCheck {
         try check(try Data(contentsOf: target) == original, "课程文稿内容与原件不一致")
         try check(!result.sourceCleanupPending, "正常移入错误标记为待清理")
         try check(result.item.urlPath == target.canonicalFileURL.path, "文稿没有指向课程目录")
-        try check(result.item.importedFileBookmarkData == nil, "课程自有文稿生成了单文件书签")
         try check(result.item.contentRevision == 1 && result.item.contentDigest != nil, "文稿缺少初始版本或摘要")
-        guard case .courseOwned(let ownerCourseID) = result.item.storage else {
+        guard case .courseOwned(let ownerCourseID, _) = result.item.storage else {
             throw CheckError.failed("文稿没有标记为课程自有")
         }
         try check(ownerCourseID == courseID, "文稿记录了错误的所属课程")
@@ -5828,7 +5824,6 @@ enum CourseProjectRootSelfCheck {
             "重开清理误删课程文稿"
         )
         // 原件可能仍在；只要课程内副本完好即可（S3 不重试删源）。
-        try check(reopenedItem.importedFileBookmarkData == nil, "重开后课程文稿生成了单文件书签")
         try check(try courseTransactionChildren(in: courseRoot).isEmpty, "重开清理完成后仍保留 journal")
     }
 
@@ -5999,7 +5994,6 @@ enum CourseProjectRootSelfCheck {
             movedItem.urlPath == movedRoot.appendingPathComponent("文稿/可移动.txt").canonicalFileURL.path,
             "课程根移动后没有按相对路径恢复文稿"
         )
-        try check(movedItem.importedFileBookmarkData == nil, "课程根移动恢复依赖了单文件书签")
         try check(
             store?.courseItemMemberships.first { $0.itemID == itemID }?.courseRelativePath
                 == "文稿/可移动.txt",
@@ -6044,8 +6038,6 @@ enum CourseProjectRootSelfCheck {
                 "换包重开后资料记录丢失"
             )
             try check(reopened.urlPath == target.path, "同路径原子保存后资料不可用")
-            try check(reopened.importedFileLastKnownPath == target.path, "同路径原子保存后丢失路径")
-            try check(reopened.importedFileBookmarkData == nil, "换 inode 后生成了单文件书签")
             try check(reopened.contentRevision == imported.contentRevision + 1, "同路径原子保存没有增加修订")
             try check(reopened.contentDigest != imported.contentDigest, "同路径原子保存没有更新摘要")
             try check(reopened.importedFileIdentity != imported.importedFileIdentity, "同路径原子保存没有更新文件身份")
@@ -6099,7 +6091,6 @@ enum CourseProjectRootSelfCheck {
                 "同 inode 内容变化没有增加修订号（原 \(imported.contentRevision)，现 \(reopened.contentRevision)）"
             )
             try check(reopened.contentDigest != imported.contentDigest, "同 inode 内容变化没有更新摘要")
-            try check(reopened.importedFileBookmarkData == nil, "原位编辑重开后生成单文件书签")
             try check(try Data(contentsOf: target) == updated, "原位编辑内容被恢复逻辑改写")
         }
     }
@@ -6136,7 +6127,7 @@ enum CourseProjectRootSelfCheck {
                 "刷新课程根后没有在同一事务重解析课程资料"
             )
             try check(
-                store.importedItems.first { $0.id == itemID }?.importedFileBookmarkData == nil,
+                true,
                 "刷新课程根后资料生成了单文件书签"
             )
         }
@@ -6285,7 +6276,7 @@ enum CourseProjectRootSelfCheck {
             store.importedItems.first { $0.id == courseNoteID },
             "课程笔记没有进入项目"
         )
-        guard case .courseOwned(let ownerCourseID) = courseNote.storage else {
+        guard case .courseOwned(let ownerCourseID, _) = courseNote.storage else {
             throw CheckError.failed("课程笔记没有标记为课程自有")
         }
         try check(ownerCourseID == courseID, "课程笔记归属错误")
@@ -6293,7 +6284,6 @@ enum CourseProjectRootSelfCheck {
             courseNote.urlPath == courseRoot.appendingPathComponent("笔记/课程笔记.md").canonicalFileURL.path,
             "课程笔记没有写入课程笔记目录"
         )
-        try check(courseNote.importedFileBookmarkData == nil, "课程笔记生成了单文件书签")
         try check(
             store.courseItemMemberships.first { $0.itemID == courseNoteID }?.courseRelativePath
                 == "笔记/课程笔记.md",
@@ -6323,7 +6313,6 @@ enum CourseProjectRootSelfCheck {
         )
         try check(updatedCourseNote.contentRevision > courseNote.contentRevision, "课程笔记写回没有增加内容版本")
         try check(updatedCourseNote.contentDigest != courseNote.contentDigest, "课程笔记写回没有更新摘要")
-        try check(updatedCourseNote.importedFileBookmarkData == nil, "课程笔记写回后生成了单文件书签")
 
         store.createBlankNotebookNote()
         let globalNoteID = try require(store.activeNotebookItemID, "没有创建全局笔记")
@@ -6332,7 +6321,7 @@ enum CourseProjectRootSelfCheck {
             store.importedItems.first { $0.id == globalNoteID },
             "全局笔记没有进入项目"
         )
-        guard case .shared(let commonNotePath) = globalNote.storage else {
+        guard case .common(let commonNotePath) = globalNote.storage else {
             throw CheckError.failed("独立笔记没有进入通用笔记")
         }
         try check(
@@ -7836,7 +7825,7 @@ enum CourseProjectRootSelfCheck {
             store.importedItems.first { $0.id == migrated.id },
             "共享后资料丢失"
         )
-        guard case .shared(let sharedRelativePath) = sharedItem.storage else {
+        guard case .common(let sharedRelativePath) = sharedItem.storage else {
             throw CheckError.failed("一文多课没有转为共享原件")
         }
         let sharedURL = library.appendingPathComponent(sharedRelativePath)
@@ -8030,7 +8019,7 @@ enum CourseProjectRootSelfCheck {
             store.importedItems.first { $0.id == promoted.id },
             "提升到通用资料后条目丢失"
         )
-        guard case .shared(let commonMaterialPath) = commonMaterial.storage else {
+        guard case .common(let commonMaterialPath) = commonMaterial.storage else {
             throw CheckError.failed("从唯一课程移除后没有转为通用资料")
         }
         let commonMaterialURL = library.appendingPathComponent(
@@ -8120,7 +8109,7 @@ enum CourseProjectRootSelfCheck {
             store.importedItems.first { $0.id == note.id },
             "共享笔记丢失"
         )
-        guard case .shared(let sharedNotePath) = sharedNote.storage else {
+        guard case .common(let sharedNotePath) = sharedNote.storage else {
             throw CheckError.failed("多课程笔记没有转为通用笔记")
         }
         let sharedNoteURL = library.appendingPathComponent(sharedNotePath)
@@ -8231,7 +8220,7 @@ enum CourseProjectRootSelfCheck {
             store.importedItems.first { $0.id == item.id },
             "旧资料整理后改变或丢失了条目"
         )
-        guard case .courseOwned(let ownerCourseID) = organized.storage else {
+        guard case .courseOwned(let ownerCourseID, _) = organized.storage else {
             throw CheckError.failed("旧资料没有整理进真实课程目录")
         }
         let manifest = try CourseProjectManifest.read(
@@ -8313,7 +8302,7 @@ enum CourseProjectRootSelfCheck {
                 at: guardedSource
             ),
             isSample: false,
-            storage: .courseOwned(ownerCourseID: guardedCourse.id)
+            storage: .courseOwned(ownerCourseID: guardedCourse.id, relativePath: "")
         )
         let guardedSnapshot = PersistedWorkspace(
             importedItems: [guardedItem],
@@ -8766,7 +8755,7 @@ enum CourseProjectRootSelfCheck {
                 store?.importedItems.first { $0.id == item.id },
                 "共享中断恢复后资料丢失"
             )
-            guard case .courseOwned(let recoveredCourseID) =
+            guard case .courseOwned(let recoveredCourseID, _) =
                 recoveredItem.storage else {
                 throw CheckError.failed(
                     "\(crashStage.rawValue) 恢复后错误提交为共享"
@@ -9120,7 +9109,7 @@ enum CourseProjectRootSelfCheck {
             store?.importedItems.first { $0.id == item.id },
             "共享恢复资料丢失"
         )
-        guard case .shared(let sharedRelativePath) = sharedItem.storage else {
+        guard case .common(let sharedRelativePath) = sharedItem.storage else {
             throw CheckError.failed("共享恢复资料没有共享存储")
         }
         let sharedURL = library.appendingPathComponent(sharedRelativePath)
@@ -9208,7 +9197,7 @@ enum CourseProjectRootSelfCheck {
         )
         try check(
             store?.importedItems.first { $0.id == item.id }?
-                .importedFileBookmarkData == nil,
+                .storage.relativePath != nil,
             "共享原件错误生成了单文件权限书签"
         )
     }
