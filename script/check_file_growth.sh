@@ -8,6 +8,9 @@ FROZEN_FILES=(
   "Sources/WeiBei/Views/NotesAgentView.swift"
   "Sources/WeiBei/Views/ReaderView.swift"
 )
+WORKSPACE_STORE_PATH="Sources/WeiBei/Stores/WorkspaceStore.swift"
+NOTES_PERSISTENCE_PATH="Sources/WeiBei/Stores/WorkspaceStore+NotesPersistence.swift"
+NOTES_PERSISTENCE_MAX_LINES=2000
 
 line_count() {
   local revision="$1"
@@ -52,52 +55,80 @@ check_growth() {
     head_lines="$(line_count "$head" "$path")"
     growth=$((head_lines - base_lines))
     printf '%s: base=%s head=%s growth=%+d\n' "$path" "$base_lines" "$head_lines" "$growth"
-    if (( growth > MAX_NET_GROWTH )); then
+    if [[ "$path" == "$WORKSPACE_STORE_PATH" ]]; then
+      if (( growth > 0 )); then
+        echo "$path must not grow (notes-persistence split: shrink or hold)" >&2
+        failed=true
+      fi
+    elif (( growth > MAX_NET_GROWTH )); then
       failed=true
     fi
   done
 
+  notes_lines="$(line_count "$head" "$NOTES_PERSISTENCE_PATH")"
+  printf '%s: head=%s max=%s\n' "$NOTES_PERSISTENCE_PATH" "$notes_lines" "$NOTES_PERSISTENCE_MAX_LINES"
+  if (( notes_lines > NOTES_PERSISTENCE_MAX_LINES )); then
+    echo "$NOTES_PERSISTENCE_PATH exceeds ${NOTES_PERSISTENCE_MAX_LINES} lines" >&2
+    failed=true
+  fi
+
   if [[ "$failed" == "true" ]]; then
-    echo "A frozen file grew by more than ${MAX_NET_GROWTH} lines" >&2
+    echo "A frozen file grew past its allowed limit" >&2
     return 1
   fi
 }
 
 self_check() {
-  local script_path file base pass_head fail_head
+  local script_path store notes base shrink_head grow_head over_head
   script_path="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
   self_check_fixture="$(mktemp -d "${TMPDIR:-/tmp}/weibei-growth-check.XXXXXX")"
   trap 'rm -rf "$self_check_fixture"' EXIT
-  file="$self_check_fixture/${FROZEN_FILES[0]}"
+  store="$self_check_fixture/$WORKSPACE_STORE_PATH"
+  notes="$self_check_fixture/$NOTES_PERSISTENCE_PATH"
 
   git -C "$self_check_fixture" init -q
   git -C "$self_check_fixture" config user.name "WeiBei Self Check"
   git -C "$self_check_fixture" config user.email "self-check@invalid"
-  mkdir -p "$(dirname "$file")"
-  printf 'base\n' >"$file"
+  mkdir -p "$(dirname "$store")"
+  printf 'one\ntwo\nthree\n' >"$store"
   git -C "$self_check_fixture" add .
   git -C "$self_check_fixture" commit -qm base
   base="$(git -C "$self_check_fixture" rev-parse HEAD)"
 
-  for _ in $(seq 1 50); do printf 'allowed\n' >>"$file"; done
-  git -C "$self_check_fixture" commit -qam allowed
-  pass_head="$(git -C "$self_check_fixture" rev-parse HEAD)"
-  (cd "$self_check_fixture" && "$script_path" "$base" "$pass_head") >/dev/null
+  printf 'one\ntwo\n' >"$store"
+  git -C "$self_check_fixture" commit -qam shrink
+  shrink_head="$(git -C "$self_check_fixture" rev-parse HEAD)"
+  (cd "$self_check_fixture" && "$script_path" "$base" "$shrink_head") >/dev/null
 
-  printf 'blocked\n' >>"$file"
-  git -C "$self_check_fixture" commit -qam blocked
-  fail_head="$(git -C "$self_check_fixture" rev-parse HEAD)"
+  printf 'one\ntwo\nthree\nfour\n' >"$store"
+  git -C "$self_check_fixture" commit -qam grow
+  grow_head="$(git -C "$self_check_fixture" rev-parse HEAD)"
   if (cd "$self_check_fixture" && \
     GROWTH_EXEMPT_LABEL=false PR_BODY='' \
-    "$script_path" "$base" "$fail_head") >/dev/null 2>&1; then
-    echo "file growth self-check failed: 51 lines were accepted" >&2
+    "$script_path" "$base" "$grow_head") >/dev/null 2>&1; then
+    echo "file growth self-check failed: WorkspaceStore growth was accepted" >&2
+    return 1
+  fi
+
+  printf 'one\ntwo\n' >"$store"
+  : >"$notes"
+  for _ in $(seq 1 $((NOTES_PERSISTENCE_MAX_LINES + 1))); do
+    printf 'line\n' >>"$notes"
+  done
+  git -C "$self_check_fixture" add .
+  git -C "$self_check_fixture" commit -qm over-limit
+  over_head="$(git -C "$self_check_fixture" rev-parse HEAD)"
+  if (cd "$self_check_fixture" && \
+    GROWTH_EXEMPT_LABEL=false PR_BODY='' \
+    "$script_path" "$base" "$over_head") >/dev/null 2>&1; then
+    echo "file growth self-check failed: NotesPersistence over-limit was accepted" >&2
     return 1
   fi
 
   (cd "$self_check_fixture" && \
     GROWTH_EXEMPT_LABEL=true \
     PR_BODY='[growth-exempt: self-check]' \
-    "$script_path" "$base" "$fail_head") >/dev/null
+    "$script_path" "$base" "$grow_head") >/dev/null
 
   echo "WeiBei file growth self-check passed"
 }

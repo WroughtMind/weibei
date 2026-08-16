@@ -572,7 +572,7 @@ final class WorkspaceStore: ObservableObject {
     @Published private(set) var courseFileOperationProgress: CourseFileOperationProgress?
     @Published var notebookCreationDraft: NotebookCreationDraft?
     @Published var notebookRenameDraft: NotebookRenameDraft?
-    private var notebookRenameInFlight = false
+    var notebookRenameInFlight = false
     @Published var modelName: String = ""
     @Published private(set) var agentInteractiveVisualizationsEnabled = true
     @Published var agentProviderID: AgentProviderID = .openai
@@ -592,21 +592,21 @@ final class WorkspaceStore: ObservableObject {
     @Published private var backNavigationStack: [NavigationSnapshot] = []
     @Published private var forwardNavigationStack: [NavigationSnapshot] = []
 
-    private var notesByItemID: [String: String] = [:]
+    var notesByItemID: [String: String] = [:]
     let courseSidebarTags = CourseSidebarTagState()
-    private var pendingNoteWritesByItemID: [String: PendingNoteWriteState] = [:]
-    private var noteOperationErrorsByItemID: [String: String] = [:]
+    var pendingNoteWritesByItemID: [String: PendingNoteWriteState] = [:]
+    var noteOperationErrorsByItemID: [String: String] = [:]
     /// 磁盘观察值：reconcile / load 可刷新，用于外部改动检测。
-    private var noteBackingContentDigestsByItemID: [String: String] = [:]
+    var noteBackingContentDigestsByItemID: [String: String] = [:]
     /// 上次魏碑自身成功写回（或静默采纳磁盘）的 digest，专供备份环判定。
     /// 不持久化：重启后首次写回无基线会多备份一份，方向安全。
-    private var lastSelfWrittenNoteDigestsByItemID: [String: String] = [:]
+    var lastSelfWrittenNoteDigestsByItemID: [String: String] = [:]
     /// P0：启动修复例程每次启动只跑一轮（幂等，重复启动无副作用）。
-    private var noteDivergenceRepairDidRun = false
+    var noteDivergenceRepairDidRun = false
     /// 文件名跟随抬头的基线：上次由抬头体系登记/同步的文件名（不含扩展名）。
     /// 只有基线==当前文件名时才跟随抬头改名；对不上说明文件名被外部动过，
     /// 先登记、不动文件。内存态即可：重启丢基线只少一次自动改名，方向安全。
-    private var headingSyncedNoteStemByItemID: [String: String] = [:]
+    var headingSyncedNoteStemByItemID: [String: String] = [:]
     private var loadedCourseNoteTextByItemID: [String: String] = [:]
     private var courseNoteLoadTasksByItemID: [String: Task<Void, Never>] = [:]
     private var courseNoteLoadGenerationByItemID: [String: UInt64] = [:]
@@ -627,10 +627,10 @@ final class WorkspaceStore: ObservableObject {
     private let courseSecurityScopeStarter: (URL) -> Bool
     private let courseSecurityScopeStopper: (URL) -> Void
     private let courseProjectMutationHook: (CourseProjectMutationStage) throws -> Void
-    private let notebookMarkdownReader: (URL) throws -> String
-    private let notebookMarkdownWriter: (String, URL) throws -> Void
-    private let noteBackupRootURL: URL
-    private let notebookFileMover: (URL, URL) throws -> Void
+    let notebookMarkdownReader: (URL) throws -> String
+    let notebookMarkdownWriter: (String, URL) throws -> Void
+    let noteBackupRootURL: URL
+    let notebookFileMover: (URL, URL) throws -> Void
     private let courseFileSourceRemover: @Sendable (URL) throws -> Void
     private let contentSourceTrashMover: @Sendable (URL) throws -> URL
     private let workspaceSnapshotWriter: (Data, URL) throws -> Void
@@ -644,7 +644,7 @@ final class WorkspaceStore: ObservableObject {
         ) throws -> Void
     private let selectionAskThreadDefaults: UserDefaults
     private let piRuntime: PiAgentRuntime
-    private let courseDocumentSearchIndex: CourseDocumentSearchIndex
+    let courseDocumentSearchIndex: CourseDocumentSearchIndex
     private var activeAgentRequestID: UUID?
     private var activeAgentReplyMessageID: UUID?
     private var latestAgentStreamingText = ""
@@ -675,7 +675,7 @@ final class WorkspaceStore: ObservableObject {
     @Published private var validatedAgentReplySourceIDs = Set<UUID>()
     private var lastAgentReplyContextRevision: UInt64?
     private var latestAgentLearningUpdateQuestion: String?
-    private var stagedNoteDraft: (itemID: String, value: String)?
+    var stagedNoteDraft: (itemID: String, value: String)?
     private var isRestoringNavigation = false
     private var lastSelectionAttachmentDate: Date?
     private var lastSelectionUpdateDate: Date?
@@ -687,10 +687,10 @@ final class WorkspaceStore: ObservableObject {
     private let selectionAttachmentMergeWindow: TimeInterval = 1.8
     private let selectionAttachmentDebounceDelay: UInt64 = 520_000_000
     private var threePaneReorderFrames: [WorkspacePaneRole: CGRect] = [:]
-    private var pendingNotePersistenceByItemID: [String: PendingNotePersistence] = [:]
-    private var pendingNotePersistenceTasks: [String: Task<Void, Never>] = [:]
-    private let notePersistenceDebounceDelay: UInt64 = 420_000_000
-    private var studyProgressSaveTask: Task<Void, Never>?
+    var pendingNotePersistenceByItemID: [String: PendingNotePersistence] = [:]
+    var pendingNotePersistenceTasks: [String: Task<Void, Never>] = [:]
+    let notePersistenceDebounceDelay: UInt64 = 420_000_000
+    var studyProgressSaveTask: Task<Void, Never>?
     private let studyProgressSaveDelay: UInt64 = 900_000_000
     /// Coalesce the 70+ main-thread full-workspace JSON saves that fire on every UI toggle.
     private var pendingWorkspaceSaveTask: Task<Void, Never>?
@@ -764,7 +764,7 @@ final class WorkspaceStore: ObservableObject {
         case currentMaterial(StudyItem)
     }
 
-    private struct PendingNotePersistence {
+    struct PendingNotePersistence {
         var item: StudyItem
         var markdown: String
     }
@@ -10222,7 +10222,7 @@ final class WorkspaceStore: ObservableObject {
         return try? await agentActionNoteMarkdown(item)
     }
 
-    private func setNoteDraft(_ markdown: String?, for itemID: String) {
+    func setNoteDraft(_ markdown: String?, for itemID: String) {
         if let markdown {
             notesByItemID[itemID] = markdown
         } else {
@@ -10231,7 +10231,7 @@ final class WorkspaceStore: ObservableObject {
         courseSidebarTags.noteDraftChanged(itemID: itemID, exists: markdown != nil)
     }
 
-    private func replaceNoteDrafts(_ drafts: [String: String]) {
+    func replaceNoteDrafts(_ drafts: [String: String]) {
         notesByItemID = drafts
         courseSidebarTags.replacedNoteDrafts(keeping: Set(drafts.keys))
     }
@@ -11125,7 +11125,7 @@ final class WorkspaceStore: ObservableObject {
         }
     }
 
-    private func waitForCourseFileOperation<T>(
+    func waitForCourseFileOperation<T>(
         _ operation: @escaping @MainActor () async throws -> T
     ) throws -> T {
         var result: Result<T, Error>?
@@ -17638,11 +17638,11 @@ final class WorkspaceStore: ObservableObject {
         return directory
     }
 
-    private func safeFileStem(_ value: String) -> String {
+    func safeFileStem(_ value: String) -> String {
         MarkdownAttachmentStore.safeFileStem(value, fallback: ui("未命名", "Untitled"), limit: 80)
     }
 
-    private func nextNotebookNoteURL(in directory: URL, title: String) -> URL {
+    func nextNotebookNoteURL(in directory: URL, title: String) -> URL {
         let stem = safeFileStem(title)
         var index = 1
         var url = directory.appendingPathComponent("\(stem).md")
@@ -17653,7 +17653,7 @@ final class WorkspaceStore: ObservableObject {
         return url
     }
 
-    private func renamedNotebookURL(in directory: URL, title: String, currentURL: URL) -> URL {
+    func renamedNotebookURL(in directory: URL, title: String, currentURL: URL) -> URL {
         let stem = safeFileStem(title)
         var index = 1
         var url = directory.appendingPathComponent("\(stem).md")
@@ -17668,7 +17668,7 @@ final class WorkspaceStore: ObservableObject {
     /// 文件名不一致时，纯 move 改文件名——一个字节内容都不碰，inode 不变，
     /// 指纹与 bookmark 保持有效。普通首行文字只影响 tab 显示，不改文件名。
     /// 只在成功落盘后调用；课程文件有自己的命名约束，不走这条路。
-    private func synchronizeNoteFileNameWithHeading(itemID: String, markdown: String, currentURL: URL) {
+    func synchronizeNoteFileNameWithHeading(itemID: String, markdown: String, currentURL: URL) {
         guard let index = importedItems.firstIndex(where: { $0.id == itemID }) else { return }
         let item = importedItems[index]
         guard item.isNotebookNote else { return }
@@ -18857,7 +18857,7 @@ final class WorkspaceStore: ObservableObject {
     }
 
     @discardableResult
-    private func refreshImportedFileTracking(itemID: String, url: URL) -> StudyItem? {
+    func refreshImportedFileTracking(itemID: String, url: URL) -> StudyItem? {
         guard let index = importedItems.firstIndex(where: { $0.id == itemID }),
               let identity = importedFileIdentityResolver(url) else {
             return nil
@@ -19060,7 +19060,7 @@ final class WorkspaceStore: ObservableObject {
         return oldPending.markdown == newPending.markdown
     }
 
-    private func replaceItemIDEverywhere(_ oldID: String, with newID: String) {
+    func replaceItemIDEverywhere(_ oldID: String, with newID: String) {
         guard oldID != newID else { return }
 
         if let oldNote = notesByItemID[oldID] {
@@ -19241,7 +19241,7 @@ final class WorkspaceStore: ObservableObject {
         }
     }
 
-    private func showTransientNoteStatus(_ message: String) {
+    func showTransientNoteStatus(_ message: String) {
         // S5: sole user-visible note feedback channel (auto-expires).
         transientNoteStatus = message
         let token = message
@@ -19332,22 +19332,22 @@ final class WorkspaceStore: ObservableObject {
         pinnedFloatingAgent = false
     }
 
-    private func defaultNote(for item: StudyItem?) -> String {
+    func defaultNote(for item: StudyItem?) -> String {
         defaultNotebookNote()
     }
 
     /// 新建笔记的正文：完全空白——不预置模板小节，也不预置来源行。
     /// 笔记名交给显示名解析（正文抬头）与抬头驱动的文件改名负责；
     /// 资料关联由 noteSourceLink 表达，不靠正文里的来源行。
-    private func defaultNotebookNote() -> String {
+    func defaultNotebookNote() -> String {
         ""
     }
 
-    private static func noteContentDigest(_ data: Data) -> String {
+    static func noteContentDigest(_ data: Data) -> String {
         SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
     }
 
-    nonisolated private static func readNotebookMarkdown(at url: URL) throws -> String {
+    nonisolated static func readNotebookMarkdown(at url: URL) throws -> String {
         let data = try Data(contentsOf: url)
         guard let markdown = String(data: data, encoding: .utf8) else {
             throw CocoaError(.fileReadInapplicableStringEncoding)
@@ -19355,11 +19355,11 @@ final class WorkspaceStore: ObservableObject {
         return markdown
     }
 
-    nonisolated private static func writeNotebookMarkdown(_ markdown: String, to url: URL) throws {
+    nonisolated static func writeNotebookMarkdown(_ markdown: String, to url: URL) throws {
         try markdown.write(to: url, atomically: true, encoding: .utf8)
     }
 
-    nonisolated private static func moveNotebookFile(from sourceURL: URL, to destinationURL: URL) throws {
+    nonisolated static func moveNotebookFile(from sourceURL: URL, to destinationURL: URL) throws {
         try FileManager.default.moveItem(at: sourceURL, to: destinationURL)
     }
 
@@ -19367,11 +19367,11 @@ final class WorkspaceStore: ObservableObject {
         try data.write(to: url, options: [.atomic])
     }
 
-    private static func noteContentDigest(at url: URL) -> String? {
+    static func noteContentDigest(at url: URL) -> String? {
         (try? Data(contentsOf: url)).map(noteContentDigest)
     }
 
-    private func setNoteFileError(_ message: String?, for itemID: String) {
+    func setNoteFileError(_ message: String?, for itemID: String) {
         if let message {
             // P0：同一条错误已记录时不重复弹 transient，避免渲染期反复触发提示。
             let alreadyRecorded = noteOperationErrorsByItemID[itemID] == message
@@ -19385,7 +19385,7 @@ final class WorkspaceStore: ObservableObject {
     }
 
     /// S2 启动迁移：旧 pendingNoteWrites 草稿按三件套写回一次；成功清除，失败转 notesByItemID 简单草稿。
-    private func retryRestoredPendingNoteWrites() {
+    func retryRestoredPendingNoteWrites() {
         let draftItemIDs = Set(pendingNoteWritesByItemID.keys)
             .union(
                 importedItems.compactMap { item in
@@ -19425,7 +19425,7 @@ final class WorkspaceStore: ObservableObject {
     ///   则不写。
     /// - 幂等：收敛后再次运行所有项的 action 都是 .none。
     /// - 全程不弹窗；结果写 NSLog。
-    private func repairDivergedNotebookNotesIfNeeded() {
+    func repairDivergedNotebookNotesIfNeeded() {
         guard !noteDivergenceRepairDidRun else { return }
         noteDivergenceRepairDidRun = true
         let dryRun = UserDefaults.standard.bool(forKey: "WeiBeiNoteRepairDisabled")
@@ -19736,7 +19736,7 @@ final class WorkspaceStore: ObservableObject {
         }
     }
 
-    private func persistCurrentNote() {
+    func persistCurrentNote() {
         guard let item = activeNoteItem else { return }
         if let stagedNoteDraft, stagedNoteDraft.itemID == item.id {
             self.stagedNoteDraft = nil
@@ -19769,7 +19769,7 @@ final class WorkspaceStore: ObservableObject {
         }
     }
 
-    private func scheduleNotePersistence(_ markdown: String, for item: StudyItem) {
+    func scheduleNotePersistence(_ markdown: String, for item: StudyItem) {
         pendingNotePersistenceByItemID[item.id] = PendingNotePersistence(item: item, markdown: markdown)
         pendingNotePersistenceTasks[item.id]?.cancel()
         let itemID = item.id
@@ -19781,7 +19781,7 @@ final class WorkspaceStore: ObservableObject {
         }
     }
 
-    private func flushPendingNotePersistence(for itemID: String) {
+    func flushPendingNotePersistence(for itemID: String) {
         cancelPendingNotePersistence(for: itemID)
         guard let pending = pendingNotePersistenceByItemID.removeValue(forKey: itemID) else { return }
         WeiBeiPerf.measure("note.persist.flush", extra: "item=\(itemID)") {
@@ -19790,7 +19790,7 @@ final class WorkspaceStore: ObservableObject {
         }
     }
 
-    private func cancelPendingNotePersistence(for itemID: String) {
+    func cancelPendingNotePersistence(for itemID: String) {
         pendingNotePersistenceTasks[itemID]?.cancel()
         pendingNotePersistenceTasks[itemID] = nil
     }
@@ -19798,7 +19798,7 @@ final class WorkspaceStore: ObservableObject {
     /// S2 三件套：备份（外部改动）→ 原子写 → 失败留草稿。
     /// 返回是否成功写回磁盘。永不因 digest 冲突拒绝写回。
     @discardableResult
-    private func writeNoteMarkdownTriple(
+    func writeNoteMarkdownTriple(
         _ markdown: String,
         itemID: String,
         url: URL
@@ -19924,7 +19924,7 @@ final class WorkspaceStore: ObservableObject {
     }
 
     /// 文件不可达时静默保留草稿（无冲突横幅）。
-    private func retainUnreachableNoteDraft(
+    func retainUnreachableNoteDraft(
         _ markdown: String,
         itemID: String
     ) {
@@ -19989,7 +19989,7 @@ final class WorkspaceStore: ObservableObject {
         courseDocumentSearchIndex.schedule([importedItems[index]])
     }
 
-    private func persistCourseOwnedNote(
+    func persistCourseOwnedNote(
         _ markdown: String,
         itemID: String
     ) {
@@ -20018,7 +20018,7 @@ final class WorkspaceStore: ObservableObject {
         save()
     }
 
-    private func persistNote(_ markdown: String, for item: StudyItem) {
+    func persistNote(_ markdown: String, for item: StudyItem) {
         let noteItemID = item.id
         if item.editsBackingMarkdownFile {
             guard let index = importedItems.firstIndex(where: { $0.id == noteItemID }) else {
@@ -21759,7 +21759,7 @@ final class WorkspaceStore: ObservableObject {
     /// Schedule a coalesced workspace snapshot write. Verification keeps the
     /// legacy synchronous path; production saves use the file worker actor.
     @discardableResult
-    private func save() -> Bool {
+    func save() -> Bool {
         if Self.mustSaveImmediately {
             return performSaveNow()
         }
@@ -21909,7 +21909,7 @@ final class WorkspaceStore: ObservableObject {
         return true
     }
 
-    private static var mustSaveImmediately: Bool {
+    static var mustSaveImmediately: Bool {
 #if DEBUG
         if WeiBeiSafetyTestMode.isEnabled { return true }
 #endif
