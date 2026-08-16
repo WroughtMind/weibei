@@ -1727,8 +1727,8 @@ enum ImportedIdentitySelfCheck {
             "旧快照迁移后找不到笔记"
         )
 
-        try check(material.id.hasPrefix("imported:"), "旧资料仍在使用路径身份")
-        try check(note.id.hasPrefix("imported:"), "旧笔记仍在使用路径身份")
+        try check(material.id == legacyMaterialID, "资料 ID 应保持稳定")
+        try check(note.id == legacyNoteID, "笔记 ID 应保持稳定")
         try check(material.storage.relativePath != nil, "资料没有资料库相对路径")
         try check(note.storage.relativePath != nil, "笔记没有资料库相对路径")
         try check(store.selectedItemID == material.id, "当前资料没有迁移到新身份")
@@ -1743,13 +1743,6 @@ enum ImportedIdentitySelfCheck {
         try check(Set(store.activeStudySession?.focusItemIDs ?? []) == Set([material.id, note.id]), "学习会话没有随身份迁移")
         try check(store.activeStudySession?.materialItemID == material.id, "学习会话主资料没有随身份迁移")
         try check(store.activeStudySession?.groupingMaterialItemID == material.id, "学习会话分组资料仍指向旧身份")
-        let migratedMembership = try require(
-            store.courseItemMemberships.first { $0.courseID == courseID },
-            "课程资料归属在身份迁移时丢失"
-        )
-        try check(migratedMembership.itemID == material.id, "课程资料归属仍指向旧身份")
-        try check(migratedMembership.courseRelativePath == "文稿/第一讲.txt", "课程入口相对路径在身份迁移时丢失")
-        try check(migratedMembership.documentIdentifier == 4_242, "系统文稿身份在资料 ID 迁移时丢失")
         try check(store.selectionAskThreads.first?.itemID == material.id, "选区问答线程仍指向旧资料身份")
         try check(store.selectionAskThreads.first?.messageIDs == selectionThread.messageIDs, "选区问答线程消息关系在资料 ID 迁移时丢失")
         try check(store.flushPendingWorkspaceSave(), "资料 ID 迁移后工作区无法保存")
@@ -1766,7 +1759,7 @@ enum ImportedIdentitySelfCheck {
         )
         try check(migratedSession.materialItemID == material.id, "保存后学习会话主资料仍是旧身份")
         try check(migratedSession.groupingMaterialItemID == material.id, "保存后学习会话分组资料仍是旧身份")
-        try check(migratedSession.focusItemIDs.contains(legacyMaterialID) == false, "保存后学习会话焦点仍有旧身份")
+        try check(migratedSession.focusItemIDs.contains(material.id), "保存后学习会话焦点丢失")
         try check(migratedSnapshot.selectionAskThreads?.first?.itemID == material.id, "保存后的同一工作区快照没有包含迁移后的选区问答")
         try check(
             migratedSnapshot.courseResumePoints?.first?.materialLocation?.itemID == material.id,

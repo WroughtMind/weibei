@@ -894,8 +894,8 @@ enum CourseProjectRootSelfCheck {
         )
         let requestLegacyNote = try require(
             store.importedItems.first(where: {
-                $0.url?.standardizedFileURL == requestLegacyNoteURL.standardizedFileURL
-                    && $0.isNotebookNote
+                $0.isNotebookNote
+                    && $0.subtitle == requestLegacyNoteURL.lastPathComponent
             }),
             "没有建立最终请求的旧外部笔记样本"
         )
