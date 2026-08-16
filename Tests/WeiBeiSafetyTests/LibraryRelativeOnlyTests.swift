@@ -100,13 +100,12 @@ enum LibraryRelativeOnlyCheck {
         XCTAssertNotEqual(second.lastPathComponent, copiedCommon.lastPathComponent)
         XCTAssertEqual(FileManager.default.contents(atPath: copiedCommon.path), sourceBytes)
 
-        let imported = store.importFiles([source], markdownAsNotes: false)
+        let imported = store.importFiles([copiedCommon], markdownAsNotes: false)
         XCTAssertFalse(imported.isEmpty)
         let itemID = try XCTUnwrap(imported.first?.id)
         let chat = try XCTUnwrap(store.createStudySession(courseID: originalCourseID))
         store.messages = [AgentMessage(role: .user, text: "还在", source: nil)]
         store.syncActiveStudySession(titleSeed: "还在")
-        _ = chat
         try FileManager.default.removeItem(at: copiedCommon)
         store.refreshRuntimeItemURLs()
         if let index = store.importedItems.firstIndex(where: { $0.id == itemID }) {

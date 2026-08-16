@@ -13909,7 +13909,17 @@ final class WorkspaceStore: ObservableObject {
         let scopedItems = importedItems
         let coursesByID = Dictionary(uniqueKeysWithValues: courses.map { ($0.id, $0.title) })
         let requestedCourseIDs: (StudyItem) -> [UUID] = { item in
-            self.courseMembershipIndex.courseIDs(for: item.id)
+            switch item.storage {
+            case .courseOwned(let ownerCourseID, _):
+                return [ownerCourseID]
+            case .common:
+                if let courseID = target.courseID {
+                    return [courseID]
+                }
+                return []
+            case .bundledSample:
+                return []
+            }
         }
         let sources = scopedItems.compactMap { item -> AgentHostToolSource? in
             let itemCourseIDs = requestedCourseIDs(item)
@@ -15127,10 +15137,7 @@ final class WorkspaceStore: ObservableObject {
         }
         switch item.storage {
         case .common:
-            guard let expectedIdentity = item.importedFileIdentity else {
-                return false
-            }
-            return CourseProjectFileWorker.identity(at: url) == expectedIdentity
+            return true
         case .bundledSample:
             return item.isSample
         case .courseOwned:

@@ -1719,11 +1719,11 @@ enum ImportedIdentitySelfCheck {
             selectionAskThreadDefaults: fixture.selectionAskThreadDefaults
         )
         let material = try require(
-            store.importedItems.first { $0.urlPath == materialURL.path },
+            store.importedItems.first { $0.id == legacyMaterialID },
             "旧快照迁移后找不到资料"
         )
         let note = try require(
-            store.importedItems.first { $0.urlPath == noteURL.path },
+            store.importedItems.first { $0.id == legacyNoteID },
             "旧快照迁移后找不到笔记"
         )
 
