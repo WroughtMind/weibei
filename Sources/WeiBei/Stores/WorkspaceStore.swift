@@ -1126,7 +1126,10 @@ final class WorkspaceStore: ObservableObject {
            !importedItems.contains(where: {
                $0.id == noteItemID
                    && $0.isNotebookNote
-                   && courseMembershipIndex.courseIDs(for: noteItemID).contains(point.courseID)
+                   && (
+                       $0.storage.ownerCourseID == point.courseID
+                           || { if case .common = $0.storage { return true }; return false }()
+                   )
            }) {
             result.noteItemID = nil
         }

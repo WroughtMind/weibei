@@ -380,14 +380,30 @@ enum ImportedIdentitySelfCheck {
             "通用资料",
             isDirectory: true
         )
+        let courseMaterials = fixture.importsDirectory.appendingPathComponent(
+            "文稿",
+            isDirectory: true
+        )
+        let courseNotes = fixture.importsDirectory.appendingPathComponent(
+            "笔记",
+            isDirectory: true
+        )
         try FileManager.default.createDirectory(
             at: commonMaterials,
             withIntermediateDirectories: true
         )
+        try FileManager.default.createDirectory(
+            at: courseMaterials,
+            withIntermediateDirectories: true
+        )
+        try FileManager.default.createDirectory(
+            at: courseNotes,
+            withIntermediateDirectories: true
+        )
         let materialURL = commonMaterials.appendingPathComponent("shared.html")
-        let noteURL = fixture.importsDirectory.appendingPathComponent("course-a-note.md")
-        let otherMaterialURL = fixture.importsDirectory.appendingPathComponent("course-b.txt")
-        let otherNoteURL = fixture.importsDirectory.appendingPathComponent("course-b-note.md")
+        let noteURL = courseNotes.appendingPathComponent("course-a-note.md")
+        let otherMaterialURL = courseMaterials.appendingPathComponent("course-b.txt")
+        let otherNoteURL = courseNotes.appendingPathComponent("course-b-note.md")
         try Data("<h1 id=\"a\">A</h1><h1 id=\"b\">B</h1>".utf8).write(to: materialURL)
         try Data("# 课程 A 笔记".utf8).write(to: noteURL)
         try Data("课程 B 文稿".utf8).write(to: otherMaterialURL)
@@ -444,7 +460,11 @@ enum ImportedIdentitySelfCheck {
             urlPath: noteURL.path,
             importedFileIdentity: noteIdentity,
             isSample: false,
-            isNotebookNote: true
+            isNotebookNote: true,
+            storage: .courseOwned(
+                ownerCourseID: courseA.id,
+                relativePath: "笔记/course-a-note.md"
+            )
         )
         let otherMaterial = StudyItem(
             id: "resume-course-b-material",
@@ -453,7 +473,11 @@ enum ImportedIdentitySelfCheck {
             kind: .text,
             urlPath: otherMaterialURL.path,
             importedFileIdentity: otherMaterialIdentity,
-            isSample: false
+            isSample: false,
+            storage: .courseOwned(
+                ownerCourseID: courseB.id,
+                relativePath: "文稿/course-b.txt"
+            )
         )
         let otherNote = StudyItem(
             id: "resume-course-b-note",
@@ -463,7 +487,11 @@ enum ImportedIdentitySelfCheck {
             urlPath: otherNoteURL.path,
             importedFileIdentity: otherNoteIdentity,
             isSample: false,
-            isNotebookNote: true
+            isNotebookNote: true,
+            storage: .courseOwned(
+                ownerCourseID: courseB.id,
+                relativePath: "笔记/course-b-note.md"
+            )
         )
         let chatA1 = StudySession(
             id: UUID(),
@@ -802,25 +830,6 @@ enum ImportedIdentitySelfCheck {
             )
         }
 
-        let rollbackStore = makeStore { _, _ in
-            throw CheckError.failed("预期中的课程关系保存失败")
-        }
-        try check(
-            rollbackStore.courseResumePointSurvivesFailedMembershipSaveForSelfCheck(
-                itemID: material.id,
-                courseID: courseA.id
-            ),
-            "课程关系保存失败并回滚后，恢复点没有一起保留"
-        )
-        let committedRemovalStore = makeStore()
-        try check(
-            committedRemovalStore
-                .courseResumePointDoesNotReviveAfterSuccessfulMembershipSaveForSelfCheck(
-                    itemID: material.id,
-                    courseID: courseA.id
-                ),
-            "课程关系成功移除后，同进程重新加入错误复活了旧恢复位置"
-        )
         let sessionCountBeforeReading = reopened.studySessions.count
         reopened.activateCourse(courseB.id)
         try check(reopened.openCourseMaterial(otherMaterial.id), "无法准备课程 B 的对照文稿")

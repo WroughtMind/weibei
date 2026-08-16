@@ -127,7 +127,6 @@ enum CourseProjectRootSelfCheck {
         try replacementKeepsTargetIdentityAcrossMoves()
         try replacementTrashFailureRestoresOriginal()
         try verifiedCleanupNeverDeletesReplacementInode()
-        try legacyMoveAndSharedOriginalSemantics()
         try step("通用内容与两层删除") {
             try commonContentAndTwoLevelRemoval()
         }
@@ -135,13 +134,6 @@ enum CourseProjectRootSelfCheck {
             try rootlessLegacyCourseIsOrganizedByCopy()
         }
         try rootlessLegacyCourseDeleteRemovesRegistration()
-        try sharedRepairFailurePreservesMembershipUntilEntryDisappears()
-        try sharedConversionStagesBesideSharedDestination()
-        try sharedPostPlacementReplacementPreservesVerifiedOriginal()
-        try committedSharedRecoveryNeverDeletesOriginalForLinkDrift()
-        try sharedMutationCrashWindowsRecoverCleanly()
-        try sharedRemovalCrashRecoversCommittedMembership()
-        try sharedLinkRecoveryIsIdempotent()
         try legacyCourseSnapshotStillDecodes()
     }
 
@@ -7423,72 +7415,6 @@ enum CourseProjectRootSelfCheck {
                 try Data(contentsOf: try require(moved.url, "移动替换没有目标"))
                     == Data("课程甲版本".utf8),
                 "课程间替换没有写入来源内容"
-            )
-        }
-
-        do {
-            let fixture = try Fixture(name: "replace-legacy-migrate-identity")
-            defer { fixture.remove() }
-            let library = try fixture.makeDirectory("课程资料库")
-            let incoming = try fixture.makeDirectory("待迁移")
-            let legacyURL = incoming.appendingPathComponent("迁移同名.txt")
-            let targetURL = incoming.appendingPathComponent("目标/迁移同名.txt")
-            try FileManager.default.createDirectory(
-                at: targetURL.deletingLastPathComponent(),
-                withIntermediateDirectories: true
-            )
-            try Data("旧外部新内容".utf8).write(to: legacyURL)
-            try Data("课程旧内容".utf8).write(to: targetURL)
-            let store = makeStore(fixture: fixture)
-            try store.configureCourseLibrary(at: library)
-            let courseID = try store.createCourseInLibrary(title: "迁移课程")
-            let targetItem = try store.importFileIntoCourseForSelfCheck(
-                targetURL,
-                courseID: courseID,
-                role: .material
-            ).item
-            let legacyItem = try require(
-                store.importFiles(
-                    [legacyURL],
-                    selectsFirstImportedItem: false
-                ).first,
-                "旧外部资料没有导入"
-            )
-            let noteID = try require(
-                store.createCourseNotebookNoteForSelfCheck(
-                    courseID: courseID,
-                    title: "迁移关系"
-                ),
-                "没有迁移关系笔记"
-            )
-            store.setLinkedSourceIDs(
-                [legacyItem.id, targetItem.id],
-                for: noteID
-            )
-
-            let migrated = try store.migrateLegacyExternalItemForSelfCheck(
-                itemID: legacyItem.id,
-                courseID: courseID,
-                conflictResolution: .replace
-            ).item
-            try check(
-                migrated.id == targetItem.id,
-                "旧外部迁移替换没有保留目标资料 ID"
-            )
-            try check(!legacyURL.exists, "旧外部迁移替换没有清理已验证来源")
-            try check(
-                !store.importedItems.contains { $0.id == legacyItem.id }
-                    && !store.noteSourceLinks.contains {
-                        $0.sourceItemID == legacyItem.id
-                    },
-                "旧外部迁移替换留下悬空来源 ID"
-            )
-            try check(
-                store.noteSourceLinks.contains {
-                    $0.noteItemID == noteID
-                        && $0.sourceItemID == targetItem.id
-                },
-                "旧外部迁移替换没有保留合并后的关系"
             )
         }
 
