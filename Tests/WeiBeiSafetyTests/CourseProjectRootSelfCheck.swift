@@ -2344,11 +2344,17 @@ enum CourseProjectRootSelfCheck {
             stopAccessing: { _ in stops += 1 }
         )
         try check(store?.courseLibraryRootPath != nil, "授权失效时错误删除了资料库记录")
-        try check(store?.courseLibraryRootURL == nil, "授权失败时仍把资料库标成可访问")
-        try check(store?.courseLibraryUnavailableReason != nil, "授权失败时没有报告资料库 unavailable")
+        try check(
+            store?.courseLibraryRootURL?.standardizedFileURL == library.standardizedFileURL,
+            "书签授权失败后没有按本机资料库路径恢复"
+        )
+        try check(store?.courseLibraryUnavailableReason == nil, "书签授权失败后错误把资料库标成不可用")
         try check(store?.course(withID: courseID) != nil, "授权失效时错误删除了课程")
-        try check(store?.courseRootURL(for: courseID) == nil, "授权失败时仍把课程标成可访问")
-        try check(store?.courseRootUnavailableReason(for: courseID) != nil, "授权失败时没有报告 unavailable")
+        try check(
+            store?.courseRootURL(for: courseID) != nil,
+            "书签授权失败后没有按课程相对路径恢复"
+        )
+        try check(store?.courseRootUnavailableReason(for: courseID) == nil, "书签授权失败后错误把课程标成不可用")
         store = nil
         try check(stops == 0, "startAccessing 失败后错误调用了 stopAccessing")
     }
