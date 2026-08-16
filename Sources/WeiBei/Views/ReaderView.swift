@@ -1689,11 +1689,11 @@ private struct PDFReaderRepresentable: NSViewRepresentable {
         }
 
         func reportCurrentSelection(in view: PDFView) {
-            let text = view.currentSelection?.string ?? ""
-            let now = ProcessInfo.processInfo.systemUptime
-            guard selectionReportGate.shouldPublish(text: text, now: now) else {
-                return
-            }
+            let text = PDFReaderOpenSafety.selectionText(in: view)
+            guard selectionReportGate.shouldPublish(
+                text: text,
+                now: ProcessInfo.processInfo.systemUptime
+            ) else { return }
             guard let selection = view.currentSelection,
                   !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                 selectionWork?.cancel()
@@ -1701,15 +1701,15 @@ private struct PDFReaderRepresentable: NSViewRepresentable {
                 return
             }
             selection.color = WeiBeiNativePalette.selectionFill(for: appearanceMode)
-            let selectedPageIndex = Self.pageIndex(for: selection, in: view) ?? pageIndex.wrappedValue
             reportSelectionAfterDragSettles(
                 text: text,
-                anchor: Self.anchor(
+                anchor: PDFReaderOpenSafety.selectionAnchor(
                     for: selection,
                     in: view,
                     fallbackLocalPoint: lastPointerInView
                 ),
-                pageIndex: selectedPageIndex
+                pageIndex: PDFReaderOpenSafety.pageIndex(for: selection, in: view)
+                    ?? pageIndex.wrappedValue
             )
         }
 
@@ -1720,39 +1720,6 @@ private struct PDFReaderRepresentable: NSViewRepresentable {
             }
             selectionWork = work
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.06, execute: work)
-        }
-
-        private static func anchor(
-            for selection: PDFSelection,
-            in view: PDFView,
-            fallbackLocalPoint: CGPoint?
-        ) -> CGPoint? {
-            if let page = selection.pages.first {
-                let bounds = selection.bounds(for: page)
-                if !bounds.isEmpty {
-                    let localRect = view.convert(bounds, from: page)
-                    if !localRect.isEmpty {
-                        let localPoint = CGPoint(x: localRect.midX, y: localRect.minY)
-                        if let anchor = SelectionAnchorContentPoint.fromLocalPoint(localPoint, in: view) {
-                            return anchor
-                        }
-                    }
-                }
-            }
-            if let fallbackLocalPoint,
-               let anchor = SelectionAnchorContentPoint.fromLocalPoint(fallbackLocalPoint, in: view) {
-                return anchor
-            }
-            return SelectionAnchorContentPoint.fromLocalPoint(
-                CGPoint(x: view.bounds.midX, y: view.bounds.midY),
-                in: view
-            )
-        }
-
-        private static func pageIndex(for selection: PDFSelection, in view: PDFView) -> Int? {
-            guard let page = selection.pages.first, let document = view.document else { return nil }
-            let index = document.index(for: page)
-            return index == NSNotFound ? nil : index
         }
 
         func applySearch(

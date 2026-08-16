@@ -38,4 +38,41 @@ enum PDFReaderOpenSafety {
             return !pageHasNativeText(page)
         }
     }
+
+    static func selectionText(in view: PDFView) -> String {
+        view.currentSelection?.string ?? ""
+    }
+
+    static func pageIndex(for selection: PDFSelection, in view: PDFView) -> Int? {
+        guard let page = selection.pages.first, let document = view.document else { return nil }
+        let index = document.index(for: page)
+        return index == NSNotFound ? nil : index
+    }
+
+    static func selectionAnchor(
+        for selection: PDFSelection,
+        in view: PDFView,
+        fallbackLocalPoint: CGPoint?
+    ) -> CGPoint? {
+        if let page = selection.pages.first {
+            let bounds = selection.bounds(for: page)
+            if !bounds.isEmpty {
+                let localRect = view.convert(bounds, from: page)
+                if !localRect.isEmpty {
+                    let localPoint = CGPoint(x: localRect.midX, y: localRect.minY)
+                    if let anchor = SelectionAnchorContentPoint.fromLocalPoint(localPoint, in: view) {
+                        return anchor
+                    }
+                }
+            }
+        }
+        if let fallbackLocalPoint,
+           let anchor = SelectionAnchorContentPoint.fromLocalPoint(fallbackLocalPoint, in: view) {
+            return anchor
+        }
+        return SelectionAnchorContentPoint.fromLocalPoint(
+            CGPoint(x: view.bounds.midX, y: view.bounds.midY),
+            in: view
+        )
+    }
 }
