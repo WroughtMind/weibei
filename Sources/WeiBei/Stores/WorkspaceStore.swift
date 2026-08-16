@@ -6936,9 +6936,9 @@ final class WorkspaceStore: ObservableObject {
                     mustBeInsideLibrary:
                         expectedCourse.sourceRootRelativePath != nil
                 )
-            }
-
-            if root != nil {
+                // Trash path still refuses when the live folder cannot accept
+                // the latest portable state. Unregister-only must not require
+                // that write: the folder is already gone or unwritable.
                 guard await persistWorkspaceNow(),
                       !dirtyPortableCourseIDs.contains(courseID),
                       !blockedPortableCourseIDs.contains(courseID),
@@ -6949,34 +6949,6 @@ final class WorkspaceStore: ObservableObject {
                         courseID
                       ) else {
                     throw CourseRemovalError.latestStateNotSaved
-                }
-            } else {
-                let hasCourseOwnedItems = importedItems.contains { item in
-                    guard case .courseOwned(let ownerCourseID) = item.storage else {
-                        return false
-                    }
-                    return ownerCourseID == courseID
-                }
-                guard !hasCourseOwnedItems else {
-                    throw CourseRemovalError.latestStateNotSaved
-                }
-                let isRootlessLegacyCourse =
-                    expectedCourse.sourceRootPath == nil
-                    && expectedCourse.sourceRootRelativePath == nil
-                    && expectedCourse.sourceRootIdentity == nil
-                    && expectedCourse.sourceRootBookmarkData == nil
-                if !isRootlessLegacyCourse {
-                    guard !requiresAvailableRoot,
-                          !dirtyPortableCourseIDs.contains(courseID),
-                          !blockedPortableCourseIDs.contains(courseID),
-                          !oversizedPortableCourseIDs.contains(courseID),
-                          coursePortableStateRevisions[courseID] != nil,
-                          coursePortableStateDigests[courseID] != nil,
-                          coursePortableStateMatchesLastSaved(
-                            courseID
-                          ) else {
-                        throw CourseRemovalError.latestStateNotSaved
-                    }
                 }
             }
 
