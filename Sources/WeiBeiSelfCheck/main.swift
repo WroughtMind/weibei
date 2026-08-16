@@ -1091,6 +1091,53 @@ expect(!pdfSelectionGate.shouldPublish(text: "", now: 1.01), "empty PDFKit pulse
 pdfSelectionGate.endTracking()
 expect(!pdfSelectionGate.shouldPublish(text: "", now: 1.02), "empty PDFKit pulses right after mouse-up do not cancel the capsule")
 expect(pdfSelectionGate.shouldPublish(text: "", now: 1.02 + PDFSelectionReportGate.emptySuppression), "a later real empty selection can still dismiss the capsule")
+let oldMacLibrary = "/Users/old-owner/Documents/魏碑资料库"
+let thisMacLibrary = URL(fileURLWithPath: "/Users/new-owner/Documents/魏碑资料库", isDirectory: true)
+let recoveredRoots = CourseLibraryRootRecovery.candidates(
+    storedPath: oldMacLibrary,
+    defaultRoot: thisMacLibrary,
+    includePerUserDefault: true
+).map(\.path)
+expect(
+    recoveredRoots.contains(oldMacLibrary)
+        && recoveredRoots.contains(thisMacLibrary.path)
+        && recoveredRoots.allSatisfy { !$0.contains("/changfenhuang/") || $0 == oldMacLibrary },
+    "library recovery uses this Mac's Documents folder, not a hardcoded previous user path"
+)
+expect(
+    CourseLibraryRootRecovery.candidates(
+        storedPath: oldMacLibrary,
+        defaultRoot: thisMacLibrary,
+        includePerUserDefault: false
+    ).map(\.path) == [oldMacLibrary],
+    "tests do not probe the real user Documents library"
+)
+let sameDisk = ImportedFileIdentity(volumeID: 1, fileID: 99, birthTimeSeconds: 8, birthTimeNanoseconds: 1)
+let remounted = ImportedFileIdentity(volumeID: 2, fileID: 99, birthTimeSeconds: 8, birthTimeNanoseconds: 1)
+expect(
+    CourseLibraryRootRecovery.shouldAccept(
+        liveIdentity: remounted,
+        expectedIdentity: sameDisk,
+        matchingRegisteredCourseCount: 0
+    ),
+    "same folder after a remount still matches without the old volume id"
+)
+expect(
+    CourseLibraryRootRecovery.shouldAccept(
+        liveIdentity: ImportedFileIdentity(volumeID: 9, fileID: 1, birthTimeSeconds: 1, birthTimeNanoseconds: 1),
+        expectedIdentity: sameDisk,
+        matchingRegisteredCourseCount: 2
+    ),
+    "another computer can reopen the library when the course folders themselves are present"
+)
+expect(
+    !CourseLibraryRootRecovery.shouldAccept(
+        liveIdentity: ImportedFileIdentity(volumeID: 9, fileID: 1, birthTimeSeconds: 1, birthTimeNanoseconds: 1),
+        expectedIdentity: sameDisk,
+        matchingRegisteredCourseCount: 0
+    ),
+    "an empty unrelated Documents folder is not claimed as the course library"
+)
 expect(!SelectionFloatingAgentPlacement.isVisible(surface: .selectionFloat, hasSelection: true, hasAnchor: false, pinned: false), "selection agent waits for anchor before floating")
 expect(SelectionFloatingAgentPlacement.isVisible(surface: .selectionFloat, hasSelection: true, hasAnchor: true, pinned: false), "selection agent appears when anchored")
 expect(SelectionFloatingAgentPlacement.isVisible(surface: .selectionFloat, hasSelection: true, hasAnchor: false, pinned: false, keepOpen: true), "keepOpen floats stay visible without a live drag anchor")

@@ -52,6 +52,9 @@ enum CourseProjectRootSelfCheck {
         try step("新建课程原子落盘") {
             try newCourseCreatesAtomicProjectAndManifest()
         }
+        try step("书签失效后仍按本机资料库相对路径打开文稿") {
+            try brokenBookmarkStillOpensInLibraryCourseFile()
+        }
         try step("课程可携带状态恢复") {
             try portableCourseStateIsScopedAtomicAndRestorable()
         }
@@ -125,6 +128,39 @@ enum CourseProjectRootSelfCheck {
             try commonContentAndTwoLevelRemoval()
         }
         try legacyCourseSnapshotStillDecodes()
+    }
+
+    @MainActor
+    private static func brokenBookmarkStillOpensInLibraryCourseFile() throws {
+        let fixture = try Fixture(name: "broken-bookmark-in-library-open")
+        defer { fixture.remove() }
+        let library = try fixture.makeDirectory("课程资料库")
+        let source = fixture.root.appendingPathComponent("paper.txt")
+        try Data("in-library article\n".utf8).write(to: source)
+        let store = makeStore(fixture: fixture)
+        try store.configureCourseLibrary(at: library)
+        let courseID = try store.createCourseInLibrary(title: "恢复课")
+        let imported = try store.importFileIntoCourseForSelfCheck(
+            source,
+            courseID: courseID,
+            role: .material
+        ).item
+        try check(
+            store.flushPendingWorkspaceSave(),
+            "书签失效样本没有完成初始保存"
+        )
+        let reopened = makeStore(
+            fixture: fixture,
+            bookmarkResolver: { _ in nil }
+        )
+        try check(
+            reopened.courseLibraryRootURL?.standardizedFileURL
+                == library.standardizedFileURL
+                && reopened.courseRootUnavailableReason(for: courseID) == nil
+                && reopened.openCourseMaterial(imported.id, in: courseID)
+                && reopened.importedItems.first(where: { $0.id == imported.id })?.url != nil,
+            "书签失效后没有按本机资料库相对路径重新打开课程文稿"
+        )
     }
 
     @MainActor
@@ -2308,11 +2344,17 @@ enum CourseProjectRootSelfCheck {
             stopAccessing: { _ in stops += 1 }
         )
         try check(store?.courseLibraryRootPath != nil, "授权失效时错误删除了资料库记录")
-        try check(store?.courseLibraryRootURL == nil, "授权失败时仍把资料库标成可访问")
-        try check(store?.courseLibraryUnavailableReason != nil, "授权失败时没有报告资料库 unavailable")
+        try check(
+            store?.courseLibraryRootURL?.standardizedFileURL == library.standardizedFileURL,
+            "书签授权失败后没有按本机资料库路径恢复"
+        )
+        try check(store?.courseLibraryUnavailableReason == nil, "书签授权失败后错误把资料库标成不可用")
         try check(store?.course(withID: courseID) != nil, "授权失效时错误删除了课程")
-        try check(store?.courseRootURL(for: courseID) == nil, "授权失败时仍把课程标成可访问")
-        try check(store?.courseRootUnavailableReason(for: courseID) != nil, "授权失败时没有报告 unavailable")
+        try check(
+            store?.courseRootURL(for: courseID) != nil,
+            "书签授权失败后没有按课程相对路径恢复"
+        )
+        try check(store?.courseRootUnavailableReason(for: courseID) == nil, "书签授权失败后错误把课程标成不可用")
         store = nil
         try check(stops == 0, "startAccessing 失败后错误调用了 stopAccessing")
     }

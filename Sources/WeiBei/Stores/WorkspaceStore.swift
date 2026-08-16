@@ -327,11 +327,11 @@ final class WorkspaceStore: ObservableObject {
     @Published var selectedItemID: String?
     @Published var activeNotebookItemID: String?
     @Published private(set) var courses: [Course] = []
-    private(set) var courseLibraryRootPath: String?
-    private(set) var courseLibraryRootIdentity: ImportedFileIdentity?
-    private(set) var courseLibraryRootBookmarkData: Data?
-    private(set) var courseLibraryRootURL: URL?
-    private(set) var courseLibraryUnavailableReason: String?
+    var courseLibraryRootPath: String?
+    var courseLibraryRootIdentity: ImportedFileIdentity?
+    var courseLibraryRootBookmarkData: Data?
+    var courseLibraryRootURL: URL?
+    var courseLibraryUnavailableReason: String?
     @Published private(set) var courseItemMemberships: [CourseItemMembership] = [] {
         didSet {
             courseMembershipIndex = CourseItemMemberships(values: courseItemMemberships)
@@ -623,10 +623,10 @@ final class WorkspaceStore: ObservableObject {
     private let workspaceDirectory: URL
     private let storageURL: URL
     let importedFileIdentityResolver: (URL) -> ImportedFileIdentity?
-    private let courseRootBookmarkMaker: (URL) -> Data?
-    private let courseRootBookmarkResolver: (Data) -> CourseProjectResolvedBookmark?
-    private let courseSecurityScopeStarter: (URL) -> Bool
-    private let courseSecurityScopeStopper: (URL) -> Void
+    let courseRootBookmarkMaker: (URL) -> Data?
+    let courseRootBookmarkResolver: (Data) -> CourseProjectResolvedBookmark?
+    let courseSecurityScopeStarter: (URL) -> Bool
+    let courseSecurityScopeStopper: (URL) -> Void
     private let courseProjectMutationHook: (CourseProjectMutationStage) throws -> Void
     let notebookMarkdownReader: (URL) throws -> String
     let notebookMarkdownWriter: (String, URL) throws -> Void
@@ -712,7 +712,7 @@ final class WorkspaceStore: ObservableObject {
     private var noteSourceRelationIndex = NoteSourceRelationIndex(links: [])
     private var courseMembershipIndex = CourseItemMemberships()
     private var courseWorkspaceReturnFocus: PaneFocus?
-    private var activeCourseSecurityScopes: [String: URL] = [:]
+    var activeCourseSecurityScopes: [String: URL] = [:]
     private var activeCourseSecurityScopeOwnerTokens: [String: UUID] = [:]
     private var activeCourseRebindTokens: [UUID: UUID] = [:]
     private var activeCourseRemovalTokens: [UUID: UUID] = [:]
@@ -5938,7 +5938,7 @@ final class WorkspaceStore: ObservableObject {
         }
     }
 
-    private func validateLibraryRoot(_ root: URL) throws {
+    func validateLibraryRoot(_ root: URL) throws {
         let protectedRoots = [
             URL(fileURLWithPath: "/", isDirectory: true),
             FileManager.default.homeDirectoryForCurrentUser,
@@ -6088,41 +6088,15 @@ final class WorkspaceStore: ObservableObject {
         resolvedCourseRootURLs.removeAll()
         courseRootUnavailableReasons.removeAll()
 
-        if let bookmark = courseLibraryRootBookmarkData,
-           let expectedIdentity = courseLibraryRootIdentity,
-           let resolution = courseRootBookmarkResolver(bookmark) {
-            let scopedURL = resolution.url
-            if courseSecurityScopeStarter(scopedURL) {
-                if let resolvedRoot = try? CourseProjectPathPolicy.existingDirectory(scopedURL),
-                   importedFileIdentityResolver(resolvedRoot) == expectedIdentity {
-                    do {
-                        try validateLibraryRoot(resolvedRoot)
-                        activeCourseSecurityScopes["library"] = scopedURL
-                        courseLibraryRootURL = resolvedRoot
-                        if courseLibraryRootPath != resolvedRoot.path {
-                            courseLibraryRootPath = resolvedRoot.path
-                            changed = true
-                        }
-                        if resolution.isStale,
-                           let refreshedBookmark = courseRootBookmarkMaker(resolvedRoot) {
-                            courseLibraryRootBookmarkData = refreshedBookmark
-                            changed = true
-                        }
-                    } catch {
-                        courseSecurityScopeStopper(scopedURL)
-                        courseLibraryUnavailableReason = error.localizedDescription
-                    }
-                } else {
-                    courseSecurityScopeStopper(scopedURL)
-                    courseLibraryUnavailableReason = CourseProjectRootError.bookmarkResolutionFailed.localizedDescription
-                }
-            } else {
-                courseLibraryUnavailableReason = CourseProjectRootError.securityScopeDenied.localizedDescription
-            }
+        if bindLibraryRootFromBookmark() {
+            changed = true
+        } else if bindLibraryRootOnThisComputer() {
+            changed = true
         } else if courseLibraryRootPath != nil
                     || courseLibraryRootIdentity != nil
                     || courseLibraryRootBookmarkData != nil {
-            courseLibraryUnavailableReason = CourseProjectRootError.bookmarkResolutionFailed.localizedDescription
+            courseLibraryUnavailableReason = courseLibraryUnavailableReason
+                ?? CourseProjectRootError.bookmarkResolutionFailed.localizedDescription
         }
 
         changed = restoreCourseReferencesInsideLibrary() || changed
@@ -6140,24 +6114,15 @@ final class WorkspaceStore: ObservableObject {
         }
         var changed = false
         for index in courses.indices {
-            guard let relativePath = courses[index].sourceRootRelativePath,
-                  let expectedIdentity = courses[index].sourceRootIdentity else {
+            guard let relativePath = courses[index].sourceRootRelativePath else {
                 continue
             }
-            let expectedURL = CourseProjectPathPolicy.resolvedRelativePath(
-                relativePath,
+            let resolvedURL = resolveRegisteredCourseFolder(
+                relativePath: relativePath,
+                expectedIdentity: courses[index].sourceRootIdentity,
+                courseID: courses[index].id,
                 inside: libraryRoot
             )
-            let resolvedURL: URL?
-            if let expectedURL,
-               importedFileIdentityResolver(expectedURL) == expectedIdentity {
-                resolvedURL = expectedURL
-            } else {
-                resolvedURL = findDirectory(
-                    with: expectedIdentity,
-                    inside: libraryRoot
-                )
-            }
             guard let resolvedURL,
                   let nextRelativePath = CourseProjectPathPolicy.relativePath(
                     of: resolvedURL,
@@ -6179,6 +6144,11 @@ final class WorkspaceStore: ObservableObject {
             }
             resolvedCourseRootURLs[courseID] = resolvedURL
             courseRootUnavailableReasons.removeValue(forKey: courseID)
+            if let liveIdentity = importedFileIdentityResolver(resolvedURL),
+               courses[index].sourceRootIdentity != liveIdentity {
+                courses[index].sourceRootIdentity = liveIdentity
+                changed = true
+            }
             if courses[index].sourceRootRelativePath != nextRelativePath {
                 courses[index].sourceRootRelativePath = nextRelativePath
                 courses[index].updatedAt = Date()
@@ -6295,8 +6265,11 @@ final class WorkspaceStore: ObservableObject {
             mustBeInsideLibrary: mustBeInsideLibrary,
             excludingCourseID: course.id
         )
-        guard let expectedIdentity = course.sourceRootIdentity,
-              importedFileIdentityResolver(root) == expectedIdentity else {
+        let liveIdentity = importedFileIdentityResolver(root)
+        let identityMatches = course.sourceRootIdentity.flatMap { expected in
+            liveIdentity.map { expected.matchesAcrossVolumeDrift($0) }
+        } ?? false
+        if !identityMatches, courseManifestCourseID(at: root) != course.id {
             throw CourseProjectRootError.manifestMismatch
         }
         let manifestURL = root.appendingPathComponent(
@@ -6317,11 +6290,15 @@ final class WorkspaceStore: ObservableObject {
             throw CourseProjectRootError.manifestMismatch
         }
         if manifest.portableExport != nil {
+            guard let expectedRootIdentity = liveIdentity
+                    ?? course.sourceRootIdentity else {
+                throw CourseProjectRootError.manifestMismatch
+            }
             // S6-5：去掉 thread evidence 官僚路径，直接 adoptionSnapshot。
             let snapshot = try await courseProjectFileWorker
                 .adoptionSnapshot(
                     at: root,
-                    expectedRootIdentity: expectedIdentity
+                    expectedRootIdentity: expectedRootIdentity
                 )
             lastPortableAdoptionReadRanOnMainThread = false
             guard snapshot.manifest.courseID == course.id,
@@ -6343,7 +6320,7 @@ final class WorkspaceStore: ObservableObject {
         }
     }
 
-    private func findDirectory(
+    func findDirectory(
         with identity: ImportedFileIdentity,
         inside libraryRoot: URL
     ) -> URL? {
@@ -6364,7 +6341,8 @@ final class WorkspaceStore: ObservableObject {
                 continue
             }
             let canonical = candidate.resolvingSymlinksInPath().standardizedFileURL
-            if importedFileIdentityResolver(canonical) == identity {
+            if let live = importedFileIdentityResolver(canonical),
+               identity.matchesAcrossVolumeDrift(live) {
                 return canonical
             }
         }
