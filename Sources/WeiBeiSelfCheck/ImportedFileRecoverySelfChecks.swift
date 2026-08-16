@@ -112,6 +112,27 @@ func checkImportedFileRecovery() {
     )
     expect(missing == .missing, "an invalid bookmark and missing path stay missing")
 
+    let lastKnownOnly = root.appendingPathComponent("last-known-after-current.md")
+    try! Data("original".utf8).write(to: lastKnownOnly)
+    let lastKnownOnlyIdentity = identityAt(lastKnownOnly)
+    expect(lastKnownOnlyIdentity != nil, "last-known-after-current fixture identity is available")
+    guard let lastKnownOnlyIdentity else { return }
+    let lastKnownAfterCurrentFailed = ImportedFileRecovery.resolve(
+        storedIdentity: lastKnownOnlyIdentity,
+        currentPath: root.appendingPathComponent("stale-current.md").path,
+        lastKnownPath: lastKnownOnly.path,
+        bookmarkURL: nil,
+        identityAt: identityAt
+    )
+    expect(
+        lastKnownAfterCurrentFailed == .resolved(
+            url: lastKnownOnly.standardizedFileURL,
+            identity: lastKnownOnlyIdentity,
+            via: .lastKnownPath
+        ),
+        "after the current path fails, recovery must try lastKnownPath instead of retrying the same failed current path"
+    )
+
     expect(
         ImportedFileRecovery.shouldForgetGoneSource(
             parentLocationAvailable: true,
