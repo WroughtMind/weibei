@@ -295,7 +295,7 @@ struct CourseProjectEntrySheet: View {
         cancel: @escaping () -> Void,
         openCourse: @escaping (UUID) -> Void
     ) {
-        _intent = State(initialValue: initialIntent)
+        _intent = State(initialValue: .create)
         self.cancel = cancel
         self.openCourse = openCourse
     }
@@ -331,8 +331,6 @@ struct CourseProjectEntrySheet: View {
 
             if needsLibrary {
                 libraryPicker
-            } else if intent == .adopt {
-                adoptionPicker
             } else {
                 courseTitleField
                 if let libraryPath = store.courseLibraryRootURL?.path {
@@ -548,26 +546,6 @@ struct CourseProjectEntrySheet: View {
                 }
                 .buttonStyle(WeiBeiTextActionButtonStyle())
                 .disabled(isWorking)
-            } else if needsLibrary || intent == .create {
-                Button(store.ui("纳入已有文件夹", "Add Existing Folder")) {
-                    intent = .adopt
-                    selectedFolder = nil
-                    title = ""
-                    errorMessage = nil
-                    rebindProposal = nil
-                }
-                .buttonStyle(WeiBeiTextActionButtonStyle())
-                .disabled(isWorking)
-            } else {
-                Button(store.ui("返回新建课程", "Back to Create")) {
-                    intent = .create
-                    selectedFolder = nil
-                    title = ""
-                    errorMessage = nil
-                    rebindProposal = nil
-                }
-                .buttonStyle(WeiBeiTextActionButtonStyle())
-                .disabled(isWorking)
             }
 
             Spacer()
@@ -596,16 +574,8 @@ struct CourseProjectEntrySheet: View {
                 )
                 .keyboardShortcut(.defaultAction)
                 .disabled(isWorking)
-            } else if !needsLibrary, intent == .create {
+            } else if !needsLibrary {
                 Button(store.ui("创建", "Create"), action: createCourse)
-                    .buttonStyle(WeiBeiTextActionButtonStyle(active: true))
-                    .keyboardShortcut(.defaultAction)
-                    .disabled(cleanedTitle.isEmpty || isWorking)
-            } else if intent == .adopt, selectedFolder != nil {
-                Button(store.ui("重新选择", "Choose Again"), action: chooseAdoptionFolder)
-                    .buttonStyle(WeiBeiTextActionButtonStyle())
-                    .disabled(isWorking)
-                Button(store.ui("纳入课程", "Add Course"), action: adoptCourse)
                     .buttonStyle(WeiBeiTextActionButtonStyle(active: true))
                     .keyboardShortcut(.defaultAction)
                     .disabled(cleanedTitle.isEmpty || isWorking)

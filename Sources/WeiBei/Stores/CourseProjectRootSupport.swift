@@ -5326,7 +5326,7 @@ enum CourseProjectRootError: LocalizedError {
         case .unavailableLibrary:
             return "课程资料库当前不可访问。"
         case .rootMustNotExist:
-            return "新建课程的位置已经存在，请改用“纳入现有课程文件夹”。"
+            return "新建课程的位置已经存在。请换一个课程名，或先在 Finder 中整理资料库里的文件夹。"
         case .rootMustExist:
             return "要接管的课程文件夹不存在。"
         case .rootMustBeDirectory:

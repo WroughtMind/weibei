@@ -11,6 +11,7 @@ enum WeiBeiSafetyTestMode {
 #if DEBUG
     static var isEnabled: Bool {
         ProcessInfo.processInfo.environment["WEIBEI_SAFETY_TEST_MODE"] == "1"
+            || ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
     }
 #else
     static let isEnabled = false
@@ -1861,34 +1862,13 @@ final class WorkspaceStore: ObservableObject {
         let libraryRelativePath = courseLibraryRootURL.flatMap {
             CourseProjectPathPolicy.relativePath(of: canonicalRoot, inside: $0)
         }
-        var bookmark: Data?
-        var resolvedExternalRoot: URL?
-        var externalScopeURL: URL?
-        if libraryRelativePath == nil {
-            guard let madeBookmark = courseRootBookmarkMaker(canonicalRoot) else {
-                throw CourseProjectRootError.bookmarkUnavailable
-            }
-            guard let resolution = courseRootBookmarkResolver(madeBookmark) else {
-                throw CourseProjectRootError.bookmarkResolutionFailed
-            }
-            let scopedURL = resolution.url
-            guard courseSecurityScopeStarter(scopedURL) else {
-                throw CourseProjectRootError.securityScopeDenied
-            }
-            let resolved: URL
-            do {
-                resolved = try CourseProjectPathPolicy.existingDirectory(scopedURL)
-                guard importedFileIdentityResolver(resolved) == identity else {
-                    throw CourseProjectRootError.bookmarkResolutionFailed
-                }
-            } catch {
-                courseSecurityScopeStopper(scopedURL)
-                throw error
-            }
-            bookmark = madeBookmark
-            resolvedExternalRoot = resolved
-            externalScopeURL = scopedURL
+        guard let libraryRelativePath,
+              isTopLevelLibraryCourseFolder(libraryRelativePath) else {
+            throw CourseProjectRootError.rootOutsideLibrary
         }
+        let bookmark: Data? = nil
+        let resolvedExternalRoot: URL? = nil
+        let externalScopeURL: URL? = nil
 
         let metadataURL = canonicalRoot.appendingPathComponent(".weibei", isDirectory: true)
         let manifestURL = metadataURL.appendingPathComponent("course.json")
@@ -2122,10 +2102,10 @@ final class WorkspaceStore: ObservableObject {
             id: courseID,
             title: title,
             colorIndex: nextCourseColorIndex(),
-            sourceRootPath: libraryRelativePath == nil ? canonicalRoot.path : nil,
+            sourceRootPath: nil,
             sourceRootRelativePath: libraryRelativePath,
             sourceRootIdentity: identity,
-            sourceRootBookmarkData: bookmark
+            sourceRootBookmarkData: nil
         )
         courses.append(course)
         courseKnowledgeProfiles.append(
@@ -2367,10 +2347,10 @@ final class WorkspaceStore: ObservableObject {
         let previousNoteBackingDigests = noteBackingContentDigestsByItemID
 
         var refreshedCourse = previousCourse
-        refreshedCourse.sourceRootPath = libraryRelativePath == nil ? resolvedRoot.path : nil
+        refreshedCourse.sourceRootPath = nil
         refreshedCourse.sourceRootRelativePath = libraryRelativePath
         refreshedCourse.sourceRootIdentity = identity
-        refreshedCourse.sourceRootBookmarkData = refreshedBookmark
+        refreshedCourse.sourceRootBookmarkData = nil
         refreshedCourse.updatedAt = Date()
         courses[courseIndex] = refreshedCourse
         resolvedCourseRootURLs[existing.id] = resolvedRoot
@@ -2702,9 +2682,6 @@ final class WorkspaceStore: ObservableObject {
         if let resolved = resolvedCourseRootURLs[course.id] {
             candidates.append(resolved)
         }
-        if let path = course.sourceRootPath {
-            candidates.append(URL(fileURLWithPath: path, isDirectory: true))
-        }
         if let relativePath = course.sourceRootRelativePath,
            let libraryRoot = courseLibraryRootURL {
             let expectedLibraryPath = courseLibraryRootPath
@@ -2745,13 +2722,7 @@ final class WorkspaceStore: ObservableObject {
             }
         }
 
-        guard let bookmark = course.sourceRootBookmarkData,
-              let resolution = courseRootBookmarkResolver(bookmark),
-              courseSecurityScopeStarter(resolution.url) else {
-            return false
-        }
-        defer { courseSecurityScopeStopper(resolution.url) }
-        return matches(resolution.url)
+        return false
     }
 
     func courseRebindRootSearchRunsOffMainForSelfCheck() -> Bool {
@@ -2830,7 +2801,7 @@ final class WorkspaceStore: ObservableObject {
         try validateCourseProjectRoot(
             canonicalRoot,
             identity: proposal.candidateRootIdentity,
-            mustBeInsideLibrary: false,
+            mustBeInsideLibrary: true,
             excludingCourseID: proposal.courseID
         )
 
@@ -2840,34 +2811,13 @@ final class WorkspaceStore: ObservableObject {
                 inside: $0
             )
         }
-        var refreshedBookmark: Data?
-        var resolvedRoot = canonicalRoot
-        var newScopeURL: URL?
-        if libraryRelativePath == nil {
-            guard let bookmark = courseRootBookmarkMaker(canonicalRoot) else {
-                throw CourseProjectRootError.bookmarkUnavailable
-            }
-            guard let resolution = courseRootBookmarkResolver(bookmark) else {
-                throw CourseProjectRootError.bookmarkResolutionFailed
-            }
-            guard courseSecurityScopeStarter(resolution.url) else {
-                throw CourseProjectRootError.securityScopeDenied
-            }
-            do {
-                resolvedRoot = try CourseProjectPathPolicy.existingDirectory(
-                    resolution.url
-                )
-                guard importedFileIdentityResolver(resolvedRoot)
-                        == proposal.candidateRootIdentity else {
-                    throw CourseProjectRebindError.proposalChanged
-                }
-            } catch {
-                courseSecurityScopeStopper(resolution.url)
-                throw error
-            }
-            refreshedBookmark = bookmark
-            newScopeURL = resolution.url
+        guard let libraryRelativePath,
+              isTopLevelLibraryCourseFolder(libraryRelativePath) else {
+            throw CourseProjectRootError.rootOutsideLibrary
         }
+        let refreshedBookmark: Data? = nil
+        let resolvedRoot = canonicalRoot
+        let newScopeURL: URL? = nil
 
         var shouldStopNewScopeOnFailure = newScopeURL != nil
         let confirmedSnapshot: CoursePortableAdoptionSnapshot
@@ -2964,12 +2914,11 @@ final class WorkspaceStore: ObservableObject {
             }
 
             var reboundCourse = currentCourse
-            reboundCourse.sourceRootPath =
-                libraryRelativePath == nil ? resolvedRoot.path : nil
+            reboundCourse.sourceRootPath = nil
             reboundCourse.sourceRootRelativePath = libraryRelativePath
             reboundCourse.sourceRootIdentity =
                 proposal.candidateRootIdentity
-            reboundCourse.sourceRootBookmarkData = refreshedBookmark
+            reboundCourse.sourceRootBookmarkData = nil
             courses[courseIndex] = reboundCourse
             resolvedCourseRootURLs[proposal.courseID] = resolvedRoot
             courseRootUnavailableReasons.removeValue(
@@ -6021,21 +5970,6 @@ final class WorkspaceStore: ObservableObject {
         if let resolved = resolvedCourseRootURLs[course.id] {
             candidates.append(resolved)
         }
-        if let path = course.sourceRootPath {
-            candidates.append(
-                URL(fileURLWithPath: path)
-                    .resolvingSymlinksInPath()
-                    .standardizedFileURL
-            )
-        }
-        if let bookmark = course.sourceRootBookmarkData,
-           let resolution = courseRootBookmarkResolver(bookmark) {
-            candidates.append(
-                resolution.url
-                    .resolvingSymlinksInPath()
-                    .standardizedFileURL
-            )
-        }
         if let relativePath = course.sourceRootRelativePath,
            let resolved = CourseProjectPathPolicy.resolvedRelativePath(
                relativePath,
@@ -6123,8 +6057,27 @@ final class WorkspaceStore: ObservableObject {
     }
 
     private func legacyCourseRootURL(for course: Course) -> URL? {
-        guard let path = course.sourceRootPath else { return nil }
-        return try? CourseProjectPathPolicy.existingDirectory(URL(fileURLWithPath: path))
+        nil
+    }
+
+    private var persistableCourses: [Course] {
+        courses.map { course in
+            var next = course
+            next.sourceRootPath = nil
+            next.sourceRootBookmarkData = nil
+            return next
+        }
+    }
+
+    private func isTopLevelLibraryCourseFolder(_ relativePath: String) -> Bool {
+        let reserved = [
+            CourseLibraryLayout.commonMaterialsDirectoryName,
+            CourseLibraryLayout.commonNotesDirectoryName,
+        ]
+        return !relativePath.isEmpty
+            && !relativePath.contains("/")
+            && !relativePath.contains("..")
+            && !reserved.contains(relativePath)
     }
 
     @discardableResult
@@ -6173,54 +6126,6 @@ final class WorkspaceStore: ObservableObject {
         }
 
         changed = restoreCourseReferencesInsideLibrary() || changed
-        for index in courses.indices where courses[index].sourceRootRelativePath == nil {
-            let courseID = courses[index].id
-            guard let bookmark = courses[index].sourceRootBookmarkData,
-                  let expectedIdentity = courses[index].sourceRootIdentity else {
-                if courses[index].sourceRootPath != nil {
-                    courseRootUnavailableReasons[courseID] = "旧课程根没有可恢复的持久授权。"
-                }
-                continue
-            }
-            guard let resolution = courseRootBookmarkResolver(bookmark) else {
-                courseRootUnavailableReasons[courseID] = CourseProjectRootError.bookmarkResolutionFailed.localizedDescription
-                continue
-            }
-            let scopedURL = resolution.url
-            guard courseSecurityScopeStarter(scopedURL) else {
-                courseRootUnavailableReasons[courseID] = CourseProjectRootError.securityScopeDenied.localizedDescription
-                continue
-            }
-            guard let resolvedRoot = try? CourseProjectPathPolicy.existingDirectory(scopedURL),
-                  importedFileIdentityResolver(resolvedRoot) == expectedIdentity else {
-                courseSecurityScopeStopper(scopedURL)
-                courseRootUnavailableReasons[courseID] = CourseProjectRootError.bookmarkResolutionFailed.localizedDescription
-                continue
-            }
-            do {
-                try validateRestoredCourseRoot(
-                    resolvedRoot,
-                    course: courses[index],
-                    mustBeInsideLibrary: false
-                )
-            } catch {
-                courseSecurityScopeStopper(scopedURL)
-                courseRootUnavailableReasons[courseID] = error.localizedDescription
-                continue
-            }
-            activeCourseSecurityScopes["course:\(courseID.uuidString)"] = scopedURL
-            resolvedCourseRootURLs[courseID] = resolvedRoot
-            if courses[index].sourceRootPath != resolvedRoot.path {
-                courses[index].sourceRootPath = resolvedRoot.path
-                courses[index].updatedAt = Date()
-                changed = true
-            }
-            if resolution.isStale,
-               let refreshedBookmark = courseRootBookmarkMaker(resolvedRoot) {
-                courses[index].sourceRootBookmarkData = refreshedBookmark
-                changed = true
-            }
-        }
         return changed
     }
 
@@ -11173,7 +11078,20 @@ final class WorkspaceStore: ObservableObject {
                 result = .failure(error)
             }
         }
+        let deadline = WeiBeiSafetyTestMode.isEnabled
+            ? Date().addingTimeInterval(45)
+            : Date.distantFuture
         while result == nil {
+            if Date() > deadline {
+                throw NSError(
+                    domain: "WeiBei.WorkspaceStore",
+                    code: NSUserCancelledError,
+                    userInfo: [
+                        NSLocalizedDescriptionKey:
+                            "course file operation timed out",
+                    ]
+                )
+            }
             RunLoop.current.run(
                 mode: .default,
                 before: Date(timeIntervalSinceNow: 0.01)
@@ -18371,14 +18289,7 @@ final class WorkspaceStore: ObservableObject {
     }
 
     private func fileURLForImportedItem(_ item: StudyItem) -> URL? {
-        if let url = item.url { return url }
-        if item.id.hasPrefix("file:") {
-            let path = String(item.id.dropFirst("file:".count))
-            if !path.isEmpty {
-                return URL(fileURLWithPath: path)
-            }
-        }
-        return resolvedLibraryURL(for: item)
+        resolvedLibraryURL(for: item)
     }
 
     private func rebuildCourseMembershipsFromStorage() {
@@ -20437,7 +20348,12 @@ final class WorkspaceStore: ObservableObject {
         noteBackingContentDigestsByItemID = snapshot.noteBackingContentDigestsByItemID ?? [:]
         selectedItemID = snapshot.selectedItemID
         activeNotebookItemID = snapshot.activeNotebookItemID
-        courses = snapshot.courses ?? []
+        courses = (snapshot.courses ?? []).map { course in
+            var next = course
+            next.sourceRootPath = nil
+            next.sourceRootBookmarkData = nil
+            return next
+        }
         persistedWorkspaceCourseIDs = Set(courses.map(\.id))
         coursePortableStateRevisions = Dictionary(
             uniqueKeysWithValues: (snapshot.coursePortableStateRevisions ?? [:])
@@ -20613,7 +20529,7 @@ final class WorkspaceStore: ObservableObject {
                     : noteBackingContentDigestsByItemID,
                 selectedItemID: selectedItemID,
                 activeNotebookItemID: activeNotebookItemID,
-                courses: courses,
+                courses: persistableCourses,
                 courseItemMemberships: nil,
                 activeCourseID: activeCourseID,
                 courseLibraryRootPath: courseLibraryRootPath,
@@ -21370,7 +21286,7 @@ final class WorkspaceStore: ObservableObject {
                     : noteBackingContentDigestsByItemID,
                 selectedItemID: selectedItemID,
                 activeNotebookItemID: activeNotebookItemID,
-                courses: courses,
+                courses: persistableCourses,
                 courseItemMemberships: nil,
                 activeCourseID: activeCourseID,
                 courseLibraryRootPath: courseLibraryRootPath,

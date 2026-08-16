@@ -309,11 +309,6 @@ struct CourseHubView: View {
                 courseEntryPresentation = CourseProjectEntryPresentation(intent: .create)
             }
             .buttonStyle(WeiBeiTextActionButtonStyle(active: store.courses.isEmpty))
-
-            Button(store.ui("纳入已有文件夹", "Add existing folder")) {
-                courseEntryPresentation = CourseProjectEntryPresentation(intent: .adopt)
-            }
-            .buttonStyle(WeiBeiTextActionButtonStyle())
         }
     }
 
@@ -779,8 +774,8 @@ struct CourseHubView: View {
 
             Spacer(minLength: 8)
 
-            Button(store.ui("重新连接…", "Reconnect…")) {
-                courseEntryPresentation = CourseProjectEntryPresentation(intent: .adopt)
+            Button(store.ui("重新选择资料库…", "Re-select Library…")) {
+                courseEntryPresentation = CourseProjectEntryPresentation(intent: .create)
             }
             .buttonStyle(WeiBeiTextActionButtonStyle(active: true))
         }

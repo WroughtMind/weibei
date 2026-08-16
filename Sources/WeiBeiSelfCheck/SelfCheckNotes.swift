@@ -58,29 +58,26 @@ func checkNotePersistenceScenes() throws {
         "a notebook note keeps its rename title and backing-file edit flag"
     )
 
-    let legacyNote = try JSONDecoder().decode(
-        StudyItem.self,
-        from: Data(
-            """
-            {
-              "id":"file:/tmp/old-note.md",
-              "title":"旧笔记",
-              "subtitle":"old-note.md",
-              "kind":"markdown",
-              "urlPath":"/tmp/old-note.md",
-              "isSample":false
-            }
-            """.utf8
+    do {
+        _ = try JSONDecoder().decode(
+            StudyItem.self,
+            from: Data(
+                """
+                {
+                  "id":"file:/tmp/old-note.md",
+                  "title":"旧笔记",
+                  "subtitle":"old-note.md",
+                  "kind":"markdown",
+                  "urlPath":"/tmp/old-note.md",
+                  "isSample":false
+                }
+                """.utf8
+            )
         )
-    )
-    let reencodedLegacy = String(data: try JSONEncoder().encode(legacyNote), encoding: .utf8) ?? ""
-    expect(
-        legacyNote.isNotebookNote == false
-            && !legacyNote.editsBackingMarkdownFile
-            && !reencodedLegacy.contains("urlPath")
-            && !reencodedLegacy.contains("importedFileLastKnownPath"),
-        "decoded items do not persist a second file address"
-    )
+        expect(false, "items without storage must not decode")
+    } catch {
+        expect(true, "items without storage are discarded")
+    }
 
     let material = StudyItem(
         id: "imported:material",
