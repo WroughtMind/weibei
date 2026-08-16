@@ -72,15 +72,10 @@ enum CourseProjectRootSelfCheck {
             try portableCourseStatePreservesOfflineAndCorruptChanges()
         }
         try stagedAndWorkspaceFailuresLeaveNoGhostCourse()
-        try failedAdoptionRollsBackOnlyItsOwnMetadata()
         try foreignWritesPreventRollbackDeletion()
         try dangerousAndOverlappingRootsWriteNothing()
         try pathComparisonFollowsActualVolumeCaseSensitivity()
         try linkedMetadataDirectoryIsRejectedWithoutWrites()
-        try adoptingExistingFolderPreservesVisibleContentsAndIsIdempotent()
-        try repeatedAdoptionRefreshesTrackingAndOwnership()
-        try failedReadoptionRestoresPreviousCourseAndScope()
-        try courseRebindRequiresConfirmationAndIsTransactional()
         try damagedMetadataIsNotOverwritten()
         try movedLibraryCourseRestoresTheSameIdentity()
         try courseOwnedMaterialMovesOnlyAfterCommitAndRejectsConflicts()
@@ -111,9 +106,6 @@ enum CourseProjectRootSelfCheck {
         }
         try step("同一路径失焦写回并在激活时刷新") {
             try appDeactivationFlushesThenActivationRefreshesSameFile()
-        }
-        try step("H2 分叉重绑 keepsLocalState 不自动确认") {
-            try forkedRebindUsesKeepsLocalStateImpact()
         }
         try step("H3 根外 symlink 不登记") {
             try courseScanSkipsSymlinksOutsideRoot()
@@ -1174,17 +1166,29 @@ enum CourseProjectRootSelfCheck {
         for nested in [false, true] {
             let fixture = try Fixture(name: nested ? "library-inside-course" : "library-equals-course")
             defer { fixture.remove() }
-            let courseRoot = try fixture.makeDirectory("外部课程")
-            let proposedLibrary = nested
-                ? try fixture.makeDirectory("外部课程/资料库")
-                : courseRoot
+            let library = try fixture.makeDirectory("课程资料库")
             let store = makeStore(fixture: fixture)
-            let courseID = try store.adoptCourseFolder(at: courseRoot, title: "外部课程")
+            try store.configureCourseLibrary(at: library)
+            let courseID = try store.createCourseInLibrary(title: "已有课程")
+            let courseRoot = try require(store.courseRootURL(for: courseID), "没有课程根")
+            let proposedLibrary = nested
+                ? courseRoot.appendingPathComponent("资料库", isDirectory: true)
+                : courseRoot
+            if nested {
+                try FileManager.default.createDirectory(
+                    at: proposedLibrary,
+                    withIntermediateDirectories: true
+                )
+            }
 
             try expectFailure(nested ? "资料库位于课程内" : "资料库等于课程") {
                 try store.configureCourseLibrary(at: proposedLibrary)
             }
-            try check(store.courseLibraryRootURL == nil, "非法资料库仍被配置")
+            try check(
+                store.courseLibraryRootURL?.standardizedFileURL
+                    == library.standardizedFileURL,
+                "非法资料库仍被配置"
+            )
             try check(store.course(withID: courseID) != nil, "拒绝资料库时误删课程")
         }
     }
@@ -1244,17 +1248,11 @@ enum CourseProjectRootSelfCheck {
             try store.configureCourseLibrary(at: library)
             injectForeignWrite = true
 
-            try expectFailure("接管 metadata 并发写入") {
+            try expectFailure("接管库外课程") {
                 try store.adoptCourseFolder(at: external, title: "已有课程")
             }
-            try check(
-                try String(
-                    contentsOf: external.appendingPathComponent(".weibei/foreign.txt"),
-                    encoding: .utf8
-                ) == "用户 metadata",
-                "回滚误删了 .weibei 里的用户并发内容"
-            )
-            try check(store.courses.isEmpty, "接管并发保存失败后留下幽灵 Course")
+            try check(store.courses.isEmpty, "库外接管失败后留下幽灵 Course")
+            try check(!external.appendingPathComponent(".weibei").exists, "库外接管仍改写了外部文件夹")
         }
 
         do {
