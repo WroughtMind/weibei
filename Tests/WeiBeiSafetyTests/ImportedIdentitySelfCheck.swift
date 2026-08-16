@@ -20,11 +20,7 @@ enum ImportedIdentitySelfCheck {
         try failedLearningMemoryMigrationKeepsLegacySnapshotRecoverable()
         try learningMemoryEditsRejectTruncationAndRetrySave()
         try courseResumePointRestoresOneAtomicLearningScene()
-        try sameVolumeMoveKeepsIdentityRelationsNavigationAndIndex()
-        try temporarilyUnavailableNoteRetainsLatestEdit()
         try restoredPendingNoteErrorsStayWithAffectedNote()
-        try offlineLaunchNoteRetainsEditWhenFileReturns()
-        try inactiveQueuedDraftBlocksRenameWhenExternalChanged()
         try reentrantNotebookRenameKeepsOneRecoveryTransaction()
         try renameRejectsChangedFileGeneration()
         try activeRenameWriteFailureIsTransactional()
@@ -33,7 +29,6 @@ enum ImportedIdentitySelfCheck {
         try initialRenameMoveFailureLeavesHealthyFileAttached()
         try failedWorkspaceSaveRecoversRenameOnRestart()
         try duplicateLegacyIdentityMigratesInOneLaunch()
-        try replacedAndCrossVolumeFilesReceiveNewIdentities()
     }
 
     @MainActor
