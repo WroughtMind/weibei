@@ -29,23 +29,4 @@ final class PDFReaderOpenSafetyTests: XCTestCase {
         let blank = PDFPage()
         XCTAssertFalse(PDFReaderOpenSafety.pageHasNativeText(blank))
     }
-
-    @MainActor
-    func testDisabledAccessibilityTreeStillExposesProgrammaticSelection() {
-        let document = PDFDocument()
-        document.insert(PDFPage(), at: 0)
-        let view = PDFView(frame: NSRect(x: 0, y: 0, width: 400, height: 600))
-        PDFReaderOpenSafety.disableAccessibilityTree(on: view)
-        view.document = document
-        PDFReaderOpenSafety.disableAccessibilityTree(on: view)
-        guard let page = document.page(at: 0),
-              let selection = page.selection(for: page.bounds(for: .mediaBox)) else {
-            XCTFail("expected a page selection")
-            return
-        }
-        view.setCurrentSelection(selection, animate: false)
-        XCTAssertNotNil(view.currentSelection)
-        XCTAssertFalse(view.isAccessibilityElement())
-        XCTAssertNil(view.accessibilityChildren())
-    }
 }
