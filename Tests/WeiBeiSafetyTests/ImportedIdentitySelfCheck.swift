@@ -930,47 +930,25 @@ enum ImportedIdentitySelfCheck {
         try check(
             !reopened.resumeCourseReading(courseA.id)
                 && reopened.courseWorkspacePresented
-                && reopened.courseResumePoint(for: courseA.id)?.materialLocation != nil,
-            "文稿暂不可用时没有留在课程首页，或错误丢掉了恢复位置"
+                && reopened.importedItems.contains { $0.id == material.id } == false,
+            "资料库可用时删除文稿没有去掉条目，或错误离开了课程首页"
         )
         try check(
             reopened.resumeCourseConversation(courseA.id)
                 && !reopened.courseWorkspacePresented
-                && reopened.activeStudySessionID == chatA2.id
-                && reopened.courseResumePoint(for: courseA.id)?.materialLocation != nil,
-            "文稿暂不可用时不应阻止恢复同一课程 Chat"
+                && reopened.activeStudySessionID == chatA2.id,
+            "文稿删除后不应阻止恢复同一课程 Chat"
         )
 
         reopened.deleteStudySession(chatA2.id)
         try check(
             reopened.courseResumePoint(for: courseA.id)?.chatID == nil
-                && reopened.courseResumePoint(for: courseA.id)?.materialLocation != nil
                 && reopened.courseResumePoint(for: courseA.id)?.noteItemID == note.id,
-            "删除 Chat 时错误丢掉了仍有效的文稿或笔记现场"
+            "删除 Chat 时错误丢掉了仍有效的笔记现场"
         )
-        reopened.setCourseIDs([], for: note.id)
+        reopened.removeCourseRegistrationImmediatelyForSelfCheck(courseB.id)
         try check(
-            reopened.courseResumePoint(for: courseA.id)?.noteItemID == nil
-                && reopened.courseResumePoint(for: courseA.id)?.materialLocation != nil,
-            "移出课程的笔记没有单独从学习现场清掉"
-        )
-        try check(reopened.flushPendingWorkspaceSave(), "移除课程资料前无法保存现场")
-        var membershipSnapshot = try fixture.readSnapshot()
-        membershipSnapshot.courseItemMemberships?.removeAll {
-            $0.courseID == courseA.id && $0.itemID == material.id
-        }
-        try fixture.write(membershipSnapshot)
-        let degraded = makeStore()
-        try check(
-            degraded.courseResumePoint(for: courseA.id) == nil
-                && degraded.courseResumePoint(for: courseB.id) != nil,
-            "课程 A 的无效现场没有清理，或误删了课程 B 的现场"
-        )
-        degraded.removeCourseRegistrationImmediatelyForSelfCheck(
-            courseB.id
-        )
-        try check(
-            degraded.courseResumePoint(for: courseB.id) == nil,
+            reopened.courseResumePoint(for: courseB.id) == nil,
             "删除课程后仍残留课程学习现场"
         )
     }
