@@ -93,7 +93,20 @@ extension WorkspaceStore {
 
     func refreshRuntimeItemURLs() {
         for index in importedItems.indices {
-            if let url = resolvedLibraryURL(for: importedItems[index]) {
+            guard let url = resolvedLibraryURL(for: importedItems[index]) else {
+                continue
+            }
+            switch CourseProjectFileWorker.entryPresence(at: url) {
+            case .absent, .inaccessible:
+                importedItems[index].urlPath = nil
+            case .present:
+                if let expectedDigest = importedItems[index].contentDigest,
+                   let actual = try? CourseProjectFileWorker.snapshotFile(at: url),
+                   actual.sha256 != expectedDigest {
+                    importedItems[index].urlPath = nil
+                    importedItems[index].importedFileIdentity = nil
+                    continue
+                }
                 importedItems[index].urlPath = url.path
             }
         }

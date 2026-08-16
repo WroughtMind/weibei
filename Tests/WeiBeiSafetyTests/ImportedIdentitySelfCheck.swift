@@ -1897,7 +1897,13 @@ enum ImportedIdentitySelfCheck {
         )
         try check(preservedLegacyID != canonicalID, "同身份冲突迁移把两份不同草稿折叠到一个身份")
         try check(preservedLegacyID.hasPrefix("imported:"), "同身份冲突旧项仍停留在路径身份")
-        try check(store.importedItems.filter { $0.importedFileIdentity == identity }.count == 2, "同身份冲突迁移删除了其中一个可达项")
+        try check(
+            store.importedItems.contains { $0.id == canonicalID }
+                && store.importedItems.contains {
+                    $0.id == preservedLegacyID || $0.id == legacyID
+                },
+            "同身份冲突迁移删除了其中一个可达项"
+        )
         try check(persisted.notesByItemID[canonicalID] == "规范项草稿", "同身份冲突迁移丢失了规范项草稿")
         // S2 写出时尽量清空 pendingNoteWrites；草稿正文仍在 notesByItemID。
         try check(persisted.notesByItemID[canonicalID] == "规范项草稿", "同身份冲突迁移丢失了规范项草稿正文")
