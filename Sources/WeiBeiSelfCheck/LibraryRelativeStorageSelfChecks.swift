@@ -131,7 +131,8 @@ func checkLibraryRelativeStorage() throws {
     expect(
         !goneSource.contains("ImportedFileRecovery")
             && goneSource.contains("resolvedLibraryURL")
-            && goneSource.contains("relativePath.contains(\"/\")"),
+            && goneSource.contains("CourseProjectPathPolicy.resolvedRelativePath")
+            && !goneSource.contains("legacyFileURL"),
         "SAFETY:library-relative-gone gone-item handling uses library-relative paths instead of recovery"
     )
     expect(
@@ -146,8 +147,19 @@ func checkLibraryRelativeStorage() throws {
             || libraryRootSource.contains("copyExternalFileIntoLibrary"))
             && libraryRootSource.contains("copyExternalFileIntoCourse")
             && storeSource.contains("discoverTopLevelCourseFolders")
-            && storeSource.contains("courseItemMemberships: nil"),
+            && storeSource.contains("courseItemMemberships: nil")
+            && storeSource.contains("isTopLevelLibraryCourseFolder")
+            && storeSource.contains("rootOutsideLibrary"),
         "SAFETY:library-relative-import import, discovery, and persist follow the single-library model"
+    )
+    let hubSource = try String(
+        contentsOfFile: "Sources/WeiBei/Views/CourseHubView.swift",
+        encoding: .utf8
+    )
+    expect(
+        !hubSource.contains("纳入已有文件夹")
+            && !hubSource.contains("Add existing folder"),
+        "SAFETY:library-inside-entry App no longer offers in-place adoption of outside course folders"
     )
 }
 

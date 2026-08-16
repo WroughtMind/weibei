@@ -18,10 +18,7 @@ extension WorkspaceStore {
                 break
             }
         }
-        let candidate = resolvedLibraryURL(for: item)
-            ?? item.url
-            ?? legacyFileURL(from: item.id)
-        guard let candidate else {
+        guard let candidate = resolvedLibraryURL(for: item) else {
             return keepUnavailableImportedItem(at: index)
         }
         switch CourseProjectFileWorker.entryPresence(at: candidate) {
@@ -64,26 +61,29 @@ extension WorkspaceStore {
         return (nil, changed)
     }
 
-    private func legacyFileURL(from itemID: String) -> URL? {
-        guard itemID.hasPrefix("file:") else { return nil }
-        let path = String(itemID.dropFirst("file:".count))
-        return path.isEmpty ? nil : URL(fileURLWithPath: path)
-    }
-
     func resolvedLibraryURL(for item: StudyItem) -> URL? {
         switch item.storage {
         case .bundledSample:
             return item.url
         case .common(let relativePath):
-            // Leftover file: items decode as common(subtitle), e.g. "笔记.md".
-            // That is not a library-relative path and must not resolve under the root.
-            guard let root = courseLibraryRootURL,
-                  relativePath.contains("/") else { return nil }
-            return root.appendingPathComponent(relativePath)
+            guard let root = courseLibraryRootURL else { return nil }
+            return CourseProjectPathPolicy.resolvedRelativePath(
+                relativePath,
+                inside: root
+            )
         case .courseOwned(let courseID, let relativePath):
-            guard let root = courseRootURL(for: courseID),
-                  relativePath.contains("/") else { return nil }
-            return root.appendingPathComponent(relativePath)
+            guard let libraryRoot = courseLibraryRootURL,
+                  let courseRoot = courseRootURL(for: courseID),
+                  let courseRelative = CourseProjectPathPolicy.relativePath(
+                    of: courseRoot,
+                    inside: libraryRoot
+                  ) else {
+                return nil
+            }
+            return CourseProjectPathPolicy.resolvedRelativePath(
+                "\(courseRelative)/\(relativePath)",
+                inside: libraryRoot
+            )
         }
     }
 }

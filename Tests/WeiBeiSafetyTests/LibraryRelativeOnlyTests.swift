@@ -114,6 +114,13 @@ enum LibraryRelativeOnlyCheck {
         XCTAssertNil(store.importedItems.first(where: { $0.id == itemID }))
         XCTAssertTrue(store.studySessions.contains(where: { $0.id == chat.id && !$0.messages.isEmpty }))
 
+        try LibraryInsideOnlyCheck.run(
+            in: store,
+            workspace: workspace,
+            library: library,
+            outside: outside
+        )
+
         try FileManager.default.removeItem(at: library)
         let remainingIDs = store.importedItems.map(\.id)
         store.refreshRuntimeItemURLs()
@@ -128,5 +135,131 @@ enum LibraryRelativeOnlyCheck {
         XCTAssertFalse(text.contains("importedFileBookmarkData"))
         XCTAssertFalse(text.contains("legacyExternal"))
         XCTAssertFalse(text.contains("\"kind\":\"shared\""))
+    }
+}
+
+enum LibraryInsideOnlyCheck {
+    @MainActor
+    static func run(
+        in store: WorkspaceStore,
+        workspace: URL,
+        library: URL,
+        outside: URL
+    ) throws {
+        let entrySource = try String(
+            contentsOfFile: "Sources/WeiBei/Views/CourseHubView.swift",
+            encoding: .utf8
+        )
+        XCTAssertFalse(entrySource.contains("纳入已有文件夹"))
+        XCTAssertFalse(entrySource.contains("Add existing folder"))
+
+        let outsideCourse = outside.appendingPathComponent("库外课", isDirectory: true)
+        try FileManager.default.createDirectory(at: outsideCourse, withIntermediateDirectories: true)
+        do {
+            _ = try store.adoptCourseFolder(at: outsideCourse, title: "库外课")
+            XCTFail("资料库外课程仍被原地纳入")
+        } catch CourseProjectRootError.rootOutsideLibrary {
+        }
+
+        let createdID = try store.createCourseInLibrary(title: "库内新建")
+        let createdRoot = try XCTUnwrap(store.courseRootURL(for: createdID))
+        XCTAssertTrue(CourseProjectPathPolicy.contains(library, createdRoot, includingRoot: false))
+        XCTAssertNil(store.course(withID: createdID)?.sourceRootPath)
+        XCTAssertNil(store.course(withID: createdID)?.sourceRootBookmarkData)
+
+        let traversal = StudyItem(
+            id: "imported:traversal",
+            title: "越界",
+            subtitle: "secret.txt",
+            kind: .text,
+            urlPath: nil,
+            isSample: false,
+            storage: .common(relativePath: "../secret.txt")
+        )
+        XCTAssertNil(store.resolvedLibraryURL(for: traversal))
+
+        let escaped = outside.appendingPathComponent("escaped.txt")
+        try Data("outside\n".utf8).write(to: escaped)
+        let escapeLink = library
+            .appendingPathComponent("通用资料", isDirectory: true)
+            .appendingPathComponent("escape.txt")
+        try FileManager.default.createDirectory(
+            at: escapeLink.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try FileManager.default.createSymbolicLink(
+            at: escapeLink,
+            withDestinationURL: escaped
+        )
+        let escapeItem = StudyItem(
+            id: "imported:escape",
+            title: "外链",
+            subtitle: "escape.txt",
+            kind: .text,
+            urlPath: nil,
+            isSample: false,
+            storage: .common(relativePath: "通用资料/escape.txt")
+        )
+        XCTAssertNil(store.resolvedLibraryURL(for: escapeItem))
+
+        let sharedBytes = Data("shared-in-library\n".utf8)
+        let commonURL = try store.copyExternalFileIntoLibrary(
+            {
+                let source = outside.appendingPathComponent("共享讲义.txt")
+                try sharedBytes.write(to: source)
+                return source
+            }(),
+            isNote: false
+        )
+        let courseA = try store.createCourseInLibrary(title: "共享甲")
+        let courseB = try store.createCourseInLibrary(title: "共享乙")
+        let imported = store.importFiles([commonURL], markdownAsNotes: false)
+        let sharedItem = try XCTUnwrap(imported.first)
+        try store.shareCourseOwnedItemForSelfCheck(itemID: sharedItem.id, withCourseID: courseA)
+        try store.shareCourseOwnedItemForSelfCheck(itemID: sharedItem.id, withCourseID: courseB)
+        XCTAssertEqual(Set(store.courseIDs(for: sharedItem.id)), Set([courseA, courseB]))
+
+        let courseARoot = try XCTUnwrap(store.courseRootURL(for: courseA))
+        let link = courseARoot
+            .appendingPathComponent("文稿", isDirectory: true)
+            .appendingPathComponent(commonURL.lastPathComponent)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: link.path))
+        let destination = try FileManager.default.destinationOfSymbolicLink(atPath: link.path)
+        let resolvedLink = URL(fileURLWithPath: destination, relativeTo: link.deletingLastPathComponent())
+            .standardizedFileURL
+        XCTAssertTrue(CourseProjectPathPolicy.contains(library, resolvedLink, includingRoot: false))
+
+        let linkedItem = store.importedItems.first { $0.id == sharedItem.id }
+        XCTAssertNotNil(linkedItem.flatMap { store.resolvedLibraryURL(for: $0) })
+
+        XCTAssertTrue(store.flushPendingWorkspaceSave())
+        let snapshot = try JSONDecoder().decode(
+            PersistedWorkspace.self,
+            from: try Data(
+                contentsOf: workspace.appendingPathComponent("workspace.json")
+            )
+        )
+        let snapshotText = String(
+            data: try JSONEncoder().encode(snapshot),
+            encoding: .utf8
+        ) ?? ""
+        XCTAssertFalse(snapshotText.contains("urlPath"))
+        XCTAssertFalse(snapshotText.contains("importedFileLastKnownPath"))
+        XCTAssertFalse(snapshotText.contains("importedFileBookmarkData"))
+        XCTAssertFalse(snapshotText.contains("sourceRootPath"))
+        XCTAssertFalse(snapshotText.contains("sourceRootBookmarkData"))
+        XCTAssertTrue(
+            snapshot.courses?.allSatisfy {
+                $0.sourceRootPath == nil && $0.sourceRootBookmarkData == nil
+            } == true
+        )
+
+        let originalTitle = try XCTUnwrap(store.course(withID: courseA)?.title)
+        let renamed = library.appendingPathComponent("共享甲改名", isDirectory: true)
+        try FileManager.default.moveItem(at: courseARoot, to: renamed)
+        store.discoverTopLevelCourseFolders()
+        XCTAssertEqual(store.course(withID: courseA)?.title, "共享甲改名")
+        XCTAssertEqual(store.course(withID: courseA)?.id, courseA)
+        _ = originalTitle
     }
 }

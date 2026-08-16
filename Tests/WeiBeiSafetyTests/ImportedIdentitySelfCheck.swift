@@ -1433,19 +1433,14 @@ enum ImportedIdentitySelfCheck {
             }
             """.utf8
         )
-        let legacyExternal = try JSONDecoder().decode(StudyItem.self, from: legacyExternalData)
-        try check(legacyExternal.storage == .common(relativePath: "legacy.txt"), "缺少 storage 的条目应按文件名记相对路径")
-        try check(legacyExternal.contentRevision == 1, "旧资料没有获得首版内容修订号")
-        try check(legacyExternal.contentDigest == nil, "旧资料被伪造了内容摘要")
-        let reencodedLegacyExternal = String(
-            data: try JSONEncoder().encode(legacyExternal),
-            encoding: .utf8
-        ) ?? ""
-        try check(
-            !reencodedLegacyExternal.contains("urlPath")
-                && !reencodedLegacyExternal.contains("importedFileLastKnownPath"),
-            "解码后不应保留第二套绝对路径"
-        )
+        do {
+            _ = try JSONDecoder().decode(StudyItem.self, from: legacyExternalData)
+            throw CheckError.failed("缺少 storage 的条目仍被当成有效资料")
+        } catch CheckError.failed(let message) {
+            throw CheckError.failed(message)
+        } catch {
+            // Old snapshots without storage are discarded, not guessed.
+        }
 
         let legacySampleData = Data(
             """
@@ -1485,7 +1480,7 @@ enum ImportedIdentitySelfCheck {
             contentRevision: 3,
             contentDigest: "sha256:shared"
         )
-        for item in [ownedItem, sharedItem, legacyExternal, legacySample] {
+        for item in [ownedItem, sharedItem, legacySample] {
             let decoded = try JSONDecoder().decode(
                 StudyItem.self,
                 from: JSONEncoder().encode(item)
