@@ -111,6 +111,9 @@ try runPiAgentSelfChecks()
 checkCourseLibraryVolatility()
 checkImportedFileRecovery()
 checkUnavailableCourseUnregister()
+try checkNotePersistenceScenes()
+try checkImportIdentityScenes()
+try checkWorkspaceSafetyScenes()
 
 expect(EmptyWorkspaceDayPeriod(hour: 5) == .morning
     && EmptyWorkspaceDayPeriod(hour: 10) == .morning
