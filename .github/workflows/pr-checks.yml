@@ -27,7 +27,7 @@ jobs:
   fast-check:
     name: 快速编译与核心自检
     runs-on: macos-26
-    timeout-minutes: 15
+    timeout-minutes: 25
     outputs:
       release: ${{ steps.scope.outputs.release }}
 
@@ -96,7 +96,7 @@ jobs:
 
       - name: 运行课程目录与数据安全自检
         if: (github.event_name == 'pull_request' && steps.scope.outputs.data_safety == 'true') || (github.event_name == 'workflow_dispatch' && inputs.full_suite)
-        run: swift test --filter WeiBeiSafetyTests
+        run: swift test --filter WeiBeiSafetyTests --verbose
 
       - name: 检查空白与生成文件
         run: |
