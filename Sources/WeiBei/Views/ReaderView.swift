@@ -1263,6 +1263,7 @@ private struct PDFReaderRepresentable: NSViewRepresentable {
         view.autoScales = true
         view.displayDirection = .vertical
         view.backgroundColor = WeiBeiNativePalette.paper(for: appearanceMode)
+        PDFReaderOpenSafety.disableAccessibilityTree(on: view)
         view.configureDocumentColorAdaptation(enabled: adaptsDocumentColors, appearanceMode: appearanceMode)
         DispatchQueue.main.async {
             WeiBeiQuietScrollers.configureRecursively(
@@ -1427,18 +1428,27 @@ private struct PDFReaderRepresentable: NSViewRepresentable {
 
             DispatchQueue.global(qos: .userInitiated).async {
                 let document = PDFDocument(url: url)
+                let firstPageHasText = document.flatMap { $0.page(at: 0) }
+                    .map(PDFReaderOpenSafety.pageHasNativeText) ?? false
                 DispatchQueue.main.async { [weak self, weak view] in
                     guard let self, let view, self.loadGeneration == generation, self.loadedURL == url else { return }
+                    PDFReaderOpenSafety.disableAccessibilityTree(on: view)
                     view.document = document
+                    PDFReaderOpenSafety.disableAccessibilityTree(on: view)
                     view.autoScales = true
                     self.pageCount.wrappedValue = document?.pageCount ?? 0
                     self.pageIndex.wrappedValue = 0
-                    if let document {
-                        self.nativeTextPageIndexes = Self.selectableTextPageIndexes(in: document)
+                    if firstPageHasText {
+                        self.nativeTextPageIndexes = [0]
                     }
                     self.updateSelectableTextState(in: view)
-                    self.configureOCROverlays(for: document, generation: generation, in: view)
-                    self.ensureOCRForCurrentPage(in: view)
+                    if let document {
+                        self.finishLoadOffMain(
+                            document: document,
+                            generation: generation,
+                            in: view
+                        )
+                    }
                     if !self.lastSearchQuery.isEmpty {
                         self.applySearch(
                             self.lastSearchQuery,
@@ -1452,31 +1462,36 @@ private struct PDFReaderRepresentable: NSViewRepresentable {
             }
         }
 
-        private static func selectableTextPageIndexes(in document: PDFDocument) -> Set<Int> {
-            Set((0..<max(document.pageCount, 0)).filter { index in
-                guard let page = document.page(at: index) else { return false }
-                return page.string?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
-            })
-        }
-
-        private static func ocrCandidatePageIndexes(in document: PDFDocument, maxPages: Int = 12) -> [Int] {
-            let pageLimit = min(max(document.pageCount, 0), max(maxPages, 0))
-            guard pageLimit > 0 else { return [] }
-            return (0..<pageLimit).filter { index in
-                guard let page = document.page(at: index) else { return false }
-                return page.string?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false
+        private func finishLoadOffMain(
+            document: PDFDocument,
+            generation: Int,
+            in view: PDFView
+        ) {
+            DispatchQueue.global(qos: .userInitiated).async { [weak self, weak view] in
+                let nativeIndexes = PDFReaderOpenSafety.nativeTextPageIndexes(in: document)
+                let ocrIndexes = PDFReaderOpenSafety.ocrCandidatePageIndexes(in: document)
+                DispatchQueue.main.async {
+                    guard let self, let view, self.loadGeneration == generation else { return }
+                    self.nativeTextPageIndexes = nativeIndexes
+                    self.updateSelectableTextState(in: view)
+                    self.configureOCROverlays(
+                        for: document,
+                        pageIndexes: ocrIndexes,
+                        generation: generation,
+                        in: view
+                    )
+                    self.ensureOCRForCurrentPage(in: view)
+                }
             }
         }
 
-        private func configureOCROverlays(for document: PDFDocument?, generation: Int, in view: PDFView) {
-            guard let document else {
-                clearOCROverlays(in: view)
-                updateSelectableTextState(in: view)
-                return
-            }
-
-            let pageIndexes = Self.ocrCandidatePageIndexes(in: document)
-            guard !pageIndexes.isEmpty else {
+        private func configureOCROverlays(
+            for document: PDFDocument?,
+            pageIndexes: [Int],
+            generation: Int,
+            in view: PDFView
+        ) {
+            guard let document, !pageIndexes.isEmpty else {
                 clearOCROverlays(in: view)
                 updateSelectableTextState(in: view)
                 return
@@ -1909,6 +1924,12 @@ private final class ReaderPDFView: PDFView {
     private var adaptsDocumentColors = true
     private var documentAppearanceMode: WeiBeiAppearanceMode = .paper
     private var trackingArea: NSTrackingArea?
+
+    override func isAccessibilityElement() -> Bool { false }
+
+    override func accessibilityChildren() -> [Any]? { nil }
+
+    override func accessibilityHitTest(_ point: NSPoint) -> Any? { nil }
 
     func configureDocumentColorAdaptation(enabled: Bool, appearanceMode: WeiBeiAppearanceMode) {
         guard adaptsDocumentColors != enabled || documentAppearanceMode != appearanceMode else { return }
