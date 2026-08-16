@@ -1138,6 +1138,64 @@ expect(
     ),
     "an empty unrelated Documents folder is not claimed as the course library"
 )
+do {
+    let courseID = UUID()
+    let liveItem = CoursePortableItem(
+        itemID: "imported:live",
+        title: "page",
+        kind: .html,
+        isNotebookNote: false,
+        courseRelativePath: "文稿/page.html",
+        storage: .courseOwned,
+        contentRevision: 1,
+        contentDigest: nil,
+        membershipCreatedAt: Date()
+    )
+    let duplicatePathItem = CoursePortableItem(
+        itemID: "imported:dup",
+        title: "page",
+        kind: .html,
+        isNotebookNote: false,
+        courseRelativePath: "文稿/page.html",
+        storage: .courseOwned,
+        contentRevision: 1,
+        contentDigest: nil,
+        membershipCreatedAt: Date()
+    )
+    let staleResume = CourseResumePoint(
+        courseID: courseID,
+        materialLocation: StudyLocation(itemID: "imported:gone", itemTitle: "gone")
+    )
+    let raw = CoursePortableState(
+        courseID: courseID,
+        revision: 1,
+        savedAt: Date(),
+        metadata: CoursePortableMetadata(
+            title: "课",
+            colorIndex: 0,
+            createdAt: Date(),
+            updatedAt: Date()
+        ),
+        items: [liveItem, duplicatePathItem],
+        studySessions: [],
+        learningMemoryState: nil,
+        noteSourceLinks: [],
+        studyLocationsByItemID: [
+            "imported:gone": StudyLocation(itemID: "imported:gone", itemTitle: "gone")
+        ],
+        resumePoint: staleResume,
+        pendingNoteDrafts: []
+    )
+    let saved = try raw.validated(expectedCourseID: courseID)
+    expect(
+        saved.items.map(\.itemID) == ["imported:live"]
+            && saved.resumePoint == nil
+            && saved.studyLocationsByItemID.isEmpty,
+        "import and export persist the file in 文稿; last-read position is not a save gate"
+    )
+} catch {
+    expect(false, "import/export course state must not fail because last-read position is missing: \(error)")
+}
 expect(!SelectionFloatingAgentPlacement.isVisible(surface: .selectionFloat, hasSelection: true, hasAnchor: false, pinned: false), "selection agent waits for anchor before floating")
 expect(SelectionFloatingAgentPlacement.isVisible(surface: .selectionFloat, hasSelection: true, hasAnchor: true, pinned: false), "selection agent appears when anchored")
 expect(SelectionFloatingAgentPlacement.isVisible(surface: .selectionFloat, hasSelection: true, hasAnchor: false, pinned: false, keepOpen: true), "keepOpen floats stay visible without a live drag anchor")
