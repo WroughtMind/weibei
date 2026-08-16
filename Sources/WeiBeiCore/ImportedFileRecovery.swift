@@ -58,4 +58,15 @@ public enum ImportedFileRecovery {
         }
         return .identityConflict(url: fallbackURL)
     }
+
+    /// Parent folder still reachable and the file itself is gone: drop the
+    /// WeiBei registration. A missing parent (unavailable course/library)
+    /// must not wipe every item inside it.
+    public static func shouldForgetGoneSource(
+        parentLocationAvailable: Bool,
+        fileReadable: Bool,
+        isSample: Bool
+    ) -> Bool {
+        !isSample && parentLocationAvailable && !fileReadable
+    }
 }
