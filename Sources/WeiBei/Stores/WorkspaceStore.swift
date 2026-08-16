@@ -20417,7 +20417,7 @@ final class WorkspaceStore: ObservableObject {
         dirtyPortableCourseIDs = Set(
             snapshot.dirtyPortableCourseIDs ?? []
         )
-        courseItemMemberships = []
+        courseItemMemberships = snapshot.courseItemMemberships ?? []
         activeCourseID = snapshot.activeCourseID
         courseLibraryRootPath = snapshot.courseLibraryRootPath
         courseLibraryRootIdentity = snapshot.courseLibraryRootIdentity
