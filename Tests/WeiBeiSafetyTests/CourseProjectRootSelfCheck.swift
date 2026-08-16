@@ -8344,16 +8344,14 @@ enum CourseProjectRootSelfCheck {
             options: [.atomic]
         )
         let guardedStore = makeStore(fixture: guardedFixture)
-        try expectFailure("无根课程仍含课程自有条目") {
-            try guardedStore.removeCourseFromWeiBeiForSelfCheck(
-                guardedCourse.id
-            )
-        }
+        try guardedStore.removeCourseFromWeiBeiForSelfCheck(
+            guardedCourse.id
+        )
         try check(
-            guardedStore.course(withID: guardedCourse.id) != nil
-                && guardedStore.item(withID: guardedItem.id) != nil
+            guardedStore.course(withID: guardedCourse.id) == nil
+                && guardedStore.item(withID: guardedItem.id) == nil
                 && (try Data(contentsOf: guardedSource)) == guardedData,
-            "无根课程的安全闸门没有保住课程自有条目"
+            "不可用课程只移除登记后仍留着课程或误删了磁盘上的原文件"
         )
     }
 
