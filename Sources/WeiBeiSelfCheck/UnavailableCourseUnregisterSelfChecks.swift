@@ -3,10 +3,6 @@ import WeiBeiCore
 
 func checkUnavailableCourseUnregister() {
     expect(
-        UnavailableCourseUnregister.action == .removeRegistrationOnly,
-        "unavailable courses must unregister without deleting folders"
-    )
-    expect(
         UnavailableCourseUnregister.shouldOfferUnregister(
             rootURL: nil,
             unavailableReason: nil

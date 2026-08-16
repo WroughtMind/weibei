@@ -709,7 +709,6 @@ private struct LibraryRow: View {
     let selected: Bool
     let compact: Bool
     let accent: Color?
-    var sourceMissingLabel: String? = nil
     @State private var hovering = false
 
     var body: some View {
@@ -725,9 +724,9 @@ private struct LibraryRow: View {
                     .font(.system(size: compact ? 12.5 : 13, weight: compact ? .medium : .regular))
                     .lineLimit(1)
                     .foregroundStyle(WeiBeiTheme.ink)
-                Text(sourceMissingLabel.map { compact ? $0 : "\($0) · \(item.subtitle)" } ?? item.subtitle)
+                Text(item.subtitle)
                     .font(compact ? .system(size: 10.5) : .caption)
-                    .foregroundStyle(sourceMissingLabel == nil ? WeiBeiTheme.secondaryInk : WeiBeiTheme.cinnabar)
+                    .foregroundStyle(WeiBeiTheme.secondaryInk)
                     .lineLimit(1)
                 if !compact, !tags.isEmpty {
                     Text(tags.prefix(3).joined(separator: " "))

@@ -28,7 +28,7 @@ extension WorkspaceStore {
             parent: parentPresence,
             isSample: item.isSample
         ) {
-            if filePresence == .present, let fileURL {
+            if filePresence == .present {
                 return (fileURL.standardizedFileURL, false)
             }
             return keepUnavailableImportedItem(at: index)

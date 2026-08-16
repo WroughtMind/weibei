@@ -27,10 +27,12 @@ public enum ImportedFileRecovery {
         let currentURL = currentPath.map {
             URL(fileURLWithPath: $0).standardizedFileURL
         }
-        if let currentURL,
-           let identity = identityAt(currentURL),
-           identity.matchesAcrossVolumeDrift(storedIdentity) {
-            return .resolved(url: currentURL, identity: identity, via: .currentPath)
+        var currentConflict: URL?
+        if let currentURL, let identity = identityAt(currentURL) {
+            if identity.matchesAcrossVolumeDrift(storedIdentity) {
+                return .resolved(url: currentURL, identity: identity, via: .currentPath)
+            }
+            currentConflict = currentURL
         }
 
         if let bookmarkURL {
@@ -45,20 +47,26 @@ public enum ImportedFileRecovery {
             }
         }
 
-        guard let lastKnownPath else { return .missing }
-        let fallbackURL = URL(fileURLWithPath: lastKnownPath).standardizedFileURL
-        if let currentURL, fallbackURL == currentURL {
-            return .missing
+        if let lastKnownPath {
+            let fallbackURL = URL(fileURLWithPath: lastKnownPath).standardizedFileURL
+            if currentURL == nil || fallbackURL != currentURL {
+                if let identity = identityAt(fallbackURL) {
+                    if identity.matchesAcrossVolumeDrift(storedIdentity) {
+                        return .resolved(
+                            url: fallbackURL,
+                            identity: identity,
+                            via: .lastKnownPath
+                        )
+                    }
+                    return .identityConflict(url: fallbackURL)
+                }
+            }
         }
-        guard let identity = identityAt(fallbackURL) else { return .missing }
-        if identity.matchesAcrossVolumeDrift(storedIdentity) {
-            return .resolved(
-                url: fallbackURL,
-                identity: identity,
-                via: .lastKnownPath
-            )
+
+        if let currentConflict {
+            return .identityConflict(url: currentConflict)
         }
-        return .identityConflict(url: fallbackURL)
+        return .missing
     }
 
     public enum LocationAvailability: Equatable, Sendable {

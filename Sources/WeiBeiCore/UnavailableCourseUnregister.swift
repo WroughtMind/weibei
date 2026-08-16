@@ -4,12 +4,6 @@ import Foundation
 /// The only allowed action is `removeCourseFromWeiBei`, which drops the
 /// registration and relations and must not move or delete external files.
 public enum UnavailableCourseUnregister {
-    public enum Action: Equatable, Sendable {
-        case removeRegistrationOnly
-    }
-
-    public static let action: Action = .removeRegistrationOnly
-
     public static func shouldOfferUnregister(
         rootURL: URL?,
         unavailableReason: String?

@@ -4,7 +4,7 @@ import XCTest
 @testable import WeiBei
 import WeiBeiCore
 
-final class MissingItemRebindTests: XCTestCase {
+final class GoneImportedItemTests: XCTestCase {
     override class func setUp() {
         super.setUp()
         setenv("WEIBEI_SAFETY_TEST_MODE", "1", 1)
