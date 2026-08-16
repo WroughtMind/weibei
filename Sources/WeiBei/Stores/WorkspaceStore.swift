@@ -19818,9 +19818,10 @@ final class WorkspaceStore: ObservableObject {
                     throw CoursePortableStateError.invalidItemStorage
                 }
                 storage = .common(relativePath: sharedRelativePath)
-                let existingBelongsToKnownCourse = existing.map {
-                    previousItemIDs.contains($0.id)
-                        || otherCourseItemIDs.contains($0.id)
+                let existingBelongsToKnownCourse = existing.map { item in
+                    if case .common = item.storage { return true }
+                    return previousItemIDs.contains(item.id)
+                        || otherCourseItemIDs.contains(item.id)
                 } ?? false
                 let existingIsCurrentCanonical: Bool
                 if existingBelongsToKnownCourse,

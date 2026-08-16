@@ -1473,7 +1473,15 @@ enum ImportedIdentitySelfCheck {
         try check(legacyExternal.storage == .common(relativePath: "legacy.txt"), "缺少 storage 的条目应按文件名记相对路径")
         try check(legacyExternal.contentRevision == 1, "旧资料没有获得首版内容修订号")
         try check(legacyExternal.contentDigest == nil, "旧资料被伪造了内容摘要")
-        try check(legacyExternal.urlPath == nil, "解码后不应保留第二套绝对路径")
+        let reencodedLegacyExternal = String(
+            data: try JSONEncoder().encode(legacyExternal),
+            encoding: .utf8
+        ) ?? ""
+        try check(
+            !reencodedLegacyExternal.contains("urlPath")
+                && !reencodedLegacyExternal.contains("importedFileLastKnownPath"),
+            "解码后不应保留第二套绝对路径"
+        )
 
         let legacySampleData = Data(
             """
