@@ -1923,21 +1923,13 @@ enum ImportedIdentitySelfCheck {
                 try JSONEncoder().encode([thread]),
                 forKey: legacyKey
             )
-            try fixture.write(
-                PersistedWorkspace(
-                    importedItems: [
-                        StudyItem(
-                            id: oldID,
-                            title: "提交顺序",
-                            subtitle: materialURL.lastPathComponent,
-                            kind: .text,
-                            urlPath: materialURL.path,
-                            isSample: false
-                        ),
-                    ],
-                    selectedItemID: oldID,
-                    noteSourceLinksMigrationVersion: 1
-                )
+            try Data(
+                """
+                {"importedItems":[{"id":"\(oldID)","title":"提交顺序","subtitle":"\(materialURL.lastPathComponent)","kind":"text","urlPath":"\(materialURL.path)","isSample":false}],"selectedItemID":"\(oldID)","noteSourceLinksMigrationVersion":1}
+                """.utf8
+            ).write(
+                to: fixture.workspaceDirectory.appendingPathComponent("workspace.json"),
+                options: [.atomic]
             )
 
             var failedStore: WorkspaceStore? = WorkspaceStore(

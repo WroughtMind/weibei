@@ -2842,6 +2842,7 @@ enum CourseProjectRootSelfCheck {
             fixture: fixture,
             workspaceDirectory: reopenedWorkspace
         )
+        try reopened.configureCourseLibrary(at: library)
         let restoredCourseID = try reopened.adoptCourseFolder(
             at: courseARoot,
             title: "用户临时输入的名称"
