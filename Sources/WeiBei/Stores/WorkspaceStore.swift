@@ -951,9 +951,13 @@ final class WorkspaceStore: ObservableObject {
         )
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         load()
+        rebuildCourseMembershipsFromStorage()
         loadLegacySelectionAskThreadsIfWorkspaceFieldMissing()
         let restoredCourseProjectRoots = restoreCourseProjectRoots()
+        refreshRuntimeItemURLs()
         let restoredPortableCourseStates = restorePortableCourseStates()
+        rebuildCourseMembershipsFromStorage()
+        refreshRuntimeItemURLs()
         // S3：不再从 journal 恢复未完成操作；仅静默清理残留事务目录。
         let recoveredCourseTrash =
             silentlyCleanupOrphanCourseTransactions()
@@ -1010,6 +1014,9 @@ final class WorkspaceStore: ObservableObject {
         }
         isRestoringCourseResumePoint = false
         // Phase 4：课程文件维护延后到首帧之后，缩短冷启动到可交互。
+        if !WeiBeiSafetyTestMode.isEnabled {
+            bootstrapDefaultLibraryIfNeeded()
+        }
         if startsCourseFileMaintenance {
             Task { @MainActor [weak self] in
                 await Task.yield()
@@ -1054,8 +1061,14 @@ final class WorkspaceStore: ObservableObject {
     }
 
     func courseItems(in courseID: UUID) -> [StudyItem] {
-        let itemIDs = Set(courseMembershipIndex.itemIDs(in: courseID))
-        return importedItems.filter { itemIDs.contains($0.id) }
+        importedItems.filter { item in
+            switch item.storage {
+            case .courseOwned(let ownerCourseID, _):
+                return ownerCourseID == courseID
+            case .common, .bundledSample:
+                return false
+            }
+        }
     }
 
     func courseMaterials(in courseID: UUID) -> [StudyItem] {
@@ -1067,7 +1080,11 @@ final class WorkspaceStore: ObservableObject {
     }
 
     func courseIDs(for itemID: String) -> [UUID] {
-        courseMembershipIndex.courseIDs(for: itemID)
+        if let owner = importedItems.first(where: { $0.id == itemID })?.storage.ownerCourseID {
+            return [owner]
+        }
+        let fromMemberships = courseMembershipIndex.courseIDs(for: itemID)
+        return fromMemberships
     }
 
     func courseResumePoint(for courseID: UUID) -> CourseResumePoint? {
@@ -1086,10 +1103,13 @@ final class WorkspaceStore: ObservableObject {
         }
         var result = point
         if let itemID = result.materialLocation?.itemID,
-           !importedItems.contains(where: {
-               $0.id == itemID
-                   && !$0.isNotebookNote
-                   && courseMembershipIndex.courseIDs(for: itemID).contains(point.courseID)
+           !importedItems.contains(where: { item in
+               item.id == itemID
+                   && !item.isNotebookNote
+                   && (
+                       item.storage.ownerCourseID == point.courseID
+                           || { if case .common = item.storage { return true }; return false }()
+                   )
            }) {
             result.materialLocation = nil
         }
@@ -1103,10 +1123,13 @@ final class WorkspaceStore: ObservableObject {
             result.chatID = nil
         }
         if let noteItemID = result.noteItemID,
-           !importedItems.contains(where: {
-               $0.id == noteItemID
-                   && $0.isNotebookNote
-                   && courseMembershipIndex.courseIDs(for: noteItemID).contains(point.courseID)
+           !importedItems.contains(where: { item in
+               item.id == noteItemID
+                   && item.isNotebookNote
+                   && (
+                       item.storage.ownerCourseID == point.courseID
+                           || { if case .common = item.storage { return true }; return false }()
+                   )
            }) {
             result.noteItemID = nil
         }
@@ -1141,7 +1164,11 @@ final class WorkspaceStore: ObservableObject {
         in courseID: UUID?
     ) -> StudyLocation? {
         guard let courseID,
-              courseMembershipIndex.courseIDs(for: itemID).contains(courseID) else {
+              courseIDs(for: itemID).contains(courseID)
+                || importedItems.first(where: { $0.id == itemID }).map({
+                    if case .common = $0.storage { return true }
+                    return false
+                }) == true else {
             return studyLocationsByItemID[itemID]
         }
         if let location = studyLocationsByCourseID[courseID.uuidString]?[itemID] {
@@ -1170,7 +1197,10 @@ final class WorkspaceStore: ObservableObject {
         }
         let existingPoint = courseResumePoint(for: courseID)
         let activeMaterialLocation: StudyLocation? = selectedMaterialItem.flatMap { item in
-            guard courseMembershipIndex.courseIDs(for: item.id).contains(courseID) else {
+            let mounted = courseMembershipIndex.courseIDs(for: item.id).contains(courseID)
+            let alreadyRecorded =
+                studyLocationsByCourseID[courseID.uuidString]?[item.id] != nil
+            guard mounted || alreadyRecorded else {
                 return nil
             }
             return studyLocation(for: item.id, in: courseID)
@@ -1646,7 +1676,7 @@ final class WorkspaceStore: ObservableObject {
 
         let membershipsBeforeMigration = courseItemMemberships
         let legacyItems = importedItems.filter { item in
-            guard case .legacyExternal = item.storage else { return false }
+            guard case .common = item.storage else { return false }
             return membershipsBeforeMigration.contains {
                 $0.itemID == item.id
             }
@@ -2205,7 +2235,8 @@ final class WorkspaceStore: ObservableObject {
                     importedItems.compactMap { item -> String? in
                         guard item.isNotebookNote,
                               case .courseOwned(
-                                  let ownerCourseID
+                                  let ownerCourseID,
+                                  _
                               ) = item.storage,
                               ownerCourseID == course.id else {
                             return nil
@@ -2436,7 +2467,7 @@ final class WorkspaceStore: ObservableObject {
 
     private func itemIsInRemovingCourse(_ itemID: String) -> Bool {
         if importedItems.first(where: { $0.id == itemID }).map({
-            if case .courseOwned(let courseID) = $0.storage {
+            if case .courseOwned(let courseID, _) = $0.storage {
                 return activeCourseRemovalTokens[courseID] != nil
             }
             return false
@@ -2585,7 +2616,7 @@ final class WorkspaceStore: ObservableObject {
             switch (portable.storage, existing.storage) {
             case let (
                 .sharedReference(candidatePath, candidateDigest),
-                .shared(existingPath)
+                .common(existingPath)
             ) where candidatePath == existingPath
                 && candidateDigest != nil
                 && candidateDigest == portable.contentDigest
@@ -3340,7 +3371,7 @@ final class WorkspaceStore: ObservableObject {
                     membershipsByItemID[state.items[index].itemID],
                   membership.courseRelativePath
                     == state.items[index].courseRelativePath,
-                  case let .shared(itemSharedRelativePath) = item.storage,
+                  case let .common(itemSharedRelativePath) = item.storage,
                   itemSharedRelativePath == sharedRelativePath,
                   item.contentDigest == expectedContentDigest,
                   let sharedURL = item.url,
@@ -3492,7 +3523,7 @@ final class WorkspaceStore: ObservableObject {
         conflictResolution: CourseFileConflictResolution = .cancel
     ) async throws -> CourseOwnedFileImportResult {
         guard let item = importedItems.first(where: { $0.id == itemID }),
-              item.storage == .legacyExternal,
+              item.storage == .common(relativePath: ""),
               let sourceURL = item.url else {
             throw CourseOwnedFileError.sourceMustBeRegularFile
         }
@@ -3516,7 +3547,7 @@ final class WorkspaceStore: ObservableObject {
         conflictResolution: CourseFileConflictResolution = .cancel
     ) async throws -> CourseOwnedFileImportResult {
         guard let item = importedItems.first(where: { $0.id == itemID }),
-              case .courseOwned(let ownerCourseID) = item.storage,
+              case .courseOwned(let ownerCourseID, _) = item.storage,
               ownerCourseID != courseID,
               let sourceURL = item.url else {
             throw CourseOwnedFileError.sourceMustBeRegularFile
@@ -3552,7 +3583,7 @@ final class WorkspaceStore: ObservableObject {
         let role: CourseOwnedFileRole = importedItems[itemIndex].isNotebookNote
             ? .note
             : .material
-        if case .shared = importedItems[itemIndex].storage {
+        if case .common = importedItems[itemIndex].storage {
             try await linkSharedItem(
                 itemID: itemID,
                 toCourseID: addedCourseID,
@@ -3560,7 +3591,7 @@ final class WorkspaceStore: ObservableObject {
             )
             return
         }
-        guard case .courseOwned(let ownerCourseID) = importedItems[itemIndex].storage,
+        guard case .courseOwned(let ownerCourseID, _) = importedItems[itemIndex].storage,
               activeCourseRemovalTokens[ownerCourseID] == nil,
               ownerCourseID != addedCourseID,
               let ownerRoot = courseRootURL(for: ownerCourseID),
@@ -3798,11 +3829,9 @@ final class WorkspaceStore: ObservableObject {
                 addedLinkIdentity: preparedAdded
             )
             importedItems[itemIndex].urlPath = sharedTarget.path
-            importedItems[itemIndex].importedFileLastKnownPath = sharedTarget.path
             importedItems[itemIndex].importedFileIdentity = placedSharedIdentity
-            importedItems[itemIndex].importedFileBookmarkData = nil
-            importedItems[itemIndex].storage = .shared(
-                sharedRelativePath: sharedRelativePath
+            importedItems[itemIndex].storage = .common(
+                relativePath: sharedRelativePath
             )
             importedItems[itemIndex].fileByteCount = sharedInfo.byteCount
             importedItems[itemIndex].fileModificationTimeNanoseconds =
@@ -3953,7 +3982,7 @@ final class WorkspaceStore: ObservableObject {
             throw CourseOwnedFileError.replacementTargetIsShared
         }
         guard let itemIndex = importedItems.firstIndex(where: { $0.id == itemID }),
-              case .shared(let sharedRelativePath) = importedItems[itemIndex].storage,
+              case .common(let sharedRelativePath) = importedItems[itemIndex].storage,
               let sharedURL = importedItems[itemIndex].url,
               let courseRoot = courseRootURL(for: courseID),
               let libraryRoot = courseLibraryRootURL,
@@ -4684,11 +4713,12 @@ final class WorkspaceStore: ObservableObject {
                 kind: StudyItemKind.detect(from: resolvedTarget),
                 urlPath: resolvedTarget.path,
                 importedFileIdentity: targetIdentity,
-                importedFileBookmarkData: nil,
-                importedFileLastKnownPath: resolvedTarget.path,
                 isSample: false,
                 isNotebookNote: role == .note,
-                storage: .courseOwned(ownerCourseID: courseID),
+                storage: .courseOwned(
+                    ownerCourseID: courseID,
+                    relativePath: targetRelativePath
+                ),
                 contentRevision: replacingItemIndex == nil
                     ? (previousItem?.contentRevision ?? 1)
                     : (previousItem?.contentRevision ?? 0) &+ 1,
@@ -4733,41 +4763,6 @@ final class WorkspaceStore: ObservableObject {
             workspaceCommitted = true
 
             var sourceCleanupPending = false
-            if let sourceURL, let sourceIdentity {
-                do {
-                    try courseProjectMutationHook(.beforeCourseFileSourceRemoval)
-                    _ = try await revalidatedCourseFileTargetInBackground(
-                        courseID: courseID,
-                        expectedRoot: canonicalRoot,
-                        expectedRootIdentity: canonicalRootIdentity,
-                        role: role,
-                        expectedDestinationIdentity: destinationDirectoryIdentity,
-                        targetURL: resolvedTarget,
-                        expectedIdentity: targetIdentity,
-                        expectedSnapshot: sourceSnapshot
-                    )
-                    _ = try await courseProjectFileWorker.stableSnapshot(
-                        at: sourceURL,
-                        expectedIdentity: sourceIdentity,
-                        expectedSnapshot: sourceSnapshot
-                    )
-                    guard let sourceQuarantineURL else {
-                        throw CourseOwnedFileError.verificationFailed
-                    }
-                    let removalOutcome = await courseProjectFileWorker.isolateAndRemoveVerifiedFile(
-                        at: sourceURL,
-                        quarantineURL: sourceQuarantineURL,
-                        expectedIdentity: sourceIdentity,
-                        expectedSnapshot: sourceSnapshot,
-                        remover: courseFileSourceRemover
-                    )
-                    guard case .removed = removalOutcome else {
-                        throw CourseOwnedFileError.sourceIdentityChanged
-                    }
-                } catch {
-                    sourceCleanupPending = true
-                }
-            }
             if let rollbackIdentity = replacedRollbackIdentity,
                let replacedSnapshot = replacedTargetSnapshot {
                 do {
@@ -5030,7 +5025,7 @@ final class WorkspaceStore: ObservableObject {
                   let index = importedItems.firstIndex(where: { $0.id == membership.itemID }) else {
                 return nil
             }
-            if case .shared = importedItems[index].storage {
+            if case .common = importedItems[index].storage {
                 throw CourseOwnedFileError.replacementTargetIsShared
             }
             return index
@@ -6288,6 +6283,88 @@ final class WorkspaceStore: ObservableObject {
         return changed
     }
 
+    func discoverTopLevelCourseFolders() {
+        guard let libraryRoot = courseLibraryRootURL else { return }
+        switch CourseProjectFileWorker.entryPresence(at: libraryRoot) {
+        case .absent, .inaccessible:
+            return
+        case .present:
+            break
+        }
+        let reserved: Set<String> = [
+            CourseLibraryLayout.commonMaterialsDirectoryName,
+            CourseLibraryLayout.commonNotesDirectoryName,
+        ]
+        let children = (try? FileManager.default.contentsOfDirectory(
+            at: libraryRoot,
+            includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey],
+            options: [.skipsHiddenFiles]
+        )) ?? []
+        for child in children {
+            let values = try? child.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
+            guard values?.isDirectory == true, values?.isSymbolicLink != true else { continue }
+            let name = child.lastPathComponent
+            guard !reserved.contains(name) else { continue }
+            if courses.contains(where: {
+                $0.sourceRootRelativePath == name || courseRootURL(for: $0.id) == child
+            }) {
+                ensureCourseScaffold(at: child)
+                continue
+            }
+            let manifestURL = child
+                .appendingPathComponent(".weibei", isDirectory: true)
+                .appendingPathComponent("course.json")
+            let existingID: UUID?
+            if let data = try? Data(contentsOf: manifestURL),
+               let manifest = try? JSONDecoder().decode(CourseProjectManifest.self, from: data) {
+                existingID = manifest.courseID
+            } else {
+                existingID = nil
+            }
+            if let existingID, let index = courses.firstIndex(where: { $0.id == existingID }) {
+                courses[index].title = name
+                courses[index].sourceRootRelativePath = name
+                resolvedCourseRootURLs[existingID] = child
+                ensureCourseScaffold(at: child)
+                continue
+            }
+            let courseID = existingID ?? UUID()
+            ensureCourseScaffold(at: child)
+            let writtenManifest = child
+                .appendingPathComponent(".weibei", isDirectory: true)
+                .appendingPathComponent("course.json")
+            if !FileManager.default.fileExists(atPath: writtenManifest.path) {
+                try? CourseProjectManifest(courseID: courseID)
+                    .encoded()
+                    .write(to: writtenManifest, options: [.atomic])
+            }
+            if !courses.contains(where: { $0.id == courseID }) {
+                courses.append(
+                    Course(
+                        id: courseID,
+                        title: name,
+                        colorIndex: nextCourseColorIndex(),
+                        sourceRootRelativePath: name
+                    )
+                )
+            }
+            resolvedCourseRootURLs[courseID] = child
+        }
+    }
+
+    private func ensureCourseScaffold(at root: URL) {
+        for name in [
+            CourseLibraryLayout.courseMaterialsDirectoryName,
+            CourseLibraryLayout.courseNotesDirectoryName,
+            ".weibei",
+        ] {
+            try? FileManager.default.createDirectory(
+                at: root.appendingPathComponent(name, isDirectory: true),
+                withIntermediateDirectories: true
+            )
+        }
+    }
+
     private func validateRestoredCourseRoot(
         _ root: URL,
         course: Course,
@@ -6991,7 +7068,7 @@ final class WorkspaceStore: ObservableObject {
     private func removeCourseLocalRegistration(_ courseID: UUID) {
         let removedItemIDs = Set(
             importedItems.compactMap { item -> String? in
-                guard case .courseOwned(let ownerCourseID) = item.storage,
+                guard case .courseOwned(let ownerCourseID, _) = item.storage,
                       ownerCourseID == courseID else {
                     return nil
                 }
@@ -7241,7 +7318,7 @@ final class WorkspaceStore: ObservableObject {
         guard let itemIndex = importedItems.firstIndex(where: {
             $0.id == itemID
         }),
-        case .courseOwned(let ownerCourseID) =
+        case .courseOwned(let ownerCourseID, _) =
             importedItems[itemIndex].storage,
         let ownerRoot = courseRootURL(for: ownerCourseID),
         let membershipIndex = uniqueCourseOwnedMembershipIndex(
@@ -7341,12 +7418,9 @@ final class WorkspaceStore: ObservableObject {
             }
 
             importedItems[itemIndex].urlPath = targetURL.path
-            importedItems[itemIndex].importedFileLastKnownPath =
-                targetURL.path
             importedItems[itemIndex].importedFileIdentity = placedIdentity
-            importedItems[itemIndex].importedFileBookmarkData = nil
-            importedItems[itemIndex].storage = .shared(
-                sharedRelativePath: sharedRelativePath
+            importedItems[itemIndex].storage = .common(
+                relativePath: sharedRelativePath
             )
             importedItems[itemIndex].subtitle = targetURL.lastPathComponent
             importedItems[itemIndex].fileByteCount = targetInfo.byteCount
@@ -7432,7 +7506,7 @@ final class WorkspaceStore: ObservableObject {
         let added = requested.subtracting(current)
         let removed = current.subtracting(requested)
 
-        if case .legacyExternal = item.storage,
+        if case .common = item.storage,
            removed.isEmpty,
            let courseID = added.first,
            let sourceURL = item.url,
@@ -7461,7 +7535,7 @@ final class WorkspaceStore: ObservableObject {
             }
             return
         }
-        if case .courseOwned(let ownerCourseID) = item.storage,
+        if case .courseOwned(let ownerCourseID, _) = item.storage,
            added.count == 1,
            let courseID = added.first,
            let sourceURL = item.url {
@@ -7520,7 +7594,7 @@ final class WorkspaceStore: ObservableObject {
             }
             return
         }
-        if case .courseOwned(let ownerCourseID) = item.storage,
+        if case .courseOwned(let ownerCourseID, _) = item.storage,
            added.isEmpty,
            removed == [ownerCourseID],
            let sourceURL = item.url,
@@ -7556,7 +7630,7 @@ final class WorkspaceStore: ObservableObject {
             }
             return
         }
-        if case .shared = item.storage {
+        if case .common = item.storage {
             let role: CourseOwnedFileRole = item.isNotebookNote
                 ? .note
                 : .material
@@ -7603,7 +7677,7 @@ final class WorkspaceStore: ObservableObject {
         }
 
         // Legacy virtual memberships may still be removed without touching files.
-        guard case .legacyExternal = item.storage, added.isEmpty else { return }
+        guard case .common = item.storage, added.isEmpty else { return }
         var memberships = courseMembershipIndex
         memberships.replaceCourses(for: itemID, courseIDs: requested)
         courseItemMemberships = memberships.values
@@ -7707,7 +7781,7 @@ final class WorkspaceStore: ObservableObject {
         guard let itemIndex = importedItems.firstIndex(where: {
             $0.id == itemID
         }),
-              case .shared(let relativePath) = importedItems[itemIndex].storage,
+              case .common(let relativePath) = importedItems[itemIndex].storage,
               let root = courseLibraryRootURL,
               let resolved = CourseProjectPathPolicy.resolvedRelativePath(
                   relativePath,
@@ -7717,7 +7791,6 @@ final class WorkspaceStore: ObservableObject {
         }
         if importedItems[itemIndex].urlPath == nil {
             importedItems[itemIndex].urlPath = resolved.path
-            importedItems[itemIndex].importedFileLastKnownPath = resolved.path
         }
         if importedItems[itemIndex].importedFileIdentity == nil {
             importedItems[itemIndex].importedFileIdentity =
@@ -7761,7 +7834,7 @@ final class WorkspaceStore: ObservableObject {
             throw ContentSourceRemovalError.itemUnavailable
         }
         _ = backfillSharedItemLocation(itemID: itemID)
-        if case .legacyExternal = importedItems[itemIndex].storage {
+        if case .common = importedItems[itemIndex].storage {
             _ = resolveTrackedImportedFile(at: itemIndex)
         }
         guard let sourceURL = importedItems[itemIndex].url,
@@ -7770,7 +7843,7 @@ final class WorkspaceStore: ObservableObject {
             throw ContentSourceRemovalError.itemUnavailable
         }
         let formerSharedLinks: [(url: URL, identity: ImportedFileIdentity)]
-        if case .shared = importedItems[itemIndex].storage {
+        if case .common = importedItems[itemIndex].storage {
             formerSharedLinks = courseItemMemberships.compactMap {
                 membership in
                 guard membership.itemID == itemID,
@@ -7968,7 +8041,7 @@ final class WorkspaceStore: ObservableObject {
             )
         }
         guard let item = importedItems.first(where: { $0.id == itemID }),
-              case .shared(let sharedRelativePath) = item.storage,
+              case .common(let sharedRelativePath) = item.storage,
               let sharedURL = item.url,
               let sharedIdentity = item.importedFileIdentity,
               let root = courseRootURL(for: courseID),
@@ -8454,9 +8527,9 @@ final class WorkspaceStore: ObservableObject {
                     .contains(courseID)
             }
             switch item.storage {
-            case .shared:
+            case .common:
                 return true
-            case .legacyExternal:
+            case .common:
                 return courseMembershipIndex.courseIDs(for: item.id).isEmpty
             case .courseOwned, .bundledSample:
                 return false
@@ -8490,9 +8563,9 @@ final class WorkspaceStore: ObservableObject {
         allItems.reduce(into: 0) { count, item in
             guard item.isNotebookNote == (kind == .note) else { return }
             switch item.storage {
-            case .shared:
+            case .common:
                 count += 1
-            case .legacyExternal:
+            case .common:
                 if courseMembershipIndex.courseIDs(for: item.id).isEmpty {
                     count += 1
                 }
@@ -10159,7 +10232,7 @@ final class WorkspaceStore: ObservableObject {
         guard let item = importedItems.first(where: {
             $0.id == itemID && $0.isNotebookNote
         }) else { return nil }
-        if case .legacyExternal = item.storage,
+        if case .common = item.storage,
            item.editsBackingMarkdownFile,
            item.importedFileIdentity == nil,
            activeNoteItemID != item.id,
@@ -10567,7 +10640,7 @@ final class WorkspaceStore: ObservableObject {
         }
         if allowsReplace,
            !protectedTargetExists,
-           targetItem.map({ if case .shared = $0.storage { return true }; return false }) != true {
+           targetItem.map({ if case .common = $0.storage { return true }; return false }) != true {
             alert.addButton(withTitle: ui("替换", "Replace"))
         }
         switch alert.runModal() {
@@ -10594,10 +10667,19 @@ final class WorkspaceStore: ObservableObject {
         courseMaterials.first(where: { $0.id == itemID })?.urlPath != nil
     }
 
+    private func itemIsAvailableInCourseContext(itemID: String, courseID: UUID) -> Bool {
+        if courseMembershipIndex.courseIDs(for: itemID).contains(courseID) {
+            return true
+        }
+        guard let item = importedItems.first(where: { $0.id == itemID }) else { return false }
+        if case .common = item.storage { return true }
+        return false
+    }
+
     @discardableResult
     func openCourseMaterial(_ itemID: String, in requestedCourseID: UUID? = nil) -> Bool {
         if let requestedCourseID {
-            guard courseMembershipIndex.itemIDs(in: requestedCourseID).contains(itemID) else {
+            guard itemIsAvailableInCourseContext(itemID: itemID, courseID: requestedCourseID) else {
                 return false
             }
         }
@@ -10688,7 +10770,7 @@ final class WorkspaceStore: ObservableObject {
             return
         }
         if let requestedCourseID {
-            guard courseMembershipIndex.itemIDs(in: requestedCourseID).contains(itemID) else {
+            guard itemIsAvailableInCourseContext(itemID: itemID, courseID: requestedCourseID) else {
                 return
             }
             activeCourseID = requestedCourseID
@@ -11548,7 +11630,7 @@ final class WorkspaceStore: ObservableObject {
             )
             : previous
         let resumePointChanged = locationChanged && (activeCourseID.flatMap { courseID in
-            guard courseMembershipIndex.courseIDs(for: item.id).contains(courseID),
+            guard itemIsAvailableInCourseContext(itemID: item.id, courseID: courseID),
                   let location else {
                 return nil
             }
@@ -11563,7 +11645,7 @@ final class WorkspaceStore: ObservableObject {
         if let location, locationChanged {
             studyLocationsByItemID[item.id] = location
             if let activeCourseID,
-               courseMembershipIndex.courseIDs(for: item.id).contains(activeCourseID) {
+               itemIsAvailableInCourseContext(itemID: item.id, courseID: activeCourseID) {
                 studyLocationsByCourseID[activeCourseID.uuidString, default: [:]][item.id]
                     = location
             }
@@ -12632,51 +12714,28 @@ final class WorkspaceStore: ObservableObject {
         var roleChanged = false
         var importedIDs: [String] = []
         var didChangeItems = false
-        for url in expandedURLs {
-            let identity = importedFileIdentityResolver(url)
-            let bookmarkData = identity.flatMap { _ in Self.makeImportedFileBookmark(for: url) }
-            if let identity {
-                for index in importedItems.indices
-                where importedItems[index].urlPath == url.path
-                    && importedItems[index].importedFileIdentity != nil
-                    && importedItems[index].importedFileIdentity != identity
-                    // 仅 volumeID 漂移时不要拆路径；真正换代（inode/出生时间变了）才清掉绑定。
-                    && importedItems[index].importedFileIdentity?
-                        .matchesAcrossVolumeDrift(identity) != true {
-                    importedItems[index].importedFileLastKnownPath = url.path
-                    importedItems[index].urlPath = nil
-                    didChangeItems = true
+        for rawURL in expandedURLs {
+            let url: URL
+            if courseLibraryRootURL != nil {
+                do {
+                    url = try copyExternalFileIntoLibrary(
+                        rawURL,
+                        isNote: isNotebookNote(rawURL)
+                    )
+                } catch {
+                    showTransientNoteStatus(error.localizedDescription)
+                    continue
                 }
+            } else {
+                continue
             }
-            // 导入去重：严格相等优先；仅当路径仍指向同一位置时才容忍 volumeID 漂移。
-            // 跨卷副本即便碰巧 inode+出生时间相同，也必须拿到新身份。
-            let identityMatchingIndex = importedItems.firstIndex { item in
-                if let identity {
-                    if item.importedFileIdentity == identity {
-                        return true
-                    }
-                    let pathMatches = item.urlPath == url.path
-                        || item.importedFileLastKnownPath == url.path
-                    return pathMatches
-                        && item.importedFileIdentity?.matchesAcrossVolumeDrift(identity) == true
-                }
-                return item.importedFileIdentity == nil && item.urlPath == url.path
+            guard let relativePath = libraryRelativePath(of: url) else {
+                continue
             }
-            let legacyPathMatchingIndex = identity == nil ? nil : importedItems.firstIndex { item in
-                item.id.hasPrefix("file:")
-                    && item.importedFileIdentity == nil
-                    && (item.urlPath == url.path || item.importedFileLastKnownPath == url.path)
+            let matchingIndex = importedItems.firstIndex { item in
+                item.storage == .common(relativePath: relativePath)
             }
-            let matchingIndex = identityMatchingIndex ?? legacyPathMatchingIndex
-
             if let matchingIndex {
-                if identity != nil, importedItems[matchingIndex].id.hasPrefix("file:") {
-                    let oldID = importedItems[matchingIndex].id
-                    let newID = Self.makeImportedItemID()
-                    importedItems[matchingIndex].id = newID
-                    replaceItemIDEverywhere(oldID, with: newID)
-                    didChangeItems = true
-                }
                 importedIDs.append(importedItems[matchingIndex].id)
                 let nextTitle = url.deletingPathExtension().lastPathComponent
                 let nextSubtitle = url.lastPathComponent
@@ -12689,19 +12748,12 @@ final class WorkspaceStore: ObservableObject {
                     || importedItems[matchingIndex].title != nextTitle
                     || importedItems[matchingIndex].subtitle != nextSubtitle
                     || importedItems[matchingIndex].kind != nextKind
-                    || importedItems[matchingIndex].isNotebookNote != nextRole
-                    || importedItems[matchingIndex].importedFileIdentity != identity
-                    || importedItems[matchingIndex].importedFileBookmarkData != bookmarkData
-                    || importedItems[matchingIndex].importedFileLastKnownPath != url.path {
+                    || importedItems[matchingIndex].isNotebookNote != nextRole {
                     importedItems[matchingIndex].urlPath = url.path
                     importedItems[matchingIndex].title = nextTitle
                     importedItems[matchingIndex].subtitle = nextSubtitle
                     importedItems[matchingIndex].kind = nextKind
                     importedItems[matchingIndex].isNotebookNote = nextRole
-                    importedItems[matchingIndex].importedFileIdentity = identity
-                    importedItems[matchingIndex].importedFileBookmarkData = bookmarkData
-                        ?? importedItems[matchingIndex].importedFileBookmarkData
-                    importedItems[matchingIndex].importedFileLastKnownPath = url.path
                     didChangeItems = true
                 }
                 continue
@@ -12713,11 +12765,9 @@ final class WorkspaceStore: ObservableObject {
                 subtitle: url.lastPathComponent,
                 kind: StudyItemKind.detect(from: url),
                 urlPath: url.path,
-                importedFileIdentity: identity,
-                importedFileBookmarkData: bookmarkData,
-                importedFileLastKnownPath: url.path,
                 isSample: false,
-                isNotebookNote: isNotebookNote(url)
+                isNotebookNote: isNotebookNote(url),
+                storage: .common(relativePath: relativePath)
             )
             importedItems.append(item)
             importedIDs.append(item.id)
@@ -12836,27 +12886,17 @@ final class WorkspaceStore: ObservableObject {
             CourseOwnedFileRole.note.commonDirectoryName,
             isDirectory: true
         )
-        let notesDirectory = commonNotesDirectory
-            ?? appOwnedFilesDirectory().appendingPathComponent(
-                "Notes",
-                isDirectory: true
-            )
+        guard let notesDirectory = commonNotesDirectory else {
+            showTransientNoteStatus(ui("请先选择魏碑资料库。", "Choose a WeiBei library first."))
+            return
+        }
         let fileName = "\(safeFileStem(title)).md"
         let url = notesDirectory.appendingPathComponent(fileName)
-        let existingIdentity = importedFileIdentityResolver(url)
+        let relativePath = "\(CourseLibraryLayout.commonNotesDirectoryName)/\(fileName)"
 
         if let index = importedItems.firstIndex(where: { item in
-            if let existingIdentity {
-                // 双链笔记路径固定，同路径下容忍 volume 漂移。
-                if item.importedFileIdentity == existingIdentity {
-                    return true
-                }
-                let pathMatches = item.urlPath == url.path
-                    || item.importedFileLastKnownPath == url.path
-                return pathMatches
-                    && item.importedFileIdentity?.matchesAcrossVolumeDrift(existingIdentity) == true
-            }
-            return item.importedFileIdentity == nil && item.urlPath == url.path
+            item.storage == .common(relativePath: relativePath)
+                || item.urlPath == url.path
         }) {
             importedItems[index].isNotebookNote = true
             removeLinksWhereSourceItemID(importedItems[index].id)
@@ -12879,7 +12919,6 @@ final class WorkspaceStore: ObservableObject {
                     && importedItems[index].importedFileIdentity != identity
                     && importedItems[index].importedFileIdentity?
                         .matchesAcrossVolumeDrift(identity) != true {
-                    importedItems[index].importedFileLastKnownPath = url.path
                     importedItems[index].urlPath = nil
                 }
             }
@@ -12891,20 +12930,9 @@ final class WorkspaceStore: ObservableObject {
                 kind: .markdown,
                 urlPath: url.path,
                 importedFileIdentity: identity,
-                importedFileBookmarkData: commonNotesDirectory == nil
-                    ? identity.flatMap { _ in
-                        Self.makeImportedFileBookmark(for: url)
-                    }
-                    : nil,
-                importedFileLastKnownPath: url.path,
                 isSample: false,
                 isNotebookNote: true,
-                storage: commonNotesDirectory == nil
-                    ? .legacyExternal
-                    : .shared(
-                        sharedRelativePath:
-                            "\(CourseOwnedFileRole.note.commonDirectoryName)/\(url.lastPathComponent)"
-                    )
+                storage: .common(relativePath: relativePath)
             )
             if !importedItems.contains(where: { $0.urlPath == url.path }) {
                 importedItems.append(item)
@@ -12938,20 +12966,49 @@ final class WorkspaceStore: ObservableObject {
         }
 
         persistCurrentNote()
-        let commonNotesDirectory = courseLibraryRootURL?.appendingPathComponent(
-            CourseOwnedFileRole.note.commonDirectoryName,
-            isDirectory: true
-        )
-        let notesDirectory = commonNotesDirectory
-            ?? appOwnedFilesDirectory().appendingPathComponent(
-                "Notes",
+        guard courseLibraryRootURL != nil else {
+            showTransientNoteStatus(ui("请先选择魏碑资料库。", "Choose a WeiBei library first."))
+            return nil
+        }
+        // Sidebar-active course is not a workspace. A blank note goes to 通用笔记
+        // unless the course workspace overlay is actually open.
+        let targetCourseID: UUID?
+        switch seed {
+        case .blank:
+            targetCourseID = courseWorkspaceCourseID
+        case .currentMaterial(let item):
+            targetCourseID = item.storage.ownerCourseID ?? courseWorkspaceCourseID
+        }
+        let notesDirectory: URL
+        if let targetCourseID, let courseRoot = courseRootURL(for: targetCourseID) {
+            notesDirectory = courseRoot.appendingPathComponent(
+                CourseLibraryLayout.courseNotesDirectoryName,
                 isDirectory: true
             )
+        } else {
+            notesDirectory = courseLibraryRootURL!.appendingPathComponent(
+                CourseLibraryLayout.commonNotesDirectoryName,
+                isDirectory: true
+            )
+        }
 
         do {
             try FileManager.default.createDirectory(at: notesDirectory, withIntermediateDirectories: true)
             let url = nextNotebookNoteURL(in: notesDirectory, title: title)
-            var item = StudyItem(
+            let resolvedStorage: StudyItemStorage
+            if let targetCourseID {
+                resolvedStorage = .courseOwned(
+                    ownerCourseID: targetCourseID,
+                    relativePath:
+                        "\(CourseLibraryLayout.courseNotesDirectoryName)/\(url.lastPathComponent)"
+                )
+            } else {
+                resolvedStorage = .common(
+                    relativePath:
+                        "\(CourseLibraryLayout.commonNotesDirectoryName)/\(url.lastPathComponent)"
+                )
+            }
+            let item = StudyItem(
                 id: Self.makeImportedItemID(),
                 title: url.deletingPathExtension().lastPathComponent,
                 subtitle: url.lastPathComponent,
@@ -12959,77 +13016,17 @@ final class WorkspaceStore: ObservableObject {
                 urlPath: url.path,
                 isSample: false,
                 isNotebookNote: true,
-                storage: commonNotesDirectory == nil
-                    ? .legacyExternal
-                    : .shared(
-                        sharedRelativePath:
-                            "\(CourseOwnedFileRole.note.commonDirectoryName)/\(url.lastPathComponent)"
-                    )
+                storage: resolvedStorage
             )
             let markdown = initialMarkdown
                 ?? defaultNotebookNote()
             try markdown.write(to: url, atomically: true, encoding: .utf8)
             noteBackingContentDigestsByItemID[item.id] = Self.noteContentDigest(Data(markdown.utf8))
-            // 新建笔记的文件名是应用生成的，登记为抬头体系管辖的基线。
             headingSyncedNoteStemByItemID[item.id] = url.deletingPathExtension().lastPathComponent
-            item.importedFileIdentity = importedFileIdentityResolver(url)
-            item.importedFileBookmarkData = commonNotesDirectory == nil
-                ? item.importedFileIdentity.flatMap { _ in
-                    Self.makeImportedFileBookmark(for: url)
-                }
-                : nil
-            item.importedFileLastKnownPath = url.path
             importedItems.append(item)
             courseDocumentSearchIndex.synchronize(allItems)
             if let sourceItem {
                 addNoteSourceLink(noteItemID: item.id, sourceItemID: sourceItem.id)
-                let courseIDs = courseMembershipIndex.courseIDs(
-                    for: sourceItem.id
-                )
-                if case .shared = item.storage, !courseIDs.isEmpty {
-                    Task { @MainActor [weak self] in
-                        guard let self else { return }
-                        var linkFailedCourseTitles: [String] = []
-                        for courseID in courseIDs {
-                            do {
-                                try await self.linkSharedItem(
-                                    itemID: item.id,
-                                    toCourseID: courseID,
-                                    conflictResolution: .keepBoth(
-                                        preferredFileName: nil
-                                    )
-                                )
-                            } catch {
-                                linkFailedCourseTitles.append(
-                                    self.course(withID: courseID)?.title
-                                        ?? courseID.uuidString
-                                )
-                            }
-                        }
-                        guard !linkFailedCourseTitles.isEmpty else { return }
-                        // 链接进课程目录失败时不能静默吞掉：兜底登记纯课程归属
-                        // （无课程内链接条目），笔记仍然归到课程下。
-                        var memberships = self.courseMembershipIndex
-                        for courseID in courseIDs {
-                            memberships.assign(itemIDs: [item.id], to: courseID)
-                        }
-                        self.courseItemMemberships = memberships.values
-                        self.invalidateAgentContext()
-                        self.save()
-                        self.showTransientNoteStatus(ui(
-                            "无法把笔记链接进课程目录（\(linkFailedCourseTitles.joined(separator: "、"))），但已归入课程。",
-                            "Could not link the note into the course folder (\(linkFailedCourseTitles.joined(separator: ", "))), but it was still assigned to the course."
-                        ))
-                    }
-                } else if !courseIDs.isEmpty {
-                    // 本地（legacyExternal）笔记没有共享目录可链接，直接登记课程归属，
-                    // 让从课程资料新建的笔记归入该课程，而不是掉进通用笔记。
-                    var memberships = courseMembershipIndex
-                    for courseID in courseIDs {
-                        memberships.assign(itemIDs: [item.id], to: courseID)
-                    }
-                    courseItemMemberships = memberships.values
-                }
             }
             invalidateAgentContext()
             activeNotebookItemID = item.id
@@ -13521,7 +13518,12 @@ final class WorkspaceStore: ObservableObject {
             let locations = entry.value.reduce(
                 into: [String: StudyLocation]()
             ) { locations, itemEntry in
-                guard validItemIDs.contains(itemEntry.key),
+                let isCommonMaterial = importedItems.contains { item in
+                    guard item.id == itemEntry.key, !item.isNotebookNote else { return false }
+                    if case .common = item.storage { return true }
+                    return false
+                }
+                guard validItemIDs.contains(itemEntry.key) || isCommonMaterial,
                       importedItems.contains(where: {
                           $0.id == itemEntry.key && !$0.isNotebookNote
                       }) else {
@@ -13947,7 +13949,17 @@ final class WorkspaceStore: ObservableObject {
         let scopedItems = importedItems
         let coursesByID = Dictionary(uniqueKeysWithValues: courses.map { ($0.id, $0.title) })
         let requestedCourseIDs: (StudyItem) -> [UUID] = { item in
-            self.courseMembershipIndex.courseIDs(for: item.id)
+            switch item.storage {
+            case .courseOwned(let ownerCourseID, _):
+                return [ownerCourseID]
+            case .common:
+                if let courseID = target.courseID {
+                    return [courseID]
+                }
+                return []
+            case .bundledSample:
+                return []
+            }
         }
         let sources = scopedItems.compactMap { item -> AgentHostToolSource? in
             let itemCourseIDs = requestedCourseIDs(item)
@@ -14077,7 +14089,7 @@ final class WorkspaceStore: ObservableObject {
         }
         let isShared: Bool
         switch item.storage {
-        case .courseOwned(let ownerCourseID):
+        case .courseOwned(let ownerCourseID, _):
             isShared = false
             guard ownerCourseID == courseID,
                   CourseProjectPathPolicy.isSame(entryURL, targetURL),
@@ -14088,7 +14100,7 @@ final class WorkspaceStore: ObservableObject {
                   ) else {
                 return nil
             }
-        case .shared:
+        case .common:
             isShared = true
             guard CourseProjectFileWorker.symbolicLink(
                 at: entryURL,
@@ -14096,7 +14108,7 @@ final class WorkspaceStore: ObservableObject {
             ) else {
                 return nil
             }
-        case .legacyExternal, .bundledSample:
+        case .common, .bundledSample:
             return nil
         }
         return AgentFileGrant(
@@ -14152,9 +14164,8 @@ final class WorkspaceStore: ObservableObject {
             kind: .text,
             urlPath: target.path,
             importedFileIdentity: identity,
-            importedFileLastKnownPath: target.path,
             isSample: false,
-            storage: .courseOwned(ownerCourseID: courseID)
+            storage: .courseOwned(ownerCourseID: courseID, relativePath: relativePath)
         )
         importedItems.append(item)
         courseItemMemberships.append(
@@ -14184,9 +14195,8 @@ final class WorkspaceStore: ObservableObject {
             kind: .text,
             urlPath: url.path,
             importedFileIdentity: identity,
-            importedFileLastKnownPath: url.path,
             isSample: false,
-            storage: .legacyExternal
+            storage: .common(relativePath: "")
         )
         importedItems.append(item)
         courseItemMemberships.append(
@@ -15166,14 +15176,11 @@ final class WorkspaceStore: ObservableObject {
             return false
         }
         switch item.storage {
-        case .legacyExternal:
-            guard let expectedIdentity = item.importedFileIdentity else {
-                return false
-            }
-            return CourseProjectFileWorker.identity(at: url) == expectedIdentity
+        case .common:
+            return true
         case .bundledSample:
             return item.isSample
-        case .courseOwned, .shared:
+        case .courseOwned:
             return false
         }
     }
@@ -17326,120 +17333,10 @@ final class WorkspaceStore: ObservableObject {
 
     func resolveTrackedImportedFile(at index: Int) -> (url: URL?, changed: Bool) {
         guard importedItems.indices.contains(index) else { return (nil, false) }
-        if case .courseOwned(let ownerCourseID) = importedItems[index].storage {
-            return resolveCourseOwnedFile(at: index, ownerCourseID: ownerCourseID)
+        if case .courseOwned(let courseID, _) = importedItems[index].storage {
+            return resolveCourseOwnedFile(at: index, ownerCourseID: courseID)
         }
-        if case .shared(let sharedRelativePath) = importedItems[index].storage {
-            let components = sharedRelativePath.split(
-                separator: "/",
-                omittingEmptySubsequences: false
-            )
-            let role: CourseOwnedFileRole = importedItems[index].isNotebookNote
-                ? .note
-                : .material
-            let allowedDirectories: Set<Substring> = role == .note
-                ? [Substring(role.commonDirectoryName)]
-                : [Substring(role.commonDirectoryName), "共享文稿"]
-            let usesPortableSharedLocation =
-                components.count == 2
-                    && allowedDirectories.contains(components[0])
-            if usesPortableSharedLocation {
-                guard let expectedDigest = importedItems[index].contentDigest,
-                      let resolved = try? resolvedSharedPortableFile(
-                          relativePath: sharedRelativePath,
-                          expectedDigest: expectedDigest,
-                          expectedKind: importedItems[index].kind,
-                          isNotebookNote: importedItems[index].isNotebookNote
-                      ),
-                      importedItems[index].importedFileIdentity.map({
-                          $0.matchesAcrossVolumeDrift(resolved.identity)
-                      }) ?? true else {
-                    return forgetGoneImportedItem(at: index)
-                }
-                let candidate = resolved.url
-                let identity = resolved.identity
-                var changed = false
-                if importedItems[index].urlPath != candidate.path
-                    || importedItems[index].importedFileLastKnownPath != candidate.path
-                    || importedItems[index].importedFileIdentity != identity
-                    || importedItems[index].importedFileBookmarkData != nil {
-                    importedItems[index].urlPath = candidate.path
-                    importedItems[index].importedFileLastKnownPath = candidate.path
-                    importedItems[index].importedFileIdentity = identity
-                    importedItems[index].importedFileBookmarkData = nil
-                    changed = true
-                }
-                return (candidate, changed)
-            }
-            // Older workspaces used `.shared` for ordinary external files
-            // before the strict `共享文稿/<file>` contract existed. Keep those
-            // records on the legacy identity/bookmark recovery path until the
-            // user explicitly migrates them into a real course project.
-        }
-        guard let storedIdentity = importedItems[index].importedFileIdentity else {
-            guard let currentURL = importedItems[index].url else {
-                return (nil, false)
-            }
-            if importedFileIdentityResolver(currentURL) != nil {
-                return (currentURL.standardizedFileURL, false)
-            }
-            return forgetGoneImportedItem(at: index)
-        }
-
-        var changed = false
-        let bookmarkResolution = importedItems[index].importedFileBookmarkData
-            .flatMap(Self.resolveImportedFileBookmark)
-        switch ImportedFileRecovery.resolve(
-            storedIdentity: storedIdentity,
-            currentPath: importedItems[index].urlPath,
-            lastKnownPath: importedItems[index].importedFileLastKnownPath,
-            bookmarkURL: bookmarkResolution?.url,
-            identityAt: importedFileIdentityResolver
-        ) {
-        case .missing:
-            return forgetGoneImportedItem(at: index)
-        case .identityConflict:
-            if let path = importedItems[index].urlPath {
-                importedItems[index].importedFileLastKnownPath = path
-                importedItems[index].urlPath = nil
-                changed = true
-            }
-            return (nil, changed)
-        case .resolved(let candidateURL, let candidateIdentity, let via):
-            if candidateIdentity != storedIdentity {
-                // volumeID 漂移：接受匹配的同时把存储身份刷新到当前值，自愈后
-                // 后续比对（含严格相等的调用方）不再受旧 volumeID 影响。
-                importedItems[index].importedFileIdentity = candidateIdentity
-                changed = true
-            }
-
-            let nextPath = candidateURL.path
-            let nextTitle = candidateURL.deletingPathExtension().lastPathComponent
-            let nextSubtitle = candidateURL.lastPathComponent
-            let nextKind = StudyItemKind.detect(from: candidateURL)
-            if importedItems[index].urlPath != nextPath
-                || importedItems[index].importedFileLastKnownPath != nextPath
-                || importedItems[index].title != nextTitle
-                || importedItems[index].subtitle != nextSubtitle
-                || importedItems[index].kind != nextKind {
-                importedItems[index].urlPath = nextPath
-                importedItems[index].importedFileLastKnownPath = nextPath
-                importedItems[index].title = nextTitle
-                importedItems[index].subtitle = nextSubtitle
-                importedItems[index].kind = nextKind
-                changed = true
-            }
-            let resolvedThroughFallback = via == .lastKnownPath
-            if importedItems[index].importedFileBookmarkData == nil
-                || bookmarkResolution?.isStale == true
-                || resolvedThroughFallback,
-               let refreshedBookmark = Self.makeImportedFileBookmark(for: candidateURL),
-               importedItems[index].importedFileBookmarkData != refreshedBookmark {
-                importedItems[index].importedFileBookmarkData = refreshedBookmark
-                changed = true
-            }
-            return (candidateURL, changed)
-        }
+        return forgetGoneImportedItem(at: index)
     }
 
     private func resolveCourseOwnedFile(
@@ -17477,19 +17374,15 @@ final class WorkspaceStore: ObservableObject {
 
         var changed = false
         if importedItems[index].urlPath != candidate.path
-            || importedItems[index].importedFileLastKnownPath != candidate.path
             || importedItems[index].title != candidate.deletingPathExtension().lastPathComponent
             || importedItems[index].subtitle != candidate.lastPathComponent
             || importedItems[index].kind != StudyItemKind.detect(from: candidate)
-            || importedItems[index].importedFileIdentity != identity
-            || importedItems[index].importedFileBookmarkData != nil {
+            || importedItems[index].importedFileIdentity != identity {
             importedItems[index].urlPath = candidate.path
-            importedItems[index].importedFileLastKnownPath = candidate.path
             importedItems[index].title = candidate.deletingPathExtension().lastPathComponent
             importedItems[index].subtitle = candidate.lastPathComponent
             importedItems[index].kind = StudyItemKind.detect(from: candidate)
             importedItems[index].importedFileIdentity = identity
-            importedItems[index].importedFileBookmarkData = nil
             changed = true
         }
         let documentIdentifier = courseFileDocumentIdentifier(at: candidate)
@@ -17506,7 +17399,7 @@ final class WorkspaceStore: ObservableObject {
     private func resolveCourseOwnedItems(for courseID: UUID) -> Bool {
         var changed = false
         let itemIDs = importedItems.compactMap { item -> String? in
-            guard case .courseOwned(let ownerCourseID) = item.storage,
+            guard case .courseOwned(let ownerCourseID, _) = item.storage,
                   ownerCourseID == courseID else {
                 return nil
             }
@@ -17530,14 +17423,11 @@ final class WorkspaceStore: ObservableObject {
         guard !courseReconciliationInFlight else { return }
         courseReconciliationInFlight = true
         defer { courseReconciliationInFlight = false }
-        var sharedChanged = false
         if let libraryRoot = courseLibraryRootURL {
             try? await ensureCommonContentDirectories(at: libraryRoot)
-            sharedChanged = await migrateLegacySharedMaterials(
-                in: libraryRoot
-            )
+            discoverTopLevelCourseFolders()
         }
-        if await reconcileSharedFilesNow() || sharedChanged {
+        if await reconcileSharedFilesNow() {
             _ = await persistWorkspaceNow()
             courseDocumentSearchIndex.synchronize(allItems)
             invalidateAgentContext()
@@ -17664,7 +17554,7 @@ final class WorkspaceStore: ObservableObject {
         )
         var changed = false
         for index in importedItems.indices {
-            guard case .shared(let relativePath) = importedItems[index].storage,
+            guard case .common(let relativePath) = importedItems[index].storage,
                   relativePath.hasPrefix("共享文稿/"),
                   let oldURL = CourseProjectPathPolicy.resolvedRelativePath(
                     relativePath,
@@ -17716,12 +17606,11 @@ final class WorkspaceStore: ObservableObject {
                     )
                 }
             }
-            importedItems[index].storage = .shared(
-                sharedRelativePath:
+            importedItems[index].storage = .common(
+                relativePath:
                     "\(CourseOwnedFileRole.material.commonDirectoryName)/\(newURL.lastPathComponent)"
             )
             importedItems[index].urlPath = newURL.path
-            importedItems[index].importedFileLastKnownPath = newURL.path
             changed = true
         }
         if (try? FileManager.default.contentsOfDirectory(
@@ -17752,7 +17641,7 @@ final class WorkspaceStore: ObservableObject {
         var changed = false
         var itemIndexByID: [String: Int] = [:]
         for index in importedItems.indices {
-            if case .shared(let relativePath) = importedItems[index].storage,
+            if case .common(let relativePath) = importedItems[index].storage,
                relativePath.hasPrefix("\(directoryName)/") {
                 itemIndexByID[importedItems[index].id] = index
             }
@@ -17778,7 +17667,7 @@ final class WorkspaceStore: ObservableObject {
 
         for itemID in itemIDs {
             guard let itemIndex = itemIndexByID[itemID],
-                  case .shared(let relativePath) = importedItems[itemIndex].storage,
+                  case .common(let relativePath) = importedItems[itemIndex].storage,
                   relativePath.hasPrefix("\(directoryName)/") else {
                 continue
             }
@@ -17885,11 +17774,9 @@ final class WorkspaceStore: ObservableObject {
                 nextItem.subtitle = observation.url.lastPathComponent
                 nextItem.kind = StudyItemKind.detect(from: observation.url)
                 nextItem.urlPath = observation.url.path
-                nextItem.importedFileLastKnownPath = observation.url.path
                 nextItem.importedFileIdentity = observation.identity
-                nextItem.importedFileBookmarkData = nil
-                nextItem.storage = .shared(
-                    sharedRelativePath:
+                nextItem.storage = .common(
+                    relativePath:
                         "\(directoryName)/\(observation.relativePath)"
                 )
                 nextItem.contentRevision = revision
@@ -17921,12 +17808,10 @@ final class WorkspaceStore: ObservableObject {
                     kind: StudyItemKind.detect(from: observation.url),
                     urlPath: observation.url.path,
                     importedFileIdentity: observation.identity,
-                    importedFileBookmarkData: nil,
-                    importedFileLastKnownPath: observation.url.path,
                     isSample: false,
                     isNotebookNote: isNote,
-                    storage: .shared(
-                        sharedRelativePath:
+                    storage: .common(
+                        relativePath:
                             "\(directoryName)/\(observation.relativePath)"
                     ),
                     contentRevision: 1,
@@ -17951,7 +17836,7 @@ final class WorkspaceStore: ObservableObject {
         var itemIDByPath: [String: String] = [:]
         var sharedItemIDs = Set<String>()
         for item in importedItems {
-            guard case .shared(let relativePath) = item.storage,
+            guard case .common(let relativePath) = item.storage,
                   let expectedURL = CourseProjectPathPolicy.resolvedRelativePath(
                     relativePath,
                     inside: libraryRoot
@@ -18108,7 +17993,7 @@ final class WorkspaceStore: ObservableObject {
         var lookupCount = 0
         var itemIndexByID: [String: Int] = [:]
         for index in importedItems.indices {
-            guard case .courseOwned(let ownerCourseID) = importedItems[index].storage,
+            guard case .courseOwned(let ownerCourseID, _) = importedItems[index].storage,
                   ownerCourseID == courseID else {
                 continue
             }
@@ -18225,8 +18110,6 @@ final class WorkspaceStore: ObservableObject {
             nextItem.kind = StudyItemKind.detect(from: observation.url)
             nextItem.urlPath = observation.url.path
             nextItem.importedFileIdentity = observation.identity
-            nextItem.importedFileBookmarkData = nil
-            nextItem.importedFileLastKnownPath = observation.url.path
             nextItem.isNotebookNote = observation.isNote
             nextItem.contentRevision = nextRevision
             nextItem.contentDigest = nextDigest
@@ -18268,11 +18151,12 @@ final class WorkspaceStore: ObservableObject {
                 kind: StudyItemKind.detect(from: observation.url),
                 urlPath: observation.url.path,
                 importedFileIdentity: observation.identity,
-                importedFileBookmarkData: nil,
-                importedFileLastKnownPath: observation.url.path,
                 isSample: false,
                 isNotebookNote: observation.isNote,
-                storage: .courseOwned(ownerCourseID: courseID),
+                storage: .courseOwned(
+                    ownerCourseID: courseID,
+                    relativePath: observation.relativePath
+                ),
                 contentRevision: 1,
                 contentDigest: nil,
                 fileByteCount: observation.byteCount,
@@ -18359,7 +18243,7 @@ final class WorkspaceStore: ObservableObject {
         _ item: StudyItem
     ) -> VerifiedCourseOwnedNoteAccess? {
         guard item.isNotebookNote,
-              case .courseOwned(let courseID) = item.storage,
+              case .courseOwned(let courseID, _) = item.storage,
               courseRootUnavailableReasons[courseID] == nil,
               let course = course(withID: courseID),
               let expectedRootIdentity = course.sourceRootIdentity,
@@ -18446,7 +18330,7 @@ final class WorkspaceStore: ObservableObject {
               let identity = importedFileIdentityResolver(url) else {
             return nil
         }
-        if case .courseOwned(let ownerCourseID) = importedItems[index].storage {
+        if case .courseOwned(let ownerCourseID, _) = importedItems[index].storage {
             guard let membershipIndex = uniqueCourseOwnedMembershipIndex(
                 itemID: itemID,
                 courseID: ownerCourseID
@@ -18469,8 +18353,6 @@ final class WorkspaceStore: ObservableObject {
             importedItems[index].contentDigest = snapshot.sha256
             importedItems[index].urlPath = resolvedURL.path
             importedItems[index].importedFileIdentity = identity
-            importedItems[index].importedFileBookmarkData = nil
-            importedItems[index].importedFileLastKnownPath = resolvedURL.path
             importedItems[index].title = resolvedURL.deletingPathExtension().lastPathComponent
             importedItems[index].subtitle = resolvedURL.lastPathComponent
             importedItems[index].kind = StudyItemKind.detect(from: resolvedURL)
@@ -18482,13 +18364,47 @@ final class WorkspaceStore: ObservableObject {
         let standardizedURL = url.standardizedFileURL
         importedItems[index].urlPath = standardizedURL.path
         importedItems[index].importedFileIdentity = identity
-        importedItems[index].importedFileBookmarkData = Self.makeImportedFileBookmark(for: standardizedURL)
-            ?? importedItems[index].importedFileBookmarkData
-        importedItems[index].importedFileLastKnownPath = standardizedURL.path
         importedItems[index].title = standardizedURL.deletingPathExtension().lastPathComponent
         importedItems[index].subtitle = standardizedURL.lastPathComponent
         importedItems[index].kind = StudyItemKind.detect(from: standardizedURL)
         return importedItems[index]
+    }
+
+    private func fileURLForImportedItem(_ item: StudyItem) -> URL? {
+        if let url = item.url { return url }
+        if item.id.hasPrefix("file:") {
+            let path = String(item.id.dropFirst("file:".count))
+            if !path.isEmpty {
+                return URL(fileURLWithPath: path)
+            }
+        }
+        return resolvedLibraryURL(for: item)
+    }
+
+    private func rebuildCourseMembershipsFromStorage() {
+        var memberships = courseItemMemberships
+        for item in importedItems {
+            guard case .courseOwned(let courseID, let relativePath) = item.storage,
+                  !relativePath.isEmpty else {
+                continue
+            }
+            if let index = memberships.firstIndex(where: {
+                $0.courseID == courseID && $0.itemID == item.id
+            }) {
+                if memberships[index].courseRelativePath == nil {
+                    memberships[index].courseRelativePath = relativePath
+                }
+            } else {
+                memberships.append(
+                    CourseItemMembership(
+                        courseID: courseID,
+                        itemID: item.id,
+                        courseRelativePath: relativePath
+                    )
+                )
+            }
+        }
+        courseItemMemberships = memberships
     }
 
     @discardableResult
@@ -18507,35 +18423,20 @@ final class WorkspaceStore: ObservableObject {
         migratedItems.reserveCapacity(importedItems.count)
         for var item in importedItems {
             let resolvedIdentity = item.importedFileIdentity
-                ?? item.url.flatMap(importedFileIdentityResolver)
+                ?? fileURLForImportedItem(item).flatMap(importedFileIdentityResolver)
             if item.importedFileIdentity != resolvedIdentity {
                 item.importedFileIdentity = resolvedIdentity
                 changed = true
             }
-            if item.importedFileLastKnownPath == nil, let path = item.urlPath {
-                item.importedFileLastKnownPath = path
-                changed = true
-            }
             let isManagedByCourseLibrary: Bool = {
                 switch item.storage {
-                case .courseOwned, .shared:
+                case .courseOwned, .common:
                     return true
-                case .legacyExternal, .bundledSample:
+                case .bundledSample:
                     return false
                 }
             }()
-            if isManagedByCourseLibrary {
-                if item.importedFileBookmarkData != nil {
-                    item.importedFileBookmarkData = nil
-                    changed = true
-                }
-            } else if resolvedIdentity != nil,
-                      item.importedFileBookmarkData == nil,
-                      let url = item.url,
-                      let bookmark = Self.makeImportedFileBookmark(for: url) {
-                item.importedFileBookmarkData = bookmark
-                changed = true
-            }
+            _ = isManagedByCourseLibrary
 
             if let resolvedIdentity,
                let canonicalID = canonicalIDByIdentity[resolvedIdentity],
@@ -18970,8 +18871,6 @@ final class WorkspaceStore: ObservableObject {
                 importedItems[currentIndex].importedFileIdentity =
                     result.metadata.identity
                 importedItems[currentIndex].urlPath = result.metadata.url.path
-                importedItems[currentIndex].importedFileLastKnownPath =
-                    result.metadata.url.path
                 noteBackingContentDigestsByItemID[itemID] =
                     result.snapshot.sha256
                 if courseItemMemberships.indices.contains(
@@ -19102,7 +19001,7 @@ final class WorkspaceStore: ObservableObject {
             return
         }
 
-        if case .courseOwned(let courseID) = item.storage,
+        if case .courseOwned(let courseID, _) = item.storage,
            let itemIndex = importedItems.firstIndex(where: { $0.id == itemID }) {
             // 外部编辑器常用原子替换保存，inode 会变；课程内文件以相对路径
             // 为准，先沿用既有解析逻辑刷新身份，再交给后台读取。
@@ -19188,7 +19087,6 @@ final class WorkspaceStore: ObservableObject {
             }
         }
         importedItems[index].urlPath = url.path
-        importedItems[index].importedFileLastKnownPath = url.path
         importedItems[index].title =
             url.deletingPathExtension().lastPathComponent
         importedItems[index].subtitle = url.lastPathComponent
@@ -19256,13 +19154,27 @@ final class WorkspaceStore: ObservableObject {
         guard let course = course(withID: courseID) else {
             throw CoursePortableStateError.courseIdentityMismatch
         }
-        let memberships = courseItemMemberships
+        var memberships = courseItemMemberships
             .filter { $0.courseID == courseID }
-            .sorted {
-                ($0.courseRelativePath ?? "").localizedStandardCompare(
-                    $1.courseRelativePath ?? ""
-                ) == .orderedAscending
+        if memberships.isEmpty {
+            memberships = importedItems.compactMap { item in
+                guard case .courseOwned(let ownerCourseID, let relativePath) = item.storage,
+                      ownerCourseID == courseID,
+                      !relativePath.isEmpty else {
+                    return nil
+                }
+                return CourseItemMembership(
+                    courseID: courseID,
+                    itemID: item.id,
+                    courseRelativePath: relativePath
+                )
             }
+        }
+        memberships.sort {
+            ($0.courseRelativePath ?? "").localizedStandardCompare(
+                $1.courseRelativePath ?? ""
+            ) == .orderedAscending
+        }
         var portableItems: [CoursePortableItem] = []
         for membership in memberships {
             guard let item = importedItems.first(where: {
@@ -19273,14 +19185,14 @@ final class WorkspaceStore: ObservableObject {
             guard let relativePath = membership.courseRelativePath else {
                 // 纯归属兜底登记（链接进课程目录失败时写入）没有课程内链接
                 // 条目，可携带状态无法表示；跳过它而不是让整次保存失败。
-                if case .shared = item.storage { continue }
+                if case .common = item.storage { continue }
                 throw CoursePortableStateError.missingCourseItem
             }
             let storage: CoursePortableItemStorage
             switch item.storage {
-            case .courseOwned(let ownerCourseID) where ownerCourseID == courseID:
+            case .courseOwned(let ownerCourseID, _) where ownerCourseID == courseID:
                 storage = .courseOwned
-            case let .shared(sharedRelativePath):
+            case let .common(sharedRelativePath):
                 storage = .sharedReference(
                     sharedRelativePath: sharedRelativePath,
                     expectedContentDigest: item.contentDigest
@@ -19920,7 +19832,10 @@ final class WorkspaceStore: ObservableObject {
             }
             switch portable.storage {
             case .courseOwned:
-                storage = .courseOwned(ownerCourseID: courseID)
+                storage = .courseOwned(
+                    ownerCourseID: courseID,
+                    relativePath: portable.courseRelativePath
+                )
                 preservedExistingShared = nil
                 let candidateIdentity =
                     try validatedPortableCourseOwnedFile(
@@ -19939,13 +19854,17 @@ final class WorkspaceStore: ObservableObject {
                 guard let expectedContentDigest else {
                     throw CoursePortableStateError.invalidItemStorage
                 }
-                storage = .shared(sharedRelativePath: sharedRelativePath)
-                let existingBelongsToKnownCourse = existing.map {
-                    previousItemIDs.contains($0.id)
-                        || otherCourseItemIDs.contains($0.id)
+                storage = .common(relativePath: sharedRelativePath)
+                let existingBelongsToKnownCourse = existing.map { item in
+                    if case .common = item.storage { return true }
+                    return previousItemIDs.contains(item.id)
+                        || otherCourseItemIDs.contains(item.id)
                 } ?? false
                 let existingIsCurrentCanonical: Bool
-                if existingBelongsToKnownCourse,
+                if let existing, case let .common(existingPath) = existing.storage,
+                   existingPath == sharedRelativePath {
+                    existingIsCurrentCanonical = true
+                } else if existingBelongsToKnownCourse,
                    let existing,
                    let existingURL = existing.url,
                    let existingIdentity = existing.importedFileIdentity,
@@ -19967,7 +19886,7 @@ final class WorkspaceStore: ObservableObject {
                     existingIsCurrentCanonical = false
                 }
                 if let existing, existingIsCurrentCanonical {
-                    guard case let .shared(existingSharedPath) =
+                    guard case let .common(existingSharedPath) =
                             existing.storage,
                           existingSharedPath == sharedRelativePath else {
                         throw CoursePortableStateError.crossCourseReference
@@ -20032,8 +19951,6 @@ final class WorkspaceStore: ObservableObject {
                     kind: portable.kind,
                     urlPath: itemURL?.path,
                     importedFileIdentity: itemIdentity,
-                    importedFileBookmarkData: nil,
-                    importedFileLastKnownPath: itemURL?.path,
                     isSample: false,
                     isNotebookNote: portable.isNotebookNote,
                     storage: storage,
@@ -20179,6 +20096,8 @@ final class WorkspaceStore: ObservableObject {
                     baselineContentDigest: draft.baselineContentDigest
                 )
         }
+        rebuildCourseMembershipsFromStorage()
+        refreshRuntimeItemURLs()
     }
 
     @discardableResult
@@ -20232,7 +20151,7 @@ final class WorkspaceStore: ObservableObject {
                                   }) else {
                                 return false
                             }
-                            return item.storage == .legacyExternal
+                            return item.storage == .common(relativePath: "")
                         }
                     if awaitsLegacyOrganization {
                         continue
@@ -20535,9 +20454,7 @@ final class WorkspaceStore: ObservableObject {
         dirtyPortableCourseIDs = Set(
             snapshot.dirtyPortableCourseIDs ?? []
         )
-        courseItemMemberships = CourseItemMemberships(
-            values: snapshot.courseItemMemberships ?? []
-        ).values
+        courseItemMemberships = snapshot.courseItemMemberships ?? []
         activeCourseID = snapshot.activeCourseID
         courseLibraryRootPath = snapshot.courseLibraryRootPath
         courseLibraryRootIdentity = snapshot.courseLibraryRootIdentity
@@ -20697,7 +20614,7 @@ final class WorkspaceStore: ObservableObject {
                 selectedItemID: selectedItemID,
                 activeNotebookItemID: activeNotebookItemID,
                 courses: courses,
-                courseItemMemberships: courseItemMemberships,
+                courseItemMemberships: nil,
                 activeCourseID: activeCourseID,
                 courseLibraryRootPath: courseLibraryRootPath,
                 courseLibraryRootIdentity: courseLibraryRootIdentity,
@@ -20762,7 +20679,7 @@ final class WorkspaceStore: ObservableObject {
         var workspace = source
         let removedItemIDs = Set(
             workspace.importedItems.compactMap { item -> String? in
-                guard case .courseOwned(let ownerCourseID) = item.storage,
+                guard case .courseOwned(let ownerCourseID, _) = item.storage,
                       ownerCourseID == courseID else {
                     return nil
                 }
@@ -21454,7 +21371,7 @@ final class WorkspaceStore: ObservableObject {
                 selectedItemID: selectedItemID,
                 activeNotebookItemID: activeNotebookItemID,
                 courses: courses,
-                courseItemMemberships: courseItemMemberships,
+                courseItemMemberships: nil,
                 activeCourseID: activeCourseID,
                 courseLibraryRootPath: courseLibraryRootPath,
                 courseLibraryRootIdentity: courseLibraryRootIdentity,

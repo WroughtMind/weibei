@@ -170,8 +170,6 @@ extension WorkspaceStore {
                     if let idx = importedItems.firstIndex(where: { $0.id == oldID }) {
                         var rolled = oldItem
                         rolled.urlPath = nil
-                        rolled.importedFileLastKnownPath = oldURL.path
-                        rolled.importedFileBookmarkData = nil
                         importedItems[idx] = rolled
                     }
                     setNoteDraft(sourceMarkdown, for: oldID)
@@ -221,9 +219,6 @@ extension WorkspaceStore {
             renamedItem.subtitle = newURL.lastPathComponent
             renamedItem.urlPath = newURL.path
             renamedItem.importedFileIdentity = coordinatedIdentity ?? originalIdentity
-            renamedItem.importedFileBookmarkData = Self.makeImportedFileBookmark(for: newURL)
-                ?? oldItem.importedFileBookmarkData
-            renamedItem.importedFileLastKnownPath = newURL.path
             importedItems[index] = renamedItem
             replaceItemIDEverywhere(oldID, with: replacementItemID)
             if wasActiveNotebook {
@@ -266,18 +261,13 @@ extension WorkspaceStore {
                 var rolled = oldItem
                 if restoredOldPath, diskTrusted {
                     rolled.urlPath = oldURL.path
-                    rolled.importedFileLastKnownPath = oldURL.path
                     rolled.importedFileIdentity =
                         importedFileIdentityResolver(oldURL)
                         ?? originalIdentity
-                    rolled.importedFileBookmarkData =
-                        Self.makeImportedFileBookmark(for: oldURL)
-                        ?? oldItem.importedFileBookmarkData
                     noteBackingContentDigestsByItemID[oldID] = diskDigest
                 } else {
                     // 磁盘上是陌生内容或路径未恢复：切断路径关系，保留正文草稿。
                     rolled.urlPath = nil
-                    rolled.importedFileLastKnownPath = oldURL.path
                     setNoteDraft(sourceMarkdown, for: oldID)
                     pendingNoteWritesByItemID[oldID] = PendingNoteWriteState(
                         baselineContentDigest: originalContentDigest
@@ -372,9 +362,7 @@ extension WorkspaceStore {
         importedItems[index].title = newStem
         importedItems[index].subtitle = newURL.lastPathComponent
         importedItems[index].urlPath = newURL.path
-        importedItems[index].importedFileLastKnownPath = newURL.path
         if let bookmark = Self.makeImportedFileBookmark(for: newURL) {
-            importedItems[index].importedFileBookmarkData = bookmark
         }
         if let refreshed = refreshImportedFileTracking(itemID: itemID, url: newURL) {
             courseDocumentSearchIndex.schedule([refreshed])
@@ -488,15 +476,9 @@ extension WorkspaceStore {
             identityDrifted: Bool
         )] = []
         for item in importedItems where item.editsBackingMarkdownFile {
-            // 有意不走 resolveTrackedImportedFile：指纹漂移的笔记在那里会被判
-            // 不可达，而本例程的职责正是修复这类漂移。直接用最后已知路径+lstat，
-            // 是否可信由 planner 按 digest 内容寻址判断。
-            // 注意 item.url 只来自 urlPath，老笔记可能只有 importedFileLastKnownPath，
-            // 必须回退，否则这类笔记会被整批漏修。
-            guard let url = item.url?.standardizedFileURL
-                ?? item.importedFileLastKnownPath.map({
-                    URL(fileURLWithPath: $0).standardizedFileURL
-                }) else { continue }
+            // 用资料库相对路径定位笔记；是否可信由 planner 按 digest 判断。
+            guard let url = resolvedLibraryURL(for: item)?.standardizedFileURL
+                ?? item.url?.standardizedFileURL else { continue }
             let draft = notesByItemID[item.id]
             let diskDigest = Self.noteContentDigest(at: url)
             let liveIdentity = importedFileIdentityResolver(url)

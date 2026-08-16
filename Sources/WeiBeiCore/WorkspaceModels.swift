@@ -1095,22 +1095,36 @@ public struct ImportedFileIdentity: Codable, Hashable, Sendable {
 }
 
 public enum StudyItemStorage: Codable, Hashable, Sendable {
-    case courseOwned(ownerCourseID: UUID)
-    case shared(sharedRelativePath: String)
-    case legacyExternal
+    case courseOwned(ownerCourseID: UUID, relativePath: String)
+    case common(relativePath: String)
     case bundledSample
+
+    public var relativePath: String? {
+        switch self {
+        case .courseOwned(_, let relativePath), .common(let relativePath):
+            return relativePath
+        case .bundledSample:
+            return nil
+        }
+    }
+
+    public var ownerCourseID: UUID? {
+        if case .courseOwned(let ownerCourseID, _) = self {
+            return ownerCourseID
+        }
+        return nil
+    }
 
     private enum Kind: String, Codable {
         case courseOwned
-        case shared
-        case legacyExternal
+        case common
         case bundledSample
     }
 
     private enum CodingKeys: String, CodingKey {
         case kind
         case ownerCourseID
-        case sharedRelativePath
+        case relativePath
     }
 
     public init(from decoder: Decoder) throws {
@@ -1118,14 +1132,13 @@ public enum StudyItemStorage: Codable, Hashable, Sendable {
         switch try container.decode(Kind.self, forKey: .kind) {
         case .courseOwned:
             self = .courseOwned(
-                ownerCourseID: try container.decode(UUID.self, forKey: .ownerCourseID)
+                ownerCourseID: try container.decode(UUID.self, forKey: .ownerCourseID),
+                relativePath: try container.decode(String.self, forKey: .relativePath)
             )
-        case .shared:
-            self = .shared(
-                sharedRelativePath: try container.decode(String.self, forKey: .sharedRelativePath)
+        case .common:
+            self = .common(
+                relativePath: try container.decode(String.self, forKey: .relativePath)
             )
-        case .legacyExternal:
-            self = .legacyExternal
         case .bundledSample:
             self = .bundledSample
         }
@@ -1134,14 +1147,13 @@ public enum StudyItemStorage: Codable, Hashable, Sendable {
     public func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         switch self {
-        case .courseOwned(let ownerCourseID):
+        case .courseOwned(let ownerCourseID, let relativePath):
             try container.encode(Kind.courseOwned, forKey: .kind)
             try container.encode(ownerCourseID, forKey: .ownerCourseID)
-        case .shared(let sharedRelativePath):
-            try container.encode(Kind.shared, forKey: .kind)
-            try container.encode(sharedRelativePath, forKey: .sharedRelativePath)
-        case .legacyExternal:
-            try container.encode(Kind.legacyExternal, forKey: .kind)
+            try container.encode(relativePath, forKey: .relativePath)
+        case .common(let relativePath):
+            try container.encode(Kind.common, forKey: .kind)
+            try container.encode(relativePath, forKey: .relativePath)
         case .bundledSample:
             try container.encode(Kind.bundledSample, forKey: .kind)
         }
@@ -1153,10 +1165,9 @@ public struct StudyItem: Identifiable, Codable, Hashable, Sendable {
     public var title: String
     public var subtitle: String
     public var kind: StudyItemKind
+    /// Runtime-only cache. Never persisted; resolve from the library root + relative path.
     public var urlPath: String?
     public var importedFileIdentity: ImportedFileIdentity?
-    public var importedFileBookmarkData: Data?
-    public var importedFileLastKnownPath: String?
     public var isSample: Bool
     public var isNotebookNote: Bool
     /// 浮动 tab 行内重命名写入的自定义显示名；为空时 tab 自动跟随 title / 正文。
@@ -1174,8 +1185,6 @@ public struct StudyItem: Identifiable, Codable, Hashable, Sendable {
         kind: StudyItemKind,
         urlPath: String?,
         importedFileIdentity: ImportedFileIdentity? = nil,
-        importedFileBookmarkData: Data? = nil,
-        importedFileLastKnownPath: String? = nil,
         isSample: Bool,
         isNotebookNote: Bool = false,
         customDisplayTitle: String? = nil,
@@ -1191,12 +1200,10 @@ public struct StudyItem: Identifiable, Codable, Hashable, Sendable {
         self.kind = kind
         self.urlPath = urlPath
         self.importedFileIdentity = importedFileIdentity
-        self.importedFileBookmarkData = importedFileBookmarkData
-        self.importedFileLastKnownPath = importedFileLastKnownPath ?? urlPath
         self.isSample = isSample
         self.isNotebookNote = isNotebookNote
         self.customDisplayTitle = customDisplayTitle
-        self.storage = storage ?? (isSample ? .bundledSample : .legacyExternal)
+        self.storage = storage ?? (isSample ? .bundledSample : .common(relativePath: subtitle))
         self.contentRevision = contentRevision
         self.contentDigest = contentDigest
         self.fileByteCount = fileByteCount
@@ -1210,8 +1217,6 @@ public struct StudyItem: Identifiable, Codable, Hashable, Sendable {
         case kind
         case urlPath
         case importedFileIdentity
-        case importedFileBookmarkData
-        case importedFileLastKnownPath
         case isSample
         case isNotebookNote
         case customDisplayTitle
@@ -1229,19 +1234,40 @@ public struct StudyItem: Identifiable, Codable, Hashable, Sendable {
         subtitle = try container.decode(String.self, forKey: .subtitle)
         kind = try container.decode(StudyItemKind.self, forKey: .kind)
         urlPath = try container.decodeIfPresent(String.self, forKey: .urlPath)
-        importedFileIdentity = try container.decodeIfPresent(ImportedFileIdentity.self, forKey: .importedFileIdentity)
-        importedFileBookmarkData = try container.decodeIfPresent(Data.self, forKey: .importedFileBookmarkData)
-        importedFileLastKnownPath = try container.decodeIfPresent(String.self, forKey: .importedFileLastKnownPath) ?? urlPath
+        importedFileIdentity = try container.decodeIfPresent(
+            ImportedFileIdentity.self,
+            forKey: .importedFileIdentity
+        )
         isSample = try container.decode(Bool.self, forKey: .isSample)
         isNotebookNote = try container.decodeIfPresent(Bool.self, forKey: .isNotebookNote) ?? false
         customDisplayTitle = try container.decodeIfPresent(String.self, forKey: .customDisplayTitle)
         storage = try container.decodeIfPresent(StudyItemStorage.self, forKey: .storage)
-            ?? (isSample ? .bundledSample : .legacyExternal)
+            ?? (isSample ? .bundledSample : .common(relativePath: subtitle))
         contentRevision = try container.decodeIfPresent(UInt64.self, forKey: .contentRevision) ?? 1
         contentDigest = try container.decodeIfPresent(String.self, forKey: .contentDigest)
         fileByteCount = try container.decodeIfPresent(UInt64.self, forKey: .fileByteCount)
         fileModificationTimeNanoseconds = try container.decodeIfPresent(
             Int64.self,
+            forKey: .fileModificationTimeNanoseconds
+        )
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(title, forKey: .title)
+        try container.encode(subtitle, forKey: .subtitle)
+        try container.encode(kind, forKey: .kind)
+        try container.encodeIfPresent(importedFileIdentity, forKey: .importedFileIdentity)
+        try container.encode(isSample, forKey: .isSample)
+        try container.encode(isNotebookNote, forKey: .isNotebookNote)
+        try container.encodeIfPresent(customDisplayTitle, forKey: .customDisplayTitle)
+        try container.encode(storage, forKey: .storage)
+        try container.encode(contentRevision, forKey: .contentRevision)
+        try container.encodeIfPresent(contentDigest, forKey: .contentDigest)
+        try container.encodeIfPresent(fileByteCount, forKey: .fileByteCount)
+        try container.encodeIfPresent(
+            fileModificationTimeNanoseconds,
             forKey: .fileModificationTimeNanoseconds
         )
     }

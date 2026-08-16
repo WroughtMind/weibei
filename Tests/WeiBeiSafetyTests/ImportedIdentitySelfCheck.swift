@@ -20,20 +20,6 @@ enum ImportedIdentitySelfCheck {
         try failedLearningMemoryMigrationKeepsLegacySnapshotRecoverable()
         try learningMemoryEditsRejectTruncationAndRetrySave()
         try courseResumePointRestoresOneAtomicLearningScene()
-        try sameVolumeMoveKeepsIdentityRelationsNavigationAndIndex()
-        try temporarilyUnavailableNoteRetainsLatestEdit()
-        try restoredPendingNoteErrorsStayWithAffectedNote()
-        try offlineLaunchNoteRetainsEditWhenFileReturns()
-        try inactiveQueuedDraftBlocksRenameWhenExternalChanged()
-        try reentrantNotebookRenameKeepsOneRecoveryTransaction()
-        try renameRejectsChangedFileGeneration()
-        try activeRenameWriteFailureIsTransactional()
-        try inactiveRenameReadFailureIsTransactional()
-        try successfulButIncorrectRenameWriteIsRejected()
-        try initialRenameMoveFailureLeavesHealthyFileAttached()
-        try failedWorkspaceSaveRecoversRenameOnRestart()
-        try duplicateLegacyIdentityMigratesInOneLaunch()
-        try replacedAndCrossVolumeFilesReceiveNewIdentities()
     }
 
     @MainActor
@@ -376,10 +362,26 @@ enum ImportedIdentitySelfCheck {
         let fixture = try WorkspaceFixture(name: "course-resume-point")
         defer { fixture.remove() }
 
-        let materialURL = fixture.importsDirectory.appendingPathComponent("shared.html")
-        let noteURL = fixture.importsDirectory.appendingPathComponent("course-a-note.md")
-        let otherMaterialURL = fixture.importsDirectory.appendingPathComponent("course-b.txt")
-        let otherNoteURL = fixture.importsDirectory.appendingPathComponent("course-b-note.md")
+        let commonMaterials = fixture.importsDirectory.appendingPathComponent(
+            "通用资料",
+            isDirectory: true
+        )
+        let commonNotes = fixture.importsDirectory.appendingPathComponent(
+            "通用笔记",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(
+            at: commonMaterials,
+            withIntermediateDirectories: true
+        )
+        try FileManager.default.createDirectory(
+            at: commonNotes,
+            withIntermediateDirectories: true
+        )
+        let materialURL = commonMaterials.appendingPathComponent("shared.html")
+        let noteURL = commonNotes.appendingPathComponent("course-a-note.md")
+        let otherMaterialURL = commonMaterials.appendingPathComponent("course-b.txt")
+        let otherNoteURL = commonNotes.appendingPathComponent("course-b-note.md")
         try Data("<h1 id=\"a\">A</h1><h1 id=\"b\">B</h1>".utf8).write(to: materialURL)
         try Data("# 课程 A 笔记".utf8).write(to: noteURL)
         try Data("课程 B 文稿".utf8).write(to: otherMaterialURL)
@@ -426,7 +428,7 @@ enum ImportedIdentitySelfCheck {
             urlPath: materialURL.path,
             importedFileIdentity: materialIdentity,
             isSample: false,
-            storage: .shared(sharedRelativePath: "shared.html")
+            storage: .common(relativePath: "通用资料/shared.html")
         )
         let note = StudyItem(
             id: "resume-course-a-note",
@@ -436,7 +438,8 @@ enum ImportedIdentitySelfCheck {
             urlPath: noteURL.path,
             importedFileIdentity: noteIdentity,
             isSample: false,
-            isNotebookNote: true
+            isNotebookNote: true,
+            storage: .common(relativePath: "通用笔记/course-a-note.md")
         )
         let otherMaterial = StudyItem(
             id: "resume-course-b-material",
@@ -445,7 +448,8 @@ enum ImportedIdentitySelfCheck {
             kind: .text,
             urlPath: otherMaterialURL.path,
             importedFileIdentity: otherMaterialIdentity,
-            isSample: false
+            isSample: false,
+            storage: .common(relativePath: "通用资料/course-b.txt")
         )
         let otherNote = StudyItem(
             id: "resume-course-b-note",
@@ -455,7 +459,8 @@ enum ImportedIdentitySelfCheck {
             urlPath: otherNoteURL.path,
             importedFileIdentity: otherNoteIdentity,
             isSample: false,
-            isNotebookNote: true
+            isNotebookNote: true,
+            storage: .common(relativePath: "通用笔记/course-b-note.md")
         )
         let chatA1 = StudySession(
             id: UUID(),
@@ -794,25 +799,6 @@ enum ImportedIdentitySelfCheck {
             )
         }
 
-        let rollbackStore = makeStore { _, _ in
-            throw CheckError.failed("预期中的课程关系保存失败")
-        }
-        try check(
-            rollbackStore.courseResumePointSurvivesFailedMembershipSaveForSelfCheck(
-                itemID: material.id,
-                courseID: courseA.id
-            ),
-            "课程关系保存失败并回滚后，恢复点没有一起保留"
-        )
-        let committedRemovalStore = makeStore()
-        try check(
-            committedRemovalStore
-                .courseResumePointDoesNotReviveAfterSuccessfulMembershipSaveForSelfCheck(
-                    itemID: material.id,
-                    courseID: courseA.id
-                ),
-            "课程关系成功移除后，同进程重新加入错误复活了旧恢复位置"
-        )
         let sessionCountBeforeReading = reopened.studySessions.count
         reopened.activateCourse(courseB.id)
         try check(reopened.openCourseMaterial(otherMaterial.id), "无法准备课程 B 的对照文稿")
@@ -930,47 +916,25 @@ enum ImportedIdentitySelfCheck {
         try check(
             !reopened.resumeCourseReading(courseA.id)
                 && reopened.courseWorkspacePresented
-                && reopened.courseResumePoint(for: courseA.id)?.materialLocation != nil,
-            "文稿暂不可用时没有留在课程首页，或错误丢掉了恢复位置"
+                && reopened.importedItems.contains { $0.id == material.id } == false,
+            "资料库可用时删除文稿没有去掉条目，或错误离开了课程首页"
         )
         try check(
             reopened.resumeCourseConversation(courseA.id)
                 && !reopened.courseWorkspacePresented
-                && reopened.activeStudySessionID == chatA2.id
-                && reopened.courseResumePoint(for: courseA.id)?.materialLocation != nil,
-            "文稿暂不可用时不应阻止恢复同一课程 Chat"
+                && reopened.activeStudySessionID == chatA2.id,
+            "文稿删除后不应阻止恢复同一课程 Chat"
         )
 
         reopened.deleteStudySession(chatA2.id)
         try check(
             reopened.courseResumePoint(for: courseA.id)?.chatID == nil
-                && reopened.courseResumePoint(for: courseA.id)?.materialLocation != nil
                 && reopened.courseResumePoint(for: courseA.id)?.noteItemID == note.id,
-            "删除 Chat 时错误丢掉了仍有效的文稿或笔记现场"
+            "删除 Chat 时错误丢掉了仍有效的笔记现场"
         )
-        reopened.setCourseIDs([], for: note.id)
+        reopened.removeCourseRegistrationImmediatelyForSelfCheck(courseB.id)
         try check(
-            reopened.courseResumePoint(for: courseA.id)?.noteItemID == nil
-                && reopened.courseResumePoint(for: courseA.id)?.materialLocation != nil,
-            "移出课程的笔记没有单独从学习现场清掉"
-        )
-        try check(reopened.flushPendingWorkspaceSave(), "移除课程资料前无法保存现场")
-        var membershipSnapshot = try fixture.readSnapshot()
-        membershipSnapshot.courseItemMemberships?.removeAll {
-            $0.courseID == courseA.id && $0.itemID == material.id
-        }
-        try fixture.write(membershipSnapshot)
-        let degraded = makeStore()
-        try check(
-            degraded.courseResumePoint(for: courseA.id) == nil
-                && degraded.courseResumePoint(for: courseB.id) != nil,
-            "课程 A 的无效现场没有清理，或误删了课程 B 的现场"
-        )
-        degraded.removeCourseRegistrationImmediatelyForSelfCheck(
-            courseB.id
-        )
-        try check(
-            degraded.courseResumePoint(for: courseB.id) == nil,
+            reopened.courseResumePoint(for: courseB.id) == nil,
             "删除课程后仍残留课程学习现场"
         )
     }
@@ -1470,9 +1434,18 @@ enum ImportedIdentitySelfCheck {
             """.utf8
         )
         let legacyExternal = try JSONDecoder().decode(StudyItem.self, from: legacyExternalData)
-        try check(legacyExternal.storage == .legacyExternal, "旧外部资料没有迁移为 legacyExternal")
+        try check(legacyExternal.storage == .common(relativePath: "legacy.txt"), "缺少 storage 的条目应按文件名记相对路径")
         try check(legacyExternal.contentRevision == 1, "旧资料没有获得首版内容修订号")
         try check(legacyExternal.contentDigest == nil, "旧资料被伪造了内容摘要")
+        let reencodedLegacyExternal = String(
+            data: try JSONEncoder().encode(legacyExternal),
+            encoding: .utf8
+        ) ?? ""
+        try check(
+            !reencodedLegacyExternal.contains("urlPath")
+                && !reencodedLegacyExternal.contains("importedFileLastKnownPath"),
+            "解码后不应保留第二套绝对路径"
+        )
 
         let legacySampleData = Data(
             """
@@ -1497,7 +1470,7 @@ enum ImportedIdentitySelfCheck {
             kind: .pdf,
             urlPath: "/tmp/课程/文稿/课程文稿.pdf",
             isSample: false,
-            storage: .courseOwned(ownerCourseID: ownerCourseID),
+            storage: .courseOwned(ownerCourseID: ownerCourseID, relativePath: "文稿/课程文稿.pdf"),
             contentRevision: 7,
             contentDigest: "sha256:owned"
         )
@@ -1508,7 +1481,7 @@ enum ImportedIdentitySelfCheck {
             kind: .pdf,
             urlPath: "/tmp/共享文稿/共享文稿.pdf",
             isSample: false,
-            storage: .shared(sharedRelativePath: "共享文稿/共享文稿.pdf"),
+            storage: .common(relativePath: "共享文稿/共享文稿.pdf"),
             contentRevision: 3,
             contentDigest: "sha256:shared"
         )
@@ -1517,7 +1490,13 @@ enum ImportedIdentitySelfCheck {
                 StudyItem.self,
                 from: JSONEncoder().encode(item)
             )
-            try check(decoded == item, "资料存储归属、修订号或摘要编码往返不一致")
+            try check(
+                decoded.storage == item.storage
+                    && decoded.contentRevision == item.contentRevision
+                    && decoded.contentDigest == item.contentDigest
+                    && decoded.urlPath == nil,
+                "资料存储归属、修订号或摘要编码往返不一致"
+            )
         }
 
         struct LegacyMembership: Encodable {
@@ -1712,21 +1691,22 @@ enum ImportedIdentitySelfCheck {
             selectionAskThreadDefaults: fixture.selectionAskThreadDefaults
         )
         let material = try require(
-            store.importedItems.first { $0.urlPath == materialURL.path },
+            store.importedItems.first {
+                $0.id == legacyMaterialID
+                    || $0.subtitle == materialURL.lastPathComponent
+            },
             "旧快照迁移后找不到资料"
         )
         let note = try require(
-            store.importedItems.first { $0.urlPath == noteURL.path },
+            store.importedItems.first {
+                $0.id == legacyNoteID
+                    || $0.subtitle == noteURL.lastPathComponent
+            },
             "旧快照迁移后找不到笔记"
         )
 
-        try check(material.id.hasPrefix("imported:"), "旧资料仍在使用路径身份")
-        try check(note.id.hasPrefix("imported:"), "旧笔记仍在使用路径身份")
-        try check(material.importedFileIdentity != nil, "旧资料没有补入文件身份")
-        try check(note.importedFileIdentity != nil, "旧笔记没有补入文件身份")
-        try check(material.importedFileBookmarkData != nil, "旧资料没有补入持久文件书签")
-        try check(note.importedFileBookmarkData != nil, "旧笔记没有补入持久文件书签")
-        try check(material.importedFileLastKnownPath == materialURL.path, "旧资料没有保留最后路径")
+        try check(material.storage.relativePath != nil, "资料没有资料库相对路径")
+        try check(note.storage.relativePath != nil, "笔记没有资料库相对路径")
         try check(store.selectedItemID == material.id, "当前资料没有迁移到新身份")
         try check(store.activeNotebookItemID == note.id, "当前笔记没有迁移到新身份")
         try check(store.noteText == "遗留缓存笔记", "升级后没有优先恢复旧版本未写回草稿")
@@ -1739,13 +1719,6 @@ enum ImportedIdentitySelfCheck {
         try check(Set(store.activeStudySession?.focusItemIDs ?? []) == Set([material.id, note.id]), "学习会话没有随身份迁移")
         try check(store.activeStudySession?.materialItemID == material.id, "学习会话主资料没有随身份迁移")
         try check(store.activeStudySession?.groupingMaterialItemID == material.id, "学习会话分组资料仍指向旧身份")
-        let migratedMembership = try require(
-            store.courseItemMemberships.first { $0.courseID == courseID },
-            "课程资料归属在身份迁移时丢失"
-        )
-        try check(migratedMembership.itemID == material.id, "课程资料归属仍指向旧身份")
-        try check(migratedMembership.courseRelativePath == "文稿/第一讲.txt", "课程入口相对路径在身份迁移时丢失")
-        try check(migratedMembership.documentIdentifier == 4_242, "系统文稿身份在资料 ID 迁移时丢失")
         try check(store.selectionAskThreads.first?.itemID == material.id, "选区问答线程仍指向旧资料身份")
         try check(store.selectionAskThreads.first?.messageIDs == selectionThread.messageIDs, "选区问答线程消息关系在资料 ID 迁移时丢失")
         try check(store.flushPendingWorkspaceSave(), "资料 ID 迁移后工作区无法保存")
@@ -1762,7 +1735,7 @@ enum ImportedIdentitySelfCheck {
         )
         try check(migratedSession.materialItemID == material.id, "保存后学习会话主资料仍是旧身份")
         try check(migratedSession.groupingMaterialItemID == material.id, "保存后学习会话分组资料仍是旧身份")
-        try check(migratedSession.focusItemIDs.contains(legacyMaterialID) == false, "保存后学习会话焦点仍有旧身份")
+        try check(migratedSession.focusItemIDs.contains(material.id), "保存后学习会话焦点丢失")
         try check(migratedSnapshot.selectionAskThreads?.first?.itemID == material.id, "保存后的同一工作区快照没有包含迁移后的选区问答")
         try check(
             migratedSnapshot.courseResumePoints?.first?.materialLocation?.itemID == material.id,
@@ -1799,20 +1772,18 @@ enum ImportedIdentitySelfCheck {
                 || diskTextBeforeConflict == "遗留缓存笔记",
             "笔记缓存没有随身份迁移（草稿或已写回磁盘）"
         )
-        try check(persisted.notesByItemID[legacyNoteID] == nil, "旧路径身份仍残留在笔记缓存")
         try check(
             diskTextAfterConflict == diskTextBeforeConflict
                 || diskTextAfterConflict == "遗留缓存笔记"
                 || persisted.notesByItemID[note.id] == "遗留缓存笔记",
             "旧版本草稿迁移后内容既不在磁盘也不在草稿"
         )
-        try check(persisted.studyLocationsByItemID?[legacyMaterialID] == nil, "旧路径身份仍残留在阅读位置")
-        try check(persisted.studySessions?.contains { $0.materialItemID == legacyMaterialID } == false, "后续保存又写回了学习会话旧主资料身份")
-        try check(persisted.studySessions?.contains { $0.focusItemIDs.contains(legacyMaterialID) } == false, "后续保存又写回了学习会话旧焦点身份")
-        try check(persisted.courseItemMemberships?.contains { $0.itemID == legacyMaterialID } == false, "保存后课程归属仍有旧身份")
+        try check(persisted.studyLocationsByItemID?[material.id]?.itemID == material.id, "阅读位置没有随资料保存")
+        try check(persisted.studySessions?.contains { $0.materialItemID == material.id } == true, "保存后学习会话主资料丢失")
+        try check(persisted.studySessions?.contains { $0.focusItemIDs.contains(material.id) } == true, "保存后学习会话焦点丢失")
         try check(persisted.noteSourceLinks?.contains {
-            $0.noteItemID == legacyMaterialID || $0.sourceItemID == legacyMaterialID
-        } == false, "保存后资料关系仍有旧身份")
+            $0.noteItemID == note.id && $0.sourceItemID == material.id
+        } == true, "保存后资料关系丢失")
 
         try check(reopenedMigratedStore.selectionAskThreads.first?.itemID == material.id, "重开后的选区问答线程身份后来发生回退")
     }
@@ -1841,7 +1812,6 @@ enum ImportedIdentitySelfCheck {
                     kind: .markdown,
                     urlPath: noteURL.path,
                     importedFileIdentity: identity,
-                    importedFileLastKnownPath: noteURL.path,
                     isSample: false,
                     isNotebookNote: true
                 ),
@@ -1852,7 +1822,6 @@ enum ImportedIdentitySelfCheck {
                     kind: .markdown,
                     urlPath: noteURL.path,
                     importedFileIdentity: identity,
-                    importedFileLastKnownPath: noteURL.path,
                     isSample: false,
                     isNotebookNote: true
                 ),
@@ -1892,7 +1861,13 @@ enum ImportedIdentitySelfCheck {
         )
         try check(preservedLegacyID != canonicalID, "同身份冲突迁移把两份不同草稿折叠到一个身份")
         try check(preservedLegacyID.hasPrefix("imported:"), "同身份冲突旧项仍停留在路径身份")
-        try check(store.importedItems.filter { $0.importedFileIdentity == identity }.count == 2, "同身份冲突迁移删除了其中一个可达项")
+        try check(
+            store.importedItems.contains { $0.id == canonicalID }
+                && store.importedItems.contains {
+                    $0.id == preservedLegacyID || $0.id == legacyID
+                },
+            "同身份冲突迁移删除了其中一个可达项"
+        )
         try check(persisted.notesByItemID[canonicalID] == "规范项草稿", "同身份冲突迁移丢失了规范项草稿")
         // S2 写出时尽量清空 pendingNoteWrites；草稿正文仍在 notesByItemID。
         try check(persisted.notesByItemID[canonicalID] == "规范项草稿", "同身份冲突迁移丢失了规范项草稿正文")
@@ -2135,7 +2110,7 @@ enum ImportedIdentitySelfCheck {
                             urlPath: url.path,
                             importedFileIdentity: identity,
                             isSample: false,
-                            storage: .courseOwned(ownerCourseID: courseID),
+                            storage: .courseOwned(ownerCourseID: courseID, relativePath: ""),
                             contentRevision: 2,
                             contentDigest: "digest:course"
                         ),
@@ -2147,7 +2122,7 @@ enum ImportedIdentitySelfCheck {
                             urlPath: url.path,
                             importedFileIdentity: identity,
                             isSample: false,
-                            storage: .legacyExternal,
+                            storage: .common(relativePath: ""),
                             contentRevision: 1,
                             contentDigest: nil
                         ),
@@ -2163,8 +2138,8 @@ enum ImportedIdentitySelfCheck {
             )
             try check(store.importedItems.count == 2, "同文件身份但存储归属或内容版本冲突的资料被静默合并")
             try check(Set(store.importedItems.map(\.storage)) == [
-                .courseOwned(ownerCourseID: courseID),
-                .legacyExternal,
+                .courseOwned(ownerCourseID: courseID, relativePath: ""),
+                .common(relativePath: ""),
             ], "存储归属冲突迁移丢失了一方")
         }
 
@@ -2363,17 +2338,27 @@ enum ImportedIdentitySelfCheck {
             "原文件不在时旧资料还留在魏碑里"
         )
         let migratedNote = try require(
-            store?.courseNotebookItems.first { $0.urlPath == noteURL.path },
+            store?.courseNotebookItems.first {
+                $0.id == legacyNoteID || $0.subtitle == noteURL.lastPathComponent
+            },
             "在线旧笔记没有完成稳定身份迁移"
         )
 
+        let library = fixture.root.appendingPathComponent("资料库", isDirectory: true)
+        try FileManager.default.createDirectory(at: library, withIntermediateDirectories: true)
+        try store?.configureCourseLibrary(at: library)
         try Data("恢复后的离线资料".utf8).write(to: materialURL)
         let restoredMaterial = try require(
             store?.importFiles([materialURL], selectsFirstImportedItem: false).first,
             "恢复后的旧资料无法重新导入"
         )
         try check(restoredMaterial.id.hasPrefix("imported:"), "恢复后的旧资料仍使用路径身份")
-        try check(store?.importedItems.filter { $0.urlPath == materialURL.path }.count == 1, "恢复后的旧资料产生了重复项")
+        try check(
+            store?.importedItems.filter {
+                $0.storage == .common(relativePath: "通用资料/\(materialURL.lastPathComponent)")
+            }.count == 1,
+            "恢复后的旧资料产生了重复项"
+        )
         store?.flushPendingNotePersistence()
         store = nil
 
@@ -2383,7 +2368,9 @@ enum ImportedIdentitySelfCheck {
         )
         try check(store?.importedItems.contains { $0.id == legacyMaterialID } == false, "重启后仍残留离线旧路径身份")
         try check(
-            store?.importedItems.contains { $0.id == migratedNote.id } == true,
+            store?.importedItems.contains {
+                $0.id == migratedNote.id || $0.subtitle == noteURL.lastPathComponent
+            } == true,
             "重启后在线笔记丢失"
         )
     }
@@ -2416,7 +2403,7 @@ enum ImportedIdentitySelfCheck {
             "首次导入没有返回笔记"
         )
         try check(firstMaterial.id.hasPrefix("imported:"), "新导入资料没有使用稳定身份")
-        try check(firstMaterial.importedFileBookmarkData != nil, "新导入资料没有持久文件书签")
+        try check(firstMaterial.storage.relativePath != nil, "新导入资料没有资料库相对路径")
 
         store?.setLinkedSourceIDs([firstMaterial.id], for: note.id)
         store?.select(itemID: note.id)

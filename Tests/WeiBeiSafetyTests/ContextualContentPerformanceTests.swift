@@ -84,7 +84,7 @@ final class ContextualContentPerformanceTests: XCTestCase {
             kind: .text,
             urlPath: nil,
             isSample: false,
-            storage: .legacyExternal
+            storage: .common(relativePath: "")
         )
         store.importedItems = [sentinel]
         XCTAssertTrue(store.importFiles([first, second]).isEmpty)
@@ -121,7 +121,7 @@ final class ContextualContentPerformanceTests: XCTestCase {
                 kind: .text,
                 urlPath: nil,
                 isSample: false,
-                storage: .legacyExternal
+                storage: .common(relativePath: "")
             )
         }
 

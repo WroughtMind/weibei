@@ -1,5 +1,19 @@
 import Foundation
 
+public enum CourseLibraryLayout {
+    public static let defaultFolderName = "魏碑资料库"
+    public static let commonMaterialsDirectoryName = "通用资料"
+    public static let commonNotesDirectoryName = "通用笔记"
+    public static let courseMaterialsDirectoryName = "文稿"
+    public static let courseNotesDirectoryName = "笔记"
+
+    public static func defaultRootURL() -> URL {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Documents", isDirectory: true)
+            .appendingPathComponent(defaultFolderName, isDirectory: true)
+    }
+}
+
 public struct Course: Identifiable, Codable, Hashable, Sendable {
     public var id: UUID
     public var title: String

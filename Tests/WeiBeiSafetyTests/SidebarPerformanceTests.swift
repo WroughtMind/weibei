@@ -267,7 +267,7 @@ final class SidebarPerformanceTests: XCTestCase {
             urlPath: noteURL.path,
             isSample: false,
             isNotebookNote: true,
-            storage: .legacyExternal
+            storage: .common(relativePath: "")
         )
         fixture.store.importedItems = [note]
 

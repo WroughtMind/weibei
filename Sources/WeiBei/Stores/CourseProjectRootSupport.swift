@@ -864,15 +864,15 @@ actor CourseProjectFileWorker {
             guard let relativePath = membership.courseRelativePath else {
                 // 纯归属兜底登记（链接进课程目录失败时写入）没有课程内链接
                 // 条目，可携带状态无法表示；跳过它而不是让整次保存失败。
-                if case .shared = item.storage { continue }
+                if case .common = item.storage { continue }
                 throw CoursePortableStateError.missingCourseItem
             }
             let storage: CoursePortableItemStorage
             switch item.storage {
-            case .courseOwned(let ownerCourseID)
+            case .courseOwned(let ownerCourseID, _)
                 where ownerCourseID == courseID:
                 storage = .courseOwned
-            case let .shared(sharedRelativePath):
+            case let .common(sharedRelativePath):
                 storage = .sharedReference(
                     sharedRelativePath: sharedRelativePath,
                     expectedContentDigest: item.contentDigest

@@ -125,10 +125,10 @@ public final class CourseDocumentSearchIndex: @unchecked Sendable {
                 }
             } else {
                 switch item.storage {
-                case .courseOwned, .shared:
+                case .courseOwned:
                     Darwin.close(descriptor)
                     return nil
-                case .legacyExternal, .bundledSample:
+                case .common, .bundledSample:
                     break
                 }
             }
