@@ -29,4 +29,36 @@ final class PDFReaderOpenSafetyTests: XCTestCase {
         let blank = PDFPage()
         XCTAssertFalse(PDFReaderOpenSafety.pageHasNativeText(blank))
     }
+
+    func testSelectionReportGateIgnoresEmptyPulsesWhileDragging() {
+        var gate = PDFSelectionReportGate()
+        gate.beginTracking()
+        XCTAssertTrue(gate.shouldPublish(text: "A Programming Paradigm", now: 1))
+        XCTAssertFalse(gate.shouldPublish(text: "", now: 1.01))
+        gate.endTracking()
+        XCTAssertFalse(
+            gate.shouldPublish(text: "", now: 1.02),
+            "empty PDFKit pulses right after a real selection must not clear the capsule"
+        )
+        XCTAssertTrue(gate.shouldPublish(text: "", now: 1.02 + PDFSelectionReportGate.emptySuppression))
+    }
+
+    @MainActor
+    func testDisabledAccessibilityTreeStillExposesProgrammaticSelection() {
+        let document = PDFDocument()
+        document.insert(PDFPage(), at: 0)
+        let view = PDFView(frame: NSRect(x: 0, y: 0, width: 400, height: 600))
+        PDFReaderOpenSafety.disableAccessibilityTree(on: view)
+        view.document = document
+        PDFReaderOpenSafety.disableAccessibilityTree(on: view)
+        guard let page = document.page(at: 0),
+              let selection = page.selection(for: page.bounds(for: .mediaBox)) else {
+            XCTFail("expected a page selection")
+            return
+        }
+        view.setCurrentSelection(selection, animate: false)
+        XCTAssertNotNil(view.currentSelection)
+        XCTAssertFalse(view.isAccessibilityElement())
+        XCTAssertNil(view.accessibilityChildren())
+    }
 }

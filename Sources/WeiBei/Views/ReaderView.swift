@@ -1305,6 +1305,7 @@ private struct PDFReaderRepresentable: NSViewRepresentable {
         context.coordinator.appearanceMode = appearanceMode
         context.coordinator.onUserPageChange = onUserPageChange
         context.coordinator.onSelectableTextChange = onSelectableTextChange
+        context.coordinator.onSelectionChange = onSelectionChange
         context.coordinator.onAskUnderlineActivate = onAskUnderlineActivate
         view.backgroundColor = WeiBeiNativePalette.paper(for: appearanceMode)
         view.configureDocumentColorAdaptation(enabled: adaptsDocumentColors, appearanceMode: appearanceMode)
@@ -1388,6 +1389,8 @@ private struct PDFReaderRepresentable: NSViewRepresentable {
         private var lastAppliedAskUnderlineMarks: [(id: String, text: String)] = []
         private var askUnderlineHits: [(threadID: String, pageIndex: Int, hitBounds: CGRect)] = []
         private var hoveredAskThreadID: String?
+        private var selectionReportGate = PDFSelectionReportGate()
+        private var lastPointerInView: CGPoint?
         private let askUnderlineMarker = "weibei-selection-ask"
         private let askUnderlineHoverMarker = "weibei-selection-ask-hover"
 
@@ -1524,11 +1527,14 @@ private struct PDFReaderRepresentable: NSViewRepresentable {
         }
 
         private func clearOCROverlays(in view: PDFView) {
+            let hadOverlays = !ocrPagesByPageIndex.isEmpty || view.pageOverlayViewProvider != nil
             ocrPagesByPageIndex = [:]
             pendingOCRPageIndexes = []
             ocrHighlightedLinesByPageIndex = [:]
             setOCRPageOverlayProvider(nil, in: view)
-            view.layoutDocumentView()
+            if hadOverlays {
+                view.layoutDocumentView()
+            }
         }
 
         private func updateSelectableTextState(in view: PDFView) {
@@ -1627,6 +1633,17 @@ private struct PDFReaderRepresentable: NSViewRepresentable {
                     return event
                 }
                 let location = view.convert(event.locationInWindow, from: nil)
+                if event.type == .leftMouseUp, self.selectionReportGate.isTracking {
+                    self.selectionReportGate.endTracking()
+                    if view.bounds.contains(location) {
+                        self.lastPointerInView = location
+                    }
+                    DispatchQueue.main.async { [weak self, weak view] in
+                        guard let self, let view else { return }
+                        self.reportCurrentSelection(in: view)
+                    }
+                    return event
+                }
                 guard view.bounds.contains(location) else { return event }
                 if event.type == .scrollWheel {
                     self.markUserNavigationIntent()
@@ -1634,8 +1651,11 @@ private struct PDFReaderRepresentable: NSViewRepresentable {
                 }
                 if event.type == .leftMouseDown {
                     view.window?.makeFirstResponder(view)
+                    self.selectionReportGate.beginTracking()
+                    self.lastPointerInView = location
                     return event
                 }
+                self.lastPointerInView = location
                 DispatchQueue.main.async { [weak self, weak view] in
                     guard let self, let view else { return }
                     self.reportCurrentSelection(in: view)
@@ -1669,8 +1689,12 @@ private struct PDFReaderRepresentable: NSViewRepresentable {
         }
 
         func reportCurrentSelection(in view: PDFView) {
+            let text = view.currentSelection?.string ?? ""
+            let now = ProcessInfo.processInfo.systemUptime
+            guard selectionReportGate.shouldPublish(text: text, now: now) else {
+                return
+            }
             guard let selection = view.currentSelection,
-                  let text = selection.string,
                   !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                 selectionWork?.cancel()
                 onSelectionChange("", nil, pageIndex.wrappedValue)
@@ -1680,7 +1704,11 @@ private struct PDFReaderRepresentable: NSViewRepresentable {
             let selectedPageIndex = Self.pageIndex(for: selection, in: view) ?? pageIndex.wrappedValue
             reportSelectionAfterDragSettles(
                 text: text,
-                anchor: Self.anchor(for: selection, in: view),
+                anchor: Self.anchor(
+                    for: selection,
+                    in: view,
+                    fallbackLocalPoint: lastPointerInView
+                ),
                 pageIndex: selectedPageIndex
             )
         }
@@ -1694,13 +1722,31 @@ private struct PDFReaderRepresentable: NSViewRepresentable {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.06, execute: work)
         }
 
-        private static func anchor(for selection: PDFSelection, in view: PDFView) -> CGPoint? {
-            guard let page = selection.pages.first else { return nil }
-            let bounds = selection.bounds(for: page)
-            guard !bounds.isEmpty else { return nil }
-            let localRect = view.convert(bounds, from: page)
-            let localPoint = CGPoint(x: localRect.midX, y: localRect.minY)
-            return SelectionAnchorContentPoint.fromLocalPoint(localPoint, in: view)
+        private static func anchor(
+            for selection: PDFSelection,
+            in view: PDFView,
+            fallbackLocalPoint: CGPoint?
+        ) -> CGPoint? {
+            if let page = selection.pages.first {
+                let bounds = selection.bounds(for: page)
+                if !bounds.isEmpty {
+                    let localRect = view.convert(bounds, from: page)
+                    if !localRect.isEmpty {
+                        let localPoint = CGPoint(x: localRect.midX, y: localRect.minY)
+                        if let anchor = SelectionAnchorContentPoint.fromLocalPoint(localPoint, in: view) {
+                            return anchor
+                        }
+                    }
+                }
+            }
+            if let fallbackLocalPoint,
+               let anchor = SelectionAnchorContentPoint.fromLocalPoint(fallbackLocalPoint, in: view) {
+                return anchor
+            }
+            return SelectionAnchorContentPoint.fromLocalPoint(
+                CGPoint(x: view.bounds.midX, y: view.bounds.midY),
+                in: view
+            )
         }
 
         private static func pageIndex(for selection: PDFSelection, in view: PDFView) -> Int? {
@@ -2028,6 +2074,8 @@ extension PDFReaderRepresentable.Coordinator: PDFPageOverlayViewProvider {
             appearanceMode: appearanceMode
         ) { [weak self] text, anchor in
             guard let self else { return }
+            let now = ProcessInfo.processInfo.systemUptime
+            guard self.selectionReportGate.shouldPublish(text: text, now: now) else { return }
             guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                 self.selectionWork?.cancel()
                 self.onSelectionChange("", nil, index)
