@@ -2215,7 +2215,8 @@ final class WorkspaceStore: ObservableObject {
                     importedItems.compactMap { item -> String? in
                         guard item.isNotebookNote,
                               case .courseOwned(
-                                  let ownerCourseID
+                                  let ownerCourseID,
+                                  _
                               ) = item.storage,
                               ownerCourseID == course.id else {
                             return nil
@@ -2640,7 +2641,7 @@ final class WorkspaceStore: ObservableObject {
                 sharedRelativePath,
                 expectedContentDigest
             ) = state.items[index].storage,
-            sharedRelativePath == provenance.sharedRelativePath,
+            sharedRelativePath == provenance.relativePath,
             expectedContentDigest == provenance.sourceContentDigest,
             state.items[index].contentDigest
                 == provenance.sourceContentDigest else {
@@ -4741,7 +4742,7 @@ final class WorkspaceStore: ObservableObject {
             }
             workspaceCommitted = true
 
-            let sourceCleanupPending = false
+            var sourceCleanupPending = false
             if let rollbackIdentity = replacedRollbackIdentity,
                let replacedSnapshot = replacedTargetSnapshot {
                 do {
@@ -6260,6 +6261,88 @@ final class WorkspaceStore: ObservableObject {
             }
         }
         return changed
+    }
+
+    func discoverTopLevelCourseFolders() {
+        guard let libraryRoot = courseLibraryRootURL else { return }
+        switch CourseProjectFileWorker.entryPresence(at: libraryRoot) {
+        case .absent, .inaccessible:
+            return
+        case .present:
+            break
+        }
+        let reserved: Set<String> = [
+            CourseLibraryLayout.commonMaterialsDirectoryName,
+            CourseLibraryLayout.commonNotesDirectoryName,
+        ]
+        let children = (try? FileManager.default.contentsOfDirectory(
+            at: libraryRoot,
+            includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey],
+            options: [.skipsHiddenFiles]
+        )) ?? []
+        for child in children {
+            let values = try? child.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
+            guard values?.isDirectory == true, values?.isSymbolicLink != true else { continue }
+            let name = child.lastPathComponent
+            guard !reserved.contains(name) else { continue }
+            if courses.contains(where: {
+                $0.sourceRootRelativePath == name || courseRootURL(for: $0.id) == child
+            }) {
+                ensureCourseScaffold(at: child)
+                continue
+            }
+            let manifestURL = child
+                .appendingPathComponent(".weibei", isDirectory: true)
+                .appendingPathComponent("course.json")
+            let existingID: UUID?
+            if let data = try? Data(contentsOf: manifestURL),
+               let manifest = try? JSONDecoder().decode(CourseProjectManifest.self, from: data) {
+                existingID = manifest.courseID
+            } else {
+                existingID = nil
+            }
+            if let existingID, let index = courses.firstIndex(where: { $0.id == existingID }) {
+                courses[index].title = name
+                courses[index].sourceRootRelativePath = name
+                resolvedCourseRootURLs[existingID] = child
+                ensureCourseScaffold(at: child)
+                continue
+            }
+            let courseID = existingID ?? UUID()
+            ensureCourseScaffold(at: child)
+            let writtenManifest = child
+                .appendingPathComponent(".weibei", isDirectory: true)
+                .appendingPathComponent("course.json")
+            if !FileManager.default.fileExists(atPath: writtenManifest.path) {
+                try? CourseProjectManifest(courseID: courseID)
+                    .encoded()
+                    .write(to: writtenManifest, options: [.atomic])
+            }
+            if !courses.contains(where: { $0.id == courseID }) {
+                courses.append(
+                    Course(
+                        id: courseID,
+                        title: name,
+                        colorIndex: nextCourseColorIndex(),
+                        sourceRootRelativePath: name
+                    )
+                )
+            }
+            resolvedCourseRootURLs[courseID] = child
+        }
+    }
+
+    private func ensureCourseScaffold(at root: URL) {
+        for name in [
+            CourseLibraryLayout.courseMaterialsDirectoryName,
+            CourseLibraryLayout.courseNotesDirectoryName,
+            ".weibei",
+        ] {
+            try? FileManager.default.createDirectory(
+                at: root.appendingPathComponent(name, isDirectory: true),
+                withIntermediateDirectories: true
+            )
+        }
     }
 
     private func validateRestoredCourseRoot(
@@ -15051,7 +15134,7 @@ final class WorkspaceStore: ObservableObject {
             return CourseProjectFileWorker.identity(at: url) == expectedIdentity
         case .bundledSample:
             return item.isSample
-        case .courseOwned, .shared:
+        case .courseOwned:
             return false
         }
     }

@@ -137,7 +137,7 @@ func checkLibraryRelativeStorage() throws {
         (storeSource.contains("copyExternalFileIntoLibrary")
             || libraryRootSource.contains("copyExternalFileIntoLibrary"))
             && libraryRootSource.contains("copyExternalFileIntoCourse")
-            && libraryRootSource.contains("discoverTopLevelCourseFolders")
+            && storeSource.contains("discoverTopLevelCourseFolders")
             && storeSource.contains("courseItemMemberships: nil"),
         "SAFETY:library-relative-import import, discovery, and persist follow the single-library model"
     )
