@@ -84,7 +84,7 @@ struct CourseMarkdownStagingResult: Sendable {
 struct CoursePortableExportSharedMaterial: Sendable {
     var itemID: String
     var courseRelativePath: String
-    var relativePath: String
+    var sharedRelativePath: String
     var linkIdentity: ImportedFileIdentity
     var sourceURL: URL
     var sourceIdentity: ImportedFileIdentity
@@ -874,7 +874,7 @@ actor CourseProjectFileWorker {
                 storage = .courseOwned
             case let .common(sharedRelativePath):
                 storage = .sharedReference(
-                    relativePath: sharedRelativePath,
+                    sharedRelativePath: sharedRelativePath,
                     expectedContentDigest: item.contentDigest
                 )
             default:
@@ -1360,7 +1360,7 @@ actor CourseProjectFileWorker {
             CourseProjectSharedMaterialProvenance(
                 itemID: $0.itemID,
                 courseRelativePath: $0.courseRelativePath,
-                relativePath: $0.relativePath,
+                sharedRelativePath: $0.sharedRelativePath,
                 sourceIdentity: $0.sourceIdentity,
                 sourceContentDigest: $0.sourceSnapshot.sha256
             )
@@ -5088,7 +5088,7 @@ struct CourseProjectSimulatedCrash: Error {}
 struct CourseProjectSharedMaterialProvenance: Codable, Equatable, Sendable {
     var itemID: String
     var courseRelativePath: String
-    var relativePath: String
+    var sharedRelativePath: String
     var sourceIdentity: ImportedFileIdentity
     var sourceContentDigest: String
 }
@@ -5228,7 +5228,7 @@ struct CourseProjectManifest: Codable, Equatable {
               portableExport.materializedSharedItems.allSatisfy({
                   !$0.itemID.isEmpty
                       && isSafeRelativePath($0.courseRelativePath)
-                      && isStrictCommonContentPath($0.relativePath)
+                      && isStrictCommonContentPath($0.sharedRelativePath)
                       && isSHA256($0.sourceContentDigest)
               }) else {
             throw CourseProjectRootError.manifestMismatch

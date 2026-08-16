@@ -2641,7 +2641,7 @@ final class WorkspaceStore: ObservableObject {
                 sharedRelativePath,
                 expectedContentDigest
             ) = state.items[index].storage,
-            sharedRelativePath == provenance.relativePath,
+            sharedRelativePath == provenance.sharedRelativePath,
             expectedContentDigest == provenance.sourceContentDigest,
             state.items[index].contentDigest
                 == provenance.sourceContentDigest else {
@@ -3419,7 +3419,7 @@ final class WorkspaceStore: ObservableObject {
                     itemID: item.id,
                     courseRelativePath:
                         state.items[index].courseRelativePath,
-                    relativePath: sharedRelativePath,
+                    sharedRelativePath: sharedRelativePath,
                     linkIdentity: linkIdentity,
                     sourceURL: sourceInfo.url,
                     sourceIdentity: sourceInfo.identity,
@@ -7398,7 +7398,6 @@ final class WorkspaceStore: ObservableObject {
             }
 
             importedItems[itemIndex].urlPath = targetURL.path
-                targetURL.path
             importedItems[itemIndex].importedFileIdentity = placedIdentity
             importedItems[itemIndex].storage = .common(
                 relativePath: sharedRelativePath
@@ -18784,7 +18783,6 @@ final class WorkspaceStore: ObservableObject {
                 importedItems[currentIndex].importedFileIdentity =
                     result.metadata.identity
                 importedItems[currentIndex].urlPath = result.metadata.url.path
-                    result.metadata.url.path
                 noteBackingContentDigestsByItemID[itemID] =
                     result.snapshot.sha256
                 if courseItemMemberships.indices.contains(
@@ -19094,7 +19092,7 @@ final class WorkspaceStore: ObservableObject {
                 storage = .courseOwned
             case let .common(sharedRelativePath):
                 storage = .sharedReference(
-                    relativePath: sharedRelativePath,
+                    sharedRelativePath: sharedRelativePath,
                     expectedContentDigest: item.contentDigest
                 )
             default:
