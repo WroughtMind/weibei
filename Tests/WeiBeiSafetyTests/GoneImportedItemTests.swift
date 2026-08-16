@@ -70,8 +70,10 @@ final class GoneImportedItemTests: XCTestCase {
         }
 
         let original = fixture.root.appendingPathComponent("locked.md")
+        let sourceURL = fixture.root.appendingPathComponent("source.txt")
         let draft = "# locked\n\nkeep this draft"
         try Data(draft.utf8).write(to: original)
+        try Data("source\n".utf8).write(to: sourceURL)
         let identity = try XCTUnwrap(statIdentity(original))
         let itemID = "imported:unreadable-keeps"
         let sourceID = "imported:unreadable-source"
@@ -83,7 +85,7 @@ final class GoneImportedItemTests: XCTestCase {
                         title: "source",
                         subtitle: "source.txt",
                         kind: .text,
-                        urlPath: fixture.root.appendingPathComponent("source.txt").path,
+                        urlPath: sourceURL.path,
                         isSample: false
                     ),
                     StudyItem(
