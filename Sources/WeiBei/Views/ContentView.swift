@@ -403,30 +403,13 @@ private struct UnifiedTopBarView: View {
                 .frame(width: 8)
         }
         .foregroundStyle(secondaryText)
-        .offset(y: isFullScreen ? 0 : -3)
         .frame(height: barHeight)
         .background(topBarBackground)
         .overlay {
             paneToggleCluster
-                .offset(y: isFullScreen ? 0 : -3)
         }
         .opacity(appeared ? 1 : 0)
         .offset(y: appeared ? 0 : -5)
-        .overlay(alignment: .top) {
-            Rectangle()
-                .fill(topHighlight)
-                .frame(height: 1)
-        }
-        .overlay(alignment: .bottom) {
-            WeiBeiHeaderHandoffFade(
-                height: 18,
-                opacity: isImmersiveLayout ? 0.42 : 0.34,
-                appearanceMode: store.appearanceMode
-            )
-            .offset(y: 18)
-            .allowsHitTesting(false)
-        }
-        .shadow(color: WeiBeiTheme.ink.opacity(0.018), radius: 8, y: 2)
         .onAppear {
             withAnimation(WeiBeiMotion.reveal) {
                 appeared = true
@@ -453,7 +436,7 @@ private struct UnifiedTopBarView: View {
     }
 
     private var controlHeight: CGFloat {
-        28
+        26
     }
 
     private var shouldShowSearchAction: Bool {
@@ -480,27 +463,8 @@ private struct UnifiedTopBarView: View {
         WeiBeiTheme.paperInset.opacity(0.38)
     }
 
-    private var topHighlight: Color {
-        // Dark: hairline only — glassHighlight reads as a warm brown streak on 墨石.
-        store.appearanceMode.isDark
-            ? WeiBeiTheme.ink.opacity(0.05)
-            : WeiBeiTheme.glassHighlight.opacity(0.24)
-    }
-
     private var topBarBackground: some View {
-        WeiBeiGlassHeaderBackground(
-            paperOpacity: backgroundPaperOpacity - (isImmersiveLayout ? 0.06 : 0),
-            materialOpacity: backgroundMaterialOpacity + (isImmersiveLayout ? 0.03 : 0),
-            appearanceMode: store.appearanceMode
-        )
-    }
-
-    private var backgroundPaperOpacity: Double {
-        0.80
-    }
-
-    private var backgroundMaterialOpacity: Double {
-        0.09
+        Color(nsColor: WeiBeiNativePalette.paper(for: store.appearanceMode))
     }
 
     @ViewBuilder
