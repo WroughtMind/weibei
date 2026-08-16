@@ -388,10 +388,7 @@ struct CourseSidebarList: View {
                             tags: row.tags,
                             selected: selected,
                             compact: compact,
-                            accent: accent,
-                            sourceMissingLabel: store.isImportedSourceMissing(item)
-                                ? store.ui("源文件缺失", "Source file missing")
-                                : nil
+                            accent: accent
                         )
                     }
                     .buttonStyle(.plain)
@@ -477,11 +474,6 @@ struct CourseSidebarList: View {
                         Label(course.title, systemImage: assigned ? "checkmark" : "circle")
                     }
                 }
-            }
-        }
-        if store.isImportedSourceMissing(item) {
-            Button(ui("重新选择文件", "Choose File Again")) {
-                store.presentRebindPanelForMissingImportedItem(item.id)
             }
         }
         if !item.isSample, item.url != nil {

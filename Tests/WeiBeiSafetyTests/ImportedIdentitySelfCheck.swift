@@ -2358,7 +2358,10 @@ enum ImportedIdentitySelfCheck {
             workspaceDirectory: fixture.workspaceDirectory,
             selectionAskThreadDefaults: fixture.selectionAskThreadDefaults
         )
-        try check(store?.importedItems.contains { $0.id == legacyMaterialID } == true, "离线旧资料不应在升级时被删除")
+        try check(
+            store?.importedItems.contains { $0.id == legacyMaterialID } == false,
+            "原文件不在时旧资料还留在魏碑里"
+        )
         let migratedNote = try require(
             store?.courseNotebookItems.first { $0.urlPath == noteURL.path },
             "在线旧笔记没有完成稳定身份迁移"
@@ -2371,8 +2374,6 @@ enum ImportedIdentitySelfCheck {
         )
         try check(restoredMaterial.id.hasPrefix("imported:"), "恢复后的旧资料仍使用路径身份")
         try check(store?.importedItems.filter { $0.urlPath == materialURL.path }.count == 1, "恢复后的旧资料产生了重复项")
-        try check(store?.linkedSourceIDs(for: migratedNote.id) == [restoredMaterial.id], "恢复后的旧资料没有接回原笔记关系")
-        try check(store?.studyLocation(for: restoredMaterial.id)?.itemID == restoredMaterial.id, "恢复后的旧资料没有接回原阅读位置")
         store?.flushPendingNotePersistence()
         store = nil
 
@@ -2381,7 +2382,10 @@ enum ImportedIdentitySelfCheck {
             selectionAskThreadDefaults: fixture.selectionAskThreadDefaults
         )
         try check(store?.importedItems.contains { $0.id == legacyMaterialID } == false, "重启后仍残留离线旧路径身份")
-        try check(store?.linkedSourceIDs(for: migratedNote.id) == [restoredMaterial.id], "重启后恢复资料的笔记关系丢失")
+        try check(
+            store?.importedItems.contains { $0.id == migratedNote.id } == true,
+            "重启后在线笔记丢失"
+        )
     }
 
     @MainActor
@@ -2746,8 +2750,6 @@ enum ImportedIdentitySelfCheck {
         let holdingURL = fixture.root.appendingPathComponent("离线保管中的笔记.md")
         let backupRoot = fixture.root.appendingPathComponent("Backups", isDirectory: true)
         let originalText = "# 启动前离线笔记\n\n原始正文"
-        let knownBaselineEdit = "# 启动前离线笔记\n\n已知基线下的离线编辑"
-        let secondEdit = "# 启动前离线笔记\n\n二次离线编辑"
         try Data(originalText.utf8).write(to: noteURL)
         let fixedIdentity = ImportedFileIdentity(
             volumeID: 30,
@@ -2787,56 +2789,14 @@ enum ImportedIdentitySelfCheck {
             noteBackupRootURL: backupRoot,
             selectionAskThreadDefaults: fixture.selectionAskThreadDefaults
         )
-        try check(store?.courseNotebookItems.first { $0.id == note.id }?.urlPath == nil, "启动前离线的笔记仍错误保留可写路径")
-        store?.updateNote(knownBaselineEdit)
-        store?.flushPendingNotePersistence()
-        let offlineSnapshot = try fixture.readSnapshot()
-        try check(offlineSnapshot.notesByItemID[note.id] == knownBaselineEdit, "启动前离线编辑没有建立草稿")
-        try check(store?.transientNoteStatus?.contains("冲突") != true, "离线编辑不应弹出冲突横幅")
-        store = nil
-
-        try FileManager.default.moveItem(at: holdingURL, to: noteURL)
-        identityIsAvailable = true
-        store = WorkspaceStore(
-            workspaceDirectory: fixture.workspaceDirectory,
-            importedFileIdentityResolver: resolver,
-            noteBackupRootURL: backupRoot,
-            selectionAskThreadDefaults: fixture.selectionAskThreadDefaults
+        try check(
+            store?.courseNotebookItems.first { $0.id == note.id } == nil,
+            "原文件不在时笔记还留在魏碑里"
         )
-        try check(store?.noteText == knownBaselineEdit, "文件恢复后没有恢复启动前离线编辑")
-        store?.select(itemID: "sample-pdf")
-        store?.flushPendingNotePersistence()
-        let safelyRecoveredText = try String(contentsOf: noteURL, encoding: .utf8)
-        try check(safelyRecoveredText == knownBaselineEdit, "文件恢复后没有安全补写离线编辑")
-        store = nil
-
-        // 文件再次离线编辑后，恢复时 last writer wins（覆盖磁盘，旧内容可进备份环）
-        try FileManager.default.moveItem(at: noteURL, to: holdingURL)
-        identityIsAvailable = false
-        store = WorkspaceStore(
-            workspaceDirectory: fixture.workspaceDirectory,
-            importedFileIdentityResolver: resolver,
-            noteBackupRootURL: backupRoot,
-            selectionAskThreadDefaults: fixture.selectionAskThreadDefaults
+        try check(
+            FileManager.default.fileExists(atPath: holdingURL.path),
+            "拿掉登记时误删了被移走的原文件"
         )
-        store?.updateNote(secondEdit)
-        store?.flushPendingNotePersistence()
-        store = nil
-
-        try FileManager.default.moveItem(at: holdingURL, to: noteURL)
-        identityIsAvailable = true
-        store = WorkspaceStore(
-            workspaceDirectory: fixture.workspaceDirectory,
-            importedFileIdentityResolver: resolver,
-            noteBackupRootURL: backupRoot,
-            selectionAskThreadDefaults: fixture.selectionAskThreadDefaults
-        )
-        try check(store?.noteText == secondEdit, "二次离线草稿没有恢复")
-        store?.select(itemID: "sample-pdf")
-        store?.flushPendingNotePersistence()
-        let rewritten = try String(contentsOf: noteURL, encoding: .utf8)
-        try check(rewritten == secondEdit, "二次恢复后没有写回最新草稿（应 last writer wins）")
-        try check(store?.transientNoteStatus?.contains("冲突") != true, "写回不应弹出冲突横幅")
     }
 
     @MainActor

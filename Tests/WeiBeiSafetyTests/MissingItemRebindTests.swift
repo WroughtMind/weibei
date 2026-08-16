@@ -11,16 +11,16 @@ final class MissingItemRebindTests: XCTestCase {
     }
 
     @MainActor
-    func testRebindUpdatesSameItemAndSurvivesReload() async throws {
-        let fixture = try Fixture(name: "rebind-success")
+    func testGoneIndependentFileDropsRegistrationAndLeavesOtherFiles() throws {
+        let fixture = try Fixture(name: "gone-independent")
         defer { fixture.remove() }
 
         let original = fixture.root.appendingPathComponent("old.md")
-        let replacement = fixture.root.appendingPathComponent("new.md")
+        let neighbor = fixture.root.appendingPathComponent("keep.md")
         try Data("# old\n".utf8).write(to: original)
-        try Data("# old\n".utf8).write(to: replacement)
+        try Data("# keep\n".utf8).write(to: neighbor)
         let identity = try XCTUnwrap(statIdentity(original))
-        let itemID = "imported:rebind-success"
+        let itemID = "imported:gone-independent"
         try fixture.write(
             PersistedWorkspace(
                 importedItems: [
@@ -29,7 +29,7 @@ final class MissingItemRebindTests: XCTestCase {
                         title: "old",
                         subtitle: "old.md",
                         kind: .markdown,
-                        urlPath: nil,
+                        urlPath: original.path,
                         importedFileIdentity: identity,
                         importedFileLastKnownPath: original.path,
                         isSample: false,
@@ -47,83 +47,62 @@ final class MissingItemRebindTests: XCTestCase {
             startsAtBlankEntries: false,
             startsCourseFileMaintenance: false
         )
-        let item = try XCTUnwrap(store.importedItems.first(where: { $0.id == itemID }))
-        XCTAssertTrue(store.isImportedSourceMissing(item))
-
-        try await store.rebindMissingImportedItem(id: itemID, to: replacement)
-        let rebound = try XCTUnwrap(store.importedItems.first(where: { $0.id == itemID }))
-        XCTAssertEqual(store.importedItems.filter { $0.id == itemID }.count, 1)
-        XCTAssertEqual(rebound.urlPath, replacement.path)
-        XCTAssertEqual(rebound.importedFileLastKnownPath, replacement.path)
-        XCTAssertNotNil(rebound.importedFileIdentity)
-        XCTAssertNotNil(rebound.importedFileBookmarkData)
-        XCTAssertFalse(store.isImportedSourceMissing(rebound))
+        XCTAssertNil(store.importedItems.first(where: { $0.id == itemID }))
+        XCTAssertEqual(try Data(contentsOf: neighbor), Data("# keep\n".utf8))
 
         let reloaded = WorkspaceStore(
             workspaceDirectory: fixture.workspaceDirectory,
             startsAtBlankEntries: false,
             startsCourseFileMaintenance: false
         )
-        let persisted = try XCTUnwrap(reloaded.importedItems.first(where: { $0.id == itemID }))
-        XCTAssertEqual(reloaded.importedItems.filter { $0.id == itemID }.count, 1)
-        XCTAssertEqual(persisted.urlPath, replacement.path)
-        XCTAssertFalse(reloaded.isImportedSourceMissing(persisted))
+        XCTAssertNil(reloaded.importedItems.first(where: { $0.id == itemID }))
+        XCTAssertEqual(try Data(contentsOf: neighbor), Data("# keep\n".utf8))
     }
 
     @MainActor
-    func testFailedSaveLeavesMissingItemUnchanged() async throws {
-        let fixture = try Fixture(name: "rebind-save-fail")
+    func testGoneCourseOwnedFileStaysWhenCourseFolderIsUnavailable() throws {
+        let fixture = try Fixture(name: "gone-owned-no-root")
         defer { fixture.remove() }
 
-        let original = fixture.root.appendingPathComponent("old.md")
-        let replacement = fixture.root.appendingPathComponent("new.md")
-        try Data("# old\n".utf8).write(to: original)
-        try Data("# old\n".utf8).write(to: replacement)
+        let original = fixture.root.appendingPathComponent("owned.md")
+        try Data("# owned\n".utf8).write(to: original)
         let identity = try XCTUnwrap(statIdentity(original))
-        let itemID = "imported:rebind-save-fail"
+        let courseID = UUID()
+        let itemID = "imported:gone-owned-no-root"
         try fixture.write(
             PersistedWorkspace(
                 importedItems: [
                     StudyItem(
                         id: itemID,
-                        title: "old",
-                        subtitle: "old.md",
+                        title: "owned",
+                        subtitle: "owned.md",
                         kind: .markdown,
-                        urlPath: nil,
+                        urlPath: original.path,
                         importedFileIdentity: identity,
                         importedFileLastKnownPath: original.path,
                         isSample: false,
-                        isNotebookNote: true
+                        isNotebookNote: true,
+                        storage: .courseOwned(ownerCourseID: courseID)
                     ),
                 ],
-                notesByItemID: [itemID: "# old\n"]
+                notesByItemID: [itemID: "# owned\n"],
+                courses: [
+                    Course(
+                        id: courseID,
+                        title: "丢失文件夹的课",
+                        sourceRootRelativePath: "已经不在的课程文件夹"
+                    ),
+                ]
             )
         )
         try FileManager.default.removeItem(at: original)
 
         let store = WorkspaceStore(
             workspaceDirectory: fixture.workspaceDirectory,
-            workspaceSnapshotWriter: { _, _ in
-                throw NSError(
-                    domain: "WeiBei.MissingItemRebindTests",
-                    code: 1,
-                    userInfo: [NSLocalizedDescriptionKey: "forced save failure"]
-                )
-            },
             startsAtBlankEntries: false,
             startsCourseFileMaintenance: false
         )
-        let before = try XCTUnwrap(store.importedItems.first(where: { $0.id == itemID }))
-        do {
-            try await store.rebindMissingImportedItem(id: itemID, to: replacement)
-            XCTFail("rebind should fail when workspace save fails")
-        } catch MissingItemRebindError.workspaceSaveFailed {
-            let after = try XCTUnwrap(store.importedItems.first(where: { $0.id == itemID }))
-            XCTAssertEqual(after, before)
-            XCTAssertNil(after.urlPath)
-            XCTAssertEqual(after.importedFileLastKnownPath, original.path)
-            XCTAssertTrue(store.isImportedSourceMissing(after))
-        }
+        XCTAssertNotNil(store.importedItems.first(where: { $0.id == itemID }))
     }
 
     private func statIdentity(_ url: URL) -> ImportedFileIdentity? {
@@ -147,7 +126,7 @@ final class MissingItemRebindTests: XCTestCase {
         init(name: String) throws {
             root = FileManager.default.temporaryDirectory
                 .appendingPathComponent(
-                    "weibei-missing-rebind-\(name)-\(UUID().uuidString)",
+                    "weibei-gone-file-\(name)-\(UUID().uuidString)",
                     isDirectory: true
                 )
             workspaceDirectory = root.appendingPathComponent("Workspace", isDirectory: true)

@@ -82,9 +82,6 @@ struct CourseWorkspaceView: View {
                 if store.isCourseLibraryRootVolatile {
                     CourseLibraryVolatilityBanner()
                 }
-                if store.selectedImportedSourceIsMissing {
-                    MissingImportedItemBanner()
-                }
 
                 Rectangle()
                     .fill(WeiBeiTheme.hairline.opacity(0.72))

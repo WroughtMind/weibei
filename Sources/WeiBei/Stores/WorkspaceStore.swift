@@ -7861,7 +7861,7 @@ final class WorkspaceStore: ObservableObject {
         }
     }
 
-    private func removeItemRegistration(_ itemID: String) {
+    func removeItemRegistration(_ itemID: String) {
         pendingNotePersistenceTasks.removeValue(forKey: itemID)?.cancel()
         courseNoteLoadTasksByItemID.removeValue(forKey: itemID)?.cancel()
         courseNoteWriteTasksByItemID.removeValue(forKey: itemID)?.cancel()
@@ -10608,21 +10608,17 @@ final class WorkspaceStore: ObservableObject {
             return false
         }
         let resolution = resolveTrackedImportedFile(at: itemIndex)
+        guard let current = importedItems.first(where: { $0.id == itemID }) else {
+            if resolution.changed { save() }
+            return false
+        }
         if resolution.changed {
             save()
-            courseDocumentSearchIndex.schedule([importedItems[itemIndex]])
+            courseDocumentSearchIndex.schedule([current])
             invalidateAgentContext()
         }
-        // identity 只用于尽力找回、永不用于拒绝（存储简化红线）：
-        // resolveTrackedImportedFile 解析出可读文件就打开；identity 漂移
-        // 已在解析路径内按 #176 自愈刷新（见 resolution.changed 的保存）。
-        // 仅当文件物理上解析不到/不可读时才提示用户放回原文件。
         guard let resolvedURL = resolution.url,
               FileManager.default.isReadableFile(atPath: resolvedURL.path) else {
-            showTransientNoteStatus(ui(
-                "“\(displayTitle(for: importedItems[itemIndex]))”暂时不在课程文件夹中。把原文件放回课程后再打开；课程首页会继续保留。",
-                "“\(displayTitle(for: importedItems[itemIndex]))” is not currently in the course folder. Put the original file back and try again; the course home will stay open."
-            ))
             return false
         }
         if let requestedCourseID {
@@ -17319,9 +17315,11 @@ final class WorkspaceStore: ObservableObject {
     @discardableResult
     private func resolvePersistedImportedFileBookmarks() -> Bool {
         var changed = false
-        for index in importedItems.indices {
-            let resolution = resolveTrackedImportedFile(at: index)
-            if resolution.changed { changed = true }
+        for itemID in importedItems.map(\.id) {
+            guard let index = importedItems.firstIndex(where: { $0.id == itemID }) else {
+                continue
+            }
+            if resolveTrackedImportedFile(at: index).changed { changed = true }
         }
         return changed
     }
@@ -17356,7 +17354,7 @@ final class WorkspaceStore: ObservableObject {
                       importedItems[index].importedFileIdentity.map({
                           $0.matchesAcrossVolumeDrift(resolved.identity)
                       }) ?? true else {
-                    return markCourseOwnedItemUnavailable(at: index)
+                    return forgetGoneImportedItem(at: index)
                 }
                 let candidate = resolved.url
                 let identity = resolved.identity
@@ -17379,11 +17377,13 @@ final class WorkspaceStore: ObservableObject {
             // user explicitly migrates them into a real course project.
         }
         guard let storedIdentity = importedItems[index].importedFileIdentity else {
-            guard let currentURL = importedItems[index].url,
-                  importedFileIdentityResolver(currentURL) != nil else {
+            guard let currentURL = importedItems[index].url else {
                 return (nil, false)
             }
-            return (currentURL.standardizedFileURL, false)
+            if importedFileIdentityResolver(currentURL) != nil {
+                return (currentURL.standardizedFileURL, false)
+            }
+            return forgetGoneImportedItem(at: index)
         }
 
         var changed = false
@@ -17396,7 +17396,9 @@ final class WorkspaceStore: ObservableObject {
             bookmarkURL: bookmarkResolution?.url,
             identityAt: importedFileIdentityResolver
         ) {
-        case .missing, .identityConflict:
+        case .missing:
+            return forgetGoneImportedItem(at: index)
+        case .identityConflict:
             if let path = importedItems[index].urlPath {
                 importedItems[index].importedFileLastKnownPath = path
                 importedItems[index].urlPath = nil
@@ -17455,11 +17457,11 @@ final class WorkspaceStore: ObservableObject {
             role: importedItems[index].isNotebookNote ? .note : .material,
             inside: root
         ) else {
-            return markCourseOwnedItemUnavailable(at: index)
+            return forgetGoneImportedItem(at: index)
         }
 
         guard let identity = importedFileIdentityResolver(candidate) else {
-            return markCourseOwnedItemUnavailable(at: index)
+            return forgetGoneImportedItem(at: index)
         }
         // identity 只用于尽力找回、永不用于拒绝（存储简化红线）：课程内文件
         // 以课程相对路径为准，路径下文件可读即接受。identity 不一致（iCloud
@@ -17503,13 +17505,17 @@ final class WorkspaceStore: ObservableObject {
     @discardableResult
     private func resolveCourseOwnedItems(for courseID: UUID) -> Bool {
         var changed = false
-        let itemIndices = importedItems.indices.filter { index in
-            guard case .courseOwned(let ownerCourseID) = importedItems[index].storage else {
-                return false
+        let itemIDs = importedItems.compactMap { item -> String? in
+            guard case .courseOwned(let ownerCourseID) = item.storage,
+                  ownerCourseID == courseID else {
+                return nil
             }
-            return ownerCourseID == courseID
+            return item.id
         }
-        for index in itemIndices {
+        for itemID in itemIDs {
+            guard let index = importedItems.firstIndex(where: { $0.id == itemID }) else {
+                continue
+            }
             if resolveCourseOwnedFile(
                 at: index,
                 ownerCourseID: courseID
@@ -17807,12 +17813,12 @@ final class WorkspaceStore: ObservableObject {
             observationIndexByItemID[itemID] = observationIndex
         }
 
+        var goneSharedIDs: [String] = []
         for itemID in itemIDs {
             guard let itemIndex = itemIndexByID[itemID],
                   let observationIndex = observationIndexByItemID[itemID] else {
-                if let itemIndex = itemIndexByID[itemID],
-                   markCourseOwnedItemUnavailable(at: itemIndex).changed {
-                    changed = true
+                if itemIndexByID[itemID] != nil {
+                    goneSharedIDs.append(itemID)
                 }
                 continue
             }
@@ -17896,10 +17902,13 @@ final class WorkspaceStore: ObservableObject {
                     changed = true
                 }
             } catch {
-                if markCourseOwnedItemUnavailable(at: itemIndex).changed {
+                if keepUnavailableImportedItem(at: itemIndex).changed {
                     changed = true
                 }
             }
+        }
+        if forgetGoneImportedItems(ids: goneSharedIDs) {
+            changed = true
         }
         for (observationIndex, observation) in snapshot.observations.enumerated()
         where !consumedObservationIndexes.contains(observationIndex) {
@@ -18166,6 +18175,7 @@ final class WorkspaceStore: ObservableObject {
             }
         }
 
+        var goneIDs: [String] = []
         for itemID in ownedItemIDs {
             lookupCount += 1
             guard let itemIndex = itemIndexByID[itemID],
@@ -18181,9 +18191,7 @@ final class WorkspaceStore: ObservableObject {
                    snapshot.preservesExistingRecord(at: relativePath) {
                     continue
                 }
-                if markCourseOwnedItemUnavailable(at: itemIndex).changed {
-                    changed = true
-                }
+                goneIDs.append(itemID)
                 continue
             }
             let observation = observations[observationIndex]
@@ -18204,7 +18212,7 @@ final class WorkspaceStore: ObservableObject {
                     }
                     nextDigest = snapshot.sha256
                 } catch {
-                    if markCourseOwnedItemUnavailable(at: itemIndex).changed {
+                    if keepUnavailableImportedItem(at: itemIndex).changed {
                         changed = true
                     }
                     continue
@@ -18245,6 +18253,9 @@ final class WorkspaceStore: ObservableObject {
                     observation.documentIdentifier
                 changed = true
             }
+        }
+        if forgetGoneImportedItems(ids: goneIDs) {
+            changed = true
         }
 
         for (observationIndex, observation) in observations.enumerated()
@@ -18312,22 +18323,6 @@ final class WorkspaceStore: ObservableObject {
                 await self?.reconcileCourseFilesNow()
             }
         }
-    }
-
-    private func markCourseOwnedItemUnavailable(
-        at index: Int
-    ) -> (url: URL?, changed: Bool) {
-        var changed = false
-        if let currentPath = importedItems[index].urlPath {
-            importedItems[index].importedFileLastKnownPath = currentPath
-            importedItems[index].urlPath = nil
-            changed = true
-        }
-        if importedItems[index].importedFileBookmarkData != nil {
-            importedItems[index].importedFileBookmarkData = nil
-            changed = true
-        }
-        return (nil, changed)
     }
 
     private func uniqueCourseOwnedMembershipIndex(

@@ -6967,8 +6967,8 @@ enum CourseProjectRootSelfCheck {
             "Finder 改名/移动没有更新相对路径"
         )
         try check(
-            store.importedItems.first { $0.id == noteItem.id }?.urlPath == nil,
-            "Finder 删除后没有保留明确不可用记录"
+            store.importedItems.first { $0.id == noteItem.id } == nil,
+            "Finder 删除后课程里还留着这条笔记"
         )
         try check(
             store.importedItems.contains { $0.urlPath == finderAdded.path },
@@ -6998,8 +6998,8 @@ enum CourseProjectRootSelfCheck {
         try FileManager.default.moveItem(at: courseURL, to: displacedURL)
         try store.reconcileCourseFilesForSelfCheck(courseID: courseID)
         try check(
-            store.importedItems.first { $0.id == item.id }?.urlPath == nil,
-            "失联文稿没有被标记为不可用"
+            store.importedItems.first { $0.id == item.id } == nil,
+            "移出课程文件夹后文稿还留在魏碑里"
         )
 
         store.presentCourseWorkspace(.hub, courseID: courseID)
@@ -7007,22 +7007,11 @@ enum CourseProjectRootSelfCheck {
         store.openCourseMaterial(item.id)
         try check(
             store.courseWorkspacePresented,
-            "失联文稿错误关闭了课程首页"
+            "已消失的文稿错误关闭了课程首页"
         )
         try check(
             store.selectedItemID == previousSelection,
-            "失联文稿错误切换到空阅读器"
-        )
-
-        try FileManager.default.moveItem(at: displacedURL, to: courseURL)
-        store.openCourseMaterial(item.id)
-        try check(
-            !store.courseWorkspacePresented,
-            "原文稿恢复后仍不能从课程首页打开"
-        )
-        try check(
-            store.selectedMaterialItem?.id == item.id,
-            "原文稿恢复后没有打开正确资料"
+            "已消失的文稿错误切换到空阅读器"
         )
     }
 

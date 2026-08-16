@@ -24,9 +24,6 @@ struct ContentView: View {
                     if store.isCourseLibraryRootVolatile {
                         CourseLibraryVolatilityBanner()
                     }
-                    if store.selectedImportedSourceIsMissing {
-                        MissingImportedItemBanner()
-                    }
 
                     ZStack(alignment: .top) {
                         LayoutContentView()

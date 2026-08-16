@@ -111,6 +111,39 @@ func checkImportedFileRecovery() {
         identityAt: identityAt
     )
     expect(missing == .missing, "an invalid bookmark and missing path stay missing")
+
+    expect(
+        ImportedFileRecovery.shouldForgetGoneSource(
+            parentLocationAvailable: true,
+            fileReadable: false,
+            isSample: false
+        ),
+        "a gone file under an available parent must drop its registration"
+    )
+    expect(
+        !ImportedFileRecovery.shouldForgetGoneSource(
+            parentLocationAvailable: false,
+            fileReadable: false,
+            isSample: false
+        ),
+        "an unavailable course or library must not wipe items inside it"
+    )
+    expect(
+        !ImportedFileRecovery.shouldForgetGoneSource(
+            parentLocationAvailable: true,
+            fileReadable: true,
+            isSample: false
+        ),
+        "a readable file must keep its registration"
+    )
+    expect(
+        !ImportedFileRecovery.shouldForgetGoneSource(
+            parentLocationAvailable: true,
+            fileReadable: false,
+            isSample: true
+        ),
+        "bundled samples are not dropped as gone files"
+    )
 }
 
 private func identityAt(_ url: URL) -> ImportedFileIdentity? {
