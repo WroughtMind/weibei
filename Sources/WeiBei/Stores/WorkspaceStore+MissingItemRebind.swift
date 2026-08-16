@@ -19,6 +19,13 @@ extension WorkspaceStore {
     func forgetGoneImportedItem(at index: Int) -> (url: URL?, changed: Bool) {
         guard importedItems.indices.contains(index) else { return (nil, false) }
         let item = importedItems[index]
+        let knownPath = item.urlPath ?? item.importedFileLastKnownPath
+        let fileReadable = knownPath.map {
+            FileManager.default.isReadableFile(atPath: $0)
+        } ?? false
+        if fileReadable, let knownPath {
+            return (URL(fileURLWithPath: knownPath).standardizedFileURL, false)
+        }
         guard ImportedFileRecovery.shouldForgetGoneSource(
             parentLocationAvailable: parentLocationIsAvailable(for: item),
             fileReadable: false,
