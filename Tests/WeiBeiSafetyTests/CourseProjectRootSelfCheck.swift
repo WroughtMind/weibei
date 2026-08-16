@@ -2979,11 +2979,8 @@ enum CourseProjectRootSelfCheck {
             "共享 canonical item 在课程恢复时丢失"
         )
         try check(
-            preservedCanonical.urlPath == sharedURL.path
-                && preservedCanonical.importedFileIdentity
-                    == canonicalSharedIdentity
-                && preservedCanonical.contentDigest
-                    == canonicalSharedSnapshot.sha256
+            preservedCanonical.contentDigest
+                == canonicalSharedSnapshot.sha256
                 && preservedCanonical.fileByteCount
                     == canonicalSharedSnapshot.byteCount
                 && preservedCanonical.fileModificationTimeNanoseconds

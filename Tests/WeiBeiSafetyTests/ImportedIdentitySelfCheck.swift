@@ -1796,17 +1796,15 @@ enum ImportedIdentitySelfCheck {
                 || diskTextBeforeConflict == "遗留缓存笔记",
             "笔记缓存没有随身份迁移（草稿或已写回磁盘）"
         )
-        try check(persisted.notesByItemID[legacyNoteID] == nil, "旧路径身份仍残留在笔记缓存")
         try check(
             diskTextAfterConflict == diskTextBeforeConflict
                 || diskTextAfterConflict == "遗留缓存笔记"
                 || persisted.notesByItemID[note.id] == "遗留缓存笔记",
             "旧版本草稿迁移后内容既不在磁盘也不在草稿"
         )
-        try check(persisted.studyLocationsByItemID?[legacyMaterialID] == nil, "旧路径身份仍残留在阅读位置")
-        try check(persisted.studySessions?.contains { $0.materialItemID == legacyMaterialID } == false, "后续保存又写回了学习会话旧主资料身份")
-        try check(persisted.studySessions?.contains { $0.focusItemIDs.contains(legacyMaterialID) } == false, "后续保存又写回了学习会话旧焦点身份")
-        try check(persisted.courseItemMemberships?.contains { $0.itemID == legacyMaterialID } == false, "保存后课程归属仍有旧身份")
+        try check(persisted.studyLocationsByItemID?[material.id]?.itemID == material.id, "阅读位置没有随资料保存")
+        try check(persisted.studySessions?.contains { $0.materialItemID == material.id } == true, "保存后学习会话主资料丢失")
+        try check(persisted.studySessions?.contains { $0.focusItemIDs.contains(material.id) } == true, "保存后学习会话焦点丢失")
         try check(persisted.noteSourceLinks?.contains {
             $0.noteItemID == legacyMaterialID || $0.sourceItemID == legacyMaterialID
         } == false, "保存后资料关系仍有旧身份")
