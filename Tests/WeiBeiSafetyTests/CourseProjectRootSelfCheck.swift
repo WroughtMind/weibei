@@ -135,7 +135,7 @@ enum CourseProjectRootSelfCheck {
         let fixture = try Fixture(name: "broken-bookmark-in-library-open")
         defer { fixture.remove() }
         let library = try fixture.makeDirectory("课程资料库")
-        let source = fixture.directory.appendingPathComponent("paper.txt")
+        let source = fixture.root.appendingPathComponent("paper.txt")
         try Data("in-library article\n".utf8).write(to: source)
         let store = makeStore(fixture: fixture)
         try store.configureCourseLibrary(at: library)
