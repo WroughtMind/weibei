@@ -10667,7 +10667,13 @@ final class WorkspaceStore: ObservableObject {
     @discardableResult
     func openCourseMaterial(_ itemID: String, in requestedCourseID: UUID? = nil) -> Bool {
         if let requestedCourseID {
-            guard courseMembershipIndex.itemIDs(in: requestedCourseID).contains(itemID) else {
+            let mounted = courseMembershipIndex.itemIDs(in: requestedCourseID).contains(itemID)
+            let common = importedItems.contains { item in
+                guard item.id == itemID else { return false }
+                if case .common = item.storage { return true }
+                return false
+            }
+            guard mounted || common else {
                 return false
             }
         }
@@ -10758,7 +10764,13 @@ final class WorkspaceStore: ObservableObject {
             return
         }
         if let requestedCourseID {
-            guard courseMembershipIndex.itemIDs(in: requestedCourseID).contains(itemID) else {
+            let mounted = courseMembershipIndex.itemIDs(in: requestedCourseID).contains(itemID)
+            let common = importedItems.contains { item in
+                guard item.id == itemID else { return false }
+                if case .common = item.storage { return true }
+                return false
+            }
+            guard mounted || common else {
                 return
             }
             activeCourseID = requestedCourseID
@@ -13506,7 +13518,12 @@ final class WorkspaceStore: ObservableObject {
             let locations = entry.value.reduce(
                 into: [String: StudyLocation]()
             ) { locations, itemEntry in
-                guard validItemIDs.contains(itemEntry.key),
+                let isCommonMaterial = importedItems.contains { item in
+                    guard item.id == itemEntry.key, !item.isNotebookNote else { return false }
+                    if case .common = item.storage { return true }
+                    return false
+                }
+                guard validItemIDs.contains(itemEntry.key) || isCommonMaterial,
                       importedItems.contains(where: {
                           $0.id == itemEntry.key && !$0.isNotebookNote
                       }) else {
