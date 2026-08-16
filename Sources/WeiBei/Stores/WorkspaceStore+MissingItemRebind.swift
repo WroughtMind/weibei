@@ -23,8 +23,8 @@ extension WorkspaceStore {
         let fileReadable = knownPath.map {
             FileManager.default.isReadableFile(atPath: $0)
         } ?? false
-        if fileReadable, let knownPath {
-            return (URL(fileURLWithPath: knownPath).standardizedFileURL, false)
+        if fileReadable {
+            return keepUnavailableImportedItem(at: index)
         }
         guard ImportedFileRecovery.shouldForgetGoneSource(
             parentLocationAvailable: parentLocationIsAvailable(for: item),
