@@ -135,32 +135,48 @@ func checkImportedFileRecovery() {
 
     expect(
         ImportedFileRecovery.shouldForgetGoneSource(
-            parentLocationAvailable: true,
-            fileReadable: false,
+            file: .absent,
+            parent: .present,
             isSample: false
         ),
         "a gone file under an available parent must drop its registration"
     )
     expect(
         !ImportedFileRecovery.shouldForgetGoneSource(
-            parentLocationAvailable: false,
-            fileReadable: false,
+            file: .absent,
+            parent: .inaccessible,
             isSample: false
         ),
         "an unavailable course or library must not wipe items inside it"
     )
     expect(
         !ImportedFileRecovery.shouldForgetGoneSource(
-            parentLocationAvailable: true,
-            fileReadable: true,
+            file: .present,
+            parent: .present,
             isSample: false
         ),
-        "a readable file must keep its registration"
+        "a present file must keep its registration"
     )
     expect(
         !ImportedFileRecovery.shouldForgetGoneSource(
-            parentLocationAvailable: true,
-            fileReadable: false,
+            file: .inaccessible,
+            parent: .present,
+            isSample: false
+        ),
+        "an unreadable but existing file must keep its registration"
+    )
+    expect(
+        !ImportedFileRecovery.shouldForgetGoneSource(
+            file: .absent,
+            parent: .absent,
+            isSample: false
+        ),
+        "a missing parent directory must keep the registration"
+    )
+    expect(
+        !ImportedFileRecovery.shouldForgetGoneSource(
+            file: .absent,
+            parent: .present,
             isSample: true
         ),
         "bundled samples are not dropped as gone files"

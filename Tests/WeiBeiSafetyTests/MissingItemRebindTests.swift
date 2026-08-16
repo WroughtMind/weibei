@@ -168,8 +168,8 @@ final class MissingItemRebindTests: XCTestCase {
     func testSampleItemIsNeverForgotten() throws {
         XCTAssertFalse(
             ImportedFileRecovery.shouldForgetGoneSource(
-                parentLocationAvailable: true,
-                fileReadable: false,
+                file: .absent,
+                parent: .present,
                 isSample: true
             )
         )
