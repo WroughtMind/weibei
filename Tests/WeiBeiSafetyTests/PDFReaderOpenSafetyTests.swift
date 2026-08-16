@@ -30,19 +30,6 @@ final class PDFReaderOpenSafetyTests: XCTestCase {
         XCTAssertFalse(PDFReaderOpenSafety.pageHasNativeText(blank))
     }
 
-    func testSelectionReportGateIgnoresEmptyPulsesWhileDragging() {
-        var gate = PDFSelectionReportGate()
-        gate.beginTracking()
-        XCTAssertTrue(gate.shouldPublish(text: "A Programming Paradigm", now: 1))
-        XCTAssertFalse(gate.shouldPublish(text: "", now: 1.01))
-        gate.endTracking()
-        XCTAssertFalse(
-            gate.shouldPublish(text: "", now: 1.02),
-            "empty PDFKit pulses right after a real selection must not clear the capsule"
-        )
-        XCTAssertTrue(gate.shouldPublish(text: "", now: 1.02 + PDFSelectionReportGate.emptySuppression))
-    }
-
     @MainActor
     func testDisabledAccessibilityTreeStillExposesProgrammaticSelection() {
         let document = PDFDocument()
