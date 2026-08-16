@@ -137,8 +137,9 @@ func checkLibraryRelativeStorage() throws {
     expect(
         storeSource.contains("case .blank:")
             && storeSource.contains("targetCourseID = courseWorkspaceCourseID")
-            && !storeSource.contains("?? activeCourseID\n            ?? sourceItem"),
-        "SAFETY:library-relative-notes blank notes ignore sidebar-active course"
+            && !storeSource.contains("?? activeCourseID\n            ?? sourceItem")
+            && storeSource.contains("return resolveCourseOwnedFile("),
+        "SAFETY:library-relative-notes blank notes ignore sidebar-active course; opening heals course-owned identity"
     )
     expect(
         (storeSource.contains("copyExternalFileIntoLibrary")

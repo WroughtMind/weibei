@@ -17312,7 +17312,11 @@ final class WorkspaceStore: ObservableObject {
     }
 
     func resolveTrackedImportedFile(at index: Int) -> (url: URL?, changed: Bool) {
-        forgetGoneImportedItem(at: index)
+        guard importedItems.indices.contains(index) else { return (nil, false) }
+        if case .courseOwned(let courseID, _) = importedItems[index].storage {
+            return resolveCourseOwnedFile(at: index, ownerCourseID: courseID)
+        }
+        return forgetGoneImportedItem(at: index)
     }
 
     private func resolveCourseOwnedFile(

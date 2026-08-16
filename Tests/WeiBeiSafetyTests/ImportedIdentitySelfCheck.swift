@@ -376,7 +376,15 @@ enum ImportedIdentitySelfCheck {
         let fixture = try WorkspaceFixture(name: "course-resume-point")
         defer { fixture.remove() }
 
-        let materialURL = fixture.importsDirectory.appendingPathComponent("shared.html")
+        let commonMaterials = fixture.importsDirectory.appendingPathComponent(
+            "通用资料",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(
+            at: commonMaterials,
+            withIntermediateDirectories: true
+        )
+        let materialURL = commonMaterials.appendingPathComponent("shared.html")
         let noteURL = fixture.importsDirectory.appendingPathComponent("course-a-note.md")
         let otherMaterialURL = fixture.importsDirectory.appendingPathComponent("course-b.txt")
         let otherNoteURL = fixture.importsDirectory.appendingPathComponent("course-b-note.md")
@@ -426,7 +434,7 @@ enum ImportedIdentitySelfCheck {
             urlPath: materialURL.path,
             importedFileIdentity: materialIdentity,
             isSample: false,
-            storage: .common(relativePath: "shared.html")
+            storage: .common(relativePath: "通用资料/shared.html")
         )
         let note = StudyItem(
             id: "resume-course-a-note",
