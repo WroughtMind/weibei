@@ -30,6 +30,8 @@ enum CourseProjectRootSelfCheck {
             _ name: String,
             _ operation: () throws -> Void
         ) throws {
+            fputs("WeiBeiSafetyTests step: \(name)\n", stderr)
+            fflush(stderr)
             do {
                 try operation()
             } catch {

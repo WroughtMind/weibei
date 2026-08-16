@@ -96,7 +96,7 @@ jobs:
 
       - name: 运行课程目录与数据安全自检
         if: (github.event_name == 'pull_request' && steps.scope.outputs.data_safety == 'true') || (github.event_name == 'workflow_dispatch' && inputs.full_suite)
-        run: swift test --filter WeiBeiSafetyTests
+        run: stdbuf -oL -eL swift test --filter WeiBeiSafetyTests
 
       - name: 检查空白与生成文件
         run: |

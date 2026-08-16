@@ -11078,7 +11078,20 @@ final class WorkspaceStore: ObservableObject {
                 result = .failure(error)
             }
         }
+        let deadline = WeiBeiSafetyTestMode.isEnabled
+            ? Date().addingTimeInterval(45)
+            : Date.distantFuture
         while result == nil {
+            if Date() > deadline {
+                throw NSError(
+                    domain: "WeiBei.WorkspaceStore",
+                    code: NSUserCancelledError,
+                    userInfo: [
+                        NSLocalizedDescriptionKey:
+                            "course file operation timed out",
+                    ]
+                )
+            }
             RunLoop.current.run(
                 mode: .default,
                 before: Date(timeIntervalSinceNow: 0.01)
