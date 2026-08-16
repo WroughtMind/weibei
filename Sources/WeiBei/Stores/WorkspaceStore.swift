@@ -17398,11 +17398,13 @@ final class WorkspaceStore: ObservableObject {
         ) {
         case .missing:
             return forgetGoneImportedItem(at: index)
-        case .identityConflict(let conflictURL):
-            if importedFileIdentityResolver(conflictURL) != nil {
-                return (conflictURL, false)
+        case .identityConflict:
+            if let path = importedItems[index].urlPath {
+                importedItems[index].importedFileLastKnownPath = path
+                importedItems[index].urlPath = nil
+                changed = true
             }
-            return forgetGoneImportedItem(at: index)
+            return (nil, changed)
         case .resolved(let candidateURL, let candidateIdentity, let via):
             if candidateIdentity != storedIdentity {
                 // volumeID 漂移：接受匹配的同时把存储身份刷新到当前值，自愈后

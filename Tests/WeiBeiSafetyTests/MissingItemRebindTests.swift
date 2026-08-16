@@ -85,14 +85,14 @@ final class MissingItemRebindTests: XCTestCase {
                         storage: .courseOwned(ownerCourseID: courseID)
                     ),
                 ],
+                notesByItemID: [itemID: "# owned\n"],
                 courses: [
                     Course(
                         id: courseID,
                         title: "丢失文件夹的课",
                         sourceRootRelativePath: "已经不在的课程文件夹"
                     ),
-                ],
-                notesByItemID: [itemID: "# owned\n"]
+                ]
             )
         )
         try FileManager.default.removeItem(at: original)
