@@ -6,3 +6,5 @@ node_modules/
 .vscode/
 .weibei-streaming-user-test-*/
 .playwright-cli/
+/Notes/
+/Visualize验收课程/
