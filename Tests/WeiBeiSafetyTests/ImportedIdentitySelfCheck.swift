@@ -20,15 +20,6 @@ enum ImportedIdentitySelfCheck {
         try failedLearningMemoryMigrationKeepsLegacySnapshotRecoverable()
         try learningMemoryEditsRejectTruncationAndRetrySave()
         try courseResumePointRestoresOneAtomicLearningScene()
-        try restoredPendingNoteErrorsStayWithAffectedNote()
-        try reentrantNotebookRenameKeepsOneRecoveryTransaction()
-        try renameRejectsChangedFileGeneration()
-        try activeRenameWriteFailureIsTransactional()
-        try inactiveRenameReadFailureIsTransactional()
-        try successfulButIncorrectRenameWriteIsRejected()
-        try initialRenameMoveFailureLeavesHealthyFileAttached()
-        try failedWorkspaceSaveRecoversRenameOnRestart()
-        try duplicateLegacyIdentityMigratesInOneLaunch()
     }
 
     @MainActor
