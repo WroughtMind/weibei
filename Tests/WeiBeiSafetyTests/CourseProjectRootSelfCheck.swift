@@ -52,6 +52,9 @@ enum CourseProjectRootSelfCheck {
         try step("新建课程原子落盘") {
             try newCourseCreatesAtomicProjectAndManifest()
         }
+        try step("书签失效后仍按本机资料库相对路径打开文稿") {
+            try brokenBookmarkStillOpensInLibraryCourseFile()
+        }
         try step("课程可携带状态恢复") {
             try portableCourseStateIsScopedAtomicAndRestorable()
         }
@@ -125,6 +128,39 @@ enum CourseProjectRootSelfCheck {
             try commonContentAndTwoLevelRemoval()
         }
         try legacyCourseSnapshotStillDecodes()
+    }
+
+    @MainActor
+    private static func brokenBookmarkStillOpensInLibraryCourseFile() throws {
+        let fixture = try Fixture(name: "broken-bookmark-in-library-open")
+        defer { fixture.remove() }
+        let library = try fixture.makeDirectory("课程资料库")
+        let source = fixture.directory.appendingPathComponent("paper.txt")
+        try Data("in-library article\n".utf8).write(to: source)
+        let store = makeStore(fixture: fixture)
+        try store.configureCourseLibrary(at: library)
+        let courseID = try store.createCourseInLibrary(title: "恢复课")
+        let imported = try store.importFileIntoCourseForSelfCheck(
+            source,
+            courseID: courseID,
+            role: .material
+        ).item
+        try check(
+            store.flushPendingWorkspaceSave(),
+            "书签失效样本没有完成初始保存"
+        )
+        let reopened = makeStore(
+            fixture: fixture,
+            bookmarkResolver: { _ in nil }
+        )
+        try check(
+            reopened.courseLibraryRootURL?.standardizedFileURL
+                == library.standardizedFileURL
+                && reopened.courseRootUnavailableReason(for: courseID) == nil
+                && reopened.openCourseMaterial(imported.id, in: courseID)
+                && reopened.importedItems.first(where: { $0.id == imported.id })?.url != nil,
+            "书签失效后没有按本机资料库相对路径重新打开课程文稿"
+        )
     }
 
     @MainActor
