@@ -61,7 +61,7 @@ final class GoneImportedItemTests: XCTestCase {
 
     @MainActor
     func testUnreadableExistingFileKeepsRegistrationDraftAndRelations() throws {
-        let fixture = try Fixture(name: "unreadable-keeps")
+        var fixture = try Fixture(name: "unreadable-keeps")
         defer {
             if let path = fixture.protectedFilePath {
                 _ = chmod(path, 0o644)
