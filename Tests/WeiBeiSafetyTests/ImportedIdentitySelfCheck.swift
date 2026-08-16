@@ -2234,37 +2234,16 @@ enum ImportedIdentitySelfCheck {
 
         let legacyMaterialID = "file:\(materialURL.path)"
         let legacyNoteID = "file:\(noteURL.path)"
-        let snapshot = PersistedWorkspace(
-            importedItems: [
-                StudyItem(
-                    id: legacyMaterialID,
-                    title: "离线资料",
-                    subtitle: materialURL.lastPathComponent,
-                    kind: .text,
-                    urlPath: materialURL.path,
-                    isSample: false
-                ),
-                StudyItem(
-                    id: legacyNoteID,
-                    title: "离线资料笔记",
-                    subtitle: noteURL.lastPathComponent,
-                    kind: .markdown,
-                    urlPath: noteURL.path,
-                    isSample: false,
-                    isNotebookNote: true
-                ),
-            ],
-            selectedItemID: legacyMaterialID,
-            activeNotebookItemID: legacyNoteID,
-            noteSourceLinks: [
-                NoteSourceLink(noteItemID: legacyNoteID, sourceItemID: legacyMaterialID),
-            ],
-            noteSourceLinksMigrationVersion: 1,
-            studyLocationsByItemID: [
-                legacyMaterialID: StudyLocation(itemID: legacyMaterialID, itemTitle: "离线资料"),
-            ]
+        // Raw JSON: StudyItem.init would inject common(""), which is not a
+        // historical snapshot. Missing storage must discard file: leftovers.
+        try Data(
+            """
+            {"importedItems":[{"id":"\(legacyMaterialID)","title":"离线资料","subtitle":"\(materialURL.lastPathComponent)","kind":"text","urlPath":"\(materialURL.path)","isSample":false},{"id":"\(legacyNoteID)","title":"离线资料笔记","subtitle":"\(noteURL.lastPathComponent)","kind":"markdown","urlPath":"\(noteURL.path)","isSample":false,"isNotebookNote":true}],"selectedItemID":"\(legacyMaterialID)","activeNotebookItemID":"\(legacyNoteID)","noteSourceLinksMigrationVersion":1}
+            """.utf8
+        ).write(
+            to: fixture.workspaceDirectory.appendingPathComponent("workspace.json"),
+            options: [.atomic]
         )
-        try fixture.write(snapshot)
 
         var store: WorkspaceStore? = WorkspaceStore(
             workspaceDirectory: fixture.workspaceDirectory,
@@ -2274,11 +2253,9 @@ enum ImportedIdentitySelfCheck {
             store?.importedItems.contains { $0.id == legacyMaterialID } == false,
             "原文件不在时旧资料还留在魏碑里"
         )
-        let migratedNote = try require(
-            store?.courseNotebookItems.first {
-                $0.id == legacyNoteID || $0.subtitle == noteURL.lastPathComponent
-            },
-            "在线旧笔记没有完成稳定身份迁移"
+        try check(
+            store?.importedItems.contains { $0.id.hasPrefix("file:") } != true,
+            "缺少 storage 的旧 file: 身份仍被路径接回"
         )
 
         let library = fixture.root.appendingPathComponent("资料库", isDirectory: true)
@@ -2296,6 +2273,15 @@ enum ImportedIdentitySelfCheck {
             }.count == 1,
             "恢复后的旧资料产生了重复项"
         )
+        let restoredNote = try require(
+            store?.importFiles(
+                [noteURL],
+                selectsFirstImportedItem: false,
+                markdownNotePaths: [noteURL.path]
+            ).first,
+            "恢复后的旧笔记无法重新导入"
+        )
+        try check(restoredNote.id.hasPrefix("imported:"), "恢复后的旧笔记仍使用路径身份")
         store?.flushPendingNotePersistence()
         store = nil
 
@@ -2305,10 +2291,8 @@ enum ImportedIdentitySelfCheck {
         )
         try check(store?.importedItems.contains { $0.id == legacyMaterialID } == false, "重启后仍残留离线旧路径身份")
         try check(
-            store?.importedItems.contains {
-                $0.id == migratedNote.id || $0.subtitle == noteURL.lastPathComponent
-            } == true,
-            "重启后在线笔记丢失"
+            store?.importedItems.contains { $0.id == restoredNote.id } == true,
+            "重启后重新导入的笔记丢失"
         )
     }
 

@@ -3135,6 +3135,7 @@ enum CourseProjectRootSelfCheck {
                 )
             }
         )
+        try casStore.configureCourseLibrary(at: library)
         _ = try casStore.adoptCourseFolder(
             at: courseARoot,
             title: "状态 CAS 竞态"
@@ -3200,6 +3201,7 @@ enum CourseProjectRootSelfCheck {
                 )
             }
         )
+        try swappedUnreadableStore.configureCourseLibrary(at: library)
         _ = try swappedUnreadableStore.adoptCourseFolder(
             at: courseARoot,
             title: "交换后不可读状态"
@@ -3263,6 +3265,7 @@ enum CourseProjectRootSelfCheck {
                 throw CheckError.injectedFailure
             }
         )
+        try firstCreateRollbackStore.configureCourseLibrary(at: library)
         _ = try firstCreateRollbackStore.adoptCourseFolder(
             at: courseARoot,
             title: "首次状态回滚并发"
@@ -3325,6 +3328,7 @@ enum CourseProjectRootSelfCheck {
                 throw CheckError.injectedFailure
             }
         )
+        try existingRollbackStore.configureCourseLibrary(at: library)
         _ = try existingRollbackStore.adoptCourseFolder(
             at: courseARoot,
             title: "已有状态回滚并发"
@@ -3416,6 +3420,7 @@ enum CourseProjectRootSelfCheck {
                 throw CheckError.injectedFailure
             }
         )
+        try unreadableRollbackStore.configureCourseLibrary(at: library)
         _ = try unreadableRollbackStore.adoptCourseFolder(
             at: courseARoot,
             title: "已有状态不可读回滚"
@@ -3554,6 +3559,7 @@ enum CourseProjectRootSelfCheck {
                 )
             }
         )
+        try failingStore.configureCourseLibrary(at: library)
         _ = try failingStore.adoptCourseFolder(
             at: courseARoot,
             title: "写入失败课程"
@@ -3613,6 +3619,7 @@ enum CourseProjectRootSelfCheck {
                 )
             }
         )
+        try directoryRaceStore?.configureCourseLibrary(at: library)
         _ = try directoryRaceStore?.adoptCourseFolder(
             at: courseARoot,
             title: "状态目录竞态"
@@ -3656,6 +3663,7 @@ enum CourseProjectRootSelfCheck {
                 try data.write(to: url, options: [.atomic])
             }
         )
+        try workspaceFailureStore?.configureCourseLibrary(at: library)
         _ = try workspaceFailureStore?.adoptCourseFolder(
             at: courseARoot,
             title: "总工作区失败课程"
@@ -3798,6 +3806,20 @@ enum CourseProjectRootSelfCheck {
                 "失败导出留下了可见目标或可冒充成功的暂存"
             )
             try FileManager.default.removeItem(at: stagingRoot)
+        }
+        func placeExportInFreshLibrary(
+            _ exportURL: URL,
+            folderName: String
+        ) throws -> (library: URL, courseRoot: URL) {
+            let importLibrary = try fixture.makeDirectory(
+                "接管库-\(folderName)"
+            )
+            let courseRoot = importLibrary.appendingPathComponent(
+                folderName,
+                isDirectory: true
+            )
+            try FileManager.default.copyItem(at: exportURL, to: courseRoot)
+            return (importLibrary, courseRoot)
         }
         let store = makeStore(fixture: fixture)
         try store.configureCourseLibrary(at: library)
@@ -4217,13 +4239,17 @@ enum CourseProjectRootSelfCheck {
             fixture: fixture,
             workspaceDirectory: adoptedWorkspace
         )
-        try adoptedStore.configureCourseLibrary(at: library)
+        let importedExport = try placeExportInFreshLibrary(
+            exportRoot,
+            folderName: "已接管导出课程"
+        )
+        try adoptedStore.configureCourseLibrary(at: importedExport.library)
         let adoptedCourseID = try adoptedStore.adoptCourseFolder(
-            at: exportRoot,
+            at: importedExport.courseRoot,
             title: "已接管导出课程"
         )
         let normalizedManifest = try CourseProjectManifest.read(
-            from: exportRoot.appendingPathComponent(
+            from: importedExport.courseRoot.appendingPathComponent(
                 ".weibei/course.json"
             )
         )
@@ -4477,41 +4503,41 @@ enum CourseProjectRootSelfCheck {
                 courseID: courseA,
                 to: tamperedAdoptionRoot
             )
+            let importedTampered = try placeExportInFreshLibrary(
+                tamperedAdoptionRoot,
+                folderName: postSaveTamper.name
+            )
             let tamperedAdoptionWorkspace = try fixture.makeDirectory(
                 "\(postSaveTamper.name)工作区"
             )
-            let stoppedExternalScopes = LockedBox<[URL]>([])
             let tamperedAdoptionStore = makeStore(
                 fixture: fixture,
                 workspaceDirectory: tamperedAdoptionWorkspace,
-                stopAccessing: { url in
-                    var stopped = stoppedExternalScopes.get()
-                    stopped.append(url.canonicalFileURL)
-                    stoppedExternalScopes.set(stopped)
-                },
                 mutationHook: { stage in
                     guard stage
                             == .afterAdoptionWorkspaceSaveBeforeManifestNormalization else {
                         return
                     }
                     try postSaveTamper.data.write(
-                        to: tamperedAdoptionRoot.appendingPathComponent(
+                        to: importedTampered.courseRoot.appendingPathComponent(
                             postSaveTamper.relativePath
                         )
                     )
                 }
             )
-            try tamperedAdoptionStore.configureCourseLibrary(at: library)
+            try tamperedAdoptionStore.configureCourseLibrary(
+                at: importedTampered.library
+            )
             try expectFailure(postSaveTamper.name) {
                 _ = try tamperedAdoptionStore.adoptCourseFolder(
-                    at: tamperedAdoptionRoot,
+                    at: importedTampered.courseRoot,
                     title: postSaveTamper.name
                 )
             }
             let retainedManifest = try JSONDecoder().decode(
                 CourseProjectManifest.self,
                 from: Data(
-                    contentsOf: tamperedAdoptionRoot
+                    contentsOf: importedTampered.courseRoot
                         .appendingPathComponent(
                             ".weibei/course.json"
                         )
@@ -4535,11 +4561,8 @@ enum CourseProjectRootSelfCheck {
                     && tamperedAdoptionStore
                         .pendingPortableNoteDraftForSelfCheck(
                             itemID: noteID
-                        ) == fixtureState.draft
-                    && stoppedExternalScopes.get().contains(
-                        tamperedAdoptionRoot.canonicalFileURL
-                    ),
-                "\(postSaveTamper.name)后错误消费封印，或危险课程根仍可读取笔记/草稿丢失/没有释放外部授权"
+                        ) == fixtureState.draft,
+                "\(postSaveTamper.name)后错误消费封印，或危险课程根仍可读取笔记/草稿丢失"
             )
         }
 
@@ -4550,6 +4573,10 @@ enum CourseProjectRootSelfCheck {
         _ = try store.exportPortableCourseCopyForSelfCheck(
             courseID: courseA,
             to: crashExportRoot
+        )
+        let importedCrash = try placeExportInFreshLibrary(
+            crashExportRoot,
+            folderName: "等待恢复的导出课程"
         )
         let crashWorkspace = try fixture.makeDirectory(
             "接管崩溃工作区"
@@ -4564,15 +4591,15 @@ enum CourseProjectRootSelfCheck {
                 }
             }
         )
-        try crashStore?.configureCourseLibrary(at: library)
+        try crashStore?.configureCourseLibrary(at: importedCrash.library)
         try expectFailure("接管保存后消费封印前崩溃") {
             _ = try crashStore?.adoptCourseFolder(
-                at: crashExportRoot,
+                at: importedCrash.courseRoot,
                 title: "等待恢复的导出课程"
             )
         }
         let sealedAfterCrash = try CourseProjectManifest.read(
-            from: crashExportRoot.appendingPathComponent(
+            from: importedCrash.courseRoot.appendingPathComponent(
                 ".weibei/course.json"
             )
         )
@@ -4586,14 +4613,14 @@ enum CourseProjectRootSelfCheck {
             workspaceDirectory: crashWorkspace
         )
         let recoveredCrashManifest = try CourseProjectManifest.read(
-            from: crashExportRoot.appendingPathComponent(
+            from: importedCrash.courseRoot.appendingPathComponent(
                 ".weibei/course.json"
             )
         )
         try check(
             recoveredCrashStore.course(withID: courseA) != nil
                 && recoveredCrashStore.courseRootURL(for: courseA)
-                    == crashExportRoot.canonicalFileURL
+                    == importedCrash.courseRoot.canonicalFileURL
                 && recoveredCrashStore
                     .portableAdoptionReadRunsOffMainForSelfCheck()
                 && recoveredCrashManifest.portableExport == nil,
@@ -4883,6 +4910,7 @@ enum CourseProjectRootSelfCheck {
             fixture: fixture,
             workspaceDirectory: migrationWorkspace
         )
+        try migratedStore?.configureCourseLibrary(at: library)
         try check(
             try migratedStore?.adoptCourseFolder(
                 at: courseRoot,
@@ -4924,18 +4952,20 @@ enum CourseProjectRootSelfCheck {
     private static func portableCourseStatePreservesOfflineAndCorruptChanges() throws {
         let fixture = try Fixture(name: "portable-state-offline")
         defer { fixture.remove() }
-        let courseRoot = try fixture.makeDirectory("外部课程")
+        let library = try fixture.makeDirectory("课程资料库")
         let movedRoot = fixture.root.appendingPathComponent(
-            "暂时移走的外部课程",
+            "暂时移走的课程",
             isDirectory: true
         )
         var store: WorkspaceStore? = makeStore(fixture: fixture)
+        try store?.configureCourseLibrary(at: library)
         let courseID = try require(
-            store?.adoptCourseFolder(
-                at: courseRoot,
-                title: "外部课程"
-            ),
+            store?.createCourseInLibrary(title: "离线课程"),
             "无法建立离线课程样本"
+        )
+        let courseRoot = try require(
+            store?.courseRootURL(for: courseID),
+            "离线课程根丢失"
         )
         let stateURL = courseRoot.appendingPathComponent(
             ".weibei/course-state.json"
@@ -5184,7 +5214,7 @@ enum CourseProjectRootSelfCheck {
         let fixture = try Fixture(name: "linked-course-metadata")
         defer { fixture.remove() }
         let library = try fixture.makeDirectory("课程资料库")
-        let external = try fixture.makeDirectory("外部课程")
+        let external = try fixture.makeDirectory("课程资料库/外部课程")
         let outsideMetadata = try fixture.makeDirectory("外部 metadata")
         let manifestURL = outsideMetadata.appendingPathComponent("course.json")
         let manifestData = try CourseProjectManifest(
@@ -5260,8 +5290,8 @@ enum CourseProjectRootSelfCheck {
         let fixture = try Fixture(name: "damaged-metadata")
         defer { fixture.remove() }
         let library = try fixture.makeDirectory("课程资料库")
-        let external = try fixture.makeDirectory("损坏课程")
-        let metadata = try fixture.makeDirectory("损坏课程/.weibei")
+        let external = try fixture.makeDirectory("课程资料库/损坏课程")
+        let metadata = try fixture.makeDirectory("课程资料库/损坏课程/.weibei")
         let manifestURL = metadata.appendingPathComponent("course.json")
         let original = Data("{not-json".utf8)
         try original.write(to: manifestURL)
@@ -6192,6 +6222,7 @@ enum CourseProjectRootSelfCheck {
                     try data.write(to: url, options: [.atomic])
                 }
             )
+            try store.configureCourseLibrary(at: library)
             let courseID = try store.adoptCourseFolder(at: courseRoot, title: "课程")
             let itemID = try store.importFileIntoCourseForSelfCheck(
                 source.canonicalFileURL,
@@ -6225,7 +6256,11 @@ enum CourseProjectRootSelfCheck {
                 observedUpdatedItemDuringFailedSave,
                 "资料库重新授权没有在保存前重解析课程资料"
             )
-            try check(store.courseLibraryRootURL == nil, "重新授权保存失败仍切换了资料库")
+            try check(
+                store.courseLibraryRootURL?.standardizedFileURL
+                    == library.standardizedFileURL,
+                "重新授权保存失败仍切换了资料库"
+            )
             try check(
                 store.importedItems.first { $0.id == itemID } == previousItem,
                 "重新授权保存失败没有回滚资料修订状态"
