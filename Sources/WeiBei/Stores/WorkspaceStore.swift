@@ -12955,9 +12955,15 @@ final class WorkspaceStore: ObservableObject {
             showTransientNoteStatus(ui("请先选择魏碑资料库。", "Choose a WeiBei library first."))
             return nil
         }
-        let targetCourseID = courseWorkspaceCourseID
-            ?? activeCourseID
-            ?? sourceItem.flatMap(\.storage.ownerCourseID)
+        // Sidebar-active course is not a workspace. A blank note goes to 通用笔记
+        // unless the course workspace overlay is actually open.
+        let targetCourseID: UUID?
+        switch seed {
+        case .blank:
+            targetCourseID = courseWorkspaceCourseID
+        case .currentMaterial(let item):
+            targetCourseID = item.storage.ownerCourseID ?? courseWorkspaceCourseID
+        }
         let notesDirectory: URL
         if let targetCourseID, let courseRoot = courseRootURL(for: targetCourseID) {
             notesDirectory = courseRoot.appendingPathComponent(

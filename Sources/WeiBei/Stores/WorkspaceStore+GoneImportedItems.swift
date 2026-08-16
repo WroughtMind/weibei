@@ -75,10 +75,14 @@ extension WorkspaceStore {
         case .bundledSample:
             return item.url
         case .common(let relativePath):
-            guard let root = courseLibraryRootURL, !relativePath.isEmpty else { return nil }
+            // Leftover file: items decode as common(subtitle), e.g. "笔记.md".
+            // That is not a library-relative path and must not resolve under the root.
+            guard let root = courseLibraryRootURL,
+                  relativePath.contains("/") else { return nil }
             return root.appendingPathComponent(relativePath)
         case .courseOwned(let courseID, let relativePath):
-            guard let root = courseRootURL(for: courseID), !relativePath.isEmpty else { return nil }
+            guard let root = courseRootURL(for: courseID),
+                  relativePath.contains("/") else { return nil }
             return root.appendingPathComponent(relativePath)
         }
     }

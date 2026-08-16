@@ -130,8 +130,15 @@ func checkLibraryRelativeStorage() throws {
     )
     expect(
         !goneSource.contains("ImportedFileRecovery")
-            && goneSource.contains("resolvedLibraryURL"),
+            && goneSource.contains("resolvedLibraryURL")
+            && goneSource.contains("relativePath.contains(\"/\")"),
         "SAFETY:library-relative-gone gone-item handling uses library-relative paths instead of recovery"
+    )
+    expect(
+        storeSource.contains("case .blank:")
+            && storeSource.contains("targetCourseID = courseWorkspaceCourseID")
+            && !storeSource.contains("?? activeCourseID\n            ?? sourceItem"),
+        "SAFETY:library-relative-notes blank notes ignore sidebar-active course"
     )
     expect(
         (storeSource.contains("copyExternalFileIntoLibrary")
