@@ -1197,7 +1197,7 @@ final class WorkspaceStore: ObservableObject {
         }
         let existingPoint = courseResumePoint(for: courseID)
         let activeMaterialLocation: StudyLocation? = selectedMaterialItem.flatMap { item in
-            guard courseMembershipIndex.courseIDs(for: item.id).contains(courseID) else {
+            guard itemIsAvailableInCourseContext(itemID: item.id, courseID: courseID) else {
                 return nil
             }
             return studyLocation(for: item.id, in: courseID)
@@ -1211,7 +1211,7 @@ final class WorkspaceStore: ObservableObject {
         }
         let activeNoteItemID: String? = activeNoteItem.flatMap { item in
             guard item.isNotebookNote,
-                  courseMembershipIndex.courseIDs(for: item.id).contains(courseID) else {
+                  itemIsAvailableInCourseContext(itemID: item.id, courseID: courseID) else {
                 return nil
             }
             return item.id
@@ -10664,16 +10664,19 @@ final class WorkspaceStore: ObservableObject {
         courseMaterials.first(where: { $0.id == itemID })?.urlPath != nil
     }
 
+    private func itemIsAvailableInCourseContext(itemID: String, courseID: UUID) -> Bool {
+        if courseMembershipIndex.courseIDs(for: itemID).contains(courseID) {
+            return true
+        }
+        guard let item = importedItems.first(where: { $0.id == itemID }) else { return false }
+        if case .common = item.storage { return true }
+        return false
+    }
+
     @discardableResult
     func openCourseMaterial(_ itemID: String, in requestedCourseID: UUID? = nil) -> Bool {
         if let requestedCourseID {
-            let mounted = courseMembershipIndex.itemIDs(in: requestedCourseID).contains(itemID)
-            let common = importedItems.contains { item in
-                guard item.id == itemID else { return false }
-                if case .common = item.storage { return true }
-                return false
-            }
-            guard mounted || common else {
+            guard itemIsAvailableInCourseContext(itemID: itemID, courseID: requestedCourseID) else {
                 return false
             }
         }
@@ -10764,13 +10767,7 @@ final class WorkspaceStore: ObservableObject {
             return
         }
         if let requestedCourseID {
-            let mounted = courseMembershipIndex.itemIDs(in: requestedCourseID).contains(itemID)
-            let common = importedItems.contains { item in
-                guard item.id == itemID else { return false }
-                if case .common = item.storage { return true }
-                return false
-            }
-            guard mounted || common else {
+            guard itemIsAvailableInCourseContext(itemID: itemID, courseID: requestedCourseID) else {
                 return
             }
             activeCourseID = requestedCourseID
@@ -11630,7 +11627,7 @@ final class WorkspaceStore: ObservableObject {
             )
             : previous
         let resumePointChanged = locationChanged && (activeCourseID.flatMap { courseID in
-            guard courseMembershipIndex.courseIDs(for: item.id).contains(courseID),
+            guard itemIsAvailableInCourseContext(itemID: item.id, courseID: courseID),
                   let location else {
                 return nil
             }
@@ -11645,7 +11642,7 @@ final class WorkspaceStore: ObservableObject {
         if let location, locationChanged {
             studyLocationsByItemID[item.id] = location
             if let activeCourseID,
-               courseMembershipIndex.courseIDs(for: item.id).contains(activeCourseID) {
+               itemIsAvailableInCourseContext(itemID: item.id, courseID: activeCourseID) {
                 studyLocationsByCourseID[activeCourseID.uuidString, default: [:]][item.id]
                     = location
             }
