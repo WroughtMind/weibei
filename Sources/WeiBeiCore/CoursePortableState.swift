@@ -352,17 +352,19 @@ public struct CoursePortableState: Codable, Equatable, Sendable {
         var itemPaths = Set<String>()
         var noteItemIDs = Set<String>()
         var materialItemIDs = Set<String>()
+        var keptItems: [CoursePortableItem] = []
         for item in items {
+            guard Self.isSafeRelativePath(item.courseRelativePath) else {
+                throw CoursePortableStateError.unsafeRelativePath
+            }
+            if itemPaths.contains(item.courseRelativePath) {
+                continue
+            }
             guard !item.itemID.isEmpty,
                   itemIDs.insert(item.itemID).inserted else {
                 throw CoursePortableStateError.duplicateItemID
             }
-            guard Self.isSafeRelativePath(item.courseRelativePath) else {
-                throw CoursePortableStateError.unsafeRelativePath
-            }
-            guard itemPaths.insert(item.courseRelativePath).inserted else {
-                throw CoursePortableStateError.duplicateItemPath
-            }
+            itemPaths.insert(item.courseRelativePath)
             guard Self.hasValidRoleAndKind(item) else {
                 throw CoursePortableStateError.invalidItemStorage
             }
@@ -383,6 +385,7 @@ public struct CoursePortableState: Codable, Equatable, Sendable {
                     throw CoursePortableStateError.invalidItemStorage
                 }
             }
+            keptItems.append(item)
             if item.isNotebookNote {
                 noteItemIDs.insert(item.itemID)
             } else {
@@ -390,9 +393,34 @@ public struct CoursePortableState: Codable, Equatable, Sendable {
             }
         }
 
+        var state = self
+        state.items = keptItems
+        state.noteSourceLinks = noteSourceLinks.filter { relation in
+            noteItemIDs.contains(relation.noteItemID)
+                && materialItemIDs.contains(relation.sourceItemID)
+        }
+        state.studyLocationsByItemID = studyLocationsByItemID.filter { itemID, location in
+            materialItemIDs.contains(itemID) && location.itemID == itemID
+        }
+        if let resumePoint {
+            let resumeIsValid = resumePoint.courseID == courseID
+                && resumePoint.materialLocation.map {
+                    materialItemIDs.contains($0.itemID)
+                } ?? true
+                && resumePoint.noteItemID.map(noteItemIDs.contains) ?? true
+            if !resumeIsValid {
+                state.resumePoint = nil
+            }
+        }
+        var seenDraftItemIDs = Set<String>()
+        state.pendingNoteDrafts = pendingNoteDrafts.filter { draft in
+            noteItemIDs.contains(draft.itemID)
+                && seenDraftItemIDs.insert(draft.itemID).inserted
+        }
+
         var relationIDs = Set<UUID>()
         var relationsByID: [UUID: NoteSourceLink] = [:]
-        for relation in noteSourceLinks {
+        for relation in state.noteSourceLinks {
             guard relationIDs.insert(relation.id).inserted,
                   noteItemIDs.contains(relation.noteItemID),
                   materialItemIDs.contains(relation.sourceItemID) else {
@@ -547,33 +575,14 @@ public struct CoursePortableState: Codable, Equatable, Sendable {
             }
         }
 
-        for (itemID, location) in studyLocationsByItemID {
-            guard materialItemIDs.contains(itemID),
-                  location.itemID == itemID else {
-                throw CoursePortableStateError.invalidStudyLocation
-            }
+        if schemaVersion != 2,
+           let resumePoint = state.resumePoint,
+           let chatID = resumePoint.chatID,
+           !chatIDs.contains(chatID) {
+            state.resumePoint = nil
         }
 
-        if let resumePoint {
-            guard resumePoint.courseID == courseID,
-                  resumePoint.materialLocation.map({
-                    materialItemIDs.contains($0.itemID)
-                }) ?? true,
-                  (schemaVersion == 2
-                    || resumePoint.chatID.map(chatIDs.contains) ?? true),
-                  resumePoint.noteItemID.map(noteItemIDs.contains) ?? true else {
-                throw CoursePortableStateError.invalidResumePoint
-            }
-        }
-
-        var draftItemIDs = Set<String>()
-        for draft in pendingNoteDrafts {
-            guard noteItemIDs.contains(draft.itemID),
-                  draftItemIDs.insert(draft.itemID).inserted else {
-                throw CoursePortableStateError.invalidNoteDraft
-            }
-        }
-        return self
+        return state
     }
 
     private static func isSafeRelativePath(_ path: String) -> Bool {
