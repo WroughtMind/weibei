@@ -21,19 +21,19 @@ function message(payload: Record<string, unknown>): string {
 
 function errorMessage(error: unknown): string {
   const value = error instanceof Error ? error.message : String(error);
-  return value.replace(/[\r\n\t]+/gu, " ").slice(0, 1_000) || "Pi 管理操作失败";
+  return value.replace(/[\r\n\t]+/gu, " ").slice(0, 1_000) || "魏碑认证操作失败";
 }
 
 function credentialEndpoint(value: unknown): string {
   if (typeof value !== "string" || new TextEncoder().encode(value).byteLength > 2_048) {
-    throw new Error("Pi 凭据地址无效");
+    throw new Error("魏碑无法读取登录信息");
   }
   const endpoint = value.trim();
   let url: URL;
   try {
     url = new URL(endpoint);
   } catch {
-    throw new Error("Pi 凭据地址无效");
+    throw new Error("魏碑无法读取登录信息");
   }
   if (
     (url.protocol !== "https:" && url.protocol !== "http:") ||
@@ -43,14 +43,14 @@ function credentialEndpoint(value: unknown): string {
     url.search ||
     url.hash
   ) {
-    throw new Error("Pi 凭据地址无效");
+    throw new Error("魏碑无法读取登录信息");
   }
   return endpoint;
 }
 
 function parseRequest(args: string): ManagementRequest {
   if (new TextEncoder().encode(args).byteLength > 4_096) {
-    throw new Error("Pi 管理请求超过大小上限");
+    throw new Error("模型服务配置请求过大");
   }
   const value = JSON.parse(args) as Partial<ManagementRequest>;
   if (value.action === "catalog") {
@@ -70,12 +70,12 @@ function parseRequest(args: string): ManagementRequest {
         (value.providerId === AZURE_PROVIDER && value.authType === "api_key") !==
         (endpoint !== undefined)
       ) {
-        throw new Error("Pi 凭据地址无效");
+        throw new Error("魏碑无法读取登录信息");
       }
       return { action: "login", providerId: value.providerId, authType: value.authType, endpoint };
     }
   }
-  throw new Error("Pi 管理请求无效");
+  throw new Error("模型服务配置请求无效");
 }
 
 function promptTitle(prompt: AuthPrompt): string {
@@ -118,7 +118,7 @@ async function run(args: string, ctx: ExtensionCommandContext): Promise<void> {
     action = request.action;
     const agentDirectory = process.env.PI_CODING_AGENT_DIR;
     const authPath = process.env.WEIBEI_PI_AUTH_PATH;
-    if (!agentDirectory || !authPath) throw new Error("魏碑 Pi 配置目录不可用");
+    if (!agentDirectory || !authPath) throw new Error("魏碑暂时无法读取模型服务配置");
 
     const { ModelRuntime, readStoredCredential } = await import(PI_PACKAGE);
     const runtime = await ModelRuntime.create({
@@ -172,7 +172,7 @@ async function run(args: string, ctx: ExtensionCommandContext): Promise<void> {
     }
 
     const provider = runtime.getProvider(request.providerId);
-    if (!provider) throw new Error(`Pi 不认识供应商 ${request.providerId}`);
+    if (!provider) throw new Error(`魏碑暂不支持模型服务 ${request.providerId}`);
     if (request.action === "logout") {
       await runtime.logout(request.providerId);
       ctx.ui.notify(message({ kind: "result", action: request.action, providerId: request.providerId }));
@@ -222,7 +222,7 @@ async function run(args: string, ctx: ExtensionCommandContext): Promise<void> {
 
 export default function managementExtension(pi: ExtensionAPI): void {
   pi.registerCommand(COMMAND, {
-    description: "通过魏碑内置 Pi 管理认证与模型目录",
+    description: "管理魏碑的认证与模型目录",
     handler: run,
   });
 }

@@ -145,8 +145,8 @@ extension SettingsView {
             Button(store.ui("取消", "Cancel"), role: .cancel) {}
         } message: {
             Text(store.ui(
-                "只删除这组服务与模型选择；内置 Pi 中的登录凭证不受影响。",
-                "This only deletes the service and model selection. Credentials in embedded Pi are unchanged."
+                "只删除这组服务与模型选择；魏碑保存的登录信息不受影响。",
+                "This only deletes the service and model selection. Sign-in information saved by WeiBei is unchanged."
             ))
         }
     }
@@ -228,7 +228,30 @@ extension SettingsView {
         }
     }
 
+    /// Bedrock, Vertex, and Cloudflare need several guided fields rather than a
+    /// single pasted key, so they get their own "设置认证" entry point.
+    private var requiresGuidedAuthentication: Bool {
+        switch store.agentProviderID {
+        case .amazonBedrock,
+             .googleVertex,
+             .cloudflareWorkersAI,
+             .cloudflareAIGateway:
+            return true
+        default:
+            return false
+        }
+    }
+
+    @ViewBuilder
     private var agentAPIKeyAuth: some View {
+        if requiresGuidedAuthentication {
+            agentGuidedAuth
+        } else {
+            agentSimpleAPIKeyAuth
+        }
+    }
+
+    private var agentSimpleAPIKeyAuth: some View {
         settingsRow(title: store.ui("密钥", "API Key")) {
             let hasStoredCredential = oauthService.isConfigured(
                 providerID: activePiProviderID,
@@ -253,7 +276,7 @@ extension SettingsView {
                 HStack(spacing: 8) {
                     if activeAPICredentialIsConfigured {
                         settingsPill(
-                            title: store.ui("已保存在内置 Pi", "Stored in embedded Pi"),
+                            title: store.ui("已保存", "Saved"),
                             icon: "checkmark.seal.fill",
                             active: true
                         )
@@ -261,12 +284,6 @@ extension SettingsView {
                     if !apiKeyDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                         Button(store.ui("保存", "Save")) { saveActiveAPIKey() }
                             .buttonStyle(WeiBeiTextActionButtonStyle(active: !oauthService.isLoggingIn))
-                    }
-                    if !activeAPICredentialIsConfigured {
-                        Button(store.ui("由内置 Pi 配置", "Configure with embedded Pi")) {
-                            startGuidedAPIConfiguration()
-                        }
-                        .buttonStyle(WeiBeiTextActionButtonStyle(active: !oauthService.isLoggingIn))
                     }
                     if hasStoredCredential {
                         Button(store.ui("清除", "Clear")) { clearActiveAPICredential() }
@@ -278,6 +295,52 @@ extension SettingsView {
                             store.openAgentProviderConsole(login: false)
                         }
                         .buttonStyle(WeiBeiTextActionButtonStyle())
+                    }
+                }
+                piManagementPrompt
+                if let progress = oauthService.statusMessage, oauthService.isLoggingIn {
+                    settingsNote(progress, icon: "arrow.triangle.2.circlepath")
+                }
+                if let error = oauthService.lastError {
+                    settingsNote(error, icon: "exclamationmark.triangle")
+                }
+            }
+        }
+    }
+
+    /// Guided providers: no generic key box. The existing step-by-step prompt
+    /// below surfaces one control at a time until the credential is complete.
+    private var agentGuidedAuth: some View {
+        settingsRow(title: store.ui("认证", "Authentication")) {
+            let hasStoredCredential = oauthService.isConfigured(
+                providerID: activePiProviderID,
+                type: .apiKey
+            )
+            VStack(alignment: .trailing, spacing: 8) {
+                HStack(spacing: 8) {
+                    if activeAPICredentialIsConfigured {
+                        settingsPill(
+                            title: store.ui("已配置", "Configured"),
+                            icon: "checkmark.seal.fill",
+                            active: true
+                        )
+                    } else {
+                        Button(store.ui("设置认证", "Set Up Authentication")) {
+                            oauthService.startAPIKeyLogin(
+                                provider: store.agentProviderID,
+                                baseURL: store.agentBaseURL,
+                                model: store.modelName
+                            )
+                        }
+                        .buttonStyle(WeiBeiTextActionButtonStyle(active: !oauthService.isLoggingIn))
+                    }
+                    if hasStoredCredential {
+                        Button(store.ui("清除", "Clear")) { clearActiveAPICredential() }
+                            .buttonStyle(WeiBeiTextActionButtonStyle())
+                    }
+                    if oauthService.isLoggingIn {
+                        Button(store.ui("取消", "Cancel")) { oauthService.cancelLogin() }
+                            .buttonStyle(WeiBeiTextActionButtonStyle())
                     }
                 }
                 piManagementPrompt
@@ -415,14 +478,6 @@ extension SettingsView {
         )
     }
 
-    private func startGuidedAPIConfiguration() {
-        oauthService.startAPIKeyLogin(
-            provider: store.agentProviderID,
-            baseURL: store.agentBaseURL,
-            model: store.modelName
-        )
-    }
-
     private func clearActiveAPICredential() {
         apiKeyDraft = ""
         oauthService.logoutCredential(
@@ -454,6 +509,11 @@ extension SettingsView {
                         "检测到旧版通用密钥。为避免把它发给错误服务，魏碑不会自动搬移；请为当前地址重新输入一次密钥。",
                         "A legacy shared key was found. WeiBei will not move it to a new endpoint automatically; enter the key once for this address."
                     ),
+                    icon: "exclamationmark.triangle"
+                )
+            } else if requiresGuidedAuthentication {
+                settingsNote(
+                    store.ui("尚未完成认证，对话将无法连接。", "Authentication not completed — chat won't connect."),
                     icon: "exclamationmark.triangle"
                 )
             } else {

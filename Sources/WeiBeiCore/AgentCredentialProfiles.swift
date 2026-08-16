@@ -24,13 +24,13 @@ public enum AgentAuthMethod: String, Codable, CaseIterable, Identifiable, Sendab
         switch self {
         case .apiKey:
             return language.text(
-                "选择 Pi 支持的提供商，由内置 Pi 完成 API 凭证配置与保存。",
-                "Choose a Pi-supported provider and let embedded Pi configure and store its API credential."
+                "选择模型服务，由魏碑保存 API 密钥。",
+                "Choose a model service. WeiBei saves its API key."
             )
         case .subscription:
             return language.text(
-                "浏览器 OAuth 连接 ChatGPT Plus/Pro、Claude Pro/Max 等订阅；凭证保存在魏碑自己的 Pi 配置里（不写入终端 ~/.pi）。",
-                "Browser OAuth for ChatGPT Plus/Pro, Claude Pro/Max, etc. Tokens stay in WeiBei’s own Pi config (not terminal ~/.pi)."
+                "通过浏览器连接 ChatGPT Plus/Pro、Claude Pro/Max 等订阅；登录信息由魏碑保存。",
+                "Connect ChatGPT Plus/Pro, Claude Pro/Max, and other subscriptions in the browser. WeiBei saves the sign-in information."
             )
         }
     }
