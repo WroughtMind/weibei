@@ -1258,6 +1258,7 @@ public struct StudyItem: Identifiable, Codable, Hashable, Sendable {
         try container.encode(title, forKey: .title)
         try container.encode(subtitle, forKey: .subtitle)
         try container.encode(kind, forKey: .kind)
+        try container.encodeIfPresent(importedFileIdentity, forKey: .importedFileIdentity)
         try container.encode(isSample, forKey: .isSample)
         try container.encode(isNotebookNote, forKey: .isNotebookNote)
         try container.encodeIfPresent(customDisplayTitle, forKey: .customDisplayTitle)

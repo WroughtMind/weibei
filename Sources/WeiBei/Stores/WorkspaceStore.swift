@@ -18352,22 +18352,29 @@ final class WorkspaceStore: ObservableObject {
     }
 
     private func rebuildCourseMembershipsFromStorage() {
-        let derived = importedItems.compactMap { item -> CourseItemMembership? in
+        var memberships = courseItemMemberships
+        for item in importedItems {
             guard case .courseOwned(let courseID, let relativePath) = item.storage,
                   !relativePath.isEmpty else {
-                return nil
+                continue
             }
-            return CourseItemMembership(
-                courseID: courseID,
-                itemID: item.id,
-                courseRelativePath: relativePath
-            )
+            if let index = memberships.firstIndex(where: {
+                $0.courseID == courseID && $0.itemID == item.id
+            }) {
+                if memberships[index].courseRelativePath == nil {
+                    memberships[index].courseRelativePath = relativePath
+                }
+            } else {
+                memberships.append(
+                    CourseItemMembership(
+                        courseID: courseID,
+                        itemID: item.id,
+                        courseRelativePath: relativePath
+                    )
+                )
+            }
         }
-        let derivedPairs = Set(derived.map { "\($0.courseID.uuidString)|\($0.itemID)" })
-        let extras = courseItemMemberships.filter { membership in
-            !derivedPairs.contains("\(membership.courseID.uuidString)|\(membership.itemID)")
-        }
-        courseItemMemberships = derived + extras
+        courseItemMemberships = memberships
     }
 
     @discardableResult
