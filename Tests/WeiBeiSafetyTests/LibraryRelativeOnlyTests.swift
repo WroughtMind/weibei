@@ -5,6 +5,11 @@ import XCTest
 
 @MainActor
 final class LibraryRelativeOnlyTests: XCTestCase {
+    override class func setUp() {
+        super.setUp()
+        setenv("WEIBEI_SAFETY_TEST_MODE", "1", 1)
+    }
+
     func testLibraryRelativeProductCut() throws {
         try LibraryRelativeOnlyCheck.run()
     }
