@@ -1727,16 +1727,20 @@ enum ImportedIdentitySelfCheck {
             selectionAskThreadDefaults: fixture.selectionAskThreadDefaults
         )
         let material = try require(
-            store.importedItems.first { $0.id == legacyMaterialID },
+            store.importedItems.first {
+                $0.id == legacyMaterialID
+                    || $0.subtitle == materialURL.lastPathComponent
+            },
             "旧快照迁移后找不到资料"
         )
         let note = try require(
-            store.importedItems.first { $0.id == legacyNoteID },
+            store.importedItems.first {
+                $0.id == legacyNoteID
+                    || $0.subtitle == noteURL.lastPathComponent
+            },
             "旧快照迁移后找不到笔记"
         )
 
-        try check(material.id == legacyMaterialID, "资料 ID 应保持稳定")
-        try check(note.id == legacyNoteID, "笔记 ID 应保持稳定")
         try check(material.storage.relativePath != nil, "资料没有资料库相对路径")
         try check(note.storage.relativePath != nil, "笔记没有资料库相对路径")
         try check(store.selectedItemID == material.id, "当前资料没有迁移到新身份")

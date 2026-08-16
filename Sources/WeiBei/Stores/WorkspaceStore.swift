@@ -19824,7 +19824,10 @@ final class WorkspaceStore: ObservableObject {
                         || otherCourseItemIDs.contains(item.id)
                 } ?? false
                 let existingIsCurrentCanonical: Bool
-                if existingBelongsToKnownCourse,
+                if let existing, case let .common(existingPath) = existing.storage,
+                   existingPath == sharedRelativePath {
+                    existingIsCurrentCanonical = true
+                } else if existingBelongsToKnownCourse,
                    let existing,
                    let existingURL = existing.url,
                    let existingIdentity = existing.importedFileIdentity,
