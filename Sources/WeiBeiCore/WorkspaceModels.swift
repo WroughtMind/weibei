@@ -1203,7 +1203,13 @@ public struct StudyItem: Identifiable, Codable, Hashable, Sendable {
         self.isSample = isSample
         self.isNotebookNote = isNotebookNote
         self.customDisplayTitle = customDisplayTitle
-        self.storage = storage ?? (isSample ? .bundledSample : .common(relativePath: subtitle))
+        if let storage {
+            self.storage = storage
+        } else if isSample {
+            self.storage = .bundledSample
+        } else {
+            self.storage = .common(relativePath: "")
+        }
         self.contentRevision = contentRevision
         self.contentDigest = contentDigest
         self.fileByteCount = fileByteCount
@@ -1233,7 +1239,7 @@ public struct StudyItem: Identifiable, Codable, Hashable, Sendable {
         title = try container.decode(String.self, forKey: .title)
         subtitle = try container.decode(String.self, forKey: .subtitle)
         kind = try container.decode(StudyItemKind.self, forKey: .kind)
-        urlPath = try container.decodeIfPresent(String.self, forKey: .urlPath)
+        urlPath = nil
         importedFileIdentity = try container.decodeIfPresent(
             ImportedFileIdentity.self,
             forKey: .importedFileIdentity
@@ -1241,8 +1247,12 @@ public struct StudyItem: Identifiable, Codable, Hashable, Sendable {
         isSample = try container.decode(Bool.self, forKey: .isSample)
         isNotebookNote = try container.decodeIfPresent(Bool.self, forKey: .isNotebookNote) ?? false
         customDisplayTitle = try container.decodeIfPresent(String.self, forKey: .customDisplayTitle)
-        storage = try container.decodeIfPresent(StudyItemStorage.self, forKey: .storage)
-            ?? (isSample ? .bundledSample : .common(relativePath: subtitle))
+        if isSample {
+            storage = try container.decodeIfPresent(StudyItemStorage.self, forKey: .storage)
+                ?? .bundledSample
+        } else {
+            storage = try container.decode(StudyItemStorage.self, forKey: .storage)
+        }
         contentRevision = try container.decodeIfPresent(UInt64.self, forKey: .contentRevision) ?? 1
         contentDigest = try container.decodeIfPresent(String.self, forKey: .contentDigest)
         fileByteCount = try container.decodeIfPresent(UInt64.self, forKey: .fileByteCount)

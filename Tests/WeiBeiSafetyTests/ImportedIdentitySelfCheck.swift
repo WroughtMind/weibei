@@ -1433,19 +1433,14 @@ enum ImportedIdentitySelfCheck {
             }
             """.utf8
         )
-        let legacyExternal = try JSONDecoder().decode(StudyItem.self, from: legacyExternalData)
-        try check(legacyExternal.storage == .common(relativePath: "legacy.txt"), "缺少 storage 的条目应按文件名记相对路径")
-        try check(legacyExternal.contentRevision == 1, "旧资料没有获得首版内容修订号")
-        try check(legacyExternal.contentDigest == nil, "旧资料被伪造了内容摘要")
-        let reencodedLegacyExternal = String(
-            data: try JSONEncoder().encode(legacyExternal),
-            encoding: .utf8
-        ) ?? ""
-        try check(
-            !reencodedLegacyExternal.contains("urlPath")
-                && !reencodedLegacyExternal.contains("importedFileLastKnownPath"),
-            "解码后不应保留第二套绝对路径"
-        )
+        do {
+            _ = try JSONDecoder().decode(StudyItem.self, from: legacyExternalData)
+            throw CheckError.failed("缺少 storage 的条目仍被当成有效资料")
+        } catch CheckError.failed(let message) {
+            throw CheckError.failed(message)
+        } catch {
+            // Old snapshots without storage are discarded, not guessed.
+        }
 
         let legacySampleData = Data(
             """
@@ -1485,7 +1480,7 @@ enum ImportedIdentitySelfCheck {
             contentRevision: 3,
             contentDigest: "sha256:shared"
         )
-        for item in [ownedItem, sharedItem, legacyExternal, legacySample] {
+        for item in [ownedItem, sharedItem, legacySample] {
             let decoded = try JSONDecoder().decode(
                 StudyItem.self,
                 from: JSONEncoder().encode(item)
@@ -1928,21 +1923,13 @@ enum ImportedIdentitySelfCheck {
                 try JSONEncoder().encode([thread]),
                 forKey: legacyKey
             )
-            try fixture.write(
-                PersistedWorkspace(
-                    importedItems: [
-                        StudyItem(
-                            id: oldID,
-                            title: "提交顺序",
-                            subtitle: materialURL.lastPathComponent,
-                            kind: .text,
-                            urlPath: materialURL.path,
-                            isSample: false
-                        ),
-                    ],
-                    selectedItemID: oldID,
-                    noteSourceLinksMigrationVersion: 1
-                )
+            try Data(
+                """
+                {"importedItems":[{"id":"\(oldID)","title":"提交顺序","subtitle":"\(materialURL.lastPathComponent)","kind":"text","urlPath":"\(materialURL.path)","isSample":false}],"selectedItemID":"\(oldID)","noteSourceLinksMigrationVersion":1}
+                """.utf8
+            ).write(
+                to: fixture.workspaceDirectory.appendingPathComponent("workspace.json"),
+                options: [.atomic]
             )
 
             var failedStore: WorkspaceStore? = WorkspaceStore(
@@ -1951,62 +1938,12 @@ enum ImportedIdentitySelfCheck {
                 workspaceSnapshotWriter: injectedSaveFailure,
                 selectionAskThreadDefaults: fixture.selectionAskThreadDefaults
             )
-            let inMemoryNewID = try require(
-                failedStore?.importedItems.first?.id,
-                "保存失败场景没有保留内存资料"
+            try check(
+                failedStore?.importedItems.isEmpty == true,
+                "缺少 storage 的旧 file: 快照仍被读进工作区"
             )
-            try check(inMemoryNewID != oldID, "保存失败场景没有真实触发资料 ID 迁移")
-            try check(failedStore?.selectionAskThreads.first?.itemID == inMemoryNewID, "内存中的选区问答没有随资料 ID 一起迁移")
-            // S5：单次写盘失败静默累计，连续 3 次才露出 workspaceSaveError。
-            try check(true, "S5 单次保存失败可不露常驻错误（原：资料 ID 迁移保存失败没有暴露错误）")
-            let snapshotAfterFailure = try fixture.readSnapshot()
-            try check(snapshotAfterFailure.importedItems.first?.id == oldID, "工作区保存失败却提前写入了新资料 ID")
-            try check(snapshotAfterFailure.selectionAskThreads == nil, "工作区保存失败却提前提交了选区问答字段")
-            let defaultsAfterFailure = try JSONDecoder().decode(
-                [SelectionAskThread].self,
-                from: try require(
-                    fixture.selectionAskThreadDefaults.data(forKey: legacyKey),
-                    "保存失败后选区问答旧值丢失"
-                )
-            )
-            try check(defaultsAfterFailure.first?.itemID == oldID, "工作区保存失败却清理或改写了旧选区问答值")
+            _ = identity
             failedStore = nil
-
-            let failedOfflineReopen = WorkspaceStore(
-                workspaceDirectory: fixture.workspaceDirectory,
-                importedFileIdentityResolver: { _ in nil },
-                workspaceSnapshotWriter: injectedSaveFailure,
-                selectionAskThreadDefaults: fixture.selectionAskThreadDefaults
-            )
-            try check(failedOfflineReopen.importedItems.first?.id == oldID, "保存失败重开后工作区没有保持旧 ID")
-            try check(failedOfflineReopen.selectionAskThreads.first?.itemID == oldID, "保存失败重开后旧选区问答不可恢复")
-            try check(fixture.selectionAskThreadDefaults.data(forKey: legacyKey) != nil, "保存再次失败却清理了旧选区问答值")
-
-            var committedStore: WorkspaceStore? = WorkspaceStore(
-                workspaceDirectory: fixture.workspaceDirectory,
-                importedFileIdentityResolver: { $0.path == materialURL.path ? identity : nil },
-                workspaceSnapshotWriter: { data, url in
-                    try data.write(to: url, options: [.atomic])
-                },
-                selectionAskThreadDefaults: fixture.selectionAskThreadDefaults
-            )
-            let committedID = try require(committedStore?.importedItems.first?.id, "重试后资料丢失")
-            try check(committedID != oldID, "保存重试后资料 ID 没有迁移")
-            let committedSnapshot = try fixture.readSnapshot()
-            try check(committedSnapshot.importedItems.first?.id == committedID, "保存重试后工作区没有提交新资料 ID")
-            try check(committedSnapshot.selectionAskThreads?.first?.itemID == committedID, "资料和选区问答没有写入同一个工作区快照")
-            try check(committedSnapshot.selectionAskThreads?.first?.messageIDs == thread.messageIDs, "保存重试后选区问答消息关系丢失")
-            try check(fixture.selectionAskThreadDefaults.object(forKey: legacyKey) == nil, "工作区保存成功后没有清理旧选区问答值")
-            committedStore = nil
-
-            let reopenedStore = WorkspaceStore(
-                workspaceDirectory: fixture.workspaceDirectory,
-                importedFileIdentityResolver: { _ in nil },
-                selectionAskThreadDefaults: fixture.selectionAskThreadDefaults
-            )
-            try check(reopenedStore.importedItems.first?.id == committedID, "保存成功后重开资料身份回退")
-            try check(reopenedStore.selectionAskThreads.first?.itemID == committedID, "保存成功后重开选区问答身份回退")
-            try check(reopenedStore.selectionAskThreads.first?.messageIDs == thread.messageIDs, "保存成功后重开选区问答消息关系丢失")
         }
 
         do {
@@ -2297,37 +2234,16 @@ enum ImportedIdentitySelfCheck {
 
         let legacyMaterialID = "file:\(materialURL.path)"
         let legacyNoteID = "file:\(noteURL.path)"
-        let snapshot = PersistedWorkspace(
-            importedItems: [
-                StudyItem(
-                    id: legacyMaterialID,
-                    title: "离线资料",
-                    subtitle: materialURL.lastPathComponent,
-                    kind: .text,
-                    urlPath: materialURL.path,
-                    isSample: false
-                ),
-                StudyItem(
-                    id: legacyNoteID,
-                    title: "离线资料笔记",
-                    subtitle: noteURL.lastPathComponent,
-                    kind: .markdown,
-                    urlPath: noteURL.path,
-                    isSample: false,
-                    isNotebookNote: true
-                ),
-            ],
-            selectedItemID: legacyMaterialID,
-            activeNotebookItemID: legacyNoteID,
-            noteSourceLinks: [
-                NoteSourceLink(noteItemID: legacyNoteID, sourceItemID: legacyMaterialID),
-            ],
-            noteSourceLinksMigrationVersion: 1,
-            studyLocationsByItemID: [
-                legacyMaterialID: StudyLocation(itemID: legacyMaterialID, itemTitle: "离线资料"),
-            ]
+        // Raw JSON: StudyItem.init would inject common(""), which is not a
+        // historical snapshot. Missing storage must discard file: leftovers.
+        try Data(
+            """
+            {"importedItems":[{"id":"\(legacyMaterialID)","title":"离线资料","subtitle":"\(materialURL.lastPathComponent)","kind":"text","urlPath":"\(materialURL.path)","isSample":false},{"id":"\(legacyNoteID)","title":"离线资料笔记","subtitle":"\(noteURL.lastPathComponent)","kind":"markdown","urlPath":"\(noteURL.path)","isSample":false,"isNotebookNote":true}],"selectedItemID":"\(legacyMaterialID)","activeNotebookItemID":"\(legacyNoteID)","noteSourceLinksMigrationVersion":1}
+            """.utf8
+        ).write(
+            to: fixture.workspaceDirectory.appendingPathComponent("workspace.json"),
+            options: [.atomic]
         )
-        try fixture.write(snapshot)
 
         var store: WorkspaceStore? = WorkspaceStore(
             workspaceDirectory: fixture.workspaceDirectory,
@@ -2337,11 +2253,9 @@ enum ImportedIdentitySelfCheck {
             store?.importedItems.contains { $0.id == legacyMaterialID } == false,
             "原文件不在时旧资料还留在魏碑里"
         )
-        let migratedNote = try require(
-            store?.courseNotebookItems.first {
-                $0.id == legacyNoteID || $0.subtitle == noteURL.lastPathComponent
-            },
-            "在线旧笔记没有完成稳定身份迁移"
+        try check(
+            store?.importedItems.contains { $0.id.hasPrefix("file:") } != true,
+            "缺少 storage 的旧 file: 身份仍被路径接回"
         )
 
         let library = fixture.root.appendingPathComponent("资料库", isDirectory: true)
@@ -2359,6 +2273,15 @@ enum ImportedIdentitySelfCheck {
             }.count == 1,
             "恢复后的旧资料产生了重复项"
         )
+        let restoredNote = try require(
+            store?.importFiles(
+                [noteURL],
+                selectsFirstImportedItem: false,
+                markdownNotePaths: [noteURL.path]
+            ).first,
+            "恢复后的旧笔记无法重新导入"
+        )
+        try check(restoredNote.id.hasPrefix("imported:"), "恢复后的旧笔记仍使用路径身份")
         store?.flushPendingNotePersistence()
         store = nil
 
@@ -2368,10 +2291,8 @@ enum ImportedIdentitySelfCheck {
         )
         try check(store?.importedItems.contains { $0.id == legacyMaterialID } == false, "重启后仍残留离线旧路径身份")
         try check(
-            store?.importedItems.contains {
-                $0.id == migratedNote.id || $0.subtitle == noteURL.lastPathComponent
-            } == true,
-            "重启后在线笔记丢失"
+            store?.importedItems.contains { $0.id == restoredNote.id } == true,
+            "重启后重新导入的笔记丢失"
         )
     }
 

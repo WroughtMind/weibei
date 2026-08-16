@@ -258,7 +258,7 @@ struct CourseWorkspaceView: View {
                 )
             }
             return store.ui(
-                "课程文件夹当前不可访问；魏碑不会假装删除。请先用“纳入已有文件夹”重新连接真实课程文件夹。",
+                "课程文件夹当前不可访问。请先在 Finder 中把它放到当前魏碑资料库里，再重新打开魏碑。",
                 "The course folder is unavailable. WeiBei won’t pretend to delete it; reconnect the real folder with Add Existing Folder first."
             )
         }
