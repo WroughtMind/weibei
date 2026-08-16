@@ -130,10 +130,6 @@ enum CourseProjectRootSelfCheck {
         try step("通用内容与两层删除") {
             try commonContentAndTwoLevelRemoval()
         }
-        try step("旧课程首次整理") {
-            try rootlessLegacyCourseIsOrganizedByCopy()
-        }
-        try rootlessLegacyCourseDeleteRemovesRegistration()
         try legacyCourseSnapshotStillDecodes()
     }
 

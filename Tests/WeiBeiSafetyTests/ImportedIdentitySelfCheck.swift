@@ -380,12 +380,8 @@ enum ImportedIdentitySelfCheck {
             "通用资料",
             isDirectory: true
         )
-        let courseMaterials = fixture.importsDirectory.appendingPathComponent(
-            "文稿",
-            isDirectory: true
-        )
-        let courseNotes = fixture.importsDirectory.appendingPathComponent(
-            "笔记",
+        let commonNotes = fixture.importsDirectory.appendingPathComponent(
+            "通用笔记",
             isDirectory: true
         )
         try FileManager.default.createDirectory(
@@ -393,17 +389,13 @@ enum ImportedIdentitySelfCheck {
             withIntermediateDirectories: true
         )
         try FileManager.default.createDirectory(
-            at: courseMaterials,
-            withIntermediateDirectories: true
-        )
-        try FileManager.default.createDirectory(
-            at: courseNotes,
+            at: commonNotes,
             withIntermediateDirectories: true
         )
         let materialURL = commonMaterials.appendingPathComponent("shared.html")
-        let noteURL = courseNotes.appendingPathComponent("course-a-note.md")
-        let otherMaterialURL = courseMaterials.appendingPathComponent("course-b.txt")
-        let otherNoteURL = courseNotes.appendingPathComponent("course-b-note.md")
+        let noteURL = commonNotes.appendingPathComponent("course-a-note.md")
+        let otherMaterialURL = commonMaterials.appendingPathComponent("course-b.txt")
+        let otherNoteURL = commonNotes.appendingPathComponent("course-b-note.md")
         try Data("<h1 id=\"a\">A</h1><h1 id=\"b\">B</h1>".utf8).write(to: materialURL)
         try Data("# 课程 A 笔记".utf8).write(to: noteURL)
         try Data("课程 B 文稿".utf8).write(to: otherMaterialURL)
@@ -461,10 +453,7 @@ enum ImportedIdentitySelfCheck {
             importedFileIdentity: noteIdentity,
             isSample: false,
             isNotebookNote: true,
-            storage: .courseOwned(
-                ownerCourseID: courseA.id,
-                relativePath: "笔记/course-a-note.md"
-            )
+            storage: .common(relativePath: "通用笔记/course-a-note.md")
         )
         let otherMaterial = StudyItem(
             id: "resume-course-b-material",
@@ -474,10 +463,7 @@ enum ImportedIdentitySelfCheck {
             urlPath: otherMaterialURL.path,
             importedFileIdentity: otherMaterialIdentity,
             isSample: false,
-            storage: .courseOwned(
-                ownerCourseID: courseB.id,
-                relativePath: "文稿/course-b.txt"
-            )
+            storage: .common(relativePath: "通用资料/course-b.txt")
         )
         let otherNote = StudyItem(
             id: "resume-course-b-note",
@@ -488,10 +474,7 @@ enum ImportedIdentitySelfCheck {
             importedFileIdentity: otherNoteIdentity,
             isSample: false,
             isNotebookNote: true,
-            storage: .courseOwned(
-                ownerCourseID: courseB.id,
-                relativePath: "笔记/course-b-note.md"
-            )
+            storage: .common(relativePath: "通用笔记/course-b-note.md")
         )
         let chatA1 = StudySession(
             id: UUID(),
