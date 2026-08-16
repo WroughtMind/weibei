@@ -27,10 +27,12 @@ public enum ImportedFileRecovery {
         let currentURL = currentPath.map {
             URL(fileURLWithPath: $0).standardizedFileURL
         }
-        if let currentURL,
-           let identity = identityAt(currentURL),
-           identity.matchesAcrossVolumeDrift(storedIdentity) {
-            return .resolved(url: currentURL, identity: identity, via: .currentPath)
+        var currentConflict: URL?
+        if let currentURL, let identity = identityAt(currentURL) {
+            if identity.matchesAcrossVolumeDrift(storedIdentity) {
+                return .resolved(url: currentURL, identity: identity, via: .currentPath)
+            }
+            currentConflict = currentURL
         }
 
         if let bookmarkURL {
@@ -45,28 +47,40 @@ public enum ImportedFileRecovery {
             }
         }
 
-        let fallbackPath = currentPath ?? lastKnownPath
-        guard let fallbackPath else { return .missing }
-        let fallbackURL = URL(fileURLWithPath: fallbackPath).standardizedFileURL
-        guard let identity = identityAt(fallbackURL) else { return .missing }
-        if identity.matchesAcrossVolumeDrift(storedIdentity) {
-            return .resolved(
-                url: fallbackURL,
-                identity: identity,
-                via: .lastKnownPath
-            )
+        if let lastKnownPath {
+            let fallbackURL = URL(fileURLWithPath: lastKnownPath).standardizedFileURL
+            if currentURL == nil || fallbackURL != currentURL {
+                if let identity = identityAt(fallbackURL) {
+                    if identity.matchesAcrossVolumeDrift(storedIdentity) {
+                        return .resolved(
+                            url: fallbackURL,
+                            identity: identity,
+                            via: .lastKnownPath
+                        )
+                    }
+                    return .identityConflict(url: fallbackURL)
+                }
+            }
         }
-        return .identityConflict(url: fallbackURL)
+
+        if let currentConflict {
+            return .identityConflict(url: currentConflict)
+        }
+        return .missing
     }
 
-    /// Parent folder still reachable and the file itself is gone: drop the
-    /// WeiBei registration. A missing parent (unavailable course/library)
-    /// must not wipe every item inside it.
+    public enum LocationAvailability: Equatable, Sendable {
+        case present
+        case absent
+        case inaccessible
+    }
+
+    /// Only a confirmed-absent file under a present parent may drop.
     public static func shouldForgetGoneSource(
-        parentLocationAvailable: Bool,
-        fileReadable: Bool,
+        file: LocationAvailability,
+        parent: LocationAvailability,
         isSample: Bool
     ) -> Bool {
-        !isSample && parentLocationAvailable && !fileReadable
+        !isSample && file == .absent && parent == .present
     }
 }

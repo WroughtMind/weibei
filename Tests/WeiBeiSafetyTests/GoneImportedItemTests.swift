@@ -4,7 +4,7 @@ import XCTest
 @testable import WeiBei
 import WeiBeiCore
 
-final class MissingItemRebindTests: XCTestCase {
+final class GoneImportedItemTests: XCTestCase {
     override class func setUp() {
         super.setUp()
         setenv("WEIBEI_SAFETY_TEST_MODE", "1", 1)
@@ -57,6 +57,124 @@ final class MissingItemRebindTests: XCTestCase {
         )
         XCTAssertNil(reloaded.importedItems.first(where: { $0.id == itemID }))
         XCTAssertEqual(try Data(contentsOf: neighbor), Data("# keep\n".utf8))
+    }
+
+    @MainActor
+    func testUnreadableExistingFileKeepsRegistrationDraftAndRelations() throws {
+        var fixture = try Fixture(name: "unreadable-keeps")
+        defer {
+            if let path = fixture.protectedFilePath {
+                _ = chmod(path, 0o644)
+            }
+            fixture.remove()
+        }
+
+        let original = fixture.root.appendingPathComponent("locked.md")
+        let sourceURL = fixture.root.appendingPathComponent("source.txt")
+        let draft = "# locked\n\nkeep this draft"
+        try Data(draft.utf8).write(to: original)
+        try Data("source\n".utf8).write(to: sourceURL)
+        let identity = try XCTUnwrap(statIdentity(original))
+        let itemID = "imported:unreadable-keeps"
+        let sourceID = "imported:unreadable-source"
+        try fixture.write(
+            PersistedWorkspace(
+                importedItems: [
+                    StudyItem(
+                        id: sourceID,
+                        title: "source",
+                        subtitle: "source.txt",
+                        kind: .text,
+                        urlPath: sourceURL.path,
+                        isSample: false
+                    ),
+                    StudyItem(
+                        id: itemID,
+                        title: "locked",
+                        subtitle: "locked.md",
+                        kind: .markdown,
+                        urlPath: original.path,
+                        importedFileIdentity: identity,
+                        importedFileLastKnownPath: original.path,
+                        isSample: false,
+                        isNotebookNote: true
+                    ),
+                ],
+                notesByItemID: [itemID: draft],
+                activeNotebookItemID: itemID,
+                noteSourceLinks: [
+                    NoteSourceLink(noteItemID: itemID, sourceItemID: sourceID),
+                ],
+                noteSourceLinksMigrationVersion: 1
+            )
+        )
+        fixture.protectedFilePath = original.path
+        XCTAssertEqual(chmod(original.path, 0o000), 0)
+
+        let store = WorkspaceStore(
+            workspaceDirectory: fixture.workspaceDirectory,
+            startsAtBlankEntries: false,
+            startsCourseFileMaintenance: false
+        )
+        let kept = try XCTUnwrap(store.importedItems.first(where: { $0.id == itemID }))
+        XCTAssertEqual(store.importedItems.first(where: { $0.id == sourceID })?.id, sourceID)
+        XCTAssertTrue(
+            store.noteSourceLinks.contains {
+                $0.noteItemID == itemID && $0.sourceItemID == sourceID
+            }
+        )
+        XCTAssertEqual(store.notesByItemID[itemID], draft)
+        XCTAssertFalse(kept.isSample)
+    }
+
+    @MainActor
+    func testMissingParentDirectoryKeepsLegacyRegistration() throws {
+        let fixture = try Fixture(name: "missing-parent")
+        defer { fixture.remove() }
+
+        let parent = fixture.root.appendingPathComponent("vanished", isDirectory: true)
+        try FileManager.default.createDirectory(at: parent, withIntermediateDirectories: true)
+        let original = parent.appendingPathComponent("note.md")
+        try Data("# note\n".utf8).write(to: original)
+        let identity = try XCTUnwrap(statIdentity(original))
+        let itemID = "imported:missing-parent"
+        try fixture.write(
+            PersistedWorkspace(
+                importedItems: [
+                    StudyItem(
+                        id: itemID,
+                        title: "note",
+                        subtitle: "note.md",
+                        kind: .markdown,
+                        urlPath: original.path,
+                        importedFileIdentity: identity,
+                        importedFileLastKnownPath: original.path,
+                        isSample: false,
+                        isNotebookNote: true
+                    ),
+                ],
+                notesByItemID: [itemID: "# note\n"]
+            )
+        )
+        try FileManager.default.removeItem(at: parent)
+
+        let store = WorkspaceStore(
+            workspaceDirectory: fixture.workspaceDirectory,
+            startsAtBlankEntries: false,
+            startsCourseFileMaintenance: false
+        )
+        XCTAssertNotNil(store.importedItems.first(where: { $0.id == itemID }))
+    }
+
+    @MainActor
+    func testSampleItemIsNeverForgotten() throws {
+        XCTAssertFalse(
+            ImportedFileRecovery.shouldForgetGoneSource(
+                file: .absent,
+                parent: .present,
+                isSample: true
+            )
+        )
     }
 
     @MainActor
@@ -122,6 +240,7 @@ final class MissingItemRebindTests: XCTestCase {
     private struct Fixture {
         let root: URL
         let workspaceDirectory: URL
+        var protectedFilePath: String?
 
         init(name: String) throws {
             root = FileManager.default.temporaryDirectory

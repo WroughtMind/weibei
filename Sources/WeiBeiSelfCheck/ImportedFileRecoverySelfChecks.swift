@@ -112,34 +112,71 @@ func checkImportedFileRecovery() {
     )
     expect(missing == .missing, "an invalid bookmark and missing path stay missing")
 
+    let lastKnownOnly = root.appendingPathComponent("last-known-after-current.md")
+    try! Data("original".utf8).write(to: lastKnownOnly)
+    let lastKnownOnlyIdentity = identityAt(lastKnownOnly)
+    expect(lastKnownOnlyIdentity != nil, "last-known-after-current fixture identity is available")
+    guard let lastKnownOnlyIdentity else { return }
+    let lastKnownAfterCurrentFailed = ImportedFileRecovery.resolve(
+        storedIdentity: lastKnownOnlyIdentity,
+        currentPath: root.appendingPathComponent("stale-current.md").path,
+        lastKnownPath: lastKnownOnly.path,
+        bookmarkURL: nil,
+        identityAt: identityAt
+    )
+    expect(
+        lastKnownAfterCurrentFailed == .resolved(
+            url: lastKnownOnly.standardizedFileURL,
+            identity: lastKnownOnlyIdentity,
+            via: .lastKnownPath
+        ),
+        "after the current path fails, recovery must try lastKnownPath instead of retrying the same failed current path"
+    )
+
     expect(
         ImportedFileRecovery.shouldForgetGoneSource(
-            parentLocationAvailable: true,
-            fileReadable: false,
+            file: .absent,
+            parent: .present,
             isSample: false
         ),
         "a gone file under an available parent must drop its registration"
     )
     expect(
         !ImportedFileRecovery.shouldForgetGoneSource(
-            parentLocationAvailable: false,
-            fileReadable: false,
+            file: .absent,
+            parent: .inaccessible,
             isSample: false
         ),
         "an unavailable course or library must not wipe items inside it"
     )
     expect(
         !ImportedFileRecovery.shouldForgetGoneSource(
-            parentLocationAvailable: true,
-            fileReadable: true,
+            file: .present,
+            parent: .present,
             isSample: false
         ),
-        "a readable file must keep its registration"
+        "a present file must keep its registration"
     )
     expect(
         !ImportedFileRecovery.shouldForgetGoneSource(
-            parentLocationAvailable: true,
-            fileReadable: false,
+            file: .inaccessible,
+            parent: .present,
+            isSample: false
+        ),
+        "an unreadable but existing file must keep its registration"
+    )
+    expect(
+        !ImportedFileRecovery.shouldForgetGoneSource(
+            file: .absent,
+            parent: .absent,
+            isSample: false
+        ),
+        "a missing parent directory must keep the registration"
+    )
+    expect(
+        !ImportedFileRecovery.shouldForgetGoneSource(
+            file: .absent,
+            parent: .present,
             isSample: true
         ),
         "bundled samples are not dropped as gone files"
