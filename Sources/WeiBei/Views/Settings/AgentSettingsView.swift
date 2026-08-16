@@ -298,18 +298,22 @@ extension SettingsView {
                     }
                 }
                 piManagementPrompt
-                if let progress = oauthService.statusMessage, oauthService.isLoggingIn {
+                if let progress = oauthService.statusMessage,
+                    oauthService.isLoggingIn,
+                    oauthService.pendingPrompt == nil {
                     settingsNote(progress, icon: "arrow.triangle.2.circlepath")
                 }
                 if let error = oauthService.lastError {
                     settingsNote(error, icon: "exclamationmark.triangle")
                 }
             }
+            .animation(WeiBeiMotion.reveal, value: oauthService.pendingPrompt != nil)
+            .animation(WeiBeiMotion.reveal, value: oauthService.isLoggingIn)
         }
     }
 
     /// Guided providers: no generic key box. The existing step-by-step prompt
-    /// below surfaces one control at a time until the credential is complete.
+    /// above surfaces one control at a time until the credential is complete.
     private var agentGuidedAuth: some View {
         settingsRow(title: store.ui("认证", "Authentication")) {
             let hasStoredCredential = oauthService.isConfigured(
@@ -317,6 +321,7 @@ extension SettingsView {
                 type: .apiKey
             )
             VStack(alignment: .trailing, spacing: 8) {
+                piManagementPrompt
                 HStack(spacing: 8) {
                     if activeAPICredentialIsConfigured {
                         settingsPill(
@@ -324,7 +329,7 @@ extension SettingsView {
                             icon: "checkmark.seal.fill",
                             active: true
                         )
-                    } else {
+                    } else if !oauthService.isLoggingIn {
                         Button(store.ui("设置认证", "Set Up Authentication")) {
                             oauthService.startAPIKeyLogin(
                                 provider: store.agentProviderID,
@@ -332,7 +337,7 @@ extension SettingsView {
                                 model: store.modelName
                             )
                         }
-                        .buttonStyle(WeiBeiTextActionButtonStyle(active: !oauthService.isLoggingIn))
+                        .buttonStyle(WeiBeiTextActionButtonStyle(active: true))
                     }
                     if hasStoredCredential {
                         Button(store.ui("清除", "Clear")) { clearActiveAPICredential() }
@@ -343,14 +348,17 @@ extension SettingsView {
                             .buttonStyle(WeiBeiTextActionButtonStyle())
                     }
                 }
-                piManagementPrompt
-                if let progress = oauthService.statusMessage, oauthService.isLoggingIn {
+                if let progress = oauthService.statusMessage,
+                    oauthService.isLoggingIn,
+                    oauthService.pendingPrompt == nil {
                     settingsNote(progress, icon: "arrow.triangle.2.circlepath")
                 }
                 if let error = oauthService.lastError {
                     settingsNote(error, icon: "exclamationmark.triangle")
                 }
             }
+            .animation(WeiBeiMotion.reveal, value: oauthService.pendingPrompt != nil)
+            .animation(WeiBeiMotion.reveal, value: oauthService.isLoggingIn)
         }
     }
 
@@ -401,13 +409,17 @@ extension SettingsView {
                     }
                 }
                 piManagementPrompt
-                if let progress = oauthService.statusMessage, oauthService.isLoggingIn {
+                if let progress = oauthService.statusMessage,
+                    oauthService.isLoggingIn,
+                    oauthService.pendingPrompt == nil {
                     settingsNote(progress, icon: "arrow.triangle.2.circlepath")
                 }
                 if let error = oauthService.lastError {
                     settingsNote(error, icon: "exclamationmark.triangle")
                 }
             }
+            .animation(WeiBeiMotion.reveal, value: oauthService.pendingPrompt != nil)
+            .animation(WeiBeiMotion.reveal, value: oauthService.isLoggingIn)
         }
     }
 
@@ -435,36 +447,67 @@ extension SettingsView {
         return provider.kind == .subscription ? [.oauth] : [.apiKey]
     }
 
+    /// The runtime's step question, styled like a quiet right-aligned field label —
+    /// not a warning note — above a control that matches the rest of the card.
     @ViewBuilder
     private var piManagementPrompt: some View {
         if let prompt = oauthService.pendingPrompt {
-            settingsNote(prompt.message, icon: "key.horizontal")
-            HStack(spacing: 8) {
-                if prompt.type == .select {
-                    Picker("", selection: $oauthService.promptValue) {
-                        ForEach(prompt.options ?? [], id: \.id) { option in
-                            Text(option.label).tag(option.id)
+            VStack(alignment: .trailing, spacing: 8) {
+                Text(prompt.message)
+                    .font(.system(size: 12))
+                    .foregroundStyle(WeiBeiTheme.secondaryInk)
+                    .multilineTextAlignment(.trailing)
+                    .fixedSize(horizontal: false, vertical: true)
+                HStack(spacing: 8) {
+                    if prompt.type == .select {
+                        compactMenu(promptSelectionLabel(prompt)) {
+                            ForEach(prompt.options ?? [], id: \.id) { option in
+                                Button(option.label) { oauthService.promptValue = option.id }
+                            }
                         }
+                    } else if prompt.type == .secret {
+                        SecureField(
+                            "",
+                            text: $oauthService.promptValue,
+                            prompt: Text(prompt.placeholder ?? "")
+                                .font(.system(size: 13))
+                                .foregroundStyle(WeiBeiTheme.placeholderInk)
+                        )
+                        .textFieldStyle(.plain)
+                        .foregroundColor(WeiBeiTheme.ink)
+                        .font(.system(size: 13))
+                        .weibeiInputSurface(active: true, height: 38)
+                        .frame(width: SettingsView.controlWidth)
+                        .onSubmit { oauthService.submitPrompt() }
+                    } else {
+                        TextField(
+                            "",
+                            text: $oauthService.promptValue,
+                            prompt: Text(prompt.placeholder ?? "")
+                                .font(.system(size: 13))
+                                .foregroundStyle(WeiBeiTheme.placeholderInk)
+                        )
+                        .textFieldStyle(.plain)
+                        .foregroundColor(WeiBeiTheme.ink)
+                        .font(.system(size: 13))
+                        .weibeiInputSurface(active: true, height: 38)
+                        .frame(width: SettingsView.controlWidth)
+                        .onSubmit { oauthService.submitPrompt() }
                     }
-                    .labelsHidden()
-                    .frame(width: SettingsView.controlWidth)
-                } else if prompt.type == .secret {
-                    SecureField(prompt.placeholder ?? "", text: $oauthService.promptValue)
-                        .textFieldStyle(.plain)
-                        .weibeiInputSurface(active: true, height: 38)
-                        .frame(width: SettingsView.controlWidth)
-                        .onSubmit { oauthService.submitPrompt() }
-                } else {
-                    TextField(prompt.placeholder ?? "", text: $oauthService.promptValue)
-                        .textFieldStyle(.plain)
-                        .weibeiInputSurface(active: true, height: 38)
-                        .frame(width: SettingsView.controlWidth)
-                        .onSubmit { oauthService.submitPrompt() }
+                    Button(store.ui("继续", "Continue")) { oauthService.submitPrompt() }
+                        .buttonStyle(WeiBeiTextActionButtonStyle(active: !oauthService.promptValue.isEmpty))
                 }
-                Button(store.ui("继续", "Continue")) { oauthService.submitPrompt() }
-                    .buttonStyle(WeiBeiTextActionButtonStyle(active: !oauthService.promptValue.isEmpty))
             }
+            .transition(.opacity)
         }
+    }
+
+    private func promptSelectionLabel(_ prompt: PiManagementPrompt) -> String {
+        let options = prompt.options ?? []
+        if let selected = options.first(where: { $0.id == oauthService.promptValue }) {
+            return selected.label
+        }
+        return options.first?.label ?? prompt.message
     }
 
     private func saveActiveAPIKey() {
@@ -488,13 +531,16 @@ extension SettingsView {
 
     // MARK: Status reminder — only when attention is needed
 
-    /// Quiet by default. Surfaces one short line only when authentication is missing.
+    /// Quiet by default. Surfaces one short line only when authentication is missing,
+    /// and stays hidden while a configuration flow is already in progress.
     @ViewBuilder
     private var agentStatusReminder: some View {
         if !oauthLinked,
                   activeAgentAuthMethod != .subscription,
                   !activeAPICredentialIsConfigured,
-                  apiKeyDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                  apiKeyDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                  oauthService.pendingPrompt == nil,
+                  !oauthService.isLoggingIn {
             if hasStaleAzureCredential {
                 settingsNote(
                     store.ui(
