@@ -57,13 +57,12 @@ struct ImmersiveHoverTitleView<Actions: View>: View {
         // CRITICAL: do NOT use maxHeight: .infinity. That expands the overlay's hit-test
         // region over the whole reader/chat pane and kills PDF/text selection + the
         // selection float capsule. Stay top-aligned and only as tall as the strip/chip;
-        // parent uses .overlay(alignment: .top).
+        // parent uses .overlay(alignment: .top). The probe itself must not claim clicks:
+        // imported HTML often puts theme / chrome buttons in this same 36pt band.
         ZStack(alignment: .top) {
-            Color.clear
+            HoverPassThroughRegion(onHoverChange: updateVisibility)
                 .frame(maxWidth: .infinity)
                 .frame(height: 36)
-                .contentShape(Rectangle())
-                .onHover(perform: updateVisibility)
 
             if visible || isPinned || titleRename?.isEditing == true {
                 HStack(alignment: .center, spacing: 8) {
