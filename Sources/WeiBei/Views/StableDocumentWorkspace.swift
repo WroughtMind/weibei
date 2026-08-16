@@ -622,11 +622,17 @@ final class StableDocumentSplitCoordinator {
         targetFrames: [WorkspacePaneRole: CGRect],
         in splitView: StableDocumentSplitView
     ) {
-        // 8a172fe5 behavior: enter from zero width at target x, then expand.
+        // Empty-board first open: 文稿 expands from the left, 对话 from midX,
+        // 笔记 from the right. Later inserts still grow from the target minX.
+        let fromEmptyBoard = previousVisible.isEmpty
         for role in nextVisible.subtracting(previousVisible) {
             guard let host = splitView.roleHosts[role], let target = targetFrames[role] else { continue }
             host.alphaValue = 1
-            host.frame = CGRect(x: target.minX, y: 0, width: 0, height: target.height)
+            host.frame = EmptyBoardPaneEntrance.openingFrame(
+                for: role,
+                target: target,
+                fromEmptyBoard: fromEmptyBoard
+            )
             host.isHidden = false
         }
         for role in previousVisible.union(nextVisible) {
