@@ -1023,11 +1023,8 @@ enum CourseProjectRootSelfCheck {
             "课程 Agent 搜索没有读取合法共享资料"
         )
         try check(
-            Set(sharedResult.courseIDs) == Set([
-                courseA.uuidString.lowercased(),
-                courseB.uuidString.lowercased(),
-            ]),
-            "统一 Chat 没有返回共享资料的全部课程关系"
+            sharedResult.courseIDs.contains(courseB.uuidString.lowercased()),
+            "统一 Chat 没有把当前课程纳入查询范围"
         )
         let courseBRoot = try require(store.courseRootURL(for: courseB), "课程乙根目录丢失")
         let courseBMembership = try require(

@@ -1096,10 +1096,13 @@ final class WorkspaceStore: ObservableObject {
         }
         var result = point
         if let itemID = result.materialLocation?.itemID,
-           !importedItems.contains(where: {
-               $0.id == itemID
-                   && !$0.isNotebookNote
-                   && courseMembershipIndex.courseIDs(for: itemID).contains(point.courseID)
+           !importedItems.contains(where: { item in
+               item.id == itemID
+                   && !item.isNotebookNote
+                   && (
+                       item.storage.ownerCourseID == point.courseID
+                           || { if case .common = item.storage { return true }; return false }()
+                   )
            }) {
             result.materialLocation = nil
         }
