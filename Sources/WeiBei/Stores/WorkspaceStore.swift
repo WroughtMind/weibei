@@ -1197,7 +1197,10 @@ final class WorkspaceStore: ObservableObject {
         }
         let existingPoint = courseResumePoint(for: courseID)
         let activeMaterialLocation: StudyLocation? = selectedMaterialItem.flatMap { item in
-            guard itemIsAvailableInCourseContext(itemID: item.id, courseID: courseID) else {
+            let mounted = courseMembershipIndex.courseIDs(for: item.id).contains(courseID)
+            let alreadyRecorded =
+                studyLocationsByCourseID[courseID.uuidString]?[item.id] != nil
+            guard mounted || alreadyRecorded else {
                 return nil
             }
             return studyLocation(for: item.id, in: courseID)
