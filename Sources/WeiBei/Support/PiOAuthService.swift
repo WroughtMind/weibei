@@ -123,7 +123,7 @@ final class PiOAuthService: ObservableObject {
     ) {
         guard !isLoggingIn else { return }
         lastError = nil
-        statusMessage = "正在启动内置 Pi 登录…"
+        statusMessage = "正在连接…"
         isLoggingIn = true
         _ = try? WeiBeiAgentDataPaths.ensurePiAgentDirectory()
         let previousRefresh = refreshTask
@@ -181,7 +181,7 @@ final class PiOAuthService: ObservableObject {
     func logoutCredential(providerID: String, displayName: String? = nil) {
         guard !isLoggingIn else { return }
         lastError = nil
-        statusMessage = "正在断开内置 Pi 凭证…"
+        statusMessage = "正在断开…"
         isLoggingIn = true
         let previousRefresh = refreshTask
         previousRefresh?.cancel()

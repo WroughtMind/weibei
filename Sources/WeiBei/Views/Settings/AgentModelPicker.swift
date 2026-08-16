@@ -41,7 +41,7 @@ extension SettingsView {
                         .font(.system(size: 11, weight: .semibold))
                 }
                 .buttonStyle(WeiBeiTextActionButtonStyle(active: !oauthService.isRefreshingCatalog))
-                .help(store.ui("重新读取内置 Pi 模型列表", "Reload embedded Pi models"))
+                .help(store.ui("重新获取模型列表", "Refresh model list"))
             }
 
             // Inline status line under the control.
@@ -82,7 +82,7 @@ extension SettingsView {
         }
         return oauthService.catalog == nil
             ? store.ui("模型", "Models")
-            : store.ui("内置 Pi 模型", "Embedded Pi models")
+            : store.ui("可用模型", "Available models")
     }
 
     private var effectiveModelEntries: [String] {
@@ -98,7 +98,7 @@ extension SettingsView {
     @ViewBuilder
     private var modelStatusLine: some View {
         if oauthService.isRefreshingCatalog {
-            Text(store.ui("正在读取内置 Pi 模型…", "Reading embedded Pi models…"))
+            Text(store.ui("正在获取模型…", "Fetching models…"))
                 .font(.system(size: 11))
                 .foregroundStyle(WeiBeiTheme.tertiaryInk)
         } else if let message = oauthService.catalogError {
@@ -107,11 +107,6 @@ extension SettingsView {
                 .foregroundStyle(WeiBeiTheme.tertiaryInk)
                 .frame(maxWidth: 260, alignment: .trailing)
                 .lineLimit(2)
-        } else if oauthService.catalog != nil {
-            let count = oauthService.models(providerID: activePiProviderID).count
-            Text(store.ui("内置 Pi 提供 \(count) 个模型", "Embedded Pi provides \(count) models"))
-                .font(.system(size: 11))
-                .foregroundStyle(WeiBeiTheme.tertiaryInk)
         }
     }
 }
