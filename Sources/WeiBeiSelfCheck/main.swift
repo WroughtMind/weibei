@@ -920,6 +920,7 @@ func readSource(_ relativePath: String) -> String {
 }
 let agentDataPathsSource = readSource("Sources/WeiBeiCore/WeiBeiAgentDataPaths.swift")
 let workspaceStoreSource = readSource("Sources/WeiBei/Stores/WorkspaceStore.swift")
+let notesPersistenceSource = readSource("Sources/WeiBei/Stores/WorkspaceStore+NotesPersistence.swift")
 let workspaceModelsSource = readSource("Sources/WeiBeiCore/WorkspaceModels.swift")
 let piAgentRuntimeSource = readSource("Sources/WeiBeiCore/PiAgentRuntime.swift")
 let piManagementSource = readSource("Sources/WeiBeiCore/AgentResources/management-extension.ts")
@@ -1940,7 +1941,8 @@ do {
     )
     expect(
         !workspaceStoreSource.contains("## \\(ui(\"核心要点\", \"Key Points\"))")
-            && workspaceStoreSource.contains("private func defaultNotebookNote() -> String"),
+            && !notesPersistenceSource.contains("## \\(ui(\"核心要点\", \"Key Points\"))")
+            && notesPersistenceSource.contains("func defaultNotebookNote() -> String"),
         "SAFETY:blank-new-note new notes must start blank so a template cannot overwrite a learner's first save"
     )
 }
@@ -2102,29 +2104,29 @@ do {
         "SAFETY:note-repair-order startup repair must run before retryRestoredPendingNoteWrites so suspect template drafts cannot be flushed to disk"
     )
     expect(
-        workspaceStoreSource.contains("guard !noteDivergenceRepairDidRun else { return }")
-            && workspaceStoreSource.contains("WeiBeiNoteRepairDisabled")
-            && workspaceStoreSource.contains("NoteDivergenceRepairPlanner.action(for: state)")
-            && workspaceStoreSource.contains("?? item.importedFileLastKnownPath.map({"),
+        notesPersistenceSource.contains("guard !noteDivergenceRepairDidRun else { return }")
+            && notesPersistenceSource.contains("WeiBeiNoteRepairDisabled")
+            && notesPersistenceSource.contains("NoteDivergenceRepairPlanner.action(for: state)")
+            && notesPersistenceSource.contains("?? item.importedFileLastKnownPath.map({"),
         "SAFETY:note-repair-oneshot repair is one-shot, dry-runnable, planner-driven, and falls back to lastKnownPath so legacy notes without urlPath are not skipped"
     )
     expect(
-        workspaceStoreSource.contains("WeiBei note repair: backup failed, skip restore item=%@ error=%@"),
+        notesPersistenceSource.contains("WeiBei note repair: backup failed, skip restore item=%@ error=%@"),
         "SAFETY:backup-before-restore restoreDraft must skip the write when the on-disk backup cannot be captured"
     )
     expect(
-        workspaceStoreSource.contains("?? item.importedFileLastKnownPath.map({"),
+        notesPersistenceSource.contains("?? item.importedFileLastKnownPath.map({"),
         "SAFETY:lastknown-fallback repair must still reach notes that only have importedFileLastKnownPath"
     )
     expect(
-        workspaceStoreSource.contains("已拦截模板写回")
-            && workspaceStoreSource.contains("currentDigest != templateDigest")
-            && workspaceStoreSource.contains("currentDigest != lastSelfDigest"),
+        notesPersistenceSource.contains("已拦截模板写回")
+            && notesPersistenceSource.contains("currentDigest != templateDigest")
+            && notesPersistenceSource.contains("currentDigest != lastSelfDigest"),
         "SAFETY:template-writeback-block template-shaped memory must not overwrite foreign disk content"
     )
     expect(
-        workspaceStoreSource.contains("正文未能完整读取，为保护内容未执行重命名。")
-            && workspaceStoreSource.contains("NoteTemplateShape.isDefaultTemplateShape(sourceMarkdown, title: oldTitle)"),
+        notesPersistenceSource.contains("正文未能完整读取，为保护内容未执行重命名。")
+            && notesPersistenceSource.contains("NoteTemplateShape.isDefaultTemplateShape(sourceMarkdown, title: oldTitle)"),
         "SAFETY:rename-sentinel rename aborts when the in-memory body is template-shaped but the disk holds other content"
     )
 }
