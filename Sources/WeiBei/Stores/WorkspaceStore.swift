@@ -1211,7 +1211,7 @@ final class WorkspaceStore: ObservableObject {
         }
         let activeNoteItemID: String? = activeNoteItem.flatMap { item in
             guard item.isNotebookNote,
-                  itemIsAvailableInCourseContext(itemID: item.id, courseID: courseID) else {
+                  courseMembershipIndex.courseIDs(for: item.id).contains(courseID) else {
                 return nil
             }
             return item.id
