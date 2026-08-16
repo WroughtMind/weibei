@@ -11,6 +11,7 @@ enum WeiBeiSafetyTestMode {
 #if DEBUG
     static var isEnabled: Bool {
         ProcessInfo.processInfo.environment["WEIBEI_SAFETY_TEST_MODE"] == "1"
+            || ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
     }
 #else
     static let isEnabled = false

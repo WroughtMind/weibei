@@ -30,7 +30,6 @@ enum CourseProjectRootSelfCheck {
             _ name: String,
             _ operation: () throws -> Void
         ) throws {
-            fputs("WeiBeiSafetyTests step: \(name)\n", stderr)
             do {
                 try operation()
             } catch {
@@ -2646,7 +2645,6 @@ enum CourseProjectRootSelfCheck {
 
     @MainActor
     private static func portableCourseStateIsScopedAtomicAndRestorable() throws {
-        fputs("WeiBeiSafetyTests portable: start\n", stderr)
         let fixture = try Fixture(name: "portable-state")
         defer { fixture.remove() }
         let library = try fixture.makeDirectory("课程资料库")
@@ -3137,7 +3135,6 @@ enum CourseProjectRootSelfCheck {
                 )
             }
         )
-        fputs("WeiBeiSafetyTests portable: casStore adopt\n", stderr)
         try casStore.configureCourseLibrary(at: library)
         _ = try casStore.adoptCourseFolder(
             at: courseARoot,
