@@ -951,9 +951,13 @@ final class WorkspaceStore: ObservableObject {
         )
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         load()
+        rebuildCourseMembershipsFromStorage()
         loadLegacySelectionAskThreadsIfWorkspaceFieldMissing()
         let restoredCourseProjectRoots = restoreCourseProjectRoots()
+        refreshRuntimeItemURLs()
         let restoredPortableCourseStates = restorePortableCourseStates()
+        rebuildCourseMembershipsFromStorage()
+        refreshRuntimeItemURLs()
         // S3：不再从 journal 恢复未完成操作；仅静默清理残留事务目录。
         let recoveredCourseTrash =
             silentlyCleanupOrphanCourseTransactions()
@@ -1076,8 +1080,11 @@ final class WorkspaceStore: ObservableObject {
     }
 
     func courseIDs(for itemID: String) -> [UUID] {
-        importedItems.first(where: { $0.id == itemID })?.storage.ownerCourseID
-            .map { [$0] } ?? []
+        if let owner = importedItems.first(where: { $0.id == itemID })?.storage.ownerCourseID {
+            return [owner]
+        }
+        let fromMemberships = courseMembershipIndex.courseIDs(for: itemID)
+        return fromMemberships
     }
 
     func courseResumePoint(for courseID: UUID) -> CourseResumePoint? {
@@ -1154,7 +1161,11 @@ final class WorkspaceStore: ObservableObject {
         in courseID: UUID?
     ) -> StudyLocation? {
         guard let courseID,
-              courseMembershipIndex.courseIDs(for: itemID).contains(courseID) else {
+              courseIDs(for: itemID).contains(courseID)
+                || importedItems.first(where: { $0.id == itemID }).map({
+                    if case .common = $0.storage { return true }
+                    return false
+                }) == true else {
             return studyLocationsByItemID[itemID]
         }
         if let location = studyLocationsByCourseID[courseID.uuidString]?[itemID] {
@@ -14128,7 +14139,7 @@ final class WorkspaceStore: ObservableObject {
             urlPath: target.path,
             importedFileIdentity: identity,
             isSample: false,
-            storage: .courseOwned(ownerCourseID: courseID, relativePath: "")
+            storage: .courseOwned(ownerCourseID: courseID, relativePath: relativePath)
         )
         importedItems.append(item)
         courseItemMemberships.append(
@@ -18329,6 +18340,36 @@ final class WorkspaceStore: ObservableObject {
         return importedItems[index]
     }
 
+    private func fileURLForImportedItem(_ item: StudyItem) -> URL? {
+        if let url = item.url { return url }
+        if item.id.hasPrefix("file:") {
+            let path = String(item.id.dropFirst("file:".count))
+            if !path.isEmpty {
+                return URL(fileURLWithPath: path)
+            }
+        }
+        return resolvedLibraryURL(for: item)
+    }
+
+    private func rebuildCourseMembershipsFromStorage() {
+        let derived = importedItems.compactMap { item -> CourseItemMembership? in
+            guard case .courseOwned(let courseID, let relativePath) = item.storage,
+                  !relativePath.isEmpty else {
+                return nil
+            }
+            return CourseItemMembership(
+                courseID: courseID,
+                itemID: item.id,
+                courseRelativePath: relativePath
+            )
+        }
+        let derivedPairs = Set(derived.map { "\($0.courseID.uuidString)|\($0.itemID)" })
+        let extras = courseItemMemberships.filter { membership in
+            !derivedPairs.contains("\(membership.courseID.uuidString)|\(membership.itemID)")
+        }
+        courseItemMemberships = derived + extras
+    }
+
     @discardableResult
     private func migrateLegacyImportedItemIdentities() -> Bool {
         var changed = false
@@ -18345,7 +18386,7 @@ final class WorkspaceStore: ObservableObject {
         migratedItems.reserveCapacity(importedItems.count)
         for var item in importedItems {
             let resolvedIdentity = item.importedFileIdentity
-                ?? item.url.flatMap(importedFileIdentityResolver)
+                ?? fileURLForImportedItem(item).flatMap(importedFileIdentityResolver)
             if item.importedFileIdentity != resolvedIdentity {
                 item.importedFileIdentity = resolvedIdentity
                 changed = true
@@ -19076,13 +19117,27 @@ final class WorkspaceStore: ObservableObject {
         guard let course = course(withID: courseID) else {
             throw CoursePortableStateError.courseIdentityMismatch
         }
-        let memberships = courseItemMemberships
+        var memberships = courseItemMemberships
             .filter { $0.courseID == courseID }
-            .sorted {
-                ($0.courseRelativePath ?? "").localizedStandardCompare(
-                    $1.courseRelativePath ?? ""
-                ) == .orderedAscending
+        if memberships.isEmpty {
+            memberships = importedItems.compactMap { item in
+                guard case .courseOwned(let ownerCourseID, let relativePath) = item.storage,
+                      ownerCourseID == courseID,
+                      !relativePath.isEmpty else {
+                    return nil
+                }
+                return CourseItemMembership(
+                    courseID: courseID,
+                    itemID: item.id,
+                    courseRelativePath: relativePath
+                )
             }
+        }
+        memberships.sort {
+            ($0.courseRelativePath ?? "").localizedStandardCompare(
+                $1.courseRelativePath ?? ""
+            ) == .orderedAscending
+        }
         var portableItems: [CoursePortableItem] = []
         for membership in memberships {
             guard let item = importedItems.first(where: {
@@ -19740,7 +19795,10 @@ final class WorkspaceStore: ObservableObject {
             }
             switch portable.storage {
             case .courseOwned:
-                storage = .courseOwned(ownerCourseID: courseID, relativePath: "")
+                storage = .courseOwned(
+                    ownerCourseID: courseID,
+                    relativePath: portable.courseRelativePath
+                )
                 preservedExistingShared = nil
                 let candidateIdentity =
                     try validatedPortableCourseOwnedFile(
@@ -19997,6 +20055,8 @@ final class WorkspaceStore: ObservableObject {
                     baselineContentDigest: draft.baselineContentDigest
                 )
         }
+        rebuildCourseMembershipsFromStorage()
+        refreshRuntimeItemURLs()
     }
 
     @discardableResult

@@ -1215,6 +1215,8 @@ public struct StudyItem: Identifiable, Codable, Hashable, Sendable {
         case title
         case subtitle
         case kind
+        case urlPath
+        case importedFileIdentity
         case isSample
         case isNotebookNote
         case customDisplayTitle
@@ -1231,8 +1233,11 @@ public struct StudyItem: Identifiable, Codable, Hashable, Sendable {
         title = try container.decode(String.self, forKey: .title)
         subtitle = try container.decode(String.self, forKey: .subtitle)
         kind = try container.decode(StudyItemKind.self, forKey: .kind)
-        urlPath = nil
-        importedFileIdentity = nil
+        urlPath = try container.decodeIfPresent(String.self, forKey: .urlPath)
+        importedFileIdentity = try container.decodeIfPresent(
+            ImportedFileIdentity.self,
+            forKey: .importedFileIdentity
+        )
         isSample = try container.decode(Bool.self, forKey: .isSample)
         isNotebookNote = try container.decodeIfPresent(Bool.self, forKey: .isNotebookNote) ?? false
         customDisplayTitle = try container.decodeIfPresent(String.self, forKey: .customDisplayTitle)
