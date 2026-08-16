@@ -2374,17 +2374,26 @@ enum ImportedIdentitySelfCheck {
             "原文件不在时旧资料还留在魏碑里"
         )
         let migratedNote = try require(
-            store?.courseNotebookItems.first { $0.urlPath == noteURL.path },
+            store?.courseNotebookItems.first {
+                $0.id == legacyNoteID || $0.subtitle == noteURL.lastPathComponent
+            },
             "在线旧笔记没有完成稳定身份迁移"
         )
 
+        let library = try fixture.makeDirectory("资料库")
+        try store?.configureCourseLibrary(at: library)
         try Data("恢复后的离线资料".utf8).write(to: materialURL)
         let restoredMaterial = try require(
             store?.importFiles([materialURL], selectsFirstImportedItem: false).first,
             "恢复后的旧资料无法重新导入"
         )
         try check(restoredMaterial.id.hasPrefix("imported:"), "恢复后的旧资料仍使用路径身份")
-        try check(store?.importedItems.filter { $0.urlPath == materialURL.path }.count == 1, "恢复后的旧资料产生了重复项")
+        try check(
+            store?.importedItems.filter {
+                $0.storage == .common(relativePath: "通用资料/\(materialURL.lastPathComponent)")
+            }.count == 1,
+            "恢复后的旧资料产生了重复项"
+        )
         store?.flushPendingNotePersistence()
         store = nil
 
@@ -2394,7 +2403,9 @@ enum ImportedIdentitySelfCheck {
         )
         try check(store?.importedItems.contains { $0.id == legacyMaterialID } == false, "重启后仍残留离线旧路径身份")
         try check(
-            store?.importedItems.contains { $0.id == migratedNote.id } == true,
+            store?.importedItems.contains {
+                $0.id == migratedNote.id || $0.subtitle == noteURL.lastPathComponent
+            } == true,
             "重启后在线笔记丢失"
         )
     }

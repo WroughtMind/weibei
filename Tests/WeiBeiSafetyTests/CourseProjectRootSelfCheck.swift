@@ -5353,11 +5353,10 @@ enum CourseProjectRootSelfCheck {
             role: .material
         )
         let target = courseRoot.appendingPathComponent("文稿/第一讲.txt")
-        try check(observedCommittedSnapshotBeforeDelete.get(), "原件删除前 workspace 尚未提交新文稿")
-        try check(observedAtomicSourceQuarantine.get(), "原件没有先在同目录原子隔离再删除")
-        try check(!source.exists, "提交成功后没有移除课程外原件")
+        try check(source.exists, "外部导入改动了原文件")
+        try check(try Data(contentsOf: source) == original, "外部原件内容被改写")
         try check(try Data(contentsOf: target) == original, "课程文稿内容与原件不一致")
-        try check(!result.sourceCleanupPending, "正常移入错误标记为待清理")
+        try check(!result.sourceCleanupPending, "复制导入错误标记为待清理")
         try check(result.item.urlPath == target.canonicalFileURL.path, "文稿没有指向课程目录")
         try check(result.item.contentRevision == 1 && result.item.contentDigest != nil, "文稿缺少初始版本或摘要")
         guard case .courseOwned(let ownerCourseID, _) = result.item.storage else {
@@ -5628,12 +5627,13 @@ enum CourseProjectRootSelfCheck {
                 courseID: courseID,
                 role: .material
             )
-            try check(result.sourceCleanupPending, "删源前目录竞态没有进入待清理状态")
-            try check(!sourceRemoverCalled.get(), "目录重验失败后仍调用了删源")
-            try check(try Data(contentsOf: source) == original, "删源前目录竞态删除了原件")
+            try check(!result.sourceCleanupPending, "复制导入不应进入删源待清理状态")
+            try check(!sourceRemoverCalled.get(), "复制导入调用了删源")
+            try check(try Data(contentsOf: source) == original, "复制导入删除了原件")
             try check(
-                movedMaterialDirectory.appendingPathComponent("删源前换目录.txt").exists,
-                "删源前目录竞态丢失已提交副本"
+                courseRoot.appendingPathComponent("文稿/删源前换目录.txt").exists
+                    || movedMaterialDirectory.appendingPathComponent("删源前换目录.txt").exists,
+                "复制导入丢失已提交副本"
             )
             try check(true, "S3 不再要求保留 journal（原：删源前目录竞态清除了 journal）")
         }
@@ -5800,7 +5800,7 @@ enum CourseProjectRootSelfCheck {
         )
         let itemID = result.item.id
         let target = courseRoot.appendingPathComponent("文稿/待清理.txt")
-        try check(result.sourceCleanupPending, "删源失败没有标记待重试")
+        try check(!result.sourceCleanupPending, "复制导入不应标记删源待重试")
         try check(try Data(contentsOf: source) == original, "删源失败没有保留原件")
         try check(try Data(contentsOf: target) == original, "删源失败丢失已提交目标")
         try check(true, "S3 不再要求保留 journal（原：删源失败没有保留 journal）")
@@ -5854,16 +5854,14 @@ enum CourseProjectRootSelfCheck {
             ),
             "隔离失败导入没有结果"
         )
-        let quarantineURL = try require(observedQuarantineURL.get(), "删源没有进入隔离路径")
-        try check(result.sourceCleanupPending, "隔离恢复失败没有标记待清理")
-        try check(try Data(contentsOf: source) == foreign, "隔离恢复覆盖了用户并发文件")
-        try check(try Data(contentsOf: quarantineURL) == original, "隔离恢复丢失了原始副本")
+        try check(observedQuarantineURL.get() == nil, "复制导入不应隔离原件")
+        try check(!result.sourceCleanupPending, "复制导入不应标记隔离待清理")
+        try check(try Data(contentsOf: source) == original, "复制导入改写了外部原件")
         // S3：无 journal；并发用户文件与隔离原件均保留。
         store = nil
 
         store = makeStore(fixture: fixture)
-        try check(try Data(contentsOf: source) == foreign, "重开误删用户并发文件")
-        try check(try Data(contentsOf: quarantineURL) == original, "重开误删隔离原件")
+        try check(try Data(contentsOf: source) == original, "重开改写了外部原件")
         try check(
             store?.courseMaterials(in: courseID).contains(where: {
                 $0.subtitle == "隔离失败.txt"
@@ -6366,7 +6364,7 @@ enum CourseProjectRootSelfCheck {
             role: .material
         )
         try check(result.item.contentDigest != nil, "大文件后台导入没有摘要")
-        try check(!source.exists, "大文件后台导入没有完成移动")
+        try check(source.exists, "大文件后台导入删除了外部原件")
 
         let noteID = try require(
             store.createCourseNotebookNoteForSelfCheck(

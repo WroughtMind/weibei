@@ -10,16 +10,17 @@ extension WorkspaceStore {
         if item.isSample {
             return (item.url, false)
         }
-        guard let libraryRoot = courseLibraryRootURL else {
-            return keepUnavailableImportedItem(at: index)
+        if let libraryRoot = courseLibraryRootURL {
+            switch CourseProjectFileWorker.entryPresence(at: libraryRoot) {
+            case .absent, .inaccessible:
+                return keepUnavailableImportedItem(at: index)
+            case .present:
+                break
+            }
         }
-        switch CourseProjectFileWorker.entryPresence(at: libraryRoot) {
-        case .absent, .inaccessible:
-            return keepUnavailableImportedItem(at: index)
-        case .present:
-            break
-        }
-        let candidate = resolvedLibraryURL(for: item) ?? item.url
+        let candidate = resolvedLibraryURL(for: item)
+            ?? item.url
+            ?? legacyFileURL(from: item.id)
         guard let candidate else {
             return keepUnavailableImportedItem(at: index)
         }
@@ -61,6 +62,12 @@ extension WorkspaceStore {
             changed = true
         }
         return (nil, changed)
+    }
+
+    private func legacyFileURL(from itemID: String) -> URL? {
+        guard itemID.hasPrefix("file:") else { return nil }
+        let path = String(itemID.dropFirst("file:".count))
+        return path.isEmpty ? nil : URL(fileURLWithPath: path)
     }
 
     func resolvedLibraryURL(for item: StudyItem) -> URL? {
