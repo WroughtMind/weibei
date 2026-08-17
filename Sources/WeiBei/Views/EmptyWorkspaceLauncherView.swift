@@ -372,7 +372,7 @@ private struct EmptyWorkspaceInspirationView: View {
             .buttonStyle(.plain)
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(Text("\(inspiration.text)，\(inspiration.credit)"))
-            .accessibilityHint(Text(store.ui("随机换一则灵感", "Show a random inspiration")))
+            .accessibilityHint(Text(store.ui("随机换一句", "Show another line")))
             .accessibilityIdentifier("empty-workspace-inspiration-next")
 
             sourceAndRights
