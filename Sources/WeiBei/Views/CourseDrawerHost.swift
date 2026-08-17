@@ -127,7 +127,7 @@ final class CourseDrawerContainerView: NSView {
     }
 
     private static func panelPaperColor(for mode: WeiBeiAppearanceMode) -> NSColor {
-        WeiBeiNativePalette.paperRaised(for: mode)
+        WeiBeiNativePalette.paper(for: mode)
     }
 
     private static func scrimColor(for mode: WeiBeiAppearanceMode) -> NSColor {

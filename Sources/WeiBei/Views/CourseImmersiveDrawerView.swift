@@ -11,8 +11,7 @@ struct CourseImmersiveDrawerView: View {
         SidebarView(store: store, model: model)
             .frame(width: Self.width)
             .frame(maxHeight: .infinity, alignment: .top)
-            // Solid paper only — material blur during slide was expensive.
-            .background(WeiBeiTheme.paperRaised)
+            .background(WeiBeiTheme.paper)
             .overlay(alignment: .trailing) {
                 Rectangle()
                     .fill(WeiBeiTheme.hairline.opacity(0.58))
