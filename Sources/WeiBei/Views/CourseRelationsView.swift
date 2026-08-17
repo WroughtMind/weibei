@@ -5,6 +5,7 @@ struct CourseRelationsView: View {
     let search: String
     @Binding var selectedNoteID: String?
     @Binding var selectedMaterialID: String?
+    @Binding var presentation: CourseDocNotePresentation
     let isCompact: Bool
 
     var body: some View {
@@ -13,6 +14,7 @@ struct CourseRelationsView: View {
             search: search,
             selectedNoteID: $selectedNoteID,
             selectedMaterialID: $selectedMaterialID,
+            presentation: $presentation,
             isCompact: isCompact
         )
     }

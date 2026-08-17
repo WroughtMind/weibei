@@ -2,7 +2,7 @@ import Foundation
 import SwiftUI
 import WeiBeiCore
 
-private enum CourseConversationSection: String, CaseIterable, Identifiable {
+enum CourseConversationSection: String, CaseIterable, Identifiable {
     case chats
     case memory
 
@@ -25,9 +25,8 @@ struct CourseRecordsView: View {
     @EnvironmentObject private var store: WorkspaceStore
     let search: String
     @Binding var selectedSessionID: UUID?
+    @Binding var section: CourseConversationSection
     let isCompact: Bool
-
-    @State private var section: CourseConversationSection = .chats
 
     private struct SessionGroup: Identifiable {
         let id: String
@@ -89,9 +88,6 @@ struct CourseRecordsView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            conversationHeader
-            CourseHairline()
-
             switch section {
             case .chats:
                 chatsContent
@@ -109,58 +105,6 @@ struct CourseRecordsView: View {
         .onChange(of: courseSessions.map(\.id)) { _, _ in
             normalizeSelectedSession()
         }
-    }
-
-    private var conversationHeader: some View {
-        HStack(spacing: 16) {
-            VStack(alignment: .leading, spacing: 3) {
-                Text(store.ui("对话", "Conversations"))
-                    .font(WeiBeiTypography.brandFont(
-                        language: store.interfaceLanguage,
-                        size: 17,
-                        weight: .semibold
-                    ))
-                    .foregroundStyle(WeiBeiTheme.ink)
-
-                Text(store.ui(
-                    "对话保存在全局；这里显示与当前课程有关的对话。",
-                    "Chats stay global; this view shows Chats associated with the current course."
-                ))
-                .font(.system(size: 10.5))
-                .foregroundStyle(WeiBeiTheme.secondaryInk)
-                .lineLimit(1)
-            }
-
-            Spacer(minLength: 12)
-
-            if !isCompact {
-                Text(store.ui(
-                    "课程记忆是可编辑的当前状态，不是聊天记录。",
-                    "Course Memory is editable current state, not Chat history."
-                ))
-                .font(.system(size: 10.5))
-                .foregroundStyle(WeiBeiTheme.tertiaryInk)
-                .lineLimit(1)
-            }
-
-            Picker("", selection: $section) {
-                ForEach(CourseConversationSection.allCases) { candidate in
-                    Text(candidate.label(
-                        language: store.interfaceLanguage,
-                        count: candidate == .chats
-                            ? courseSessions.count
-                            : memoryCount
-                    ))
-                    .tag(candidate)
-                }
-            }
-            .labelsHidden()
-            .pickerStyle(.segmented)
-            .frame(width: isCompact ? 220 : 260)
-        }
-        .padding(.horizontal, 18)
-        .frame(minHeight: 58)
-        .background(WeiBeiTheme.paperRaised.opacity(0.24))
     }
 
     @ViewBuilder

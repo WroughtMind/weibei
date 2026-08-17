@@ -41,6 +41,8 @@ struct CourseWorkspaceView: View {
     @EnvironmentObject private var store: WorkspaceStore
     @State private var page: CourseWorkspacePage = .hub
     @State private var relationLens: CourseRelationLens = .notes
+    @State private var docNotePresentation: CourseDocNotePresentation = .list
+    @State private var conversationSection: CourseConversationSection = .chats
     @State private var selectedNoteID: String?
     @State private var selectedMaterialID: String?
     @State private var selectedSessionID: UUID?
@@ -59,6 +61,10 @@ struct CourseWorkspaceView: View {
             VStack(spacing: 0) {
                 CourseWorkspaceHeader(
                     page: $page,
+                    docNotePresentation: $docNotePresentation,
+                    conversationSection: $conversationSection,
+                    conversationChatCount: conversationChatCount,
+                    conversationMemoryCount: conversationMemoryCount,
                     search: $search,
                     searchFocused: $searchFocused,
                     isCompact: geometry.size.width < 900,
@@ -208,15 +214,27 @@ struct CourseWorkspaceView: View {
                 search: search,
                 selectedNoteID: $selectedNoteID,
                 selectedMaterialID: $selectedMaterialID,
+                presentation: $docNotePresentation,
                 isCompact: size.width < 900
             )
         case .records:
             CourseRecordsView(
                 search: search,
                 selectedSessionID: $selectedSessionID,
+                section: $conversationSection,
                 isCompact: size.width < 900
             )
         }
+    }
+
+    private var conversationChatCount: Int {
+        guard let courseID = store.courseWorkspaceCourseID else { return 0 }
+        return store.sessionsTouchingCourse(courseID).count
+    }
+
+    private var conversationMemoryCount: Int {
+        guard let courseID = store.courseWorkspaceCourseID else { return 0 }
+        return store.learningMemoryEntries(in: .course(courseID)).count
     }
 
     private func promptForNewNote() {
@@ -376,6 +394,10 @@ private struct CourseNewNoteSheet: View {
 struct CourseWorkspaceHeader: View {
     @EnvironmentObject private var store: WorkspaceStore
     @Binding var page: CourseWorkspacePage
+    @Binding var docNotePresentation: CourseDocNotePresentation
+    @Binding var conversationSection: CourseConversationSection
+    let conversationChatCount: Int
+    let conversationMemoryCount: Int
     @Binding var search: String
     var searchFocused: FocusState<Bool>.Binding
     let isCompact: Bool
@@ -434,6 +456,8 @@ struct CourseWorkspaceHeader: View {
 
             Spacer(minLength: 12)
 
+            pageModeSwitch
+
             if let saveError = store.workspaceSaveError {
                 Button(action: { _ = store.retryWorkspaceSave() }) {
                     Label(store.ui("保存失败，点此重试", "Save failed, retry"), systemImage: "exclamationmark.triangle")
@@ -482,6 +506,37 @@ struct CourseWorkspaceHeader: View {
         .padding(.horizontal, 16)
         .frame(height: 52)
         .background(WeiBeiGlassHeaderBackground(paperOpacity: 0.88, materialOpacity: 0.05))
+    }
+
+    @ViewBuilder
+    private var pageModeSwitch: some View {
+        switch page {
+        case .hub:
+            EmptyView()
+        case .relations:
+            HStack(spacing: 4) {
+                ForEach(CourseDocNotePresentation.allCases) { candidate in
+                    Button(candidate.label(language: store.interfaceLanguage)) {
+                        docNotePresentation = candidate
+                    }
+                    .buttonStyle(WeiBeiTextActionButtonStyle(active: candidate == docNotePresentation))
+                }
+            }
+        case .records:
+            HStack(spacing: 4) {
+                ForEach(CourseConversationSection.allCases) { candidate in
+                    Button(candidate.label(
+                        language: store.interfaceLanguage,
+                        count: candidate == .chats
+                            ? conversationChatCount
+                            : conversationMemoryCount
+                    )) {
+                        conversationSection = candidate
+                    }
+                    .buttonStyle(WeiBeiTextActionButtonStyle(active: candidate == conversationSection))
+                }
+            }
+        }
     }
 
     private var searchPrompt: String {

@@ -1,7 +1,7 @@
 import SwiftUI
 import WeiBeiCore
 
-private enum CourseDocNotePresentation: String, CaseIterable, Identifiable {
+enum CourseDocNotePresentation: String, CaseIterable, Identifiable {
     case list
     case map
 
@@ -26,9 +26,8 @@ struct CourseDocNoteWorkspaceView: View {
     let search: String
     @Binding var selectedNoteID: String?
     @Binding var selectedMaterialID: String?
+    @Binding var presentation: CourseDocNotePresentation
     let isCompact: Bool
-
-    @State private var presentation: CourseDocNotePresentation = .list
 
     private var courseID: UUID? {
         store.courseWorkspaceCourseID
@@ -86,9 +85,6 @@ struct CourseDocNoteWorkspaceView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            workspaceToolbar
-            CourseHairline()
-
             Group {
                 if courseID == nil {
                     CourseEmptyState(
@@ -125,56 +121,6 @@ struct CourseDocNoteWorkspaceView: View {
         }
         .onChange(of: notes.map(\.id)) { _, _ in
             normalizeSelection()
-        }
-    }
-
-    private var workspaceToolbar: some View {
-        HStack(alignment: .center, spacing: 18) {
-            VStack(alignment: .leading, spacing: 3) {
-                Text(store.ui("文稿与笔记", "Docs & Notes"))
-                    .font(WeiBeiTypography.brandFont(
-                        language: store.interfaceLanguage,
-                        size: 16,
-                        weight: .semibold
-                    ))
-                    .foregroundStyle(WeiBeiTheme.ink)
-
-                Text(toolbarDetail)
-                    .font(.system(size: 10.5))
-                    .foregroundStyle(WeiBeiTheme.secondaryInk)
-                    .lineLimit(1)
-            }
-
-            Spacer(minLength: 12)
-
-            Picker("", selection: $presentation) {
-                ForEach(CourseDocNotePresentation.allCases) { candidate in
-                    Text(candidate.label(language: store.interfaceLanguage))
-                        .tag(candidate)
-                }
-            }
-            .labelsHidden()
-            .pickerStyle(.segmented)
-            .frame(width: 176)
-        }
-        .padding(.horizontal, 16)
-        .frame(minHeight: 52)
-        .background(WeiBeiTheme.paperRaised.opacity(0.22))
-    }
-
-    private var toolbarDetail: String {
-        let counts = store.ui(
-            "文稿 \(documents.count) · 笔记 \(notes.count) · 明确关联 \(explicitLinkCount)",
-            "\(documents.count) docs · \(notes.count) notes · \(explicitLinkCount) explicit links"
-        )
-        switch presentation {
-        case .list:
-            return counts
-        case .map:
-            return store.ui(
-                "\(counts) · 关系图只显示已保存的文稿—笔记关联",
-                "\(counts) · The map shows only saved doc–note links"
-            )
         }
     }
 
