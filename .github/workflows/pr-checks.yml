@@ -130,6 +130,9 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: 安装 Node 依赖（package 前置）
+        run: npm ci
+
       - name: 生成可追溯安装包
         run: ./script/build_and_run.sh package
 
