@@ -109,7 +109,8 @@ struct CourseRecordsView: View {
                     "选择课程后，这里会显示与它有关的全局对话。",
                     "Choose a course to see the global Chats associated with it."
                 ),
-                systemImage: "bubble.left.and.text.bubble.right"
+                systemImage: "bubble.left.and.text.bubble.right",
+                alignment: .center
             )
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .padding(30)
@@ -124,7 +125,8 @@ struct CourseRecordsView: View {
                         "Ask from the course overview or start a new Chat. The Chat itself remains global."
                     )
                     : store.ui("换一个搜索词再试。", "Try another search term."),
-                systemImage: "bubble.left.and.text.bubble.right"
+                systemImage: "bubble.left.and.text.bubble.right",
+                alignment: .center
             )
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .padding(30)
@@ -160,7 +162,7 @@ struct CourseRecordsView: View {
                 .padding(.horizontal, 20)
                 .padding(.vertical, 18)
                 .frame(maxWidth: 560, alignment: .leading)
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .frame(maxWidth: .infinity, alignment: .center)
             }
         }
     }
@@ -207,7 +209,8 @@ struct CourseMemoryWorkspaceView: View {
                         "课程记忆按当前课程单独保存。",
                         "Course Memory is stored separately for each course."
                     ),
-                    systemImage: "brain.head.profile"
+                    systemImage: "brain.head.profile",
+                    alignment: .center
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .padding(30)
@@ -240,7 +243,7 @@ struct LearningMemoryListSection: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: memories.isEmpty && centerEmptyState ? .center : .leading, spacing: 0) {
             if !(memories.isEmpty && centerEmptyState) {
                 HStack(spacing: 8) {
                     Image(systemName: "brain.head.profile")
@@ -272,7 +275,8 @@ struct LearningMemoryListSection: View {
                     detail: search.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                         ? store.ui("学习过程中留下的要点会出现在这里。", "Highlights from study will appear here.")
                         : store.ui("换一个搜索词再试。", "Try another search term."),
-                    systemImage: "brain.head.profile"
+                    systemImage: "brain.head.profile",
+                    alignment: .center
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .padding(32)

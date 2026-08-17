@@ -1087,6 +1087,10 @@ struct CourseEmptyState: View {
                 .frame(minHeight: 32, alignment: alignment == .leading ? .topLeading : .top)
                 .multilineTextAlignment(alignment == .leading ? .leading : .center)
         }
+        .frame(
+            maxWidth: alignment == .center ? 360 : .infinity,
+            alignment: Alignment(horizontal: alignment, vertical: .center)
+        )
         .frame(maxWidth: .infinity, alignment: Alignment(horizontal: alignment, vertical: .center))
         .padding(.vertical, 8)
     }
