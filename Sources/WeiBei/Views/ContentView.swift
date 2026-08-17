@@ -14,8 +14,7 @@ struct ContentView: View {
     var body: some View {
         GeometryReader { geometry in
             ZStack {
-                Color(nsColor: WeiBeiNativePalette.paper(for: store.appearanceMode))
-                    .ignoresSafeArea()
+                WorkspaceChromeBackdrop()
 
                 VStack(spacing: 0) {
                     UnifiedTopBarView(
@@ -339,6 +338,26 @@ private struct LibraryAwareEscapeBridge: View {
     }
 }
 
+/// Window paper sits behind the top bar so empty-board glow and open-pane
+/// paper continue through the chrome instead of becoming a second strip.
+private struct WorkspaceChromeBackdrop: View {
+    @EnvironmentObject private var store: WorkspaceStore
+    @EnvironmentObject private var paneState: WorkspacePaneState
+
+    var body: some View {
+        let empty = !paneState.showReader && !paneState.showAgent && !paneState.showNotes
+        ZStack {
+            Color(nsColor: WeiBeiNativePalette.paper(for: store.appearanceMode))
+            if empty {
+                EmptyWorkspacePaperField(mode: store.appearanceMode, compact: false)
+            }
+        }
+        .ignoresSafeArea()
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+    }
+}
+
 private struct UnifiedTopBarView: View {
     @EnvironmentObject private var store: WorkspaceStore
     @EnvironmentObject private var libraryDrawer: LibraryDrawerState
@@ -469,7 +488,7 @@ private struct UnifiedTopBarView: View {
     }
 
     private var topBarBackground: some View {
-        Color(nsColor: WeiBeiNativePalette.paper(for: store.appearanceMode))
+        Color.clear
     }
 
     @ViewBuilder

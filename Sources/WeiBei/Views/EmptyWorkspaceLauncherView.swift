@@ -38,6 +38,8 @@ struct EmptyWorkspaceLauncherView: View {
 
                 ZStack {
                     EmptyWorkspacePaperField(mode: mode, compact: compact)
+                        .frame(height: geometry.size.height + WeiBeiMetric.topBarHeight)
+                        .offset(y: -WeiBeiMetric.topBarHeight)
 
                     workspaceContent(
                         at: timeline.date,
@@ -208,7 +210,7 @@ private enum EmptyWorkspaceResolvedColor {
     }
 }
 
-private struct EmptyWorkspacePaperField: View {
+struct EmptyWorkspacePaperField: View {
     let mode: WeiBeiAppearanceMode
     let compact: Bool
 
