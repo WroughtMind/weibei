@@ -23,7 +23,6 @@ struct ContentView: View {
                         isFullScreen: windowIsFullScreen,
                         searchFocused: $topSearchFocused
                     )
-                    .ignoresSafeArea(.container, edges: .top)
 
                     if store.isCourseLibraryRootVolatile {
                         CourseLibraryVolatilityBanner()
@@ -407,10 +406,12 @@ private struct UnifiedTopBarView: View {
                 .frame(width: 8)
         }
         .foregroundStyle(secondaryText)
+        .offset(y: isFullScreen ? 0 : -2)
         .frame(height: barHeight)
         .background(topBarBackground)
         .overlay {
             paneToggleCluster
+                .offset(y: isFullScreen ? 0 : -2)
         }
         .opacity(appeared ? 1 : 0)
         .offset(y: appeared ? 0 : -5)
@@ -440,7 +441,7 @@ private struct UnifiedTopBarView: View {
     }
 
     private var controlHeight: CGFloat {
-        26
+        28
     }
 
     private var shouldShowSearchAction: Bool {

@@ -359,125 +359,39 @@ private struct WindowChromeConfigurator: NSViewRepresentable {
 
     func makeNSView(context: Context) -> NSView {
         let view = NSView()
-        context.coordinator.appearanceMode = appearanceMode
-        DispatchQueue.main.async {
-            context.coordinator.attach(to: view)
+        if let window = view.window {
+            configure(window)
+        } else {
+            DispatchQueue.main.async {
+                configure(view.window)
+            }
         }
         return view
     }
 
     func updateNSView(_ view: NSView, context: Context) {
-        context.coordinator.appearanceMode = appearanceMode
-        context.coordinator.apply(to: view.window)
+        if let window = view.window {
+            configure(window)
+        } else {
+            DispatchQueue.main.async {
+                configure(view.window)
+            }
+        }
     }
 
-    func makeCoordinator() -> Coordinator {
-        Coordinator(appearanceMode: appearanceMode)
-    }
-
-    static func dismantleNSView(_ nsView: NSView, coordinator: Coordinator) {
-        coordinator.stopObserving()
-    }
-
-    @MainActor
-    final class Coordinator {
-        var appearanceMode: WeiBeiAppearanceMode
-        private weak var view: NSView?
-        private weak var observedWindow: NSWindow?
-        private var observers: [NSObjectProtocol] = []
-
-        init(appearanceMode: WeiBeiAppearanceMode) {
-            self.appearanceMode = appearanceMode
-        }
-
-        func attach(to view: NSView) {
-            self.view = view
-            apply(to: view.window)
-            DispatchQueue.main.async { [weak self] in
-                self?.observeWindowIfReady()
-            }
-        }
-
-        func stopObserving() {
-            observers.forEach(NotificationCenter.default.removeObserver)
-            observers.removeAll()
-            observedWindow = nil
-        }
-
-        func apply(to window: NSWindow?) {
-            guard let window else { return }
-            window.titleVisibility = .hidden
-            window.title = ""
-            window.titlebarAppearsTransparent = true
-            window.titlebarSeparatorStyle = .none
-            window.styleMask.insert(.fullSizeContentView)
-            window.toolbar = nil
-            window.isOpaque = true
-            window.backgroundColor = appearanceMode.windowBackground
-            window.appearance = NSAppearance(
-                named: appearanceMode.isDark ? .darkAqua : .aqua
-            )
-            window.isMovableByWindowBackground = true
-            Self.flattenTitlebar(window)
-        }
-
-        private func observeWindowIfReady() {
-            guard let window = view?.window else { return }
-            apply(to: window)
-            guard observedWindow !== window else { return }
-            stopObserving()
-            observedWindow = window
-            let names: [NSNotification.Name] = [
-                NSWindow.didEnterFullScreenNotification,
-                NSWindow.didExitFullScreenNotification,
-                NSWindow.didBecomeKeyNotification
-            ]
-            observers = names.map { name in
-                NotificationCenter.default.addObserver(forName: name, object: window, queue: .main) { [weak self, weak window] _ in
-                    DispatchQueue.main.async {
-                        self?.apply(to: window)
-                    }
-                }
-            }
-        }
-
-        /// The system titlebar sits on top of the 32pt SwiftUI bar. Its visual-effect
-        /// fill hid the windowed controls and tinted fullscreen chrome away from paper.
-        private static func flattenTitlebar(_ window: NSWindow) {
-            guard let closeButton = window.standardWindowButton(.closeButton),
-                  let titlebar = closeButton.superview?.superview else { return }
-            titlebar.wantsLayer = true
-            titlebar.layer?.backgroundColor = NSColor.clear.cgColor
-            flattenVisualEffects(in: titlebar, window: window)
-        }
-
-        private static func flattenVisualEffects(in view: NSView, window: NSWindow) {
-            if let effect = view as? NSVisualEffectView {
-                if containsTrafficLights(effect, window: window) {
-                    effect.state = .inactive
-                    effect.blendingMode = .behindWindow
-                    effect.material = .contentBackground
-                    effect.wantsLayer = true
-                    effect.layer?.backgroundColor = NSColor.clear.cgColor
-                } else {
-                    effect.isHidden = true
-                }
-            }
-            for subview in view.subviews {
-                flattenVisualEffects(in: subview, window: window)
-            }
-        }
-
-        private static func containsTrafficLights(_ view: NSView, window: NSWindow) -> Bool {
-            let buttons = [
-                window.standardWindowButton(.closeButton),
-                window.standardWindowButton(.miniaturizeButton),
-                window.standardWindowButton(.zoomButton)
-            ]
-            if buttons.contains(where: { $0 === view }) {
-                return true
-            }
-            return view.subviews.contains { containsTrafficLights($0, window: window) }
-        }
+    private func configure(_ window: NSWindow?) {
+        guard let window else { return }
+        window.titleVisibility = .hidden
+        window.title = ""
+        window.titlebarAppearsTransparent = true
+        window.titlebarSeparatorStyle = .none
+        window.styleMask.insert(.fullSizeContentView)
+        window.toolbar = nil
+        window.isOpaque = true
+        window.backgroundColor = appearanceMode.windowBackground
+        window.appearance = NSAppearance(
+            named: appearanceMode.isDark ? .darkAqua : .aqua
+        )
+        window.isMovableByWindowBackground = true
     }
 }

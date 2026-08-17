@@ -503,7 +503,7 @@ enum WeiBeiMetric {
     static let iconButton: CGFloat = 26
     static let inputHeight: CGFloat = 30
     static let controlRadius: CGFloat = 7
-    static let topBarHeight: CGFloat = 32
+    static let topBarHeight: CGFloat = 36
 }
 
 /// Top-bar brand mark (DesignSystem logo exports bundled under Resources/Brand).
