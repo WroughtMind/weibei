@@ -20710,7 +20710,8 @@ final class WorkspaceStore: ObservableObject {
             persisted.resumePoints =
                 persisted.snapshot.courseResumePoints ?? []
         }
-        var requestedCourseIDs = Set(courses.map(\.id))
+        var requestedCourseIDs = persistedWorkspaceCourseIDs
+            .intersection(Set(courses.map(\.id)))
             .subtracting(skippingPortableCourseIDs)
         if let removingCourseID =
                 workspacePersistenceRemovingCourseID {
@@ -21238,8 +21239,9 @@ final class WorkspaceStore: ObservableObject {
     ) -> Bool {
         WeiBeiPerf.measure("workspace.save") {
             let requestedCourseIDs =
-                Set(courses.map(\.id))
-                .subtracting(skippingPortableCourseIDs)
+                persistedWorkspaceCourseIDs.intersection(
+                    Set(courses.map(\.id))
+                ).subtracting(skippingPortableCourseIDs)
             let portableCommit: CoursePortableStateCommit
             do {
                 portableCommit = try persistCoursePortableStates(
