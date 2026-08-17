@@ -504,6 +504,7 @@ struct CourseWorkspaceHeader: View {
         }
         .buttonStyle(.plain)
         .menuIndicator(.hidden)
+        .fixedSize()
         .help(store.ui(
             "选择课程",
             "Choose a course"
@@ -528,23 +529,23 @@ private struct CourseSwitchCapsule: View {
 
     var body: some View {
         Text(title)
-            .font(courseTitleDisplayFont(title, size: 12.5, weight: .semibold))
+            .font(courseTitleDisplayFont(title, size: 12, weight: .semibold))
             .foregroundStyle(WeiBeiTheme.ink)
             .lineLimit(1)
-            .padding(.horizontal, 8)
-            .frame(maxWidth: 168, minHeight: 24)
+            .padding(.horizontal, 10)
+            .frame(height: WeiBeiMetric.inputHeight)
             .background(
                 WeiBeiTheme.paperRaised.opacity(hovering ? 0.90 : 0.68),
-                in: RoundedRectangle(cornerRadius: 8, style: .continuous)
+                in: RoundedRectangle(cornerRadius: WeiBeiMetric.controlRadius, style: .continuous)
             )
             .overlay {
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                RoundedRectangle(cornerRadius: WeiBeiMetric.controlRadius, style: .continuous)
                     .stroke(
                         WeiBeiTheme.hairline.opacity(hovering ? 0.80 : 0.48),
                         lineWidth: 1
                     )
             }
-            .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: WeiBeiMetric.controlRadius, style: .continuous))
             .onHover { hovering = $0 }
     }
 }
