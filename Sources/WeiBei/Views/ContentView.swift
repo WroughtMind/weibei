@@ -488,7 +488,17 @@ private struct UnifiedTopBarView: View {
     }
 
     private var topBarBackground: some View {
-        Color.clear
+        let empty = !paneState.showReader && !paneState.showAgent && !paneState.showNotes
+        // Empty board keeps the glow visible through the bar. Open panes paint
+        // the same opaque paper as the workspace so the system titlebar cannot
+        // leave a second strip above NOTE / READ / CHAT.
+        return Group {
+            if empty {
+                Color.clear
+            } else {
+                Color(nsColor: WeiBeiNativePalette.paper(for: store.appearanceMode))
+            }
+        }
     }
 
     @ViewBuilder
