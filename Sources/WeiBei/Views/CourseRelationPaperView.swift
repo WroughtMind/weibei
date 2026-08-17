@@ -86,8 +86,10 @@ struct CourseRelationPaperView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            header(model: graphModel)
-            CourseHairline()
+            if isCompact && allowsWorkspaceScopes {
+                header
+                CourseHairline()
+            }
             GeometryReader { proxy in
                 let showCourseRail = allowsWorkspaceScopes
                     && !isCompact
@@ -145,20 +147,10 @@ struct CourseRelationPaperView: View {
     }
 
     /// Thin toolbar only — page title already lives in the course-space top bar.
-    private func header(model: CourseRelationGraphModel) -> some View {
+    private var header: some View {
         HStack(spacing: 12) {
-            Text(headerDetail(model: model))
-                .font(.system(size: 11.5, weight: .medium))
-                .foregroundStyle(WeiBeiTheme.secondaryInk)
-                .lineLimit(1)
-                .layoutPriority(1)
-
-            Spacer(minLength: 8)
-
-            // Narrow widths hide the rail — keep a compact course picker.
-            if isCompact && allowsWorkspaceScopes {
-                scopeMenu
-            }
+            Spacer(minLength: 0)
+            scopeMenu
         }
         .padding(.horizontal, 16)
         .frame(height: 40)
@@ -784,24 +776,6 @@ struct CourseRelationPaperView: View {
         )
     }
 
-    private func headerDetail(model: CourseRelationGraphModel) -> String {
-        if let selectedAnchor {
-            let title = model.visibleNodes.first(where: {
-                $0.itemID == selectedAnchor.itemID && $0.kind == selectedAnchor.kind
-            })?.item.title ?? store.ui("当前项目", "Current item")
-            return store.ui(
-                "已选「\(title)」· 点对面 + 建立关联，双击打开",
-                "Selected “\(title)” · tap + on the other side to link, double-click to open"
-            )
-        }
-        let scopeText = scopeTitle(effectiveScope)
-        let relationText = store.ui("\(model.edges.count) 条关系", "\(model.edges.count) links")
-        if model.hiddenNodeCount > 0 {
-            return "\(scopeText) · \(relationText) · \(store.ui("其余 \(model.hiddenNodeCount) 项", "\(model.hiddenNodeCount) hidden"))"
-        }
-        return "\(scopeText) · \(relationText)"
-    }
-
     private func scopeTitle(_ scope: CourseRelationPaperScope) -> String {
         switch scope {
         case .course(let courseID):
@@ -1045,6 +1019,7 @@ private struct CourseRelationPaperNodeView: View {
     let open: () -> Void
     let connect: () -> Void
     let hover: (Bool) -> Void
+    @State private var lastClickAt: Date?
 
     var body: some View {
         HStack(spacing: 8) {
@@ -1076,10 +1051,8 @@ private struct CourseRelationPaperNodeView: View {
                 Spacer(minLength: 6)
             }
             .contentShape(Rectangle())
-            .onTapGesture(count: 2, perform: open)
-            .onTapGesture(count: 1, perform: select)
             .modifier(CourseRelationNodeDragModifier(
-                enabled: node.kind == .material,
+                enabled: false,
                 itemID: node.itemID
             ))
 
@@ -1099,6 +1072,18 @@ private struct CourseRelationPaperNodeView: View {
                 .padding(.leading, 12)
         }
         .onHover(perform: hover)
+        .onTapGesture(perform: handleCardClick)
+    }
+
+    private func handleCardClick() {
+        let now = Date()
+        if let lastClickAt, now.timeIntervalSince(lastClickAt) < 0.35 {
+            self.lastClickAt = nil
+            open()
+        } else {
+            lastClickAt = now
+            select()
+        }
     }
 
     private var detailText: String {
