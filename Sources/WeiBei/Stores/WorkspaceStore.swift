@@ -17258,10 +17258,7 @@ final class WorkspaceStore: ObservableObject {
         // 与 applyCourseFileObservations 的对账语义一致，最多记一条日志。
         if importedItems[index].importedFileIdentity.map({ $0 != identity }) ?? false
             || courseItemMemberships[membershipIndex].entryIdentity.map({ $0 != identity }) ?? false {
-            NSLog(
-                "WeiBei: course-owned file identity drifted at %@; refreshed stored identity instead of refusing",
-                candidate.path
-            )
+            WeiBeiLog.workspace.notice("course_file_identity_refreshed")
         }
 
         var changed = false

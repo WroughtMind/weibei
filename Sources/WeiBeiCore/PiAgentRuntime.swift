@@ -2706,6 +2706,14 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         if stderrBuffer.count > 16_384 {
             stderrBuffer = String(stderrBuffer.suffix(16_384))
         }
+        // 报错桥镜像：stderr 完整行经 PiAgentDiagnosticSanitizer 脱敏后逐行
+        // 落盘（notice 保证 logd 持久化；stderr 行无法自动分级；launchFailed
+        // 已有独立路径，不动）。
+        for line in text.split(separator: "\n") {
+            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { continue }
+            WeiBeiLog.pi.notice("pi_stderr line=\(WeiBeiLog.truncated(trimmed), privacy: .public)")
+        }
     }
 
     private func transportFailed(_ error: Error, generation: UInt64) {

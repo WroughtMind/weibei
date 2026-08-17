@@ -346,10 +346,12 @@ private struct RichAnswerWebViewRepresentable: NSViewRepresentable {
         )
 
         let configuration = WeiBeiWebViewConfiguration.make(
+            surface: .richAnswer,
             allowingInlineMedia: false,
             nonPersistent: true
         )
         configuration.userContentController = controller
+        WeiBeiWebViewConfiguration.installConsoleErrorBridge(on: controller, surface: .richAnswer)
         configuration.allowsAirPlayForMediaPlayback = false
 
         let webView = WKWebView(frame: .zero, configuration: configuration)
@@ -372,7 +374,7 @@ private struct RichAnswerWebViewRepresentable: NSViewRepresentable {
             withExtension: "html"
         ) else {
             runtimeError = "富回答网页运行时资源缺失。"
-            NSLog("[WeiBei rich answer] %@", runtimeError ?? "unknown runtime resource error")
+            WeiBeiLog.richAnswer.error("rich_answer_runtime_resource_error detail=\(WeiBeiLog.truncated(runtimeError ?? "unknown"), privacy: .public)")
             return clippingView
         }
 
@@ -574,7 +576,7 @@ private struct RichAnswerWebViewRepresentable: NSViewRepresentable {
             case "weibei:error":
                 let diagnostic = body["message"] as? String ?? "富回答程序渲染失败。"
                 if body["fatal"] as? Bool == false {
-                    NSLog("[WeiBei rich answer] %@", diagnostic)
+                    WeiBeiLog.richAnswer.error("rich_answer_page_diagnostic detail=\(WeiBeiLog.truncated(diagnostic), privacy: .public)")
                 } else {
                     reportRuntimeError(diagnostic)
                 }
@@ -717,7 +719,7 @@ private struct RichAnswerWebViewRepresentable: NSViewRepresentable {
         }
 
         private func reportRuntimeError(_ message: String) {
-            NSLog("[WeiBei rich answer] %@", message)
+            WeiBeiLog.richAnswer.error("rich_answer_bridge_message detail=\(WeiBeiLog.truncated(message), privacy: .public)")
             runtimeError.wrappedValue = message
             contentOverflowed.wrappedValue = false
         }
@@ -835,7 +837,7 @@ private struct RichAnswerWebViewRepresentable: NSViewRepresentable {
                 case let .ready(transport):
                     transports.append(transport)
                 case let .failed(diagnostic, fallbackReason, fallbackText):
-                    NSLog("[WeiBei rich answer] %@", diagnostic)
+                    WeiBeiLog.richAnswer.error("rich_answer_page_diagnostic detail=\(WeiBeiLog.truncated(diagnostic), privacy: .public)")
                     itemFailures.append([
                         "index": index,
                         "programID": entry.scene.id,

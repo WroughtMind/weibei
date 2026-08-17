@@ -2223,7 +2223,7 @@ do {
         "SAFETY:note-repair-oneshot repair is one-shot, dry-runnable, planner-driven, and locates notes from the library-relative path"
     )
     expect(
-        notesPersistenceSource.contains("WeiBei note repair: backup failed, skip restore item=%@ error=%@"),
+        notesPersistenceSource.contains("note_repair_backup_failed"),
         "SAFETY:backup-before-restore restoreDraft must skip the write when the on-disk backup cannot be captured"
     )
     expect(

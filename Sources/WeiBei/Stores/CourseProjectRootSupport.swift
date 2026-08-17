@@ -1466,10 +1466,7 @@ actor CourseProjectFileWorker {
             sharedByCoursePath: sharedByCoursePath
         )
         if liveSourceEntries != sourceEntries {
-            NSLog(
-                "[WeiBei export] source tree drifted during export; using sealed staging (course=%@)",
-                request.courseID.uuidString
-            )
+            WeiBeiLog.workspace.notice("export_source_tree_drifted")
         }
         _ = try Self.renameWithoutReplacementAnchored(
             from: stagingRoot,
@@ -2680,11 +2677,7 @@ actor CourseProjectFileWorker {
                         fileURL,
                         includingRoot: false
                       ) else {
-                    NSLog(
-                        "[WeiBei scan] skip course symlink outside root: %@ -> %@",
-                        rawURL.path,
-                        fileURL.path
-                    )
+                    WeiBeiLog.workspace.notice("scan_skipped_symlink_outside_root")
                     continue
                 }
                 guard let resolvedValues = try? fileURL.resourceValues(forKeys: keys),
