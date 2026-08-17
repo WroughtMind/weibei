@@ -19448,16 +19448,13 @@ final class WorkspaceStore: ObservableObject {
                     // 磁盘更旧：保留本机，静默。
                     continue
                 }
-                if state.revision == knownRevision {
-                    if knownDigest != diskDigest {
-                        // 同 revision 不同 digest：标记阻塞，不自动覆盖。
-                        blockedPortableCourseIDs.insert(courseID)
-                        dirtyPortableCourseIDs.insert(courseID)
-                        needsPortableCourseStateBootstrap = true
-                        changed = true
-                    }
-                    // Matching revision is already the local baseline. Replaying it
-                    // would wipe newer workspace-only links if the snapshot is stale.
+                if state.revision == knownRevision,
+                   knownDigest != diskDigest {
+                    // 同 revision 不同 digest：标记阻塞，不自动覆盖。
+                    blockedPortableCourseIDs.insert(courseID)
+                    dirtyPortableCourseIDs.insert(courseID)
+                    needsPortableCourseStateBootstrap = true
+                    changed = true
                     continue
                 }
                 try applyCoursePortableState(state, courseID: courseID)
@@ -20713,8 +20710,7 @@ final class WorkspaceStore: ObservableObject {
             persisted.resumePoints =
                 persisted.snapshot.courseResumePoints ?? []
         }
-        var requestedCourseIDs = persistedWorkspaceCourseIDs
-            .intersection(Set(courses.map(\.id)))
+        var requestedCourseIDs = Set(courses.map(\.id))
             .subtracting(skippingPortableCourseIDs)
         if let removingCourseID =
                 workspacePersistenceRemovingCourseID {
@@ -21242,9 +21238,8 @@ final class WorkspaceStore: ObservableObject {
     ) -> Bool {
         WeiBeiPerf.measure("workspace.save") {
             let requestedCourseIDs =
-                persistedWorkspaceCourseIDs.intersection(
-                    Set(courses.map(\.id))
-                ).subtracting(skippingPortableCourseIDs)
+                Set(courses.map(\.id))
+                .subtracting(skippingPortableCourseIDs)
             let portableCommit: CoursePortableStateCommit
             do {
                 portableCommit = try persistCoursePortableStates(
