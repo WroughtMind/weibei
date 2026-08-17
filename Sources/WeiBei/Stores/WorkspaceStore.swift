@@ -1104,34 +1104,15 @@ final class WorkspaceStore: ObservableObject {
         }
         var result = point
         if let itemID = result.materialLocation?.itemID,
-           !importedItems.contains(where: { item in
-               item.id == itemID
-                   && !item.isNotebookNote
-                   && (
-                       item.storage.ownerCourseID == point.courseID
-                           || { if case .common = item.storage { return true }; return false }()
-                   )
-           }) {
+           !importedItems.contains(where: { $0.id == itemID }) {
             result.materialLocation = nil
         }
         if let chatID = result.chatID,
-           !studySessions.contains(where: {
-               $0.id == chatID
-                   && $0.relatedCourseIDs.contains(point.courseID)
-                   && $0.scopeNeedsReview == false
-                   && !$0.messages.isEmpty
-           }) {
+           !studySessions.contains(where: { $0.id == chatID }) {
             result.chatID = nil
         }
         if let noteItemID = result.noteItemID,
-           !importedItems.contains(where: { item in
-               item.id == noteItemID
-                   && item.isNotebookNote
-                   && (
-                       item.storage.ownerCourseID == point.courseID
-                           || { if case .common = item.storage { return true }; return false }()
-                   )
-           }) {
+           !importedItems.contains(where: { $0.id == noteItemID }) {
             result.noteItemID = nil
         }
         return result.materialLocation == nil
@@ -20110,10 +20091,14 @@ final class WorkspaceStore: ObservableObject {
                     blockedPortableCourseIDs.remove(courseID)
                 }
                 if blockedPortableCourseIDs.contains(courseID) {
-                    if knownDigest != payloadDigest {
-                        dirtyPortableCourseIDs.insert(courseID)
+                    if dirtyPortableCourseIDs.contains(courseID) {
+                        blockedPortableCourseIDs.remove(courseID)
+                    } else {
+                        if knownDigest != payloadDigest {
+                            dirtyPortableCourseIDs.insert(courseID)
+                        }
+                        continue
                     }
-                    continue
                 }
                 if knownDigest == payloadDigest, stateExists {
                     if requiredCourseIDs.contains(courseID) {
@@ -20132,18 +20117,24 @@ final class WorkspaceStore: ObservableObject {
                     continue
                 }
                 if stateExists {
-                    guard let knownDigest,
-                          let diskState = try? readCoursePortableState(
-                              at: stateURL,
-                              expectedCourseID: courseID
-                          ),
-                          diskState.revision == currentRevision,
-                          (try? coursePortableStatePayloadDigest(
-                              diskState
-                          )) == knownDigest else {
-                        dirtyPortableCourseIDs.insert(courseID)
-                        blockedPortableCourseIDs.insert(courseID)
-                        continue
+                    let diskMatchesKnown = knownDigest != nil
+                        && (try? readCoursePortableState(
+                            at: stateURL,
+                            expectedCourseID: courseID
+                        )).map { diskState in
+                            diskState.revision == currentRevision
+                                && (try? coursePortableStatePayloadDigest(
+                                    diskState
+                                )) == knownDigest
+                        } == true
+                    if !diskMatchesKnown {
+                        if dirtyPortableCourseIDs.contains(courseID) {
+                            blockedPortableCourseIDs.remove(courseID)
+                        } else {
+                            dirtyPortableCourseIDs.insert(courseID)
+                            blockedPortableCourseIDs.insert(courseID)
+                            continue
+                        }
                     }
                 }
                 let previousData = stateExists
@@ -21155,13 +21146,8 @@ final class WorkspaceStore: ObservableObject {
                 "工作区内容已保存，但有课程的可携带状态超过 32 MB；课程文件夹中的原状态保持不变。请精简课程 Chat 或未写入草稿后重试。",
                 "The workspace was saved, but a portable course state exceeds 32 MB. The state in the course folder was left unchanged. Reduce course chats or pending drafts, then retry."
             ))
-        } else if blockedPortableCourseIDs.isEmpty {
-            clearWorkspaceSaveError()
         } else {
-            reportWorkspaceSaveFailure(ui(
-                "有课程状态存在冲突或损坏，原文件与本机缓存均已保留；魏碑不会自动覆盖。",
-                "A course state is conflicted or damaged. Both the original file and local cache were preserved, and WeiBei will not overwrite either automatically."
-            ))
+            clearWorkspaceSaveError()
         }
         needsSelectionAskThreadsWorkspaceMigration = false
         loadedSelectionAskThreadsFromWorkspaceSnapshot = true
@@ -21342,15 +21328,8 @@ final class WorkspaceStore: ObservableObject {
                         "工作区内容已保存，但有课程的可携带状态超过 32 MB；课程文件夹中的原状态保持不变。请精简课程 Chat 或未写入草稿后重试。",
                         "The workspace was saved, but a portable course state exceeds 32 MB. The state in the course folder was left unchanged. Reduce course chats or pending drafts, then retry."
                     ))
-                } else if blockedPortableCourseIDs.isEmpty {
-                    if workspaceSaveError != nil {
-                        clearWorkspaceSaveError()
-                    }
                 } else {
-                    reportWorkspaceSaveFailure(ui(
-                        "有课程状态存在冲突或损坏，原文件与本机缓存均已保留；魏碑不会自动覆盖。",
-                        "A course state is conflicted or damaged. Both the original file and local cache were preserved, and WeiBei will not overwrite either automatically."
-                    ))
+                    clearWorkspaceSaveError()
                 }
                 needsSelectionAskThreadsWorkspaceMigration = false
                 loadedSelectionAskThreadsFromWorkspaceSnapshot = true
