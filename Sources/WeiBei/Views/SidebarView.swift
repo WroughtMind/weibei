@@ -27,9 +27,10 @@ struct SidebarView: View {
                 },
                 onDeleteCourse: { coursePendingDeletion = $0 }
             )
-                .background(WeiBeiTheme.paperRaised.opacity(0.72))
+                .background(WeiBeiTheme.paper)
         }
-        .weibeiPanel()
+        .foregroundStyle(WeiBeiTheme.ink)
+        .background(WeiBeiTheme.paper)
         .onReceive(store.paneState.$focusRequest) { _ in
             librarySearchFocused = store.paneState.focusedPane == .library
         }
@@ -95,40 +96,45 @@ struct SidebarView: View {
 
     private var header: some View {
         VStack(spacing: 0) {
-            HStack(alignment: .firstTextBaseline) {
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(ui("课程目录", "Course Index"))
-                        .font(WeiBeiTypography.brandFont(
-                            language: model.interfaceLanguage,
-                            size: 22,
-                            weight: .semibold
-                        ))
-                    Button { store.presentCourseWorkspace(.hub) } label: {
-                        HStack(spacing: 3) {
-                            Text(ui("课程空间", "Course Space"))
-                            Image(systemName: "chevron.right")
-                                .font(.system(size: 8, weight: .bold))
-                        }
-                        .font(.system(size: 10.5, weight: .semibold))
-                        .foregroundStyle(WeiBeiTheme.cinnabar.opacity(0.78))
+            HStack(spacing: 8) {
+                Button { store.presentCourseWorkspace(.hub) } label: {
+                    HStack(spacing: 3) {
+                        Text(ui("课程空间", "Course Space"))
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 8, weight: .bold))
                     }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel(Text(ui("打开课程空间", "Open course space")))
-                    .help(ui("打开课程空间", "Open course space"))
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(WeiBeiTheme.cinnabar.opacity(0.82))
                 }
-                Spacer()
-                Button {
-                    courseEntryPresentation = CourseProjectEntryPresentation(intent: .create)
+                .buttonStyle(.plain)
+                .accessibilityLabel(Text(ui("打开课程空间", "Open course space")))
+                .help(ui("打开课程空间", "Open course space"))
+
+                Spacer(minLength: 0)
+
+                Menu {
+                    Button(ui("新建课程", "New Course")) {
+                        courseEntryPresentation = CourseProjectEntryPresentation(intent: .create)
+                    }
+                    Divider()
+                    Button(ui("导入文稿", "Import materials")) {
+                        importMaterialsFromSidebar()
+                    }
+                    Button(ui("导入笔记", "Import notes")) {
+                        importNotesFromSidebar()
+                    }
                 } label: {
                     Image(systemName: "plus")
                 }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
                 .buttonStyle(WeiBeiIconButtonStyle())
-                .accessibilityLabel(Text(ui("添加课程", "Add course")))
-                .help(ui("新建或纳入课程", "Create or add a course"))
+                .accessibilityLabel(Text(ui("添加", "Add")))
+                .help(ui("新建课程，或导入文稿和笔记", "Create a course, or import materials and notes"))
             }
             .padding(.horizontal, 16)
             .padding(.top, 14)
-            .padding(.bottom, 10)
+            .padding(.bottom, 8)
 
             TextField(
                 "",
@@ -148,12 +154,29 @@ struct SidebarView: View {
             .padding(.horizontal, 14)
             .padding(.bottom, 10)
         }
-        .background(WeiBeiGlassHeaderBackground(paperOpacity: 0.70, materialOpacity: 0.10))
+        .background(WeiBeiTheme.paper)
         .overlay(alignment: .bottom) {
-            WeiBeiHeaderHandoffFade(height: 16, opacity: 0.72)
-                .offset(y: 16)
+            Rectangle()
+                .fill(WeiBeiTheme.hairline.opacity(0.35))
+                .frame(height: 1)
         }
         .zIndex(1)
+    }
+
+    private func importMaterialsFromSidebar() {
+        if let courseID = store.activeCourseID {
+            store.importCourseMaterialsFromPanel(courseID: courseID)
+        } else {
+            store.importFilesFromPanel()
+        }
+    }
+
+    private func importNotesFromSidebar() {
+        if let courseID = store.activeCourseID {
+            store.importCourseNotesFromPanel(courseID: courseID)
+        } else {
+            store.importCourseNotesFromPanel(courseID: nil)
+        }
     }
 
     private func ui(_ chinese: String, _ english: String) -> String {
@@ -238,8 +261,9 @@ struct CourseSidebarList: View {
                 }
             }
         }
-        .listStyle(.sidebar)
+        .listStyle(.plain)
         .scrollContentBackground(.hidden)
+        .background(WeiBeiTheme.paper)
         .task(id: model.searchTagTaskID) { [weak store = store, weak model = model] in
             guard let requests = model?.missingTagRequestsForSearch(),
                   !requests.isEmpty else { return }
@@ -435,6 +459,12 @@ struct CourseSidebarList: View {
     private func courseContextMenu(for course: Course) -> some View {
         Button(ui("进入课程空间", "Enter course space")) {
             store.openCourseSpace(course.id)
+        }
+        Button(ui("导入文稿", "Import materials")) {
+            store.importCourseMaterialsFromPanel(courseID: course.id)
+        }
+        Button(ui("导入笔记", "Import notes")) {
+            store.importCourseNotesFromPanel(courseID: course.id)
         }
         Button(ui("重命名课程", "Rename course")) {
             onRenameCourse(course)
