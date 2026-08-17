@@ -14,7 +14,14 @@ const DEFAULT_SOURCE = '.build/rich-answer-evidence';
 
 function parseArgs() {
   const args = process.argv.slice(2);
-  const result = {
+  const result: {
+    runDir: string | null;
+    runId: string | null;
+    source: string;
+    output: string | null;
+    force: boolean;
+    help?: boolean;
+  } = {
     runDir: null,
     runId: null,
     source: DEFAULT_SOURCE,
@@ -61,8 +68,8 @@ function usage() {
     '用途：将 .build/rich-answer-evidence/<runID>/ 的验收留档生成离线浏览包',
     '',
     '用法: ',
-    '  node generate-offline-evidence-package.mjs --run-dir <runDir> --output <outDir> [--force]',
-    '  node generate-offline-evidence-package.mjs --run-id <runID> --source <sourceDir> --output <outDir> [--force]',
+    '  npx tsx generate-offline-evidence-package.ts --run-dir <runDir> --output <outDir> [--force]',
+    '  npx tsx generate-offline-evidence-package.ts --run-id <runID> --source <sourceDir> --output <outDir> [--force]',
     '',
     '参数:',
     '  --run-dir      直接指定 run 目录',

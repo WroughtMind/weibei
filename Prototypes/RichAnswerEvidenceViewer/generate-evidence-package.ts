@@ -99,7 +99,15 @@ function readRawText(filePath) {
 
 function parseArgs() {
   const args = process.argv.slice(2);
-  const out = {
+  const out: {
+    source: string;
+    force: boolean;
+    output: string | null;
+    assetMode: string;
+    runDir?: string;
+    runId?: string;
+    help?: boolean;
+  } = {
     source: DATASET_PATH,
     force: false,
     output: null,
@@ -151,8 +159,8 @@ function usage() {
     "用途：将 .build/rich-answer-evidence/<runID>/ 下的证据目录生成离线验收包。",
     "",
     "用法:",
-    "  node generate-evidence-package.mjs --run-dir <run-dir> --output <out-dir> [--force]",
-    "  node generate-evidence-package.mjs --run-id <runID> --source .build/rich-answer-evidence --output <out-dir> [--force]",
+    "  npx tsx generate-evidence-package.ts --run-dir <run-dir> --output <out-dir> [--force]",
+    "  npx tsx generate-evidence-package.ts --run-id <runID> --source .build/rich-answer-evidence --output <out-dir> [--force]",
     "",
     "参数:",
     "  --run-dir      直接指定证据目录（如 .build/rich-answer-evidence/xxx）",
@@ -562,10 +570,10 @@ function collectRecordsFromRunDir(runDir, report) {
 
 function buildGroupData(records) {
   const map = new Map();
-  const subjects = new Set();
-  const shapes = new Set();
-  const statuses = new Set();
-  const repetitions = new Set();
+  const subjects = new Set<string>();
+  const shapes = new Set<string>();
+  const statuses = new Set<string>();
+  const repetitions = new Set<string>();
   const kindCounts = { rich: 0, "text-only": 0, degradation: 0, "invalid-protocol": 0, unknown: 0 };
 
   for (const item of records) {
@@ -598,7 +606,7 @@ function buildGroupData(records) {
     status: Array.from(statuses).sort().reduce((acc, status) => {
       acc[status] = records.filter((item) => item.status === status).length;
       return acc;
-    }, {}),
+    }, {} as Record<string, number>),
     byKind: kindCounts,
     byCaseKind: groups.reduce((acc, group) => {
       const kind = group.caseKind || "unknown";
@@ -636,22 +644,23 @@ function buildPayload(runDir, runID, runData, report) {
   const expectedTotals = Object.entries(TARGET_BREAKDOWN).reduce((acc, [kind, count]) => {
     acc[kind] = count;
     return acc;
-  }, {});
+  }, {} as Record<string, number>);
   expectedTotals.total = TARGET_TOTAL;
 
-  const actualTotalByKind = Object.entries(grouped.counts.byCaseKind).reduce((acc, [kind, count]) => {
+  const actualTotalByKind = Object.entries(grouped.counts.byCaseKind).reduce((acc, [kind, count]: [string, number]) => {
     acc[kind] = count;
     return acc;
-  }, {});
+  }, {} as Record<string, number>);
   actualTotalByKind.total = grouped.groups.length;
 
   const subjectGap = runData.records.reduce((acc, item) => {
-    acc[item.subject] = (acc[item.subject] || 0) + 1;
+    const subject = (item as any).subject;
+    acc[subject] = (acc[subject] || 0) + 1;
     return acc;
-  }, {});
+  }, {} as Record<string, number>);
 
-  const missingFlags = Object.entries(grouped.counts.byCaseKind).map(([kind, count]) => {
-    const expected = TARGET_BREAKDOWN[kind] || 0;
+  const missingFlags = Object.entries(grouped.counts.byCaseKind).map(([kind, count]: [string, number]) => {
+    const expected = (TARGET_BREAKDOWN as Record<string, number>)[kind] || 0;
     return {
       kind,
       expected,
@@ -1076,7 +1085,7 @@ function buildClientScript() {
 }
 
 function evidenceViewerRuntime() {
-const data = window.__EVIDENCE_DATA || {};
+const data = (window as any).__EVIDENCE_DATA || {};
 const cases = Array.isArray(data.cases) ? data.cases : [];
 const filters = data.overview && data.overview.filterOptions ? data.overview.filterOptions : {};
 let reviewMode = "rich";
@@ -1103,11 +1112,11 @@ function buildOptions() {
   const shapeEl = document.getElementById("filter-shape");
   const repEl = document.getElementById("filter-repetition");
 
-  const all = (array) => Array.from(new Set(array || [])).filter(Boolean).sort();
-  const statusList = all((filters.statuses || []).concat((cases.flatMap((c) => c.attempts || []).map((a) => a.status))));
-  const subjectList = all((filters.subjects || []).concat(cases.map((c) => c.subject)));
-  const shapeList = all((filters.shapes || []).concat(cases.flatMap((c) => c.attempts || []).map((a) => a.actualShape)));
-  const repetitionList = all((filters.repetitions || []).concat(cases.flatMap((c) => c.attempts || []).map((a) => String(a.repetition))));
+  const all = (array: any[]) => Array.from(new Set(array || [])).filter(Boolean).sort();
+  const statusList = all(((filters as any).statuses || []).concat((cases.flatMap((c) => c.attempts || []).map((a) => a.status))));
+  const subjectList = all(((filters as any).subjects || []).concat(cases.map((c) => c.subject)));
+  const shapeList = all(((filters as any).shapes || []).concat(cases.flatMap((c) => c.attempts || []).map((a) => a.actualShape)));
+  const repetitionList = all(((filters as any).repetitions || []).concat(cases.flatMap((c) => c.attempts || []).map((a) => String(a.repetition))));
 
   const statusLabel = (status) => status === "passed"
     ? "模型/协议记录正常"
@@ -1123,11 +1132,11 @@ function buildOptions() {
 function getFilters() {
   return {
     reviewMode,
-    status: document.getElementById("filter-status").value,
-    subject: document.getElementById("filter-subject").value,
-    shape: document.getElementById("filter-shape").value,
-    repetition: document.getElementById("filter-repetition").value,
-    keyword: (document.getElementById("filter-keyword").value || "").trim().toLowerCase(),
+    status: (document.getElementById("filter-status") as HTMLInputElement).value,
+    subject: (document.getElementById("filter-subject") as HTMLInputElement).value,
+    shape: (document.getElementById("filter-shape") as HTMLInputElement).value,
+    repetition: (document.getElementById("filter-repetition") as HTMLInputElement).value,
+    keyword: ((document.getElementById("filter-keyword") as HTMLInputElement).value || "").trim().toLowerCase(),
   };
 }
 
@@ -1374,7 +1383,7 @@ document.getElementById("filter-shape").addEventListener("change", render);
 document.getElementById("filter-repetition").addEventListener("change", render);
 document.getElementById("filter-keyword").addEventListener("input", render);
 document.getElementById("review-mode-bar").addEventListener("click", (event) => {
-  const button = event.target.closest("[data-review-mode]");
+  const button = (event.target as HTMLElement).closest("[data-review-mode]") as HTMLElement | null;
   if (!button) return;
   reviewMode = button.dataset.reviewMode || "rich";
   document.querySelectorAll("[data-review-mode]").forEach((item) => item.classList.toggle("active", item === button));
@@ -1391,16 +1400,16 @@ document.getElementById("review-mode-bar").addEventListener("click", (event) => 
 });
 
 const caseList = document.getElementById("case-list");
-const imageDialog = document.getElementById("image-dialog");
-const imageDialogImage = document.getElementById("image-dialog-image");
+const imageDialog = document.getElementById("image-dialog") as HTMLDialogElement;
+const imageDialogImage = document.getElementById("image-dialog-image") as HTMLImageElement;
 const imageDialogTitle = document.getElementById("image-dialog-title");
 
 caseList.addEventListener("click", (event) => {
-  const choice = event.target.closest(".visual-choice");
+  const choice = (event.target as HTMLElement).closest(".visual-choice") as HTMLElement | null;
   if (choice) {
     const review = choice.closest(".visual-review");
-    const image = review?.querySelector(".visual-frame img");
-    const frame = review?.querySelector(".visual-frame");
+    const image = review?.querySelector(".visual-frame img") as HTMLImageElement | null | undefined;
+    const frame = review?.querySelector(".visual-frame") as HTMLElement | null | undefined;
     if (!review || !image || !frame) return;
     review.querySelectorAll(".visual-choice").forEach((item) => item.classList.toggle("active", item === choice));
     image.src = choice.dataset.src || image.src;
@@ -1408,9 +1417,9 @@ caseList.addEventListener("click", (event) => {
     frame.dataset.imageTitle = image.alt;
     return;
   }
-  const frame = event.target.closest(".visual-frame");
+  const frame = (event.target as HTMLElement).closest(".visual-frame") as HTMLElement | null;
   if (!frame) return;
-  const image = frame.querySelector("img");
+  const image = frame.querySelector("img") as HTMLImageElement | null;
   if (!image) return;
   imageDialogImage.src = image.src;
   imageDialogImage.alt = image.alt;

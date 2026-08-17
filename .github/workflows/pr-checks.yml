@@ -91,11 +91,14 @@ jobs:
 
       - name: 运行 Agent 扩展自检
         if: (github.event_name == 'pull_request' && steps.scope.outputs.pi == 'true') || (github.event_name == 'workflow_dispatch' && inputs.full_suite)
-        run: npx tsx script/check-agent-project-tools.ts
+        run: |
+          npm run typecheck:agent
+          npx tsx script/check-agent-project-tools.ts
 
       - name: 运行编辑器自检
         if: (github.event_name == 'pull_request' && steps.scope.outputs.editor == 'true') || (github.event_name == 'workflow_dispatch' && inputs.full_suite)
         run: |
+          npm run typecheck:editor
           npm run build:editor
           git diff --exit-code -- Sources/WeiBei/Resources/Editor
           swift run WeiBeiWebEditorCheck
@@ -106,6 +109,7 @@ jobs:
           npm ci
           npm -w Prototypes/RichAnswerWebRuntime run build:embed
           git diff --exit-code -- Sources/WeiBei/Resources/rich-answer.html Sources/WeiBei/Resources/rich-answer-runtime.css Sources/WeiBei/Resources/rich-answer-runtime.js
+          npx tsc --noEmit -p Prototypes/RichAnswerEvidenceViewer/tsconfig.json
 
       - name: 运行课程目录与数据安全自检
         if: (github.event_name == 'pull_request' && steps.scope.outputs.data_safety == 'true') || (github.event_name == 'workflow_dispatch' && inputs.full_suite)

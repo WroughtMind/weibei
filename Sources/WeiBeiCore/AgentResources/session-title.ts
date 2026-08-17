@@ -71,7 +71,7 @@ export async function generateSessionTitle(
     );
     if (result.stopReason === "error" || result.stopReason === "aborted") return undefined;
     return normalizedTitle(
-      result.content.flatMap((item) => item.type === "text" ? [item.text] : []).join("\n"),
+      result.content.flatMap((item: any) => item.type === "text" ? [item.text] : []).join("\n"),
     );
   } finally {
     clearTimeout(timeout);
