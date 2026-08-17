@@ -26,8 +26,10 @@ struct CourseDocNoteWorkspaceView: View {
     let search: String
     @Binding var selectedNoteID: String?
     @Binding var selectedMaterialID: String?
-    @Binding var presentation: CourseDocNotePresentation
+    var showsGraph = false
     let isCompact: Bool
+    var onEditLinks: (() -> Void)? = nil
+    var createNote: (() -> Void)? = nil
 
     private var courseID: UUID? {
         store.courseWorkspaceCourseID
@@ -97,13 +99,10 @@ struct CourseDocNoteWorkspaceView: View {
                     )
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .padding(32)
+                } else if showsGraph {
+                    relationshipMap
                 } else {
-                    switch presentation {
-                    case .list:
-                        listWorkspace
-                    case .map:
-                        relationshipMap
-                    }
+                    listWorkspace
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -113,7 +112,6 @@ struct CourseDocNoteWorkspaceView: View {
         .onChange(of: courseID) { _, _ in
             selectedMaterialID = nil
             selectedNoteID = nil
-            presentation = .list
             normalizeSelection()
         }
         .onChange(of: documents.map(\.id)) { _, _ in
@@ -130,18 +128,16 @@ struct CourseDocNoteWorkspaceView: View {
             emptyCourseState
         } else {
             GeometryReader { proxy in
-                if isCompact || proxy.size.width < 840 {
+                if isCompact || proxy.size.width < 720 {
                     compactListWorkspace
                 } else {
-                    wideListWorkspace(
-                        inspectorWidth: min(380, max(300, proxy.size.width * 0.31))
-                    )
+                    wideListWorkspace()
                 }
             }
         }
     }
 
-    private func wideListWorkspace(inspectorWidth: CGFloat) -> some View {
+    private func wideListWorkspace() -> some View {
         HStack(spacing: 0) {
             itemColumn(
                 title: store.ui("文稿", "Docs"),
@@ -160,11 +156,6 @@ struct CourseDocNoteWorkspaceView: View {
                 kind: .notes
             )
             .frame(minWidth: 250, maxWidth: .infinity)
-
-            CourseHairline(axis: .vertical)
-
-            inspector
-                .frame(width: inspectorWidth)
         }
     }
 
@@ -184,17 +175,6 @@ struct CourseDocNoteWorkspaceView: View {
                     allItems: notes,
                     kind: .notes
                 )
-
-                inspector
-                    .frame(minHeight: 300)
-                    .background(
-                        WeiBeiTheme.paperRaised.opacity(0.16),
-                        in: RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    )
-                    .overlay {
-                        RoundedRectangle(cornerRadius: 10, style: .continuous)
-                            .stroke(WeiBeiTheme.hairline.opacity(0.62), lineWidth: 1)
-                    }
             }
             .padding(18)
         }
@@ -207,7 +187,7 @@ struct CourseDocNoteWorkspaceView: View {
         kind: CourseRelationLens
     ) -> some View {
         VStack(spacing: 0) {
-            sectionHeader(title: title, count: allItems.count)
+            sectionHeader(title: title, count: allItems.count, kind: kind)
             CourseHairline()
 
             if items.isEmpty {
@@ -228,7 +208,7 @@ struct CourseDocNoteWorkspaceView: View {
                 }
             }
         }
-        .background(WeiBeiTheme.paperRaised.opacity(0.10))
+        .background(WeiBeiTheme.paper)
     }
 
     private func compactItemSection(
@@ -238,7 +218,7 @@ struct CourseDocNoteWorkspaceView: View {
         kind: CourseRelationLens
     ) -> some View {
         VStack(alignment: .leading, spacing: 0) {
-            sectionHeader(title: title, count: allItems.count)
+            sectionHeader(title: title, count: allItems.count, kind: kind)
             CourseHairline()
 
             if items.isEmpty {
@@ -263,35 +243,92 @@ struct CourseDocNoteWorkspaceView: View {
         }
     }
 
-    private func sectionHeader(title: String, count: Int) -> some View {
+    private func sectionHeader(title: String, count: Int, kind: CourseRelationLens) -> some View {
         HStack(spacing: 8) {
             Text(title)
-                .font(WeiBeiTypography.brandFont(
-                    language: store.interfaceLanguage,
-                    size: 13,
-                    weight: .semibold
-                ))
-            Text("\(count)")
-                .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(WeiBeiTheme.secondaryInk)
+            Text("\(count)")
+                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                .foregroundStyle(WeiBeiTheme.tertiaryInk)
             Spacer(minLength: 0)
+            if let courseID {
+                if kind == .materials {
+                    Button {
+                        store.importCourseMaterialsFromPanel(courseID: courseID)
+                    } label: {
+                        Image(systemName: "plus")
+                    }
+                    .buttonStyle(WeiBeiIconButtonStyle(size: 22))
+                    .help(store.ui("导入文稿", "Import docs"))
+                    .accessibilityLabel(Text(store.ui("导入文稿", "Import docs")))
+                } else {
+                    Menu {
+                        Button(store.ui("导入笔记", "Import notes")) {
+                            store.importCourseNotesFromPanel(courseID: courseID)
+                        }
+                        if let createNote {
+                            Button(store.ui("新建笔记", "New note"), action: createNote)
+                        }
+                    } label: {
+                        Image(systemName: "plus")
+                    }
+                    .menuStyle(.borderlessButton)
+                    .menuIndicator(.hidden)
+                    .buttonStyle(WeiBeiIconButtonStyle(size: 22))
+                    .help(store.ui("导入或新建笔记", "Import or create a note"))
+                    .accessibilityLabel(Text(store.ui("添加笔记", "Add note")))
+                }
+            }
         }
-        .padding(.horizontal, 14)
-        .frame(height: 42)
+        .padding(.horizontal, 12)
+        .frame(height: 30)
     }
+
+    private var showsMaterialLinkToggles: Bool { selectedNote != nil }
+
+    private var showsNoteLinkToggles: Bool { selectedDocument != nil }
 
     private func itemRow(
         _ item: StudyItem,
         kind: CourseRelationLens
     ) -> some View {
-        CourseWorkspaceRow(
-            icon: kind == .notes ? "note.text" : item.kind.systemImage,
-            title: store.displayTitle(for: item),
-            detail: itemDetail(item),
-            status: relationCountLabel(for: item, kind: kind),
-            selected: isSelected(item, kind: kind)
-        ) {
-            select(item, kind: kind)
+        let showsToggle = kind == .materials ? showsMaterialLinkToggles : showsNoteLinkToggles
+        let counterpart: StudyItem? = kind == .materials ? selectedNote : selectedDocument
+        return HStack(spacing: 0) {
+            if showsToggle, let counterpart {
+                Button {
+                    toggleLink(item: counterpart, kind: kind == .materials ? .notes : .materials, counterpart: item)
+                } label: {
+                    Image(systemName: isLinked(
+                        item: counterpart,
+                        kind: kind == .materials ? .notes : .materials,
+                        counterpart: item
+                    ) ? "checkmark.square.fill" : "square")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(
+                        isLinked(
+                            item: counterpart,
+                            kind: kind == .materials ? .notes : .materials,
+                            counterpart: item
+                        ) ? WeiBeiTheme.cinnabar : WeiBeiTheme.tertiaryInk
+                    )
+                    .frame(width: 28, height: 36)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(Text(store.ui("切换关联", "Toggle link")))
+            }
+
+            CourseWorkspaceRow(
+                icon: kind == .notes ? "note.text" : item.kind.systemImage,
+                title: store.displayTitle(for: item),
+                detail: itemDetail(item),
+                status: relationCountLabel(for: item, kind: kind),
+                selected: isSelected(item, kind: kind)
+            ) {
+                select(item, kind: kind)
+            }
         }
     }
 
@@ -313,8 +350,8 @@ struct CourseDocNoteWorkspaceView: View {
             CourseEmptyState(
                 title: store.ui("还没有文稿", "No docs yet"),
                 detail: store.ui(
-                    "从右上角“添加”导入 PDF、HTML、Markdown 或文本。",
-                    "Use Add in the top-right to import PDF, HTML, Markdown, or text."
+                    "点这一列顶部的加号导入 PDF、HTML、Markdown 或文本。",
+                    "Use the plus on this column to import PDF, HTML, Markdown, or text."
                 ),
                 systemImage: "doc.badge.plus"
             )
@@ -498,12 +535,10 @@ struct CourseDocNoteWorkspaceView: View {
                         }
                         .buttonStyle(WeiBeiTextActionButtonStyle(active: !documents.isEmpty))
                     }
-                    Button(store.ui("返回列表", "Back to List")) {
-                        withAnimation(WeiBeiMotion.panel) {
-                            presentation = .list
-                        }
+                    if let onEditLinks {
+                        Button(store.ui("去文稿与笔记建立关联", "Link in Docs & Notes"), action: onEditLinks)
+                            .buttonStyle(WeiBeiTextActionButtonStyle())
                     }
-                    .buttonStyle(WeiBeiTextActionButtonStyle())
                 }
             }
             .frame(maxWidth: 460)
@@ -523,12 +558,10 @@ struct CourseDocNoteWorkspaceView: View {
                     systemImage: "point.3.connected.trianglepath.dotted"
                 )
 
-                Button(store.ui("返回列表建立关联", "Link in List")) {
-                    withAnimation(WeiBeiMotion.panel) {
-                        presentation = .list
-                    }
+                if let onEditLinks {
+                    Button(store.ui("去文稿与笔记建立关联", "Link in Docs & Notes"), action: onEditLinks)
+                        .buttonStyle(WeiBeiTextActionButtonStyle(active: true))
                 }
-                .buttonStyle(WeiBeiTextActionButtonStyle(active: true))
             }
             .frame(maxWidth: 460)
             .frame(maxWidth: .infinity, maxHeight: .infinity)

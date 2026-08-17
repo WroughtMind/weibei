@@ -479,12 +479,6 @@ struct CourseHubView: View {
                     )
             }
 
-            Text(store.ui(
-                "提交后会在当前 Chat 中优先查找这门课；切换资料不会切换 Chat。",
-                "The current Chat will prioritize this course; switching content does not switch Chats."
-            ))
-            .font(.system(size: 10.5))
-            .foregroundStyle(WeiBeiTheme.tertiaryInk)
         }
     }
 

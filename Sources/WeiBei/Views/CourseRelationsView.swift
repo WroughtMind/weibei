@@ -5,8 +5,10 @@ struct CourseRelationsView: View {
     let search: String
     @Binding var selectedNoteID: String?
     @Binding var selectedMaterialID: String?
-    @Binding var presentation: CourseDocNotePresentation
+    var showsGraph = false
     let isCompact: Bool
+    var onEditLinks: (() -> Void)? = nil
+    var createNote: (() -> Void)? = nil
 
     var body: some View {
         CourseDocNoteWorkspaceView(
@@ -14,8 +16,10 @@ struct CourseRelationsView: View {
             search: search,
             selectedNoteID: $selectedNoteID,
             selectedMaterialID: $selectedMaterialID,
-            presentation: $presentation,
-            isCompact: isCompact
+            showsGraph: showsGraph,
+            isCompact: isCompact,
+            onEditLinks: onEditLinks,
+            createNote: createNote
         )
     }
 }
