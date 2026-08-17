@@ -14,6 +14,8 @@ struct ContentView: View {
     var body: some View {
         GeometryReader { geometry in
             ZStack {
+                WorkspaceChromeBackdrop()
+
                 VStack(spacing: 0) {
                     UnifiedTopBarView(
                         isImmersiveLayout: isImmersiveLayout,
@@ -336,6 +338,26 @@ private struct LibraryAwareEscapeBridge: View {
     }
 }
 
+/// Window paper sits behind the top bar so empty-board glow and open-pane
+/// paper continue through the chrome instead of becoming a second strip.
+private struct WorkspaceChromeBackdrop: View {
+    @EnvironmentObject private var store: WorkspaceStore
+    @EnvironmentObject private var paneState: WorkspacePaneState
+
+    var body: some View {
+        let empty = !paneState.showReader && !paneState.showAgent && !paneState.showNotes
+        ZStack {
+            Color(nsColor: WeiBeiNativePalette.paper(for: store.appearanceMode))
+            if empty {
+                EmptyWorkspacePaperField(mode: store.appearanceMode, compact: false)
+            }
+        }
+        .ignoresSafeArea()
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+    }
+}
+
 private struct UnifiedTopBarView: View {
     @EnvironmentObject private var store: WorkspaceStore
     @EnvironmentObject private var libraryDrawer: LibraryDrawerState
@@ -403,30 +425,15 @@ private struct UnifiedTopBarView: View {
                 .frame(width: 8)
         }
         .foregroundStyle(secondaryText)
-        .offset(y: isFullScreen ? 0 : -3)
+        .offset(y: isFullScreen ? 0 : -2)
         .frame(height: barHeight)
         .background(topBarBackground)
         .overlay {
             paneToggleCluster
-                .offset(y: isFullScreen ? 0 : -3)
+                .offset(y: isFullScreen ? 0 : -2)
         }
         .opacity(appeared ? 1 : 0)
         .offset(y: appeared ? 0 : -5)
-        .overlay(alignment: .top) {
-            Rectangle()
-                .fill(topHighlight)
-                .frame(height: 1)
-        }
-        .overlay(alignment: .bottom) {
-            WeiBeiHeaderHandoffFade(
-                height: 18,
-                opacity: isImmersiveLayout ? 0.42 : 0.34,
-                appearanceMode: store.appearanceMode
-            )
-            .offset(y: 18)
-            .allowsHitTesting(false)
-        }
-        .shadow(color: WeiBeiTheme.ink.opacity(0.018), radius: 8, y: 2)
         .onAppear {
             withAnimation(WeiBeiMotion.reveal) {
                 appeared = true
@@ -480,27 +487,8 @@ private struct UnifiedTopBarView: View {
         WeiBeiTheme.paperInset.opacity(0.38)
     }
 
-    private var topHighlight: Color {
-        // Dark: hairline only — glassHighlight reads as a warm brown streak on 墨石.
-        store.appearanceMode.isDark
-            ? WeiBeiTheme.ink.opacity(0.05)
-            : WeiBeiTheme.glassHighlight.opacity(0.24)
-    }
-
     private var topBarBackground: some View {
-        WeiBeiGlassHeaderBackground(
-            paperOpacity: backgroundPaperOpacity - (isImmersiveLayout ? 0.06 : 0),
-            materialOpacity: backgroundMaterialOpacity + (isImmersiveLayout ? 0.03 : 0),
-            appearanceMode: store.appearanceMode
-        )
-    }
-
-    private var backgroundPaperOpacity: Double {
-        0.80
-    }
-
-    private var backgroundMaterialOpacity: Double {
-        0.09
+        Color.clear
     }
 
     @ViewBuilder

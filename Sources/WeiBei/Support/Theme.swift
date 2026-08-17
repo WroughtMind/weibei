@@ -503,7 +503,7 @@ enum WeiBeiMetric {
     static let iconButton: CGFloat = 26
     static let inputHeight: CGFloat = 30
     static let controlRadius: CGFloat = 7
-    static let topBarHeight: CGFloat = 38
+    static let topBarHeight: CGFloat = 36
 }
 
 /// Top-bar brand mark (DesignSystem logo exports bundled under Resources/Brand).
@@ -680,8 +680,8 @@ struct WeiBeiThemeLayoutPreview: View {
             .frame(width: 22, alignment: .trailing)
         }
         .padding(.horizontal, 6)
-        .frame(height: 13)
-        .background(paper.opacity(0.96))
+        .frame(height: 11)
+        .background(paper)
     }
 
     /// Wide reading column — primary surface in WeiBei.

@@ -38,6 +38,8 @@ struct EmptyWorkspaceLauncherView: View {
 
                 ZStack {
                     EmptyWorkspacePaperField(mode: mode, compact: compact)
+                        .frame(height: geometry.size.height + WeiBeiMetric.topBarHeight)
+                        .offset(y: -WeiBeiMetric.topBarHeight)
 
                     workspaceContent(
                         at: timeline.date,
@@ -188,37 +190,27 @@ struct EmptyWorkspaceLauncherView: View {
 /// `Color(nsColor:)` can stick to the wrong snapshot inside a long-lived NSHostingView.
 private enum EmptyWorkspaceResolvedColor {
     static func paper(_ mode: WeiBeiAppearanceMode) -> Color {
-        color(WeiBeiNativePalette.paper(for: mode))
+        Color(nsColor: WeiBeiNativePalette.paper(for: mode))
     }
 
     static func paperRaised(_ mode: WeiBeiAppearanceMode) -> Color {
-        color(WeiBeiNativePalette.paperRaised(for: mode))
+        Color(nsColor: WeiBeiNativePalette.paperRaised(for: mode))
     }
 
     static func ink(_ mode: WeiBeiAppearanceMode) -> Color {
-        color(WeiBeiNativePalette.ink(for: mode))
+        Color(nsColor: WeiBeiNativePalette.ink(for: mode))
     }
 
     static func secondaryInk(_ mode: WeiBeiAppearanceMode) -> Color {
-        color(WeiBeiNativePalette.secondaryInk(for: mode))
+        Color(nsColor: WeiBeiNativePalette.secondaryInk(for: mode))
     }
 
     static func hairline(_ mode: WeiBeiAppearanceMode) -> Color {
-        color(WeiBeiNativePalette.hairline(for: mode))
-    }
-
-    private static func color(_ nsColor: NSColor) -> Color {
-        let converted = nsColor.usingColorSpace(.sRGB) ?? nsColor
-        var red: CGFloat = 0
-        var green: CGFloat = 0
-        var blue: CGFloat = 0
-        var alpha: CGFloat = 0
-        converted.getRed(&red, green: &green, blue: &blue, alpha: &alpha)
-        return Color(.sRGB, red: red, green: green, blue: blue, opacity: alpha)
+        Color(nsColor: WeiBeiNativePalette.hairline(for: mode))
     }
 }
 
-private struct EmptyWorkspacePaperField: View {
+struct EmptyWorkspacePaperField: View {
     let mode: WeiBeiAppearanceMode
     let compact: Bool
 
