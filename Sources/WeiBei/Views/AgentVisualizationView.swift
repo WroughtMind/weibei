@@ -69,10 +69,12 @@ private struct AgentVisualizationWebView: NSViewRepresentable {
         controller.add(context.coordinator, name: Coordinator.handlerName)
 
         let configuration = WeiBeiWebViewConfiguration.make(
+            surface: .genui,
             allowingInlineMedia: false,
             nonPersistent: true
         )
         configuration.userContentController = controller
+        WeiBeiWebViewConfiguration.installConsoleErrorBridge(on: controller, surface: .genui)
 
         let view = WKWebView(frame: .zero, configuration: configuration)
         view.navigationDelegate = context.coordinator

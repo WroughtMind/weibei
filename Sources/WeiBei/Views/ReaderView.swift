@@ -2388,7 +2388,7 @@ struct WebReaderRepresentable: NSViewRepresentable {
     }
 
     func makeNSView(context: Context) -> WKWebView {
-        let configuration = WeiBeiWebViewConfiguration.make()
+        let configuration = WeiBeiWebViewConfiguration.make(surface: .reader)
         let controller = WKUserContentController()
         for name in Self.scriptMessageNames {
             controller.add(context.coordinator, name: name)
@@ -2414,6 +2414,7 @@ struct WebReaderRepresentable: NSViewRepresentable {
             forMainFrameOnly: true
         ))
         configuration.userContentController = controller
+        WeiBeiWebViewConfiguration.installConsoleErrorBridge(on: controller, surface: .reader)
         configuration.setURLSchemeHandler(
             context.coordinator.htmlResourceSchemeHandler,
             forURLScheme: WebReaderResourceSchemeHandler.scheme

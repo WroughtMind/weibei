@@ -507,14 +507,9 @@ extension WorkspaceStore {
             }
         }
         guard !plans.isEmpty else { return }
+        WeiBeiLog.noteRepair.notice("note_repair_planned count=\(plans.count, privacy: .public) dryRun=\(dryRun, privacy: .public)")
         for plan in plans {
-            NSLog(
-                "WeiBei note repair: item=%@ action=%@ path=%@%@",
-                plan.itemID,
-                plan.action.rawValue,
-                plan.url.path,
-                dryRun ? " (dry-run)" : ""
-            )
+            WeiBeiLog.noteRepair.notice("note_repair_plan action=\(plan.action.rawValue, privacy: .public)")
         }
         guard !dryRun else { return }
         var changed = false
@@ -533,11 +528,7 @@ extension WorkspaceStore {
                         rootURL: noteBackupRootURL
                     )
                 } catch {
-                    NSLog(
-                        "WeiBei note repair: backup failed, skip restore item=%@ error=%@",
-                        itemID,
-                        error.localizedDescription
-                    )
+                    WeiBeiLog.noteRepair.error("note_repair_backup_failed code=\(WeiBeiLog.code(error), privacy: .public)")
                     continue
                 }
                 do {
@@ -555,11 +546,7 @@ extension WorkspaceStore {
                     }
                     changed = true
                 } catch {
-                    NSLog(
-                        "WeiBei note repair: restore write failed item=%@ error=%@",
-                        itemID,
-                        error.localizedDescription
-                    )
+                    WeiBeiLog.noteRepair.error("note_repair_restore_write_failed code=\(WeiBeiLog.code(error), privacy: .public)")
                 }
             case .discardRedundantDraft:
                 // 磁盘==草稿：只清草稿不动内容；仅指纹漂移时才刷指纹（幂等）。
@@ -593,10 +580,7 @@ extension WorkspaceStore {
                     courseDocumentSearchIndex.schedule([refreshed])
                     changed = true
                 } else {
-                    NSLog(
-                        "WeiBei note repair: identity refresh failed item=%@",
-                        itemID
-                    )
+                    WeiBeiLog.noteRepair.error("note_repair_identity_refresh_failed")
                 }
             }
         }

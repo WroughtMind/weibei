@@ -633,7 +633,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
     }
 
     func makeNSView(context: Context) -> WKWebView {
-        let configuration = WeiBeiWebViewConfiguration.make()
+        let configuration = WeiBeiWebViewConfiguration.make(surface: .editor)
         let controller = WKUserContentController()
         context.coordinator.imageSchemeHandler.update(
             markdownBaseURLString: markdownBaseURL?.absoluteString ?? "",
@@ -717,6 +717,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             forMainFrameOnly: true
         ))
         configuration.userContentController = controller
+        WeiBeiWebViewConfiguration.installConsoleErrorBridge(on: controller, surface: .editor)
 
         let view = MarkdownWebView(frame: .zero, configuration: configuration)
         view.setValue(false, forKey: "drawsBackground")
