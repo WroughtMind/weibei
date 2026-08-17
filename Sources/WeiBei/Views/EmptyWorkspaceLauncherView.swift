@@ -255,7 +255,7 @@ private struct EmptyWorkspaceEntryRow: View {
     var body: some View {
         HStack(spacing: 0) {
             EmptyWorkspaceEntryButton(
-                title: "DOC",
+                title: "READ",
                 accessibilityLabel: store.ui("打开文稿", "Open document"),
                 identifier: "empty-workspace-entry-doc",
                 width: entryWidth,
@@ -275,7 +275,7 @@ private struct EmptyWorkspaceEntryRow: View {
             entryDivider
 
             EmptyWorkspaceEntryButton(
-                title: "NOTES",
+                title: "NOTE",
                 accessibilityLabel: store.ui("打开笔记", "Open notes"),
                 identifier: "empty-workspace-entry-notes",
                 width: entryWidth,
@@ -372,7 +372,7 @@ private struct EmptyWorkspaceInspirationView: View {
             .buttonStyle(.plain)
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(Text("\(inspiration.text)，\(inspiration.credit)"))
-            .accessibilityHint(Text(store.ui("随机换一则灵感", "Show a random inspiration")))
+            .accessibilityHint(Text(store.ui("随机换一句", "Show another line")))
             .accessibilityIdentifier("empty-workspace-inspiration-next")
 
             sourceAndRights

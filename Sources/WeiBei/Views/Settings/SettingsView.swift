@@ -260,23 +260,7 @@ struct SettingsView: View {
 
             settingsGroup(store.ui("偏好", "Preferences")) {
                 settingsRow(
-                    title: store.ui("文稿随主题调色", "Match documents to theme"),
-                    detail: store.ui(
-                        "PDF / HTML 按当前主题显示；关闭则保留原稿颜色。",
-                        "PDF and HTML follow the theme; off keeps original colors."
-                    )
-                ) {
-                    settingsSwitch(
-                        isOn: Binding(
-                            get: { store.adaptImportedDocumentColors },
-                            set: { store.setImportedDocumentColorAdaptation($0) }
-                        ),
-                        accessibilityLabel: store.ui("文稿随主题调色", "Match documents to theme")
-                    )
-                }
-
-                settingsRow(
-                    title: store.ui("每日灵感", "Daily Inspiration"),
+                    title: store.ui("今日一句", "Today's line"),
                     showsBottomDivider: false
                 ) {
                     settingsSwitch(
@@ -284,7 +268,7 @@ struct SettingsView: View {
                             get: { store.showDailyInspiration },
                             set: { store.setDailyInspirationEnabled($0) }
                         ),
-                        accessibilityLabel: store.ui("显示每日灵感", "Show Daily Inspiration")
+                        accessibilityLabel: store.ui("显示今日一句", "Show today's line")
                     )
                 }
             }

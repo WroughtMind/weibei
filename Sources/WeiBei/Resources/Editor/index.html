@@ -9,8 +9,8 @@
     :root,
     :root[data-weibei-theme="paper"] {
       color-scheme: light;
-      --paper: #f1e4cf;
-      --paper-raised: #f7ecd9;
+      --paper: #f4ead5;
+      --paper-raised: #f9f1de;
       --ink: #1d1814;
       --muted: rgba(58, 46, 38, .72);
       --faint: rgba(58, 46, 38, .50);
@@ -49,8 +49,8 @@
 
     :root[data-weibei-theme="xuan"] {
       color-scheme: light;
-      --paper: #f7f4ef;
-      --paper-raised: #fcfbf8;
+      --paper: #f8f5f0;
+      --paper-raised: #fdfcf9;
       --ink: #25231f;
       --muted: rgba(90, 86, 78, .74);
       --faint: rgba(90, 86, 78, .52);
@@ -87,21 +87,6 @@
       --selection: rgba(176, 64, 52, .32);
     }
 
-    :root[data-weibei-theme="xuan"] #editor {
-      background: color-mix(in srgb, var(--paper) 90%, transparent);
-    }
-
-    :root[data-weibei-theme="stele"] body {
-      background:
-        radial-gradient(circle at 20% 10%, rgba(255, 255, 255, .03), transparent 28%),
-        linear-gradient(180deg, #1a1d22 0%, #12151a 100%);
-    }
-
-    :root[data-weibei-compact-preview="true"][data-weibei-theme="stele"] body {
-      background: transparent;
-    }
-
-
     html, body {
       margin: 0;
       height: 100%;
@@ -114,15 +99,8 @@
       overflow: hidden;
     }
 
-    :root[data-weibei-theme="inkstone"] body,
-    :root[data-weibei-theme="stele"] body {
-      background:
-        radial-gradient(circle at 20% 10%, rgba(255, 255, 255, .025), transparent 28%),
-        linear-gradient(180deg, #101010 0%, #0b0b0b 100%);
-    }
-
-    :root[data-weibei-compact-preview="true"][data-weibei-theme="inkstone"] body,
-:root[data-weibei-compact-preview="true"][data-weibei-theme="stele"] body {
+    :root[data-weibei-compact-preview="true"] html,
+    :root[data-weibei-compact-preview="true"] body {
       background: transparent;
     }
 
@@ -133,7 +111,7 @@
       scrollbar-width: thin;
       scrollbar-color: transparent transparent;
       padding: 28px 34px 64px;
-      background: color-mix(in srgb, var(--paper) 88%, transparent);
+      background: transparent;
     }
 
     :root[data-weibei-compact-preview="true"] #editor {
@@ -144,13 +122,8 @@
       background: transparent;
     }
 
-    :root[data-weibei-theme="inkstone"] #editor,
-    :root[data-weibei-theme="stele"] #editor {
-      background: rgba(15, 15, 15, .88);
-    }
-
     :root[data-weibei-compact-preview="true"][data-weibei-theme="inkstone"] #editor,
-:root[data-weibei-compact-preview="true"][data-weibei-theme="stele"] #editor {
+    :root[data-weibei-compact-preview="true"][data-weibei-theme="stele"] #editor {
       background: transparent;
     }
 

@@ -293,7 +293,7 @@ struct ReaderView: View {
                store.selectedMaterialItem != nil {
                 // Mask switch lives only on this hover DOC tab — not pinned, not main top bar.
                 ImmersiveHoverTitleView(
-                    mark: "DOC",
+                    mark: "READ",
                     title: floatingTitle,
                     appearanceMode: store.appearanceMode,
                     reorderRole: floatingTitleReorderRole

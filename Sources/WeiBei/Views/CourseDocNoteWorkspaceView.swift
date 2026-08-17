@@ -419,7 +419,7 @@ struct CourseDocNoteWorkspaceView: View {
     ) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             VStack(alignment: .leading, spacing: 9) {
-                Text(kind == .materials ? "DOC" : "NOTE")
+                Text(kind == .materials ? "READ" : "NOTE")
                     .font(WeiBeiTypography.englishBrandFont(size: 9, weight: .semibold))
                     .tracking(1.0)
                     .foregroundStyle(WeiBeiTheme.cinnabar)

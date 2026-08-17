@@ -568,7 +568,7 @@ struct NotePaneView: View {
         } else {
             WeiBeiPaneHeader(
                 title: store.ui("笔记", "Notes"),
-                latinMark: store.interfaceLanguage == .chinese ? "NOTES" : nil,
+                latinMark: store.interfaceLanguage == .chinese ? "NOTE" : nil,
                 subtitle: noteHeaderSubtitle,
                 appearanceMode: store.appearanceMode,
                 reorderRole: reorderRole
@@ -586,7 +586,7 @@ struct NotePaneView: View {
     private var immersiveNoteHeader: some View {
         ZStack(alignment: .top) {
             ImmersiveHoverTitleView(
-                mark: "NOTES",
+                mark: "NOTE",
                 title: noteHeaderSubtitle,
                 appearanceMode: store.appearanceMode,
                 isPinned: store.notebookCreationDraft != nil,
