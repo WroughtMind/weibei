@@ -410,7 +410,6 @@ struct CourseWorkspaceHeader: View {
             .accessibilityLabel(Text(store.ui("关闭课程空间并返回工作台", "Close course space")))
 
             hubTitleBlock
-            .frame(minWidth: isCompact ? 96 : 120, alignment: .leading)
 
             if isCompact {
                 Menu {
@@ -514,34 +513,17 @@ struct CourseWorkspaceHeader: View {
                 }
             }
         } label: {
-            HStack(spacing: 7) {
-                Text(hubCourseTitle)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(WeiBeiTheme.ink)
-                    .lineLimit(1)
-                Image(systemName: "chevron.down")
-                    .font(.system(size: 8, weight: .bold))
-                    .foregroundStyle(WeiBeiTheme.secondaryInk)
-            }
-            .padding(.horizontal, 10)
-            .frame(height: 28)
-            .background(WeiBeiTheme.paperInset.opacity(0.34))
-            .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 7, style: .continuous)
-                    .stroke(WeiBeiTheme.hairline.opacity(0.55), lineWidth: 1)
-            }
-            .contentShape(Rectangle())
+            CourseSwitchCapsule(title: hubCourseTitle)
         }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden) // system pull-down chevron + our own would double up
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
         .help(store.ui(
-            "选择或管理课程",
-            "Choose or manage a course"
+            "选择课程",
+            "Choose a course"
         ))
         .accessibilityLabel(Text(store.ui(
-            "课程菜单",
-            "Course menu"
+            "当前课程 \(hubCourseTitle)，点按以切换",
+            "Current course \(hubCourseTitle), click to switch"
         )))
     }
 
@@ -550,6 +532,33 @@ struct CourseWorkspaceHeader: View {
             return course.title
         }
         return store.ui("选择课程", "Select course")
+    }
+}
+
+private struct CourseSwitchCapsule: View {
+    let title: String
+    @State private var hovering = false
+
+    var body: some View {
+        Text(title)
+            .font(courseTitleDisplayFont(title, size: 15, weight: .semibold))
+            .foregroundStyle(WeiBeiTheme.ink)
+            .lineLimit(1)
+            .padding(.horizontal, 16)
+            .frame(minWidth: 148, maxWidth: 240, minHeight: 36)
+            .background(
+                WeiBeiTheme.paperRaised.opacity(hovering ? 0.90 : 0.68),
+                in: Capsule()
+            )
+            .overlay {
+                Capsule()
+                    .stroke(
+                        WeiBeiTheme.hairline.opacity(hovering ? 0.80 : 0.48),
+                        lineWidth: 1
+                    )
+            }
+            .contentShape(Capsule())
+            .onHover { hovering = $0 }
     }
 }
 
