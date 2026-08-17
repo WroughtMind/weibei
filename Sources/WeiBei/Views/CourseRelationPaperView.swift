@@ -845,7 +845,7 @@ struct CourseRelationPaperView: View {
         let materialID = selectedAnchor.kind == .material ? selectedAnchor.itemID : node.itemID
         let noteID = selectedAnchor.kind == .note ? selectedAnchor.itemID : node.itemID
         if store.linkedNoteIDs(for: materialID).contains(noteID) {
-            return nil
+            return .linked
         }
         return .target
     }
@@ -854,7 +854,18 @@ struct CourseRelationPaperView: View {
         guard let selectedAnchor, selectedAnchor.kind != node.kind else { return }
         let materialID = selectedAnchor.kind == .material ? selectedAnchor.itemID : node.itemID
         let noteID = selectedAnchor.kind == .note ? selectedAnchor.itemID : node.itemID
-        addLink(materialID: materialID, noteID: noteID)
+        if store.linkedNoteIDs(for: materialID).contains(noteID) {
+            removeLink(noteID: noteID, materialID: materialID)
+        } else {
+            addLink(materialID: materialID, noteID: noteID)
+        }
+        if selectedAnchor.kind == .material {
+            selectedMaterialID = selectedAnchor.itemID
+            selectedNoteID = nil
+        } else {
+            selectedNoteID = selectedAnchor.itemID
+            selectedMaterialID = nil
+        }
     }
 
     private func addLink(materialID: String, noteID: String) {
@@ -862,22 +873,14 @@ struct CourseRelationPaperView: View {
               scopedNotes.contains(where: { $0.id == noteID })
         else { return }
         var linkedNoteIDs = Set(store.linkedNoteIDs(for: materialID))
-        guard linkedNoteIDs.insert(noteID).inserted else {
-            selectedMaterialID = materialID
-            selectedNoteID = noteID
-            return
-        }
+        guard linkedNoteIDs.insert(noteID).inserted else { return }
         store.setLinkedNoteIDs(linkedNoteIDs, for: materialID)
-        selectedMaterialID = materialID
-        selectedNoteID = noteID
     }
 
     private func removeLink(noteID: String, materialID: String) {
         var linkedMaterialIDs = Set(store.linkedCourseSourceIDs(for: noteID))
         linkedMaterialIDs.remove(materialID)
         store.setLinkedCourseSourceIDs(linkedMaterialIDs, for: noteID)
-        selectedMaterialID = materialID
-        selectedNoteID = noteID
     }
 
     private func linkedNoteItems(for materialID: String) -> [StudyItem] {
@@ -1006,6 +1009,7 @@ private enum CourseRelationConnectionState: Equatable {
     case alternate
     case source
     case target
+    case linked
 }
 
 private struct CourseRelationPaperNodeView: View {
@@ -1023,8 +1027,8 @@ private struct CourseRelationPaperNodeView: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            if node.kind == .note, connectionState == .target {
-                connectionControl(.target)
+            if node.kind == .note, let connectionState, showsConnectionControl(connectionState) {
+                connectionControl(connectionState)
             }
 
             Capsule()
@@ -1056,8 +1060,8 @@ private struct CourseRelationPaperNodeView: View {
                 itemID: node.itemID
             ))
 
-            if node.kind == .material, connectionState == .target {
-                connectionControl(.target)
+            if node.kind == .material, let connectionState, showsConnectionControl(connectionState) {
+                connectionControl(connectionState)
             }
         }
         .padding(.horizontal, 8)
@@ -1096,16 +1100,20 @@ private struct CourseRelationPaperNodeView: View {
         connectionButton(state)
     }
 
+    private func showsConnectionControl(_ state: CourseRelationConnectionState) -> Bool {
+        state == .target || state == .linked
+    }
+
     private func connectionButton(_ state: CourseRelationConnectionState) -> some View {
         Button(action: connect) {
-            Image(systemName: state == .source ? "xmark" : "plus")
+            Image(systemName: state == .linked || state == .source ? "minus" : "plus")
                 .font(.system(size: 10.5, weight: .bold))
                 .foregroundStyle(connectionForeground(state))
-                .frame(width: 27, height: 27)
+                .frame(width: 24, height: 24)
                 .background(connectionBackground(state), in: Circle())
                 .overlay(
                     Circle()
-                        .stroke(connectionBorder(state), lineWidth: state == .target ? 1.4 : 1)
+                        .stroke(connectionBorder(state), lineWidth: 1)
                 )
                 .contentShape(Circle())
         }
@@ -1124,6 +1132,8 @@ private struct CourseRelationPaperNodeView: View {
             return WeiBeiTheme.onCinnabar
         case .target:
             return accent
+        case .linked:
+            return WeiBeiTheme.secondaryInk
         }
     }
 
@@ -1137,6 +1147,8 @@ private struct CourseRelationPaperNodeView: View {
             return accent.opacity(0.88)
         case .target:
             return accent.opacity(0.13)
+        case .linked:
+            return WeiBeiTheme.paperInset.opacity(0.42)
         }
     }
 
@@ -1150,6 +1162,8 @@ private struct CourseRelationPaperNodeView: View {
             return accent.opacity(0.92)
         case .target:
             return accent.opacity(0.62)
+        case .linked:
+            return WeiBeiTheme.hairline.opacity(0.78)
         }
     }
 
@@ -1162,18 +1176,14 @@ private struct CourseRelationPaperNodeView: View {
         case .source:
             return store.ui("取消当前关联起点", "Cancel current link start")
         case .target:
-            return store.ui("与当前起点建立关联", "Link with current start")
+            return store.ui("建立关联", "Add link")
+        case .linked:
+            return store.ui("去掉关联", "Remove link")
         }
     }
 
     private func connectionHelp(_ state: CourseRelationConnectionState) -> String {
-        if state == .target {
-            return connectionLabel(state)
-        }
-        if node.kind == .material, state != .source {
-            return store.ui("点按选择资料；也可拖到笔记", "Choose this material, or drag it onto a note")
-        }
-        return connectionLabel(state)
+        connectionLabel(state)
     }
 
     private var iconColor: Color {

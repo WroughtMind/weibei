@@ -528,11 +528,11 @@ private struct CourseSwitchCapsule: View {
 
     var body: some View {
         Text(title)
-            .font(courseTitleDisplayFont(title, size: 13.5, weight: .semibold))
+            .font(courseTitleDisplayFont(title, size: 12.5, weight: .semibold))
             .foregroundStyle(WeiBeiTheme.ink)
             .lineLimit(1)
-            .padding(.horizontal, 11)
-            .frame(maxWidth: 200, minHeight: 28)
+            .padding(.horizontal, 8)
+            .frame(maxWidth: 168, minHeight: 24)
             .background(
                 WeiBeiTheme.paperRaised.opacity(hovering ? 0.90 : 0.68),
                 in: RoundedRectangle(cornerRadius: 8, style: .continuous)
