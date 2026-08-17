@@ -408,11 +408,15 @@ final class StableDocumentSplitCoordinator {
             preserveCurrentWidths: preserveCurrentWidths
         )
         let targetFrames = visibleFrames(order: visibleOrder, widths: widths, size: splitView.bounds.size)
+        let container = CGRect(origin: .zero, size: splitView.bounds.size)
+        let currentFrames = Dictionary(uniqueKeysWithValues: WorkspacePaneRole.allCases.compactMap { role in
+            splitView.roleHosts[role].map { (role, $0.frame) }
+        })
         let allTargetFrames = allRoleFrames(
             normalizedOrder: state.normalizedOrder,
-            visibleOrder: visibleOrder,
             visibleFrames: targetFrames,
-            size: splitView.bounds.size
+            currentFrames: currentFrames,
+            container: container
         )
         let targetDividerFrames = dividerFramesForOrder(
             visibleOrder,
@@ -578,42 +582,19 @@ final class StableDocumentSplitCoordinator {
 
     private func allRoleFrames(
         normalizedOrder: [WorkspacePaneRole],
-        visibleOrder: [WorkspacePaneRole],
         visibleFrames: [WorkspacePaneRole: CGRect],
-        size: CGSize
+        currentFrames: [WorkspacePaneRole: CGRect],
+        container: CGRect
     ) -> [WorkspacePaneRole: CGRect] {
         var frames = visibleFrames
         for role in normalizedOrder where visibleFrames[role] == nil {
-            frames[role] = collapsedFrame(
+            frames[role] = PaneSeatMotion.closingFrame(
                 for: role,
-                normalizedOrder: normalizedOrder,
-                visibleOrder: visibleOrder,
-                visibleFrames: visibleFrames,
-                size: size
+                current: currentFrames[role],
+                container: container
             )
         }
         return frames
-    }
-
-    private func collapsedFrame(
-        for role: WorkspacePaneRole,
-        normalizedOrder: [WorkspacePaneRole],
-        visibleOrder: [WorkspacePaneRole],
-        visibleFrames: [WorkspacePaneRole: CGRect],
-        size: CGSize
-    ) -> CGRect {
-        guard let roleIndex = normalizedOrder.firstIndex(of: role) else {
-            return CGRect(x: size.width, y: 0, width: 0, height: size.height)
-        }
-        if let nextRole = normalizedOrder.dropFirst(roleIndex + 1).first(where: { visibleOrder.contains($0) }),
-           let nextFrame = visibleFrames[nextRole] {
-            return CGRect(x: nextFrame.minX, y: 0, width: 0, height: size.height)
-        }
-        if let previousRole = normalizedOrder[..<roleIndex].reversed().first(where: { visibleOrder.contains($0) }),
-           let previousFrame = visibleFrames[previousRole] {
-            return CGRect(x: previousFrame.maxX, y: 0, width: 0, height: size.height)
-        }
-        return CGRect(x: 0, y: 0, width: 0, height: size.height)
     }
 
     private func prepareHosts(
@@ -622,11 +603,12 @@ final class StableDocumentSplitCoordinator {
         targetFrames: [WorkspacePaneRole: CGRect],
         in splitView: StableDocumentSplitView
     ) {
-        // 8a172fe5 behavior: enter from zero width at target x, then expand.
+        // 文稿 grows from the left of its slot, 对话 from the slot mid-line,
+        // 笔记 from the right — including the second/third pane after another is open.
         for role in nextVisible.subtracting(previousVisible) {
             guard let host = splitView.roleHosts[role], let target = targetFrames[role] else { continue }
             host.alphaValue = 1
-            host.frame = CGRect(x: target.minX, y: 0, width: 0, height: target.height)
+            host.frame = PaneSeatMotion.openingFrame(for: role, target: target)
             host.isHidden = false
         }
         for role in previousVisible.union(nextVisible) {
