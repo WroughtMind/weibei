@@ -25,6 +25,7 @@ import { katexOptionsCtx, math } from '@milkdown/plugin-math';
 import katex from 'katex';
 import 'katex/dist/katex.css';
 import mermaid from 'mermaid';
+// @ts-expect-error prismjs 无类型声明，运行时由 prism.js 提供
 import Prism from 'prismjs';
 import 'prismjs/components/prism-bash';
 import 'prismjs/components/prism-css';
@@ -41,6 +42,28 @@ import 'prismjs/components/prism-swift';
 import 'prismjs/components/prism-tsx';
 import 'prismjs/components/prism-typescript';
 import 'prismjs/components/prism-yaml';
+
+declare global {
+  interface Window {
+    webkit?: {
+      messageHandlers?: any;
+    };
+    weiBeiMarkdownEditable?: boolean;
+    weiBeiMarkdownCompactPreview?: boolean;
+    weiBeiDocumentID?: string;
+    weiBeiMarkdownBaseURL?: string;
+    weiBeiLocalImageScheme?: string;
+    weiBeiInterfaceLanguage?: unknown;
+    weiBeiTheme?: unknown;
+    weiBeiSuppressSelectionReport?: boolean;
+    weiBeiEditorCheckMode?: boolean;
+    initialMarkdown?: string;
+    WeiBeiEditorBootFailed?: (error: unknown) => void;
+    WeiBeiEditor?: Record<string, unknown>;
+    WeiBeiCompactPreviewHeight?: number;
+    WeiBeiCompactPreviewMeasuredAt?: number;
+  }
+}
 
 // Stata has no official Prism component; econometrics answers lean on it heavily.
 // Line-leading `*` is a comment in Stata — colorized here so it does not read
@@ -62,13 +85,13 @@ Prism.languages.stata = {
 Prism.languages.do = Prism.languages.stata;
 
 const bridge = window.webkit?.messageHandlers;
-let editor;
+let editor: Editor;
 let lastMarkdown = '';
-let compositionStartMarkdown = null;
-let compositionTextblockFrom = null;
+let compositionStartMarkdown: string | null = null;
+let compositionTextblockFrom: number | null = null;
 let compositionEndPending = false;
-let lastSelectionRange = null;
-let lastSelectionReport = { text: null, rectKey: null };
+let lastSelectionRange: { from: number; to: number } | null = null;
+let lastSelectionReport: { text: string | null; rectKey: string | null } = { text: null, rectKey: null };
 let frontmatterBlock = '';
 let isEditable = window.weiBeiMarkdownEditable !== false;
 const isCompactPreview = window.weiBeiMarkdownCompactPreview === true;
@@ -85,8 +108,8 @@ const pendingImagePickers = new Map();
 const weiBeiSlash = slashFactory('WEIBEI_BLOCK_COMMAND');
 let currentDocumentGeneration = 0;
 let currentContentGeneration = 0;
-let streamingMarkdownBuffer = null;
-let selectionAskMarks = [];
+let streamingMarkdownBuffer: string | null = null;
+let selectionAskMarks: any[] = [];
 const insertionCursorMarker = '{{WEIBEI_CURSOR}}';
 const insertionSelectionStartMarker = '{{WEIBEI_SELECT_START}}';
 const insertionSelectionEndMarker = '{{WEIBEI_SELECT_END}}';
@@ -110,8 +133,8 @@ const calloutTypes = new Set([
 ]);
 const calloutTypePattern = '[A-Za-z][A-Za-z0-9_-]*';
 const calloutPrefixPattern = '(?:\\s*>\\s*)*\\s*';
-const normalizeInterfaceLanguage = (value) => (value === 'en' ? 'en' : 'zh-Hans');
-let currentLanguage = normalizeInterfaceLanguage(window.weiBeiInterfaceLanguage);
+const normalizeInterfaceLanguage = (value: any) => (value === 'en' ? 'en' : 'zh-Hans');
+let currentLanguage: 'en' | 'zh-Hans' = normalizeInterfaceLanguage(window.weiBeiInterfaceLanguage);
 const calloutLabels = {
   'zh-Hans': {
     note: '札记',
@@ -150,7 +173,7 @@ const calloutLabels = {
     todo: 'Todo',
   },
 };
-const calloutLabel = (type) => calloutLabels[currentLanguage]?.[type] || calloutLabels['zh-Hans'][type] || type;
+const calloutLabel = (type: any) => (calloutLabels[currentLanguage] as Record<string, string>)?.[type] || (calloutLabels['zh-Hans'] as Record<string, string>)[type] || type;
 const editorLabels = {
   'zh-Hans': {
     properties: '属性',
@@ -185,8 +208,8 @@ const editorLabels = {
     slashRows: 'Rows', slashColumns: 'Columns', slashInsertTable: 'Insert table', slashImageFailed: 'Image could not be read or saved', codeLanguage: 'Code language', codeLanguagePlaceholder: 'text',
   },
 };
-const editorLabel = (key, values = {}) => {
-  let text = editorLabels[currentLanguage]?.[key] || editorLabels['zh-Hans'][key] || key;
+const editorLabel = (key: any, values: any = {}) => {
+  let text = (editorLabels[currentLanguage] as Record<string, string>)?.[key] || (editorLabels['zh-Hans'] as Record<string, string>)[key] || key;
   for (const [name, value] of Object.entries(values)) {
     text = text.split(`{${name}}`).join(String(value));
   }
@@ -198,7 +221,7 @@ const calloutMarkerRegex = new RegExp(`^${calloutPrefixPattern}\\\\?\\[!(?:${cal
 const calloutHeadingRegex = new RegExp(`^${calloutPrefixPattern}\\\\?\\[!(?:${calloutTypePattern})\\][+-]?(?:[ \\t]+[^\\n]+)?$`, 'i');
 const selectedTextCalloutControlRegex = new RegExp(`(^|\\n)\\s*(?:>\\s*)*\\\\?\\[!(?:${calloutTypePattern})\\][+-]?[ \\t]*`, 'gi');
 const htmlBreakPattern = /<br\s*\/?>/gi;
-const cleanSelectedText = (text) => String(text || '')
+const cleanSelectedText = (text: any) => String(text || '')
   .replace(htmlBreakPattern, '\n')
   .replace(/%%[\s\S]*?%%\n?/g, '')
   .replace(/!\[\[([^\]\n]+)\]\]/g, (_, raw) => {
@@ -221,15 +244,15 @@ const cleanSelectedText = (text) => String(text || '')
   .replace(/[ \t]+\n/g, '\n')
   .replace(/\n{2,}/g, '\n')
   .trim();
-const calloutHeaderText = (node) => {
+const calloutHeaderText = (node: any) => {
   const text = node.textBetween
     ? node.textBetween(0, node.content.size, '\n')
     : (node.textContent || '');
   return (text.split('\n')[0] || '').trimStart();
 };
-const firstParagraphText = (node) => {
+const firstParagraphText = (node: any) => {
   let first = '';
-  node.descendants((child) => {
+  node.descendants((child: any) => {
     if (first) return false;
     if (child.type?.name !== 'paragraph') return true;
     const text = (child.textContent || '').trimStart();
@@ -239,12 +262,12 @@ const firstParagraphText = (node) => {
   });
   return first;
 };
-const calloutMatchForBlockquote = (node) => (
+const calloutMatchForBlockquote = (node: any) => (
   calloutHeaderText(node).match(calloutRegex)
     || firstParagraphText(node).match(calloutRegex)
 );
-const isBlockquoteType = (typeName) => typeName === 'blockquote' || typeName === 'block_quote';
-const decorateCalloutHeadingSource = (decorations, node, pos) => {
+const isBlockquoteType = (typeName: any) => typeName === 'blockquote' || typeName === 'block_quote';
+const decorateCalloutHeadingSource = (decorations: any, node: any, pos: any) => {
   const text = node.textBetween
     ? node.textBetween(0, node.content.size, '')
     : (node.textContent || '');
@@ -261,7 +284,7 @@ const decorateCalloutHeadingSource = (decorations, node, pos) => {
     addRangeDecoration(decorations, markerEnd, titleEnd, 'weibei-callout-heading-source');
   }
 };
-const decorateLeakedCalloutControls = (decorations, text, pos) => {
+const decorateLeakedCalloutControls = (decorations: any, text: any, pos: any) => {
   for (const match of text.matchAll(selectedTextCalloutControlRegex)) {
     const lineBreakSize = match[1]?.length || 0;
     const from = pos + (match.index || 0) + lineBreakSize;
@@ -271,7 +294,7 @@ const decorateLeakedCalloutControls = (decorations, text, pos) => {
 };
 
 // Keep all four product themes — CSS variables live under data-weibei-theme={paper|xuan|inkstone|stele}.
-const normalizeTheme = (theme) => {
+const normalizeTheme = (theme: any) => {
   if (theme === 'xuan' || theme === 'inkstone' || theme === 'stele' || theme === 'paper') return theme;
   return 'paper';
 };
@@ -335,7 +358,7 @@ const initializeMermaid = () => {
   });
 };
 
-const applyTheme = (theme) => {
+const applyTheme = (theme: any) => {
   currentTheme = normalizeTheme(theme);
   document.documentElement.dataset.weibeiTheme = currentTheme;
   if (document.body) document.body.dataset.weibeiTheme = currentTheme;
@@ -345,7 +368,7 @@ const applyTheme = (theme) => {
 
 applyTheme(currentTheme);
 
-const showFailure = (error) => {
+const showFailure = (error: any) => {
   if (window.WeiBeiEditorBootFailed) {
     window.WeiBeiEditorBootFailed(error);
     return;
@@ -358,7 +381,7 @@ const showFailure = (error) => {
 window.addEventListener('error', (event) => showFailure(event.error || event.message));
 window.addEventListener('unhandledrejection', (event) => showFailure(event.reason));
 
-const post = (name, body = {}) => {
+const post = (name: any, body: any = {}) => {
   bridge?.[name]?.postMessage({ ...body, documentID: currentDocumentID });
 };
 
@@ -371,7 +394,7 @@ const slashStatusElement = document.createElement('div');
 slashStatusElement.className = 'weibei-visually-hidden';
 slashStatusElement.setAttribute('role', 'status');
 slashStatusElement.setAttribute('aria-live', 'polite');
-let slashTablePanelElement = null;
+let slashTablePanelElement: HTMLElement | null = null;
 
 const slashGroups = [
   { id: 'structure', label: 'slashStructure' }, { id: 'lists', label: 'slashLists' },
@@ -392,7 +415,21 @@ const slashCommands = [
   { id: 'image', group: 'rich', label: 'slashImage', aliases: ['image', 'photo', 'picture', 'tp', '图片', '照片'] },
   { id: 'mermaid', group: 'rich', label: 'slashMermaid', aliases: ['mermaid', 'diagram', 'flowchart', 'lct', '图表', '流程图'] },
 ];
-const slashRuntime = { provider: null, view: null, context: null, commands: [], activeIndex: 0, dismissedContext: '', activationContext: '', tableOpen: false, tableFocus: 'rows', tableRows: 3, tableColumns: 3, tableMenuBaseLeft: '', error: '' };
+const slashRuntime: {
+  provider: any;
+  view: any;
+  context: any;
+  commands: any[];
+  activeIndex: number;
+  dismissedContext: string;
+  activationContext: string;
+  tableOpen: boolean;
+  tableFocus: string;
+  tableRows: number;
+  tableColumns: number;
+  tableMenuBaseLeft: string;
+  error: string;
+} = { provider: null, view: null, context: null, commands: [], activeIndex: 0, dismissedContext: '', activationContext: '', tableOpen: false, tableFocus: 'rows', tableRows: 3, tableColumns: 3, tableMenuBaseLeft: '', error: '' };
 const slashExcludedAncestors = new Set(['list_item', 'task_list_item', 'table', 'table_row', 'table_header_row', 'table_cell', 'table_header', 'code_block', 'math_block']);
 
 /**
@@ -404,7 +441,7 @@ const slashExcludedAncestors = new Set(['list_item', 'task_list_item', 'table', 
  * them, so without this check an image followed by "/" would be mistaken for a
  * blank Slash line and replaced wholesale.
  */
-const slashContextForView = (view) => {
+const slashContextForView = (view: any) => {
   if (!isEditable || view.composing) return null;
   const { selection } = view.state;
   if (!(selection instanceof TextSelection) || !selection.empty) return null;
@@ -412,7 +449,7 @@ const slashContextForView = (view) => {
   if ($from.parent.type.name !== 'paragraph' || $from.parentOffset !== $from.parent.content.size) return null;
   for (let depth = $from.depth; depth > 0; depth -= 1) if (slashExcludedAncestors.has($from.node(depth).type.name)) return null;
   let hasInlineNode = false;
-  $from.parent.content.forEach((node) => { if (!node.isText) hasInlineNode = true; });
+  $from.parent.content.forEach((node: any) => { if (!node.isText) hasInlineNode = true; });
   if (hasInlineNode) return null;
   const source = $from.parent.textContent || '';
   const match = source.match(/^[\u200B\uFEFF]*\/([^\s/]*)$/u);
@@ -422,7 +459,7 @@ const slashContextForView = (view) => {
 };
 
 /** Builds the replacement nodes directly instead of reparsing generated Markdown. */
-const slashReplacement = (commandID, schema, options = {}) => {
+const slashReplacement = (commandID: any, schema: any, options: any = {}) => {
   const paragraph = schema.nodes.paragraph;
   if (!paragraph) return null;
   if (commandID.startsWith('heading')) {
@@ -471,7 +508,7 @@ const slashReplacement = (commandID, schema, options = {}) => {
 };
 
 /** Checks whether the current container accepts the requested replacement. */
-const slashCommandIsAllowed = (command, context, schema) => {
+const slashCommandIsAllowed = (command: any, context: any, schema: any) => {
   if (!context) return false;
   if (command.id === 'image') return Boolean(schema.nodes.image);
   const replacement = slashReplacement(command.id, schema, { rows: 3, columns: 3 });
@@ -479,13 +516,13 @@ const slashCommandIsAllowed = (command, context, schema) => {
 };
 
 /** Filters commands by localized labels and stable aliases. */
-const filteredSlashCommands = (query, context, schema) => {
+const filteredSlashCommands = (query: any, context: any, schema: any) => {
   const normalized = String(query || '').toLocaleLowerCase();
-  return slashCommands.filter((command) => slashCommandIsAllowed(command, context, schema) && (!normalized || [editorLabels['zh-Hans'][command.label], editorLabels.en[command.label], ...command.aliases].some((value) => String(value).toLocaleLowerCase().includes(normalized))));
+  return slashCommands.filter((command) => slashCommandIsAllowed(command, context, schema) && (!normalized || [(editorLabels['zh-Hans'] as Record<string, string>)[command.label], (editorLabels.en as Record<string, string>)[command.label], ...command.aliases].some((value) => String(value).toLocaleLowerCase().includes(normalized))));
 };
 
 /** Applies exactly one history event for a slash block replacement. */
-const applySlashReplacement = (view, context, replacement) => {
+const applySlashReplacement = (view: any, context: any, replacement: any) => {
   if (!context || !replacement) return false;
   const node = view.state.doc.nodeAt(context.blockFrom);
   if (node?.type.name !== 'paragraph' || node.textContent !== context.source) return false;
@@ -500,7 +537,7 @@ const applySlashReplacement = (view, context, replacement) => {
 };
 
 /** Records a native picker request without changing the slash paragraph. */
-const requestSlashImage = (view, context) => {
+const requestSlashImage = (view: any, context: any) => {
   const id = `image-picker-${Date.now()}-${attachmentRequestID += 1}`;
   pendingImagePickers.set(id, { view, context, documentID: currentDocumentID, documentGeneration: currentDocumentGeneration });
   slashRuntime.dismissedContext = context.key;
@@ -509,7 +546,7 @@ const requestSlashImage = (view, context) => {
 };
 
 /** Executes a selected command or opens the image picker. */
-const executeSlashCommand = (commandID) => {
+const executeSlashCommand = (commandID: any) => {
   const view = slashRuntime.view;
   const context = view && slashContextForView(view);
   if (!view || !context) return false;
@@ -572,7 +609,7 @@ const renderSlashMenu = () => {
       const stepper = document.createElement('div'); stepper.className = `weibei-slash-stepper${slashRuntime.tableFocus === kind ? ' is-focused' : ''}`;
       const label = document.createElement('span'); label.className = 'weibei-slash-stepper-label'; label.textContent = editorLabel(isRows ? 'slashRows' : 'slashColumns'); stepper.appendChild(label);
       const decrement = document.createElement('button'); decrement.type = 'button'; decrement.textContent = '−'; decrement.disabled = value <= 1; decrement.setAttribute('aria-label', `${label.textContent} −`); decrement.addEventListener('pointerdown', (event) => event.preventDefault()); decrement.addEventListener('click', () => { if (isRows) slashRuntime.tableRows = Math.max(1, value - 1); else slashRuntime.tableColumns = Math.max(1, value - 1); slashRuntime.tableFocus = kind; renderSlashMenu(); }); stepper.appendChild(decrement);
-      const input = document.createElement('input'); input.className = 'weibei-slash-stepper-input'; input.type = 'number'; input.inputMode = 'numeric'; input.min = '1'; input.max = String(max); input.step = '1'; input.value = String(value); input.setAttribute('aria-label', label.textContent); input.addEventListener('focus', () => { slashRuntime.tableFocus = kind; panel.querySelectorAll('.weibei-slash-stepper.is-focused').forEach((element) => element.classList.remove('is-focused')); stepper.classList.add('is-focused'); }); input.addEventListener('input', () => { const next = Number.parseInt(input.value, 10); if (!Number.isFinite(next)) return; if (isRows) slashRuntime.tableRows = Math.min(max, Math.max(1, next)); else slashRuntime.tableColumns = Math.min(max, Math.max(1, next)); }); input.addEventListener('change', () => { const next = Math.min(max, Math.max(1, Number.parseInt(input.value, 10) || 1)); input.value = String(next); if (isRows) slashRuntime.tableRows = next; else slashRuntime.tableColumns = next; }); input.addEventListener('keydown', (event) => { event.stopPropagation(); if (event.key === 'Enter') { const next = Math.min(max, Math.max(1, Number.parseInt(input.value, 10) || 1)); if (isRows) slashRuntime.tableRows = next; else slashRuntime.tableColumns = next; executeSlashCommand('table'); event.preventDefault(); } }); stepper.appendChild(input);
+      const input = document.createElement('input'); input.className = 'weibei-slash-stepper-input'; input.type = 'number'; input.inputMode = 'numeric'; input.min = '1'; input.max = String(max); input.step = '1'; input.value = String(value); input.setAttribute('aria-label', label.textContent!); input.addEventListener('focus', () => { slashRuntime.tableFocus = kind; panel.querySelectorAll('.weibei-slash-stepper.is-focused').forEach((element) => element.classList.remove('is-focused')); stepper.classList.add('is-focused'); }); input.addEventListener('input', () => { const next = Number.parseInt(input.value, 10); if (!Number.isFinite(next)) return; if (isRows) slashRuntime.tableRows = Math.min(max, Math.max(1, next)); else slashRuntime.tableColumns = Math.min(max, Math.max(1, next)); }); input.addEventListener('change', () => { const next = Math.min(max, Math.max(1, Number.parseInt(input.value, 10) || 1)); input.value = String(next); if (isRows) slashRuntime.tableRows = next; else slashRuntime.tableColumns = next; }); input.addEventListener('keydown', (event) => { event.stopPropagation(); if (event.key === 'Enter') { const next = Math.min(max, Math.max(1, Number.parseInt(input.value, 10) || 1)); if (isRows) slashRuntime.tableRows = next; else slashRuntime.tableColumns = next; executeSlashCommand('table'); event.preventDefault(); } }); stepper.appendChild(input);
       const increment = document.createElement('button'); increment.type = 'button'; increment.textContent = '+'; increment.disabled = value >= max; increment.setAttribute('aria-label', `${label.textContent} +`); increment.addEventListener('pointerdown', (event) => event.preventDefault()); increment.addEventListener('click', () => { if (isRows) slashRuntime.tableRows = Math.min(max, value + 1); else slashRuntime.tableColumns = Math.min(max, value + 1); slashRuntime.tableFocus = kind; renderSlashMenu(); }); stepper.appendChild(increment);
       panel.appendChild(stepper);
     }
@@ -597,7 +634,7 @@ const renderSlashMenu = () => {
 };
 
 /** Handles command navigation before the editor's ordinary key handlers. */
-const handleSlashMenuKeyDown = (view, event) => {
+const handleSlashMenuKeyDown = (view: any, event: any) => {
   const context = slashContextForView(view);
   if (slashMenuElement.dataset.show !== 'true' || !context || event.isComposing || event.keyCode === 229) return false;
   if (event.key === 'Escape') { slashRuntime.dismissedContext = context.key; slashRuntime.provider?.hide(); event.preventDefault(); return true; }
@@ -619,15 +656,15 @@ document.documentElement.dataset.weibeiCompactPreview = isCompactPreview ? 'true
 let contentHeightFrame = 0;
 let lastReportedContentHeight = 0;
 let lastReportedContentWidth = 0;
-const contentHeightDelayHandles = new Set();
+const contentHeightDelayHandles = new Set<number>();
 
-const compactPreviewMeasureNodes = () => [
+const compactPreviewMeasureNodes = () => ([
   document.querySelector('#editor'),
   document.querySelector('.milkdown'),
   document.querySelector('.ProseMirror'),
-].filter(Boolean);
+].filter(Boolean)) as any[];
 
-const measuredNodeHeight = (node) => {
+const measuredNodeHeight = (node: any) => {
   const rect = node.getBoundingClientRect?.();
   return Math.max(
     0,
@@ -710,7 +747,7 @@ const rectFromSelection = () => {
   };
 };
 
-const isEscapedMarkdownPosition = (source, index) => {
+const isEscapedMarkdownPosition = (source: any, index: any) => {
   let slashCount = 0;
   for (let cursor = index - 1; cursor >= 0 && source[cursor] === '\\'; cursor -= 1) {
     slashCount += 1;
@@ -718,7 +755,7 @@ const isEscapedMarkdownPosition = (source, index) => {
   return slashCount % 2 === 1;
 };
 
-const findUnescapedMarkdownMarker = (source, marker, from) => {
+const findUnescapedMarkdownMarker = (source: any, marker: any, from: any) => {
   let index = source.indexOf(marker, from);
   while (index >= 0 && isEscapedMarkdownPosition(source, index)) {
     index = source.indexOf(marker, index + marker.length);
@@ -726,7 +763,7 @@ const findUnescapedMarkdownMarker = (source, marker, from) => {
   return index;
 };
 
-const mapMarkdownOutsideBackticks = (line, transform) => {
+const mapMarkdownOutsideBackticks = (line: any, transform: any) => {
   const source = String(line || '');
   let result = '';
   let cursor = 0;
@@ -749,7 +786,7 @@ const mapMarkdownOutsideBackticks = (line, transform) => {
   return result;
 };
 
-const normalizeMarkdownOutputSegment = (text) => String(text || '')
+const normalizeMarkdownOutputSegment = (text: any) => String(text || '')
   .replace(/\\\[\\\[/g, '[[')
   .replace(/\\\]\\\]/g, ']]')
   .replace(/\\=\\=([^=\n]+?)\\=\\=/g, '==$1==')
@@ -758,7 +795,7 @@ const normalizeMarkdownOutputSegment = (text) => String(text || '')
   .replace(/\\\$(?=\d)/g, '$')
   .replace(new RegExp(`^(\\s*(?:>\\s*)*)\\\\(\\[!(?:${calloutTypePattern})\\])`, 'gim'), '$1$2');
 
-const mapMarkdownOutsideCode = (markdown, transform) => {
+const mapMarkdownOutsideCode = (markdown: any, transform: any) => {
   const parts = String(markdown || '').split(/(\r?\n)/);
   let inFence = false;
   let fenceMarker = '';
@@ -792,13 +829,13 @@ const mapMarkdownOutsideCode = (markdown, transform) => {
 };
 
 // ponytail: line scanner skips code fences/backtick spans; use a Markdown AST only if more rewrites are added.
-const normalizeMarkdownOutput = (markdown) => mapMarkdownOutsideCode(markdown, normalizeMarkdownOutputSegment);
+const normalizeMarkdownOutput = (markdown: any) => mapMarkdownOutsideCode(markdown, normalizeMarkdownOutputSegment);
 
-const normalizeHtmlBreaksInLine = (line) => String(line || '').replace(/<br\s*\/?>[ \t]*/gi, '  \n');
+const normalizeHtmlBreaksInLine = (line: any) => String(line || '').replace(/<br\s*\/?>[ \t]*/gi, '  \n');
 
-const normalizeHtmlBreaks = (markdown) => mapMarkdownOutsideCode(markdown, normalizeHtmlBreaksInLine);
+const normalizeHtmlBreaks = (markdown: any) => mapMarkdownOutsideCode(markdown, normalizeHtmlBreaksInLine);
 
-const splitFrontmatter = (markdown) => {
+const splitFrontmatter = (markdown: any) => {
   const source = markdown || '';
   const match = source.match(/^(---\n[\s\S]*?\n---)(?:\n+|$)/);
   if (!match) return { frontmatter: '', body: source };
@@ -808,13 +845,13 @@ const splitFrontmatter = (markdown) => {
   };
 };
 
-const withFrontmatter = (markdown) => {
+const withFrontmatter = (markdown: any) => {
   const normalized = normalizeMarkdownOutput(markdown);
   const body = frontmatterBlock ? normalized.replace(/^\n+/, '') : normalized;
   return frontmatterBlock ? `${frontmatterBlock}\n\n${body}` : body;
 };
 
-const frontmatterRows = (frontmatter) => String(frontmatter || '')
+const frontmatterRows = (frontmatter: any) => String(frontmatter || '')
   .split(/\r?\n/)
   .slice(1, -1)
   .map((line) => {
@@ -828,9 +865,9 @@ const frontmatterRows = (frontmatter) => String(frontmatter || '')
   .filter(Boolean);
 
 const syncFrontmatterPanel = () => {
-  const panel = document.querySelector('#frontmatter-panel');
+  const panel = document.querySelector<HTMLElement>('#frontmatter-panel');
   if (!panel) return;
-  const rows = frontmatterRows(frontmatterBlock);
+  const rows = frontmatterRows(frontmatterBlock) as { key: string; value: string }[];
   panel.dataset.visible = rows.length > 0 ? 'true' : 'false';
   panel.innerHTML = rows.length > 0
     ? `<div class="frontmatter-title">${frontmatterLabel()}</div>${rows.map((row) => (
@@ -839,16 +876,16 @@ const syncFrontmatterPanel = () => {
     : '';
 };
 
-const escapeHTML = (value) => String(value)
+const escapeHTML = (value: any) => String(value)
   .replace(/&/g, '&amp;')
   .replace(/</g, '&lt;')
   .replace(/>/g, '&gt;')
   .replace(/"/g, '&quot;');
 
-const localImageURL = (src) => `${localImageScheme}://image?src=${encodeURIComponent(src)}`;
+const localImageURL = (src: any) => `${localImageScheme}://image?src=${encodeURIComponent(src)}`;
 const imageTargetPattern = /\.(?:png|jpe?g|gif|webp|svg|avif|bmp|tiff?)(?:$|[?#])/i;
 
-const parseImageSize = (value) => {
+const parseImageSize = (value: any) => {
   const raw = (value || '').trim();
   const match = raw.match(/^(\d{1,4})(?:x(\d{1,4}))?$/i);
   if (!match) return null;
@@ -858,14 +895,14 @@ const parseImageSize = (value) => {
   };
 };
 
-const applyImageSize = (element, size) => {
+const applyImageSize = (element: any, size: any) => {
   if (!size) return;
   element.style.width = `${size.width}px`;
   element.style.maxWidth = '100%';
   if (size.height) element.style.height = `${size.height}px`;
 };
 
-const parseMarkdownImageAlt = (alt) => {
+const parseMarkdownImageAlt = (alt: any) => {
   const parts = String(alt || '').split('|');
   const size = parts.length > 1 ? parseImageSize(parts.at(-1)) : null;
   return {
@@ -874,7 +911,7 @@ const parseMarkdownImageAlt = (alt) => {
   };
 };
 
-const rawTrimRange = (source, start, end) => {
+const rawTrimRange = (source: any, start: any, end: any) => {
   let from = start;
   let to = end;
   while (from < to && /\s/.test(source[from])) from += 1;
@@ -882,7 +919,7 @@ const rawTrimRange = (source, start, end) => {
   return { start: from, end: to };
 };
 
-const splitObsidianFields = (raw) => {
+const splitObsidianFields = (raw: any) => {
   const source = String(raw || '');
   const fields = [];
   let start = 0;
@@ -924,7 +961,7 @@ const splitObsidianFields = (raw) => {
   return fields;
 };
 
-const parseObsidianTarget = (raw) => {
+const parseObsidianTarget = (raw: any) => {
   const source = String(raw || '').trim();
   const fields = splitObsidianFields(source);
   const targetField = fields.shift() || { value: '', start: 0, end: 0 };
@@ -932,7 +969,7 @@ const parseObsidianTarget = (raw) => {
   const aliasFields = fields;
   const alias = aliasFields.map((field) => field.value).join('|').trim();
   const aliasRange = aliasFields.length > 0
-    ? rawTrimRange(source, aliasFields[0].start, aliasFields.at(-1).end)
+    ? rawTrimRange(source, aliasFields[0].start, aliasFields.at(-1)!.end)
     : null;
   const hashIndex = target.indexOf('#');
   const noteTitle = hashIndex >= 0 ? target.slice(0, hashIndex).trim() : target;
@@ -946,7 +983,7 @@ const parseObsidianTarget = (raw) => {
   };
 };
 
-const parseObsidianEmbed = (raw) => {
+const parseObsidianEmbed = (raw: any) => {
   const fields = splitObsidianFields(String(raw || '').trim());
   const target = (fields.shift()?.value || '').trim();
   const lastField = fields.at(-1);
@@ -972,7 +1009,7 @@ const missingImageURL = () => {
   return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
 };
 
-const resolveMarkdownURL = (src) => {
+const resolveMarkdownURL = (src: any) => {
   if (!src || /^(?:data:|blob:|weibeiimage:)/i.test(src)) return src;
   if (/^https:/i.test(src)) return localImageURL(src);
   if (/^http:/i.test(src)) return '';
@@ -985,9 +1022,9 @@ const resolveMarkdownURL = (src) => {
   }
 };
 
-const documentImageSources = (state) => {
-  const sources = [];
-  state.doc.descendants((node) => {
+const documentImageSources = (state: any) => {
+  const sources: any[] = [];
+  state.doc.descendants((node: any) => {
     if (node.type.name === 'image' && node.attrs.src) sources.push(node.attrs.src);
     return true;
   });
@@ -1006,9 +1043,9 @@ const syncEditableState = () => {
   });
 };
 
-const resolveEditorImages = (view) => {
+const resolveEditorImages = (view: any) => {
   const sources = documentImageSources(view.state);
-  const images = Array.from(view.dom.querySelectorAll('img'));
+  const images = Array.from(view.dom.querySelectorAll('img')) as HTMLImageElement[];
   images.forEach((image, index) => {
     const source = sources[index];
     if (!source) return;
@@ -1042,7 +1079,7 @@ const resolveEditorImages = (view) => {
   });
 };
 
-const scheduleImageResolution = (view) => {
+const scheduleImageResolution = (view: any) => {
   window.cancelAnimationFrame(imageRefreshFrame);
   imageRefreshFrame = window.requestAnimationFrame(() => resolveEditorImages(view));
 };
@@ -1071,19 +1108,19 @@ const editorSelectedText = () => {
 
 const selectedText = () => cleanSelectedText(window.getSelection()?.toString() || editorSelectedText());
 
-const addRangeDecoration = (decorations, from, to, className, attrs = {}) => {
+const addRangeDecoration = (decorations: any, from: any, to: any, className: any, attrs: any = {}) => {
   if (to <= from) return;
   decorations.push(Decoration.inline(from, to, { ...attrs, class: className }));
 };
 
-const normalizeSelectionAskMarks = (marks) => (Array.isArray(marks) ? marks : [])
+const normalizeSelectionAskMarks = (marks: any) => (Array.isArray(marks) ? marks : [])
   .map((mark) => ({
     id: String(mark?.id || ''),
     text: String(mark?.text || '').trim(),
   }))
   .filter((mark) => mark.id && mark.text.length >= 4);
 
-const decorateSelectionAskMarks = (decorations, text, pos, counts) => {
+const decorateSelectionAskMarks = (decorations: any, text: any, pos: any, counts: any) => {
   if (isEditable || selectionAskMarks.length === 0) return;
   selectionAskMarks.forEach((mark) => {
     let start = 0;
@@ -1108,7 +1145,7 @@ const decorateSelectionAskMarks = (decorations, text, pos, counts) => {
   });
 };
 
-const isInsideNode = (state, pos, typeName) => {
+const isInsideNode = (state: any, pos: any, typeName: any) => {
   const resolved = state.doc.resolve(pos);
   for (let depth = resolved.depth; depth >= 0; depth -= 1) {
     if (resolved.node(depth).type.name === typeName) return true;
@@ -1116,7 +1153,7 @@ const isInsideNode = (state, pos, typeName) => {
   return false;
 };
 
-const decorateDelimitedInline = (decorations, text, pos, regex, markerSize, className) => {
+const decorateDelimitedInline = (decorations: any, text: any, pos: any, regex: any, markerSize: any, className: any) => {
   for (const match of text.matchAll(regex)) {
     const from = pos + (match.index || 0);
     const to = from + match[0].length;
@@ -1126,7 +1163,7 @@ const decorateDelimitedInline = (decorations, text, pos, regex, markerSize, clas
   }
 };
 
-const decorateInlineFootnotes = (decorations, text, pos) => {
+const decorateInlineFootnotes = (decorations: any, text: any, pos: any) => {
   for (const match of text.matchAll(/(^|[^\\])\^\[([^\]\n]+)\]/g)) {
     const prefixLength = match[1]?.length || 0;
     const content = match[2] || '';
@@ -1141,7 +1178,7 @@ const decorateInlineFootnotes = (decorations, text, pos) => {
   }
 };
 
-const decorateWikiLinks = (decorations, text, pos) => {
+const decorateWikiLinks = (decorations: any, text: any, pos: any) => {
   for (const match of text.matchAll(/\[\[([^\]\n]+)\]\]/g)) {
     const index = match.index || 0;
     if (text[index - 1] === '!') continue;
@@ -1174,7 +1211,7 @@ const decorateWikiLinks = (decorations, text, pos) => {
   }
 };
 
-const decorateSourceReferences = (decorations, text, pos) => {
+const decorateSourceReferences = (decorations: any, text: any, pos: any) => {
   for (const match of text.matchAll(/(?:^|[\s`])((?:来源：|Source:)[^`\n]+)/g)) {
     const prefixLength = match[0].startsWith(match[1]) ? 0 : 1;
     const sourcePrefix = match[1].startsWith('来源：') ? '来源：' : 'Source:';
@@ -1189,7 +1226,7 @@ const decorateSourceReferences = (decorations, text, pos) => {
   }
 };
 
-const decorateObsidianEmbeds = (decorations, text, pos) => {
+const decorateObsidianEmbeds = (decorations: any, text: any, pos: any) => {
   for (const match of text.matchAll(/!\[\[([^\]\n]+)\]\]/g)) {
     const from = pos + (match.index || 0);
     const to = from + match[0].length;
@@ -1221,7 +1258,7 @@ const decorateObsidianEmbeds = (decorations, text, pos) => {
   }
 };
 
-const decorateComments = (decorations, text, pos, commentState) => {
+const decorateComments = (decorations: any, text: any, pos: any, commentState: any) => {
   let cursor = 0;
   while (cursor < text.length) {
     if (commentState.open) {
@@ -1249,7 +1286,7 @@ const decorateComments = (decorations, text, pos, commentState) => {
   }
 };
 
-const decorateTagsAndBlocks = (decorations, text, pos) => {
+const decorateTagsAndBlocks = (decorations: any, text: any, pos: any) => {
   for (const match of text.matchAll(/(^|\s)(#[\p{L}\p{N}_/-]+)\b/gu)) {
     const from = pos + (match.index || 0) + match[1].length;
     addRangeDecoration(decorations, from, from + match[2].length, 'weibei-tag');
@@ -1260,7 +1297,7 @@ const decorateTagsAndBlocks = (decorations, text, pos) => {
   }
 };
 
-const decorateHtmlBreaks = (decorations, text, pos) => {
+const decorateHtmlBreaks = (decorations: any, text: any, pos: any) => {
   for (const match of text.matchAll(/<br\s*\/?>/gi)) {
     const from = pos + (match.index || 0);
     const to = from + match[0].length;
@@ -1273,7 +1310,7 @@ const decorateHtmlBreaks = (decorations, text, pos) => {
   }
 };
 
-const mermaidWidget = (source) => {
+const mermaidWidget = (source: any) => {
   const container = document.createElement('div');
   container.className = 'weibei-mermaid-render';
   container.textContent = editorLabel('mermaidRendering');
@@ -1290,7 +1327,7 @@ const mermaidWidget = (source) => {
     } catch (error) {
       if (!container.isConnected) return;
       container.classList.add('weibei-mermaid-error');
-      container.textContent = editorLabel('mermaidFailed', { value: String(error?.message || error) });
+      container.textContent = editorLabel('mermaidFailed', { value: String((error as any)?.message || error) });
       scheduleContentHeightReports();
     }
   }, 0);
@@ -1298,11 +1335,11 @@ const mermaidWidget = (source) => {
 };
 
 let mermaidPreviewCache = new WeakMap();
-let activeMermaidPreview = null;
+let activeMermaidPreview: any = null;
 let mermaidSourceHasFocus = false;
 
 /** Returns the Mermaid code block containing the focused text selection. */
-const focusedMermaidBlock = (state) => {
+const focusedMermaidBlock = (state: any) => {
   if (!mermaidSourceHasFocus || !(state.selection instanceof TextSelection)) return null;
   const { $from } = state.selection;
   for (let depth = $from.depth; depth > 0; depth -= 1) {
@@ -1315,13 +1352,13 @@ const focusedMermaidBlock = (state) => {
 };
 
 /** Ends the active edit snapshot when focus or document identity changes. */
-const synchronizeActiveMermaidPreview = (focusedBlock) => {
+const synchronizeActiveMermaidPreview = (focusedBlock: any) => {
   if (!activeMermaidPreview) return;
   if (activeMermaidPreview.documentGeneration !== currentDocumentGeneration || activeMermaidPreview.contentGeneration !== currentContentGeneration || activeMermaidPreview.generation !== mermaidPreviewGeneration || focusedBlock?.pos !== activeMermaidPreview.pos) activeMermaidPreview = null;
 };
 
 /** Creates or reuses the SVG preview committed for a Mermaid block. */
-const mermaidPreviewForBlock = (node, pos, focusedBlock) => {
+const mermaidPreviewForBlock = (node: any, pos: any, focusedBlock: any) => {
   const isFocused = focusedBlock?.pos === pos;
   if (isFocused && !activeMermaidPreview) {
     const cached = mermaidPreviewCache.get(node);
@@ -1337,7 +1374,7 @@ const mermaidPreviewForBlock = (node, pos, focusedBlock) => {
   return preview;
 };
 
-const decorateMermaidBlock = (decorations, node, pos, focusedBlock) => {
+const decorateMermaidBlock = (decorations: any, node: any, pos: any, focusedBlock: any) => {
   if (normalizeLanguage(node.attrs.language || '') !== 'mermaid') return false;
   decorations.push(Decoration.node(pos, pos + node.nodeSize, {
     class: 'weibei-code-block weibei-mermaid-block',
@@ -1350,50 +1387,50 @@ const decorateMermaidBlock = (decorations, node, pos, focusedBlock) => {
   return true;
 };
 
-const wikiNavigationTitle = (raw) => {
+const wikiNavigationTitle = (raw: any) => {
   const parsed = parseObsidianTarget(raw);
   return parsed.target || parsed.noteTitle;
 };
 
-const wikiTitleFromTarget = (target) => {
+const wikiTitleFromTarget = (target: any) => {
   const link = target instanceof Element
     ? target.closest('.weibei-wikilink, .weibei-embed-note[data-wikilink-title]')
     : null;
   return link?.getAttribute('data-wikilink-title') || link?.textContent?.trim() || '';
 };
 
-const activateWikiLink = (target) => {
+const activateWikiLink = (target: any) => {
   const title = wikiTitleFromTarget(target);
   if (!title) return false;
   post('wikiLinkActivated', { title });
   return true;
 };
 
-const sourceReferenceFromTarget = (target) => {
+const sourceReferenceFromTarget = (target: any) => {
   const link = target instanceof Element
     ? target.closest('.weibei-source-reference[data-source-reference]')
     : null;
   return link?.getAttribute('data-source-reference') || '';
 };
 
-const activateSourceReference = (target) => {
+const activateSourceReference = (target: any) => {
   const reference = sourceReferenceFromTarget(target);
   if (!reference) return false;
   post('sourceReferenceActivated', { reference });
   return true;
 };
 
-const activateSelectionAskMark = (target) => {
+const activateSelectionAskMark = (target: any) => {
   const mark = target instanceof Element
     ? target.closest('.weibei-selection-ask-mark[data-thread-id]')
     : null;
   const threadId = mark?.getAttribute('data-thread-id') || '';
   if (!threadId) return false;
-  post('selectionAskMark', { threadId, text: mark.textContent || '' });
+  post('selectionAskMark', { threadId, text: mark!.textContent || '' });
   return true;
 };
 
-const toggleFoldedCallout = (target) => {
+const toggleFoldedCallout = (target: any) => {
   if (isEditable || !(target instanceof Element)) return false;
   const callout = target.closest('blockquote.weibei-callout[data-callout-fold="-"]');
   if (!callout) return false;
@@ -1401,7 +1438,7 @@ const toggleFoldedCallout = (target) => {
   return true;
 };
 
-const normalizeLanguage = (language) => {
+const normalizeLanguage = (language: any) => {
   const key = (language || '').trim().toLowerCase();
   const aliases = {
     js: 'javascript',
@@ -1416,21 +1453,21 @@ const normalizeLanguage = (language) => {
     md: 'markdown',
     yml: 'yaml',
   };
-  return aliases[key] || key;
+  return (aliases as Record<string, string>)[key] || key;
 };
 
-const tokenLength = (token) => {
+const tokenLength = (token: any) => {
   if (typeof token === 'string') return token.length;
-  if (Array.isArray(token.content)) return token.content.reduce((sum, child) => sum + tokenLength(child), 0);
+  if (Array.isArray(token.content)) return token.content.reduce((sum: any, child: any) => sum + tokenLength(child), 0);
   return String(token.content || '').length;
 };
 
-const tokenClass = (token) => {
+const tokenClass = (token: any) => {
   const aliases = Array.isArray(token.alias) ? token.alias : token.alias ? [token.alias] : [];
   return ['weibei-prism-token', 'token', token.type, ...aliases].filter(Boolean).join(' ');
 };
 
-const addTokenDecorations = (decorations, tokens, start) => {
+const addTokenDecorations = (decorations: any, tokens: any, start: any) => {
   let cursor = start;
   for (const token of tokens) {
     const length = tokenLength(token);
@@ -1444,7 +1481,7 @@ const addTokenDecorations = (decorations, tokens, start) => {
   }
 };
 
-const decorateCodeBlock = (decorations, node, pos) => {
+const decorateCodeBlock = (decorations: any, node: any, pos: any) => {
   const language = normalizeLanguage(node.attrs.language || '');
   if (!language || !Prism.languages[language]) return;
   try {
@@ -1460,7 +1497,7 @@ const decorateCodeBlock = (decorations, node, pos) => {
  * The language control stays in the `<pre>` shell, preventing it from becoming a
  * text decoration inside the editable code content.
  */
-const createCodeBlockNodeView = (node, view, getPos) => {
+const createCodeBlockNodeView = (node: any, view: any, getPos: any) => {
   const pre = document.createElement('pre');
   pre.className = 'weibei-code-block';
   const input = document.createElement('input');
@@ -1497,7 +1534,7 @@ const createCodeBlockNodeView = (node, view, getPos) => {
     if (current?.type.name !== 'code_block' || String(current.attrs.language || '') !== language) { input.value = language; return; }
     view.dispatch(view.state.tr.setNodeMarkup(position, undefined, { ...current.attrs, language: next }));
   };
-  const onKeyDown = (event) => {
+  const onKeyDown = (event: any) => {
     if (event.key === 'Escape') { input.value = language; input.blur(); return; }
     if (event.key !== 'Enter') return;
     event.preventDefault();
@@ -1512,7 +1549,7 @@ const createCodeBlockNodeView = (node, view, getPos) => {
   return {
     dom: pre,
     contentDOM: code,
-    update(nextNode) {
+    update(nextNode: any) {
       if (nextNode.type.name !== 'code_block') return false;
       // A document replacement must not reuse a control that captured an older generation.
       if (documentID !== currentDocumentID || documentGeneration !== currentDocumentGeneration || contentGeneration !== currentContentGeneration) return false;
@@ -1520,8 +1557,8 @@ const createCodeBlockNodeView = (node, view, getPos) => {
       syncControl();
       return true;
     },
-    stopEvent(event) { return event.target === input || (event.target instanceof Node && input.contains(event.target)); },
-    ignoreMutation(mutation) { return mutation.target === input || input.contains(mutation.target); },
+    stopEvent(event: any) { return event.target === input || (event.target instanceof Node && input.contains(event.target)); },
+    ignoreMutation(mutation: any) { return mutation.target === input || input.contains(mutation.target); },
     destroy() {
       input.removeEventListener('change', commit);
       input.removeEventListener('blur', commit);
@@ -1556,7 +1593,7 @@ const wikiTitleAtSelection = () => {
   });
 };
 
-const requestAttachment = async (file) => {
+const requestAttachment = async (file: any) => {
   const { alt, src } = await readImageAsBase64(file);
   if (!bridge?.imageAttachmentRequested) {
     return { alt, src };
@@ -1578,7 +1615,7 @@ const requestAttachment = async (file) => {
   });
 };
 
-const looksLikeBlockMarkdown = (markdown) => {
+const looksLikeBlockMarkdown = (markdown: any) => {
   const text = String(markdown || '');
   const trimmed = text.trim();
   if (!trimmed) return false;
@@ -1586,7 +1623,7 @@ const looksLikeBlockMarkdown = (markdown) => {
   return /^(?:#{1,6}\s|[-*+]\s|\d+\.\s|>\s|```|~~~|\$\$|\|.*\||---$)/.test(trimmed);
 };
 
-const normalizeMarkdownInsertion = (markdown) => {
+const normalizeMarkdownInsertion = (markdown: any) => {
   const text = String(markdown || '');
   if (!looksLikeBlockMarkdown(text)) return text;
   return `\n\n${text.trim()}\n\n`;
@@ -1594,8 +1631,8 @@ const normalizeMarkdownInsertion = (markdown) => {
 
 const placeCursorAtInsertionMarker = () => editor.action((ctx) => {
   const view = ctx.get(editorViewCtx);
-  let selectionRange = null;
-  let range = null;
+  let selectionRange: any = null;
+  let range: any = null;
   view.state.doc.descendants((node, pos) => {
     if (!node.isText || selectionRange || range) return true;
     const text = node.text || '';
@@ -1645,30 +1682,30 @@ const collapseSelectionToEnd = () => editor.action((ctx) => {
   view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, position)));
 });
 
-const localImageUploader = async (files, schema) => {
+const localImageUploader = async (files: any, schema: any) => {
   if (!isEditable) return [];
-  const images = [];
+  const images: any[] = [];
   for (let i = 0; i < files.length; i += 1) {
     const file = files.item(i);
     if (file && file.type.includes('image')) images.push(file);
   }
   const imageNode = schema.nodes.image;
   if (!imageNode || images.length === 0) return [];
-  const saved = await Promise.all(images.map(requestAttachment));
+  const saved = (await Promise.all(images.map(requestAttachment))) as { alt: string; src: string }[];
   return saved.map(({ alt, src }) => imageNode.createAndFill({ alt, src })).filter(Boolean);
 };
 
-const imageFilesFromItems = (items) => Array.from(items || [])
+const imageFilesFromItems = (items: any) => (Array.from(items || []) as any[])
   .map((item) => item.getAsFile?.())
   .filter((file) => file && file.type.includes('image'));
 
-const markdownImage = ({ alt, src }) => {
+const markdownImage = ({ alt, src }: { alt: any; src: any }) => {
   const safeAlt = (alt || 'image').replace(/[\[\]\n\r]/g, ' ').trim() || 'image';
   const safeSrc = String(src || '').replace(/\s/g, '%20').replace(/\)/g, '%29');
   return `![${safeAlt}](${safeSrc})`;
 };
 
-const insertImageFiles = async (files) => {
+const insertImageFiles = async (files: any) => {
   if (!isEditable) return;
   const saved = await Promise.all(files.map(requestAttachment));
   replaceSelectionInternal(saved.map(markdownImage).join('\n\n'));
@@ -1684,7 +1721,7 @@ const upgradeDisplayMath = () => {
   // block math stuck in inline mode. The dialect plugin already calls this
   // after ProseMirror has flushed the DOM.
   document
-    .querySelectorAll('.ProseMirror div[data-type="math_block"], .ProseMirror div[data-type="math-block"]')
+    .querySelectorAll<HTMLElement>('.ProseMirror div[data-type="math_block"], .ProseMirror div[data-type="math-block"]')
     .forEach((element) => {
       const value = element.dataset.value || '';
       if (element.dataset.weibeiDisplayValue === value) return;
@@ -1714,7 +1751,7 @@ const annotateMathErrors = () => {
 const quietScrollableSelector = '#editor, .ProseMirror pre, .ProseMirror div[data-type="math_block"], .ProseMirror div[data-type="math-block"]';
 const scrollFadeTimers = new WeakMap();
 
-const markScrollActive = (element) => {
+const markScrollActive = (element: any) => {
   if (!(element instanceof Element)) return;
   element.classList.add('weibei-scroll-active');
   const timer = scrollFadeTimers.get(element);
@@ -1735,9 +1772,9 @@ const installQuietScrollIndicators = () => {
 };
 
 const listItemTypeNames = new Set(['list_item', 'task_list_item']);
-const meaningfulListText = (node) => (node.textContent || '').replace(/[\u200B\uFEFF]/g, '').trim();
+const meaningfulListText = (node: any) => (node.textContent || '').replace(/[\u200B\uFEFF]/g, '').trim();
 
-const emptyListItemTypeAtSelection = (state) => {
+const emptyListItemTypeAtSelection = (state: any) => {
   const { selection } = state;
   if (!selection.empty) return null;
   const { $from } = selection;
@@ -1750,7 +1787,7 @@ const emptyListItemTypeAtSelection = (state) => {
   return null;
 };
 
-const clearInvisibleCurrentTextblock = (view) => {
+const clearInvisibleCurrentTextblock = (view: any) => {
   const { state } = view;
   const { $from } = state.selection;
   const node = $from.parent;
@@ -1762,7 +1799,7 @@ const clearInvisibleCurrentTextblock = (view) => {
   view.dispatch(tr);
 };
 
-const exitEmptyListItem = (view) => {
+const exitEmptyListItem = (view: any) => {
   let listItemType = emptyListItemTypeAtSelection(view.state);
   if (!listItemType) return false;
   clearInvisibleCurrentTextblock(view);
@@ -1771,14 +1808,14 @@ const exitEmptyListItem = (view) => {
 };
 
 /** Converts an empty code block back to a paragraph for Backspace and Delete. */
-const clearEmptyCodeBlock = (view, event) => {
+const clearEmptyCodeBlock = (view: any, event: any) => {
   if (!isEditable || event.shiftKey || event.altKey || event.metaKey || event.ctrlKey || !['Backspace', 'Delete'].includes(event.key)) return false;
   const { selection, schema } = view.state;
   return selection instanceof TextSelection && selection.empty && selection.$from.parent.type.spec.code === true && selection.$from.parent.content.size === 0 && Boolean(schema.nodes.paragraph && setBlockType(schema.nodes.paragraph)(view.state, view.dispatch));
 };
 
 /** Inserts a literal tab character without moving focus out of a code block. */
-const insertCodeBlockTab = (view, event) => {
+const insertCodeBlockTab = (view: any, event: any) => {
   if (!isEditable || event.key !== 'Tab' || event.shiftKey || event.altKey || event.metaKey || event.ctrlKey || event.isComposing || event.keyCode === 229) return false;
   const { selection } = view.state;
   if (!(selection instanceof TextSelection) || selection.$from.parent !== selection.$to.parent || selection.$from.parent.type.spec.code !== true) return false;
@@ -1790,7 +1827,7 @@ const insertCodeBlockTab = (view, event) => {
 const literalCodeBlockCharacters = new Set(['-', "'", '"']);
 
 /** Inserts ASCII punctuation directly so WebKit cannot apply smart substitutions. */
-const insertLiteralCodeBlockCharacter = (view, event) => {
+const insertLiteralCodeBlockCharacter = (view: any, event: any) => {
   if (!isEditable || !literalCodeBlockCharacters.has(event.key) || event.altKey || event.metaKey || event.ctrlKey || event.isComposing || event.keyCode === 229) return false;
   const { selection } = view.state;
   if (!(selection instanceof TextSelection) || selection.$from.parent !== selection.$to.parent || selection.$from.parent.type.spec.code !== true) return false;
@@ -1800,7 +1837,7 @@ const insertLiteralCodeBlockCharacter = (view, event) => {
 };
 
 /** Rejects spell checking, text replacement, and writing suggestion edits in code blocks. */
-const preventCodeBlockAutomaticReplacement = (view, event) => {
+const preventCodeBlockAutomaticReplacement = (view: any, event: any) => {
   if (!isEditable || event.inputType !== 'insertReplacementText' || event.isComposing || !event.cancelable) return false;
   const { selection } = view.state;
   if (!(selection instanceof TextSelection) || selection.$from.parent !== selection.$to.parent || selection.$from.parent.type.spec.code !== true) return false;
@@ -1810,7 +1847,7 @@ const preventCodeBlockAutomaticReplacement = (view, event) => {
 };
 
 /** Leaves a terminal code block only at the document's final visual or logical line. */
-const exitTerminalCodeBlock = (view, event) => {
+const exitTerminalCodeBlock = (view: any, event: any) => {
   if (!isEditable || event.shiftKey || event.altKey || event.metaKey || event.ctrlKey || !['ArrowRight', 'ArrowDown'].includes(event.key)) return false;
   const { selection } = view.state;
   if (!(selection instanceof TextSelection) || !selection.empty || selection.$from.parent.type.spec.code !== true) return false;
@@ -1826,7 +1863,7 @@ const weiBeiDialectPlugin = $prose(() => new Plugin({
     const codeInputAttributeValues = { autocapitalize: 'none', autocorrect: 'off', spellcheck: 'false' };
     const defaultCodeInputAttributes = new Map(Object.keys(codeInputAttributeValues).map((name) => [name, view.dom.getAttribute(name)]));
     /** Applies literal-input attributes only while the selection is inside a code block. */
-    const synchronizeCodeInputAttributes = (updatedView) => {
+    const synchronizeCodeInputAttributes = (updatedView: any) => {
       if (updatedView.state.selection.$from.parent.type.spec.code === true) {
         for (const [name, value] of Object.entries(codeInputAttributeValues)) updatedView.dom.setAttribute(name, value);
         return;
@@ -1836,13 +1873,13 @@ const weiBeiDialectPlugin = $prose(() => new Plugin({
         else updatedView.dom.setAttribute(name, value);
       }
     };
-    const setMermaidSourceFocus = (focused) => {
+    const setMermaidSourceFocus = (focused: any) => {
       if (mermaidSourceHasFocus === focused) return;
       mermaidSourceHasFocus = focused;
       view.dispatch(view.state.tr.setMeta('weibeiMermaidFocusChanged', focused));
     };
-    const handleEditorFocus = (event) => setMermaidSourceFocus(event.target === view.dom);
-    const handleEditorBlur = (event) => { if (event.target === view.dom) setMermaidSourceFocus(false); };
+    const handleEditorFocus = (event: any) => setMermaidSourceFocus(event.target === view.dom);
+    const handleEditorBlur = (event: any) => { if (event.target === view.dom) setMermaidSourceFocus(false); };
     const handleCompositionStart = () => {
       compositionStartMarkdown = getMarkdownInternal();
       compositionEndPending = false;
@@ -1854,13 +1891,13 @@ const weiBeiDialectPlugin = $prose(() => new Plugin({
       setTimeout(publishCompletedCompositionMarkdown);
     };
     /** Handles literal code-block keys before WebKit's native text substitution runs. */
-    const handleCodeBlockKeyDown = (event) => {
+    const handleCodeBlockKeyDown = (event: any) => {
       if (event.target !== view.dom || !view.hasFocus() || (!insertCodeBlockTab(view, event) && !insertLiteralCodeBlockCharacter(view, event))) return;
       event.preventDefault();
       event.stopImmediatePropagation();
     };
     /** Cancels automatic replacement events without affecting composition or paste input. */
-    const handleBeforeInput = (event) => {
+    const handleBeforeInput = (event: any) => {
       if (event.target === view.dom) preventCodeBlockAutomaticReplacement(view, event);
     };
     view.dom.addEventListener('compositionstart', handleCompositionStart, true);
@@ -1965,7 +2002,7 @@ const weiBeiDialectPlugin = $prose(() => new Plugin({
       return true;
     },
     decorations(state) {
-      const decorations = [];
+      const decorations: any[] = [];
       const commentState = { open: false };
       const selectionAskCounts = new Map();
       const focusedBlock = focusedMermaidBlock(state);
@@ -2067,7 +2104,7 @@ const ensureEditor = () => {
   if (!editor) throw new Error('WeiBei editor is not ready');
 };
 
-const setSelectionAskMarksInternal = (marks) => {
+const setSelectionAskMarksInternal = (marks: any) => {
   selectionAskMarks = normalizeSelectionAskMarks(marks);
   if (!editor) return;
   editor.action((ctx) => {
@@ -2083,7 +2120,7 @@ const normalizeCompletedEmptyTextblockComposition = () => {
   compositionTextblockFrom = null;
   editor.action((ctx) => {
     const view = ctx.get(editorViewCtx);
-    view.domObserver?.flush();
+    (view as any).domObserver?.flush();
     const textblock = view.state.doc.nodeAt(textblockFrom);
     if (!textblock?.isTextblock || !textblock.textContent) return;
     const hardbreak = view.state.schema.nodes.hardbreak || view.state.schema.nodes.hard_break;
@@ -2101,7 +2138,7 @@ const normalizeCompletedEmptyTextblockComposition = () => {
     const textblockDOM = view.nodeDOM(textblockFrom);
     if (textblockDOM instanceof HTMLElement) {
       textblockDOM.querySelectorAll('br').forEach((node) => node.remove());
-      view.domObserver?.flush();
+      (view as any).domObserver?.flush();
     }
   });
 };
@@ -2130,7 +2167,7 @@ const stopStreamingMarkdown = (keep = true) => {
   streamingMarkdownBuffer = null;
 };
 
-const updateStreamingMarkdownInternal = (markdown) => {
+const updateStreamingMarkdownInternal = (markdown: any) => {
   ensureEditor();
   const document = splitFrontmatter(markdown || '');
   const body = normalizeHtmlBreaks(document.body);
@@ -2152,14 +2189,14 @@ const updateStreamingMarkdownInternal = (markdown) => {
   scheduleContentHeightReports();
 };
 
-const finishStreamingMarkdownInternal = (markdown) => {
+const finishStreamingMarkdownInternal = (markdown: any) => {
   updateStreamingMarkdownInternal(markdown);
   streamingCommands().call(endStreamingCmd.key, { diffReview: false });
   streamingMarkdownBuffer = null;
   scheduleContentHeightReports();
 };
 
-const setMarkdownInternal = (markdown) => {
+const setMarkdownInternal = (markdown: any) => {
   ensureEditor();
   stopStreamingMarkdown();
   compositionStartMarkdown = null;
@@ -2180,7 +2217,7 @@ const getMarkdownInternal = () => {
   return withFrontmatter(editor.action(readMarkdown()));
 };
 
-const replaceSelectionInternal = (markdown) => {
+const replaceSelectionInternal = (markdown: any) => {
   ensureEditor();
   const insertion = normalizeHtmlBreaks(markdown || '');
   const range = lastSelectionRange || editorSelectionRange();
@@ -2195,7 +2232,7 @@ const replaceSelectionInternal = (markdown) => {
   post('markdownChanged', { markdown: next });
 };
 
-const insertMarkdownInternal = (markdown) => {
+const insertMarkdownInternal = (markdown: any) => {
   ensureEditor();
   const range = editorSelectionRange();
   const insertion = normalizeMarkdownInsertion(normalizeHtmlBreaks(markdown));
@@ -2213,12 +2250,12 @@ const insertMarkdownInternal = (markdown) => {
   post('markdownChanged', { markdown: next });
 };
 
-const selectFirstTextForCheck = (needle) => {
+const selectFirstTextForCheck = (needle: any) => {
   ensureEditor();
   if (!window.weiBeiEditorCheckMode || !needle) return false;
   return editor.action((ctx) => {
     const view = ctx.get(editorViewCtx);
-    let range = null;
+    let range: any = null;
     view.state.doc.descendants((node, pos) => {
       if (!node.isText || range) return true;
       const index = (node.text || '').indexOf(needle);
@@ -2233,7 +2270,7 @@ const selectFirstTextForCheck = (needle) => {
   });
 };
 
-const typeTextForCheck = (text) => {
+const typeTextForCheck = (text: any) => {
   ensureEditor();
   if (!window.weiBeiEditorCheckMode) return false;
   return editor.action((ctx) => {
@@ -2242,7 +2279,7 @@ const typeTextForCheck = (text) => {
     for (const character of String(text || '')) {
       const { from, to } = view.state.selection;
       let handled = false;
-      view.someProp('handleTextInput', (handler) => {
+      view.someProp('handleTextInput', (handler: any) => {
         if (handled) return true;
         handled = handler(view, from, to, character) === true;
         return handled;
@@ -2255,7 +2292,7 @@ const typeTextForCheck = (text) => {
   });
 };
 
-const pressKeyForCheck = (key, options = {}) => {
+const pressKeyForCheck = (key: any, options: any = {}) => {
   ensureEditor();
   if (!window.weiBeiEditorCheckMode) return false;
   return editor.action((ctx) => {
@@ -2301,7 +2338,7 @@ const reportActiveHeading = () => {
   });
 };
 
-const scrollToHeadingInternal = (rawIndex) => {
+const scrollToHeadingInternal = (rawIndex: any) => {
   const index = Number(rawIndex);
   const headings = headingElements();
   const heading = Number.isFinite(index) ? headings[Math.max(0, Math.floor(index))] : null;
@@ -2313,21 +2350,21 @@ const scrollToHeadingInternal = (rawIndex) => {
 
 window.WeiBeiEditor = {
   getMarkdown: getMarkdownInternal,
-  setMarkdown: (markdown) => {
+  setMarkdown: (markdown: any) => {
     setMarkdownInternal(markdown);
     post('markdownChanged', { markdown: String(markdown || '') });
   },
   // Milkdown's streaming plugin reparses the cumulative snapshot and applies a
   // ProseMirror document diff, preserving unchanged DOM instead of rebuilding
   // the whole answer or parsing token fragments as standalone paragraphs.
-  updateStreamingMarkdown: (markdown) => {
+  updateStreamingMarkdown: (markdown: any) => {
     try {
       updateStreamingMarkdownInternal(markdown);
     } catch (error) {
       showFailure(error);
     }
   },
-  finishStreamingMarkdown: (markdown) => {
+  finishStreamingMarkdown: (markdown: any) => {
     try {
       finishStreamingMarkdownInternal(markdown);
       return true;
@@ -2336,14 +2373,14 @@ window.WeiBeiEditor = {
       return false;
     }
   },
-  replaceSelection: (markdown) => {
+  replaceSelection: (markdown: any) => {
     try {
       replaceSelectionInternal(markdown);
     } catch (error) {
       showFailure(error);
     }
   },
-  applyAgentPatch: (markdown) => {
+  applyAgentPatch: (markdown: any) => {
     try {
       const current = getMarkdownInternal();
       setMarkdownInternal(`${current.trimEnd()}\n\n${markdown || ''}\n`);
@@ -2359,47 +2396,47 @@ window.WeiBeiEditor = {
     const text = selectedText();
     post('askAgentWithSelection', { text, rect: rectFromSelection() });
   },
-  insertMarkdownImage: (markdown) => {
+  insertMarkdownImage: (markdown: any) => {
     try {
       replaceSelectionInternal(markdown);
     } catch (error) {
       showFailure(error);
     }
   },
-  insertMarkdown: (markdown) => {
+  insertMarkdown: (markdown: any) => {
     try {
       insertMarkdownInternal(markdown);
     } catch (error) {
       showFailure(error);
     }
   },
-  resolveAttachment: (id, src, alt) => {
+  resolveAttachment: (id: any, src: any, alt: any) => {
     const pending = pendingAttachments.get(id);
     if (!pending) return;
     pendingAttachments.delete(id);
     pending.resolve({ src, alt });
   },
-  rejectAttachment: (id, message) => {
+  rejectAttachment: (id: any, message: any) => {
     const pending = pendingAttachments.get(id);
     if (!pending) return;
     pendingAttachments.delete(id);
     pending.reject(new Error(message || 'Attachment save failed'));
   },
-  resolveImagePicker: (id, src, alt) => {
+  resolveImagePicker: (id: any, src: any, alt: any) => {
     const pending = pendingImagePickers.get(id);
     if (!pending) return false;
     pendingImagePickers.delete(id);
     if (pending.documentID !== currentDocumentID || pending.documentGeneration !== currentDocumentGeneration) return false;
     return applySlashReplacement(pending.view, pending.context, slashReplacement('image', pending.view.state.schema, { src, alt }));
   },
-  cancelImagePicker: (id) => {
+  cancelImagePicker: (id: any) => {
     const pending = pendingImagePickers.get(id);
     if (!pending) return false;
     pendingImagePickers.delete(id);
     return pending.documentID === currentDocumentID && pending.documentGeneration === currentDocumentGeneration;
   },
-  discardImagePicker: (id) => pendingImagePickers.delete(id),
-  rejectImagePicker: (id, message) => {
+  discardImagePicker: (id: any) => pendingImagePickers.delete(id),
+  rejectImagePicker: (id: any, message: any) => {
     const pending = pendingImagePickers.get(id);
     if (!pending) return false;
     pendingImagePickers.delete(id);
@@ -2411,7 +2448,7 @@ window.WeiBeiEditor = {
     renderSlashMenu();
     return true;
   },
-  setEditable: (next) => {
+  setEditable: (next: any) => {
     isEditable = next !== false;
     syncEditableState();
     if (editor) {
@@ -2422,7 +2459,7 @@ window.WeiBeiEditor = {
     }
   },
   setSelectionAskMarks: setSelectionAskMarksInternal,
-  setDocumentID: (next) => {
+  setDocumentID: (next: any) => {
     const nextID = next || '';
     if (nextID !== currentDocumentID) {
       currentDocumentID = nextID;
@@ -2433,11 +2470,11 @@ window.WeiBeiEditor = {
       setSelectionAskMarksInternal([]);
     }
   },
-  setMarkdownBaseURL: (next) => {
+  setMarkdownBaseURL: (next: any) => {
     markdownBaseURL = next || '';
     refreshRenderedImages();
   },
-  setTheme: (next) => {
+  setTheme: (next: any) => {
     applyTheme(next);
     document.querySelectorAll('img[data-weibei-image-placeholder="true"]').forEach((image) => {
       image.setAttribute('src', missingImageURL());
@@ -2448,7 +2485,7 @@ window.WeiBeiEditor = {
       view.dispatch(view.state.tr.setMeta('weibeiThemeChanged', currentTheme));
     });
   },
-  setInterfaceLanguage: (next) => {
+  setInterfaceLanguage: (next: any) => {
     currentLanguage = normalizeInterfaceLanguage(next);
     document.documentElement.dataset.weibeiLanguage = currentLanguage;
     syncFrontmatterPanel();
@@ -2472,10 +2509,10 @@ if (window.weiBeiEditorCheckMode) {
   window.WeiBeiEditor.openSlashMenuForCheck = () => { const view = slashRuntime.view; if (!view || !slashContextForView(view)) return false; slashRuntime.dismissedContext = ''; slashRuntime.provider?.show(); renderSlashMenu(); return slashMenuElement.dataset.show === 'true'; };
   window.WeiBeiEditor.slashStateForCheck = () => ({ show: slashMenuElement.dataset.show === 'true', commands: Array.from(slashMenuElement.querySelectorAll('.weibei-slash-command-button')).map((button) => button.textContent), groups: Array.from(slashMenuElement.querySelectorAll('.weibei-slash-group')).map((group) => group.textContent), rows: slashRuntime.tableRows, columns: slashRuntime.tableColumns, tableOpen: slashRuntime.tableOpen, tableSide: slashTablePanelElement?.dataset.side || '', activeDescendant: slashRuntime.view?.dom.getAttribute('aria-activedescendant') || '', announcement: slashStatusElement.textContent, error: slashRuntime.error });
   window.WeiBeiEditor.renderSlashMenuForCheck = renderSlashMenu;
-  window.WeiBeiEditor.executeSlashCommandForCheck = (id) => executeSlashCommand(id);
+  window.WeiBeiEditor.executeSlashCommandForCheck = (id: any) => executeSlashCommand(id);
   window.WeiBeiEditor.pendingImagePickerIDsForCheck = () => Array.from(pendingImagePickers.keys());
   window.WeiBeiEditor.undoForCheck = () => editor.action((ctx) => undo(ctx.get(editorViewCtx).state, ctx.get(editorViewCtx).dispatch));
-  window.WeiBeiEditor.selectFirstCodeBlockEndForCheck = () => editor.action((ctx) => { const view = ctx.get(editorViewCtx); let target = null; view.state.doc.descendants((node, pos) => { if (target !== null || node.type.name !== 'code_block') return true; target = pos + node.content.size + 1; return false; }); if (target === null) return false; view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, target))); view.focus(); return true; });
+  window.WeiBeiEditor.selectFirstCodeBlockEndForCheck = () => editor.action((ctx) => { const view = ctx.get(editorViewCtx); let target: any = null; view.state.doc.descendants((node, pos) => { if (target !== null || node.type.name !== 'code_block') return true; target = pos + node.content.size + 1; return false; }); if (target === null) return false; view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, target))); view.focus(); return true; });
   window.WeiBeiEditor.selectDocumentEndForCheck = () => editor.action((ctx) => { const view = ctx.get(editorViewCtx); view.dispatch(view.state.tr.setSelection(Selection.atEnd(view.state.doc))); view.focus(); return true; });
   window.WeiBeiEditor.selectionForCheck = () => editor.action((ctx) => {
     const selection = ctx.get(editorViewCtx).state.selection;
@@ -2500,7 +2537,7 @@ Editor
     ctx.set(uploadConfig.key, {
       uploader: localImageUploader,
       enableHtmlFileUploader: true,
-      uploadWidgetFactory: (pos, spec) => {
+      uploadWidgetFactory: (pos: any, spec: any) => {
         const widget = document.createElement('span');
         widget.className = 'weibei-uploading';
         widget.textContent = editorLabel('uploadingImage');
