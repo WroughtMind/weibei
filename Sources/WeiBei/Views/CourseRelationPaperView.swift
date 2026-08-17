@@ -11,10 +11,8 @@ struct CourseRelationPaperView: View {
     var allowsWorkspaceScopes: Bool = true
 
     @State private var scope: CourseRelationPaperScope?
-    @State private var mode: CourseRelationPaperMode = .viewing
     @State private var hoveredNodeID: String?
     @State private var dropTargetNoteID: String?
-    @State private var pendingConnection: CourseRelationConnectionAnchor?
     @State private var zoomScale: CGFloat = 1
     @State private var zoomGestureStartScale: CGFloat?
     @State private var fitScrollRequest = 0
@@ -118,9 +116,7 @@ struct CourseRelationPaperView: View {
         }
         .background(WeiBeiTheme.paper.opacity(0.94))
         .animation(WeiBeiMotion.hover, value: hoveredNodeID)
-        .animation(WeiBeiMotion.hover, value: pendingConnection)
         .animation(WeiBeiMotion.panel, value: effectiveScope.id)
-        .animation(WeiBeiMotion.panel, value: mode)
         .onAppear {
             // Seed once from the course already open in course space.
             if scope == nil {
@@ -146,15 +142,6 @@ struct CourseRelationPaperView: View {
                 }
             }
         }
-        .onChange(of: mode) { _, nextMode in
-            if nextMode != .managing { pendingConnection = nil }
-        }
-        .onChange(of: effectiveScope.id) { _, _ in
-            pendingConnection = nil
-        }
-        .onChange(of: search) { _, _ in
-            pendingConnection = nil
-        }
     }
 
     /// Thin toolbar only — page title already lives in the course-space top bar.
@@ -172,9 +159,6 @@ struct CourseRelationPaperView: View {
             if isCompact && allowsWorkspaceScopes {
                 scopeMenu
             }
-
-            paperModeButton(.viewing)
-            paperModeButton(.managing)
         }
         .padding(.horizontal, 16)
         .frame(height: 40)
@@ -327,23 +311,6 @@ struct CourseRelationPaperView: View {
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
         .fixedSize()
-    }
-
-    private func paperModeButton(_ candidate: CourseRelationPaperMode) -> some View {
-        Button {
-            mode = candidate
-        } label: {
-            Text(candidate.label(language: store.interfaceLanguage))
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(mode == candidate ? WeiBeiTheme.cinnabar : WeiBeiTheme.secondaryInk)
-                .padding(.horizontal, 10)
-                .frame(height: 28)
-                .background(
-                    (mode == candidate ? WeiBeiTheme.cinnabarSoft : WeiBeiTheme.paperInset.opacity(0.20)),
-                    in: Capsule()
-                )
-        }
-        .buttonStyle(.plain)
     }
 
     private func graphPaper(model: CourseRelationGraphModel, availableSize: CGSize) -> some View {
@@ -571,8 +538,8 @@ struct CourseRelationPaperView: View {
             x: from.x + horizontalDistance * 0.5,
             y: (from.y + to.y) * 0.5 + min(16, max(-16, (to.y - from.y) * 0.035))
         )
-        let departure = min(horizontalDistance * 0.40, max(88, horizontalDistance * 0.30))
-        let waist = min(horizontalDistance * 0.16, 72)
+        let departure = min(horizontalDistance * 0.28, 44)
+        let waist = min(horizontalDistance * 0.10, 28)
 
         var path = Path()
         path.move(to: from)
@@ -666,10 +633,10 @@ struct CourseRelationPaperView: View {
                 .foregroundStyle(WeiBeiTheme.secondaryInk)
                 .padding(.horizontal, 4)
 
-            VStack(spacing: 10) {
+            VStack(spacing: 8) {
                 ForEach(nodes) { node in
                     paperNode(node, model: model)
-                        .frame(maxWidth: .infinity, minHeight: 72)
+                        .frame(maxWidth: .infinity, minHeight: 56)
                 }
             }
         }
@@ -681,14 +648,12 @@ struct CourseRelationPaperView: View {
     ) -> some View {
         let prominence = model.nodeProminence(node, hoveredNodeID: hoveredNodeID)
         let isDropTarget = node.kind == .note && dropTargetNoteID == node.itemID
-        let connectorState = mode == .managing ? connectionState(for: node) : nil
 
         return CourseRelationPaperNodeView(
             node: node,
             prominence: prominence,
             accent: nodeAccent(for: node),
-            mode: mode,
-            connectionState: connectorState,
+            connectionState: connectionState(for: node),
             isDropTarget: isDropTarget,
             select: { select(node) },
             open: { open(node) },
@@ -700,7 +665,7 @@ struct CourseRelationPaperView: View {
         }
         .modifier(CourseRelationDropModifier(
             node: node,
-            enabled: mode == .managing,
+            enabled: true,
             dropTargetNoteID: $dropTargetNoteID,
             addLink: addLink(materialID:noteID:)
         ))
@@ -711,35 +676,33 @@ struct CourseRelationPaperView: View {
         Button(node.kind == .material ? store.ui("打开资料", "Open material") : store.ui("打开笔记", "Open note")) {
             open(node)
         }
-        if mode == .managing {
-            Divider()
-            if node.kind == .material {
-                let linkedNotes = linkedNoteItems(for: node.itemID)
-                if linkedNotes.isEmpty {
-                    Text(store.ui("没有可删除关系", "No links to remove"))
-                } else {
-                    Menu(store.ui("删除已关联笔记", "Remove linked note")) {
-                        ForEach(linkedNotes) { note in
-                            Button(role: .destructive) {
-                                removeLink(noteID: note.id, materialID: node.itemID)
-                            } label: {
-                                Text(store.displayTitle(for: note))
-                            }
+        Divider()
+        if node.kind == .material {
+            let linkedNotes = linkedNoteItems(for: node.itemID)
+            if linkedNotes.isEmpty {
+                Text(store.ui("没有可删除关系", "No links to remove"))
+            } else {
+                Menu(store.ui("删除已关联笔记", "Remove linked note")) {
+                    ForEach(linkedNotes) { note in
+                        Button(role: .destructive) {
+                            removeLink(noteID: note.id, materialID: node.itemID)
+                        } label: {
+                            Text(store.displayTitle(for: note))
                         }
                     }
                 }
+            }
+        } else {
+            let linkedMaterials = linkedMaterialItems(for: node.itemID)
+            if linkedMaterials.isEmpty {
+                Text(store.ui("没有可删除关系", "No links to remove"))
             } else {
-                let linkedMaterials = linkedMaterialItems(for: node.itemID)
-                if linkedMaterials.isEmpty {
-                    Text(store.ui("没有可删除关系", "No links to remove"))
-                } else {
-                    Menu(store.ui("删除已关联资料", "Remove linked material")) {
-                        ForEach(linkedMaterials) { material in
-                            Button(role: .destructive) {
-                                removeLink(noteID: node.itemID, materialID: material.id)
-                            } label: {
-                                Text(store.displayTitle(for: material))
-                            }
+                Menu(store.ui("删除已关联资料", "Remove linked material")) {
+                    ForEach(linkedMaterials) { material in
+                        Button(role: .destructive) {
+                            removeLink(noteID: node.itemID, materialID: material.id)
+                        } label: {
+                            Text(store.displayTitle(for: material))
                         }
                     }
                 }
@@ -822,25 +785,21 @@ struct CourseRelationPaperView: View {
     }
 
     private func headerDetail(model: CourseRelationGraphModel) -> String {
-        if let pendingConnection {
+        if let selectedAnchor {
             let title = model.visibleNodes.first(where: {
-                $0.itemID == pendingConnection.itemID && $0.kind == pendingConnection.kind
+                $0.itemID == selectedAnchor.itemID && $0.kind == selectedAnchor.kind
             })?.item.title ?? store.ui("当前项目", "Current item")
             return store.ui(
-                "已选「\(title)」· 点另一侧的 + 建立关联，点当前 + 取消",
-                "Selected “\(title)” · choose + on the other side to link, or choose this + again to cancel"
+                "已选「\(title)」· 点对面 + 建立关联，双击打开",
+                "Selected “\(title)” · tap + on the other side to link, double-click to open"
             )
         }
         let scopeText = scopeTitle(effectiveScope)
-        let relationText = store.ui("\(model.edges.count) 条可见关系", "\(model.edges.count) visible links")
-        let nodeText = store.ui("\(model.visibleNodes.count) 个节点", "\(model.visibleNodes.count) nodes")
-        let saveText = mode == .managing
-            ? " · \(store.ui("更改自动保存", "Changes save automatically"))"
-            : ""
+        let relationText = store.ui("\(model.edges.count) 条关系", "\(model.edges.count) links")
         if model.hiddenNodeCount > 0 {
-            return "\(scopeText) · \(relationText) · \(nodeText) · \(store.ui("其余 \(model.hiddenNodeCount) 项", "\(model.hiddenNodeCount) hidden"))\(saveText)"
+            return "\(scopeText) · \(relationText) · \(store.ui("其余 \(model.hiddenNodeCount) 项", "\(model.hiddenNodeCount) hidden"))"
         }
-        return "\(scopeText) · \(relationText) · \(nodeText)\(saveText)"
+        return "\(scopeText) · \(relationText)"
     }
 
     private func scopeTitle(_ scope: CourseRelationPaperScope) -> String {
@@ -893,40 +852,39 @@ struct CourseRelationPaperView: View {
         return courseID
     }
 
-    private func connectionState(for node: CourseRelationGraphNode) -> CourseRelationConnectionState {
-        guard let pendingConnection else { return .available }
-        let anchor = CourseRelationConnectionAnchor(itemID: node.itemID, kind: node.kind)
-        if pendingConnection == anchor { return .source }
-        return pendingConnection.kind == node.kind ? .alternate : .target
+    private var selectedAnchor: CourseRelationConnectionAnchor? {
+        if let selectedMaterialID {
+            return CourseRelationConnectionAnchor(itemID: selectedMaterialID, kind: .material)
+        }
+        if let selectedNoteID {
+            return CourseRelationConnectionAnchor(itemID: selectedNoteID, kind: .note)
+        }
+        return nil
+    }
+
+    private func connectionState(for node: CourseRelationGraphNode) -> CourseRelationConnectionState? {
+        guard let selectedAnchor else { return nil }
+        if selectedAnchor.itemID == node.itemID, selectedAnchor.kind == node.kind {
+            return nil
+        }
+        guard selectedAnchor.kind != node.kind else { return nil }
+        let materialID = selectedAnchor.kind == .material ? selectedAnchor.itemID : node.itemID
+        let noteID = selectedAnchor.kind == .note ? selectedAnchor.itemID : node.itemID
+        if store.linkedNoteIDs(for: materialID).contains(noteID) {
+            return nil
+        }
+        return .target
     }
 
     private func handleConnectionTap(_ node: CourseRelationGraphNode) {
-        guard mode == .managing else { return }
-        let anchor = CourseRelationConnectionAnchor(itemID: node.itemID, kind: node.kind)
-        guard let pendingConnection else {
-            self.pendingConnection = anchor
-            select(node)
-            return
-        }
-        if pendingConnection == anchor {
-            self.pendingConnection = nil
-            return
-        }
-        if pendingConnection.kind == anchor.kind {
-            self.pendingConnection = anchor
-            select(node)
-            return
-        }
-
-        let materialID = pendingConnection.kind == .material ? pendingConnection.itemID : anchor.itemID
-        let noteID = pendingConnection.kind == .note ? pendingConnection.itemID : anchor.itemID
+        guard let selectedAnchor, selectedAnchor.kind != node.kind else { return }
+        let materialID = selectedAnchor.kind == .material ? selectedAnchor.itemID : node.itemID
+        let noteID = selectedAnchor.kind == .note ? selectedAnchor.itemID : node.itemID
         addLink(materialID: materialID, noteID: noteID)
-        self.pendingConnection = nil
     }
 
     private func addLink(materialID: String, noteID: String) {
-        guard mode == .managing,
-              scopedMaterials.contains(where: { $0.id == materialID }),
+        guard scopedMaterials.contains(where: { $0.id == materialID }),
               scopedNotes.contains(where: { $0.id == noteID })
         else { return }
         var linkedNoteIDs = Set(store.linkedNoteIDs(for: materialID))
@@ -1037,29 +995,29 @@ struct CourseRelationPaperView: View {
     }
 
     private func edgeWidth(_ edge: CourseRelationGraphEdge, prominence: CourseRelationGraphProminence) -> CGFloat {
-        let base = CGFloat(min(9, 4 + max(0, edge.count - 1) * 2))
+        let extra = CGFloat(min(1, max(0, edge.count - 1))) * 0.35
         switch prominence {
         case .focused:
-            return base + 6
+            return 2.0 + extra
         case .related:
-            return base + 2.5
+            return 1.5 + extra
         case .normal:
-            return base
+            return 1.15 + extra
         case .mist:
-            return max(1.2, base * 0.38)
+            return 0.7
         }
     }
 
     private func edgeHazeWidth(_ prominence: CourseRelationGraphProminence) -> CGFloat {
         switch prominence {
         case .focused:
-            return 22
+            return 5
         case .related:
-            return 16
+            return 3.5
         case .normal:
-            return 11
+            return 2.5
         case .mist:
-            return 7
+            return 1.5
         }
     }
 }
@@ -1076,26 +1034,11 @@ private enum CourseRelationConnectionState: Equatable {
     case target
 }
 
-private enum CourseRelationPaperMode: Equatable {
-    case viewing
-    case managing
-
-    func label(language: WeiBeiInterfaceLanguage) -> String {
-        switch self {
-        case .viewing:
-            return language.text("查看", "View")
-        case .managing:
-            return language.text("管理", "Manage")
-        }
-    }
-}
-
 private struct CourseRelationPaperNodeView: View {
     @EnvironmentObject private var store: WorkspaceStore
     let node: CourseRelationGraphNode
     let prominence: CourseRelationGraphProminence
     let accent: Color
-    let mode: CourseRelationPaperMode
     let connectionState: CourseRelationConnectionState?
     let isDropTarget: Bool
     let select: () -> Void
@@ -1105,46 +1048,43 @@ private struct CourseRelationPaperNodeView: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            if node.kind == .note, let connectionState {
-                connectionControl(connectionState)
+            if node.kind == .note, connectionState == .target {
+                connectionControl(.target)
             }
 
             Capsule()
                 .fill(markerColor)
-                .frame(width: prominence == .focused ? 3 : 2, height: 30)
+                .frame(width: prominence == .focused ? 3 : 2, height: 22)
 
-            Button(action: select) {
-                HStack(spacing: 9) {
-                    Image(systemName: node.item.symbolName)
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundStyle(iconColor)
-                        .frame(width: 20)
+            HStack(spacing: 9) {
+                Image(systemName: node.item.symbolName)
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(iconColor)
+                    .frame(width: 18)
 
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(node.item.title)
-                            .font(.system(size: 13.5, weight: .semibold))
-                            .foregroundStyle(WeiBeiTheme.ink)
-                            .lineLimit(1)
-                        Text(detailText)
-                            .font(.system(size: 11))
-                            .foregroundStyle(WeiBeiTheme.secondaryInk)
-                            .lineLimit(1)
-                    }
-
-                    Spacer(minLength: 6)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(node.item.title)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(WeiBeiTheme.ink)
+                        .lineLimit(1)
+                    Text(detailText)
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(WeiBeiTheme.secondaryInk)
+                        .lineLimit(1)
                 }
-                .contentShape(Rectangle())
+
+                Spacer(minLength: 6)
             }
-            .buttonStyle(.plain)
+            .contentShape(Rectangle())
+            .onTapGesture(count: 2, perform: open)
+            .onTapGesture(count: 1, perform: select)
             .modifier(CourseRelationNodeDragModifier(
-                enabled: mode == .managing && node.kind == .material,
+                enabled: node.kind == .material,
                 itemID: node.itemID
             ))
 
-            if node.kind == .material, let connectionState {
-                connectionControl(connectionState)
-            } else if mode == .viewing {
-                openControl
+            if node.kind == .material, connectionState == .target {
+                connectionControl(.target)
             }
         }
         .padding(.horizontal, 8)
@@ -1164,17 +1104,6 @@ private struct CourseRelationPaperNodeView: View {
     private var detailText: String {
         let countText = node.relationCount == 0 ? "0" : "\(node.relationCount)"
         return "\(node.item.kindLabel) · \(countText)"
-    }
-
-    private var openControl: some View {
-        Button(action: open) {
-            Image(systemName: "arrow.up.forward")
-                .font(.system(size: 10.5, weight: .semibold))
-                .foregroundStyle(WeiBeiTheme.tertiaryInk)
-                .frame(width: 22, height: 22)
-        }
-        .buttonStyle(.plain)
-        .opacity(prominence == .mist ? 0.12 : 0.72)
     }
 
     @ViewBuilder

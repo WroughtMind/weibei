@@ -418,68 +418,37 @@ struct CourseHubView: View {
     }
 
     private var courseQuestionSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text(store.ui("问这门课", "Ask this course"))
-                .font(WeiBeiTypography.brandFont(
-                    language: store.interfaceLanguage,
-                    size: 21,
-                    weight: .semibold
-                ))
-                .foregroundStyle(WeiBeiTheme.ink)
-
-            HStack(alignment: .center, spacing: 12) {
-                Image(systemName: "bubble.left.and.text.bubble.right")
-                    .font(.system(size: 15, weight: .regular))
-                    .foregroundStyle(WeiBeiTheme.secondaryInk)
-                    .frame(width: 24)
-
-                TextField(
-                    "",
-                    text: $courseQuestion,
-                    prompt: Text(store.ui(
-                        "关于这门课，你想继续弄懂什么？",
-                        "What would you like to understand about this course?"
-                    ))
-                    .foregroundStyle(WeiBeiTheme.placeholderInk),
-                    axis: .vertical
-                )
+        HStack(spacing: 8) {
+            TextField("", text: $courseQuestion)
                 .textFieldStyle(.plain)
-                .font(.system(size: 14))
+                .font(.system(size: 13.5))
                 .foregroundStyle(WeiBeiTheme.ink)
-                .lineLimit(1...4)
                 .focused($courseQuestionFocused)
                 .onSubmit(submitCourseQuestion)
                 .accessibilityIdentifier("course-home-question")
+                .accessibilityLabel(Text(store.ui("向这门课提问", "Ask this course")))
 
-                Button(action: submitCourseQuestion) {
-                    Image(systemName: "arrow.up")
-                }
-                .buttonStyle(WeiBeiIconButtonStyle(
-                    size: 32,
-                    prominence: canSubmitCourseQuestion ? .primary : .neutral
-                ))
-                .disabled(!canSubmitCourseQuestion)
-                .accessibilityLabel(Text(store.ui("发送课程问题", "Send course question")))
-            }
-            .padding(.horizontal, 16)
-            .frame(minHeight: 78)
-            .background(
-                WeiBeiTheme.paperRaised.opacity(
-                    courseQuestionFocused ? 0.72 : 0.48
-                ),
-                in: RoundedRectangle(cornerRadius: 10, style: .continuous)
-            )
-            .overlay {
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .stroke(
-                        courseQuestionFocused
-                            ? WeiBeiTheme.cinnabar.opacity(0.28)
-                            : WeiBeiTheme.hairline.opacity(0.72),
-                        lineWidth: 1
+            Button(action: submitCourseQuestion) {
+                Image(systemName: "arrow.up")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(
+                        canSubmitCourseQuestion
+                            ? WeiBeiTheme.onCinnabar
+                            : WeiBeiTheme.tertiaryInk
+                    )
+                    .frame(width: 26, height: 26)
+                    .background(
+                        canSubmitCourseQuestion
+                            ? WeiBeiTheme.cinnabar
+                            : WeiBeiTheme.paperInset.opacity(0.55),
+                        in: Circle()
                     )
             }
-
+            .buttonStyle(.plain)
+            .disabled(!canSubmitCourseQuestion)
+            .accessibilityLabel(Text(store.ui("发送", "Send")))
         }
+        .weibeiInputSurface(active: courseQuestionFocused, height: 38)
     }
 
     private var canSubmitCourseQuestion: Bool {

@@ -296,31 +296,37 @@ struct CourseRelationGraphModel {
     }
 
     func paperSize(forWidth width: CGFloat, compact: Bool) -> CGSize {
+        let nodeHeight: CGFloat = 56
+        let rowGap: CGFloat = 10
+        let top: CGFloat = 64
+        let bottom: CGFloat = 48
         if compact {
-            let rows = max(materials.count + notes.count, 5)
-            return CGSize(width: max(width, 360), height: max(520, CGFloat(rows) * 74 + 180))
+            let rows = max(materials.count + notes.count, 1)
+            return CGSize(
+                width: max(width, 360),
+                height: max(360, top + CGFloat(rows) * (nodeHeight + rowGap) + bottom)
+            )
         }
-        let sideCount = max(materials.count, notes.count, 4)
-        return CGSize(width: max(width, 860), height: max(620, CGFloat(sideCount) * 92 + 180))
+        let sideCount = max(materials.count, notes.count, 1)
+        return CGSize(
+            width: max(width, 760),
+            height: max(420, top + CGFloat(sideCount) * (nodeHeight + rowGap) - rowGap + bottom)
+        )
     }
 
     func layout(in size: CGSize) -> CourseRelationGraphLayout {
-        let nodeSize = CGSize(width: min(230, max(190, size.width * 0.22)), height: 74)
-        let top: CGFloat = 92
-        let bottom: CGFloat = 86
-        let usableHeight = max(1, size.height - top - bottom)
-        let materialStep = materials.count <= 1 ? 0 : usableHeight / CGFloat(materials.count - 1)
-        let noteStep = notes.count <= 1 ? 0 : usableHeight / CGFloat(notes.count - 1)
-        let materialX = min(max(150, size.width * 0.28), size.width * 0.42)
-        let noteX = max(min(size.width - 150, size.width * 0.72), size.width * 0.58)
+        let nodeSize = CGSize(width: min(220, max(176, size.width * 0.22)), height: 56)
+        let top: CGFloat = 64
+        let rowStride = nodeSize.height + 10
+        let materialX = min(max(140, size.width * 0.26), size.width * 0.40)
+        let noteX = max(min(size.width - 140, size.width * 0.74), size.width * 0.60)
 
         let materialNodes = materials.enumerated().map { index, node in
-            let wave = CGFloat((index % 3) - 1) * 16
-            let y = top + (materials.count <= 1 ? usableHeight * 0.42 : CGFloat(index) * materialStep)
+            let y = top + CGFloat(index) * rowStride + nodeSize.height / 2
             return CourseRelationPlacedNode(
                 node: node,
                 frame: CGRect(
-                    x: materialX - nodeSize.width / 2 + wave,
+                    x: materialX - nodeSize.width / 2,
                     y: y - nodeSize.height / 2,
                     width: nodeSize.width,
                     height: nodeSize.height
@@ -328,12 +334,11 @@ struct CourseRelationGraphModel {
             )
         }
         let noteNodes = notes.enumerated().map { index, node in
-            let wave = CGFloat((index % 3) - 1) * -16
-            let y = top + (notes.count <= 1 ? usableHeight * 0.56 : CGFloat(index) * noteStep)
+            let y = top + CGFloat(index) * rowStride + nodeSize.height / 2
             return CourseRelationPlacedNode(
                 node: node,
                 frame: CGRect(
-                    x: noteX - nodeSize.width / 2 + wave,
+                    x: noteX - nodeSize.width / 2,
                     y: y - nodeSize.height / 2,
                     width: nodeSize.width,
                     height: nodeSize.height

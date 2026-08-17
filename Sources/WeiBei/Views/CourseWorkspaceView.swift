@@ -4,7 +4,6 @@ import WeiBeiCore
 
 enum CourseWorkspacePage: String, CaseIterable, Identifiable {
     case hub
-    case relations
     case map
     case records
     case memory
@@ -15,10 +14,8 @@ enum CourseWorkspacePage: String, CaseIterable, Identifiable {
         switch self {
         case .hub:
             language.text("概览", "Overview")
-        case .relations:
-            language.text("文稿与笔记", "Docs & Notes")
         case .map:
-            language.text("关系图", "Map")
+            language.text("文稿与笔记", "Docs & Notes")
         case .records:
             language.text("对话", "Conversations")
         case .memory:
@@ -180,7 +177,7 @@ struct CourseWorkspaceView: View {
                 selectedSessionID: $selectedSessionID,
                 isCompact: size.width < 960,
                 openRelations: {
-                    withAnimation(WeiBeiMotion.panel) { page = .relations }
+                    withAnimation(WeiBeiMotion.panel) { page = .map }
                 },
                 openRecords: {
                     withAnimation(WeiBeiMotion.panel) { page = .records }
@@ -197,16 +194,6 @@ struct CourseWorkspaceView: View {
                 },
                 createNote: promptForNewNote
             )
-        case .relations:
-            CourseRelationsView(
-                lens: $relationLens,
-                search: search,
-                selectedNoteID: $selectedNoteID,
-                selectedMaterialID: $selectedMaterialID,
-                showsGraph: false,
-                isCompact: size.width < 900,
-                createNote: promptForNewNote
-            )
         case .map:
             CourseRelationsView(
                 lens: $relationLens,
@@ -215,9 +202,7 @@ struct CourseWorkspaceView: View {
                 selectedMaterialID: $selectedMaterialID,
                 showsGraph: true,
                 isCompact: size.width < 900,
-                onEditLinks: {
-                    withAnimation(WeiBeiMotion.panel) { page = .relations }
-                }
+                createNote: promptForNewNote
             )
         case .records:
             CourseRecordsView(
@@ -296,7 +281,7 @@ struct CourseWorkspaceView: View {
             selectedMaterialID = nil
             selectedNoteID = noteID
             relationLens = .notes
-            page = .relations
+            page = .map
             showsNewNotePrompt = false
         }
     }
@@ -310,21 +295,21 @@ struct CourseWorkspaceView: View {
                     store.courseMaterials(in: $0).first?.id
                 }
         case .relations:
-            page = .relations
+            page = .map
         case .materials:
             relationLens = .materials
             selectedMaterialID = store.courseWorkspaceTargetItemID
                 ?? store.courseWorkspaceCourseID.flatMap {
                     store.courseMaterials(in: $0).first?.id
                 }
-            page = .relations
+            page = .map
         case .notes:
             relationLens = .notes
             selectedNoteID = store.courseWorkspaceTargetItemID
                 ?? store.courseWorkspaceCourseID.flatMap {
                     store.courseNotes(in: $0).first?.id
                 }
-            page = .relations
+            page = .map
         case .sessions:
             if let rawID = store.courseWorkspaceTargetItemID {
                 selectedSessionID = UUID(uuidString: rawID)
@@ -473,7 +458,7 @@ struct CourseWorkspaceHeader: View {
         switch page {
         case .hub:
             store.ui("搜索本课", "Search this course")
-        case .relations, .map:
+        case .map:
             store.ui("搜索本课文稿与笔记", "Search Docs and Notes in this course")
         case .records:
             store.ui("搜索本课对话", "Search Chats in this course")

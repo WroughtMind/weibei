@@ -65,14 +65,6 @@ struct CourseDocNoteWorkspaceView: View {
         filter(notes)
     }
 
-    private var explicitLinkCount: Int {
-        documents.reduce(into: 0) { count, document in
-            count += store.linkedNoteIDs(for: document.id)
-                .filter(noteIDs.contains)
-                .count
-        }
-    }
-
     private var selectedDocument: StudyItem? {
         selectedMaterialID.flatMap { selectedID in
             documents.first { $0.id == selectedID }
@@ -509,63 +501,8 @@ struct CourseDocNoteWorkspaceView: View {
 
     @ViewBuilder
     private var relationshipMap: some View {
-        if documents.isEmpty || notes.isEmpty {
-            VStack(spacing: 18) {
-                CourseEmptyState(
-                    title: documents.isEmpty
-                        ? store.ui("先加入文稿", "Add a doc first")
-                        : store.ui("先加入笔记", "Add a note first"),
-                    detail: store.ui(
-                        "关系图需要文稿和笔记两侧都存在；当前内容仍可在列表中管理。",
-                        "The map needs both docs and notes. Current items remain manageable in List."
-                    ),
-                    systemImage: "point.3.connected.trianglepath.dotted"
-                )
-
-                HStack(spacing: 10) {
-                    if documents.isEmpty, let courseID {
-                        Button(store.ui("导入文稿", "Import docs")) {
-                            store.importCourseMaterialsFromPanel(courseID: courseID)
-                        }
-                        .buttonStyle(WeiBeiTextActionButtonStyle(active: true))
-                    }
-                    if notes.isEmpty, let courseID {
-                        Button(store.ui("导入笔记", "Import notes")) {
-                            store.importCourseNotesFromPanel(courseID: courseID)
-                        }
-                        .buttonStyle(WeiBeiTextActionButtonStyle(active: !documents.isEmpty))
-                    }
-                    if let onEditLinks {
-                        Button(store.ui("去文稿与笔记建立关联", "Link in Docs & Notes"), action: onEditLinks)
-                            .buttonStyle(WeiBeiTextActionButtonStyle())
-                    }
-                }
-            }
-            .frame(maxWidth: 460)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .padding(32)
-        } else if explicitLinkCount == 0 {
-            VStack(spacing: 18) {
-                CourseEmptyState(
-                    title: store.ui(
-                        "还没有文档与笔记的明确关联",
-                        "No explicit doc–note links yet"
-                    ),
-                    detail: store.ui(
-                        "先回到列表，选择一份文档，再勾选相关笔记。关系图只展示真实保存的关联。",
-                        "Return to List, select a doc, and check its related notes. The map only shows saved links."
-                    ),
-                    systemImage: "point.3.connected.trianglepath.dotted"
-                )
-
-                if let onEditLinks {
-                    Button(store.ui("去文稿与笔记建立关联", "Link in Docs & Notes"), action: onEditLinks)
-                        .buttonStyle(WeiBeiTextActionButtonStyle(active: true))
-                }
-            }
-            .frame(maxWidth: 460)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .padding(32)
+        if documents.isEmpty && notes.isEmpty {
+            emptyCourseState
         } else {
             CourseRelationPaperView(
                 lens: $lens,
