@@ -4,8 +4,12 @@
   "private": true,
   "license": "MIT",
   "repository": "https://github.com/weibei-app/weibei",
+  "workspaces": [
+    "Prototypes/RichAnswerWebRuntime"
+  ],
   "scripts": {
-    "build:editor": "esbuild Sources/WeiBei/WebEditor/src/editor.js --bundle --format=iife --outfile=Sources/WeiBei/Resources/Editor/editor.js --minify --loader:.woff=file --loader:.woff2=file --loader:.ttf=file --asset-names=fonts/[name]"
+    "build:editor": "esbuild Sources/WeiBei/WebEditor/src/editor.js --bundle --format=iife --outfile=Sources/WeiBei/Resources/Editor/editor.js --minify --loader:.woff=file --loader:.woff2=file --loader:.ttf=file --asset-names=fonts/[name]",
+    "typecheck:tools": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
     "@milkdown/kit": "7.21.3",
@@ -17,7 +21,10 @@
   },
   "devDependencies": {
     "appdmg": "0.6.6",
-    "esbuild": "0.28.1"
+    "esbuild": "0.28.1",
+    "typescript": "5.7.3",
+    "tsx": "^4.19.2",
+    "@types/node": "^22.10.0"
   },
   "overrides": {
     "dompurify": "3.4.12"

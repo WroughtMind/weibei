@@ -19,7 +19,7 @@ const sourceBinding = {
   role: "basis",
 };
 
-function renderPlan(renderer, specVersion, spec, qualityBudget = {}) {
+function renderPlan(renderer: any, specVersion: any, spec: any, qualityBudget: Record<string, number> = {}) {
   return {
     renderer,
     specVersion,
@@ -188,7 +188,7 @@ try {
     ),
   ];
 
-  const expectedRoutes = new Map([
+  const expectedRoutes = new Map<string, any>([
     ["weibei.echarts.chart", { version: "weibei.chart.v1", maxNodes: 80, maxDataPoints: 4_000, maxArtifacts: 0, maxBytes: 256_000, maxHeight: 640, maxInteractionLatencyMS: 120 }],
     ["weibei.math.function", { version: "weibei.math-function.v1", maxNodes: 64, maxDataPoints: 1_600, maxArtifacts: 0, maxBytes: 256_000, maxHeight: 640, maxInteractionLatencyMS: 120 }],
     ["weibei.geometry.2d", { version: "weibei.geometry-2d.v1", maxNodes: 260, maxDataPoints: 1_200, maxArtifacts: 0, maxBytes: 256_000, maxHeight: 720, maxInteractionLatencyMS: 120 }],
@@ -202,7 +202,7 @@ try {
     "Web runtime must register exactly the six canonical render-plan routes",
   );
   for (const renderer of renderers) {
-    const expected = expectedRoutes.get(renderer.id);
+    const expected = expectedRoutes.get(renderer.id)!;
     assert.deepEqual(renderer.capabilities.specVersions, [expected.version]);
     for (const field of ["maxNodes", "maxDataPoints", "maxArtifacts", "maxBytes", "maxHeight", "maxInteractionLatencyMS"]) {
       assert.equal(renderer.capabilities[field], expected[field], `${renderer.id} ${field}`);
@@ -296,7 +296,7 @@ try {
     [{ index: 2, value: { id: "C", kind: "compiled" } }],
   );
   assert.deepEqual(
-    orderedMixedGroup.map((item) => `${item.id}:${item.kind}`),
+    orderedMixedGroup.map((item: any) => `${item.id}:${item.kind}`),
     ["A:compiled", "B:fallback", "C:compiled"],
     "a bad middle item keeps A, local B fallback, C in original order",
   );
@@ -308,7 +308,7 @@ try {
   );
   assert.equal(allFailedGroup.length, 6);
   assert.equal(
-    allFailedGroup.every((html) =>
+    allFailedGroup.every((html: any) =>
       html.includes('data-weibei-fallback-mode="narrativeOnly"')
         && html.includes("保留普通正文。")),
     true,
@@ -323,9 +323,9 @@ try {
     ],
     formalRenderGroupResourceLimits,
   );
-  assert.deepEqual(logicalAdmission.accepted.map((item) => item.index), [0, 2]);
+  assert.deepEqual(logicalAdmission.accepted.map((item: any) => item.index), [0, 2]);
   assert.deepEqual(
-    logicalAdmission.rejected.map((item) => [item.index, item.reason]),
+    logicalAdmission.rejected.map((item: any) => [item.index, item.reason]),
     [[1, "logical_plan_bytes"]],
     "individually legal plans cannot exceed the shared 1.5 MB group envelope",
   );
@@ -351,9 +351,9 @@ try {
     ],
     formalRenderGroupResourceLimits,
   );
-  assert.deepEqual(assetAdmission.accepted.map((item) => item.index), [0, 1]);
+  assert.deepEqual(assetAdmission.accepted.map((item: any) => item.index), [0, 1]);
   assert.deepEqual(
-    assetAdmission.rejected.map((item) => [item.index, item.reason]),
+    assetAdmission.rejected.map((item: any) => [item.index, item.reason]),
     [[2, "trusted_asset_count"]],
   );
   assert.equal(assetAdmission.totals.trustedAssetCount, 4);

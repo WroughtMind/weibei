@@ -55,6 +55,6 @@
 - [ ] `WeiBeiSelfCheck` 通过
 - [ ] 与布局、字体、cinnabar、glass、EmptyWorkspace 相关断言已同步
 - [ ] 视觉变更已更新相应 `DesignReferences/` 或基线截图
-- [ ] `script/verify_release_metadata.sh` 检查图标与 plist
+- [ ] `swift run WeiBeiDev verify-release-metadata`（迁移自 `script/verify_release_metadata.sh`）检查图标与 plist
 
 最后问一次：**去掉 Logo，这个界面是否仍然像一张为长期阅读和写作准备的工作台，而不是通用 AI 聊天壳？**

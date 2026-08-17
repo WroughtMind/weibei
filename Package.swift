@@ -11,7 +11,8 @@ let package = Package(
         .executable(name: "WeiBeiSelfCheck", targets: ["WeiBeiSelfCheck"]),
         .executable(name: "WeiBeiWebEditorCheck", targets: ["WeiBeiWebEditorCheck"]),
         .executable(name: "WeiBeiPiCheck", targets: ["WeiBeiPiCheck"]),
-        .executable(name: "WeiBeiPDFTextWorker", targets: ["WeiBeiPDFTextWorker"])
+        .executable(name: "WeiBeiPDFTextWorker", targets: ["WeiBeiPDFTextWorker"]),
+        .executable(name: "WeiBeiDev", targets: ["WeiBeiDev"])
     ],
     targets: [
         .target(
@@ -65,6 +66,9 @@ let package = Package(
             linkerSettings: [
                 .linkedFramework("PDFKit")
             ]
+        ),
+        .executableTarget(
+            name: "WeiBeiDev"
         ),
         .testTarget(
             name: "WeiBeiSafetyTests",

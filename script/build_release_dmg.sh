@@ -73,14 +73,6 @@ if [[ ! -x "$ROOT_DIR/node_modules/.bin/appdmg" ]]; then
   echo "release failed: run npm ci before building the DMG" >&2
   exit 7
 fi
-for native_module in \
-  "$ROOT_DIR/node_modules/macos-alias/build/Release/volume.node" \
-  "$ROOT_DIR/node_modules/fs-xattr/build/Release/xattr.node"; do
-  if [[ ! -f "$native_module" ]]; then
-    echo "release failed: appdmg native modules are missing; run npm rebuild macos-alias fs-xattr" >&2
-    exit 18
-  fi
-done
 
 if [[ "$MODE" == "notarized" ]]; then
   SIGN_IDENTITY="${WEIBEI_CODESIGN_IDENTITY:-}"
@@ -123,7 +115,7 @@ fi
 
 "$ROOT_DIR/script/build_and_run.sh" check
 "$ROOT_DIR/script/build_and_run.sh" package
-"$ROOT_DIR/script/verify_release_metadata.sh" --require-clean "$BASE_APP"
+(cd "$ROOT_DIR" && swift run WeiBeiDev verify-release-metadata --require-clean "$BASE_APP")
 
 mkdir -p "$RELEASE_DIR"
 rm -rf "$RELEASE_APP"
@@ -146,8 +138,8 @@ fi
 /usr/bin/codesign --verify --strict --verbose=2 "$PI_EXECUTABLE"
 /usr/bin/codesign --verify --strict --verbose=2 "$PDF_HELPER"
 /usr/bin/codesign --verify --deep --strict --verbose=2 "$RELEASE_APP"
-"$ROOT_DIR/script/verify_release_metadata.sh" --require-clean "$RELEASE_APP"
-"$ROOT_DIR/script/verify_production_hygiene.sh" "$RELEASE_APP"
+(cd "$ROOT_DIR" && swift run WeiBeiDev verify-release-metadata --require-clean "$RELEASE_APP")
+(cd "$ROOT_DIR" && swift run WeiBeiDev verify-production-hygiene "$RELEASE_APP")
 
 BUILD_DIR="$(swift build -c release --show-bin-path)"
 WEIBEI_PI_EXECUTABLE="$PI_EXECUTABLE" \
@@ -155,7 +147,7 @@ WEIBEI_PI_APP_BUNDLE="$RELEASE_APP" \
 WEIBEI_PI_LIVE_CHECK=0 \
   "$BUILD_DIR/WeiBeiPiCheck"
 
-node "$ROOT_DIR/script/dmg/build_dmg.mjs" "$ROOT_DIR" "$RELEASE_APP" "$DMG_PATH" "$APP_VERSION"
+npx tsx "$ROOT_DIR/script/dmg/build_dmg.ts" "$ROOT_DIR" "$RELEASE_APP" "$DMG_PATH" "$APP_VERSION"
 
 if [[ "$MODE" == "notarized" ]]; then
   /usr/bin/codesign --force --timestamp --sign "$SIGN_IDENTITY" "$DMG_PATH"
@@ -223,7 +215,7 @@ detach_release_mount
 
 DMG_SHA256="$(/usr/bin/shasum -a 256 "$DMG_PATH" | /usr/bin/awk '{print $1}')"
 /usr/bin/printf '%s  %s\n' "$DMG_SHA256" "$DMG_NAME" | /usr/bin/tee "$DMG_SHA_PATH" >/dev/null
-node "$ROOT_DIR/script/homebrew/generate_cask.mjs" "$APP_VERSION" "$DMG_SHA256" "$CASK_PATH"
+npx tsx "$ROOT_DIR/script/homebrew/generate_cask.ts" "$APP_VERSION" "$DMG_SHA256" "$CASK_PATH"
 /usr/bin/ruby -c "$CASK_PATH" >/dev/null
 
 echo "release_mode=$MODE"

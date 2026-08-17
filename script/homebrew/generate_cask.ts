@@ -5,7 +5,7 @@ import process from "node:process";
 
 const [version, sha256, outputArgument] = process.argv.slice(2);
 if (!version || !/^[0-9]+\.[0-9]+\.[0-9]+$/.test(version)) {
-  throw new Error("usage: generate_cask.mjs <version> <64-char-sha256> <output.rb>");
+  throw new Error("usage: generate_cask.ts <version> <64-char-sha256> <output.rb>");
 }
 if (!sha256 || !/^[0-9a-f]{64}$/.test(sha256)) {
   throw new Error("DMG SHA-256 must be 64 lowercase hexadecimal characters");

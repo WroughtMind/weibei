@@ -6,7 +6,7 @@
 
 1. 把整个 `DesignSystem/` 放在仓库根目录。
 2. 应用 `build_and_run.icon.patch`，或手工完成同样三件事：检查 ICNS、复制到 `Contents/Resources`、写入 `CFBundleIconFile`。
-3. 在 `script/verify_release_metadata.sh` 增加图标文件与 plist 引用校验。
+3. 在 `swift run WeiBeiDev verify-release-metadata`（原 `script/verify_release_metadata.sh`，已迁移为 Swift 工具子命令）增加图标文件与 plist 引用校验。
 4. 运行：
 
 ```bash

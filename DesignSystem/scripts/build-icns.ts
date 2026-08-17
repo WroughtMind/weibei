@@ -4,7 +4,7 @@ import path from "node:path";
 
 const [iconset, output] = process.argv.slice(2);
 if (!iconset || !output) {
-  console.error("usage: build-icns.mjs <AppIcon.iconset> <output.icns>");
+  console.error("usage: build-icns.ts <AppIcon.iconset> <output.icns>");
   process.exit(2);
 }
 

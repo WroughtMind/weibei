@@ -20,7 +20,7 @@
 | 设计回归断言 | `Sources/WeiBeiSelfCheck/main.swift` |
 | 历史视觉参考 | `DesignReferences/` |
 | 手工应用打包 | `script/build_and_run.sh` |
-| 发布元数据验证 | `script/verify_release_metadata.sh` |
+| 发布元数据验证 | `swift run WeiBeiDev verify-release-metadata`（迁移自 `script/verify_release_metadata.sh`） |
 
 ## 文档与代码同步
 

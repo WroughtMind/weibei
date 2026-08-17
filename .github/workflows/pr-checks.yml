@@ -75,6 +75,12 @@ jobs:
         if: github.event_name != 'pull_request' || steps.scope.outputs.code == 'true'
         run: swift run WeiBeiSelfCheck
 
+      - name: 运行开发工具子命令自检
+        if: github.event_name != 'pull_request' || steps.scope.outputs.code == 'true'
+        run: |
+          swift run WeiBeiDev selfcheck-assertions
+          swift run WeiBeiDev nslog-scan
+
       - name: 运行 Pi 终止语义自检
         if: (github.event_name == 'pull_request' && steps.scope.outputs.pi == 'true') || (github.event_name == 'workflow_dispatch' && inputs.full_suite)
         run: WEIBEI_PI_TERMINAL_SELF_CHECK_ONLY=1 swift run WeiBeiSelfCheck
@@ -85,7 +91,7 @@ jobs:
 
       - name: 运行 Agent 扩展自检
         if: (github.event_name == 'pull_request' && steps.scope.outputs.pi == 'true') || (github.event_name == 'workflow_dispatch' && inputs.full_suite)
-        run: node script/check-agent-project-tools.mjs
+        run: npx tsx script/check-agent-project-tools.ts
 
       - name: 运行编辑器自检
         if: (github.event_name == 'pull_request' && steps.scope.outputs.editor == 'true') || (github.event_name == 'workflow_dispatch' && inputs.full_suite)
@@ -93,6 +99,13 @@ jobs:
           npm run build:editor
           git diff --exit-code -- Sources/WeiBei/Resources/Editor
           swift run WeiBeiWebEditorCheck
+
+      - name: 校验富回答运行时产物一致
+        if: (github.event_name == 'pull_request' && steps.scope.outputs.rich_answer == 'true') || (github.event_name == 'workflow_dispatch' && inputs.full_suite)
+        run: |
+          npm ci
+          npm -w Prototypes/RichAnswerWebRuntime run build:embed
+          git diff --exit-code -- Sources/WeiBei/Resources/rich-answer.html Sources/WeiBei/Resources/rich-answer-runtime.css Sources/WeiBei/Resources/rich-answer-runtime.js
 
       - name: 运行课程目录与数据安全自检
         if: (github.event_name == 'pull_request' && steps.scope.outputs.data_safety == 'true') || (github.event_name == 'workflow_dispatch' && inputs.full_suite)
@@ -117,17 +130,20 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: 安装 Node 依赖（package 前置）
+        run: npm ci
+
       - name: 生成可追溯安装包
         run: ./script/build_and_run.sh package
 
       - name: 校验版本、构建号与提交来源
-        run: ./script/verify_release_metadata.sh --require-clean
+        run: swift run WeiBeiDev verify-release-metadata --require-clean
 
       - name: 校验安装包签名
         run: /usr/bin/codesign --verify --deep --strict "dist/魏碑.app"
 
       - name: 确认正式包不含测试支架或内置示例
-        run: ./script/verify_production_hygiene.sh "dist/魏碑.app"
+        run: swift run WeiBeiDev verify-production-hygiene "dist/魏碑.app"
 
       - name: 压缩短期真实窗口验收包
         run: ditto -c -k --sequesterRsrc --keepParent "dist/魏碑.app" "dist/魏碑-CI验收包.zip"

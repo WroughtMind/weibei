@@ -2276,22 +2276,4 @@ do {
     expect(hoppedOffMain, "Phase 2 encode hop leaves main thread")
 }
 
-do {
-    let script = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
-        .appendingPathComponent("script/check_selfcheck_source_assertions.sh")
-    let process = Process()
-    process.executableURL = URL(fileURLWithPath: "/bin/bash")
-    process.arguments = [script.path]
-    let pipe = Pipe()
-    process.standardOutput = pipe
-    process.standardError = pipe
-    try process.run()
-    process.waitUntilExit()
-    let output = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
-    expect(
-        process.terminationStatus == 0,
-        "SAFETY:note-repair-oneshot source-assertion guard must stay green: \(output)"
-    )
-}
-
 print("WeiBei self-check passed")
