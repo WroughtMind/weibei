@@ -1,0 +1,19 @@
+{
+  "compilerOptions": {
+    "strict": false,
+    "noImplicitAny": true,
+    "noEmit": true,
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "target": "es2022",
+    "lib": ["es2022", "dom"],
+    "types": ["node"],
+    "allowImportingTsExtensions": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true
+  },
+  "include": [
+    "Sources/WeiBeiCore/AgentResources/**/*.ts",
+    "Prototypes/RichAnswerWebRuntime/scripts/agent-contract-stubs.d.ts"
+  ]
+}

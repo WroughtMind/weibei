@@ -137,7 +137,7 @@ async function run(args: string, ctx: ExtensionCommandContext): Promise<void> {
         kind: "result",
         action: request.action,
         catalog: {
-          providers: runtime.getProviders().map((provider) => {
+          providers: runtime.getProviders().map((provider: any) => {
             const status = runtime.getProviderAuthStatus(provider.id);
             return {
               id: provider.id,
@@ -150,7 +150,7 @@ async function run(args: string, ctx: ExtensionCommandContext): Promise<void> {
               authSource: status.source,
             };
           }),
-          models: runtime.getModels().map((model) => ({
+          models: runtime.getModels().map((model: any) => ({
             id: model.id,
             name: model.name,
             providerId: model.provider,
@@ -160,7 +160,7 @@ async function run(args: string, ctx: ExtensionCommandContext): Promise<void> {
             contextWindow: model.contextWindow,
             maxTokens: model.maxTokens,
           })),
-          credentials: credentials.map((credential) => ({
+          credentials: credentials.map((credential: any) => ({
             ...credential,
             boundEndpoint: credential.providerId === AZURE_PROVIDER
               ? boundAzureEndpoint
@@ -194,7 +194,7 @@ async function run(args: string, ctx: ExtensionCommandContext): Promise<void> {
           ...provider.auth,
           apiKey: {
             ...apiKeyAuth,
-            async login(interaction) {
+            async login(interaction: any) {
               const credential = await login(interaction);
               return {
                 ...credential,

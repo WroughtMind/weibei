@@ -588,7 +588,7 @@ function readCourse(value: unknown): CourseSnapshot {
   ) {
     throw new Error("魏碑课程快照缺少 catalog、items 或 relations");
   }
-  const catalog = course.catalog.slice(0, LIMITS.courseCatalogItems).map((entry, index) => {
+  const catalog = course.catalog.slice(0, LIMITS.courseCatalogItems).map((entry: any, index) => {
     const field = `course.catalog[${index}]`;
     return readCourseCatalogItem(requireRecord(entry, field), field);
   });
@@ -599,7 +599,7 @@ function readCourse(value: unknown): CourseSnapshot {
     }
     catalogIDs.add(item.id);
   });
-  const items = course.items.slice(0, LIMITS.courseItems).map((entry, index) => {
+  const items = course.items.slice(0, LIMITS.courseItems).map((entry: any, index) => {
     const field = `course.items[${index}]`;
     const item = requireRecord(entry, field);
     const parsedItem = {
@@ -623,7 +623,7 @@ function readCourse(value: unknown): CourseSnapshot {
   });
   const relations = course.relations
     .slice(0, LIMITS.courseRelations)
-    .map((entry, index) => {
+    .map((entry: any, index) => {
       const relation = requireRecord(entry, `course.relations[${index}]`);
       const parsedRelation = {
         noteItemID: requireIdentifier(
@@ -709,7 +709,7 @@ function readProject(value: unknown, catalogIDs: Set<string>): ProjectSnapshot {
   ) {
     throw new Error("课程项目的文件夹授权不完整");
   }
-  const items = project.items.slice(0, LIMITS.projectItems).map((entry, index) => {
+  const items = project.items.slice(0, LIMITS.projectItems).map((entry: any, index) => {
     const field = `project.items[${index}]`;
     const item = requireRecord(entry, field);
     const itemID = requireIdentifier(item.itemID, `${field}.itemID`);
@@ -838,7 +838,7 @@ function readLearning(value: unknown): LearningSnapshot {
     "agentInference",
     "observed",
   ]);
-  const memories = learning.memories.slice(0, LIMITS.learningMemories).map((entry, index) => {
+  const memories = learning.memories.slice(0, LIMITS.learningMemories).map((entry: any, index) => {
     const memory = requireRecord(entry, `learning.memories[${index}]`);
     const kind = requireString(memory.kind, `learning.memories[${index}].kind`) as LearningMemoryKind;
     const origin = requireString(
@@ -1012,7 +1012,7 @@ async function readContextEnvelope(): Promise<Record<string, unknown>> {
 async function readCurrentSnapshot(): Promise<ContextSnapshotV2> {
   const envelope = await readContextEnvelope();
   const course = readCourse(envelope.course);
-  const catalogIDs = new Set(course.catalog.map((item) => item.id));
+  const catalogIDs = new Set(course.catalog.map((item: any) => item.id));
   const project = readProject(envelope.project, catalogIDs);
 
   return {
@@ -1051,7 +1051,7 @@ async function readCurrentVisualAssets(
     throw new Error("魏碑视觉材料描述必须是数组");
   }
   const currentMaterialIDs = new Set(
-    snapshot.course.catalog.filter((item) => item.isCurrentMaterial).map((item) => item.id),
+    snapshot.course.catalog.filter((item: any) => item.isCurrentMaterial).map((item: any) => item.id),
   );
   const assets = new Map<string, VisualAssetFileSnapshot>();
   envelope.visualAssets.slice(0, LIMITS.visualAssets).forEach((entry, index) => {
@@ -1109,14 +1109,14 @@ function evidenceLabels(
   const labels: string[] = [];
   if (snapshot.selection?.text.trim()) labels.push(`[选区：${snapshot.selection.title}]`);
   snapshot.course.catalog
-    .filter((item) => readableItemIDs.has(item.id))
+    .filter((item: any) => readableItemIDs.has(item.id))
     .forEach((item) => labels.push(courseEvidenceLabel(snapshot.course, item)));
   return labels;
 }
 
 function currentFocusMessage(snapshot: ContextSnapshotV2): string {
   const focus = snapshot.focus;
-  const catalog = snapshot.course.catalog.map((item) => ({
+  const catalog = snapshot.course.catalog.map((item: any) => ({
     id: item.id,
     title: item.title,
     role: item.role,
@@ -1137,12 +1137,12 @@ function currentFocusMessage(snapshot: ContextSnapshotV2): string {
       },
       course: {
         title: snapshot.course.title,
-        materialCount: catalog.filter((item) => item.role === "material").length,
-        noteCount: catalog.filter((item) => item.role === "note").length,
+        materialCount: catalog.filter((item: any) => item.role === "material").length,
+        noteCount: catalog.filter((item: any) => item.role === "note").length,
         profileRevision: snapshot.courseProfile.revision,
         understanding: truncate(snapshot.courseProfile.overview, 600),
-        currentMaterial: catalog.find((item) => item.isCurrentMaterial),
-        currentNote: catalog.find((item) => item.isCurrentNote),
+        currentMaterial: catalog.find((item: any) => item.isCurrentMaterial),
+        currentNote: catalog.find((item: any) => item.isCurrentNote),
       },
       location: focus
         ? {
@@ -1666,35 +1666,35 @@ function presentCourseResults(
   jumpReferences: string[];
   jumpEvidence: Record<string, string>;
 } {
-  const presentedResults = results.map((item) => {
+  const presentedResults = results.map((item: any) => {
     const hasEvidence = item.searchText.trim().length > 0;
     const sectionJumpReferences =
       hasEvidence && item.kind === "html"
         ? item.headings
             .slice(0, 5)
-            .map((heading) => courseJumpReference(snapshot.course, item, heading))
+            .map((heading: any) => courseJumpReference(snapshot.course, item, heading))
         : [];
     const pageJumpReferences =
       hasEvidence && item.kind === "pdf"
         ? item.headings
-            .filter((heading) => coursePage(heading) !== undefined)
+            .filter((heading: any) => coursePage(heading) !== undefined)
             .slice(0, 5)
-            .map((heading) => courseJumpReference(snapshot.course, item, heading))
+            .map((heading: any) => courseJumpReference(snapshot.course, item, heading))
         : [];
     return {
       ...item,
-      headings: item.headings.map((heading) => courseHeading(heading).title),
+      headings: item.headings.map((heading: any) => courseHeading(heading).title),
       evidenceLabel: hasEvidence ? courseEvidenceLabel(snapshot.course, item) : undefined,
       jumpReference: hasEvidence ? courseJumpReference(snapshot.course, item) : undefined,
       sectionJumpReferences,
       pageJumpReferences,
     };
   });
-  const evidenceLabels = presentedResults.flatMap((item) =>
+  const evidenceLabels = presentedResults.flatMap((item: any) =>
     item.evidenceLabel ? [item.evidenceLabel] : [],
   );
   const jumpEvidence = Object.fromEntries(
-    presentedResults.flatMap((item) => {
+    presentedResults.flatMap((item: any) => {
       if (!item.evidenceLabel || !item.jumpReference) return [];
       return [item.jumpReference, ...item.sectionJumpReferences, ...item.pageJumpReferences]
         .map((jumpReference) => [jumpReference, item.evidenceLabel] as const);
@@ -1752,7 +1752,7 @@ export default function weibeiExtension(pi: ExtensionAPI) {
       { additionalProperties: false },
     ),
     executionMode: "sequential",
-    async execute(_toolCallID, params) {
+    async execute(_toolCallID: any, params: any) {
       const normalizedSkillPath = skillPath(params.path);
       const skill = normalizedSkillPath
         ? SKILL_BY_PATH.get(normalizedSkillPath)
@@ -1794,7 +1794,7 @@ export default function weibeiExtension(pi: ExtensionAPI) {
       { additionalProperties: false },
     ),
     executionMode: "sequential",
-    async execute(_toolCallID, params) {
+    async execute(_toolCallID: any, params: any) {
       const id = params.id.trim();
       const spec = params.spec as Record<string, unknown>;
       const specJSON = JSON.stringify(spec);
@@ -1831,7 +1831,7 @@ export default function weibeiExtension(pi: ExtensionAPI) {
       { additionalProperties: false },
     ),
     executionMode: "sequential",
-    async execute(_toolCallID, params) {
+    async execute(_toolCallID: any, params: any) {
       const current = await readCurrentSnapshot();
       const visualAssets = await readCurrentVisualAssets(current);
       const asset = visualAssets.get(params.assetID);
@@ -1904,7 +1904,7 @@ export default function weibeiExtension(pi: ExtensionAPI) {
       { additionalProperties: false },
     ),
     executionMode: "sequential",
-    async execute(toolCallID, params, signal) {
+    async execute(toolCallID: any, params: any, signal: any) {
       const snapshot = await readCurrentSnapshot();
       const offset = params.offset ?? 0;
       const limit = params.limit ?? 40;
@@ -1916,13 +1916,13 @@ export default function weibeiExtension(pi: ExtensionAPI) {
       );
       const results = response.items;
       rememberHostCourseItems(hostCourseItemIDs, results);
-      const catalog = results.map((item) => ({
+      const catalog = results.map((item: any) => ({
         ...item,
         jumpReference: courseJumpReference(snapshot.course, item),
       }));
-      const catalogByID = new Map(results.map((item) => [item.id, item] as const));
-      const relations = results.flatMap((item) =>
-        item.linkedItemIDs.flatMap((linkedID) => {
+      const catalogByID = new Map(results.map((item: any) => [item.id, item] as const));
+      const relations = results.flatMap((item: any) =>
+        item.linkedItemIDs.flatMap((linkedID: any) => {
           const linked = catalogByID.get(linkedID);
           if (!linked || item.role === linked.role || item.id > linked.id) return [];
           const note = item.role === "note" ? item : linked;
@@ -1973,7 +1973,7 @@ export default function weibeiExtension(pi: ExtensionAPI) {
       { additionalProperties: false },
     ),
     executionMode: "sequential",
-    async execute(toolCallID, params, signal) {
+    async execute(toolCallID: any, params: any, signal: any) {
       const snapshot = await readCurrentSnapshot();
       const query = params.query.trim();
       const response = await queryCourseIndex(
@@ -1985,7 +1985,7 @@ export default function weibeiExtension(pi: ExtensionAPI) {
       const results = response.items;
       rememberHostCourseItems(hostCourseItemIDs, results);
       results
-        .filter((item) => item.searchText.trim().length > 0)
+        .filter((item: any) => item.searchText.trim().length > 0)
         .forEach((item) => searchedCourseItemIDs.add(item.id));
       const presented = presentCourseResults(snapshot, results);
       const details: CourseSearchToolDetails = {
@@ -2032,10 +2032,10 @@ export default function weibeiExtension(pi: ExtensionAPI) {
       { additionalProperties: false },
     ),
     executionMode: "sequential",
-    async execute(toolCallID, params, signal) {
+    async execute(toolCallID: any, params: any, signal: any) {
       const snapshot = await readCurrentSnapshot();
       if (
-        !snapshot.project.items.some((item) => item.itemID === params.itemID) &&
+        !snapshot.project.items.some((item: any) => item.itemID === params.itemID) &&
         !hostCourseItemIDs.has(params.itemID)
       ) {
         throw new Error("该资料 ID 不属于本轮查询作用域");
@@ -2091,7 +2091,7 @@ export default function weibeiExtension(pi: ExtensionAPI) {
       maximumCharacters: Type.Optional(Type.Integer({ minimum: 1_000, maximum: LIMITS.webText })),
     }, { additionalProperties: false }),
     executionMode: "sequential",
-    async execute(toolCallID, params, signal) {
+    async execute(toolCallID: any, params: any, signal: any) {
       const snapshot = await readCurrentSnapshot();
       const page = await openWebPage(snapshot, toolCallID, signal);
       return {
@@ -2149,7 +2149,7 @@ export default function weibeiExtension(pi: ExtensionAPI) {
       { additionalProperties: false },
     ),
     executionMode: "sequential",
-    async execute(_toolCallID, params) {
+    async execute(_toolCallID: any, params: any) {
       const current = await readCurrentSnapshot();
       const entries = params.entries ?? [];
       const removedEntryIDs = params.removedEntryIDs ?? [];
@@ -2167,12 +2167,12 @@ export default function weibeiExtension(pi: ExtensionAPI) {
         throw new Error("课程知识档案更新不能为空");
       }
       const catalogByID = new Map(
-        current.course.catalog.map((item) => [item.id, item] as const),
+        current.course.catalog.map((item: any) => [item.id, item] as const),
       );
-      const existingEntryIDs = new Set(current.courseProfile.entries.map((entry) => entry.id));
+      const existingEntryIDs = new Set(current.courseProfile.entries.map((entry: any) => entry.id));
       if (
-        removedEntryIDs.some((id) => !existingEntryIDs.has(id)) ||
-        entries.some((entry) => entry.entryID && !existingEntryIDs.has(entry.entryID))
+        removedEntryIDs.some((id: any) => !existingEntryIDs.has(id)) ||
+        entries.some((entry: any) => entry.entryID && !existingEntryIDs.has(entry.entryID))
       ) {
         throw new Error("课程知识档案条目已变化，请重新查看课程地图");
       }
@@ -2307,7 +2307,7 @@ export default function weibeiExtension(pi: ExtensionAPI) {
       { additionalProperties: false },
     ),
     executionMode: "sequential",
-    async execute(_toolCallId, params) {
+    async execute(_toolCallId: any, params: any) {
       const current = await readCurrentSnapshot();
       if (!hasExplicitLearningCheckpoint(current.question)) {
         throw new Error("普通问答不更新长期学习记忆；等待用户明确确认理解、结论或保存学习成果");
@@ -2325,14 +2325,14 @@ export default function weibeiExtension(pi: ExtensionAPI) {
       ) {
         throw new Error("学习状态建议的上下文或记忆修订号不匹配");
       }
-      const entries = params.entries.map((entry) => ({
+      const entries = params.entries.map((entry: any) => ({
         memoryID: entry.memoryID?.trim().toLowerCase(),
         kind: entry.kind as LearningMemoryKind,
         text: entry.text.trim(),
         evidence: entry.evidence.trim(),
         origin: entry.origin as "userStatement" | "agentInference",
       }));
-      if (entries.some((entry) => entry.memoryID !== undefined && !entry.memoryID)) {
+      if (entries.some((entry: any) => entry.memoryID !== undefined && !entry.memoryID)) {
         throw new Error("学习记忆 ID 不能为空");
       }
       const allowedEvidencePrefixes = [
@@ -2340,12 +2340,12 @@ export default function weibeiExtension(pi: ExtensionAPI) {
         "[会话：当前]",
         ...evidenceLabels(current, searchedCourseItemIDs),
         ...current.course.catalog
-          .filter((item) => searchedCourseItemIDs.has(item.id))
-          .map((item) => courseEvidenceLabel(current.course, item)),
+          .filter((item: any) => searchedCourseItemIDs.has(item.id))
+          .map((item: any) => courseEvidenceLabel(current.course, item)),
       ];
       if (
         entries.some(
-          (entry) =>
+          (entry: any) =>
             !entry.text ||
             !entry.evidence ||
             !allowedEvidencePrefixes.some((prefix) => entry.evidence.startsWith(prefix)),
@@ -2355,7 +2355,7 @@ export default function weibeiExtension(pi: ExtensionAPI) {
       }
       if (
         entries.some(
-          (entry) =>
+          (entry: any) =>
             (entry.evidence.startsWith("[用户：本轮]") ||
               entry.evidence.startsWith("[会话：当前]")) &&
             !currentTurnEvidenceMatches(current, entry.evidence),
@@ -2365,28 +2365,28 @@ export default function weibeiExtension(pi: ExtensionAPI) {
       }
       if (
         entries.some(
-          (entry) =>
+          (entry: any) =>
             entry.origin === "userStatement" && !entry.evidence.startsWith("[用户：本轮]"),
         )
       ) {
         throw new Error("用户陈述型记忆必须直接依据本轮用户原话");
       }
       const suggestedNext = params.suggestedNext
-        .map((item) => item.trim())
-        .filter((item) => item.length > 0);
+        .map((item: any) => item.trim())
+        .filter((item: any) => item.length > 0);
       const sessionSummary = params.sessionSummary?.trim();
       const allActiveMemoryByID = new Map(
         current.learning.memories
           .filter((memory) => memory.status === "active")
           .map((memory) => [memory.id.trim().toLowerCase(), memory] as const),
       );
-      const updateTargetIDs = entries.flatMap((entry) =>
+      const updateTargetIDs = entries.flatMap((entry: any) =>
         entry.memoryID ? [entry.memoryID] : []
       );
       if (new Set(updateTargetIDs).size !== updateTargetIDs.length) {
         throw new Error("同一次学习状态更新不能重复修改同一条记忆");
       }
-      if (updateTargetIDs.some((memoryID) => !allActiveMemoryByID.has(memoryID))) {
+      if (updateTargetIDs.some((memoryID: any) => !allActiveMemoryByID.has(memoryID))) {
         throw new Error("只能更新当前作用域内仍处于活跃状态的学习记忆");
       }
       const resolvableMemoryByID = new Map(
@@ -2398,7 +2398,7 @@ export default function weibeiExtension(pi: ExtensionAPI) {
           )
           .map((memory) => [memory.id.trim().toLowerCase(), memory] as const),
       );
-      const resolutions = (params.resolutions ?? []).map((resolution) => {
+      const resolutions = (params.resolutions ?? []).map((resolution: any) => {
         const memoryID = resolution.memoryID.trim().toLowerCase();
         const memory = resolvableMemoryByID.get(memoryID);
         const evidence = resolution.evidence.trim();
@@ -2414,7 +2414,7 @@ export default function weibeiExtension(pi: ExtensionAPI) {
           evidence,
         };
       });
-      const resolutionTargetIDs = resolutions.map((resolution) =>
+      const resolutionTargetIDs = resolutions.map((resolution: any) =>
         resolution.memoryID.trim().toLowerCase()
       );
       if (new Set(resolutionTargetIDs).size !== resolutionTargetIDs.length) {
@@ -2481,7 +2481,7 @@ export default function weibeiExtension(pi: ExtensionAPI) {
       { additionalProperties: false },
     ),
     executionMode: "sequential",
-    async execute(_toolCallId, params) {
+    async execute(_toolCallId: any, params: any) {
       const current = await readCurrentSnapshot();
       if (params.contextRevision !== current.contextRevision) {
         throw new Error(
@@ -2490,12 +2490,12 @@ export default function weibeiExtension(pi: ExtensionAPI) {
       }
 
       const markdown = params.markdown.trim();
-      const evidence = params.evidence.map((item) => item.trim()).filter((item) => item.length > 0);
+      const evidence = params.evidence.map((item: any) => item.trim()).filter((item: any) => item.length > 0);
       if (!markdown || evidence.length === 0) {
         throw new Error("笔记建议必须包含非空 Markdown 和至少一条证据");
       }
       const allowedEvidenceLabels = evidenceLabels(current, searchedCourseItemIDs);
-      if (evidence.some((item) => !allowedEvidenceLabels.some((label) => item.startsWith(label)))) {
+      if (evidence.some((item: any) => !allowedEvidenceLabels.some((label) => item.startsWith(label)))) {
         throw new Error("笔记建议的每条证据都必须以当前材料、笔记或选区的真实来源标签开头");
       }
 
@@ -2545,7 +2545,7 @@ export default function weibeiExtension(pi: ExtensionAPI) {
       { additionalProperties: false },
     ),
     executionMode: "sequential",
-    async execute(_toolCallId, params) {
+    async execute(_toolCallId: any, params: any) {
       const current = await readCurrentSnapshot();
       if (!current.project.courseID) {
         throw new Error("当前没有可归属的课程，不能提出课程内关系建议");
@@ -2556,7 +2556,7 @@ export default function weibeiExtension(pi: ExtensionAPI) {
         );
       }
       const catalogByID = new Map(
-        current.course.catalog.map((item) => [item.id, item] as const),
+        current.course.catalog.map((item: any) => [item.id, item] as const),
       );
       const note = catalogByID.get(params.noteItemID);
       const source = catalogByID.get(params.sourceItemID);
@@ -2644,7 +2644,7 @@ export default function weibeiExtension(pi: ExtensionAPI) {
       try {
         if (pi.getSessionName() || !context.model) return;
         const completedAssistantCount = context.sessionManager.getBranch().filter(
-          (entry) => entry.type === "message"
+          (entry: any) => entry.type === "message"
             && entry.message.role === "assistant"
             && (entry.message.stopReason === "stop" || entry.message.stopReason === "length"),
         ).length;
@@ -2657,7 +2657,7 @@ export default function weibeiExtension(pi: ExtensionAPI) {
           return;
         }
         const answer = assistant.content
-          .flatMap((item) => item.type === "text" ? [item.text] : [])
+          .flatMap((item: any) => item.type === "text" ? [item.text] : [])
           .join("\n");
         const title = await generateSessionTitle(context, question, answer);
         if (title) pi.setSessionName(title);
@@ -2760,7 +2760,7 @@ export default function weibeiExtension(pi: ExtensionAPI) {
 
       if (message.role === "assistant") {
         const content = message.content.filter(
-          (item) => item.type !== "toolCall" || !staleToolCallIDs.has(item.id),
+          (item: any) => item.type !== "toolCall" || !staleToolCallIDs.has(item.id),
         );
         if (content.length === 0) continue;
         if (content.length !== message.content.length) {
@@ -2773,7 +2773,7 @@ export default function weibeiExtension(pi: ExtensionAPI) {
     }
 
     let latestUserIndex = -1;
-    messages.forEach((message, index) => {
+    messages.forEach((message: any, index: any) => {
       if (message.role === "user") latestUserIndex = index;
     });
     messages.splice(latestUserIndex < 0 ? messages.length : latestUserIndex + 1, 0, {
