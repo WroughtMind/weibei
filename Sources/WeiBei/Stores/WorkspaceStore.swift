@@ -20099,8 +20099,7 @@ final class WorkspaceStore: ObservableObject {
                 if oversizedPortableCourseIDs.remove(courseID) != nil {
                     blockedPortableCourseIDs.remove(courseID)
                 }
-                if blockedPortableCourseIDs.contains(courseID),
-                   !(dirtyPortableCourseIDs.contains(courseID) && knownRevision != nil) {
+                if blockedPortableCourseIDs.contains(courseID) {
                     if knownDigest != payloadDigest {
                         dirtyPortableCourseIDs.insert(courseID)
                     }
@@ -20122,8 +20121,7 @@ final class WorkspaceStore: ObservableObject {
                     durablePortableCourseIDs.insert(courseID)
                     continue
                 }
-                if stateExists,
-                   !(dirtyPortableCourseIDs.contains(courseID) && knownRevision != nil) {
+                if stateExists {
                     guard let knownDigest,
                           let diskState = try? readCoursePortableState(
                               at: stateURL,
@@ -21329,8 +21327,13 @@ final class WorkspaceStore: ObservableObject {
                         "工作区内容已保存，但有课程的可携带状态超过 32 MB；课程文件夹中的原状态保持不变。请精简课程 Chat 或未写入草稿后重试。",
                         "The workspace was saved, but a portable course state exceeds 32 MB. The state in the course folder was left unchanged. Reduce course chats or pending drafts, then retry."
                     ))
-                } else {
+                } else if blockedPortableCourseIDs.isEmpty {
                     clearWorkspaceSaveError()
+                } else {
+                    reportWorkspaceSaveFailure(ui(
+                        "有课程状态存在冲突或损坏，原文件与本机缓存均已保留；魏碑不会自动覆盖。",
+                        "A course state is conflicted or damaged. Both the original file and local cache were preserved, and WeiBei will not overwrite either automatically."
+                    ))
                 }
                 needsSelectionAskThreadsWorkspaceMigration = false
                 loadedSelectionAskThreadsFromWorkspaceSnapshot = true

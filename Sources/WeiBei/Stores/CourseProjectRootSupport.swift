@@ -486,8 +486,7 @@ actor CourseProjectFileWorker {
                 if oversized.remove(courseID) != nil {
                     blocked.remove(courseID)
                 }
-                if blocked.contains(courseID),
-                   !(dirty.contains(courseID) && knownRevision != nil && !candidate.items.isEmpty) {
+                if blocked.contains(courseID) {
                     if knownDigest != payloadDigest {
                         dirty.insert(courseID)
                     }
@@ -512,8 +511,7 @@ actor CourseProjectFileWorker {
                     durablePortableCourseIDs.insert(courseID)
                     continue
                 }
-                if stateExists,
-                   !(dirty.contains(courseID) && knownRevision != nil && !candidate.items.isEmpty) {
+                if stateExists {
                     guard let knownDigest,
                           let diskState = try? Self.readValidatedPortableState(
                             at: stateURL,
