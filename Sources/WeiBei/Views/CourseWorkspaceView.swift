@@ -558,7 +558,6 @@ struct CourseWorkspaceHeader: View {
                 ForEach(store.courses) { course in
                     Button {
                         store.selectCourseWorkspaceCourse(course.id)
-                        page = .hub
                     } label: {
                         if course.id == store.courseWorkspaceCourseID {
                             Label(course.title, systemImage: "checkmark")

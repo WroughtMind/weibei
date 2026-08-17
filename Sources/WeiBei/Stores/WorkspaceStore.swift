@@ -10284,6 +10284,7 @@ final class WorkspaceStore: ObservableObject {
         guard relations.links != noteSourceLinks else { return }
         invalidateAgentContext()
         noteSourceLinks = relations.links
+        markPortableCoursesDirty(forItemIDs: [noteItemID].union(sourceItemIDs))
         save()
     }
 
@@ -10307,7 +10308,20 @@ final class WorkspaceStore: ObservableObject {
         guard relations.links != noteSourceLinks else { return }
         invalidateAgentContext()
         noteSourceLinks = relations.links
+        markPortableCoursesDirty(forItemIDs: [sourceItemID].union(noteItemIDs))
         save()
+    }
+
+    private func markPortableCoursesDirty(forItemIDs itemIDs: Set<String>) {
+        guard !itemIDs.isEmpty else { return }
+        for membership in courseItemMemberships where itemIDs.contains(membership.itemID) {
+            dirtyPortableCourseIDs.insert(membership.courseID)
+        }
+        for item in importedItems where itemIDs.contains(item.id) {
+            if case let .courseOwned(ownerCourseID, _) = item.storage {
+                dirtyPortableCourseIDs.insert(ownerCourseID)
+            }
+        }
     }
 
     func presentCourseWorkspace(
@@ -19448,13 +19462,16 @@ final class WorkspaceStore: ObservableObject {
                     // 磁盘更旧：保留本机，静默。
                     continue
                 }
-                if state.revision == knownRevision,
-                   knownDigest != diskDigest {
-                    // 同 revision 不同 digest：标记阻塞，不自动覆盖。
-                    blockedPortableCourseIDs.insert(courseID)
-                    dirtyPortableCourseIDs.insert(courseID)
-                    needsPortableCourseStateBootstrap = true
-                    changed = true
+                if state.revision == knownRevision {
+                    if knownDigest != diskDigest {
+                        // 同 revision 不同 digest：标记阻塞，不自动覆盖。
+                        blockedPortableCourseIDs.insert(courseID)
+                        dirtyPortableCourseIDs.insert(courseID)
+                        needsPortableCourseStateBootstrap = true
+                        changed = true
+                    }
+                    // Matching revision is already the local baseline. Replaying it
+                    // would wipe newer workspace-only links if the snapshot is stale.
                     continue
                 }
                 try applyCoursePortableState(state, courseID: courseID)
