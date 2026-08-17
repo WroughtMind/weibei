@@ -19030,6 +19030,22 @@ final class WorkspaceStore: ObservableObject {
         )
     }
 
+    private func localPortableItemIDs(for courseID: UUID) -> Set<String> {
+        var ids = Set(
+            courseItemMemberships.lazy
+                .filter { $0.courseID == courseID && $0.courseRelativePath != nil }
+                .map(\.itemID)
+        )
+        for item in importedItems {
+            if case .courseOwned(let ownerCourseID, let relativePath) = item.storage,
+               ownerCourseID == courseID,
+               !relativePath.isEmpty {
+                ids.insert(item.id)
+            }
+        }
+        return ids
+    }
+
     private func makeCoursePortableState(
         courseID: UUID,
         revision: UInt64,
@@ -19040,19 +19056,23 @@ final class WorkspaceStore: ObservableObject {
         }
         var memberships = courseItemMemberships
             .filter { $0.courseID == courseID }
-        if memberships.isEmpty {
-            memberships = importedItems.compactMap { item in
-                guard case .courseOwned(let ownerCourseID, let relativePath) = item.storage,
-                      ownerCourseID == courseID,
-                      !relativePath.isEmpty else {
-                    return nil
-                }
-                return CourseItemMembership(
-                    courseID: courseID,
-                    itemID: item.id,
-                    courseRelativePath: relativePath
-                )
+        let ownedMemberships = importedItems.compactMap { item
+            -> CourseItemMembership? in
+            guard case .courseOwned(let ownerCourseID, let relativePath)
+                    = item.storage,
+                  ownerCourseID == courseID,
+                  !relativePath.isEmpty else {
+                return nil
             }
+            return CourseItemMembership(
+                courseID: courseID,
+                itemID: item.id,
+                courseRelativePath: relativePath
+            )
+        }
+        for extra in ownedMemberships
+        where !memberships.contains(where: { $0.itemID == extra.itemID }) {
+            memberships.append(extra)
         }
         memberships.sort {
             ($0.courseRelativePath ?? "").localizedStandardCompare(
@@ -19390,6 +19410,14 @@ final class WorkspaceStore: ObservableObject {
                     at: stateURL,
                     expectedCourseID: courseID
                 )
+                let diskItemIDs = Set(state.items.map(\.itemID))
+                let localItemIDs = localPortableItemIDs(for: courseID)
+                if !localItemIDs.isEmpty, !localItemIDs.isSubset(of: diskItemIDs) {
+                    dirtyPortableCourseIDs.insert(courseID)
+                    blockedPortableCourseIDs.remove(courseID)
+                    changed = true
+                    continue
+                }
                 let diskDigest = try coursePortableStatePayloadDigest(state)
                 let knownRevision = coursePortableStateRevisions[courseID]
                 let knownDigest = coursePortableStateDigests[courseID]
@@ -19656,6 +19684,12 @@ final class WorkspaceStore: ObservableObject {
         courseID: UUID
     ) throws {
         let state = try rawState.validated(expectedCourseID: courseID)
+        let incomingItemIDs = Set(state.items.map(\.itemID))
+        let localItemIDs = localPortableItemIDs(for: courseID)
+        if !localItemIDs.isEmpty, !localItemIDs.isSubset(of: incomingItemIDs) {
+            dirtyPortableCourseIDs.insert(courseID)
+            return
+        }
         guard let courseIndex = courses.firstIndex(where: {
             $0.id == courseID
         }),
