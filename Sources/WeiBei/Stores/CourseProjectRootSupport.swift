@@ -467,10 +467,14 @@ actor CourseProjectFileWorker {
                     blocked.remove(courseID)
                 }
                 if blocked.contains(courseID) {
-                    if knownDigest != payloadDigest {
-                        dirty.insert(courseID)
+                    if dirty.contains(courseID), !candidate.items.isEmpty {
+                        blocked.remove(courseID)
+                    } else {
+                        if knownDigest != payloadDigest {
+                            dirty.insert(courseID)
+                        }
+                        continue
                     }
-                    continue
                 }
                 if knownDigest == payloadDigest, stateExists {
                     if request.requiredPortableCourseIDs.contains(courseID) {
@@ -492,18 +496,24 @@ actor CourseProjectFileWorker {
                     continue
                 }
                 if stateExists {
-                    guard let knownDigest,
-                          let diskState = try? Self.readValidatedPortableState(
+                    let diskMatchesKnown = knownDigest != nil
+                        && (try? Self.readValidatedPortableState(
                             at: stateURL,
                             expectedDirectoryIdentity: directoryIdentity,
                             expectedCourseID: courseID
-                          ),
-                          diskState.revision == currentRevision,
-                          (try? Self.portablePayloadDigest(diskState))
-                            == knownDigest else {
-                        dirty.insert(courseID)
-                        blocked.insert(courseID)
-                        continue
+                        )).map { diskState in
+                            diskState.revision == currentRevision
+                                && (try? Self.portablePayloadDigest(diskState))
+                                    == knownDigest
+                        } == true
+                    if !diskMatchesKnown {
+                        if dirty.contains(courseID), !candidate.items.isEmpty {
+                            blocked.remove(courseID)
+                        } else {
+                            dirty.insert(courseID)
+                            blocked.insert(courseID)
+                            continue
+                        }
                     }
                 }
                 let previousData = stateExists
@@ -844,13 +854,29 @@ actor CourseProjectFileWorker {
         }) else {
             throw CoursePortableStateError.courseIdentityMismatch
         }
-        let memberships = (workspace.courseItemMemberships ?? [])
+        var memberships = (workspace.courseItemMemberships ?? [])
             .filter { $0.courseID == courseID }
-            .sorted {
-                ($0.courseRelativePath ?? "").localizedStandardCompare(
-                    $1.courseRelativePath ?? ""
-                ) == .orderedAscending
+        for item in workspace.importedItems {
+            guard case .courseOwned(let ownerCourseID, let relativePath)
+                    = item.storage,
+                  ownerCourseID == courseID,
+                  !relativePath.isEmpty,
+                  !memberships.contains(where: { $0.itemID == item.id }) else {
+                continue
             }
+            memberships.append(
+                CourseItemMembership(
+                    courseID: courseID,
+                    itemID: item.id,
+                    courseRelativePath: relativePath
+                )
+            )
+        }
+        memberships.sort {
+            ($0.courseRelativePath ?? "").localizedStandardCompare(
+                $1.courseRelativePath ?? ""
+            ) == .orderedAscending
+        }
         var importedItemsByID: [String: StudyItem] = [:]
         for item in workspace.importedItems
         where importedItemsByID[item.id] == nil {
