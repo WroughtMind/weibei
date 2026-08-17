@@ -39,6 +39,26 @@ struct CourseFileScanSnapshot: Sendable {
     }
 }
 
+func portableItemIDs(
+    for courseID: UUID,
+    memberships: [CourseItemMembership],
+    items: [StudyItem]
+) -> Set<String> {
+    var ids = Set(
+        memberships.lazy
+            .filter { $0.courseID == courseID && $0.courseRelativePath != nil }
+            .map(\.itemID)
+    )
+    for item in items {
+        if case .courseOwned(let owner, let path) = item.storage,
+           owner == courseID,
+           !path.isEmpty {
+            ids.insert(item.id)
+        }
+    }
+    return ids
+}
+
 struct CourseSharedLinkObservation: Equatable, Sendable {
     var url: URL
     var relativePath: String
