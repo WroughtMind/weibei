@@ -8,7 +8,6 @@
     "dev": "vite --host 127.0.0.1",
     "build": "tsc -b && vite build",
     "build:embed": "npm run build && tsx scripts/embed-runtime.ts",
-    "check:agent-contract": "node scripts/check-agent-contract.mjs",
     "check:fallback": "tsx scripts/check-failure-fallback.ts",
     "serve": "vite preview --host 127.0.0.1"
   },
