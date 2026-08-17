@@ -12,22 +12,28 @@ import {
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import process from "node:process";
 
 import { build } from "esbuild";
 
-const repositoryRoot = process.cwd();
-const resourcesRoot = resolve(repositoryRoot, "Sources/WeiBeiCore/AgentResources");
-const temporaryRoot = await mkdtemp(join(tmpdir(), "weibei-project-tools-"));
+async function main() {
+  // 仓库根由脚本自身位置推导（script/ -> 仓库根），不依赖调用方 cwd。
+  // 注意：URL 相对解析会先剥离文件名再处理 ".."，故 script/xxx.ts 到根只需一级。
+  const repositoryRoot = fileURLToPath(new URL("..", import.meta.url));
+  const resourcesRoot = resolve(repositoryRoot, "Sources/WeiBeiCore/AgentResources");
+  const temporaryRoot = await mkdtemp(join(tmpdir(), "weibei-project-tools-"));
+  // 自检桩通过 globalThis 交换注入数据；这里只做类型收窄，不改语义。
+  const g = globalThis as any;
 
-function requireValue(value, message) {
-  if (value === undefined || value === null || value === false) {
-    throw new Error(message);
+  function requireValue<T>(value: T | undefined | null | false, message: string): T {
+    if (value === undefined || value === null || value === false) {
+      throw new Error(message);
+    }
+    return value;
   }
-  return value;
-}
 
-function hasUnpairedSurrogate(value) {
+  function hasUnpairedSurrogate(value: string) {
   for (let index = 0; index < value.length; index += 1) {
     const code = value.charCodeAt(index);
     if (code >= 0xd800 && code <= 0xdbff) {
@@ -41,7 +47,7 @@ function hasUnpairedSurrogate(value) {
   return false;
 }
 
-async function waitFor(predicate) {
+async function waitFor(predicate: () => boolean) {
   for (let attempt = 0; attempt < 100; attempt += 1) {
     if (predicate()) return true;
     await new Promise((resolve) => setTimeout(resolve, 1));
@@ -49,7 +55,7 @@ async function waitFor(predicate) {
   return predicate();
 }
 
-async function identity(path) {
+async function identity(path: string) {
   const stats = await lstat(path, { bigint: true });
   return {
     volumeID: String(stats.dev),
@@ -244,18 +250,18 @@ try {
   process.env.WEIBEI_AGENT_CONTEXT_FILE = contextFile;
   const eventHandlers = new Map();
   const registeredTools = new Map();
-  let sessionName;
+  let sessionName: string | undefined;
   extension.default({
-    registerTool(tool) {
+    registerTool(tool: any) {
       registeredTools.set(tool.name, tool);
     },
-    on(name, handler) {
+    on(name: any, handler: any) {
       eventHandlers.set(name, handler);
     },
     getSessionName() {
       return sessionName;
     },
-    setSessionName(value) {
+    setSessionName(value: any) {
       sessionName = value;
     },
   });
@@ -289,8 +295,8 @@ try {
     eventHandlers.get("agent_end"),
     "真实扩展没有注册首轮会话命名钩子",
   );
-  globalThis.__weibeiTitleCalls = 0;
-  globalThis.__weibeiTitleResult = {
+  g.__weibeiTitleCalls = 0;
+  g.__weibeiTitleResult = {
     stopReason: "stop",
     content: [{ type: "text", text: "标题： 利率为何不同。" }],
   };
@@ -326,7 +332,7 @@ try {
     "会话标题网络请求仍在阻塞主回答结束事件",
   );
   await waitFor(() => sessionName === "利率为何不同");
-  const titleInputs = JSON.stringify(globalThis.__weibeiTitleInputs);
+  const titleInputs = JSON.stringify(g.__weibeiTitleInputs);
   requireValue(
     titleInputs.includes("解释当前材料") && !titleInputs.includes("第二问不能覆盖标题输入"),
     "迟到标题读取了下一轮已经覆盖的上下文",
@@ -343,11 +349,11 @@ try {
   );
   await new Promise((resolve) => setTimeout(resolve, 5));
   requireValue(
-    sessionName === "利率为何不同" && globalThis.__weibeiTitleCalls === 1,
+    sessionName === "利率为何不同" && g.__weibeiTitleCalls === 1,
     "首轮会话标题没有清洗落库，或已命名会话发生了重复请求",
   );
   sessionName = undefined;
-  globalThis.__weibeiTitleError = true;
+  g.__weibeiTitleError = true;
   agentEnd(
     {
       messages: [{
@@ -358,12 +364,12 @@ try {
     },
     titleContext,
   );
-  await waitFor(() => globalThis.__weibeiTitleCalls === 2);
+  await waitFor(() => g.__weibeiTitleCalls === 2);
   requireValue(
-    sessionName === undefined && globalThis.__weibeiTitleCalls === 2,
+    sessionName === undefined && g.__weibeiTitleCalls === 2,
     "标题请求失败影响了正文流程或写入了无效标题",
   );
-  globalThis.__weibeiTitleError = false;
+  g.__weibeiTitleError = false;
   titleBranch = [
     { type: "message", message: { role: "user" } },
     { type: "message", message: { role: "assistant", stopReason: "error" } },
@@ -382,7 +388,7 @@ try {
   );
   await waitFor(() => sessionName === "利率为何不同");
   requireValue(
-    sessionName === "利率为何不同" && globalThis.__weibeiTitleCalls === 3,
+    sessionName === "利率为何不同" && g.__weibeiTitleCalls === 3,
     "首轮失败后的首次成功回答没有生成会话标题",
   );
   sessionName = undefined;
@@ -403,7 +409,7 @@ try {
   );
   await new Promise((resolve) => setTimeout(resolve, 5));
   requireValue(
-    sessionName === undefined && globalThis.__weibeiTitleCalls === 3,
+    sessionName === undefined && g.__weibeiTitleCalls === 3,
     "已有成功回答的旧会话被自动改名",
   );
   const excerptMarker = "\n…（中间内容已省略）…\n";
@@ -426,7 +432,7 @@ try {
     { type: "message", message: { role: "user" } },
     { type: "message", message: { role: "assistant", stopReason: "stop" } },
   ];
-  globalThis.__weibeiTitleResult = {
+  g.__weibeiTitleResult = {
     stopReason: "stop",
     content: [{ type: "text", text: "长内容方案比较" }],
   };
@@ -441,7 +447,7 @@ try {
     titleContext,
   );
   await waitFor(() => sessionName === "长内容方案比较");
-  const longTitlePrompt = globalThis.__weibeiTitleInputs[1].messages[0].content;
+  const longTitlePrompt = g.__weibeiTitleInputs[1].messages[0].content;
   const longTitleParts = requireValue(
     /^用户问题：\n([\s\S]*)\n\n首轮回答：\n([\s\S]*)$/u.exec(longTitlePrompt),
     "超长会话标题请求结构无效",
@@ -505,8 +511,8 @@ try {
     requireValue(
       nextPayload !== originalPayload &&
         originalPayload.tools.length === 1 &&
-        tools.some((tool) => tool?.type === check.toolType) &&
-        tools.some((tool) =>
+        tools.some((tool: any) => tool?.type === check.toolType) &&
+        tools.some((tool: any) =>
           tool?.type === "function" && tool?.name === "weibei_course_map"
         ),
       `${check.name} 没有收到模型服务自己的网页搜索工具`,
@@ -552,7 +558,7 @@ try {
   requireValue(
     backgroundResult === backgroundPayload &&
       JSON.stringify(backgroundPayload) === backgroundSnapshot &&
-      !backgroundResult.tools.some((tool) => tool?.type === "web_search") &&
+      !backgroundResult.tools.some((tool: any) => tool?.type === "web_search") &&
       backgroundResult.include === undefined,
     "后台摘要请求被错误开放了网页搜索",
   );
@@ -919,3 +925,9 @@ try {
 } finally {
   await rm(temporaryRoot, { recursive: true, force: true });
 }
+}
+
+main().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});

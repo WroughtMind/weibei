@@ -88,6 +88,9 @@ fi
 
 if [[ -d "$ROOT_DIR/node_modules" ]]; then
   npm run build:editor >/dev/null
+elif [[ "$CHECK_ONLY" == true || "$PACKAGE_ONLY" == true ]]; then
+  echo "build failed: run npm ci first" >&2
+  exit 25
 fi
 
 if [[ "$CHECK_ONLY" != true ]]; then
@@ -301,8 +304,8 @@ PLIST
       echo "package failed: strict-audit copy changed the final app binary UUID" >&2
       exit 18
     fi
-    "$ROOT_DIR/script/verify_release_metadata.sh" "$FINAL_APP_BUNDLE"
-    "$ROOT_DIR/script/verify_production_hygiene.sh" "$FINAL_APP_BUNDLE"
+    (cd "$ROOT_DIR" && swift run WeiBeiDev verify-release-metadata "$FINAL_APP_BUNDLE")
+    (cd "$ROOT_DIR" && swift run WeiBeiDev verify-production-hygiene "$FINAL_APP_BUNDLE")
   fi
 fi
 

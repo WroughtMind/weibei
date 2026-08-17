@@ -7,7 +7,7 @@ const root = path.resolve(process.argv[2] ?? ".");
 const assets = path.join(root, "assets");
 const allowed = new Set([".png", ".svg", ".ico", ".icns", ".json", ".ttf"]);
 
-function walk(dir) {
+function walk(dir: string): string[] {
   return fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
     const full = path.join(dir, entry.name);
     return entry.isDirectory() ? walk(full) : [full];

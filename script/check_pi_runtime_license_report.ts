@@ -21,8 +21,8 @@ const notice = readFileSync(
 );
 const bunLicensePath = resolve(root, "Vendor/PiRuntime/BUN_LICENSE.md");
 
-const sha256 = (bytes) => createHash("sha256").update(bytes).digest("hex");
-const assertEqual = (actual, expected, label) => {
+const sha256 = (bytes: Buffer | string) => createHash("sha256").update(bytes).digest("hex");
+const assertEqual = (actual: unknown, expected: unknown, label: string) => {
   if (actual !== expected) {
     throw new Error(`${label}: expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`);
   }
@@ -48,7 +48,7 @@ for (const architecture of ["darwin-arm64", "darwin-x64"]) {
 if (!existsSync(bunLicensePath)) {
   throw new Error("missing Vendor/PiRuntime/BUN_LICENSE.md");
 }
-const bunLicenseBytes = readFileSync(bunLicensePath);
+const bunLicenseBytes: Buffer = readFileSync(bunLicensePath);
 assertEqual(sha256(bunLicenseBytes), inputs.bun.license.sha256, "Bun license hash");
 const bunLicense = bunLicenseBytes.toString("utf8");
 for (const required of ["JavaScriptCore", "LGPL-2", "tinycc", "LGPL v2.1", "make jsc", "zig build"]) {

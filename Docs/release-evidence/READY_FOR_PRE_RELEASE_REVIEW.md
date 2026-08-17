@@ -39,7 +39,7 @@ Not done here (explicitly deferred): final LICENSE, privacy/NOTICE legal copy, D
   - App: `dist/魏碑.app`
   - `release_metadata_version=0.1.0` (not bumped; deferred)
   - `release_metadata_source_dirty=true` (expected with uncommitted evidence packing)
-- `./script/verify_release_metadata.sh` → after package: version/build/commit printed (`final-metadata.log`)
+- `swift run WeiBeiDev verify-release-metadata`（迁移自 `./script/verify_release_metadata.sh`）→ after package: version/build/commit printed (`final-metadata.log`)
 
 ### Real window captures
 

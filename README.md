@@ -98,6 +98,27 @@ cd weibei
 
 The script builds and opens `dist/魏碑.app`.
 
+## Development and tooling
+
+The root `Makefile` is a thin entry point that forwards to the underlying build scripts (run `make help` for the same list):
+
+| Target | What it runs |
+|---|---|
+| `make build` | `swift build` |
+| `make run` | `./script/build_and_run.sh` |
+| `make check` | `./script/build_and_run.sh check` |
+| `make package` | `./script/build_and_run.sh package` |
+| `make editor-build` | `npm run build:editor` |
+| `make rich-answer-build` | `npm -w Prototypes/RichAnswerWebRuntime run build:embed` |
+| `make genui-math-check` | `npx tsx script/check-genui-math.ts` |
+| `make perf-p95` | `./script/perf_p95.sh $(LOG) $(METRIC)` (usage: `make perf-p95 LOG=<perf-log> METRIC=<metric-name>`) |
+| `make pi-prepare` | `./script/prepare_pi_runtime.sh` |
+| `make release-community` | `./script/build_release_dmg.sh --community` |
+| `make release-notarized` | `./script/build_release_dmg.sh --notarized` |
+| `make clean` | `swift package clean && rm -rf dist` (keeps `node_modules`, `.build/pi-runtime` and user data) |
+
+Node tooling: the repository has a **single root lockfile** (`package-lock.json`) covering the `Prototypes/RichAnswerWebRuntime` workspace, and exactly one `npm ci` installs everything. Tool scripts under `script/`, `DesignSystem/scripts/` and the prototype `scripts/` are TypeScript run with `tsx` (e.g. `npx tsx script/check-genui-math.ts`); `npm run typecheck:tools` type-checks them.
+
 ## Suggested judge test
 
 No private course data is included. Use a small folder containing a PDF, HTML page, Markdown file, or plain-text document that you are allowed to test with.
