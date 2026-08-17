@@ -488,9 +488,9 @@ enum WeiBeiNativePalette {
     ) {
         switch mode {
         case .paper:
-            return ("#f1e4cf", "#f7ecd9", "#1d1814", "rgba(58,46,38,.72)", "#91261c", "#31566b", "rgba(145,38,28,.18)")
+            return ("#f4ead5", "#f9f1de", "#1d1814", "rgba(58,46,38,.72)", "#91261c", "#31566b", "rgba(145,38,28,.18)")
         case .xuan:
-            return ("#f7f4ef", "#fcfbf8", "#25231f", "rgba(90,86,78,.74)", "#8a2f24", "#335266", "rgba(138,47,36,.16)")
+            return ("#f8f5f0", "#fdfcf9", "#25231f", "rgba(90,86,78,.74)", "#8a2f24", "#335266", "rgba(138,47,36,.16)")
         case .inkstone:
             return ("#0f0f0f", "#151515", "#d7cbb0", "rgba(155,145,120,.88)", "#a6362b", "#c8b98a", "rgba(166,54,43,.35)")
         case .stele:
