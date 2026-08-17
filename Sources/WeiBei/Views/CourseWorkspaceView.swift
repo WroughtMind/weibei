@@ -409,30 +409,32 @@ struct CourseWorkspaceHeader: View {
             .buttonStyle(.plain)
             .accessibilityLabel(Text(store.ui("关闭课程空间并返回工作台", "Close course space")))
 
-            hubTitleBlock
+            HStack(spacing: 8) {
+                hubTitleBlock
 
-            if isCompact {
-                Menu {
-                    ForEach(CourseWorkspacePage.allCases) { candidate in
-                        Button(candidate.label(language: store.interfaceLanguage)) {
-                            page = candidate
-                        }
-                    }
-                } label: {
-                    Label(page.label(language: store.interfaceLanguage), systemImage: "chevron.down")
-                        .font(.system(size: 12, weight: .semibold))
-                }
-                .menuStyle(.borderlessButton)
-                .fixedSize()
-            } else {
-                HStack(spacing: 22) {
-                    ForEach(CourseWorkspacePage.allCases) { candidate in
-                        CourseWorkspaceTab(
-                            title: candidate.label(language: store.interfaceLanguage),
-                            active: candidate == page
-                        ) {
-                            withAnimation(WeiBeiMotion.panel) {
+                if isCompact {
+                    Menu {
+                        ForEach(CourseWorkspacePage.allCases) { candidate in
+                            Button(candidate.label(language: store.interfaceLanguage)) {
                                 page = candidate
+                            }
+                        }
+                    } label: {
+                        Label(page.label(language: store.interfaceLanguage), systemImage: "chevron.down")
+                            .font(.system(size: 12, weight: .semibold))
+                    }
+                    .menuStyle(.borderlessButton)
+                    .fixedSize()
+                } else {
+                    HStack(spacing: 22) {
+                        ForEach(CourseWorkspacePage.allCases) { candidate in
+                            CourseWorkspaceTab(
+                                title: candidate.label(language: store.interfaceLanguage),
+                                active: candidate == page
+                            ) {
+                                withAnimation(WeiBeiMotion.panel) {
+                                    page = candidate
+                                }
                             }
                         }
                     }
@@ -541,23 +543,23 @@ private struct CourseSwitchCapsule: View {
 
     var body: some View {
         Text(title)
-            .font(courseTitleDisplayFont(title, size: 15, weight: .semibold))
+            .font(courseTitleDisplayFont(title, size: 13.5, weight: .semibold))
             .foregroundStyle(WeiBeiTheme.ink)
             .lineLimit(1)
-            .padding(.horizontal, 16)
-            .frame(minWidth: 148, maxWidth: 240, minHeight: 36)
+            .padding(.horizontal, 11)
+            .frame(maxWidth: 200, minHeight: 28)
             .background(
                 WeiBeiTheme.paperRaised.opacity(hovering ? 0.90 : 0.68),
-                in: Capsule()
+                in: RoundedRectangle(cornerRadius: 8, style: .continuous)
             )
             .overlay {
-                Capsule()
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
                     .stroke(
                         WeiBeiTheme.hairline.opacity(hovering ? 0.80 : 0.48),
                         lineWidth: 1
                     )
             }
-            .contentShape(Capsule())
+            .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
             .onHover { hovering = $0 }
     }
 }
