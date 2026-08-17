@@ -10284,7 +10284,7 @@ final class WorkspaceStore: ObservableObject {
         guard relations.links != noteSourceLinks else { return }
         invalidateAgentContext()
         noteSourceLinks = relations.links
-        markPortableCoursesDirty(forItemIDs: [noteItemID].union(sourceItemIDs))
+        markPortableCoursesDirty(forItemIDs: Set([noteItemID]).union(sourceItemIDs))
         save()
     }
 
@@ -10308,7 +10308,7 @@ final class WorkspaceStore: ObservableObject {
         guard relations.links != noteSourceLinks else { return }
         invalidateAgentContext()
         noteSourceLinks = relations.links
-        markPortableCoursesDirty(forItemIDs: [sourceItemID].union(noteItemIDs))
+        markPortableCoursesDirty(forItemIDs: Set([sourceItemID]).union(noteItemIDs))
         save()
     }
 
