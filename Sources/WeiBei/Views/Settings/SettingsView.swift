@@ -77,6 +77,7 @@ struct SettingsView: View {
         }
         .frame(minWidth: 860, minHeight: 610)
         .background(WeiBeiTheme.paper)
+        .background(SettingsWindowPaper(appearanceMode: store.appearanceMode))
         .foregroundStyle(WeiBeiTheme.ink)
         .preferredColorScheme(store.appearanceMode.colorScheme)
         .modifier(WeiBeiAppearanceTransition(mode: store.appearanceMode))
@@ -173,20 +174,7 @@ struct SettingsView: View {
             Spacer()
         }
         .frame(width: 200)
-        .background {
-            ZStack(alignment: .top) {
-                WeiBeiTheme.paperInset.opacity(store.appearanceMode.isDark ? 0.62 : 0.80)
-                LinearGradient(
-                    colors: [
-                        WeiBeiTheme.glassHighlight.opacity(store.appearanceMode.isDark ? 0.09 : 0.20),
-                        .clear
-                    ],
-                    startPoint: .top,
-                    endPoint: .bottom
-                )
-                .frame(height: 96)
-            }
-        }
+        .background(WeiBeiTheme.paper)
     }
 
     private var settingsDetail: some View {
@@ -225,11 +213,11 @@ struct SettingsView: View {
         .padding(.horizontal, 28)
         .padding(.top, 18)
         .padding(.bottom, 14)
-        .background {
-            ZStack(alignment: .bottom) {
-                WeiBeiGlassHeaderBackground(paperOpacity: 0.66, materialOpacity: 0.10)
-                WeiBeiHeaderHandoffFade(height: 12, opacity: 0.22)
-            }
+        .background(WeiBeiTheme.paper)
+        .overlay(alignment: .bottom) {
+            Rectangle()
+                .fill(WeiBeiTheme.hairline.opacity(0.35))
+                .frame(height: 1)
         }
     }
 
@@ -785,8 +773,6 @@ struct SettingsView: View {
             .padding(.horizontal, 10)
             .frame(maxWidth: .infinity, minHeight: 34, alignment: .leading)
             .contentShape(Rectangle())
-            .background(active ? WeiBeiTheme.paperRaised.opacity(0.62) : .clear)
-            .clipShape(RoundedRectangle(cornerRadius: 7))
             .overlay(alignment: .leading) {
                 Rectangle()
                     .fill(active ? WeiBeiTheme.cinnabar.opacity(0.82) : .clear)
@@ -807,27 +793,13 @@ struct SettingsView: View {
             .accessibilityLabel(Text(accessibilityLabel))
     }
 
-    /// Shared Settings card primitive (also used by `AgentSettingsView` extension).
+    /// Shared Settings group: title + rows on the same paper, no raised card.
     func settingsGroup<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
-        let cardFill = WeiBeiTheme.paperRaised.opacity(store.appearanceMode.isDark ? 0.20 : 0.36)
-        return VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: 0) {
             sectionTitle(title)
-                .padding(.horizontal, 14)
-                .padding(.bottom, 8)
+                .padding(.bottom, 6)
             VStack(spacing: 0) {
                 content()
-            }
-            .background(cardFill)
-            .clipShape(RoundedRectangle(cornerRadius: 8))
-            .overlay {
-                RoundedRectangle(cornerRadius: 8)
-                    .stroke(WeiBeiTheme.hairline.opacity(0.42), lineWidth: 1)
-            }
-            .overlay(alignment: .bottom) {
-                Rectangle()
-                    .fill(cardFill)
-                    .frame(height: 1)
-                    .padding(.horizontal, 1)
             }
         }
     }
@@ -855,14 +827,12 @@ struct SettingsView: View {
             Spacer(minLength: 12)
             control()
         }
-        .padding(.horizontal, 14)
         .padding(.vertical, detail.isEmpty ? 11 : 12)
         .overlay(alignment: .bottom) {
             if showsBottomDivider {
                 Rectangle()
                     .fill(WeiBeiTheme.hairline.opacity(0.28))
                     .frame(height: 1)
-                    .padding(.leading, 14)
             }
         }
     }
@@ -963,4 +933,31 @@ private enum SettingsType {
     static let detail: Font = .system(size: 12, weight: .regular)
     static let pill: Font = .system(size: 12, weight: .medium)
     static let menu: Font = .system(size: 13, weight: .semibold)
+}
+
+/// Paint the Settings window with the same paper as the workspace.
+/// Leave the system titlebar in place so traffic lights stay clear of「设置」.
+private struct SettingsWindowPaper: NSViewRepresentable {
+    var appearanceMode: WeiBeiAppearanceMode
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView()
+        DispatchQueue.main.async { configure(view.window) }
+        return view
+    }
+
+    func updateNSView(_ view: NSView, context: Context) {
+        configure(view.window)
+    }
+
+    private func configure(_ window: NSWindow?) {
+        guard let window else { return }
+        window.titlebarAppearsTransparent = true
+        window.titlebarSeparatorStyle = .none
+        window.isOpaque = true
+        window.backgroundColor = appearanceMode.windowBackground
+        window.appearance = NSAppearance(
+            named: appearanceMode.isDark ? .darkAqua : .aqua
+        )
+    }
 }
