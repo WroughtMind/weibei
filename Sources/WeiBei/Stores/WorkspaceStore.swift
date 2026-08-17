@@ -14419,6 +14419,7 @@ final class WorkspaceStore: ObservableObject {
         if activeStudySessionID == studySessions[sessionIndex].id {
             messages = studySessions[sessionIndex].messages
         }
+        dirtyPortableCourseIDs.insert(courseID)
         return message.id
     }
 
@@ -14488,6 +14489,7 @@ final class WorkspaceStore: ObservableObject {
                 $0.id == noteItemID
             }?.contentDigest
         )
+        dirtyPortableCourseIDs.insert(courseID)
     }
 
     func portableCourseLearningMatchesForSelfCheck(
