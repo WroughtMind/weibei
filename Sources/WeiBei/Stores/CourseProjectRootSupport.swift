@@ -486,15 +486,12 @@ actor CourseProjectFileWorker {
                 if oversized.remove(courseID) != nil {
                     blocked.remove(courseID)
                 }
-                if blocked.contains(courseID) {
-                    if dirty.contains(courseID), !candidate.items.isEmpty {
-                        blocked.remove(courseID)
-                    } else {
-                        if knownDigest != payloadDigest {
-                            dirty.insert(courseID)
-                        }
-                        continue
+                if blocked.contains(courseID),
+                   !(dirty.contains(courseID) && knownRevision != nil && !candidate.items.isEmpty) {
+                    if knownDigest != payloadDigest {
+                        dirty.insert(courseID)
                     }
+                    continue
                 }
                 if knownDigest == payloadDigest, stateExists {
                     if request.requiredPortableCourseIDs.contains(courseID) {
@@ -515,25 +512,20 @@ actor CourseProjectFileWorker {
                     durablePortableCourseIDs.insert(courseID)
                     continue
                 }
-                if stateExists {
-                    let diskMatchesKnown = knownDigest != nil
-                        && (try? Self.readValidatedPortableState(
+                if stateExists,
+                   !(dirty.contains(courseID) && knownRevision != nil && !candidate.items.isEmpty) {
+                    guard let knownDigest,
+                          let diskState = try? Self.readValidatedPortableState(
                             at: stateURL,
                             expectedDirectoryIdentity: directoryIdentity,
                             expectedCourseID: courseID
-                        )).map { diskState in
-                            diskState.revision == currentRevision
-                                && (try? Self.portablePayloadDigest(diskState))
-                                    == knownDigest
-                        } == true
-                    if !diskMatchesKnown {
-                        if dirty.contains(courseID), !candidate.items.isEmpty {
-                            blocked.remove(courseID)
-                        } else {
-                            dirty.insert(courseID)
-                            blocked.insert(courseID)
-                            continue
-                        }
+                          ),
+                          diskState.revision == currentRevision,
+                          (try? Self.portablePayloadDigest(diskState))
+                            == knownDigest else {
+                        dirty.insert(courseID)
+                        blocked.insert(courseID)
+                        continue
                     }
                 }
                 let previousData = stateExists

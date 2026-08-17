@@ -19382,17 +19382,19 @@ final class WorkspaceStore: ObservableObject {
                     at: stateURL,
                     expectedCourseID: courseID
                 )
+                let diskDigest = try coursePortableStatePayloadDigest(state)
+                let knownRevision = coursePortableStateRevisions[courseID]
                 let localItemIDs = portableItemIDs(
                     for: courseID, memberships: courseItemMemberships, items: importedItems
                 )
-                if !localItemIDs.isEmpty, !localItemIDs.isSubset(of: Set(state.items.map(\.itemID))) {
+                if knownRevision != nil,
+                   !localItemIDs.isEmpty,
+                   !localItemIDs.isSubset(of: Set(state.items.map(\.itemID))) {
                     dirtyPortableCourseIDs.insert(courseID)
                     blockedPortableCourseIDs.remove(courseID)
                     changed = true
                     continue
                 }
-                let diskDigest = try coursePortableStatePayloadDigest(state)
-                let knownRevision = coursePortableStateRevisions[courseID]
                 let knownDigest = coursePortableStateDigests[courseID]
                 if knownRevision == nil || knownDigest == nil {
                     let canEstablishLegacyBaseline =
@@ -20099,7 +20101,7 @@ final class WorkspaceStore: ObservableObject {
                     blockedPortableCourseIDs.remove(courseID)
                 }
                 if blockedPortableCourseIDs.contains(courseID),
-                   !dirtyPortableCourseIDs.contains(courseID) {
+                   !(dirtyPortableCourseIDs.contains(courseID) && knownRevision != nil) {
                     if knownDigest != payloadDigest {
                         dirtyPortableCourseIDs.insert(courseID)
                     }
@@ -20121,7 +20123,8 @@ final class WorkspaceStore: ObservableObject {
                     durablePortableCourseIDs.insert(courseID)
                     continue
                 }
-                if stateExists, !dirtyPortableCourseIDs.contains(courseID) {
+                if stateExists,
+                   !(dirtyPortableCourseIDs.contains(courseID) && knownRevision != nil) {
                     guard let knownDigest,
                           let diskState = try? readCoursePortableState(
                               at: stateURL,
