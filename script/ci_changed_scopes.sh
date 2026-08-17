@@ -50,10 +50,10 @@ classify_path() {
       ;;
   esac
 
-  # 富回答运行时：原型源码/脚本，或 embed 输出的入库产物（与 embed-runtime 脚本
-  # 的输出清单一致：rich-answer.html / rich-answer-runtime.css / rich-answer-runtime.js）。
+  # 原型工具面：富回答运行时（源码/脚本/embed 输出产物）与 Evidence Viewer
+  # 等 Prototypes 下的 TS 工具（CI 只做类型检查，不跑生成）。
   case "$path" in
-    Prototypes/RichAnswerWebRuntime/*|Sources/WeiBei/Resources/rich-answer.html|Sources/WeiBei/Resources/rich-answer-runtime.css|Sources/WeiBei/Resources/rich-answer-runtime.js)
+    Prototypes/*|Sources/WeiBei/Resources/rich-answer.html|Sources/WeiBei/Resources/rich-answer-runtime.css|Sources/WeiBei/Resources/rich-answer-runtime.js)
       rich_answer=true
       ;;
   esac
@@ -136,6 +136,10 @@ if [[ "${1:-}" == "--self-check" ]]; then
     "code=false pi=false editor=false data_safety=false release=false rich_answer=true " \
     "Prototypes/RichAnswerWebRuntime/src/main.tsx" \
     "Prototypes/RichAnswerWebRuntime/scripts/embed-runtime.ts"
+  expect_scopes \
+    "code=false pi=false editor=false data_safety=false release=false rich_answer=true " \
+    "Prototypes/RichAnswerEvidenceViewer/generate-evidence-package.ts" \
+    "Prototypes/RichAnswerEvidenceViewer/tsconfig.json"
   expect_scopes \
     "code=true pi=false editor=false data_safety=false release=false rich_answer=true " \
     "Sources/WeiBei/Resources/rich-answer-runtime.js" \
