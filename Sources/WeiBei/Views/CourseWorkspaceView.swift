@@ -4,8 +4,9 @@ import WeiBeiCore
 
 enum CourseWorkspacePage: String, CaseIterable, Identifiable {
     case hub
-    case relations
+    case map
     case records
+    case memory
 
     var id: String { rawValue }
 
@@ -13,10 +14,12 @@ enum CourseWorkspacePage: String, CaseIterable, Identifiable {
         switch self {
         case .hub:
             language.text("概览", "Overview")
-        case .relations:
+        case .map:
             language.text("文稿与笔记", "Docs & Notes")
         case .records:
             language.text("对话", "Conversations")
+        case .memory:
+            language.text("课程记忆", "Course Memory")
         }
     }
 }
@@ -61,19 +64,8 @@ struct CourseWorkspaceView: View {
                     page: $page,
                     search: $search,
                     searchFocused: $searchFocused,
-                    isCompact: geometry.size.width < 900,
+                    isCompact: geometry.size.width < 980,
                     dismiss: store.dismissCourseWorkspace,
-                    importMaterials: {
-                        store.importCourseMaterialsFromPanel(
-                            courseID: store.courseWorkspaceCourseID
-                        )
-                    },
-                    importNotes: {
-                        store.importCourseNotesFromPanel(
-                            courseID: store.courseWorkspaceCourseID
-                        )
-                    },
-                    createNote: promptForNewNote,
                     manageCourse: presentCourseSettings,
                     requestCourseDeletion:
                         presentCourseDeletionConfirmation
@@ -185,7 +177,7 @@ struct CourseWorkspaceView: View {
                 selectedSessionID: $selectedSessionID,
                 isCompact: size.width < 960,
                 openRelations: {
-                    withAnimation(WeiBeiMotion.panel) { page = .relations }
+                    withAnimation(WeiBeiMotion.panel) { page = .map }
                 },
                 openRecords: {
                     withAnimation(WeiBeiMotion.panel) { page = .records }
@@ -202,13 +194,15 @@ struct CourseWorkspaceView: View {
                 },
                 createNote: promptForNewNote
             )
-        case .relations:
+        case .map:
             CourseRelationsView(
                 lens: $relationLens,
                 search: search,
                 selectedNoteID: $selectedNoteID,
                 selectedMaterialID: $selectedMaterialID,
-                isCompact: size.width < 900
+                showsGraph: true,
+                isCompact: size.width < 900,
+                createNote: promptForNewNote
             )
         case .records:
             CourseRecordsView(
@@ -216,6 +210,8 @@ struct CourseWorkspaceView: View {
                 selectedSessionID: $selectedSessionID,
                 isCompact: size.width < 900
             )
+        case .memory:
+            CourseMemoryWorkspaceView(search: search)
         }
     }
 
@@ -285,7 +281,7 @@ struct CourseWorkspaceView: View {
             selectedMaterialID = nil
             selectedNoteID = noteID
             relationLens = .notes
-            page = .relations
+            page = .map
             showsNewNotePrompt = false
         }
     }
@@ -299,21 +295,21 @@ struct CourseWorkspaceView: View {
                     store.courseMaterials(in: $0).first?.id
                 }
         case .relations:
-            page = .relations
+            page = .map
         case .materials:
             relationLens = .materials
             selectedMaterialID = store.courseWorkspaceTargetItemID
                 ?? store.courseWorkspaceCourseID.flatMap {
                     store.courseMaterials(in: $0).first?.id
                 }
-            page = .relations
+            page = .map
         case .notes:
             relationLens = .notes
             selectedNoteID = store.courseWorkspaceTargetItemID
                 ?? store.courseWorkspaceCourseID.flatMap {
                     store.courseNotes(in: $0).first?.id
                 }
-            page = .relations
+            page = .map
         case .sessions:
             if let rawID = store.courseWorkspaceTargetItemID {
                 selectedSessionID = UUID(uuidString: rawID)
@@ -380,9 +376,6 @@ struct CourseWorkspaceHeader: View {
     var searchFocused: FocusState<Bool>.Binding
     let isCompact: Bool
     let dismiss: () -> Void
-    let importMaterials: () -> Void
-    let importNotes: () -> Void
-    let createNote: () -> Void
     let manageCourse: () -> Void
     let requestCourseDeletion: () -> Void
 
@@ -401,31 +394,32 @@ struct CourseWorkspaceHeader: View {
             .buttonStyle(.plain)
             .accessibilityLabel(Text(store.ui("关闭课程空间并返回工作台", "Close course space")))
 
-            hubTitleBlock
-            .frame(minWidth: isCompact ? 96 : 120, alignment: .leading)
+            HStack(spacing: 8) {
+                hubTitleBlock
 
-            if isCompact {
-                Menu {
-                    ForEach(CourseWorkspacePage.allCases) { candidate in
-                        Button(candidate.label(language: store.interfaceLanguage)) {
-                            page = candidate
-                        }
-                    }
-                } label: {
-                    Label(page.label(language: store.interfaceLanguage), systemImage: "chevron.down")
-                        .font(.system(size: 12, weight: .semibold))
-                }
-                .menuStyle(.borderlessButton)
-                .fixedSize()
-            } else {
-                HStack(spacing: 22) {
-                    ForEach(CourseWorkspacePage.allCases) { candidate in
-                        CourseWorkspaceTab(
-                            title: candidate.label(language: store.interfaceLanguage),
-                            active: candidate == page
-                        ) {
-                            withAnimation(WeiBeiMotion.panel) {
+                if isCompact {
+                    Menu {
+                        ForEach(CourseWorkspacePage.allCases) { candidate in
+                            Button(candidate.label(language: store.interfaceLanguage)) {
                                 page = candidate
+                            }
+                        }
+                    } label: {
+                        Label(page.label(language: store.interfaceLanguage), systemImage: "chevron.down")
+                            .font(.system(size: 12, weight: .semibold))
+                    }
+                    .menuStyle(.borderlessButton)
+                    .fixedSize()
+                } else {
+                    HStack(spacing: 22) {
+                        ForEach(CourseWorkspacePage.allCases) { candidate in
+                            CourseWorkspaceTab(
+                                title: candidate.label(language: store.interfaceLanguage),
+                                active: candidate == page
+                            ) {
+                                withAnimation(WeiBeiMotion.panel) {
+                                    page = candidate
+                                }
                             }
                         }
                     }
@@ -454,30 +448,6 @@ struct CourseWorkspaceHeader: View {
             }
             .weibeiInputSurface(active: searchFocused.wrappedValue, height: 30)
             .frame(width: isCompact ? 160 : 220)
-
-            Menu {
-                Button(action: importMaterials) {
-                    Label(store.ui("导入文稿", "Import Docs"), systemImage: "doc.badge.plus")
-                }
-                Button(action: importNotes) {
-                    Label(store.ui("导入 Markdown 笔记", "Import Markdown Notes"), systemImage: "note.text.badge.plus")
-                }
-                Divider()
-                Button(action: createNote) {
-                    Label(store.ui("新建笔记", "New Note"), systemImage: "square.and.pencil")
-                }
-            } label: {
-                Label(store.ui("添加", "Add"), systemImage: "plus")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(WeiBeiTheme.secondaryInk)
-                    .padding(.horizontal, 9)
-                    .frame(height: 28)
-                    .background(WeiBeiTheme.paperInset.opacity(0.20))
-                    .clipShape(RoundedRectangle(cornerRadius: 6))
-            }
-            .menuStyle(.borderlessButton)
-            .fixedSize()
-            .help(store.ui("添加文稿或笔记", "Add Docs or Notes"))
         }
         .padding(.horizontal, 16)
         .frame(height: 52)
@@ -487,11 +457,13 @@ struct CourseWorkspaceHeader: View {
     private var searchPrompt: String {
         switch page {
         case .hub:
-            store.ui("搜索本课文稿、笔记与对话", "Search this course")
-        case .relations:
+            store.ui("搜索本课", "Search this course")
+        case .map:
             store.ui("搜索本课文稿与笔记", "Search Docs and Notes in this course")
         case .records:
-            store.ui("搜索本课对话与课程记忆", "Search Chats and Course Memory")
+            store.ui("搜索本课对话", "Search Chats in this course")
+        case .memory:
+            store.ui("搜索课程记忆", "Search Course Memory")
         }
     }
 
@@ -503,7 +475,6 @@ struct CourseWorkspaceHeader: View {
                 ForEach(store.courses) { course in
                     Button {
                         store.selectCourseWorkspaceCourse(course.id)
-                        page = .hub
                     } label: {
                         if course.id == store.courseWorkspaceCourseID {
                             Label(course.title, systemImage: "checkmark")
@@ -529,26 +500,18 @@ struct CourseWorkspaceHeader: View {
                 }
             }
         } label: {
-            HStack(spacing: 6) {
-                Text(hubCourseTitle)
-                    .font(courseTitleDisplayFont(hubCourseTitle, size: 20))
-                    .foregroundStyle(WeiBeiTheme.ink)
-                    .lineLimit(1)
-                Image(systemName: "chevron.down")
-                    .font(.system(size: 9, weight: .bold))
-                    .foregroundStyle(WeiBeiTheme.secondaryInk)
-            }
-            .contentShape(Rectangle())
+            CourseSwitchCapsule(title: hubCourseTitle)
         }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden) // system pull-down chevron + our own would double up
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
+        .fixedSize()
         .help(store.ui(
-            "选择或管理课程",
-            "Choose or manage a course"
+            "选择课程",
+            "Choose a course"
         ))
         .accessibilityLabel(Text(store.ui(
-            "课程菜单",
-            "Course menu"
+            "当前课程 \(hubCourseTitle)，点按以切换",
+            "Current course \(hubCourseTitle), click to switch"
         )))
     }
 
@@ -557,6 +520,33 @@ struct CourseWorkspaceHeader: View {
             return course.title
         }
         return store.ui("选择课程", "Select course")
+    }
+}
+
+private struct CourseSwitchCapsule: View {
+    let title: String
+    @State private var hovering = false
+
+    var body: some View {
+        Text(title)
+            .font(courseTitleDisplayFont(title, size: 12, weight: .semibold))
+            .foregroundStyle(WeiBeiTheme.ink)
+            .lineLimit(1)
+            .padding(.horizontal, 10)
+            .frame(height: WeiBeiMetric.inputHeight)
+            .background(
+                WeiBeiTheme.paperRaised.opacity(hovering ? 0.90 : 0.68),
+                in: RoundedRectangle(cornerRadius: WeiBeiMetric.controlRadius, style: .continuous)
+            )
+            .overlay {
+                RoundedRectangle(cornerRadius: WeiBeiMetric.controlRadius, style: .continuous)
+                    .stroke(
+                        WeiBeiTheme.hairline.opacity(hovering ? 0.80 : 0.48),
+                        lineWidth: 1
+                    )
+            }
+            .contentShape(RoundedRectangle(cornerRadius: WeiBeiMetric.controlRadius, style: .continuous))
+            .onHover { hovering = $0 }
     }
 }
 

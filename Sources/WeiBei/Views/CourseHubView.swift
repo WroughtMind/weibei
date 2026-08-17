@@ -25,8 +25,6 @@ struct CourseHubView: View {
     @State private var isMaterialDropTargeted = false
     @State private var isNoteDropTargeted = false
     @State private var courseEntryPresentation: CourseProjectEntryPresentation?
-    @State private var courseQuestion = ""
-    @FocusState private var courseQuestionFocused: Bool
 
     private var courseID: UUID? { store.courseWorkspaceCourseID }
 
@@ -171,13 +169,9 @@ struct CourseHubView: View {
         }
         .onChange(of: courseID) { _, _ in
             showsAllContent = false
-            courseQuestion = ""
             selectedMaterialID = materials.first?.id
             selectedNoteID = nil
             selectedSessionID = nil
-        }
-        .onDisappear {
-            courseQuestion = ""
         }
         .onChange(of: materials.map(\.id)) { _, ids in
             if selectedMaterialID == nil
@@ -323,7 +317,6 @@ struct CourseHubView: View {
                 }
 
                 continueReadingSection
-                courseQuestionSection
                 courseContentSection
             }
             .frame(maxWidth: isCompact ? .infinity : 1_000, alignment: .leading)
@@ -415,97 +408,6 @@ struct CourseHubView: View {
                 )
             }
         }
-    }
-
-    private var courseQuestionSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text(store.ui("问这门课", "Ask this course"))
-                .font(WeiBeiTypography.brandFont(
-                    language: store.interfaceLanguage,
-                    size: 21,
-                    weight: .semibold
-                ))
-                .foregroundStyle(WeiBeiTheme.ink)
-
-            HStack(alignment: .center, spacing: 12) {
-                Image(systemName: "bubble.left.and.text.bubble.right")
-                    .font(.system(size: 15, weight: .regular))
-                    .foregroundStyle(WeiBeiTheme.secondaryInk)
-                    .frame(width: 24)
-
-                TextField(
-                    "",
-                    text: $courseQuestion,
-                    prompt: Text(store.ui(
-                        "关于这门课，你想继续弄懂什么？",
-                        "What would you like to understand about this course?"
-                    ))
-                    .foregroundStyle(WeiBeiTheme.placeholderInk),
-                    axis: .vertical
-                )
-                .textFieldStyle(.plain)
-                .font(.system(size: 14))
-                .foregroundStyle(WeiBeiTheme.ink)
-                .lineLimit(1...4)
-                .focused($courseQuestionFocused)
-                .onSubmit(submitCourseQuestion)
-                .accessibilityIdentifier("course-home-question")
-
-                Button(action: submitCourseQuestion) {
-                    Image(systemName: "arrow.up")
-                }
-                .buttonStyle(WeiBeiIconButtonStyle(
-                    size: 32,
-                    prominence: canSubmitCourseQuestion ? .primary : .neutral
-                ))
-                .disabled(!canSubmitCourseQuestion)
-                .accessibilityLabel(Text(store.ui("发送课程问题", "Send course question")))
-            }
-            .padding(.horizontal, 16)
-            .frame(minHeight: 78)
-            .background(
-                WeiBeiTheme.paperRaised.opacity(
-                    courseQuestionFocused ? 0.72 : 0.48
-                ),
-                in: RoundedRectangle(cornerRadius: 10, style: .continuous)
-            )
-            .overlay {
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .stroke(
-                        courseQuestionFocused
-                            ? WeiBeiTheme.cinnabar.opacity(0.28)
-                            : WeiBeiTheme.hairline.opacity(0.72),
-                        lineWidth: 1
-                    )
-            }
-
-            Text(store.ui(
-                "提交后会在当前 Chat 中优先查找这门课；切换资料不会切换 Chat。",
-                "The current Chat will prioritize this course; switching content does not switch Chats."
-            ))
-            .font(.system(size: 10.5))
-            .foregroundStyle(WeiBeiTheme.tertiaryInk)
-        }
-    }
-
-    private var canSubmitCourseQuestion: Bool {
-        !store.isStoppingAgent
-            && !store.isAgentRunningInActiveChat
-            && !courseQuestion.trimmingCharacters(
-                in: .whitespacesAndNewlines
-            ).isEmpty
-    }
-
-    private func submitCourseQuestion() {
-        guard canSubmitCourseQuestion,
-              let courseID,
-              store.submitCourseHomeQuestion(
-                courseQuestion,
-                in: courseID
-              ) != nil else {
-            return
-        }
-        courseQuestion = ""
     }
 
     private var courseContentSection: some View {

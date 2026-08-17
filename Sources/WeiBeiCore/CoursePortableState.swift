@@ -402,15 +402,24 @@ public struct CoursePortableState: Codable, Equatable, Sendable {
         state.studyLocationsByItemID = studyLocationsByItemID.filter { itemID, location in
             materialItemIDs.contains(itemID) && location.itemID == itemID
         }
-        if let resumePoint {
-            let resumeIsValid = resumePoint.courseID == courseID
-                && resumePoint.materialLocation.map {
-                    materialItemIDs.contains($0.itemID)
-                } ?? true
-                && resumePoint.noteItemID.map(noteItemIDs.contains) ?? true
-            if !resumeIsValid {
-                state.resumePoint = nil
+        if var resumePoint, resumePoint.courseID == courseID {
+            if let itemID = resumePoint.materialLocation?.itemID,
+               !materialItemIDs.contains(itemID) {
+                resumePoint.materialLocation = nil
             }
+            if let noteItemID = resumePoint.noteItemID,
+               !noteItemIDs.contains(noteItemID) {
+                resumePoint.noteItemID = nil
+            }
+            if resumePoint.materialLocation == nil
+                && resumePoint.chatID == nil
+                && resumePoint.noteItemID == nil {
+                state.resumePoint = nil
+            } else {
+                state.resumePoint = resumePoint
+            }
+        } else {
+            state.resumePoint = nil
         }
         var seenDraftItemIDs = Set<String>()
         state.pendingNoteDrafts = pendingNoteDrafts.filter { draft in

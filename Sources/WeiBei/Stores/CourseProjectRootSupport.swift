@@ -39,6 +39,26 @@ struct CourseFileScanSnapshot: Sendable {
     }
 }
 
+func portableItemIDs(
+    for courseID: UUID,
+    memberships: [CourseItemMembership],
+    items: [StudyItem]
+) -> Set<String> {
+    var ids = Set(
+        memberships.lazy
+            .filter { $0.courseID == courseID && $0.courseRelativePath != nil }
+            .map(\.itemID)
+    )
+    for item in items {
+        if case .courseOwned(let owner, let path) = item.storage,
+           owner == courseID,
+           !path.isEmpty {
+            ids.insert(item.id)
+        }
+    }
+    return ids
+}
+
 struct CourseSharedLinkObservation: Equatable, Sendable {
     var url: URL
     var relativePath: String
@@ -844,13 +864,29 @@ actor CourseProjectFileWorker {
         }) else {
             throw CoursePortableStateError.courseIdentityMismatch
         }
-        let memberships = (workspace.courseItemMemberships ?? [])
+        var memberships = (workspace.courseItemMemberships ?? [])
             .filter { $0.courseID == courseID }
-            .sorted {
-                ($0.courseRelativePath ?? "").localizedStandardCompare(
-                    $1.courseRelativePath ?? ""
-                ) == .orderedAscending
+        for item in workspace.importedItems {
+            guard case .courseOwned(let ownerCourseID, let relativePath)
+                    = item.storage,
+                  ownerCourseID == courseID,
+                  !relativePath.isEmpty,
+                  !memberships.contains(where: { $0.itemID == item.id }) else {
+                continue
             }
+            memberships.append(
+                CourseItemMembership(
+                    courseID: courseID,
+                    itemID: item.id,
+                    courseRelativePath: relativePath
+                )
+            )
+        }
+        memberships.sort {
+            ($0.courseRelativePath ?? "").localizedStandardCompare(
+                $1.courseRelativePath ?? ""
+            ) == .orderedAscending
+        }
         var importedItemsByID: [String: StudyItem] = [:]
         for item in workspace.importedItems
         where importedItemsByID[item.id] == nil {
