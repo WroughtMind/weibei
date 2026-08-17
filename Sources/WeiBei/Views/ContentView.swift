@@ -14,12 +14,16 @@ struct ContentView: View {
     var body: some View {
         GeometryReader { geometry in
             ZStack {
+                Color(nsColor: WeiBeiNativePalette.paper(for: store.appearanceMode))
+                    .ignoresSafeArea()
+
                 VStack(spacing: 0) {
                     UnifiedTopBarView(
                         isImmersiveLayout: isImmersiveLayout,
                         isFullScreen: windowIsFullScreen,
                         searchFocused: $topSearchFocused
                     )
+                    .ignoresSafeArea(.container, edges: .top)
 
                     if store.isCourseLibraryRootVolatile {
                         CourseLibraryVolatilityBanner()
