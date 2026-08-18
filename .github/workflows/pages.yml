@@ -101,7 +101,8 @@ jobs:
             test -s _site/appcast.xml
             grep -Fq "releases/download/$tag/" _site/appcast.xml
             grep -Fq 'sparkle:edSignature=' _site/appcast.xml
-            grep -Fq 'sparkle:signature=' _site/appcast.xml
+            grep -Fq 'sparkle-signatures:' _site/appcast.xml
+            grep -Fq 'edSignature:' _site/appcast.xml
           fi
 
           jq -n \
