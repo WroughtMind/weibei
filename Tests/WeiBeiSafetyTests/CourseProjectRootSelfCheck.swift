@@ -188,6 +188,7 @@ enum CourseProjectRootSelfCheck {
                     title: "第一讲",
                     subtitle: "第一讲.md",
                     kind: .markdown,
+                    urlPath: nil,
                     isSample: false,
                     isNotebookNote: true,
                     appearsInMaterials: true,
