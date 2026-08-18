@@ -13,7 +13,6 @@ final class WorkspaceInteractionState: ObservableObject {
     @Published var selectionContext: SelectionContext?
     @Published var selectionAttachments: [SelectionContext] = []
     @Published var activeSelectionThreadID: UUID?
-    @Published var activeSelectionMarkKind: SelectionMarkKind = .ask
     @Published var keepFloatingSelectionForAnswer = false
 
     /// Selection capsule position. Anchor-only drag/scroll updates can suppress
