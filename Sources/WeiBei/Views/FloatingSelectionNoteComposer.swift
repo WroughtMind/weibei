@@ -10,7 +10,6 @@ struct FloatingSelectionNoteComposer: View {
     @Binding var draft: String
     let onSaved: () -> Void
     @FocusState private var focused: Bool
-    @State private var includesLatestAnswer = true
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -47,10 +46,6 @@ struct FloatingSelectionNoteComposer: View {
                 .controlSize(.small)
                 .keyboardShortcut(.return, modifiers: .command)
             }
-            if store.latestSelectionAnswer(for: store.activeSelectionThreadID) != nil {
-                Toggle(store.ui("附上本轮 AI 回答", "Include the latest AI answer"), isOn: $includesLatestAnswer)
-                    .toggleStyle(.checkbox).font(.system(size: 11.5)).foregroundStyle(WeiBeiTheme.secondaryInk)
-            }
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 12)
@@ -64,9 +59,8 @@ struct FloatingSelectionNoteComposer: View {
     }
 
     private func save() {
-        guard store.saveSelectionNote(draft, includeLatestAnswer: includesLatestAnswer) != nil else { return }
+        guard store.saveSelectionNote(draft) != nil else { return }
         draft = ""
-        includesLatestAnswer = true
         onSaved()
     }
 }
