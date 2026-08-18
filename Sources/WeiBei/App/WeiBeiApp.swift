@@ -104,6 +104,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 struct WeiBeiApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var store = sharedWorkspaceStore
+    @StateObject private var updateService = WeiBeiUpdateService()
 
     init() {
         WeiBeiTypography.registerBundledFonts()
@@ -113,6 +114,7 @@ struct WeiBeiApp: App {
         WindowGroup("魏碑", id: "main") {
             ContentView()
                 .environmentObject(store)
+                .environmentObject(updateService)
                 .environmentObject(store.libraryDrawer)
                 .environmentObject(store.threePaneReorder)
                 .environmentObject(store.paneState)
@@ -268,6 +270,7 @@ struct WeiBeiApp: App {
         Settings {
             SettingsView()
                 .environmentObject(store)
+                .environmentObject(updateService)
         }
     }
 

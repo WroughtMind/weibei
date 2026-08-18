@@ -89,6 +89,13 @@ jobs:
             exit 0
           fi
 
+          appcast_asset="$(jq -c '[.assets[] | select(.name == "appcast.xml")] | if length == 1 then .[0] else empty end' <<<"$release")"
+          if [ -n "$appcast_asset" ]; then
+            appcast_url="$(jq -r '.url' <<<"$appcast_asset")"
+            gh api "$appcast_url" -H "Accept: application/octet-stream" > _site/appcast.xml
+            test -s _site/appcast.xml
+          fi
+
           jq -n \
             --arg version "$tag" \
             --arg published_at "$published_at" \
