@@ -10843,7 +10843,6 @@ final class WorkspaceStore: ObservableObject {
         if !item.editsBackingMarkdownFile {
             setNoteDraft(value, for: item.id)
         }
-        reconcileSelectionPlacements(in: value, noteItemID: item.id)
         scheduleNotePersistence(value, for: item)
     }
 
@@ -10924,6 +10923,7 @@ final class WorkspaceStore: ObservableObject {
             updateNote(value)
             return
         }
+        // Local editor draft may flush after a note switch; persist that item without touching active noteText.
         if itemID != activeNoteItemID {
             commitInactiveNoteDraft(value, itemID: itemID)
             return
@@ -10932,6 +10932,7 @@ final class WorkspaceStore: ObservableObject {
         updateNote(value)
     }
 
+    /// Persist a draft for a note that is no longer active (does not mutate active `noteText`).
     private func commitInactiveNoteDraft(_ value: String, itemID: String) {
         guard !itemIsInRemovingCourse(itemID),
               let item = allItems.first(where: { $0.id == itemID }) else {
@@ -10940,7 +10941,6 @@ final class WorkspaceStore: ObservableObject {
         if !item.editsBackingMarkdownFile {
             setNoteDraft(value, for: item.id)
         }
-        reconcileSelectionPlacements(in: value, noteItemID: item.id)
         scheduleNotePersistence(value, for: item)
     }
 
