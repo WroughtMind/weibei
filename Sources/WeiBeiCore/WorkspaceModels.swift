@@ -896,13 +896,20 @@ public struct SelectionMark: Identifiable, Codable, Hashable, Sendable {
     public var text: String
     public var hasAsk: Bool
     public var hasNote: Bool
+    public var sourceAnchor: SelectionSourceAnchor?
 
-    public init(id: UUID, text: String, hasAsk: Bool, hasNote: Bool) {
+    public init(id: UUID, text: String, hasAsk: Bool, hasNote: Bool, sourceAnchor: SelectionSourceAnchor? = nil) {
         self.id = id
         self.text = text
         self.hasAsk = hasAsk
         self.hasNote = hasNote
+        self.sourceAnchor = sourceAnchor
     }
+}
+
+public enum SelectionMarkKind: String, Codable, Hashable, Sendable {
+    case ask
+    case note
 }
 
 /// One durable source selection with its questions, notes, answer snapshots, and note placements.

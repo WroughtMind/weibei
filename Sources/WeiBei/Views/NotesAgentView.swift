@@ -701,7 +701,9 @@ struct NotePaneView: View {
                     .accessibilityLabel(Text(store.ui("正在载入笔记", "Loading note")))
             } else {
                 // 笔记固定为所见即所得（rich）写作，源码 / 对照模式入口已全部移除。
-                richEditor
+                if let materialID = store.activeNoteItem?.excerptSourceItemID {
+                    ExcerptNotebookView(materialID: materialID)
+                } else { richEditor }
             }
         }
     }
@@ -2793,6 +2795,7 @@ struct FloatingSelectionAgentView: View {
         .onChange(of: interaction.activeSelectionThreadID) { _, id in
             if id != nil, interaction.keepFloatingSelectionForAnswer {
                 withAnimation(WeiBeiMotion.panel) {
+                    mode = interaction.activeSelectionMarkKind == .note ? .note : .ask
                     expanded = true
                     dragOffset = .zero
                     settledOffset = .zero
@@ -2808,6 +2811,7 @@ struct FloatingSelectionAgentView: View {
             draftFocused = paneState.focusedPane == .agent
         }
         .onAppear {
+            mode = interaction.activeSelectionMarkKind == .note ? .note : .ask
             draftFocused = paneState.focusedPane == .agent
             if interaction.pinnedFloatingAgent || store.isAgentRunningInActiveChat || interaction.keepFloatingSelectionForAnswer {
                 expanded = true

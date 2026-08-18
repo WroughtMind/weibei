@@ -1117,6 +1117,8 @@ const normalizeSelectionAskMarks = (marks: any) => (Array.isArray(marks) ? marks
   .map((mark) => ({
     id: String(mark?.id || ''),
     text: String(mark?.text || '').trim(),
+    ask: Boolean(mark?.ask),
+    note: Boolean(mark?.note),
   }))
   .filter((mark) => mark.id && mark.text.length >= 4);
 
@@ -1125,19 +1127,18 @@ const decorateSelectionAskMarks = (decorations: any, text: any, pos: any, counts
   selectionAskMarks.forEach((mark) => {
     let start = 0;
     let count = counts.get(mark.id) || 0;
-    while (count < 3) {
+    while (true) {
       const index = text.indexOf(mark.text, start);
       if (index < 0) break;
-      addRangeDecoration(
-        decorations,
-        pos + index,
-        pos + index + mark.text.length,
-        'weibei-selection-ask-mark',
-        {
-          'data-thread-id': mark.id,
-          title: '打开当时的选区问答',
-        },
-      );
+      if (mark.ask) addRangeDecoration(decorations, pos + index, pos + index + mark.text.length,
+        'weibei-selection-ask-mark', { 'data-thread-id': mark.id, title: '打开当时的选区问答' });
+      if (mark.note) decorations.push(Decoration.widget(pos + index + mark.text.length, () => {
+        const edge = document.createElement('span');
+        edge.className = 'weibei-selection-note-mark';
+        edge.dataset.threadId = mark.id;
+        edge.title = '继续补充这条札记';
+        return edge;
+      }, { side: 1 }));
       count += 1;
       start = index + mark.text.length;
     }
@@ -1422,11 +1423,11 @@ const activateSourceReference = (target: any) => {
 
 const activateSelectionAskMark = (target: any) => {
   const mark = target instanceof Element
-    ? target.closest('.weibei-selection-ask-mark[data-thread-id]')
+    ? target.closest('.weibei-selection-note-mark[data-thread-id], .weibei-selection-ask-mark[data-thread-id]')
     : null;
   const threadId = mark?.getAttribute('data-thread-id') || '';
   if (!threadId) return false;
-  post('selectionAskMark', { threadId, text: mark!.textContent || '' });
+  post('selectionAskMark', { threadId: `${threadId}|${mark!.classList.contains('weibei-selection-note-mark') ? 'note' : 'ask'}`, text: mark!.textContent || '' });
   return true;
 };
 
