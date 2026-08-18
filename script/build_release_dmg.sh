@@ -235,17 +235,17 @@ DMG_SHA256="$(/usr/bin/shasum -a 256 "$DMG_PATH" | /usr/bin/awk '{print $1}')"
 npx tsx "$ROOT_DIR/script/homebrew/generate_cask.ts" "$APP_VERSION" "$DMG_SHA256" "$CASK_PATH"
 /usr/bin/ruby -c "$CASK_PATH" >/dev/null
 
-RELEASE_NOTES_SOURCE="${WEIBEI_RELEASE_NOTES_FILE:-$ROOT_DIR/Docs/releases/v$APP_VERSION.md}"
+UPDATE_SUMMARY_SOURCE="${WEIBEI_UPDATE_SUMMARY_FILE:-$ROOT_DIR/Docs/update-summaries/v$APP_VERSION.md}"
 APPCAST_RESULT="not-generated"
 if [[ -n "$SPARKLE_PRIVATE_KEY_FILE" ]]; then
-  if [[ ! -f "$SPARKLE_PRIVATE_KEY_FILE" || ! -s "$RELEASE_NOTES_SOURCE" ]]; then
-    echo "release failed: Sparkle private key or release notes are missing" >&2
+  if [[ ! -f "$SPARKLE_PRIVATE_KEY_FILE" || ! -s "$UPDATE_SUMMARY_SOURCE" ]]; then
+    echo "release failed: Sparkle private key or in-app update summary is missing" >&2
     exit 21
   fi
   rm -rf "$APPCAST_INPUT_DIR"
   mkdir -p "$APPCAST_INPUT_DIR"
   /usr/bin/ditto --norsrc --noextattr "$DMG_PATH" "$APPCAST_INPUT_DIR/$DMG_NAME"
-  cp "$RELEASE_NOTES_SOURCE" "$APPCAST_INPUT_DIR/${DMG_NAME%.dmg}.md"
+  cp "$UPDATE_SUMMARY_SOURCE" "$APPCAST_INPUT_DIR/${DMG_NAME%.dmg}.md"
   "$SPARKLE_GENERATE_APPCAST" \
     --ed-key-file "$SPARKLE_PRIVATE_KEY_FILE" \
     --download-url-prefix "https://github.com/weibei-app/weibei/releases/download/v$APP_VERSION/" \
