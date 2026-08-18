@@ -573,6 +573,7 @@ struct NotePaneView: View {
                 appearanceMode: store.appearanceMode,
                 reorderRole: reorderRole
             ) {
+                SelectionPlacementMenu()
                 ContextualContentListButton(kind: .note)
                 newNoteControl
             }
@@ -593,6 +594,7 @@ struct NotePaneView: View {
                 reorderRole: reorderRole,
                 titleRename: noteTabRename
             ) {
+                SelectionPlacementMenu()
                 ContextualContentListButton(kind: .note)
                 newNoteControl
             }

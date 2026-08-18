@@ -883,11 +883,13 @@ public struct SelectionAnnotationPlacement: Identifiable, Codable, Hashable, Sen
     public var id: UUID
     public var noteItemID: String
     public var createdAt: Date
+    public var detachedAt: Date?
 
-    public init(id: UUID = UUID(), noteItemID: String, createdAt: Date = Date()) {
+    public init(id: UUID = UUID(), noteItemID: String, createdAt: Date = Date(), detachedAt: Date? = nil) {
         self.id = id
         self.noteItemID = noteItemID
         self.createdAt = createdAt
+        self.detachedAt = detachedAt
     }
 }
 
