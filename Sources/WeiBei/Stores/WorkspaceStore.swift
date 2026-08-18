@@ -15912,29 +15912,6 @@ final class WorkspaceStore: ObservableObject {
         focus(.notes)
     }
 
-    private func quotedReferenceBlock(text: String, sourceTitle: String) -> String {
-        let quoted = MarkdownSelectionSanitizer.clean(text)
-            .split(separator: "\n", omittingEmptySubsequences: false)
-            .map { "> \($0)" }
-            .joined(separator: "\n")
-        return ui(
-            """
-            > [!quote] 选区摘录
-            >
-            \(quoted)
-            >
-            > 来源：\(sourceTitle)
-            """,
-            """
-            > [!quote] Selection excerpt
-            >
-            \(quoted)
-            >
-            > Source: \(sourceTitle)
-            """
-        )
-    }
-
     func applyLastAgentAnswerToNote() {
         guard let content = lastAgentAnswerContentForCurrentNote() else { return }
         let block = "\n\n\(noteBlockForAgentAnswer(content))"

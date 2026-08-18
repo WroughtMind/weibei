@@ -5,6 +5,29 @@ import WeiBeiCore
 
 @MainActor
 extension WorkspaceStore {
+    func quotedReferenceBlock(text: String, sourceTitle: String) -> String {
+        let quoted = MarkdownSelectionSanitizer.clean(text)
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .map { "> \($0)" }
+            .joined(separator: "\n")
+        return ui(
+            """
+            > [!quote] 选区摘录
+            >
+            \(quoted)
+            >
+            > 来源：\(sourceTitle)
+            """,
+            """
+            > [!quote] Selection excerpt
+            >
+            \(quoted)
+            >
+            > Source: \(sourceTitle)
+            """
+        )
+    }
+
     /// 浮动 tab 的行内重命名只写自定义显示名；提交空白则清除，恢复自动跟随 title / 正文。
     func setNoteCustomDisplayTitle(_ rawTitle: String, for itemID: String) {
         guard let index = importedItems.firstIndex(where: { $0.id == itemID && $0.isNotebookNote }) else { return }
