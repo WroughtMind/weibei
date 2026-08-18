@@ -3373,6 +3373,7 @@ private struct AgentBubble: View {
     var isChatWideTypography = false
     @State private var hovering = false
     @State private var copiedMessage = false
+    @State private var showsGlobalLearningMemory = false
 
     var body: some View {
         Group {
@@ -3398,6 +3399,10 @@ private struct AgentBubble: View {
             guard copiedMessage else { return }
             try? await Task.sleep(nanoseconds: 1_200_000_000)
             copiedMessage = false
+        }
+        .sheet(isPresented: $showsGlobalLearningMemory) {
+            GlobalLearningMemorySheet()
+                .environmentObject(store)
         }
     }
 
@@ -3801,8 +3806,12 @@ private struct AgentBubble: View {
                 store.resumePreviousStudy()
             }
         case .learningMemory:
-            withAnimation(WeiBeiMotion.panel) {
-                store.presentCourseWorkspace(.sessions)
+            if let courseID = message.origin?.courseID {
+                withAnimation(WeiBeiMotion.panel) {
+                    store.presentCourseWorkspace(.memory, courseID: courseID)
+                }
+            } else {
+                showsGlobalLearningMemory = true
             }
         case .session:
             break
@@ -3965,23 +3974,30 @@ private struct AgentReplyMemoryUpdateTag: View {
     let message: AgentMessage
     let update: AgentReplyMemoryUpdate
     @State private var expanded = false
+    @State private var showsGlobalLearningMemory = false
 
-    private var scope: LearningMemoryScope? {
-        guard let origin = message.origin else { return nil }
-        return origin.courseID.map(LearningMemoryScope.course) ?? .global
+    private var updatedMemoryScopes: Set<LearningMemoryScope> {
+        Set(store.learningMemoryStates.compactMap { state in
+            state.entries.contains(where: { update.memoryIDs.contains($0.id) })
+                ? state.scope
+                : nil
+        })
     }
 
     private var revisions: [LearningMemoryRevisionRecord]? {
-        guard let scope else { return nil }
         return update.revisions(
             for: message.id,
-            in: store.learningMemoryEntries(in: scope)
+            in: store.learningMemoryStates.flatMap(\.entries)
         )
     }
 
-    private var canOpenAll: Bool {
-        guard let courseID = message.origin?.courseID else { return false }
-        return store.course(withID: courseID) != nil
+    private var courseID: UUID? {
+        guard let courseID = message.origin?.courseID,
+              store.course(withID: courseID) != nil,
+              updatedMemoryScopes.contains(.course(courseID)) else {
+            return nil
+        }
+        return courseID
     }
 
     var body: some View {
@@ -4044,13 +4060,21 @@ private struct AgentReplyMemoryUpdateTag: View {
                             .fixedSize(horizontal: false, vertical: true)
                     }
 
-                    if canOpenAll {
-                        Button(store.ui("查看全部", "View all")) {
-                            guard let courseID = message.origin?.courseID else { return }
-                            store.presentCourseWorkspace(.sessions, courseID: courseID)
+                    HStack(spacing: 8) {
+                        if let courseID {
+                            Button(store.ui("查看课程记忆", "View Course Memory")) {
+                                store.presentCourseWorkspace(.memory, courseID: courseID)
+                            }
+                            .buttonStyle(WeiBeiTextActionButtonStyle())
+                            .accessibilityIdentifier("agent-memory-update-view-all")
                         }
-                        .buttonStyle(WeiBeiTextActionButtonStyle())
-                        .accessibilityIdentifier("agent-memory-update-view-all")
+                        if updatedMemoryScopes.contains(.global) {
+                            Button(store.ui("查看全局记忆", "View Global Memory")) {
+                                showsGlobalLearningMemory = true
+                            }
+                            .buttonStyle(WeiBeiTextActionButtonStyle())
+                            .accessibilityIdentifier("agent-memory-update-view-global")
+                        }
                     }
                 }
                 .padding(.leading, 9)
@@ -4061,6 +4085,10 @@ private struct AgentReplyMemoryUpdateTag: View {
                 }
                 .transition(.opacity.combined(with: .move(edge: .top)))
             }
+        }
+        .sheet(isPresented: $showsGlobalLearningMemory) {
+            GlobalLearningMemorySheet()
+                .environmentObject(store)
         }
     }
 }

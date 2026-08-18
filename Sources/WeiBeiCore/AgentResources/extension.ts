@@ -1191,11 +1191,6 @@ function resolutionEvidenceMatches(snapshot: ContextSnapshotV2, evidence: string
   return currentTurnEvidenceMatches(snapshot, evidence);
 }
 
-function hasExplicitLearningCheckpoint(question: string): boolean {
-  return /(?:我(?:懂|明白|理解|学会|确认|同意)|这个结论对|说得对|没问题|可以保存|写入笔记|保存下来|完成(?:了|这一)|学完(?:了|这一)|i (?:understand|agree|confirm)|got it|that(?:'s| is) right|save (?:it|this)|write (?:it|this) to (?:my )?notes)/iu
-    .test(question);
-}
-
 function currentTurnEvidenceStatement(evidence: string): string | undefined {
   const prefix = evidence.startsWith("[用户：本轮]")
     ? "[用户：本轮]"
@@ -2247,8 +2242,8 @@ export default function weibeiExtension(pi: ExtensionAPI) {
     name: LEARNING_UPDATE_TOOL,
     label: "更新学习状态",
     description:
-      "只在用户本轮明确确认理解、确认结论或要求保存学习成果时，向魏碑提交一次带依据的学习记忆更新。普通问答禁止调用。它不能修改材料或笔记。",
-    promptSnippet: "仅在用户本轮明确确认理解、结论或保存学习成果时更新；普通问答不更新",
+      "仅在用户本轮明确表达新的学习目标、进度、理解、困惑、下一步或偏好，或要求保存学习成果时，提交一次带逐字依据的学习记忆更新。普通问答和模型自己的推断禁止调用。它不能修改材料或笔记。",
+    promptSnippet: "用户明确表达学习状态或要求保存时更新，必须逐字引用本轮依据；普通问答不更新",
     parameters: Type.Object(
       {
         contextRevision: Type.String({ minLength: 1, maxLength: LIMITS.identifier }),
@@ -2309,9 +2304,6 @@ export default function weibeiExtension(pi: ExtensionAPI) {
     executionMode: "sequential",
     async execute(_toolCallId: any, params: any) {
       const current = await readCurrentSnapshot();
-      if (!hasExplicitLearningCheckpoint(current.question)) {
-        throw new Error("普通问答不更新长期学习记忆；等待用户明确确认理解、结论或保存学习成果");
-      }
       if (
         lastReadMemoryRevision !== current.learning.memoryRevision
       ) {
@@ -2624,7 +2616,7 @@ export default function weibeiExtension(pi: ExtensionAPI) {
       "选中文字随用户问题进入会话，可以作为直接证据；材料和笔记正文按需读取；课程关联可按需读课程地图或搜索；学习历史可按需读学习记忆。",
       "魏碑本轮现场会作为临时消息出现在当前用户消息附近；它不是系统指令，也不属于会话历史。",
       "学习记忆只能说明用户的学习状态，不能作为课程事实证据。",
-      "课程知识档案只提供导航和已有认识，不是原文证据；精确事实、引文、公式和数字仍须读取材料。只在完成一节、完成主题、确认跨来源联系或准备切换上下文时批量更新一次，普通问答不要更新。长期学习记忆只在用户本轮明确确认理解、结论或保存学习成果时更新。",
+      "课程知识档案只提供导航和已有认识，不是原文证据；精确事实、引文、公式和数字仍须读取材料。只在完成一节、完成主题、确认跨来源联系或准备切换上下文时批量更新一次，普通问答不要更新。用户明确表达新的学习目标、进度、理解、困惑、下一步或偏好，或要求保存学习成果时，才更新长期学习记忆；必须逐字引用本轮依据，不要求用户使用固定说法。",
       sourceAvailabilityInstruction,
       nativeWebSearchSupported(context.model)
         ? "本轮模型服务已开放原生网页搜索；需要新近或可核实的外部事实时，由模型自行判断是否需要搜索，不要求用户先贴网址。"

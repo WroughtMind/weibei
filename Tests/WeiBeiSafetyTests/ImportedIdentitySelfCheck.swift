@@ -1079,6 +1079,19 @@ enum ImportedIdentitySelfCheck {
             snapshotAfterRetry.learningMemoryStates?.first?.entries.first?.text == editedText,
             "学习记忆重试成功后没有落盘"
         )
+
+        let revisionBeforeDelete = store.learningMemoryRevision(in: .global)
+        try check(
+            store.deleteLearningMemory(memory.id, in: .global),
+            "用户无法删除单条学习记忆"
+        )
+        let snapshotAfterDelete = try fixture.readSnapshot()
+        try check(
+            store.learningMemoryEntries(in: .global).isEmpty
+                && snapshotAfterDelete.learningMemoryStates?.first?.entries.isEmpty == true
+                && store.learningMemoryRevision(in: .global) == revisionBeforeDelete + 1,
+            "删除单条学习记忆后没有同步更新内存、修订号和落盘快照"
+        )
     }
 
     @MainActor

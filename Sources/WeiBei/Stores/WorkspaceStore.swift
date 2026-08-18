@@ -142,6 +142,7 @@ enum CourseWorkspaceDestination: String, CaseIterable, Sendable {
     case materials
     case notes
     case sessions
+    case memory
 }
 
 enum CourseOwnedFileRole: String, Codable, Sendable {
@@ -13655,7 +13656,7 @@ final class WorkspaceStore: ObservableObject {
         for kind: LearningMemoryKind,
         courseID: UUID?
     ) -> LearningMemoryScope {
-        if kind == .goal || kind == .preference { return .global }
+        if kind == .preference { return .global }
         return learningMemoryScope(courseID: courseID)
     }
 
@@ -15114,7 +15115,6 @@ final class WorkspaceStore: ObservableObject {
                 orderedLearningMemoryEntries(in: scope).filter { entry in
                     scope != .global
                         || target.courseID == nil
-                        || entry.kind == .goal
                         || entry.kind == .preference
                 }
             }
@@ -15683,6 +15683,24 @@ final class WorkspaceStore: ObservableObject {
             status: .active,
             resolutionEvidence: nil
         )
+    }
+
+    @discardableResult
+    func deleteLearningMemory(
+        _ memoryID: UUID,
+        in scope: LearningMemoryScope
+    ) -> Bool {
+        guard scope.courseID.map({
+            activeCourseRemovalTokens[$0] == nil
+        }) ?? true,
+        let stateIndex = learningMemoryStateIndex(for: scope, createIfMissing: false),
+        learningMemoryStates[stateIndex].entries.contains(where: { $0.id == memoryID }) else {
+            return false
+        }
+        learningMemoryStates[stateIndex].entries.removeAll { $0.id == memoryID }
+        learningMemoryStates[stateIndex].revision &+= 1
+        invalidateAgentContext()
+        return save()
     }
 
     private func setLearningMemoryStatus(
