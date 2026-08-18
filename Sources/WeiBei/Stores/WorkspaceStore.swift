@@ -15592,10 +15592,7 @@ final class WorkspaceStore: ObservableObject {
         dirtyPortableCourseIDs.insert(courseID)
     }
 
-    func isLearningMemoryResolved(
-        _ memoryID: String,
-        in scope: LearningMemoryScope
-    ) -> Bool {
+    func isLearningMemoryResolved(_ memoryID: String, in scope: LearningMemoryScope) -> Bool {
         guard let id = UUID(uuidString: memoryID) else { return false }
         return learningMemoryEntries(in: scope)
             .first(where: { $0.id == id })?
@@ -15661,10 +15658,7 @@ final class WorkspaceStore: ObservableObject {
         return save()
     }
 
-    func resolveLearningMemory(
-        _ memoryID: UUID,
-        in scope: LearningMemoryScope
-    ) {
+    func resolveLearningMemory(_ memoryID: UUID, in scope: LearningMemoryScope) {
         setLearningMemoryStatus(
             memoryID,
             in: scope,
@@ -15673,31 +15667,19 @@ final class WorkspaceStore: ObservableObject {
         )
     }
 
-    func restoreLearningMemory(
-        _ memoryID: UUID,
-        in scope: LearningMemoryScope
-    ) {
-        setLearningMemoryStatus(
-            memoryID,
-            in: scope,
-            status: .active,
-            resolutionEvidence: nil
-        )
+    func restoreLearningMemory(_ memoryID: UUID, in scope: LearningMemoryScope) {
+        setLearningMemoryStatus(memoryID, in: scope, status: .active, resolutionEvidence: nil)
     }
-
     @discardableResult
-    func deleteLearningMemory(
-        _ memoryID: UUID,
-        in scope: LearningMemoryScope
-    ) -> Bool {
+    func deleteLearningMemory(_ memoryID: UUID, in scope: LearningMemoryScope) -> Bool {
         guard scope.courseID.map({
             activeCourseRemovalTokens[$0] == nil
         }) ?? true,
         let stateIndex = learningMemoryStateIndex(for: scope, createIfMissing: false),
-        learningMemoryStates[stateIndex].entries.contains(where: { $0.id == memoryID }) else {
+        let entryIndex = learningMemoryStates[stateIndex].entries.firstIndex(where: { $0.id == memoryID }) else {
             return false
         }
-        learningMemoryStates[stateIndex].entries.removeAll { $0.id == memoryID }
+        learningMemoryStates[stateIndex].entries.remove(at: entryIndex)
         learningMemoryStates[stateIndex].revision &+= 1
         invalidateAgentContext()
         return save()
