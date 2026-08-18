@@ -89,6 +89,21 @@ jobs:
             exit 0
           fi
 
+          appcast_asset="$(jq -c '[.assets[] | select(.name == "appcast.xml")] | if length == 1 then .[0] else empty end' <<<"$release")"
+          if [ -z "$appcast_asset" ]; then
+            if [ "$GITHUB_EVENT_NAME" = "release" ]; then
+              echo "published release is missing appcast.xml" >&2
+              exit 1
+            fi
+          else
+            appcast_url="$(jq -r '.url' <<<"$appcast_asset")"
+            gh api "$appcast_url" -H "Accept: application/octet-stream" > _site/appcast.xml
+            test -s _site/appcast.xml
+            grep -Fq "releases/download/$tag/" _site/appcast.xml
+            grep -Fq 'sparkle:edSignature=' _site/appcast.xml
+            grep -Fq 'sparkle:signature=' _site/appcast.xml
+          fi
+
           jq -n \
             --arg version "$tag" \
             --arg published_at "$published_at" \

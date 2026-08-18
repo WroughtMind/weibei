@@ -38,6 +38,7 @@ fi
 APP_BUNDLE="$DIST_DIR/$APP_DISPLAY_NAME.app"
 APP_CONTENTS="$APP_BUNDLE/Contents"
 APP_MACOS="$APP_CONTENTS/MacOS"
+APP_FRAMEWORKS="$APP_CONTENTS/Frameworks"
 APP_HELPERS="$APP_CONTENTS/Helpers"
 APP_RESOURCES="$APP_CONTENTS/Resources"
 APP_ICON_SOURCE="$ROOT_DIR/DesignSystem/assets/app-icon/AppIcon.icns"
@@ -55,6 +56,9 @@ FINAL_AUDIT_APP_BINARY="$FINAL_AUDIT_APP_BUNDLE/Contents/MacOS/$PRODUCT_NAME"
 PDF_TEXT_WORKER_NAME="WeiBeiPDFTextWorker"
 PDF_TEXT_WORKER="$APP_HELPERS/$PDF_TEXT_WORKER_NAME"
 INFO_PLIST="$APP_CONTENTS/Info.plist"
+SPARKLE_TEST_PUBLIC_KEY="eRFPLZuNM6m8bltmtpPX4fzKbufI1z6rKJHtgIIsllk="
+SPARKLE_PUBLIC_KEY="${WEIBEI_SPARKLE_PUBLIC_KEY:-$SPARKLE_TEST_PUBLIC_KEY}"
+SPARKLE_FEED_URL="${WEIBEI_SPARKLE_FEED_URL:-https://weibei-app.github.io/weibei/appcast.xml}"
 
 target_app_is_running() {
   local pid command target_binary="$APP_BINARY"
@@ -146,7 +150,7 @@ if [[ "$CHECK_ONLY" != true ]]; then
   )
 
   rm -rf "$APP_BUNDLE"
-  mkdir -p "$APP_MACOS" "$APP_HELPERS" "$APP_RESOURCES"
+  mkdir -p "$APP_MACOS" "$APP_FRAMEWORKS" "$APP_HELPERS" "$APP_RESOURCES"
   if [[ ! -f "$APP_ICON_SOURCE" ]]; then
     echo "package failed: missing App Icon at $APP_ICON_SOURCE" >&2
     exit 22
@@ -157,6 +161,13 @@ if [[ "$CHECK_ONLY" != true ]]; then
     exit 10
   fi
   chmod +x "$APP_BINARY"
+  SPARKLE_FRAMEWORK="$BUILD_DIR/Sparkle.framework"
+  if [[ ! -d "$SPARKLE_FRAMEWORK" ]]; then
+    echo "package failed: missing Sparkle.framework" >&2
+    exit 26
+  fi
+  /usr/bin/ditto --norsrc --noextattr "$SPARKLE_FRAMEWORK" "$APP_FRAMEWORKS/Sparkle.framework"
+  /usr/bin/install_name_tool -add_rpath "@executable_path/../Frameworks" "$APP_BINARY"
   BUILD_PDF_TEXT_WORKER="$BUILD_DIR/$PDF_TEXT_WORKER_NAME"
   if [[ ! -x "$BUILD_PDF_TEXT_WORKER" ]]; then
     echo "package failed: missing bounded PDF text worker" >&2
@@ -246,9 +257,28 @@ if [[ "$CHECK_ONLY" != true ]]; then
   <string>$MIN_SYSTEM_VERSION</string>
   <key>NSPrincipalClass</key>
   <string>NSApplication</string>
+  <key>SUFeedURL</key>
+  <string>$SPARKLE_FEED_URL</string>
+  <key>SUPublicEDKey</key>
+  <string>$SPARKLE_PUBLIC_KEY</string>
+  <key>SUEnableAutomaticChecks</key>
+  <true/>
+  <key>SUAutomaticallyUpdate</key>
+  <false/>
+  <key>SUEnableSystemProfiling</key>
+  <false/>
+  <key>SURequireSignedFeed</key>
+  <true/>
+  <key>SUScheduledCheckInterval</key>
+  <integer>3600</integer>
 </dict>
 </plist>
 PLIST
+  if [[ "$(/usr/bin/printf '%s' "$SPARKLE_PUBLIC_KEY" | /usr/bin/base64 -D 2>/dev/null | /usr/bin/wc -c | /usr/bin/tr -d ' ')" != "32" ]]; then
+    echo "package failed: WEIBEI_SPARKLE_PUBLIC_KEY must be a base64-encoded 32-byte Ed25519 public key" >&2
+    exit 27
+  fi
+  /usr/bin/codesign --force --deep --sign - --timestamp=none "$APP_FRAMEWORKS/Sparkle.framework" >/dev/null
   /usr/bin/codesign --force --sign - --timestamp=none "$PDF_TEXT_WORKER" >/dev/null
   /usr/bin/codesign --force --sign - --timestamp=none "$APP_BUNDLE" >/dev/null
   if ! /usr/bin/codesign --verify --deep --strict "$APP_BUNDLE" >/dev/null; then
@@ -281,6 +311,7 @@ PLIST
       # after stripping attrs so release consumers still get a verifiable dist/.
       /usr/bin/xattr -cr "$FINAL_APP_BUNDLE" 2>/dev/null || true
       /usr/bin/codesign --force --sign - --timestamp=none "$FINAL_APP_BUNDLE/Contents/Resources/PiRuntime/bin/pi" >/dev/null 2>&1 || true
+      /usr/bin/codesign --force --deep --sign - --timestamp=none "$FINAL_APP_BUNDLE/Contents/Frameworks/Sparkle.framework" >/dev/null 2>&1 || true
       /usr/bin/codesign --force --sign - --timestamp=none "$FINAL_APP_BUNDLE/Contents/Helpers/$PDF_TEXT_WORKER_NAME" >/dev/null 2>&1 || true
       /usr/bin/codesign --force --sign - --timestamp=none "$FINAL_APP_BUNDLE" >/dev/null
     fi

@@ -15,6 +15,7 @@ struct SettingsView: View {
     // Visible to `internal` so the Settings sub-views in Views/Settings/*.swift
     // (same-target extensions) can bind to them.
     @EnvironmentObject var store: WorkspaceStore
+    @EnvironmentObject private var updateService: WeiBeiUpdateService
     @StateObject var oauthService = PiOAuthService.shared
     @State private var selectedSection: SettingsSection = .agent
     @FocusState var focusedField: Field?
@@ -27,11 +28,6 @@ struct SettingsView: View {
     @State var apiKeyDraft = ""
     // Profile delete confirmation (AgentSettingsView extension).
     @State var showDeleteProfileConfirmation = false
-    // About / update check (tier-0: prompt only, never silent install).
-    @State private var updateCheckStatus: String?
-    @State private var updateCheckBusy = false
-    @State private var availableUpdate: WeiBeiUpdateManifest?
-    @State private var isVersionUpToDate = false
     // Shortcut rebinding: click a key chip, then press the new chord.
     @State private var recordingShortcutID: AppShortcutID?
     @State private var shortcutRecordMonitor: Any?
@@ -462,31 +458,28 @@ struct SettingsView: View {
             settingsGroup(store.ui("版本", "Version")) {
                 settingsRow(
                     title: buildInfo.version,
-                    showsBottomDivider: availableUpdate != nil
+                    showsBottomDivider: updateService.availableUpdate != nil
                 ) {
                     Button {
-                        Task { await runUpdateCheck() }
+                        runUpdateAction()
                     } label: {
-                        if updateCheckBusy {
+                        if updateService.isBusy {
                             ProgressView().controlSize(.mini)
                         } else {
                             Text(updateActionLabel)
                         }
                     }
-                    .buttonStyle(WeiBeiTextActionButtonStyle(active: availableUpdate != nil || !isVersionUpToDate))
-                    .disabled(updateCheckBusy)
+                    .buttonStyle(WeiBeiTextActionButtonStyle(active: updateService.status != .upToDate))
+                    .disabled(updateService.isBusy)
                 }
 
-                if let availableUpdate {
+                if let availableUpdate = updateService.availableUpdate {
                     settingsRow(
-                        title: store.ui("新版本", "New Version"),
+                        title: store.ui("新版本 \(availableUpdate.version)", "New Version \(availableUpdate.version)"),
                         detail: userFacingUpdateDetail(availableUpdate),
                         showsBottomDivider: false
                     ) {
-                        Button(store.ui("前往下载", "Download")) {
-                            openUpdateDownload(availableUpdate)
-                        }
-                        .buttonStyle(WeiBeiTextActionButtonStyle(active: true))
+                        EmptyView()
                     }
                 }
             }
@@ -506,9 +499,8 @@ struct SettingsView: View {
                 }
             }
 
-            if let updateCheckStatus, !updateCheckStatus.isEmpty, !isVersionUpToDate, availableUpdate == nil {
-                // Only surface failures — success is the button label "已是最新".
-                Text(updateCheckStatus)
+            if case let .failed(message) = updateService.status {
+                Text(store.ui("更新失败：\(message)", "Update failed: \(message)"))
                     .font(SettingsType.detail)
                     .foregroundStyle(WeiBeiTheme.tertiaryInk)
                     .padding(.horizontal, 4)
@@ -528,13 +520,20 @@ struct SettingsView: View {
     }
 
     private var updateActionLabel: String {
-        if availableUpdate != nil {
-            return store.ui("有新版本", "Update available")
+        if updateService.availableUpdate != nil {
+            if case .failed = updateService.status {
+                return store.ui("重试安装", "Retry Install")
+            }
+            return store.ui("下载并安装", "Download and Install")
         }
-        if isVersionUpToDate {
-            return store.ui("已是最新", "Up to date")
+        switch updateService.status {
+        case .upToDate:
+            return store.ui("已是最新", "Up to Date")
+        case .failed:
+            return store.ui("重新检查", "Try Again")
+        default:
+            return store.ui("检查更新", "Check for Updates")
         }
-        return store.ui("检查更新", "Check for Updates")
     }
 
     private var feedbackSheet: some View {
@@ -712,46 +711,18 @@ struct SettingsView: View {
         }
     }
 
-    @MainActor
-    private func runUpdateCheck() async {
-        updateCheckBusy = true
-        updateCheckStatus = nil
-        availableUpdate = nil
-        isVersionUpToDate = false
-        let result = await WeiBeiUpdateChecker.check(local: buildInfo)
-        updateCheckBusy = false
-        switch result {
-        case .upToDate:
-            availableUpdate = nil
-            isVersionUpToDate = true
-            updateCheckStatus = nil
-        case let .updateAvailable(_, remote):
-            availableUpdate = remote
-            isVersionUpToDate = false
-            updateCheckStatus = nil
-        case .failed:
-            availableUpdate = nil
-            isVersionUpToDate = false
-            updateCheckStatus = store.ui(
-                "暂时无法检查更新，请稍后重试。",
-                "Could not check for updates. Please try again later."
-            )
+    private func runUpdateAction() {
+        if updateService.availableUpdate == nil {
+            updateService.checkForUpdates()
+        } else {
+            updateService.installAvailableUpdate()
         }
     }
 
-    private func openUpdateDownload(_ manifest: WeiBeiUpdateManifest) {
-        let url = manifest.downloadURL ?? WeiBeiUpdateChecker.defaultReleasesPageURL
-        NSWorkspace.shared.open(url)
-    }
-
-    private func userFacingUpdateDetail(_ remote: WeiBeiUpdateManifest) -> String {
-        if let notes = remote.notes?.trimmingCharacters(in: .whitespacesAndNewlines), !notes.isEmpty {
-            let cleaned = notes
-                .replacingOccurrences(of: " (no login-keychain prompts)", with: "")
-                .replacingOccurrences(of: "（无钥匙串弹窗）", with: "")
-            return "\(remote.version) · \(cleaned)"
-        }
-        return remote.version
+    private func userFacingUpdateDetail(_ update: WeiBeiAvailableUpdate) -> String {
+        update.summaryLines.isEmpty
+            ? store.ui("包含最新改进和修复。", "Includes the latest improvements and fixes.")
+            : update.summaryLines.joined(separator: "\n")
     }
 
     private func settingsSidebarButton(_ section: SettingsSection) -> some View {

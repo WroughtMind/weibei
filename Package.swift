@@ -14,6 +14,9 @@ let package = Package(
         .executable(name: "WeiBeiPDFTextWorker", targets: ["WeiBeiPDFTextWorker"]),
         .executable(name: "WeiBeiDev", targets: ["WeiBeiDev"])
     ],
+    dependencies: [
+        .package(url: "https://github.com/sparkle-project/Sparkle", exact: "2.9.6")
+    ],
     targets: [
         .target(
             name: "WeiBeiCore",
@@ -30,7 +33,10 @@ let package = Package(
         ),
         .executableTarget(
             name: "WeiBei",
-            dependencies: ["WeiBeiCore"],
+            dependencies: [
+                "WeiBeiCore",
+                .product(name: "Sparkle", package: "Sparkle")
+            ],
             exclude: ["WebEditor"],
             resources: [
                 .process("Resources")

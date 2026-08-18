@@ -360,6 +360,7 @@ private struct WorkspaceChromeBackdrop: View {
 
 private struct UnifiedTopBarView: View {
     @EnvironmentObject private var store: WorkspaceStore
+    @EnvironmentObject private var updateService: WeiBeiUpdateService
     @EnvironmentObject private var libraryDrawer: LibraryDrawerState
     @EnvironmentObject private var paneState: WorkspacePaneState
     @EnvironmentObject private var interaction: WorkspaceInteractionState
@@ -528,7 +529,34 @@ private struct UnifiedTopBarView: View {
             }
             .keyboardShortcut("]", modifiers: [.command])
             .disabled(!store.canNavigateForward)
+
+            if updateService.showsToolbarControl, let update = updateService.availableUpdate {
+                Button {
+                    updateService.installAvailableUpdate()
+                } label: {
+                    if updateService.isBusy {
+                        ProgressView()
+                            .controlSize(.mini)
+                    } else {
+                        Image(systemName: "arrow.down")
+                            .contentShape(Rectangle())
+                    }
+                }
+                .buttonStyle(WeiBeiIconButtonStyle(active: true, size: 24))
+                .disabled(updateService.isBusy)
+                .accessibilityLabel(Text(store.ui("下载并安装魏碑更新", "Download and install the WeiBei update")))
+                .help(updateHelpText(update))
+                .transition(.opacity.combined(with: .scale(scale: 0.92)))
+            }
         }
+        .animation(WeiBeiMotion.panel, value: updateService.showsToolbarControl)
+    }
+
+    private func updateHelpText(_ update: WeiBeiAvailableUpdate) -> String {
+        guard case let .failed(message) = updateService.status else {
+            return update.helpText
+        }
+        return update.helpText + "\n" + store.ui("更新失败，点击重试：\(message)", "Update failed. Click to retry: \(message)")
     }
 
     private var paneToggleCluster: some View {

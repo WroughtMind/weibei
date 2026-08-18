@@ -36,10 +36,18 @@ RELEASE_APP="$RELEASE_DIR/$APP_NAME"
 PI_EXECUTABLE="$RELEASE_APP/Contents/Resources/PiRuntime/bin/pi"
 PI_HASH="$RELEASE_APP/Contents/Resources/PiRuntime/binary.sha256"
 PDF_HELPER="$RELEASE_APP/Contents/Helpers/WeiBeiPDFTextWorker"
+SPARKLE_FRAMEWORK="$RELEASE_APP/Contents/Frameworks/Sparkle.framework"
 BACKGROUND="$ROOT_DIR/DesignSystem/assets/dmg/dmg-background.png"
 BACKGROUND_2X="$ROOT_DIR/DesignSystem/assets/dmg/dmg-background@2x.png"
 PI_ENTITLEMENTS="$ROOT_DIR/Config/PiRuntime.entitlements"
 NOTARY_RESULT="$RELEASE_DIR/notary-result.json"
+APPCAST_PATH="$RELEASE_DIR/appcast.xml"
+APPCAST_INPUT_DIR="$RELEASE_DIR/appcast-input"
+SPARKLE_TEST_PUBLIC_KEY="eRFPLZuNM6m8bltmtpPX4fzKbufI1z6rKJHtgIIsllk="
+SPARKLE_PUBLIC_KEY="${WEIBEI_SPARKLE_PUBLIC_KEY:-}"
+SPARKLE_PRIVATE_KEY_FILE="${WEIBEI_SPARKLE_PRIVATE_KEY_FILE:-}"
+SPARKLE_GENERATE_APPCAST="$ROOT_DIR/.build/artifacts/sparkle/Sparkle/bin/generate_appcast"
+SPARKLE_SIGN_UPDATE="$ROOT_DIR/.build/artifacts/sparkle/Sparkle/bin/sign_update"
 
 if [[ ! -f "$VERSION_FILE" ]]; then
   echo "release failed: missing VERSION" >&2
@@ -73,6 +81,23 @@ if [[ ! -x "$ROOT_DIR/node_modules/.bin/appdmg" ]]; then
   echo "release failed: run npm ci before building the DMG" >&2
   exit 7
 fi
+if [[ -z "$SPARKLE_PUBLIC_KEY" || "$SPARKLE_PUBLIC_KEY" == "$SPARKLE_TEST_PUBLIC_KEY" ]]; then
+  echo "release failed: WEIBEI_SPARKLE_PUBLIC_KEY must contain the formal Sparkle public key" >&2
+  exit 18
+fi
+if [[ "$(/usr/bin/printf '%s' "$SPARKLE_PUBLIC_KEY" | /usr/bin/base64 -D 2>/dev/null | /usr/bin/wc -c | /usr/bin/tr -d ' ')" != "32" ]]; then
+  echo "release failed: WEIBEI_SPARKLE_PUBLIC_KEY must be a base64-encoded 32-byte Ed25519 public key" >&2
+  exit 19
+fi
+if [[ -z "$SPARKLE_PRIVATE_KEY_FILE" || ! -f "$SPARKLE_PRIVATE_KEY_FILE" ]]; then
+  echo "release failed: WEIBEI_SPARKLE_PRIVATE_KEY_FILE must point to the Sparkle private key outside the repository" >&2
+  exit 20
+fi
+if [[ "$(node "$ROOT_DIR/script/sparkle_public_key.mjs" "$SPARKLE_PRIVATE_KEY_FILE")" != "$SPARKLE_PUBLIC_KEY" ]]; then
+  echo "release failed: Sparkle public and private keys do not match" >&2
+  exit 22
+fi
+export WEIBEI_SPARKLE_PUBLIC_KEY="$SPARKLE_PUBLIC_KEY"
 
 if [[ "$MODE" == "notarized" ]]; then
   SIGN_IDENTITY="${WEIBEI_CODESIGN_IDENTITY:-}"
@@ -122,8 +147,8 @@ rm -rf "$RELEASE_APP"
 /usr/bin/ditto --norsrc --noextattr "$BASE_APP" "$RELEASE_APP"
 /usr/bin/xattr -cr "$RELEASE_APP"
 
-if [[ ! -x "$PI_EXECUTABLE" || ! -x "$PDF_HELPER" || ! -f "$PI_ENTITLEMENTS" ]]; then
-  echo "release failed: packaged executables or Pi entitlements are missing" >&2
+if [[ ! -x "$PI_EXECUTABLE" || ! -x "$PDF_HELPER" || ! -d "$SPARKLE_FRAMEWORK" || ! -f "$PI_ENTITLEMENTS" ]]; then
+  echo "release failed: packaged executables, Sparkle, or Pi entitlements are missing" >&2
   exit 12
 fi
 
@@ -132,11 +157,14 @@ fi
 /usr/bin/shasum -a 256 "$PI_EXECUTABLE" | /usr/bin/awk '{print $1}' | /usr/bin/tee "$PI_HASH" >/dev/null
 /usr/bin/codesign --force --options runtime "${TIMESTAMP_ARGUMENT[@]}" \
   --sign "$SIGN_IDENTITY" "$PDF_HELPER"
+/usr/bin/codesign --force --deep --options runtime "${TIMESTAMP_ARGUMENT[@]}" \
+  --sign "$SIGN_IDENTITY" "$SPARKLE_FRAMEWORK"
 /usr/bin/codesign --force --options runtime "${TIMESTAMP_ARGUMENT[@]}" \
   --sign "$SIGN_IDENTITY" "$RELEASE_APP"
 
 /usr/bin/codesign --verify --strict --verbose=2 "$PI_EXECUTABLE"
 /usr/bin/codesign --verify --strict --verbose=2 "$PDF_HELPER"
+/usr/bin/codesign --verify --deep --strict --verbose=2 "$SPARKLE_FRAMEWORK"
 /usr/bin/codesign --verify --deep --strict --verbose=2 "$RELEASE_APP"
 (cd "$ROOT_DIR" && swift run WeiBeiDev verify-release-metadata --require-clean "$RELEASE_APP")
 (cd "$ROOT_DIR" && swift run WeiBeiDev verify-production-hygiene "$RELEASE_APP")
@@ -218,11 +246,40 @@ DMG_SHA256="$(/usr/bin/shasum -a 256 "$DMG_PATH" | /usr/bin/awk '{print $1}')"
 npx tsx "$ROOT_DIR/script/homebrew/generate_cask.ts" "$APP_VERSION" "$DMG_SHA256" "$CASK_PATH"
 /usr/bin/ruby -c "$CASK_PATH" >/dev/null
 
+RELEASE_NOTES_SOURCE="${WEIBEI_RELEASE_NOTES_FILE:-$ROOT_DIR/Docs/releases/v$APP_VERSION.md}"
+if [[ ! -s "$RELEASE_NOTES_SOURCE" || ! -x "$SPARKLE_GENERATE_APPCAST" || ! -x "$SPARKLE_SIGN_UPDATE" ]]; then
+  echo "release failed: release notes or Sparkle appcast tools are missing" >&2
+  exit 21
+fi
+rm -rf "$APPCAST_INPUT_DIR"
+mkdir -p "$APPCAST_INPUT_DIR"
+/usr/bin/ditto --norsrc --noextattr "$DMG_PATH" "$APPCAST_INPUT_DIR/$DMG_NAME"
+cp "$RELEASE_NOTES_SOURCE" "$APPCAST_INPUT_DIR/${DMG_NAME%.dmg}.md"
+"$SPARKLE_GENERATE_APPCAST" \
+  --ed-key-file "$SPARKLE_PRIVATE_KEY_FILE" \
+  --download-url-prefix "https://github.com/weibei-app/weibei/releases/download/v$APP_VERSION/" \
+  --embed-release-notes \
+  --maximum-versions 1 \
+  --maximum-deltas 0 \
+  -o "$APPCAST_PATH" \
+  "$APPCAST_INPUT_DIR"
+"$SPARKLE_SIGN_UPDATE" --verify --ed-key-file "$SPARKLE_PRIVATE_KEY_FILE" "$APPCAST_PATH"
+/usr/bin/xmllint --noout "$APPCAST_PATH"
+DMG_BYTES="$(/usr/bin/stat -f '%z' "$DMG_PATH")"
+APP_BUILD="$(/usr/bin/plutil -extract CFBundleVersion raw -o - "$RELEASE_APP/Contents/Info.plist")"
+/usr/bin/grep -Fq "sparkle:version=\"$APP_BUILD\"" "$APPCAST_PATH"
+/usr/bin/grep -Fq "sparkle:shortVersionString=\"$APP_VERSION\"" "$APPCAST_PATH"
+/usr/bin/grep -Fq "length=\"$DMG_BYTES\"" "$APPCAST_PATH"
+/usr/bin/grep -Fq "url=\"https://github.com/weibei-app/weibei/releases/download/v$APP_VERSION/$DMG_NAME\"" "$APPCAST_PATH"
+/usr/bin/grep -Fq "sparkle:edSignature=" "$APPCAST_PATH"
+/usr/bin/grep -Fq "sparkle:signature=" "$APPCAST_PATH"
+
 echo "release_mode=$MODE"
 echo "release_app=$RELEASE_APP"
 echo "release_dmg=$DMG_PATH"
 echo "release_sha256=$DMG_SHA256"
 echo "release_homebrew_cask=$CASK_PATH"
+echo "release_appcast=$APPCAST_PATH"
 if [[ "$MODE" == "notarized" ]]; then
   echo "release_trust=notarized-developer-id"
 else
