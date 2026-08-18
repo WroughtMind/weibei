@@ -13,7 +13,6 @@
     "forceConsistentCasingInFileNames": true
   },
   "include": [
-    "Sources/WeiBeiCore/AgentResources/**/*.ts",
-    "Prototypes/RichAnswerWebRuntime/scripts/agent-contract-stubs.d.ts"
+    "Sources/WeiBeiCore/AgentResources/**/*.ts"
   ]
 }

@@ -439,6 +439,7 @@ public actor PiAgentRuntime: StudyAgentRuntime {
     private var startingRunID: UUID?
     private var cancelledStartingRunIDs: Set<UUID> = []
     private var stderrBuffer = ""
+    private var stderrPendingLine = ""
     private var startupFailure: PiAgentRuntimeError?
     private var idleShutdownTask: Task<Void, Never>?
     private let traceEnabled = ProcessInfo.processInfo.environment["WEIBEI_PI_TRACE"] == "1"
@@ -2700,20 +2701,38 @@ public actor PiAgentRuntime: StudyAgentRuntime {
 
     private func appendStderr(_ data: Data, generation: UInt64) {
         guard generation == processGeneration else { return }
-        let text = sanitizedDiagnostic(String(decoding: data, as: UTF8.self))
+        let rawText = String(decoding: data, as: UTF8.self)
+        let text = sanitizedDiagnostic(rawText)
         stderrBuffer += text
         trace("stderr bytes=\(data.count)")
         if stderrBuffer.count > 16_384 {
             stderrBuffer = String(stderrBuffer.suffix(16_384))
         }
-        // 报错桥镜像：stderr 完整行经 PiAgentDiagnosticSanitizer 脱敏后逐行
-        // 落盘（notice 保证 logd 持久化；stderr 行无法自动分级；launchFailed
-        // 已有独立路径，不动）。
-        for line in text.split(separator: "\n") {
-            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !trimmed.isEmpty else { continue }
-            WeiBeiLog.pi.notice("pi_stderr line=\(WeiBeiLog.truncated(trimmed), privacy: .public)")
+        // 报错桥镜像：数据块不保证按行切割，先缓存未完成行，拼成完整
+        // UTF-8 行后再整体经 PiAgentDiagnosticSanitizer 脱敏、截断落日志
+        // （先脱敏后拆行会让跨块拼接的敏感串绕过脱敏）。notice 保证 logd
+        // 持久化；stderr 行无法自动分级；launchFailed 独立路径不动。
+        stderrPendingLine += rawText
+        let segments = stderrPendingLine.split(separator: "\n", omittingEmptySubsequences: false)
+        if stderrPendingLine.hasSuffix("\n") {
+            stderrPendingLine = ""
+            for segment in segments {
+                logSanitizedStderrLine(String(segment))
+            }
+        } else {
+            stderrPendingLine = String(segments.last ?? "")
+            for segment in segments.dropLast() {
+                logSanitizedStderrLine(String(segment))
+            }
         }
+    }
+
+    private func logSanitizedStderrLine(_ line: String) {
+        let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        WeiBeiLog.pi.notice(
+            "pi_stderr line=\(WeiBeiLog.truncated(self.sanitizedDiagnostic(trimmed)), privacy: .public)"
+        )
     }
 
     private func transportFailed(_ error: Error, generation: UInt64) {

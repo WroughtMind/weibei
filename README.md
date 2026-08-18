@@ -115,7 +115,7 @@ The root `Makefile` is a thin entry point that forwards to the underlying build 
 | `make pi-prepare` | `./script/prepare_pi_runtime.sh` |
 | `make release-community` | `./script/build_release_dmg.sh --community` |
 | `make release-notarized` | `./script/build_release_dmg.sh --notarized` |
-| `make clean` | `swift package clean && rm -rf dist` (keeps `node_modules`, `.build/pi-runtime` and user data) |
+| `make clean` | `swift package clean && rm -rf dist` (keeps `node_modules`, `.build/pi-runtime` — the clean target moves `pi-runtime` aside and back around `swift package clean`, which would otherwise delete it — and user data) |
 
 Node tooling: the repository has a **single root lockfile** (`package-lock.json`) covering the `Prototypes/RichAnswerWebRuntime` workspace, and exactly one `npm ci` installs everything. Tool scripts under `script/`, `DesignSystem/scripts/` and the prototype `scripts/` are TypeScript run with `tsx` (e.g. `npx tsx script/check-genui-math.ts`); `npm run typecheck:tools` type-checks them.
 

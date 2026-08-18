@@ -56,5 +56,13 @@ release-notarized: ## 构建并公证 DMG（受 WEIBEI_CODESIGN_IDENTITY / WEIBE
 	./script/build_release_dmg.sh --notarized
 
 clean: ## 清理构建产物（不删 node_modules / .build/pi-runtime / 用户数据）
-	swift package clean
+	@if [ -d .build/pi-runtime ]; then \
+		keep="$${TMPDIR:-/tmp}/weibei-pi-runtime-clean-keep-$$$$"; \
+		mv .build/pi-runtime "$$keep"; \
+		swift package clean; \
+		mkdir -p .build; \
+		mv "$$keep" .build/pi-runtime; \
+	else \
+		swift package clean; \
+	fi
 	rm -rf dist

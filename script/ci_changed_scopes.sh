@@ -7,6 +7,7 @@ editor=false
 data_safety=false
 release=false
 rich_answer=false
+tools=false
 
 classify_path() {
   local path="$1"
@@ -18,13 +19,13 @@ classify_path() {
   esac
 
   case "$path" in
-    Sources/*Pi*|Sources/WeiBeiCore/AgentResources/*|Sources/WeiBeiCore/StudyAgentRuntime.swift|Sources/WeiBeiCore/Agent*|Sources/WeiBei/Views/NotesAgentView.swift|script/check-agent-project-tools.ts|script/prepare_pi_runtime.sh|Config/PiRuntime.entitlements|Vendor/PiRuntime/manifest.json)
+    Sources/*Pi*|Sources/WeiBeiCore/AgentResources/*|Sources/WeiBeiCore/StudyAgentRuntime.swift|Sources/WeiBeiCore/Agent*|Sources/WeiBei/Views/NotesAgentView.swift|script/check-agent-project-tools.ts|script/prepare_pi_runtime.sh|Config/PiRuntime.entitlements|Vendor/PiRuntime/manifest.json|tsconfig.agent.json)
       pi=true
       ;;
   esac
 
   case "$path" in
-    Sources/WeiBei/WebEditor/*|Sources/WeiBei/Resources/Editor/*|Sources/WeiBeiWebEditorCheck/*|Sources/WeiBei/Support/AgentChatKaTeXMarkdown.swift|Sources/WeiBei/Views/*Markdown*|Sources/WeiBei/Views/NotesAgentView.swift|Sources/WeiBeiCore/Markdown*.swift|package.json|package-lock.json)
+    Sources/WeiBei/WebEditor/*|Sources/WeiBei/Resources/Editor/*|Sources/WeiBeiWebEditorCheck/*|Sources/WeiBei/Support/AgentChatKaTeXMarkdown.swift|Sources/WeiBei/Views/*Markdown*|Sources/WeiBei/Views/NotesAgentView.swift|Sources/WeiBeiCore/Markdown*.swift|package.json|package-lock.json|tsconfig.editor.json)
       editor=true
       ;;
   esac
@@ -57,11 +58,18 @@ classify_path() {
       rich_answer=true
       ;;
   esac
+
+  # Node 工具脚本类型检查（npm run typecheck:tools 的触发面）。
+  case "$path" in
+    script/*.ts|DesignSystem/scripts/*.ts|tsconfig.json)
+      tools=true
+      ;;
+  esac
 }
 
 emit_scopes() {
-  printf 'code=%s\npi=%s\neditor=%s\ndata_safety=%s\nrelease=%s\nrich_answer=%s\n' \
-    "$code" "$pi" "$editor" "$data_safety" "$release" "$rich_answer"
+  printf 'code=%s\npi=%s\neditor=%s\ndata_safety=%s\nrelease=%s\nrich_answer=%s\ntools=%s\n' \
+    "$code" "$pi" "$editor" "$data_safety" "$release" "$rich_answer" "$tools"
 }
 
 reset_scopes() {
@@ -71,6 +79,7 @@ reset_scopes() {
   data_safety=false
   release=false
   rich_answer=false
+  tools=false
 }
 
 expect_scopes() {
@@ -91,60 +100,71 @@ expect_scopes() {
 
 if [[ "${1:-}" == "--self-check" ]]; then
   expect_scopes \
-    "code=false pi=false editor=false data_safety=false release=false rich_answer=false " \
+    "code=false pi=false editor=false data_safety=false release=false rich_answer=false tools=false " \
     "Docs/plans/example.md"
   expect_scopes \
-    "code=true pi=true editor=true data_safety=true release=false rich_answer=false " \
+    "code=true pi=true editor=true data_safety=true release=false rich_answer=false tools=false " \
     "Sources/WeiBei/Stores/WorkspaceStore.swift"
   expect_scopes \
-    "code=true pi=false editor=true data_safety=false release=false rich_answer=false " \
-    "Sources/WeiBei/WebEditor/src/editor.js"
+    "code=true pi=false editor=true data_safety=false release=false rich_answer=false tools=false " \
+    "Sources/WeiBei/WebEditor/src/editor.ts"
   expect_scopes \
-    "code=true pi=false editor=true data_safety=false release=false rich_answer=false " \
+    "code=true pi=false editor=true data_safety=false release=false rich_answer=false tools=false " \
     "Sources/WeiBeiCore/MarkdownAttachmentStore.swift"
   expect_scopes \
-    "code=true pi=false editor=false data_safety=true release=false rich_answer=false " \
+    "code=true pi=false editor=false data_safety=true release=false rich_answer=false tools=false " \
     "Tests/WeiBeiSafetyTests/CourseProjectRootSelfCheck.swift"
   expect_scopes \
-    "code=true pi=false editor=false data_safety=true release=false rich_answer=false " \
+    "code=true pi=false editor=false data_safety=true release=false rich_answer=false tools=false " \
     "Sources/WeiBei/Views/SidebarView.swift" \
     "Sources/WeiBei/Views/CourseDrawerHost.swift"
   expect_scopes \
-    "code=true pi=false editor=false data_safety=true release=false rich_answer=false " \
+    "code=true pi=false editor=false data_safety=true release=false rich_answer=false tools=false " \
     "Sources/WeiBeiCore/LearningModels.swift" \
     "Sources/WeiBeiCore/CourseDocumentSearchIndex.swift" \
     "Sources/WeiBeiCore/NoteSourceRelations.swift"
   expect_scopes \
-    "code=true pi=true editor=true data_safety=true release=true rich_answer=false " \
+    "code=true pi=true editor=true data_safety=true release=true rich_answer=false tools=false " \
     ".github/workflows/pr-checks.yml"
   expect_scopes \
-    "code=true pi=true editor=false data_safety=false release=true rich_answer=false " \
+    "code=true pi=true editor=false data_safety=false release=true rich_answer=false tools=false " \
     "Vendor/PiRuntime/manifest.json"
   expect_scopes \
-    "code=false pi=false editor=false data_safety=false release=true rich_answer=false " \
+    "code=false pi=false editor=false data_safety=false release=true rich_answer=false tools=false " \
     "LICENSE"
   expect_scopes \
-    "code=false pi=false editor=false data_safety=false release=true rich_answer=false " \
+    "code=false pi=false editor=false data_safety=false release=true rich_answer=false tools=false " \
     "Vendor/PiRuntime/LICENSE"
   expect_scopes \
-    "code=false pi=false editor=false data_safety=false release=true rich_answer=false " \
+    "code=false pi=false editor=false data_safety=false release=true rich_answer=false tools=false " \
     "Vendor/PiRuntime/THIRD_PARTY_NOTICES.md"
   expect_scopes \
-    "code=false pi=false editor=false data_safety=false release=false rich_answer=false " \
+    "code=false pi=false editor=false data_safety=false release=false rich_answer=false tools=false " \
     "Vendor/PiRuntime/README.md"
   expect_scopes \
-    "code=false pi=false editor=false data_safety=false release=false rich_answer=true " \
+    "code=false pi=false editor=false data_safety=false release=false rich_answer=true tools=false " \
     "Prototypes/RichAnswerWebRuntime/src/main.tsx" \
     "Prototypes/RichAnswerWebRuntime/scripts/embed-runtime.ts"
   expect_scopes \
-    "code=false pi=false editor=false data_safety=false release=false rich_answer=true " \
+    "code=false pi=false editor=false data_safety=false release=false rich_answer=true tools=false " \
     "Prototypes/RichAnswerEvidenceViewer/generate-evidence-package.ts" \
     "Prototypes/RichAnswerEvidenceViewer/tsconfig.json"
   expect_scopes \
-    "code=true pi=false editor=false data_safety=false release=false rich_answer=true " \
+    "code=true pi=false editor=false data_safety=false release=false rich_answer=true tools=false " \
     "Sources/WeiBei/Resources/rich-answer-runtime.js" \
     "Sources/WeiBei/Resources/rich-answer.html" \
     "Sources/WeiBei/Resources/rich-answer-runtime.css"
+  expect_scopes \
+    "code=false pi=true editor=false data_safety=false release=false rich_answer=false tools=false " \
+    "tsconfig.agent.json"
+  expect_scopes \
+    "code=false pi=false editor=true data_safety=false release=false rich_answer=false tools=false " \
+    "tsconfig.editor.json"
+  expect_scopes \
+    "code=true pi=false editor=false data_safety=false release=false rich_answer=false tools=true " \
+    "script/check-genui-math.ts" \
+    "DesignSystem/scripts/build-icns.ts" \
+    "tsconfig.json"
   echo "CI scope self-check passed"
   exit 0
 fi
