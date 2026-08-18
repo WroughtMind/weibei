@@ -439,6 +439,11 @@ public actor PiAgentRuntime: StudyAgentRuntime {
     private var startingRunID: UUID?
     private var cancelledStartingRunIDs: Set<UUID> = []
     private var stderrBuffer = ""
+    // 行镜像的未完成行缓冲：按字节累积，跨块 UTF-8 多字节字符与跨块敏感串
+    // 都能拼成完整行后再脱敏。上限 16KB：超限的未完成行整体丢弃（保留尾部
+    // 会丢掉前缀上下文，可能让 "Bearer …" 这类敏感串绕过脱敏）。
+    private var stderrPendingBytes = Data()
+    private var stderrDroppingOversizedLine = false
     private var startupFailure: PiAgentRuntimeError?
     private var idleShutdownTask: Task<Void, Never>?
     private let traceEnabled = ProcessInfo.processInfo.environment["WEIBEI_PI_TRACE"] == "1"
@@ -2170,6 +2175,9 @@ public actor PiAgentRuntime: StudyAgentRuntime {
                 if data.isEmpty { break }
                 await self?.appendStderr(data, generation: generation)
             }
+            // EOF：主动把未完成行写出（带 generation 守卫；若进程已关闭，
+            // shutdownProcess 已 flush 过，这里跳过）。
+            await self?.flushStderrPendingLine(generation: generation)
         }
     }
 
@@ -2700,20 +2708,58 @@ public actor PiAgentRuntime: StudyAgentRuntime {
 
     private func appendStderr(_ data: Data, generation: UInt64) {
         guard generation == processGeneration else { return }
-        let text = sanitizedDiagnostic(String(decoding: data, as: UTF8.self))
+        let rawText = String(decoding: data, as: UTF8.self)
+        let text = sanitizedDiagnostic(rawText)
         stderrBuffer += text
         trace("stderr bytes=\(data.count)")
         if stderrBuffer.count > 16_384 {
             stderrBuffer = String(stderrBuffer.suffix(16_384))
         }
-        // 报错桥镜像：stderr 完整行经 PiAgentDiagnosticSanitizer 脱敏后逐行
-        // 落盘（notice 保证 logd 持久化；stderr 行无法自动分级；launchFailed
-        // 已有独立路径，不动）。
-        for line in text.split(separator: "\n") {
-            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !trimmed.isEmpty else { continue }
-            WeiBeiLog.pi.notice("pi_stderr line=\(WeiBeiLog.truncated(trimmed), privacy: .public)")
+        // 报错桥镜像：数据块不保证按行切割，且 UTF-8 多字节字符可能跨块；
+        // 按字节累积未完成行，拼成完整行后再解码并整体脱敏、截断落日志
+        // （先脱敏后拆行会让跨块拼接的敏感串绕过脱敏）。notice 保证 logd
+        // 持久化；stderr 行无法自动分级；launchFailed 独立路径不动。
+        stderrPendingBytes.append(data)
+        var start = stderrPendingBytes.startIndex
+        while let newlineIndex = stderrPendingBytes[start...].firstIndex(of: 0x0A) {
+            if stderrDroppingOversizedLine {
+                // 丢弃模式：整行已丢，遇到换行即恢复记录。
+                stderrDroppingOversizedLine = false
+            } else {
+                let lineData = stderrPendingBytes[start..<newlineIndex]
+                logSanitizedStderrLine(String(decoding: lineData, as: UTF8.self))
+            }
+            start = stderrPendingBytes.index(after: newlineIndex)
         }
+        stderrPendingBytes = stderrPendingBytes[start...]
+        if stderrPendingBytes.count > 16_384 {
+            // 未完成行超限：整行丢弃到下一个换行，绝不保留失去前缀上下文的尾部。
+            stderrPendingBytes.removeAll(keepingCapacity: true)
+            stderrDroppingOversizedLine = true
+        }
+    }
+
+    private func logSanitizedStderrLine(_ line: String) {
+        let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        WeiBeiLog.pi.notice(
+            "pi_stderr line=\(WeiBeiLog.truncated(self.sanitizedDiagnostic(trimmed)), privacy: .public)"
+        )
+    }
+
+    /// 进程退出时把未完成行写出（避免与下一进程的首行拼接），并清空缓冲。
+    /// `generation` 传值时为 EOF 路径（与 appendStderr 同守卫：进程已关闭则
+    /// 由 shutdownProcess 的调用负责，这里跳过）。
+    private func flushStderrPendingLine(generation: UInt64? = nil) {
+        if let generation, generation != processGeneration { return }
+        if stderrDroppingOversizedLine {
+            stderrPendingBytes.removeAll(keepingCapacity: true)
+            stderrDroppingOversizedLine = false
+            return
+        }
+        guard !stderrPendingBytes.isEmpty else { return }
+        logSanitizedStderrLine(String(decoding: stderrPendingBytes, as: UTF8.self))
+        stderrPendingBytes.removeAll(keepingCapacity: true)
     }
 
     private func transportFailed(_ error: Error, generation: UInt64) {
@@ -2749,6 +2795,9 @@ public actor PiAgentRuntime: StudyAgentRuntime {
     private func shutdownProcess(reason: Error) {
         trace("shutdown: \(reason.localizedDescription)")
         processGeneration &+= 1
+        // generation 已递增，cancel 后的 appendStderr 会被 guard 拒绝；
+        // 在此把未完成行写出并清空，避免与下一进程的首行拼接。
+        flushStderrPendingLine()
         clearContextSnapshot()
         idleShutdownTask?.cancel()
         idleShutdownTask = nil

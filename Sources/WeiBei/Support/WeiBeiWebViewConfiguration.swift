@@ -90,12 +90,14 @@ enum WeiBeiWebViewConfiguration {
         } catch (e) {}
       };
       window.addEventListener("error", function (event) {
-        forward("page", (event.message || "") + " @ " + (event.filename || "") + ":" + (event.lineno || 0));
+        // 不记 event.filename（loadFileURL 场景会泄漏完整 file:// 路径）。
+        forward("page", (event.message || "") + " line=" + (event.lineno || 0) + " col=" + (event.colno || 0));
       });
       window.addEventListener("unhandledrejection", function (event) {
         var reason = event.reason;
         var detail = "";
-        try { detail = reason && reason.stack ? reason.stack : String(reason); } catch (e) { detail = String(reason); }
+        // 不取 stack：调用栈框架通常携带 file:// 路径；只留报错文本本身。
+        try { detail = reason && reason.message ? String(reason.message) : String(reason); } catch (e) { detail = String(reason); }
         forward("rejection", detail);
       });
     })();

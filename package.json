@@ -22,11 +22,13 @@
     "prismjs": "^1.30.0"
   },
   "devDependencies": {
+    "@earendil-works/pi-ai": "0.82.1",
+    "@earendil-works/pi-coding-agent": "0.82.1",
+    "@types/node": "^22.10.0",
     "appdmg": "0.6.6",
     "esbuild": "0.28.1",
-    "typescript": "5.7.3",
     "tsx": "^4.19.2",
-    "@types/node": "^22.10.0"
+    "typescript": "5.7.3"
   },
   "overrides": {
     "dompurify": "3.4.12"
