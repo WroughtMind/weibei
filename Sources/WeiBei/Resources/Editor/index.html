@@ -662,17 +662,6 @@
       display: revert;
     }
 
-    .ProseMirror blockquote.weibei-callout[data-callout-title="AI 回答"][data-callout-fold="-"] {
-      cursor: pointer;
-    }
-    body[data-editable="true"] .ProseMirror blockquote.weibei-callout[data-callout-title="AI 回答"][data-callout-fold="-"] > * {
-      display: none;
-    }
-    body[data-editable="true"] .ProseMirror blockquote.weibei-callout[data-callout-title="AI 回答"][data-callout-fold="-"]:hover > *,
-    body[data-editable="true"] .ProseMirror blockquote.weibei-callout[data-callout-title="AI 回答"][data-callout-fold="-"].weibei-callout-open > * {
-      display: revert;
-    }
-
     body[data-editable="true"] .ProseMirror blockquote.weibei-callout.weibei-callout-has-heading::before {
       display: none;
     }
@@ -887,23 +876,6 @@
       color: var(--blue-ink);
       border-bottom: 1px dotted rgba(49, 86, 107, .38);
       cursor: pointer;
-    }
-
-    .weibei-selection-ask-mark {
-      text-decoration: underline var(--cinnabar) 1.5px;
-      text-underline-offset: 3px;
-      cursor: pointer;
-    }
-
-    .weibei-selection-note-mark {
-      display: inline-block;
-      width: 3px;
-      height: 0.9em;
-      margin-left: 3px;
-      border-radius: 1px;
-      background: var(--cinnabar);
-      cursor: pointer;
-      vertical-align: -0.08em;
     }
 
     :root[data-weibei-theme="inkstone"] .weibei-source-reference,

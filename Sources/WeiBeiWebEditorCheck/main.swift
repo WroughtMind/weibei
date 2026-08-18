@@ -133,7 +133,7 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
     private var activatedWikiTitle: String?
     private var attachmentRequests = 0
     private var imagePickerRequests = 0
-    private var activatedSelectionThreadID: String?
+    private var activatedSelectionAskThreadID: String?
     private var editorFailures = 0
     private var markdownChanges: [(documentID: String, markdown: String)] = []
 
@@ -190,7 +190,7 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
         case "imagePickerRequested":
             imagePickerRequests += 1
         case "selectionAskMark":
-            activatedSelectionThreadID = (message.body as? [String: Any])?["threadId"] as? String
+            activatedSelectionAskThreadID = (message.body as? [String: Any])?["threadId"] as? String
         case "editorFailure":
             editorFailures += 1
         case "markdownChanged":
@@ -869,7 +869,7 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
     }
 
     private func validateSelectionAskMark(completion: @escaping () -> Void) {
-        activatedSelectionThreadID = nil
+        activatedSelectionAskThreadID = nil
         let threadID = "8a311629-157e-43fd-9256-b9d67803fcff"
         let selectedText = "利率是资金使用价格的表达。"
         let script = """
@@ -879,16 +879,13 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
           }
           window.WeiBeiEditor.setSelectionAskMarks([{
             id: \(json(threadID)),
-            text: \(json(selectedText)),
-            ask: true,
-            note: true
+            text: \(json(selectedText))
           }]);
           const mark = document.querySelector('.weibei-selection-ask-mark');
           if (!mark) throw new Error('selection ask mark was not rendered');
           mark.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
           return {
             markCount: document.querySelectorAll('.weibei-selection-ask-mark').length,
-            noteCount: document.querySelectorAll('.weibei-selection-note-mark').length,
             editorAlive: !!document.querySelector('.ProseMirror')
           };
         })();
@@ -901,13 +898,12 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
             }
             guard let result = value as? [String: Any],
                   (result["markCount"] as? Int ?? 0) >= 1,
-                  (result["noteCount"] as? Int ?? 0) >= 1,
                   result["editorAlive"] as? Bool == true else {
                 self.fail("selection ask mark damaged the editor: \(String(describing: value))")
                 return
             }
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                guard self.activatedSelectionThreadID == threadID + "|ask" else {
+                guard self.activatedSelectionAskThreadID == threadID else {
                     self.fail("selection ask mark did not send its thread identity")
                     return
                 }

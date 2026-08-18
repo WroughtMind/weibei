@@ -1623,7 +1623,7 @@ enum ImportedIdentitySelfCheck {
             focusItemIDs: [legacyMaterialID, legacyNoteID],
             materialItemID: legacyMaterialID
         )
-        let selectionThread = SelectionThread(
+        let selectionThread = SelectionAskThread(
             selectionText: "货币乘数",
             source: .document,
             ownerTitle: "第一讲",
@@ -1728,8 +1728,8 @@ enum ImportedIdentitySelfCheck {
         try check(Set(store.activeStudySession?.focusItemIDs ?? []) == Set([material.id, note.id]), "学习会话没有随身份迁移")
         try check(store.activeStudySession?.materialItemID == material.id, "学习会话主资料没有随身份迁移")
         try check(store.activeStudySession?.groupingMaterialItemID == material.id, "学习会话分组资料仍指向旧身份")
-        try check(store.selectionThreads.first?.itemID == material.id, "选区问答线程仍指向旧资料身份")
-        try check(store.selectionThreads.first?.messageIDs == selectionThread.messageIDs, "选区问答线程消息关系在资料 ID 迁移时丢失")
+        try check(store.selectionAskThreads.first?.itemID == material.id, "选区问答线程仍指向旧资料身份")
+        try check(store.selectionAskThreads.first?.messageIDs == selectionThread.messageIDs, "选区问答线程消息关系在资料 ID 迁移时丢失")
         try check(store.flushPendingWorkspaceSave(), "资料 ID 迁移后工作区无法保存")
         let migratedSnapshot = try fixture.readSnapshot()
         try check(
@@ -1745,12 +1745,12 @@ enum ImportedIdentitySelfCheck {
         try check(migratedSession.materialItemID == material.id, "保存后学习会话主资料仍是旧身份")
         try check(migratedSession.groupingMaterialItemID == material.id, "保存后学习会话分组资料仍是旧身份")
         try check(migratedSession.focusItemIDs.contains(material.id), "保存后学习会话焦点丢失")
-        try check(migratedSnapshot.selectionThreads?.first?.itemID == material.id, "保存后的同一工作区快照没有包含迁移后的选区问答")
+        try check(migratedSnapshot.selectionAskThreads?.first?.itemID == material.id, "保存后的同一工作区快照没有包含迁移后的选区问答")
         try check(
             migratedSnapshot.courseResumePoints?.first?.materialLocation?.itemID == material.id,
             "保存后课程恢复位置仍指向旧资料身份"
         )
-        try check(migratedSnapshot.selectionThreads?.first?.messageIDs == selectionThread.messageIDs, "保存后的选区问答消息关系丢失")
+        try check(migratedSnapshot.selectionAskThreads?.first?.messageIDs == selectionThread.messageIDs, "保存后的选区问答消息关系丢失")
         try check(
             fixture.selectionAskThreadDefaults.object(forKey: "weibei.selectionAskThreads.v1") == nil,
             "工作区快照保存成功后没有清理旧选区问答存储"
@@ -1766,8 +1766,8 @@ enum ImportedIdentitySelfCheck {
         )
         try check(reopenedMigratedSession.materialItemID == material.id, "重开后学习会话主资料迁移丢失")
         try check(reopenedMigratedSession.groupingMaterialItemID == material.id, "重开后学习会话分组资料迁移丢失")
-        try check(reopenedMigratedStore.selectionThreads.first?.itemID == material.id, "重开后选区问答线程身份迁移丢失")
-        try check(reopenedMigratedStore.selectionThreads.first?.messageIDs == selectionThread.messageIDs, "重开后选区问答线程消息关系丢失")
+        try check(reopenedMigratedStore.selectionAskThreads.first?.itemID == material.id, "重开后选区问答线程身份迁移丢失")
+        try check(reopenedMigratedStore.selectionAskThreads.first?.messageIDs == selectionThread.messageIDs, "重开后选区问答线程消息关系丢失")
 
         let diskTextBeforeConflict = try String(contentsOf: noteURL, encoding: .utf8)
         store.select(itemID: "sample-pdf")
@@ -1794,7 +1794,7 @@ enum ImportedIdentitySelfCheck {
             $0.noteItemID == note.id && $0.sourceItemID == material.id
         } == true, "保存后资料关系丢失")
 
-        try check(reopenedMigratedStore.selectionThreads.first?.itemID == material.id, "重开后的选区问答线程身份后来发生回退")
+        try check(reopenedMigratedStore.selectionAskThreads.first?.itemID == material.id, "重开后的选区问答线程身份后来发生回退")
     }
 
     @MainActor
@@ -1926,7 +1926,7 @@ enum ImportedIdentitySelfCheck {
                 birthTimeSeconds: 5_002,
                 birthTimeNanoseconds: 52
             )
-            let thread = SelectionThread(
+            let thread = SelectionAskThread(
                 selectionText: "提交顺序",
                 source: .document,
                 ownerTitle: "提交顺序",
@@ -1963,7 +1963,7 @@ enum ImportedIdentitySelfCheck {
         do {
             let fixture = try WorkspaceFixture(name: "selection-thread-explicit-empty")
             defer { fixture.remove() }
-            let staleThread = SelectionThread(
+            let staleThread = SelectionAskThread(
                 selectionText: "不应复活",
                 source: .document,
                 ownerTitle: "旧线程",
@@ -1976,7 +1976,7 @@ enum ImportedIdentitySelfCheck {
             try fixture.write(
                 PersistedWorkspace(
                     noteSourceLinksMigrationVersion: 1,
-                    selectionThreads: []
+                    selectionAskThreads: []
                 )
             )
 
@@ -1984,7 +1984,7 @@ enum ImportedIdentitySelfCheck {
                 workspaceDirectory: fixture.workspaceDirectory,
                 selectionAskThreadDefaults: fixture.selectionAskThreadDefaults
             )
-            try check(store?.selectionThreads.isEmpty == true, "工作区显式空线程被旧值复活")
+            try check(store?.selectionAskThreads.isEmpty == true, "工作区显式空线程被旧值复活")
             try check(fixture.selectionAskThreadDefaults.object(forKey: legacyKey) == nil, "显式空线程没有清理无效旧值")
             store = nil
 
@@ -1996,7 +1996,7 @@ enum ImportedIdentitySelfCheck {
                 workspaceDirectory: fixture.workspaceDirectory,
                 selectionAskThreadDefaults: fixture.selectionAskThreadDefaults
             )
-            try check(reopenedStore.selectionThreads.isEmpty, "重开后显式空线程被后来出现的旧值复活")
+            try check(reopenedStore.selectionAskThreads.isEmpty, "重开后显式空线程被后来出现的旧值复活")
             try check(fixture.selectionAskThreadDefaults.object(forKey: legacyKey) == nil, "重开显式空线程后没有清理无效旧值")
         }
 
@@ -2007,7 +2007,7 @@ enum ImportedIdentitySelfCheck {
                     : "selection-thread-missing-workspace"
             )
             defer { fixture.remove() }
-            let legacyThread = SelectionThread(
+            let legacyThread = SelectionAskThread(
                 selectionText: malformedWorkspace ? "损坏快照恢复" : "缺失快照恢复",
                 source: .document,
                 ownerTitle: "旧线程",
@@ -2028,9 +2028,9 @@ enum ImportedIdentitySelfCheck {
                 workspaceDirectory: fixture.workspaceDirectory,
                 selectionAskThreadDefaults: fixture.selectionAskThreadDefaults
             )
-            try check(store.selectionThreads.first?.id == legacyThread.id, "工作区缺失或损坏时没有恢复旧选区问答")
+            try check(store.selectionAskThreads.first?.id == legacyThread.id, "工作区缺失或损坏时没有恢复旧选区问答")
             let migratedSnapshot = try fixture.readSnapshot()
-            try check(migratedSnapshot.selectionThreads?.first?.id == legacyThread.id, "恢复的旧选区问答没有写入工作区快照")
+            try check(migratedSnapshot.selectionAskThreads?.first?.id == legacyThread.id, "恢复的旧选区问答没有写入工作区快照")
             try check(fixture.selectionAskThreadDefaults.object(forKey: legacyKey) == nil, "恢复成功后没有清理旧选区问答值")
         }
     }
