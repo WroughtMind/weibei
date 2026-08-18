@@ -54,7 +54,6 @@ final class WeiBeiUpdateService: NSObject, ObservableObject {
 
     @Published private(set) var status: Status = .idle
     @Published private(set) var availableUpdate: WeiBeiAvailableUpdate?
-    @Published private(set) var downloadProgress: Double?
 
     var isBusy: Bool {
         switch status {
@@ -83,8 +82,6 @@ final class WeiBeiUpdateService: NSObject, ObservableObject {
     )
     private var updateChoiceReply: ((SPUUserUpdateChoice) -> Void)?
     private var retryInstallWhenFound = false
-    private var expectedDownloadLength: UInt64 = 0
-    private var receivedDownloadLength: UInt64 = 0
 
     override init() {
         super.init()
@@ -111,7 +108,6 @@ final class WeiBeiUpdateService: NSObject, ObservableObject {
         }
 
         status = .downloading
-        downloadProgress = nil
         if let updateChoiceReply {
             self.updateChoiceReply = nil
             updateChoiceReply(.install)
@@ -121,11 +117,6 @@ final class WeiBeiUpdateService: NSObject, ObservableObject {
         }
     }
 
-    private func resetDownloadProgress() {
-        expectedDownloadLength = 0
-        receivedDownloadLength = 0
-        downloadProgress = nil
-    }
 }
 
 extension WeiBeiUpdateService: SPUUserDriver {
@@ -155,7 +146,6 @@ extension WeiBeiUpdateService: SPUUserDriver {
             informationURL: appcastItem.infoURL
         )
         availableUpdate = update
-        resetDownloadProgress()
 
         if update.informationOnly {
             retryInstallWhenFound = false
@@ -193,42 +183,29 @@ extension WeiBeiUpdateService: SPUUserDriver {
         availableUpdate = nil
         retryInstallWhenFound = false
         updateChoiceReply = nil
-        resetDownloadProgress()
         status = .upToDate
     }
 
     func showUpdaterError(_ error: Error) async {
         retryInstallWhenFound = false
         updateChoiceReply = nil
-        resetDownloadProgress()
         status = .failed(error.localizedDescription)
     }
 
     func showDownloadInitiated(cancellation: @escaping () -> Void) {
         status = .downloading
-        resetDownloadProgress()
     }
 
-    func showDownloadDidReceiveExpectedContentLength(_ expectedContentLength: UInt64) {
-        expectedDownloadLength = expectedContentLength
-        receivedDownloadLength = 0
-        downloadProgress = expectedContentLength > 0 ? 0 : nil
-    }
+    func showDownloadDidReceiveExpectedContentLength(_ expectedContentLength: UInt64) {}
 
-    func showDownloadDidReceiveData(ofLength length: UInt64) {
-        receivedDownloadLength += length
-        guard expectedDownloadLength > 0 else { return }
-        downloadProgress = min(1, Double(receivedDownloadLength) / Double(expectedDownloadLength))
-    }
+    func showDownloadDidReceiveData(ofLength length: UInt64) {}
 
     func showDownloadDidStartExtractingUpdate() {
         status = .extracting
-        downloadProgress = nil
     }
 
     func showExtractionReceivedProgress(_ progress: Double) {
         status = .extracting
-        downloadProgress = min(1, max(0, progress))
     }
 
     func showReadyToInstallAndRelaunch() async -> SPUUserUpdateChoice {
@@ -251,7 +228,6 @@ extension WeiBeiUpdateService: SPUUserDriver {
     func dismissUpdateInstallation() {
         updateChoiceReply = nil
         retryInstallWhenFound = false
-        resetDownloadProgress()
         if case .failed = status {
             return
         }
