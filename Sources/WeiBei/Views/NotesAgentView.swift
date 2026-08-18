@@ -2814,7 +2814,7 @@ struct FloatingSelectionAgentView: View {
             }
         }
         .onExitCommand {
-            closeFloatingAgent()
+            if showsExpandedBody { withAnimation(WeiBeiMotion.panel) { expanded = false; store.pinnedFloatingAgent = false; store.keepFloatingSelectionForAnswer = false } } else { closeFloatingAgent() }
         }
     }
 

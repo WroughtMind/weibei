@@ -1337,6 +1337,8 @@ public struct StudyItem: Identifiable, Codable, Hashable, Sendable {
     public var importedFileIdentity: ImportedFileIdentity?
     public var isSample: Bool
     public var isNotebookNote: Bool
+    /// Material id when this note is that material's dedicated excerpt notebook.
+    public var excerptSourceItemID: String?
     public var appearsInMaterials: Bool?
     /// 浮动 tab 行内重命名写入的自定义显示名；为空时 tab 自动跟随 title / 正文。
     public var customDisplayTitle: String?
@@ -1355,6 +1357,7 @@ public struct StudyItem: Identifiable, Codable, Hashable, Sendable {
         importedFileIdentity: ImportedFileIdentity? = nil,
         isSample: Bool,
         isNotebookNote: Bool = false,
+        excerptSourceItemID: String? = nil,
         appearsInMaterials: Bool? = nil,
         customDisplayTitle: String? = nil,
         storage: StudyItemStorage? = nil,
@@ -1371,6 +1374,7 @@ public struct StudyItem: Identifiable, Codable, Hashable, Sendable {
         self.importedFileIdentity = importedFileIdentity
         self.isSample = isSample
         self.isNotebookNote = isNotebookNote
+        self.excerptSourceItemID = excerptSourceItemID
         self.appearsInMaterials = appearsInMaterials
         self.customDisplayTitle = customDisplayTitle
         if let storage {
@@ -1395,6 +1399,7 @@ public struct StudyItem: Identifiable, Codable, Hashable, Sendable {
         case importedFileIdentity
         case isSample
         case isNotebookNote
+        case excerptSourceItemID
         case appearsInMaterials
         case customDisplayTitle
         case storage
@@ -1417,6 +1422,7 @@ public struct StudyItem: Identifiable, Codable, Hashable, Sendable {
         )
         isSample = try container.decode(Bool.self, forKey: .isSample)
         isNotebookNote = try container.decodeIfPresent(Bool.self, forKey: .isNotebookNote) ?? false
+        excerptSourceItemID = try container.decodeIfPresent(String.self, forKey: .excerptSourceItemID)
         appearsInMaterials = try container.decodeIfPresent(Bool.self, forKey: .appearsInMaterials)
         customDisplayTitle = try container.decodeIfPresent(String.self, forKey: .customDisplayTitle)
         if isSample {
@@ -1443,6 +1449,7 @@ public struct StudyItem: Identifiable, Codable, Hashable, Sendable {
         try container.encodeIfPresent(importedFileIdentity, forKey: .importedFileIdentity)
         try container.encode(isSample, forKey: .isSample)
         try container.encode(isNotebookNote, forKey: .isNotebookNote)
+        try container.encodeIfPresent(excerptSourceItemID, forKey: .excerptSourceItemID)
         try container.encodeIfPresent(appearsInMaterials, forKey: .appearsInMaterials)
         try container.encodeIfPresent(customDisplayTitle, forKey: .customDisplayTitle)
         try container.encode(storage, forKey: .storage)
