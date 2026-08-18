@@ -142,6 +142,7 @@ enum CourseWorkspaceDestination: String, CaseIterable, Sendable {
     case materials
     case notes
     case sessions
+    case memory
 }
 
 enum CourseOwnedFileRole: String, Codable, Sendable {
@@ -13642,7 +13643,7 @@ final class WorkspaceStore: ObservableObject {
     }
 
     private func learningMemoryContextScopes(courseID: UUID?) -> [LearningMemoryScope] {
-        courseID.map { [.global, .course($0)] } ?? [.global]
+        courseID.map { [.course($0)] } ?? []
     }
 
     private func learningMemoryContextRevision(courseID: UUID?) -> UInt64 {
@@ -13652,10 +13653,9 @@ final class WorkspaceStore: ObservableObject {
     }
 
     private func learningMemoryScope(
-        for kind: LearningMemoryKind,
+        for _: LearningMemoryKind,
         courseID: UUID?
     ) -> LearningMemoryScope {
-        if kind == .goal || kind == .preference { return .global }
         return learningMemoryScope(courseID: courseID)
     }
 
@@ -15110,18 +15110,11 @@ final class WorkspaceStore: ObservableObject {
             )
         }
         let memories = learningMemoryContextScopes(courseID: target.courseID)
-            .flatMap { scope in
-                orderedLearningMemoryEntries(in: scope).filter { entry in
-                    scope != .global
-                        || target.courseID == nil
-                        || entry.kind == .goal
-                        || entry.kind == .preference
-                }
-            }
+            .flatMap { orderedLearningMemoryEntries(in: $0) }
             .sorted { $0.updatedAt > $1.updatedAt }
         return StudyAgentLearningContext(
             memoryRevision: learningMemoryContextRevision(courseID: target.courseID),
-            lastLocation: lastStudyLocation(in: target.courseID),
+            lastLocation: target.courseID.flatMap { lastStudyLocation(in: $0) },
             memories: Array(memories.prefix(200)),
             session: session
         )
@@ -15200,7 +15193,8 @@ final class WorkspaceStore: ObservableObject {
         if activeStudySessionID == target.sessionID {
             latestAgentLearningUpdate = nil
         }
-        guard target.courseID.map({ activeCourseRemovalTokens[$0] == nil }) ?? true,
+        guard let courseID = target.courseID,
+              activeCourseRemovalTokens[courseID] == nil,
               let update,
               update.contextRevision == expectedContextRevision,
               update.memoryRevision == expectedMemoryRevision,
@@ -15592,10 +15586,7 @@ final class WorkspaceStore: ObservableObject {
         dirtyPortableCourseIDs.insert(courseID)
     }
 
-    func isLearningMemoryResolved(
-        _ memoryID: String,
-        in scope: LearningMemoryScope
-    ) -> Bool {
+    func isLearningMemoryResolved(_ memoryID: String, in scope: LearningMemoryScope) -> Bool {
         guard let id = UUID(uuidString: memoryID) else { return false }
         return learningMemoryEntries(in: scope)
             .first(where: { $0.id == id })?
@@ -15661,10 +15652,7 @@ final class WorkspaceStore: ObservableObject {
         return save()
     }
 
-    func resolveLearningMemory(
-        _ memoryID: UUID,
-        in scope: LearningMemoryScope
-    ) {
+    func resolveLearningMemory(_ memoryID: UUID, in scope: LearningMemoryScope) {
         setLearningMemoryStatus(
             memoryID,
             in: scope,
@@ -15673,16 +15661,22 @@ final class WorkspaceStore: ObservableObject {
         )
     }
 
-    func restoreLearningMemory(
-        _ memoryID: UUID,
-        in scope: LearningMemoryScope
-    ) {
-        setLearningMemoryStatus(
-            memoryID,
-            in: scope,
-            status: .active,
-            resolutionEvidence: nil
-        )
+    func restoreLearningMemory(_ memoryID: UUID, in scope: LearningMemoryScope) {
+        setLearningMemoryStatus(memoryID, in: scope, status: .active, resolutionEvidence: nil)
+    }
+    @discardableResult
+    func deleteLearningMemory(_ memoryID: UUID, in scope: LearningMemoryScope) -> Bool {
+        guard scope.courseID.map({
+            activeCourseRemovalTokens[$0] == nil
+        }) ?? true,
+        let stateIndex = learningMemoryStateIndex(for: scope, createIfMissing: false),
+        let entryIndex = learningMemoryStates[stateIndex].entries.firstIndex(where: { $0.id == memoryID }) else {
+            return false
+        }
+        learningMemoryStates[stateIndex].entries.remove(at: entryIndex)
+        learningMemoryStates[stateIndex].revision &+= 1
+        invalidateAgentContext()
+        return save()
     }
 
     private func setLearningMemoryStatus(

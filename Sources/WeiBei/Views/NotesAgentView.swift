@@ -3520,7 +3520,9 @@ private struct AgentBubble: View {
             switch citation.kind {
             case .material, .note, .selection:
                 return false
-            case .learningRecord, .learningMemory, .session:
+            case .learningRecord, .learningMemory:
+                return message.origin?.courseID != nil
+            case .session:
                 return true
             }
         }
@@ -3585,7 +3587,8 @@ private struct AgentBubble: View {
                 }
             }
 
-            if let memoryUpdate = message.memoryUpdate,
+            if message.origin?.courseID != nil,
+               let memoryUpdate = message.memoryUpdate,
                !memoryUpdate.memoryIDs.isEmpty {
                 AgentReplyMemoryUpdateTag(
                     message: message,
@@ -3790,8 +3793,10 @@ private struct AgentBubble: View {
                 store.resumePreviousStudy()
             }
         case .learningMemory:
-            withAnimation(WeiBeiMotion.panel) {
-                store.presentCourseWorkspace(.sessions)
+            if let courseID = message.origin?.courseID {
+                withAnimation(WeiBeiMotion.panel) {
+                    store.presentCourseWorkspace(.memory, courseID: courseID)
+                }
             }
         case .session:
             break
@@ -3954,10 +3959,8 @@ private struct AgentReplyMemoryUpdateTag: View {
     let message: AgentMessage
     let update: AgentReplyMemoryUpdate
     @State private var expanded = false
-
     private var scope: LearningMemoryScope? {
-        guard let origin = message.origin else { return nil }
-        return origin.courseID.map(LearningMemoryScope.course) ?? .global
+        message.origin?.courseID.map(LearningMemoryScope.course)
     }
 
     private var revisions: [LearningMemoryRevisionRecord]? {
@@ -3968,9 +3971,12 @@ private struct AgentReplyMemoryUpdateTag: View {
         )
     }
 
-    private var canOpenAll: Bool {
-        guard let courseID = message.origin?.courseID else { return false }
-        return store.course(withID: courseID) != nil
+    private var courseID: UUID? {
+        guard let courseID = message.origin?.courseID,
+              store.course(withID: courseID) != nil else {
+            return nil
+        }
+        return courseID
     }
 
     var body: some View {
@@ -4033,10 +4039,9 @@ private struct AgentReplyMemoryUpdateTag: View {
                             .fixedSize(horizontal: false, vertical: true)
                     }
 
-                    if canOpenAll {
-                        Button(store.ui("查看全部", "View all")) {
-                            guard let courseID = message.origin?.courseID else { return }
-                            store.presentCourseWorkspace(.sessions, courseID: courseID)
+                    if let courseID {
+                        Button(store.ui("查看课程记忆", "View Course Memory")) {
+                            store.presentCourseWorkspace(.memory, courseID: courseID)
                         }
                         .buttonStyle(WeiBeiTextActionButtonStyle())
                         .accessibilityIdentifier("agent-memory-update-view-all")

@@ -319,6 +319,8 @@ struct CourseWorkspaceView: View {
                     store.sessionsTouchingCourse($0).first?.id
                 }
             page = .records
+        case .memory:
+            page = .memory
         }
     }
 

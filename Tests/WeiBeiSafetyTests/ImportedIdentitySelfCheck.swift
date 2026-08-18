@@ -1011,11 +1011,12 @@ enum ImportedIdentitySelfCheck {
             evidence: "旧工作区",
             origin: .agentInference
         )
+        let scope = LearningMemoryScope.course(UUID())
         try fixture.write(
             PersistedWorkspace(
                 learningMemoryStates: [
                     ScopedLearningMemoryState(
-                        scope: .global,
+                        scope: scope,
                         revision: 1,
                         entries: [memory]
                     ),
@@ -1039,11 +1040,11 @@ enum ImportedIdentitySelfCheck {
         try check(
             !store.updateLearningMemory(
                 memory.id,
-                in: .global,
+                in: scope,
                 kind: .progress,
                 text: overlong
             )
-                && store.learningMemoryEntries(in: .global).first?.text == memory.text,
+                && store.learningMemoryEntries(in: scope).first?.text == memory.text,
             "用户学习记忆超过 500 字时被静默截断"
         )
 
@@ -1051,7 +1052,7 @@ enum ImportedIdentitySelfCheck {
         try check(
             !store.updateLearningMemory(
                 memory.id,
-                in: .global,
+                in: scope,
                 kind: .progress,
                 text: editedText
             )
@@ -1068,7 +1069,7 @@ enum ImportedIdentitySelfCheck {
         try check(
             store.updateLearningMemory(
                 memory.id,
-                in: .global,
+                in: scope,
                 kind: .progress,
                 text: editedText
             ),
@@ -1078,6 +1079,19 @@ enum ImportedIdentitySelfCheck {
         try check(
             snapshotAfterRetry.learningMemoryStates?.first?.entries.first?.text == editedText,
             "学习记忆重试成功后没有落盘"
+        )
+
+        let revisionBeforeDelete = store.learningMemoryRevision(in: scope)
+        try check(
+            store.deleteLearningMemory(memory.id, in: scope),
+            "用户无法删除单条学习记忆"
+        )
+        let snapshotAfterDelete = try fixture.readSnapshot()
+        try check(
+            store.learningMemoryEntries(in: scope).isEmpty
+                && snapshotAfterDelete.learningMemoryStates?.first?.entries.isEmpty == true
+                && store.learningMemoryRevision(in: scope) == revisionBeforeDelete + 1,
+            "删除单条学习记忆后没有同步更新内存、修订号和落盘快照"
         )
     }
 

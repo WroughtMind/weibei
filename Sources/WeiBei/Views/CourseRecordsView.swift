@@ -228,6 +228,7 @@ struct LearningMemoryListSection: View {
     var search = ""
     var centerEmptyState = false
     @State private var editingMemory: LearningMemoryEntry?
+    @State private var memoryPendingDeletion: LearningMemoryEntry?
 
     private var memories: [LearningMemoryEntry] {
         let all = store.orderedLearningMemoryEntries(in: scope)
@@ -292,6 +293,28 @@ struct LearningMemoryListSection: View {
             LearningMemoryEditSheet(scope: scope, memory: memory)
                 .environmentObject(store)
         }
+        .confirmationDialog(
+            store.ui("删除这条学习记忆？", "Delete this learning memory?"),
+            isPresented: Binding(
+                get: { memoryPendingDeletion != nil },
+                set: { if !$0 { memoryPendingDeletion = nil } }
+            ),
+            titleVisibility: .visible,
+            presenting: memoryPendingDeletion
+        ) { memory in
+            Button(store.ui("删除记忆", "Delete Memory"), role: .destructive) {
+                _ = store.deleteLearningMemory(memory.id, in: scope)
+                memoryPendingDeletion = nil
+            }
+            Button(store.ui("取消", "Cancel"), role: .cancel) {
+                memoryPendingDeletion = nil
+            }
+        } message: { _ in
+            Text(store.ui(
+                "只删除这一条记忆，其他学习记录不受影响。",
+                "Only this memory will be deleted. Other learning records are unchanged."
+            ))
+        }
     }
 
     private func memoryRow(_ memory: LearningMemoryEntry) -> some View {
@@ -335,6 +358,15 @@ struct LearningMemoryListSection: View {
             }
             .buttonStyle(WeiBeiIconButtonStyle(active: memory.status == .resolved, size: 24))
             .help(store.ui(memory.status == .resolved ? "恢复" : "标为已解决", memory.status == .resolved ? "Restore" : "Resolve"))
+
+            Button(role: .destructive) {
+                memoryPendingDeletion = memory
+            } label: {
+                Image(systemName: "trash")
+            }
+            .buttonStyle(WeiBeiIconButtonStyle(size: 24))
+            .help(store.ui("删除记忆", "Delete Memory"))
+            .accessibilityLabel(store.ui("删除记忆", "Delete Memory"))
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 11)
@@ -416,55 +448,5 @@ private struct LearningMemoryEditSheet: View {
         }
         .padding(22)
         .frame(width: 460)
-    }
-}
-
-struct GlobalLearningMemorySheet: View {
-    @EnvironmentObject private var store: WorkspaceStore
-    @Environment(\.dismiss) private var dismiss
-    @State private var search = ""
-
-    var body: some View {
-        VStack(spacing: 0) {
-            HStack {
-                Text(store.ui("全局记忆", "Global Memory"))
-                    .font(WeiBeiTypography.brandFont(language: store.interfaceLanguage, size: 19, weight: .semibold))
-                Spacer()
-                TextField(
-                    store.ui("搜索全局记忆", "Search global memory"),
-                    text: $search
-                )
-                .textFieldStyle(.roundedBorder)
-                .frame(width: 220)
-                if let saveError = store.workspaceSaveError {
-                    Button(action: { _ = store.retryWorkspaceSave() }) {
-                        Label(
-                            store.ui("保存失败，点此重试", "Save failed, retry"),
-                            systemImage: "exclamationmark.triangle"
-                        )
-                        .font(.system(size: 10.5, weight: .medium))
-                        .foregroundStyle(WeiBeiTheme.cinnabar)
-                    }
-                    .buttonStyle(.plain)
-                    .help(saveError)
-                }
-                Button(store.ui("完成", "Done")) {
-                    dismiss()
-                }
-            }
-            .padding(18)
-
-            CourseHairline()
-
-            ScrollView {
-                LearningMemoryListSection(
-                    scope: .global,
-                    title: store.ui("所有对话共用", "Shared by All Chats"),
-                    search: search
-                )
-            }
-        }
-        .frame(width: 560, height: 500)
-        .background(WeiBeiTheme.paper)
     }
 }
