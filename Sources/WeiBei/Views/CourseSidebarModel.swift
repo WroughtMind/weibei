@@ -232,16 +232,17 @@ final class CourseSidebarModel: ObservableObject {
             }
             let displayedRows = normalizedQuery.isEmpty ? allCourseRows : visibleRows
             let noteCount = allCourseRows.lazy.filter(\.item.isNotebookNote).count
+            let materialCount = allCourseRows.lazy.filter(\.item.isCourseMaterial).count
             return CourseSidebarCourseRow(
                 course: course,
-                materialCount: allCourseRows.count - noteCount,
+                materialCount: materialCount,
                 noteCount: noteCount,
-                materials: displayedRows.filter { !$0.item.isNotebookNote },
+                materials: displayedRows.filter(\.item.isCourseMaterial),
                 notes: displayedRows.filter(\.item.isNotebookNote)
             )
         }
         let nextUnassignedMaterials = filteredRows.filter {
-            !$0.item.isNotebookNote && $0.courseIDs.isEmpty
+            $0.item.isCourseMaterial && $0.courseIDs.isEmpty
         }
         let nextUnassignedNotes = filteredRows.filter {
             $0.item.isNotebookNote && $0.courseIDs.isEmpty

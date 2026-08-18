@@ -10,7 +10,7 @@ struct LinkedSourcesPopover: View {
 
     private var materials: [StudyItem] {
         store.allItems.filter { item in
-            guard !item.isNotebookNote else { return false }
+            guard item.isCourseMaterial else { return false }
             let cleaned = query.trimmingCharacters(in: .whitespacesAndNewlines)
             return cleaned.isEmpty
                 || store.displayTitle(for: item).localizedCaseInsensitiveContains(cleaned)
