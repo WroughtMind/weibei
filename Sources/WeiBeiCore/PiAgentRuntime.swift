@@ -440,8 +440,10 @@ public actor PiAgentRuntime: StudyAgentRuntime {
     private var cancelledStartingRunIDs: Set<UUID> = []
     private var stderrBuffer = ""
     // 行镜像的未完成行缓冲：按字节累积，跨块 UTF-8 多字节字符与跨块敏感串
-    // 都能拼成完整行后再脱敏。上限 16KB（防御异常进程的无换行输出）。
+    // 都能拼成完整行后再脱敏。上限 16KB：超限的未完成行整体丢弃（保留尾部
+    // 会丢掉前缀上下文，可能让 "Bearer …" 这类敏感串绕过脱敏）。
     private var stderrPendingBytes = Data()
+    private var stderrDroppingOversizedLine = false
     private var startupFailure: PiAgentRuntimeError?
     private var idleShutdownTask: Task<Void, Never>?
     private let traceEnabled = ProcessInfo.processInfo.environment["WEIBEI_PI_TRACE"] == "1"
@@ -2173,6 +2175,9 @@ public actor PiAgentRuntime: StudyAgentRuntime {
                 if data.isEmpty { break }
                 await self?.appendStderr(data, generation: generation)
             }
+            // EOF：主动把未完成行写出（带 generation 守卫；若进程已关闭，
+            // shutdownProcess 已 flush 过，这里跳过）。
+            await self?.flushStderrPendingLine(generation: generation)
         }
     }
 
@@ -2717,13 +2722,20 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         stderrPendingBytes.append(data)
         var start = stderrPendingBytes.startIndex
         while let newlineIndex = stderrPendingBytes[start...].firstIndex(of: 0x0A) {
-            let lineData = stderrPendingBytes[start..<newlineIndex]
-            logSanitizedStderrLine(String(decoding: lineData, as: UTF8.self))
+            if stderrDroppingOversizedLine {
+                // 丢弃模式：整行已丢，遇到换行即恢复记录。
+                stderrDroppingOversizedLine = false
+            } else {
+                let lineData = stderrPendingBytes[start..<newlineIndex]
+                logSanitizedStderrLine(String(decoding: lineData, as: UTF8.self))
+            }
             start = stderrPendingBytes.index(after: newlineIndex)
         }
         stderrPendingBytes = stderrPendingBytes[start...]
         if stderrPendingBytes.count > 16_384 {
-            stderrPendingBytes = stderrPendingBytes.suffix(16_384)
+            // 未完成行超限：整行丢弃到下一个换行，绝不保留失去前缀上下文的尾部。
+            stderrPendingBytes.removeAll(keepingCapacity: true)
+            stderrDroppingOversizedLine = true
         }
     }
 
@@ -2736,7 +2748,15 @@ public actor PiAgentRuntime: StudyAgentRuntime {
     }
 
     /// 进程退出时把未完成行写出（避免与下一进程的首行拼接），并清空缓冲。
-    private func flushStderrPendingLine() {
+    /// `generation` 传值时为 EOF 路径（与 appendStderr 同守卫：进程已关闭则
+    /// 由 shutdownProcess 的调用负责，这里跳过）。
+    private func flushStderrPendingLine(generation: UInt64? = nil) {
+        if let generation, generation != processGeneration { return }
+        if stderrDroppingOversizedLine {
+            stderrPendingBytes.removeAll(keepingCapacity: true)
+            stderrDroppingOversizedLine = false
+            return
+        }
         guard !stderrPendingBytes.isEmpty else { return }
         logSanitizedStderrLine(String(decoding: stderrPendingBytes, as: UTF8.self))
         stderrPendingBytes.removeAll(keepingCapacity: true)

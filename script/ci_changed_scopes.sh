@@ -62,9 +62,10 @@ classify_path() {
 
   # Node 工具脚本类型检查（npm run typecheck:tools 的触发面）。
   # 根 tsconfig.json 的 include 覆盖 Prototypes/RichAnswerWebRuntime/scripts/**/*.ts，
-  # 因此这些原型脚本同样触发 tools。
+  # 因此这些原型脚本同样触发 tools；package.json/lockfile 变化可能改动
+  # typescript/@types/node 版本或 typecheck:tools 本身，也必须触发。
   case "$path" in
-    script/*.ts|DesignSystem/scripts/*.ts|tsconfig.json|Prototypes/RichAnswerWebRuntime/scripts/*.ts)
+    script/*.ts|DesignSystem/scripts/*.ts|tsconfig.json|Prototypes/RichAnswerWebRuntime/scripts/*.ts|package.json|package-lock.json)
       tools=true
       ;;
   esac
@@ -171,12 +172,12 @@ if [[ "${1:-}" == "--self-check" ]]; then
     "DesignSystem/scripts/build-icns.ts" \
     "tsconfig.json"
   # 依赖清单变化影响 Pi 类型（pi-ai/pi-coding-agent）、编辑器与富回答产物解析，
-  # 必须触发对应检查；tools 不触发（脚本源码与 tsconfig 未变）。
+  # 以及 typescript/@types/node 版本与 typecheck:tools 本身 → 全部触发。
   expect_scopes \
-    "code=true pi=true editor=true data_safety=false release=true rich_answer=true tools=false " \
+    "code=true pi=true editor=true data_safety=false release=true rich_answer=true tools=true " \
     "package.json"
   expect_scopes \
-    "code=true pi=true editor=true data_safety=false release=true rich_answer=true tools=false " \
+    "code=true pi=true editor=true data_safety=false release=true rich_answer=true tools=true " \
     "package-lock.json"
   echo "CI scope self-check passed"
   exit 0

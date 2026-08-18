@@ -65,5 +65,7 @@ clean: ## 清理构建产物（不删 node_modules / .build/pi-runtime / 用户�
 		mkdir -p .build; \
 		mv "$$keep" .build/pi-runtime; \
 		trap - EXIT; \
+	else \
+		swift package clean; \
 	fi; \
 	rm -rf dist
