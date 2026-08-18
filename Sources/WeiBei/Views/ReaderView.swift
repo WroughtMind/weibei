@@ -303,7 +303,7 @@ struct ReaderView: View {
                 ) {
                     HStack(spacing: 8) {
                         ContextualContentListButton(kind: .material)
-                        selectionAskThreadsMenu
+                        selectionThreadsMenu
                         importedDocumentAdaptationControl
                     }
                 }
@@ -395,12 +395,12 @@ struct ReaderView: View {
     }
 
     private func selectionAskMarksJSON(for itemID: String) -> String {
-        let marks = store.selectionAskThreads(forItemID: itemID)
-            .prefix(40)
+        let marks = store.selectionThreads(forItemID: itemID)
+            .filter(\.hasAsk)
             .map { thread -> [String: String] in
                 [
                     "id": thread.id.uuidString,
-                    "text": String(thread.selectionText.prefix(240)),
+                    "text": thread.selectionText,
                 ]
             }
         // .sortedKeys keeps the output stable for identical mark data; without it
@@ -690,13 +690,13 @@ struct ReaderView: View {
 
     /// Top-chrome entry for past selection-ask threads (replaces the mid-document legend overlay).
     @ViewBuilder
-    private var selectionAskThreadsMenu: some View {
-        let threads = store.selectionAskThreads(forItemID: store.selectedMaterialItem?.id)
+    private var selectionThreadsMenu: some View {
+        let threads = store.selectionThreads(forItemID: store.selectedMaterialItem?.id).filter(\.hasAsk)
         if !threads.isEmpty {
             Menu {
                 ForEach(threads.prefix(12)) { thread in
                     Button {
-                        store.openSelectionAskThread(thread.id, jumpToConversation: false)
+                        store.openSelectionThread(thread.id, jumpToConversation: false)
                     } label: {
                         VStack(alignment: .leading, spacing: 2) {
                             Text(Self.truncatedAskMenuLabel(thread.selectionText))
@@ -959,13 +959,13 @@ struct ReaderView: View {
                         pageIndex: $pdfPageIndex,
                         pageCount: $pdfPageCount,
                         railTargetPageIndex: $pdfRailTargetPageIndex,
-                        underlineSnippets: store.selectionAskThreads(forItemID: item.id).map(\.selectionText),
-                        askUnderlineMarks: store.selectionAskThreads(forItemID: item.id).map {
+                        underlineSnippets: store.selectionThreads(forItemID: item.id).filter(\.hasAsk).map(\.selectionText),
+                        askUnderlineMarks: store.selectionThreads(forItemID: item.id).filter(\.hasAsk).map {
                             (id: $0.id.uuidString, text: $0.selectionText)
                         },
                         onAskUnderlineActivate: { threadID, anchor in
                             if let uuid = UUID(uuidString: threadID) {
-                                store.openSelectionAskThread(uuid, jumpToConversation: false, anchor: anchor)
+                                store.openSelectionThread(uuid, jumpToConversation: false, anchor: anchor)
                             }
                         },
                         onUserPageChange: schedulePDFLocationCommit,
@@ -974,7 +974,17 @@ struct ReaderView: View {
                         let title = store.displayTitle(for: item)
                         let ownerTitle = store.ui("\(title)，第 \(selectionPageIndex + 1) 页", "\(title), page \(selectionPageIndex + 1)")
                         store.updateReaderLocationTitle(ownerTitle)
-                        store.updateSelection(text, source: .document, anchor: anchor, ownerTitle: ownerTitle)
+                        store.updateSelection(
+                            text,
+                            source: .document,
+                            anchor: anchor,
+                            ownerTitle: ownerTitle,
+                            sourceAnchor: .locate(
+                                kind: .pdf,
+                                pageIndex: selectionPageIndex,
+                                selectedText: text
+                            )
+                        )
                     }
                 } else {
                     MaterialReadFailureView(fileName: store.displayTitle(for: item))
@@ -993,11 +1003,16 @@ struct ReaderView: View {
                         onAppShortcut: { key, modifiers in store.handleAppShortcut(key: key, modifiers: modifiers) },
                         onSelectionAskMark: { threadID in
                             if let uuid = UUID(uuidString: threadID) {
-                                store.openSelectionAskThread(uuid, jumpToConversation: false)
+                                store.openSelectionThread(uuid, jumpToConversation: false)
                             }
                         }
                     ) { text, anchor in
-                        store.updateSelection(text, source: .document, anchor: anchor)
+                        store.updateSelection(
+                            text,
+                            source: .document,
+                            anchor: anchor,
+                            sourceAnchor: .locate(kind: .html, selectedText: text)
+                        )
                     }
                 } else {
                     MaterialReadFailureView(fileName: store.displayTitle(for: item))
@@ -1026,9 +1041,14 @@ struct ReaderView: View {
                         maximumByteCount: CourseProjectFileWorker
                             .markdownMaximumByteCount
                     ),
-                   let text = String(data: data, encoding: .utf8) {
-                    PlainTextReaderView(text: text, searchQuery: store.effectiveReaderSearch, appearanceMode: store.appearanceMode) { text, anchor in
-                        store.updateSelection(text, source: .document, anchor: anchor)
+                   let documentText = String(data: data, encoding: .utf8) {
+                    PlainTextReaderView(text: documentText, searchQuery: store.effectiveReaderSearch, appearanceMode: store.appearanceMode) { text, anchor in
+                        store.updateSelection(
+                            text,
+                            source: .document,
+                            anchor: anchor,
+                            sourceAnchor: .locate(kind: .text, selectedText: text, in: documentText)
+                        )
                     }
                 } else {
                     MaterialReadFailureView(fileName: store.displayTitle(for: item))
@@ -1076,11 +1096,16 @@ struct ReaderView: View {
             onAppShortcut: { key, modifiers in store.handleAppShortcut(key: key, modifiers: modifiers) },
             onSelectionAskMark: { threadID in
                 if let uuid = UUID(uuidString: threadID) {
-                    store.openSelectionAskThread(uuid, jumpToConversation: false)
+                    store.openSelectionThread(uuid, jumpToConversation: false)
                 }
             }
         ) { text, anchor in
-            store.updateSelection(text, source: .document, anchor: anchor)
+            store.updateSelection(
+                text,
+                source: .document,
+                anchor: anchor,
+                sourceAnchor: .locate(kind: .markdown, selectedText: text, in: markdown)
+            )
         }
     }
 
@@ -3755,7 +3780,7 @@ private struct PlainTextReaderView: View {
             text: text,
             searchQuery: searchQuery,
             appearanceMode: appearanceMode,
-            underlineSnippets: store.selectionAskThreads.map(\.selectionText),
+            underlineSnippets: store.selectionThreads.map(\.selectionText),
             onSelectionChange: onSelectionChange
         )
             .padding(32)

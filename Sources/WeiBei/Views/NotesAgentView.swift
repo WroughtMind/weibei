@@ -788,10 +788,20 @@ struct NotePaneView: View {
         appearanceMode: store.appearanceMode,
         interfaceLanguage: store.interfaceLanguage,
         onSelectionChange: { text, anchor in
-            store.updateSelection(text, source: .note, anchor: anchor)
+            store.updateSelection(
+                text,
+                source: .note,
+                anchor: anchor,
+                sourceAnchor: .locate(kind: .markdown, selectedText: text, in: store.noteText)
+            )
         }, onAskAgentWithSelection: { text, anchor in
             flushNoteDraft(immediate: true)
-            store.updateSelection(text, source: .note, anchor: anchor)
+            store.updateSelection(
+                text,
+                source: .note,
+                anchor: anchor,
+                sourceAnchor: .locate(kind: .markdown, selectedText: text, in: store.noteText)
+            )
             store.askSelection()
         }, onActiveHeadingChange: { index in
             activeNoteRailID = index.map { "note-heading-\($0)" }
@@ -2777,7 +2787,7 @@ struct FloatingSelectionAgentView: View {
                 && previous?.isEditable == next?.isEditable
             guard !sameContent else { return }
             // Reopen uses SelectionContext.id == thread.id — expand beside the mark.
-            let isThreadReopen = next.map { interaction.activeSelectionAskThreadID == $0.id } ?? false
+            let isThreadReopen = next.map { interaction.activeSelectionThreadID == $0.id } ?? false
             if isThreadReopen, interaction.keepFloatingSelectionForAnswer {
                 withAnimation(WeiBeiMotion.panel) {
                     expanded = true
@@ -2790,7 +2800,7 @@ struct FloatingSelectionAgentView: View {
             withAnimation(WeiBeiMotion.panel) {
                 expanded = false
                 interaction.keepFloatingSelectionForAnswer = false
-                interaction.activeSelectionAskThreadID = nil
+                interaction.activeSelectionThreadID = nil
                 dragOffset = .zero
                 settledOffset = .zero
             }
@@ -2804,7 +2814,7 @@ struct FloatingSelectionAgentView: View {
                 }
             }
         }
-        .onChange(of: interaction.activeSelectionAskThreadID) { _, id in
+        .onChange(of: interaction.activeSelectionThreadID) { _, id in
             if id != nil, interaction.keepFloatingSelectionForAnswer {
                 withAnimation(WeiBeiMotion.panel) {
                     expanded = true
@@ -3021,8 +3031,8 @@ struct FloatingSelectionAgentView: View {
     private var visibleFloatingMessages: [AgentMessage] {
         // Strict isolation: only messages belonging to the active selection-ask thread.
         // Never fall back to the global conversation feed.
-        guard let threadID = store.activeSelectionAskThreadID,
-              let thread = store.selectionAskThreads.first(where: { $0.id == threadID }) else {
+        guard let threadID = store.activeSelectionThreadID,
+              let thread = store.selectionThreads.first(where: { $0.id == threadID }) else {
             return []
         }
         let idSet = Set(thread.messageIDs)
@@ -3187,8 +3197,8 @@ struct FloatingSelectionAgentView: View {
             store.keepFloatingSelectionForAnswer = true
             if let selection = store.selectionContext {
                 store.addSelectionAttachment(selection)
-                let thread = store.beginOrReuseSelectionAskThread(for: selection)
-                store.activeSelectionAskThreadID = thread.id
+                let thread = store.beginOrReuseSelectionThread(for: selection)
+                store.activeSelectionThreadID = thread.id
             }
         }
         store.submitAgentDraft()

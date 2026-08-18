@@ -133,7 +133,7 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
     private var activatedWikiTitle: String?
     private var attachmentRequests = 0
     private var imagePickerRequests = 0
-    private var activatedSelectionAskThreadID: String?
+    private var activatedSelectionThreadID: String?
     private var editorFailures = 0
     private var markdownChanges: [(documentID: String, markdown: String)] = []
 
@@ -190,7 +190,7 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
         case "imagePickerRequested":
             imagePickerRequests += 1
         case "selectionAskMark":
-            activatedSelectionAskThreadID = (message.body as? [String: Any])?["threadId"] as? String
+            activatedSelectionThreadID = (message.body as? [String: Any])?["threadId"] as? String
         case "editorFailure":
             editorFailures += 1
         case "markdownChanged":
@@ -869,7 +869,7 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
     }
 
     private func validateSelectionAskMark(completion: @escaping () -> Void) {
-        activatedSelectionAskThreadID = nil
+        activatedSelectionThreadID = nil
         let threadID = "8a311629-157e-43fd-9256-b9d67803fcff"
         let selectedText = "利率是资金使用价格的表达。"
         let script = """
@@ -903,7 +903,7 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
                 return
             }
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                guard self.activatedSelectionAskThreadID == threadID else {
+                guard self.activatedSelectionThreadID == threadID else {
                     self.fail("selection ask mark did not send its thread identity")
                     return
                 }
