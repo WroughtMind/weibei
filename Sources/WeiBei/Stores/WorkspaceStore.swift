@@ -4626,11 +4626,14 @@ final class WorkspaceStore: ObservableObject {
                 replaceItemIDEverywhere(retiredSourceItemID, with: itemID)
                 importedItems.removeAll { $0.id == retiredSourceItemID }
             }
+            let itemStorage = StudyItemStorage.courseOwned(ownerCourseID: courseID, relativePath: targetRelativePath)
             let existingItemIndex = importedItems.firstIndex { $0.id == itemID }
+                ?? importedItems.firstIndex { $0.storage == itemStorage }
+            let committedItemID = existingItemIndex.map { importedItems[$0].id } ?? itemID
             let previousItem = existingItemIndex.map { importedItems[$0] }
             let detectedKind = StudyItemKind.detect(from: resolvedTarget)
             var item = StudyItem(
-                id: itemID,
+                id: committedItemID,
                 title: resolvedTarget.deletingPathExtension().lastPathComponent,
                 subtitle: resolvedTarget.lastPathComponent,
                 kind: detectedKind,
@@ -4639,10 +4642,7 @@ final class WorkspaceStore: ObservableObject {
                 isSample: false,
                 isNotebookNote: role == .note || detectedKind == .markdown,
                 appearsInMaterials: role == .material,
-                storage: .courseOwned(
-                    ownerCourseID: courseID,
-                    relativePath: targetRelativePath
-                ),
+                storage: itemStorage,
                 contentRevision: replacingItemIndex == nil
                     ? (previousItem?.contentRevision ?? 1)
                     : (previousItem?.contentRevision ?? 0) &+ 1,
@@ -4652,7 +4652,7 @@ final class WorkspaceStore: ObservableObject {
             )
             let membership = CourseItemMembership(
                 courseID: courseID,
-                itemID: itemID,
+                itemID: committedItemID,
                 courseRelativePath: targetRelativePath,
                 entryIdentity: targetIdentity,
                 documentIdentifier: targetInfo.identity == targetIdentity
@@ -4668,7 +4668,7 @@ final class WorkspaceStore: ObservableObject {
             }
             courseItemMemberships.append(membership)
             if role == .note {
-                noteBackingContentDigestsByItemID[itemID] = sourceSnapshot.sha256
+                noteBackingContentDigestsByItemID[committedItemID] = sourceSnapshot.sha256
             }
             try courseProjectMutationHook(.beforeCourseFileWorkspaceSave)
             _ = try await revalidatedCourseFileTargetInBackground(
