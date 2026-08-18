@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import WeiBeiCore
 
@@ -11,19 +12,22 @@ extension WorkspaceStore {
         }
     }
 
-    func appendSelectionToNote() {
-        _ = saveSelectionNote("")
-    }
-
     @discardableResult
     func saveSelectionNote(_ text: String, includeLatestAnswer: Bool = false) -> SelectionThread? {
         guard let selectionContext,
               selectionContext.source == .document,
               let materialID = selectionContext.itemID ?? selectedMaterialItem?.id,
               let material = item(withID: materialID), material.isCourseMaterial else { return nil }
+        let previousThreads = selectionThreads
+        let previousActiveThreadID = activeSelectionThreadID
         let ordinaryNote = showNotes && !activeNoteIsLoading && activeNoteItem?.excerptSourceItemID == nil
             ? activeNoteItem : nil
+        let previousOrdinaryNote = ordinaryNote.map { ($0.id, noteText) }
+        let existingExcerptNotebook = importedItems.first {
+            $0.excerptSourceItemID == material.id && $0.isNotebookNote
+        }
         guard let excerptNotebook = excerptNotebook(for: material) else { return nil }
+        let previousExcerptMarkdown = storedMarkdown(for: excerptNotebook)
         let thread = beginOrReuseSelectionThread(for: selectionContext)
         guard let index = selectionThreads.firstIndex(where: { $0.id == thread.id }) else { return nil }
         let note = text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -36,8 +40,10 @@ extension WorkspaceStore {
            !selectionThreads[index].answerAttachments.contains(where: { $0.messageID == attachment.messageID }) {
             selectionThreads[index].answerAttachments.append(attachment)
         }
+        var insertedPlacementID: UUID?
         if let ordinaryNote {
             let placement = SelectionAnnotationPlacement(noteItemID: ordinaryNote.id)
+            insertedPlacementID = placement.id
             selectionThreads[index].placements.append(placement)
             noteEditorCommand = NoteEditorCommand(
                 kind: .insertMarkdown,
@@ -46,9 +52,35 @@ extension WorkspaceStore {
         }
         selectionThreads[index].updatedAt = Date()
         activeSelectionThreadID = thread.id
-        updateNote(excerptNotebookMarkdown(for: material), for: excerptNotebook.id)
+        let writtenExcerptMarkdown = excerptNotebookMarkdown(for: material)
+        updateNote(writtenExcerptMarkdown, for: excerptNotebook.id)
         syncSelectionThread(thread.id, excluding: ordinaryNote?.id ?? "")
         save()
+        if let undoManager = NSApp.keyWindow?.undoManager {
+            let createdExcerptNotebook = existingExcerptNotebook == nil ? excerptNotebook : nil
+            undoManager.registerUndo(withTarget: self) { store in
+                store.selectionThreads = previousThreads
+                store.activeSelectionThreadID = previousActiveThreadID
+                if let previousOrdinaryNote {
+                    let current = store.markdown(forItemID: previousOrdinaryNote.0)
+                    let restored = insertedPlacementID.map {
+                        store.replacingPlacement($0, in: current, with: "")
+                    } ?? current
+                    store.updateNote(restored, for: previousOrdinaryNote.0)
+                }
+                if let existingExcerptNotebook {
+                    store.updateNote(previousExcerptMarkdown, for: existingExcerptNotebook.id)
+                } else if let createdExcerptNotebook, let url = createdExcerptNotebook.url {
+                    let current = (try? String(contentsOf: url, encoding: .utf8)) ?? ""
+                    if current == previousExcerptMarkdown || current == writtenExcerptMarkdown,
+                       (try? FileManager.default.removeItem(at: url)) != nil {
+                        store.removeItemRegistration(createdExcerptNotebook.id)
+                    }
+                }
+                store.save()
+            }
+            undoManager.setActionName(ui("保存选区札记", "Save Selection Note"))
+        }
         return selectionThreads[index]
     }
 
@@ -87,9 +119,8 @@ extension WorkspaceStore {
     }
 
     private func rewriteExcerptNotebook(for materialID: String) {
-        guard let material = item(withID: materialID),
-              let notebook = importedItems.first(where: { $0.excerptSourceItemID == materialID }) else { return }
-        updateNote(excerptNotebookMarkdown(for: material), for: notebook.id)
+        guard let notebook = importedItems.first(where: { $0.excerptSourceItemID == materialID }) else { return }
+        updateNote(excerptNotebookMarkdown(materialID: materialID, title: notebook.title), for: notebook.id)
         save()
     }
 
@@ -112,7 +143,11 @@ extension WorkspaceStore {
     private func excerptNotebookMarkdown(for material: StudyItem) -> String {
         let title = importedItems.first { $0.excerptSourceItemID == material.id }?.title
             ?? ui("\(displayTitle(for: material)) · 摘抄", "\(displayTitle(for: material)) · Excerpts")
-        let blocks = orderedExcerptThreads(for: material.id).map(selectionAnnotationMarkdown)
+        return excerptNotebookMarkdown(materialID: material.id, title: title)
+    }
+
+    private func excerptNotebookMarkdown(materialID: String, title: String) -> String {
+        let blocks = orderedExcerptThreads(for: materialID).map(selectionAnnotationMarkdown)
         return (["# \(title)"] + blocks).joined(separator: "\n\n") + "\n"
     }
 
@@ -125,15 +160,44 @@ extension WorkspaceStore {
                 .map { "> \($0)" }.joined(separator: "\n")
             return "> [!answer]- AI 回答\n> \(attachment.question)\n>\n\(body)"
         }.joined(separator: "\n\n")
+        let source = thread.invalidatedAt == nil ? thread.ownerTitle : ui("\(thread.ownerTitle)（原材料已移除）", "\(thread.ownerTitle) (source removed)")
         return """
         <!-- weibei-selection-thread:\(thread.id.uuidString.lowercased()) -->
         > [!quote] 原文
         \(quoted)
         >
-        > 来源：\(thread.ownerTitle)
+        > 来源：\(source)
         \(notes)
         \(answers)
         """.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    func invalidateSelectionThreads(for itemID: String) {
+        let now = Date()
+        var changed = false
+        for index in selectionThreads.indices {
+            if selectionThreads[index].itemID == itemID, selectionThreads[index].invalidatedAt == nil {
+                selectionThreads[index].invalidatedAt = now
+                selectionThreads[index].updatedAt = now
+                changed = true
+            }
+            let previousCount = selectionThreads[index].placements.count
+            selectionThreads[index].placements.removeAll { $0.noteItemID == itemID }
+            changed = changed || previousCount != selectionThreads[index].placements.count
+        }
+        if changed { rewriteExcerptNotebook(for: itemID) }
+    }
+
+    func deleteSelectionThread(_ threadID: UUID) {
+        guard let thread = selectionThreads.first(where: { $0.id == threadID }) else { return }
+        for placement in thread.placements where placement.detachedAt == nil {
+            let current = markdown(forItemID: placement.noteItemID)
+            updateNote(replacingPlacement(placement.id, in: current, with: ""), for: placement.noteItemID)
+        }
+        selectionThreads.removeAll { $0.id == threadID }
+        if activeSelectionThreadID == threadID { activeSelectionThreadID = nil }
+        if let materialID = thread.itemID { rewriteExcerptNotebook(for: materialID) }
+        save()
     }
 
     func latestSelectionAnswer(for threadID: UUID?) -> SelectionAIAnswerAttachment? {
@@ -255,6 +319,17 @@ extension WorkspaceStore {
     private func replacingPlacement(_ placementID: UUID, in markdown: String, with replacement: String) -> String {
         guard let block = placementBlock(placementID, in: markdown), let range = markdown.range(of: block) else { return markdown }
         return markdown.replacingCharacters(in: range, with: replacement)
+    }
+
+    private func storedMarkdown(for item: StudyItem) -> String {
+        markdown(forItemID: item.id)
+    }
+
+    private func markdown(forItemID itemID: String) -> String {
+        if activeNoteItemID == itemID { return noteText }
+        if let markdown = notesByItemID[itemID] { return markdown }
+        guard let url = item(withID: itemID)?.url else { return "" }
+        return (try? String(contentsOf: url, encoding: .utf8)) ?? ""
     }
 
     private func placementNotes(from block: String) -> String {
