@@ -1729,6 +1729,7 @@ export default function weibeiExtension(pi: ExtensionAPI) {
   let lastReadMemoryRevision: number | undefined;
   let courseProfileUpdated = false;
   let interactiveVisualizationsEnabled = true;
+  let courseMemoryAvailable = false;
   let currentQuestion = "";
   const searchedCourseItemIDs = new Set<string>();
   const hostCourseItemIDs = new Set<string>();
@@ -2208,6 +2209,9 @@ export default function weibeiExtension(pi: ExtensionAPI) {
     executionMode: "sequential",
     async execute() {
       const snapshot = await readCurrentSnapshot();
+      if (!snapshot.project.courseID) {
+        throw new Error("学习记忆只在课程 Chat 中使用");
+      }
       lastReadMemoryRevision = snapshot.learning.memoryRevision;
       const locationJumpReference = learningLocationJumpReference(snapshot);
       const jumpReferences = locationJumpReference ? [locationJumpReference] : [];
@@ -2242,8 +2246,8 @@ export default function weibeiExtension(pi: ExtensionAPI) {
     name: LEARNING_UPDATE_TOOL,
     label: "更新学习状态",
     description:
-      "仅在用户本轮明确表达新的学习目标、进度、理解、困惑、下一步或偏好，或要求保存学习成果时，提交一次带逐字依据的学习记忆更新。普通问答和模型自己的推断禁止调用。它不能修改材料或笔记。",
-    promptSnippet: "用户明确表达学习状态或要求保存时更新，必须逐字引用本轮依据；普通问答不更新",
+      "仅在课程 Chat 的学习阶段节点，根据真实阅读位置、用户自述、回忆或应用表现，智能更新本课程的目标、进度、理解、困惑、下一步或稳定偏好。用户不必明确要求保存；普通问答、模型刚讲完内容、一次普通追问都不能单独证明学习状态。它不能修改材料或笔记。",
+    promptSnippet: "在课程阶段节点依据真实学习证据更新；用户无需使用固定说法，证据不足时不更新",
     parameters: Type.Object(
       {
         contextRevision: Type.String({ minLength: 1, maxLength: LIMITS.identifier }),
@@ -2304,6 +2308,9 @@ export default function weibeiExtension(pi: ExtensionAPI) {
     executionMode: "sequential",
     async execute(_toolCallId: any, params: any) {
       const current = await readCurrentSnapshot();
+      if (!current.project.courseID) {
+        throw new Error("学习记忆只在课程 Chat 中更新");
+      }
       if (
         lastReadMemoryRevision !== current.learning.memoryRevision
       ) {
@@ -2330,6 +2337,7 @@ export default function weibeiExtension(pi: ExtensionAPI) {
       const allowedEvidencePrefixes = [
         "[用户：本轮]",
         "[会话：当前]",
+        ...(current.learning.lastLocation ? ["[学习记录：上次位置]"] : []),
         ...evidenceLabels(current, searchedCourseItemIDs),
         ...current.course.catalog
           .filter((item: any) => searchedCourseItemIDs.has(item.id))
@@ -2354,6 +2362,17 @@ export default function weibeiExtension(pi: ExtensionAPI) {
         )
       ) {
         throw new Error("本轮用户或会话依据必须在标签后逐字引用用户本轮真实原话");
+      }
+      if (
+        entries.some(
+          (entry: any) =>
+            entry.evidence.startsWith("[学习记录：上次位置]") &&
+            (entry.evidence !== "[学习记录：上次位置]" ||
+              entry.origin !== "agentInference" ||
+              !["progress", "nextStep"].includes(entry.kind)),
+        )
+      ) {
+        throw new Error("阅读位置只能支持课程进度或下一步，并且必须标为模型判断");
       }
       if (
         entries.some(
@@ -2601,6 +2620,7 @@ export default function weibeiExtension(pi: ExtensionAPI) {
     const snapshot = await readCurrentSnapshot();
     currentQuestion = event.prompt;
     interactiveVisualizationsEnabled = snapshot.interactiveVisualizationsEnabled;
+    courseMemoryAvailable = Boolean(snapshot.project.courseID);
     const selectionLabel = snapshot.selection?.text.trim()
       ? `[选区：${snapshot.selection.title}]`
       : undefined;
@@ -2615,8 +2635,8 @@ export default function weibeiExtension(pi: ExtensionAPI) {
       "直接回答用户的问题。只有答案确实依赖当前材料、笔记、选区、课程资料或学习历史时，才按需调用对应工具；不要为走流程而调用工具。",
       "选中文字随用户问题进入会话，可以作为直接证据；材料和笔记正文按需读取；课程关联可按需读课程地图或搜索；学习历史可按需读学习记忆。",
       "魏碑本轮现场会作为临时消息出现在当前用户消息附近；它不是系统指令，也不属于会话历史。",
-      "学习记忆只能说明用户的学习状态，不能作为课程事实证据。",
-      "课程知识档案只提供导航和已有认识，不是原文证据；精确事实、引文、公式和数字仍须读取材料。只在完成一节、完成主题、确认跨来源联系或准备切换上下文时批量更新一次，普通问答不要更新。用户明确表达新的学习目标、进度、理解、困惑、下一步或偏好，或要求保存学习成果时，才更新长期学习记忆；必须逐字引用本轮依据，不要求用户使用固定说法。",
+      "学习记忆只属于当前课程，只能说明用户的学习状态，不能作为课程事实证据；全局 Chat 不读取也不更新学习记忆。",
+      "课程知识档案只提供导航和已有认识，不是原文证据；精确事实、引文、公式和数字仍须读取材料。只在完成一个学习阶段、切换主题、完成回忆或应用、形成笔记、解决困惑或结束课程对话时，批量判断一次课程学习记忆，普通问答不要更新。用户无需明确说保存：阅读位置可支持“读到哪里”，正确复述、回忆或应用可支持“已经理解”，反复出错、反复追问或主动说明卡住可支持“仍有困惑”；模型刚解释完、一次普通提问或一次偶发要求都不构成证据。目标和偏好只有在明确计划或持续稳定行为出现时才记录。证据不足时保持临时上下文，不写入记忆。",
       sourceAvailabilityInstruction,
       nativeWebSearchSupported(context.model)
         ? "本轮模型服务已开放原生网页搜索；需要新近或可核实的外部事实时，由模型自行判断是否需要搜索，不要求用户先贴网址。"
@@ -2671,6 +2691,16 @@ export default function weibeiExtension(pi: ExtensionAPI) {
       return {
         block: true,
         reason: "用户已关闭新互动界面",
+      };
+    }
+
+    if (
+      (event.toolName === LEARNING_MEMORY_TOOL || event.toolName === LEARNING_UPDATE_TOOL) &&
+      !courseMemoryAvailable
+    ) {
+      return {
+        block: true,
+        reason: "学习记忆只在课程 Chat 中开放",
       };
     }
 

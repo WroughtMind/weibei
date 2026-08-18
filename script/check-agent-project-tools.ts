@@ -198,6 +198,15 @@ try {
     project: { ...snapshot.project, items: [item] },
     learning: {
       memoryRevision: 2,
+      lastLocation: {
+        itemID: "material-1",
+        itemTitle: "第一讲",
+        locationID: "section-1",
+        locationTitle: "基础概念",
+        pageIndex: 3,
+        lastStudiedAt: 1,
+        visitCount: 2,
+      },
       session: {
         id: "chat-a",
         title: "新学习会话",
@@ -289,6 +298,100 @@ try {
       beforeResult.systemPrompt.includes("weibei_course_map"),
     "本轮现场仍被写成持久消息，或本轮规则没有交给 Pi",
   );
+
+  const learningMemoryTool = requireValue(
+    registeredTools.get("weibei_learning_memory"),
+    "真实扩展没有注册课程学习记忆读取工具",
+  );
+  const learningUpdateTool = requireValue(
+    registeredTools.get("weibei_learning_update"),
+    "真实扩展没有注册课程学习状态更新工具",
+  );
+  await learningMemoryTool.execute("course-memory-read", {});
+  const observedProgress = await learningUpdateTool.execute("course-progress-update", {
+    contextRevision: hookEnvelope.contextRevision,
+    memoryRevision: 2,
+    suggestedNext: [],
+    entries: [{
+      kind: "progress",
+      text: "当前阅读到第一讲的基础概念。",
+      evidence: "[学习记录：上次位置]",
+      origin: "agentInference",
+    }],
+  });
+  requireValue(
+    observedProgress.details?.kind === "learning_update" &&
+      observedProgress.details.entries[0]?.kind === "progress",
+    "课程真实阅读位置无法形成有边界的课程进度更新",
+  );
+  let locationMasteryRejected = false;
+  try {
+    await learningUpdateTool.execute("course-mastery-update", {
+      contextRevision: hookEnvelope.contextRevision,
+      memoryRevision: 2,
+      suggestedNext: [],
+      entries: [{
+        kind: "understood",
+        text: "已经掌握第一讲。",
+        evidence: "[学习记录：上次位置]",
+        origin: "agentInference",
+      }],
+    });
+  } catch {
+    locationMasteryRejected = true;
+  }
+  requireValue(locationMasteryRejected, "仅凭阅读位置就能把课程内容判断为已经掌握");
+
+  const toolCallHook = requireValue(
+    eventHandlers.get("tool_call"),
+    "真实扩展没有注册工具调用边界",
+  );
+  const globalEnvelope = {
+    ...hookEnvelope,
+    contextRevision: "global-context",
+    project: {
+      ...hookEnvelope.project,
+      kind: "global",
+      chatID: "global-chat",
+      courseID: undefined,
+      courseTitle: undefined,
+      rootPath: undefined,
+      rootIdentity: undefined,
+      items: [],
+    },
+    learning: {
+      memoryRevision: 0,
+      memories: [],
+      session: {
+        id: "global-chat",
+        title: "全局 Chat",
+        summary: "",
+        phase: "orient",
+        focusItemIDs: [],
+        turnCount: 0,
+      },
+    },
+  };
+  await writeFile(contextFile, JSON.stringify(globalEnvelope));
+  await beforeAgentStart(
+    { prompt: "普通聊天", systemPrompt: "base" },
+    { model: undefined },
+  );
+  const blockedGlobalMemory = await toolCallHook({
+    toolName: "weibei_learning_memory",
+    input: {},
+  });
+  requireValue(
+    blockedGlobalMemory?.block === true &&
+      blockedGlobalMemory.reason.includes("课程 Chat"),
+    "全局 Chat 仍能读取或更新长期学习记忆",
+  );
+  await writeFile(contextFile, JSON.stringify(hookEnvelope));
+  await beforeAgentStart(
+    { prompt: "解释当前材料", systemPrompt: "base" },
+    { model: undefined },
+  );
+
   hookEnvelope.question = "第二问不能覆盖标题输入";
   await writeFile(contextFile, JSON.stringify(hookEnvelope));
   const agentEnd = requireValue(

@@ -1372,7 +1372,11 @@ public actor PiAgentRuntime: StudyAgentRuntime {
             let evidenceIsReadSource = run.allowedSourceLabels.contains {
                 entry.evidence.hasPrefix($0)
             }
-            guard evidenceIsCurrentTurn || evidenceIsReadSource else {
+            let evidenceIsStudyLocation = entry.evidence == "[学习记录：上次位置]"
+                && run.allowedLearningLabels.contains("[学习记录：上次位置]")
+                && entry.origin == .agentInference
+                && (entry.kind == .progress || entry.kind == .nextStep)
+            guard evidenceIsCurrentTurn || evidenceIsReadSource || evidenceIsStudyLocation else {
                 return "PI proposed learning memory with evidence that was not read"
             }
             if entry.origin == .userStatement,

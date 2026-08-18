@@ -13643,7 +13643,7 @@ final class WorkspaceStore: ObservableObject {
     }
 
     private func learningMemoryContextScopes(courseID: UUID?) -> [LearningMemoryScope] {
-        courseID.map { [.global, .course($0)] } ?? [.global]
+        courseID.map { [.course($0)] } ?? []
     }
 
     private func learningMemoryContextRevision(courseID: UUID?) -> UInt64 {
@@ -13653,10 +13653,9 @@ final class WorkspaceStore: ObservableObject {
     }
 
     private func learningMemoryScope(
-        for kind: LearningMemoryKind,
+        for _: LearningMemoryKind,
         courseID: UUID?
     ) -> LearningMemoryScope {
-        if kind == .preference { return .global }
         return learningMemoryScope(courseID: courseID)
     }
 
@@ -15111,17 +15110,11 @@ final class WorkspaceStore: ObservableObject {
             )
         }
         let memories = learningMemoryContextScopes(courseID: target.courseID)
-            .flatMap { scope in
-                orderedLearningMemoryEntries(in: scope).filter { entry in
-                    scope != .global
-                        || target.courseID == nil
-                        || entry.kind == .preference
-                }
-            }
+            .flatMap { orderedLearningMemoryEntries(in: $0) }
             .sorted { $0.updatedAt > $1.updatedAt }
         return StudyAgentLearningContext(
             memoryRevision: learningMemoryContextRevision(courseID: target.courseID),
-            lastLocation: lastStudyLocation(in: target.courseID),
+            lastLocation: target.courseID.flatMap { lastStudyLocation(in: $0) },
             memories: Array(memories.prefix(200)),
             session: session
         )
@@ -15200,7 +15193,8 @@ final class WorkspaceStore: ObservableObject {
         if activeStudySessionID == target.sessionID {
             latestAgentLearningUpdate = nil
         }
-        guard target.courseID.map({ activeCourseRemovalTokens[$0] == nil }) ?? true,
+        guard let courseID = target.courseID,
+              activeCourseRemovalTokens[courseID] == nil,
               let update,
               update.contextRevision == expectedContextRevision,
               update.memoryRevision == expectedMemoryRevision,

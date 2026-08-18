@@ -1701,7 +1701,6 @@ struct AgentPaneView: View {
     @State private var agentVisibleMessageLimit = AgentPaneView.agentHistoryPageSize
     @State private var isRevealingEarlierAgentHistory = false
     @State private var isAgentHistoryRevealButtonHovered = false
-    @State private var showsGlobalLearningMemory = false
 
     private static let agentHistoryPageSize = AgentHistoryRevealPolicy.pageSize
     private static let paneStructureTransitionDuration: TimeInterval = 0.24
@@ -1995,10 +1994,6 @@ struct AgentPaneView: View {
             }
         } message: { session in
             Text(sessionDeletionMessage(session))
-        }
-        .sheet(isPresented: $showsGlobalLearningMemory) {
-            GlobalLearningMemorySheet()
-                .environmentObject(store)
         }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("stable-document-slot-agent")
@@ -2447,12 +2442,6 @@ struct AgentPaneView: View {
             store.createStudySession(courseID: nil)
         } label: {
             Label(store.ui("新建对话", "New Chat"), systemImage: "plus.bubble")
-        }
-
-        Button {
-            showsGlobalLearningMemory = true
-        } label: {
-            Label(store.ui("全局记忆", "Global Memory"), systemImage: "brain.head.profile")
         }
 
         Divider()
@@ -3373,7 +3362,6 @@ private struct AgentBubble: View {
     var isChatWideTypography = false
     @State private var hovering = false
     @State private var copiedMessage = false
-    @State private var showsGlobalLearningMemory = false
 
     var body: some View {
         Group {
@@ -3399,10 +3387,6 @@ private struct AgentBubble: View {
             guard copiedMessage else { return }
             try? await Task.sleep(nanoseconds: 1_200_000_000)
             copiedMessage = false
-        }
-        .sheet(isPresented: $showsGlobalLearningMemory) {
-            GlobalLearningMemorySheet()
-                .environmentObject(store)
         }
     }
 
@@ -3536,7 +3520,9 @@ private struct AgentBubble: View {
             switch citation.kind {
             case .material, .note, .selection:
                 return false
-            case .learningRecord, .learningMemory, .session:
+            case .learningRecord, .learningMemory:
+                return message.origin?.courseID != nil
+            case .session:
                 return true
             }
         }
@@ -3601,7 +3587,8 @@ private struct AgentBubble: View {
                 }
             }
 
-            if let memoryUpdate = message.memoryUpdate,
+            if message.origin?.courseID != nil,
+               let memoryUpdate = message.memoryUpdate,
                !memoryUpdate.memoryIDs.isEmpty {
                 AgentReplyMemoryUpdateTag(
                     message: message,
@@ -3810,8 +3797,6 @@ private struct AgentBubble: View {
                 withAnimation(WeiBeiMotion.panel) {
                     store.presentCourseWorkspace(.memory, courseID: courseID)
                 }
-            } else {
-                showsGlobalLearningMemory = true
             }
         case .session:
             break
@@ -3974,27 +3959,21 @@ private struct AgentReplyMemoryUpdateTag: View {
     let message: AgentMessage
     let update: AgentReplyMemoryUpdate
     @State private var expanded = false
-    @State private var showsGlobalLearningMemory = false
-
-    private var updatedMemoryScopes: Set<LearningMemoryScope> {
-        Set(store.learningMemoryStates.compactMap { state in
-            state.entries.contains(where: { update.memoryIDs.contains($0.id) })
-                ? state.scope
-                : nil
-        })
+    private var scope: LearningMemoryScope? {
+        message.origin?.courseID.map(LearningMemoryScope.course)
     }
 
     private var revisions: [LearningMemoryRevisionRecord]? {
+        guard let scope else { return nil }
         return update.revisions(
             for: message.id,
-            in: store.learningMemoryStates.flatMap(\.entries)
+            in: store.learningMemoryEntries(in: scope)
         )
     }
 
     private var courseID: UUID? {
         guard let courseID = message.origin?.courseID,
-              store.course(withID: courseID) != nil,
-              updatedMemoryScopes.contains(.course(courseID)) else {
+              store.course(withID: courseID) != nil else {
             return nil
         }
         return courseID
@@ -4060,21 +4039,12 @@ private struct AgentReplyMemoryUpdateTag: View {
                             .fixedSize(horizontal: false, vertical: true)
                     }
 
-                    HStack(spacing: 8) {
-                        if let courseID {
-                            Button(store.ui("查看课程记忆", "View Course Memory")) {
-                                store.presentCourseWorkspace(.memory, courseID: courseID)
-                            }
-                            .buttonStyle(WeiBeiTextActionButtonStyle())
-                            .accessibilityIdentifier("agent-memory-update-view-all")
+                    if let courseID {
+                        Button(store.ui("查看课程记忆", "View Course Memory")) {
+                            store.presentCourseWorkspace(.memory, courseID: courseID)
                         }
-                        if updatedMemoryScopes.contains(.global) {
-                            Button(store.ui("查看全局记忆", "View Global Memory")) {
-                                showsGlobalLearningMemory = true
-                            }
-                            .buttonStyle(WeiBeiTextActionButtonStyle())
-                            .accessibilityIdentifier("agent-memory-update-view-global")
-                        }
+                        .buttonStyle(WeiBeiTextActionButtonStyle())
+                        .accessibilityIdentifier("agent-memory-update-view-all")
                     }
                 }
                 .padding(.leading, 9)
@@ -4085,10 +4055,6 @@ private struct AgentReplyMemoryUpdateTag: View {
                 }
                 .transition(.opacity.combined(with: .move(edge: .top)))
             }
-        }
-        .sheet(isPresented: $showsGlobalLearningMemory) {
-            GlobalLearningMemorySheet()
-                .environmentObject(store)
         }
     }
 }
