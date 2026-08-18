@@ -1432,9 +1432,9 @@ const activateSelectionAskMark = (target: any) => {
 };
 
 const toggleFoldedCallout = (target: any) => {
-  if (isEditable || !(target instanceof Element)) return false;
+  if (!(target instanceof Element)) return false;
   const callout = target.closest('blockquote.weibei-callout[data-callout-fold="-"]');
-  if (!callout) return false;
+  if (!callout || (isEditable && callout.getAttribute('data-callout-title') !== 'AI 回答')) return false;
   callout.classList.toggle('weibei-callout-open');
   return true;
 };

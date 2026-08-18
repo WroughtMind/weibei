@@ -48,8 +48,31 @@ struct ExcerptNotebookView: View {
                 if index > 0 { Divider().frame(width: 72) }
                 Text(entry.text).font(.system(size: 15)).foregroundStyle(WeiBeiTheme.ink).textSelection(.enabled)
             }
+            ForEach(thread.answerAttachments) { attachment in
+                SelectionAnswerAttachmentView(attachment: attachment)
+            }
         }
         .padding(.vertical, 18).contentShape(Rectangle())
         .overlay(alignment: .bottom) { Divider().opacity(0.55) }
+    }
+}
+
+private struct SelectionAnswerAttachmentView: View {
+    let attachment: SelectionAIAnswerAttachment
+    @State private var expanded = false
+
+    var body: some View {
+        DisclosureGroup(isExpanded: $expanded) {
+            VStack(alignment: .leading, spacing: 8) {
+                if !attachment.question.isEmpty {
+                    Text(attachment.question).font(.system(size: 12, weight: .medium)).foregroundStyle(WeiBeiTheme.secondaryInk)
+                }
+                Text(attachment.answer).font(.system(size: 13)).foregroundStyle(WeiBeiTheme.ink).textSelection(.enabled)
+            }
+            .padding(.top, 8)
+        } label: {
+            Text("AI 回答").font(.system(size: 11, weight: .semibold)).foregroundStyle(WeiBeiTheme.cinnabar)
+        }
+        .onHover { expanded = $0 }
     }
 }
