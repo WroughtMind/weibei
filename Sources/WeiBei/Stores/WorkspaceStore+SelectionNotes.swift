@@ -16,7 +16,7 @@ extension WorkspaceStore {
     }
 
     @discardableResult
-    func saveSelectionNote(_ text: String) -> SelectionThread? {
+    func saveSelectionNote(_ text: String, includeLatestAnswer: Bool = false) -> SelectionThread? {
         guard let selectionContext,
               selectionContext.source == .document,
               let materialID = selectionContext.itemID ?? selectedMaterialItem?.id,
@@ -32,6 +32,10 @@ extension WorkspaceStore {
         } else {
             selectionThreads[index].entries.append(SelectionAnnotationEntry(text: note))
         }
+        if includeLatestAnswer, let attachment = latestSelectionAnswer(for: thread.id),
+           !selectionThreads[index].answerAttachments.contains(where: { $0.messageID == attachment.messageID }) {
+            selectionThreads[index].answerAttachments.append(attachment)
+        }
         if let ordinaryNote {
             let placement = SelectionAnnotationPlacement(noteItemID: ordinaryNote.id)
             selectionThreads[index].placements.append(placement)
@@ -43,6 +47,7 @@ extension WorkspaceStore {
         selectionThreads[index].updatedAt = Date()
         activeSelectionThreadID = thread.id
         updateNote(excerptNotebookMarkdown(for: material), for: excerptNotebook.id)
+        syncSelectionThread(thread.id, excluding: ordinaryNote?.id ?? "")
         save()
         return selectionThreads[index]
     }
@@ -115,6 +120,11 @@ extension WorkspaceStore {
         let quoted = thread.selectionText.split(separator: "\n", omittingEmptySubsequences: false)
             .map { "> \($0)" }.joined(separator: "\n")
         let notes = thread.entries.map(\.text).joined(separator: "\n\n---\n\n")
+        let answers = thread.answerAttachments.map { attachment in
+            let body = attachment.answer.split(separator: "\n", omittingEmptySubsequences: false)
+                .map { "> \($0)" }.joined(separator: "\n")
+            return "> [!answer]- AI 回答\n> \(attachment.question)\n>\n\(body)"
+        }.joined(separator: "\n\n")
         return """
         <!-- weibei-selection-thread:\(thread.id.uuidString.lowercased()) -->
         > [!quote] 原文
@@ -122,7 +132,20 @@ extension WorkspaceStore {
         >
         > 来源：\(thread.ownerTitle)
         \(notes)
+        \(answers)
         """.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    func latestSelectionAnswer(for threadID: UUID?) -> SelectionAIAnswerAttachment? {
+        guard let threadID, let thread = selectionThreads.first(where: { $0.id == threadID }) else { return nil }
+        let threadMessages = thread.messageIDs.compactMap { id in messages.first { $0.id == id } }
+        guard let answer = threadMessages.last(where: {
+            $0.role == .assistant && $0.completionState == .completed && !Self.isAgentFailureMessage($0.text)
+        }) else { return nil }
+        let question = threadMessages.last(where: { $0.role == .user && $0.createdAt <= answer.createdAt })?.text ?? ""
+        let text = agentDisplayText(for: answer).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return nil }
+        return SelectionAIAnswerAttachment(messageID: answer.id, question: question, answer: text)
     }
 
     func activeSelectionPlacements() -> [(thread: SelectionThread, placement: SelectionAnnotationPlacement)] {
@@ -239,7 +262,9 @@ extension WorkspaceStore {
         let tail = block[source.upperBound...]
         guard let lineEnd = tail.firstIndex(of: "\n") else { return "" }
         let content = tail[tail.index(after: lineEnd)...]
-        let end = content.range(of: "\n<!-- /weibei-selection-placement:")?.lowerBound ?? content.endIndex
+        let placementEnd = content.range(of: "\n<!-- /weibei-selection-placement:")?.lowerBound ?? content.endIndex
+        let answerEnd = content.range(of: "\n> [!answer]")?.lowerBound ?? content.endIndex
+        let end = min(placementEnd, answerEnd)
         return content[..<end].trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }
