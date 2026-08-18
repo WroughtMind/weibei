@@ -891,6 +891,20 @@ public struct SelectionAnnotationPlacement: Identifiable, Codable, Hashable, Sen
     }
 }
 
+public struct SelectionMark: Identifiable, Codable, Hashable, Sendable {
+    public var id: UUID
+    public var text: String
+    public var hasAsk: Bool
+    public var hasNote: Bool
+
+    public init(id: UUID, text: String, hasAsk: Bool, hasNote: Bool) {
+        self.id = id
+        self.text = text
+        self.hasAsk = hasAsk
+        self.hasNote = hasNote
+    }
+}
+
 /// One durable source selection with its questions, notes, answer snapshots, and note placements.
 public struct SelectionThread: Identifiable, Codable, Hashable, Sendable {
     public var id: UUID
