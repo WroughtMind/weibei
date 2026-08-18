@@ -298,7 +298,7 @@ public enum CoursePortableStateError: LocalizedError, Equatable {
 }
 
 public struct CoursePortableState: Codable, Equatable, Sendable {
-    public static let currentSchemaVersion = 3
+    public static let currentSchemaVersion = 2
 
     public var courseID: UUID
     public var schemaVersion: Int
@@ -313,7 +313,6 @@ public struct CoursePortableState: Codable, Equatable, Sendable {
     public var studyLocationsByItemID: [String: StudyLocation]
     public var resumePoint: CourseResumePoint?
     public var pendingNoteDrafts: [CoursePortableNoteDraft]
-    public var selectionThreads: [SelectionThread]?
 
     public init(
         courseID: UUID,
@@ -328,8 +327,7 @@ public struct CoursePortableState: Codable, Equatable, Sendable {
         noteSourceLinks: [NoteSourceLink],
         studyLocationsByItemID: [String: StudyLocation],
         resumePoint: CourseResumePoint?,
-        pendingNoteDrafts: [CoursePortableNoteDraft],
-        selectionThreads: [SelectionThread]? = nil
+        pendingNoteDrafts: [CoursePortableNoteDraft]
     ) {
         self.courseID = courseID
         self.schemaVersion = schemaVersion
@@ -344,7 +342,6 @@ public struct CoursePortableState: Codable, Equatable, Sendable {
         self.studyLocationsByItemID = studyLocationsByItemID
         self.resumePoint = resumePoint
         self.pendingNoteDrafts = pendingNoteDrafts
-        self.selectionThreads = selectionThreads
     }
 
     public func validated(expectedCourseID: UUID) throws -> CoursePortableState {
@@ -437,9 +434,6 @@ public struct CoursePortableState: Codable, Equatable, Sendable {
         state.pendingNoteDrafts = pendingNoteDrafts.filter { draft in
             noteItemIDs.contains(draft.itemID)
                 && seenDraftItemIDs.insert(draft.itemID).inserted
-        }
-        state.selectionThreads = (selectionThreads ?? []).filter {
-            $0.itemID.map(itemIDs.contains) == true
         }
 
         var relationIDs = Set<UUID>()
@@ -570,7 +564,7 @@ public struct CoursePortableState: Codable, Equatable, Sendable {
                 sessionID: UUID?,
                 messageID: UUID?
             ) -> Bool {
-                if schemaVersion >= 2 {
+                if schemaVersion == 2 {
                     return sessionID != nil || messageID == nil
                 }
                 guard let sessionID else {
@@ -599,7 +593,7 @@ public struct CoursePortableState: Codable, Equatable, Sendable {
             }
         }
 
-        if schemaVersion < 2,
+        if schemaVersion != 2,
            let resumePoint = state.resumePoint,
            let chatID = resumePoint.chatID,
            !chatIDs.contains(chatID) {

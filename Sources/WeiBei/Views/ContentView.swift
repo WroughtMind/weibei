@@ -257,7 +257,7 @@ private struct GlobalFloatingSelectionLayer: View {
                     // (点「问」/回访红线/顶部已问), not on bare selection.
                     if keep { expanded = true }
                 }
-                .onChange(of: interaction.activeSelectionThreadID) { _, id in
+                .onChange(of: interaction.activeSelectionAskThreadID) { _, id in
                     if id != nil, interaction.keepFloatingSelectionForAnswer {
                         expanded = true
                     }
