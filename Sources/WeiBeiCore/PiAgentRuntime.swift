@@ -439,7 +439,9 @@ public actor PiAgentRuntime: StudyAgentRuntime {
     private var startingRunID: UUID?
     private var cancelledStartingRunIDs: Set<UUID> = []
     private var stderrBuffer = ""
-    private var stderrPendingLine = ""
+    // 行镜像的未完成行缓冲：按字节累积，跨块 UTF-8 多字节字符与跨块敏感串
+    // 都能拼成完整行后再脱敏。上限 16KB（防御异常进程的无换行输出）。
+    private var stderrPendingBytes = Data()
     private var startupFailure: PiAgentRuntimeError?
     private var idleShutdownTask: Task<Void, Never>?
     private let traceEnabled = ProcessInfo.processInfo.environment["WEIBEI_PI_TRACE"] == "1"
@@ -2708,22 +2710,20 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         if stderrBuffer.count > 16_384 {
             stderrBuffer = String(stderrBuffer.suffix(16_384))
         }
-        // 报错桥镜像：数据块不保证按行切割，先缓存未完成行，拼成完整
-        // UTF-8 行后再整体经 PiAgentDiagnosticSanitizer 脱敏、截断落日志
+        // 报错桥镜像：数据块不保证按行切割，且 UTF-8 多字节字符可能跨块；
+        // 按字节累积未完成行，拼成完整行后再解码并整体脱敏、截断落日志
         // （先脱敏后拆行会让跨块拼接的敏感串绕过脱敏）。notice 保证 logd
         // 持久化；stderr 行无法自动分级；launchFailed 独立路径不动。
-        stderrPendingLine += rawText
-        let segments = stderrPendingLine.split(separator: "\n", omittingEmptySubsequences: false)
-        if stderrPendingLine.hasSuffix("\n") {
-            stderrPendingLine = ""
-            for segment in segments {
-                logSanitizedStderrLine(String(segment))
-            }
-        } else {
-            stderrPendingLine = String(segments.last ?? "")
-            for segment in segments.dropLast() {
-                logSanitizedStderrLine(String(segment))
-            }
+        stderrPendingBytes.append(data)
+        var start = stderrPendingBytes.startIndex
+        while let newlineIndex = stderrPendingBytes[start...].firstIndex(of: 0x0A) {
+            let lineData = stderrPendingBytes[start..<newlineIndex]
+            logSanitizedStderrLine(String(decoding: lineData, as: UTF8.self))
+            start = stderrPendingBytes.index(after: newlineIndex)
+        }
+        stderrPendingBytes = stderrPendingBytes[start...]
+        if stderrPendingBytes.count > 16_384 {
+            stderrPendingBytes = stderrPendingBytes.suffix(16_384)
         }
     }
 
@@ -2733,6 +2733,13 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         WeiBeiLog.pi.notice(
             "pi_stderr line=\(WeiBeiLog.truncated(self.sanitizedDiagnostic(trimmed)), privacy: .public)"
         )
+    }
+
+    /// 进程退出时把未完成行写出（避免与下一进程的首行拼接），并清空缓冲。
+    private func flushStderrPendingLine() {
+        guard !stderrPendingBytes.isEmpty else { return }
+        logSanitizedStderrLine(String(decoding: stderrPendingBytes, as: UTF8.self))
+        stderrPendingBytes.removeAll(keepingCapacity: true)
     }
 
     private func transportFailed(_ error: Error, generation: UInt64) {
@@ -2768,6 +2775,9 @@ public actor PiAgentRuntime: StudyAgentRuntime {
     private func shutdownProcess(reason: Error) {
         trace("shutdown: \(reason.localizedDescription)")
         processGeneration &+= 1
+        // generation 已递增，cancel 后的 appendStderr 会被 guard 拒绝；
+        // 在此把未完成行写出并清空，避免与下一进程的首行拼接。
+        flushStderrPendingLine()
         clearContextSnapshot()
         idleShutdownTask?.cancel()
         idleShutdownTask = nil

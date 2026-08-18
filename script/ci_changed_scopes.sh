@@ -19,7 +19,7 @@ classify_path() {
   esac
 
   case "$path" in
-    Sources/*Pi*|Sources/WeiBeiCore/AgentResources/*|Sources/WeiBeiCore/StudyAgentRuntime.swift|Sources/WeiBeiCore/Agent*|Sources/WeiBei/Views/NotesAgentView.swift|script/check-agent-project-tools.ts|script/prepare_pi_runtime.sh|Config/PiRuntime.entitlements|Vendor/PiRuntime/manifest.json|tsconfig.agent.json)
+    Sources/*Pi*|Sources/WeiBeiCore/AgentResources/*|Sources/WeiBeiCore/StudyAgentRuntime.swift|Sources/WeiBeiCore/Agent*|Sources/WeiBei/Views/NotesAgentView.swift|script/check-agent-project-tools.ts|script/prepare_pi_runtime.sh|Config/PiRuntime.entitlements|Vendor/PiRuntime/manifest.json|tsconfig.agent.json|package.json|package-lock.json)
       pi=true
       ;;
   esac
@@ -53,15 +53,18 @@ classify_path() {
 
   # 原型工具面：富回答运行时（源码/脚本/embed 输出产物）与 Evidence Viewer
   # 等 Prototypes 下的 TS 工具（CI 只做类型检查，不跑生成）。
+  # package.json/lockfile 变化可能改变依赖解析（workspaces 合并曾因此改变产物），必须触发。
   case "$path" in
-    Prototypes/*|Sources/WeiBei/Resources/rich-answer.html|Sources/WeiBei/Resources/rich-answer-runtime.css|Sources/WeiBei/Resources/rich-answer-runtime.js)
+    Prototypes/*|Sources/WeiBei/Resources/rich-answer.html|Sources/WeiBei/Resources/rich-answer-runtime.css|Sources/WeiBei/Resources/rich-answer-runtime.js|package.json|package-lock.json)
       rich_answer=true
       ;;
   esac
 
   # Node 工具脚本类型检查（npm run typecheck:tools 的触发面）。
+  # 根 tsconfig.json 的 include 覆盖 Prototypes/RichAnswerWebRuntime/scripts/**/*.ts，
+  # 因此这些原型脚本同样触发 tools。
   case "$path" in
-    script/*.ts|DesignSystem/scripts/*.ts|tsconfig.json)
+    script/*.ts|DesignSystem/scripts/*.ts|tsconfig.json|Prototypes/RichAnswerWebRuntime/scripts/*.ts)
       tools=true
       ;;
   esac
@@ -143,7 +146,9 @@ if [[ "${1:-}" == "--self-check" ]]; then
     "Vendor/PiRuntime/README.md"
   expect_scopes \
     "code=false pi=false editor=false data_safety=false release=false rich_answer=true tools=false " \
-    "Prototypes/RichAnswerWebRuntime/src/main.tsx" \
+    "Prototypes/RichAnswerWebRuntime/src/main.tsx"
+  expect_scopes \
+    "code=false pi=false editor=false data_safety=false release=false rich_answer=true tools=true " \
     "Prototypes/RichAnswerWebRuntime/scripts/embed-runtime.ts"
   expect_scopes \
     "code=false pi=false editor=false data_safety=false release=false rich_answer=true tools=false " \
@@ -165,6 +170,14 @@ if [[ "${1:-}" == "--self-check" ]]; then
     "script/check-genui-math.ts" \
     "DesignSystem/scripts/build-icns.ts" \
     "tsconfig.json"
+  # 依赖清单变化影响 Pi 类型（pi-ai/pi-coding-agent）、编辑器与富回答产物解析，
+  # 必须触发对应检查；tools 不触发（脚本源码与 tsconfig 未变）。
+  expect_scopes \
+    "code=true pi=true editor=true data_safety=false release=true rich_answer=true tools=false " \
+    "package.json"
+  expect_scopes \
+    "code=true pi=true editor=true data_safety=false release=true rich_answer=true tools=false " \
+    "package-lock.json"
   echo "CI scope self-check passed"
   exit 0
 fi
