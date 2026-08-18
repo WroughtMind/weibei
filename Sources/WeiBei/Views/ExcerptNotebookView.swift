@@ -51,9 +51,18 @@ struct ExcerptNotebookView: View {
             ForEach(thread.answerAttachments) { attachment in
                 SelectionAnswerAttachmentView(attachment: attachment)
             }
+            if thread.invalidatedAt != nil {
+                Text(store.ui("原材料已移除，札记与其他笔记中的投影仍保留", "Source removed; this note and its placements are preserved"))
+                    .font(.system(size: 11)).foregroundStyle(WeiBeiTheme.tertiaryInk)
+            }
         }
         .padding(.vertical, 18).contentShape(Rectangle())
         .overlay(alignment: .bottom) { Divider().opacity(0.55) }
+        .contextMenu {
+            Button(store.ui("彻底删除这条札记", "Delete This Note Completely"), role: .destructive) {
+                store.deleteSelectionThread(thread.id)
+            }
+        }
     }
 }
 
