@@ -1170,6 +1170,7 @@ public struct StudyItem: Identifiable, Codable, Hashable, Sendable {
     public var importedFileIdentity: ImportedFileIdentity?
     public var isSample: Bool
     public var isNotebookNote: Bool
+    public var appearsInMaterials: Bool?
     /// 浮动 tab 行内重命名写入的自定义显示名；为空时 tab 自动跟随 title / 正文。
     public var customDisplayTitle: String?
     public var storage: StudyItemStorage
@@ -1187,6 +1188,7 @@ public struct StudyItem: Identifiable, Codable, Hashable, Sendable {
         importedFileIdentity: ImportedFileIdentity? = nil,
         isSample: Bool,
         isNotebookNote: Bool = false,
+        appearsInMaterials: Bool? = nil,
         customDisplayTitle: String? = nil,
         storage: StudyItemStorage? = nil,
         contentRevision: UInt64 = 1,
@@ -1202,6 +1204,7 @@ public struct StudyItem: Identifiable, Codable, Hashable, Sendable {
         self.importedFileIdentity = importedFileIdentity
         self.isSample = isSample
         self.isNotebookNote = isNotebookNote
+        self.appearsInMaterials = appearsInMaterials
         self.customDisplayTitle = customDisplayTitle
         if let storage {
             self.storage = storage
@@ -1225,6 +1228,7 @@ public struct StudyItem: Identifiable, Codable, Hashable, Sendable {
         case importedFileIdentity
         case isSample
         case isNotebookNote
+        case appearsInMaterials
         case customDisplayTitle
         case storage
         case contentRevision
@@ -1246,6 +1250,7 @@ public struct StudyItem: Identifiable, Codable, Hashable, Sendable {
         )
         isSample = try container.decode(Bool.self, forKey: .isSample)
         isNotebookNote = try container.decodeIfPresent(Bool.self, forKey: .isNotebookNote) ?? false
+        appearsInMaterials = try container.decodeIfPresent(Bool.self, forKey: .appearsInMaterials)
         customDisplayTitle = try container.decodeIfPresent(String.self, forKey: .customDisplayTitle)
         if isSample {
             storage = try container.decodeIfPresent(StudyItemStorage.self, forKey: .storage)
@@ -1271,6 +1276,7 @@ public struct StudyItem: Identifiable, Codable, Hashable, Sendable {
         try container.encodeIfPresent(importedFileIdentity, forKey: .importedFileIdentity)
         try container.encode(isSample, forKey: .isSample)
         try container.encode(isNotebookNote, forKey: .isNotebookNote)
+        try container.encodeIfPresent(appearsInMaterials, forKey: .appearsInMaterials)
         try container.encodeIfPresent(customDisplayTitle, forKey: .customDisplayTitle)
         try container.encode(storage, forKey: .storage)
         try container.encode(contentRevision, forKey: .contentRevision)
@@ -1292,6 +1298,10 @@ public struct StudyItem: Identifiable, Codable, Hashable, Sendable {
 
     public var editsBackingMarkdownFile: Bool {
         !isSample && kind == .markdown && isNotebookNote
+    }
+
+    public var isCourseMaterial: Bool {
+        appearsInMaterials ?? !isNotebookNote
     }
 
     public var canBecomeNotebookNote: Bool {

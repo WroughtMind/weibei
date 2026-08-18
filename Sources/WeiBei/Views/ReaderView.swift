@@ -238,6 +238,9 @@ struct ReaderView: View {
     @State private var pendingHTMLLocationCommit: Task<Void, Never>?
     @State private var pendingHTMLContentRailActiveCommit: Task<Void, Never>?
     @State private var pendingPDFLocationCommit: Task<Void, Never>?
+    @State private var markdownSnapshotItemID: String?
+    @State private var markdownSnapshotText: String?
+    @State private var markdownSnapshotFailed = false
     /// Live pane size from a background probe. Zero until first real measurement.
     @State private var measuredPaneSize: CGSize = .zero
 
@@ -330,6 +333,7 @@ struct ReaderView: View {
         .animation(WeiBeiMotion.panel, value: paneState.showReaderSearch)
         .animation(WeiBeiMotion.panel, value: pdfHasSelectableText)
         .onAppear {
+            loadMarkdownSnapshot()
             syncReaderLocationTitle()
             capturePendingPDFPageRequest()
             htmlContentRailActiveID = store.readerLocationID
@@ -338,6 +342,7 @@ struct ReaderView: View {
             rebuildPDFContentRail()
         }
         .onChange(of: store.selectedItemID) { _, _ in
+            loadMarkdownSnapshot()
             pendingHTMLLocationCommit?.cancel()
             pendingHTMLLocationCommit = nil
             pendingHTMLContentRailActiveCommit?.cancel()
@@ -358,6 +363,9 @@ struct ReaderView: View {
             applyPendingPDFPageIfReady()
             applyPendingHTMLLocationIfReady()
             rebuildPDFContentRail()
+        }
+        .onChange(of: store.showReader) { _, visible in
+            if visible { loadMarkdownSnapshot() }
         }
         .onChange(of: pdfPageIndex) { _, _ in
             syncReaderLocationTitle()
@@ -996,16 +1004,16 @@ struct ReaderView: View {
                 }
             case .markdown:
                 if let url = item.url {
-                    if let data = try? CourseProjectFileWorker
-                        .readBoundedRegularFile(
-                            at: url,
-                            maximumByteCount: CourseProjectFileWorker
-                                .markdownMaximumByteCount
-                        ),
-                       let text = String(data: data, encoding: .utf8) {
+                    if markdownSnapshotItemID == item.id,
+                       let text = markdownSnapshotText {
                         markdownReader(markdown: text, markdownBaseURL: url.deletingLastPathComponent())
-                    } else {
+                    } else if markdownSnapshotItemID == item.id,
+                              markdownSnapshotFailed {
                         MarkdownReadFailureView(fileName: url.lastPathComponent)
+                    } else {
+                        ProgressView()
+                            .controlSize(.small)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
                     }
                 } else {
                     MaterialReadFailureView(fileName: store.displayTitle(for: item))
@@ -1031,6 +1039,28 @@ struct ReaderView: View {
         } else {
             EmptyReaderView()
         }
+    }
+
+    private func loadMarkdownSnapshot() {
+        guard let item = store.selectedMaterialItem,
+              item.kind == .markdown,
+              let url = item.url else {
+            markdownSnapshotItemID = nil
+            markdownSnapshotText = nil
+            markdownSnapshotFailed = false
+            return
+        }
+        markdownSnapshotItemID = item.id
+        guard let data = try? CourseProjectFileWorker.readBoundedRegularFile(
+            at: url,
+            maximumByteCount: CourseProjectFileWorker.markdownMaximumByteCount
+        ), let text = String(data: data, encoding: .utf8) else {
+            markdownSnapshotText = nil
+            markdownSnapshotFailed = true
+            return
+        }
+        markdownSnapshotText = text
+        markdownSnapshotFailed = false
     }
 
     private func markdownReader(markdown: String, markdownBaseURL: URL?) -> some View {

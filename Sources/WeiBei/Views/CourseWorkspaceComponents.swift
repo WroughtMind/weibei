@@ -1,6 +1,7 @@
 import AppKit
 import Foundation
 import SwiftUI
+import UniformTypeIdentifiers
 import WeiBeiCore
 
 enum CourseProjectEntryIntent: Equatable {
@@ -284,6 +285,7 @@ struct CourseProjectEntrySheet: View {
     @State private var intent: CourseProjectEntryIntent
     @State private var title = ""
     @State private var selectedFolder: URL?
+    @State private var selectedImportURLs: [URL] = []
     @State private var configuredLibraryThisTime = false
     @State private var isWorking = false
     @State private var errorMessage: String?
@@ -295,7 +297,7 @@ struct CourseProjectEntrySheet: View {
         cancel: @escaping () -> Void,
         openCourse: @escaping (UUID) -> Void
     ) {
-        _intent = State(initialValue: .create)
+        _intent = State(initialValue: initialIntent)
         self.cancel = cancel
         self.openCourse = openCourse
     }
@@ -338,6 +340,9 @@ struct CourseProjectEntrySheet: View {
                         label: store.ui("魏碑资料库", "WeiBei Library"),
                         path: libraryPath
                     )
+                }
+                if intent == .create {
+                    importPicker
                 }
             }
 
@@ -517,6 +522,32 @@ struct CourseProjectEntrySheet: View {
             .accessibilityLabel(Text(store.ui("课程名称", "Course title")))
     }
 
+    private var importPicker: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Button(
+                selectedImportURLs.isEmpty
+                    ? store.ui("同时选择现有文稿或文件夹…", "Choose Existing Files or Folder…")
+                    : store.ui("重新选择导入内容…", "Choose Different Content…"),
+                action: chooseImportContent
+            )
+            .buttonStyle(WeiBeiTextActionButtonStyle(active: selectedImportURLs.isEmpty))
+            .disabled(isWorking)
+
+            if !selectedImportURLs.isEmpty {
+                Text(store.ui(
+                    "已选择 \(selectedImportURLs.count) 项；课程创建后会直接导入。Markdown 会同时出现在文稿与笔记中。",
+                    "Selected \(selectedImportURLs.count) item(s). Markdown will appear in both Materials and Notes."
+                ))
+                .font(.system(size: 11.5))
+                .foregroundStyle(WeiBeiTheme.secondaryInk)
+                .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(WeiBeiTheme.paperRaised.opacity(0.30), in: RoundedRectangle(cornerRadius: 9))
+    }
+
     private func pathLine(label: String, path: String) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(label)
@@ -575,7 +606,12 @@ struct CourseProjectEntrySheet: View {
                 .keyboardShortcut(.defaultAction)
                 .disabled(isWorking)
             } else if !needsLibrary {
-                Button(store.ui("创建", "Create"), action: createCourse)
+                Button(
+                    selectedImportURLs.isEmpty
+                        ? store.ui("创建课程", "Create Course")
+                        : store.ui("创建并导入", "Create and Import"),
+                    action: createCourse
+                )
                     .buttonStyle(WeiBeiTextActionButtonStyle(active: true))
                     .keyboardShortcut(.defaultAction)
                     .disabled(cleanedTitle.isEmpty || isWorking)
@@ -633,6 +669,28 @@ struct CourseProjectEntrySheet: View {
         rebindProposal = nil
     }
 
+    private func chooseImportContent() {
+        let panel = NSOpenPanel()
+        panel.title = store.ui("选择课程内容", "Choose Course Content")
+        panel.message = store.ui(
+            "可以选择多个文件或一个文件夹。Markdown 会作为同一个文件同时用于阅读和笔记。",
+            "Choose files or a folder. Markdown stays one file and appears in both reading and notes."
+        )
+        panel.prompt = store.ui("选择", "Choose")
+        panel.allowsMultipleSelection = true
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = true
+        panel.allowedContentTypes = [
+            .pdf,
+            .html,
+            .plainText,
+            UTType(filenameExtension: "md") ?? .plainText,
+            UTType(filenameExtension: "markdown") ?? .plainText,
+        ]
+        guard panel.runModal() == .OK else { return }
+        selectedImportURLs = panel.urls
+    }
+
     private func submitCurrentIntent() {
         if rebindProposal != nil {
             confirmRebind()
@@ -654,7 +712,16 @@ struct CourseProjectEntrySheet: View {
             let courseID = try await store.createCourseInLibraryAsync(
                 title: cleanedTitle
             )
-            openCourse(courseID)
+            if selectedImportURLs.isEmpty {
+                openCourse(courseID)
+            } else {
+                store.importCourseFilesFromURLs(
+                    selectedImportURLs,
+                    courseID: courseID
+                ) { _ in
+                    openCourse(courseID)
+                }
+            }
         }
     }
 

@@ -19,7 +19,7 @@ public struct CourseWorkspaceSummary: Equatable, Sendable {
         learningMemoryEntries: [LearningMemoryEntry]
     ) {
         let courseItems = importedItems.filter { !$0.isSample }
-        let materialIDs = Set(courseItems.lazy.filter { !$0.isNotebookNote }.map(\.id))
+        let materialIDs = Set(courseItems.lazy.filter(\.isCourseMaterial).map(\.id))
         let noteIDs = Set(courseItems.lazy.filter(\.isNotebookNote).map(\.id))
 
         var relations = NoteSourceRelations(links: noteSourceLinks)

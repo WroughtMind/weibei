@@ -694,14 +694,15 @@ struct NotePaneView: View {
             && store.blankNoteDraftMaterialID == nil {
             ContextualContentPicker(kind: .note)
         } else {
-            // 笔记固定为所见即所得（rich）写作，源码 / 对照模式入口已全部移除。
-            richEditor
-                .overlay(alignment: .topLeading) {
-                    if noteIsEmpty {
-                        emptyNoteHint
-                            .transition(WeiBeiTransition.message)
-                    }
-                }
+            if store.activeNoteIsLoading {
+                ProgressView()
+                    .controlSize(.small)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .accessibilityLabel(Text(store.ui("正在载入笔记", "Loading note")))
+            } else {
+                // 笔记固定为所见即所得（rich）写作，源码 / 对照模式入口已全部移除。
+                richEditor
+            }
         }
     }
 
@@ -809,10 +810,6 @@ struct NotePaneView: View {
         .background(WeiBeiTheme.paper)
     }
 
-    private var noteIsEmpty: Bool {
-        draftNoteText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-    }
-
     private func pullExternalNoteText() {
         isApplyingExternalNote = true
         draftNoteItemID = store.activeNoteItemID
@@ -858,18 +855,6 @@ struct NotePaneView: View {
         _ = immediate
     }
 
-    private var emptyNoteHint: some View {
-        Text(emptyNoteHintText)
-            .font(.system(size: 13, weight: .medium, design: .serif))
-            .foregroundStyle(WeiBeiTheme.tertiaryInk.opacity(0.72))
-            .padding(.horizontal, 20)
-            .padding(.top, 18)
-            .allowsHitTesting(false)
-    }
-
-    private var emptyNoteHintText: String {
-        store.hasSelectedMaterial ? store.ui("开始记录当前材料", "Start taking notes on this material") : store.ui("开始记录当前笔记", "Start writing this note")
-    }
 }
 
 private struct NotebookCreationPanel: View {

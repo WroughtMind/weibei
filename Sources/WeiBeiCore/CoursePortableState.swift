@@ -74,6 +74,7 @@ public struct CoursePortableItem: Codable, Equatable, Sendable {
     public var title: String
     public var kind: StudyItemKind
     public var isNotebookNote: Bool
+    public var appearsInMaterials: Bool?
     public var courseRelativePath: String
     public var storage: CoursePortableItemStorage
     public var contentRevision: UInt64
@@ -87,6 +88,7 @@ public struct CoursePortableItem: Codable, Equatable, Sendable {
         title: String,
         kind: StudyItemKind,
         isNotebookNote: Bool,
+        appearsInMaterials: Bool? = nil,
         courseRelativePath: String,
         storage: CoursePortableItemStorage,
         contentRevision: UInt64,
@@ -99,6 +101,7 @@ public struct CoursePortableItem: Codable, Equatable, Sendable {
         self.title = title
         self.kind = kind
         self.isNotebookNote = isNotebookNote
+        self.appearsInMaterials = appearsInMaterials
         self.courseRelativePath = courseRelativePath
         self.storage = storage
         self.contentRevision = contentRevision
@@ -107,6 +110,10 @@ public struct CoursePortableItem: Codable, Equatable, Sendable {
         self.fileModificationTimeNanoseconds =
             fileModificationTimeNanoseconds
         self.membershipCreatedAt = membershipCreatedAt
+    }
+
+    public var isCourseMaterial: Bool {
+        appearsInMaterials ?? !isNotebookNote
     }
 }
 
@@ -388,7 +395,8 @@ public struct CoursePortableState: Codable, Equatable, Sendable {
             keptItems.append(item)
             if item.isNotebookNote {
                 noteItemIDs.insert(item.itemID)
-            } else {
+            }
+            if item.isCourseMaterial {
                 materialItemIDs.insert(item.itemID)
             }
         }
@@ -398,6 +406,7 @@ public struct CoursePortableState: Codable, Equatable, Sendable {
         state.noteSourceLinks = noteSourceLinks.filter { relation in
             noteItemIDs.contains(relation.noteItemID)
                 && materialItemIDs.contains(relation.sourceItemID)
+                && relation.noteItemID != relation.sourceItemID
         }
         state.studyLocationsByItemID = studyLocationsByItemID.filter { itemID, location in
             materialItemIDs.contains(itemID) && location.itemID == itemID
@@ -638,6 +647,7 @@ public struct CoursePortableState: Codable, Equatable, Sendable {
             first == "笔记" && item.kind == .markdown
         if item.isNotebookNote {
             return pathDefinesNotebookNote
+                || (first == "文稿" && item.kind == .markdown)
         }
         return !pathDefinesNotebookNote
     }
@@ -661,7 +671,8 @@ public struct CoursePortableState: Codable, Equatable, Sendable {
                 .lowercased()
         )
         if isNotebookNote {
-            return components[0] == "通用笔记"
+            return (components[0] == "通用笔记"
+                || components[0] == "通用资料")
                 && detectedKind == .markdown
         }
         return (components[0] == "通用资料"

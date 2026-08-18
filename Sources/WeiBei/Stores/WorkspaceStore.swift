@@ -326,7 +326,7 @@ final class WorkspaceStore: ObservableObject {
     @Published var importedItems: [StudyItem] = []
     @Published var selectedItemID: String?
     @Published var activeNotebookItemID: String?
-    @Published private(set) var courses: [Course] = []
+    @Published var courses: [Course] = []
     var courseLibraryRootPath: String?
     var courseLibraryRootIdentity: ImportedFileIdentity?
     var courseLibraryRootBookmarkData: Data?
@@ -609,7 +609,7 @@ final class WorkspaceStore: ObservableObject {
     /// 先登记、不动文件。内存态即可：重启丢基线只少一次自动改名，方向安全。
     var headingSyncedNoteStemByItemID: [String: String] = [:]
     private var loadedCourseNoteTextByItemID: [String: String] = [:]
-    private var courseNoteLoadTasksByItemID: [String: Task<Void, Never>] = [:]
+    var courseNoteLoadTasksByItemID: [String: Task<Void, Never>] = [:]
     private var courseNoteLoadGenerationByItemID: [String: UInt64] = [:]
     private var courseNoteWritesInFlight = Set<String>()
     private var courseNoteWriteTasksByItemID: [String: Task<Void, Never>] = [:]
@@ -1040,7 +1040,7 @@ final class WorkspaceStore: ObservableObject {
     }
 
     var courseMaterials: [StudyItem] {
-        importedItems.filter { !$0.isNotebookNote }
+        importedItems.filter(\.isCourseMaterial)
     }
 
     var courseNotebookItems: [StudyItem] {
@@ -1073,7 +1073,7 @@ final class WorkspaceStore: ObservableObject {
     }
 
     func courseMaterials(in courseID: UUID) -> [StudyItem] {
-        courseItems(in: courseID).filter { !$0.isNotebookNote }
+        courseItems(in: courseID).filter(\.isCourseMaterial)
     }
 
     func courseNotes(in courseID: UUID) -> [StudyItem] {
@@ -1759,9 +1759,7 @@ final class WorkspaceStore: ObservableObject {
                 to: temporarySource,
                 expectedSnapshot: sourceSnapshot
             )
-        let role: CourseOwnedFileRole = item.isNotebookNote
-            ? .note
-            : .material
+        let role = CourseOwnedFileRole(item: item)
         _ = try await transactCourseOwnedFile(
             courseID: ownerCourseID,
             role: role,
@@ -3284,9 +3282,7 @@ final class WorkspaceStore: ObservableObject {
             ) = state.items[index].storage else {
                 continue
             }
-            let role: CourseOwnedFileRole = state.items[index].isNotebookNote
-                ? .note
-                : .material
+            let role = CourseOwnedFileRole(portableItem: state.items[index])
             let sharedDirectoryName = sharedRelativePath.split(
                 separator: "/"
             ).first.map(String.init)
@@ -3460,7 +3456,7 @@ final class WorkspaceStore: ObservableObject {
         let sourceInfo = try await courseProjectFileWorker.validatedRegularSource(sourceURL)
         return try await transactCourseOwnedFile(
             courseID: courseID,
-            role: item.isNotebookNote ? .note : .material,
+            role: CourseOwnedFileRole(item: item),
             fileName: sourceInfo.url.lastPathComponent,
             sourceURL: sourceInfo.url,
             sourceIdentity: sourceInfo.identity,
@@ -3485,7 +3481,7 @@ final class WorkspaceStore: ObservableObject {
         let sourceInfo = try await courseProjectFileWorker.validatedRegularSource(sourceURL)
         return try await transactCourseOwnedFile(
             courseID: courseID,
-            role: item.isNotebookNote ? .note : .material,
+            role: CourseOwnedFileRole(item: item),
             fileName: sourceInfo.url.lastPathComponent,
             sourceURL: sourceInfo.url,
             sourceIdentity: sourceInfo.identity,
@@ -3510,9 +3506,7 @@ final class WorkspaceStore: ObservableObject {
         guard let itemIndex = importedItems.firstIndex(where: { $0.id == itemID }) else {
             throw CourseOwnedFileError.unsupportedFile
         }
-        let role: CourseOwnedFileRole = importedItems[itemIndex].isNotebookNote
-            ? .note
-            : .material
+        let role = CourseOwnedFileRole(item: importedItems[itemIndex])
         if case .common = importedItems[itemIndex].storage {
             try await linkSharedItem(
                 itemID: itemID,
@@ -3923,9 +3917,7 @@ final class WorkspaceStore: ObservableObject {
               CourseProjectPathPolicy.isSame(expectedSharedURL, sharedURL) else {
             throw CourseOwnedFileError.courseRootUnavailable
         }
-        let role: CourseOwnedFileRole = importedItems[itemIndex].isNotebookNote
-            ? .note
-            : .material
+        let role = CourseOwnedFileRole(item: importedItems[itemIndex])
         let allowedSharedDirectories: Set<Substring> = role == .note
             ? [Substring(role.commonDirectoryName)]
             : [Substring(role.commonDirectoryName), "共享文稿"]
@@ -4634,21 +4626,23 @@ final class WorkspaceStore: ObservableObject {
                 replaceItemIDEverywhere(retiredSourceItemID, with: itemID)
                 importedItems.removeAll { $0.id == retiredSourceItemID }
             }
+            let itemStorage = StudyItemStorage.courseOwned(ownerCourseID: courseID, relativePath: targetRelativePath)
             let existingItemIndex = importedItems.firstIndex { $0.id == itemID }
+                ?? importedItems.firstIndex { $0.storage == itemStorage }
+            let committedItemID = existingItemIndex.map { importedItems[$0].id } ?? itemID
             let previousItem = existingItemIndex.map { importedItems[$0] }
+            let detectedKind = StudyItemKind.detect(from: resolvedTarget)
             var item = StudyItem(
-                id: itemID,
+                id: committedItemID,
                 title: resolvedTarget.deletingPathExtension().lastPathComponent,
                 subtitle: resolvedTarget.lastPathComponent,
-                kind: StudyItemKind.detect(from: resolvedTarget),
+                kind: detectedKind,
                 urlPath: resolvedTarget.path,
                 importedFileIdentity: targetIdentity,
                 isSample: false,
-                isNotebookNote: role == .note,
-                storage: .courseOwned(
-                    ownerCourseID: courseID,
-                    relativePath: targetRelativePath
-                ),
+                isNotebookNote: role == .note || detectedKind == .markdown,
+                appearsInMaterials: role == .material,
+                storage: itemStorage,
                 contentRevision: replacingItemIndex == nil
                     ? (previousItem?.contentRevision ?? 1)
                     : (previousItem?.contentRevision ?? 0) &+ 1,
@@ -4658,7 +4652,7 @@ final class WorkspaceStore: ObservableObject {
             )
             let membership = CourseItemMembership(
                 courseID: courseID,
-                itemID: itemID,
+                itemID: committedItemID,
                 courseRelativePath: targetRelativePath,
                 entryIdentity: targetIdentity,
                 documentIdentifier: targetInfo.identity == targetIdentity
@@ -4674,7 +4668,7 @@ final class WorkspaceStore: ObservableObject {
             }
             courseItemMemberships.append(membership)
             if role == .note {
-                noteBackingContentDigestsByItemID[itemID] = sourceSnapshot.sha256
+                noteBackingContentDigestsByItemID[committedItemID] = sourceSnapshot.sha256
             }
             try courseProjectMutationHook(.beforeCourseFileWorkspaceSave)
             _ = try await revalidatedCourseFileTargetInBackground(
@@ -7036,7 +7030,7 @@ final class WorkspaceStore: ObservableObject {
 
         if selectedItemID.map(removedItemIDs.contains) == true {
             selectedItemID = importedItems.first(where: {
-                !$0.isNotebookNote
+                $0.isCourseMaterial
             })?.id
         }
         if activeNotebookItemID.map(
@@ -7194,8 +7188,7 @@ final class WorkspaceStore: ObservableObject {
         let libraryRoot = courseLibraryRootURL else {
             throw CourseOwnedFileError.courseRootUnavailable
         }
-        let role: CourseOwnedFileRole = importedItems[itemIndex]
-            .isNotebookNote ? .note : .material
+        let role = CourseOwnedFileRole(item: importedItems[itemIndex])
         guard let sourceURL = safeCourseOwnedFileURL(
             relativePath: relativePath,
             role: role,
@@ -7377,13 +7370,13 @@ final class WorkspaceStore: ObservableObject {
            confirmManagedCourseMove(
             sourceURL: sourceURL,
             courseID: courseID,
-            role: item.isNotebookNote ? .note : .material,
+            role: CourseOwnedFileRole(item: item),
             verb: ui("移入课程", "Move into Course")
            ) {
             let resolution = courseImportConflictResolution(
                 sourceURL: sourceURL,
                 courseID: courseID,
-                role: item.isNotebookNote ? .note : .material
+                role: CourseOwnedFileRole(item: item)
             )
             guard let resolution else { return }
             Task { @MainActor [weak self] in
@@ -7404,9 +7397,7 @@ final class WorkspaceStore: ObservableObject {
            let courseID = added.first,
            let sourceURL = item.url {
             let movesOwnership = removed.contains(ownerCourseID)
-            let role: CourseOwnedFileRole = item.isNotebookNote
-                ? .note
-                : .material
+            let role = CourseOwnedFileRole(item: item)
             let verb = movesOwnership
                 ? ui("移到另一门课程", "Move to Another Course")
                 : ui(
@@ -7463,9 +7454,7 @@ final class WorkspaceStore: ObservableObject {
            removed == [ownerCourseID],
            let sourceURL = item.url,
            let libraryRoot = courseLibraryRootURL {
-            let role: CourseOwnedFileRole = item.isNotebookNote
-                ? .note
-                : .material
+            let role = CourseOwnedFileRole(item: item)
             let commonTarget = libraryRoot
                 .appendingPathComponent(
                     role.commonDirectoryName,
@@ -7495,9 +7484,7 @@ final class WorkspaceStore: ObservableObject {
             return
         }
         if case .common = item.storage {
-            let role: CourseOwnedFileRole = item.isNotebookNote
-                ? .note
-                : .material
+            let role = CourseOwnedFileRole(item: item)
             if let courseID = added.first,
                let sourceURL = item.url,
                confirmManagedCourseMove(
@@ -8371,7 +8358,7 @@ final class WorkspaceStore: ObservableObject {
 
     var linkedSourcesForActiveNote: [StudyItem] {
         let linkedIDs = Set(linkedSourceIDsForActiveNote)
-        return allItems.filter { linkedIDs.contains($0.id) && !$0.isNotebookNote }
+        return allItems.filter { linkedIDs.contains($0.id) && $0.isCourseMaterial }
     }
 
     var linkedSourceCount: Int {
@@ -8383,7 +8370,7 @@ final class WorkspaceStore: ObservableObject {
         courseID: UUID?
     ) -> [StudyItem] {
         allItems.filter { item in
-            guard item.isNotebookNote == (kind == .note) else {
+            guard courseContextItemMatches(item, kind: kind) else {
                 return false
             }
             if let courseID {
@@ -8393,8 +8380,6 @@ final class WorkspaceStore: ObservableObject {
             switch item.storage {
             case .common:
                 return true
-            case .common:
-                return courseMembershipIndex.courseIDs(for: item.id).isEmpty
             case .courseOwned, .bundledSample:
                 return false
             }
@@ -8413,7 +8398,7 @@ final class WorkspaceStore: ObservableObject {
         _ kind: ContextualContentKind
     ) -> [UUID: Int] {
         var counts: [UUID: Int] = [:]
-        for item in allItems where item.isNotebookNote == (kind == .note) {
+        for item in allItems where courseContextItemMatches(item, kind: kind) {
             for courseID in courseMembershipIndex.courseIDs(for: item.id) {
                 counts[courseID, default: 0] += 1
             }
@@ -8425,14 +8410,10 @@ final class WorkspaceStore: ObservableObject {
     /// sort — root rows only need the number, not the sorted list.
     func contextualBrowserCommonCount(_ kind: ContextualContentKind) -> Int {
         allItems.reduce(into: 0) { count, item in
-            guard item.isNotebookNote == (kind == .note) else { return }
+            guard courseContextItemMatches(item, kind: kind) else { return }
             switch item.storage {
             case .common:
                 count += 1
-            case .common:
-                if courseMembershipIndex.courseIDs(for: item.id).isEmpty {
-                    count += 1
-                }
             case .courseOwned, .bundledSample:
                 break
             }
@@ -8500,13 +8481,13 @@ final class WorkspaceStore: ObservableObject {
         kind: ContextualContentKind
     ) {
         guard let item = item(withID: itemID),
-              item.isNotebookNote == (kind == .note) else {
+              courseContextItemMatches(item, kind: kind) else {
             return
         }
         switch kind {
         case .material:
             let noteID = activeNoteItem?.id
-            select(itemID: itemID)
+            selectMeasured(itemID: itemID, opensNotebook: false)
             showReader = true
             if let noteID {
                 rememberMaterialNotePair(
@@ -8533,7 +8514,8 @@ final class WorkspaceStore: ObservableObject {
         materialID: String,
         noteID: String
     ) {
-        guard item(withID: materialID)?.isNotebookNote == false,
+        guard materialID != noteID,
+              item(withID: materialID)?.isCourseMaterial == true,
               item(withID: noteID)?.isNotebookNote == true else {
             return
         }
@@ -8570,12 +8552,12 @@ final class WorkspaceStore: ObservableObject {
     func prepareMaterialForOpening() {
         guard let note = activeNoteItem else { return }
         if let materialID = noteMaterialPairings[note.id],
-           item(withID: materialID)?.isNotebookNote == false {
+           item(withID: materialID)?.isCourseMaterial == true {
             openContextualItem(materialID, kind: .material)
             return
         }
         let linked = linkedSourceIDs(for: note.id).filter {
-            item(withID: $0)?.isNotebookNote == false
+            item(withID: $0)?.isCourseMaterial == true
         }
         let candidates = linked.isEmpty
             ? courseMembershipIndex.courseIDs(for: note.id).flatMap { courseID in
@@ -9346,8 +9328,9 @@ final class WorkspaceStore: ObservableObject {
                   $0.id == noteItemID && $0.isNotebookNote
               }),
               let source = allItems.first(where: {
-                  $0.id == sourceItemID && !$0.isNotebookNote
+                  $0.id == sourceItemID && $0.isCourseMaterial
               }),
+              source.id != note.id,
               relationItemsBelongToActionScope(
                   noteItemID: note.id,
                   sourceItemID: source.id,
@@ -9683,7 +9666,7 @@ final class WorkspaceStore: ObservableObject {
     }
 
     var navigableItems: [StudyItem] {
-        let materialItems = allItems.filter { !$0.isNotebookNote }
+        let materialItems = allItems.filter(\.isCourseMaterial)
         let query = librarySearch.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !query.isEmpty else { return materialItems }
         return materialItems.filter { itemMatchesLibrarySearch($0, query: query) }
@@ -9694,7 +9677,7 @@ final class WorkspaceStore: ObservableObject {
     }
 
     var selectedMaterialItem: StudyItem? {
-        guard let item = selectedItem, !item.isNotebookNote else { return nil }
+        guard let item = selectedItem, item.isCourseMaterial else { return nil }
         return item
     }
 
@@ -10162,11 +10145,11 @@ final class WorkspaceStore: ObservableObject {
 
     func select(itemID: String?) {
         WeiBeiPerf.measure("workspace.select") {
-            selectMeasured(itemID: itemID)
+            selectMeasured(itemID: itemID, opensNotebook: nil)
         }
     }
 
-    private func selectMeasured(itemID: String?) {
+    private func selectMeasured(itemID: String?, opensNotebook: Bool?) {
         invalidateAgentContext()
         persistCurrentNote()
         notebookCreationDraft = nil
@@ -10174,7 +10157,8 @@ final class WorkspaceStore: ObservableObject {
         if let itemID {
             alignActiveCourse(with: itemID)
         }
-        if let itemID,
+        if opensNotebook != false,
+           let itemID,
            let item = allItems.first(where: { $0.id == itemID && $0.isNotebookNote }) {
             blankNoteMaterializationTask?.cancel()
             blankNoteMaterializationTask = nil
@@ -10256,11 +10240,11 @@ final class WorkspaceStore: ObservableObject {
 
     func setLinkedSourceIDs(_ sourceItemIDs: Set<String>, for noteItemID: String) {
         guard allItems.contains(where: { $0.id == noteItemID && $0.isNotebookNote }) else { return }
-        let validSourceIDs = Set(allItems.lazy.filter { !$0.isNotebookNote }.map(\.id))
+        let validSourceIDs = Set(allItems.lazy.filter(\.isCourseMaterial).map(\.id))
         var relations = NoteSourceRelations(links: noteSourceLinks)
         relations.replaceSources(
             for: noteItemID,
-            sourceItemIDs: sourceItemIDs.intersection(validSourceIDs)
+            sourceItemIDs: sourceItemIDs.intersection(validSourceIDs).subtracting([noteItemID])
         )
         guard relations.links != noteSourceLinks else { return }
         invalidateAgentContext()
@@ -10279,12 +10263,12 @@ final class WorkspaceStore: ObservableObject {
     }
 
     func setLinkedNoteIDs(_ noteItemIDs: Set<String>, for sourceItemID: String) {
-        guard allItems.contains(where: { $0.id == sourceItemID && !$0.isNotebookNote }) else { return }
+        guard allItems.contains(where: { $0.id == sourceItemID && $0.isCourseMaterial }) else { return }
         let validNoteIDs = Set(courseNotebookItems.map(\.id))
         var relations = NoteSourceRelations(links: noteSourceLinks)
         relations.replaceNotes(
             for: sourceItemID,
-            noteItemIDs: noteItemIDs.intersection(validNoteIDs)
+            noteItemIDs: noteItemIDs.intersection(validNoteIDs).subtracting([sourceItemID])
         )
         guard relations.links != noteSourceLinks else { return }
         invalidateAgentContext()
@@ -10561,7 +10545,7 @@ final class WorkspaceStore: ObservableObject {
             }
         }
         guard let itemIndex = importedItems.firstIndex(where: {
-            $0.id == itemID && !$0.isNotebookNote
+            $0.id == itemID && $0.isCourseMaterial
         }),
         courseMaterials.contains(where: { $0.id == itemID }) else {
             return false
@@ -10585,7 +10569,7 @@ final class WorkspaceStore: ObservableObject {
         }
         dismissCourseWorkspace(restoringFocus: false)
         showLibrary = false
-        select(itemID: itemID)
+        selectMeasured(itemID: itemID, opensNotebook: false)
         if layout == .immersiveWriting || layout == .immersiveConversation {
             setLayout(.immersiveReading)
         } else {
@@ -11119,7 +11103,7 @@ final class WorkspaceStore: ObservableObject {
         notebookCreationDraft = nil
         if draft.kind == .currentMaterial,
            let sourceItemID = draft.sourceItemID,
-           let item = allItems.first(where: { $0.id == sourceItemID && !$0.isNotebookNote }) {
+           let item = allItems.first(where: { $0.id == sourceItemID && $0.isCourseMaterial }) {
             createNotebookNote(seed: .currentMaterial(item), title: title)
         } else {
             createNotebookNote(seed: .blank, title: title)
@@ -12593,10 +12577,11 @@ final class WorkspaceStore: ObservableObject {
             showImportLimitExceededAlert()
             return []
         }
-        let isNotebookNote: (URL) -> Bool = { url in
-            guard Self.isMarkdownFile(url) else { return false }
-            return markdownNotePaths?.contains(url.path) ?? markdownAsNotes
+        let importsAsNoteOnly: (URL) -> Bool = { url in
+            Self.isMarkdownFile(url)
+                && (markdownNotePaths?.contains(url.path) ?? markdownAsNotes)
         }
+        let isEditableMarkdown: (URL) -> Bool = Self.isMarkdownFile
 
         if reclassifiesExistingMarkdown || markdownNotePaths != nil {
             persistCurrentNote()
@@ -12605,12 +12590,13 @@ final class WorkspaceStore: ObservableObject {
         var importedIDs: [String] = []
         var didChangeItems = false
         for rawURL in expandedURLs {
+            let importsIntoNotes = importsAsNoteOnly(rawURL)
             let url: URL
             if courseLibraryRootURL != nil {
                 do {
                     url = try copyExternalFileIntoLibrary(
                         rawURL,
-                        isNote: isNotebookNote(rawURL)
+                        isNote: importsIntoNotes
                     )
                 } catch {
                     showTransientNoteStatus(error.localizedDescription)
@@ -12630,7 +12616,8 @@ final class WorkspaceStore: ObservableObject {
                 let nextTitle = url.deletingPathExtension().lastPathComponent
                 let nextSubtitle = url.lastPathComponent
                 let nextKind = StudyItemKind.detect(from: url)
-                let nextRole = isNotebookNote(url)
+                let nextRole = isEditableMarkdown(url)
+                let nextMaterialVisibility = !importsIntoNotes
                 if importedItems[matchingIndex].isNotebookNote != nextRole {
                     roleChanged = true
                 }
@@ -12638,12 +12625,14 @@ final class WorkspaceStore: ObservableObject {
                     || importedItems[matchingIndex].title != nextTitle
                     || importedItems[matchingIndex].subtitle != nextSubtitle
                     || importedItems[matchingIndex].kind != nextKind
-                    || importedItems[matchingIndex].isNotebookNote != nextRole {
+                    || importedItems[matchingIndex].isNotebookNote != nextRole
+                    || importedItems[matchingIndex].appearsInMaterials != nextMaterialVisibility {
                     importedItems[matchingIndex].urlPath = url.path
                     importedItems[matchingIndex].title = nextTitle
                     importedItems[matchingIndex].subtitle = nextSubtitle
                     importedItems[matchingIndex].kind = nextKind
                     importedItems[matchingIndex].isNotebookNote = nextRole
+                    importedItems[matchingIndex].appearsInMaterials = nextMaterialVisibility
                     didChangeItems = true
                 }
                 continue
@@ -12656,7 +12645,8 @@ final class WorkspaceStore: ObservableObject {
                 kind: StudyItemKind.detect(from: url),
                 urlPath: url.path,
                 isSample: false,
-                isNotebookNote: isNotebookNote(url),
+                isNotebookNote: isEditableMarkdown(url),
+                appearsInMaterials: !importsIntoNotes,
                 storage: .common(relativePath: relativePath)
             )
             importedItems.append(item)
@@ -12666,7 +12656,7 @@ final class WorkspaceStore: ObservableObject {
 
         if roleChanged {
             if let selectedItemID,
-               importedItems.first(where: { $0.id == selectedItemID })?.isNotebookNote == true {
+               importedItems.first(where: { $0.id == selectedItemID })?.isCourseMaterial == false {
                 self.selectedItemID = courseMaterials.first?.id
                 readerLocationTitle = selectedMaterialItem.map(displayTitle)
                 restoreCurrentStudyLocation()
@@ -12683,8 +12673,8 @@ final class WorkspaceStore: ObservableObject {
         let importedIDSet = Set(importedIDs)
         let selectedItems = importedItems.filter { importedIDSet.contains($0.id) }
         if selectsFirstImportedItem,
-           let first = selectedItems.first(where: { !$0.isNotebookNote }) {
-            select(itemID: first.id)
+           let first = selectedItems.first(where: \.isCourseMaterial) {
+            selectMeasured(itemID: first.id, opensNotebook: false)
         } else if didChangeItems {
             save()
         }
@@ -13262,7 +13252,7 @@ final class WorkspaceStore: ObservableObject {
         if exact.count == 1 { return exact[0] }
         if exact.count > 1 {
             // Prefer materials over notes when the label says "material".
-            if let material = exact.first(where: { !$0.isNotebookNote }) { return material }
+            if let material = exact.first(where: \.isCourseMaterial) { return material }
             return exact[0]
         }
 
@@ -13272,7 +13262,7 @@ final class WorkspaceStore: ObservableObject {
         }
         if loose.count == 1 { return loose[0] }
         if loose.count > 1 {
-            if let material = loose.first(where: { !$0.isNotebookNote }) { return material }
+            if let material = loose.first(where: \.isCourseMaterial) { return material }
             return loose[0]
         }
 
@@ -13335,7 +13325,7 @@ final class WorkspaceStore: ObservableObject {
             for rawLine in markdown.components(separatedBy: .newlines) {
                 let line = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
                 guard line.contains("来源：") || line.localizedCaseInsensitiveContains("source:") else { continue }
-                guard let source = sourceReferenceItem(from: line), !source.isNotebookNote else { continue }
+                guard let source = sourceReferenceItem(from: line), source.isCourseMaterial else { continue }
                 addNoteSourceLink(noteItemID: note.id, sourceItemID: source.id)
             }
         }
@@ -13346,7 +13336,7 @@ final class WorkspaceStore: ObservableObject {
     private func sanitizeNoteSourceLinks() -> Bool {
         let previous = noteSourceLinks
         let validNoteItemIDs = Set(allItems.lazy.filter(\.isNotebookNote).map(\.id))
-        let validSourceItemIDs = Set(allItems.lazy.filter { !$0.isNotebookNote }.map(\.id))
+        let validSourceItemIDs = Set(allItems.lazy.filter(\.isCourseMaterial).map(\.id))
         var relations = NoteSourceRelations(links: noteSourceLinks)
         relations.sanitize(
             validNoteItemIDs: validNoteItemIDs,
@@ -13409,13 +13399,13 @@ final class WorkspaceStore: ObservableObject {
                 into: [String: StudyLocation]()
             ) { locations, itemEntry in
                 let isCommonMaterial = importedItems.contains { item in
-                    guard item.id == itemEntry.key, !item.isNotebookNote else { return false }
+                    guard item.id == itemEntry.key, item.isCourseMaterial else { return false }
                     if case .common = item.storage { return true }
                     return false
                 }
                 guard validItemIDs.contains(itemEntry.key) || isCommonMaterial,
                       importedItems.contains(where: {
-                          $0.id == itemEntry.key && !$0.isNotebookNote
+                          $0.id == itemEntry.key && $0.isCourseMaterial
                       }) else {
                     return
                 }
@@ -13998,7 +13988,7 @@ final class WorkspaceStore: ObservableObject {
             ) else {
                 return nil
             }
-        case .common, .bundledSample:
+        case .bundledSample:
             return nil
         }
         return AgentFileGrant(
@@ -16247,7 +16237,6 @@ final class WorkspaceStore: ObservableObject {
         access: AgentProjectAccessSnapshot
     ) async -> [StudyAgentVisualAsset] {
         guard let item = selectedMaterialItem,
-              !item.isNotebookNote,
               let source = access.sources.first(where: { $0.item.id == item.id }),
               Self.agentHostToolSourceIsValid(source),
               let sourceURL = source.grants.first(where: Self.agentFileGrantIsValid)?
@@ -17243,7 +17232,7 @@ final class WorkspaceStore: ObservableObject {
         let root = courseRootURL(for: ownerCourseID),
         let candidate = safeCourseOwnedFileURL(
             relativePath: relativePath,
-            role: importedItems[index].isNotebookNote ? .note : .material,
+            role: CourseOwnedFileRole(item: importedItems[index]),
             inside: root
         ) else {
             return forgetGoneImportedItem(at: index)
@@ -17668,6 +17657,8 @@ final class WorkspaceStore: ObservableObject {
                     relativePath:
                         "\(directoryName)/\(observation.relativePath)"
                 )
+                nextItem.isNotebookNote = isNote || nextItem.kind == .markdown
+                nextItem.appearsInMaterials = nextItem.appearsInMaterials ?? !isNote
                 nextItem.contentRevision = revision
                 nextItem.contentDigest = digest
                 nextItem.fileByteCount = observation.byteCount
@@ -17698,7 +17689,8 @@ final class WorkspaceStore: ObservableObject {
                     urlPath: observation.url.path,
                     importedFileIdentity: observation.identity,
                     isSample: false,
-                    isNotebookNote: isNote,
+                    isNotebookNote: isNote || StudyItemKind.detect(from: observation.url) == .markdown,
+                    appearsInMaterials: !isNote,
                     storage: .common(
                         relativePath:
                             "\(directoryName)/\(observation.relativePath)"
@@ -17999,7 +17991,8 @@ final class WorkspaceStore: ObservableObject {
             nextItem.kind = StudyItemKind.detect(from: observation.url)
             nextItem.urlPath = observation.url.path
             nextItem.importedFileIdentity = observation.identity
-            nextItem.isNotebookNote = observation.isNote
+            nextItem.isNotebookNote = observation.isNote || nextItem.kind == .markdown
+            nextItem.appearsInMaterials = nextItem.appearsInMaterials ?? !observation.isNote
             nextItem.contentRevision = nextRevision
             nextItem.contentDigest = nextDigest
             nextItem.fileByteCount = observation.byteCount
@@ -18041,7 +18034,8 @@ final class WorkspaceStore: ObservableObject {
                 urlPath: observation.url.path,
                 importedFileIdentity: observation.identity,
                 isSample: false,
-                isNotebookNote: observation.isNote,
+                isNotebookNote: observation.isNote || StudyItemKind.detect(from: observation.url) == .markdown,
+                appearsInMaterials: !observation.isNote,
                 storage: .courseOwned(
                     ownerCourseID: courseID,
                     relativePath: observation.relativePath
@@ -18228,7 +18222,7 @@ final class WorkspaceStore: ObservableObject {
             let root = courseRootURL(for: ownerCourseID),
             let resolvedURL = safeCourseOwnedFileURL(
                 relativePath: relativePath,
-                role: importedItems[index].isNotebookNote ? .note : .material,
+                role: CourseOwnedFileRole(item: importedItems[index]),
                 inside: root
             ),
             CourseProjectPathPolicy.isSame(resolvedURL, url.resolvingSymlinksInPath()),
@@ -18641,7 +18635,7 @@ final class WorkspaceStore: ObservableObject {
         }
     }
 
-    private func invalidateAgentContext(restoreAgentDraft _: Bool = true) {
+    func invalidateAgentContext(restoreAgentDraft _: Bool = true) {
         agentContextRevision &+= 1
         latestAgentNoteProposal = nil
         lastAgentReplyContextRevision = nil
@@ -18698,7 +18692,6 @@ final class WorkspaceStore: ObservableObject {
         selectionAnchor = nil
         pinnedFloatingAgent = false
     }
-
 
     private func scheduleCourseNoteLoad(_ item: StudyItem) {
         guard let access = verifiedCourseOwnedNoteAccess(
@@ -19081,6 +19074,7 @@ final class WorkspaceStore: ObservableObject {
                     title: item.title,
                     kind: item.kind,
                     isNotebookNote: item.isNotebookNote,
+                    appearsInMaterials: item.appearsInMaterials,
                     courseRelativePath: relativePath,
                     storage: storage,
                     contentRevision: item.contentRevision,
@@ -19097,7 +19091,7 @@ final class WorkspaceStore: ObservableObject {
         let noteItemIDs = Set(
             portableItems.lazy.filter(\.isNotebookNote).map(\.itemID)
         )
-        let materialItemIDs = portableItemIDs.subtracting(noteItemIDs)
+        let materialItemIDs = Set(portableItems.lazy.filter(\.isCourseMaterial).map(\.itemID))
         let rawMemoryState = learningMemoryStates.first {
             $0.scope == .course(courseID)
         }
@@ -19568,7 +19562,11 @@ final class WorkspaceStore: ObservableObject {
             separator: "/",
             omittingEmptySubsequences: false
         )
-        let role: CourseOwnedFileRole = isNotebookNote ? .note : .material
+        let role: CourseOwnedFileRole = components.first
+            == Substring(CourseLibraryLayout.commonMaterialsDirectoryName)
+            || components.first == "共享文稿"
+            ? .material
+            : .note
         let allowedDirectories: Set<Substring> = role == .note
             ? [Substring(role.commonDirectoryName)]
             : [Substring(role.commonDirectoryName), "共享文稿"]
@@ -19846,6 +19844,7 @@ final class WorkspaceStore: ObservableObject {
                     importedFileIdentity: itemIdentity,
                     isSample: false,
                     isNotebookNote: portable.isNotebookNote,
+                    appearsInMaterials: portable.appearsInMaterials,
                     storage: storage,
                     contentRevision: portable.contentRevision,
                     contentDigest: portable.contentDigest,
@@ -20392,7 +20391,8 @@ final class WorkspaceStore: ObservableObject {
             selectionAskThreads = persistedSelectionAskThreads
             selectionAskThreadDefaults.removeObject(forKey: Self.legacySelectionAskThreadsDefaultsKey)
         }
-        if selectedItem?.isNotebookNote == true {
+        if selectedItem?.isCourseMaterial == false,
+           selectedItem?.isNotebookNote == true {
             activeNotebookItemID = selectedItemID
             selectedItemID = nil
         }
@@ -20401,12 +20401,12 @@ final class WorkspaceStore: ObservableObject {
             self.activeNotebookItemID = nil
         }
         materialNotePairings = materialNotePairings.filter {
-            item(withID: $0.key)?.isNotebookNote == false
+            $0.key != $0.value && item(withID: $0.key)?.isCourseMaterial == true
                 && item(withID: $0.value)?.isNotebookNote == true
         }
         noteMaterialPairings = noteMaterialPairings.filter {
-            item(withID: $0.key)?.isNotebookNote == true
-                && item(withID: $0.value)?.isNotebookNote == false
+            $0.key != $0.value && item(withID: $0.key)?.isNotebookNote == true
+                && item(withID: $0.value)?.isCourseMaterial == true
         }
         if let activeCourseID,
            !courses.contains(where: { $0.id == activeCourseID }) {

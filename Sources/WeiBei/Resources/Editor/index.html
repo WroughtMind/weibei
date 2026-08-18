@@ -1344,5 +1344,20 @@
     });
   </script>
   <script src="./editor.js"></script>
+  <script>
+    document.getElementById('editor').addEventListener('pointerdown', function(event) {
+      if (window.weiBeiMarkdownEditable !== true
+          || (event.target instanceof Element && event.target.closest('.ProseMirror'))) return;
+      var editor = document.querySelector('.ProseMirror');
+      if (!editor) return;
+      editor.focus();
+      var range = document.createRange();
+      range.selectNodeContents(editor);
+      range.collapse(false);
+      var selection = window.getSelection();
+      selection.removeAllRanges();
+      selection.addRange(range);
+    });
+  </script>
 </body>
 </html>

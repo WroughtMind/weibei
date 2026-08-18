@@ -3,6 +3,27 @@ import CryptoKit
 import Darwin
 import WeiBeiCore
 
+extension CourseOwnedFileRole {
+    init(item: StudyItem) {
+        switch item.storage {
+        case .courseOwned(_, let path), .common(let path):
+            let directory = path.split(separator: "/").first.map(String.init)
+            self = directory == CourseLibraryLayout.courseMaterialsDirectoryName
+                || directory == CourseLibraryLayout.commonMaterialsDirectoryName
+                || directory == "共享文稿"
+                ? .material : .note
+        case .bundledSample:
+            self = .material
+        }
+    }
+
+    init(portableItem: CoursePortableItem) {
+        self = portableItem.courseRelativePath.split(separator: "/").first
+            == Substring(CourseLibraryLayout.courseMaterialsDirectoryName)
+            ? .material : .note
+    }
+}
+
 struct CourseProjectResolvedBookmark {
     var url: URL
     var isStale: Bool
@@ -922,6 +943,7 @@ actor CourseProjectFileWorker {
                     title: item.title,
                     kind: item.kind,
                     isNotebookNote: item.isNotebookNote,
+                    appearsInMaterials: item.appearsInMaterials,
                     courseRelativePath: relativePath,
                     storage: storage,
                     contentRevision: item.contentRevision,
@@ -938,7 +960,7 @@ actor CourseProjectFileWorker {
         let noteItemIDs = Set(
             portableItems.lazy.filter(\.isNotebookNote).map(\.itemID)
         )
-        let materialItemIDs = portableItemIDs.subtracting(noteItemIDs)
+        let materialItemIDs = Set(portableItems.lazy.filter(\.isCourseMaterial).map(\.itemID))
         let rawMemoryState = workspace.learningMemoryStates?.first {
             $0.scope == .course(courseID)
         }

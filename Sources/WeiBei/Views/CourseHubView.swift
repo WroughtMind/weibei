@@ -809,7 +809,7 @@ struct CourseHubView: View {
                         ?? imported.first(where: \.isNotebookNote)?.id
                 } else {
                     selectedMaterialID = selectedMaterialID
-                        ?? imported.first(where: { !$0.isNotebookNote })?.id
+                        ?? imported.first(where: \.isCourseMaterial)?.id
                 }
             }
         }

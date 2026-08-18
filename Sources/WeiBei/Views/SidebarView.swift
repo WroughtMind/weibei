@@ -8,9 +8,7 @@ struct SidebarView: View {
     @State private var courseEntryPresentation: CourseProjectEntryPresentation?
     @State private var courseToRename: Course?
     @State private var renameCourseTitle = ""
-    @State private var coursePendingDeletion: Course?
     @State private var courseManagementPresentation: CourseManagementPresentation?
-    @State private var courseDeletionError: String?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -24,8 +22,7 @@ struct SidebarView: View {
                 },
                 onManageCourse: { courseID in
                     courseManagementPresentation = CourseManagementPresentation(courseID: courseID)
-                },
-                onDeleteCourse: { coursePendingDeletion = $0 }
+                }
             )
                 .background(WeiBeiTheme.paper)
         }
@@ -62,35 +59,6 @@ struct SidebarView: View {
         .sheet(item: $courseManagementPresentation) { presentation in
             CourseManagementSheet(courseID: presentation.courseID)
                 .environmentObject(store)
-        }
-        .confirmationDialog(
-            ui("删除这门课程？", "Delete this course?"),
-            isPresented: Binding(
-                get: { coursePendingDeletion != nil },
-                set: { if !$0 { coursePendingDeletion = nil } }
-            ),
-            titleVisibility: .visible,
-            presenting: coursePendingDeletion
-        ) { course in
-            Button(role: .destructive) { deleteCourse(course) } label: {
-                Text(ui("删除“\(course.title)”", "Delete “\(course.title)”"))
-            }
-            Button(ui("取消", "Cancel"), role: .cancel) {
-                coursePendingDeletion = nil
-            }
-        } message: { course in
-            Text(courseDeletionMessage(for: course))
-        }
-        .alert(
-            ui("无法删除课程", "Could Not Delete Course"),
-            isPresented: Binding(
-                get: { courseDeletionError != nil },
-                set: { if !$0 { courseDeletionError = nil } }
-            )
-        ) {
-            Button(ui("好", "OK"), role: .cancel) {}
-        } message: {
-            Text(courseDeletionError ?? "")
         }
     }
 
@@ -189,35 +157,6 @@ struct SidebarView: View {
         renameCourseTitle = ""
     }
 
-    private func deleteCourse(_ course: Course) {
-        coursePendingDeletion = nil
-        Task { @MainActor in
-            do {
-                try await store.deleteCourse(course.id)
-            } catch {
-                courseDeletionError = error.localizedDescription
-            }
-        }
-    }
-
-    private func courseDeletionMessage(for course: Course) -> String {
-        guard let root = store.courseRootURL(for: course.id) else {
-            if store.courseHasNeverHadFolder(course.id) {
-                return ui(
-                    "这门旧课程从未有课程文件夹。删除会移除课程和全部关系；外部原文件会留在独立资料或笔记中，可从侧边栏分别删除。",
-                    "This legacy course never had a course folder. Deleting removes the course and all relations; external source files remain as independent materials or notes and can be deleted from the sidebar."
-                )
-            }
-            return ui(
-                "课程文件夹当前不可访问。请先在 Finder 中把它放到当前魏碑资料库里，再重新打开魏碑。",
-                "The course folder is unavailable. WeiBei won’t pretend to delete it; reconnect the real folder with Add Existing Folder first."
-            )
-        }
-        return ui(
-            "会把整个课程文件夹及其中内容移到 macOS 废纸篓，并从魏碑删除：\n\(root.path)",
-            "The entire course folder and its contents will be moved to the macOS Trash and deleted from WeiBei:\n\(root.path)"
-        )
-    }
 }
 
 struct CourseSidebarList: View {
@@ -225,7 +164,6 @@ struct CourseSidebarList: View {
     @ObservedObject var model: CourseSidebarModel
     let onRenameCourse: (Course) -> Void
     let onManageCourse: (UUID) -> Void
-    let onDeleteCourse: (Course) -> Void
 
     var body: some View {
         List {
@@ -244,7 +182,7 @@ struct CourseSidebarList: View {
             if !model.unassignedMaterials.isEmpty {
                 Section {
                     ForEach(model.unassignedMaterials) { row in
-                        itemRow(row, compact: false, accent: nil)
+                        itemRow(row, compact: false, accent: nil, opensNotebook: false)
                     }
                 } header: {
                     SidebarSectionHeader(title: ui("独立资料", "Unassigned Materials"))
@@ -254,7 +192,7 @@ struct CourseSidebarList: View {
             if !model.unassignedNotes.isEmpty {
                 Section {
                     ForEach(model.unassignedNotes) { row in
-                        itemRow(row, compact: false, accent: nil)
+                        itemRow(row, compact: false, accent: nil, opensNotebook: true)
                     }
                 } header: {
                     SidebarSectionHeader(title: ui("独立笔记", "Unassigned Notes"))
@@ -319,17 +257,14 @@ struct CourseSidebarList: View {
             .help(ui("进入课程空间", "Enter course space"))
             .accessibilityLabel(Text(ui("进入课程空间", "Enter course space")))
 
-            Menu { courseContextMenu(for: course) } label: {
-                Image(systemName: "ellipsis")
-                    .frame(width: 22, height: 28)
-            }
-            .menuStyle(.borderlessButton)
-            .menuIndicator(.hidden)
-            .fixedSize()
-            .accessibilityLabel(Text(ui("管理课程", "Manage course")))
-            .help(ui("管理课程", "Manage course"))
         }
         .contextMenu { courseContextMenu(for: course) }
+        .draggable("course:\(course.id.uuidString)")
+        .dropDestination(for: String.self) { values, _ in
+            guard let courseID = draggedCourseID(from: values) else { return false }
+            store.moveCourse(courseID, before: course.id)
+            return true
+        }
         .listRowInsets(EdgeInsets(top: 1, leading: 2, bottom: 1, trailing: 2))
         .listRowBackground(Color.clear)
         .listRowSeparator(.hidden)
@@ -339,7 +274,11 @@ struct CourseSidebarList: View {
                 title: ui("资料", "Materials"),
                 systemImage: "doc.text",
                 count: row.materials.count,
-                accent: accent
+                accent: accent,
+                add: { store.importCourseMaterialsFromPanel(courseID: course.id) },
+                onDropItem: {
+                    store.moveCourseItem($0, before: row.materials.first?.id, intoNotebook: false)
+                }
             )
             .id("\(course.id.uuidString)-materials-header")
             .listRowInsets(EdgeInsets(top: 4, leading: 28, bottom: 0, trailing: 6))
@@ -354,7 +293,7 @@ struct CourseSidebarList: View {
                     .listRowSeparator(.hidden)
             } else {
                 ForEach(row.materials) { item in
-                    itemRow(item, compact: true, accent: accent)
+                    itemRow(item, compact: true, accent: accent, opensNotebook: false)
                 }
             }
 
@@ -362,7 +301,11 @@ struct CourseSidebarList: View {
                 title: ui("笔记", "Notes"),
                 systemImage: "note.text",
                 count: row.notes.count,
-                accent: accent
+                accent: accent,
+                add: { store.importCourseNotesFromPanel(courseID: course.id) },
+                onDropItem: {
+                    store.moveCourseItem($0, before: row.notes.first?.id, intoNotebook: true)
+                }
             )
             .id("\(course.id.uuidString)-notes-header")
             .listRowInsets(EdgeInsets(top: 4, leading: 28, bottom: 0, trailing: 6))
@@ -377,7 +320,7 @@ struct CourseSidebarList: View {
                     .listRowSeparator(.hidden)
             } else {
                 ForEach(row.notes) { item in
-                    itemRow(item, compact: true, accent: accent)
+                    itemRow(item, compact: true, accent: accent, opensNotebook: true)
                 }
             }
         }
@@ -387,10 +330,11 @@ struct CourseSidebarList: View {
     private func itemRow(
         _ row: CourseSidebarItemRow,
         compact: Bool,
-        accent: Color?
+        accent: Color?,
+        opensNotebook: Bool
     ) -> some View {
         let item = row.item
-        let selected = item.isNotebookNote
+        let selected = opensNotebook
             ? model.activeNotebookItemID == item.id
             : model.selectedItemID == item.id
         Group {
@@ -405,7 +349,7 @@ struct CourseSidebarList: View {
                 )
             } else {
                 HStack(spacing: 2) {
-                    Button { open(item) } label: {
+                    Button { open(item, opensNotebook: opensNotebook) } label: {
                         LibraryRow(
                             item: item,
                             resolvedTitle: row.resolvedTitle,
@@ -417,19 +361,20 @@ struct CourseSidebarList: View {
                     }
                     .buttonStyle(.plain)
 
-                    if !item.isSample {
-                        Menu { itemContextMenu(for: row) } label: {
-                            Image(systemName: "ellipsis")
-                                .frame(width: 22, height: compact ? 28 : 32)
-                        }
-                        .menuStyle(.borderlessButton)
-                        .menuIndicator(.hidden)
-                        .fixedSize()
-                        .accessibilityLabel(Text(ui("管理文件", "Manage file")))
-                        .help(ui("管理文件", "Manage file"))
-                    }
                 }
-                .contextMenu { itemContextMenu(for: row) }
+                .contextMenu {
+                    itemContextMenu(for: row, opensNotebook: opensNotebook)
+                }
+                .draggable("item:\(item.id)")
+                .dropDestination(for: String.self) { values, _ in
+                    guard let itemID = draggedItemID(from: values) else { return false }
+                    store.moveCourseItem(
+                        itemID,
+                        before: item.id,
+                        intoNotebook: opensNotebook
+                    )
+                    return true
+                }
             }
         }
         .listRowInsets(EdgeInsets(
@@ -457,33 +402,21 @@ struct CourseSidebarList: View {
 
     @ViewBuilder
     private func courseContextMenu(for course: Course) -> some View {
-        Button(ui("进入课程空间", "Enter course space")) {
-            store.openCourseSpace(course.id)
-        }
-        Button(ui("导入文稿", "Import materials")) {
-            store.importCourseMaterialsFromPanel(courseID: course.id)
-        }
-        Button(ui("导入笔记", "Import notes")) {
-            store.importCourseNotesFromPanel(courseID: course.id)
-        }
         Button(ui("重命名课程", "Rename course")) {
             onRenameCourse(course)
         }
         Button(ui("课程设置…", "Course Settings…")) {
             onManageCourse(course.id)
         }
-        Divider()
-        Button(role: .destructive) {
-            onDeleteCourse(course)
-        } label: {
-            Text(ui("删除课程…", "Delete Course…"))
-        }
     }
 
     @ViewBuilder
-    private func itemContextMenu(for row: CourseSidebarItemRow) -> some View {
+    private func itemContextMenu(
+        for row: CourseSidebarItemRow,
+        opensNotebook: Bool
+    ) -> some View {
         let item = row.item
-        if item.isNotebookNote {
+        if opensNotebook {
             Button(ui("重命名笔记", "Rename Note")) {
                 store.promptRenameNotebookNote(itemID: item.id)
             }
@@ -511,18 +444,18 @@ struct CourseSidebarList: View {
             Button(role: .destructive) {
                 store.confirmMoveItemSourceToTrash(item.id)
             } label: {
-                Text(item.isNotebookNote
+                Text(opensNotebook
                     ? ui("删除笔记…", "Delete Note…")
                     : ui("删除资料…", "Delete Material…"))
             }
         }
     }
 
-    private func open(_ item: StudyItem) {
+    private func open(_ item: StudyItem, opensNotebook: Bool) {
         if item.isSample {
             store.select(itemID: item.id)
             store.showLibrary = false
-        } else if item.isNotebookNote {
+        } else if opensNotebook {
             store.openCourseNote(item.id)
         } else {
             store.openCourseMaterial(item.id)
@@ -531,6 +464,18 @@ struct CourseSidebarList: View {
 
     private func ui(_ chinese: String, _ english: String) -> String {
         model.interfaceLanguage.text(chinese, english)
+    }
+
+    private func draggedCourseID(from values: [String]) -> UUID? {
+        values.first(where: { $0.hasPrefix("course:") }).flatMap {
+            UUID(uuidString: String($0.dropFirst("course:".count)))
+        }
+    }
+
+    private func draggedItemID(from values: [String]) -> String? {
+        values.first(where: { $0.hasPrefix("item:") }).map {
+            String($0.dropFirst("item:".count))
+        }
     }
 }
 
@@ -561,6 +506,8 @@ private struct SidebarCourseGroupHeader: View {
     let systemImage: String
     let count: Int
     let accent: Color
+    var add: (() -> Void)? = nil
+    var onDropItem: ((String) -> Void)? = nil
 
     var body: some View {
         HStack(spacing: 5) {
@@ -574,8 +521,27 @@ private struct SidebarCourseGroupHeader: View {
             Text("\(count)")
                 .font(.system(size: 9.5, weight: .medium, design: .monospaced))
                 .foregroundStyle(WeiBeiTheme.tertiaryInk)
+            if let add {
+                Button(action: add) {
+                    Image(systemName: "plus")
+                        .font(.system(size: 9.5, weight: .semibold))
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(accent.opacity(0.82))
+                .accessibilityLabel(Text("添加\(title)"))
+                .help("添加\(title)")
+            }
         }
         .frame(height: 18)
+        .dropDestination(for: String.self) { values, _ in
+            guard let itemID = values.first(where: { $0.hasPrefix("item:") }).map({
+                String($0.dropFirst("item:".count))
+            }), let onDropItem else {
+                return false
+            }
+            onDropItem(itemID)
+            return true
+        }
     }
 }
 
