@@ -74,7 +74,6 @@ public struct CoursePortableItem: Codable, Equatable, Sendable {
     public var title: String
     public var kind: StudyItemKind
     public var isNotebookNote: Bool
-    public var excerptSourceItemID: String?
     public var appearsInMaterials: Bool?
     public var courseRelativePath: String
     public var storage: CoursePortableItemStorage
@@ -89,7 +88,6 @@ public struct CoursePortableItem: Codable, Equatable, Sendable {
         title: String,
         kind: StudyItemKind,
         isNotebookNote: Bool,
-        excerptSourceItemID: String? = nil,
         appearsInMaterials: Bool? = nil,
         courseRelativePath: String,
         storage: CoursePortableItemStorage,
@@ -103,7 +101,6 @@ public struct CoursePortableItem: Codable, Equatable, Sendable {
         self.title = title
         self.kind = kind
         self.isNotebookNote = isNotebookNote
-        self.excerptSourceItemID = excerptSourceItemID
         self.appearsInMaterials = appearsInMaterials
         self.courseRelativePath = courseRelativePath
         self.storage = storage
@@ -405,11 +402,6 @@ public struct CoursePortableState: Codable, Equatable, Sendable {
             if item.isCourseMaterial {
                 materialItemIDs.insert(item.itemID)
             }
-        }
-        guard keptItems.allSatisfy({
-            $0.excerptSourceItemID.map(materialItemIDs.contains) ?? true
-        }) else {
-            throw CoursePortableStateError.invalidItemStorage
         }
 
         var state = self

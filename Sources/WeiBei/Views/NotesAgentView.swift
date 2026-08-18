@@ -2714,6 +2714,24 @@ private struct AgentSelectionAttachmentPill: View {
     }
 }
 
+private struct FloatingSelectionPreview: View {
+    let text: String
+
+    var body: some View {
+        Text(cleanedText)
+            .font(.system(size: 11.5, weight: .medium))
+            .foregroundStyle(WeiBeiTheme.secondaryInk)
+            .lineLimit(1)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityLabel(Text(text))
+    }
+
+    private var cleanedText: String {
+        text.trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "\n", with: " ")
+    }
+}
+
 struct FloatingSelectionAgentView: View {
     @EnvironmentObject private var store: WorkspaceStore
     @EnvironmentObject private var paneState: WorkspacePaneState
@@ -2729,8 +2747,6 @@ struct FloatingSelectionAgentView: View {
     @State private var feedHeightLocked = false
     @State private var resizeOrigin: FloatingAgentSize?
     @State private var resizeOriginOffset: CGSize?
-    @State private var mode: FloatingSelectionMode = .ask
-    @State private var noteDraft = ""
     @FocusState private var draftFocused: Bool
     @Namespace private var floatingNamespace
 
@@ -2773,8 +2789,6 @@ struct FloatingSelectionAgentView: View {
             // Live reselection → capsule only.
             withAnimation(WeiBeiMotion.panel) {
                 expanded = false
-                mode = .ask
-                noteDraft = ""
                 interaction.keepFloatingSelectionForAnswer = false
                 interaction.activeSelectionThreadID = nil
                 dragOffset = .zero
@@ -2814,7 +2828,7 @@ struct FloatingSelectionAgentView: View {
             }
         }
         .onExitCommand {
-            if showsExpandedBody { withAnimation(WeiBeiMotion.panel) { expanded = false; store.pinnedFloatingAgent = false; store.keepFloatingSelectionForAnswer = false } } else { closeFloatingAgent() }
+            closeFloatingAgent()
         }
     }
 
@@ -2832,13 +2846,19 @@ struct FloatingSelectionAgentView: View {
             .accessibilityLabel(Text(store.ui("就这段提问", "Ask about this passage")))
             .help(store.ui("就这段提问", "Ask about this passage"))
 
+            if store.canOpenSelectedSourceReference {
+                promptSeparator
+                Button(store.ui("来源", "Source")) {
+                    openSourceReference()
+                }
+            }
+
             if store.selectionContext != nil {
                 promptSeparator
-                Button(store.ui("记", "Note")) {
-                    openNoteComposer()
+                Button(store.ui("摘录", "Excerpt")) {
+                    store.appendSelectionToNote()
+                    closeFloatingAgent()
                 }
-                .foregroundStyle(WeiBeiTheme.cinnabar)
-                .accessibilityLabel(Text(store.ui("为这段原文记笔记", "Note this passage")))
             }
         }
         .font(.system(size: 12, weight: .semibold))
@@ -2858,9 +2878,8 @@ struct FloatingSelectionAgentView: View {
     private var expandedBody: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 8) {
-                HStack(spacing: 2) {
-                    modeButton(.ask, title: store.ui("问", "Ask"))
-                    modeButton(.note, title: store.ui("记", "Note"))
+                if let selection = store.selectionContext?.text, !selection.isEmpty {
+                    FloatingSelectionPreview(text: selection)
                 }
                 Spacer(minLength: 4)
                 Button {
@@ -2900,9 +2919,6 @@ struct FloatingSelectionAgentView: View {
                 .frame(height: 1)
                 .padding(.horizontal, 12)
 
-            if mode == .note {
-                FloatingSelectionNoteComposer(draft: $noteDraft) { closeFloatingAgent() }
-            } else {
             if showsFloatingFeed {
                 ScrollView(showsIndicators: false) {
                     // Same order as immersive chat: messages → streaming → thinking.
@@ -2981,7 +2997,6 @@ struct FloatingSelectionAgentView: View {
             }
             .padding(.horizontal, 14)
             .padding(.bottom, 5)
-            }
         }
         .frame(width: panelWidth, alignment: .leading)
         .overlay {
@@ -3152,7 +3167,6 @@ struct FloatingSelectionAgentView: View {
 
     private func openExpandedComposer() {
         withAnimation(WeiBeiMotion.panel) {
-            mode = .ask
             expanded = true
             store.keepFloatingSelectionForAnswer = true
             // Do not invent a prompt or auto-send — only open a normal composer.
@@ -3161,22 +3175,8 @@ struct FloatingSelectionAgentView: View {
         }
     }
 
-    private func openNoteComposer() {
-        withAnimation(WeiBeiMotion.panel) {
-            mode = .note
-            expanded = true
-            store.keepFloatingSelectionForAnswer = true
-        }
-    }
-
-    private func modeButton(_ target: FloatingSelectionMode, title: String) -> some View {
-        Button(title) { withAnimation(WeiBeiMotion.micro) { mode = target } }
-            .font(.system(size: 11, weight: .semibold))
-            .foregroundStyle(mode == target ? WeiBeiTheme.cinnabar : WeiBeiTheme.secondaryInk)
-            .padding(.horizontal, 7)
-            .frame(height: 24)
-            .background(mode == target ? WeiBeiTheme.cinnabarSoft.opacity(0.7) : .clear, in: RoundedRectangle(cornerRadius: 6))
-            .buttonStyle(.plain)
+    private func openSourceReference() {
+        store.openSelectedSourceReference()
     }
 
     private func sendDraft() {

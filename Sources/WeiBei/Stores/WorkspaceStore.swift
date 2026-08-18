@@ -761,7 +761,7 @@ final class WorkspaceStore: ObservableObject {
         var threePaneOrder: [WorkspacePaneRole]
     }
 
-    enum NotebookNoteSeed {
+    private enum NotebookNoteSeed {
         case blank
         case currentMaterial(StudyItem)
     }
@@ -12827,12 +12827,10 @@ final class WorkspaceStore: ObservableObject {
     }
 
     @discardableResult
-    func createNotebookNote(
+    private func createNotebookNote(
         seed: NotebookNoteSeed,
         title rawTitle: String? = nil,
-        initialMarkdown: String? = nil,
-        excerptSourceItemID: String? = nil,
-        activates: Bool = true
+        initialMarkdown: String? = nil
     ) -> StudyItem? {
         let sourceItem: StudyItem?
         let defaultTitle = suggestedNotebookTitle(for: seed)
@@ -12899,7 +12897,6 @@ final class WorkspaceStore: ObservableObject {
                 urlPath: url.path,
                 isSample: false,
                 isNotebookNote: true,
-                excerptSourceItemID: excerptSourceItemID,
                 storage: resolvedStorage
             )
             let markdown = initialMarkdown
@@ -12912,18 +12909,16 @@ final class WorkspaceStore: ObservableObject {
             if let sourceItem {
                 addNoteSourceLink(noteItemID: item.id, sourceItemID: sourceItem.id)
             }
-            if activates {
-                invalidateAgentContext()
-                activeNotebookItemID = item.id
-                noteText = markdown
-                revealRichWritingSurface()
-                focus(.notes)
-            }
+            invalidateAgentContext()
+            activeNotebookItemID = item.id
+            noteText = markdown
+            revealRichWritingSurface()
+            focus(.notes)
             save()
             let status = sourceItem == nil
                 ? ui("已新建空白笔记：\(url.lastPathComponent)", "Created blank note: \(url.lastPathComponent)")
                 : ui("已为当前资料新建笔记：\(url.lastPathComponent)", "Created note from current material: \(url.lastPathComponent)")
-            if activates { showTransientNoteStatus(status) }
+            showTransientNoteStatus(status)
             return item
         } catch {
             showTransientNoteStatus(ui("无法创建笔记：\(error.localizedDescription)", "Could not create note: \(error.localizedDescription)"))
@@ -15902,6 +15897,16 @@ final class WorkspaceStore: ObservableObject {
         }
         shouldRemoveLegacySelectionThreadsAfterSave =
             selectionAskThreadDefaults.object(forKey: Self.legacySelectionAskThreadsDefaultsKey) != nil
+    }
+
+    func appendSelectionToNote() {
+        guard let selectionContext else { return }
+        let block = """
+
+        \(quotedReferenceBlock(text: selectionContext.text, sourceTitle: selectionContext.ownerTitle))
+        """
+        updateNote(noteText + block)
+        focus(.notes)
     }
 
     private func quotedReferenceBlock(text: String, sourceTitle: String) -> String {
@@ -19060,7 +19065,6 @@ final class WorkspaceStore: ObservableObject {
                     title: item.title,
                     kind: item.kind,
                     isNotebookNote: item.isNotebookNote,
-                    excerptSourceItemID: item.excerptSourceItemID,
                     appearsInMaterials: item.appearsInMaterials,
                     courseRelativePath: relativePath,
                     storage: storage,
@@ -19832,7 +19836,6 @@ final class WorkspaceStore: ObservableObject {
                     importedFileIdentity: itemIdentity,
                     isSample: false,
                     isNotebookNote: portable.isNotebookNote,
-                    excerptSourceItemID: portable.excerptSourceItemID,
                     appearsInMaterials: portable.appearsInMaterials,
                     storage: storage,
                     contentRevision: portable.contentRevision,
