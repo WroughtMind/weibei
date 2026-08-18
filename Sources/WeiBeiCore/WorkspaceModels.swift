@@ -730,6 +730,80 @@ public enum SelectionSource: String, Codable, Hashable, Sendable {
     case note
 }
 
+public enum SelectionAnchorKind: String, Codable, Hashable, Sendable {
+    case pdf
+    case html
+    case markdown
+    case text
+}
+
+public struct SelectionSourceRect: Codable, Hashable, Sendable {
+    public var x: Double
+    public var y: Double
+    public var width: Double
+    public var height: Double
+
+    public init(x: Double, y: Double, width: Double, height: Double) {
+        self.x = x
+        self.y = y
+        self.width = width
+        self.height = height
+    }
+}
+
+public struct SelectionSourceAnchor: Codable, Hashable, Sendable {
+    public var kind: SelectionAnchorKind
+    public var pageIndex: Int?
+    public var blockPath: String?
+    public var startOffset: Int
+    public var endOffset: Int
+    public var rects: [SelectionSourceRect]
+    public var contextFingerprint: String
+
+    public init(
+        kind: SelectionAnchorKind,
+        pageIndex: Int? = nil,
+        blockPath: String? = nil,
+        startOffset: Int,
+        endOffset: Int,
+        rects: [SelectionSourceRect] = [],
+        contextFingerprint: String
+    ) {
+        self.kind = kind
+        self.pageIndex = pageIndex
+        self.blockPath = blockPath
+        self.startOffset = startOffset
+        self.endOffset = endOffset
+        self.rects = rects
+        self.contextFingerprint = contextFingerprint
+    }
+
+    public static func locate(
+        kind: SelectionAnchorKind,
+        pageIndex: Int? = nil,
+        selectedText: String,
+        in content: String? = nil
+    ) -> SelectionSourceAnchor {
+        let selected = selectedText as NSString
+        let content = (content ?? selectedText) as NSString
+        let range = content.range(of: selectedText)
+        let start = range.location == NSNotFound ? 0 : range.location
+        let end = start + selected.length
+        let contextStart = max(0, start - 24)
+        let contextEnd = min(content.length, end + 24)
+        let fingerprint = content.substring(
+            with: NSRange(location: contextStart, length: contextEnd - contextStart)
+        )
+        return SelectionSourceAnchor(
+            kind: kind,
+            pageIndex: pageIndex,
+            startOffset: start,
+            endOffset: end,
+            contextFingerprint: SelectionAttachmentMerge.normalized(fingerprint)
+        )
+    }
+}
+
 public struct SelectionContext: Identifiable, Codable, Hashable, Sendable {
     public var id: UUID
     public var text: String
@@ -737,6 +811,7 @@ public struct SelectionContext: Identifiable, Codable, Hashable, Sendable {
     public var ownerTitle: String
     public var itemID: String?
     public var isEditable: Bool
+    public var sourceAnchor: SelectionSourceAnchor?
 
     public init(
         id: UUID = UUID(),
@@ -744,7 +819,8 @@ public struct SelectionContext: Identifiable, Codable, Hashable, Sendable {
         source: SelectionSource,
         ownerTitle: String,
         itemID: String? = nil,
-        isEditable: Bool = true
+        isEditable: Bool = true,
+        sourceAnchor: SelectionSourceAnchor? = nil
     ) {
         self.id = id
         self.text = text
@@ -752,6 +828,7 @@ public struct SelectionContext: Identifiable, Codable, Hashable, Sendable {
         self.ownerTitle = ownerTitle
         self.itemID = itemID
         self.isEditable = isEditable
+        self.sourceAnchor = sourceAnchor
     }
 
     public func label(language: WeiBeiInterfaceLanguage) -> String {
@@ -772,9 +849,50 @@ public struct SelectionContext: Identifiable, Codable, Hashable, Sendable {
     }
 }
 
-/// A durable link between a selected text span the user asked about and the chat turns that followed.
-/// Used for underline marks in the reader/note and for reopening the floating selection agent.
-public struct SelectionAskThread: Identifiable, Codable, Hashable, Sendable {
+public struct SelectionAnnotationEntry: Identifiable, Codable, Hashable, Sendable {
+    public var id: UUID
+    public var text: String
+    public var createdAt: Date
+    public var updatedAt: Date
+
+    public init(id: UUID = UUID(), text: String, createdAt: Date = Date(), updatedAt: Date = Date()) {
+        self.id = id
+        self.text = text
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+    }
+}
+
+public struct SelectionAIAnswerAttachment: Identifiable, Codable, Hashable, Sendable {
+    public var id: UUID
+    public var messageID: UUID
+    public var question: String
+    public var answer: String
+    public var createdAt: Date
+
+    public init(id: UUID = UUID(), messageID: UUID, question: String, answer: String, createdAt: Date = Date()) {
+        self.id = id
+        self.messageID = messageID
+        self.question = question
+        self.answer = answer
+        self.createdAt = createdAt
+    }
+}
+
+public struct SelectionAnnotationPlacement: Identifiable, Codable, Hashable, Sendable {
+    public var id: UUID
+    public var noteItemID: String
+    public var createdAt: Date
+
+    public init(id: UUID = UUID(), noteItemID: String, createdAt: Date = Date()) {
+        self.id = id
+        self.noteItemID = noteItemID
+        self.createdAt = createdAt
+    }
+}
+
+/// One durable source selection with its questions, notes, answer snapshots, and note placements.
+public struct SelectionThread: Identifiable, Codable, Hashable, Sendable {
     public var id: UUID
     public var selectionText: String
     public var source: SelectionSource
@@ -783,6 +901,13 @@ public struct SelectionAskThread: Identifiable, Codable, Hashable, Sendable {
     public var itemID: String?
     /// Conversation message ids (user + assistant) belonging to this selection thread.
     public var messageIDs: [UUID]
+    public var sourceAnchor: SelectionSourceAnchor?
+    public var isExcerpted: Bool
+    public var entries: [SelectionAnnotationEntry]
+    public var answerAttachments: [SelectionAIAnswerAttachment]
+    public var placements: [SelectionAnnotationPlacement]
+    public var customOrder: Int?
+    public var invalidatedAt: Date?
     public var createdAt: Date
     public var updatedAt: Date
 
@@ -793,6 +918,13 @@ public struct SelectionAskThread: Identifiable, Codable, Hashable, Sendable {
         ownerTitle: String,
         itemID: String? = nil,
         messageIDs: [UUID] = [],
+        sourceAnchor: SelectionSourceAnchor? = nil,
+        isExcerpted: Bool = false,
+        entries: [SelectionAnnotationEntry] = [],
+        answerAttachments: [SelectionAIAnswerAttachment] = [],
+        placements: [SelectionAnnotationPlacement] = [],
+        customOrder: Int? = nil,
+        invalidatedAt: Date? = nil,
         createdAt: Date = Date(),
         updatedAt: Date = Date()
     ) {
@@ -802,12 +934,47 @@ public struct SelectionAskThread: Identifiable, Codable, Hashable, Sendable {
         self.ownerTitle = ownerTitle
         self.itemID = itemID
         self.messageIDs = messageIDs
+        self.sourceAnchor = sourceAnchor
+        self.isExcerpted = isExcerpted
+        self.entries = entries
+        self.answerAttachments = answerAttachments
+        self.placements = placements
+        self.customOrder = customOrder
+        self.invalidatedAt = invalidatedAt
         self.createdAt = createdAt
         self.updatedAt = updatedAt
     }
 
     public var normalizedText: String {
         SelectionAttachmentMerge.normalized(selectionText)
+    }
+
+    public var hasAsk: Bool { !messageIDs.isEmpty }
+    public var hasNote: Bool { isExcerpted || !entries.isEmpty }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, selectionText, source, ownerTitle, itemID, messageIDs, sourceAnchor
+        case isExcerpted, entries, answerAttachments, placements, customOrder, invalidatedAt
+        case createdAt, updatedAt
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        selectionText = try container.decode(String.self, forKey: .selectionText)
+        source = try container.decode(SelectionSource.self, forKey: .source)
+        ownerTitle = try container.decode(String.self, forKey: .ownerTitle)
+        itemID = try container.decodeIfPresent(String.self, forKey: .itemID)
+        messageIDs = try container.decodeIfPresent([UUID].self, forKey: .messageIDs) ?? []
+        sourceAnchor = try container.decodeIfPresent(SelectionSourceAnchor.self, forKey: .sourceAnchor)
+        isExcerpted = try container.decodeIfPresent(Bool.self, forKey: .isExcerpted) ?? false
+        entries = try container.decodeIfPresent([SelectionAnnotationEntry].self, forKey: .entries) ?? []
+        answerAttachments = try container.decodeIfPresent([SelectionAIAnswerAttachment].self, forKey: .answerAttachments) ?? []
+        placements = try container.decodeIfPresent([SelectionAnnotationPlacement].self, forKey: .placements) ?? []
+        customOrder = try container.decodeIfPresent(Int.self, forKey: .customOrder)
+        invalidatedAt = try container.decodeIfPresent(Date.self, forKey: .invalidatedAt)
+        createdAt = try container.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
+        updatedAt = try container.decodeIfPresent(Date.self, forKey: .updatedAt) ?? createdAt
     }
 }
 
@@ -1884,7 +2051,9 @@ public struct PersistedWorkspace: Codable, Sendable {
     public var studySessions: [StudySession]?
     public var studySessionScopeMigrationVersion: Int?
     public var activeStudySessionID: UUID?
-    public var selectionAskThreads: [SelectionAskThread]?
+    public var selectionThreads: [SelectionThread]?
+    /// Decode-only field used by builds that stored question-only selection threads.
+    public var selectionAskThreads: [SelectionThread]?
     public var modelName: String?
     public var agentProviderID: String?
     public var agentBaseURL: String?
@@ -1933,7 +2102,8 @@ public struct PersistedWorkspace: Codable, Sendable {
         studySessions: [StudySession]? = nil,
         studySessionScopeMigrationVersion: Int? = nil,
         activeStudySessionID: UUID? = nil,
-        selectionAskThreads: [SelectionAskThread]? = nil,
+        selectionThreads: [SelectionThread]? = nil,
+        selectionAskThreads: [SelectionThread]? = nil,
         modelName: String? = nil,
         agentProviderID: String? = nil,
         agentBaseURL: String? = nil,
@@ -1981,6 +2151,7 @@ public struct PersistedWorkspace: Codable, Sendable {
         self.studySessions = studySessions
         self.studySessionScopeMigrationVersion = studySessionScopeMigrationVersion
         self.activeStudySessionID = activeStudySessionID
+        self.selectionThreads = selectionThreads
         self.selectionAskThreads = selectionAskThreads
         self.modelName = modelName
         self.agentProviderID = agentProviderID
