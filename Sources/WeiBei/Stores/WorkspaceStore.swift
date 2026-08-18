@@ -6996,15 +6996,12 @@ final class WorkspaceStore: ObservableObject {
             }
         }
 
-        let removalDate = Date()
-        for index in selectionThreads.indices {
-            if selectionThreads[index].itemID.map(removedItemIDs.contains) == true {
-                selectionThreads[index].invalidatedAt = removalDate
-                selectionThreads[index].updatedAt = removalDate
+        selectionThreads = selectionThreads.compactMap {
+            thread -> SelectionThread? in
+            if thread.itemID.map(removedItemIDs.contains) == true {
+                return nil
             }
-            selectionThreads[index].placements.removeAll {
-                removedItemIDs.contains($0.noteItemID)
-            }
+            return thread
         }
         if activeSelectionThreadID.map({ id in
             !selectionThreads.contains { $0.id == id }
@@ -7833,7 +7830,12 @@ final class WorkspaceStore: ObservableObject {
                 courseResumePoints[index].noteItemID = nil
             }
         }
-        invalidateSelectionThreads(for: itemID)
+        selectionThreads.removeAll { $0.itemID == itemID }
+        if activeSelectionThreadID.map({ id in
+            !selectionThreads.contains { $0.id == id }
+        }) == true {
+            activeSelectionThreadID = nil
+        }
         if selectionContext?.itemID == itemID { selectionContext = nil }
         selectionAttachments.removeAll { $0.itemID == itemID }
         backNavigationStack.removeAll {
@@ -15840,12 +15842,13 @@ final class WorkspaceStore: ObservableObject {
 
     @discardableResult
     func beginOrReuseSelectionThread(for selection: SelectionContext) -> SelectionThread {
+        let normalized = SelectionAttachmentMerge.normalized(selection.text)
         let itemID = selection.itemID
             ?? (selection.source == .note ? activeNotebookItemID : selectedItemID)
         if let index = selectionThreads.firstIndex(where: {
-            $0.id == selection.id || ($0.source == selection.source
+            $0.source == selection.source
                 && ($0.itemID == nil || $0.itemID == itemID || itemID == nil)
-                && selection.sourceAnchor != nil && $0.sourceAnchor == selection.sourceAnchor)
+                && (selection.sourceAnchor == nil ? $0.normalizedText == normalized : $0.sourceAnchor == selection.sourceAnchor)
         }) {
             selectionThreads[index].updatedAt = Date()
             selectionThreads[index].itemID = selectionThreads[index].itemID ?? itemID
@@ -15876,6 +15879,12 @@ final class WorkspaceStore: ObservableObject {
     func selectionThreads(forItemID itemID: String?) -> [SelectionThread] {
         guard let itemID else { return selectionThreads }
         return selectionThreads.filter { $0.itemID == nil || $0.itemID == itemID }
+    }
+
+    func selectionThread(matchingText text: String) -> SelectionThread? {
+        let normalized = SelectionAttachmentMerge.normalized(text)
+        guard !normalized.isEmpty else { return nil }
+        return selectionThreads.first { $0.normalizedText == normalized }
     }
 
     private func loadLegacySelectionThreadsIfWorkspaceFieldMissing() {

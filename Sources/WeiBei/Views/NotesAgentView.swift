@@ -3647,8 +3647,8 @@ private struct AgentBubble: View {
             } else if message.id == store.lastUsableAgentAnswerID {
                 HStack(spacing: 6) {
                     if store.selectionContext != nil {
-                        Button(store.ui("记入札记", "Save to Note")) {
-                            _ = store.saveSelectionNote("", includeLatestAnswer: true)
+                        Button(store.ui("摘录", "Excerpt")) {
+                            store.appendSelectionToNote()
                         }
                         .buttonStyle(WeiBeiTextActionButtonStyle())
                     }
