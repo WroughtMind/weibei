@@ -12970,14 +12970,7 @@ final class WorkspaceStore: ObservableObject {
         NSPasteboard.general.setString(reference, forType: .string)
     }
 
-    func updateSelection(
-        _ text: String,
-        source: SelectionSource,
-        anchor: CGPoint? = nil,
-        ownerTitle: String? = nil,
-        isEditable: Bool = true,
-        sourceAnchor: SelectionSourceAnchor? = nil
-    ) {
+    func updateSelection(_ text: String, source: SelectionSource, anchor: CGPoint? = nil, ownerTitle: String? = nil, isEditable: Bool = true, sourceAnchor: SelectionSourceAnchor? = nil) {
         guard !courseWorkspacePresented else { return }
         let cleaned = MarkdownSelectionSanitizer.clean(text)
         guard Self.hasMeaningfulSelectionCharacter(cleaned) else {
@@ -13000,8 +12993,7 @@ final class WorkspaceStore: ObservableObject {
             $0.text == boundedText
                 && $0.source == source
                 && $0.ownerTitle == resolvedOwnerTitle
-                && $0.isEditable == isEditable
-                && $0.sourceAnchor == sourceAnchor
+                && $0.isEditable == isEditable && $0.sourceAnchor == sourceAnchor
         } ?? false
 
         // Drag stream: same text, only anchor moves — no spring, no new SelectionContext id.
@@ -13051,8 +13043,7 @@ final class WorkspaceStore: ObservableObject {
             source: source,
             ownerTitle: resolvedOwnerTitle,
             itemID: source == .note ? activeNotebookItemID : selectedItemID,
-            isEditable: isEditable,
-            sourceAnchor: sourceAnchor
+            isEditable: isEditable, sourceAnchor: sourceAnchor
         )
         // Continuous fields update immediately so the capsule tracks like a native selection tool.
         // Only agentSurface show/hide keeps a one-shot panel spring.
@@ -13133,8 +13124,7 @@ final class WorkspaceStore: ObservableObject {
             source: selection.source,
             ownerTitle: selection.ownerTitle,
             itemID: selection.itemID,
-            isEditable: selection.isEditable,
-            sourceAnchor: selection.sourceAnchor
+            isEditable: selection.isEditable, sourceAnchor: selection.sourceAnchor
         )
         let now = Date()
         defer { lastSelectionAttachmentDate = now }
@@ -13196,8 +13186,7 @@ final class WorkspaceStore: ObservableObject {
             source: existing.source,
             ownerTitle: existing.ownerTitle,
             itemID: existing.itemID ?? incoming.itemID,
-            isEditable: incoming.isEditable,
-            sourceAnchor: existing.sourceAnchor ?? incoming.sourceAnchor
+            isEditable: incoming.isEditable, sourceAnchor: existing.sourceAnchor ?? incoming.sourceAnchor
         )
     }
 
@@ -15831,8 +15820,7 @@ final class WorkspaceStore: ObservableObject {
                 source: thread.source,
                 ownerTitle: thread.ownerTitle,
                 itemID: thread.itemID,
-                isEditable: thread.source == .note,
-                sourceAnchor: thread.sourceAnchor
+                isEditable: thread.source == .note, sourceAnchor: thread.sourceAnchor
             )
             if jumpToConversation, isConversationSurfaceVisible,
                let lastID = thread.messageIDs.last {
@@ -15855,9 +15843,7 @@ final class WorkspaceStore: ObservableObject {
         if let index = selectionThreads.firstIndex(where: {
             $0.source == selection.source
                 && ($0.itemID == nil || $0.itemID == itemID || itemID == nil)
-                && (selection.sourceAnchor == nil
-                    ? $0.normalizedText == normalized
-                    : $0.sourceAnchor == selection.sourceAnchor)
+                && (selection.sourceAnchor == nil ? $0.normalizedText == normalized : $0.sourceAnchor == selection.sourceAnchor)
         }) {
             selectionThreads[index].updatedAt = Date()
             selectionThreads[index].itemID = selectionThreads[index].itemID ?? itemID
@@ -15868,8 +15854,7 @@ final class WorkspaceStore: ObservableObject {
             selectionText: selection.text,
             source: selection.source,
             ownerTitle: selection.ownerTitle,
-            itemID: itemID,
-            sourceAnchor: selection.sourceAnchor
+            itemID: itemID, sourceAnchor: selection.sourceAnchor
         )
         selectionThreads.insert(thread, at: 0)
         save()
@@ -16909,8 +16894,7 @@ final class WorkspaceStore: ObservableObject {
                     source: thread.source,
                     ownerTitle: thread.ownerTitle,
                     itemID: thread.itemID,
-                    isEditable: thread.source == .note,
-                    sourceAnchor: thread.sourceAnchor
+                    isEditable: thread.source == .note, sourceAnchor: thread.sourceAnchor
                 ),
             ]
         } ?? []
@@ -19312,9 +19296,7 @@ final class WorkspaceStore: ObservableObject {
             studyLocationsByItemID: locations,
             resumePoint: courseResumePoint(for: courseID),
             pendingNoteDrafts: drafts,
-            selectionThreads: selectionThreads.filter {
-                $0.itemID.map(portableItemIDs.contains) == true
-            }
+            selectionThreads: selectionThreads.filter { $0.itemID.map(portableItemIDs.contains) == true }
         ).validated(expectedCourseID: courseID)
     }
 
@@ -19962,10 +19944,7 @@ final class WorkspaceStore: ObservableObject {
         if let resumePoint = state.resumePoint {
             courseResumePoints.append(resumePoint)
         }
-        selectionThreads.removeAll {
-            $0.itemID.map(previousItemIDs.contains) == true
-                && $0.itemID.map(pathlessItemIDs.contains) != true
-        }
+        selectionThreads.removeAll { $0.itemID.map(previousItemIDs.contains) == true && $0.itemID.map(pathlessItemIDs.contains) != true }
         selectionThreads.append(contentsOf: state.selectionThreads ?? [])
 
         let restoredNoteIDs = Set(

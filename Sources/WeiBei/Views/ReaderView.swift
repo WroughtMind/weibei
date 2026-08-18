@@ -397,12 +397,7 @@ struct ReaderView: View {
     private func selectionAskMarksJSON(for itemID: String) -> String {
         let marks = store.selectionThreads(forItemID: itemID)
             .filter(\.hasAsk)
-            .map { thread -> [String: String] in
-                [
-                    "id": thread.id.uuidString,
-                    "text": thread.selectionText,
-                ]
-            }
+            .map { ["id": $0.id.uuidString, "text": $0.selectionText] }
         // .sortedKeys keeps the output stable for identical mark data; without it
         // dictionary key order can reshuffle and defeat the dedup guard in
         // applySelectionAskMarksIfNeeded, re-firing WebKit IPC on every frame.
@@ -974,17 +969,10 @@ struct ReaderView: View {
                         let title = store.displayTitle(for: item)
                         let ownerTitle = store.ui("\(title)，第 \(selectionPageIndex + 1) 页", "\(title), page \(selectionPageIndex + 1)")
                         store.updateReaderLocationTitle(ownerTitle)
-                        store.updateSelection(
-                            text,
-                            source: .document,
-                            anchor: anchor,
-                            ownerTitle: ownerTitle,
-                            sourceAnchor: .locate(
-                                kind: .pdf,
-                                pageIndex: selectionPageIndex,
-                                selectedText: text
-                            )
+                        let sourceAnchor = SelectionSourceAnchor.locate(
+                            kind: .pdf, pageIndex: selectionPageIndex, selectedText: text
                         )
+                        store.updateSelection(text, source: .document, anchor: anchor, ownerTitle: ownerTitle, sourceAnchor: sourceAnchor)
                     }
                 } else {
                     MaterialReadFailureView(fileName: store.displayTitle(for: item))
@@ -1007,12 +995,7 @@ struct ReaderView: View {
                             }
                         }
                     ) { text, anchor in
-                        store.updateSelection(
-                            text,
-                            source: .document,
-                            anchor: anchor,
-                            sourceAnchor: .locate(kind: .html, selectedText: text)
-                        )
+                        store.updateSelection(text, source: .document, anchor: anchor, sourceAnchor: .locate(kind: .html, selectedText: text))
                     }
                 } else {
                     MaterialReadFailureView(fileName: store.displayTitle(for: item))
@@ -1043,12 +1026,7 @@ struct ReaderView: View {
                     ),
                    let documentText = String(data: data, encoding: .utf8) {
                     PlainTextReaderView(text: documentText, searchQuery: store.effectiveReaderSearch, appearanceMode: store.appearanceMode) { text, anchor in
-                        store.updateSelection(
-                            text,
-                            source: .document,
-                            anchor: anchor,
-                            sourceAnchor: .locate(kind: .text, selectedText: text, in: documentText)
-                        )
+                        store.updateSelection(text, source: .document, anchor: anchor, sourceAnchor: .locate(kind: .text, selectedText: text, in: documentText))
                     }
                 } else {
                     MaterialReadFailureView(fileName: store.displayTitle(for: item))
@@ -1100,12 +1078,7 @@ struct ReaderView: View {
                 }
             }
         ) { text, anchor in
-            store.updateSelection(
-                text,
-                source: .document,
-                anchor: anchor,
-                sourceAnchor: .locate(kind: .markdown, selectedText: text, in: markdown)
-            )
+            store.updateSelection(text, source: .document, anchor: anchor, sourceAnchor: .locate(kind: .markdown, selectedText: text, in: markdown))
         }
     }
 

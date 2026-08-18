@@ -788,20 +788,10 @@ struct NotePaneView: View {
         appearanceMode: store.appearanceMode,
         interfaceLanguage: store.interfaceLanguage,
         onSelectionChange: { text, anchor in
-            store.updateSelection(
-                text,
-                source: .note,
-                anchor: anchor,
-                sourceAnchor: .locate(kind: .markdown, selectedText: text, in: store.noteText)
-            )
+            store.updateSelection(text, source: .note, anchor: anchor, sourceAnchor: .locate(kind: .markdown, selectedText: text, in: store.noteText))
         }, onAskAgentWithSelection: { text, anchor in
             flushNoteDraft(immediate: true)
-            store.updateSelection(
-                text,
-                source: .note,
-                anchor: anchor,
-                sourceAnchor: .locate(kind: .markdown, selectedText: text, in: store.noteText)
-            )
+            store.updateSelection(text, source: .note, anchor: anchor, sourceAnchor: .locate(kind: .markdown, selectedText: text, in: store.noteText))
             store.askSelection()
         }, onActiveHeadingChange: { index in
             activeNoteRailID = index.map { "note-heading-\($0)" }
