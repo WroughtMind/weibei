@@ -879,13 +879,16 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
           }
           window.WeiBeiEditor.setSelectionAskMarks([{
             id: \(json(threadID)),
-            text: \(json(selectedText))
+            text: \(json(selectedText)),
+            ask: true,
+            note: true
           }]);
           const mark = document.querySelector('.weibei-selection-ask-mark');
           if (!mark) throw new Error('selection ask mark was not rendered');
           mark.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
           return {
             markCount: document.querySelectorAll('.weibei-selection-ask-mark').length,
+            noteCount: document.querySelectorAll('.weibei-selection-note-mark').length,
             editorAlive: !!document.querySelector('.ProseMirror')
           };
         })();
@@ -898,12 +901,13 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
             }
             guard let result = value as? [String: Any],
                   (result["markCount"] as? Int ?? 0) >= 1,
+                  (result["noteCount"] as? Int ?? 0) >= 1,
                   result["editorAlive"] as? Bool == true else {
                 self.fail("selection ask mark damaged the editor: \(String(describing: value))")
                 return
             }
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                guard self.activatedSelectionThreadID == threadID else {
+                guard self.activatedSelectionThreadID == threadID + "|ask" else {
                     self.fail("selection ask mark did not send its thread identity")
                     return
                 }
