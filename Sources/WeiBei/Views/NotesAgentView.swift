@@ -1701,6 +1701,7 @@ struct AgentPaneView: View {
     @State private var agentVisibleMessageLimit = AgentPaneView.agentHistoryPageSize
     @State private var isRevealingEarlierAgentHistory = false
     @State private var isAgentHistoryRevealButtonHovered = false
+    @State private var showsGlobalLearningMemory = false
 
     private static let agentHistoryPageSize = AgentHistoryRevealPolicy.pageSize
     private static let paneStructureTransitionDuration: TimeInterval = 0.24
@@ -1994,6 +1995,10 @@ struct AgentPaneView: View {
             }
         } message: { session in
             Text(sessionDeletionMessage(session))
+        }
+        .sheet(isPresented: $showsGlobalLearningMemory) {
+            GlobalLearningMemorySheet()
+                .environmentObject(store)
         }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("stable-document-slot-agent")
@@ -2442,6 +2447,12 @@ struct AgentPaneView: View {
             store.createStudySession(courseID: nil)
         } label: {
             Label(store.ui("新建对话", "New Chat"), systemImage: "plus.bubble")
+        }
+
+        Button {
+            showsGlobalLearningMemory = true
+        } label: {
+            Label(store.ui("全局记忆", "Global Memory"), systemImage: "brain.head.profile")
         }
 
         Divider()
