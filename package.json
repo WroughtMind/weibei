@@ -11,7 +11,8 @@
     "build:editor": "esbuild Sources/WeiBei/WebEditor/src/editor.ts --bundle --format=iife --outfile=Sources/WeiBei/Resources/Editor/editor.js --minify --loader:.woff=file --loader:.woff2=file --loader:.ttf=file --asset-names=fonts/[name]",
     "typecheck:tools": "tsc --noEmit -p tsconfig.json",
     "typecheck:agent": "tsc --noEmit -p tsconfig.agent.json",
-    "typecheck:editor": "tsc --noEmit -p tsconfig.editor.json"
+    "typecheck:editor": "tsc --noEmit -p tsconfig.editor.json",
+    "test:editor": "node --import tsx --test Sources/WeiBei/WebEditor/test/*.test.ts"
   },
   "dependencies": {
     "@milkdown/kit": "7.21.3",

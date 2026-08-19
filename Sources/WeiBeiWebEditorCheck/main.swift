@@ -2720,7 +2720,308 @@ final class UTF8HTMLReaderHarness: NSObject, WKNavigationDelegate {
     }
 }
 
+private struct BenchmarkMetrics: Codable {
+    let transactions: Int
+    let fullSerializations: Int
+    let bridgeMessages: Int
+    let bridgeBytes: Int
+    let decorationNodes: Int
+    let katexRenders: Int
+    let mermaidRenders: Int
+    let imageScans: Int
+    let codeTokenizations: Int
+}
+
+private struct BenchmarkSnapshotTimings: Codable {
+    let samplesMilliseconds: [Double]
+    let minimumMilliseconds: Double
+    let medianMilliseconds: Double
+    let p95Milliseconds: Double
+    let maximumMilliseconds: Double
+
+    init(samples: [Double]) {
+        let sorted = samples.sorted()
+        samplesMilliseconds = samples
+        minimumMilliseconds = sorted.first ?? 0
+        medianMilliseconds = sorted[sorted.count / 2]
+        p95Milliseconds = sorted[min(sorted.count - 1, Int(ceil(Double(sorted.count) * 0.95)) - 1)]
+        maximumMilliseconds = sorted.last ?? 0
+    }
+}
+
+private struct BenchmarkFixtureResult: Codable {
+    let fixture: String
+    let bytes: Int
+    let characters: Int
+    let readyMilliseconds: Double
+    let snapshotBytes: Int
+    let snapshotCharacters: Int
+    let snapshotTimings: BenchmarkSnapshotTimings
+    let readyMetrics: BenchmarkMetrics
+    let metrics: BenchmarkMetrics
+}
+
+private struct BenchmarkReport: Codable {
+    let inputCharacters: Int
+    let selectionChanges: Int
+    let snapshots: Int
+    let fixtures: [BenchmarkFixtureResult]
+}
+
+private enum BenchmarkError: LocalizedError {
+    case failed(String)
+
+    var errorDescription: String? {
+        switch self {
+        case let .failed(message): message
+        }
+    }
+}
+
+private final class EditorBenchmarkHarness: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
+    static let input = String(repeating: "基", count: 100)
+    static let snapshotCount = 7
+
+    private let fixture: String
+    private let markdown: String
+    private let webView: WKWebView
+    private var loadStarted = 0.0
+    private var readyMilliseconds = 0.0
+    private var readyMetrics: BenchmarkMetrics?
+    private var snapshotSamples: [Double] = []
+    private var snapshotMarkdown: String?
+    private var result: Result<BenchmarkFixtureResult, Error>?
+
+    init(fixture: String, markdown: String) {
+        self.fixture = fixture
+        self.markdown = markdown
+        let configuration = WKWebViewConfiguration()
+        let controller = WKUserContentController()
+        controller.addUserScript(WKUserScript(source: """
+        document.documentElement.setAttribute("writingsuggestions", "false");
+        window.initialMarkdown = \(json(markdown));
+        window.weiBeiDocumentID = \(json(fixture));
+        window.weiBeiMarkdownEditable = true;
+        window.weiBeiEditorCheckMode = true;
+        window.weiBeiLocalImageScheme = "weibeiimage";
+        window.weiBeiMarkdownBaseURL = \(json(URL(fileURLWithPath: FileManager.default.currentDirectoryPath).appendingPathComponent("Sources/WeiBei/Resources/Editor/").absoluteString));
+        """, injectionTime: .atDocumentStart, forMainFrameOnly: true))
+        configuration.userContentController = controller
+        webView = WKWebView(frame: CGRect(x: 0, y: 0, width: 960, height: 720), configuration: configuration)
+        super.init()
+        for name in [
+            "editorReady", "markdownChanged", "selectionChanged", "askAgentWithSelection",
+            "wikiLinkActivated", "sourceReferenceActivated", "editorFailure",
+            "imageAttachmentRequested", "imagePickerRequested", "contentHeightChanged",
+            "activeHeadingChanged", "compactPreviewWheel", "appShortcut", "selectionAskMark"
+        ] {
+            controller.add(self, name: name)
+        }
+        webView.navigationDelegate = self
+    }
+
+    func run() throws -> BenchmarkFixtureResult {
+        defer {
+            webView.stopLoading()
+            webView.navigationDelegate = nil
+            let controller = webView.configuration.userContentController
+            controller.removeScriptMessageHandler(forName: "editorReady")
+            controller.removeScriptMessageHandler(forName: "editorFailure")
+        }
+        let indexURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+            .appendingPathComponent("Sources/WeiBei/Resources/Editor/index.html")
+        loadStarted = ProcessInfo.processInfo.systemUptime
+        webView.loadFileURL(indexURL, allowingReadAccessTo: indexURL.deletingLastPathComponent())
+
+        let timeout = Date().addingTimeInterval(60)
+        while result == nil && Date() < timeout {
+            RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.05))
+        }
+        guard let result else {
+            throw BenchmarkError.failed("\(fixture): editor benchmark timed out")
+        }
+        return try result.get()
+    }
+
+    func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+        switch message.name {
+        case "editorReady":
+            guard (message.body as? [String: Any])?["documentID"] as? String == fixture else {
+                finish(.failure(BenchmarkError.failed("\(fixture): editorReady returned the wrong document")))
+                return
+            }
+            readyMilliseconds = (ProcessInfo.processInfo.systemUptime - loadStarted) * 1_000
+            beginActions()
+        case "editorFailure":
+            finish(.failure(BenchmarkError.failed("\(fixture): editor reported a failure: \(message.body)")))
+        default:
+            break
+        }
+    }
+
+    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+        finish(.failure(BenchmarkError.failed("\(fixture): navigation failed: \(error.localizedDescription)")))
+    }
+
+    func webView(
+        _ webView: WKWebView,
+        didFailProvisionalNavigation navigation: WKNavigation!,
+        withError error: Error
+    ) {
+        finish(.failure(BenchmarkError.failed("\(fixture): navigation failed: \(error.localizedDescription)")))
+    }
+
+    private func beginActions() {
+        let script = """
+        (() => {
+          const editor = window.WeiBeiEditor;
+          if (typeof editor?.getCheckMetrics !== 'function' || typeof editor?.resetCheckMetrics !== 'function') {
+            throw new Error('editor check metrics API is unavailable');
+          }
+          const readyMetrics = editor.getCheckMetrics();
+          editor.resetCheckMetrics();
+          if (!editor.selectDocumentEndForCheck() || !editor.typeTextForCheck(\(json(Self.input)))) {
+            throw new Error('benchmark input helpers are unavailable');
+          }
+          for (let index = 0; index < 10; index += 1) {
+            if (!editor.selectFirstTextForCheck('基基') || !editor.selectDocumentEndForCheck()) {
+              throw new Error('benchmark selection helpers are unavailable');
+            }
+          }
+          return JSON.stringify(readyMetrics);
+        })();
+        """
+        webView.evaluateJavaScript(script) { [weak self] value, error in
+            guard let self else { return }
+            guard error == nil,
+                  let raw = value as? String,
+                  let data = raw.data(using: .utf8),
+                  let metrics = try? JSONDecoder().decode(BenchmarkMetrics.self, from: data) else {
+                self.finish(.failure(BenchmarkError.failed("\(self.fixture): benchmark actions failed: \(String(describing: error))")))
+                return
+            }
+            self.readyMetrics = metrics
+            self.waitForInputSettlement(until: Date().addingTimeInterval(10))
+        }
+    }
+
+    private func waitForInputSettlement(until deadline: Date) {
+        webView.evaluateJavaScript("window.WeiBeiEditor.getCheckMetrics().fullSerializations") { [weak self] value, error in
+            guard let self else { return }
+            guard error == nil, let serializations = value as? Int else {
+                self.finish(.failure(BenchmarkError.failed("\(self.fixture): serialization settlement check failed: \(String(describing: error))")))
+                return
+            }
+            if serializations > 0 {
+                self.measureSnapshot()
+            } else if Date() < deadline {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                    self.waitForInputSettlement(until: deadline)
+                }
+            } else {
+                self.finish(.failure(BenchmarkError.failed("\(self.fixture): input serialization did not settle")))
+            }
+        }
+    }
+
+    private func measureSnapshot() {
+        let started = ProcessInfo.processInfo.systemUptime
+        webView.evaluateJavaScript("window.WeiBeiEditor.getMarkdown()") { [weak self] value, error in
+            guard let self else { return }
+            guard error == nil, let markdown = value as? String else {
+                self.finish(.failure(BenchmarkError.failed("\(self.fixture): getMarkdown failed: \(String(describing: error))")))
+                return
+            }
+            if let previous = self.snapshotMarkdown, previous != markdown {
+                self.finish(.failure(BenchmarkError.failed("\(self.fixture): repeated snapshots were not stable")))
+                return
+            }
+            self.snapshotMarkdown = markdown
+            self.snapshotSamples.append((ProcessInfo.processInfo.systemUptime - started) * 1_000)
+            if self.snapshotSamples.count < Self.snapshotCount {
+                self.measureSnapshot()
+            } else {
+                self.readFinalMetrics()
+            }
+        }
+    }
+
+    private func readFinalMetrics() {
+        webView.evaluateJavaScript("JSON.stringify(window.WeiBeiEditor.getCheckMetrics())") { [weak self] value, error in
+            guard let self else { return }
+            guard error == nil,
+                  let raw = value as? String,
+                  let data = raw.data(using: .utf8),
+                  let metrics = try? JSONDecoder().decode(BenchmarkMetrics.self, from: data),
+                  let readyMetrics = self.readyMetrics,
+                  let snapshotMarkdown = self.snapshotMarkdown else {
+                self.finish(.failure(BenchmarkError.failed("\(self.fixture): metrics collection failed: \(String(describing: error))")))
+                return
+            }
+            self.finish(.success(BenchmarkFixtureResult(
+                fixture: self.fixture,
+                bytes: self.markdown.utf8.count,
+                characters: self.markdown.count,
+                readyMilliseconds: self.readyMilliseconds,
+                snapshotBytes: snapshotMarkdown.utf8.count,
+                snapshotCharacters: snapshotMarkdown.count,
+                snapshotTimings: BenchmarkSnapshotTimings(samples: self.snapshotSamples),
+                readyMetrics: readyMetrics,
+                metrics: metrics
+            )))
+        }
+    }
+
+    private func finish(_ result: Result<BenchmarkFixtureResult, Error>) {
+        guard self.result == nil else { return }
+        self.result = result
+    }
+}
+
+private func runBenchmarks() throws {
+    let root = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+    let fixtureRoot = root.appendingPathComponent("Tests/Fixtures/Writing", isDirectory: true)
+    guard let enumerator = FileManager.default.enumerator(
+        at: fixtureRoot,
+        includingPropertiesForKeys: [.isRegularFileKey],
+        options: [.skipsHiddenFiles]
+    ) else {
+        throw BenchmarkError.failed("Writing benchmark fixtures are missing at \(fixtureRoot.path)")
+    }
+    let fixtureURLs = enumerator.compactMap { $0 as? URL }
+        .filter { $0.pathExtension.lowercased() == "md" }
+        .sorted { $0.path < $1.path }
+    guard !fixtureURLs.isEmpty else {
+        throw BenchmarkError.failed("Writing benchmark fixtures contain no Markdown files")
+    }
+
+    var results: [BenchmarkFixtureResult] = []
+    for fixtureURL in fixtureURLs {
+        let markdown = try String(contentsOf: fixtureURL, encoding: .utf8)
+        let relativePath = String(fixtureURL.path.dropFirst(fixtureRoot.path.count + 1))
+        results.append(try EditorBenchmarkHarness(fixture: relativePath, markdown: markdown).run())
+    }
+    let report = BenchmarkReport(
+        inputCharacters: EditorBenchmarkHarness.input.count,
+        selectionChanges: 20,
+        snapshots: EditorBenchmarkHarness.snapshotCount,
+        fixtures: results
+    )
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.sortedKeys]
+    print(String(decoding: try encoder.encode(report), as: UTF8.self))
+}
+
 NSApplication.shared.setActivationPolicy(.prohibited)
+if CommandLine.arguments.dropFirst().contains("--benchmark") {
+    do {
+        try runBenchmarks()
+        exit(0)
+    } catch {
+        fputs("web-editor-benchmark failed: \(error.localizedDescription)\n", stderr)
+        exit(1)
+    }
+}
 if ProcessInfo.processInfo.environment["WEIBEI_HTML_READER_SELF_CHECK_ONLY"] == "1" {
     UTF8HTMLReaderHarness().run()
     print("WeiBei HTML reader check passed")

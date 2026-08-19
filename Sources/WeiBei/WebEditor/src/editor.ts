@@ -42,6 +42,17 @@ import 'prismjs/components/prism-swift';
 import 'prismjs/components/prism-tsx';
 import 'prismjs/components/prism-typescript';
 import 'prismjs/components/prism-yaml';
+import {
+  calloutTypePattern,
+  joinFrontmatter,
+  normalizeHtmlBreaks,
+  splitFrontmatter,
+} from './markdownRules';
+import {
+  addEditorMetric,
+  createEditorCheckMetrics,
+  resetEditorCheckMetrics,
+} from './checkMetrics';
 
 declare global {
   interface Window {
@@ -85,6 +96,7 @@ Prism.languages.stata = {
 Prism.languages.do = Prism.languages.stata;
 
 const bridge = window.webkit?.messageHandlers;
+const checkMetrics = window.weiBeiEditorCheckMode ? createEditorCheckMetrics() : null;
 let editor: Editor;
 let lastMarkdown = '';
 let compositionStartMarkdown: string | null = null;
@@ -131,7 +143,6 @@ const calloutTypes = new Set([
   'bug',
   'todo',
 ]);
-const calloutTypePattern = '[A-Za-z][A-Za-z0-9_-]*';
 const calloutPrefixPattern = '(?:\\s*>\\s*)*\\s*';
 const normalizeInterfaceLanguage = (value: any) => (value === 'en' ? 'en' : 'zh-Hans');
 let currentLanguage: 'en' | 'zh-Hans' = normalizeInterfaceLanguage(window.weiBeiInterfaceLanguage);
@@ -382,7 +393,12 @@ window.addEventListener('error', (event) => showFailure(event.error || event.mes
 window.addEventListener('unhandledrejection', (event) => showFailure(event.reason));
 
 const post = (name: any, body: any = {}) => {
-  bridge?.[name]?.postMessage({ ...body, documentID: currentDocumentID });
+  const handler = bridge?.[name];
+  if (!handler) return;
+  const message = { ...body, documentID: currentDocumentID };
+  addEditorMetric(checkMetrics, 'bridgeMessages');
+  if (checkMetrics) addEditorMetric(checkMetrics, 'bridgeBytes', new TextEncoder().encode(JSON.stringify(message)).byteLength);
+  handler.postMessage(message);
 };
 
 const slashMenuElement = document.createElement('div');
@@ -747,109 +763,7 @@ const rectFromSelection = () => {
   };
 };
 
-const isEscapedMarkdownPosition = (source: any, index: any) => {
-  let slashCount = 0;
-  for (let cursor = index - 1; cursor >= 0 && source[cursor] === '\\'; cursor -= 1) {
-    slashCount += 1;
-  }
-  return slashCount % 2 === 1;
-};
-
-const findUnescapedMarkdownMarker = (source: any, marker: any, from: any) => {
-  let index = source.indexOf(marker, from);
-  while (index >= 0 && isEscapedMarkdownPosition(source, index)) {
-    index = source.indexOf(marker, index + marker.length);
-  }
-  return index;
-};
-
-const mapMarkdownOutsideBackticks = (line: any, transform: any) => {
-  const source = String(line || '');
-  let result = '';
-  let cursor = 0;
-  while (cursor < source.length) {
-    const tick = findUnescapedMarkdownMarker(source, '`', cursor);
-    if (tick < 0) {
-      result += transform(source.slice(cursor));
-      break;
-    }
-    result += transform(source.slice(cursor, tick));
-    const marker = source.slice(tick).match(/^`+/)?.[0] || '`';
-    const close = findUnescapedMarkdownMarker(source, marker, tick + marker.length);
-    if (close < 0) {
-      result += source.slice(tick);
-      break;
-    }
-    result += source.slice(tick, close + marker.length);
-    cursor = close + marker.length;
-  }
-  return result;
-};
-
-const normalizeMarkdownOutputSegment = (text: any) => String(text || '')
-  .replace(/\\\[\\\[/g, '[[')
-  .replace(/\\\]\\\]/g, ']]')
-  .replace(/\\=\\=([^=\n]+?)\\=\\=/g, '==$1==')
-  .replace(/\^\\\[/g, '^[')
-  .replace(/(^|\s)\\#(?=[\p{L}\p{N}_/-])/gu, '$1#')
-  .replace(/\\\$(?=\d)/g, '$')
-  .replace(new RegExp(`^(\\s*(?:>\\s*)*)\\\\(\\[!(?:${calloutTypePattern})\\])`, 'gim'), '$1$2');
-
-const mapMarkdownOutsideCode = (markdown: any, transform: any) => {
-  const parts = String(markdown || '').split(/(\r?\n)/);
-  let inFence = false;
-  let fenceMarker = '';
-  let fenceLength = 0;
-  let result = '';
-  for (let index = 0; index < parts.length; index += 2) {
-    const line = parts[index] || '';
-    const newline = parts[index + 1] || '';
-    const fence = line.match(/^\s*(?:>\s*)*(`{3,}|~{3,})/);
-    if (fence) {
-      if (!inFence) {
-        inFence = true;
-        fenceMarker = fence[1][0];
-        fenceLength = fence[1].length;
-      } else if (fence[1][0] === fenceMarker && fence[1].length >= fenceLength) {
-        inFence = false;
-        fenceLength = 0;
-      }
-      result += line + newline;
-      continue;
-    }
-    if (inFence) {
-      result += line + newline;
-      continue;
-    }
-    const normalizedLine = mapMarkdownOutsideBackticks(line, transform);
-    result += normalizedLine;
-    if (!(normalizedLine.endsWith('\n') && newline)) result += newline;
-  }
-  return result;
-};
-
-// ponytail: line scanner skips code fences/backtick spans; use a Markdown AST only if more rewrites are added.
-const normalizeMarkdownOutput = (markdown: any) => mapMarkdownOutsideCode(markdown, normalizeMarkdownOutputSegment);
-
-const normalizeHtmlBreaksInLine = (line: any) => String(line || '').replace(/<br\s*\/?>[ \t]*/gi, '  \n');
-
-const normalizeHtmlBreaks = (markdown: any) => mapMarkdownOutsideCode(markdown, normalizeHtmlBreaksInLine);
-
-const splitFrontmatter = (markdown: any) => {
-  const source = markdown || '';
-  const match = source.match(/^(---\n[\s\S]*?\n---)(?:\n+|$)/);
-  if (!match) return { frontmatter: '', body: source };
-  return {
-    frontmatter: match[1],
-    body: source.slice(match[0].length),
-  };
-};
-
-const withFrontmatter = (markdown: any) => {
-  const normalized = normalizeMarkdownOutput(markdown);
-  const body = frontmatterBlock ? normalized.replace(/^\n+/, '') : normalized;
-  return frontmatterBlock ? `${frontmatterBlock}\n\n${body}` : body;
-};
+const withFrontmatter = (markdown: any) => joinFrontmatter(frontmatterBlock, markdown);
 
 const frontmatterRows = (frontmatter: any) => String(frontmatter || '')
   .split(/\r?\n/)
@@ -1023,6 +937,7 @@ const resolveMarkdownURL = (src: any) => {
 };
 
 const documentImageSources = (state: any) => {
+  addEditorMetric(checkMetrics, 'imageScans');
   const sources: any[] = [];
   state.doc.descendants((node: any) => {
     if (node.type.name === 'image' && node.attrs.src) sources.push(node.attrs.src);
@@ -1318,6 +1233,7 @@ const mermaidWidget = (source: any) => {
     if (!container.isConnected) return;
     try {
       const id = `weibei-mermaid-${mermaidRenderID += 1}`;
+      addEditorMetric(checkMetrics, 'mermaidRenders');
       const { svg, bindFunctions } = await mermaid.render(id, source, container);
       if (!container.isConnected) return;
       container.innerHTML = svg;
@@ -1485,6 +1401,7 @@ const decorateCodeBlock = (decorations: any, node: any, pos: any) => {
   const language = normalizeLanguage(node.attrs.language || '');
   if (!language || !Prism.languages[language]) return;
   try {
+    addEditorMetric(checkMetrics, 'codeTokenizations');
     addTokenDecorations(decorations, Prism.tokenize(node.textContent, Prism.languages[language]), pos + 1);
   } catch {
     // Prism should not be allowed to break editing.
@@ -1726,6 +1643,7 @@ const upgradeDisplayMath = () => {
       const value = element.dataset.value || '';
       if (element.dataset.weibeiDisplayValue === value) return;
       try {
+        addEditorMetric(checkMetrics, 'katexRenders');
         katex.render(value, element, {
           throwOnError: false,
           strict: false,
@@ -1859,6 +1777,13 @@ const exitTerminalCodeBlock = (view: any, event: any) => {
 };
 
 const weiBeiDialectPlugin = $prose(() => new Plugin({
+  state: {
+    init: () => null,
+    apply: (_transaction, value) => {
+      addEditorMetric(checkMetrics, 'transactions');
+      return value;
+    },
+  },
   view(view) {
     const codeInputAttributeValues = { autocapitalize: 'none', autocorrect: 'off', spellcheck: 'false' };
     const defaultCodeInputAttributes = new Map(Object.keys(codeInputAttributeValues).map((name) => [name, view.dom.getAttribute(name)]));
@@ -2009,6 +1934,7 @@ const weiBeiDialectPlugin = $prose(() => new Plugin({
       synchronizeActiveMermaidPreview(focusedBlock);
 
       state.doc.descendants((node, pos, parent) => {
+        addEditorMetric(checkMetrics, 'decorationNodes');
         const typeName = node.type.name;
         const parentName = parent?.type?.name || '';
 
@@ -2214,6 +2140,7 @@ const setMarkdownInternal = (markdown: any) => {
 
 const getMarkdownInternal = () => {
   ensureEditor();
+  addEditorMetric(checkMetrics, 'fullSerializations');
   return withFrontmatter(editor.action(readMarkdown()));
 };
 
@@ -2501,6 +2428,8 @@ window.WeiBeiEditor = {
 };
 
 if (window.weiBeiEditorCheckMode) {
+  window.WeiBeiEditor.getCheckMetrics = () => ({ ...checkMetrics! });
+  window.WeiBeiEditor.resetCheckMetrics = () => resetEditorCheckMetrics(checkMetrics);
   window.WeiBeiEditor.selectFirstTextForCheck = selectFirstTextForCheck;
   window.WeiBeiEditor.selectedTextForCheck = editorSelectedText;
   window.WeiBeiEditor.typeTextForCheck = typeTextForCheck;
@@ -2581,6 +2510,8 @@ Editor
   .use(listener)
   .config((ctx) => {
     ctx.get(listenerCtx).markdownUpdated((listenerContext, markdown) => {
+      // plugin-listener invokes this callback once for each debounced serializer(doc).
+      addEditorMetric(checkMetrics, 'fullSerializations');
       const normalizedMarkdown = withFrontmatter(markdown);
       if (normalizedMarkdown === lastMarkdown) return;
       lastMarkdown = normalizedMarkdown;
@@ -2604,6 +2535,8 @@ Editor
     syncEditableState();
     installQuietScrollIndicators();
     document.querySelector('#editor-status')?.remove();
+    // plugin-listener serializes the initial document once while its state is created.
+    addEditorMetric(checkMetrics, 'fullSerializations');
     lastMarkdown = getMarkdownInternal();
     document.addEventListener('mouseup', reportSelection);
     document.addEventListener('pointerdown', () => {
