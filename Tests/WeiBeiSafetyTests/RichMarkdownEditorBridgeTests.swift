@@ -1,9 +1,61 @@
+import Foundation
 import SwiftUI
 import WebKit
 import XCTest
 @testable import WeiBei
 
 final class RichMarkdownEditorBridgeTests: XCTestCase {
+    @MainActor
+    func testV2SnapshotUsesSingleDispatchEntry() async throws {
+        let loaded = expectation(description: "test WebView loaded")
+        let navigationProbe = FinalizedMarkdownNavigationProbe { loaded.fulfill() }
+        let webView = WKWebView(frame: .zero)
+        webView.navigationDelegate = navigationProbe
+        webView.loadHTMLString("""
+        <!doctype html>
+        <body></body>
+        <script>
+          window.WeiBeiEditor = {
+            dispatchCommand(command) {
+              document.body.dataset.command = JSON.stringify(command);
+              return true;
+            }
+          };
+        </script>
+        """, baseURL: nil)
+        await fulfillment(of: [loaded], timeout: 3)
+
+        let session = NoteEditingSession(documentID: "note-a", initialRevision: 7)
+        let editor = RichMarkdownEditorView(
+            documentID: "note-a",
+            markdown: .constant("# Note"),
+            command: .constant(nil),
+            editingSession: session,
+            onSelectionChange: { _, _ in },
+            onAskAgentWithSelection: { _, _ in }
+        )
+        let coordinator = editor.makeCoordinator()
+        coordinator.webView = webView
+        coordinator.bindEditingSession()
+
+        XCTAssertTrue(session.requestSnapshot())
+        _ = try await webView.evaluateJavaScript("true")
+        let rawValue = try await webView.evaluateJavaScript("document.body.dataset.command")
+        let raw = try XCTUnwrap(rawValue as? String)
+        let command = try XCTUnwrap(
+            try JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any]
+        )
+        XCTAssertEqual(command["protocolVersion"] as? Int, 2)
+        XCTAssertEqual(command["type"] as? String, "requestSnapshot")
+        XCTAssertEqual(command["documentID"] as? String, "note-a")
+        XCTAssertEqual(command["documentGeneration"] as? Int, 1)
+        XCTAssertEqual(command["minimumRevision"] as? Int, 7)
+        XCTAssertNotNil(command["requestID"] as? String)
+
+        coordinator.unbindEditingSession()
+        withExtendedLifetime(navigationProbe) {}
+    }
+
     @MainActor
     func testFinalizedMarkdownBridgeWithoutAnimationFrames() async throws {
         let loaded = expectation(description: "test WebView loaded")

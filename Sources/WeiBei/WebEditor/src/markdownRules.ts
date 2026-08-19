@@ -30,7 +30,7 @@ const mapMarkdownOutsideBackticks = (line: string, transform: (value: string) =>
     const marker = source.slice(tick).match(/^`+/)?.[0] || '`';
     const close = findUnescapedMarkdownMarker(source, marker, tick + marker.length);
     if (close < 0) {
-      result += source.slice(tick);
+      result += transform(source.slice(tick));
       break;
     }
     result += source.slice(tick, close + marker.length);
@@ -40,6 +40,7 @@ const mapMarkdownOutsideBackticks = (line: string, transform: (value: string) =>
 };
 
 const normalizeMarkdownOutputSegment = (text: string) => String(text || '')
+  .replace(/(?<!\\)`/g, '\\`')
   .replace(/\\\[\\\[/g, '[[')
   .replace(/\\\]\\\]/g, ']]')
   .replace(/\\=\\=([^=\n]+?)\\=\\=/g, '==$1==')
@@ -87,6 +88,33 @@ export const normalizeMarkdownOutput = (markdown: string) => mapMarkdownOutsideC
 const normalizeHtmlBreaksInLine = (line: string) => String(line || '').replace(/<br\s*\/?>[ \t]*/gi, '  \n');
 
 export const normalizeHtmlBreaks = (markdown: string) => mapMarkdownOutsideCode(markdown, normalizeHtmlBreaksInLine);
+
+export type MarkdownSource = 'userDocument' | 'userPaste' | 'agentGenerated' | 'internalFragment';
+
+export const inlineMathInputPattern = /(?<!\\)\$((?!\d)[^$\n]+)\$$/;
+
+const protectCurrencySegment = (text: string) => String(text || '').replace(/(^|[^\\])\$(?=\d)/g, '$1\\$');
+
+/** Prevents remark-math from treating ordinary prices and ranges as formulas. */
+export const protectCurrencyDollars = (markdown: string) => mapMarkdownOutsideCode(markdown, protectCurrencySegment);
+
+const normalizeCompatibleMathDelimiters = (markdown: string) => mapMarkdownOutsideCode(markdown, (text) => text
+  .replace(/\\\[([\s\S]*?)\\\]/g, (_match, source) => `$$\n${String(source).trim()}\n$$`)
+  .replace(/\\\(([^\n]*?)\\\)/g, (_match, source) => `$${String(source).trim()}$`));
+
+const normalizeAgentMath = (markdown: string) => mapMarkdownOutsideCode(markdown, (text) => text
+  .replace(/^[ \t]*\[\s*([^\n\]]*?\\[A-Za-z]+[^\n\]]*?)\s*\][ \t]*$/gm, (_match, source) => `$$\n${String(source).trim()}\n$$`)
+  .replace(/^[ \t]*\$\$([^$\n]+)\$\$[ \t]*$/gm, (_match, source) => `$$\n${String(source).trim()}\n$$`)
+  .replace(/\\hat\s+(\\[A-Za-z]+|[A-Za-z])/g, '\\hat{$1}')
+  .replace(/\\hat(?!\{)(\\[A-Za-z]+|[A-Za-z])/g, '\\hat{$1}'));
+
+/** The one source matrix used by document loads, paste, Agent output, and internal inserts. */
+export const normalizeMarkdownSource = (markdown: string, source: MarkdownSource) => {
+  let normalized = normalizeHtmlBreaks(markdown);
+  if (source === 'userPaste' || source === 'agentGenerated') normalized = normalizeCompatibleMathDelimiters(normalized);
+  if (source === 'agentGenerated') normalized = normalizeAgentMath(normalized);
+  return protectCurrencyDollars(normalized);
+};
 
 export const splitFrontmatter = (markdown: string) => {
   const source = markdown || '';

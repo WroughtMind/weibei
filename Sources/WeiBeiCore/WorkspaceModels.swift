@@ -709,19 +709,23 @@ public enum NoteRenderMode: String, Codable, CaseIterable, Identifiable, Sendabl
 public struct NoteEditorCommand: Identifiable, Hashable {
     public enum Kind: String, Hashable {
         case replaceSelection
+        case selectionCommand
         case applyAgentPatch
         case insertMarkdown
         case scrollToHeading
+        case reloadDocument
     }
 
     public var id: UUID
     public var kind: Kind
     public var markdown: String
+    public var value: String?
 
-    public init(id: UUID = UUID(), kind: Kind, markdown: String) {
+    public init(id: UUID = UUID(), kind: Kind, markdown: String, value: String? = nil) {
         self.id = id
         self.kind = kind
         self.markdown = markdown
+        self.value = value
     }
 }
 

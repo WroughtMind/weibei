@@ -340,6 +340,16 @@ final class WorkspaceStore: ObservableObject {
     }
     @Published private(set) var activeCourseID: UUID?
     @Published var noteText = ""
+    @Published var noteEditorRecoveryConflict: NoteEditorRecoveryConflict?
+    var noteEditorConflictProbeDocumentID: String?
+    var latestNoteEditorSnapshot: (documentID: String, digest: String, baseDigest: String, revision: UInt64)?
+    let noteRecoveryStore = NoteRecoveryStore()
+    lazy var noteEditingSession = NoteEditingSession(
+        documentID: "",
+        onSnapshotAccepted: { [weak self] snapshot in
+            self?.acceptNoteEditorSnapshot(snapshot)
+        }
+    )
     @Published var agentDraft = ""
     @Published var messages: [AgentMessage] = []
     @Published var isAskingAgent = false
@@ -677,7 +687,6 @@ final class WorkspaceStore: ObservableObject {
     @Published private var validatedAgentReplySourceIDs = Set<UUID>()
     private var lastAgentReplyContextRevision: UInt64?
     private var latestAgentLearningUpdateQuestion: String?
-    var stagedNoteDraft: (itemID: String, value: String)?
     private var isRestoringNavigation = false
     private var lastSelectionAttachmentDate: Date?
     private var lastSelectionUpdateDate: Date?
@@ -2466,9 +2475,7 @@ final class WorkspaceStore: ObservableObject {
         )
         return pendingNotePersistenceByItemID.keys.contains {
             noteItemIDs.contains($0)
-        } || stagedNoteDraft.map {
-            noteItemIDs.contains($0.itemID)
-        } == true || courseNoteWritesInFlight.contains {
+        } || courseNoteWritesInFlight.contains {
             noteItemIDs.contains($0)
         } || studySessions.contains {
             $0.courseID == courseID
@@ -4282,9 +4289,6 @@ final class WorkspaceStore: ObservableObject {
         )
         cancelPendingNotePersistence(for: itemID)
         pendingNotePersistenceByItemID.removeValue(forKey: itemID)
-        if stagedNoteDraft?.itemID == itemID {
-            stagedNoteDraft = nil
-        }
     }
 
     func migrateLegacyExternalItemForSelfCheck(
@@ -4478,7 +4482,6 @@ final class WorkspaceStore: ObservableObject {
         let previousCourseStudyLocations = studyLocationsByCourseID
         let previousStudySessions = studySessions
         let previousSelectionAskThreads = selectionAskThreads
-        let previousStagedNoteDraft = stagedNoteDraft
         let previousNotebookCreationDraft = notebookCreationDraft
         let previousNotebookRenameDraft = notebookRenameDraft
         let previousPendingNotePersistence = pendingNotePersistenceByItemID
@@ -4746,7 +4749,6 @@ final class WorkspaceStore: ObservableObject {
                 studyLocationsByCourseID = previousCourseStudyLocations
                 studySessions = previousStudySessions
                 selectionAskThreads = previousSelectionAskThreads
-                stagedNoteDraft = previousStagedNoteDraft
                 notebookCreationDraft = previousNotebookCreationDraft
                 notebookRenameDraft = previousNotebookRenameDraft
                 backNavigationStack = previousBackNavigationStack
@@ -6807,14 +6809,6 @@ final class WorkspaceStore: ObservableObject {
                 $0.courseID == courseID
             }.map(\.itemID)
         )
-        if let stagedNoteDraft,
-           noteItemIDs.contains(stagedNoteDraft.itemID) {
-            self.stagedNoteDraft = nil
-            updateNote(
-                stagedNoteDraft.value,
-                for: stagedNoteDraft.itemID
-            )
-        }
         for itemID in noteItemIDs {
             flushPendingNotePersistence(for: itemID)
         }
@@ -7666,11 +7660,6 @@ final class WorkspaceStore: ObservableObject {
                 itemIDs: [itemID]
             )
         }
-        if stagedNoteDraft?.itemID == itemID,
-           let draft = stagedNoteDraft {
-            stagedNoteDraft = nil
-            updateNote(draft.value, for: itemID)
-        }
         flushPendingNotePersistence(for: itemID)
         while let task = courseNoteWriteTasksByItemID[itemID] {
             await task.value
@@ -7852,7 +7841,6 @@ final class WorkspaceStore: ObservableObject {
         if courseWorkspaceTargetItemID == itemID {
             courseWorkspaceTargetItemID = nil
         }
-        if stagedNoteDraft?.itemID == itemID { stagedNoteDraft = nil }
         if blankNoteDraftMaterialID == itemID {
             blankNoteDraftMaterialID = nil
             pendingBlankNoteText = ""
@@ -10895,27 +10883,10 @@ final class WorkspaceStore: ObservableObject {
         }
     }
 
-    func stageNoteDraft(_ value: String, for itemID: String?) {
-        guard let itemID,
-              !itemIsInRemovingCourse(itemID) else {
-            return
-        }
-        if stagedNoteDraft?.itemID != itemID || stagedNoteDraft?.value != value {
-            invalidateAgentContext()
-        }
-        stagedNoteDraft = (itemID, value)
-    }
-
-    func clearStagedNoteDraft(for itemID: String?, matching value: String? = nil) {
-        guard let itemID, let stagedNoteDraft, stagedNoteDraft.itemID == itemID else { return }
-        if let value, stagedNoteDraft.value != value { return }
-        self.stagedNoteDraft = nil
-    }
-
-    private func flushStagedNoteDraftForAgentContext() {
-        guard let stagedNoteDraft, stagedNoteDraft.itemID == activeNoteItemID else { return }
-        self.stagedNoteDraft = nil
-        updateNote(stagedNoteDraft.value, for: stagedNoteDraft.itemID)
+    func waitForBlankNoteMaterialization() async -> Bool {
+        await blankNoteMaterializationTask?.value
+        return blankNoteDraftMaterialID == nil
+            || noteText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     func updateNote(_ value: String, for itemID: String?) {
@@ -15908,14 +15879,14 @@ final class WorkspaceStore: ObservableObject {
 
         \(quotedReferenceBlock(text: selectionContext.text, sourceTitle: selectionContext.ownerTitle))
         """
-        updateNote(noteText + block)
+        noteEditorCommand = NoteEditorCommand(kind: .insertMarkdown, markdown: block)
         focus(.notes)
     }
 
     func applyLastAgentAnswerToNote() {
         guard let content = lastAgentAnswerContentForCurrentNote() else { return }
         let block = "\n\n\(noteBlockForAgentAnswer(content))"
-        updateNote(noteText + block)
+        noteEditorCommand = NoteEditorCommand(kind: .insertMarkdown, markdown: block)
         focus(.notes)
     }
 
@@ -15991,7 +15962,6 @@ final class WorkspaceStore: ObservableObject {
         visibleQuestionOverride: String? = nil,
         questionOverride: String? = nil
     ) {
-        flushStagedNoteDraftForAgentContext()
         let question = (questionOverride ?? agentDraft)
             .trimmingCharacters(in: .whitespacesAndNewlines)
         guard agentRequestTask == nil,
@@ -16263,7 +16233,7 @@ final class WorkspaceStore: ObservableObject {
             agentRequestTask = nil
             return
         }
-        flushStagedNoteDraftForAgentContext()
+        _ = try? await noteEditingSession.snapshot()
         let question = (questionOverride ?? agentDraft)
             .trimmingCharacters(in: .whitespacesAndNewlines)
         guard !question.isEmpty, !isAskingAgent else {
@@ -18480,9 +18450,6 @@ final class WorkspaceStore: ObservableObject {
             selectionAskThreads[index].itemID = newID
         }
 
-        if stagedNoteDraft?.itemID == oldID, let value = stagedNoteDraft?.value {
-            stagedNoteDraft = (newID, value)
-        }
         if notebookCreationDraft?.sourceItemID == oldID {
             notebookCreationDraft?.sourceItemID = newID
         }
@@ -18839,8 +18806,7 @@ final class WorkspaceStore: ObservableObject {
         let itemID = item.id
         // 失焦会先冲刷输入。若仍有草稿或写入任务，说明落盘尚未完成，
         // 继续保留本地内容，不用一次刷新制造数据丢失。
-        guard stagedNoteDraft?.itemID != itemID,
-              notesByItemID[itemID] == nil,
+        guard notesByItemID[itemID] == nil,
               pendingNotePersistenceByItemID[itemID] == nil,
               !courseNoteWritesInFlight.contains(itemID),
               courseNoteWriteTasksByItemID[itemID] == nil else {
@@ -20965,6 +20931,9 @@ final class WorkspaceStore: ObservableObject {
             ))
             return false
         }
+        let noteEditorSaveReceipt = makeNoteEditorWorkspaceSaveReceipt(
+            prepared.request.workspace
+        )
         let result = await courseProjectFileWorker.persistWorkspace(
             prepared.request
         )
@@ -21125,6 +21094,7 @@ final class WorkspaceStore: ObservableObject {
             shouldRemoveLegacySelectionAskThreadsAfterSave = false
         }
         publishOutcome = "completed"
+        noteEditorDidPersistWorkspace(noteEditorSaveReceipt)
         return true
     }
 
@@ -21284,6 +21254,7 @@ final class WorkspaceStore: ObservableObject {
                 adaptImportedDocumentColors: adaptImportedDocumentColors,
                 interfaceLanguageRaw: interfaceLanguage.rawValue
             )
+            let noteEditorSaveReceipt = makeNoteEditorWorkspaceSaveReceipt(snapshot)
             do {
                 let data = try JSONEncoder().encode(snapshot)
                 try workspaceSnapshotWriter(data, storageURL)
@@ -21311,6 +21282,7 @@ final class WorkspaceStore: ObservableObject {
                     )
                     shouldRemoveLegacySelectionAskThreadsAfterSave = false
                 }
+                noteEditorDidPersistWorkspace(noteEditorSaveReceipt)
                 return true
             } catch {
                 do {

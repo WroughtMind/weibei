@@ -295,7 +295,9 @@ private struct GlobalFloatingSelectionLayer: View {
             topInset: Double(WeiBeiMetric.topBarHeight),
             surfaceHalfWidth: expanded
                 ? SelectionFloatingAgentPlacement.expandedHalfWidth
-                : SelectionFloatingAgentPlacement.compactHalfWidth,
+                : (store.selectionContext?.isReplaceableNoteSelection == true && interaction.noteSelectionFormatting != nil
+                    ? 126
+                    : SelectionFloatingAgentPlacement.compactHalfWidth),
             prefersAnchorCenter: !expanded
         )
         return CGPoint(x: point.x, y: point.y)

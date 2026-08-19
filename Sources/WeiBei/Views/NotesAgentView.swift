@@ -448,16 +448,11 @@ struct NotePaneView: View {
     @EnvironmentObject private var paneState: WorkspacePaneState
     @State private var noteTabTitleDraft = ""
     @State private var editingNoteTabTitle = false
-    /// Local typing buffer so each keystroke does not republish WorkspaceStore.noteText to the whole tree.
-    @State private var draftNoteText = ""
-    @State private var draftNoteItemID: String?
-    @State private var isApplyingExternalNote = false
-    @State private var noteDraftFlushTask: Task<Void, Never>?
+    @State private var editorRecoveryGeneration = 0
+    @State private var noteOutline: [NoteEditorOutlineItem] = []
     @State private var activeNoteRailID: String?
     var showsPaneHeader = true
     var reorderRole: WorkspacePaneRole? = nil
-
-    private let noteDraftFlushDelayNanoseconds: UInt64 = 220_000_000
 
     var body: some View {
         GeometryReader { geometry in
@@ -481,6 +476,26 @@ struct NotePaneView: View {
                             .padding(.horizontal, 14)
                             .padding(.bottom, 8)
                             .transition(.opacity)
+                    }
+
+                    if store.noteEditorRecoveryConflict != nil {
+                        HStack(spacing: 12) {
+                            Text(store.ui(
+                                "这份笔记在应用外也发生了修改。",
+                                "This note was also changed outside WeiBei."
+                            ))
+                            Spacer(minLength: 8)
+                            Button(store.ui("使用磁盘版本", "Use Disk Version")) {
+                                Task { await store.resolveNoteEditorRecoveryConflict(useDisk: true) }
+                            }
+                            Button(store.ui("恢复魏碑中的内容", "Restore WeiBei Content")) {
+                                Task { await store.resolveNoteEditorRecoveryConflict(useDisk: false) }
+                            }
+                        }
+                        .font(.caption)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 7)
+                        .background(WeiBeiTheme.paperRaised)
                     }
 
                     noteBody
@@ -517,33 +532,16 @@ struct NotePaneView: View {
                 .allowsHitTesting(false)
         }
         .animation(WeiBeiMotion.panel, value: store.notebookCreationDraft?.id)
-        .onAppear {
-            pullExternalNoteText()
-        }
         .onDisappear {
-            flushNoteDraft(immediate: true)
+            store.noteEditingSession.requestSnapshot()
         }
-        .onChange(of: store.activeNoteItemID) { previousID, _ in
+        .onChange(of: store.activeNoteItemID) { _, _ in
             editingNoteTabTitle = false
-            if let previousID, previousID == draftNoteItemID {
-                flushNoteDraft(for: previousID, immediate: true)
-            }
-            pullExternalNoteText()
-        }
-        .onChange(of: store.noteText) { _, newValue in
-            guard !isApplyingExternalNote else { return }
-            // External writers (agent insert, wiki open, import) win over a stale draft.
-            if newValue != draftNoteText {
-                noteDraftFlushTask?.cancel()
-                noteDraftFlushTask = nil
-                draftNoteText = newValue
-                draftNoteItemID = store.activeNoteItemID
-                store.clearStagedNoteDraft(for: draftNoteItemID)
-            }
+            noteOutline = []
         }
         .onChange(of: paneState.focusedPane) { _, pane in
             if pane != .notes {
-                flushNoteDraft(immediate: true)
+                store.noteEditingSession.requestSnapshot()
             }
         }
         .accessibilityElement(children: .contain)
@@ -706,50 +704,18 @@ struct NotePaneView: View {
         }
     }
 
-    private var noteMarkdownBinding: Binding<String> {
-        Binding(
-            get: { draftNoteText },
-            set: { value in
-                guard value != draftNoteText else { return }
-                draftNoteText = value
-                draftNoteItemID = store.activeNoteItemID
-                if draftNoteItemID == nil {
-                    store.updateNote(value)
-                    return
-                }
-                store.stageNoteDraft(value, for: draftNoteItemID)
-                scheduleNoteDraftFlush()
-            }
-        )
-    }
-
     private var noteRailItems: [ContentRailItem] {
-        let lines = draftNoteText.components(separatedBy: .newlines)
-        let headings = lines.enumerated().compactMap { offset, line -> (line: Int, level: Int, title: String)? in
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
-            let level = trimmed.prefix { $0 == "#" }.count
-            guard (1...4).contains(level) else { return nil }
-            let markerEnd = trimmed.index(trimmed.startIndex, offsetBy: level)
-            guard markerEnd < trimmed.endIndex, trimmed[markerEnd].isWhitespace else { return nil }
-            let title = trimmed[markerEnd...].trimmingCharacters(in: .whitespaces)
-            guard !title.isEmpty else { return nil }
-            return (offset, level, title)
-        }
-
-        return headings.enumerated().map { index, heading in
-            let nextLine = index + 1 < headings.count ? headings[index + 1].line : lines.count
-            let excerpt = lines[(heading.line + 1)..<max(heading.line + 1, nextLine)]
-                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-                .filter { !$0.isEmpty }
-                .joined(separator: " ")
-            let position = lines.count > 1 ? CGFloat(heading.line) / CGFloat(lines.count - 1) : 0
+        noteOutline.map { heading in
             return ContentRailItem(
-                id: "note-heading-\(index)",
-                position: position,
-                level: heading.level - 1,
+                id: heading.id,
+                position: CGFloat(heading.position),
+                level: max(heading.level - 1, 0),
                 title: heading.title,
-                excerpt: railPreviewText(excerpt),
-                metadata: store.ui("第 \(index + 1) / \(headings.count) 节 · H\(heading.level)", "Section \(index + 1) / \(headings.count) · H\(heading.level)")
+                excerpt: "",
+                metadata: store.ui(
+                    "第 \(heading.index + 1) / \(noteOutline.count) 节 · H\(heading.level)",
+                    "Section \(heading.index + 1) / \(noteOutline.count) · H\(heading.level)"
+                )
             )
         }
     }
@@ -774,12 +740,12 @@ struct NotePaneView: View {
     }
 
     private var richEditor: some View {
-        let itemID = store.activeNoteItemID
-        return RichMarkdownEditorView(documentID: itemID ?? "", markdown: noteMarkdownBinding, command: Binding(get: {
+        RichMarkdownEditorView(documentID: store.activeNoteEditorDocumentID, markdown: .constant(store.noteText), command: Binding(get: {
             store.noteEditorCommand
         }, set: { value in
             store.noteEditorCommand = value
         }),
+        editingSession: store.noteEditingSession,
         isEditable: true,
         isFocused: paneState.focusedPane == .notes,
         focusRequest: paneState.focusRequest,
@@ -789,70 +755,34 @@ struct NotePaneView: View {
         interfaceLanguage: store.interfaceLanguage,
         onSelectionChange: { text, anchor in
             store.updateSelection(text, source: .note, anchor: anchor)
+        }, onSelectionFormattingChange: { formatting in
+            store.interaction.noteSelectionFormatting = formatting
         }, onAskAgentWithSelection: { text, anchor in
-            flushNoteDraft(immediate: true)
+            store.noteEditingSession.requestSnapshot()
             store.updateSelection(text, source: .note, anchor: anchor)
             store.askSelection()
         }, onActiveHeadingChange: { index in
             activeNoteRailID = index.map { "note-heading-\($0)" }
+        }, onOutlineChange: { items in
+            noteOutline = items
         }, onWikiLink: { title in
-            flushNoteDraft(immediate: true)
+            store.noteEditingSession.requestSnapshot()
             store.openOrCreateWikiNote(title: title)
         }, onSourceReference: { reference in
-            flushNoteDraft(immediate: true)
+            store.noteEditingSession.requestSnapshot()
             store.openSourceReference(reference)
         }, onAppShortcut: { key, modifiers in
             if modifiers.contains(.command) {
-                flushNoteDraft(immediate: true)
+                store.noteEditingSession.requestSnapshot()
             }
             return store.handleAppShortcut(key: key, modifiers: modifiers)
+        }, onRenderFailure: {
+            store.noteEditingSession.invalidateBridgeGeneration()
+            editorRecoveryGeneration &+= 1
+            Task { await store.reconcileActiveNoteEditorWithBackingFile() }
         })
+        .id("\(store.activeNoteEditorDocumentID):\(editorRecoveryGeneration)")
         .background(WeiBeiTheme.paper)
-    }
-
-    private func pullExternalNoteText() {
-        isApplyingExternalNote = true
-        draftNoteItemID = store.activeNoteItemID
-        draftNoteText = store.noteText
-        store.clearStagedNoteDraft(for: draftNoteItemID)
-        isApplyingExternalNote = false
-    }
-
-    private func scheduleNoteDraftFlush() {
-        noteDraftFlushTask?.cancel()
-        let itemID = draftNoteItemID ?? store.activeNoteItemID
-        let snapshot = draftNoteText
-        noteDraftFlushTask = Task { @MainActor in
-            try? await Task.sleep(nanoseconds: noteDraftFlushDelayNanoseconds)
-            guard !Task.isCancelled else { return }
-            guard draftNoteText == snapshot else { return }
-            flushNoteDraft(for: itemID, immediate: true)
-        }
-    }
-
-    private func flushNoteDraft(immediate: Bool = false) {
-        flushNoteDraft(for: draftNoteItemID ?? store.activeNoteItemID, immediate: immediate)
-    }
-
-    private func flushNoteDraft(for itemID: String?, immediate: Bool) {
-        noteDraftFlushTask?.cancel()
-        noteDraftFlushTask = nil
-        guard let itemID else {
-            store.updateNote(draftNoteText)
-            return
-        }
-        let value = (itemID == draftNoteItemID) ? draftNoteText : draftNoteText
-        defer { store.clearStagedNoteDraft(for: itemID, matching: value) }
-        if itemID == store.activeNoteItemID {
-            if store.noteText == value { return }
-            isApplyingExternalNote = true
-            store.updateNote(value, for: itemID)
-            isApplyingExternalNote = false
-            return
-        }
-        // Inactive flush after note switch.
-        store.updateNote(value, for: itemID)
-        _ = immediate
     }
 
 }
@@ -1230,12 +1160,16 @@ struct MarkdownSourceEditor: NSViewRepresentable {
             switch command.kind {
             case .replaceSelection:
                 replaceSelection(with: command.markdown, in: textView)
+            case .selectionCommand:
+                break
             case .applyAgentPatch:
                 applyPatch(command.markdown, in: textView)
             case .insertMarkdown:
                 insertMarkdown(command.markdown, in: textView)
             case .scrollToHeading:
                 scrollToHeading(command.markdown, in: textView)
+            case .reloadDocument:
+                textView.string = command.markdown
             }
         }
 
@@ -2747,7 +2681,10 @@ struct FloatingSelectionAgentView: View {
     @State private var feedHeightLocked = false
     @State private var resizeOrigin: FloatingAgentSize?
     @State private var resizeOriginOffset: CGSize?
+    @State private var linkDraft = ""
+    @State private var showsLinkEditor = false
     @FocusState private var draftFocused: Bool
+    @FocusState private var linkFocused: Bool
     @Namespace private var floatingNamespace
 
     var body: some View {
@@ -2838,6 +2775,16 @@ struct FloatingSelectionAgentView: View {
     }
 
     private var promptBody: some View {
+        Group {
+            if showsNoteFormattingToolbar {
+                noteFormattingToolbar
+            } else {
+                defaultPromptBody
+            }
+        }
+    }
+
+    private var defaultPromptBody: some View {
         HStack(spacing: 0) {
             Button(store.ui("问", "Ask")) {
                 openExpandedComposer()
@@ -2866,6 +2813,107 @@ struct FloatingSelectionAgentView: View {
         .padding(.horizontal, 12)
         .frame(height: 34)
         .fixedSize()
+    }
+
+    private var showsNoteFormattingToolbar: Bool {
+        store.selectionContext?.isReplaceableNoteSelection == true
+            && interaction.noteSelectionFormatting != nil
+    }
+
+    private var noteFormattingToolbar: some View {
+        HStack(spacing: 2) {
+            formattingButton("bold", icon: "bold", label: store.ui("加粗", "Bold"))
+            formattingButton("italic", icon: "italic", label: store.ui("斜体", "Italic"))
+            formattingButton("highlight", icon: "highlighter", label: store.ui("高亮", "Highlight"))
+            Button {
+                linkDraft = interaction.noteSelectionFormatting?.linkTarget ?? ""
+                showsLinkEditor = true
+                DispatchQueue.main.async { linkFocused = true }
+            } label: {
+                Image(systemName: "link")
+                    .foregroundStyle(isFormattingActive("link") ? WeiBeiTheme.cinnabar : WeiBeiTheme.secondaryInk)
+                    .frame(width: 24, height: 28)
+            }
+            .buttonStyle(.plain)
+            .help(store.ui("链接", "Link"))
+            .accessibilityLabel(Text(store.ui("链接", "Link")))
+            .popover(isPresented: $showsLinkEditor, arrowEdge: .bottom) {
+                linkEditor
+            }
+
+            formattingButton("inlineCode", icon: "chevron.left.forwardslash.chevron.right", label: store.ui("行内代码", "Inline code"))
+            formattingButton("inlineMath", icon: "function", label: store.ui("转为行内公式", "Convert to formula"), enabled: interaction.noteSelectionFormatting?.canConvertToMath == true)
+            formattingButton("quote", icon: "text.quote", label: store.ui("引用", "Quote"), active: interaction.noteSelectionFormatting?.blockType == "blockquote")
+
+            promptSeparator
+            Button(store.ui("问", "Ask")) { openExpandedComposer() }
+                .foregroundStyle(WeiBeiTheme.link)
+                .accessibilityLabel(Text(store.ui("就这段提问", "Ask about this passage")))
+                .help(store.ui("就这段提问", "Ask about this passage"))
+        }
+        .font(.system(size: 12, weight: .semibold))
+        .buttonStyle(.plain)
+        .padding(.horizontal, 8)
+        .frame(height: 34)
+        .fixedSize()
+    }
+
+    private func formattingButton(
+        _ action: String,
+        icon: String,
+        label: String,
+        enabled: Bool = true,
+        active: Bool? = nil
+    ) -> some View {
+        Button { runSelectionCommand(action) } label: {
+            Image(systemName: icon)
+                .foregroundStyle((active ?? isFormattingActive(action)) ? WeiBeiTheme.cinnabar : WeiBeiTheme.secondaryInk)
+                .frame(width: 24, height: 28)
+        }
+        .buttonStyle(.plain)
+        .disabled(!enabled)
+        .help(label)
+        .accessibilityLabel(Text(label))
+    }
+
+    private var linkEditor: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(store.ui("链接地址", "Link address"))
+                .font(.system(size: 12, weight: .semibold))
+            TextField("https://", text: $linkDraft)
+                .textFieldStyle(.roundedBorder)
+                .frame(width: 260)
+                .focused($linkFocused)
+                .onSubmit { commitLink() }
+            HStack {
+                if isFormattingActive("link") {
+                    Button(store.ui("移除链接", "Remove link")) {
+                        linkDraft = ""
+                        commitLink()
+                    }
+                }
+                Spacer()
+                Button(store.ui("取消", "Cancel")) { showsLinkEditor = false }
+                Button(store.ui("完成", "Done")) { commitLink() }
+                    .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(12)
+        .onExitCommand { showsLinkEditor = false }
+    }
+
+    private func isFormattingActive(_ action: String) -> Bool {
+        let mark = action == "bold" ? "strong" : action == "italic" ? "emphasis" : action
+        return interaction.noteSelectionFormatting?.activeMarks.contains(mark) == true
+    }
+
+    private func runSelectionCommand(_ action: String, value: String? = nil) {
+        store.noteEditorCommand = NoteEditorCommand(kind: .selectionCommand, markdown: action, value: value)
+    }
+
+    private func commitLink() {
+        runSelectionCommand("link", value: linkDraft)
+        showsLinkEditor = false
     }
 
     private var promptSeparator: some View {

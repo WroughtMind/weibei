@@ -305,6 +305,13 @@
       word-break: break-word;
     }
 
+    .ProseMirror.weibei-empty-document > p:first-child::before {
+      content: attr(data-empty-placeholder);
+      position: absolute;
+      color: color-mix(in srgb, var(--faint) 58%, transparent);
+      pointer-events: none;
+    }
+
     :root[data-weibei-compact-preview="true"] .ProseMirror {
       min-height: 0;
       font-size: 14px;
@@ -507,12 +514,16 @@
     }
 
     .ProseMirror table {
-      width: 100%;
+      display: block;
+      width: max-content;
+      min-width: 100%;
+      max-width: 100%;
       margin: 1.1em 0;
       border-collapse: collapse;
-      table-layout: fixed;
+      table-layout: auto;
       font-size: .96em;
       background: transparent;
+      overflow-x: auto;
     }
 
     .ProseMirror th,
@@ -649,6 +660,27 @@
     .ProseMirror blockquote.weibei-callout-failure::before { color: var(--cinnabar); }
     .ProseMirror blockquote.weibei-callout-bug::before { color: var(--cinnabar); }
     .ProseMirror blockquote.weibei-callout::before { content: attr(data-callout-title); }
+
+    .weibei-callout-header {
+      display: flex;
+      gap: .45em;
+      align-items: center;
+      margin-bottom: .35em;
+    }
+
+    .weibei-callout-type,
+    .weibei-callout-title,
+    .weibei-structured-input {
+      border: 0;
+      border-bottom: 1px solid var(--line);
+      background: transparent;
+      color: inherit;
+      font: inherit;
+      outline: none;
+    }
+
+    .weibei-callout-title { min-width: 6em; flex: 1; }
+    body[data-editable="false"] .weibei-callout-header { display: none; }
 
     body[data-editable="false"] .ProseMirror blockquote.weibei-callout[data-callout-fold="-"] {
       cursor: pointer;
@@ -866,6 +898,9 @@
       cursor: pointer;
     }
 
+    .weibei-structured-node.weibei-embed-preview { display: inline-block; margin: 0 .12em; }
+    .weibei-structured-input { width: 10em; margin-right: .3em; }
+
     :root[data-weibei-theme="inkstone"] .weibei-wikilink,
     :root[data-weibei-theme="stele"] .weibei-wikilink {
       background: rgba(200, 185, 138, .08);
@@ -1036,13 +1071,11 @@
     .ProseMirror span[data-type="math_inline"],
     .ProseMirror span[data-type="math-inline"],
     .ProseMirror .math-inline {
-      color: transparent;
-      font-size: 0;
-      line-height: 0;
+      color: inherit;
       background: transparent !important;
       border: 0;
       box-shadow: none;
-      user-select: none;
+      user-select: text;
     }
 
     .ProseMirror span[data-type="math_inline"]::before,
@@ -1057,14 +1090,12 @@
     .ProseMirror div[data-type="math_block"],
     .ProseMirror div[data-type="math-block"],
     .ProseMirror .math-block {
-      color: transparent;
-      font-size: 0;
-      line-height: 0;
+      color: inherit;
       background: transparent;
       border: 0;
       text-align: center;
       margin: .9em 0;
-      user-select: none;
+      user-select: text;
     }
 
     :root[data-weibei-theme="inkstone"] .ProseMirror div[data-type="math_block"],
@@ -1083,8 +1114,6 @@
     .ProseMirror span[data-type="math-inline"] > .katex,
     .ProseMirror .math-inline > .katex {
       color: rgba(33, 27, 23, .92);
-      /* rem on purpose: the container hides raw LaTeX via font-size: 0,
-         so any em-based size here would collapse to 0. */
       font-size: 1rem;
       line-height: 1.2;
       user-select: text;
@@ -1100,8 +1129,7 @@
       user-select: text;
     }
 
-    /* displayMode upgrade path: KaTeX wraps in .katex-display (block, centered).
-       rem again — the container hides raw LaTeX via font-size: 0. */
+    /* Block NodeView renders KaTeX with displayMode directly. */
     .ProseMirror div[data-type="math_block"] > .katex-display,
     .ProseMirror div[data-type="math-block"] > .katex-display,
     .ProseMirror .math-block > .katex-display {
@@ -1161,15 +1189,6 @@
       vertical-align: baseline;
     }
 
-    .ProseMirror span[data-type="math_inline"] > :not(.katex),
-    .ProseMirror span[data-type="math-inline"] > :not(.katex),
-    .ProseMirror .math-inline > :not(.katex),
-    .ProseMirror div[data-type="math_block"] > :not(.katex):not(.katex-display),
-    .ProseMirror div[data-type="math-block"] > :not(.katex):not(.katex-display),
-    .ProseMirror .math-block > :not(.katex):not(.katex-display) {
-      display: none !important;
-    }
-
     .ProseMirror span[data-type="math_inline"] > .katex > .katex-mathml,
     .ProseMirror span[data-type="math-inline"] > .katex > .katex-mathml,
     .ProseMirror .math-inline > .katex > .katex-mathml,
@@ -1203,19 +1222,20 @@
       border-left: 2px solid rgba(63, 105, 82, .36);
     }
 
-    .ProseMirror .katex-error {
-      color: var(--cinnabar);
-      background: var(--cinnabar-soft);
-      border-bottom: 1px solid var(--cinnabar-line);
-      padding: 0 .2em;
-    }
-
-    .ProseMirror .katex-error::after {
-      content: " 公式未解析";
-      color: var(--cinnabar);
-      font: 11px/1.5 -apple-system, BlinkMacSystemFont, "Songti SC", serif;
-      opacity: .74;
-    }
+    .weibei-math-node { cursor: text; }
+    .weibei-math-inline { display: inline-flex !important; align-items: baseline; padding: 0 .05em; vertical-align: baseline; }
+    .weibei-math-block { display: block !important; margin: .8em 0; padding: .75em 1em; overflow-x: auto; border-left: 2px solid rgba(63, 105, 82, .36) !important; }
+    .weibei-math-preview > .katex { color: rgba(33, 27, 23, .92); font-size: 1rem; line-height: 1.2; }
+    .weibei-math-block .weibei-math-preview > .katex-display { margin: .25em 0; font-size: 1rem; line-height: 1.5; }
+    :root[data-weibei-theme="inkstone"] .weibei-math-preview > .katex,
+    :root[data-weibei-theme="stele"] .weibei-math-preview > .katex { color: #d7cbb0; }
+    .weibei-math-source { display: none; box-sizing: border-box; color: var(--ink); background: color-mix(in srgb, var(--paper-raised) 88%, transparent); border: 1px solid var(--line); border-radius: 4px; font: 13px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; outline: none; }
+    .weibei-math-inline .weibei-math-source { width: min(30em, 65vw); padding: .15em .35em; }
+    .weibei-math-block .weibei-math-source { width: 100%; min-height: 5em; padding: .55em .65em; resize: vertical; }
+    .weibei-math-editing { align-items: center; gap: .4em; }
+    .weibei-math-editing .weibei-math-source { display: block; }
+    .weibei-math-invalid { background: color-mix(in srgb, var(--paper-raised) 55%, transparent) !important; border-bottom: 1px dashed var(--line) !important; }
+    .weibei-math-invalid .weibei-math-preview { color: var(--muted); font: 13px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap; }
 
     .weibei-mermaid-block {
       opacity: .72;
@@ -1260,6 +1280,15 @@
       padding: 4px;
     }
 
+    .weibei-image-node { position: relative; display: inline-block; max-width: 100%; vertical-align: bottom; }
+    .weibei-image-node.ProseMirror-selectednode { outline: 1px solid color-mix(in srgb, var(--moss) 55%, transparent); outline-offset: 3px; }
+    .weibei-image-controls { position: absolute; left: 6px; bottom: 8px; z-index: 2; display: flex; gap: 3px; padding: 3px; background: color-mix(in srgb, var(--paper-raised) 96%, transparent); border: 1px solid var(--line); border-radius: 6px; box-shadow: 0 4px 14px rgba(35, 26, 19, .14); }
+    .weibei-image-controls[hidden] { display: none; }
+    .weibei-image-controls button, .weibei-image-controls select { height: 24px; color: var(--ink); background: transparent; border: 0; border-radius: 4px; font: 11px/24px -apple-system, BlinkMacSystemFont, sans-serif; }
+    .weibei-image-controls button { padding: 0 7px; }
+    .weibei-image-controls select { padding: 0 4px; }
+    .weibei-image-controls button:hover, .weibei-image-controls button:focus-visible, .weibei-image-controls select:focus-visible { background: color-mix(in srgb, var(--line) 25%, transparent); outline: none; }
+
     :root[data-weibei-theme="inkstone"] .weibei-image,
     :root[data-weibei-theme="stele"] .weibei-image {
       background: rgba(255, 255, 255, .035);
@@ -1281,6 +1310,12 @@
 
     .weibei-slash-menu { position: absolute; z-index: 120; width: 204px; max-height: min(420px, calc(100vh - 16px)); overflow: auto; box-sizing: border-box; padding: 5px; color: var(--ink); background: color-mix(in srgb, var(--paper-raised) 96%, transparent); border: 1px solid var(--line); border-radius: 9px; box-shadow: 0 14px 34px rgba(35, 26, 19, .18), 0 2px 8px rgba(35, 26, 19, .10); backdrop-filter: blur(16px); }
     .weibei-slash-menu[data-show="false"] { display: none; }
+    .weibei-line-plus { position: fixed; z-index: 110; width: 24px; height: 24px; padding: 0; color: var(--faint); background: transparent; border: 0; border-radius: 4px; font: 17px/24px -apple-system, BlinkMacSystemFont, sans-serif; cursor: pointer; }
+    .weibei-line-plus:hover, .weibei-line-plus:focus-visible { color: var(--ink); background: color-mix(in srgb, var(--paper-raised) 72%, transparent); outline: none; }
+    .weibei-table-toolbar { position: fixed; z-index: 115; display: flex; gap: 2px; padding: 3px; color: var(--ink); background: color-mix(in srgb, var(--paper-raised) 96%, transparent); border: 1px solid var(--line); border-radius: 7px; box-shadow: 0 6px 18px rgba(35, 26, 19, .12); }
+    .weibei-table-toolbar[hidden] { display: none; }
+    .weibei-table-toolbar button { min-width: 34px; height: 22px; padding: 0 6px; color: var(--muted); background: transparent; border: 0; border-radius: 4px; font: 11px/22px -apple-system, BlinkMacSystemFont, sans-serif; }
+    .weibei-table-toolbar button:hover, .weibei-table-toolbar button:focus-visible { color: var(--ink); background: color-mix(in srgb, var(--line) 25%, transparent); outline: none; }
     .weibei-slash-section + .weibei-slash-section { margin-top: 3px; padding-top: 3px; border-top: 1px solid var(--line); }
     .weibei-slash-group { padding: 4px 8px 3px; color: var(--faint); font-size: 10px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; user-select: none; }
     .weibei-slash-command { border-radius: 6px; }

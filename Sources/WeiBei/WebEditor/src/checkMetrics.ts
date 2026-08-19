@@ -4,10 +4,13 @@ export const metricNames = [
   'bridgeMessages',
   'bridgeBytes',
   'decorationNodes',
+  'decorationCacheHits',
   'katexRenders',
   'mermaidRenders',
   'imageScans',
+  'imageNodeUpdates',
   'codeTokenizations',
+  'outlineReports',
 ] as const;
 
 export type EditorMetricName = typeof metricNames[number];
