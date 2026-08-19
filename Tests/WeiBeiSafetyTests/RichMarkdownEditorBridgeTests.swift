@@ -3,6 +3,7 @@ import SwiftUI
 import WebKit
 import XCTest
 @testable import WeiBei
+import WeiBeiCore
 
 final class RichMarkdownEditorBridgeTests: XCTestCase {
     @MainActor
