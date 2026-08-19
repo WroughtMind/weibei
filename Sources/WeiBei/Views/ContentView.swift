@@ -295,8 +295,8 @@ private struct GlobalFloatingSelectionLayer: View {
             topInset: Double(WeiBeiMetric.topBarHeight),
             surfaceHalfWidth: expanded
                 ? SelectionFloatingAgentPlacement.expandedHalfWidth
-                : (store.selectionContext?.isReplaceableNoteSelection == true && interaction.noteSelectionFormatting != nil
-                    ? 126
+                : (store.selectionContext?.isReplaceableNoteSelection == true
+                    ? 144
                     : SelectionFloatingAgentPlacement.compactHalfWidth),
             prefersAnchorCenter: !expanded
         )

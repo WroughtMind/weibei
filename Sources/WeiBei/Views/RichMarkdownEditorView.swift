@@ -1518,7 +1518,9 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             lastCommandID = pendingCommand.id
             run(pendingCommand)
             DispatchQueue.main.async {
-                self.command.wrappedValue = nil
+                if self.command.wrappedValue?.id == pendingCommand.id {
+                    self.command.wrappedValue = nil
+                }
             }
         }
 

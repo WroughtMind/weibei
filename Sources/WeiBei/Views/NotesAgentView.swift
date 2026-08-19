@@ -2425,7 +2425,6 @@ struct FloatingSelectionAgentView: View {
 
     private var showsNoteFormattingToolbar: Bool {
         store.selectionContext?.isReplaceableNoteSelection == true
-            && interaction.noteSelectionFormatting != nil
     }
 
     private var noteFormattingToolbar: some View {
@@ -2439,10 +2438,8 @@ struct FloatingSelectionAgentView: View {
                 DispatchQueue.main.async { linkFocused = true }
             } label: {
                 Image(systemName: "link")
-                    .foregroundStyle(isFormattingActive("link") ? WeiBeiTheme.cinnabar : WeiBeiTheme.secondaryInk)
-                    .frame(width: 24, height: 28)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(WeiBeiIconButtonStyle(active: isFormattingActive("link"), size: 30, cornerRadius: 5))
             .help(store.ui("链接", "Link"))
             .accessibilityLabel(Text(store.ui("链接", "Link")))
             .popover(isPresented: $showsLinkEditor, arrowEdge: .bottom) {
@@ -2455,7 +2452,7 @@ struct FloatingSelectionAgentView: View {
 
             promptSeparator
             Button(store.ui("问", "Ask")) { openExpandedComposer() }
-                .foregroundStyle(WeiBeiTheme.link)
+                .buttonStyle(WeiBeiTextActionButtonStyle(active: true))
                 .accessibilityLabel(Text(store.ui("就这段提问", "Ask about this passage")))
                 .help(store.ui("就这段提问", "Ask about this passage"))
         }
@@ -2475,10 +2472,8 @@ struct FloatingSelectionAgentView: View {
     ) -> some View {
         Button { runSelectionCommand(action) } label: {
             Image(systemName: icon)
-                .foregroundStyle((active ?? isFormattingActive(action)) ? WeiBeiTheme.cinnabar : WeiBeiTheme.secondaryInk)
-                .frame(width: 24, height: 28)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(WeiBeiIconButtonStyle(active: active ?? isFormattingActive(action), size: 30, cornerRadius: 5))
         .disabled(!enabled)
         .help(label)
         .accessibilityLabel(Text(label))

@@ -6,6 +6,30 @@ import XCTest
 
 final class RichMarkdownEditorBridgeTests: XCTestCase {
     @MainActor
+    func testExecutedCommandDoesNotClearNewerCommand() async {
+        var command: NoteEditorCommand? = NoteEditorCommand(kind: .selectionCommand, markdown: "bold")
+        let editor = RichMarkdownEditorView(
+            documentID: "note-a",
+            markdown: "alpha",
+            command: Binding(get: { command }, set: { command = $0 }),
+            editingSession: NoteEditingSession(documentID: "note-a"),
+            onSelectionChange: { _, _ in },
+            onAskAgentWithSelection: { _, _ in }
+        )
+        let coordinator = editor.makeCoordinator()
+        coordinator.isReady = true
+        coordinator.runPendingCommandIfReady()
+
+        let newer = NoteEditorCommand(kind: .selectionCommand, markdown: "italic")
+        command = newer
+        let settled = expectation(description: "the previous command cleanup ran")
+        DispatchQueue.main.async { settled.fulfill() }
+        await fulfillment(of: [settled], timeout: 1)
+
+        XCTAssertEqual(command?.id, newer.id)
+    }
+
+    @MainActor
     func testV2SnapshotUsesSingleDispatchEntry() async throws {
         let loaded = expectation(description: "test WebView loaded")
         let navigationProbe = FinalizedMarkdownNavigationProbe { loaded.fulfill() }
