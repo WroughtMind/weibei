@@ -1362,23 +1362,37 @@
     window.WeiBeiEditorBootFailed = function(error) {
       var root = document.querySelector('#editor');
       if (!root) return;
-      var text = error && (error.stack || error.message) ? (error.stack || error.message) : String(error);
+      var text = error && (error.stack || error.message)
+        ? [error.message, error.stack].filter(Boolean).join('\n')
+        : String(error);
       root.innerHTML = '<pre class="editor-status error">Milkdown 初始化失败\n' + text.replace(/[<>&]/g, function(ch) {
         return { '<': '&lt;', '>': '&gt;', '&': '&amp;' }[ch];
       }) + '</pre>';
       window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.editorFailure
         && window.webkit.messageHandlers.editorFailure.postMessage({
-          documentID: window.weiBeiDocumentID || ''
+          documentID: window.weiBeiDocumentID || '',
+          message: text
         });
     };
     window.addEventListener('error', function(event) {
-      window.WeiBeiEditorBootFailed(event.error || event.message);
+      window.WeiBeiEditorBootFailed(event.error || new Error(
+        event.message + ' at ' + event.filename + ':' + event.lineno + ':' + event.colno
+      ));
     });
     window.addEventListener('unhandledrejection', function(event) {
       window.WeiBeiEditorBootFailed(event.reason);
     });
   </script>
-  <script src="./editor.js"></script>
+  <script>
+    var weiBeiEntry = document.createElement('script');
+    weiBeiEntry.src = window.weiBeiMarkdownEditable === true
+      ? './editor-entry.js'
+      : './viewer-entry.js';
+    weiBeiEntry.onerror = function() {
+      window.WeiBeiEditorBootFailed(new Error('编辑器本地入口加载失败'));
+    };
+    document.body.appendChild(weiBeiEntry);
+  </script>
   <script>
     document.getElementById('editor').addEventListener('pointerdown', function(event) {
       if (window.weiBeiMarkdownEditable !== true

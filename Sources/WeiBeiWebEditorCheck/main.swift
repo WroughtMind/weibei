@@ -2394,7 +2394,7 @@ private final class FinalizedAgentMarkdownHarness: NSObject, WKScriptMessageHand
             }
             handleMeasurement(height: height, width: Double(webView.frame.width))
         case "editorFailure":
-            fail("finalized agent Markdown renderer failed")
+            fail("finalized agent Markdown renderer failed: \(message.body)")
         default:
             break
         }
@@ -2944,6 +2944,7 @@ private struct BenchmarkActionState: Codable {
     let inputMetrics: BenchmarkMetrics
     let documentGeneration: Int
     let revision: Int
+    let loadedRuntimes: [String]
 }
 
 private struct BenchmarkSnapshotTimings: Codable {
@@ -3069,7 +3070,7 @@ private final class EditorBenchmarkHarness: NSObject, WKScriptMessageHandler, WK
                 return
             }
             readyMilliseconds = (ProcessInfo.processInfo.systemUptime - loadStarted) * 1_000
-            beginActions()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { self.beginActions() }
         case "editorFailure":
             finish(.failure(BenchmarkError.failed("\(fixture): editor reported a failure: \(message.body)")))
         case "dirtyChanged":
@@ -3125,6 +3126,9 @@ private final class EditorBenchmarkHarness: NSObject, WKScriptMessageHandler, WK
             inputMetrics,
             documentGeneration: session.documentGeneration,
             revision: session.revision,
+            loadedRuntimes: Array.from(document.scripts)
+              .map((script) => script.src.split('/').pop())
+              .filter((name) => name?.endsWith('-runtime.js')),
           });
         })();
         """
@@ -3141,6 +3145,19 @@ private final class EditorBenchmarkHarness: NSObject, WKScriptMessageHandler, WK
                   state.inputMetrics.fullBridgeMessages == 0 else {
                 self.finish(.failure(BenchmarkError.failed(
                     "\(self.fixture): ordinary input serialized or bridged full Markdown: serializations=\(state.inputMetrics.fullSerializations), messages=\(state.inputMetrics.fullBridgeMessages)"
+                )))
+                return
+            }
+            let expectedRuntime: String? = [
+                "plain-5k.md": "",
+                "math-dense.md": "katex-runtime.js",
+                "mermaid-dense.md": "mermaid-runtime.js",
+                "code-dense.md": "prism-runtime.js",
+            ][self.fixture]
+            if let expectedRuntime,
+               state.loadedRuntimes != (expectedRuntime.isEmpty ? [] : [expectedRuntime]) {
+                self.finish(.failure(BenchmarkError.failed(
+                    "\(self.fixture): loaded unrelated runtimes: \(state.loadedRuntimes)"
                 )))
                 return
             }
