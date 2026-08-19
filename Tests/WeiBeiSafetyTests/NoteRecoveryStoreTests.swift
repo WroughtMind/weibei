@@ -125,10 +125,11 @@ final class NoteRecoveryStoreTests: XCTestCase {
 
     func testPersistedSnapshotCannotReappearAfterLateCheckpointTask() async throws {
         let digest = NoteRecoveryStore.digest("saved")
-        XCTAssertFalse(try await store.removeIfCheckpointMatches(
+        let didRemove = try await store.removeIfCheckpointMatches(
             documentID: "note-a",
             checkpointDigest: digest
-        ))
+        )
+        XCTAssertFalse(didRemove)
 
         try await store.store(
             documentID: "note-a",
@@ -137,6 +138,7 @@ final class NoteRecoveryStoreTests: XCTestCase {
             markdown: "saved"
         )
 
-        XCTAssertNil(try await store.load(documentID: "note-a"))
+        let checkpoint = try await store.load(documentID: "note-a")
+        XCTAssertNil(checkpoint)
     }
 }

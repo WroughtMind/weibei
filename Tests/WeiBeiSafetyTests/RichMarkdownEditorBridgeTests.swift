@@ -28,7 +28,7 @@ final class RichMarkdownEditorBridgeTests: XCTestCase {
         let session = NoteEditingSession(documentID: "note-a", initialRevision: 7)
         let editor = RichMarkdownEditorView(
             documentID: "note-a",
-            markdown: .constant("# Note"),
+            markdown: "# Note",
             command: .constant(nil),
             editingSession: session,
             onSelectionChange: { _, _ in },
@@ -84,7 +84,7 @@ final class RichMarkdownEditorBridgeTests: XCTestCase {
         var finalizedHeight: CGFloat?
         let preview = RichMarkdownEditorView(
             documentID: "finalized-render-check",
-            markdown: .constant(""),
+            markdown: "",
             command: .constant(nil),
             onSelectionChange: { _, _ in },
             onAskAgentWithSelection: { _, _ in },
