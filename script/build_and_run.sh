@@ -58,7 +58,7 @@ PDF_TEXT_WORKER="$APP_HELPERS/$PDF_TEXT_WORKER_NAME"
 INFO_PLIST="$APP_CONTENTS/Info.plist"
 SPARKLE_TEST_PUBLIC_KEY="eRFPLZuNM6m8bltmtpPX4fzKbufI1z6rKJHtgIIsllk="
 SPARKLE_PUBLIC_KEY="${WEIBEI_SPARKLE_PUBLIC_KEY:-$SPARKLE_TEST_PUBLIC_KEY}"
-SPARKLE_FEED_URL="${WEIBEI_SPARKLE_FEED_URL:-https://weibei-app.github.io/weibei/appcast.xml}"
+SPARKLE_FEED_URL="${WEIBEI_SPARKLE_FEED_URL:-https://github.com/weibei-app/weibei/releases/latest/download/appcast.xml}"
 
 target_app_is_running() {
   local pid command target_binary="$APP_BINARY"
