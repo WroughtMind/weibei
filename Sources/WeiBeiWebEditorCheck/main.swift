@@ -1879,6 +1879,11 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
           if (state.commands.length !== 21 || state.groups.join('|') !== '结构|列表|内容|丰富内容') throw new Error('slash commands or groups invalid: ' + JSON.stringify(state));
           for (const [query, expected] of [['/h2', '二级标题'], ['/liujibiaoti', '六级标题'], ['/dmk', '代码块'], ['/yxlb', '有序列表'], ['/bijilianjie', '笔记链接'], ['/jiaozhu', '脚注'], ['/代码块', '代码块']]) { open(query); state = window.WeiBeiEditor.slashStateForCheck(); if (state.commands.length !== 1 || state.commands[0] !== expected) throw new Error('alias failed: ' + query + JSON.stringify(state)); }
           for (const query of ['/code block', '/ordered list']) { if (open(query)) throw new Error('space alias matched: ' + query); }
+          if (!open('前文/h2')) throw new Error('slash menu did not open after existing text');
+          window.WeiBeiEditor.executeSlashCommandForCheck('heading2'); window.WeiBeiEditor.typeTextForCheck('标题');
+          if (window.WeiBeiEditor.getMarkdown() !== '前文\\n\\n## 标题\\n') throw new Error('slash block command changed surrounding text: ' + JSON.stringify(window.WeiBeiEditor.getMarkdown()));
+          open('前文/'); window.WeiBeiEditor.executeSlashCommandForCheck('inlineMath');
+          if (window.WeiBeiEditor.getMarkdown() !== '前文$x$\\n') throw new Error('slash inline command changed surrounding text: ' + JSON.stringify(window.WeiBeiEditor.getMarkdown()));
           open('/'); window.WeiBeiEditor.pressKeyForCheck('ArrowDown'); state = window.WeiBeiEditor.slashStateForCheck(); if (state.activeDescendant !== 'weibei-slash-command-heading2' || !state.announcement.includes('二级标题')) throw new Error('accessibility did not update: ' + JSON.stringify(state));
           const menu = document.querySelector('.weibei-slash-menu'); menu.style.maxHeight = '90px'; menu.style.scrollBehavior = 'auto'; open('/'); for (let index = 0; index < 12; index += 1) window.WeiBeiEditor.pressKeyForCheck('ArrowDown'); if (menu.scrollTop <= 0) throw new Error('arrow navigation did not scroll the slash menu'); menu.style.maxHeight = '';
           window.WeiBeiEditor.pressKeyForCheck('Escape'); if (!window.WeiBeiEditor.getMarkdown().includes('/')) throw new Error('escape removed slash text');
@@ -2029,29 +2034,28 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
         webView.evaluateJavaScript(script) { [weak self] value, error in
             guard let self else { return }
             guard error == nil, value as? Bool == true, self.imagePickerRequests >= 2 else { self.fail("slash image lifecycle failed: \(String(describing: error)); requests=\(self.imagePickerRequests)"); return }
-            self.validateSlashImageInlineRejection()
+            self.validateSlashAfterInlineImage()
         }
     }
 
-    /// Verifies that an inline image followed by "/" does NOT trigger a Slash menu,
-    /// and that attempting to execute a command leaves the Markdown and image intact.
-    private func validateSlashImageInlineRejection() {
+    /// Verifies that an inline image does not block Slash insertion or get replaced by it.
+    private func validateSlashAfterInlineImage() {
         let script = """
         (() => {
           window.WeiBeiEditor.setDocumentID('slash-image-inline');
           window.WeiBeiEditor.setMarkdown('![icon](assets/weibei.svg) /');
-          if (window.WeiBeiEditor.openSlashMenuForCheck()) throw new Error('slash menu opened after an inline image + /');
+          if (!window.WeiBeiEditor.openSlashMenuForCheck()) throw new Error('slash menu did not open after an inline image + /');
           const before = window.WeiBeiEditor.getMarkdown();
           if (!before.includes('![icon](assets/weibei.svg)')) throw new Error('image reference missing before command attempt: ' + before);
           window.WeiBeiEditor.executeSlashCommandForCheck('quote');
           const after = window.WeiBeiEditor.getMarkdown();
-          if (after !== before) throw new Error('command replaced the paragraph and lost the image: ' + JSON.stringify({ before, after }));
+          if (!after.includes('![icon](assets/weibei.svg)') || !after.includes('>')) throw new Error('command insertion lost the image: ' + JSON.stringify({ before, after }));
           return true;
         })();
         """
         webView.evaluateJavaScript(script) { [weak self] value, error in
             guard let self else { return }
-            guard error == nil, value as? Bool == true else { self.fail("inline image slash rejection failed: \(String(describing: error)); \(String(describing: value))"); return }
+            guard error == nil, value as? Bool == true else { self.fail("slash after inline image failed: \(String(describing: error)); \(String(describing: value))"); return }
             self.validateSlashCodeBlockTypingStability()
         }
     }

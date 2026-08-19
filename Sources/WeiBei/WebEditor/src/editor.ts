@@ -426,30 +426,24 @@ const slashRuntime: {
 } = { provider: null, view: null, context: null, commands: [], activeIndex: 0, dismissedContext: '', activationContext: '', tableOpen: false, tableFocus: 'rows', tableRows: 3, tableColumns: 3, tableMenuBaseLeft: '', error: '' };
 const slashExcludedAncestors = new Set(['list_item', 'task_list_item', 'table', 'table_row', 'table_header_row', 'table_cell', 'table_header', 'code_block', 'math_block']);
 
-/**
- * Returns slash context only when `/` begins an otherwise blank editable line.
- *
- * Zero-width placeholders are tolerated because ProseMirror can retain them in
- * a visually blank paragraph while a composition session finishes.  Paragraphs
- * that contain inline nodes (images, etc.) are rejected \u2014 textContent excludes
- * them, so without this check an image followed by "/" would be mistaken for a
- * blank Slash line and replaced wholesale.
- */
+/** Returns the `/query` immediately before the caret without consuming surrounding content. */
 const slashContextForView = (view: any) => {
   if (!isEditable || view.composing) return null;
   const { selection } = view.state;
   if (!(selection instanceof TextSelection) || !selection.empty) return null;
   const { $from } = selection;
-  if ($from.parent.type.name !== 'paragraph' || $from.parentOffset !== $from.parent.content.size) return null;
+  if ($from.parent.type.name !== 'paragraph') return null;
   for (let depth = $from.depth; depth > 0; depth -= 1) if (slashExcludedAncestors.has($from.node(depth).type.name)) return null;
-  let hasInlineNode = false;
-  $from.parent.content.forEach((node: any) => { if (!node.isText) hasInlineNode = true; });
-  if (hasInlineNode) return null;
-  const source = $from.parent.textContent || '';
-  const match = source.match(/^[\u200B\uFEFF]*\/([^\s/]*)$/u);
-  if (!match) return null;
+  const beforeCaret = $from.parent.textBetween(0, $from.parentOffset, '\uFFFC', '\uFFFC');
+  const slashOffset = beforeCaret.lastIndexOf('/');
+  if (slashOffset < 0) return null;
+  const query = beforeCaret.slice(slashOffset + 1);
+  if (/[\s/]/u.test(query)) return null;
+  const triggerStartOffset = /^[\u200B\uFEFF]*$/u.test(beforeCaret.slice(0, slashOffset)) ? 0 : slashOffset;
   const depth = $from.depth;
-  return { query: match[1] || '', source, blockFrom: $from.before(depth), blockTo: $from.after(depth), index: $from.index(depth - 1), container: $from.node(depth - 1), key: `${$from.before(depth)}:${source}` };
+  const blockFrom = $from.before(depth);
+  const triggerFrom = $from.start(depth) + triggerStartOffset;
+  return { query, parent: $from.parent, triggerFrom, triggerTo: $from.pos, triggerStartOffset, triggerEndOffset: $from.parentOffset, blockFrom, blockTo: $from.after(depth), index: $from.index(depth - 1), container: $from.node(depth - 1), key: `${triggerFrom}:${query}` };
 };
 
 const emptyLineContextForView = (view: any) => {
@@ -549,12 +543,33 @@ const slashReplacement = (commandID: any, schema: any, options: any = {}) => {
   return null;
 };
 
+/** Preserves the paragraph around an inline command, or splits it around a block command. */
+const slashContentForContext = (context: any, replacement: any) => {
+  const first = replacement?.content?.firstChild;
+  if (!context || !first) return null;
+  if (replacement.content.childCount === 1 && first.type === context.parent.type) {
+    const content = context.parent.content.cut(0, context.triggerStartOffset)
+      .append(first.content)
+      .append(context.parent.content.cut(context.triggerEndOffset));
+    return { content: Fragment.from(context.parent.type.create(context.parent.attrs, content, context.parent.marks)), selectionBase: context.triggerFrom - 1 };
+  }
+  const nodes: any[] = [];
+  const prefix = context.parent.content.cut(0, context.triggerStartOffset);
+  const suffix = context.parent.content.cut(context.triggerEndOffset);
+  if (prefix.size) nodes.push(context.parent.type.create(context.parent.attrs, prefix, context.parent.marks));
+  const selectionBase = context.blockFrom + nodes.reduce((size, node) => size + node.nodeSize, 0);
+  replacement.content.forEach((node: any) => nodes.push(node));
+  if (suffix.size) nodes.push(context.parent.type.create(context.parent.attrs, suffix, context.parent.marks));
+  return { content: Fragment.from(nodes), selectionBase };
+};
+
 /** Checks whether the current container accepts the requested replacement. */
 const slashCommandIsAllowed = (command: any, context: any, schema: any) => {
   if (!context) return false;
   if (command.id === 'image') return Boolean(schema.nodes.image);
   const replacement = slashReplacement(command.id, schema, { rows: 3, columns: 3 });
-  return Boolean(replacement && context.container.canReplace(context.index, context.index + 1, replacement.content));
+  const applied = slashContentForContext(context, replacement);
+  return Boolean(applied && context.container.canReplace(context.index, context.index + 1, applied.content));
 };
 
 /** Filters commands by localized labels and stable aliases. */
@@ -567,13 +582,14 @@ const filteredSlashCommands = (query: any, context: any, schema: any) => {
 const applySlashReplacement = (view: any, context: any, replacement: any) => {
   if (!context || !replacement) return false;
   const node = view.state.doc.nodeAt(context.blockFrom);
-  if (node?.type.name !== 'paragraph' || node.textContent !== context.source) return false;
-  const tr = closeHistory(view.state.tr.replaceWith(context.blockFrom, context.blockTo, replacement.content));
+  const applied = slashContentForContext(context, replacement);
+  if (!node?.eq(context.parent) || !applied || !context.container.canReplace(context.index, context.index + 1, applied.content)) return false;
+  const tr = closeHistory(view.state.tr.replaceWith(context.blockFrom, context.blockTo, applied.content));
   const selection = replacement.activateEvent
-    ? NodeSelection.create(tr.doc, context.blockFrom + replacement.selectionOffset)
+    ? NodeSelection.create(tr.doc, applied.selectionBase + replacement.selectionOffset)
     : Number.isInteger(replacement.selectionFromOffset) && Number.isInteger(replacement.selectionToOffset)
-    ? TextSelection.create(tr.doc, context.blockFrom + replacement.selectionFromOffset, context.blockFrom + replacement.selectionToOffset)
-    : Selection.findFrom(tr.doc.resolve(Math.min(context.blockFrom + replacement.selectionOffset, tr.doc.content.size)), 1, true);
+    ? TextSelection.create(tr.doc, applied.selectionBase + replacement.selectionFromOffset, applied.selectionBase + replacement.selectionToOffset)
+    : Selection.findFrom(tr.doc.resolve(Math.min(applied.selectionBase + replacement.selectionOffset, tr.doc.content.size)), 1, true);
   if (selection) tr.setSelection(selection);
   view.dispatch(tr.scrollIntoView());
   slashRuntime.dismissedContext = '';
