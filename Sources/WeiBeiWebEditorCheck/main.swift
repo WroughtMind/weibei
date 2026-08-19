@@ -1430,6 +1430,11 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
           window.WeiBeiMermaidHTMLForE = window.WeiBeiMermaidPreviewForE?.innerHTML || '';
           editor.resetCheckMetrics();
           if (!editor.typeTextForCheck('x')) throw new Error('Mermaid typing helper unavailable');
+          window.WeiBeiMermaidBeforeForE = new Promise((resolve) => window.setTimeout(() => resolve({
+            sameDOM: document.querySelector('.weibei-mermaid-render') === window.WeiBeiMermaidPreviewForE,
+            sameHTML: window.WeiBeiMermaidPreviewForE?.innerHTML === window.WeiBeiMermaidHTMLForE,
+            renders: window.WeiBeiEditor.getCheckMetrics().mermaidRenders
+          }), 150));
           return {
             selectionDecorationNodes: selectionMetrics.decorationNodes,
             inputImageScans: inputMetrics.imageScans,
@@ -1468,20 +1473,19 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
     }
 
     private func validateMermaidDebounceBeforeDeadline() {
-        webView.evaluateJavaScript("""
-        ({
-          sameDOM: document.querySelector('.weibei-mermaid-render') === window.WeiBeiMermaidPreviewForE,
-          sameHTML: window.WeiBeiMermaidPreviewForE?.innerHTML === window.WeiBeiMermaidHTMLForE,
-          renders: window.WeiBeiEditor.getCheckMetrics().mermaidRenders
-        })
-        """) { [weak self] value, error in
+        webView.callAsyncJavaScript(
+            "return await window.WeiBeiMermaidBeforeForE;",
+            arguments: [:],
+            in: nil,
+            in: .page
+        ) { [weak self] result in
             guard let self else { return }
-            guard error == nil,
-                  let result = value as? [String: Any],
-                  result["sameDOM"] as? Bool == true,
-                  result["sameHTML"] as? Bool == true,
-                  result["renders"] as? Int == 0 else {
-                self.fail("focused Mermaid preview updated before its 300ms debounce: \(String(describing: value))")
+            guard case let .success(value) = result,
+                  let snapshot = value as? [String: Any],
+                  snapshot["sameDOM"] as? Bool == true,
+                  snapshot["sameHTML"] as? Bool == true,
+                  snapshot["renders"] as? Int == 0 else {
+                self.fail("focused Mermaid preview updated before its 300ms debounce: \(String(describing: result))")
                 return
             }
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
