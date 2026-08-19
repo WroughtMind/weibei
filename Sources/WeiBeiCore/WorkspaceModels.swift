@@ -679,33 +679,6 @@ public enum AgentSurface: String, Codable, CaseIterable, Identifiable, Sendable 
     }
 }
 
-public enum NoteRenderMode: String, Codable, CaseIterable, Identifiable, Sendable {
-    case rich
-    case split
-    case source
-    case preview
-
-    public var id: String { rawValue }
-    public static let visibleCases: [NoteRenderMode] = [.rich, .split, .source]
-
-    public var visibleMode: NoteRenderMode {
-        self == .preview ? .rich : self
-    }
-
-    public func label(language: WeiBeiInterfaceLanguage) -> String {
-        switch self {
-        case .rich:
-            return language.text("写作", "Write")
-        case .split:
-            return language.text("对照", "Compare")
-        case .source:
-            return language.text("源码", "Source")
-        case .preview:
-            return language.text("预览", "Preview")
-        }
-    }
-}
-
 public struct NoteEditorCommand: Identifiable, Hashable {
     public enum Kind: String, Hashable {
         case replaceSelection
@@ -1895,7 +1868,6 @@ public struct PersistedWorkspace: Codable, Sendable {
     public var workspaceLayout: WorkspaceLayout?
     public var threePaneOrder: [WorkspacePaneRole]?
     public var agentSurface: AgentSurface?
-    public var noteRenderMode: NoteRenderMode?
     public var showLibrary: Bool?
     public var showReader: Bool?
     public var showAgent: Bool?
@@ -1944,7 +1916,6 @@ public struct PersistedWorkspace: Codable, Sendable {
         workspaceLayout: WorkspaceLayout? = nil,
         threePaneOrder: [WorkspacePaneRole]? = nil,
         agentSurface: AgentSurface? = nil,
-        noteRenderMode: NoteRenderMode? = nil,
         showLibrary: Bool? = nil,
         showReader: Bool? = nil,
         showAgent: Bool? = nil,
@@ -1992,7 +1963,6 @@ public struct PersistedWorkspace: Codable, Sendable {
         self.workspaceLayout = workspaceLayout
         self.threePaneOrder = threePaneOrder
         self.agentSurface = agentSurface
-        self.noteRenderMode = noteRenderMode
         self.showLibrary = showLibrary
         self.showReader = showReader
         self.showAgent = showAgent

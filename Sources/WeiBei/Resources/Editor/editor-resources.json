@@ -3,8 +3,8 @@
   "assets": [
     {
       "name": "editor-entry.js",
-      "bytes": 588015,
-      "sha256": "3142ecda00b58dd41823e25aa57fa4e1aef60303520367a09bc0a0a52a61151a"
+      "bytes": 587068,
+      "sha256": "d6a893c206d89bc750d15111541a6e9ee426fd19d230c5a6c87baaf7df699bca"
     },
     {
       "name": "editor.css",
@@ -313,8 +313,8 @@
     },
     {
       "name": "index.html",
-      "bytes": 49907,
-      "sha256": "47c1af7e1dc521e6cc27de0d1189936b8a65085344a1ddc1958e249b95489904"
+      "bytes": 41514,
+      "sha256": "0746f93b0516e3253265b5f222cd25f5cb1490343a15e47cf0a9ecb79b1d48a8"
     },
     {
       "name": "katex-runtime.js",
@@ -333,8 +333,8 @@
     },
     {
       "name": "viewer-entry.js",
-      "bytes": 512581,
-      "sha256": "10c63b2390fcea8e3ff19c22d54bfe88ae21aaae1f9fc674d1bfdab9be7d2f85"
+      "bytes": 512503,
+      "sha256": "72b21e2a3117d19411145f94dc5be793ba8661ae7bce20ee37ad792420dcc231"
     }
   ]
 }

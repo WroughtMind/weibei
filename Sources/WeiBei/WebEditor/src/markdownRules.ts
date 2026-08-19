@@ -85,7 +85,7 @@ const mapMarkdownOutsideCode = (markdown: string, transform: (value: string) => 
 // ponytail: line scanner skips code fences/backtick spans; use a Markdown AST only if more rewrites are added.
 export const normalizeMarkdownOutput = (markdown: string) => mapMarkdownOutsideCode(markdown, normalizeMarkdownOutputSegment);
 
-const normalizeHtmlBreaksInLine = (line: string) => String(line || '').replace(/<br\s*\/?>[ \t]*/gi, '  \n');
+const normalizeHtmlBreaksInLine = (line: string) => String(line || '').replace(/<br\s*\/?>[ \t]*/gi, '\n'.padStart(3));
 
 export const normalizeHtmlBreaks = (markdown: string) => mapMarkdownOutsideCode(markdown, normalizeHtmlBreaksInLine);
 

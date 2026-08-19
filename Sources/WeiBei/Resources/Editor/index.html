@@ -192,21 +192,18 @@
     }
 
     .ProseMirror pre::-webkit-scrollbar,
-    .ProseMirror div[data-type="math_block"]::-webkit-scrollbar,
-    .ProseMirror div[data-type="math-block"]::-webkit-scrollbar {
+    .weibei-math-block::-webkit-scrollbar {
       width: 5px;
       height: 5px;
     }
 
     .ProseMirror pre::-webkit-scrollbar-track,
-    .ProseMirror div[data-type="math_block"]::-webkit-scrollbar-track,
-    .ProseMirror div[data-type="math-block"]::-webkit-scrollbar-track {
+    .weibei-math-block::-webkit-scrollbar-track {
       background: transparent;
     }
 
     .ProseMirror pre::-webkit-scrollbar-thumb,
-    .ProseMirror div[data-type="math_block"]::-webkit-scrollbar-thumb,
-    .ProseMirror div[data-type="math-block"]::-webkit-scrollbar-thumb {
+    .weibei-math-block::-webkit-scrollbar-thumb {
       border: 2px solid color-mix(in srgb, var(--paper) 88%, transparent);
       border-radius: 999px;
       background: transparent;
@@ -215,30 +212,22 @@
 
     :root[data-weibei-theme="inkstone"] .ProseMirror pre::-webkit-scrollbar-thumb,
     :root[data-weibei-theme="stele"] .ProseMirror pre::-webkit-scrollbar-thumb,
-
-    :root[data-weibei-theme="inkstone"] .ProseMirror div[data-type="math_block"]::-webkit-scrollbar-thumb,
-    :root[data-weibei-theme="stele"] .ProseMirror div[data-type="math_block"]::-webkit-scrollbar-thumb,
-
-    :root[data-weibei-theme="inkstone"] .ProseMirror div[data-type="math-block"]::-webkit-scrollbar-thumb,
-    :root[data-weibei-theme="stele"] .ProseMirror div[data-type="math-block"]::-webkit-scrollbar-thumb {
+    :root[data-weibei-theme="inkstone"] .weibei-math-block::-webkit-scrollbar-thumb,
+    :root[data-weibei-theme="stele"] .weibei-math-block::-webkit-scrollbar-thumb {
       border-color: #171717;
     }
 
     .ProseMirror pre.weibei-scroll-active::-webkit-scrollbar-thumb,
     .ProseMirror pre:hover::-webkit-scrollbar-thumb,
     .ProseMirror pre:focus-within::-webkit-scrollbar-thumb,
-    .ProseMirror div[data-type="math_block"].weibei-scroll-active::-webkit-scrollbar-thumb,
-    .ProseMirror div[data-type="math_block"]:hover::-webkit-scrollbar-thumb,
-    .ProseMirror div[data-type="math_block"]:focus-within::-webkit-scrollbar-thumb,
-    .ProseMirror div[data-type="math-block"].weibei-scroll-active::-webkit-scrollbar-thumb,
-    .ProseMirror div[data-type="math-block"]:hover::-webkit-scrollbar-thumb,
-    .ProseMirror div[data-type="math-block"]:focus-within::-webkit-scrollbar-thumb {
+    .weibei-math-block.weibei-scroll-active::-webkit-scrollbar-thumb,
+    .weibei-math-block:hover::-webkit-scrollbar-thumb,
+    .weibei-math-block:focus-within::-webkit-scrollbar-thumb {
       background: rgba(92, 70, 46, .16);
     }
 
     .ProseMirror pre::-webkit-scrollbar-thumb:hover,
-    .ProseMirror div[data-type="math_block"]::-webkit-scrollbar-thumb:hover,
-    .ProseMirror div[data-type="math-block"]::-webkit-scrollbar-thumb:hover {
+    .weibei-math-block::-webkit-scrollbar-thumb:hover {
       background: rgba(92, 70, 46, .24);
     }
 
@@ -1026,200 +1015,6 @@
       display: block;
       height: 0;
       line-height: 0;
-    }
-
-    .weibei-md-marker,
-    .weibei-callout-marker {
-      color: rgba(58, 46, 38, .56);
-      font-size: .86em;
-      user-select: text;
-    }
-
-    :root[data-weibei-theme="inkstone"] .weibei-md-marker,
-    :root[data-weibei-theme="stele"] .weibei-md-marker,
-
-    :root[data-weibei-theme="inkstone"] .weibei-callout-marker,
-    :root[data-weibei-theme="stele"] .weibei-callout-marker {
-      color: rgba(155, 145, 120, .58);
-    }
-
-    body[data-editable="false"] .weibei-md-marker,
-    body[data-editable="false"] .weibei-callout-marker {
-      color: transparent;
-      font-size: 0;
-      user-select: none;
-    }
-
-    .ProseMirror blockquote.weibei-callout .weibei-callout-marker {
-      display: inline-block !important;
-      color: transparent !important;
-      opacity: 0 !important;
-      visibility: hidden !important;
-      font-size: 0 !important;
-      line-height: 0 !important;
-      width: 0 !important;
-      max-width: 0 !important;
-      height: 0 !important;
-      margin: 0 !important;
-      padding: 0 !important;
-      border: 0 !important;
-      overflow: hidden !important;
-      user-select: none !important;
-      white-space: nowrap !important;
-    }
-
-    .ProseMirror span[data-type="math_inline"],
-    .ProseMirror span[data-type="math-inline"],
-    .ProseMirror .math-inline {
-      color: inherit;
-      background: transparent !important;
-      border: 0;
-      box-shadow: none;
-      user-select: text;
-    }
-
-    .ProseMirror span[data-type="math_inline"]::before,
-    .ProseMirror span[data-type="math_inline"]::after,
-    .ProseMirror span[data-type="math-inline"]::before,
-    .ProseMirror span[data-type="math-inline"]::after,
-    .ProseMirror .math-inline::before,
-    .ProseMirror .math-inline::after {
-      content: none !important;
-    }
-
-    .ProseMirror div[data-type="math_block"],
-    .ProseMirror div[data-type="math-block"],
-    .ProseMirror .math-block {
-      color: inherit;
-      background: transparent;
-      border: 0;
-      text-align: center;
-      margin: .9em 0;
-      user-select: text;
-    }
-
-    :root[data-weibei-theme="inkstone"] .ProseMirror div[data-type="math_block"],
-    :root[data-weibei-theme="stele"] .ProseMirror div[data-type="math_block"],
-
-    :root[data-weibei-theme="inkstone"] .ProseMirror div[data-type="math-block"],
-    :root[data-weibei-theme="stele"] .ProseMirror div[data-type="math-block"],
-
-    :root[data-weibei-theme="inkstone"] .ProseMirror .math-block,
-    :root[data-weibei-theme="stele"] .ProseMirror .math-block {
-      background: transparent;
-      border-color: transparent;
-    }
-
-    .ProseMirror span[data-type="math_inline"] > .katex,
-    .ProseMirror span[data-type="math-inline"] > .katex,
-    .ProseMirror .math-inline > .katex {
-      color: rgba(33, 27, 23, .92);
-      font-size: 1rem;
-      line-height: 1.2;
-      user-select: text;
-    }
-
-    .ProseMirror div[data-type="math_block"] > .katex,
-    .ProseMirror div[data-type="math-block"] > .katex,
-    .ProseMirror .math-block > .katex {
-      color: rgba(33, 27, 23, .92);
-      display: inline-block;
-      font-size: 1.18rem;
-      line-height: 1.5;
-      user-select: text;
-    }
-
-    /* Block NodeView renders KaTeX with displayMode directly. */
-    .ProseMirror div[data-type="math_block"] > .katex-display,
-    .ProseMirror div[data-type="math-block"] > .katex-display,
-    .ProseMirror .math-block > .katex-display {
-      color: rgba(33, 27, 23, .92);
-      font-size: 1rem;
-      line-height: 1.5;
-      margin: .25em 0;
-      user-select: text;
-    }
-
-    :root[data-weibei-compact-preview="true"]:not([data-weibei-chat-wide="true"]) .ProseMirror div[data-type="math_block"] > .katex-display,
-    :root[data-weibei-compact-preview="true"]:not([data-weibei-chat-wide="true"]) .ProseMirror div[data-type="math-block"] > .katex-display,
-    :root[data-weibei-compact-preview="true"]:not([data-weibei-chat-wide="true"]) .ProseMirror .math-block > .katex-display {
-      font-size: .9rem;
-    }
-
-    :root[data-weibei-theme="inkstone"] .ProseMirror div[data-type="math_block"] > .katex-display,
-    :root[data-weibei-theme="stele"] .ProseMirror div[data-type="math_block"] > .katex-display,
-    :root[data-weibei-theme="inkstone"] .ProseMirror div[data-type="math-block"] > .katex-display,
-    :root[data-weibei-theme="stele"] .ProseMirror div[data-type="math-block"] > .katex-display,
-    :root[data-weibei-theme="inkstone"] .ProseMirror .math-block > .katex-display,
-    :root[data-weibei-theme="stele"] .ProseMirror .math-block > .katex-display {
-      color: #d7cbb0;
-    }
-
-    :root[data-weibei-compact-preview="true"]:not([data-weibei-chat-wide="true"]) .ProseMirror div[data-type="math_block"] > .katex,
-    :root[data-weibei-compact-preview="true"]:not([data-weibei-chat-wide="true"]) .ProseMirror div[data-type="math-block"] > .katex,
-    :root[data-weibei-compact-preview="true"]:not([data-weibei-chat-wide="true"]) .ProseMirror .math-block > .katex {
-      font-size: 1.05rem;
-    }
-
-    :root[data-weibei-theme="inkstone"] .ProseMirror span[data-type="math_inline"] > .katex,
-    :root[data-weibei-theme="stele"] .ProseMirror span[data-type="math_inline"] > .katex,
-
-    :root[data-weibei-theme="inkstone"] .ProseMirror span[data-type="math-inline"] > .katex,
-    :root[data-weibei-theme="stele"] .ProseMirror span[data-type="math-inline"] > .katex,
-
-    :root[data-weibei-theme="inkstone"] .ProseMirror .math-inline > .katex,
-    :root[data-weibei-theme="stele"] .ProseMirror .math-inline > .katex,
-
-    :root[data-weibei-theme="inkstone"] .ProseMirror div[data-type="math_block"] > .katex,
-    :root[data-weibei-theme="stele"] .ProseMirror div[data-type="math_block"] > .katex,
-
-    :root[data-weibei-theme="inkstone"] .ProseMirror div[data-type="math-block"] > .katex,
-    :root[data-weibei-theme="stele"] .ProseMirror div[data-type="math-block"] > .katex,
-
-    :root[data-weibei-theme="inkstone"] .ProseMirror .math-block > .katex,
-    :root[data-weibei-theme="stele"] .ProseMirror .math-block > .katex {
-      color: #d7cbb0;
-    }
-
-    .ProseMirror span[data-type="math_inline"],
-    .ProseMirror span[data-type="math-inline"],
-    .ProseMirror .math-inline {
-      display: inline;
-      padding: 0 .05em;
-      vertical-align: baseline;
-    }
-
-    .ProseMirror span[data-type="math_inline"] > .katex > .katex-mathml,
-    .ProseMirror span[data-type="math-inline"] > .katex > .katex-mathml,
-    .ProseMirror .math-inline > .katex > .katex-mathml,
-    .ProseMirror div[data-type="math_block"] > .katex > .katex-mathml,
-    .ProseMirror div[data-type="math-block"] > .katex > .katex-mathml,
-    .ProseMirror .math-block > .katex > .katex-mathml {
-      position: absolute !important;
-      width: 1px !important;
-      height: 1px !important;
-      overflow: hidden !important;
-      clip: rect(0 0 0 0) !important;
-      clip-path: inset(50%) !important;
-      white-space: nowrap !important;
-      user-select: none;
-      pointer-events: none;
-    }
-
-    .ProseMirror span[data-type="math_inline"].ProseMirror-selectednode,
-    .ProseMirror span[data-type="math-inline"].ProseMirror-selectednode {
-      outline: 1px solid rgba(63, 105, 82, .30);
-      outline-offset: 2px;
-      border-radius: 3px;
-    }
-
-    .ProseMirror div[data-type="math_block"],
-    .ProseMirror div[data-type="math-block"] {
-      display: block;
-      margin: .8em 0;
-      padding: .75em 1em;
-      overflow-x: auto;
-      border-left: 2px solid rgba(63, 105, 82, .36);
     }
 
     .weibei-math-node { cursor: text; }

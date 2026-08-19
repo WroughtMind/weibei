@@ -563,6 +563,7 @@ v1 不做 Step JSONL：正常切换、失焦与退出目标零损失；WebConten
 9. `$5` 等金额不误判；
 10. 未修改公式、图片、代码和 Mermaid 不因普通正文输入而重算；
 11. 高价值 Markdown 对象具备稳定编辑与 round-trip；
+
 12. 不懂 Markdown 的用户可以完成完整常见写作；
 13. 未知语法和旧笔记内容不静默丢失；
 14. Bridge V1、旧全文 Binding、旧公式补丁与死代码已删除而非并存；
@@ -570,3 +571,12 @@ v1 不做 Step JSONL：正常切换、失焦与退出目标零损失；WebConten
 16. 从干净 `main` 构建的唯一候选版完成用户闭环。
 
 这份计划约束的是正确的产品结果、数据安全和性能结构，不约束执行 Agent 必须用某个漂亮但多余的架构。执行中持续以"能否更简单、更可靠地满足目标"为判断标准。
+
+## 15. 执行决策记录（2026-08-20）
+
+- 笔记编辑只保留 Bridge V2；普通输入只发 dirty，最新全文只由显式 snapshot 请求产生。
+- 正常保存继续复用原笔记持久化链；异常恢复只保存轻量 checkpoint，没有引入 Step Journal。
+- 公式沿用现有 `math_inline` / `math_block` 节点与本地 NodeView；旧 `plugin-math` 和旧 DOM/CSS 补丁已移除。
+- 本地 ESM 在真实 `WKWebView.loadFileURL` 下被拒绝，因此采用普通本地 IIFE：编辑、只读、KaTeX、Mermaid、Prism 分包，按内容首次加载。
+- Reader / Chat 使用只读入口并保留累计流式渲染；历史、上传、Slash、可编辑 NodeView 与 dirty/snapshot 不进入只读包。
+- 源码编辑器、双栏/源码显示模式、Bridge V1 全文回传和 kill switch 已删除，不保留兼容层。

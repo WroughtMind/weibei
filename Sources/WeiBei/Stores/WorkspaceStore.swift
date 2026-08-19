@@ -518,7 +518,6 @@ final class WorkspaceStore: ObservableObject {
             }
         }
     }
-    @Published var noteRenderMode: NoteRenderMode = .rich
     var floatingSelectionPrompt: String {
         get { interaction.floatingSelectionPrompt }
         set {
@@ -760,7 +759,6 @@ final class WorkspaceStore: ObservableObject {
         var showAgent: Bool
         var showNotes: Bool
         var agentSurface: AgentSurface
-        var noteRenderMode: NoteRenderMode
         var showReaderSearch: Bool
         var readerSearch: String
         var readerLocationID: String?
@@ -11940,26 +11938,6 @@ final class WorkspaceStore: ObservableObject {
         save()
     }
 
-    func setNoteRenderMode(_ mode: NoteRenderMode) {
-        // 笔记固定为所见即所得（rich）写作：NoteRenderMode 机制保留用于持久化与旧数据
-        // 兼容，但所有模式切换入口已移除，任何请求都收敛为展示并聚焦 rich 笔记面板。
-        let nextMode = NoteRenderMode.rich
-        if noteRenderMode != nextMode || layout == .immersiveReading || layout == .immersiveConversation || !showNotes {
-            recordNavigationPoint()
-        }
-        if layout == .immersiveReading || layout == .immersiveConversation {
-            clearUnpinnedFloatingSelection()
-            layout = .immersiveWriting
-        }
-        if !showNotes {
-            clearUnpinnedFloatingSelection()
-            showNotes = true
-        }
-        noteRenderMode = nextMode
-        focus(.notes)
-        save()
-    }
-
     private func revealRichWritingSurface() {
         if layout == .immersiveReading || layout == .immersiveConversation {
             clearUnpinnedFloatingSelection()
@@ -11969,7 +11947,6 @@ final class WorkspaceStore: ObservableObject {
             clearUnpinnedFloatingSelection()
             showNotes = true
         }
-        noteRenderMode = .rich
     }
 
     private func recordNavigationPoint() {
@@ -11993,7 +11970,6 @@ final class WorkspaceStore: ObservableObject {
             showAgent: showAgent,
             showNotes: showNotes,
             agentSurface: agentSurface == .selectionFloat ? .hidden : agentSurface,
-            noteRenderMode: noteRenderMode,
             showReaderSearch: showReaderSearch,
             readerSearch: readerSearch,
             readerLocationID: readerLocationID,
@@ -12016,7 +11992,6 @@ final class WorkspaceStore: ObservableObject {
         showAgent = snapshot.showAgent
         showNotes = snapshot.showNotes
         agentSurface = snapshot.agentSurface == .selectionFloat ? .hidden : snapshot.agentSurface
-        noteRenderMode = snapshot.noteRenderMode.visibleMode
         showReaderSearch = snapshot.showReaderSearch
         readerSearch = snapshot.readerSearch
         readerLocationID = snapshot.readerLocationID
@@ -12103,20 +12078,6 @@ final class WorkspaceStore: ObservableObject {
                 animateLayoutChange { selectAdjacentItem(step: -1) }
             case "down":
                 animateLayoutChange { selectAdjacentItem(step: 1) }
-            default:
-                return false
-            }
-            return true
-        }
-
-        if modifiers == [.control, .command] {
-            switch key {
-            case "1":
-                animatePanelChange { setNoteRenderMode(.rich) }
-            case "2":
-                animatePanelChange { setNoteRenderMode(.split) }
-            case "3":
-                animatePanelChange { setNoteRenderMode(.source) }
             default:
                 return false
             }
@@ -20372,9 +20333,6 @@ final class WorkspaceStore: ObservableObject {
         if let agentSurface = snapshot.agentSurface {
             self.agentSurface = agentSurface == .selectionFloat ? .hidden : agentSurface
         }
-        if let noteRenderMode = snapshot.noteRenderMode {
-            self.noteRenderMode = noteRenderMode.visibleMode
-        }
         let legacyRightPane = snapshot.showRightPane
         showReader = snapshot.showReader ?? true
         showAgent = snapshot.showAgent ?? legacyRightPane ?? true
@@ -20492,7 +20450,6 @@ final class WorkspaceStore: ObservableObject {
                 threePaneOrder: normalizedThreePaneOrder,
                 agentSurface:
                     agentSurface == .selectionFloat ? .hidden : agentSurface,
-                noteRenderMode: noteRenderMode,
                 showLibrary: nil,
                 showReader: showReader,
                 showAgent: showAgent,
@@ -21243,7 +21200,6 @@ final class WorkspaceStore: ObservableObject {
                 workspaceLayout: layout,
                 threePaneOrder: normalizedThreePaneOrder,
                 agentSurface: agentSurface == .selectionFloat ? .hidden : agentSurface,
-                noteRenderMode: noteRenderMode,
                 showLibrary: nil,
                 showReader: showReader,
                 showAgent: showAgent,

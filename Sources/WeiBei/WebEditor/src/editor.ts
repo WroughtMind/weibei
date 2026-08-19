@@ -1977,7 +1977,7 @@ const insertImageFiles = async (files: any) => {
   replaceSelectionInternal(saved.map(markdownImage).join('\n\n'));
 };
 
-const quietScrollableSelector = '#editor, .ProseMirror pre, .ProseMirror div[data-type="math_block"], .ProseMirror div[data-type="math-block"]';
+const quietScrollableSelector = '#editor, .ProseMirror pre, .weibei-math-block';
 const scrollFadeTimers = new WeakMap();
 
 const markScrollActive = (element: any) => {
@@ -2928,155 +2928,112 @@ const dispatchEditorCommand = (value: unknown) => {
   }
 };
 
-let legacyCommandID = 0;
-const dispatchLegacyCommand = (type: EditorCommand['type'], payload: Record<string, unknown>) => dispatchEditorCommand({
-  protocolVersion: editorProtocolVersion,
-  commandID: `legacy-${legacyCommandID += 1}`,
-  documentID: currentDocumentID,
-  documentGeneration: currentDocumentGeneration,
-  type,
-  payload,
-});
-
 window.WeiBeiEditor = {
-  ...(WEIBEI_EDITOR_RUNTIME ? { dispatchCommand: dispatchEditorCommand } : {}),
-  getMarkdown: getMarkdownInternal,
-  setMarkdown: (markdown: any) => WEIBEI_EDITOR_RUNTIME
-    ? dispatchLegacyCommand('loadDocument', { markdown: String(markdown || '') })
-    : setMarkdownInternal(String(markdown || '')),
-  // Milkdown's streaming plugin reparses the cumulative snapshot and applies a
-  // ProseMirror document diff, preserving unchanged DOM instead of rebuilding
-  // the whole answer or parsing token fragments as standalone paragraphs.
-  updateStreamingMarkdown: (markdown: any) => {
-    try {
-      updateStreamingMarkdownInternal(markdown);
-    } catch (error) {
-      showFailure(error);
-    }
-  },
-  finishStreamingMarkdown: (markdown: any) => {
-    try {
-      finishStreamingMarkdownInternal(markdown);
-      return true;
-    } catch (error) {
-      showFailure(error);
-      return false;
-    }
-  },
   ...(WEIBEI_EDITOR_RUNTIME ? {
-  replaceSelection: (markdown: any) => {
-    try {
-      return dispatchLegacyCommand('replaceSelection', { markdown: String(markdown || '') });
-    } catch (error) {
-      showFailure(error);
-      return false;
-    }
-  },
-  executeSelectionCommand: (action: any, value: any = '') => {
-    try {
-      return dispatchLegacyCommand('executeSelectionCommand', { action, value });
-    } catch (error) {
-      showFailure(error);
-      return false;
-    }
-  },
-  applyAgentPatch: (markdown: any) => {
-    try {
-      return dispatchLegacyCommand('applyMarkdownFragment', { markdown: String(markdown || '') });
-    } catch (error) {
-      showFailure(error);
-      return false;
-    }
-  },
-  askAgentWithSelection: () => {
-    lastSelectionRange = editorSelectionRange() || lastSelectionRange;
-    const text = selectedText();
-    post('askAgentWithSelection', { text, rect: rectFromSelection() });
-  },
-  insertMarkdownImage: (markdown: any) => {
-    try {
-      return dispatchLegacyCommand('replaceSelection', { markdown: String(markdown || '') });
-    } catch (error) {
-      showFailure(error);
-      return false;
-    }
-  },
-  insertMarkdown: (markdown: any) => {
-    try {
-      return dispatchLegacyCommand('insertStructuredBlock', { markdown: String(markdown || '') });
-    } catch (error) {
-      showFailure(error);
-      return false;
-    }
-  },
-  resolveAttachment: (id: any, src: any, alt: any) => {
-    const pending = pendingAttachments.get(id);
-    if (!pending) return;
-    pendingAttachments.delete(id);
-    pending.resolve({ src, alt });
-  },
-  rejectAttachment: (id: any, message: any) => {
-    const pending = pendingAttachments.get(id);
-    if (!pending) return;
-    pendingAttachments.delete(id);
-    pending.reject(new Error(message || 'Attachment save failed'));
-  },
-  resolveImagePicker: (id: any, src: any, alt: any) => {
-    const pending = pendingImagePickers.get(id);
-    if (!pending) return false;
-    pendingImagePickers.delete(id);
-    if (pending.documentID !== currentDocumentID || pending.documentGeneration !== currentDocumentGeneration) return false;
-    if (pending.mode === 'replace') {
-      const pos = pending.getPos();
-      const current = typeof pos === 'number' ? pending.view.state.doc.nodeAt(pos) : null;
-      if (current?.type.name !== 'image') return false;
-      const oldSize = parseMarkdownImageAlt(current.attrs.alt || '').size;
-      const nextAlt = `${String(alt || 'image')}${oldSize ? `|${oldSize.width}${oldSize.height ? `x${oldSize.height}` : ''}` : ''}`;
-      pending.view.dispatch(pending.view.state.tr.setNodeMarkup(pos, undefined, { ...current.attrs, src, alt: nextAlt }).scrollIntoView());
-      pending.view.focus();
+    dispatchCommand: dispatchEditorCommand,
+    resolveAttachment: (id: any, src: any, alt: any) => {
+      const pending = pendingAttachments.get(id);
+      if (!pending) return;
+      pendingAttachments.delete(id);
+      pending.resolve({ src, alt });
+    },
+    rejectAttachment: (id: any, message: any) => {
+      const pending = pendingAttachments.get(id);
+      if (!pending) return;
+      pendingAttachments.delete(id);
+      pending.reject(new Error(message || 'Attachment save failed'));
+    },
+    resolveImagePicker: (id: any, src: any, alt: any) => {
+      const pending = pendingImagePickers.get(id);
+      if (!pending) return false;
+      pendingImagePickers.delete(id);
+      if (pending.documentID !== currentDocumentID || pending.documentGeneration !== currentDocumentGeneration) return false;
+      if (pending.mode === 'replace') {
+        const pos = pending.getPos();
+        const current = typeof pos === 'number' ? pending.view.state.doc.nodeAt(pos) : null;
+        if (current?.type.name !== 'image') return false;
+        const oldSize = parseMarkdownImageAlt(current.attrs.alt || '').size;
+        const nextAlt = `${String(alt || 'image')}${oldSize ? `|${oldSize.width}${oldSize.height ? `x${oldSize.height}` : ''}` : ''}`;
+        pending.view.dispatch(pending.view.state.tr.setNodeMarkup(pos, undefined, { ...current.attrs, src, alt: nextAlt }).scrollIntoView());
+        pending.view.focus();
+        return true;
+      }
+      return applySlashReplacement(pending.view, pending.context, slashReplacement('image', pending.view.state.schema, { src, alt }));
+    },
+    cancelImagePicker: (id: any) => {
+      const pending = pendingImagePickers.get(id);
+      if (!pending) return false;
+      pendingImagePickers.delete(id);
+      if (pending.mode === 'replace') pending.view.focus();
+      return pending.documentID === currentDocumentID && pending.documentGeneration === currentDocumentGeneration;
+    },
+    discardImagePicker: (id: any) => pendingImagePickers.delete(id),
+    rejectImagePicker: (id: any, message: any) => {
+      const pending = pendingImagePickers.get(id);
+      if (!pending) return false;
+      pendingImagePickers.delete(id);
+      if (pending.documentID !== currentDocumentID || pending.documentGeneration !== currentDocumentGeneration) return false;
+      if (pending.mode === 'replace') { pending.view.focus(); return true; }
+      slashRuntime.dismissedContext = '';
+      slashRuntime.error = message || editorLabel('slashImageFailed');
+      slashRuntime.view = pending.view;
+      slashRuntime.provider?.show();
+      renderSlashMenu();
       return true;
-    }
-    return applySlashReplacement(pending.view, pending.context, slashReplacement('image', pending.view.state.schema, { src, alt }));
-  },
-  cancelImagePicker: (id: any) => {
-    const pending = pendingImagePickers.get(id);
-    if (!pending) return false;
-    pendingImagePickers.delete(id);
-    if (pending.mode === 'replace') pending.view.focus();
-    return pending.documentID === currentDocumentID && pending.documentGeneration === currentDocumentGeneration;
-  },
-  discardImagePicker: (id: any) => pendingImagePickers.delete(id),
-  rejectImagePicker: (id: any, message: any) => {
-    const pending = pendingImagePickers.get(id);
-    if (!pending) return false;
-    pendingImagePickers.delete(id);
-    if (pending.documentID !== currentDocumentID || pending.documentGeneration !== currentDocumentGeneration) return false;
-    if (pending.mode === 'replace') { pending.view.focus(); return true; }
-    slashRuntime.dismissedContext = '';
-    slashRuntime.error = message || editorLabel('slashImageFailed');
-    slashRuntime.view = pending.view;
-    slashRuntime.provider?.show();
-    renderSlashMenu();
-    return true;
-  },
-  setEditable: (next: any) => dispatchLegacyCommand('setEditable', { editable: next !== false }),
-  } : {}),
+    },
+  } : {
+    getMarkdown: getMarkdownInternal,
+    setMarkdown: (markdown: any) => setMarkdownInternal(String(markdown || '')),
+    updateStreamingMarkdown: (markdown: any) => {
+      try {
+        updateStreamingMarkdownInternal(markdown);
+      } catch (error) {
+        showFailure(error);
+      }
+    },
+    finishStreamingMarkdown: (markdown: any) => {
+      try {
+        finishStreamingMarkdownInternal(markdown);
+        return true;
+      } catch (error) {
+        showFailure(error);
+        return false;
+      }
+    },
+    setDocumentID: (next: any) => {
+      const nextID = next || '';
+      if (nextID !== currentDocumentID) setDocumentIdentityInternal(nextID, currentDocumentGeneration + 1);
+    },
+    setTheme: setThemeInternal,
+    setInterfaceLanguage: setLanguageInternal,
+    focus: focusInternal,
+    scrollToHeading: scrollToHeadingInternal,
+  }),
   setSelectionAskMarks: setSelectionAskMarksInternal,
-  setDocumentID: (next: any) => {
-    const nextID = next || '';
-    if (nextID !== currentDocumentID) setDocumentIdentityInternal(nextID, currentDocumentGeneration + 1);
-  },
   setMarkdownBaseURL: (next: any) => {
     markdownBaseURL = next || '';
     refreshRenderedImages();
   },
-  setTheme: (next: any) => WEIBEI_EDITOR_RUNTIME ? dispatchLegacyCommand('setTheme', { theme: next }) : setThemeInternal(next),
-  setInterfaceLanguage: (next: any) => WEIBEI_EDITOR_RUNTIME ? dispatchLegacyCommand('setLanguage', { language: next }) : setLanguageInternal(next),
-  focus: () => WEIBEI_EDITOR_RUNTIME ? dispatchLegacyCommand('focus', {}) : focusInternal(),
-  scrollToHeading: (index: any) => WEIBEI_EDITOR_RUNTIME ? dispatchLegacyCommand('scrollToHeading', { index }) : scrollToHeadingInternal(index),
 };
 
 if (WEIBEI_EDITOR_RUNTIME && window.weiBeiEditorCheckMode) {
+  Object.assign(window.WeiBeiEditor, {
+    getMarkdown: getMarkdownInternal,
+    setMarkdown: setMarkdownInternal,
+    updateStreamingMarkdown: updateStreamingMarkdownInternal,
+    finishStreamingMarkdown: (markdown: any) => { finishStreamingMarkdownInternal(markdown); return true; },
+    replaceSelection: replaceSelectionInternal,
+    executeSelectionCommand: executeSelectionCommandInternal,
+    applyAgentPatch: appendMarkdownInternal,
+    insertMarkdownImage: replaceSelectionInternal,
+    insertMarkdown: insertMarkdownInternal,
+    setEditable: setEditableInternal,
+    setDocumentID: (next: any) => setDocumentIdentityInternal(String(next || ''), currentDocumentGeneration + 1),
+    setTheme: setThemeInternal,
+    setInterfaceLanguage: setLanguageInternal,
+    focus: focusInternal,
+    scrollToHeading: scrollToHeadingInternal,
+  });
   window.WeiBeiEditor.getCheckMetrics = () => ({ ...checkMetrics!, fullBridgeMessages: fullMarkdownBridgeMessages });
   window.WeiBeiEditor.resetCheckMetrics = () => {
     resetEditorCheckMetrics(checkMetrics);
