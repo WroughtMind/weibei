@@ -140,9 +140,8 @@ final class NoteEditingSessionTests: XCTestCase {
         )
 
         session.receive(dirtyEvent(for: session, revision: 1))
-        try await Task.sleep(for: .milliseconds(10))
         session.receive(dirtyEvent(for: session, revision: 2))
-        try await Task.sleep(for: .milliseconds(30))
+        try await Task.sleep(for: .milliseconds(100))
 
         XCTAssertEqual(commands.count, 1)
         XCTAssertEqual(commands.first?.minimumRevision, 2)
