@@ -87,12 +87,22 @@
       --selection: rgba(176, 64, 52, .32);
     }
 
+    @font-face {
+      font-family: "WeiBei Stele";
+      src: url("../Fonts/WeiBeiStele.ttf") format("truetype");
+      font-display: swap;
+    }
+
+    :root { --weibei-writing-font: "Songti SC", "STSong", ui-serif, serif; }
+    :root[data-weibei-writing-font="system"] { --weibei-writing-font: -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", sans-serif; }
+    :root[data-weibei-writing-font="literary"] { --weibei-writing-font: "WeiBei Stele", "Kaiti SC", "STKaiti", ui-serif, serif; }
+
     html, body {
       margin: 0;
       height: 100%;
       background: transparent;
       color: var(--ink);
-      font-family: "Songti SC", "STSong", ui-serif, serif;
+      font-family: var(--weibei-writing-font);
     }
 
     body {

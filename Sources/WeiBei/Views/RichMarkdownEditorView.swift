@@ -3,6 +3,24 @@ import SwiftUI
 import WebKit
 import WeiBeiCore
 
+enum WeiBeiWritingFont: String, CaseIterable, Identifiable {
+    static let storageKey = "noteWritingFont"
+
+    case system
+    case serif
+    case literary
+
+    var id: String { rawValue }
+
+    func label(_ language: WeiBeiInterfaceLanguage) -> String {
+        switch self {
+        case .system: return language.text("清爽书写", "Clean Sans")
+        case .serif: return language.text("书卷宋体", "Book Serif")
+        case .literary: return language.text("魏碑文楷", "WeiBei Literary")
+        }
+    }
+}
+
 final class MarkdownImageSchemeHandler: NSObject, WKURLSchemeHandler, URLSessionDataDelegate, URLSessionTaskDelegate {
     private final class RemoteLoad {
         let schemeTask: WKURLSchemeTask
@@ -582,6 +600,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
     var searchQuery = ""
     var appearanceMode: WeiBeiAppearanceMode = .paper
     var interfaceLanguage: WeiBeiInterfaceLanguage = .chinese
+    var writingFont: WeiBeiWritingFont = .serif
     var isCompactPreview = false
     var isChatWideTypography = false
     /// A live read-only answer uses Milkdown's cumulative streaming document
@@ -619,6 +638,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             searchQuery: searchQuery,
             appearanceMode: appearanceMode,
             interfaceLanguage: interfaceLanguage,
+            writingFont: writingFont,
             streamsMarkdownUpdates: streamsMarkdownUpdates,
             selectionAskMarks: selectionAskMarks,
             onContentHeightChange: onContentHeightChange,
@@ -661,10 +681,12 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             window.weiBeiLocalImageScheme = \(Self.json(Self.localImageScheme));
             window.weiBeiTheme = \(Self.json(appearanceMode.webThemeName));
             window.weiBeiInterfaceLanguage = \(Self.json(interfaceLanguage.rawValue));
+            window.weiBeiWritingFont = \(Self.json(writingFont.rawValue));
             window.weiBeiMarkdownCompactPreview = \(isCompactPreview ? "true" : "false");
             window.weiBeiChatWideTypography = \(isChatWideTypography ? "true" : "false");
             document.documentElement.dataset.weibeiTheme = window.weiBeiTheme;
             document.documentElement.dataset.weibeiLanguage = window.weiBeiInterfaceLanguage;
+            document.documentElement.dataset.weibeiWritingFont = window.weiBeiWritingFont;
             document.documentElement.dataset.weibeiCompactPreview = window.weiBeiMarkdownCompactPreview ? "true" : "false";
             document.documentElement.dataset.weibeiChatWide = window.weiBeiChatWideTypography ? "true" : "false";
             (() => {
@@ -822,6 +844,12 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             context.coordinator.interfaceLanguage = interfaceLanguage
             if context.coordinator.isReady {
                 context.coordinator.setInterfaceLanguage(interfaceLanguage)
+            }
+        }
+        if context.coordinator.writingFont != writingFont {
+            context.coordinator.writingFont = writingFont
+            if context.coordinator.isReady {
+                context.coordinator.setWritingFont(writingFont)
             }
         }
         context.coordinator.isFocused = isFocused
@@ -987,6 +1015,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         var searchQuery: String
         var appearanceMode: WeiBeiAppearanceMode
         var interfaceLanguage: WeiBeiInterfaceLanguage
+        var writingFont: WeiBeiWritingFont
         var webMarkdown = ""
         var pendingStreamingCompletion = false
         var lastCommandID: UUID?
@@ -1012,6 +1041,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             searchQuery: String,
             appearanceMode: WeiBeiAppearanceMode,
             interfaceLanguage: WeiBeiInterfaceLanguage,
+            writingFont: WeiBeiWritingFont,
             streamsMarkdownUpdates: Bool,
             selectionAskMarks: String,
             onContentHeightChange: @escaping (CGFloat) -> Void,
@@ -1041,6 +1071,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             self.searchQuery = searchQuery
             self.appearanceMode = appearanceMode
             self.interfaceLanguage = interfaceLanguage
+            self.writingFont = writingFont
             self.streamsMarkdownUpdates = streamsMarkdownUpdates
             self.selectionAskMarks = selectionAskMarks
             self.onContentHeightChange = onContentHeightChange
@@ -1243,6 +1274,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
                 }
                 applySearch()
                 setTheme(appearanceMode)
+                setWritingFont(writingFont)
                 setChatWideTypography(isChatWideTypography)
                 applyFocus()
                 applySelectionAskMarks(force: true)
@@ -1452,6 +1484,19 @@ struct RichMarkdownEditorView: NSViewRepresentable {
                 ))
             } else {
                 evaluate("window.WeiBeiEditor?.setInterfaceLanguage(\(Self.json(language.rawValue)))")
+            }
+        }
+
+        func setWritingFont(_ font: WeiBeiWritingFont) {
+            if let editingSession {
+                dispatchV2(NoteEditorCommandEnvelope(
+                    documentID: editingSession.documentID,
+                    documentGeneration: editingSession.documentGeneration,
+                    type: .setWritingFont,
+                    payload: NoteEditorWritingFontPayload(font: font.rawValue)
+                ))
+            } else {
+                evaluate("window.WeiBeiEditor?.setWritingFont(\(Self.json(font.rawValue)))")
             }
         }
 

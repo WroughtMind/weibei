@@ -1256,8 +1256,50 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
                     self.fail("inline formula marker did not select the editable formula")
                     return
                 }
-                self.validateMathNodeViews()
+                self.validateWritingRoundTrips()
             }
+        }
+    }
+
+    private func validateWritingRoundTrips() {
+        let script = """
+        (() => {
+          const editor = window.WeiBeiEditor;
+          editor.setDocumentID('writing-round-trips');
+          editor.setMarkdown('上段');
+          editor.selectDocumentEndForCheck();
+          for (let index = 0; index < 4; index += 1) editor.pressKeyForCheck('Enter');
+          editor.typeTextForCheck('下段');
+          const paragraphsBefore = document.querySelectorAll('.ProseMirror > p').length;
+          const markdown = editor.getMarkdown();
+          editor.setMarkdown(markdown);
+          const paragraphsAfter = document.querySelectorAll('.ProseMirror > p').length;
+          if (paragraphsBefore !== 5 || paragraphsAfter !== paragraphsBefore) {
+            throw new Error('blank writing lines changed after snapshot reload: ' + JSON.stringify({ paragraphsBefore, paragraphsAfter, markdown }));
+          }
+
+          editor.setMarkdown('公式切换');
+          if (!editor.selectFirstTextForCheck('公式切换') || !editor.executeSelectionCommand('inlineMath')) {
+            throw new Error('first formula conversion failed');
+          }
+          if (!editor.executeSelectionCommand('inlineMath') || editor.getMarkdown().trim() !== '公式切换') {
+            throw new Error('second formula click did not restore the original text: ' + editor.getMarkdown());
+          }
+          const markdownBeforeFontChange = editor.getMarkdown();
+          editor.setWritingFont('system');
+          if (document.documentElement.dataset.weibeiWritingFont !== 'system' || editor.getMarkdown() !== markdownBeforeFontChange) {
+            throw new Error('writing font changed note content');
+          }
+          return true;
+        })();
+        """
+        webView.evaluateJavaScript(script) { [weak self] value, error in
+            guard let self else { return }
+            guard error == nil, value as? Bool == true else {
+                self.fail("writing round-trip check failed: \(String(describing: error)); \(String(describing: value))")
+                return
+            }
+            self.validateMathNodeViews()
         }
     }
 

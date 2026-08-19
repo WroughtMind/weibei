@@ -38,6 +38,7 @@ struct SettingsView: View {
     @State private var feedbackBody = ""
     @State private var feedbackBusy = false
     @State private var feedbackStatus: String?
+    @AppStorage(WeiBeiWritingFont.storageKey) private var writingFontRaw = WeiBeiWritingFont.system.rawValue
 
     private var buildInfo: WeiBeiAppBuildInfo { .current() }
 
@@ -243,6 +244,18 @@ struct SettingsView: View {
             }
 
             settingsGroup(store.ui("偏好", "Preferences")) {
+                settingsRow(
+                    title: store.ui("写作字体", "Writing font"),
+                    detail: store.ui("只改变笔记的显示，不写入 Markdown。", "Changes note display only; Markdown stays untouched.")
+                ) {
+                    compactMenu((WeiBeiWritingFont(rawValue: writingFontRaw) ?? .system).label(store.interfaceLanguage)) {
+                        ForEach(WeiBeiWritingFont.allCases) { font in
+                            Button(font.label(store.interfaceLanguage)) {
+                                writingFontRaw = font.rawValue
+                            }
+                        }
+                    }
+                }
                 settingsRow(
                     title: store.ui("今日一句", "Today's line"),
                     showsBottomDivider: false

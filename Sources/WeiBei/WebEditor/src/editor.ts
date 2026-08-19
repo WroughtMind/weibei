@@ -68,6 +68,7 @@ declare global {
     weiBeiLocalImageScheme?: string;
     weiBeiInterfaceLanguage?: unknown;
     weiBeiTheme?: unknown;
+    weiBeiWritingFont?: unknown;
     weiBeiSuppressSelectionReport?: boolean;
     weiBeiEditorCheckMode?: boolean;
     initialMarkdown?: string;
@@ -2426,6 +2427,8 @@ const reportSelection = () => {
     const { selection } = state;
     const markNames = ['strong', 'emphasis', 'highlight', 'link', 'inlineCode'];
     const activeMarks = markNames.filter((name) => state.schema.marks[name] && state.doc.rangeHasMark(selection.from, selection.to, state.schema.marks[name]));
+    const isInlineMath = selection instanceof NodeSelection && selection.node.type.name === 'math_inline';
+    if (isInlineMath) activeMarks.push('inlineMath');
     let blockType = selection.$from.parent.type.name;
     for (let depth = selection.$from.depth; depth > 0; depth -= 1) {
       const name = selection.$from.node(depth).type.name;
@@ -2442,7 +2445,7 @@ const reportSelection = () => {
     return {
       activeMarks,
       blockType,
-      canConvertToMath: selection instanceof TextSelection && !selection.empty && selection.$from.parent === selection.$to.parent && selection.$from.parent.isTextblock,
+      canConvertToMath: isInlineMath || (selection instanceof TextSelection && !selection.empty && selection.$from.parent === selection.$to.parent && selection.$from.parent.isTextblock),
       linkTarget,
     };
   }) : { activeMarks: [], blockType: '', canConvertToMath: false, linkTarget: '' };
@@ -2495,6 +2498,19 @@ const executeSelectionCommandInternal = (action: unknown, value: unknown = '') =
       }
       case 'inlineMath': {
         const math = state.schema.nodes.math_inline;
+        const selectedMath = selection instanceof NodeSelection ? selection.node : state.doc.nodeAt(selection.from);
+        if (selectedMath?.type === math && selection.to === selection.from + selectedMath.nodeSize) {
+          const source = selectedMath.textContent;
+          const tr = closeHistory(source
+            ? state.tr.replaceWith(selection.from, selection.to, state.schema.text(source))
+            : state.tr.delete(selection.from, selection.to));
+          tr.setSelection(source
+            ? TextSelection.create(tr.doc, selection.from, selection.from + source.length)
+            : Selection.near(tr.doc.resolve(Math.min(selection.from, tr.doc.content.size))));
+          view.dispatch(tr.scrollIntoView());
+          applied = true;
+          break;
+        }
         const source = state.doc.textBetween(selection.from, selection.to, '\n', '\n');
         if (!math || !source || !(selection instanceof TextSelection) || selection.$from.parent !== selection.$to.parent) break;
         const node = math.create(null, state.schema.text(source));
@@ -2853,6 +2869,12 @@ const setLanguageInternal = (next: unknown) => {
   });
 };
 
+const setWritingFontInternal = (next: unknown) => {
+  const font = typeof next === 'string' && ['system', 'serif', 'literary'].includes(next) ? next : 'serif';
+  document.documentElement.dataset.weibeiWritingFont = font;
+  scheduleContentHeightReports();
+};
+
 const focusInternal = () => {
   if (!editor) return false;
   editor.action((ctx) => ctx.get(editorViewCtx).focus());
@@ -2890,6 +2912,9 @@ const dispatchEditorCommand = (value: unknown) => {
       return true;
     case 'setLanguage':
       setLanguageInternal(commandPayloadValue(command, 'language'));
+      return true;
+    case 'setWritingFont':
+      setWritingFontInternal(commandPayloadValue(command, 'font'));
       return true;
     case 'setEditable':
       setEditableInternal(commandPayloadValue(command, 'editable'));
@@ -3006,6 +3031,7 @@ window.WeiBeiEditor = {
     },
     setTheme: setThemeInternal,
     setInterfaceLanguage: setLanguageInternal,
+    setWritingFont: setWritingFontInternal,
     focus: focusInternal,
     scrollToHeading: scrollToHeadingInternal,
   }),
@@ -3031,6 +3057,7 @@ if (WEIBEI_EDITOR_RUNTIME && window.weiBeiEditorCheckMode) {
     setDocumentID: (next: any) => setDocumentIdentityInternal(String(next || ''), currentDocumentGeneration + 1),
     setTheme: setThemeInternal,
     setInterfaceLanguage: setLanguageInternal,
+    setWritingFont: setWritingFontInternal,
     focus: focusInternal,
     scrollToHeading: scrollToHeadingInternal,
   });

@@ -446,6 +446,7 @@ private struct AccessibilityFrameProbe: NSViewRepresentable {
 struct NotePaneView: View {
     @EnvironmentObject private var store: WorkspaceStore
     @EnvironmentObject private var paneState: WorkspacePaneState
+    @AppStorage(WeiBeiWritingFont.storageKey) private var writingFontRaw = WeiBeiWritingFont.system.rawValue
     @State private var noteTabTitleDraft = ""
     @State private var editingNoteTabTitle = false
     @State private var editorRecoveryGeneration = 0
@@ -753,6 +754,7 @@ struct NotePaneView: View {
         attachmentDirectory: store.currentAttachmentDirectory,
         appearanceMode: store.appearanceMode,
         interfaceLanguage: store.interfaceLanguage,
+        writingFont: WeiBeiWritingFont(rawValue: writingFontRaw) ?? .system,
         onSelectionChange: { text, anchor in
             store.updateSelection(text, source: .note, anchor: anchor)
         }, onSelectionFormattingChange: { formatting in
@@ -2447,7 +2449,12 @@ struct FloatingSelectionAgentView: View {
             }
 
             formattingButton("inlineCode", icon: "chevron.left.forwardslash.chevron.right", label: store.ui("行内代码", "Inline code"))
-            formattingButton("inlineMath", icon: "function", label: store.ui("转为行内公式", "Convert to formula"), enabled: interaction.noteSelectionFormatting?.canConvertToMath == true)
+            formattingButton(
+                "inlineMath",
+                icon: "function",
+                label: isFormattingActive("inlineMath") ? store.ui("转回文字", "Convert to text") : store.ui("转为行内公式", "Convert to formula"),
+                enabled: interaction.noteSelectionFormatting?.canConvertToMath == true
+            )
             formattingButton("quote", icon: "text.quote", label: store.ui("引用", "Quote"), active: interaction.noteSelectionFormatting?.blockType == "blockquote")
 
             promptSeparator

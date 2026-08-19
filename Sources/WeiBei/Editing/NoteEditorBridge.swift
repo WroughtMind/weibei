@@ -13,6 +13,7 @@ enum NoteEditorCommandType: String, Codable, Sendable {
     case insertStructuredBlock
     case setTheme
     case setLanguage
+    case setWritingFont
     case setEditable
     case focus
     case scrollToHeading
@@ -75,6 +76,10 @@ struct NoteEditorThemePayload: Codable, Sendable {
 
 struct NoteEditorLanguagePayload: Codable, Sendable {
     let language: String
+}
+
+struct NoteEditorWritingFontPayload: Codable, Sendable {
+    let font: String
 }
 
 struct NoteEditorEditablePayload: Codable, Sendable {

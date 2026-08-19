@@ -61,6 +61,7 @@ test('HTML break normalization changes prose but leaves inline and fenced code u
     '<br>',
     '```',
   ].join('\n'));
+  assert.equal(normalizeHtmlBreaks('<br />\n\n> <br>'), '<br />\n\n> <br>');
 });
 
 test('currency dollars are protected at parse time without touching formulas, escapes, or code', () => {
