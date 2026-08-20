@@ -785,6 +785,33 @@ struct NotePaneView: View {
         })
         .id("\(store.activeNoteEditorDocumentID):\(editorRecoveryGeneration)")
         .background(WeiBeiTheme.paper)
+        .overlay(alignment: .topTrailing) {
+            writingFontMenu
+                .padding(10)
+        }
+    }
+
+    private var writingFontMenu: some View {
+        let current = WeiBeiWritingFont(rawValue: writingFontRaw) ?? .system
+        return Menu {
+            ForEach(WeiBeiWritingFont.allCases) { font in
+                Button {
+                    writingFontRaw = font.rawValue
+                } label: {
+                    HStack {
+                        Text(font.displayName)
+                        if font == current {
+                            Image(systemName: "checkmark")
+                        }
+                    }
+                }
+            }
+        } label: {
+            Label(current.displayName, systemImage: "textformat")
+        }
+        .buttonStyle(WeiBeiTextActionButtonStyle())
+        .help(store.ui("切换写作字体", "Change writing font"))
+        .accessibilityLabel(Text(store.ui("写作字体：\(current.displayName)", "Writing font: \(current.displayName)")))
     }
 
 }

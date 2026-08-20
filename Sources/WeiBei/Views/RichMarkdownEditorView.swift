@@ -12,11 +12,11 @@ enum WeiBeiWritingFont: String, CaseIterable, Identifiable {
 
     var id: String { rawValue }
 
-    func label(_ language: WeiBeiInterfaceLanguage) -> String {
+    var displayName: String {
         switch self {
-        case .system: return language.text("清爽书写", "Clean Sans")
-        case .serif: return language.text("书卷宋体", "Book Serif")
-        case .literary: return language.text("魏碑文楷", "WeiBei Literary")
+        case .system: return "SF Pro / PingFang SC"
+        case .serif: return "Songti SC"
+        case .literary: return "WeiBeiStele"
         }
     }
 }

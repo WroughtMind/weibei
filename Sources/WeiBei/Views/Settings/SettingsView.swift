@@ -248,9 +248,9 @@ struct SettingsView: View {
                     title: store.ui("写作字体", "Writing font"),
                     detail: store.ui("只改变笔记的显示，不写入 Markdown。", "Changes note display only; Markdown stays untouched.")
                 ) {
-                    compactMenu((WeiBeiWritingFont(rawValue: writingFontRaw) ?? .system).label(store.interfaceLanguage)) {
+                    compactMenu((WeiBeiWritingFont(rawValue: writingFontRaw) ?? .system).displayName) {
                         ForEach(WeiBeiWritingFont.allCases) { font in
-                            Button(font.label(store.interfaceLanguage)) {
+                            Button(font.displayName) {
                                 writingFontRaw = font.rawValue
                             }
                         }
