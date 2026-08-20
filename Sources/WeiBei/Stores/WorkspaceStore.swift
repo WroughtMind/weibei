@@ -356,6 +356,14 @@ final class WorkspaceStore: ObservableObject {
     @Published private(set) var isStoppingAgent = false
     @Published private(set) var isAgentSwitchConfirmationPresented = false
     let agentStreaming = AgentStreamingState()
+    private lazy var agentStreamingDisplayPump = AgentStreamingDisplayPump(hooks: .init(
+        targetText: { [weak self] in self?.latestAgentStreamingText ?? "" },
+        publish: { [weak self] in self?.agentStreaming.text = $0 },
+        canPublish: { [weak self] in
+            guard let self, let chatID = self.activeAgentReplyChatID else { return false }
+            return self.activeStudySessionID == chatID
+        }
+    ))
     @Published var showLoadingIndicatorSamples = false
     /// Last failed user question for precise one-tap retry.
     @Published private(set) var lastFailedAgentQuestion: String?
@@ -16316,6 +16324,7 @@ final class WorkspaceStore: ObservableObject {
         activeAgentRequestID = requestID
         latestAgentStreamingText = ""
         lastAgentStreamingPublishNanoseconds = 0
+        agentStreamingDisplayPump.stopAndReset()
         agentVisualizationIDsUpdatingHistory = []
         agentStreaming.text = ""
         agentStreaming.activityText = ui("正在准备课程现场", "Preparing course context")
@@ -16327,6 +16336,7 @@ final class WorkspaceStore: ObservableObject {
                 isAskingAgent = false
                 latestAgentStreamingText = ""
                 lastAgentStreamingPublishNanoseconds = 0
+                agentStreamingDisplayPump.stopAndReset()
                 agentVisualizationIDsUpdatingHistory = []
                 agentStreaming.text = ""
                 agentStreaming.activityText = nil
@@ -16761,6 +16771,7 @@ final class WorkspaceStore: ObservableObject {
         isStoppingAgent = true
         latestAgentStreamingText = ""
         lastAgentStreamingPublishNanoseconds = 0
+        agentStreamingDisplayPump.stopAndReset()
         agentStreaming.text = ""
         agentStreaming.activityText = nil
         agentStopTask?.cancel()
@@ -16973,6 +16984,7 @@ final class WorkspaceStore: ObservableObject {
             }
         case let .text(text, blocks):
             latestAgentStreamingText = text
+            agentStreamingDisplayPump.start()
             if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 agentReplyIDsThatDisplayedStreamingText.insert(replyMessageID)
             }
@@ -16980,7 +16992,6 @@ final class WorkspaceStore: ObservableObject {
             if updatesVisibleChat,
                now &- lastAgentStreamingPublishNanoseconds >= 33_000_000 {
                 lastAgentStreamingPublishNanoseconds = now
-                agentStreaming.text = text
                 updateStreamingAgentContentBlocks(
                     currentAgentVisualizationBlocks(blocks),
                     messageID: replyMessageID,
