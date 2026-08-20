@@ -79,15 +79,21 @@ final class NoteEditingSessionTests: XCTestCase {
     }
 
     @MainActor
-    func testConcurrentSnapshotRequestsShareOneFlight() async throws {
+    func testConcurrentSnapshotRequestsShareOneFlight() throws {
         var commands: [NoteEditorSnapshotRequest] = []
         let session = NoteEditingSession(documentID: "note-a") {
             commands.append($0)
         }
 
-        async let first = session.snapshot()
-        async let second = session.snapshot()
-        await Task.yield()
+        // Two callers requesting before the flight lands must share it. The
+        // async snapshot() wrapper schedules through the MainActor, and
+        // async-let children are not guaranteed to start within a single
+        // Task.yield() on current toolchains, so drive the synchronous
+        // requestSnapshot path directly: same contract, no scheduling dependence.
+        var firstResult: Result<NoteEditorSnapshotReadyEvent, NoteEditingSessionError>?
+        var secondResult: Result<NoteEditorSnapshotReadyEvent, NoteEditingSessionError>?
+        XCTAssertTrue(session.requestSnapshot { firstResult = $0 })
+        XCTAssertTrue(session.requestSnapshot { secondResult = $0 })
 
         XCTAssertEqual(commands.count, 1)
         let command = try XCTUnwrap(commands.first)
@@ -97,8 +103,36 @@ final class NoteEditingSessionTests: XCTestCase {
             )
         )
 
-        let snapshots = try await [first, second]
-        XCTAssertEqual(snapshots.map(\.markdown), ["shared", "shared"])
+        XCTAssertEqual(try firstResult?.get().markdown, "shared")
+        XCTAssertEqual(try secondResult?.get().markdown, "shared")
+        XCTAssertEqual(commands.count, 1)
+    }
+
+    @MainActor
+    func testAsyncSnapshotResumesWithFlightResult() async throws {
+        var commands: [NoteEditorSnapshotRequest] = []
+        let session = NoteEditingSession(documentID: "note-a") {
+            commands.append($0)
+        }
+
+        async let awaited = session.snapshot()
+        // The continuation registers before the child task's first suspension,
+        // so waiting for the issued command deterministically waits for the
+        // caller to be attached to the flight.
+        var waits = 0
+        while commands.isEmpty && waits < 10_000 {
+            waits += 1
+            await Task.yield()
+        }
+        let command = try XCTUnwrap(commands.first)
+
+        XCTAssertTrue(
+            session.receive(
+                snapshot(for: command, revision: 0, markdown: "shared")
+            )
+        )
+        let result = try await awaited
+        XCTAssertEqual(result.markdown, "shared")
         XCTAssertEqual(commands.count, 1)
     }
 

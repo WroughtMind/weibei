@@ -1243,6 +1243,42 @@
     :root[data-weibei-compact-preview="true"] .editor-status:not(.error) {
       display: none;
     }
+
+    /* Streaming appearance: newly typed characters fade in and a quiet caret
+       follows the flow, so evenly paced inserts read as a continuous stream
+       instead of discrete character pops. The 260ms fade makes ~8 characters
+       dissolve simultaneously at typical Chinese output rates, bridging the
+       33ms arrival gaps into a continuous flow. Opacity-only = cheap. */
+    .wb-stream-in {
+      animation: wb-stream-in 260ms cubic-bezier(0.2, 0.7, 0.3, 1) both;
+    }
+
+    @keyframes wb-stream-in {
+      from { opacity: 0; }
+      to   { opacity: 1; }
+    }
+
+    .wb-stream-caret {
+      display: inline-block;
+      width: 2px;
+      height: 1.05em;
+      margin-left: 1px;
+      vertical-align: -0.18em;
+      border-radius: 1px;
+      background: currentColor;
+      opacity: 0.7;
+      animation: wb-stream-caret-blink 1.06s ease-in-out infinite;
+    }
+
+    @keyframes wb-stream-caret-blink {
+      0%, 100% { opacity: 0.7; }
+      50%      { opacity: 0.06; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .wb-stream-in { animation: none; }
+      .wb-stream-caret { animation: none; }
+    }
   </style>
 </head>
 <body>

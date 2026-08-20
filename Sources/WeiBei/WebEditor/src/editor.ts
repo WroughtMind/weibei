@@ -12,6 +12,7 @@ import {
   streaming,
   streamingConfig,
 } from '@milkdown/plugin-streaming';
+import { streamingAppearancePlugin } from './streaming-appearance';
 import { SlashProvider, slashFactory } from '@milkdown/kit/plugin/slash';
 import { readImageAsBase64, upload, uploadConfig } from '@milkdown/kit/plugin/upload';
 import { exitCode, lift, setBlockType, toggleMark, wrapIn } from '@milkdown/kit/prose/commands';
@@ -118,6 +119,11 @@ const weiBeiMath = [
 ].flat();
 let currentContentGeneration = 0;
 let streamingMarkdownBuffer: string | null = null;
+// Raw body of the last push when it is byte-identical to the processed body
+// (normalization was a no-op). While set, a push whose new tail contains none
+// of the characters the normalization rules react to can splice the raw tail
+// directly, skipping the full-text passes. Any rewriting push clears it.
+let streamingRawBody: string | null = null;
 let selectionAskMarks: any[] = [];
 let decorationGeneration = 0;
 const insertionCursorMarker = '{{WEIBEI_CURSOR}}';
@@ -2446,6 +2452,11 @@ const weiBeiDialectPlugin = $prose(() => new Plugin({
           const text = node.text || '';
           const hasCodeMark = (node.marks || []).some((mark) => mark.type.name.toLowerCase().includes('code'));
           if (hasCodeMark) return true;
+          // The content regex passes walk every text node on every streaming
+          // flush (~30x/second) and compete with the fade animations for the
+          // web process main thread. They are irrelevant to mid-stream agent
+          // previews; the finished render rebuilds them in full.
+          if (streamingMarkdownBuffer !== null) return true;
           decorateHtmlBreaks(decorations, text, textPos);
           decorateComments(decorations, text, textPos, commentState);
           decorateSourceReferences(decorations, text, textPos);
@@ -2669,14 +2680,32 @@ const stopStreamingMarkdown = (keep = true) => {
   if (streamingMarkdownBuffer === null) return;
   streamingCommands().call(abortStreamingCmd.key, { keep });
   streamingMarkdownBuffer = null;
+  streamingRawBody = null;
 };
 
 const updateStreamingMarkdownInternal = (markdown: any) => {
   ensureEditor();
   const document = splitFrontmatter(markdown || '');
-  const body = normalizeMarkdownSource(document.body, 'agentGenerated');
   frontmatterBlock = document.frontmatter;
   syncFrontmatterPanel();
+  // Full-text normalization and the withFrontmatter serialization walk the
+  // whole document on every push (~30x/second during streaming). When the
+  // appended tail is verbatim-clean for those rules, splice it onto the raw
+  // anchor instead; any tail containing rule triggers falls back to the full
+  // passes, and the finished render always normalizes once, fully.
+  const rawBody = document.body;
+  const rawTail = streamingRawBody !== null && streamingMarkdownBuffer === streamingRawBody && rawBody.startsWith(streamingRawBody)
+    ? rawBody.slice(streamingRawBody.length)
+    : null;
+  let body: string;
+  if (rawTail !== null && !/[$<>\\`\r]/.test(rawTail)) {
+    body = rawBody;
+    streamingRawBody = rawBody;
+  } else {
+    body = normalizeMarkdownSource(rawBody, 'agentGenerated');
+    streamingRawBody = body === rawBody ? rawBody : null;
+    lastMarkdown = withFrontmatter(body);
+  }
   const commands = streamingCommands();
   if (streamingMarkdownBuffer === null) {
     commands.call(startStreamingCmd.key);
@@ -2689,14 +2718,24 @@ const updateStreamingMarkdownInternal = (markdown: any) => {
   const delta = body.slice(streamingMarkdownBuffer.length);
   if (delta) commands.call(pushChunkCmd.key, delta);
   streamingMarkdownBuffer = body;
-  lastMarkdown = withFrontmatter(body);
   scheduleContentHeightReports();
 };
 
 const finishStreamingMarkdownInternal = (markdown: any) => {
+  streamingRawBody = null; // force the full normalize + serialization pass
   updateStreamingMarkdownInternal(markdown);
   streamingCommands().call(endStreamingCmd.key, { diffReview: false });
+  streamingRawBody = null;
   streamingMarkdownBuffer = null;
+  // Decorations gate on the live buffer; repaint once so the finished render
+  // drops the streaming caret and fade spans without dispatching a transaction.
+  try {
+    editor?.action((ctx) => {
+      ctx.get(editorViewCtx).updateState(ctx.get(editorViewCtx).state);
+    });
+  } catch {
+    // View not ready yet; decorations clear on the next transaction anyway.
+  }
   scheduleContentHeightReports();
 };
 
@@ -3233,7 +3272,8 @@ editorBuilder = editorBuilder
   .use(gfm)
   .use(structuredMarkdown)
   .use(weiBeiMath)
-  .use(streaming);
+  .use(streaming)
+  .use($prose(() => streamingAppearancePlugin(() => streamingMarkdownBuffer !== null)));
 
 if (WEIBEI_EDITOR_RUNTIME) {
   editorBuilder = editorBuilder
