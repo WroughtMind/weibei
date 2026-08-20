@@ -72,7 +72,10 @@ struct SettingsView: View {
             settingsDetail
         }
         .frame(minWidth: 860, minHeight: 610)
-        .background(WeiBeiTheme.paper)
+        .background {
+            WeiBeiThemeBackdrop(mode: store.appearanceMode)
+                .ignoresSafeArea()
+        }
         .background(SettingsWindowPaper(appearanceMode: store.appearanceMode))
         .foregroundStyle(WeiBeiTheme.ink)
         .preferredColorScheme(store.appearanceMode.colorScheme)
@@ -262,11 +265,16 @@ struct SettingsView: View {
     /// Theme gallery modeled on AionUI `ThemeLayoutPreview` cards:
     /// mini app chrome (top bar + panes) so you can see how the theme feels.
     private var themePicker: some View {
-        HStack(spacing: 10) {
-            ForEach(WeiBeiAppearanceMode.allCases) { mode in
-                themePreviewCard(mode)
+        ScrollView(.horizontal) {
+            LazyHStack(spacing: 10) {
+                ForEach(WeiBeiAppearanceMode.allCases) { mode in
+                    themePreviewCard(mode)
+                        .frame(width: 190)
+                }
             }
+            .padding(.bottom, 6)
         }
+        .scrollIndicators(.visible)
     }
 
     private var themeSwatchRow: some View { themePicker }
@@ -925,10 +933,14 @@ private struct SettingsWindowPaper: NSViewRepresentable {
         guard let window else { return }
         window.titlebarAppearsTransparent = true
         window.titlebarSeparatorStyle = .none
-        window.isOpaque = true
-        window.backgroundColor = appearanceMode.windowBackground
+        window.isOpaque = !appearanceMode.isGlass
+        window.backgroundColor = appearanceMode.isGlass
+            ? .clear
+            : appearanceMode.windowBackground
         window.appearance = NSAppearance(
             named: appearanceMode.isDark ? .darkAqua : .aqua
         )
+        window.contentView?.wantsLayer = appearanceMode.isGlass
+        window.contentView?.layer?.backgroundColor = appearanceMode.isGlass ? NSColor.clear.cgColor : nil
     }
 }

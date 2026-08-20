@@ -252,11 +252,15 @@ const cleanSelectedText = (text: any) => String(text || '')
   .replace(/[ \t]+\n/g, '\n')
   .replace(/\n{2,}/g, '\n')
   .trim();
-// Keep all four product themes — CSS variables live under data-weibei-theme={paper|xuan|inkstone|stele}.
+// Glass keeps the matching readable paper palette while exposing its own
+// surface flag for translucent menus and other floating editor chrome.
 const normalizeTheme = (theme: any) => {
+  if (theme === 'glassLight' || theme === 'glassMist') return 'xuan';
+  if (theme === 'glassDark' || theme === 'glassSlate') return 'stele';
   if (theme === 'xuan' || theme === 'inkstone' || theme === 'stele' || theme === 'paper') return theme;
   return 'paper';
 };
+const normalizeGlassTheme = (theme: any) => ['glassLight', 'glassDark', 'glassMist', 'glassSlate'].includes(theme) ? theme : '';
 let currentTheme = normalizeTheme(window.weiBeiTheme);
 
 const mermaidThemeVariables = () => {
@@ -319,12 +323,20 @@ const initializeMermaid = (mermaid: any) => {
 
 const applyTheme = (theme: any) => {
   currentTheme = normalizeTheme(theme);
+  const glassTheme = normalizeGlassTheme(theme);
   document.documentElement.dataset.weibeiTheme = currentTheme;
   if (document.body) document.body.dataset.weibeiTheme = currentTheme;
+  if (glassTheme) {
+    document.documentElement.dataset.weibeiGlass = glassTheme;
+    if (document.body) document.body.dataset.weibeiGlass = glassTheme;
+  } else {
+    delete document.documentElement.dataset.weibeiGlass;
+    if (document.body) delete document.body.dataset.weibeiGlass;
+  }
   mermaidPreviewGeneration += 1;
 };
 
-applyTheme(currentTheme);
+applyTheme(window.weiBeiTheme);
 
 const showFailure = (error: any) => {
   if (window.WeiBeiEditorBootFailed) {

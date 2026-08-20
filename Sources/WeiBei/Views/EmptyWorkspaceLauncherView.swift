@@ -37,9 +37,11 @@ struct EmptyWorkspaceLauncherView: View {
                 let mode = liveAppearanceMode
 
                 ZStack {
-                    EmptyWorkspacePaperField(mode: mode, compact: compact)
-                        .frame(height: geometry.size.height + WeiBeiMetric.topBarHeight)
-                        .offset(y: -WeiBeiMetric.topBarHeight)
+                    if !mode.isGlass {
+                        EmptyWorkspacePaperField(mode: mode, compact: compact)
+                            .frame(height: geometry.size.height + WeiBeiMetric.topBarHeight)
+                            .offset(y: -WeiBeiMetric.topBarHeight)
+                    }
 
                     workspaceContent(
                         at: timeline.date,
@@ -56,7 +58,11 @@ struct EmptyWorkspaceLauncherView: View {
                 .id("\(mode.rawValue)-\(appearanceEpoch)")
             }
         }
-        .background(EmptyWorkspaceResolvedColor.paper(liveAppearanceMode))
+        .background(
+            liveAppearanceMode.isGlass
+                ? Color.clear
+                : EmptyWorkspaceResolvedColor.paper(liveAppearanceMode)
+        )
         // One rebuild trigger only — onChange + didChangeNotification used to fire
         // twice per switch and made the empty board lag the rest of the chrome.
         .onChange(of: store.appearanceMode) { _, _ in

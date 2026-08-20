@@ -391,11 +391,15 @@ private struct WindowChromeConfigurator: NSViewRepresentable {
         window.titlebarSeparatorStyle = .none
         window.styleMask.insert(.fullSizeContentView)
         window.toolbar = nil
-        window.isOpaque = true
-        window.backgroundColor = appearanceMode.windowBackground
+        window.isOpaque = !appearanceMode.isGlass
+        window.backgroundColor = appearanceMode.isGlass
+            ? .clear
+            : appearanceMode.windowBackground
         window.appearance = NSAppearance(
             named: appearanceMode.isDark ? .darkAqua : .aqua
         )
+        window.contentView?.wantsLayer = appearanceMode.isGlass
+        window.contentView?.layer?.backgroundColor = appearanceMode.isGlass ? NSColor.clear.cgColor : nil
         window.isMovableByWindowBackground = true
     }
 }
