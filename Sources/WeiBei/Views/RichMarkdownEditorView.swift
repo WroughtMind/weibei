@@ -404,6 +404,10 @@ final class MarkdownImageSchemeHandler: NSObject, WKURLSchemeHandler, URLSession
             return ("#151515", "#a6362b", "#d7cbb0")
         case .stele:
             return ("#1e2228", "#b04034", "#d2d6dc")
+        case .glassLight:
+            return ("#edf4fb", "#9c281d", "#46515f")
+        case .glassDark:
+            return ("#1b2330", "#eb5746", "#e8eef9")
         }
     }
 

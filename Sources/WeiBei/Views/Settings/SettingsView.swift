@@ -72,7 +72,10 @@ struct SettingsView: View {
             settingsDetail
         }
         .frame(minWidth: 860, minHeight: 610)
-        .background(WeiBeiTheme.paper)
+        .background {
+            WeiBeiThemeBackdrop(mode: store.appearanceMode)
+                .ignoresSafeArea()
+        }
         .background(SettingsWindowPaper(appearanceMode: store.appearanceMode))
         .foregroundStyle(WeiBeiTheme.ink)
         .preferredColorScheme(store.appearanceMode.colorScheme)
@@ -925,10 +928,14 @@ private struct SettingsWindowPaper: NSViewRepresentable {
         guard let window else { return }
         window.titlebarAppearsTransparent = true
         window.titlebarSeparatorStyle = .none
-        window.isOpaque = true
-        window.backgroundColor = appearanceMode.windowBackground
+        window.isOpaque = !appearanceMode.isGlass
+        window.backgroundColor = appearanceMode.isGlass
+            ? .clear
+            : appearanceMode.windowBackground
         window.appearance = NSAppearance(
             named: appearanceMode.isDark ? .darkAqua : .aqua
         )
+        window.contentView?.wantsLayer = appearanceMode.isGlass
+        window.contentView?.layer?.backgroundColor = appearanceMode.isGlass ? NSColor.clear.cgColor : nil
     }
 }

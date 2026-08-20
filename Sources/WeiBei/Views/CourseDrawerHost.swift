@@ -122,22 +122,30 @@ final class CourseDrawerContainerView: NSView {
     private func applyPaperChrome(for mode: WeiBeiAppearanceMode) {
         let paper = Self.panelPaperColor(for: mode)
         panel.layer?.backgroundColor = paper.cgColor
+        panel.layer?.borderWidth = mode.isGlass ? 1 : 0
+        panel.layer?.borderColor = mode.isGlass
+            ? WeiBeiNativePalette.hairline(for: mode).withAlphaComponent(0.42).cgColor
+            : NSColor.clear.cgColor
         scrim.layer?.backgroundColor = Self.scrimColor(for: mode).cgColor
         hostingView?.layer?.backgroundColor = paper.cgColor
     }
 
     private static func panelPaperColor(for mode: WeiBeiAppearanceMode) -> NSColor {
-        WeiBeiNativePalette.paper(for: mode)
+        WeiBeiNativePalette.drawerSurface(for: mode)
     }
 
     private static func scrimColor(for mode: WeiBeiAppearanceMode) -> NSColor {
         switch mode {
         case .paper, .xuan:
             return WeiBeiNativePalette.ink(for: mode).withAlphaComponent(mode == .xuan ? 0.030 : 0.035)
+        case .glassLight:
+            return NSColor(calibratedWhite: 0, alpha: 0.10)
         case .inkstone:
             return NSColor(calibratedRed: 0, green: 0, blue: 0, alpha: 0.18)
         case .stele:
             return NSColor(calibratedRed: 0, green: 0, blue: 0, alpha: 0.22)
+        case .glassDark:
+            return NSColor(calibratedRed: 0, green: 0, blue: 0, alpha: 0.18)
         }
     }
 

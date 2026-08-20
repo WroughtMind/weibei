@@ -30,7 +30,11 @@ struct ContentView: View {
                     ZStack(alignment: .top) {
                         LayoutContentView()
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
-                            .background(Color(nsColor: WeiBeiNativePalette.paper(for: store.appearanceMode)))
+                            .background(
+                                store.appearanceMode.isGlass
+                                    ? Color.clear
+                                    : Color(nsColor: WeiBeiNativePalette.paper(for: store.appearanceMode))
+                            )
                             // Only cross-fade immersive ↔ document families. Pane show/hide inside
                             // the document family is owned by AppKit StableDocumentWorkspace animation
                             // — a second SwiftUI layout animation here made toggles feel split/janky.
@@ -58,10 +62,17 @@ struct ContentView: View {
                 }
                 .allowsHitTesting(!store.courseWorkspacePresented)
                 .accessibilityHidden(store.courseWorkspacePresented)
+                .opacity(
+                    store.courseWorkspacePresented && store.appearanceMode.isGlass
+                        ? 0
+                        : 1
+                )
 
                 if store.courseWorkspacePresented {
                     ZStack {
-                        WeiBeiTheme.paper
+                        Color(nsColor: WeiBeiNativePalette.foregroundWorkspaceSurface(
+                            for: store.appearanceMode
+                        ))
                         CourseWorkspaceView()
                     }
                     .frame(width: geometry.size.width, height: geometry.size.height)
@@ -349,7 +360,7 @@ private struct WorkspaceChromeBackdrop: View {
     var body: some View {
         let empty = !paneState.showReader && !paneState.showAgent && !paneState.showNotes
         ZStack {
-            Color(nsColor: WeiBeiNativePalette.paper(for: store.appearanceMode))
+            WeiBeiThemeBackdrop(mode: store.appearanceMode)
             if empty {
                 EmptyWorkspacePaperField(mode: store.appearanceMode, compact: false)
             }
@@ -493,10 +504,10 @@ private struct UnifiedTopBarView: View {
     private var topBarBackground: some View {
         let empty = !paneState.showReader && !paneState.showAgent && !paneState.showNotes
         // Empty board keeps the glow visible through the bar. Open panes paint
-        // the same opaque paper as the workspace so the system titlebar cannot
+        // the same theme surface as the workspace so the system titlebar cannot
         // leave a second strip above NOTE / READ / CHAT.
         return Group {
-            if empty {
+            if empty || store.appearanceMode.isGlass {
                 Color.clear
             } else {
                 Color(nsColor: WeiBeiNativePalette.paper(for: store.appearanceMode))

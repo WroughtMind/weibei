@@ -3,22 +3,27 @@ import CoreText
 import SwiftUI
 import WeiBeiCore
 
-/// Four surface themes. Light pair: 纸面 (warm product paper) + 宣纸 (cooler fibrous xuan).
-/// Dark pair: 墨石 (near-black warm ink) + 石碑 (cool carved stele grey).
+/// Six surface themes: four paper/stone palettes plus a light/dark glass pair.
 enum WeiBeiAppearanceMode: String, CaseIterable, Identifiable {
     case paper
     case xuan
     case inkstone
     case stele
+    case glassLight
+    case glassDark
 
     var id: String { rawValue }
 
-    /// True for both dark surfaces (墨石 / 石碑). Prefer this over `== .inkstone`.
+    /// Prefer this over checking individual dark palettes.
     var isDark: Bool {
         switch self {
-        case .paper, .xuan: return false
-        case .inkstone, .stele: return true
+        case .paper, .xuan, .glassLight: return false
+        case .inkstone, .stele, .glassDark: return true
         }
+    }
+
+    var isGlass: Bool {
+        self == .glassLight || self == .glassDark
     }
 
     func label(language: WeiBeiInterfaceLanguage) -> String {
@@ -31,6 +36,10 @@ enum WeiBeiAppearanceMode: String, CaseIterable, Identifiable {
             return language.text("墨石", "Inkstone")
         case .stele:
             return language.text("石碑", "Stele")
+        case .glassLight:
+            return language.text("晴璃", "Clear Glass")
+        case .glassDark:
+            return language.text("夜璃", "Dark Glass")
         }
     }
 
@@ -44,6 +53,10 @@ enum WeiBeiAppearanceMode: String, CaseIterable, Identifiable {
             return language.text("暖黑墨石", "Warm near-black ink")
         case .stele:
             return language.text("冷灰碑面", "Cool carved stone")
+        case .glassLight:
+            return language.text("明亮液态磨砂玻璃", "Bright liquid frosted glass")
+        case .glassDark:
+            return language.text("深色液态磨砂玻璃", "Dark liquid frosted glass")
         }
     }
 
@@ -61,6 +74,10 @@ enum WeiBeiAppearanceMode: String, CaseIterable, Identifiable {
             return "moon.stars"
         case .stele:
             return "rectangle.split.3x1"
+        case .glassLight:
+            return "sun.haze"
+        case .glassDark:
+            return "moon.haze"
         }
     }
 
@@ -69,26 +86,36 @@ enum WeiBeiAppearanceMode: String, CaseIterable, Identifiable {
     }
 
     var webThemeName: String {
-        rawValue
+        switch self {
+        case .glassLight: return WeiBeiAppearanceMode.xuan.rawValue
+        case .glassDark: return WeiBeiAppearanceMode.stele.rawValue
+        default: return rawValue
+        }
     }
 
     var windowBackground: NSColor {
         WeiBeiNativePalette.paper(for: self)
     }
 
-    /// Cycles all four themes (used by legacy toggle API / shortcuts).
+    /// Cycles all themes (used by legacy toggle API / shortcuts).
     var toggled: WeiBeiAppearanceMode {
         switch self {
         case .paper: return .xuan
         case .xuan: return .inkstone
         case .inkstone: return .stele
-        case .stele: return .paper
+        case .stele: return .glassLight
+        case .glassLight: return .glassDark
+        case .glassDark: return .paper
         }
     }
 
     /// Next theme in the light↔dark pair, or full cycle when no pair preference.
     var oppositeFamily: WeiBeiAppearanceMode {
-        isDark ? .paper : .inkstone
+        switch self {
+        case .glassLight: return .glassDark
+        case .glassDark: return .glassLight
+        default: return isDark ? .paper : .inkstone
+        }
     }
 }
 
@@ -194,7 +221,45 @@ enum WeiBeiTheme {
     static var stone: Color { secondaryInk }
 }
 
-/// AppKit / WebKit palette — single source of truth for all four themes.
+/// One native behind-window material layer for each glass window.
+struct WeiBeiThemeBackdrop: View {
+    let mode: WeiBeiAppearanceMode
+
+    @ViewBuilder
+    var body: some View {
+        if mode.isGlass {
+            ZStack {
+                WeiBeiBehindWindowMaterial(mode: mode)
+                Color(nsColor: WeiBeiNativePalette.glassBaseTint(for: mode))
+            }
+        } else {
+            Color(nsColor: WeiBeiNativePalette.paper(for: mode))
+        }
+    }
+}
+
+private struct WeiBeiBehindWindowMaterial: NSViewRepresentable {
+    let mode: WeiBeiAppearanceMode
+
+    func makeNSView(context: Context) -> NSVisualEffectView {
+        let view = NSVisualEffectView()
+        view.blendingMode = .behindWindow
+        view.state = .active
+        configure(view)
+        return view
+    }
+
+    func updateNSView(_ view: NSVisualEffectView, context: Context) {
+        configure(view)
+    }
+
+    private func configure(_ view: NSVisualEffectView) {
+        view.material = mode.isDark ? .hudWindow : .underWindowBackground
+        view.alphaValue = mode.isDark ? 0.92 : 0.62
+    }
+}
+
+/// AppKit / WebKit palette — single source of truth for all six themes.
 /// Prefer these over hard-coded paper/inkstone RGB pairs in native views.
 enum WeiBeiNativePalette {
     /// Current mode used by AppKit code that cannot take an explicit mode parameter.
@@ -210,6 +275,10 @@ enum WeiBeiNativePalette {
             return NSColor(calibratedRed: 0.059, green: 0.059, blue: 0.059, alpha: 1.0)
         case .stele:
             return NSColor(calibratedRed: 0.086, green: 0.094, blue: 0.110, alpha: 1.0)
+        case .glassLight:
+            return .clear
+        case .glassDark:
+            return .clear
         }
     }
 
@@ -223,6 +292,10 @@ enum WeiBeiNativePalette {
             return NSColor(calibratedRed: 0.082, green: 0.082, blue: 0.082, alpha: 1.0)
         case .stele:
             return NSColor(calibratedRed: 0.118, green: 0.133, blue: 0.157, alpha: 1.0)
+        case .glassLight:
+            return NSColor(calibratedRed: 0.965, green: 0.980, blue: 1.000, alpha: 0.18)
+        case .glassDark:
+            return NSColor(calibratedRed: 0.105, green: 0.135, blue: 0.185, alpha: 0.22)
         }
     }
 
@@ -236,6 +309,47 @@ enum WeiBeiNativePalette {
             return NSColor(calibratedRed: 0.110, green: 0.110, blue: 0.110, alpha: 1.0)
         case .stele:
             return NSColor(calibratedRed: 0.145, green: 0.165, blue: 0.196, alpha: 1.0)
+        case .glassLight:
+            return NSColor(calibratedRed: 0.700, green: 0.760, blue: 0.830, alpha: 0.13)
+        case .glassDark:
+            return NSColor(calibratedRed: 0.180, green: 0.230, blue: 0.310, alpha: 0.16)
+        }
+    }
+
+    static func glassBaseTint(for mode: WeiBeiAppearanceMode = current) -> NSColor {
+        switch mode {
+        case .glassLight:
+            return NSColor(calibratedRed: 0.94, green: 0.98, blue: 1.00, alpha: 0.03)
+        case .glassDark:
+            return NSColor(calibratedRed: 0.025, green: 0.040, blue: 0.065, alpha: 0.56)
+        default:
+            return .clear
+        }
+    }
+
+    /// Raised drawer surface. Glass themes keep one window blur and use only a
+    /// translucent tint here so foreground navigation stays legible.
+    static func drawerSurface(for mode: WeiBeiAppearanceMode = current) -> NSColor {
+        switch mode {
+        case .glassLight:
+            return NSColor(calibratedRed: 0.94, green: 0.97, blue: 1.00, alpha: 0.20)
+        case .glassDark:
+            return NSColor(calibratedRed: 0.055, green: 0.075, blue: 0.105, alpha: 0.28)
+        default:
+            return paper(for: mode)
+        }
+    }
+
+    /// Full-window foreground workspace surface. It must hide any open drawer
+    /// below it while remaining visibly translucent to the desktop material.
+    static func foregroundWorkspaceSurface(for mode: WeiBeiAppearanceMode = current) -> NSColor {
+        switch mode {
+        case .glassLight:
+            return NSColor(calibratedRed: 0.94, green: 0.97, blue: 1.00, alpha: 0.12)
+        case .glassDark:
+            return NSColor(calibratedRed: 0.040, green: 0.055, blue: 0.080, alpha: 0.22)
+        default:
+            return paper(for: mode)
         }
     }
 
@@ -249,6 +363,10 @@ enum WeiBeiNativePalette {
             return NSColor(calibratedRed: 0.843, green: 0.796, blue: 0.690, alpha: 1.0)
         case .stele:
             return NSColor(calibratedRed: 0.824, green: 0.839, blue: 0.863, alpha: 1.0)
+        case .glassLight:
+            return NSColor(calibratedRed: 0.090, green: 0.115, blue: 0.150, alpha: 0.96)
+        case .glassDark:
+            return NSColor(calibratedRed: 0.910, green: 0.935, blue: 0.975, alpha: 0.98)
         }
     }
 
@@ -262,6 +380,10 @@ enum WeiBeiNativePalette {
             return NSColor(calibratedRed: 0.608, green: 0.569, blue: 0.471, alpha: 1.0)
         case .stele:
             return NSColor(calibratedRed: 0.604, green: 0.631, blue: 0.671, alpha: 1.0)
+        case .glassLight:
+            return NSColor(calibratedRed: 0.275, green: 0.315, blue: 0.370, alpha: 0.92)
+        case .glassDark:
+            return NSColor(calibratedRed: 0.680, green: 0.730, blue: 0.800, alpha: 0.94)
         }
     }
 
@@ -275,6 +397,10 @@ enum WeiBeiNativePalette {
             return NSColor(calibratedRed: 0.435, green: 0.400, blue: 0.333, alpha: 1.0)
         case .stele:
             return NSColor(calibratedRed: 0.430, green: 0.460, blue: 0.510, alpha: 1.0)
+        case .glassLight:
+            return NSColor(calibratedRed: 0.430, green: 0.480, blue: 0.550, alpha: 0.82)
+        case .glassDark:
+            return NSColor(calibratedRed: 0.480, green: 0.550, blue: 0.640, alpha: 0.86)
         }
     }
 
@@ -288,6 +414,10 @@ enum WeiBeiNativePalette {
             return NSColor(calibratedRed: 0.227, green: 0.200, blue: 0.157, alpha: 0.72)
         case .stele:
             return NSColor(calibratedRed: 0.227, green: 0.255, blue: 0.298, alpha: 0.78)
+        case .glassLight:
+            return NSColor(calibratedRed: 0.280, green: 0.350, blue: 0.440, alpha: 0.24)
+        case .glassDark:
+            return NSColor(calibratedRed: 0.790, green: 0.860, blue: 0.950, alpha: 0.26)
         }
     }
 
@@ -301,6 +431,10 @@ enum WeiBeiNativePalette {
             return NSColor(calibratedRed: 0.651, green: 0.212, blue: 0.169, alpha: 1.0)
         case .stele:
             return NSColor(calibratedRed: 0.690, green: 0.250, blue: 0.200, alpha: 1.0)
+        case .glassLight:
+            return NSColor(calibratedRed: 0.610, green: 0.155, blue: 0.115, alpha: 1.0)
+        case .glassDark:
+            return NSColor(calibratedRed: 0.920, green: 0.335, blue: 0.275, alpha: 1.0)
         }
     }
 
@@ -314,6 +448,10 @@ enum WeiBeiNativePalette {
             return NSColor(calibratedRed: 0.784, green: 0.725, blue: 0.541, alpha: 1.0)
         case .stele:
             return NSColor(calibratedRed: 0.722, green: 0.769, blue: 0.816, alpha: 1.0)
+        case .glassLight:
+            return NSColor(calibratedRed: 0.120, green: 0.355, blue: 0.540, alpha: 1.0)
+        case .glassDark:
+            return NSColor(calibratedRed: 0.490, green: 0.745, blue: 0.960, alpha: 1.0)
         }
     }
 
@@ -327,6 +465,10 @@ enum WeiBeiNativePalette {
             return NSColor(calibratedRed: 0.043, green: 0.043, blue: 0.043, alpha: 1.0)
         case .stele:
             return NSColor(calibratedRed: 0.063, green: 0.071, blue: 0.090, alpha: 1.0)
+        case .glassLight:
+            return NSColor(calibratedRed: 0.090, green: 0.115, blue: 0.150, alpha: 1.0)
+        case .glassDark:
+            return NSColor(calibratedRed: 0.025, green: 0.035, blue: 0.055, alpha: 0.92)
         }
     }
 
@@ -340,6 +482,10 @@ enum WeiBeiNativePalette {
             return NSColor(calibratedRed: 0.686, green: 0.643, blue: 0.549, alpha: 1.0)
         case .stele:
             return NSColor(calibratedRed: 0.659, green: 0.686, blue: 0.722, alpha: 1.0)
+        case .glassLight:
+            return NSColor(calibratedRed: 0.390, green: 0.440, blue: 0.510, alpha: 0.88)
+        case .glassDark:
+            return NSColor(calibratedRed: 0.600, green: 0.665, blue: 0.750, alpha: 0.90)
         }
     }
 
@@ -353,6 +499,10 @@ enum WeiBeiNativePalette {
             return NSColor(calibratedRed: 0.361, green: 0.149, blue: 0.129, alpha: 0.62)
         case .stele:
             return NSColor(calibratedRed: 0.353, green: 0.165, blue: 0.157, alpha: 0.58)
+        case .glassLight:
+            return NSColor(calibratedRed: 0.610, green: 0.155, blue: 0.115, alpha: 0.11)
+        case .glassDark:
+            return NSColor(calibratedRed: 0.620, green: 0.190, blue: 0.165, alpha: 0.42)
         }
     }
 
@@ -366,6 +516,8 @@ enum WeiBeiNativePalette {
             return NSColor(calibratedRed: 0.953, green: 0.871, blue: 0.761, alpha: 1.0)
         case .stele:
             return NSColor(calibratedRed: 0.910, green: 0.925, blue: 0.941, alpha: 1.0)
+        case .glassLight, .glassDark:
+            return NSColor(calibratedRed: 0.975, green: 0.985, blue: 1.000, alpha: 1.0)
         }
     }
 
@@ -379,6 +531,10 @@ enum WeiBeiNativePalette {
             return NSColor(calibratedRed: 0.722, green: 0.541, blue: 0.259, alpha: 1.0)
         case .stele:
             return NSColor(calibratedRed: 0.561, green: 0.627, blue: 0.416, alpha: 1.0)
+        case .glassLight:
+            return NSColor(calibratedRed: 0.190, green: 0.420, blue: 0.335, alpha: 1.0)
+        case .glassDark:
+            return NSColor(calibratedRed: 0.520, green: 0.750, blue: 0.565, alpha: 1.0)
         }
     }
 
@@ -392,6 +548,10 @@ enum WeiBeiNativePalette {
             return NSColor(calibratedRed: 0.090, green: 0.090, blue: 0.090, alpha: 0.92)
         case .stele:
             return NSColor(calibratedRed: 0.102, green: 0.118, blue: 0.141, alpha: 0.94)
+        case .glassLight:
+            return NSColor(calibratedWhite: 0.150, alpha: 0.055)
+        case .glassDark:
+            return NSColor(calibratedWhite: 0.020, alpha: 0.42)
         }
     }
 
@@ -405,6 +565,10 @@ enum WeiBeiNativePalette {
             return NSColor(calibratedRed: 0.102, green: 0.094, blue: 0.078, alpha: 1.0)
         case .stele:
             return NSColor(calibratedRed: 0.110, green: 0.125, blue: 0.149, alpha: 1.0)
+        case .glassLight:
+            return NSColor(calibratedRed: 0.820, green: 0.910, blue: 1.000, alpha: 1.0)
+        case .glassDark:
+            return NSColor(calibratedRed: 0.150, green: 0.210, blue: 0.300, alpha: 1.0)
         }
     }
 
@@ -418,6 +582,10 @@ enum WeiBeiNativePalette {
             return NSColor(calibratedRed: 0.227, green: 0.200, blue: 0.157, alpha: 1.0)
         case .stele:
             return NSColor(calibratedRed: 0.243, green: 0.275, blue: 0.322, alpha: 1.0)
+        case .glassLight:
+            return NSColor(calibratedWhite: 1.000, alpha: 1.0)
+        case .glassDark:
+            return NSColor(calibratedRed: 0.720, green: 0.840, blue: 0.970, alpha: 1.0)
         }
     }
 
@@ -435,12 +603,16 @@ enum WeiBeiNativePalette {
         case .stele:
             // Cool stone mid-tone for 石碑.
             return NSColor(calibratedRed: 0.58, green: 0.60, blue: 0.64, alpha: 1.0)
+        case .glassLight:
+            return NSColor(calibratedRed: 0.82, green: 0.86, blue: 0.91, alpha: 1.0)
+        case .glassDark:
+            return NSColor(calibratedRed: 0.56, green: 0.60, blue: 0.67, alpha: 1.0)
         }
     }
 
-    /// Split-view divider fill — matches the active paper surface (all four modes).
+    /// Split-view divider fill — glass themes keep their transparency.
     static func dividerFill(for mode: WeiBeiAppearanceMode = current) -> NSColor {
-        paper(for: mode).withAlphaComponent(0.96)
+        mode.isGlass ? paper(for: mode) : paper(for: mode).withAlphaComponent(0.96)
     }
 
     /// Split-view hairline on the divider.
@@ -454,17 +626,23 @@ enum WeiBeiNativePalette {
             return NSColor(calibratedRed: 0.230, green: 0.200, blue: 0.155, alpha: 0.24)
         case .stele:
             return NSColor(calibratedRed: 0.220, green: 0.250, blue: 0.300, alpha: 0.28)
+        case .glassLight:
+            return NSColor(calibratedRed: 0.250, green: 0.340, blue: 0.440, alpha: 0.18)
+        case .glassDark:
+            return NSColor(calibratedRed: 0.700, green: 0.820, blue: 0.950, alpha: 0.19)
         }
     }
 
     static func selectedText(for mode: WeiBeiAppearanceMode = current) -> NSColor {
         switch mode {
-        case .paper, .xuan:
+        case .paper, .xuan, .glassLight:
             return ink(for: mode)
         case .inkstone:
             return NSColor(calibratedRed: 0.961, green: 0.906, blue: 0.784, alpha: 1.0)
         case .stele:
             return NSColor(calibratedRed: 0.930, green: 0.940, blue: 0.955, alpha: 1.0)
+        case .glassDark:
+            return NSColor(calibratedRed: 0.955, green: 0.975, blue: 1.000, alpha: 1.0)
         }
     }
 
@@ -478,6 +656,10 @@ enum WeiBeiNativePalette {
             return NSColor(calibratedRed: 0.651, green: 0.212, blue: 0.169, alpha: 0.35)
         case .stele:
             return NSColor(calibratedRed: 0.690, green: 0.250, blue: 0.200, alpha: 0.32)
+        case .glassLight:
+            return NSColor(calibratedRed: 0.610, green: 0.155, blue: 0.115, alpha: 0.20)
+        case .glassDark:
+            return NSColor(calibratedRed: 0.920, green: 0.335, blue: 0.275, alpha: 0.34)
         }
     }
 
@@ -495,6 +677,10 @@ enum WeiBeiNativePalette {
             return ("#0f0f0f", "#151515", "#d7cbb0", "rgba(155,145,120,.88)", "#a6362b", "#c8b98a", "rgba(166,54,43,.35)")
         case .stele:
             return ("#16181c", "#1e2228", "#d2d6dc", "rgba(154,161,171,.88)", "#b04034", "#b8c4d0", "rgba(176,64,52,.32)")
+        case .glassLight:
+            return ("rgba(230,240,250,.42)", "rgba(248,251,255,.62)", "#171d26", "rgba(62,74,90,.78)", "#9c281d", "#1f5a89", "rgba(156,40,29,.20)")
+        case .glassDark:
+            return ("rgba(12,16,24,.52)", "rgba(27,35,48,.56)", "#e8eef9", "rgba(174,186,204,.88)", "#eb5746", "#7dbeF5", "rgba(235,87,70,.34)")
         }
     }
 }
@@ -535,7 +721,7 @@ enum WeiBeiMotion {
     static let sideDrawer = Animation.easeOut(duration: 0.12)
 }
 
-/// Top-bar / settings theme control: four paper swatches instead of a SF-Symbol Menu.
+/// Top-bar / settings theme control: compact surface swatches instead of a menu.
 struct AppearanceThemePaletteButton: View {
     @EnvironmentObject private var store: WorkspaceStore
     @State private var isPresented = false
@@ -578,7 +764,7 @@ private struct AppearanceThemePalettePopover: View {
                     VStack(spacing: 6) {
                         ZStack {
                             RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                .fill(Color(nsColor: WeiBeiNativePalette.paper(for: mode)))
+                                .fill(Color(nsColor: previewSurface(for: mode)))
                                 .frame(width: 52, height: 36)
                             RoundedRectangle(cornerRadius: 8, style: .continuous)
                                 .stroke(
@@ -622,7 +808,7 @@ private struct AppearanceThemePalettePopover: View {
 struct WeiBeiThemeLayoutPreview: View {
     let mode: WeiBeiAppearanceMode
 
-    private var paper: Color { Color(nsColor: WeiBeiNativePalette.paper(for: mode)) }
+    private var paper: Color { Color(nsColor: previewSurface(for: mode)) }
     private var raised: Color { Color(nsColor: WeiBeiNativePalette.paperRaised(for: mode)) }
     private var inset: Color { Color(nsColor: WeiBeiNativePalette.paperInset(for: mode)) }
     private var ink: Color { Color(nsColor: WeiBeiNativePalette.ink(for: mode)) }
@@ -797,6 +983,12 @@ struct WeiBeiThemeLayoutPreview: View {
     }
 }
 
+private func previewSurface(for mode: WeiBeiAppearanceMode) -> NSColor {
+    mode.isGlass
+        ? WeiBeiNativePalette.drawerSurface(for: mode)
+        : WeiBeiNativePalette.paper(for: mode)
+}
+
 enum WeiBeiTransition {
     // No blur: blur during large panel open forces offscreen raster of the whole workspace.
     // Kept for call sites that still use transition insertion; ContentView uses offset slide.
@@ -866,7 +1058,9 @@ struct WeiBeiGlassHeaderBackground: View {
 
     var body: some View {
         ZStack {
-            if isDark {
+            if appearanceMode.isGlass {
+                Color.clear
+            } else if isDark {
                 // Match the page/window paper exactly — no paperRaised wash, no warm
                 // glassHighlight (those made 墨石/石碑 top bars look gray-brown).
                 Rectangle()
@@ -906,8 +1100,9 @@ struct WeiBeiHeaderHandoffFade: View {
     var body: some View {
         // Dark: pure paper fade into content (no warm glassTint band under the bar).
         // Light: keep the soft glass handoff.
-        let colors: [Color] = appearanceMode.isDark
-            ? [
+        let colors: [Color] = appearanceMode.isGlass
+            ? [.clear, .clear]
+            : appearanceMode.isDark ? [
                 WeiBeiTheme.paper.opacity(0.55 * opacity),
                 WeiBeiTheme.paper.opacity(0.22 * opacity),
                 .clear
