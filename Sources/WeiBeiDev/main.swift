@@ -224,6 +224,8 @@ func runVerifyReleaseMetadata(arguments: [String]) {
     let actualBundleID = plistString("CFBundleIdentifier")
     let actualIcon = plistString("CFBundleIconFile")
     let actualMinSystem = plistString("LSMinimumSystemVersion")
+    let requiresSignedFeed = plistDictionary["SURequireSignedFeed"] as? Bool ?? false
+    let verifiesUpdateBeforeExtraction = plistDictionary["SUVerifyUpdateBeforeExtraction"] as? Bool ?? false
 
     func assertEqual(_ label: String, _ expected: String, _ actual: String) {
         if actual != expected {
@@ -237,6 +239,12 @@ func runVerifyReleaseMetadata(arguments: [String]) {
     assertEqual("bundle identifier", "com.changfenhuang.weibei", actualBundleID)
     assertEqual("app icon", "AppIcon.icns", actualIcon)
     assertEqual("minimum system version", "14.0", actualMinSystem)
+    guard requiresSignedFeed, verifiesUpdateBeforeExtraction else {
+        fail(
+            "Sparkle requires signed-feed and verify-before-extraction safeguards",
+            exitCode: 8
+        )
+    }
 
     guard let iconHeader = try? Data(contentsOf: appIcon).prefix(4),
           String(data: iconHeader, encoding: .ascii) == "icns" else {
@@ -250,6 +258,7 @@ func runVerifyReleaseMetadata(arguments: [String]) {
     print("release_metadata_bundle_id=\(actualBundleID)")
     print("release_metadata_icon=\(actualIcon)")
     print("release_metadata_min_system=\(actualMinSystem)")
+    print("release_metadata_sparkle_validation=enabled")
     print("release_metadata_notices=packaged")
 }
 
