@@ -1268,7 +1268,19 @@ struct RichMarkdownEditorView: NSViewRepresentable {
                     setDocumentID(documentID)
                     setEditable(isEditable)
                     setInterfaceLanguage(interfaceLanguage)
-                    webMarkdown = markdown
+                    // The JS editor initialized with the markdown baked in at
+                    // page load; tokens that accumulated during the cold start
+                    // (and any completion that landed before ready) must be
+                    // replayed now, or a short answer would stay frozen on the
+                    // first chunk forever.
+                    if streamsMarkdownUpdates {
+                        updateStreamingMarkdown(markdown)
+                    } else if pendingStreamingCompletion {
+                        pendingStreamingCompletion = false
+                        finishStreamingMarkdown(markdown)
+                    } else {
+                        webMarkdown = markdown
+                    }
                 }
                 applySearch()
                 setTheme(appearanceMode)

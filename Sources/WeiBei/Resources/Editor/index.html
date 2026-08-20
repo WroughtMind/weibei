@@ -1236,6 +1236,13 @@
       font-family: "SF Mono", Menlo, ui-monospace, monospace;
       white-space: pre-wrap;
     }
+
+    /* Chat previews cover the loading window with their own thinking
+       indicator; the 14px loading line would flash a third type size at the
+       start of every streamed answer. Errors stay visible. */
+    :root[data-weibei-compact-preview="true"] .editor-status:not(.error) {
+      display: none;
+    }
   </style>
 </head>
 <body>

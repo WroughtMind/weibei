@@ -2996,16 +2996,20 @@ private struct FloatingSelectionMessageRow: View {
     var body: some View {
         let isGenerating = message.completionState == .generating
         let text = isGenerating ? streaming.text : store.agentDisplayText(for: message)
-        if isGenerating && text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            AgentThinkingIndicator(activityText: streaming.activityText)
-                .id(message.id)
-                .padding(.vertical, 4)
-        } else {
+        // Mount the bubble (and its markdown WebView) while the thinking
+        // overlay is still up, so the renderer's cold start runs in parallel
+        // with the wait for the first token.
+        ZStack(alignment: .topLeading) {
             FloatingSelectionMessageBubble(
                 message: message,
                 text: text,
                 isError: WorkspaceStore.isAgentFailureMessage(message.text)
             )
+            if isGenerating && text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                AgentThinkingIndicator(activityText: streaming.activityText)
+                    .id(message.id)
+                    .padding(.vertical, 4)
+            }
         }
     }
 }
@@ -3209,11 +3213,10 @@ private struct AgentBubble: View {
             }
         }
         let displayedStreamingText = store.agentReplyDisplayedStreamingText(message)
+        let isAwaitingFirstToken = message.completionState == .generating
+            && answerText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         return VStack(alignment: .leading, spacing: 8) {
-            if message.completionState == .generating
-                && answerText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                AgentThinkingIndicator(activityText: liveActivityText)
-            } else if let richAnswer = message.richAnswer,
+            if !isAwaitingFirstToken, let richAnswer = message.richAnswer,
                richAnswer.mode == .rich,
                !richAnswer.scenes.isEmpty,
                !displayedStreamingText {
@@ -3230,17 +3233,24 @@ private struct AgentBubble: View {
                 }) {
                     visualizedMessageFlow(fallbackText: citationParse.displayText)
                 } else {
-                    // One surface owns the answer from its first rendered token through
-                    // completion. State changes may freeze/cache it, but never replace it.
-                    AgentMessageMarkdownText(
-                        text: citationParse.displayText,
-                        rendersRichMarkdown: true,
-                        isChatWideTypography: isChatWideTypography,
-                        usesFinalizedKaTeX: !isFailureMessage,
-                        messageID: message.id,
-                        keepsMarkdownSurfaceMounted: !isFailureMessage,
-                        isStreaming: message.completionState == .generating
-                    )
+                    // One surface owns the answer from question send through
+                    // completion. The WebView mounts while the thinking overlay
+                    // is still up, so its cold start runs in parallel with the
+                    // wait for the first token instead of after it.
+                    ZStack(alignment: .topLeading) {
+                        AgentMessageMarkdownText(
+                            text: citationParse.displayText,
+                            rendersRichMarkdown: true,
+                            isChatWideTypography: isChatWideTypography,
+                            usesFinalizedKaTeX: !isFailureMessage,
+                            messageID: message.id,
+                            keepsMarkdownSurfaceMounted: !isFailureMessage,
+                            isStreaming: message.completionState == .generating
+                        )
+                        if isAwaitingFirstToken {
+                            AgentThinkingIndicator(activityText: liveActivityText)
+                        }
+                    }
                 }
                 if let richAnswer = message.richAnswer,
                    richAnswer.mode == .rich,
