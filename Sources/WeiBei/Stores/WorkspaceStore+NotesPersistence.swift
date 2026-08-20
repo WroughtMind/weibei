@@ -104,10 +104,6 @@ extension WorkspaceStore {
         guard let initialIndex = importedItems.firstIndex(where: { $0.id == itemID && $0.isNotebookNote }) else { return }
         let oldTitle = displayTitle(for: importedItems[initialIndex])
 
-        if let stagedNoteDraft, stagedNoteDraft.itemID == itemID {
-            self.stagedNoteDraft = nil
-            updateNote(stagedNoteDraft.value, for: itemID)
-        }
         flushPendingNotePersistence(for: itemID)
         persistCurrentNote()
         guard let index = importedItems.firstIndex(where: { $0.id == itemID && $0.isNotebookNote }) else { return }
@@ -614,10 +610,6 @@ extension WorkspaceStore {
 
     func persistCurrentNote() {
         guard let item = activeNoteItem else { return }
-        if let stagedNoteDraft, stagedNoteDraft.itemID == item.id {
-            self.stagedNoteDraft = nil
-            updateNote(stagedNoteDraft.value, for: item.id)
-        }
         if pendingNotePersistenceByItemID[item.id] != nil {
             flushPendingNotePersistence(for: item.id)
         } else if notesByItemID[item.id] != nil, item.editsBackingMarkdownFile {
@@ -630,10 +622,6 @@ extension WorkspaceStore {
     }
 
     func flushPendingNotePersistence(flushWorkspace: Bool) {
-        if let stagedNoteDraft {
-            self.stagedNoteDraft = nil
-            updateNote(stagedNoteDraft.value, for: stagedNoteDraft.itemID)
-        }
         let itemIDs = Array(pendingNotePersistenceByItemID.keys)
         itemIDs.forEach { flushPendingNotePersistence(for: $0) }
         studyProgressSaveTask?.cancel()
@@ -725,6 +713,7 @@ extension WorkspaceStore {
             setNoteDraft(nil, for: itemID)
             pendingNoteWritesByItemID.removeValue(forKey: itemID)
             setNoteFileError(nil, for: itemID)
+            noteEditorDidPersist(markdown, documentID: itemID)
             return true
         } catch {
             setNoteDraft(markdown, for: itemID)

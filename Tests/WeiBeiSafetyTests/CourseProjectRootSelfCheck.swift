@@ -6811,7 +6811,7 @@ enum CourseProjectRootSelfCheck {
         )
 
         let localDraft = "# 魏碑写入\n\n失焦前必须落盘"
-        store.stageNoteDraft(localDraft, for: noteID)
+        store.updateNote(localDraft, for: noteID)
         store.flushPendingNotePersistence(flushWorkspace: false)
         try store.waitForCourseNoteWritesForSelfCheck()
         let afterFlush = try String(contentsOf: noteURL, encoding: .utf8)

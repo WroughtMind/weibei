@@ -8,18 +8,19 @@
     "Prototypes/RichAnswerWebRuntime"
   ],
   "scripts": {
-    "build:editor": "esbuild Sources/WeiBei/WebEditor/src/editor.ts --bundle --format=iife --outfile=Sources/WeiBei/Resources/Editor/editor.js --minify --loader:.woff=file --loader:.woff2=file --loader:.ttf=file --asset-names=fonts/[name]",
+    "build:editor": "node script/build_editor.mjs",
     "typecheck:tools": "tsc --noEmit -p tsconfig.json",
     "typecheck:agent": "tsc --noEmit -p tsconfig.agent.json",
-    "typecheck:editor": "tsc --noEmit -p tsconfig.editor.json"
+    "typecheck:editor": "tsc --noEmit -p tsconfig.editor.json",
+    "test:editor": "node --import tsx --test Sources/WeiBei/WebEditor/test/*.test.ts"
   },
   "dependencies": {
     "@milkdown/kit": "7.21.3",
-    "@milkdown/plugin-math": "^7.5.9",
+    "@milkdown/plugin-streaming": "7.21.3",
     "katex": "^0.17.0",
-    "mdast-util-math": "^3.0.0",
     "mermaid": "11.16.1",
-    "prismjs": "^1.30.0"
+    "prismjs": "^1.30.0",
+    "remark-math": "^6.0.0"
   },
   "devDependencies": {
     "@earendil-works/pi-ai": "0.82.1",

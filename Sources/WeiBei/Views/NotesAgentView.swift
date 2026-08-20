@@ -448,16 +448,11 @@ struct NotePaneView: View {
     @EnvironmentObject private var paneState: WorkspacePaneState
     @State private var noteTabTitleDraft = ""
     @State private var editingNoteTabTitle = false
-    /// Local typing buffer so each keystroke does not republish WorkspaceStore.noteText to the whole tree.
-    @State private var draftNoteText = ""
-    @State private var draftNoteItemID: String?
-    @State private var isApplyingExternalNote = false
-    @State private var noteDraftFlushTask: Task<Void, Never>?
+    @State private var editorRecoveryGeneration = 0
+    @State private var noteOutline: [NoteEditorOutlineItem] = []
     @State private var activeNoteRailID: String?
     var showsPaneHeader = true
     var reorderRole: WorkspacePaneRole? = nil
-
-    private let noteDraftFlushDelayNanoseconds: UInt64 = 220_000_000
 
     var body: some View {
         GeometryReader { geometry in
@@ -481,6 +476,26 @@ struct NotePaneView: View {
                             .padding(.horizontal, 14)
                             .padding(.bottom, 8)
                             .transition(.opacity)
+                    }
+
+                    if store.noteEditorRecoveryConflict != nil {
+                        HStack(spacing: 12) {
+                            Text(store.ui(
+                                "这份笔记在应用外也发生了修改。",
+                                "This note was also changed outside WeiBei."
+                            ))
+                            Spacer(minLength: 8)
+                            Button(store.ui("使用磁盘版本", "Use Disk Version")) {
+                                Task { await store.resolveNoteEditorRecoveryConflict(useDisk: true) }
+                            }
+                            Button(store.ui("恢复魏碑中的内容", "Restore WeiBei Content")) {
+                                Task { await store.resolveNoteEditorRecoveryConflict(useDisk: false) }
+                            }
+                        }
+                        .font(.caption)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 7)
+                        .background(WeiBeiTheme.paperRaised)
                     }
 
                     noteBody
@@ -517,33 +532,16 @@ struct NotePaneView: View {
                 .allowsHitTesting(false)
         }
         .animation(WeiBeiMotion.panel, value: store.notebookCreationDraft?.id)
-        .onAppear {
-            pullExternalNoteText()
-        }
         .onDisappear {
-            flushNoteDraft(immediate: true)
+            store.noteEditingSession.requestSnapshot()
         }
-        .onChange(of: store.activeNoteItemID) { previousID, _ in
+        .onChange(of: store.activeNoteItemID) { _, _ in
             editingNoteTabTitle = false
-            if let previousID, previousID == draftNoteItemID {
-                flushNoteDraft(for: previousID, immediate: true)
-            }
-            pullExternalNoteText()
-        }
-        .onChange(of: store.noteText) { _, newValue in
-            guard !isApplyingExternalNote else { return }
-            // External writers (agent insert, wiki open, import) win over a stale draft.
-            if newValue != draftNoteText {
-                noteDraftFlushTask?.cancel()
-                noteDraftFlushTask = nil
-                draftNoteText = newValue
-                draftNoteItemID = store.activeNoteItemID
-                store.clearStagedNoteDraft(for: draftNoteItemID)
-            }
+            noteOutline = []
         }
         .onChange(of: paneState.focusedPane) { _, pane in
             if pane != .notes {
-                flushNoteDraft(immediate: true)
+                store.noteEditingSession.requestSnapshot()
             }
         }
         .accessibilityElement(children: .contain)
@@ -706,50 +704,18 @@ struct NotePaneView: View {
         }
     }
 
-    private var noteMarkdownBinding: Binding<String> {
-        Binding(
-            get: { draftNoteText },
-            set: { value in
-                guard value != draftNoteText else { return }
-                draftNoteText = value
-                draftNoteItemID = store.activeNoteItemID
-                if draftNoteItemID == nil {
-                    store.updateNote(value)
-                    return
-                }
-                store.stageNoteDraft(value, for: draftNoteItemID)
-                scheduleNoteDraftFlush()
-            }
-        )
-    }
-
     private var noteRailItems: [ContentRailItem] {
-        let lines = draftNoteText.components(separatedBy: .newlines)
-        let headings = lines.enumerated().compactMap { offset, line -> (line: Int, level: Int, title: String)? in
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
-            let level = trimmed.prefix { $0 == "#" }.count
-            guard (1...4).contains(level) else { return nil }
-            let markerEnd = trimmed.index(trimmed.startIndex, offsetBy: level)
-            guard markerEnd < trimmed.endIndex, trimmed[markerEnd].isWhitespace else { return nil }
-            let title = trimmed[markerEnd...].trimmingCharacters(in: .whitespaces)
-            guard !title.isEmpty else { return nil }
-            return (offset, level, title)
-        }
-
-        return headings.enumerated().map { index, heading in
-            let nextLine = index + 1 < headings.count ? headings[index + 1].line : lines.count
-            let excerpt = lines[(heading.line + 1)..<max(heading.line + 1, nextLine)]
-                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-                .filter { !$0.isEmpty }
-                .joined(separator: " ")
-            let position = lines.count > 1 ? CGFloat(heading.line) / CGFloat(lines.count - 1) : 0
+        noteOutline.map { heading in
             return ContentRailItem(
-                id: "note-heading-\(index)",
-                position: position,
-                level: heading.level - 1,
+                id: heading.id,
+                position: CGFloat(heading.position),
+                level: max(heading.level - 1, 0),
                 title: heading.title,
-                excerpt: railPreviewText(excerpt),
-                metadata: store.ui("第 \(index + 1) / \(headings.count) 节 · H\(heading.level)", "Section \(index + 1) / \(headings.count) · H\(heading.level)")
+                excerpt: "",
+                metadata: store.ui(
+                    "第 \(heading.index + 1) / \(noteOutline.count) 节 · H\(heading.level)",
+                    "Section \(heading.index + 1) / \(noteOutline.count) · H\(heading.level)"
+                )
             )
         }
     }
@@ -774,12 +740,12 @@ struct NotePaneView: View {
     }
 
     private var richEditor: some View {
-        let itemID = store.activeNoteItemID
-        return RichMarkdownEditorView(documentID: itemID ?? "", markdown: noteMarkdownBinding, command: Binding(get: {
+        RichMarkdownEditorView(documentID: store.activeNoteEditorDocumentID, markdown: store.noteText, command: Binding(get: {
             store.noteEditorCommand
         }, set: { value in
             store.noteEditorCommand = value
         }),
+        editingSession: store.noteEditingSession,
         isEditable: true,
         isFocused: paneState.focusedPane == .notes,
         focusRequest: paneState.focusRequest,
@@ -789,70 +755,34 @@ struct NotePaneView: View {
         interfaceLanguage: store.interfaceLanguage,
         onSelectionChange: { text, anchor in
             store.updateSelection(text, source: .note, anchor: anchor)
+        }, onSelectionFormattingChange: { formatting in
+            store.interaction.noteSelectionFormatting = formatting
         }, onAskAgentWithSelection: { text, anchor in
-            flushNoteDraft(immediate: true)
+            store.noteEditingSession.requestSnapshot()
             store.updateSelection(text, source: .note, anchor: anchor)
             store.askSelection()
         }, onActiveHeadingChange: { index in
             activeNoteRailID = index.map { "note-heading-\($0)" }
+        }, onOutlineChange: { items in
+            noteOutline = items
         }, onWikiLink: { title in
-            flushNoteDraft(immediate: true)
+            store.noteEditingSession.requestSnapshot()
             store.openOrCreateWikiNote(title: title)
         }, onSourceReference: { reference in
-            flushNoteDraft(immediate: true)
+            store.noteEditingSession.requestSnapshot()
             store.openSourceReference(reference)
         }, onAppShortcut: { key, modifiers in
             if modifiers.contains(.command) {
-                flushNoteDraft(immediate: true)
+                store.noteEditingSession.requestSnapshot()
             }
             return store.handleAppShortcut(key: key, modifiers: modifiers)
+        }, onRenderFailure: {
+            store.noteEditingSession.invalidateBridgeGeneration()
+            editorRecoveryGeneration &+= 1
+            Task { await store.reconcileActiveNoteEditorWithBackingFile() }
         })
+        .id("\(store.activeNoteEditorDocumentID):\(editorRecoveryGeneration)")
         .background(WeiBeiTheme.paper)
-    }
-
-    private func pullExternalNoteText() {
-        isApplyingExternalNote = true
-        draftNoteItemID = store.activeNoteItemID
-        draftNoteText = store.noteText
-        store.clearStagedNoteDraft(for: draftNoteItemID)
-        isApplyingExternalNote = false
-    }
-
-    private func scheduleNoteDraftFlush() {
-        noteDraftFlushTask?.cancel()
-        let itemID = draftNoteItemID ?? store.activeNoteItemID
-        let snapshot = draftNoteText
-        noteDraftFlushTask = Task { @MainActor in
-            try? await Task.sleep(nanoseconds: noteDraftFlushDelayNanoseconds)
-            guard !Task.isCancelled else { return }
-            guard draftNoteText == snapshot else { return }
-            flushNoteDraft(for: itemID, immediate: true)
-        }
-    }
-
-    private func flushNoteDraft(immediate: Bool = false) {
-        flushNoteDraft(for: draftNoteItemID ?? store.activeNoteItemID, immediate: immediate)
-    }
-
-    private func flushNoteDraft(for itemID: String?, immediate: Bool) {
-        noteDraftFlushTask?.cancel()
-        noteDraftFlushTask = nil
-        guard let itemID else {
-            store.updateNote(draftNoteText)
-            return
-        }
-        let value = (itemID == draftNoteItemID) ? draftNoteText : draftNoteText
-        defer { store.clearStagedNoteDraft(for: itemID, matching: value) }
-        if itemID == store.activeNoteItemID {
-            if store.noteText == value { return }
-            isApplyingExternalNote = true
-            store.updateNote(value, for: itemID)
-            isApplyingExternalNote = false
-            return
-        }
-        // Inactive flush after note switch.
-        store.updateNote(value, for: itemID)
-        _ = immediate
     }
 
 }
@@ -992,394 +922,6 @@ private struct NotebookCreationPanel: View {
     }
 }
 
-final class MarkdownSourceTextView: NSTextView {
-    var openWikiLinkAtCursor: (() -> Bool)?
-    var hasImagesInPasteboard: ((NSPasteboard) -> Bool)?
-    var insertImagesFromPasteboard: ((NSPasteboard) -> Bool)?
-
-    override var readablePasteboardTypes: [NSPasteboard.PasteboardType] {
-        Array(Set(super.readablePasteboardTypes + [.tiff, .png, .fileURL]))
-    }
-
-    override func keyDown(with event: NSEvent) {
-        if event.modifierFlags.contains(.command),
-           event.charactersIgnoringModifiers == "\r",
-           openWikiLinkAtCursor?() == true {
-            return
-        }
-        super.keyDown(with: event)
-    }
-
-    override func paste(_ sender: Any?) {
-        if insertImagesFromPasteboard?(NSPasteboard.general) == true {
-            return
-        }
-        super.paste(sender)
-    }
-
-    override func readSelection(from pasteboard: NSPasteboard, type: NSPasteboard.PasteboardType) -> Bool {
-        if insertImagesFromPasteboard?(pasteboard) == true {
-            return true
-        }
-        return super.readSelection(from: pasteboard, type: type)
-    }
-
-    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
-        hasImagesInPasteboard?(sender.draggingPasteboard) == true ? .copy : super.draggingEntered(sender)
-    }
-
-    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
-        insertImagesFromPasteboard?(sender.draggingPasteboard) == true || super.performDragOperation(sender)
-    }
-}
-
-struct MarkdownSourceEditor: NSViewRepresentable {
-    @Binding var text: String
-    @Binding var command: NoteEditorCommand?
-    var isFocused = false
-    var focusRequest = 0
-    var markdownBaseURL: URL?
-    var attachmentDirectory: URL?
-    var appearanceMode: WeiBeiAppearanceMode = .paper
-    var onSelectionChange: (String, CGPoint?) -> Void
-    var onWikiLink: (String) -> Void = { _ in }
-
-    func makeCoordinator() -> Coordinator {
-        Coordinator(
-            text: $text,
-            command: $command,
-            isFocused: isFocused,
-            focusRequest: focusRequest,
-            markdownBaseURLString: markdownBaseURL?.absoluteString ?? "",
-            attachmentDirectory: attachmentDirectory,
-            appearanceMode: appearanceMode,
-            onSelectionChange: onSelectionChange,
-            onWikiLink: onWikiLink
-        )
-    }
-
-    func makeNSView(context: Context) -> NSScrollView {
-        let scrollView = NSScrollView()
-        scrollView.hasVerticalScroller = true
-        WeiBeiQuietScrollers.configure(scrollView, hasHorizontalScroller: false)
-        scrollView.drawsBackground = false
-
-        let textView = MarkdownSourceTextView()
-        textView.isRichText = false
-        textView.isAutomaticQuoteSubstitutionEnabled = false
-        textView.isAutomaticDashSubstitutionEnabled = false
-        textView.backgroundColor = .clear
-        textView.string = text
-        applyTheme(to: textView)
-        textView.delegate = context.coordinator
-        textView.openWikiLinkAtCursor = { [weak coordinator = context.coordinator, weak textView] in
-            guard let textView else { return false }
-            return coordinator?.openWikiLink(in: textView) ?? false
-        }
-        textView.hasImagesInPasteboard = { [weak coordinator = context.coordinator] pasteboard in
-            coordinator?.hasImages(in: pasteboard) ?? false
-        }
-        textView.insertImagesFromPasteboard = { [weak coordinator = context.coordinator, weak textView] pasteboard in
-            guard let textView else { return false }
-            return coordinator?.insertImages(from: pasteboard, in: textView) ?? false
-        }
-        textView.registerForDraggedTypes([.fileURL, .png, .tiff])
-        textView.textContainerInset = NSSize(width: 12, height: 12)
-        textView.autoresizingMask = [.width]
-        textView.textContainer?.widthTracksTextView = true
-
-        scrollView.documentView = textView
-        return scrollView
-    }
-
-    func updateNSView(_ scrollView: NSScrollView, context: Context) {
-        guard let textView = scrollView.documentView as? NSTextView else { return }
-        context.coordinator.text = $text
-        context.coordinator.command = $command
-        context.coordinator.markdownBaseURLString = markdownBaseURL?.absoluteString ?? ""
-        context.coordinator.attachmentDirectory = attachmentDirectory
-        context.coordinator.onSelectionChange = onSelectionChange
-        context.coordinator.onWikiLink = onWikiLink
-        context.coordinator.isFocused = isFocused
-        context.coordinator.focusRequest = focusRequest
-        context.coordinator.appearanceMode = appearanceMode
-        if textView.string != text {
-            textView.string = text
-        }
-        applyTheme(to: textView)
-        context.coordinator.applyFocus(in: textView)
-        if let command, context.coordinator.lastCommandID != command.id {
-            context.coordinator.lastCommandID = command.id
-            context.coordinator.run(command, in: textView)
-            DispatchQueue.main.async {
-                self.command = nil
-            }
-        }
-    }
-
-    private func applyTheme(to textView: NSTextView) {
-        let baseFont = NSFont.monospacedSystemFont(ofSize: 15, weight: .regular)
-        textView.font = baseFont
-        textView.textColor = WeiBeiNativePalette.ink(for: appearanceMode)
-        textView.insertionPointColor = WeiBeiNativePalette.ink(for: appearanceMode)
-        textView.selectedTextAttributes = [
-            .backgroundColor: WeiBeiNativePalette.selectionFill(for: appearanceMode),
-            .foregroundColor: WeiBeiNativePalette.selectedText(for: appearanceMode)
-        ]
-        Self.applySourcePresentation(in: textView, appearanceMode: appearanceMode, baseFont: baseFont)
-    }
-
-    private static func applySourcePresentation(
-        in textView: NSTextView,
-        appearanceMode: WeiBeiAppearanceMode,
-        baseFont: NSFont
-    ) {
-        guard let textStorage = textView.textStorage, textStorage.length > 0 else { return }
-        let fullRange = NSRange(location: 0, length: textStorage.length)
-        let ink = WeiBeiNativePalette.ink(for: appearanceMode)
-        let quotePrefixColor = ink.withAlphaComponent(appearanceMode.isDark ? 0.30 : 0.36)
-        let markerColor = NSColor.clear
-        let markerFont = NSFont.monospacedSystemFont(ofSize: 0.1, weight: .regular)
-        let quotePrefixRegex = try? NSRegularExpression(pattern: #"(?m)^\s*(?:>\s*)+"#)
-        let calloutControlRegex = try? NSRegularExpression(
-            pattern: #"(?m)^(\s*(?:>\s*)*)(\\?\[![A-Za-z][A-Za-z0-9_-]*\][+-]?\s*)"#
-        )
-
-        textView.undoManager?.disableUndoRegistration()
-        textStorage.beginEditing()
-        textStorage.addAttributes([
-            .font: baseFont,
-            .foregroundColor: ink
-        ], range: fullRange)
-
-        quotePrefixRegex?.enumerateMatches(in: textView.string, range: fullRange) { match, _, _ in
-            guard let range = match?.range, range.location != NSNotFound else { return }
-            textStorage.addAttributes([
-                .foregroundColor: quotePrefixColor
-            ], range: range)
-        }
-
-        calloutControlRegex?.enumerateMatches(in: textView.string, range: fullRange) { match, _, _ in
-            guard let markerRange = match?.range(at: 2), markerRange.location != NSNotFound else { return }
-            textStorage.addAttributes([
-                .font: markerFont,
-                .foregroundColor: markerColor,
-                .baselineOffset: 0
-            ], range: markerRange)
-        }
-        textStorage.endEditing()
-        textView.undoManager?.enableUndoRegistration()
-    }
-
-    final class Coordinator: NSObject, NSTextViewDelegate {
-        var text: Binding<String>
-        var command: Binding<NoteEditorCommand?>
-        var isFocused: Bool
-        var focusRequest: Int
-        var markdownBaseURLString: String
-        var attachmentDirectory: URL?
-        var onSelectionChange: (String, CGPoint?) -> Void
-        var onWikiLink: (String) -> Void
-        var appearanceMode: WeiBeiAppearanceMode
-        var lastCommandID: UUID?
-        private var lastAppliedFocusRequest = -1
-
-        init(
-            text: Binding<String>,
-            command: Binding<NoteEditorCommand?>,
-            isFocused: Bool,
-            focusRequest: Int,
-            markdownBaseURLString: String,
-            attachmentDirectory: URL?,
-            appearanceMode: WeiBeiAppearanceMode,
-            onSelectionChange: @escaping (String, CGPoint?) -> Void,
-            onWikiLink: @escaping (String) -> Void
-        ) {
-            self.text = text
-            self.command = command
-            self.isFocused = isFocused
-            self.focusRequest = focusRequest
-            self.markdownBaseURLString = markdownBaseURLString
-            self.attachmentDirectory = attachmentDirectory
-            self.onSelectionChange = onSelectionChange
-            self.onWikiLink = onWikiLink
-            self.appearanceMode = appearanceMode
-        }
-
-        func textDidChange(_ notification: Notification) {
-            guard let textView = notification.object as? NSTextView else { return }
-            MarkdownSourceEditor.applySourcePresentation(
-                in: textView,
-                appearanceMode: appearanceMode,
-                baseFont: .monospacedSystemFont(ofSize: 15, weight: .regular)
-            )
-            text.wrappedValue = textView.string
-        }
-
-        func textViewDidChangeSelection(_ notification: Notification) {
-            guard let textView = notification.object as? NSTextView else { return }
-            let range = textView.selectedRange()
-            guard range.length > 0, let stringRange = Range(range, in: textView.string) else {
-                onSelectionChange("", nil)
-                return
-            }
-            onSelectionChange(String(textView.string[stringRange]), Self.anchor(for: range, in: textView))
-        }
-
-        func run(_ command: NoteEditorCommand, in textView: NSTextView) {
-            switch command.kind {
-            case .replaceSelection:
-                replaceSelection(with: command.markdown, in: textView)
-            case .applyAgentPatch:
-                applyPatch(command.markdown, in: textView)
-            case .insertMarkdown:
-                insertMarkdown(command.markdown, in: textView)
-            case .scrollToHeading:
-                scrollToHeading(command.markdown, in: textView)
-            }
-        }
-
-        private func scrollToHeading(_ rawIndex: String, in textView: NSTextView) {
-            guard let targetIndex = Int(rawIndex), targetIndex >= 0 else { return }
-            let pattern = #"(?m)^#{1,4}[\t ]+.+$"#
-            guard let regex = try? NSRegularExpression(pattern: pattern) else { return }
-            let fullRange = NSRange(location: 0, length: (textView.string as NSString).length)
-            let matches = regex.matches(in: textView.string, range: fullRange)
-            guard matches.indices.contains(targetIndex) else { return }
-            textView.scrollRangeToVisible(matches[targetIndex].range)
-        }
-
-        private func replaceSelection(with markdown: String, in textView: NSTextView) {
-            let range = textView.selectedRange()
-            guard range.length > 0 else {
-                applyPatch(markdown, in: textView)
-                return
-            }
-            insertMarkdown(markdown, in: textView)
-        }
-
-        private func insertMarkdown(_ markdown: String, in textView: NSTextView) {
-            let range = textView.selectedRange()
-            textView.textStorage?.replaceCharacters(in: range, with: markdown)
-            let cursor = range.location + (markdown as NSString).length
-            textView.setSelectedRange(NSRange(location: cursor, length: 0))
-            text.wrappedValue = textView.string
-            refreshSourcePresentation(in: textView)
-        }
-
-        private func applyPatch(_ markdown: String, in textView: NSTextView) {
-            let next = "\(textView.string.trimmingCharacters(in: .whitespacesAndNewlines))\n\n\(markdown.trimmingCharacters(in: .whitespacesAndNewlines))\n"
-            textView.string = next
-            text.wrappedValue = next
-            textView.setSelectedRange(NSRange(location: (next as NSString).length, length: 0))
-            refreshSourcePresentation(in: textView)
-        }
-
-        func applyFocus(in textView: NSTextView) {
-            guard isFocused, focusRequest != lastAppliedFocusRequest else { return }
-            lastAppliedFocusRequest = focusRequest
-            textView.window?.makeFirstResponder(textView)
-        }
-
-        func openWikiLink(in textView: NSTextView) -> Bool {
-            guard let title = WikiLink.enclosingTitle(in: textView.string, cursor: textView.selectedRange().location) else {
-                return false
-            }
-            onWikiLink(title)
-            return true
-        }
-
-        func insertImages(from pasteboard: NSPasteboard, in textView: NSTextView) -> Bool {
-            let attachments = imageAttachments(from: pasteboard)
-            guard !attachments.isEmpty else { return false }
-            let markdown = attachments.map { MarkdownAttachmentStore.markdownImage(for: $0) }.joined(separator: "\n\n")
-            insertBlockMarkdown(markdown, in: textView)
-            return true
-        }
-
-        func hasImages(in pasteboard: NSPasteboard) -> Bool {
-            imageFileURLs(from: pasteboard).isEmpty == false || NSImage(pasteboard: pasteboard) != nil
-        }
-
-        private func imageAttachments(from pasteboard: NSPasteboard) -> [MarkdownAttachment] {
-            let urls = imageFileURLs(from: pasteboard)
-            if !urls.isEmpty {
-                let attachments = urls.compactMap(saveImageFile)
-                if !attachments.isEmpty { return attachments }
-            }
-
-            guard let image = NSImage(pasteboard: pasteboard),
-                  let tiff = image.tiffRepresentation,
-                  let bitmap = NSBitmapImageRep(data: tiff),
-                  let data = bitmap.representation(using: .png, properties: [:]) else {
-                return []
-            }
-
-            return [saveImageData(data, originalName: "pasted-image.png", mime: "image/png")].compactMap(\.self)
-        }
-
-        private func imageFileURLs(from pasteboard: NSPasteboard) -> [URL] {
-            let options: [NSPasteboard.ReadingOptionKey: Any] = [.urlReadingFileURLsOnly: true]
-            return (pasteboard.readObjects(forClasses: [NSURL.self], options: options) ?? [])
-                .compactMap { object in
-                    if let url = object as? URL { return url }
-                    if let url = object as? NSURL { return url as URL }
-                    return nil
-                }
-                .filter { MarkdownAttachmentStore.isSupportedImageExtension($0.pathExtension) }
-        }
-
-        private func saveImageFile(_ url: URL) -> MarkdownAttachment? {
-            guard let data = try? CourseProjectFileWorker.readBoundedRegularFile(
-                at: url,
-                maximumByteCount: CourseProjectFileWorker.markdownImageMaximumByteCount
-            ) else {
-                return nil
-            }
-            return saveImageData(
-                data,
-                originalName: url.lastPathComponent,
-                mime: MarkdownAttachmentStore.mimeType(forFileExtension: url.pathExtension)
-            )
-        }
-
-        private func saveImageData(_ data: Data, originalName: String, mime: String) -> MarkdownAttachment? {
-            guard let attachmentDirectory else { return nil }
-            return try? MarkdownAttachmentStore.save(
-                data: data,
-                originalName: originalName,
-                mime: mime,
-                attachmentDirectory: attachmentDirectory,
-                markdownBaseURLString: markdownBaseURLString
-            )
-        }
-
-        private func insertBlockMarkdown(_ markdown: String, in textView: NSTextView) {
-            let result = MarkdownBlockInsertion.insert(markdown, into: textView.string, replacing: textView.selectedRange())
-            textView.string = result.text
-            textView.setSelectedRange(NSRange(location: result.cursor, length: 0))
-            text.wrappedValue = result.text
-            refreshSourcePresentation(in: textView)
-        }
-
-        private func refreshSourcePresentation(in textView: NSTextView) {
-            MarkdownSourceEditor.applySourcePresentation(
-                in: textView,
-                appearanceMode: appearanceMode,
-                baseFont: .monospacedSystemFont(ofSize: 15, weight: .regular)
-            )
-        }
-
-        private static func anchor(for range: NSRange, in textView: NSTextView) -> CGPoint? {
-            guard let window = textView.window else { return nil }
-            let rect = textView.firstRect(forCharacterRange: range, actualRange: nil)
-            guard !rect.isEmpty else { return nil }
-            let screenPoint = CGPoint(x: rect.midX, y: rect.minY)
-            return SelectionAnchorContentPoint.fromScreenPoint(screenPoint, in: window)
-        }
-    }
-}
-
 struct MarkdownPreviewView: View {
     var markdown: String
     var markdownBaseURL: URL?
@@ -1432,7 +974,7 @@ struct MarkdownPreviewView: View {
 
     var body: some View {
         RichMarkdownEditorView(
-            markdown: .constant(markdown),
+            markdown: markdown,
             command: $command,
             isEditable: false,
             markdownBaseURL: markdownBaseURL,
@@ -2747,7 +2289,10 @@ struct FloatingSelectionAgentView: View {
     @State private var feedHeightLocked = false
     @State private var resizeOrigin: FloatingAgentSize?
     @State private var resizeOriginOffset: CGSize?
+    @State private var linkDraft = ""
+    @State private var showsLinkEditor = false
     @FocusState private var draftFocused: Bool
+    @FocusState private var linkFocused: Bool
     @Namespace private var floatingNamespace
 
     var body: some View {
@@ -2838,6 +2383,16 @@ struct FloatingSelectionAgentView: View {
     }
 
     private var promptBody: some View {
+        Group {
+            if showsNoteFormattingToolbar {
+                noteFormattingToolbar
+            } else {
+                defaultPromptBody
+            }
+        }
+    }
+
+    private var defaultPromptBody: some View {
         HStack(spacing: 0) {
             Button(store.ui("问", "Ask")) {
                 openExpandedComposer()
@@ -2866,6 +2421,133 @@ struct FloatingSelectionAgentView: View {
         .padding(.horizontal, 12)
         .frame(height: 34)
         .fixedSize()
+    }
+
+    private var showsNoteFormattingToolbar: Bool {
+        store.selectionContext?.isReplaceableNoteSelection == true
+    }
+
+    private var noteFormattingToolbar: some View {
+        HStack(spacing: 2) {
+            formattingButton("bold", icon: "bold", label: store.ui("加粗", "Bold"))
+            formattingButton("italic", icon: "italic", label: store.ui("斜体", "Italic"))
+            formattingButton("highlight", icon: "highlighter", label: store.ui("高亮", "Highlight"))
+            Button {
+                linkDraft = interaction.noteSelectionFormatting?.linkTarget ?? ""
+                showsLinkEditor = true
+                DispatchQueue.main.async { linkFocused = true }
+            } label: {
+                Image(systemName: "link")
+            }
+            .buttonStyle(WeiBeiIconButtonStyle(active: isFormattingActive("link"), size: 30, cornerRadius: 5))
+            .help(store.ui("链接", "Link"))
+            .accessibilityLabel(Text(store.ui("链接", "Link")))
+            .popover(isPresented: $showsLinkEditor, arrowEdge: .bottom) {
+                linkEditor
+            }
+
+            formattingButton("inlineCode", icon: "chevron.left.forwardslash.chevron.right", label: store.ui("行内代码", "Inline code"))
+            formattingButton(
+                "inlineMath",
+                icon: "function",
+                label: isFormattingActive("inlineMath") ? store.ui("转回文字", "Convert to text") : store.ui("转为行内公式", "Convert to formula"),
+                enabled: interaction.noteSelectionFormatting?.canConvertToMath == true
+            )
+            formattingButton("quote", icon: "text.quote", label: store.ui("引用", "Quote"), active: interaction.noteSelectionFormatting?.blockType == "blockquote")
+
+            promptSeparator
+            writingFontMenu
+            promptSeparator
+            Button(store.ui("问", "Ask")) { openExpandedComposer() }
+                .buttonStyle(WeiBeiTextActionButtonStyle(active: true))
+                .accessibilityLabel(Text(store.ui("就这段提问", "Ask about this passage")))
+                .help(store.ui("就这段提问", "Ask about this passage"))
+        }
+        .font(.system(size: 12, weight: .semibold))
+        .buttonStyle(.plain)
+        .padding(.horizontal, 8)
+        .frame(height: 34)
+        .fixedSize()
+    }
+
+    private var writingFontMenu: some View {
+        let current = WeiBeiWritingFont.allCases.first { isFormattingActive("font:\($0.rawValue)") }
+        return Menu {
+            ForEach(WeiBeiWritingFont.allCases) { font in
+                Button {
+                    runSelectionCommand("font", value: font.rawValue)
+                } label: {
+                    HStack {
+                        Text(font.displayName)
+                        if font == current {
+                            Image(systemName: "checkmark")
+                        }
+                    }
+                }
+            }
+        } label: {
+            Image(systemName: "textformat")
+        }
+        .buttonStyle(WeiBeiIconButtonStyle(size: 30, cornerRadius: 5))
+        .help(current.map { store.ui("选中文字字体：\($0.displayName)", "Selected font: \($0.displayName)") }
+            ?? store.ui("更改选中文字字体", "Change selected font"))
+        .accessibilityLabel(Text(store.ui("更改选中文字字体", "Change selected font")))
+    }
+
+    private func formattingButton(
+        _ action: String,
+        icon: String,
+        label: String,
+        enabled: Bool = true,
+        active: Bool? = nil
+    ) -> some View {
+        Button { runSelectionCommand(action) } label: {
+            Image(systemName: icon)
+        }
+        .buttonStyle(WeiBeiIconButtonStyle(active: active ?? isFormattingActive(action), size: 30, cornerRadius: 5))
+        .disabled(!enabled)
+        .help(label)
+        .accessibilityLabel(Text(label))
+    }
+
+    private var linkEditor: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(store.ui("链接地址", "Link address"))
+                .font(.system(size: 12, weight: .semibold))
+            TextField("https://", text: $linkDraft)
+                .textFieldStyle(.roundedBorder)
+                .frame(width: 260)
+                .focused($linkFocused)
+                .onSubmit { commitLink() }
+            HStack {
+                if isFormattingActive("link") {
+                    Button(store.ui("移除链接", "Remove link")) {
+                        linkDraft = ""
+                        commitLink()
+                    }
+                }
+                Spacer()
+                Button(store.ui("取消", "Cancel")) { showsLinkEditor = false }
+                Button(store.ui("完成", "Done")) { commitLink() }
+                    .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(12)
+        .onExitCommand { showsLinkEditor = false }
+    }
+
+    private func isFormattingActive(_ action: String) -> Bool {
+        let mark = action == "bold" ? "strong" : action == "italic" ? "emphasis" : action
+        return interaction.noteSelectionFormatting?.activeMarks.contains(mark) == true
+    }
+
+    private func runSelectionCommand(_ action: String, value: String? = nil) {
+        store.noteEditorCommand = NoteEditorCommand(kind: .selectionCommand, markdown: action, value: value)
+    }
+
+    private func commitLink() {
+        runSelectionCommand("link", value: linkDraft)
+        showsLinkEditor = false
     }
 
     private var promptSeparator: some View {

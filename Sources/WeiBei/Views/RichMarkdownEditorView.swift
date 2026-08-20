@@ -3,6 +3,22 @@ import SwiftUI
 import WebKit
 import WeiBeiCore
 
+enum WeiBeiWritingFont: String, CaseIterable, Identifiable {
+    case system
+    case serif
+    case literary
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .system: return "SF Pro / PingFang SC"
+        case .serif: return "Songti SC"
+        case .literary: return "WeiBeiStele"
+        }
+    }
+}
+
 final class MarkdownImageSchemeHandler: NSObject, WKURLSchemeHandler, URLSessionDataDelegate, URLSessionTaskDelegate {
     private final class RemoteLoad {
         let schemeTask: WKURLSchemeTask
@@ -571,8 +587,9 @@ final class MarkdownWebView: WKWebView {
 
 struct RichMarkdownEditorView: NSViewRepresentable {
     var documentID = ""
-    @Binding var markdown: String
+    var markdown: String
     @Binding var command: NoteEditorCommand?
+    var editingSession: NoteEditingSession? = nil
     var isEditable = true
     var isFocused = false
     var focusRequest = 0
@@ -587,9 +604,11 @@ struct RichMarkdownEditorView: NSViewRepresentable {
     /// diff. Completion ends that same session with a final synchronous flush.
     var streamsMarkdownUpdates = false
     var onSelectionChange: (String, CGPoint?) -> Void
+    var onSelectionFormattingChange: (NoteSelectionFormatting?) -> Void = { _ in }
     var onAskAgentWithSelection: (String, CGPoint?) -> Void
     var onContentHeightChange: (CGFloat) -> Void = { _ in }
     var onActiveHeadingChange: (Int?) -> Void = { _ in }
+    var onOutlineChange: ([NoteEditorOutlineItem]) -> Void = { _ in }
     var onWikiLink: (String) -> Void = { _ in }
     var onSourceReference: (String) -> Void = { _ in }
     var onAppShortcut: (String, NSEvent.ModifierFlags) -> Bool = { _, _ in false }
@@ -605,8 +624,9 @@ struct RichMarkdownEditorView: NSViewRepresentable {
     func makeCoordinator() -> Coordinator {
         Coordinator(
             documentID: documentID,
-            markdown: $markdown,
+            markdown: markdown,
             command: $command,
+            editingSession: editingSession,
             isEditable: isEditable,
             isFocused: isFocused,
             focusRequest: focusRequest,
@@ -619,7 +639,9 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             selectionAskMarks: selectionAskMarks,
             onContentHeightChange: onContentHeightChange,
             onActiveHeadingChange: onActiveHeadingChange,
+            onOutlineChange: onOutlineChange,
             onSelectionChange: onSelectionChange,
+            onSelectionFormattingChange: onSelectionFormattingChange,
             onAskAgentWithSelection: onAskAgentWithSelection,
             onWikiLink: onWikiLink,
             onSourceReference: onSourceReference,
@@ -649,6 +671,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             source: """
             window.initialMarkdown = \(Self.json(markdown));
             window.weiBeiDocumentID = \(Self.json(documentID));
+            window.weiBeiDocumentGeneration = \(editingSession?.documentGeneration ?? 0);
             window.weiBeiMarkdownEditable = \(isEditable ? "true" : "false");
             window.weiBeiMarkdownBaseURL = \(Self.json(markdownBaseURL?.absoluteString ?? ""));
             window.weiBeiLocalImageScheme = \(Self.json(Self.localImageScheme));
@@ -780,8 +803,9 @@ struct RichMarkdownEditorView: NSViewRepresentable {
     func updateNSView(_ view: WKWebView, context: Context) {
         (view as? MarkdownWebView)?.passesVerticalScrollToSuperview = isCompactPreview
         Self.applyWebAppearance(to: view, appearanceMode: appearanceMode)
-        context.coordinator.markdown = $markdown
+        context.coordinator.markdown = markdown
         context.coordinator.command = $command
+        context.coordinator.editingSession = editingSession
         let wasStreamingMarkdown = context.coordinator.streamsMarkdownUpdates
         context.coordinator.streamsMarkdownUpdates = streamsMarkdownUpdates
         if !context.coordinator.isReady, wasStreamingMarkdown, !streamsMarkdownUpdates {
@@ -789,7 +813,9 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         } else if streamsMarkdownUpdates {
             context.coordinator.pendingStreamingCompletion = false
         }
-        if context.coordinator.documentID != documentID {
+        if context.coordinator.editingSession != nil {
+            context.coordinator.transitionV2DocumentIfNeeded(to: documentID, markdown: markdown)
+        } else if context.coordinator.documentID != documentID {
             context.coordinator.documentID = documentID
             context.coordinator.pendingStreamingCompletion = false
             context.coordinator.setDocumentID(documentID)
@@ -833,9 +859,11 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             context.coordinator.setEditable(isEditable)
         }
         context.coordinator.onSelectionChange = onSelectionChange
+        context.coordinator.onSelectionFormattingChange = onSelectionFormattingChange
         context.coordinator.onAskAgentWithSelection = onAskAgentWithSelection
         context.coordinator.onContentHeightChange = onContentHeightChange
         context.coordinator.onActiveHeadingChange = onActiveHeadingChange
+        context.coordinator.onOutlineChange = onOutlineChange
         context.coordinator.onSelectionAskMark = onSelectionAskMark
         context.coordinator.selectionAskMarks = selectionAskMarks
         if context.coordinator.isChatWideTypography != isChatWideTypography {
@@ -845,7 +873,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             }
         }
 
-        if context.coordinator.isReady {
+        if context.coordinator.isReady, context.coordinator.editingSession == nil {
             if streamsMarkdownUpdates, isCompactPreview, !isEditable {
                 if context.coordinator.webMarkdown != markdown || !wasStreamingMarkdown {
                     context.coordinator.updateStreamingMarkdown(markdown)
@@ -867,6 +895,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
     }
 
     static func dismantleNSView(_ view: WKWebView, coordinator: Coordinator) {
+        coordinator.unbindEditingSession()
         coordinator.imageSchemeHandler.invalidate()
         WeiBeiPerf.event(
             "webview.markdown_destroy",
@@ -881,7 +910,9 @@ struct RichMarkdownEditorView: NSViewRepresentable {
 
     private static let scriptMessageNames = [
         "editorReady",
-        "markdownChanged",
+        "dirtyChanged",
+        "snapshotReady",
+        "outlineChanged",
         "selectionChanged",
         "askAgentWithSelection",
         "wikiLinkActivated",
@@ -941,13 +972,16 @@ struct RichMarkdownEditorView: NSViewRepresentable {
     }
 
     final class Coordinator: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
-        var markdown: Binding<String>
+        var markdown: String
         var command: Binding<NoteEditorCommand?>
+        var editingSession: NoteEditingSession?
         var documentID: String
         var onSelectionChange: (String, CGPoint?) -> Void
+        var onSelectionFormattingChange: (NoteSelectionFormatting?) -> Void
         var onAskAgentWithSelection: (String, CGPoint?) -> Void
         var onContentHeightChange: (CGFloat) -> Void
         var onActiveHeadingChange: (Int?) -> Void
+        var onOutlineChange: ([NoteEditorOutlineItem]) -> Void
         var onWikiLink: (String) -> Void
         var onSourceReference: (String) -> Void
         var onAppShortcut: (String, NSEvent.ModifierFlags) -> Bool
@@ -970,9 +1004,10 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         var appearanceMode: WeiBeiAppearanceMode
         var interfaceLanguage: WeiBeiInterfaceLanguage
         var webMarkdown = ""
-        var pendingExternalMarkdown: String?
         var pendingStreamingCompletion = false
         var lastCommandID: UUID?
+        private var editingSessionBindingToken: UUID?
+        private var pendingV2DocumentID: String?
         let performanceInstanceID = UUID()
         fileprivate let imageSchemeHandler = MarkdownImageSchemeHandler()
         private var lastAppliedSearchQuery = ""
@@ -982,8 +1017,9 @@ struct RichMarkdownEditorView: NSViewRepresentable {
 
         init(
             documentID: String,
-            markdown: Binding<String>,
+            markdown: String,
             command: Binding<NoteEditorCommand?>,
+            editingSession: NoteEditingSession?,
             isEditable: Bool,
             isFocused: Bool,
             focusRequest: Int,
@@ -996,7 +1032,9 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             selectionAskMarks: String,
             onContentHeightChange: @escaping (CGFloat) -> Void,
             onActiveHeadingChange: @escaping (Int?) -> Void,
+            onOutlineChange: @escaping ([NoteEditorOutlineItem]) -> Void,
             onSelectionChange: @escaping (String, CGPoint?) -> Void,
+            onSelectionFormattingChange: @escaping (NoteSelectionFormatting?) -> Void,
             onAskAgentWithSelection: @escaping (String, CGPoint?) -> Void,
             onWikiLink: @escaping (String) -> Void,
             onSourceReference: @escaping (String) -> Void,
@@ -1010,6 +1048,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             self.documentID = documentID
             self.markdown = markdown
             self.command = command
+            self.editingSession = editingSession
             self.isEditable = isEditable
             self.isFocused = isFocused
             self.focusRequest = focusRequest
@@ -1022,7 +1061,9 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             self.selectionAskMarks = selectionAskMarks
             self.onContentHeightChange = onContentHeightChange
             self.onActiveHeadingChange = onActiveHeadingChange
+            self.onOutlineChange = onOutlineChange
             self.onSelectionChange = onSelectionChange
+            self.onSelectionFormattingChange = onSelectionFormattingChange
             self.onAskAgentWithSelection = onAskAgentWithSelection
             self.onWikiLink = onWikiLink
             self.onSourceReference = onSourceReference
@@ -1032,6 +1073,83 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             self.onRenderFailure = onRenderFailure
             self.onSearchResult = onSearchResult
             self.onSelectionAskMark = onSelectionAskMark
+        }
+
+        func bindEditingSession() {
+            guard let editingSession, editingSessionBindingToken == nil else { return }
+            editingSessionBindingToken = editingSession.bindSnapshotRequestHandler { [weak self] request in
+                self?.dispatchV2(request)
+            }
+        }
+
+        func unbindEditingSession() {
+            guard let editingSession, let editingSessionBindingToken else { return }
+            editingSession.unbindSnapshotRequestHandler(editingSessionBindingToken)
+            self.editingSessionBindingToken = nil
+        }
+
+        func transitionV2DocumentIfNeeded(to nextDocumentID: String, markdown: String) {
+            guard let editingSession else { return }
+            if nextDocumentID == editingSession.documentID {
+                guard isReady, !editingSession.dirty, webMarkdown != markdown else { return }
+                editingSession.replaceDocument(with: nextDocumentID)
+                documentID = nextDocumentID
+                loadV2Document(markdown)
+                return
+            }
+            guard
+                  pendingV2DocumentID != nextDocumentID else { return }
+
+            let sourceDocumentID = editingSession.documentID
+            let loadNext = { [weak self, weak editingSession] (nextMarkdown: String) in
+                guard let self, let editingSession,
+                      self.pendingV2DocumentID == nextDocumentID else { return }
+                self.pendingV2DocumentID = nil
+                editingSession.replaceDocument(with: nextDocumentID)
+                self.documentID = nextDocumentID
+                self.loadV2Document(nextMarkdown)
+            }
+
+            pendingV2DocumentID = nextDocumentID
+            if isReady, editingSession.dirty {
+                editingSession.requestSnapshot { [weak self] result in
+                    switch result {
+                    case .success(let snapshot):
+                        loadNext(sourceDocumentID.hasPrefix("draft:") ? snapshot.markdown : markdown)
+                    case .failure:
+                        self?.pendingV2DocumentID = nil
+                        self?.reportRenderFailure()
+                    }
+                }
+            } else {
+                loadNext(markdown)
+            }
+        }
+
+        private func loadV2Document(_ markdown: String) {
+            guard isReady, let editingSession else { return }
+            webMarkdown = markdown
+            dispatchV2(NoteEditorCommandEnvelope(
+                documentID: editingSession.documentID,
+                documentGeneration: editingSession.documentGeneration,
+                type: .loadDocument,
+                payload: NoteEditorLoadDocumentPayload(
+                    markdown: markdown,
+                    initialRevision: editingSession.currentRevision
+                )
+            ))
+        }
+
+        private func dispatchV2<Payload>(_ command: NoteEditorCommandEnvelope<Payload>) {
+            guard let data = try? JSONEncoder().encode(command),
+                  let json = String(data: data, encoding: .utf8) else { return }
+            evaluate("window.WeiBeiEditor?.dispatchCommand(\(json))")
+        }
+
+        private func decodeV2Event<Event: Decodable>(_ type: Event.Type, from body: Any) -> Event? {
+            guard JSONSerialization.isValidJSONObject(body),
+                  let data = try? JSONSerialization.data(withJSONObject: body) else { return nil }
+            return try? JSONDecoder().decode(type, from: data)
         }
 
         func handleAppShortcut(key: String, modifiers: NSEvent.ModifierFlags) -> Bool {
@@ -1111,24 +1229,33 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             switch message.name {
             case "editorReady":
                 isReady = true
-                setDocumentID(documentID)
+                bindEditingSession()
                 setMarkdownBaseURL(markdownBaseURLString)
-                setEditable(isEditable)
-                setInterfaceLanguage(interfaceLanguage)
-                if let text = (message.body as? [String: Any])?["markdown"] as? String {
+                if let editingSession {
+                    documentID = editingSession.documentID
+                    loadV2Document(markdown)
+                    setEditable(isEditable)
+                    setInterfaceLanguage(interfaceLanguage)
+                } else if let text = (message.body as? [String: Any])?["markdown"] as? String {
+                    setDocumentID(documentID)
+                    setEditable(isEditable)
+                    setInterfaceLanguage(interfaceLanguage)
                     webMarkdown = text
                     if streamsMarkdownUpdates {
-                        updateStreamingMarkdown(markdown.wrappedValue)
+                        updateStreamingMarkdown(markdown)
                     } else if pendingStreamingCompletion {
                         pendingStreamingCompletion = false
-                        finishStreamingMarkdown(markdown.wrappedValue)
-                    } else if markdown.wrappedValue == text {
-                        markdown.wrappedValue = text
+                        finishStreamingMarkdown(markdown)
+                    } else if markdown == text {
+                        webMarkdown = text
                     } else {
-                        setMarkdown(markdown.wrappedValue)
+                        setMarkdown(markdown)
                     }
                 } else {
-                    webMarkdown = markdown.wrappedValue
+                    setDocumentID(documentID)
+                    setEditable(isEditable)
+                    setInterfaceLanguage(interfaceLanguage)
+                    webMarkdown = markdown
                 }
                 applySearch()
                 setTheme(appearanceMode)
@@ -1137,28 +1264,35 @@ struct RichMarkdownEditorView: NSViewRepresentable {
                 applySelectionAskMarks(force: true)
                 runPendingCommandIfReady()
                 onRenderReady()
-            case "markdownChanged":
-                guard let text = (message.body as? [String: Any])?["markdown"] as? String else { return }
-                guard isEditable else {
-                    pendingExternalMarkdown = nil
-                    applySelectionAskMarks(force: true)
-                    return
+            case "dirtyChanged":
+                guard let event = decodeV2Event(NoteEditorDirtyChangedEvent.self, from: message.body) else { return }
+                _ = editingSession?.receive(event)
+            case "snapshotReady":
+                guard let event = decodeV2Event(NoteEditorSnapshotReadyEvent.self, from: message.body) else { return }
+                if editingSession?.receive(event) == true {
+                    webMarkdown = event.markdown
                 }
-                if let pendingExternalMarkdown {
-                    guard text == pendingExternalMarkdown else { return }
-                    self.pendingExternalMarkdown = nil
-                }
-                if text == webMarkdown, markdown.wrappedValue != webMarkdown {
-                    setMarkdown(markdown.wrappedValue)
-                    return
-                }
-                webMarkdown = text
-                markdown.wrappedValue = text
-                applySelectionAskMarks(force: true)
+            case "outlineChanged":
+                guard let event = decodeV2Event(
+                    NoteEditorOutlineChangedEvent.self,
+                    from: message.body
+                ), event.documentID == editingSession?.documentID,
+                   event.documentGeneration == editingSession?.documentGeneration else { return }
+                onOutlineChange(event.items)
             case "selectionChanged":
                 guard let body = message.body as? [String: Any],
                       let text = body["text"] as? String else { return }
                 onSelectionChange(text, anchor(from: body["rect"] as? [String: Any]))
+                if text.isEmpty {
+                    onSelectionFormattingChange(nil)
+                } else {
+                    onSelectionFormattingChange(NoteSelectionFormatting(
+                        activeMarks: Set(body["activeMarks"] as? [String] ?? []),
+                        blockType: body["blockType"] as? String ?? "",
+                        canConvertToMath: body["canConvertToMath"] as? Bool ?? false,
+                        linkTarget: body["linkTarget"] as? String ?? ""
+                    ))
+                }
             case "askAgentWithSelection":
                 guard let body = message.body as? [String: Any] else { return }
                 let text = body["text"] as? String ?? ""
@@ -1250,14 +1384,12 @@ struct RichMarkdownEditorView: NSViewRepresentable {
 
         func setMarkdown(_ text: String) {
             finalizedRenderGeneration &+= 1
-            pendingExternalMarkdown = text
             webMarkdown = text
             evaluate("window.WeiBeiEditor?.setMarkdown(\(Self.json(text)))")
         }
 
         func updateStreamingMarkdown(_ text: String) {
             finalizedRenderGeneration &+= 1
-            pendingExternalMarkdown = nil
             webMarkdown = text
             evaluate("window.WeiBeiEditor?.updateStreamingMarkdown(\(Self.json(text)))")
         }
@@ -1266,7 +1398,6 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             finalizedRenderGeneration &+= 1
             let generation = finalizedRenderGeneration
             let finalizedDocumentID = documentID
-            pendingExternalMarkdown = nil
             webMarkdown = text
             webView?.evaluateJavaScript("""
             (() => {
@@ -1297,7 +1428,13 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         }
 
         func setEditable(_ editable: Bool) {
-            evaluate("window.WeiBeiEditor?.setEditable(\(editable ? "true" : "false"))")
+            guard let editingSession else { return }
+            dispatchV2(NoteEditorCommandEnvelope(
+                documentID: editingSession.documentID,
+                documentGeneration: editingSession.documentGeneration,
+                type: .setEditable,
+                payload: NoteEditorEditablePayload(editable: editable)
+            ))
         }
 
         func setDocumentID(_ id: String) {
@@ -1309,11 +1446,29 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         }
 
         func setTheme(_ mode: WeiBeiAppearanceMode) {
-            evaluate("window.WeiBeiEditor?.setTheme(\(Self.json(mode.webThemeName)))")
+            if let editingSession {
+                dispatchV2(NoteEditorCommandEnvelope(
+                    documentID: editingSession.documentID,
+                    documentGeneration: editingSession.documentGeneration,
+                    type: .setTheme,
+                    payload: NoteEditorThemePayload(theme: mode.webThemeName)
+                ))
+            } else {
+                evaluate("window.WeiBeiEditor?.setTheme(\(Self.json(mode.webThemeName)))")
+            }
         }
 
         func setInterfaceLanguage(_ language: WeiBeiInterfaceLanguage) {
-            evaluate("window.WeiBeiEditor?.setInterfaceLanguage(\(Self.json(language.rawValue)))")
+            if let editingSession {
+                dispatchV2(NoteEditorCommandEnvelope(
+                    documentID: editingSession.documentID,
+                    documentGeneration: editingSession.documentGeneration,
+                    type: .setLanguage,
+                    payload: NoteEditorLanguagePayload(language: language.rawValue)
+                ))
+            } else {
+                evaluate("window.WeiBeiEditor?.setInterfaceLanguage(\(Self.json(language.rawValue)))")
+            }
         }
 
         func setChatWideTypography(_ wide: Bool) {
@@ -1324,26 +1479,64 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         }
 
         func run(_ command: NoteEditorCommand) {
+            guard let editingSession else { return }
+            let type: NoteEditorCommandType
             switch command.kind {
-            case .replaceSelection:
-                evaluate("window.WeiBeiEditor?.replaceSelection(\(Self.json(command.markdown)))")
-            case .applyAgentPatch:
-                evaluate("window.WeiBeiEditor?.applyAgentPatch(\(Self.json(command.markdown)))")
-            case .insertMarkdown:
-                evaluate("window.WeiBeiEditor?.insertMarkdown(\(Self.json(command.markdown)))")
+            case .replaceSelection: type = .replaceSelection
+            case .selectionCommand:
+                dispatchV2(NoteEditorCommandEnvelope(
+                    documentID: editingSession.documentID,
+                    documentGeneration: editingSession.documentGeneration,
+                    minimumRevision: editingSession.currentRevision,
+                    type: .executeSelectionCommand,
+                    payload: NoteEditorSelectionCommandPayload(action: command.markdown, value: command.value)
+                ))
+                return
+            case .applyAgentPatch: type = .applyMarkdownFragment
+            case .insertMarkdown: type = .insertStructuredBlock
+            case .reloadDocument:
+                webMarkdown = command.markdown
+                dispatchV2(NoteEditorCommandEnvelope(
+                    documentID: editingSession.documentID,
+                    documentGeneration: editingSession.documentGeneration,
+                    type: .loadDocument,
+                    payload: NoteEditorLoadDocumentPayload(
+                        markdown: command.markdown,
+                        initialRevision: editingSession.currentRevision
+                    )
+                ))
+                return
             case .scrollToHeading:
-                evaluate("window.WeiBeiEditor?.scrollToHeading(\(Self.json(command.markdown)))")
+                guard let index = Int(command.markdown) else { return }
+                dispatchV2(NoteEditorCommandEnvelope(
+                    documentID: editingSession.documentID,
+                    documentGeneration: editingSession.documentGeneration,
+                    minimumRevision: editingSession.currentRevision,
+                    type: .scrollToHeading,
+                    payload: NoteEditorScrollPayload(index: index)
+                ))
+                return
             }
+            dispatchV2(NoteEditorCommandEnvelope(
+                documentID: editingSession.documentID,
+                documentGeneration: editingSession.documentGeneration,
+                minimumRevision: editingSession.currentRevision,
+                type: type,
+                payload: NoteEditorMarkdownPayload(markdown: command.markdown)
+            ))
         }
 
         func runPendingCommandIfReady() {
             guard isReady,
+                  pendingV2DocumentID == nil,
                   let pendingCommand = command.wrappedValue,
                   lastCommandID != pendingCommand.id else { return }
             lastCommandID = pendingCommand.id
             run(pendingCommand)
             DispatchQueue.main.async {
-                self.command.wrappedValue = nil
+                if self.command.wrappedValue?.id == pendingCommand.id {
+                    self.command.wrappedValue = nil
+                }
             }
         }
 
@@ -1382,7 +1575,16 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             guard isFocused, focusRequest != lastAppliedFocusRequest else { return }
             lastAppliedFocusRequest = focusRequest
             webView?.window?.makeFirstResponder(webView)
-            evaluate("document.querySelector('.ProseMirror')?.focus()")
+            if let editingSession {
+                dispatchV2(NoteEditorCommandEnvelope(
+                    documentID: editingSession.documentID,
+                    documentGeneration: editingSession.documentGeneration,
+                    type: .focus,
+                    payload: NoteEditorEmptyPayload()
+                ))
+            } else {
+                evaluate("document.querySelector('.ProseMirror')?.focus()")
+            }
         }
 
         func applySelectionAskMarks(force: Bool = false) {
@@ -1399,6 +1601,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
 
         func pasteImageFromClipboard() -> Bool {
             guard isEditable,
+                  let editingSession,
                   let image = NSImage(pasteboard: .general),
                   let tiff = image.tiffRepresentation,
                   let bitmap = NSBitmapImageRep(data: tiff),
@@ -1412,7 +1615,14 @@ struct RichMarkdownEditorView: NSViewRepresentable {
                 "mime": "image/png"
             ]
             guard let attachment = saveImageAttachment(from: body) else { return false }
-            evaluate("window.WeiBeiEditor?.insertMarkdownImage(\(Self.json(MarkdownAttachmentStore.markdownImage(for: attachment))))")
+            let markdown = MarkdownAttachmentStore.markdownImage(for: attachment)
+            dispatchV2(NoteEditorCommandEnvelope(
+                documentID: editingSession.documentID,
+                documentGeneration: editingSession.documentGeneration,
+                minimumRevision: editingSession.currentRevision,
+                type: .insertStructuredBlock,
+                payload: NoteEditorMarkdownPayload(markdown: markdown)
+            ))
             return true
         }
 

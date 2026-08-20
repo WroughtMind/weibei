@@ -3311,7 +3311,7 @@ private struct MarkdownDocumentReaderView: View {
 
     var body: some View {
         RichMarkdownEditorView(
-            markdown: .constant(markdown),
+            markdown: markdown,
             command: $command,
             isEditable: false,
             markdownBaseURL: markdownBaseURL,

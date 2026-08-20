@@ -87,12 +87,24 @@
       --selection: rgba(176, 64, 52, .32);
     }
 
+    @font-face {
+      font-family: "WeiBei Stele";
+      src: url("../Fonts/WeiBeiStele.ttf") format("truetype");
+      font-display: swap;
+    }
+
+    :root { --weibei-writing-font: "Songti SC", "STSong", ui-serif, serif; }
+
+    [data-weibei-font="system"] { font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", sans-serif; }
+    [data-weibei-font="serif"] { font-family: "Songti SC", "STSong", ui-serif, serif; }
+    [data-weibei-font="literary"] { font-family: "WeiBei Stele", "Kaiti SC", "STKaiti", ui-serif, serif; }
+
     html, body {
       margin: 0;
       height: 100%;
       background: transparent;
       color: var(--ink);
-      font-family: "Songti SC", "STSong", ui-serif, serif;
+      font-family: var(--weibei-writing-font);
     }
 
     body {
@@ -192,21 +204,18 @@
     }
 
     .ProseMirror pre::-webkit-scrollbar,
-    .ProseMirror div[data-type="math_block"]::-webkit-scrollbar,
-    .ProseMirror div[data-type="math-block"]::-webkit-scrollbar {
+    .weibei-math-block::-webkit-scrollbar {
       width: 5px;
       height: 5px;
     }
 
     .ProseMirror pre::-webkit-scrollbar-track,
-    .ProseMirror div[data-type="math_block"]::-webkit-scrollbar-track,
-    .ProseMirror div[data-type="math-block"]::-webkit-scrollbar-track {
+    .weibei-math-block::-webkit-scrollbar-track {
       background: transparent;
     }
 
     .ProseMirror pre::-webkit-scrollbar-thumb,
-    .ProseMirror div[data-type="math_block"]::-webkit-scrollbar-thumb,
-    .ProseMirror div[data-type="math-block"]::-webkit-scrollbar-thumb {
+    .weibei-math-block::-webkit-scrollbar-thumb {
       border: 2px solid color-mix(in srgb, var(--paper) 88%, transparent);
       border-radius: 999px;
       background: transparent;
@@ -215,30 +224,22 @@
 
     :root[data-weibei-theme="inkstone"] .ProseMirror pre::-webkit-scrollbar-thumb,
     :root[data-weibei-theme="stele"] .ProseMirror pre::-webkit-scrollbar-thumb,
-
-    :root[data-weibei-theme="inkstone"] .ProseMirror div[data-type="math_block"]::-webkit-scrollbar-thumb,
-    :root[data-weibei-theme="stele"] .ProseMirror div[data-type="math_block"]::-webkit-scrollbar-thumb,
-
-    :root[data-weibei-theme="inkstone"] .ProseMirror div[data-type="math-block"]::-webkit-scrollbar-thumb,
-    :root[data-weibei-theme="stele"] .ProseMirror div[data-type="math-block"]::-webkit-scrollbar-thumb {
+    :root[data-weibei-theme="inkstone"] .weibei-math-block::-webkit-scrollbar-thumb,
+    :root[data-weibei-theme="stele"] .weibei-math-block::-webkit-scrollbar-thumb {
       border-color: #171717;
     }
 
     .ProseMirror pre.weibei-scroll-active::-webkit-scrollbar-thumb,
     .ProseMirror pre:hover::-webkit-scrollbar-thumb,
     .ProseMirror pre:focus-within::-webkit-scrollbar-thumb,
-    .ProseMirror div[data-type="math_block"].weibei-scroll-active::-webkit-scrollbar-thumb,
-    .ProseMirror div[data-type="math_block"]:hover::-webkit-scrollbar-thumb,
-    .ProseMirror div[data-type="math_block"]:focus-within::-webkit-scrollbar-thumb,
-    .ProseMirror div[data-type="math-block"].weibei-scroll-active::-webkit-scrollbar-thumb,
-    .ProseMirror div[data-type="math-block"]:hover::-webkit-scrollbar-thumb,
-    .ProseMirror div[data-type="math-block"]:focus-within::-webkit-scrollbar-thumb {
+    .weibei-math-block.weibei-scroll-active::-webkit-scrollbar-thumb,
+    .weibei-math-block:hover::-webkit-scrollbar-thumb,
+    .weibei-math-block:focus-within::-webkit-scrollbar-thumb {
       background: rgba(92, 70, 46, .16);
     }
 
     .ProseMirror pre::-webkit-scrollbar-thumb:hover,
-    .ProseMirror div[data-type="math_block"]::-webkit-scrollbar-thumb:hover,
-    .ProseMirror div[data-type="math-block"]::-webkit-scrollbar-thumb:hover {
+    .weibei-math-block::-webkit-scrollbar-thumb:hover {
       background: rgba(92, 70, 46, .24);
     }
 
@@ -299,10 +300,17 @@
     .ProseMirror {
       outline: none;
       min-height: calc(100vh - 92px);
-      font-size: 16px;
+      font-size: 17px;
       line-height: 1.82;
       caret-color: var(--cinnabar);
       word-break: break-word;
+    }
+
+    .ProseMirror.weibei-empty-document > p:first-child::before {
+      content: attr(data-empty-placeholder);
+      position: absolute;
+      color: color-mix(in srgb, var(--faint) 58%, transparent);
+      pointer-events: none;
     }
 
     :root[data-weibei-compact-preview="true"] .ProseMirror {
@@ -507,12 +515,16 @@
     }
 
     .ProseMirror table {
-      width: 100%;
+      display: block;
+      width: max-content;
+      min-width: 100%;
+      max-width: 100%;
       margin: 1.1em 0;
       border-collapse: collapse;
-      table-layout: fixed;
+      table-layout: auto;
       font-size: .96em;
       background: transparent;
+      overflow-x: auto;
     }
 
     .ProseMirror th,
@@ -649,6 +661,27 @@
     .ProseMirror blockquote.weibei-callout-failure::before { color: var(--cinnabar); }
     .ProseMirror blockquote.weibei-callout-bug::before { color: var(--cinnabar); }
     .ProseMirror blockquote.weibei-callout::before { content: attr(data-callout-title); }
+
+    .weibei-callout-header {
+      display: flex;
+      gap: .45em;
+      align-items: center;
+      margin-bottom: .35em;
+    }
+
+    .weibei-callout-type,
+    .weibei-callout-title,
+    .weibei-structured-input {
+      border: 0;
+      border-bottom: 1px solid var(--line);
+      background: transparent;
+      color: inherit;
+      font: inherit;
+      outline: none;
+    }
+
+    .weibei-callout-title { min-width: 6em; flex: 1; }
+    body[data-editable="false"] .weibei-callout-header { display: none; }
 
     body[data-editable="false"] .ProseMirror blockquote.weibei-callout[data-callout-fold="-"] {
       cursor: pointer;
@@ -866,6 +899,9 @@
       cursor: pointer;
     }
 
+    .weibei-structured-node.weibei-embed-preview { display: inline-block; margin: 0 .12em; }
+    .weibei-structured-input { width: 10em; margin-right: .3em; }
+
     :root[data-weibei-theme="inkstone"] .weibei-wikilink,
     :root[data-weibei-theme="stele"] .weibei-wikilink {
       background: rgba(200, 185, 138, .08);
@@ -993,229 +1029,20 @@
       line-height: 0;
     }
 
-    .weibei-md-marker,
-    .weibei-callout-marker {
-      color: rgba(58, 46, 38, .56);
-      font-size: .86em;
-      user-select: text;
-    }
-
-    :root[data-weibei-theme="inkstone"] .weibei-md-marker,
-    :root[data-weibei-theme="stele"] .weibei-md-marker,
-
-    :root[data-weibei-theme="inkstone"] .weibei-callout-marker,
-    :root[data-weibei-theme="stele"] .weibei-callout-marker {
-      color: rgba(155, 145, 120, .58);
-    }
-
-    body[data-editable="false"] .weibei-md-marker,
-    body[data-editable="false"] .weibei-callout-marker {
-      color: transparent;
-      font-size: 0;
-      user-select: none;
-    }
-
-    .ProseMirror blockquote.weibei-callout .weibei-callout-marker {
-      display: inline-block !important;
-      color: transparent !important;
-      opacity: 0 !important;
-      visibility: hidden !important;
-      font-size: 0 !important;
-      line-height: 0 !important;
-      width: 0 !important;
-      max-width: 0 !important;
-      height: 0 !important;
-      margin: 0 !important;
-      padding: 0 !important;
-      border: 0 !important;
-      overflow: hidden !important;
-      user-select: none !important;
-      white-space: nowrap !important;
-    }
-
-    .ProseMirror span[data-type="math_inline"],
-    .ProseMirror span[data-type="math-inline"],
-    .ProseMirror .math-inline {
-      color: transparent;
-      font-size: 0;
-      line-height: 0;
-      background: transparent !important;
-      border: 0;
-      box-shadow: none;
-      user-select: none;
-    }
-
-    .ProseMirror span[data-type="math_inline"]::before,
-    .ProseMirror span[data-type="math_inline"]::after,
-    .ProseMirror span[data-type="math-inline"]::before,
-    .ProseMirror span[data-type="math-inline"]::after,
-    .ProseMirror .math-inline::before,
-    .ProseMirror .math-inline::after {
-      content: none !important;
-    }
-
-    .ProseMirror div[data-type="math_block"],
-    .ProseMirror div[data-type="math-block"],
-    .ProseMirror .math-block {
-      color: transparent;
-      font-size: 0;
-      line-height: 0;
-      background: transparent;
-      border: 0;
-      text-align: center;
-      margin: .9em 0;
-      user-select: none;
-    }
-
-    :root[data-weibei-theme="inkstone"] .ProseMirror div[data-type="math_block"],
-    :root[data-weibei-theme="stele"] .ProseMirror div[data-type="math_block"],
-
-    :root[data-weibei-theme="inkstone"] .ProseMirror div[data-type="math-block"],
-    :root[data-weibei-theme="stele"] .ProseMirror div[data-type="math-block"],
-
-    :root[data-weibei-theme="inkstone"] .ProseMirror .math-block,
-    :root[data-weibei-theme="stele"] .ProseMirror .math-block {
-      background: transparent;
-      border-color: transparent;
-    }
-
-    .ProseMirror span[data-type="math_inline"] > .katex,
-    .ProseMirror span[data-type="math-inline"] > .katex,
-    .ProseMirror .math-inline > .katex {
-      color: rgba(33, 27, 23, .92);
-      /* rem on purpose: the container hides raw LaTeX via font-size: 0,
-         so any em-based size here would collapse to 0. */
-      font-size: 1rem;
-      line-height: 1.2;
-      user-select: text;
-    }
-
-    .ProseMirror div[data-type="math_block"] > .katex,
-    .ProseMirror div[data-type="math-block"] > .katex,
-    .ProseMirror .math-block > .katex {
-      color: rgba(33, 27, 23, .92);
-      display: inline-block;
-      font-size: 1.18rem;
-      line-height: 1.5;
-      user-select: text;
-    }
-
-    /* displayMode upgrade path: KaTeX wraps in .katex-display (block, centered).
-       rem again — the container hides raw LaTeX via font-size: 0. */
-    .ProseMirror div[data-type="math_block"] > .katex-display,
-    .ProseMirror div[data-type="math-block"] > .katex-display,
-    .ProseMirror .math-block > .katex-display {
-      color: rgba(33, 27, 23, .92);
-      font-size: 1rem;
-      line-height: 1.5;
-      margin: .25em 0;
-      user-select: text;
-    }
-
-    :root[data-weibei-compact-preview="true"]:not([data-weibei-chat-wide="true"]) .ProseMirror div[data-type="math_block"] > .katex-display,
-    :root[data-weibei-compact-preview="true"]:not([data-weibei-chat-wide="true"]) .ProseMirror div[data-type="math-block"] > .katex-display,
-    :root[data-weibei-compact-preview="true"]:not([data-weibei-chat-wide="true"]) .ProseMirror .math-block > .katex-display {
-      font-size: .9rem;
-    }
-
-    :root[data-weibei-theme="inkstone"] .ProseMirror div[data-type="math_block"] > .katex-display,
-    :root[data-weibei-theme="stele"] .ProseMirror div[data-type="math_block"] > .katex-display,
-    :root[data-weibei-theme="inkstone"] .ProseMirror div[data-type="math-block"] > .katex-display,
-    :root[data-weibei-theme="stele"] .ProseMirror div[data-type="math-block"] > .katex-display,
-    :root[data-weibei-theme="inkstone"] .ProseMirror .math-block > .katex-display,
-    :root[data-weibei-theme="stele"] .ProseMirror .math-block > .katex-display {
-      color: #d7cbb0;
-    }
-
-    :root[data-weibei-compact-preview="true"]:not([data-weibei-chat-wide="true"]) .ProseMirror div[data-type="math_block"] > .katex,
-    :root[data-weibei-compact-preview="true"]:not([data-weibei-chat-wide="true"]) .ProseMirror div[data-type="math-block"] > .katex,
-    :root[data-weibei-compact-preview="true"]:not([data-weibei-chat-wide="true"]) .ProseMirror .math-block > .katex {
-      font-size: 1.05rem;
-    }
-
-    :root[data-weibei-theme="inkstone"] .ProseMirror span[data-type="math_inline"] > .katex,
-    :root[data-weibei-theme="stele"] .ProseMirror span[data-type="math_inline"] > .katex,
-
-    :root[data-weibei-theme="inkstone"] .ProseMirror span[data-type="math-inline"] > .katex,
-    :root[data-weibei-theme="stele"] .ProseMirror span[data-type="math-inline"] > .katex,
-
-    :root[data-weibei-theme="inkstone"] .ProseMirror .math-inline > .katex,
-    :root[data-weibei-theme="stele"] .ProseMirror .math-inline > .katex,
-
-    :root[data-weibei-theme="inkstone"] .ProseMirror div[data-type="math_block"] > .katex,
-    :root[data-weibei-theme="stele"] .ProseMirror div[data-type="math_block"] > .katex,
-
-    :root[data-weibei-theme="inkstone"] .ProseMirror div[data-type="math-block"] > .katex,
-    :root[data-weibei-theme="stele"] .ProseMirror div[data-type="math-block"] > .katex,
-
-    :root[data-weibei-theme="inkstone"] .ProseMirror .math-block > .katex,
-    :root[data-weibei-theme="stele"] .ProseMirror .math-block > .katex {
-      color: #d7cbb0;
-    }
-
-    .ProseMirror span[data-type="math_inline"],
-    .ProseMirror span[data-type="math-inline"],
-    .ProseMirror .math-inline {
-      display: inline;
-      padding: 0 .05em;
-      vertical-align: baseline;
-    }
-
-    .ProseMirror span[data-type="math_inline"] > :not(.katex),
-    .ProseMirror span[data-type="math-inline"] > :not(.katex),
-    .ProseMirror .math-inline > :not(.katex),
-    .ProseMirror div[data-type="math_block"] > :not(.katex):not(.katex-display),
-    .ProseMirror div[data-type="math-block"] > :not(.katex):not(.katex-display),
-    .ProseMirror .math-block > :not(.katex):not(.katex-display) {
-      display: none !important;
-    }
-
-    .ProseMirror span[data-type="math_inline"] > .katex > .katex-mathml,
-    .ProseMirror span[data-type="math-inline"] > .katex > .katex-mathml,
-    .ProseMirror .math-inline > .katex > .katex-mathml,
-    .ProseMirror div[data-type="math_block"] > .katex > .katex-mathml,
-    .ProseMirror div[data-type="math-block"] > .katex > .katex-mathml,
-    .ProseMirror .math-block > .katex > .katex-mathml {
-      position: absolute !important;
-      width: 1px !important;
-      height: 1px !important;
-      overflow: hidden !important;
-      clip: rect(0 0 0 0) !important;
-      clip-path: inset(50%) !important;
-      white-space: nowrap !important;
-      user-select: none;
-      pointer-events: none;
-    }
-
-    .ProseMirror span[data-type="math_inline"].ProseMirror-selectednode,
-    .ProseMirror span[data-type="math-inline"].ProseMirror-selectednode {
-      outline: 1px solid rgba(63, 105, 82, .30);
-      outline-offset: 2px;
-      border-radius: 3px;
-    }
-
-    .ProseMirror div[data-type="math_block"],
-    .ProseMirror div[data-type="math-block"] {
-      display: block;
-      margin: .8em 0;
-      padding: .75em 1em;
-      overflow-x: auto;
-      border-left: 2px solid rgba(63, 105, 82, .36);
-    }
-
-    .ProseMirror .katex-error {
-      color: var(--cinnabar);
-      background: var(--cinnabar-soft);
-      border-bottom: 1px solid var(--cinnabar-line);
-      padding: 0 .2em;
-    }
-
-    .ProseMirror .katex-error::after {
-      content: " 公式未解析";
-      color: var(--cinnabar);
-      font: 11px/1.5 -apple-system, BlinkMacSystemFont, "Songti SC", serif;
-      opacity: .74;
-    }
+    .weibei-math-node { cursor: text; }
+    .weibei-math-inline { display: inline-flex !important; align-items: baseline; padding: 0 .05em; vertical-align: baseline; }
+    .weibei-math-block { display: block !important; margin: .8em 0; padding: .75em 1em; overflow-x: auto; border-left: 2px solid rgba(63, 105, 82, .36) !important; }
+    .weibei-math-preview > .katex { color: rgba(33, 27, 23, .92); font-size: 1rem; line-height: 1.2; }
+    .weibei-math-block .weibei-math-preview > .katex-display { margin: .25em 0; font-size: 1rem; line-height: 1.5; }
+    :root[data-weibei-theme="inkstone"] .weibei-math-preview > .katex,
+    :root[data-weibei-theme="stele"] .weibei-math-preview > .katex { color: #d7cbb0; }
+    .weibei-math-source { display: none; box-sizing: border-box; color: var(--ink); background: color-mix(in srgb, var(--paper-raised) 88%, transparent); border: 1px solid var(--line); border-radius: 4px; font: 13px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; outline: none; }
+    .weibei-math-inline .weibei-math-source { width: min(30em, 65vw); padding: .15em .35em; }
+    .weibei-math-block .weibei-math-source { width: 100%; min-height: 5em; padding: .55em .65em; resize: vertical; }
+    .weibei-math-editing { align-items: center; gap: .4em; }
+    .weibei-math-editing .weibei-math-source { display: block; }
+    .weibei-math-invalid { background: color-mix(in srgb, var(--paper-raised) 55%, transparent) !important; border-bottom: 1px dashed var(--line) !important; }
+    .weibei-math-invalid .weibei-math-preview { color: var(--muted); font: 13px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap; }
 
     .weibei-mermaid-block {
       opacity: .72;
@@ -1260,6 +1087,15 @@
       padding: 4px;
     }
 
+    .weibei-image-node { position: relative; display: inline-block; max-width: 100%; vertical-align: bottom; }
+    .weibei-image-node.ProseMirror-selectednode { outline: 1px solid color-mix(in srgb, var(--moss) 55%, transparent); outline-offset: 3px; }
+    .weibei-image-controls { position: absolute; left: 6px; bottom: 8px; z-index: 2; display: flex; gap: 3px; padding: 3px; background: color-mix(in srgb, var(--paper-raised) 96%, transparent); border: 1px solid var(--line); border-radius: 6px; box-shadow: 0 4px 14px rgba(35, 26, 19, .14); }
+    .weibei-image-controls[hidden] { display: none; }
+    .weibei-image-controls button, .weibei-image-controls select { height: 24px; color: var(--ink); background: transparent; border: 0; border-radius: 4px; font: 11px/24px -apple-system, BlinkMacSystemFont, sans-serif; }
+    .weibei-image-controls button { padding: 0 7px; }
+    .weibei-image-controls select { padding: 0 4px; }
+    .weibei-image-controls button:hover, .weibei-image-controls button:focus-visible, .weibei-image-controls select:focus-visible { background: color-mix(in srgb, var(--line) 25%, transparent); outline: none; }
+
     :root[data-weibei-theme="inkstone"] .weibei-image,
     :root[data-weibei-theme="stele"] .weibei-image {
       background: rgba(255, 255, 255, .035);
@@ -1281,6 +1117,12 @@
 
     .weibei-slash-menu { position: absolute; z-index: 120; width: 204px; max-height: min(420px, calc(100vh - 16px)); overflow: auto; box-sizing: border-box; padding: 5px; color: var(--ink); background: color-mix(in srgb, var(--paper-raised) 96%, transparent); border: 1px solid var(--line); border-radius: 9px; box-shadow: 0 14px 34px rgba(35, 26, 19, .18), 0 2px 8px rgba(35, 26, 19, .10); backdrop-filter: blur(16px); }
     .weibei-slash-menu[data-show="false"] { display: none; }
+    .weibei-line-plus { position: fixed; z-index: 110; width: 24px; height: 24px; padding: 0; color: var(--faint); background: transparent; border: 0; border-radius: 4px; font: 17px/24px -apple-system, BlinkMacSystemFont, sans-serif; cursor: pointer; }
+    .weibei-line-plus:hover, .weibei-line-plus:focus-visible { color: var(--ink); background: color-mix(in srgb, var(--paper-raised) 72%, transparent); outline: none; }
+    .weibei-table-toolbar { position: fixed; z-index: 115; display: flex; gap: 2px; padding: 3px; color: var(--ink); background: color-mix(in srgb, var(--paper-raised) 96%, transparent); border: 1px solid var(--line); border-radius: 7px; box-shadow: 0 6px 18px rgba(35, 26, 19, .12); }
+    .weibei-table-toolbar[hidden] { display: none; }
+    .weibei-table-toolbar button { min-width: 34px; height: 22px; padding: 0 6px; color: var(--muted); background: transparent; border: 0; border-radius: 4px; font: 11px/22px -apple-system, BlinkMacSystemFont, sans-serif; }
+    .weibei-table-toolbar button:hover, .weibei-table-toolbar button:focus-visible { color: var(--ink); background: color-mix(in srgb, var(--line) 25%, transparent); outline: none; }
     .weibei-slash-section + .weibei-slash-section { margin-top: 3px; padding-top: 3px; border-top: 1px solid var(--line); }
     .weibei-slash-group { padding: 4px 8px 3px; color: var(--faint); font-size: 10px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; user-select: none; }
     .weibei-slash-command { border-radius: 6px; }
@@ -1327,23 +1169,37 @@
     window.WeiBeiEditorBootFailed = function(error) {
       var root = document.querySelector('#editor');
       if (!root) return;
-      var text = error && (error.stack || error.message) ? (error.stack || error.message) : String(error);
+      var text = error && (error.stack || error.message)
+        ? [error.message, error.stack].filter(Boolean).join('\n')
+        : String(error);
       root.innerHTML = '<pre class="editor-status error">Milkdown 初始化失败\n' + text.replace(/[<>&]/g, function(ch) {
         return { '<': '&lt;', '>': '&gt;', '&': '&amp;' }[ch];
       }) + '</pre>';
       window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.editorFailure
         && window.webkit.messageHandlers.editorFailure.postMessage({
-          documentID: window.weiBeiDocumentID || ''
+          documentID: window.weiBeiDocumentID || '',
+          message: text
         });
     };
     window.addEventListener('error', function(event) {
-      window.WeiBeiEditorBootFailed(event.error || event.message);
+      window.WeiBeiEditorBootFailed(event.error || new Error(
+        event.message + ' at ' + event.filename + ':' + event.lineno + ':' + event.colno
+      ));
     });
     window.addEventListener('unhandledrejection', function(event) {
       window.WeiBeiEditorBootFailed(event.reason);
     });
   </script>
-  <script src="./editor.js"></script>
+  <script>
+    var weiBeiEntry = document.createElement('script');
+    weiBeiEntry.src = window.weiBeiMarkdownEditable === true
+      ? './editor-entry.js'
+      : './viewer-entry.js';
+    weiBeiEntry.onerror = function() {
+      window.WeiBeiEditorBootFailed(new Error('编辑器本地入口加载失败'));
+    };
+    document.body.appendChild(weiBeiEntry);
+  </script>
   <script>
     document.getElementById('editor').addEventListener('pointerdown', function(event) {
       if (window.weiBeiMarkdownEditable !== true

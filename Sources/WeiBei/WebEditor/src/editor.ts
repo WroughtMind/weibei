@@ -14,34 +14,46 @@ import {
 } from '@milkdown/plugin-streaming';
 import { SlashProvider, slashFactory } from '@milkdown/kit/plugin/slash';
 import { readImageAsBase64, upload, uploadConfig } from '@milkdown/kit/plugin/upload';
-import { exitCode, setBlockType } from '@milkdown/kit/prose/commands';
-import { closeHistory, undo } from '@milkdown/kit/prose/history';
+import { exitCode, lift, setBlockType, toggleMark, wrapIn } from '@milkdown/kit/prose/commands';
+import { closeHistory, redo, undo } from '@milkdown/kit/prose/history';
+import { nodeRule } from '@milkdown/kit/prose';
 import { Fragment } from '@milkdown/kit/prose/model';
-import { Plugin, Selection, TextSelection } from '@milkdown/kit/prose/state';
+import { NodeSelection, Plugin, Selection, TextSelection } from '@milkdown/kit/prose/state';
 import { liftListItem } from '@milkdown/kit/prose/schema-list';
+import { addColumnAfter, addRowAfter, deleteColumn, deleteRow, goToNextCell, isInTable, selectedRect } from '@milkdown/kit/prose/tables';
 import { Decoration, DecorationSet } from '@milkdown/kit/prose/view';
-import { getMarkdown as readMarkdown, insert, replaceAll, replaceRange, $prose } from '@milkdown/kit/utils';
-import { katexOptionsCtx, math } from '@milkdown/plugin-math';
-import katex from 'katex';
-import 'katex/dist/katex.css';
-import mermaid from 'mermaid';
-// @ts-expect-error prismjs 无类型声明，运行时由 prism.js 提供
-import Prism from 'prismjs';
-import 'prismjs/components/prism-bash';
-import 'prismjs/components/prism-css';
-import 'prismjs/components/prism-java';
-import 'prismjs/components/prism-json';
-import 'prismjs/components/prism-jsx';
-import 'prismjs/components/prism-markdown';
-import 'prismjs/components/prism-python';
-import 'prismjs/components/prism-r';
-import 'prismjs/components/prism-ruby';
-import 'prismjs/components/prism-rust';
-import 'prismjs/components/prism-sql';
-import 'prismjs/components/prism-swift';
-import 'prismjs/components/prism-tsx';
-import 'prismjs/components/prism-typescript';
-import 'prismjs/components/prism-yaml';
+import { getMarkdown as readMarkdown, insert, replaceAll, replaceRange, $inputRule, $prose } from '@milkdown/kit/utils';
+import {
+  mathBlockInputRule,
+  mathBlockSchema,
+  mathInlineSchema,
+  remarkMathPlugin,
+} from './mathExtension';
+import { loadedKaTeX, loadKaTeX, loadMermaid, loadPrism } from './localRuntime';
+import {
+  calloutTypePattern,
+  inlineMathInputPattern,
+  joinFrontmatter,
+  normalizeMarkdownSource,
+  splitFrontmatter,
+} from './markdownRules';
+import {
+  addEditorMetric,
+  createEditorCheckMetrics,
+  resetEditorCheckMetrics,
+} from './checkMetrics';
+import { outlineChangeKey, type EditorOutlineItem } from './outline';
+import {
+  acceptsEditorCommand,
+  createEditorEvent,
+  editorProtocolVersion,
+  parseEditorCommand,
+  reduceRevision,
+  type EditorCommand,
+} from './bridge/protocol';
+import { structuredMarkdown } from './structuredMarkdown';
+
+declare const WEIBEI_EDITOR_RUNTIME: boolean;
 
 declare global {
   interface Window {
@@ -51,6 +63,7 @@ declare global {
     weiBeiMarkdownEditable?: boolean;
     weiBeiMarkdownCompactPreview?: boolean;
     weiBeiDocumentID?: string;
+    weiBeiDocumentGeneration?: number;
     weiBeiMarkdownBaseURL?: string;
     weiBeiLocalImageScheme?: string;
     weiBeiInterfaceLanguage?: unknown;
@@ -65,51 +78,48 @@ declare global {
   }
 }
 
-// Stata has no official Prism component; econometrics answers lean on it heavily.
-// Line-leading `*` is a comment in Stata — colorized here so it does not read
-// as a stray Markdown artifact.
-Prism.languages.stata = {
-  comment: [
-    { pattern: /(^|\n)\s*\*.*/, lookbehind: true },
-    { pattern: /\/\/.*/ },
-    { pattern: /\/\*[\s\S]*?\*\//, greedy: true },
-  ],
-  string: { pattern: /"[^"\n]*"/, greedy: true },
-  macro: { pattern: /`[^'\n]*'|\$\{?\w+\}?/, alias: 'variable' },
-  keyword: /\b(?:use|clear|gen(?:erate)?|egen|replace|drop|keep|merge|append|save|import|export|reg(?:ress)?|ivregress|areg|xtreg|logit|probit|tobit|test|testparm|lincom|nlcom|margins|display|di|summarize|sum|tabulate|tab|describe|predict|estat|esttab|estimates|vce|robust|cluster|if|in|foreach|forvalues|while|else|local|global|scalar|matrix|by|bysort|sort|gsort|label|rename|recode|encode|decode|reshape|collapse|preserve|restore|set|version|capture|quietly|noisily)\b/,
-  function: /\b[a-zA-Z_]\w*(?=\()/,
-  number: /\b\d+(?:\.\d+)?(?:e[+-]?\d+)?\b/i,
-  operator: /[-+*/^=<>!&|~#]+/,
-  punctuation: /[(){}[\],;:]/,
-};
-Prism.languages.do = Prism.languages.stata;
-
 const bridge = window.webkit?.messageHandlers;
+const checkMetrics = window.weiBeiEditorCheckMode ? createEditorCheckMetrics() : null;
 let editor: Editor;
 let lastMarkdown = '';
 let compositionStartMarkdown: string | null = null;
 let compositionTextblockFrom: number | null = null;
 let compositionEndPending = false;
 let lastSelectionRange: { from: number; to: number } | null = null;
-let lastSelectionReport: { text: string | null; rectKey: string | null } = { text: null, rectKey: null };
+let lastSelectionReport: { text: string | null; rectKey: string | null; detailKey: string | null } = { text: null, rectKey: null, detailKey: null };
 let frontmatterBlock = '';
-let isEditable = window.weiBeiMarkdownEditable !== false;
+let isEditable = WEIBEI_EDITOR_RUNTIME && window.weiBeiMarkdownEditable !== false;
 const isCompactPreview = window.weiBeiMarkdownCompactPreview === true;
 let currentDocumentID = window.weiBeiDocumentID || '';
+let currentDocumentGeneration = window.weiBeiDocumentGeneration || 0;
+let revisionState = { revision: 0, dirty: false };
+let suppressDirtyTransactions = false;
+let editorReadyPosted = false;
+let fullMarkdownBridgeMessages = 0;
 let markdownBaseURL = window.weiBeiMarkdownBaseURL || '';
 const localImageScheme = window.weiBeiLocalImageScheme || 'weibeiimage';
 let attachmentRequestID = 0;
-let imageRefreshFrame = 0;
 let mermaidRenderID = 0;
 let mermaidPreviewID = 0;
 let mermaidPreviewGeneration = 0;
 const pendingAttachments = new Map();
 const pendingImagePickers = new Map();
-const weiBeiSlash = slashFactory('WEIBEI_BLOCK_COMMAND');
-let currentDocumentGeneration = 0;
+const weiBeiSlash = WEIBEI_EDITOR_RUNTIME ? slashFactory('WEIBEI_BLOCK_COMMAND') : null as any;
+const weiBeiMathInlineInputRule = WEIBEI_EDITOR_RUNTIME ? $inputRule((ctx) => nodeRule(
+  inlineMathInputPattern,
+  mathInlineSchema.type(ctx),
+  { beforeDispatch: ({ tr, match, start }) => tr.insertText(match[1] || '', start + 1) },
+)) : null;
+const weiBeiMath = [
+  remarkMathPlugin,
+  mathInlineSchema,
+  mathBlockSchema,
+  ...(WEIBEI_EDITOR_RUNTIME ? [mathBlockInputRule, weiBeiMathInlineInputRule] : []),
+].flat();
 let currentContentGeneration = 0;
 let streamingMarkdownBuffer: string | null = null;
 let selectionAskMarks: any[] = [];
+let decorationGeneration = 0;
 const insertionCursorMarker = '{{WEIBEI_CURSOR}}';
 const insertionSelectionStartMarker = '{{WEIBEI_SELECT_START}}';
 const insertionSelectionEndMarker = '{{WEIBEI_SELECT_END}}';
@@ -131,7 +141,6 @@ const calloutTypes = new Set([
   'bug',
   'todo',
 ]);
-const calloutTypePattern = '[A-Za-z][A-Za-z0-9_-]*';
 const calloutPrefixPattern = '(?:\\s*>\\s*)*\\s*';
 const normalizeInterfaceLanguage = (value: any) => (value === 'en' ? 'en' : 'zh-Hans');
 let currentLanguage: 'en' | 'zh-Hans' = normalizeInterfaceLanguage(window.weiBeiInterfaceLanguage);
@@ -185,11 +194,12 @@ const editorLabels = {
     embed: '嵌入：{value}',
     mermaidRendering: '正在渲染 Mermaid 图表...',
     mermaidFailed: 'Mermaid 图表未解析\n{value}',
-    mathError: '公式没有通过 KaTeX 解析。常用写法：x_i、x^{2}、\\frac{a}{b}、\\begin{bmatrix}...\\end{bmatrix}',
     uploadingImage: '正在收纳图片...',
-    slashNoResults: '没有匹配命令', slashStructure: '结构', slashLists: '列表', slashContent: '内容', slashRichContent: '丰富内容',
-    slashHeading1: '一级标题', slashHeading2: '二级标题', slashHeading3: '三级标题', slashBulletList: '无序列表', slashOrderedList: '有序列表', slashTaskList: '待办列表', slashQuote: '引用', slashCallout: '提示块', slashCode: '代码块', slashDivider: '分隔线', slashTable: '表格', slashImage: '图片', slashMermaid: 'Mermaid 图表',
-    slashRows: '行', slashColumns: '列', slashInsertTable: '插入表格', slashImageFailed: '图片读取或保存失败', codeLanguage: '代码语言', codeLanguagePlaceholder: 'text',
+    emptyNotePlaceholder: '从这里开始写下第一句…',
+    slashNoResults: '没有匹配命令', slashStructure: '结构', slashLists: '列表', slashContent: '内容', slashRichContent: '丰富内容', slashFonts: '字体',
+    slashHeading1: '一级标题', slashHeading2: '二级标题', slashHeading3: '三级标题', slashHeading4: '四级标题', slashHeading5: '五级标题', slashHeading6: '六级标题', slashBulletList: '无序列表', slashOrderedList: '有序列表', slashTaskList: '待办列表', slashQuote: '引用', slashCallout: '提示块', slashCode: '代码块', slashDivider: '分隔线', slashTable: '表格', slashImage: '图片', slashMermaid: 'Mermaid 图表', slashLink: '链接', slashWikiLink: '笔记链接', slashFootnote: '脚注', slashInlineMath: '行内公式', slashBlockMath: '块级公式',
+    slashFontSystem: '字体：SF Pro / PingFang SC', slashFontSerif: '字体：Songti SC', slashFontLiterary: '字体：WeiBeiStele',
+    slashRows: '行', slashColumns: '列', slashInsertTable: '插入表格', slashImageFailed: '图片读取或保存失败', tableAddRow: '＋行', tableDeleteRow: '−行', tableAddColumn: '＋列', tableDeleteColumn: '−列', tableHeader: '表头', linkPlaceholder: '链接文字', wikiLinkPlaceholder: '笔记标题', footnotePlaceholder: '脚注内容', codeLanguage: '代码语言', codeLanguagePlaceholder: 'text',
   },
   en: {
     properties: 'Properties',
@@ -201,11 +211,12 @@ const editorLabels = {
     embed: 'Embed: {value}',
     mermaidRendering: 'Rendering Mermaid diagram...',
     mermaidFailed: 'Mermaid diagram did not parse\n{value}',
-    mathError: 'KaTeX could not parse this formula. Common forms: x_i, x^{2}, \\frac{a}{b}, \\begin{bmatrix}...\\end{bmatrix}',
     uploadingImage: 'Saving image...',
-    slashNoResults: 'No matching commands', slashStructure: 'Structure', slashLists: 'Lists', slashContent: 'Content', slashRichContent: 'Rich content',
-    slashHeading1: 'Heading 1', slashHeading2: 'Heading 2', slashHeading3: 'Heading 3', slashBulletList: 'Bulleted list', slashOrderedList: 'Numbered list', slashTaskList: 'To-do list', slashQuote: 'Quote', slashCallout: 'Callout', slashCode: 'Code block', slashDivider: 'Divider', slashTable: 'Table', slashImage: 'Image', slashMermaid: 'Mermaid diagram',
-    slashRows: 'Rows', slashColumns: 'Columns', slashInsertTable: 'Insert table', slashImageFailed: 'Image could not be read or saved', codeLanguage: 'Code language', codeLanguagePlaceholder: 'text',
+    emptyNotePlaceholder: 'Start writing here…',
+    slashNoResults: 'No matching commands', slashStructure: 'Structure', slashLists: 'Lists', slashContent: 'Content', slashRichContent: 'Rich content', slashFonts: 'Fonts',
+    slashHeading1: 'Heading 1', slashHeading2: 'Heading 2', slashHeading3: 'Heading 3', slashHeading4: 'Heading 4', slashHeading5: 'Heading 5', slashHeading6: 'Heading 6', slashBulletList: 'Bulleted list', slashOrderedList: 'Numbered list', slashTaskList: 'To-do list', slashQuote: 'Quote', slashCallout: 'Callout', slashCode: 'Code block', slashDivider: 'Divider', slashTable: 'Table', slashImage: 'Image', slashMermaid: 'Mermaid diagram', slashLink: 'Link', slashWikiLink: 'Note link', slashFootnote: 'Footnote', slashInlineMath: 'Inline formula', slashBlockMath: 'Block formula',
+    slashFontSystem: 'Font: SF Pro / PingFang SC', slashFontSerif: 'Font: Songti SC', slashFontLiterary: 'Font: WeiBeiStele',
+    slashRows: 'Rows', slashColumns: 'Columns', slashInsertTable: 'Insert table', slashImageFailed: 'Image could not be read or saved', tableAddRow: '+ Row', tableDeleteRow: '− Row', tableAddColumn: '+ Column', tableDeleteColumn: '− Column', tableHeader: 'Header', linkPlaceholder: 'Link text', wikiLinkPlaceholder: 'Note title', footnotePlaceholder: 'Footnote', codeLanguage: 'Code language', codeLanguagePlaceholder: 'text',
   },
 };
 const editorLabel = (key: any, values: any = {}) => {
@@ -216,9 +227,6 @@ const editorLabel = (key: any, values: any = {}) => {
   return text;
 };
 const frontmatterLabel = () => editorLabel('properties');
-const calloutRegex = new RegExp(`^${calloutPrefixPattern}\\\\?\\[!(${calloutTypePattern})\\]([+-]?)(?:[ \\t]+([^\\n]+))?`, 'i');
-const calloutMarkerRegex = new RegExp(`^${calloutPrefixPattern}\\\\?\\[!(?:${calloutTypePattern})\\][+-]?\\s*`, 'i');
-const calloutHeadingRegex = new RegExp(`^${calloutPrefixPattern}\\\\?\\[!(?:${calloutTypePattern})\\][+-]?(?:[ \\t]+[^\\n]+)?$`, 'i');
 const selectedTextCalloutControlRegex = new RegExp(`(^|\\n)\\s*(?:>\\s*)*\\\\?\\[!(?:${calloutTypePattern})\\][+-]?[ \\t]*`, 'gi');
 const htmlBreakPattern = /<br\s*\/?>/gi;
 const cleanSelectedText = (text: any) => String(text || '')
@@ -244,55 +252,6 @@ const cleanSelectedText = (text: any) => String(text || '')
   .replace(/[ \t]+\n/g, '\n')
   .replace(/\n{2,}/g, '\n')
   .trim();
-const calloutHeaderText = (node: any) => {
-  const text = node.textBetween
-    ? node.textBetween(0, node.content.size, '\n')
-    : (node.textContent || '');
-  return (text.split('\n')[0] || '').trimStart();
-};
-const firstParagraphText = (node: any) => {
-  let first = '';
-  node.descendants((child: any) => {
-    if (first) return false;
-    if (child.type?.name !== 'paragraph') return true;
-    const text = (child.textContent || '').trimStart();
-    if (!text) return true;
-    first = text;
-    return false;
-  });
-  return first;
-};
-const calloutMatchForBlockquote = (node: any) => (
-  calloutHeaderText(node).match(calloutRegex)
-    || firstParagraphText(node).match(calloutRegex)
-);
-const isBlockquoteType = (typeName: any) => typeName === 'blockquote' || typeName === 'block_quote';
-const decorateCalloutHeadingSource = (decorations: any, node: any, pos: any) => {
-  const text = node.textBetween
-    ? node.textBetween(0, node.content.size, '')
-    : (node.textContent || '');
-  const marker = text.match(calloutMarkerRegex);
-  if (!marker) return;
-  const contentStart = pos + 1;
-  const markerEnd = contentStart + marker[0].length;
-  addRangeDecoration(decorations, contentStart, markerEnd, 'weibei-callout-marker');
-
-  const heading = text.match(calloutHeadingRegex);
-  if (!heading) return;
-  const titleEnd = contentStart + heading[0].length;
-  if (titleEnd > markerEnd) {
-    addRangeDecoration(decorations, markerEnd, titleEnd, 'weibei-callout-heading-source');
-  }
-};
-const decorateLeakedCalloutControls = (decorations: any, text: any, pos: any) => {
-  for (const match of text.matchAll(selectedTextCalloutControlRegex)) {
-    const lineBreakSize = match[1]?.length || 0;
-    const from = pos + (match.index || 0) + lineBreakSize;
-    const to = pos + (match.index || 0) + match[0].length;
-    addRangeDecoration(decorations, from, to, 'weibei-callout-marker');
-  }
-};
-
 // Keep all four product themes — CSS variables live under data-weibei-theme={paper|xuan|inkstone|stele}.
 const normalizeTheme = (theme: any) => {
   if (theme === 'xuan' || theme === 'inkstone' || theme === 'stele' || theme === 'paper') return theme;
@@ -349,7 +308,7 @@ const mermaidThemeVariables = () => {
   }
 };
 
-const initializeMermaid = () => {
+const initializeMermaid = (mermaid: any) => {
   mermaid.initialize({
     startOnLoad: false,
     securityLevel: 'strict',
@@ -362,7 +321,6 @@ const applyTheme = (theme: any) => {
   currentTheme = normalizeTheme(theme);
   document.documentElement.dataset.weibeiTheme = currentTheme;
   if (document.body) document.body.dataset.weibeiTheme = currentTheme;
-  initializeMermaid();
   mermaidPreviewGeneration += 1;
 };
 
@@ -382,39 +340,81 @@ window.addEventListener('error', (event) => showFailure(event.error || event.mes
 window.addEventListener('unhandledrejection', (event) => showFailure(event.reason));
 
 const post = (name: any, body: any = {}) => {
-  bridge?.[name]?.postMessage({ ...body, documentID: currentDocumentID });
+  const handler = bridge?.[name];
+  if (!handler) return;
+  const message = createEditorEvent({
+    documentID: currentDocumentID,
+    documentGeneration: currentDocumentGeneration,
+    revision: revisionState.revision,
+  }, body);
+  if (typeof message.markdown === 'string') fullMarkdownBridgeMessages += 1;
+  addEditorMetric(checkMetrics, 'bridgeMessages');
+  if (checkMetrics) addEditorMetric(checkMetrics, 'bridgeBytes', new TextEncoder().encode(JSON.stringify(message)).byteLength);
+  handler.postMessage(message);
 };
 
-const slashMenuElement = document.createElement('div');
-slashMenuElement.className = 'weibei-slash-menu';
-slashMenuElement.dataset.show = 'false';
-slashMenuElement.setAttribute('role', 'listbox');
-slashMenuElement.setAttribute('aria-label', 'Slash commands');
-const slashStatusElement = document.createElement('div');
-slashStatusElement.className = 'weibei-visually-hidden';
-slashStatusElement.setAttribute('role', 'status');
-slashStatusElement.setAttribute('aria-live', 'polite');
+const slashMenuElement = (WEIBEI_EDITOR_RUNTIME ? document.createElement('div') : null) as HTMLDivElement;
+const slashStatusElement = (WEIBEI_EDITOR_RUNTIME ? document.createElement('div') : null) as HTMLDivElement;
+const linePlusElement = (WEIBEI_EDITOR_RUNTIME ? document.createElement('button') : null) as HTMLButtonElement;
+const tableToolbarElement = (WEIBEI_EDITOR_RUNTIME ? document.createElement('div') : null) as HTMLDivElement;
+if (WEIBEI_EDITOR_RUNTIME) {
+  slashMenuElement.className = 'weibei-slash-menu';
+  slashMenuElement.dataset.show = 'false';
+  slashMenuElement.setAttribute('role', 'listbox');
+  slashMenuElement.setAttribute('aria-label', 'Slash commands');
+  slashStatusElement.className = 'weibei-visually-hidden';
+  slashStatusElement.setAttribute('role', 'status');
+  slashStatusElement.setAttribute('aria-live', 'polite');
+  linePlusElement.type = 'button';
+  linePlusElement.className = 'weibei-line-plus';
+  linePlusElement.textContent = '＋';
+  linePlusElement.setAttribute('aria-label', '插入内容');
+  linePlusElement.hidden = true;
+  tableToolbarElement.className = 'weibei-table-toolbar';
+  tableToolbarElement.hidden = true;
+  tableToolbarElement.setAttribute('role', 'toolbar');
+  for (const [action, label] of [['addRow', 'tableAddRow'], ['deleteRow', 'tableDeleteRow'], ['addColumn', 'tableAddColumn'], ['deleteColumn', 'tableDeleteColumn'], ['header', 'tableHeader']]) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.dataset.action = action;
+    button.dataset.label = label;
+    tableToolbarElement.append(button);
+  }
+}
 let slashTablePanelElement: HTMLElement | null = null;
 
 const slashGroups = [
   { id: 'structure', label: 'slashStructure' }, { id: 'lists', label: 'slashLists' },
-  { id: 'content', label: 'slashContent' }, { id: 'rich', label: 'slashRichContent' },
+  { id: 'content', label: 'slashContent' }, { id: 'rich', label: 'slashRichContent' }, { id: 'fonts', label: 'slashFonts' },
 ];
 const slashCommands = [
-  { id: 'heading1', group: 'structure', label: 'slashHeading1', aliases: ['h1', 'heading_1', 'yjbt', '一级', '标题1'] },
-  { id: 'heading2', group: 'structure', label: 'slashHeading2', aliases: ['h2', 'heading_2', 'ejbt', '二级', '标题2'] },
-  { id: 'heading3', group: 'structure', label: 'slashHeading3', aliases: ['h3', 'heading_3', 'sjbt', '三级', '标题3'] },
-  { id: 'bulletList', group: 'lists', label: 'slashBulletList', aliases: ['bullet_list', 'bullet', 'ul', 'wxlb', '无序', '项目符号'] },
-  { id: 'orderedList', group: 'lists', label: 'slashOrderedList', aliases: ['ordered_list', 'ol', 'yxlb', '有序', '编号'] },
-  { id: 'taskList', group: 'lists', label: 'slashTaskList', aliases: ['task_list', 'todo', 'task', 'checklist', 'dblb', '待办', '任务'] },
-  { id: 'quote', group: 'lists', label: 'slashQuote', aliases: ['quote', 'blockquote', 'yy', '引用'] },
-  { id: 'callout', group: 'content', label: 'slashCallout', aliases: ['callout', 'note', 'tsk', '提示', '札记'] },
-  { id: 'code', group: 'content', label: 'slashCode', aliases: ['code', 'code_block', 'dmk', '代码'] },
-  { id: 'divider', group: 'content', label: 'slashDivider', aliases: ['divider', 'horizontal_rule', 'hr', 'fgx', '分隔', '横线'] },
-  { id: 'table', group: 'rich', label: 'slashTable', aliases: ['table', 'grid', 'bg', '表格'] },
-  { id: 'image', group: 'rich', label: 'slashImage', aliases: ['image', 'photo', 'picture', 'tp', '图片', '照片'] },
-  { id: 'mermaid', group: 'rich', label: 'slashMermaid', aliases: ['mermaid', 'diagram', 'flowchart', 'lct', '图表', '流程图'] },
+  { id: 'heading1', group: 'structure', label: 'slashHeading1', aliases: ['h1', 'heading_1', 'yjbt', 'yijibiaoti', '一级', '标题1'] },
+  { id: 'heading2', group: 'structure', label: 'slashHeading2', aliases: ['h2', 'heading_2', 'ejbt', 'erjibiaoti', '二级', '标题2'] },
+  { id: 'heading3', group: 'structure', label: 'slashHeading3', aliases: ['h3', 'heading_3', 'sjbt', 'sanjibiaoti', '三级', '标题3'] },
+  { id: 'heading4', group: 'structure', label: 'slashHeading4', aliases: ['h4', 'heading_4', 'sijbt', 'sijibiaoti', '四级', '标题4'] },
+  { id: 'heading5', group: 'structure', label: 'slashHeading5', aliases: ['h5', 'heading_5', 'wjbt', 'wujibiaoti', '五级', '标题5'] },
+  { id: 'heading6', group: 'structure', label: 'slashHeading6', aliases: ['h6', 'heading_6', 'ljbt', 'liujibiaoti', '六级', '标题6'] },
+  { id: 'bulletList', group: 'lists', label: 'slashBulletList', aliases: ['bullet_list', 'bullet', 'ul', 'wxlb', 'wuxuliebiao', '无序', '项目符号'] },
+  { id: 'orderedList', group: 'lists', label: 'slashOrderedList', aliases: ['ordered_list', 'ol', 'yxlb', 'youxuliebiao', '有序', '编号'] },
+  { id: 'taskList', group: 'lists', label: 'slashTaskList', aliases: ['task_list', 'todo', 'task', 'checklist', 'dblb', 'daibanliebiao', '待办', '任务'] },
+  { id: 'quote', group: 'lists', label: 'slashQuote', aliases: ['quote', 'blockquote', 'yy', 'yinyong', '引用'] },
+  { id: 'callout', group: 'content', label: 'slashCallout', aliases: ['callout', 'note', 'tsk', 'tishikuai', '提示', '札记'] },
+  { id: 'code', group: 'content', label: 'slashCode', aliases: ['code', 'code_block', 'dmk', 'daimakuai', '代码'] },
+  { id: 'divider', group: 'content', label: 'slashDivider', aliases: ['divider', 'horizontal_rule', 'hr', 'fgx', 'fengexian', '分隔', '横线'] },
+  { id: 'link', group: 'content', label: 'slashLink', aliases: ['link', 'url', 'lj', 'lianjie', '链接', '网址'] },
+  { id: 'wikiLink', group: 'content', label: 'slashWikiLink', aliases: ['wiki', 'note_link', 'bjl', 'bijilianjie', '笔记', '双链'] },
+  { id: 'footnote', group: 'content', label: 'slashFootnote', aliases: ['footnote', 'note_ref', 'jz', 'jiaozhu', '脚注', '注释'] },
+  { id: 'table', group: 'rich', label: 'slashTable', aliases: ['table', 'grid', 'bg', 'biaoge', '表格'] },
+  { id: 'image', group: 'rich', label: 'slashImage', aliases: ['image', 'photo', 'picture', 'tp', 'tupian', '图片', '照片'] },
+  { id: 'mermaid', group: 'rich', label: 'slashMermaid', aliases: ['mermaid', 'diagram', 'flowchart', 'lct', 'liuchengtu', '图表', '流程图'] },
+  { id: 'inlineMath', group: 'rich', label: 'slashInlineMath', aliases: ['math', 'formula', 'inline_math', 'hngs', 'hangneigongshi', '公式', '行内'] },
+  { id: 'blockMath', group: 'rich', label: 'slashBlockMath', aliases: ['display_math', 'equation', 'block_math', 'kjgs', 'kuaijigongshi', '方程', '块级'] },
+  { id: 'fontSystem', group: 'fonts', label: 'slashFontSystem', aliases: ['font', 'system', 'sf pro', 'pingfang sc', 'ziti', '字体', '苹方'] },
+  { id: 'fontSerif', group: 'fonts', label: 'slashFontSerif', aliases: ['font', 'serif', 'songti sc', 'ziti', '字体', '宋体'] },
+  { id: 'fontLiterary', group: 'fonts', label: 'slashFontLiterary', aliases: ['font', 'weibeistele', 'wei bei stele', 'ziti', '字体', '魏碑'] },
 ];
+const writingFontValues = new Set(['system', 'serif', 'literary']);
+const slashWritingFonts: Record<string, string> = { fontSystem: 'system', fontSerif: 'serif', fontLiterary: 'literary' };
 const slashRuntime: {
   provider: any;
   view: any;
@@ -432,30 +432,41 @@ const slashRuntime: {
 } = { provider: null, view: null, context: null, commands: [], activeIndex: 0, dismissedContext: '', activationContext: '', tableOpen: false, tableFocus: 'rows', tableRows: 3, tableColumns: 3, tableMenuBaseLeft: '', error: '' };
 const slashExcludedAncestors = new Set(['list_item', 'task_list_item', 'table', 'table_row', 'table_header_row', 'table_cell', 'table_header', 'code_block', 'math_block']);
 
-/**
- * Returns slash context only when `/` begins an otherwise blank editable line.
- *
- * Zero-width placeholders are tolerated because ProseMirror can retain them in
- * a visually blank paragraph while a composition session finishes.  Paragraphs
- * that contain inline nodes (images, etc.) are rejected \u2014 textContent excludes
- * them, so without this check an image followed by "/" would be mistaken for a
- * blank Slash line and replaced wholesale.
- */
+/** Returns the `/query` immediately before the caret without consuming surrounding content. */
 const slashContextForView = (view: any) => {
   if (!isEditable || view.composing) return null;
   const { selection } = view.state;
   if (!(selection instanceof TextSelection) || !selection.empty) return null;
   const { $from } = selection;
-  if ($from.parent.type.name !== 'paragraph' || $from.parentOffset !== $from.parent.content.size) return null;
+  if ($from.parent.type.name !== 'paragraph') return null;
   for (let depth = $from.depth; depth > 0; depth -= 1) if (slashExcludedAncestors.has($from.node(depth).type.name)) return null;
-  let hasInlineNode = false;
-  $from.parent.content.forEach((node: any) => { if (!node.isText) hasInlineNode = true; });
-  if (hasInlineNode) return null;
-  const source = $from.parent.textContent || '';
-  const match = source.match(/^[\u200B\uFEFF]*\/([^\s/]*)$/u);
-  if (!match) return null;
+  const beforeCaret = $from.parent.textBetween(0, $from.parentOffset, '\uFFFC', '\uFFFC');
+  const slashOffset = beforeCaret.lastIndexOf('/');
+  if (slashOffset < 0) return null;
+  const query = beforeCaret.slice(slashOffset + 1);
+  if (/[\s/]/u.test(query)) return null;
+  const triggerStartOffset = /^[\u200B\uFEFF]*$/u.test(beforeCaret.slice(0, slashOffset)) ? 0 : slashOffset;
   const depth = $from.depth;
-  return { query: match[1] || '', source, blockFrom: $from.before(depth), blockTo: $from.after(depth), index: $from.index(depth - 1), container: $from.node(depth - 1), key: `${$from.before(depth)}:${source}` };
+  const blockFrom = $from.before(depth);
+  const triggerFrom = $from.start(depth) + triggerStartOffset;
+  return { query, parent: $from.parent, triggerFrom, triggerTo: $from.pos, triggerStartOffset, triggerEndOffset: $from.parentOffset, blockFrom, blockTo: $from.after(depth), index: $from.index(depth - 1), container: $from.node(depth - 1), key: `${triggerFrom}:${query}` };
+};
+
+const emptyLineContextForView = (view: any) => {
+  if (!isEditable || view.composing) return null;
+  const { selection } = view.state;
+  if (!(selection instanceof TextSelection) || !selection.empty || selection.$from.parent.type.name !== 'paragraph' || selection.$from.parent.content.size !== 0) return null;
+  for (let depth = selection.$from.depth; depth > 0; depth -= 1) if (slashExcludedAncestors.has(selection.$from.node(depth).type.name)) return null;
+  return selection.$from;
+};
+
+const syncLinePlus = (view: any) => {
+  const $from = emptyLineContextForView(view);
+  linePlusElement.hidden = !$from;
+  if (!$from) return;
+  const rect = view.coordsAtPos($from.pos);
+  linePlusElement.style.left = `${Math.max(6, rect.left - 30)}px`;
+  linePlusElement.style.top = `${Math.max(6, rect.top - 2)}px`;
 };
 
 /** Builds the replacement nodes directly instead of reparsing generated Markdown. */
@@ -472,18 +483,49 @@ const slashReplacement = (commandID: any, schema: any, options: any = {}) => {
     const listNode = item && list?.createAndFill(null, item);
     return listNode ? { content: Fragment.from(listNode), selectionOffset: 3 } : null;
   }
-  if (commandID === 'quote' || commandID === 'callout') {
+  if (commandID === 'callout') {
+    const callout = schema.nodes.callout;
+    const node = callout?.create({ calloutType: 'note', title: '', fold: '' }, paragraph.create());
+    return node ? { content: Fragment.from(node), selectionOffset: 2 } : null;
+  }
+  if (commandID === 'quote') {
     const blockquote = schema.nodes.blockquote || schema.nodes.block_quote;
     if (!blockquote) return null;
-    const content = commandID === 'callout' ? [paragraph.create(null, schema.text('[!note]')), paragraph.create()] : [paragraph.create()];
-    const node = blockquote.create(null, content);
-    return { content: Fragment.from(node), selectionOffset: commandID === 'callout' ? 10 : 2 };
+    const node = blockquote.create(null, paragraph.create());
+    return { content: Fragment.from(node), selectionOffset: 2 };
   }
   if (commandID === 'code' || commandID === 'mermaid') {
     const code = schema.nodes.code_block;
     if (!code) return null;
     const source = commandID === 'mermaid' ? 'graph TD\n\tA --> B' : '';
     return { content: Fragment.from(code.create({ language: commandID === 'mermaid' ? 'mermaid' : '' }, source ? schema.text(source) : null)), selectionOffset: source.length + 1 };
+  }
+  if (commandID === 'inlineMath') {
+    const mathInline = schema.nodes.math_inline;
+    const node = mathInline?.create(null, schema.text('x'));
+    return node ? { content: Fragment.from(paragraph.create(null, node)), selectionOffset: 1 } : null;
+  }
+  if (commandID === 'link') {
+    const link = schema.marks.link;
+    const label = editorLabel('linkPlaceholder');
+    const node = link ? paragraph.create(null, schema.text(label, [link.create({ href: '' })])) : null;
+    return node ? { content: Fragment.from(node), selectionFromOffset: 1, selectionToOffset: label.length + 1 } : null;
+  }
+  if (commandID === 'wikiLink') {
+    const wikiLink = schema.nodes.wiki_link;
+    const target = editorLabel('wikiLinkPlaceholder');
+    const node = wikiLink?.create({ raw: target, target, label: '' });
+    return node ? { content: Fragment.from(paragraph.create(null, node)), selectionOffset: 1, activateEvent: 'weibei-edit-structured' } : null;
+  }
+  if (commandID === 'footnote') {
+    const footnote = schema.nodes.inline_footnote;
+    const node = footnote?.create({ value: editorLabel('footnotePlaceholder') });
+    return node ? { content: Fragment.from(paragraph.create(null, node)), selectionOffset: 1, activateEvent: 'weibei-edit-structured' } : null;
+  }
+  if (commandID === 'blockMath') {
+    const mathBlock = schema.nodes.math_block;
+    const node = mathBlock?.create({ value: 'x' });
+    return node ? { content: Fragment.from(node), selectionOffset: 0 } : null;
   }
   if (commandID === 'divider') {
     const divider = schema.nodes.hr || schema.nodes.horizontal_rule;
@@ -507,12 +549,34 @@ const slashReplacement = (commandID: any, schema: any, options: any = {}) => {
   return null;
 };
 
+/** Preserves the paragraph around an inline command, or splits it around a block command. */
+const slashContentForContext = (context: any, replacement: any) => {
+  const first = replacement?.content?.firstChild;
+  if (!context || !first) return null;
+  if (replacement.content.childCount === 1 && first.type === context.parent.type) {
+    const content = context.parent.content.cut(0, context.triggerStartOffset)
+      .append(first.content)
+      .append(context.parent.content.cut(context.triggerEndOffset));
+    return { content: Fragment.from(context.parent.type.create(context.parent.attrs, content, context.parent.marks)), selectionBase: context.triggerFrom - 1 };
+  }
+  const nodes: any[] = [];
+  const prefix = context.parent.content.cut(0, context.triggerStartOffset);
+  const suffix = context.parent.content.cut(context.triggerEndOffset);
+  if (prefix.size) nodes.push(context.parent.type.create(context.parent.attrs, prefix, context.parent.marks));
+  const selectionBase = context.blockFrom + nodes.reduce((size, node) => size + node.nodeSize, 0);
+  replacement.content.forEach((node: any) => nodes.push(node));
+  if (suffix.size) nodes.push(context.parent.type.create(context.parent.attrs, suffix, context.parent.marks));
+  return { content: Fragment.from(nodes), selectionBase };
+};
+
 /** Checks whether the current container accepts the requested replacement. */
 const slashCommandIsAllowed = (command: any, context: any, schema: any) => {
   if (!context) return false;
+  if (slashWritingFonts[command.id]) return Boolean(schema.marks.writing_font);
   if (command.id === 'image') return Boolean(schema.nodes.image);
   const replacement = slashReplacement(command.id, schema, { rows: 3, columns: 3 });
-  return Boolean(replacement && context.container.canReplace(context.index, context.index + 1, replacement.content));
+  const applied = slashContentForContext(context, replacement);
+  return Boolean(applied && context.container.canReplace(context.index, context.index + 1, applied.content));
 };
 
 /** Filters commands by localized labels and stable aliases. */
@@ -525,24 +589,48 @@ const filteredSlashCommands = (query: any, context: any, schema: any) => {
 const applySlashReplacement = (view: any, context: any, replacement: any) => {
   if (!context || !replacement) return false;
   const node = view.state.doc.nodeAt(context.blockFrom);
-  if (node?.type.name !== 'paragraph' || node.textContent !== context.source) return false;
-  const tr = closeHistory(view.state.tr.replaceWith(context.blockFrom, context.blockTo, replacement.content));
-  const selection = Selection.findFrom(tr.doc.resolve(Math.min(context.blockFrom + replacement.selectionOffset, tr.doc.content.size)), 1, true);
+  const applied = slashContentForContext(context, replacement);
+  if (!node?.eq(context.parent) || !applied || !context.container.canReplace(context.index, context.index + 1, applied.content)) return false;
+  const tr = closeHistory(view.state.tr.replaceWith(context.blockFrom, context.blockTo, applied.content));
+  const selection = replacement.activateEvent
+    ? NodeSelection.create(tr.doc, applied.selectionBase + replacement.selectionOffset)
+    : Number.isInteger(replacement.selectionFromOffset) && Number.isInteger(replacement.selectionToOffset)
+    ? TextSelection.create(tr.doc, applied.selectionBase + replacement.selectionFromOffset, applied.selectionBase + replacement.selectionToOffset)
+    : Selection.findFrom(tr.doc.resolve(Math.min(applied.selectionBase + replacement.selectionOffset, tr.doc.content.size)), 1, true);
   if (selection) tr.setSelection(selection);
   view.dispatch(tr.scrollIntoView());
   slashRuntime.dismissedContext = '';
   slashRuntime.provider?.hide();
   view.focus();
+  if (replacement.activateEvent && selection) window.requestAnimationFrame(() => {
+    (view.nodeDOM(selection.from) as HTMLElement | null)?.dispatchEvent(new CustomEvent(replacement.activateEvent));
+  });
+  window.requestAnimationFrame(reportSelection);
   return true;
 };
 
 /** Records a native picker request without changing the slash paragraph. */
 const requestSlashImage = (view: any, context: any) => {
   const id = `image-picker-${Date.now()}-${attachmentRequestID += 1}`;
-  pendingImagePickers.set(id, { view, context, documentID: currentDocumentID, documentGeneration: currentDocumentGeneration });
+  pendingImagePickers.set(id, { mode: 'insert', view, context, documentID: currentDocumentID, documentGeneration: currentDocumentGeneration });
   slashRuntime.dismissedContext = context.key;
   slashRuntime.provider?.hide();
   post('imagePickerRequested', { id });
+};
+
+const applySlashWritingFont = (view: any, context: any, font: string) => {
+  const mark = view.state.schema.marks.writing_font;
+  if (!mark || !writingFontValues.has(font)) return false;
+  const existingMarks = view.state.storedMarks || view.state.selection.$from.marks();
+  const tr = closeHistory(view.state.tr.delete(context.triggerFrom, context.triggerTo));
+  tr.setSelection(TextSelection.create(tr.doc, context.triggerFrom));
+  tr.setStoredMarks([...existingMarks.filter((existing: any) => existing.type !== mark), mark.create({ font })]);
+  view.dispatch(tr.scrollIntoView());
+  slashRuntime.dismissedContext = '';
+  slashRuntime.provider?.hide();
+  view.focus();
+  window.requestAnimationFrame(reportSelection);
+  return true;
 };
 
 /** Executes a selected command or opens the image picker. */
@@ -551,6 +639,7 @@ const executeSlashCommand = (commandID: any) => {
   const context = view && slashContextForView(view);
   if (!view || !context) return false;
   if (commandID === 'image') { requestSlashImage(view, context); return true; }
+  if (slashWritingFonts[commandID]) return applySlashWritingFont(view, context, slashWritingFonts[commandID]);
   return applySlashReplacement(view, context, slashReplacement(commandID, view.state.schema, { rows: slashRuntime.tableRows, columns: slashRuntime.tableColumns }));
 };
 
@@ -654,9 +743,9 @@ const handleSlashMenuKeyDown = (view: any, event: any) => {
 document.documentElement.dataset.weibeiCompactPreview = isCompactPreview ? 'true' : 'false';
 
 let contentHeightFrame = 0;
+let contentHeightTimer = 0;
 let lastReportedContentHeight = 0;
 let lastReportedContentWidth = 0;
-const contentHeightDelayHandles = new Set<number>();
 
 const compactPreviewMeasureNodes = () => ([
   document.querySelector('#editor'),
@@ -693,10 +782,7 @@ const publishContentHeight = () => {
 };
 
 const reportContentHeight = () => {
-  if (!isCompactPreview) return;
-  // Background/off-screen WKWebViews can throttle requestAnimationFrame.
-  // Publish once synchronously so compact Chat rows still receive a real
-  // height, then measure again on the next painted frame for font/layout drift.
+  if (!isCompactPreview || !editorReadyPosted) return;
   publishContentHeight();
   window.cancelAnimationFrame(contentHeightFrame);
   contentHeightFrame = window.requestAnimationFrame(publishContentHeight);
@@ -704,34 +790,23 @@ const reportContentHeight = () => {
 
 const scheduleContentHeightReports = () => {
   if (!isCompactPreview) return;
-  for (const handle of contentHeightDelayHandles) window.clearTimeout(handle);
-  contentHeightDelayHandles.clear();
-  lastReportedContentHeight = 0;
-  lastReportedContentWidth = 0;
-  reportContentHeight();
-  window.requestAnimationFrame(() => {
+  if (contentHeightTimer) return;
+  // A timer still fires for an off-screen WKWebView; the following frame catches
+  // painted font/image drift without every caller running its own retry ladder.
+  contentHeightTimer = window.setTimeout(() => {
+    contentHeightTimer = 0;
     reportContentHeight();
-    window.requestAnimationFrame(reportContentHeight);
-  });
-  for (const delay of [40, 120, 240, 480]) {
-    const handle = window.setTimeout(() => {
-      contentHeightDelayHandles.delete(handle);
-      reportContentHeight();
-    }, delay);
-    contentHeightDelayHandles.add(handle);
-  }
-  document.fonts?.ready?.then(() => {
-    if (isCompactPreview) reportContentHeight();
-  }).catch(() => {});
+  }, 40);
 };
 
 const installContentHeightObserver = () => {
   if (!isCompactPreview) return;
   if (window.ResizeObserver) {
-    const observer = new ResizeObserver(reportContentHeight);
+    const observer = new ResizeObserver(scheduleContentHeightReports);
     compactPreviewMeasureNodes().forEach((node) => observer.observe(node));
   }
   scheduleContentHeightReports();
+  document.fonts?.ready?.then(scheduleContentHeightReports).catch(() => {});
 };
 
 const rectFromSelection = () => {
@@ -747,109 +822,7 @@ const rectFromSelection = () => {
   };
 };
 
-const isEscapedMarkdownPosition = (source: any, index: any) => {
-  let slashCount = 0;
-  for (let cursor = index - 1; cursor >= 0 && source[cursor] === '\\'; cursor -= 1) {
-    slashCount += 1;
-  }
-  return slashCount % 2 === 1;
-};
-
-const findUnescapedMarkdownMarker = (source: any, marker: any, from: any) => {
-  let index = source.indexOf(marker, from);
-  while (index >= 0 && isEscapedMarkdownPosition(source, index)) {
-    index = source.indexOf(marker, index + marker.length);
-  }
-  return index;
-};
-
-const mapMarkdownOutsideBackticks = (line: any, transform: any) => {
-  const source = String(line || '');
-  let result = '';
-  let cursor = 0;
-  while (cursor < source.length) {
-    const tick = findUnescapedMarkdownMarker(source, '`', cursor);
-    if (tick < 0) {
-      result += transform(source.slice(cursor));
-      break;
-    }
-    result += transform(source.slice(cursor, tick));
-    const marker = source.slice(tick).match(/^`+/)?.[0] || '`';
-    const close = findUnescapedMarkdownMarker(source, marker, tick + marker.length);
-    if (close < 0) {
-      result += source.slice(tick);
-      break;
-    }
-    result += source.slice(tick, close + marker.length);
-    cursor = close + marker.length;
-  }
-  return result;
-};
-
-const normalizeMarkdownOutputSegment = (text: any) => String(text || '')
-  .replace(/\\\[\\\[/g, '[[')
-  .replace(/\\\]\\\]/g, ']]')
-  .replace(/\\=\\=([^=\n]+?)\\=\\=/g, '==$1==')
-  .replace(/\^\\\[/g, '^[')
-  .replace(/(^|\s)\\#(?=[\p{L}\p{N}_/-])/gu, '$1#')
-  .replace(/\\\$(?=\d)/g, '$')
-  .replace(new RegExp(`^(\\s*(?:>\\s*)*)\\\\(\\[!(?:${calloutTypePattern})\\])`, 'gim'), '$1$2');
-
-const mapMarkdownOutsideCode = (markdown: any, transform: any) => {
-  const parts = String(markdown || '').split(/(\r?\n)/);
-  let inFence = false;
-  let fenceMarker = '';
-  let fenceLength = 0;
-  let result = '';
-  for (let index = 0; index < parts.length; index += 2) {
-    const line = parts[index] || '';
-    const newline = parts[index + 1] || '';
-    const fence = line.match(/^\s*(?:>\s*)*(`{3,}|~{3,})/);
-    if (fence) {
-      if (!inFence) {
-        inFence = true;
-        fenceMarker = fence[1][0];
-        fenceLength = fence[1].length;
-      } else if (fence[1][0] === fenceMarker && fence[1].length >= fenceLength) {
-        inFence = false;
-        fenceLength = 0;
-      }
-      result += line + newline;
-      continue;
-    }
-    if (inFence) {
-      result += line + newline;
-      continue;
-    }
-    const normalizedLine = mapMarkdownOutsideBackticks(line, transform);
-    result += normalizedLine;
-    if (!(normalizedLine.endsWith('\n') && newline)) result += newline;
-  }
-  return result;
-};
-
-// ponytail: line scanner skips code fences/backtick spans; use a Markdown AST only if more rewrites are added.
-const normalizeMarkdownOutput = (markdown: any) => mapMarkdownOutsideCode(markdown, normalizeMarkdownOutputSegment);
-
-const normalizeHtmlBreaksInLine = (line: any) => String(line || '').replace(/<br\s*\/?>[ \t]*/gi, '  \n');
-
-const normalizeHtmlBreaks = (markdown: any) => mapMarkdownOutsideCode(markdown, normalizeHtmlBreaksInLine);
-
-const splitFrontmatter = (markdown: any) => {
-  const source = markdown || '';
-  const match = source.match(/^(---\n[\s\S]*?\n---)(?:\n+|$)/);
-  if (!match) return { frontmatter: '', body: source };
-  return {
-    frontmatter: match[1],
-    body: source.slice(match[0].length),
-  };
-};
-
-const withFrontmatter = (markdown: any) => {
-  const normalized = normalizeMarkdownOutput(markdown);
-  const body = frontmatterBlock ? normalized.replace(/^\n+/, '') : normalized;
-  return frontmatterBlock ? `${frontmatterBlock}\n\n${body}` : body;
-};
+const withFrontmatter = (markdown: any) => joinFrontmatter(frontmatterBlock, markdown);
 
 const frontmatterRows = (frontmatter: any) => String(frontmatter || '')
   .split(/\r?\n/)
@@ -896,10 +869,9 @@ const parseImageSize = (value: any) => {
 };
 
 const applyImageSize = (element: any, size: any) => {
-  if (!size) return;
-  element.style.width = `${size.width}px`;
-  element.style.maxWidth = '100%';
-  if (size.height) element.style.height = `${size.height}px`;
+  element.style.width = size ? `${size.width}px` : '';
+  element.style.maxWidth = size ? '100%' : '';
+  element.style.height = size?.height ? `${size.height}px` : '';
 };
 
 const parseMarkdownImageAlt = (alt: any) => {
@@ -1022,15 +994,6 @@ const resolveMarkdownURL = (src: any) => {
   }
 };
 
-const documentImageSources = (state: any) => {
-  const sources: any[] = [];
-  state.doc.descendants((node: any) => {
-    if (node.type.name === 'image' && node.attrs.src) sources.push(node.attrs.src);
-    return true;
-  });
-  return sources;
-};
-
 const syncEditableState = () => {
   document.body.dataset.editable = isEditable ? 'true' : 'false';
   document.querySelectorAll('.weibei-code-language-input').forEach((input) => {
@@ -1043,51 +1006,152 @@ const syncEditableState = () => {
   });
 };
 
-const resolveEditorImages = (view: any) => {
-  const sources = documentImageSources(view.state);
-  const images = Array.from(view.dom.querySelectorAll('img')) as HTMLImageElement[];
-  images.forEach((image, index) => {
-    const source = sources[index];
-    if (!source) return;
+const imageNodeRefreshers = new Set<() => void>();
+const structuredNodeRenderers = new Set<() => void>();
+
+const createReadOnlyImageNodeView = (initialNode: any) => {
+  let node = initialNode;
+  const image = document.createElement('img');
+  image.className = 'weibei-image';
+  const refresh = () => {
+    const parsed = parseMarkdownImageAlt(node.attrs.alt || '');
+    const resolved = resolveMarkdownURL(String(node.attrs.src || ''));
+    image.alt = parsed.alt;
+    image.title = String(node.attrs.title || '');
+    applyImageSize(image, parsed.size);
+    image.src = resolved || missingImageURL();
+  };
+  image.addEventListener('load', scheduleContentHeightReports);
+  image.addEventListener('error', () => { image.src = missingImageURL(); });
+  imageNodeRefreshers.add(refresh);
+  refresh();
+  return {
+    dom: image,
+    update(nextNode: any) { if (nextNode.type !== node.type) return false; node = nextNode; refresh(); return true; },
+    destroy() { imageNodeRefreshers.delete(refresh); },
+  };
+};
+
+/** Lets each image own its URL, size and failure state instead of matching two full-tree scans by index. */
+const createImageNodeView = (initialNode: any, view: any, getPos: any) => {
+  let node = initialNode;
+  const dom = document.createElement('span');
+  const image = document.createElement('img');
+  const controls = document.createElement('span');
+  const replaceButton = document.createElement('button');
+  const deleteButton = document.createElement('button');
+  const size = document.createElement('select');
+  dom.className = 'weibei-image-node';
+  dom.contentEditable = 'false';
+  image.className = 'weibei-image';
+  controls.className = 'weibei-image-controls';
+  replaceButton.type = deleteButton.type = 'button';
+  replaceButton.textContent = '更换';
+  deleteButton.textContent = '删除';
+  replaceButton.setAttribute('aria-label', '更换图片');
+  deleteButton.setAttribute('aria-label', '删除图片');
+  for (const [value, label] of [['', '原尺寸'], ['320', '小'], ['560', '中'], ['900', '大']]) {
+    const option = document.createElement('option');
+    option.value = value;
+    option.textContent = label;
+    size.append(option);
+  }
+  size.setAttribute('aria-label', '图片尺寸');
+  controls.append(replaceButton, deleteButton, size);
+  dom.append(image, controls);
+  controls.hidden = true;
+
+  const onError = () => {
+    image.dataset.weibeiImageMissingFor = image.dataset.weibeiResolvedSrc || image.getAttribute('src') || '';
+    image.dataset.weibeiImagePlaceholder = 'true';
+    image.classList.add('weibei-image-missing');
+    image.title = editorLabel('imageMissing');
+    scheduleContentHeightReports();
+  };
+  const onLoad = () => {
+    if (image.dataset.weibeiImagePlaceholder === 'true') return;
+    image.classList.remove('weibei-image-missing');
+    scheduleContentHeightReports();
+  };
+  const refresh = () => {
+    addEditorMetric(checkMetrics, 'imageNodeUpdates');
+    const source = String(node.attrs.src || '');
     const resolved = resolveMarkdownURL(source);
-    const { alt, size } = parseMarkdownImageAlt(image.getAttribute('alt') || '');
-    if (alt) image.setAttribute('alt', alt);
-    applyImageSize(image, size);
+    const parsed = parseMarkdownImageAlt(node.attrs.alt || '');
+    image.alt = parsed.alt;
+    image.title = String(node.attrs.title || '');
     image.dataset.weibeiMarkdownSrc = source;
-    if (!image.dataset.weibeiImageEventsBound) {
-      image.dataset.weibeiImageEventsBound = 'true';
-      image.addEventListener('error', () => {
-        image.dataset.weibeiImageMissingFor = image.dataset.weibeiResolvedSrc || image.getAttribute('src') || '';
-        image.dataset.weibeiImagePlaceholder = 'true';
-        image.classList.add('weibei-image-missing');
-        image.setAttribute('src', missingImageURL());
-      });
-      image.addEventListener('load', () => {
-        if (image.dataset.weibeiImagePlaceholder === 'true') return;
-        image.classList.remove('weibei-image-missing');
-      });
-    }
-    if (image.dataset.weibeiImageMissingFor === resolved && image.dataset.weibeiImagePlaceholder === 'true') {
+    size.value = parsed.size && ['320', '560', '900'].includes(String(parsed.size.width)) ? String(parsed.size.width) : '';
+    applyImageSize(image, parsed.size);
+    if (image.dataset.weibeiImagePlaceholder === 'true' && image.dataset.weibeiImageMissingFor === resolved) {
       return;
     }
-    if (resolved && image.getAttribute('src') !== resolved) {
-      image.dataset.weibeiResolvedSrc = resolved;
-      delete image.dataset.weibeiImagePlaceholder;
-      image.classList.remove('weibei-image-missing');
-      image.setAttribute('src', resolved);
+    if (!resolved) {
+      image.dataset.weibeiImageMissingFor = resolved;
+      image.dataset.weibeiImagePlaceholder = 'true';
+      image.classList.add('weibei-image-missing');
+      image.setAttribute('src', missingImageURL());
+      return;
     }
-  });
+    image.dataset.weibeiResolvedSrc = resolved;
+    delete image.dataset.weibeiImagePlaceholder;
+    image.classList.remove('weibei-image-missing');
+    image.setAttribute('src', resolved);
+  };
+  const requestReplacement = () => {
+    const id = `image-picker-${Date.now()}-${attachmentRequestID += 1}`;
+    pendingImagePickers.set(id, { mode: 'replace', view, getPos, documentID: currentDocumentID, documentGeneration: currentDocumentGeneration });
+    post('imagePickerRequested', { id });
+  };
+  const deleteImage = () => {
+    const pos = getPos();
+    const current = typeof pos === 'number' ? view.state.doc.nodeAt(pos) : null;
+    if (current?.type === node.type) view.dispatch(view.state.tr.delete(pos, pos + current.nodeSize).scrollIntoView());
+  };
+  const resizeImage = () => {
+    const pos = getPos();
+    const current = typeof pos === 'number' ? view.state.doc.nodeAt(pos) : null;
+    if (current?.type !== node.type) return;
+    const parsed = parseMarkdownImageAlt(current.attrs.alt || '');
+    const alt = `${parsed.alt}${size.value ? `|${size.value}` : ''}`;
+    view.dispatch(view.state.tr.setNodeMarkup(pos, undefined, { ...current.attrs, alt }).scrollIntoView());
+    view.focus();
+  };
+  image.addEventListener('error', onError);
+  image.addEventListener('load', onLoad);
+  replaceButton.addEventListener('click', requestReplacement);
+  deleteButton.addEventListener('click', deleteImage);
+  size.addEventListener('change', resizeImage);
+  imageNodeRefreshers.add(refresh);
+  refresh();
+
+  return {
+    dom,
+    update(nextNode: any) {
+      if (nextNode.type !== node.type) return false;
+      const changed = nextNode.attrs.src !== node.attrs.src
+        || nextNode.attrs.alt !== node.attrs.alt
+        || nextNode.attrs.title !== node.attrs.title;
+      node = nextNode;
+      if (changed) refresh();
+      return true;
+    },
+    selectNode() { dom.classList.add('ProseMirror-selectednode'); image.classList.add('ProseMirror-selectednode'); controls.hidden = false; },
+    deselectNode() { dom.classList.remove('ProseMirror-selectednode'); image.classList.remove('ProseMirror-selectednode'); controls.hidden = true; },
+    stopEvent(event: Event) { return controls.contains(event.target as Node); },
+    ignoreMutation(mutation: any) { return controls.contains(mutation.target); },
+    destroy() {
+      imageNodeRefreshers.delete(refresh);
+      image.removeEventListener('error', onError);
+      image.removeEventListener('load', onLoad);
+      replaceButton.removeEventListener('click', requestReplacement);
+      deleteButton.removeEventListener('click', deleteImage);
+      size.removeEventListener('change', resizeImage);
+    },
+  };
 };
 
-const scheduleImageResolution = (view: any) => {
-  window.cancelAnimationFrame(imageRefreshFrame);
-  imageRefreshFrame = window.requestAnimationFrame(() => resolveEditorImages(view));
-};
-
-const refreshRenderedImages = () => {
-  if (!editor) return;
-  editor.action((ctx) => scheduleImageResolution(ctx.get(editorViewCtx)));
-};
+const refreshRenderedImages = () => imageNodeRefreshers.forEach((refresh) => refresh());
 
 const editorSelectionRange = () => {
   if (!editor) return null;
@@ -1153,64 +1217,6 @@ const isInsideNode = (state: any, pos: any, typeName: any) => {
   return false;
 };
 
-const decorateDelimitedInline = (decorations: any, text: any, pos: any, regex: any, markerSize: any, className: any) => {
-  for (const match of text.matchAll(regex)) {
-    const from = pos + (match.index || 0);
-    const to = from + match[0].length;
-    addRangeDecoration(decorations, from, from + markerSize, 'weibei-md-marker');
-    addRangeDecoration(decorations, from + markerSize, to - markerSize, className);
-    addRangeDecoration(decorations, to - markerSize, to, 'weibei-md-marker');
-  }
-};
-
-const decorateInlineFootnotes = (decorations: any, text: any, pos: any) => {
-  for (const match of text.matchAll(/(^|[^\\])\^\[([^\]\n]+)\]/g)) {
-    const prefixLength = match[1]?.length || 0;
-    const content = match[2] || '';
-    const from = pos + (match.index || 0) + prefixLength;
-    const to = from + match[0].length - prefixLength;
-    addRangeDecoration(decorations, from, from + 2, 'weibei-md-marker');
-    addRangeDecoration(decorations, from + 2, to - 1, 'weibei-inline-footnote', {
-      title: editorLabel('inlineFootnote', { value: content }),
-      'aria-label': editorLabel('inlineFootnote', { value: content }),
-    });
-    addRangeDecoration(decorations, to - 1, to, 'weibei-md-marker');
-  }
-};
-
-const decorateWikiLinks = (decorations: any, text: any, pos: any) => {
-  for (const match of text.matchAll(/\[\[([^\]\n]+)\]\]/g)) {
-    const index = match.index || 0;
-    if (text[index - 1] === '!') continue;
-    const from = pos + index;
-    const to = from + match[0].length;
-    const parsed = parseObsidianTarget(match[1]);
-    const title = parsed.noteTitle || parsed.target;
-    const bridgeTitle = parsed.target || title;
-    addRangeDecoration(decorations, from, from + 2, 'weibei-md-marker');
-    if (parsed.aliasRange && parsed.aliasRange.end > parsed.aliasRange.start) {
-      addRangeDecoration(decorations, from + 2, from + 2 + parsed.aliasRange.start, 'weibei-md-marker');
-      addRangeDecoration(decorations, from + 2 + parsed.aliasRange.start, from + 2 + parsed.aliasRange.end, 'weibei-wikilink', {
-        role: 'link',
-        tabindex: '0',
-        title: editorLabel('openOrCreateNote', { value: title }),
-        'data-wikilink-target': parsed.target,
-        'data-wikilink-title': bridgeTitle,
-      });
-      addRangeDecoration(decorations, from + 2 + parsed.aliasRange.end, to - 2, 'weibei-md-marker');
-    } else {
-      addRangeDecoration(decorations, from + 2, to - 2, 'weibei-wikilink', {
-        role: 'link',
-        tabindex: '0',
-        title: editorLabel('openOrCreateNote', { value: title }),
-        'data-wikilink-target': parsed.target,
-        'data-wikilink-title': bridgeTitle,
-      });
-    }
-    addRangeDecoration(decorations, to - 2, to, 'weibei-md-marker');
-  }
-};
-
 const decorateSourceReferences = (decorations: any, text: any, pos: any) => {
   for (const match of text.matchAll(/(?:^|[\s`])((?:来源：|Source:)[^`\n]+)/g)) {
     const prefixLength = match[0].startsWith(match[1]) ? 0 : 1;
@@ -1223,38 +1229,6 @@ const decorateSourceReferences = (decorations: any, text: any, pos: any) => {
       title: editorLabel('openSource', { value: match[1].slice(sourcePrefix.length).trim() }),
       'data-source-reference': match[1],
     });
-  }
-};
-
-const decorateObsidianEmbeds = (decorations: any, text: any, pos: any) => {
-  for (const match of text.matchAll(/!\[\[([^\]\n]+)\]\]/g)) {
-    const from = pos + (match.index || 0);
-    const to = from + match[0].length;
-    const embed = parseObsidianEmbed(match[1]);
-    addRangeDecoration(decorations, from, to, 'weibei-embed-source');
-    decorations.push(Decoration.widget(to, () => {
-      if (imageTargetPattern.test(embed.target)) {
-        const image = document.createElement('img');
-        image.className = 'weibei-embed-preview weibei-embed-image';
-        image.alt = embed.target;
-        image.src = resolveMarkdownURL(embed.target);
-        applyImageSize(image, embed.size);
-        image.addEventListener('error', () => {
-          image.src = missingImageURL();
-          image.classList.add('weibei-image-missing');
-        });
-        return image;
-      }
-      const chip = document.createElement('span');
-      chip.className = 'weibei-embed-preview weibei-embed-note';
-      chip.textContent = editorLabel('embed', { value: embed.label || embed.target });
-      chip.setAttribute('role', 'link');
-      chip.setAttribute('tabindex', '0');
-      chip.setAttribute('title', editorLabel('openOrCreateNote', { value: embed.target }));
-      chip.dataset.wikilinkTarget = embed.target;
-      chip.dataset.wikilinkTitle = embed.target;
-      return chip;
-    }, { side: 1 }));
   }
 };
 
@@ -1310,28 +1284,43 @@ const decorateHtmlBreaks = (decorations: any, text: any, pos: any) => {
   }
 };
 
-const mermaidWidget = (source: any) => {
+const mermaidWidget = (initialSource: any) => {
   const container = document.createElement('div');
   container.className = 'weibei-mermaid-render';
   container.textContent = editorLabel('mermaidRendering');
-  window.setTimeout(async () => {
-    if (!container.isConnected) return;
-    try {
-      const id = `weibei-mermaid-${mermaidRenderID += 1}`;
-      const { svg, bindFunctions } = await mermaid.render(id, source, container);
-      if (!container.isConnected) return;
-      container.innerHTML = svg;
-      bindFunctions?.(container);
-      container.dataset.rendered = 'true';
+  let desiredSource = '\0';
+  let renderTimer = 0;
+  let requestGeneration = 0;
+
+  const updateSource = (source: any, debounce = false) => {
+    const nextSource = String(source || '');
+    if (nextSource === desiredSource) return;
+    desiredSource = nextSource;
+    const request = requestGeneration += 1;
+    window.clearTimeout(renderTimer);
+    renderTimer = window.setTimeout(async () => {
+      if (!container.isConnected || request !== requestGeneration) return;
+      container.classList.remove('weibei-mermaid-error');
+      try {
+        const mermaid = await loadMermaid();
+        initializeMermaid(mermaid);
+        const id = `weibei-mermaid-${mermaidRenderID += 1}`;
+        addEditorMetric(checkMetrics, 'mermaidRenders');
+        const { svg, bindFunctions } = await mermaid.render(id, nextSource, container);
+        if (!container.isConnected || request !== requestGeneration) return;
+        container.innerHTML = svg;
+        bindFunctions?.(container);
+        container.dataset.rendered = 'true';
+      } catch (error) {
+        if (!container.isConnected || request !== requestGeneration) return;
+        container.classList.add('weibei-mermaid-error');
+        container.textContent = editorLabel('mermaidFailed', { value: String((error as any)?.message || error) });
+      }
       scheduleContentHeightReports();
-    } catch (error) {
-      if (!container.isConnected) return;
-      container.classList.add('weibei-mermaid-error');
-      container.textContent = editorLabel('mermaidFailed', { value: String((error as any)?.message || error) });
-      scheduleContentHeightReports();
-    }
-  }, 0);
-  return container;
+    }, debounce ? 300 : 0);
+  };
+  updateSource(initialSource);
+  return { element: container, updateSource };
 };
 
 let mermaidPreviewCache = new WeakMap();
@@ -1364,12 +1353,18 @@ const mermaidPreviewForBlock = (node: any, pos: any, focusedBlock: any) => {
     const cached = mermaidPreviewCache.get(node);
     activeMermaidPreview = cached?.generation === mermaidPreviewGeneration
       ? { ...cached, pos, documentGeneration: currentDocumentGeneration, contentGeneration: currentContentGeneration }
-      : { element: mermaidWidget(node.textContent), generation: mermaidPreviewGeneration, key: `mermaid-preview-${mermaidPreviewID += 1}`, pos, documentGeneration: currentDocumentGeneration, contentGeneration: currentContentGeneration };
+      : { ...mermaidWidget(node.textContent), generation: mermaidPreviewGeneration, key: `mermaid-preview-${mermaidPreviewID += 1}`, pos, documentGeneration: currentDocumentGeneration, contentGeneration: currentContentGeneration };
   }
-  if (isFocused) return activeMermaidPreview;
+  if (isFocused) {
+    activeMermaidPreview.updateSource(node.textContent, true);
+    return activeMermaidPreview;
+  }
   const cached = mermaidPreviewCache.get(node);
-  if (cached?.generation === mermaidPreviewGeneration) return cached;
-  const preview = { element: mermaidWidget(node.textContent), generation: mermaidPreviewGeneration, key: `mermaid-preview-${mermaidPreviewID += 1}` };
+  if (cached?.generation === mermaidPreviewGeneration) {
+    cached.updateSource(node.textContent);
+    return cached;
+  }
+  const preview = { ...mermaidWidget(node.textContent), generation: mermaidPreviewGeneration, key: `mermaid-preview-${mermaidPreviewID += 1}` };
   mermaidPreviewCache.set(node, preview);
   return preview;
 };
@@ -1467,14 +1462,32 @@ const tokenClass = (token: any) => {
   return ['weibei-prism-token', 'token', token.type, ...aliases].filter(Boolean).join(' ');
 };
 
-const addTokenDecorations = (decorations: any, tokens: any, start: any) => {
+const codeTokenCache = new WeakMap<any, { from: number; to: number; className: string }[]>();
+const prismLanguages = new Set(['bash', 'css', 'do', 'java', 'javascript', 'json', 'jsx', 'markdown', 'python', 'r', 'ruby', 'rust', 'sql', 'stata', 'swift', 'tsx', 'typescript', 'yaml']);
+let prismRuntime: any = null;
+let prismLoading = false;
+
+const requestPrism = () => {
+  if (prismRuntime || prismLoading) return;
+  prismLoading = true;
+  loadPrism().then((runtime) => {
+    prismRuntime = runtime;
+    decorationGeneration += 1;
+    editor?.action((ctx) => {
+      const view = ctx.get(editorViewCtx);
+      view.dispatch(view.state.tr.setMeta('weibeiPrismReady', true));
+    });
+  }).catch(showFailure);
+};
+
+const collectTokenDecorations = (decorations: { from: number; to: number; className: string }[], tokens: any, start: any) => {
   let cursor = start;
   for (const token of tokens) {
     const length = tokenLength(token);
     if (typeof token !== 'string' && length > 0) {
-      addRangeDecoration(decorations, cursor, cursor + length, tokenClass(token));
+      decorations.push({ from: cursor, to: cursor + length, className: tokenClass(token) });
       if (Array.isArray(token.content)) {
-        addTokenDecorations(decorations, token.content, cursor);
+        collectTokenDecorations(decorations, token.content, cursor);
       }
     }
     cursor += length;
@@ -1483,12 +1496,167 @@ const addTokenDecorations = (decorations: any, tokens: any, start: any) => {
 
 const decorateCodeBlock = (decorations: any, node: any, pos: any) => {
   const language = normalizeLanguage(node.attrs.language || '');
-  if (!language || !Prism.languages[language]) return;
+  if (!prismLanguages.has(language)) return;
+  if (!prismRuntime) { requestPrism(); return; }
+  let cached = codeTokenCache.get(node);
   try {
-    addTokenDecorations(decorations, Prism.tokenize(node.textContent, Prism.languages[language]), pos + 1);
+    if (!cached) {
+      addEditorMetric(checkMetrics, 'codeTokenizations');
+      cached = [];
+      collectTokenDecorations(cached, prismRuntime.tokenize(node.textContent, prismRuntime.languages[language]), 0);
+      codeTokenCache.set(node, cached);
+    }
+    cached.forEach((token) => addRangeDecoration(decorations, pos + 1 + token.from, pos + 1 + token.to, token.className));
   } catch {
     // Prism should not be allowed to break editing.
   }
+};
+
+const createReadOnlyMathNodeView = (initialNode: any) => {
+  let node = initialNode;
+  const isBlock = node.type.name === 'math_block';
+  const dom = document.createElement(isBlock ? 'div' : 'span');
+  dom.className = `weibei-math-node ${isBlock ? 'weibei-math-block' : 'weibei-math-inline'}`;
+  dom.dataset.type = node.type.name;
+  let renderRequest = 0;
+  const source = () => isBlock ? String(node.attrs.value || '') : node.textContent;
+  const render = async () => {
+    const request = renderRequest += 1;
+    const value = source();
+    dom.dataset.value = value;
+    dom.textContent = value || '公式';
+    const apply = (katex: any, requireConnected = false) => {
+      if (request !== renderRequest || (requireConnected && !dom.isConnected)) return;
+      addEditorMetric(checkMetrics, 'katexRenders');
+      katex.render(value, dom, { throwOnError: true, strict: false, trust: false, displayMode: isBlock });
+    };
+    try {
+      const katex = loadedKaTeX();
+      if (katex) apply(katex);
+      else apply(await loadKaTeX(), true);
+    } catch { if (request === renderRequest) dom.textContent = value || '公式'; }
+    scheduleContentHeightReports();
+  };
+  render();
+  return {
+    dom,
+    update(nextNode: any) { if (nextNode.type !== node.type) return false; node = nextNode; render(); return true; },
+    ignoreMutation() { return true; },
+  };
+};
+
+/** Renders and edits one math node without scanning the document. */
+const createMathNodeView = (initialNode: any, view: any, getPos: any) => {
+  let node = initialNode;
+  const isBlock = node.type.name === 'math_block';
+  const dom = document.createElement(isBlock ? 'div' : 'span');
+  dom.className = `weibei-math-node ${isBlock ? 'weibei-math-block' : 'weibei-math-inline'}`;
+  dom.dataset.type = node.type.name;
+  dom.contentEditable = 'false';
+  dom.tabIndex = 0;
+  const preview = document.createElement(isBlock ? 'div' : 'span');
+  preview.className = 'weibei-math-preview';
+  const input = document.createElement(isBlock ? 'textarea' : 'input') as HTMLInputElement | HTMLTextAreaElement;
+  input.className = 'weibei-math-source';
+  input.setAttribute('aria-label', isBlock ? editorLabel('slashBlockMath') : editorLabel('slashInlineMath'));
+  input.setAttribute('autocapitalize', 'none');
+  input.setAttribute('autocomplete', 'off');
+  input.setAttribute('spellcheck', 'false');
+  if (input instanceof HTMLInputElement) input.type = 'text';
+  dom.append(preview, input);
+  let editing = false;
+  let renderRequest = 0;
+
+  const source = () => isBlock ? String(node.attrs.value || '') : node.textContent;
+  const render = async (value = source()) => {
+    const request = renderRequest += 1;
+    dom.dataset.value = value;
+    preview.replaceChildren();
+    preview.textContent = value || '公式';
+    const apply = (katex: any, requireConnected = false) => {
+      if (request !== renderRequest || (requireConnected && !dom.isConnected)) return;
+      preview.replaceChildren();
+      addEditorMetric(checkMetrics, 'katexRenders');
+      katex.render(value, preview, { throwOnError: true, strict: false, trust: false, displayMode: isBlock });
+      dom.classList.remove('weibei-math-invalid');
+      dom.removeAttribute('title');
+    };
+    try {
+      const katex = loadedKaTeX();
+      if (katex) apply(katex);
+      else apply(await loadKaTeX(), true);
+    } catch {
+      if (request !== renderRequest) return;
+      preview.textContent = value || '公式';
+      dom.classList.add('weibei-math-invalid');
+      dom.title = currentLanguage === 'en' ? 'Not displayable yet; keep editing.' : '暂时无法显示，继续编辑即可';
+    }
+  };
+
+  const setEditing = (next: boolean) => {
+    if (!isEditable && next) return;
+    editing = next;
+    dom.classList.toggle('weibei-math-editing', next);
+    if (next) {
+      input.value = source();
+      input.focus();
+      input.select();
+    }
+  };
+
+  const commit = () => {
+    const value = input.value;
+    setEditing(false);
+    const pos = getPos();
+    if (typeof pos !== 'number') return;
+    if (value === source()) {
+      view.dispatch(view.state.tr.setSelection(NodeSelection.create(view.state.doc, pos)));
+      render();
+      view.focus();
+      return;
+    }
+    const nextNode = isBlock
+      ? node.type.create({ ...node.attrs, value })
+      : node.type.create(node.attrs, value ? view.state.schema.text(value) : null, node.marks);
+    const tr = view.state.tr.replaceWith(pos, pos + node.nodeSize, nextNode);
+    tr.setSelection(NodeSelection.create(tr.doc, pos));
+    view.dispatch(tr.scrollIntoView());
+    view.focus();
+  };
+
+  dom.addEventListener('click', (event) => { if (!editing && event.target !== input) setEditing(true); });
+  dom.addEventListener('weibei-edit-math', () => setEditing(true));
+  dom.addEventListener('keydown', (event) => {
+    const keyEvent = event as KeyboardEvent;
+    if (!editing && keyEvent.key === 'Enter') {
+      event.preventDefault();
+      setEditing(true);
+      return;
+    }
+    if (!editing) return;
+    if (keyEvent.key === 'Escape' || (keyEvent.key === 'Enter' && (!isBlock || keyEvent.metaKey))) {
+      event.preventDefault();
+      commit();
+    }
+  });
+  input.addEventListener('input', () => render(input.value));
+  input.addEventListener('blur', commit);
+  render();
+
+  return {
+    dom,
+    update(nextNode: any) {
+      if (nextNode.type !== node.type) return false;
+      const changed = (isBlock ? nextNode.attrs.value : nextNode.textContent) !== source();
+      node = nextNode;
+      if (changed && !editing) render();
+      return true;
+    },
+    selectNode() { dom.classList.add('ProseMirror-selectednode'); },
+    deselectNode() { dom.classList.remove('ProseMirror-selectednode'); },
+    stopEvent(event: Event) { return event.target === input || input.contains(event.target as Node); },
+    ignoreMutation() { return true; },
+  };
 };
 
 /**
@@ -1564,6 +1732,144 @@ const createCodeBlockNodeView = (node: any, view: any, getPos: any) => {
       input.removeEventListener('blur', commit);
       input.removeEventListener('keydown', onKeyDown);
     },
+  };
+};
+
+const createStructuredInlineNodeView = (initialNode: any, view: any, getPos: any) => {
+  let node = initialNode;
+  let editing = false;
+  const dom = document.createElement('span');
+  dom.contentEditable = 'false';
+  const render = () => {
+    editing = false;
+    const type = node.type.name;
+    dom.className = `weibei-structured-node ${type === 'wiki_link' ? 'weibei-wikilink' : type === 'embed' ? 'weibei-embed-preview weibei-embed-note' : 'weibei-inline-footnote'}`;
+    dom.dataset.type = type;
+    dom.dataset.wikilinkTarget = type === 'inline_footnote' ? '' : node.attrs.target;
+    dom.dataset.wikilinkTitle = type === 'inline_footnote' ? '' : node.attrs.target;
+    dom.setAttribute('role', type === 'inline_footnote' ? 'note' : 'link');
+    dom.tabIndex = 0;
+    dom.replaceChildren();
+    if (type === 'embed' && imageTargetPattern.test(node.attrs.target)) {
+      const image = document.createElement('img');
+      image.className = 'weibei-embed-image';
+      image.alt = node.attrs.label || node.attrs.target;
+      image.src = resolveMarkdownURL(node.attrs.target);
+      image.addEventListener('error', () => { image.src = missingImageURL(); image.classList.add('weibei-image-missing'); }, { once: true });
+      dom.append(image);
+    } else {
+      dom.textContent = type === 'inline_footnote' ? node.attrs.value : (node.attrs.label || node.attrs.target);
+    }
+    dom.title = type === 'inline_footnote'
+      ? editorLabel('inlineFootnote', { value: node.attrs.value })
+      : editorLabel(type === 'embed' ? 'embed' : 'openOrCreateNote', { value: node.attrs.target });
+  };
+  const edit = () => {
+    if (!isEditable || editing) return;
+    editing = true;
+    const footnote = node.type.name === 'inline_footnote';
+    const target = document.createElement('input');
+    const label = document.createElement('input');
+    target.className = label.className = 'weibei-structured-input';
+    target.value = footnote ? node.attrs.value : node.attrs.target;
+    label.value = footnote ? '' : node.attrs.label;
+    target.setAttribute('aria-label', footnote ? '脚注' : '目标');
+    label.setAttribute('aria-label', '标题');
+    label.placeholder = '标题';
+    const finish = (save: boolean) => {
+      if (!editing) return;
+      editing = false;
+      if (save) {
+        const pos = getPos();
+        const current = typeof pos === 'number' ? view.state.doc.nodeAt(pos) : null;
+        if (current?.type === node.type) {
+          const attrs = footnote
+            ? { value: target.value }
+            : { target: target.value.trim(), label: label.value.trim(), raw: `${target.value.trim()}${label.value.trim() ? `|${label.value.trim()}` : ''}` };
+          view.dispatch(view.state.tr.setNodeMarkup(pos, undefined, attrs));
+        }
+      } else render();
+    };
+    const keydown = (event: KeyboardEvent) => {
+      if (event.key === 'Enter') { event.preventDefault(); finish(true); }
+      if (event.key === 'Escape') { event.preventDefault(); finish(false); }
+    };
+    target.addEventListener('keydown', keydown);
+    label.addEventListener('keydown', keydown);
+    dom.replaceChildren(target);
+    if (!footnote) dom.append(label);
+    dom.addEventListener('focusout', () => window.setTimeout(() => { if (!dom.contains(document.activeElement)) finish(true); }), { once: true });
+    target.focus();
+    target.select();
+  };
+  dom.addEventListener('click', (event) => { if (isEditable) { event.preventDefault(); event.stopPropagation(); edit(); } });
+  dom.addEventListener('weibei-edit-structured', edit);
+  structuredNodeRenderers.add(render);
+  render();
+  return {
+    dom,
+    update(next: any) { if (next.type !== node.type) return false; node = next; if (!editing) render(); return true; },
+    selectNode() { dom.classList.add('ProseMirror-selectednode'); },
+    deselectNode() { dom.classList.remove('ProseMirror-selectednode'); },
+    stopEvent(event: Event) { return event.target instanceof HTMLInputElement; },
+    ignoreMutation() { return true; },
+    destroy() { structuredNodeRenderers.delete(render); },
+  };
+};
+
+const createCalloutNodeView = (initialNode: any, view: any, getPos: any) => {
+  let node = initialNode;
+  const dom = document.createElement('blockquote');
+  const header = document.createElement('div');
+  const type = document.createElement('select');
+  const title = document.createElement('input');
+  const content = document.createElement('div');
+  header.className = 'weibei-callout-header';
+  type.className = 'weibei-callout-type';
+  title.className = 'weibei-callout-title';
+  title.placeholder = '标题';
+  content.className = 'weibei-callout-content';
+  header.append(type, title);
+  dom.append(header, content);
+  const render = () => {
+    const value = String(node.attrs.calloutType || 'note');
+    const choices = calloutTypes.has(value) ? Array.from(calloutTypes) : [value, ...calloutTypes];
+    type.replaceChildren(...choices.map((choice) => {
+      const option = document.createElement('option');
+      option.value = choice;
+      option.textContent = calloutLabel(choice);
+      return option;
+    }));
+    type.value = value;
+    title.value = node.attrs.title || '';
+    type.disabled = !isEditable;
+    title.readOnly = !isEditable;
+    dom.className = `weibei-callout weibei-callout-has-heading weibei-callout-${value}`;
+    dom.dataset.type = 'callout';
+    dom.dataset.callout = value;
+    dom.dataset.calloutFold = node.attrs.fold || '';
+    dom.dataset.calloutTitle = node.attrs.title || calloutLabel(value);
+  };
+  const commit = () => {
+    const pos = getPos();
+    const current = isEditable && typeof pos === 'number' ? view.state.doc.nodeAt(pos) : null;
+    if (current?.type === node.type) view.dispatch(view.state.tr.setNodeMarkup(pos, undefined, { ...node.attrs, calloutType: type.value, title: title.value.trim() }));
+  };
+  type.addEventListener('change', commit);
+  title.addEventListener('blur', commit);
+  title.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') { event.preventDefault(); commit(); title.blur(); }
+    if (event.key === 'Escape') { event.preventDefault(); render(); title.blur(); }
+  });
+  structuredNodeRenderers.add(render);
+  render();
+  return {
+    dom,
+    contentDOM: content,
+    update(next: any) { if (next.type !== node.type) return false; node = next; render(); return true; },
+    stopEvent(event: Event) { return event.target === type || event.target === title; },
+    ignoreMutation(mutation: any) { return header.contains(mutation.target); },
+    destroy() { structuredNodeRenderers.delete(render); },
   };
 };
 
@@ -1711,44 +2017,7 @@ const insertImageFiles = async (files: any) => {
   replaceSelectionInternal(saved.map(markdownImage).join('\n\n'));
 };
 
-// plugin-math renders math_block nodes with inline-mode KaTeX (its shared
-// options cannot enable displayMode without breaking inline math). Re-render
-// block nodes in display mode so fractions, limits and sizing read like real
-// display equations; KaTeX centers them natively via .katex-display.
-const upgradeDisplayMath = () => {
-  // Synchronous on purpose: requestAnimationFrame never fires in occluded or
-  // offscreen WKWebViews (chat previews measure while hidden), which left
-  // block math stuck in inline mode. The dialect plugin already calls this
-  // after ProseMirror has flushed the DOM.
-  document
-    .querySelectorAll<HTMLElement>('.ProseMirror div[data-type="math_block"], .ProseMirror div[data-type="math-block"]')
-    .forEach((element) => {
-      const value = element.dataset.value || '';
-      if (element.dataset.weibeiDisplayValue === value) return;
-      try {
-        katex.render(value, element, {
-          throwOnError: false,
-          strict: false,
-          trust: false,
-          displayMode: true,
-        });
-        element.dataset.weibeiDisplayValue = value;
-      } catch (error) {
-        // Keep the inline-mode render; annotateMathErrors covers bad input.
-      }
-    });
-};
-
-const annotateMathErrors = () => {
-  window.requestAnimationFrame(() => {
-    document.querySelectorAll('.ProseMirror .katex-error').forEach((element) => {
-      if (element.getAttribute('title')) return;
-      element.setAttribute('title', editorLabel('mathError'));
-    });
-  });
-};
-
-const quietScrollableSelector = '#editor, .ProseMirror pre, .ProseMirror div[data-type="math_block"], .ProseMirror div[data-type="math-block"]';
+const quietScrollableSelector = '#editor, .ProseMirror pre, .weibei-math-block';
 const scrollFadeTimers = new WeakMap();
 
 const markScrollActive = (element: any) => {
@@ -1858,7 +2127,92 @@ const exitTerminalCodeBlock = (view: any, event: any) => {
   return exitCode(view.state, view.dispatch);
 };
 
+const appendTableRowFromLastCell = (view: any, event: KeyboardEvent) => {
+  if (!isEditable || event.key !== 'Tab' || event.shiftKey || event.altKey || event.metaKey || event.ctrlKey || event.isComposing || !isInTable(view.state)) return false;
+  const rect = selectedRect(view.state);
+  if (rect.bottom !== rect.map.height || rect.right !== rect.map.width) return false;
+  let added = false;
+  addRowAfter(view.state, (tr: any) => { view.dispatch(tr); added = true; });
+  if (added) goToNextCell(1)(view.state, view.dispatch, view);
+  return added;
+};
+
+const runTableToolbarAction = (view: any, action: string) => {
+  if (!isEditable || !isInTable(view.state)) return false;
+  if (action === 'addRow') return addRowAfter(view.state, view.dispatch);
+  if (action === 'deleteRow') return deleteRow(view.state, view.dispatch);
+  if (action === 'addColumn') return addColumnAfter(view.state, view.dispatch);
+  if (action === 'deleteColumn') return deleteColumn(view.state, view.dispatch);
+  if (action === 'header') {
+    const { $from } = view.state.selection;
+    for (let depth = $from.depth; depth > 0; depth -= 1) {
+      if ($from.node(depth).type.name !== 'table') continue;
+      const position = Math.min($from.before(depth) + 4, view.state.doc.content.size);
+      view.dispatch(view.state.tr.setSelection(Selection.near(view.state.doc.resolve(position), 1)).scrollIntoView());
+      return true;
+    }
+  }
+  return false;
+};
+
+const syncTableToolbar = (view: any) => {
+  tableToolbarElement.querySelectorAll('button').forEach((button) => {
+    const label = editorLabel((button as HTMLElement).dataset.label);
+    button.textContent = label;
+    button.setAttribute('aria-label', label);
+  });
+  if (!isEditable || !isInTable(view.state)) { tableToolbarElement.hidden = true; return; }
+  const dom = view.domAtPos(view.state.selection.from).node;
+  const cell = (dom instanceof Element ? dom : dom.parentElement)?.closest('td, th');
+  if (!(cell instanceof HTMLElement)) { tableToolbarElement.hidden = true; return; }
+  const rect = cell.getBoundingClientRect();
+  tableToolbarElement.hidden = false;
+  tableToolbarElement.style.left = `${Math.max(8, Math.min(window.innerWidth - tableToolbarElement.offsetWidth - 8, rect.left))}px`;
+  tableToolbarElement.style.top = `${Math.max(8, rect.top - 32)}px`;
+};
+
+let decorationCache: {
+  doc: any;
+  focusedMermaidPos: number | null;
+  generation: number;
+  decorations: any;
+} = { doc: null, focusedMermaidPos: null, generation: -1, decorations: DecorationSet.empty };
+
+const rangeContainsHeading = (doc: any, from: number, to: number) => {
+  let found = false;
+  const start = Math.max(0, Math.min(doc.content.size, from - 1));
+  const end = Math.max(start, Math.min(doc.content.size, Math.max(to, from + 1) + 1));
+  doc.nodesBetween(start, end, (node: any) => {
+    if (node.type.name === 'heading') found = true;
+    return !found;
+  });
+  return found;
+};
+
+/** Limits outline work to transaction ranges that gained, lost, or edited a heading. */
+const transactionTouchesHeading = (transaction: any) => transaction.steps.some((step: any, index: number) => {
+  const before = transaction.docs[index];
+  const after = transaction.docs[index + 1] || transaction.doc;
+  let touchesHeading = false;
+  step.getMap().forEach((oldStart: number, oldEnd: number, newStart: number, newEnd: number) => {
+    if (rangeContainsHeading(before, oldStart, oldEnd) || rangeContainsHeading(after, newStart, newEnd)) touchesHeading = true;
+  });
+  return touchesHeading;
+});
+
 const weiBeiDialectPlugin = $prose(() => new Plugin({
+  state: {
+    init: () => null,
+    apply: (transaction, value, _oldState, newState) => {
+      addEditorMetric(checkMetrics, 'transactions');
+      if (WEIBEI_EDITOR_RUNTIME && transaction.docChanged && !suppressDirtyTransactions) {
+        revisionState = reduceRevision(revisionState, true);
+        post('dirtyChanged', { dirty: revisionState.dirty });
+      }
+      if (transaction.docChanged && transactionTouchesHeading(transaction)) reportOutline(newState.doc);
+      return value;
+    },
+  },
   view(view) {
     const codeInputAttributeValues = { autocapitalize: 'none', autocorrect: 'off', spellcheck: 'false' };
     const defaultCodeInputAttributes = new Map(Object.keys(codeInputAttributeValues).map((name) => [name, view.dom.getAttribute(name)]));
@@ -1873,6 +2227,11 @@ const weiBeiDialectPlugin = $prose(() => new Plugin({
         else updatedView.dom.setAttribute(name, value);
       }
     };
+    const synchronizeEmptyPlaceholder = (updatedView: any) => {
+      const doc = updatedView.state.doc;
+      updatedView.dom.classList.toggle('weibei-empty-document', doc.childCount === 1 && doc.firstChild?.type.name === 'paragraph' && doc.firstChild.content.size === 0);
+      updatedView.dom.dataset.emptyPlaceholder = editorLabel('emptyNotePlaceholder');
+    };
     const setMermaidSourceFocus = (focused: any) => {
       if (mermaidSourceHasFocus === focused) return;
       mermaidSourceHasFocus = focused;
@@ -1881,7 +2240,7 @@ const weiBeiDialectPlugin = $prose(() => new Plugin({
     const handleEditorFocus = (event: any) => setMermaidSourceFocus(event.target === view.dom);
     const handleEditorBlur = (event: any) => { if (event.target === view.dom) setMermaidSourceFocus(false); };
     const handleCompositionStart = () => {
-      compositionStartMarkdown = getMarkdownInternal();
+      compositionStartMarkdown = lastMarkdown;
       compositionEndPending = false;
       const { $from } = view.state.selection;
       compositionTextblockFrom = $from.parent.isTextblock && $from.parent.content.size === 0 ? $from.before($from.depth) : null;
@@ -1900,34 +2259,55 @@ const weiBeiDialectPlugin = $prose(() => new Plugin({
     const handleBeforeInput = (event: any) => {
       if (event.target === view.dom) preventCodeBlockAutomaticReplacement(view, event);
     };
-    view.dom.addEventListener('compositionstart', handleCompositionStart, true);
-    view.dom.addEventListener('compositionend', handleCompositionEnd, true);
+    const keepTableSelection = (event: MouseEvent) => event.preventDefault();
+    const handleTableToolbarClick = (event: MouseEvent) => {
+      const button = event.target instanceof Element ? event.target.closest('button[data-action]') : null;
+      if (!(button instanceof HTMLElement)) return;
+      runTableToolbarAction(view, button.dataset.action || '');
+      view.focus();
+      window.requestAnimationFrame(() => syncTableToolbar(view));
+    };
     view.dom.addEventListener('focus', handleEditorFocus, true);
     view.dom.addEventListener('blur', handleEditorBlur, true);
-    view.dom.addEventListener('keydown', handleCodeBlockKeyDown, true);
-    view.dom.addEventListener('beforeinput', handleBeforeInput, true);
-    synchronizeCodeInputAttributes(view);
+    if (WEIBEI_EDITOR_RUNTIME) {
+      view.dom.addEventListener('compositionstart', handleCompositionStart, true);
+      view.dom.addEventListener('compositionend', handleCompositionEnd, true);
+      view.dom.addEventListener('keydown', handleCodeBlockKeyDown, true);
+      view.dom.addEventListener('beforeinput', handleBeforeInput, true);
+      tableToolbarElement.addEventListener('mousedown', keepTableSelection);
+      tableToolbarElement.addEventListener('click', handleTableToolbarClick);
+      document.body.appendChild(tableToolbarElement);
+      synchronizeCodeInputAttributes(view);
+      synchronizeEmptyPlaceholder(view);
+      syncTableToolbar(view);
+    }
     mermaidSourceHasFocus = view.hasFocus();
-    scheduleImageResolution(view);
-    annotateMathErrors();
-    upgradeDisplayMath();
     return {
-      update(updatedView) {
-        synchronizeCodeInputAttributes(updatedView);
-        scheduleImageResolution(updatedView);
-        annotateMathErrors();
-        upgradeDisplayMath();
+      update(updatedView, previousState) {
+        if (WEIBEI_EDITOR_RUNTIME) {
+          synchronizeCodeInputAttributes(updatedView);
+          synchronizeEmptyPlaceholder(updatedView);
+          syncTableToolbar(updatedView);
+        }
+        if (updatedView.state.doc.eq(previousState.doc)) return;
+        scheduleContentHeightReports();
+        reportActiveHeading();
       },
       destroy() {
-        view.dom.removeEventListener('compositionstart', handleCompositionStart, true);
-        view.dom.removeEventListener('compositionend', handleCompositionEnd, true);
         view.dom.removeEventListener('focus', handleEditorFocus, true);
         view.dom.removeEventListener('blur', handleEditorBlur, true);
-        view.dom.removeEventListener('keydown', handleCodeBlockKeyDown, true);
-        view.dom.removeEventListener('beforeinput', handleBeforeInput, true);
-        for (const [name, value] of defaultCodeInputAttributes) {
-          if (value === null) view.dom.removeAttribute(name);
-          else view.dom.setAttribute(name, value);
+        if (WEIBEI_EDITOR_RUNTIME) {
+          view.dom.removeEventListener('compositionstart', handleCompositionStart, true);
+          view.dom.removeEventListener('compositionend', handleCompositionEnd, true);
+          view.dom.removeEventListener('keydown', handleCodeBlockKeyDown, true);
+          view.dom.removeEventListener('beforeinput', handleBeforeInput, true);
+          tableToolbarElement.removeEventListener('mousedown', keepTableSelection);
+          tableToolbarElement.removeEventListener('click', handleTableToolbarClick);
+          tableToolbarElement.remove();
+          for (const [name, value] of defaultCodeInputAttributes) {
+            if (value === null) view.dom.removeAttribute(name);
+            else view.dom.setAttribute(name, value);
+          }
         }
         mermaidSourceHasFocus = false;
         activeMermaidPreview = null;
@@ -1936,23 +2316,30 @@ const weiBeiDialectPlugin = $prose(() => new Plugin({
     };
   },
   props: {
-    handlePaste(_, event) {
+    handlePaste: WEIBEI_EDITOR_RUNTIME ? (_: any, event: ClipboardEvent) => {
       if (!isEditable) return false;
       const files = imageFilesFromItems(event.clipboardData?.items);
-      if (files.length === 0) return false;
+      if (files.length > 0) {
+        event.preventDefault();
+        insertImageFiles(files).catch(showFailure);
+        return true;
+      }
+      const text = event.clipboardData?.getData('text/plain') || '';
+      const normalized = normalizeMarkdownSource(text, 'userPaste');
+      if (!text || normalized === text) return false;
       event.preventDefault();
-      insertImageFiles(files).catch(showFailure);
+      replaceSelectionInternal(normalized);
       return true;
-    },
-    handleDrop(_, event) {
+    } : () => false,
+    handleDrop: WEIBEI_EDITOR_RUNTIME ? (_: any, event: DragEvent) => {
       if (!isEditable) return false;
       const files = imageFilesFromItems(event.dataTransfer?.items);
       if (files.length === 0) return false;
       event.preventDefault();
       insertImageFiles(files).catch(showFailure);
       return true;
-    },
-    handleTextInput(view, from, to, text) {
+    } : () => false,
+    handleTextInput: WEIBEI_EDITOR_RUNTIME ? (view: any, from: number, to: number, text: string) => {
       if (!isEditable) return false;
       const incoming = String(text || '');
       if (!incoming) return false;
@@ -1967,7 +2354,7 @@ const weiBeiDialectPlugin = $prose(() => new Plugin({
       tr.setSelection(TextSelection.create(tr.doc, Math.min(start + 1, tr.doc.content.size)));
       view.dispatch(tr);
       return true;
-    },
+    } : () => false,
     handleClick(view, pos, event) {
       return activateSelectionAskMark(event.target)
         || activateWikiLink(event.target)
@@ -1975,19 +2362,30 @@ const weiBeiDialectPlugin = $prose(() => new Plugin({
         || toggleFoldedCallout(event.target);
     },
     handleKeyDown(view, event) {
-      if (handleSlashMenuKeyDown(view, event)) return true;
-      if (clearEmptyCodeBlock(view, event) || exitTerminalCodeBlock(view, event)) { event.preventDefault(); return true; }
-      if (
-        event.key === 'Enter'
-        && isEditable
-        && !event.shiftKey
-        && !event.altKey
-        && !event.metaKey
-        && !event.ctrlKey
-        && exitEmptyListItem(view)
-      ) {
-        event.preventDefault();
-        return true;
+      if (WEIBEI_EDITOR_RUNTIME) {
+        if (appendTableRowFromLastCell(view, event)) { event.preventDefault(); return true; }
+        if (handleSlashMenuKeyDown(view, event)) return true;
+        if (event.key === 'Enter' && view.state.selection instanceof NodeSelection) {
+          const selected = view.state.selection.node;
+          if (selected.type.name === 'math_inline' || selected.type.name === 'math_block') {
+            (view.nodeDOM(view.state.selection.from) as HTMLElement | null)?.dispatchEvent(new CustomEvent('weibei-edit-math'));
+            event.preventDefault();
+            return true;
+          }
+        }
+        if (clearEmptyCodeBlock(view, event) || exitTerminalCodeBlock(view, event)) { event.preventDefault(); return true; }
+        if (
+          event.key === 'Enter'
+          && isEditable
+          && !event.shiftKey
+          && !event.altKey
+          && !event.metaKey
+          && !event.ctrlKey
+          && exitEmptyListItem(view)
+        ) {
+          event.preventDefault();
+          return true;
+        }
       }
       if (event.key !== 'Enter' && event.key !== ' ') return false;
       if (activateSourceReference(event.target)) {
@@ -2002,48 +2400,24 @@ const weiBeiDialectPlugin = $prose(() => new Plugin({
       return true;
     },
     decorations(state) {
+      const focusedBlock = focusedMermaidBlock(state);
+      synchronizeActiveMermaidPreview(focusedBlock);
+      const focusedMermaidPos = focusedBlock?.pos ?? null;
+      const cached = decorationCache;
+      if (cached.doc === state.doc
+          && cached.focusedMermaidPos === focusedMermaidPos
+          && cached.generation === decorationGeneration) {
+        addEditorMetric(checkMetrics, 'decorationCacheHits');
+        return cached.decorations;
+      }
+
       const decorations: any[] = [];
       const commentState = { open: false };
       const selectionAskCounts = new Map();
-      const focusedBlock = focusedMermaidBlock(state);
-      synchronizeActiveMermaidPreview(focusedBlock);
 
       state.doc.descendants((node, pos, parent) => {
+        addEditorMetric(checkMetrics, 'decorationNodes');
         const typeName = node.type.name;
-        const parentName = parent?.type?.name || '';
-
-        if (isBlockquoteType(typeName)) {
-          const match = calloutMatchForBlockquote(node);
-          if (match) {
-            const calloutType = match[1].toLowerCase();
-            const calloutClass = calloutTypes.has(calloutType)
-              ? `weibei-callout-${calloutType}`
-              : `weibei-callout-${calloutType} weibei-callout-custom`;
-            decorations.push(Decoration.node(pos, pos + node.nodeSize, {
-              class: `weibei-callout weibei-callout-has-heading ${calloutClass}`,
-              'data-callout': calloutType,
-              'data-callout-fold': match[2] || '',
-              'data-callout-title': (match[3] || calloutLabel(calloutType)).trim(),
-            }));
-          }
-        }
-
-        if (typeName === 'paragraph' && isBlockquoteType(parentName)) {
-          const calloutHeading = node.textContent.trimStart().match(calloutRegex);
-          if (calloutHeading) {
-            decorations.push(Decoration.node(pos, pos + node.nodeSize, {
-              class: 'weibei-callout-heading',
-            }));
-            decorateCalloutHeadingSource(decorations, node, pos);
-          }
-        }
-
-        if (typeName === 'image' && node.attrs.src) {
-          decorations.push(Decoration.node(pos, pos + node.nodeSize, {
-            class: 'weibei-image',
-            src: resolveMarkdownURL(node.attrs.src),
-          }));
-        }
 
         if (typeName === 'code_block') {
           if (decorateMermaidBlock(decorations, node, pos, focusedBlock)) return false;
@@ -2060,14 +2434,8 @@ const weiBeiDialectPlugin = $prose(() => new Plugin({
           const text = node.text || '';
           const hasCodeMark = (node.marks || []).some((mark) => mark.type.name.toLowerCase().includes('code'));
           if (hasCodeMark) return true;
-          const insideBlockquote = isInsideNode(state, textPos, 'blockquote') || isInsideNode(state, textPos, 'block_quote');
-          if (insideBlockquote) decorateLeakedCalloutControls(decorations, text, textPos);
-          decorateDelimitedInline(decorations, text, textPos, /==([^=\n]+)==/g, 2, 'weibei-highlight');
-          decorateInlineFootnotes(decorations, text, textPos);
           decorateHtmlBreaks(decorations, text, textPos);
           decorateComments(decorations, text, textPos, commentState);
-          decorateObsidianEmbeds(decorations, text, textPos);
-          decorateWikiLinks(decorations, text, textPos);
           decorateSourceReferences(decorations, text, textPos);
           decorateTagsAndBlocks(decorations, text, textPos);
           decorateSelectionAskMarks(decorations, text, textPos, selectionAskCounts);
@@ -2077,7 +2445,14 @@ const weiBeiDialectPlugin = $prose(() => new Plugin({
         return true;
       });
 
-      return DecorationSet.create(state.doc, decorations);
+      const set = DecorationSet.create(state.doc, decorations);
+      decorationCache = {
+        doc: state.doc,
+        focusedMermaidPos,
+        generation: decorationGeneration,
+        decorations: set,
+      };
+      return set;
     },
   },
 }));
@@ -2086,18 +2461,140 @@ const reportSelection = () => {
   if (window.weiBeiSuppressSelectionReport) return;
   const text = selectedText();
   const rect = text ? rectFromSelection() : null;
+  const details = text && editor ? editor.action((ctx) => {
+    const { state } = ctx.get(editorViewCtx);
+    const { selection } = state;
+    const markNames = ['strong', 'emphasis', 'highlight', 'link', 'inlineCode'];
+    const activeMarks = markNames.filter((name) => state.schema.marks[name] && state.doc.rangeHasMark(selection.from, selection.to, state.schema.marks[name]));
+    const writingFont = state.schema.marks.writing_font;
+    let selectedFont: string | undefined;
+    let mixedFont = false;
+    if (writingFont) state.doc.nodesBetween(selection.from, selection.to, (node: any) => {
+      if (!node.isText) return true;
+      const font = writingFont.isInSet(node.marks || [])?.attrs.font || 'serif';
+      if (selectedFont === undefined) selectedFont = font;
+      else if (selectedFont !== font) mixedFont = true;
+      return true;
+    });
+    if (selectedFont && !mixedFont) activeMarks.push(`font:${selectedFont}`);
+    const isInlineMath = selection instanceof NodeSelection && selection.node.type.name === 'math_inline';
+    if (isInlineMath) activeMarks.push('inlineMath');
+    let blockType = selection.$from.parent.type.name;
+    for (let depth = selection.$from.depth; depth > 0; depth -= 1) {
+      const name = selection.$from.node(depth).type.name;
+      if (name === 'blockquote' || name === 'block_quote') { blockType = 'blockquote'; break; }
+    }
+    if (blockType === 'heading') blockType = `heading${selection.$from.parent.attrs.level || ''}`;
+    let linkTarget = '';
+    const link = state.schema.marks.link;
+    if (link) state.doc.nodesBetween(selection.from, selection.to, (node: any) => {
+      const mark = link.isInSet(node.marks || []);
+      if (mark && !linkTarget) linkTarget = String(mark.attrs.href || '');
+      return !linkTarget;
+    });
+    return {
+      activeMarks,
+      blockType,
+      canConvertToMath: isInlineMath || (selection instanceof TextSelection && !selection.empty && selection.$from.parent === selection.$to.parent && selection.$from.parent.isTextblock),
+      linkTarget,
+    };
+  }) : { activeMarks: [], blockType: '', canConvertToMath: false, linkTarget: '' };
   const rectKey = rect
     ? `${Math.round(rect.x)}:${Math.round(rect.y)}:${Math.round(rect.width)}:${Math.round(rect.height)}`
     : '';
-  if (text === lastSelectionReport.text && rectKey === lastSelectionReport.rectKey) return;
-  lastSelectionReport = { text, rectKey };
+  const detailKey = JSON.stringify(details);
+  if (text === lastSelectionReport.text && rectKey === lastSelectionReport.rectKey && detailKey === lastSelectionReport.detailKey) return;
+  lastSelectionReport = { text, rectKey, detailKey };
   if (!text) {
     lastSelectionRange = null;
-    post('selectionChanged', { text: '', rect: null });
+    post('selectionChanged', { text: '', rect: null, ...details });
     return;
   }
   lastSelectionRange = editorSelectionRange();
-  post('selectionChanged', { text, rect });
+  post('selectionChanged', { text, rect, ...details });
+};
+
+const executeSelectionCommandInternal = (action: unknown, value: unknown = '') => {
+  if (!editor || !isEditable || typeof action !== 'string') return false;
+  return editor.action((ctx) => {
+    const view = ctx.get(editorViewCtx);
+    if (view.state.selection.empty && lastSelectionRange) {
+      const from = Math.min(lastSelectionRange.from, view.state.doc.content.size);
+      const to = Math.min(lastSelectionRange.to, view.state.doc.content.size);
+      if (from < to) view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, from, to)));
+    }
+    const { state } = view;
+    const { selection } = state;
+    if (selection.empty) return false;
+    let applied = false;
+    const toggle = (markName: string) => {
+      const mark = state.schema.marks[markName];
+      return Boolean(mark && toggleMark(mark)(view.state, view.dispatch, view));
+    };
+    switch (action) {
+      case 'bold': applied = toggle('strong'); break;
+      case 'italic': applied = toggle('emphasis'); break;
+      case 'highlight': applied = toggle('highlight'); break;
+      case 'inlineCode': applied = toggle('inlineCode'); break;
+      case 'font': {
+        const font = typeof value === 'string' && writingFontValues.has(value) ? value : '';
+        const mark = state.schema.marks.writing_font;
+        if (!font || !mark) break;
+        const tr = state.tr.removeMark(selection.from, selection.to, mark)
+          .addMark(selection.from, selection.to, mark.create({ font }));
+        view.dispatch(tr.scrollIntoView());
+        applied = true;
+        break;
+      }
+      case 'link': {
+        const link = state.schema.marks.link;
+        if (!link) break;
+        const href = typeof value === 'string' ? value.trim() : '';
+        const tr = state.tr.removeMark(selection.from, selection.to, link);
+        if (href) tr.addMark(selection.from, selection.to, link.create({ href }));
+        view.dispatch(tr.scrollIntoView());
+        applied = true;
+        break;
+      }
+      case 'inlineMath': {
+        const math = state.schema.nodes.math_inline;
+        const selectedMath = selection instanceof NodeSelection ? selection.node : state.doc.nodeAt(selection.from);
+        if (selectedMath?.type === math && selection.to === selection.from + selectedMath.nodeSize) {
+          const source = selectedMath.textContent;
+          const tr = closeHistory(source
+            ? state.tr.replaceWith(selection.from, selection.to, state.schema.text(source))
+            : state.tr.delete(selection.from, selection.to));
+          tr.setSelection(source
+            ? TextSelection.create(tr.doc, selection.from, selection.from + source.length)
+            : Selection.near(tr.doc.resolve(Math.min(selection.from, tr.doc.content.size))));
+          view.dispatch(tr.scrollIntoView());
+          applied = true;
+          break;
+        }
+        const source = state.doc.textBetween(selection.from, selection.to, '\n', '\n');
+        if (!math || !source || !(selection instanceof TextSelection) || selection.$from.parent !== selection.$to.parent) break;
+        const node = math.create(null, state.schema.text(source));
+        const tr = closeHistory(state.tr.replaceRangeWith(selection.from, selection.to, node));
+        tr.setSelection(NodeSelection.create(tr.doc, selection.from));
+        view.dispatch(tr.scrollIntoView());
+        applied = true;
+        break;
+      }
+      case 'quote': {
+        const quote = state.schema.nodes.blockquote || state.schema.nodes.block_quote;
+        if (!quote) break;
+        const inQuote = Array.from({ length: selection.$from.depth }, (_, index) => selection.$from.node(index + 1)).some((node: any) => node.type === quote);
+        applied = Boolean((inQuote ? lift : wrapIn(quote))(view.state, view.dispatch, view));
+        break;
+      }
+      default: return false;
+    }
+    if (applied) {
+      view.focus();
+      window.requestAnimationFrame(reportSelection);
+    }
+    return applied;
+  });
 };
 
 const ensureEditor = () => {
@@ -2106,6 +2603,7 @@ const ensureEditor = () => {
 
 const setSelectionAskMarksInternal = (marks: any) => {
   selectionAskMarks = normalizeSelectionAskMarks(marks);
+  decorationGeneration += 1;
   if (!editor) return;
   editor.action((ctx) => {
     const view = ctx.get(editorViewCtx);
@@ -2143,18 +2641,12 @@ const normalizeCompletedEmptyTextblockComposition = () => {
   });
 };
 
-/** Publishes only the final IME composition snapshot to the Swift host. */
+/** Finishes IME cleanup without serializing the document. */
 const publishCompletedCompositionMarkdown = () => {
   if (!editor) return;
   normalizeCompletedEmptyTextblockComposition();
   compositionEndPending = false;
-  if (compositionStartMarkdown === null) return;
-  const start = compositionStartMarkdown;
-  const next = getMarkdownInternal();
   compositionStartMarkdown = null;
-  lastMarkdown = next;
-  if (next === start) return;
-  post('markdownChanged', { markdown: next });
   scheduleContentHeightReports();
   reportActiveHeading();
 };
@@ -2170,7 +2662,7 @@ const stopStreamingMarkdown = (keep = true) => {
 const updateStreamingMarkdownInternal = (markdown: any) => {
   ensureEditor();
   const document = splitFrontmatter(markdown || '');
-  const body = normalizeHtmlBreaks(document.body);
+  const body = normalizeMarkdownSource(document.body, 'agentGenerated');
   frontmatterBlock = document.frontmatter;
   syncFrontmatterPanel();
   const commands = streamingCommands();
@@ -2204,38 +2696,48 @@ const setMarkdownInternal = (markdown: any) => {
   compositionEndPending = false;
   currentContentGeneration += 1;
   const document = splitFrontmatter(markdown || '');
-  const body = normalizeHtmlBreaks(document.body);
+  const body = normalizeMarkdownSource(document.body, 'userDocument');
   frontmatterBlock = document.frontmatter;
   syncFrontmatterPanel();
   editor.action(replaceAll(body));
   lastMarkdown = withFrontmatter(body);
+  editor.action((ctx) => reportOutline(ctx.get(editorViewCtx).state.doc));
   scheduleContentHeightReports();
+};
+
+const loadMarkdownInternal = (markdown: any, revision = 0, dirty = false) => {
+  suppressDirtyTransactions = true;
+  revisionState = { revision, dirty };
+  try {
+    setMarkdownInternal(markdown);
+  } finally {
+    suppressDirtyTransactions = false;
+  }
+  if (WEIBEI_EDITOR_RUNTIME) post('dirtyChanged', { dirty });
 };
 
 const getMarkdownInternal = () => {
   ensureEditor();
+  addEditorMetric(checkMetrics, 'fullSerializations');
   return withFrontmatter(editor.action(readMarkdown()));
 };
 
 const replaceSelectionInternal = (markdown: any) => {
   ensureEditor();
-  const insertion = normalizeHtmlBreaks(markdown || '');
+  const insertion = normalizeMarkdownSource(markdown || '', 'internalFragment');
   const range = lastSelectionRange || editorSelectionRange();
   if (range) {
     editor.action(replaceRange(insertion, range));
   } else {
     editor.action(insert(insertion));
   }
-  const next = getMarkdownInternal();
-  lastMarkdown = next;
   lastSelectionRange = null;
-  post('markdownChanged', { markdown: next });
 };
 
-const insertMarkdownInternal = (markdown: any) => {
+const insertMarkdownInternal = (markdown: any, source: 'agentGenerated' | 'internalFragment' = 'internalFragment') => {
   ensureEditor();
   const range = editorSelectionRange();
-  const insertion = normalizeMarkdownInsertion(normalizeHtmlBreaks(markdown));
+  const insertion = normalizeMarkdownInsertion(normalizeMarkdownSource(markdown, source));
   if (range) {
     editor.action(replaceRange(insertion, range));
   } else {
@@ -2244,10 +2746,16 @@ const insertMarkdownInternal = (markdown: any) => {
   if (!placeCursorAtInsertionMarker()) {
     collapseSelectionToEnd();
   }
-  const next = getMarkdownInternal();
-  lastMarkdown = next;
   lastSelectionRange = null;
-  post('markdownChanged', { markdown: next });
+};
+
+const appendMarkdownInternal = (markdown: any) => {
+  ensureEditor();
+  editor.action((ctx) => {
+    const view = ctx.get(editorViewCtx);
+    view.dispatch(view.state.tr.setSelection(Selection.atEnd(view.state.doc)));
+  });
+  insertMarkdownInternal(markdown, 'agentGenerated');
 };
 
 const selectFirstTextForCheck = (needle: any) => {
@@ -2312,9 +2820,34 @@ const pressKeyForCheck = (key: any, options: any = {}) => {
   });
 };
 
-const headingElements = () => Array.from(document.querySelectorAll('.ProseMirror h1, .ProseMirror h2, .ProseMirror h3, .ProseMirror h4'));
+const headingElements = () => Array.from(document.querySelectorAll('.ProseMirror h1, .ProseMirror h2, .ProseMirror h3, .ProseMirror h4, .ProseMirror h5, .ProseMirror h6'));
 let activeHeadingFrame = 0;
 let lastActiveHeadingIndex = -2;
+let lastOutlineChangeKey: string | null = null;
+
+const reportOutline = (doc: any) => {
+  const items: EditorOutlineItem[] = [];
+  const documentSize = Math.max(1, doc.content.size);
+  doc.descendants((node: any, pos: number) => {
+    if (node.type.name !== 'heading') return true;
+    const title = node.textContent.trim();
+    if (!title) return false;
+    const index = items.length;
+    items.push({
+      id: `note-heading-${index}`,
+      index,
+      level: Number(node.attrs.level || 1),
+      title,
+      position: Math.max(0, Math.min(1, pos / documentSize)),
+    });
+    return false;
+  });
+  const key = outlineChangeKey(items);
+  if (key === lastOutlineChangeKey) return;
+  lastOutlineChangeKey = key;
+  addEditorMetric(checkMetrics, 'outlineReports');
+  post('outlineChanged', { items });
+};
 
 const reportActiveHeading = () => {
   window.cancelAnimationFrame(activeHeadingFrame);
@@ -2348,159 +2881,247 @@ const scrollToHeadingInternal = (rawIndex: any) => {
   return true;
 };
 
-window.WeiBeiEditor = {
-  getMarkdown: getMarkdownInternal,
-  setMarkdown: (markdown: any) => {
-    setMarkdownInternal(markdown);
-    post('markdownChanged', { markdown: String(markdown || '') });
-  },
-  // Milkdown's streaming plugin reparses the cumulative snapshot and applies a
-  // ProseMirror document diff, preserving unchanged DOM instead of rebuilding
-  // the whole answer or parsing token fragments as standalone paragraphs.
-  updateStreamingMarkdown: (markdown: any) => {
-    try {
-      updateStreamingMarkdownInternal(markdown);
-    } catch (error) {
-      showFailure(error);
-    }
-  },
-  finishStreamingMarkdown: (markdown: any) => {
-    try {
-      finishStreamingMarkdownInternal(markdown);
+const setDocumentIdentityInternal = (documentID: string, documentGeneration: number) => {
+  const changed = documentID !== currentDocumentID || documentGeneration !== currentDocumentGeneration;
+  currentDocumentID = documentID;
+  currentDocumentGeneration = documentGeneration;
+  if (!changed) return;
+  lastOutlineChangeKey = null;
+  currentContentGeneration += 1;
+  pendingImagePickers.clear();
+  pendingAttachments.clear();
+  setSelectionAskMarksInternal([]);
+};
+
+const setEditableInternal = (next: unknown) => {
+  isEditable = next !== false;
+  syncEditableState();
+  if (!editor) return;
+  editor.action((ctx) => {
+    const view = ctx.get(editorViewCtx);
+    view.dispatch(view.state.tr.setMeta('weibeiEditableChanged', isEditable));
+  });
+};
+
+const setThemeInternal = (next: unknown) => {
+  applyTheme(next);
+  decorationGeneration += 1;
+  refreshRenderedImages();
+  if (!editor) return;
+  editor.action((ctx) => {
+    const view = ctx.get(editorViewCtx);
+    view.dispatch(view.state.tr.setMeta('weibeiThemeChanged', currentTheme));
+  });
+};
+
+const setLanguageInternal = (next: unknown) => {
+  currentLanguage = normalizeInterfaceLanguage(next);
+  decorationGeneration += 1;
+  document.documentElement.dataset.weibeiLanguage = currentLanguage;
+  syncFrontmatterPanel();
+  syncEditableState();
+  structuredNodeRenderers.forEach((render) => render());
+  if (WEIBEI_EDITOR_RUNTIME && slashMenuElement.dataset.show === 'true') renderSlashMenu();
+  if (!editor) return;
+  editor.action((ctx) => {
+    const view = ctx.get(editorViewCtx);
+    view.dispatch(view.state.tr.setMeta('weibeiLanguageChanged', currentLanguage));
+  });
+};
+
+const focusInternal = () => {
+  if (!editor) return false;
+  editor.action((ctx) => ctx.get(editorViewCtx).focus());
+  return true;
+};
+
+const commandPayloadValue = (command: EditorCommand, name: string) => command.payload[name] ?? command.payload.value;
+
+const dispatchEditorCommand = (value: unknown) => {
+  const command = parseEditorCommand(value);
+  if (!command || !acceptsEditorCommand(command, {
+    documentID: currentDocumentID,
+    documentGeneration: currentDocumentGeneration,
+    revision: revisionState.revision,
+  })) return false;
+
+  switch (command.type) {
+    case 'loadDocument': {
+      const markdown = commandPayloadValue(command, 'markdown');
+      const initialRevision = commandPayloadValue(command, 'initialRevision');
+      if (typeof markdown !== 'string'
+          || (initialRevision !== undefined && !Number.isInteger(initialRevision))) return false;
+      setDocumentIdentityInternal(command.documentID, command.documentGeneration);
+      loadMarkdownInternal(markdown, Number(initialRevision ?? 0));
       return true;
-    } catch (error) {
-      showFailure(error);
-      return false;
     }
-  },
-  replaceSelection: (markdown: any) => {
-    try {
+    case 'requestSnapshot': {
+      const markdown = getMarkdownInternal();
+      lastMarkdown = markdown;
+      post('snapshotReady', { requestID: command.requestID!, markdown });
+      return true;
+    }
+    case 'setTheme':
+      setThemeInternal(commandPayloadValue(command, 'theme'));
+      return true;
+    case 'setLanguage':
+      setLanguageInternal(commandPayloadValue(command, 'language'));
+      return true;
+    case 'setEditable':
+      setEditableInternal(commandPayloadValue(command, 'editable'));
+      return true;
+    case 'focus':
+      return focusInternal();
+    case 'scrollToHeading':
+      return scrollToHeadingInternal(commandPayloadValue(command, 'index'));
+    case 'applyMarkdownFragment': {
+      const markdown = commandPayloadValue(command, 'markdown');
+      if (typeof markdown !== 'string') return false;
+      appendMarkdownInternal(markdown);
+      return true;
+    }
+    case 'replaceSelection': {
+      const markdown = commandPayloadValue(command, 'markdown');
+      if (typeof markdown !== 'string') return false;
       replaceSelectionInternal(markdown);
-    } catch (error) {
-      showFailure(error);
+      return true;
     }
-  },
-  applyAgentPatch: (markdown: any) => {
-    try {
-      const current = getMarkdownInternal();
-      setMarkdownInternal(`${current.trimEnd()}\n\n${markdown || ''}\n`);
-      const next = getMarkdownInternal();
-      lastMarkdown = next;
-      post('markdownChanged', { markdown: next });
-    } catch (error) {
-      showFailure(error);
-    }
-  },
-  askAgentWithSelection: () => {
-    lastSelectionRange = editorSelectionRange() || lastSelectionRange;
-    const text = selectedText();
-    post('askAgentWithSelection', { text, rect: rectFromSelection() });
-  },
-  insertMarkdownImage: (markdown: any) => {
-    try {
-      replaceSelectionInternal(markdown);
-    } catch (error) {
-      showFailure(error);
-    }
-  },
-  insertMarkdown: (markdown: any) => {
-    try {
+    case 'executeSelectionCommand':
+      return executeSelectionCommandInternal(commandPayloadValue(command, 'action'), commandPayloadValue(command, 'value'));
+    case 'insertStructuredBlock': {
+      const markdown = commandPayloadValue(command, 'markdown');
+      if (typeof markdown !== 'string') return false;
       insertMarkdownInternal(markdown);
-    } catch (error) {
-      showFailure(error);
+      return true;
     }
-  },
-  resolveAttachment: (id: any, src: any, alt: any) => {
-    const pending = pendingAttachments.get(id);
-    if (!pending) return;
-    pendingAttachments.delete(id);
-    pending.resolve({ src, alt });
-  },
-  rejectAttachment: (id: any, message: any) => {
-    const pending = pendingAttachments.get(id);
-    if (!pending) return;
-    pendingAttachments.delete(id);
-    pending.reject(new Error(message || 'Attachment save failed'));
-  },
-  resolveImagePicker: (id: any, src: any, alt: any) => {
-    const pending = pendingImagePickers.get(id);
-    if (!pending) return false;
-    pendingImagePickers.delete(id);
-    if (pending.documentID !== currentDocumentID || pending.documentGeneration !== currentDocumentGeneration) return false;
-    return applySlashReplacement(pending.view, pending.context, slashReplacement('image', pending.view.state.schema, { src, alt }));
-  },
-  cancelImagePicker: (id: any) => {
-    const pending = pendingImagePickers.get(id);
-    if (!pending) return false;
-    pendingImagePickers.delete(id);
-    return pending.documentID === currentDocumentID && pending.documentGeneration === currentDocumentGeneration;
-  },
-  discardImagePicker: (id: any) => pendingImagePickers.delete(id),
-  rejectImagePicker: (id: any, message: any) => {
-    const pending = pendingImagePickers.get(id);
-    if (!pending) return false;
-    pendingImagePickers.delete(id);
-    if (pending.documentID !== currentDocumentID || pending.documentGeneration !== currentDocumentGeneration) return false;
-    slashRuntime.dismissedContext = '';
-    slashRuntime.error = message || editorLabel('slashImageFailed');
-    slashRuntime.view = pending.view;
-    slashRuntime.provider?.show();
-    renderSlashMenu();
-    return true;
-  },
-  setEditable: (next: any) => {
-    isEditable = next !== false;
-    syncEditableState();
-    if (editor) {
-      editor.action((ctx) => {
-        const view = ctx.get(editorViewCtx);
-        view.dispatch(view.state.tr.setMeta('weibeiEditableChanged', isEditable));
-      });
+    case 'restoreCheckpoint': {
+      const markdown = commandPayloadValue(command, 'markdown');
+      const revision = commandPayloadValue(command, 'revision');
+      if (typeof markdown !== 'string' || (revision !== undefined && (!Number.isInteger(revision) || Number(revision) < 0))) return false;
+      loadMarkdownInternal(markdown, revision === undefined ? revisionState.revision : Number(revision), true);
+      return true;
     }
-  },
+  }
+};
+
+window.WeiBeiEditor = {
+  ...(WEIBEI_EDITOR_RUNTIME ? {
+    dispatchCommand: dispatchEditorCommand,
+    resolveAttachment: (id: any, src: any, alt: any) => {
+      const pending = pendingAttachments.get(id);
+      if (!pending) return;
+      pendingAttachments.delete(id);
+      pending.resolve({ src, alt });
+    },
+    rejectAttachment: (id: any, message: any) => {
+      const pending = pendingAttachments.get(id);
+      if (!pending) return;
+      pendingAttachments.delete(id);
+      pending.reject(new Error(message || 'Attachment save failed'));
+    },
+    resolveImagePicker: (id: any, src: any, alt: any) => {
+      const pending = pendingImagePickers.get(id);
+      if (!pending) return false;
+      pendingImagePickers.delete(id);
+      if (pending.documentID !== currentDocumentID || pending.documentGeneration !== currentDocumentGeneration) return false;
+      if (pending.mode === 'replace') {
+        const pos = pending.getPos();
+        const current = typeof pos === 'number' ? pending.view.state.doc.nodeAt(pos) : null;
+        if (current?.type.name !== 'image') return false;
+        const oldSize = parseMarkdownImageAlt(current.attrs.alt || '').size;
+        const nextAlt = `${String(alt || 'image')}${oldSize ? `|${oldSize.width}${oldSize.height ? `x${oldSize.height}` : ''}` : ''}`;
+        pending.view.dispatch(pending.view.state.tr.setNodeMarkup(pos, undefined, { ...current.attrs, src, alt: nextAlt }).scrollIntoView());
+        pending.view.focus();
+        return true;
+      }
+      return applySlashReplacement(pending.view, pending.context, slashReplacement('image', pending.view.state.schema, { src, alt }));
+    },
+    cancelImagePicker: (id: any) => {
+      const pending = pendingImagePickers.get(id);
+      if (!pending) return false;
+      pendingImagePickers.delete(id);
+      if (pending.mode === 'replace') pending.view.focus();
+      return pending.documentID === currentDocumentID && pending.documentGeneration === currentDocumentGeneration;
+    },
+    discardImagePicker: (id: any) => pendingImagePickers.delete(id),
+    rejectImagePicker: (id: any, message: any) => {
+      const pending = pendingImagePickers.get(id);
+      if (!pending) return false;
+      pendingImagePickers.delete(id);
+      if (pending.documentID !== currentDocumentID || pending.documentGeneration !== currentDocumentGeneration) return false;
+      if (pending.mode === 'replace') { pending.view.focus(); return true; }
+      slashRuntime.dismissedContext = '';
+      slashRuntime.error = message || editorLabel('slashImageFailed');
+      slashRuntime.view = pending.view;
+      slashRuntime.provider?.show();
+      renderSlashMenu();
+      return true;
+    },
+  } : {
+    getMarkdown: getMarkdownInternal,
+    setMarkdown: (markdown: any) => setMarkdownInternal(String(markdown || '')),
+    updateStreamingMarkdown: (markdown: any) => {
+      try {
+        updateStreamingMarkdownInternal(markdown);
+      } catch (error) {
+        showFailure(error);
+      }
+    },
+    finishStreamingMarkdown: (markdown: any) => {
+      try {
+        finishStreamingMarkdownInternal(markdown);
+        return true;
+      } catch (error) {
+        showFailure(error);
+        return false;
+      }
+    },
+    setDocumentID: (next: any) => {
+      const nextID = next || '';
+      if (nextID !== currentDocumentID) setDocumentIdentityInternal(nextID, currentDocumentGeneration + 1);
+    },
+    setTheme: setThemeInternal,
+    setInterfaceLanguage: setLanguageInternal,
+    focus: focusInternal,
+    scrollToHeading: scrollToHeadingInternal,
+  }),
   setSelectionAskMarks: setSelectionAskMarksInternal,
-  setDocumentID: (next: any) => {
-    const nextID = next || '';
-    if (nextID !== currentDocumentID) {
-      currentDocumentID = nextID;
-      currentDocumentGeneration += 1;
-      currentContentGeneration += 1;
-      pendingImagePickers.clear();
-      pendingAttachments.clear();
-      setSelectionAskMarksInternal([]);
-    }
-  },
   setMarkdownBaseURL: (next: any) => {
     markdownBaseURL = next || '';
     refreshRenderedImages();
   },
-  setTheme: (next: any) => {
-    applyTheme(next);
-    document.querySelectorAll('img[data-weibei-image-placeholder="true"]').forEach((image) => {
-      image.setAttribute('src', missingImageURL());
-    });
-    if (!editor) return;
-    editor.action((ctx) => {
-      const view = ctx.get(editorViewCtx);
-      view.dispatch(view.state.tr.setMeta('weibeiThemeChanged', currentTheme));
-    });
-  },
-  setInterfaceLanguage: (next: any) => {
-    currentLanguage = normalizeInterfaceLanguage(next);
-    document.documentElement.dataset.weibeiLanguage = currentLanguage;
-    syncFrontmatterPanel();
-    syncEditableState();
-    if (slashMenuElement.dataset.show === 'true') renderSlashMenu();
-    if (!editor) return;
-    editor.action((ctx) => {
-      const view = ctx.get(editorViewCtx);
-      view.dispatch(view.state.tr.setMeta('weibeiLanguageChanged', currentLanguage));
-    });
-  },
-  scrollToHeading: scrollToHeadingInternal,
 };
 
-if (window.weiBeiEditorCheckMode) {
+if (WEIBEI_EDITOR_RUNTIME && window.weiBeiEditorCheckMode) {
+  Object.assign(window.WeiBeiEditor, {
+    getMarkdown: getMarkdownInternal,
+    setMarkdown: setMarkdownInternal,
+    updateStreamingMarkdown: updateStreamingMarkdownInternal,
+    finishStreamingMarkdown: (markdown: any) => { finishStreamingMarkdownInternal(markdown); return true; },
+    replaceSelection: replaceSelectionInternal,
+    executeSelectionCommand: executeSelectionCommandInternal,
+    applyAgentPatch: appendMarkdownInternal,
+    insertMarkdownImage: replaceSelectionInternal,
+    insertMarkdown: insertMarkdownInternal,
+    setEditable: setEditableInternal,
+    setDocumentID: (next: any) => setDocumentIdentityInternal(String(next || ''), currentDocumentGeneration + 1),
+    setTheme: setThemeInternal,
+    setInterfaceLanguage: setLanguageInternal,
+    focus: focusInternal,
+    scrollToHeading: scrollToHeadingInternal,
+  });
+  window.WeiBeiEditor.getCheckMetrics = () => ({ ...checkMetrics!, fullBridgeMessages: fullMarkdownBridgeMessages });
+  window.WeiBeiEditor.resetCheckMetrics = () => {
+    resetEditorCheckMetrics(checkMetrics);
+    fullMarkdownBridgeMessages = 0;
+  };
+  window.WeiBeiEditor.getBridgeSessionForCheck = () => ({
+    protocolVersion: editorProtocolVersion,
+    documentID: currentDocumentID,
+    documentGeneration: currentDocumentGeneration,
+    revision: revisionState.revision,
+    dirty: revisionState.dirty,
+  });
   window.WeiBeiEditor.selectFirstTextForCheck = selectFirstTextForCheck;
   window.WeiBeiEditor.selectedTextForCheck = editorSelectedText;
   window.WeiBeiEditor.typeTextForCheck = typeTextForCheck;
@@ -2512,6 +3133,7 @@ if (window.weiBeiEditorCheckMode) {
   window.WeiBeiEditor.executeSlashCommandForCheck = (id: any) => executeSlashCommand(id);
   window.WeiBeiEditor.pendingImagePickerIDsForCheck = () => Array.from(pendingImagePickers.keys());
   window.WeiBeiEditor.undoForCheck = () => editor.action((ctx) => undo(ctx.get(editorViewCtx).state, ctx.get(editorViewCtx).dispatch));
+  window.WeiBeiEditor.redoForCheck = () => editor.action((ctx) => redo(ctx.get(editorViewCtx).state, ctx.get(editorViewCtx).dispatch));
   window.WeiBeiEditor.selectFirstCodeBlockEndForCheck = () => editor.action((ctx) => { const view = ctx.get(editorViewCtx); let target: any = null; view.state.doc.descendants((node, pos) => { if (target !== null || node.type.name !== 'code_block') return true; target = pos + node.content.size + 1; return false; }); if (target === null) return false; view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, target))); view.focus(); return true; });
   window.WeiBeiEditor.selectDocumentEndForCheck = () => editor.action((ctx) => { const view = ctx.get(editorViewCtx); view.dispatch(view.state.tr.setSelection(Selection.atEnd(view.state.doc))); view.focus(); return true; });
   window.WeiBeiEditor.selectionForCheck = () => editor.action((ctx) => {
@@ -2521,19 +3143,43 @@ if (window.weiBeiEditorCheckMode) {
 }
 
 const initialDocument = splitFrontmatter(window.initialMarkdown || '');
-initialDocument.body = normalizeHtmlBreaks(initialDocument.body);
+initialDocument.body = normalizeMarkdownSource(initialDocument.body, 'userDocument');
 frontmatterBlock = initialDocument.frontmatter;
+lastMarkdown = withFrontmatter(initialDocument.body);
 syncFrontmatterPanel();
 
-Editor
+let editorBuilder = Editor
   .make()
   .config((ctx) => {
     ctx.set(rootCtx, document.querySelector('#editor'));
     ctx.set(defaultValueCtx, initialDocument.body);
     ctx.set(editorViewOptionsCtx, {
       editable: () => isEditable,
-      nodeViews: { code_block: createCodeBlockNodeView },
+      nodeViews: WEIBEI_EDITOR_RUNTIME ? {
+        code_block: createCodeBlockNodeView,
+        image: createImageNodeView,
+        math_inline: createMathNodeView,
+        math_block: createMathNodeView,
+        wiki_link: createStructuredInlineNodeView,
+        embed: createStructuredInlineNodeView,
+        inline_footnote: createStructuredInlineNodeView,
+        callout: createCalloutNodeView,
+      } : {
+        image: createReadOnlyImageNodeView,
+        math_inline: createReadOnlyMathNodeView,
+        math_block: createReadOnlyMathNodeView,
+      },
     });
+    ctx.set(streamingConfig.key, {
+      throttleMs: 0,
+      scrollFollow: false,
+      diffReviewOnEnd: false,
+      ignoreAttrs: { heading: ['id'] },
+    });
+  });
+
+if (WEIBEI_EDITOR_RUNTIME) {
+  editorBuilder = editorBuilder.config((ctx) => {
     ctx.set(uploadConfig.key, {
       uploader: localImageUploader,
       enableHtmlFileUploader: true,
@@ -2544,56 +3190,50 @@ Editor
         return Decoration.widget(pos, widget, spec);
       },
     });
-    ctx.set(katexOptionsCtx.key, {
-      throwOnError: false,
-      strict: false,
-      trust: false,
-    });
-    ctx.set(streamingConfig.key, {
-      throttleMs: 0,
-      scrollFollow: false,
-      diffReviewOnEnd: false,
-      ignoreAttrs: { heading: ['id'] },
-    });
-  })
-  .config((ctx) => {
     ctx.set(weiBeiSlash.key, {
-      view(view) {
-        document.body.appendChild(slashStatusElement);
+      view(view: any) {
+        const preventLinePlusBlur = (event: MouseEvent) => event.preventDefault();
+        const openLineMenu = () => {
+          const $from = emptyLineContextForView(view);
+          if (!$from) return;
+          view.dispatch(view.state.tr.insertText('/', $from.pos).scrollIntoView());
+          view.focus();
+          slashRuntime.dismissedContext = '';
+        };
+        linePlusElement.addEventListener('mousedown', preventLinePlusBlur);
+        linePlusElement.addEventListener('click', openLineMenu);
+        document.body.append(slashStatusElement, linePlusElement);
         const provider = new SlashProvider({ content: slashMenuElement, debounce: 0, offset: 6, root: document.body, shouldShow: (updatedView) => { const context = slashContextForView(updatedView); return Boolean(context && slashRuntime.dismissedContext !== context.key); } });
         slashRuntime.provider = provider; slashRuntime.view = view;
         provider.onShow = () => { slashRuntime.view = view; renderSlashMenu(); };
         provider.onHide = () => { slashRuntime.context = null; slashRuntime.tableOpen = false; if (slashRuntime.tableMenuBaseLeft) { slashMenuElement.style.left = slashRuntime.tableMenuBaseLeft; slashRuntime.tableMenuBaseLeft = ''; } slashTablePanelElement?.remove(); slashTablePanelElement = null; syncSlashAccessibility(); };
         provider.update(view);
-        return { update(updatedView, previousState) { slashRuntime.view = updatedView; const context = slashContextForView(updatedView); if (slashRuntime.dismissedContext && context?.key !== slashRuntime.dismissedContext) slashRuntime.dismissedContext = ''; provider.update(updatedView, previousState); }, destroy() { provider.destroy(); slashMenuElement.remove(); slashStatusElement.remove(); slashTablePanelElement?.remove(); slashRuntime.provider = null; slashRuntime.view = null; } };
+        syncLinePlus(view);
+        return { update(updatedView: any, previousState: any) { slashRuntime.view = updatedView; const context = slashContextForView(updatedView); if (slashRuntime.dismissedContext && context?.key !== slashRuntime.dismissedContext) slashRuntime.dismissedContext = ''; provider.update(updatedView, previousState); syncLinePlus(updatedView); }, destroy() { provider.destroy(); linePlusElement.removeEventListener('mousedown', preventLinePlusBlur); linePlusElement.removeEventListener('click', openLineMenu); slashMenuElement.remove(); slashStatusElement.remove(); linePlusElement.remove(); slashTablePanelElement?.remove(); slashRuntime.provider = null; slashRuntime.view = null; } };
       },
     });
-  })
+  });
+}
+
+editorBuilder = editorBuilder
   .use(weiBeiDialectPlugin)
-  .use(weiBeiSlash)
-  .use(history)
   .use(commonmark)
   .use(gfm)
-  .use(math)
-  .use(clipboard)
-  .use(streaming)
-  .use(upload)
+  .use(structuredMarkdown)
+  .use(weiBeiMath)
+  .use(streaming);
+
+if (WEIBEI_EDITOR_RUNTIME) {
+  editorBuilder = editorBuilder
+    .use(weiBeiSlash)
+    .use(history)
+    .use(clipboard)
+    .use(upload);
+}
+
+editorBuilder
   .use(listener)
   .config((ctx) => {
-    ctx.get(listenerCtx).markdownUpdated((listenerContext, markdown) => {
-      const normalizedMarkdown = withFrontmatter(markdown);
-      if (normalizedMarkdown === lastMarkdown) return;
-      lastMarkdown = normalizedMarkdown;
-      if (listenerContext.get(editorViewCtx).composing || compositionEndPending) {
-        scheduleContentHeightReports();
-        reportActiveHeading();
-        return;
-      }
-      compositionStartMarkdown = null;
-      post('markdownChanged', { markdown: normalizedMarkdown });
-      scheduleContentHeightReports();
-      reportActiveHeading();
-    });
     ctx.get(listenerCtx).selectionUpdated(() => {
       requestAnimationFrame(reportSelection);
     });
@@ -2604,7 +3244,6 @@ Editor
     syncEditableState();
     installQuietScrollIndicators();
     document.querySelector('#editor-status')?.remove();
-    lastMarkdown = getMarkdownInternal();
     document.addEventListener('mouseup', reportSelection);
     document.addEventListener('pointerdown', () => {
       if (window.weiBeiSuppressSelectionReport) return;
@@ -2614,6 +3253,7 @@ Editor
       post('selectionChanged', { text: '', rect: null });
     }, true);
     document.addEventListener('click', (event) => {
+      if (isEditable && event.target instanceof Element && event.target.closest('.weibei-structured-node')) return;
       if (!activateSelectionAskMark(event.target)
           && !activateWikiLink(event.target)
           && !activateSourceReference(event.target)
@@ -2631,8 +3271,12 @@ Editor
       reportSelection();
     });
     document.addEventListener('scroll', reportActiveHeading, true);
-    post('editorReady', { markdown: lastMarkdown });
-    installContentHeightObserver();
-    reportActiveHeading();
+    post('editorReady', {});
+    window.setTimeout(() => {
+      editorReadyPosted = true;
+      installContentHeightObserver();
+      editor.action((ctx) => reportOutline(ctx.get(editorViewCtx).state.doc));
+      reportActiveHeading();
+    });
   })
   .catch(showFailure);

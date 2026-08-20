@@ -9,5 +9,8 @@
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true
   },
-  "include": ["Sources/WeiBei/WebEditor/src/**/*.ts"]
+  "include": [
+    "Sources/WeiBei/WebEditor/src/**/*.ts",
+    "Sources/WeiBei/WebEditor/test/**/*.ts"
+  ]
 }

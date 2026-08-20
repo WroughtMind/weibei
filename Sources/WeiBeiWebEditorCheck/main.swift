@@ -127,6 +127,13 @@ func json(_ value: String) -> String {
 }
 
 final class EditorHarness: NSObject, WKScriptMessageHandler {
+    private struct Snapshot {
+        let documentID: String
+        let documentGeneration: Int
+        let revision: Int
+        let markdown: String
+    }
+
     private let webView: WKWebView
     private var isDone = false
     private var failure: String?
@@ -135,7 +142,13 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
     private var imagePickerRequests = 0
     private var activatedSelectionAskThreadID: String?
     private var editorFailures = 0
-    private var markdownChanges: [(documentID: String, markdown: String)] = []
+    private var currentDocumentID = "web-editor-check"
+    private var currentDocumentGeneration = 0
+    private var currentRevision = 0
+    private var isDirty = false
+    private var snapshotCount = 0
+    private var snapshotCallbacks: [String: (Snapshot) -> Void] = [:]
+    private var outlineEvents: [(documentID: String, items: [[String: Any]])] = []
 
     override init() {
         let configuration = WKWebViewConfiguration()
@@ -153,7 +166,7 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
         configuration.userContentController = controller
         webView = WKWebView(frame: CGRect(x: 0, y: 0, width: 960, height: 720), configuration: configuration)
         super.init()
-        for name in ["editorReady", "markdownChanged", "selectionChanged", "askAgentWithSelection", "wikiLinkActivated", "imageAttachmentRequested", "imagePickerRequested", "selectionAskMark", "editorFailure"] {
+        for name in ["editorReady", "dirtyChanged", "snapshotReady", "outlineChanged", "selectionChanged", "askAgentWithSelection", "wikiLinkActivated", "imageAttachmentRequested", "imagePickerRequested", "selectionAskMark", "editorFailure"] {
             controller.add(self, name: name)
         }
     }
@@ -178,11 +191,41 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
         switch message.name {
         case "editorReady":
-            guard (message.body as? [String: Any])?["documentID"] as? String == "web-editor-check" else {
-                fail("editorReady did not include the current document identity")
+            guard updateSession(from: message.body), currentDocumentID == "web-editor-check" else {
+                fail("editorReady did not include the V2 document identity")
                 return
             }
             validateInitialMarkdown()
+        case "dirtyChanged":
+            guard updateSession(from: message.body),
+                  let dirty = (message.body as? [String: Any])?["dirty"] as? Bool else {
+                fail("dirtyChanged did not include the V2 session and dirty state")
+                return
+            }
+            isDirty = dirty
+        case "snapshotReady":
+            guard updateSession(from: message.body),
+                  let body = message.body as? [String: Any],
+                  let requestID = body["requestID"] as? String,
+                  let markdown = body["markdown"] as? String,
+                  let callback = snapshotCallbacks.removeValue(forKey: requestID) else {
+                fail("snapshotReady did not match a V2 snapshot request")
+                return
+            }
+            snapshotCount += 1
+            callback(Snapshot(
+                documentID: currentDocumentID,
+                documentGeneration: currentDocumentGeneration,
+                revision: currentRevision,
+                markdown: markdown
+            ))
+        case "outlineChanged":
+            guard updateSession(from: message.body),
+                  let items = (message.body as? [String: Any])?["items"] as? [[String: Any]] else {
+                fail("outlineChanged did not include a V2 session and outline payload")
+                return
+            }
+            outlineEvents.append((currentDocumentID, items))
         case "wikiLinkActivated":
             activatedWikiTitle = (message.body as? [String: Any])?["title"] as? String
         case "imageAttachmentRequested":
@@ -193,31 +236,55 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
             activatedSelectionAskThreadID = (message.body as? [String: Any])?["threadId"] as? String
         case "editorFailure":
             editorFailures += 1
-        case "markdownChanged":
-            guard let body = message.body as? [String: Any],
-                  let documentID = body["documentID"] as? String,
-                  let markdown = body["markdown"] as? String else {
-                fail("markdownChanged did not include document identity and Markdown")
-                return
-            }
-            markdownChanges.append((documentID, markdown))
         default:
             break
         }
     }
 
-    private func validateInitialMarkdown() {
-        webView.evaluateJavaScript("window.WeiBeiEditor.getMarkdown()") { [weak self] value, error in
+    private func updateSession(from value: Any) -> Bool {
+        guard let body = value as? [String: Any],
+              body["protocolVersion"] as? Int == 2,
+              let documentID = body["documentID"] as? String,
+              let documentGeneration = body["documentGeneration"] as? Int,
+              let revision = body["revision"] as? Int else { return false }
+        currentDocumentID = documentID
+        currentDocumentGeneration = documentGeneration
+        currentRevision = revision
+        return true
+    }
+
+    private func requestSnapshot(completion: @escaping (Snapshot) -> Void) {
+        let requestID = UUID().uuidString
+        snapshotCallbacks[requestID] = completion
+        let command: [String: Any] = [
+            "protocolVersion": 2,
+            "commandID": "web-editor-check-snapshot-\(requestID)",
+            "requestID": requestID,
+            "documentID": currentDocumentID,
+            "documentGeneration": currentDocumentGeneration,
+            "minimumRevision": currentRevision,
+            "type": "requestSnapshot",
+            "payload": [:],
+        ]
+        guard let data = try? JSONSerialization.data(withJSONObject: command),
+              let encoded = String(data: data, encoding: .utf8) else {
+            fail("could not encode V2 snapshot request")
+            return
+        }
+        webView.evaluateJavaScript("window.WeiBeiEditor.dispatchCommand(\(encoded))") { [weak self] value, error in
             guard let self else { return }
-            if let error {
-                self.fail("getMarkdown threw \(error.localizedDescription)")
+            guard error == nil, value as? Bool == true else {
+                self.snapshotCallbacks.removeValue(forKey: requestID)
+                self.fail("V2 snapshot request was rejected: \(String(describing: error))")
                 return
             }
-            guard let markdown = value as? String else {
-                self.fail("getMarkdown did not return text")
-                return
-            }
-            self.validate(markdown)
+        }
+    }
+
+    private func validateInitialMarkdown() {
+        requestSnapshot { [weak self] snapshot in
+            guard let self else { return }
+            self.validate(snapshot.markdown)
             DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
                 self.validateObsidianDecorations {
                     self.validateReadOnlyInkstoneDecorations {
@@ -263,110 +330,33 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
           mermaidPlaceholder: document.body.textContent.includes('渲染器未安装完成') ? 1 : 0,
           mermaidText: document.querySelector('.weibei-mermaid-render')?.textContent || '',
           mermaidSourceOpacity: getComputedStyle(document.querySelector('.weibei-mermaid-block') || document.body).opacity,
-          mathInline: document.querySelectorAll('span[data-type="math_inline"], .math-inline, .katex').length,
-          mathBlockCount: document.querySelectorAll('div[data-type="math_block"], div[data-type="math-block"], .math-block').length,
-          mathBlockDisplay: document.querySelectorAll('div[data-type="math_block"] > .katex-display, div[data-type="math-block"] > .katex-display, .math-block > .katex-display').length,
-          mathBlockDisplayFontSize: getComputedStyle(document.querySelector('div[data-type="math_block"] > .katex-display, div[data-type="math-block"] > .katex-display, .math-block > .katex-display') || document.body).fontSize,
-          mathInlineBackground: getComputedStyle(document.querySelector('span[data-type="math_inline"], .math-inline') || document.body).backgroundColor,
-          mathInlineContainerColor: getComputedStyle(document.querySelector('span[data-type="math_inline"], .math-inline') || document.body).color,
-          mathInlineContainerFontSize: getComputedStyle(document.querySelector('span[data-type="math_inline"], .math-inline') || document.body).fontSize,
-          mathInlineKatexColor: getComputedStyle(document.querySelector('span[data-type="math_inline"] > .katex, .math-inline > .katex') || document.body).color,
-          mathInlineKatexFontSize: getComputedStyle(document.querySelector('span[data-type="math_inline"] > .katex, .math-inline > .katex') || document.body).fontSize,
-          mathInlineDirectTextNodes: (() => {
-            const node = document.querySelector('span[data-type="math_inline"], .math-inline');
-            if (!node) return -1;
-            return Array.from(node.childNodes).filter((child) => child.nodeType === Node.TEXT_NODE && child.nodeValue.trim()).length;
-          })(),
-          mathInlineSourceChildrenVisible: (() => {
-            const node = document.querySelector('span[data-type="math_inline"], .math-inline');
-            if (!node) return false;
-            return Array.from(node.children).some((child) => {
-              if (child.classList.contains('katex')) return false;
-              const style = getComputedStyle(child);
-              return style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0';
-            });
-          })(),
-          mathInlinePseudoBefore: getComputedStyle(document.querySelector('span[data-type="math_inline"], .math-inline') || document.body, '::before').content,
-          mathInlinePseudoAfter: getComputedStyle(document.querySelector('span[data-type="math_inline"], .math-inline') || document.body, '::after').content,
-          mathInlineMathMLHidden: (() => {
-            const mathML = document.querySelector('span[data-type="math_inline"] .katex-mathml, .math-inline .katex-mathml');
-            if (!mathML) return false;
-            const style = getComputedStyle(mathML);
-            return style.position === 'absolute' && style.overflow === 'hidden' && (style.clipPath !== 'none' || style.clip !== 'auto');
-          })(),
-          mathBlock: document.querySelectorAll('div[data-type="math_block"], .math-block, .katex-display').length,
-          rawMathArtifacts: document.querySelectorAll('[class*="weibei-raw-math"]').length,
-          rawMathPlainText: (() => {
-            const root = document.querySelector('.ProseMirror');
-            if (!root) return 0;
-            const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
-            let count = 0;
-            let node;
-            while ((node = walker.nextNode())) {
-              const parent = node.parentElement;
-              if (!node.nodeValue.includes('$text^*$')) continue;
-              if (parent?.closest('[data-type="math_inline"], .math-inline')) continue;
-              count += 1;
-            }
-            return count;
-          })(),
+          mathInlinePreview: document.querySelectorAll('.weibei-math-inline > .weibei-math-preview > .katex').length,
+          mathBlockPreview: document.querySelectorAll('.weibei-math-block > .weibei-math-preview > .katex-display').length,
+          mathSourcesHidden: Array.from(document.querySelectorAll('.weibei-math-source')).every((source) => getComputedStyle(source).display === 'none'),
+          mathContainersVisible: Array.from(document.querySelectorAll('.weibei-math-node')).every((node) => {
+            const style = getComputedStyle(node);
+            const rect = node.getBoundingClientRect();
+            return style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0' && rect.width > 0 && rect.height > 0;
+          }),
           foldedCallout: document.querySelector('blockquote.weibei-callout')?.getAttribute('data-callout-fold') || '',
           calloutTitle: document.querySelector('blockquote.weibei-callout')?.getAttribute('data-callout-title') || '',
           calloutHeadingVisible: (() => {
-            const heading = document.querySelector('blockquote.weibei-callout .weibei-callout-heading');
-            if (!heading) return false;
-            const style = getComputedStyle(heading);
-            return style.opacity !== '0' && style.fontSize !== '0px' && heading.textContent.includes('可编辑标题');
+            const header = document.querySelector('blockquote.weibei-callout .weibei-callout-header');
+            const type = header?.querySelector('.weibei-callout-type');
+            const title = header?.querySelector('.weibei-callout-title');
+            if (!header || !type || !title) return false;
+            const style = getComputedStyle(header);
+            return style.display !== 'none' && !type.disabled && !title.readOnly && title.value === '可编辑标题';
           })(),
-          calloutMarkerHidden: (() => {
-            const marker = document.querySelector('blockquote.weibei-callout .weibei-callout-heading .weibei-callout-marker');
-            if (!marker) return false;
-            const style = getComputedStyle(marker);
-            return style.color === 'rgba(0, 0, 0, 0)' && style.fontSize === '0px';
+          calloutSourceMarkerAbsent: (() => {
+            const callout = document.querySelector('blockquote.weibei-callout[data-type="callout"]');
+            return Boolean(callout)
+              && callout.querySelector('.weibei-callout-marker') === null
+              && !callout.textContent.includes('[!');
           })(),
           quoteCalloutTitle: document.querySelector('blockquote.weibei-callout-quote')?.getAttribute('data-callout-title') || '',
           quoteCalloutText: document.querySelector('blockquote.weibei-callout-quote')?.textContent || '',
           quoteCalloutCount: document.querySelectorAll('blockquote.weibei-callout-quote').length,
-          quoteCalloutMarkerVisible: (() => {
-            const marker = document.querySelector('blockquote.weibei-callout-quote .weibei-callout-marker');
-            if (!marker) return true;
-            const style = getComputedStyle(marker);
-            return style.visibility !== 'hidden'
-              || Array.from(marker.getClientRects()).some((rect) => rect.width > 0.5 || rect.height > 0.5);
-          })(),
-          quoteCalloutMarkerHidden: (() => {
-            const marker = document.querySelector('blockquote.weibei-callout-quote .weibei-callout-marker');
-            if (!marker) return false;
-            const style = getComputedStyle(marker);
-            return style.display === 'inline-block'
-              && style.color === 'rgba(0, 0, 0, 0)'
-              && style.visibility === 'hidden'
-              && style.fontSize === '0px'
-              && style.width === '0px'
-              && marker.getBoundingClientRect().width === 0;
-          })(),
-          visibleBareCalloutMarkers: (() => {
-            const root = document.querySelector('.ProseMirror');
-            if (!root) return -1;
-            const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
-            let count = 0;
-            let node;
-            while ((node = walker.nextNode())) {
-              if (!/\\[![A-Za-z]/.test(node.nodeValue || '')) continue;
-              const parent = node.parentElement;
-              if (parent?.closest('code, pre')) continue;
-              if (parent?.closest('.weibei-callout-marker')) continue;
-              if (!parent?.closest('blockquote.weibei-callout')) continue;
-              const style = getComputedStyle(parent);
-              const visible = style.display !== 'none'
-                && style.visibility !== 'hidden'
-                && style.opacity !== '0'
-                && style.color !== 'rgba(0, 0, 0, 0)'
-                && parseFloat(style.fontSize || '0') > 0;
-              if (visible) count += 1;
-            }
-            return count;
-          })(),
           visibleRawCalloutMarkers: (() => {
             const root = document.querySelector('.ProseMirror');
             if (!root) return -1;
@@ -388,32 +378,10 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
             }
             return count;
           })(),
-          cleanedCalloutSelection: (() => {
-            if (!window.WeiBeiEditor.selectFirstTextForCheck('[!quote] 选区摘录')) return '__missing__';
-            return window.WeiBeiEditor.selectedTextForCheck();
-          })(),
-          customCalloutType: document.querySelector('blockquote.weibei-callout-custom')?.getAttribute('data-callout') || '',
-          customCalloutFold: document.querySelector('blockquote.weibei-callout-custom')?.getAttribute('data-callout-fold') || '',
-          customCalloutTitle: document.querySelector('blockquote.weibei-callout-custom')?.getAttribute('data-callout-title') || '',
-          customCalloutText: document.querySelector('blockquote.weibei-callout-custom')?.textContent || '',
-          customCalloutMarkerVisible: (() => {
-            const marker = document.querySelector('blockquote.weibei-callout-custom .weibei-callout-marker');
-            if (!marker) return true;
-            const style = getComputedStyle(marker);
-            return style.visibility !== 'hidden'
-              || Array.from(marker.getClientRects()).some((rect) => rect.width > 0.5 || rect.height > 0.5);
-          })(),
-          customCalloutMarkerHidden: (() => {
-            const marker = document.querySelector('blockquote.weibei-callout-custom .weibei-callout-marker');
-            if (!marker) return false;
-            const style = getComputedStyle(marker);
-            return style.display === 'inline-block'
-              && style.color === 'rgba(0, 0, 0, 0)'
-              && style.visibility === 'hidden'
-              && style.fontSize === '0px'
-              && style.width === '0px'
-              && marker.getBoundingClientRect().width === 0;
-          })(),
+          customCalloutType: document.querySelector('blockquote[data-callout="attention"]')?.getAttribute('data-callout') || '',
+          customCalloutFold: document.querySelector('blockquote[data-callout="attention"]')?.getAttribute('data-callout-fold') || '',
+          customCalloutTitle: document.querySelector('blockquote[data-callout="attention"]')?.getAttribute('data-callout-title') || '',
+          customCalloutText: document.querySelector('blockquote[data-callout="attention"]')?.textContent || '',
           inlineCodeSyntaxDecorations: document.querySelectorAll('code .weibei-wikilink, code .weibei-highlight, code .weibei-comment, code .weibei-tag, code .weibei-html-break-source').length,
           inlineCodeSyntaxText: Array.from(document.querySelectorAll('code'))
             .map((node) => node.textContent || '')
@@ -482,69 +450,14 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
                 self.fail("Mermaid source block is too faint to edit: \(opacityText)")
                 return
             }
-            if (result["mathInline"] as? Int ?? 0) < 1 {
-                self.fail("inline math did not render as a math node")
+            if (result["mathInlinePreview"] as? Int ?? 0) < 1
+                || (result["mathBlockPreview"] as? Int ?? 0) < 1 {
+                self.fail("valid inline and block formulas must render through their NodeView previews")
                 return
             }
-            if result["mathInlineBackground"] as? String != "rgba(0, 0, 0, 0)" {
-                self.fail("inline math should not render as a filled source block")
-                return
-            }
-            if result["mathInlineContainerColor"] as? String != "rgba(0, 0, 0, 0)" {
-                self.fail("inline math container should hide raw source text")
-                return
-            }
-            if result["mathInlineContainerFontSize"] as? String != "0px" {
-                self.fail("inline math source container should collapse raw source font size")
-                return
-            }
-            if result["mathInlineKatexColor"] as? String == "rgba(0, 0, 0, 0)" {
-                self.fail("inline math rendered KaTeX should remain visible")
-                return
-            }
-            if result["mathInlineKatexFontSize"] as? String == "0px" {
-                self.fail("inline math rendered KaTeX should keep readable font size")
-                return
-            }
-            if (result["mathBlockCount"] as? Int ?? 0) < 1 {
-                self.fail("$$ block math did not parse into a math_block node")
-                return
-            }
-            if (result["mathBlockDisplay"] as? Int ?? 0) < 1 {
-                self.fail("block math did not upgrade to KaTeX displayMode (.katex-display missing)")
-                return
-            }
-            if result["mathBlockDisplayFontSize"] as? String == "0px" {
-                self.fail("block math display wrapper collapsed to zero font size")
-                return
-            }
-            if (result["mathInlineDirectTextNodes"] as? Int ?? 1) > 0 {
-                self.fail("inline math should not render raw source text beside KaTeX")
-                return
-            }
-            if result["mathInlineSourceChildrenVisible"] as? Bool == true {
-                self.fail("inline math source child should not occupy layout beside KaTeX")
-                return
-            }
-            if result["mathInlinePseudoBefore"] as? String != "none"
-                || result["mathInlinePseudoAfter"] as? String != "none" {
-                self.fail("inline math should not render source pseudo-elements")
-                return
-            }
-            if result["mathInlineMathMLHidden"] as? Bool != true {
-                self.fail("inline math MathML should be visually hidden")
-                return
-            }
-            if (result["mathBlock"] as? Int ?? 0) < 1 {
-                self.fail("block math did not render as a math node")
-                return
-            }
-            if (result["rawMathArtifacts"] as? Int ?? 0) > 0 {
-                self.fail("raw inline math fallback artifacts should not be rendered")
-                return
-            }
-            if (result["rawMathPlainText"] as? Int ?? 0) > 0 {
-                self.fail("inline math source remained visible as plain text")
+            if result["mathSourcesHidden"] as? Bool != true
+                || result["mathContainersVisible"] as? Bool != true {
+                self.fail("formula sources should be hidden by default while their NodeView containers remain visible")
                 return
             }
             if result["foldedCallout"] as? String != "-" {
@@ -559,8 +472,8 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
                 self.fail("callout title should stay visible and editable in writing mode")
                 return
             }
-            if result["calloutMarkerHidden"] as? Bool != true {
-                self.fail("callout source marker should not remain visible in writing mode")
+            if result["calloutSourceMarkerAbsent"] as? Bool != true {
+                self.fail("semantic callout should not keep its source marker in the editable document")
                 return
             }
             if result["quoteCalloutTitle"] as? String != "选区摘录" {
@@ -575,27 +488,8 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
                 self.fail("nested quote callout was not recognized")
                 return
             }
-            if result["quoteCalloutMarkerHidden"] as? Bool != true {
-                self.fail("quote callout marker should collapse in writing and preview surfaces")
-                return
-            }
-            if result["quoteCalloutMarkerVisible"] as? Bool == true {
-                self.fail("quote callout marker should not have visible boxes")
-                return
-            }
-            if (result["visibleBareCalloutMarkers"] as? Int ?? -1) != 0 {
-                self.fail("callout source markers should not leak as visible bare text")
-                return
-            }
             if (result["visibleRawCalloutMarkers"] as? Int ?? -1) != 0 {
                 self.fail("nested callout source markers should not leak as visible text")
-                return
-            }
-            let cleanedCalloutSelection = result["cleanedCalloutSelection"] as? String ?? ""
-            if cleanedCalloutSelection == "__missing__"
-                || cleanedCalloutSelection.contains("[!quote]")
-                || !cleanedCalloutSelection.contains("选区摘录") {
-                self.fail("callout control marker leaked into selected text: \(cleanedCalloutSelection)")
                 return
             }
             if result["customCalloutType"] as? String != "attention" {
@@ -614,21 +508,95 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
                 self.fail("unknown Obsidian callout body disappeared")
                 return
             }
-            if result["customCalloutMarkerHidden"] as? Bool != true {
-                self.fail("unknown Obsidian callout marker should collapse")
-                return
-            }
-            if result["customCalloutMarkerVisible"] as? Bool == true {
-                self.fail("unknown Obsidian callout marker should not have visible boxes")
-                return
-            }
             if (result["inlineCodeSyntaxDecorations"] as? Int ?? -1) != 0
                 || !(result["inlineCodeSyntaxText"] as? String ?? "").contains("[[不是链接]] ==不是高亮== %%不是注释%% #not-tag <br />") {
                 self.fail("inline code should not receive WeiBei Markdown syntax decorations")
                 return
             }
-            self.validateStreamingSnapshotIntegrity {
-                self.validateFrontmatterLanguageCycle(completion: completion)
+            self.validateStructuredMarkdownNodes {
+                self.validateStreamingSnapshotIntegrity {
+                    self.validateFrontmatterLanguageCycle(completion: completion)
+                }
+            }
+        }
+    }
+
+    private func validateStructuredMarkdownNodes(completion: @escaping () -> Void) {
+        let editScript = """
+        (() => {
+          const selectors = [
+            '[data-type="wiki_link"]',
+            'mark.weibei-highlight',
+            '[data-type="inline_footnote"]',
+            'blockquote[data-type="callout"]',
+            '[data-type="embed"]'
+          ];
+          const missing = selectors.filter((selector) => !document.querySelector(selector));
+          if (missing.length) throw new Error('missing structured nodes: ' + missing.join(', '));
+          const wiki = document.querySelector('[data-type="wiki_link"]');
+          wiki.click();
+          const inputs = wiki.querySelectorAll('.weibei-structured-input');
+          if (inputs.length !== 2) throw new Error('wiki link did not open its in-place editor');
+          inputs[0].value = '现场理论';
+          inputs[1].value = '现场别名';
+          document.querySelector('.ProseMirror')?.focus();
+          return true;
+        })();
+        """
+        webView.evaluateJavaScript(editScript) { [weak self] value, error in
+            guard let self else { return }
+            guard error == nil, value as? Bool == true else {
+                self.fail("structured Markdown interaction failed: \(String(describing: error)); \(String(describing: value))")
+                return
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                self.webView.evaluateJavaScript("Boolean(document.querySelector('[data-type=\"wiki_link\"][data-wikilink-target=\"现场理论\"]'))") { [weak self] value, error in
+                    guard let self else { return }
+                    guard error == nil, value as? Bool == true else {
+                        self.fail("wiki link in-place edit was not committed")
+                        return
+                    }
+                    self.requestSnapshot { [weak self] snapshot in
+                        guard let self else { return }
+                        guard snapshot.markdown.contains("[[现场理论|现场别名]]")
+                                || snapshot.markdown.contains("[[现场理论\\|现场别名]]") else {
+                            self.fail("structured Markdown snapshot lost the in-place wiki edit: \(snapshot.markdown.prefix(500))")
+                            return
+                        }
+                        let historyScript = """
+                (() => {
+                  const count = () => document.querySelectorAll('[data-type="wiki_link"], mark.weibei-highlight, [data-type="inline_footnote"], blockquote[data-type="callout"], [data-type="embed"]').length;
+                  window.WeiBeiEditor.pressKeyForCheck('a', { metaKey: true });
+                  window.WeiBeiEditor.pressKeyForCheck('Backspace');
+                  const deleted = count() === 0;
+                  window.WeiBeiEditor.undoForCheck();
+                  const undone = count() > 0;
+                  window.WeiBeiEditor.redoForCheck();
+                  const redone = count() === 0;
+                  window.WeiBeiEditor.undoForCheck();
+                  return { deleted, undone, redone };
+                })();
+                """
+                        self.webView.evaluateJavaScript(historyScript) { [weak self] value, error in
+                            guard let self else { return }
+                            guard error == nil,
+                                  let result = value as? [String: Any],
+                                  result["deleted"] as? Bool == true,
+                                  result["undone"] as? Bool == true,
+                                  result["redone"] as? Bool == true else {
+                                self.fail("structured Markdown delete/undo/redo failed: \(String(describing: error)); \(String(describing: value))")
+                                return
+                            }
+                            self.webView.evaluateJavaScript("window.WeiBeiEditor.setMarkdown(\(json(sampleMarkdown)))") { _, error in
+                                guard error == nil else {
+                                    self.fail("structured Markdown check could not restore the fixture: \(String(describing: error))")
+                                    return
+                                }
+                                completion()
+                            }
+                        }
+                    }
+                }
             }
         }
     }
@@ -787,7 +755,7 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
           const root = document.querySelector('.ProseMirror');
           const quote = document.querySelector('blockquote.weibei-callout-quote');
           const marker = quote?.querySelector('.weibei-callout-marker');
-          const heading = quote?.querySelector('.weibei-callout-heading');
+          const heading = quote?.querySelector('.weibei-callout-header');
           const textNodeWalker = document.createTreeWalker(root || document.body, NodeFilter.SHOW_TEXT);
           let visibleBareMarkers = 0;
           let node;
@@ -804,7 +772,6 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
               && parseFloat(style.fontSize || '0') > 0;
             if (visible) visibleBareMarkers += 1;
           }
-          const markerStyle = marker ? getComputedStyle(marker) : null;
           const headingStyle = heading ? getComputedStyle(heading) : null;
           const sampleText = quote?.querySelector('p:last-child') || quote || root || document.body;
           const sampleColor = getComputedStyle(sampleText).color;
@@ -822,9 +789,7 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
           return {
             editable: document.body.dataset.editable || '',
             theme: document.documentElement.dataset.weibeiTheme || '',
-            markerHidden: markerStyle
-              ? markerStyle.color === 'rgba(0, 0, 0, 0)' && markerStyle.fontSize === '0px'
-              : false,
+            markerAbsent: marker === null,
             headingHidden: headingStyle ? headingStyle.display === 'none' : false,
             visibleBareMarkers,
             sampleColor,
@@ -847,7 +812,7 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
                 self.fail("read-only inkstone state was not applied: \(result)")
                 return
             }
-            if result["markerHidden"] as? Bool != true || result["headingHidden"] as? Bool != true {
+            if result["markerAbsent"] as? Bool != true || result["headingHidden"] as? Bool != true {
                 self.fail("read-only callout heading or marker leaked: \(result)")
                 return
             }
@@ -1135,16 +1100,8 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
             guard let self else { return }
             self.replaceFirst("温和洞察", with: "Agent 洞察") { [weak self] in
                 guard let self else { return }
-                self.webView.evaluateJavaScript("window.WeiBeiEditor.getMarkdown()") { [weak self] value, error in
-                    guard let self else { return }
-                    if let error {
-                        self.fail("getMarkdown after replacement threw \(error.localizedDescription)")
-                        return
-                    }
-                    guard let markdown = value as? String else {
-                        self.fail("replacement markdown did not return text")
-                        return
-                    }
+                self.requestSnapshot { markdownSnapshot in
+                    let markdown = markdownSnapshot.markdown
                     let tableReplaced = markdown.contains("| Agent | 已改写 |")
                         || (markdown.contains("| Agent") && markdown.contains("已改写"))
                     if !tableReplaced {
@@ -1185,16 +1142,8 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
                 self.fail("applyAgentPatch threw \(error.localizedDescription)")
                 return
             }
-            self.webView.evaluateJavaScript("window.WeiBeiEditor.getMarkdown()") { [weak self] value, error in
-                guard let self else { return }
-                if let error {
-                    self.fail("getMarkdown after patch threw \(error.localizedDescription)")
-                    return
-                }
-                guard let markdown = value as? String else {
-                    self.fail("patched markdown did not return text")
-                    return
-                }
+            self.requestSnapshot { markdownSnapshot in
+                let markdown = markdownSnapshot.markdown
                 if !markdown.contains("Agent 整理建议") || !markdown.contains("补充一条可写回的整理建议") {
                     self.fail("Agent patch was not serialized back to markdown")
                     return
@@ -1212,16 +1161,8 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
                 self.fail("insertMarkdown command threw \(error.localizedDescription)")
                 return
             }
-            self.webView.evaluateJavaScript("window.WeiBeiEditor.getMarkdown()") { [weak self] value, error in
-                guard let self else { return }
-                if let error {
-                    self.fail("getMarkdown after insert command threw \(error.localizedDescription)")
-                    return
-                }
-                guard let markdown = value as? String else {
-                    self.fail("inserted markdown did not return text")
-                    return
-                }
+            self.requestSnapshot { markdownSnapshot in
+                let markdown = markdownSnapshot.markdown
                 if !markdown.contains("\\frac{x}{y}") || !markdown.contains("$$") {
                     self.fail("insertMarkdown command did not serialize block math correctly")
                     return
@@ -1315,81 +1256,382 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
                     self.fail("inline formula marker did not select the editable formula")
                     return
                 }
-                self.validateTypedInlineFormula()
+                self.validateWritingRoundTrips()
             }
         }
     }
 
-    private func validateTypedInlineFormula() {
+    private func validateWritingRoundTrips() {
         let script = """
-        window.WeiBeiEditor.insertMarkdown("\\n\\n{{WEIBEI_CURSOR}}");
-        if (!window.WeiBeiEditor.typeTextForCheck('$A^*$')) {
-          throw new Error('typeTextForCheck unavailable');
-        }
-        (() => ({
-          markdown: window.WeiBeiEditor.getMarkdown(),
-          mathNodes: document.querySelectorAll('span[data-type="math_inline"], .math-inline').length,
-          typedMathNode: !!document.querySelector('span[data-type="math_inline"][data-value="A^*"], .math-inline[data-value="A^*"]'),
-          typedMathColor: getComputedStyle(document.querySelector('span[data-type="math_inline"][data-value="A^*"], .math-inline[data-value="A^*"]') || document.body).color,
-          typedMathFontSize: getComputedStyle(document.querySelector('span[data-type="math_inline"][data-value="A^*"], .math-inline[data-value="A^*"]') || document.body).fontSize,
-          typedKatexFontSize: getComputedStyle(document.querySelector('span[data-type="math_inline"][data-value="A^*"] > .katex, .math-inline[data-value="A^*"] > .katex') || document.body).fontSize,
-          rawFormulaText: (() => {
-            const root = document.querySelector('.ProseMirror');
-            const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
-            let count = 0;
-            let node;
-            while ((node = walker.nextNode())) {
-              const parent = node.parentElement;
-              if (!node.nodeValue.includes('$A^*$')) continue;
-              if (parent?.closest('[data-type="math_inline"], .math-inline')) continue;
-              count += 1;
-            }
-            return count;
-          })(),
-          mathBackground: getComputedStyle(document.querySelector('span[data-type="math_inline"], .math-inline') || document.body).backgroundColor
-        }))();
+        (() => {
+          const editor = window.WeiBeiEditor;
+          editor.setDocumentID('writing-round-trips');
+          editor.setMarkdown('上段');
+          editor.selectDocumentEndForCheck();
+          for (let index = 0; index < 4; index += 1) editor.pressKeyForCheck('Enter');
+          editor.typeTextForCheck('下段');
+          const paragraphsBefore = document.querySelectorAll('.ProseMirror > p').length;
+          const markdown = editor.getMarkdown();
+          editor.setMarkdown(markdown);
+          const paragraphsAfter = document.querySelectorAll('.ProseMirror > p').length;
+          if (paragraphsBefore !== 5 || paragraphsAfter !== paragraphsBefore) {
+            throw new Error('blank writing lines changed after snapshot reload: ' + JSON.stringify({ paragraphsBefore, paragraphsAfter, markdown }));
+          }
+
+          editor.setMarkdown('公式切换');
+          if (!editor.selectFirstTextForCheck('公式切换') || !editor.executeSelectionCommand('inlineMath')) {
+            throw new Error('first formula conversion failed');
+          }
+          if (!editor.executeSelectionCommand('inlineMath') || editor.getMarkdown().trim() !== '公式切换') {
+            throw new Error('second formula click did not restore the original text: ' + editor.getMarkdown());
+          }
+          editor.setMarkdown('甲乙丙');
+          if (!editor.selectFirstTextForCheck('乙') || !editor.executeSelectionCommand('font', 'literary')) {
+            throw new Error('selected font command failed');
+          }
+          const selectedFontMarkdown = editor.getMarkdown().trim();
+          if (selectedFontMarkdown !== '甲<span data-weibei-font="literary">乙</span>丙') {
+            throw new Error('selected font changed the wrong text: ' + selectedFontMarkdown);
+          }
+          editor.setMarkdown(selectedFontMarkdown);
+          if (document.querySelector('.ProseMirror [data-weibei-font="literary"]')?.textContent !== '乙'
+              || editor.getMarkdown().trim() !== selectedFontMarkdown) {
+            throw new Error('selected font did not survive reload');
+          }
+
+          editor.setMarkdown('/songti');
+          editor.openSlashMenuForCheck();
+          if (!editor.executeSlashCommandForCheck('fontSerif') || !editor.typeTextForCheck('后续')) {
+            throw new Error('slash font command failed');
+          }
+          const slashFontMarkdown = editor.getMarkdown().trim();
+          if (slashFontMarkdown !== '<span data-weibei-font="serif">后续</span>') {
+            throw new Error('slash font did not apply to following input: ' + slashFontMarkdown);
+          }
+          editor.setMarkdown(slashFontMarkdown);
+          if (document.querySelector('.ProseMirror [data-weibei-font="serif"]')?.textContent !== '后续') {
+            throw new Error('slash font did not survive reload');
+          }
+          return true;
+        })();
         """
         webView.evaluateJavaScript(script) { [weak self] value, error in
             guard let self else { return }
-            if let error {
-                self.fail("typed inline formula check threw \(error.localizedDescription)")
+            guard error == nil, value as? Bool == true else {
+                self.fail("writing round-trip check failed: \(String(describing: error)); \(String(describing: value))")
                 return
             }
-            guard let result = value as? [String: Any],
-                  let markdown = result["markdown"] as? String else {
-                self.fail("typed inline formula check did not return result")
+            self.validateMathNodeViews()
+        }
+    }
+
+    private func validateMathNodeViews() {
+        let interactionMarkdown = "行内 $x^2$\n\n$$\ny^2\n$$\n\n坏公式 $\\frac{$"
+        let moneyMarkdown = "金额 $5、$10–$20、\\$5，公式 $x^2$。"
+        let invalidFormula = "\\frac{"
+        let fixedFormula = "\\frac{1}{2}"
+        let script = """
+        (() => {
+          const editor = window.WeiBeiEditor;
+          const fail = (message) => { throw new Error(message); };
+          const key = (element, name, options = {}) => element.dispatchEvent(new KeyboardEvent('keydown', { key: name, bubbles: true, cancelable: true, ...options }));
+          const sourceHidden = (node) => getComputedStyle(node.querySelector('.weibei-math-source')).display === 'none';
+          const visible = (node) => { const style = getComputedStyle(node); const rect = node.getBoundingClientRect(); return style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0' && rect.width > 0 && rect.height > 0; };
+
+          editor.setDocumentID('math-node-interactions');
+          editor.setMarkdown(\(json(interactionMarkdown)));
+          let inline = document.querySelector('.weibei-math-inline[data-value="x^2"]');
+          let block = document.querySelector('.weibei-math-block[data-value="y^2"]');
+          let invalid = Array.from(document.querySelectorAll('.weibei-math-inline')).find((node) => node.dataset.value === \(json(invalidFormula)));
+          if (!inline?.querySelector('.weibei-math-preview > .katex') || !block?.querySelector('.weibei-math-preview > .katex-display')) fail('valid inline or block formula preview missing');
+          if (![inline, block, invalid].every((node) => node && visible(node) && sourceHidden(node))) fail('formula source was visible by default or its container was hidden');
+          if (!invalid?.classList.contains('weibei-math-invalid') || invalid.querySelector('.katex-error') || invalid.querySelector('.weibei-math-preview')?.textContent !== \(json(invalidFormula))) fail('invalid formula did not preserve its original source without katex-error');
+
+          inline.querySelector('.weibei-math-preview').click();
+          let input = inline.querySelector('.weibei-math-source');
+          if (!inline.classList.contains('weibei-math-editing') || document.activeElement !== input || getComputedStyle(input).display === 'none') fail('click did not open inline formula editing');
+          input.value = 'x^3'; input.dispatchEvent(new Event('input', { bubbles: true })); key(input, 'Enter');
+          if (!editor.getMarkdown().includes('$x^3$') || inline.classList.contains('weibei-math-editing')) fail('inline Enter did not save the formula');
+
+          key(invalid, 'Enter');
+          input = invalid.querySelector('.weibei-math-source');
+          if (document.activeElement !== input) fail('Enter did not open formula editing');
+          input.value = \(json(fixedFormula)); input.dispatchEvent(new Event('input', { bubbles: true })); key(input, 'Enter');
+          if (invalid.classList.contains('weibei-math-invalid') || !invalid.querySelector('.weibei-math-preview > .katex') || !editor.getMarkdown().includes(\(json(fixedFormula)))) fail('correcting an invalid formula did not restore its preview');
+
+          key(block, 'Enter');
+          input = block.querySelector('.weibei-math-source');
+          input.value = 'y^3'; input.dispatchEvent(new Event('input', { bubbles: true })); key(input, 'Enter', { metaKey: true });
+          if (!editor.getMarkdown().includes('y^3') || block.classList.contains('weibei-math-editing')) fail('block Command-Enter did not save the formula');
+          block.querySelector('.weibei-math-preview').click(); input = block.querySelector('.weibei-math-source'); input.value = 'y^4'; input.dispatchEvent(new Event('input', { bubbles: true })); input.blur();
+          if (!editor.getMarkdown().includes('y^4')) fail('block blur did not save the formula');
+          inline.querySelector('.weibei-math-preview').click(); input = inline.querySelector('.weibei-math-source'); input.value = 'x^4'; input.dispatchEvent(new Event('input', { bubbles: true })); key(input, 'Escape');
+          if (!editor.getMarkdown().includes('$x^4$')) fail('Escape did not save the formula');
+
+          editor.setDocumentID('math-render-scope');
+          editor.setMarkdown('first $a^2$ and second $b^2$');
+          const formulas = Array.from(document.querySelectorAll('.weibei-math-inline'));
+          const untouchedPreview = formulas[1]?.querySelector('.weibei-math-preview');
+          const untouchedHTML = untouchedPreview?.innerHTML;
+          editor.resetCheckMetrics();
+          formulas[0]?.querySelector('.weibei-math-preview')?.click(); input = formulas[0]?.querySelector('.weibei-math-source'); input.value = 'a^3'; input.dispatchEvent(new Event('input', { bubbles: true })); key(input, 'Enter');
+          const editedMetrics = editor.getCheckMetrics();
+          if (editedMetrics.katexRenders < 1 || formulas[1]?.querySelector('.weibei-math-preview') !== untouchedPreview || untouchedPreview?.innerHTML !== untouchedHTML) fail('editing one formula rerendered an untouched formula');
+          editor.setMarkdown('ordinary paragraph without formulas'); editor.resetCheckMetrics(); editor.typeTextForCheck(' plus text');
+          if (editor.getCheckMetrics().katexRenders !== 0) fail('ordinary paragraph editing rendered KaTeX');
+
+          editor.setDocumentID('math-money-boundaries'); editor.setMarkdown(\(json(moneyMarkdown)));
+          const moneyNodes = Array.from(document.querySelectorAll('.weibei-math-node'));
+          if (moneyNodes.length !== 1 || moneyNodes[0].dataset.value !== 'x^2') fail('currency or escaped dollars became formula nodes');
+
+          editor.setDocumentID('math-typed'); editor.setMarkdown(''); editor.insertMarkdown(\(json("\n\n{{WEIBEI_CURSOR}}")));
+          if (!editor.typeTextForCheck('$A^*$') || !editor.getMarkdown().includes('$A^*$') || !document.querySelector('.weibei-math-inline[data-value="A^*"]')) fail('typed inline formula did not become a formula node');
+
+          editor.setDocumentID('math-slash-inline'); editor.setMarkdown('/'); editor.openSlashMenuForCheck(); editor.executeSlashCommandForCheck('inlineMath');
+          if (!document.querySelector('.weibei-math-inline[data-value="x"]') || !editor.getMarkdown().includes('$x$')) fail('Slash inline formula command did not insert a formula');
+          editor.setDocumentID('math-slash-block'); editor.setMarkdown('/'); editor.openSlashMenuForCheck(); editor.executeSlashCommandForCheck('blockMath');
+          if (!document.querySelector('.weibei-math-block[data-value="x"]') || !editor.getMarkdown().includes('$$')) fail('Slash block formula command did not insert a formula');
+          return true;
+        })();
+        """
+        webView.evaluateJavaScript(script) { [weak self] value, error in
+            guard let self else { return }
+            guard error == nil, value as? Bool == true else {
+                self.fail("formula NodeView interaction check failed: \(String(describing: error)); \(String(describing: value))")
                 return
             }
-            if !markdown.contains("$A^*$") {
-                self.fail("typed inline formula did not serialize as Markdown math: \(markdown)")
+            self.validateWorkPackageEStructures()
+        }
+    }
+
+    private func validateWorkPackageEStructures() {
+        let ordinaryMarkdown = "ordinary alpha\n\nordinary beta"
+        let imageMarkdown = "![failed alt](missing.png)\n\n![success alt](data:image/svg+xml;base64,PHN2Zy8+)"
+        let mermaidMarkdown = "```mermaid\ngraph TD\nA --> B\n```\n\nafter"
+        let script = """
+        (() => {
+          const editor = window.WeiBeiEditor;
+          editor.setDocumentID('work-package-e-metrics');
+          editor.setMarkdown(\(json(ordinaryMarkdown)));
+          editor.resetCheckMetrics();
+          for (let index = 0; index < 10; index += 1) {
+            if (!editor.selectFirstTextForCheck('ordinary') || !editor.selectDocumentEndForCheck()) throw new Error('selection helpers unavailable');
+          }
+          const selectionMetrics = editor.getCheckMetrics();
+          editor.resetCheckMetrics();
+          if (!editor.typeTextForCheck('x')) throw new Error('ordinary input helper unavailable');
+          const inputMetrics = editor.getCheckMetrics();
+
+          editor.setDocumentID('work-package-e-images');
+          editor.setMarkdown(\(json(imageMarkdown)));
+          const failed = document.querySelector('img[alt="failed alt"]');
+          const success = document.querySelector('img[alt="success alt"]');
+          if (!failed || !success) throw new Error('image NodeViews missing');
+          const failedIdentity = { node: failed, src: failed.getAttribute('src'), alt: failed.alt };
+          const successIdentity = { node: success, src: success.getAttribute('src'), alt: success.alt };
+          failed.dispatchEvent(new Event('error'));
+          success.dispatchEvent(new Event('load'));
+          const select = (node) => {
+            const rect = node.getBoundingClientRect();
+            const options = { bubbles: true, cancelable: true, button: 0, clientX: rect.left + Math.max(1, rect.width / 2), clientY: rect.top + Math.max(1, rect.height / 2) };
+            node.dispatchEvent(new MouseEvent('mousedown', options));
+            node.dispatchEvent(new MouseEvent('mouseup', options));
+            node.dispatchEvent(new MouseEvent('click', options));
+            return node.classList.contains('ProseMirror-selectednode');
+          };
+          const failedSelectable = select(failed);
+          const successSelectable = select(success);
+          const imagesStable = failed === failedIdentity.node && success === successIdentity.node
+            && failed.getAttribute('src') === failedIdentity.src && success.getAttribute('src') === successIdentity.src
+            && failed.alt === failedIdentity.alt && success.alt === successIdentity.alt;
+
+          editor.setDocumentID('work-package-e-mermaid');
+          editor.setMarkdown(\(json(mermaidMarkdown)));
+          if (!editor.selectFirstCodeBlockEndForCheck()) throw new Error('Mermaid selection helper unavailable');
+          window.WeiBeiMermaidPreviewForE = document.querySelector('.weibei-mermaid-render');
+          window.WeiBeiMermaidHTMLForE = window.WeiBeiMermaidPreviewForE?.innerHTML || '';
+          editor.resetCheckMetrics();
+          if (!editor.typeTextForCheck('x')) throw new Error('Mermaid typing helper unavailable');
+          window.WeiBeiMermaidBeforeForE = new Promise((resolve) => window.setTimeout(() => resolve({
+            sameDOM: document.querySelector('.weibei-mermaid-render') === window.WeiBeiMermaidPreviewForE,
+            sameHTML: window.WeiBeiMermaidPreviewForE?.innerHTML === window.WeiBeiMermaidHTMLForE,
+            renders: window.WeiBeiEditor.getCheckMetrics().mermaidRenders
+          }), 150));
+          return {
+            selectionDecorationNodes: selectionMetrics.decorationNodes,
+            inputImageScans: inputMetrics.imageScans,
+            inputCodeTokenizations: inputMetrics.codeTokenizations,
+            inputKatexRenders: inputMetrics.katexRenders,
+            inputMermaidRenders: inputMetrics.mermaidRenders,
+            imagesStable,
+            failedSelectable,
+            successSelectable,
+            mermaidPreviewExists: Boolean(window.WeiBeiMermaidPreviewForE),
+            mermaidDOMReused: document.querySelector('.weibei-mermaid-render') === window.WeiBeiMermaidPreviewForE
+          };
+        })();
+        """
+        webView.evaluateJavaScript(script) { [weak self] value, error in
+            guard let self else { return }
+            guard error == nil,
+                  let result = value as? [String: Any],
+                  result["selectionDecorationNodes"] as? Int == 0,
+                  result["inputImageScans"] as? Int == 0,
+                  result["inputCodeTokenizations"] as? Int == 0,
+                  result["inputKatexRenders"] as? Int == 0,
+                  result["inputMermaidRenders"] as? Int == 0,
+                  result["imagesStable"] as? Bool == true,
+                  result["failedSelectable"] as? Bool == true,
+                  result["successSelectable"] as? Bool == true,
+                  result["mermaidPreviewExists"] as? Bool == true,
+                  result["mermaidDOMReused"] as? Bool == true else {
+                self.fail("work package E structural metrics or image identity failed: \(String(describing: error)); \(String(describing: value))")
                 return
             }
-            if (result["mathNodes"] as? Int ?? 0) < 1 {
-                self.fail("typed inline formula did not become a math node")
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                self.validateMermaidDebounceBeforeDeadline()
+            }
+        }
+    }
+
+    private func validateMermaidDebounceBeforeDeadline() {
+        webView.callAsyncJavaScript(
+            "return await window.WeiBeiMermaidBeforeForE;",
+            arguments: [:],
+            in: nil,
+            in: .page
+        ) { [weak self] result in
+            guard let self else { return }
+            guard case let .success(value) = result,
+                  let snapshot = value as? [String: Any],
+                  snapshot["sameDOM"] as? Bool == true,
+                  snapshot["sameHTML"] as? Bool == true,
+                  snapshot["renders"] as? Int == 0 else {
+                self.fail("focused Mermaid preview updated before its 300ms debounce: \(String(describing: result))")
                 return
             }
-            if result["typedMathNode"] as? Bool != true {
-                self.fail("typed inline formula did not create a math node for A^*")
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                self.validateMermaidDebounceAfterDeadline()
+            }
+        }
+    }
+
+    private func validateMermaidDebounceAfterDeadline() {
+        webView.evaluateJavaScript("""
+        ({
+          sameDOM: document.querySelector('.weibei-mermaid-render') === window.WeiBeiMermaidPreviewForE,
+          changedHTML: window.WeiBeiMermaidPreviewForE?.innerHTML !== window.WeiBeiMermaidHTMLForE,
+          renders: window.WeiBeiEditor.getCheckMetrics().mermaidRenders
+        })
+        """) { [weak self] value, error in
+            guard let self else { return }
+            guard error == nil,
+                  let result = value as? [String: Any],
+                  result["sameDOM"] as? Bool == true,
+                  result["changedHTML"] as? Bool == true,
+                  (result["renders"] as? Int ?? 0) >= 1 else {
+                self.fail("focused Mermaid preview did not update in place after its 300ms debounce: \(String(describing: value))")
                 return
             }
-            if result["typedMathColor"] as? String != "rgba(0, 0, 0, 0)"
-                || result["typedMathFontSize"] as? String != "0px" {
-                self.fail("typed inline formula source container should be invisible and collapsed")
+            self.validateOutlineInitialEvent()
+        }
+    }
+
+    private func validateOutlineInitialEvent() {
+        let documentID = "work-package-e-outline"
+        outlineEvents.removeAll { $0.documentID == documentID }
+        webView.evaluateJavaScript("""
+        window.WeiBeiEditor.setDocumentID(\(json(documentID)));
+        window.WeiBeiEditor.setMarkdown('# Alpha\\n\\nbody');
+        """) { [weak self] _, error in
+            guard let self else { return }
+            guard error == nil else {
+                self.fail("outline initial document failed: \(String(describing: error))")
                 return
             }
-            if result["typedKatexFontSize"] as? String == "0px" {
-                self.fail("typed inline formula rendered KaTeX should stay readable")
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                let events = self.outlineEvents.filter { $0.documentID == documentID }
+                guard events.count == 1,
+                      let item = events[0].items.first,
+                      events[0].items.count == 1,
+                      item["title"] as? String == "Alpha",
+                      item["level"] as? Int == 1,
+                      item["index"] as? Int == 0 else {
+                    self.fail("outline initial event was not emitted exactly once with the right payload: \(events)")
+                    return
+                }
+                self.validateOutlineBodyChange(documentID: documentID)
+            }
+        }
+    }
+
+    private func validateOutlineBodyChange(documentID: String) {
+        outlineEvents.removeAll { $0.documentID == documentID }
+        webView.evaluateJavaScript("""
+        if (!window.WeiBeiEditor.selectFirstTextForCheck('body') || !window.WeiBeiEditor.typeTextForCheck('!')) {
+          throw new Error('outline body edit helper unavailable');
+        }
+        """) { [weak self] _, error in
+            guard let self else { return }
+            guard error == nil else {
+                self.fail("outline ordinary body change failed: \(String(describing: error))")
                 return
             }
-            if (result["rawFormulaText"] as? Int ?? 0) > 0 {
-                self.fail("typed inline formula left a raw source text block beside KaTeX")
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                let events = self.outlineEvents.filter { $0.documentID == documentID }
+                guard events.isEmpty else {
+                    self.fail("ordinary body change emitted outlineChanged: \(events)")
+                    return
+                }
+                self.validateOutlineTitleChange(documentID: documentID)
+            }
+        }
+    }
+
+    private func validateOutlineTitleChange(documentID: String) {
+        outlineEvents.removeAll { $0.documentID == documentID }
+        webView.evaluateJavaScript("""
+        if (!window.WeiBeiEditor.selectFirstTextForCheck('Alpha')) throw new Error('missing outline heading');
+        window.WeiBeiEditor.replaceSelection('Beta');
+        """) { [weak self] _, error in
+            guard let self else { return }
+            guard error == nil else {
+                self.fail("outline title change failed: \(String(describing: error))")
                 return
             }
-            if result["mathBackground"] as? String != "rgba(0, 0, 0, 0)" {
-                self.fail("typed inline formula should not look like a filled source chip")
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                let events = self.outlineEvents.filter { $0.documentID == documentID }
+                guard events.count == 1,
+                      events[0].items.count == 1,
+                      events[0].items[0]["title"] as? String == "Beta",
+                      events[0].items[0]["level"] as? Int == 1 else {
+                    self.fail("heading text change did not emit one accurate outline payload: \(events)")
+                    return
+                }
+                self.validateOutlineLevelChange(documentID: documentID)
+            }
+        }
+    }
+
+    private func validateOutlineLevelChange(documentID: String) {
+        outlineEvents.removeAll { $0.documentID == documentID }
+        webView.evaluateJavaScript("window.WeiBeiEditor.setMarkdown('## Beta\\n\\nbody!')") { [weak self] _, error in
+            guard let self else { return }
+            guard error == nil else {
+                self.fail("outline level change failed: \(String(describing: error))")
                 return
             }
-            self.validateTypedHtmlBreak()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                let events = self.outlineEvents.filter { $0.documentID == documentID }
+                guard events.count == 1,
+                      events[0].items.count == 1,
+                      events[0].items[0]["title"] as? String == "Beta",
+                      events[0].items[0]["level"] as? Int == 2 else {
+                    self.fail("heading level change did not emit one accurate outline payload: \(events)")
+                    return
+                }
+                self.validateTypedHtmlBreak()
+            }
         }
     }
 
@@ -1656,9 +1898,14 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
           if (!open('/')) throw new Error('slash menu did not open');
           if (!open('\\u200B/')) throw new Error('slash menu did not open from a blank-line placeholder');
           let state = window.WeiBeiEditor.slashStateForCheck();
-          if (state.commands.length !== 13 || state.groups.join('|') !== '结构|列表|内容|丰富内容') throw new Error('slash commands or groups invalid: ' + JSON.stringify(state));
-          for (const [query, expected] of [['/h2', '二级标题'], ['/dmk', '代码块'], ['/yxlb', '有序列表'], ['/代码块', '代码块']]) { open(query); state = window.WeiBeiEditor.slashStateForCheck(); if (state.commands.length !== 1 || state.commands[0] !== expected) throw new Error('alias failed: ' + query + JSON.stringify(state)); }
+          if (state.commands.length !== 24 || state.groups.join('|') !== '结构|列表|内容|丰富内容|字体') throw new Error('slash commands or groups invalid: ' + JSON.stringify(state));
+          for (const [query, expected] of [['/h2', '二级标题'], ['/liujibiaoti', '六级标题'], ['/dmk', '代码块'], ['/yxlb', '有序列表'], ['/bijilianjie', '笔记链接'], ['/jiaozhu', '脚注'], ['/代码块', '代码块'], ['/songti', '字体：Songti SC']]) { open(query); state = window.WeiBeiEditor.slashStateForCheck(); if (state.commands.length !== 1 || state.commands[0] !== expected) throw new Error('alias failed: ' + query + JSON.stringify(state)); }
           for (const query of ['/code block', '/ordered list']) { if (open(query)) throw new Error('space alias matched: ' + query); }
+          if (!open('前文/h2')) throw new Error('slash menu did not open after existing text');
+          window.WeiBeiEditor.executeSlashCommandForCheck('heading2'); window.WeiBeiEditor.typeTextForCheck('标题');
+          if (window.WeiBeiEditor.getMarkdown() !== '前文\\n\\n## 标题\\n') throw new Error('slash block command changed surrounding text: ' + JSON.stringify(window.WeiBeiEditor.getMarkdown()));
+          open('前文/'); window.WeiBeiEditor.executeSlashCommandForCheck('inlineMath');
+          if (window.WeiBeiEditor.getMarkdown() !== '前文$x$\\n') throw new Error('slash inline command changed surrounding text: ' + JSON.stringify(window.WeiBeiEditor.getMarkdown()));
           open('/'); window.WeiBeiEditor.pressKeyForCheck('ArrowDown'); state = window.WeiBeiEditor.slashStateForCheck(); if (state.activeDescendant !== 'weibei-slash-command-heading2' || !state.announcement.includes('二级标题')) throw new Error('accessibility did not update: ' + JSON.stringify(state));
           const menu = document.querySelector('.weibei-slash-menu'); menu.style.maxHeight = '90px'; menu.style.scrollBehavior = 'auto'; open('/'); for (let index = 0; index < 12; index += 1) window.WeiBeiEditor.pressKeyForCheck('ArrowDown'); if (menu.scrollTop <= 0) throw new Error('arrow navigation did not scroll the slash menu'); menu.style.maxHeight = '';
           window.WeiBeiEditor.pressKeyForCheck('Escape'); if (!window.WeiBeiEditor.getMarkdown().includes('/')) throw new Error('escape removed slash text');
@@ -1695,26 +1942,28 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
 
     /// Verifies that transient IME snapshots never round-trip through SwiftUI.
     private func validateIMECompositionBridge() {
-        let initialChangeCount = markdownChanges.count
+        let initialSnapshotCount = snapshotCount
         let script = """
         (() => {
           window.WeiBeiEditor.setDocumentID('ime-composition'); window.WeiBeiEditor.setMarkdown('/h1'); window.WeiBeiEditor.openSlashMenuForCheck(); window.WeiBeiEditor.executeSlashCommandForCheck('heading1');
           const root = document.querySelector('.ProseMirror'); root.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true })); window.WeiBeiEditor.typeTextForCheck('中文标题');
-          return { markdown: window.WeiBeiEditor.getMarkdown(), childCount: root.children.length };
+          return { childCount: root.children.length };
         })();
         """
         webView.evaluateJavaScript(script) { [weak self] value, error in
             guard let self else { return }
             guard error == nil else { self.fail("IME composition setup failed: \(error!.localizedDescription)"); return }
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
-                guard self.markdownChanges.count == initialChangeCount + 1 else {
-                    self.fail("IME transient markdown escaped to Swift: \(self.markdownChanges.count - initialChangeCount) updates; \(String(describing: value))")
+                guard self.snapshotCount == initialSnapshotCount,
+                      self.currentDocumentID == "ime-composition",
+                      self.isDirty else {
+                    self.fail("IME transient content crossed the snapshot bridge: \(String(describing: value))")
                     return
                 }
                 self.webView.evaluateJavaScript("window.WeiBeiEditor.compositionStateForCheck()") { stateValue, stateError in
                     guard stateError == nil,
                           let state = stateValue as? [String: Any],
-                          state["start"] as? String == "#\n",
+                          state["start"] as? String != nil,
                           state["composing"] as? Bool == true else {
                         self.fail("IME composition state was not retained: \(String(describing: stateError)); \(String(describing: stateValue))")
                         return
@@ -1722,18 +1971,22 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
                     self.webView.evaluateJavaScript("const heading = document.querySelector('.ProseMirror h1'); for (let index = 0; index < 3; index += 1) heading.appendChild(document.createElement('br')); document.querySelector('.ProseMirror').dispatchEvent(new CompositionEvent('compositionend', { bubbles: true, data: '中文标题' }));") { _, compositionError in
                         guard compositionError == nil else { self.fail("IME composition end failed: \(compositionError!.localizedDescription)"); return }
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
-                        self.webView.evaluateJavaScript("({ markdown: window.WeiBeiEditor.getMarkdown(), childCount: document.querySelector('.ProseMirror').children.length, breakCount: document.querySelectorAll('.ProseMirror h1 br').length, composition: window.WeiBeiEditor.compositionStateForCheck() })") { finalValue, finalError in
+                        self.webView.evaluateJavaScript("({ childCount: document.querySelector('.ProseMirror').children.length, breakCount: document.querySelectorAll('.ProseMirror h1 br').length, composition: window.WeiBeiEditor.compositionStateForCheck() })") { finalValue, finalError in
                             guard finalError == nil,
                                   let result = finalValue as? [String: Any],
-                                  result["markdown"] as? String == "# 中文标题\n",
                                   result["childCount"] as? Int == 1,
-                                  result["breakCount"] as? Int == 0,
-                                  self.markdownChanges.count == initialChangeCount + 2,
-                                  self.markdownChanges.last?.markdown == "# 中文标题\n" else {
-                                self.fail("IME final markdown was not published exactly once: \(String(describing: finalError)); \(String(describing: finalValue)); changes=\(self.markdownChanges.count - initialChangeCount)")
+                                  result["breakCount"] as? Int == 0 else {
+                                self.fail("IME final DOM was not normalized: \(String(describing: finalError)); \(String(describing: finalValue))")
                                 return
                             }
-                            self.validateIMEQuoteComposition()
+                            self.requestSnapshot { snapshot in
+                                guard snapshot.documentID == "ime-composition",
+                                      snapshot.markdown == "# 中文标题\n" else {
+                                    self.fail("IME final snapshot was incorrect: \(snapshot.markdown.debugDescription)")
+                                    return
+                                }
+                                self.validateIMEQuoteComposition()
+                            }
                         }
                     }
                     }
@@ -1744,37 +1997,43 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
 
     /// Verifies that IME submission removes WebKit line-break artifacts inside a new quote.
     private func validateIMEQuoteComposition() {
-        let initialChangeCount = markdownChanges.count
+        let initialSnapshotCount = snapshotCount
         let setupScript = """
         (() => {
           window.WeiBeiEditor.setDocumentID('ime-quote'); window.WeiBeiEditor.setMarkdown('/quote'); window.WeiBeiEditor.openSlashMenuForCheck(); window.WeiBeiEditor.executeSlashCommandForCheck('quote');
           const root = document.querySelector('.ProseMirror'); window.WeiBeiIMEQuoteInitialHeight = document.querySelector('.ProseMirror blockquote').getBoundingClientRect().height; root.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true })); window.WeiBeiEditor.typeTextForCheck('引用内容');
-          return window.WeiBeiEditor.getMarkdown();
+          return document.querySelector('.ProseMirror blockquote')?.textContent || '';
         })();
         """
         webView.evaluateJavaScript(setupScript) { [weak self] value, error in
             guard let self else { return }
             guard error == nil else { self.fail("IME quote setup failed: \(error!.localizedDescription)"); return }
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
-                guard self.markdownChanges.count == initialChangeCount + 1 else {
-                    self.fail("IME quote transient markdown escaped to Swift: \(self.markdownChanges.count - initialChangeCount) updates; \(String(describing: value))")
+                guard self.snapshotCount == initialSnapshotCount,
+                      self.currentDocumentID == "ime-quote",
+                      self.isDirty else {
+                    self.fail("IME quote transient content crossed the snapshot bridge: \(String(describing: value))")
                     return
                 }
                 let completeScript = "const quote = document.querySelector('.ProseMirror blockquote'); const paragraph = quote.querySelector('p'); const marker = paragraph.querySelector('.ProseMirror-safari-ime-span'); if (!marker) throw new Error('missing Safari IME composition marker'); const beforeBreakHeight = quote.getBoundingClientRect().height; for (let index = 0; index < 3; index += 1) paragraph.appendChild(document.createElement('br')); const composingHeight = quote.getBoundingClientRect().height; if (composingHeight > window.WeiBeiIMEQuoteInitialHeight + 1) throw new Error('IME line breaks changed quote height: ' + window.WeiBeiIMEQuoteInitialHeight + ' -> ' + beforeBreakHeight + ' -> ' + composingHeight + '; html=' + paragraph.innerHTML + '; displays=' + Array.from(paragraph.querySelectorAll('br')).map((node) => getComputedStyle(node).display).join(',')); document.querySelector('.ProseMirror').dispatchEvent(new CompositionEvent('compositionend', { bubbles: true, data: '引用内容' }));"
                 self.webView.evaluateJavaScript(completeScript) { _, completionError in
                     guard completionError == nil else { self.fail("IME quote completion failed: \(String(describing: completionError))"); return }
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
-                        self.webView.evaluateJavaScript("({ markdown: window.WeiBeiEditor.getMarkdown(), breakCount: document.querySelectorAll('.ProseMirror blockquote p br').length })") { finalValue, finalError in
+                        self.webView.evaluateJavaScript("({ breakCount: document.querySelectorAll('.ProseMirror blockquote p br').length })") { finalValue, finalError in
                             guard finalError == nil,
                                   let result = finalValue as? [String: Any],
-                                  result["markdown"] as? String == "> 引用内容\n",
-                                  result["breakCount"] as? Int == 0,
-                                  self.markdownChanges.count == initialChangeCount + 2,
-                                  self.markdownChanges.last?.markdown == "> 引用内容\n" else {
-                                self.fail("IME quote line breaks were not normalized: \(String(describing: finalError)); \(String(describing: finalValue)); changes=\(self.markdownChanges.count - initialChangeCount)")
+                                  result["breakCount"] as? Int == 0 else {
+                                self.fail("IME quote line breaks were not normalized: \(String(describing: finalError)); \(String(describing: finalValue))")
                                 return
                             }
-                            self.validateSlashImageLifecycle()
+                            self.requestSnapshot { snapshot in
+                                guard snapshot.documentID == "ime-quote",
+                                      snapshot.markdown == "> 引用内容\n" else {
+                                    self.fail("IME quote final snapshot was incorrect: \(snapshot.markdown.debugDescription)")
+                                    return
+                                }
+                                self.validateSlashImageLifecycle()
+                            }
                         }
                     }
                 }
@@ -1797,29 +2056,28 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
         webView.evaluateJavaScript(script) { [weak self] value, error in
             guard let self else { return }
             guard error == nil, value as? Bool == true, self.imagePickerRequests >= 2 else { self.fail("slash image lifecycle failed: \(String(describing: error)); requests=\(self.imagePickerRequests)"); return }
-            self.validateSlashImageInlineRejection()
+            self.validateSlashAfterInlineImage()
         }
     }
 
-    /// Verifies that an inline image followed by "/" does NOT trigger a Slash menu,
-    /// and that attempting to execute a command leaves the Markdown and image intact.
-    private func validateSlashImageInlineRejection() {
+    /// Verifies that an inline image does not block Slash insertion or get replaced by it.
+    private func validateSlashAfterInlineImage() {
         let script = """
         (() => {
           window.WeiBeiEditor.setDocumentID('slash-image-inline');
           window.WeiBeiEditor.setMarkdown('![icon](assets/weibei.svg) /');
-          if (window.WeiBeiEditor.openSlashMenuForCheck()) throw new Error('slash menu opened after an inline image + /');
+          if (!window.WeiBeiEditor.openSlashMenuForCheck()) throw new Error('slash menu did not open after an inline image + /');
           const before = window.WeiBeiEditor.getMarkdown();
           if (!before.includes('![icon](assets/weibei.svg)')) throw new Error('image reference missing before command attempt: ' + before);
           window.WeiBeiEditor.executeSlashCommandForCheck('quote');
           const after = window.WeiBeiEditor.getMarkdown();
-          if (after !== before) throw new Error('command replaced the paragraph and lost the image: ' + JSON.stringify({ before, after }));
+          if (!after.includes('![icon](assets/weibei.svg)') || !after.includes('>')) throw new Error('command insertion lost the image: ' + JSON.stringify({ before, after }));
           return true;
         })();
         """
         webView.evaluateJavaScript(script) { [weak self] value, error in
             guard let self else { return }
-            guard error == nil, value as? Bool == true else { self.fail("inline image slash rejection failed: \(String(describing: error)); \(String(describing: value))"); return }
+            guard error == nil, value as? Bool == true else { self.fail("slash after inline image failed: \(String(describing: error)); \(String(describing: value))"); return }
             self.validateSlashCodeBlockTypingStability()
         }
     }
@@ -1934,21 +2192,38 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
     private func validateExternalMarkdownAcknowledgement() {
         let documentID = "note-switch-target"
         let markdown = "# 切换后的笔记\n\n"
-        markdownChanges.removeAll()
-        webView.evaluateJavaScript("""
-        window.WeiBeiEditor.setDocumentID(\(json(documentID)));
-        window.WeiBeiEditor.setMarkdown(\(json(markdown)));
-        """) { [weak self] _, error in
+        let generation = currentDocumentGeneration + 1
+        let command: [String: Any] = [
+            "protocolVersion": 2,
+            "commandID": "web-editor-check-load",
+            "documentID": documentID,
+            "documentGeneration": generation,
+            "type": "loadDocument",
+            "payload": ["markdown": markdown],
+        ]
+        guard let data = try? JSONSerialization.data(withJSONObject: command),
+              let encoded = String(data: data, encoding: .utf8) else {
+            fail("could not encode V2 loadDocument command")
+            return
+        }
+        webView.evaluateJavaScript("window.WeiBeiEditor.dispatchCommand(\(encoded))") { [weak self] value, error in
             guard let self else { return }
-            if let error {
-                self.fail("external Markdown acknowledgement setup threw \(error.localizedDescription)")
+            guard error == nil, value as? Bool == true else {
+                self.fail("V2 loadDocument was rejected: \(String(describing: error))")
                 return
             }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                guard self.markdownChanges.contains(where: {
-                    $0.documentID == documentID && $0.markdown == markdown
-                }) else {
-                    self.fail("setMarkdown did not acknowledge the switched document before user editing")
+            guard self.currentDocumentID == documentID,
+                  self.currentDocumentGeneration == generation,
+                  !self.isDirty else {
+                self.fail("loadDocument did not publish a clean V2 session")
+                return
+            }
+            self.requestSnapshot { snapshot in
+                guard snapshot.documentID == documentID,
+                      snapshot.documentGeneration == generation,
+                      snapshot.markdown.trimmingCharacters(in: .newlines)
+                        == markdown.trimmingCharacters(in: .newlines) else {
+                    self.fail("loadDocument snapshot did not match the switched document: \(snapshot.markdown.debugDescription)")
                     return
                 }
                 self.isDone = true
@@ -2191,7 +2466,7 @@ private final class FinalizedAgentMarkdownHarness: NSObject, WKScriptMessageHand
             }
             handleMeasurement(height: height, width: Double(webView.frame.width))
         case "editorFailure":
-            fail("finalized agent Markdown renderer failed")
+            fail("finalized agent Markdown renderer failed: \(message.body)")
         default:
             break
         }
@@ -2720,7 +2995,389 @@ final class UTF8HTMLReaderHarness: NSObject, WKNavigationDelegate {
     }
 }
 
+private struct BenchmarkMetrics: Codable {
+    let transactions: Int
+    let fullSerializations: Int
+    let bridgeMessages: Int
+    let bridgeBytes: Int
+    let decorationNodes: Int
+    let decorationCacheHits: Int
+    let katexRenders: Int
+    let mermaidRenders: Int
+    let imageScans: Int
+    let imageNodeUpdates: Int
+    let codeTokenizations: Int
+    let outlineReports: Int
+    let fullBridgeMessages: Int
+}
+
+private struct BenchmarkActionState: Codable {
+    let readyMetrics: BenchmarkMetrics
+    let inputMetrics: BenchmarkMetrics
+    let documentGeneration: Int
+    let revision: Int
+    let loadedRuntimes: [String]
+}
+
+private struct BenchmarkSnapshotTimings: Codable {
+    let samplesMilliseconds: [Double]
+    let minimumMilliseconds: Double
+    let medianMilliseconds: Double
+    let p95Milliseconds: Double
+    let maximumMilliseconds: Double
+
+    init(samples: [Double]) {
+        let sorted = samples.sorted()
+        samplesMilliseconds = samples
+        minimumMilliseconds = sorted.first ?? 0
+        medianMilliseconds = sorted[sorted.count / 2]
+        p95Milliseconds = sorted[min(sorted.count - 1, Int(ceil(Double(sorted.count) * 0.95)) - 1)]
+        maximumMilliseconds = sorted.last ?? 0
+    }
+}
+
+private struct BenchmarkFixtureResult: Codable {
+    let fixture: String
+    let bytes: Int
+    let characters: Int
+    let readyMilliseconds: Double
+    let snapshotBytes: Int
+    let snapshotCharacters: Int
+    let snapshotTimings: BenchmarkSnapshotTimings
+    let readyMetrics: BenchmarkMetrics
+    let metrics: BenchmarkMetrics
+}
+
+private struct BenchmarkReport: Codable {
+    let inputCharacters: Int
+    let selectionChanges: Int
+    let snapshots: Int
+    let fixtures: [BenchmarkFixtureResult]
+}
+
+private enum BenchmarkError: LocalizedError {
+    case failed(String)
+
+    var errorDescription: String? {
+        switch self {
+        case let .failed(message): message
+        }
+    }
+}
+
+private final class EditorBenchmarkHarness: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
+    static let input = String(repeating: "基", count: 100)
+    static let snapshotCount = 7
+
+    private let fixture: String
+    private let markdown: String
+    private let webView: WKWebView
+    private var loadStarted = 0.0
+    private var readyMilliseconds = 0.0
+    private var readyMetrics: BenchmarkMetrics?
+    private var inputRevision = 0
+    private var documentGeneration = 0
+    private var snapshotSamples: [Double] = []
+    private var snapshotMarkdown: String?
+    private var pendingSnapshotRequestID: String?
+    private var pendingSnapshotStarted = 0.0
+    private var result: Result<BenchmarkFixtureResult, Error>?
+
+    init(fixture: String, markdown: String) {
+        self.fixture = fixture
+        self.markdown = markdown
+        let configuration = WKWebViewConfiguration()
+        let controller = WKUserContentController()
+        controller.addUserScript(WKUserScript(source: """
+        document.documentElement.setAttribute("writingsuggestions", "false");
+        window.initialMarkdown = \(json(markdown));
+        window.weiBeiDocumentID = \(json(fixture));
+        window.weiBeiMarkdownEditable = true;
+        window.weiBeiEditorCheckMode = true;
+        window.weiBeiLocalImageScheme = "weibeiimage";
+        window.weiBeiMarkdownBaseURL = \(json(URL(fileURLWithPath: FileManager.default.currentDirectoryPath).appendingPathComponent("Sources/WeiBei/Resources/Editor/").absoluteString));
+        """, injectionTime: .atDocumentStart, forMainFrameOnly: true))
+        configuration.userContentController = controller
+        webView = WKWebView(frame: CGRect(x: 0, y: 0, width: 960, height: 720), configuration: configuration)
+        super.init()
+        for name in [
+            "editorReady", "dirtyChanged", "snapshotReady", "selectionChanged", "askAgentWithSelection",
+            "wikiLinkActivated", "sourceReferenceActivated", "editorFailure",
+            "imageAttachmentRequested", "imagePickerRequested", "contentHeightChanged",
+            "activeHeadingChanged", "compactPreviewWheel", "appShortcut", "selectionAskMark"
+        ] {
+            controller.add(self, name: name)
+        }
+        webView.navigationDelegate = self
+    }
+
+    func run() throws -> BenchmarkFixtureResult {
+        defer {
+            webView.stopLoading()
+            webView.navigationDelegate = nil
+            let controller = webView.configuration.userContentController
+            controller.removeScriptMessageHandler(forName: "editorReady")
+            controller.removeScriptMessageHandler(forName: "editorFailure")
+        }
+        let indexURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+            .appendingPathComponent("Sources/WeiBei/Resources/Editor/index.html")
+        loadStarted = ProcessInfo.processInfo.systemUptime
+        webView.loadFileURL(indexURL, allowingReadAccessTo: indexURL.deletingLastPathComponent())
+
+        let timeout = Date().addingTimeInterval(60)
+        while result == nil && Date() < timeout {
+            RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.05))
+        }
+        guard let result else {
+            throw BenchmarkError.failed("\(fixture): editor benchmark timed out")
+        }
+        return try result.get()
+    }
+
+    func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+        switch message.name {
+        case "editorReady":
+            guard (message.body as? [String: Any])?["documentID"] as? String == fixture else {
+                finish(.failure(BenchmarkError.failed("\(fixture): editorReady returned the wrong document")))
+                return
+            }
+            readyMilliseconds = (ProcessInfo.processInfo.systemUptime - loadStarted) * 1_000
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { self.beginActions() }
+        case "editorFailure":
+            finish(.failure(BenchmarkError.failed("\(fixture): editor reported a failure: \(message.body)")))
+        case "dirtyChanged":
+            guard let body = message.body as? [String: Any],
+                  body["protocolVersion"] as? Int == 2,
+                  body["documentID"] as? String == fixture,
+                  body["documentGeneration"] as? Int == documentGeneration || documentGeneration == 0,
+                  body["revision"] as? Int != nil,
+                  body["dirty"] as? Bool != nil else {
+                finish(.failure(BenchmarkError.failed("\(fixture): dirtyChanged did not contain a V2 session")))
+                return
+            }
+        case "snapshotReady":
+            receiveSnapshot(message.body)
+        default:
+            break
+        }
+    }
+
+    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+        finish(.failure(BenchmarkError.failed("\(fixture): navigation failed: \(error.localizedDescription)")))
+    }
+
+    func webView(
+        _ webView: WKWebView,
+        didFailProvisionalNavigation navigation: WKNavigation!,
+        withError error: Error
+    ) {
+        finish(.failure(BenchmarkError.failed("\(fixture): navigation failed: \(error.localizedDescription)")))
+    }
+
+    private func beginActions() {
+        let script = """
+        (() => {
+          const editor = window.WeiBeiEditor;
+          if (typeof editor?.getCheckMetrics !== 'function' || typeof editor?.resetCheckMetrics !== 'function') {
+            throw new Error('editor check metrics API is unavailable');
+          }
+          const readyMetrics = editor.getCheckMetrics();
+          editor.resetCheckMetrics();
+          if (!editor.selectDocumentEndForCheck() || !editor.typeTextForCheck(\(json(Self.input)))) {
+            throw new Error('benchmark input helpers are unavailable');
+          }
+          for (let index = 0; index < 10; index += 1) {
+            if (!editor.selectFirstTextForCheck('基基') || !editor.selectDocumentEndForCheck()) {
+              throw new Error('benchmark selection helpers are unavailable');
+            }
+          }
+          const inputMetrics = editor.getCheckMetrics();
+          const session = editor.getBridgeSessionForCheck();
+          return JSON.stringify({
+            readyMetrics,
+            inputMetrics,
+            documentGeneration: session.documentGeneration,
+            revision: session.revision,
+            loadedRuntimes: Array.from(document.scripts)
+              .map((script) => script.src.split('/').pop())
+              .filter((name) => name?.endsWith('-runtime.js')),
+          });
+        })();
+        """
+        webView.evaluateJavaScript(script) { [weak self] value, error in
+            guard let self else { return }
+            guard error == nil,
+                  let raw = value as? String,
+                  let data = raw.data(using: .utf8),
+                  let state = try? JSONDecoder().decode(BenchmarkActionState.self, from: data) else {
+                self.finish(.failure(BenchmarkError.failed("\(self.fixture): benchmark actions failed: \(String(describing: error))")))
+                return
+            }
+            guard state.inputMetrics.fullSerializations == 0,
+                  state.inputMetrics.fullBridgeMessages == 0 else {
+                self.finish(.failure(BenchmarkError.failed(
+                    "\(self.fixture): ordinary input serialized or bridged full Markdown: serializations=\(state.inputMetrics.fullSerializations), messages=\(state.inputMetrics.fullBridgeMessages)"
+                )))
+                return
+            }
+            let expectedRuntime: String? = [
+                "plain-5k.md": "",
+                "math-dense.md": "katex-runtime.js",
+                "mermaid-dense.md": "mermaid-runtime.js",
+                "code-dense.md": "prism-runtime.js",
+            ][self.fixture]
+            if let expectedRuntime,
+               state.loadedRuntimes != (expectedRuntime.isEmpty ? [] : [expectedRuntime]) {
+                self.finish(.failure(BenchmarkError.failed(
+                    "\(self.fixture): loaded unrelated runtimes: \(state.loadedRuntimes)"
+                )))
+                return
+            }
+            self.readyMetrics = state.readyMetrics
+            self.inputRevision = state.revision
+            self.documentGeneration = state.documentGeneration
+            self.measureSnapshot()
+        }
+    }
+
+    private func measureSnapshot() {
+        let requestID = "benchmark-\(snapshotSamples.count + 1)"
+        pendingSnapshotRequestID = requestID
+        pendingSnapshotStarted = ProcessInfo.processInfo.systemUptime
+        let command: [String: Any] = [
+            "protocolVersion": 2,
+            "commandID": "benchmark-command-\(snapshotSamples.count + 1)",
+            "requestID": requestID,
+            "documentID": fixture,
+            "documentGeneration": documentGeneration,
+            "minimumRevision": inputRevision,
+            "type": "requestSnapshot",
+            "payload": [:],
+        ]
+        guard let data = try? JSONSerialization.data(withJSONObject: command),
+              let encoded = String(data: data, encoding: .utf8) else {
+            finish(.failure(BenchmarkError.failed("\(fixture): could not encode snapshot command")))
+            return
+        }
+        webView.evaluateJavaScript("window.WeiBeiEditor.dispatchCommand(\(encoded))") { [weak self] value, error in
+            guard let self else { return }
+            guard error == nil, value as? Bool == true else {
+                self.finish(.failure(BenchmarkError.failed("\(self.fixture): V2 snapshot command failed: \(String(describing: error))")))
+                return
+            }
+        }
+    }
+
+    private func receiveSnapshot(_ value: Any) {
+        guard let body = value as? [String: Any],
+              body["protocolVersion"] as? Int == 2,
+              body["documentID"] as? String == fixture,
+              body["documentGeneration"] as? Int == documentGeneration,
+              let revision = body["revision"] as? Int,
+              revision >= inputRevision,
+              let requestID = body["requestID"] as? String,
+              requestID == pendingSnapshotRequestID,
+              let markdown = body["markdown"] as? String else {
+            finish(.failure(BenchmarkError.failed("\(fixture): snapshotReady did not match the V2 request")))
+            return
+        }
+        pendingSnapshotRequestID = nil
+        if let previous = snapshotMarkdown, previous != markdown {
+            finish(.failure(BenchmarkError.failed("\(fixture): repeated snapshots were not stable")))
+            return
+        }
+        snapshotMarkdown = markdown
+        snapshotSamples.append((ProcessInfo.processInfo.systemUptime - pendingSnapshotStarted) * 1_000)
+        if snapshotSamples.count < Self.snapshotCount {
+            measureSnapshot()
+        } else {
+            readFinalMetrics()
+        }
+    }
+
+    private func readFinalMetrics() {
+        webView.evaluateJavaScript("JSON.stringify(window.WeiBeiEditor.getCheckMetrics())") { [weak self] value, error in
+            guard let self else { return }
+            guard error == nil,
+                  let raw = value as? String,
+                  let data = raw.data(using: .utf8),
+                  let metrics = try? JSONDecoder().decode(BenchmarkMetrics.self, from: data),
+                  let readyMetrics = self.readyMetrics,
+                  let snapshotMarkdown = self.snapshotMarkdown else {
+                self.finish(.failure(BenchmarkError.failed("\(self.fixture): metrics collection failed: \(String(describing: error))")))
+                return
+            }
+            guard metrics.fullSerializations == Self.snapshotCount,
+                  metrics.fullBridgeMessages == Self.snapshotCount else {
+                self.finish(.failure(BenchmarkError.failed(
+                    "\(self.fixture): explicit snapshot counts were wrong: serializations=\(metrics.fullSerializations), messages=\(metrics.fullBridgeMessages)"
+                )))
+                return
+            }
+            self.finish(.success(BenchmarkFixtureResult(
+                fixture: self.fixture,
+                bytes: self.markdown.utf8.count,
+                characters: self.markdown.count,
+                readyMilliseconds: self.readyMilliseconds,
+                snapshotBytes: snapshotMarkdown.utf8.count,
+                snapshotCharacters: snapshotMarkdown.count,
+                snapshotTimings: BenchmarkSnapshotTimings(samples: self.snapshotSamples),
+                readyMetrics: readyMetrics,
+                metrics: metrics
+            )))
+        }
+    }
+
+    private func finish(_ result: Result<BenchmarkFixtureResult, Error>) {
+        guard self.result == nil else { return }
+        self.result = result
+    }
+}
+
+private func runBenchmarks() throws {
+    let root = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+    let fixtureRoot = root.appendingPathComponent("Tests/Fixtures/Writing", isDirectory: true)
+    guard let enumerator = FileManager.default.enumerator(
+        at: fixtureRoot,
+        includingPropertiesForKeys: [.isRegularFileKey],
+        options: [.skipsHiddenFiles]
+    ) else {
+        throw BenchmarkError.failed("Writing benchmark fixtures are missing at \(fixtureRoot.path)")
+    }
+    let fixtureURLs = enumerator.compactMap { $0 as? URL }
+        .filter { $0.pathExtension.lowercased() == "md" }
+        .sorted { $0.path < $1.path }
+    guard !fixtureURLs.isEmpty else {
+        throw BenchmarkError.failed("Writing benchmark fixtures contain no Markdown files")
+    }
+
+    var results: [BenchmarkFixtureResult] = []
+    for fixtureURL in fixtureURLs {
+        let markdown = try String(contentsOf: fixtureURL, encoding: .utf8)
+        let relativePath = String(fixtureURL.path.dropFirst(fixtureRoot.path.count + 1))
+        results.append(try EditorBenchmarkHarness(fixture: relativePath, markdown: markdown).run())
+    }
+    let report = BenchmarkReport(
+        inputCharacters: EditorBenchmarkHarness.input.count,
+        selectionChanges: 20,
+        snapshots: EditorBenchmarkHarness.snapshotCount,
+        fixtures: results
+    )
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.sortedKeys]
+    print(String(decoding: try encoder.encode(report), as: UTF8.self))
+}
+
 NSApplication.shared.setActivationPolicy(.prohibited)
+if CommandLine.arguments.dropFirst().contains("--benchmark") {
+    do {
+        try runBenchmarks()
+        exit(0)
+    } catch {
+        fputs("web-editor-benchmark failed: \(error.localizedDescription)\n", stderr)
+        exit(1)
+    }
+}
 if ProcessInfo.processInfo.environment["WEIBEI_HTML_READER_SELF_CHECK_ONLY"] == "1" {
     UTF8HTMLReaderHarness().run()
     print("WeiBei HTML reader check passed")

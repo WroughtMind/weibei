@@ -3,6 +3,13 @@ import CoreGraphics
 import Foundation
 import WeiBeiCore
 
+struct NoteSelectionFormatting: Equatable {
+    var activeMarks: Set<String>
+    var blockType: String
+    var canConvertToMath: Bool
+    var linkTarget: String
+}
+
 /// Transient selection / floating-agent interaction chrome.
 /// Isolated from `WorkspaceStore` so selection drag does not rebuild the whole workspace tree.
 @MainActor
@@ -14,6 +21,7 @@ final class WorkspaceInteractionState: ObservableObject {
     @Published var selectionAttachments: [SelectionContext] = []
     @Published var activeSelectionAskThreadID: UUID?
     @Published var keepFloatingSelectionForAnswer = false
+    @Published var noteSelectionFormatting: NoteSelectionFormatting?
 
     /// Selection capsule position. Anchor-only drag/scroll updates can suppress
     /// publish so agent chat SelectionOverlay is not remasured every pixel.

@@ -38,7 +38,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidBecomeActive(_ notification: Notification) {
-        sharedWorkspaceStore.refreshActiveNoteFromBackingFile()
+        Task { @MainActor in
+            await sharedWorkspaceStore.reconcileActiveNoteEditorWithBackingFile()
+        }
     }
 
     func applicationShouldTerminate(
@@ -53,13 +55,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         terminationSaveInFlight = true
         resignFlushTask?.cancel()
         resignFlushTask = nil
-        sharedWorkspaceStore.flushPendingNotePersistence(
-            flushWorkspace: false
-        )
-        sharedWorkspaceStore.cancelAgentRequest(restoreDraft: false)
         Task { @MainActor [weak self] in
-            let saved =
-                await sharedWorkspaceStore.flushPendingWorkspaceSaveAsync()
+            guard await sharedWorkspaceStore.freshActiveNoteEditorSnapshot() else {
+                self?.terminationSaveInFlight = false
+                sender.reply(toApplicationShouldTerminate: false)
+                return
+            }
+            sharedWorkspaceStore.cancelAgentRequest(restoreDraft: false)
+            sharedWorkspaceStore.flushPendingNotePersistence(flushWorkspace: false)
+            let saved = await sharedWorkspaceStore.flushPendingWorkspaceSaveAsync()
             guard let self else {
                 sender.reply(toApplicationShouldTerminate: false)
                 return
@@ -72,11 +76,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
-        // Keep a final fallback for termination paths that bypassed the
-        // asynchronous applicationShouldTerminate handshake.
         sharedWorkspaceStore.cancelAgentRequest(restoreDraft: false)
         if !terminationApproved {
-            sharedWorkspaceStore.flushPendingNotePersistence()
+            _ = sharedWorkspaceStore.flushPendingWorkspaceSave()
         }
         sharedWorkspaceStore.shutdownAgentRuntime()
         resignFlushTask?.cancel()
@@ -87,13 +89,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidResignActive(_ notification: Notification) {
-        // Durability + less work at quit: flush pending note/workspace saves on focus loss.
         guard !terminationSaveInFlight else { return }
-        sharedWorkspaceStore.flushPendingNotePersistence(
-            flushWorkspace: false
-        )
         resignFlushTask?.cancel()
         resignFlushTask = Task { @MainActor in
+            guard await sharedWorkspaceStore.freshActiveNoteEditorSnapshot(),
+                  !Task.isCancelled else { return }
+            sharedWorkspaceStore.flushPendingNotePersistence(flushWorkspace: false)
             _ = await sharedWorkspaceStore.flushPendingWorkspaceSaveAsync()
         }
     }

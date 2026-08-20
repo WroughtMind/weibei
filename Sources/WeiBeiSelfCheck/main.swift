@@ -905,9 +905,6 @@ let reorderFrames: [WorkspacePaneRole: CGRect] = [
 ]
 expect(ThreePaneReorderTargeting.targetIndex(order: reorderOrder, frames: reorderFrames, role: .reader, horizontalDelta: 180) == 1, "pane reorder target follows real resized pane overlap instead of fixed thirds")
 expect(ThreePaneReorderTargeting.targetIndex(order: reorderOrder, frames: reorderFrames, role: .notes, horizontalDelta: -420) == 1, "pane reorder target works from either edge using the current pane widths")
-expect(NoteRenderMode.visibleCases == [.rich, .split, .source]
-    && NoteRenderMode.preview.visibleMode == .rich
-    && NoteRenderMode.source.visibleMode == .source, "note render modes keep legacy preview data readable while hiding preview from the writing controls")
 expect(WorkspaceLayout.documentAgentNotes.label(language: .chinese) == "阅读-对话-笔记"
     && WorkspaceLayout.documentAgentNotes.label(language: .english) == "Reader-Chat-Notes"
     && WorkspaceLayout.documentNotesAgent.label(language: .chinese) == "阅读-笔记-对话"
@@ -973,10 +970,6 @@ expect(
 expect(
     NoteTabDisplayTitle.resolve(customTitle: "   ", noteTitle: "利率笔记", body: "无关正文") == "无关正文",
     "clearing the custom name restores auto-follow"
-)
-expect(
-    NoteRenderMode.visibleCases.contains(.rich),
-    "note writing stays on the rich render mode"
 )
 expect(
     NoteTabDisplayTitle.resolve(customTitle: "", noteTitle: "利率笔记", body: "正文") == "正文",
@@ -1821,7 +1814,6 @@ let persisted = PersistedWorkspace(
     ],
     learningMemoryScopeMigrationVersion: 1,
     threePaneOrder: [.agent, .reader, .notes],
-    noteRenderMode: .preview,
     showLibrary: false,
     showReader: false,
     showAgent: true,
@@ -1847,7 +1839,6 @@ expect(legacyWorkspace.showDailyInspiration == nil
 expect(restored.adaptImportedDocumentColors == false
     && legacyWorkspace.adaptImportedDocumentColors == nil,
     "imported-document color adaptation persists while old workspaces keep the legacy default")
-expect(restored.noteRenderMode == .preview, "legacy preview note mode remains decodable for old workspace snapshots")
 expect(restored.threePaneOrder == [.agent, .reader, .notes], "custom three-pane order persists")
 expect(restored.noteSourceLinks == [oldestLink] && restored.noteSourceLinksMigrationVersion == 1, "note-source relations and one-time migration state persist together")
 expect(restored.learningMemoryStates?.first?.scope == .course(courseA.id)
