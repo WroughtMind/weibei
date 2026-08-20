@@ -1881,21 +1881,32 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
               blur: (style?.backdropFilter || style?.webkitBackdropFilter || '').includes('10px'),
               ink: style?.color || '',
               accent: activeStyle?.color || '',
-              shadow: style?.boxShadow || ''
+              shadow: style?.boxShadow || '',
+              surface: backgroundValues
             };
           };
           const dark = readGlassMenu('glassDark');
           const light = readGlassMenu('glassLight');
+          const mist = readGlassMenu('glassMist');
+          const slate = readGlassMenu('glassSlate');
+          const surfaceMatches = (values, red, green, blue, alpha) =>
+            values.length === 4 && values[0] === red && values[1] === green && values[2] === blue && Math.abs(values[3] - alpha) < 0.001;
           const glassResult = {
             show: menu?.dataset.show === 'true',
             position: menu ? getComputedStyle(menu).position : '',
             visible: !!rect && rect.width > 0 && rect.height > 0 && rect.left >= 0 && rect.top >= 0 && rect.right <= innerWidth && rect.bottom <= innerHeight,
             darkTheme: dark.dataset,
             lightTheme: light.dataset,
+            mistTheme: mist.dataset,
+            slateTheme: slate.dataset,
             darkPalette: dark.ink === 'rgb(232, 239, 249)' && dark.accent === 'rgb(235, 87, 70)',
             lightPalette: light.ink === 'rgb(23, 29, 38)' && light.accent === 'rgb(156, 40, 29)',
-            glassSurface: dark.translucent && light.translucent,
-            glassBlur: dark.blur && light.blur,
+            mistPalette: mist.ink === 'rgb(37, 35, 31)' && mist.accent === 'rgb(138, 47, 36)'
+              && surfaceMatches(mist.surface, 244, 249, 255, .72),
+            slatePalette: slate.ink === 'rgb(210, 214, 220)' && slate.accent === 'rgb(176, 64, 52)'
+              && surfaceMatches(slate.surface, 27, 33, 43, .66),
+            glassSurface: dark.translucent && light.translucent && mist.translucent && slate.translucent,
+            glassBlur: dark.blur && light.blur && mist.blur && slate.blur,
             distinctShadows: dark.shadow !== light.shadow
           };
           window.WeiBeiEditor.setTheme('paper');
@@ -1911,8 +1922,12 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
                   state["visible"] as? Bool == true,
                   state["darkTheme"] as? Bool == true,
                   state["lightTheme"] as? Bool == true,
+                  state["mistTheme"] as? Bool == true,
+                  state["slateTheme"] as? Bool == true,
                   state["darkPalette"] as? Bool == true,
                   state["lightPalette"] as? Bool == true,
+                  state["mistPalette"] as? Bool == true,
+                  state["slatePalette"] as? Bool == true,
                   state["glassSurface"] as? Bool == true,
                   state["glassBlur"] as? Bool == true,
                   state["distinctShadows"] as? Bool == true else {

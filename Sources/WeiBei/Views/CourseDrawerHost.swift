@@ -151,13 +151,13 @@ final class CourseDrawerContainerView: NSView {
         switch mode {
         case .paper, .xuan:
             return WeiBeiNativePalette.ink(for: mode).withAlphaComponent(mode == .xuan ? 0.030 : 0.035)
-        case .glassLight:
+        case .glassLight, .glassMist:
             return NSColor(calibratedWhite: 0, alpha: 0.10)
         case .inkstone:
             return NSColor(calibratedRed: 0, green: 0, blue: 0, alpha: 0.18)
         case .stele:
             return NSColor(calibratedRed: 0, green: 0, blue: 0, alpha: 0.22)
-        case .glassDark:
+        case .glassDark, .glassSlate:
             return NSColor(calibratedRed: 0, green: 0, blue: 0, alpha: 0.18)
         }
     }

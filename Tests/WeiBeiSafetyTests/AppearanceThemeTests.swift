@@ -3,17 +3,26 @@ import XCTest
 
 final class AppearanceThemeTests: XCTestCase {
     func testGlassThemesStayPairedAndTranslucent() {
-        XCTAssertEqual(WeiBeiAppearanceMode.allCases.count, 6)
+        XCTAssertEqual(WeiBeiAppearanceMode.allCases.count, 8)
         XCTAssertEqual(WeiBeiAppearanceMode.glassLight.oppositeFamily, .glassDark)
         XCTAssertEqual(WeiBeiAppearanceMode.glassDark.oppositeFamily, .glassLight)
+        XCTAssertEqual(WeiBeiAppearanceMode.glassMist.oppositeFamily, .glassSlate)
+        XCTAssertEqual(WeiBeiAppearanceMode.glassSlate.oppositeFamily, .glassMist)
         XCTAssertEqual(WeiBeiAppearanceMode.glassLight.webThemeName, "glassLight")
         XCTAssertEqual(WeiBeiAppearanceMode.glassDark.webThemeName, "glassDark")
-        XCTAssertLessThan(WeiBeiNativePalette.paper(for: .glassLight).alphaComponent, 1)
-        XCTAssertLessThan(WeiBeiNativePalette.paper(for: .glassDark).alphaComponent, 1)
-        XCTAssertGreaterThan(WeiBeiNativePalette.drawerSurface(for: .glassLight).alphaComponent, 0)
-        XCTAssertLessThan(WeiBeiNativePalette.drawerSurface(for: .glassLight).alphaComponent, 1)
-        XCTAssertGreaterThan(WeiBeiNativePalette.foregroundWorkspaceSurface(for: .glassDark).alphaComponent, 0)
-        XCTAssertLessThan(WeiBeiNativePalette.foregroundWorkspaceSurface(for: .glassDark).alphaComponent, 1)
+        for mode in [
+            WeiBeiAppearanceMode.glassLight,
+            .glassDark,
+            .glassMist,
+            .glassSlate,
+        ] {
+            XCTAssertTrue(mode.isGlass)
+            XCTAssertLessThan(WeiBeiNativePalette.paper(for: mode).alphaComponent, 1)
+            XCTAssertGreaterThan(WeiBeiNativePalette.drawerSurface(for: mode).alphaComponent, 0)
+            XCTAssertLessThan(WeiBeiNativePalette.drawerSurface(for: mode).alphaComponent, 1)
+            XCTAssertGreaterThan(WeiBeiNativePalette.foregroundWorkspaceSurface(for: mode).alphaComponent, 0)
+            XCTAssertLessThan(WeiBeiNativePalette.foregroundWorkspaceSurface(for: mode).alphaComponent, 1)
+        }
 
         for mode in [
             WeiBeiAppearanceMode.paper,

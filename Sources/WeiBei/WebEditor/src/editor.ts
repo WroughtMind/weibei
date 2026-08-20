@@ -255,12 +255,12 @@ const cleanSelectedText = (text: any) => String(text || '')
 // Glass keeps the matching readable paper palette while exposing its own
 // surface flag for translucent menus and other floating editor chrome.
 const normalizeTheme = (theme: any) => {
-  if (theme === 'glassLight') return 'xuan';
-  if (theme === 'glassDark') return 'stele';
+  if (theme === 'glassLight' || theme === 'glassMist') return 'xuan';
+  if (theme === 'glassDark' || theme === 'glassSlate') return 'stele';
   if (theme === 'xuan' || theme === 'inkstone' || theme === 'stele' || theme === 'paper') return theme;
   return 'paper';
 };
-const normalizeGlassTheme = (theme: any) => theme === 'glassLight' || theme === 'glassDark' ? theme : '';
+const normalizeGlassTheme = (theme: any) => ['glassLight', 'glassDark', 'glassMist', 'glassSlate'].includes(theme) ? theme : '';
 let currentTheme = normalizeTheme(window.weiBeiTheme);
 
 const mermaidThemeVariables = () => {

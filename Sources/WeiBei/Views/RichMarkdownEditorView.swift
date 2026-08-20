@@ -408,6 +408,10 @@ final class MarkdownImageSchemeHandler: NSObject, WKURLSchemeHandler, URLSession
             return ("#edf4fb", "#9c281d", "#46515f")
         case .glassDark:
             return ("#1b2330", "#eb5746", "#e8eef9")
+        case .glassMist:
+            return ("#f4f9ff", "#8a2f24", "#25231f")
+        case .glassSlate:
+            return ("#1b212b", "#b04034", "#d2d6dc")
         }
     }
 
@@ -683,10 +687,10 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             window.weiBeiInterfaceLanguage = \(Self.json(interfaceLanguage.rawValue));
             window.weiBeiMarkdownCompactPreview = \(isCompactPreview ? "true" : "false");
             window.weiBeiChatWideTypography = \(isChatWideTypography ? "true" : "false");
-            document.documentElement.dataset.weibeiTheme = window.weiBeiTheme === "glassLight"
+            document.documentElement.dataset.weibeiTheme = window.weiBeiTheme === "glassLight" || window.weiBeiTheme === "glassMist"
               ? "xuan"
-              : window.weiBeiTheme === "glassDark" ? "stele" : window.weiBeiTheme;
-            if (window.weiBeiTheme === "glassLight" || window.weiBeiTheme === "glassDark") {
+              : window.weiBeiTheme === "glassDark" || window.weiBeiTheme === "glassSlate" ? "stele" : window.weiBeiTheme;
+            if (["glassLight", "glassDark", "glassMist", "glassSlate"].includes(window.weiBeiTheme)) {
               document.documentElement.dataset.weibeiGlass = window.weiBeiTheme;
             }
             document.documentElement.dataset.weibeiLanguage = window.weiBeiInterfaceLanguage;
