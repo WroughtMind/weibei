@@ -36,6 +36,9 @@ runtime_is_ready() {
     && [[ -f "$RUNTIME_DIR/LICENSE" ]] \
     && [[ -f "$RUNTIME_DIR/THIRD_PARTY_NOTICES.md" ]] \
     && [[ -f "$RUNTIME_DIR/BUN_LICENSE.md" ]] \
+    && [[ -f "$RUNTIME_DIR/LGPL-2.0.txt" ]] \
+    && [[ -f "$RUNTIME_DIR/LGPL-2.1.txt" ]] \
+    && [[ -f "$RUNTIME_DIR/RELINK.md" ]] \
     && [[ -f "$RUNTIME_DIR/binary.sha256" ]] \
     && cmp -s "$MANIFEST" "$RUNTIME_DIR/manifest.json" \
     && /usr/bin/codesign --verify --strict "$RUNTIME_BINARY" >/dev/null 2>&1 \
@@ -124,6 +127,9 @@ if [[ ! -f "$ROOT_DIR/Vendor/PiRuntime/BUN_LICENSE.md" ]]; then
   exit 4
 fi
 cp "$ROOT_DIR/Vendor/PiRuntime/BUN_LICENSE.md" "$STAGING_DIR/PiRuntime/BUN_LICENSE.md"
+cp "$ROOT_DIR/Vendor/PiRuntime/LGPL-2.0.txt" "$STAGING_DIR/PiRuntime/LGPL-2.0.txt"
+cp "$ROOT_DIR/Vendor/PiRuntime/LGPL-2.1.txt" "$STAGING_DIR/PiRuntime/LGPL-2.1.txt"
+cp "$ROOT_DIR/Vendor/PiRuntime/RELINK.md" "$STAGING_DIR/PiRuntime/RELINK.md"
 printf '%s  %s\n' "$EXPECTED_SHA256" "$ARCHIVE_NAME" >"$STAGING_DIR/PiRuntime/artifact.sha256"
 chmod 755 "$STAGING_DIR/PiRuntime/bin/pi"
 /usr/bin/xattr -dr com.apple.quarantine "$STAGING_DIR/PiRuntime" 2>/dev/null || true

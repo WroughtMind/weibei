@@ -35,6 +35,7 @@ RELEASE_DIR="$ROOT_DIR/dist/release"
 RELEASE_APP="$RELEASE_DIR/$APP_NAME"
 PI_EXECUTABLE="$RELEASE_APP/Contents/Resources/PiRuntime/bin/pi"
 PI_HASH="$RELEASE_APP/Contents/Resources/PiRuntime/binary.sha256"
+RELINK_BUNDLE="${WEIBEI_PI_RELINK_BUNDLE:-}"
 PDF_HELPER="$RELEASE_APP/Contents/Helpers/WeiBeiPDFTextWorker"
 SPARKLE_FRAMEWORK="$RELEASE_APP/Contents/Frameworks/Sparkle.framework"
 BACKGROUND="$ROOT_DIR/DesignSystem/assets/dmg/dmg-background.png"
@@ -80,6 +81,12 @@ if [[ ! -x "$ROOT_DIR/node_modules/.bin/appdmg" ]]; then
   echo "release failed: run npm ci before building the DMG" >&2
   exit 7
 fi
+if [[ -z "$RELINK_BUNDLE" ]]; then
+  echo "release failed: WEIBEI_PI_RELINK_BUNDLE must point to the frozen LGPL relink bundle" >&2
+  exit 22
+fi
+(cd "$ROOT_DIR" && node --import tsx script/check_pi_runtime_license_report.ts >/dev/null)
+VERIFIED_RELINK_BUNDLE="$("$ROOT_DIR/script/prepare_pi_runtime_relink_bundle.sh" --verify "$RELINK_BUNDLE")"
 if [[ -n "$SPARKLE_PRIVATE_KEY_FILE" && -z "$SPARKLE_PUBLIC_KEY" ]]; then
   echo "release failed: WEIBEI_SPARKLE_PUBLIC_KEY is required when generating appcast.xml" >&2
   exit 18
@@ -132,6 +139,7 @@ fi
 (cd "$ROOT_DIR" && swift run WeiBeiDev verify-release-metadata --require-clean "$BASE_APP")
 
 mkdir -p "$RELEASE_DIR"
+cp "$VERIFIED_RELINK_BUNDLE" "$RELEASE_DIR/$(basename "$VERIFIED_RELINK_BUNDLE")"
 rm -rf "$RELEASE_APP"
 /usr/bin/ditto --norsrc --noextattr "$BASE_APP" "$RELEASE_APP"
 /usr/bin/xattr -cr "$RELEASE_APP"
@@ -263,6 +271,7 @@ echo "release_app=$RELEASE_APP"
 echo "release_dmg=$DMG_PATH"
 echo "release_sha256=$DMG_SHA256"
 echo "release_homebrew_cask=$CASK_PATH"
+echo "release_relink_bundle=$RELEASE_DIR/$(basename "$VERIFIED_RELINK_BUNDLE")"
 echo "release_appcast=$APPCAST_RESULT"
 if [[ "$MODE" == "notarized" ]]; then
   echo "release_trust=notarized-developer-id"
