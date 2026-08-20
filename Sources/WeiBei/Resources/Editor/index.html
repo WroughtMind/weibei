@@ -90,16 +90,46 @@
     :root {
       --floating-surface: color-mix(in srgb, var(--paper-raised) 96%, transparent);
       --floating-line: var(--line);
+      --floating-ink: var(--ink);
+      --floating-muted: var(--muted);
+      --floating-faint: var(--faint);
+      --floating-accent: var(--cinnabar);
+      --floating-accent-soft: var(--cinnabar-soft);
+      --floating-accent-line: var(--cinnabar-line);
+      --floating-input: rgba(255, 255, 255, .18);
+      --floating-input-focus: var(--paper-raised);
+      --floating-menu-shadow: 0 14px 34px rgba(35, 26, 19, .18), 0 2px 8px rgba(35, 26, 19, .10);
+      --floating-toolbar-shadow: 0 6px 18px rgba(35, 26, 19, .12);
     }
 
     :root[data-weibei-glass="glassLight"] {
-      --floating-surface: rgba(244, 249, 255, .72);
-      --floating-line: rgba(70, 91, 116, .18);
+      --floating-surface: rgba(240, 248, 255, .78);
+      --floating-line: rgba(71, 89, 112, .24);
+      --floating-ink: #171d26;
+      --floating-muted: rgba(70, 80, 94, .92);
+      --floating-faint: rgba(110, 122, 140, .82);
+      --floating-accent: #9c281d;
+      --floating-accent-soft: rgba(156, 40, 29, .11);
+      --floating-accent-line: rgba(156, 40, 29, .28);
+      --floating-input: rgba(255, 255, 255, .30);
+      --floating-input-focus: rgba(248, 252, 255, .88);
+      --floating-menu-shadow: 0 14px 34px rgba(37, 55, 76, .14), 0 2px 8px rgba(37, 55, 76, .08);
+      --floating-toolbar-shadow: 0 6px 18px rgba(37, 55, 76, .10);
     }
 
     :root[data-weibei-glass="glassDark"] {
-      --floating-surface: rgba(27, 33, 43, .66);
-      --floating-line: rgba(185, 198, 216, .14);
+      --floating-surface: rgba(13, 20, 31, .78);
+      --floating-line: rgba(201, 219, 242, .18);
+      --floating-ink: #e8eff9;
+      --floating-muted: rgba(173, 186, 204, .94);
+      --floating-faint: rgba(122, 140, 163, .86);
+      --floating-accent: #eb5746;
+      --floating-accent-soft: rgba(158, 48, 42, .42);
+      --floating-accent-line: rgba(235, 87, 70, .46);
+      --floating-input: rgba(255, 255, 255, .08);
+      --floating-input-focus: rgba(31, 43, 61, .92);
+      --floating-menu-shadow: 0 16px 38px rgba(0, 0, 0, .34), 0 2px 8px rgba(0, 0, 0, .24);
+      --floating-toolbar-shadow: 0 7px 20px rgba(0, 0, 0, .26);
     }
 
     @font-face {
@@ -1130,34 +1160,34 @@
       background: rgba(255, 255, 255, .035);
     }
 
-    .weibei-slash-menu { position: absolute; z-index: 120; width: 204px; max-height: min(420px, calc(100vh - 16px)); overflow: auto; box-sizing: border-box; padding: 5px; color: var(--ink); background: var(--floating-surface); border: 1px solid var(--floating-line); border-radius: 9px; box-shadow: 0 14px 34px rgba(35, 26, 19, .18), 0 2px 8px rgba(35, 26, 19, .10); backdrop-filter: blur(16px); }
+    .weibei-slash-menu { position: absolute; z-index: 120; width: 204px; max-height: min(420px, calc(100vh - 16px)); overflow: auto; box-sizing: border-box; padding: 5px; color: var(--floating-ink); background: var(--floating-surface); border: 1px solid var(--floating-line); border-radius: 9px; box-shadow: var(--floating-menu-shadow); backdrop-filter: blur(16px); }
     :root[data-weibei-glass] .weibei-slash-menu { -webkit-backdrop-filter: blur(10px) saturate(120%); backdrop-filter: blur(10px) saturate(120%); }
     .weibei-slash-menu[data-show="false"] { display: none; }
     .weibei-line-plus { position: fixed; z-index: 110; width: 24px; height: 24px; padding: 0; color: var(--faint); background: transparent; border: 0; border-radius: 4px; font: 17px/24px -apple-system, BlinkMacSystemFont, sans-serif; cursor: pointer; }
     .weibei-line-plus:hover, .weibei-line-plus:focus-visible { color: var(--ink); background: color-mix(in srgb, var(--paper-raised) 72%, transparent); outline: none; }
-    .weibei-table-toolbar { position: fixed; z-index: 115; display: flex; gap: 2px; padding: 3px; color: var(--ink); background: var(--floating-surface); border: 1px solid var(--floating-line); border-radius: 7px; box-shadow: 0 6px 18px rgba(35, 26, 19, .12); }
+    .weibei-table-toolbar { position: fixed; z-index: 115; display: flex; gap: 2px; padding: 3px; color: var(--floating-ink); background: var(--floating-surface); border: 1px solid var(--floating-line); border-radius: 7px; box-shadow: var(--floating-toolbar-shadow); }
     .weibei-table-toolbar[hidden] { display: none; }
-    .weibei-table-toolbar button { min-width: 34px; height: 22px; padding: 0 6px; color: var(--muted); background: transparent; border: 0; border-radius: 4px; font: 11px/22px -apple-system, BlinkMacSystemFont, sans-serif; }
-    .weibei-table-toolbar button:hover, .weibei-table-toolbar button:focus-visible { color: var(--ink); background: color-mix(in srgb, var(--line) 25%, transparent); outline: none; }
-    .weibei-slash-section + .weibei-slash-section { margin-top: 3px; padding-top: 3px; border-top: 1px solid var(--line); }
-    .weibei-slash-group { padding: 4px 8px 3px; color: var(--faint); font-size: 10px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; user-select: none; }
+    .weibei-table-toolbar button { min-width: 34px; height: 22px; padding: 0 6px; color: var(--floating-muted); background: transparent; border: 0; border-radius: 4px; font: 11px/22px -apple-system, BlinkMacSystemFont, sans-serif; }
+    .weibei-table-toolbar button:hover, .weibei-table-toolbar button:focus-visible { color: var(--floating-ink); background: color-mix(in srgb, var(--floating-line) 25%, transparent); outline: none; }
+    .weibei-slash-section + .weibei-slash-section { margin-top: 3px; padding-top: 3px; border-top: 1px solid var(--floating-line); }
+    .weibei-slash-group { padding: 4px 8px 3px; color: var(--floating-faint); font-size: 10px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; user-select: none; }
     .weibei-slash-command { border-radius: 6px; }
-    .weibei-slash-command-button { display: flex; width: 100%; height: 31px; align-items: center; box-sizing: border-box; padding: 0 9px; color: var(--ink); background: transparent; border: 0; border-radius: 6px; font: 500 13px/1 -apple-system, BlinkMacSystemFont, "Songti SC", serif; text-align: left; cursor: default; }
-    .weibei-slash-command.is-active > .weibei-slash-command-button { color: var(--cinnabar); background: var(--cinnabar-soft); }
-    .weibei-slash-empty { padding: 13px 10px; color: var(--faint); font-size: 12px; }
-    .weibei-slash-error { margin: 3px 4px 5px; padding: 6px 7px; color: var(--cinnabar); background: var(--cinnabar-soft); border-radius: 5px; font-size: 11px; }
-    .weibei-slash-table-panel { position: fixed; z-index: 121; width: 164px; box-sizing: border-box; padding: 8px; color: var(--ink); background: var(--floating-surface); border: 1px solid var(--floating-line); border-radius: 9px; box-shadow: 0 14px 34px rgba(35, 26, 19, .18); }
+    .weibei-slash-command-button { display: flex; width: 100%; height: 31px; align-items: center; box-sizing: border-box; padding: 0 9px; color: var(--floating-ink); background: transparent; border: 0; border-radius: 6px; font: 500 13px/1 -apple-system, BlinkMacSystemFont, "Songti SC", serif; text-align: left; cursor: default; }
+    .weibei-slash-command.is-active > .weibei-slash-command-button { color: var(--floating-accent); background: var(--floating-accent-soft); }
+    .weibei-slash-empty { padding: 13px 10px; color: var(--floating-faint); font-size: 12px; }
+    .weibei-slash-error { margin: 3px 4px 5px; padding: 6px 7px; color: var(--floating-accent); background: var(--floating-accent-soft); border-radius: 5px; font-size: 11px; }
+    .weibei-slash-table-panel { position: fixed; z-index: 121; width: 164px; box-sizing: border-box; padding: 8px; color: var(--floating-ink); background: var(--floating-surface); border: 1px solid var(--floating-line); border-radius: 9px; box-shadow: var(--floating-menu-shadow); }
     :root[data-weibei-glass] .weibei-table-toolbar,
     :root[data-weibei-glass] .weibei-slash-table-panel { -webkit-backdrop-filter: blur(10px) saturate(120%); backdrop-filter: blur(10px) saturate(120%); }
-    .weibei-slash-stepper { display: grid; grid-template-columns: minmax(24px, 1fr) 28px 38px 28px; align-items: center; gap: 4px; width: 100%; min-height: 34px; box-sizing: border-box; padding: 0 4px; color: var(--muted); font-size: 12px; border-radius: 6px; }
-    .weibei-slash-stepper.is-focused { background: var(--cinnabar-soft); }
+    .weibei-slash-stepper { display: grid; grid-template-columns: minmax(24px, 1fr) 28px 38px 28px; align-items: center; gap: 4px; width: 100%; min-height: 34px; box-sizing: border-box; padding: 0 4px; color: var(--floating-muted); font-size: 12px; border-radius: 6px; }
+    .weibei-slash-stepper.is-focused { background: var(--floating-accent-soft); }
     .weibei-slash-stepper-label { min-width: 0; }
-    .weibei-slash-stepper button, .weibei-slash-table-insert { color: var(--muted); background: transparent; border: 1px solid var(--line); border-radius: 4px; }
+    .weibei-slash-stepper button, .weibei-slash-table-insert { color: var(--floating-muted); background: transparent; border: 1px solid var(--floating-line); border-radius: 4px; }
     .weibei-slash-stepper button { width: 28px; height: 27px; padding: 0; }
-    .weibei-slash-stepper-input { width: 38px; height: 27px; box-sizing: border-box; padding: 0 2px; color: var(--ink); background: rgba(255, 255, 255, .18); border: 1px solid var(--line); border-radius: 4px; font: inherit; text-align: center; outline: none; appearance: textfield; }
-    .weibei-slash-stepper-input:focus { border-color: var(--cinnabar-line); background: var(--paper-raised); }
+    .weibei-slash-stepper-input { width: 38px; height: 27px; box-sizing: border-box; padding: 0 2px; color: var(--floating-ink); background: var(--floating-input); border: 1px solid var(--floating-line); border-radius: 4px; font: inherit; text-align: center; outline: none; appearance: textfield; }
+    .weibei-slash-stepper-input:focus { border-color: var(--floating-accent-line); background: var(--floating-input-focus); }
     .weibei-slash-stepper-input::-webkit-inner-spin-button, .weibei-slash-stepper-input::-webkit-outer-spin-button { margin: 0; -webkit-appearance: none; }
-    .weibei-slash-table-insert { width: 100%; margin-top: 7px; padding: 6px; color: var(--ink); }
+    .weibei-slash-table-insert { width: 100%; margin-top: 7px; padding: 6px; color: var(--floating-ink); }
 
     .ProseMirror-focused {
       outline: none;

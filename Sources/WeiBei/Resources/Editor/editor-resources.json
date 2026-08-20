@@ -313,8 +313,8 @@
     },
     {
       "name": "index.html",
-      "bytes": 42812,
-      "sha256": "06c6d626b81fef4faef922dfa50e882a2166c361bc796c8d82d9855600899dd3"
+      "bytes": 44551,
+      "sha256": "9378cd982fe0244cc9723f8689fb086e407a6aab0993a791069c9d276b632946"
     },
     {
       "name": "katex-runtime.js",

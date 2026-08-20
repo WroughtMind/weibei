@@ -1868,21 +1868,35 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
         let script = """
         (() => {
           const menu = document.querySelector('.weibei-slash-menu');
-          window.WeiBeiEditor.setTheme('glassDark');
-          const style = menu && getComputedStyle(menu);
           const rect = menu?.getBoundingClientRect();
-          const background = style?.backgroundColor || '';
-          const backgroundValues = (background.match(/[0-9.]+/g) || []).map(Number);
+          const readGlassMenu = (theme) => {
+            window.WeiBeiEditor.setTheme(theme);
+            const style = menu && getComputedStyle(menu);
+            const active = menu?.querySelector('.weibei-slash-command.is-active > .weibei-slash-command-button');
+            const activeStyle = active && getComputedStyle(active);
+            const backgroundValues = ((style?.backgroundColor || '').match(/[0-9.]+/g) || []).map(Number);
+            return {
+              dataset: document.documentElement.dataset.weibeiGlass === theme,
+              translucent: backgroundValues.length === 4 && backgroundValues[3] > 0 && backgroundValues[3] < 1,
+              blur: (style?.backdropFilter || style?.webkitBackdropFilter || '').includes('10px'),
+              ink: style?.color || '',
+              accent: activeStyle?.color || '',
+              shadow: style?.boxShadow || ''
+            };
+          };
+          const dark = readGlassMenu('glassDark');
+          const light = readGlassMenu('glassLight');
           const glassResult = {
             show: menu?.dataset.show === 'true',
-            position: style?.position || '',
+            position: menu ? getComputedStyle(menu).position : '',
             visible: !!rect && rect.width > 0 && rect.height > 0 && rect.left >= 0 && rect.top >= 0 && rect.right <= innerWidth && rect.bottom <= innerHeight,
-            glassTheme: document.documentElement.dataset.weibeiTheme === 'stele'
-              && document.documentElement.dataset.weibeiGlass === 'glassDark',
-            glassSurface: backgroundValues.length === 4
-              && backgroundValues[3] > 0
-              && backgroundValues[3] < 1,
-            glassBlur: (style?.backdropFilter || style?.webkitBackdropFilter || '').includes('10px')
+            darkTheme: dark.dataset,
+            lightTheme: light.dataset,
+            darkPalette: dark.ink === 'rgb(232, 239, 249)' && dark.accent === 'rgb(235, 87, 70)',
+            lightPalette: light.ink === 'rgb(23, 29, 38)' && light.accent === 'rgb(156, 40, 29)',
+            glassSurface: dark.translucent && light.translucent,
+            glassBlur: dark.blur && light.blur,
+            distinctShadows: dark.shadow !== light.shadow
           };
           window.WeiBeiEditor.setTheme('paper');
           return glassResult;
@@ -1895,9 +1909,13 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
                   state["show"] as? Bool == true,
                   state["position"] as? String == "absolute",
                   state["visible"] as? Bool == true,
-                  state["glassTheme"] as? Bool == true,
+                  state["darkTheme"] as? Bool == true,
+                  state["lightTheme"] as? Bool == true,
+                  state["darkPalette"] as? Bool == true,
+                  state["lightPalette"] as? Bool == true,
                   state["glassSurface"] as? Bool == true,
-                  state["glassBlur"] as? Bool == true else {
+                  state["glassBlur"] as? Bool == true,
+                  state["distinctShadows"] as? Bool == true else {
                 self.fail("automatic slash menu was not visible in the viewport: \(String(describing: error)); \(String(describing: value))")
                 return
             }
