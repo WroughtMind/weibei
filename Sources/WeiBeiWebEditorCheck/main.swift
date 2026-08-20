@@ -1285,10 +1285,32 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
           if (!editor.executeSelectionCommand('inlineMath') || editor.getMarkdown().trim() !== '公式切换') {
             throw new Error('second formula click did not restore the original text: ' + editor.getMarkdown());
           }
-          const markdownBeforeFontChange = editor.getMarkdown();
-          editor.setWritingFont('system');
-          if (document.documentElement.dataset.weibeiWritingFont !== 'system' || editor.getMarkdown() !== markdownBeforeFontChange) {
-            throw new Error('writing font changed note content');
+          editor.setMarkdown('甲乙丙');
+          if (!editor.selectFirstTextForCheck('乙') || !editor.executeSelectionCommand('font', 'literary')) {
+            throw new Error('selected font command failed');
+          }
+          const selectedFontMarkdown = editor.getMarkdown().trim();
+          if (selectedFontMarkdown !== '甲<span data-weibei-font="literary">乙</span>丙') {
+            throw new Error('selected font changed the wrong text: ' + selectedFontMarkdown);
+          }
+          editor.setMarkdown(selectedFontMarkdown);
+          if (document.querySelector('.ProseMirror [data-weibei-font="literary"]')?.textContent !== '乙'
+              || editor.getMarkdown().trim() !== selectedFontMarkdown) {
+            throw new Error('selected font did not survive reload');
+          }
+
+          editor.setMarkdown('/songti');
+          editor.openSlashMenuForCheck();
+          if (!editor.executeSlashCommandForCheck('fontSerif') || !editor.typeTextForCheck('后续')) {
+            throw new Error('slash font command failed');
+          }
+          const slashFontMarkdown = editor.getMarkdown().trim();
+          if (slashFontMarkdown !== '<span data-weibei-font="serif">后续</span>') {
+            throw new Error('slash font did not apply to following input: ' + slashFontMarkdown);
+          }
+          editor.setMarkdown(slashFontMarkdown);
+          if (document.querySelector('.ProseMirror [data-weibei-font="serif"]')?.textContent !== '后续') {
+            throw new Error('slash font did not survive reload');
           }
           return true;
         })();
@@ -1876,8 +1898,8 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
           if (!open('/')) throw new Error('slash menu did not open');
           if (!open('\\u200B/')) throw new Error('slash menu did not open from a blank-line placeholder');
           let state = window.WeiBeiEditor.slashStateForCheck();
-          if (state.commands.length !== 21 || state.groups.join('|') !== '结构|列表|内容|丰富内容') throw new Error('slash commands or groups invalid: ' + JSON.stringify(state));
-          for (const [query, expected] of [['/h2', '二级标题'], ['/liujibiaoti', '六级标题'], ['/dmk', '代码块'], ['/yxlb', '有序列表'], ['/bijilianjie', '笔记链接'], ['/jiaozhu', '脚注'], ['/代码块', '代码块']]) { open(query); state = window.WeiBeiEditor.slashStateForCheck(); if (state.commands.length !== 1 || state.commands[0] !== expected) throw new Error('alias failed: ' + query + JSON.stringify(state)); }
+          if (state.commands.length !== 24 || state.groups.join('|') !== '结构|列表|内容|丰富内容|字体') throw new Error('slash commands or groups invalid: ' + JSON.stringify(state));
+          for (const [query, expected] of [['/h2', '二级标题'], ['/liujibiaoti', '六级标题'], ['/dmk', '代码块'], ['/yxlb', '有序列表'], ['/bijilianjie', '笔记链接'], ['/jiaozhu', '脚注'], ['/代码块', '代码块'], ['/songti', '字体：Songti SC']]) { open(query); state = window.WeiBeiEditor.slashStateForCheck(); if (state.commands.length !== 1 || state.commands[0] !== expected) throw new Error('alias failed: ' + query + JSON.stringify(state)); }
           for (const query of ['/code block', '/ordered list']) { if (open(query)) throw new Error('space alias matched: ' + query); }
           if (!open('前文/h2')) throw new Error('slash menu did not open after existing text');
           window.WeiBeiEditor.executeSlashCommandForCheck('heading2'); window.WeiBeiEditor.typeTextForCheck('标题');

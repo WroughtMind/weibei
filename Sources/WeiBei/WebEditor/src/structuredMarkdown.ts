@@ -14,6 +14,32 @@ type MarkdownNode = {
   [key: string]: unknown;
 };
 
+const writingFonts = new Set(['system', 'serif', 'literary']);
+
+const groupWritingFontSpans = (children: MarkdownNode[]) => {
+  const grouped: MarkdownNode[] = [];
+  for (let index = 0; index < children.length; index += 1) {
+    const child = children[index];
+    const match = child.type === 'html'
+      ? String(child.value || '').match(/^<span data-weibei-font="(system|serif|literary)">$/)
+      : null;
+    if (!match) {
+      grouped.push(child);
+      continue;
+    }
+    const close = children.findIndex((candidate, candidateIndex) => candidateIndex > index
+      && candidate.type === 'html'
+      && String(candidate.value || '') === '</span>');
+    if (close < 0) {
+      grouped.push(child);
+      continue;
+    }
+    grouped.push({ type: 'writingFont', font: match[1], children: children.slice(index + 1, close) });
+    index = close;
+  }
+  return grouped;
+};
+
 const inlineTokenToMarkdownNode = (token: StructuredInlineToken): MarkdownNode => {
   if (token.type === 'text') return { type: 'text', value: token.value };
   if (token.type === 'highlight') return { type: 'highlight', children: [{ type: 'text', value: token.value }] };
@@ -42,13 +68,14 @@ const transformDialectTree = (node: MarkdownNode) => {
       }
     }
   }
-  node.children = node.children.flatMap((child) => {
+  const children = node.children.flatMap((child) => {
     if (child.type !== 'text') {
       transformDialectTree(child);
       return [child];
     }
     return parseStructuredInline(String(child.value || '')).map(inlineTokenToMarkdownNode);
   });
+  node.children = groupWritingFontSpans(children);
 };
 
 const structuredRemark = $remark('weiBeiStructuredMarkdown', () => (function weiBeiStructuredMarkdown(this: any) {
@@ -62,6 +89,11 @@ const structuredRemark = $remark('weiBeiStructuredMarkdown', () => (function wei
       highlight: (node: any, _parent: any, state: any, info: any) => {
         const value = state.containerPhrasing(node, { ...info, before: '==', after: '==' });
         return `==${value}==`;
+      },
+      writingFont: (node: any, _parent: any, state: any, info: any) => {
+        const font = writingFonts.has(node.font) ? node.font : 'serif';
+        const value = state.containerPhrasing(node, { ...info, before: '>', after: '<' });
+        return `<span data-weibei-font="${font}">${value}</span>`;
       },
       callout: (node: any, _parent: any, state: any, info: any) => {
         const header = serializeCalloutHeader({ calloutType: node.calloutType, fold: node.fold || '', title: node.title || '' });
@@ -142,6 +174,31 @@ export const highlightSchema = $markSchema('highlight', () => ({
   toMarkdown: { match: (mark) => mark.type.name === 'highlight', runner: (state, mark) => { state.withMark(mark, 'highlight'); } },
 }));
 
+export const writingFontSchema = $markSchema('writing_font', () => ({
+  attrs: { font: { default: 'serif' } },
+  excludes: 'writing_font',
+  priority: 10,
+  parseDOM: [{
+    tag: 'span[data-weibei-font]',
+    getAttrs: (dom) => {
+      const font = dom instanceof HTMLElement ? dom.dataset.weibeiFont : '';
+      return font && writingFonts.has(font) ? { font } : false;
+    },
+  }],
+  toDOM: (mark) => {
+    const font = writingFonts.has(mark.attrs.font) ? mark.attrs.font : 'serif';
+    return ['span', { 'data-weibei-font': font }, 0];
+  },
+  parseMarkdown: {
+    match: (node) => node.type === 'writingFont',
+    runner: (state, node, mark) => state.openMark(mark, { font: node.font }).next(node.children).closeMark(mark),
+  },
+  toMarkdown: {
+    match: (mark) => mark.type.name === 'writing_font',
+    runner: (state, mark) => { state.withMark(mark, 'writingFont', undefined, { font: mark.attrs.font }); },
+  },
+}));
+
 export const highlightInputRule = $inputRule((ctx) => markRule(
   /(?:^|[^\\=])==([^=\n]+)==$/,
   highlightSchema.type(ctx),
@@ -161,6 +218,7 @@ export const structuredMarkdown = [
   wikiLinkSchema,
   embedSchema,
   inlineFootnoteSchema,
+  writingFontSchema,
   highlightSchema,
   highlightInputRule,
   calloutSchema,

@@ -68,7 +68,6 @@ declare global {
     weiBeiLocalImageScheme?: string;
     weiBeiInterfaceLanguage?: unknown;
     weiBeiTheme?: unknown;
-    weiBeiWritingFont?: unknown;
     weiBeiSuppressSelectionReport?: boolean;
     weiBeiEditorCheckMode?: boolean;
     initialMarkdown?: string;
@@ -197,8 +196,9 @@ const editorLabels = {
     mermaidFailed: 'Mermaid 图表未解析\n{value}',
     uploadingImage: '正在收纳图片...',
     emptyNotePlaceholder: '从这里开始写下第一句…',
-    slashNoResults: '没有匹配命令', slashStructure: '结构', slashLists: '列表', slashContent: '内容', slashRichContent: '丰富内容',
+    slashNoResults: '没有匹配命令', slashStructure: '结构', slashLists: '列表', slashContent: '内容', slashRichContent: '丰富内容', slashFonts: '字体',
     slashHeading1: '一级标题', slashHeading2: '二级标题', slashHeading3: '三级标题', slashHeading4: '四级标题', slashHeading5: '五级标题', slashHeading6: '六级标题', slashBulletList: '无序列表', slashOrderedList: '有序列表', slashTaskList: '待办列表', slashQuote: '引用', slashCallout: '提示块', slashCode: '代码块', slashDivider: '分隔线', slashTable: '表格', slashImage: '图片', slashMermaid: 'Mermaid 图表', slashLink: '链接', slashWikiLink: '笔记链接', slashFootnote: '脚注', slashInlineMath: '行内公式', slashBlockMath: '块级公式',
+    slashFontSystem: '字体：SF Pro / PingFang SC', slashFontSerif: '字体：Songti SC', slashFontLiterary: '字体：WeiBeiStele',
     slashRows: '行', slashColumns: '列', slashInsertTable: '插入表格', slashImageFailed: '图片读取或保存失败', tableAddRow: '＋行', tableDeleteRow: '−行', tableAddColumn: '＋列', tableDeleteColumn: '−列', tableHeader: '表头', linkPlaceholder: '链接文字', wikiLinkPlaceholder: '笔记标题', footnotePlaceholder: '脚注内容', codeLanguage: '代码语言', codeLanguagePlaceholder: 'text',
   },
   en: {
@@ -213,8 +213,9 @@ const editorLabels = {
     mermaidFailed: 'Mermaid diagram did not parse\n{value}',
     uploadingImage: 'Saving image...',
     emptyNotePlaceholder: 'Start writing here…',
-    slashNoResults: 'No matching commands', slashStructure: 'Structure', slashLists: 'Lists', slashContent: 'Content', slashRichContent: 'Rich content',
+    slashNoResults: 'No matching commands', slashStructure: 'Structure', slashLists: 'Lists', slashContent: 'Content', slashRichContent: 'Rich content', slashFonts: 'Fonts',
     slashHeading1: 'Heading 1', slashHeading2: 'Heading 2', slashHeading3: 'Heading 3', slashHeading4: 'Heading 4', slashHeading5: 'Heading 5', slashHeading6: 'Heading 6', slashBulletList: 'Bulleted list', slashOrderedList: 'Numbered list', slashTaskList: 'To-do list', slashQuote: 'Quote', slashCallout: 'Callout', slashCode: 'Code block', slashDivider: 'Divider', slashTable: 'Table', slashImage: 'Image', slashMermaid: 'Mermaid diagram', slashLink: 'Link', slashWikiLink: 'Note link', slashFootnote: 'Footnote', slashInlineMath: 'Inline formula', slashBlockMath: 'Block formula',
+    slashFontSystem: 'Font: SF Pro / PingFang SC', slashFontSerif: 'Font: Songti SC', slashFontLiterary: 'Font: WeiBeiStele',
     slashRows: 'Rows', slashColumns: 'Columns', slashInsertTable: 'Insert table', slashImageFailed: 'Image could not be read or saved', tableAddRow: '+ Row', tableDeleteRow: '− Row', tableAddColumn: '+ Column', tableDeleteColumn: '− Column', tableHeader: 'Header', linkPlaceholder: 'Link text', wikiLinkPlaceholder: 'Note title', footnotePlaceholder: 'Footnote', codeLanguage: 'Code language', codeLanguagePlaceholder: 'text',
   },
 };
@@ -384,7 +385,7 @@ let slashTablePanelElement: HTMLElement | null = null;
 
 const slashGroups = [
   { id: 'structure', label: 'slashStructure' }, { id: 'lists', label: 'slashLists' },
-  { id: 'content', label: 'slashContent' }, { id: 'rich', label: 'slashRichContent' },
+  { id: 'content', label: 'slashContent' }, { id: 'rich', label: 'slashRichContent' }, { id: 'fonts', label: 'slashFonts' },
 ];
 const slashCommands = [
   { id: 'heading1', group: 'structure', label: 'slashHeading1', aliases: ['h1', 'heading_1', 'yjbt', 'yijibiaoti', '一级', '标题1'] },
@@ -408,7 +409,12 @@ const slashCommands = [
   { id: 'mermaid', group: 'rich', label: 'slashMermaid', aliases: ['mermaid', 'diagram', 'flowchart', 'lct', 'liuchengtu', '图表', '流程图'] },
   { id: 'inlineMath', group: 'rich', label: 'slashInlineMath', aliases: ['math', 'formula', 'inline_math', 'hngs', 'hangneigongshi', '公式', '行内'] },
   { id: 'blockMath', group: 'rich', label: 'slashBlockMath', aliases: ['display_math', 'equation', 'block_math', 'kjgs', 'kuaijigongshi', '方程', '块级'] },
+  { id: 'fontSystem', group: 'fonts', label: 'slashFontSystem', aliases: ['font', 'system', 'sf pro', 'pingfang sc', 'ziti', '字体', '苹方'] },
+  { id: 'fontSerif', group: 'fonts', label: 'slashFontSerif', aliases: ['font', 'serif', 'songti sc', 'ziti', '字体', '宋体'] },
+  { id: 'fontLiterary', group: 'fonts', label: 'slashFontLiterary', aliases: ['font', 'weibeistele', 'wei bei stele', 'ziti', '字体', '魏碑'] },
 ];
+const writingFontValues = new Set(['system', 'serif', 'literary']);
+const slashWritingFonts: Record<string, string> = { fontSystem: 'system', fontSerif: 'serif', fontLiterary: 'literary' };
 const slashRuntime: {
   provider: any;
   view: any;
@@ -566,6 +572,7 @@ const slashContentForContext = (context: any, replacement: any) => {
 /** Checks whether the current container accepts the requested replacement. */
 const slashCommandIsAllowed = (command: any, context: any, schema: any) => {
   if (!context) return false;
+  if (slashWritingFonts[command.id]) return Boolean(schema.marks.writing_font);
   if (command.id === 'image') return Boolean(schema.nodes.image);
   const replacement = slashReplacement(command.id, schema, { rows: 3, columns: 3 });
   const applied = slashContentForContext(context, replacement);
@@ -611,12 +618,28 @@ const requestSlashImage = (view: any, context: any) => {
   post('imagePickerRequested', { id });
 };
 
+const applySlashWritingFont = (view: any, context: any, font: string) => {
+  const mark = view.state.schema.marks.writing_font;
+  if (!mark || !writingFontValues.has(font)) return false;
+  const existingMarks = view.state.storedMarks || view.state.selection.$from.marks();
+  const tr = closeHistory(view.state.tr.delete(context.triggerFrom, context.triggerTo));
+  tr.setSelection(TextSelection.create(tr.doc, context.triggerFrom));
+  tr.setStoredMarks([...existingMarks.filter((existing: any) => existing.type !== mark), mark.create({ font })]);
+  view.dispatch(tr.scrollIntoView());
+  slashRuntime.dismissedContext = '';
+  slashRuntime.provider?.hide();
+  view.focus();
+  window.requestAnimationFrame(reportSelection);
+  return true;
+};
+
 /** Executes a selected command or opens the image picker. */
 const executeSlashCommand = (commandID: any) => {
   const view = slashRuntime.view;
   const context = view && slashContextForView(view);
   if (!view || !context) return false;
   if (commandID === 'image') { requestSlashImage(view, context); return true; }
+  if (slashWritingFonts[commandID]) return applySlashWritingFont(view, context, slashWritingFonts[commandID]);
   return applySlashReplacement(view, context, slashReplacement(commandID, view.state.schema, { rows: slashRuntime.tableRows, columns: slashRuntime.tableColumns }));
 };
 
@@ -2443,6 +2466,17 @@ const reportSelection = () => {
     const { selection } = state;
     const markNames = ['strong', 'emphasis', 'highlight', 'link', 'inlineCode'];
     const activeMarks = markNames.filter((name) => state.schema.marks[name] && state.doc.rangeHasMark(selection.from, selection.to, state.schema.marks[name]));
+    const writingFont = state.schema.marks.writing_font;
+    let selectedFont: string | undefined;
+    let mixedFont = false;
+    if (writingFont) state.doc.nodesBetween(selection.from, selection.to, (node: any) => {
+      if (!node.isText) return true;
+      const font = writingFont.isInSet(node.marks || [])?.attrs.font || 'serif';
+      if (selectedFont === undefined) selectedFont = font;
+      else if (selectedFont !== font) mixedFont = true;
+      return true;
+    });
+    if (selectedFont && !mixedFont) activeMarks.push(`font:${selectedFont}`);
     const isInlineMath = selection instanceof NodeSelection && selection.node.type.name === 'math_inline';
     if (isInlineMath) activeMarks.push('inlineMath');
     let blockType = selection.$from.parent.type.name;
@@ -2502,6 +2536,16 @@ const executeSelectionCommandInternal = (action: unknown, value: unknown = '') =
       case 'italic': applied = toggle('emphasis'); break;
       case 'highlight': applied = toggle('highlight'); break;
       case 'inlineCode': applied = toggle('inlineCode'); break;
+      case 'font': {
+        const font = typeof value === 'string' && writingFontValues.has(value) ? value : '';
+        const mark = state.schema.marks.writing_font;
+        if (!font || !mark) break;
+        const tr = state.tr.removeMark(selection.from, selection.to, mark)
+          .addMark(selection.from, selection.to, mark.create({ font }));
+        view.dispatch(tr.scrollIntoView());
+        applied = true;
+        break;
+      }
       case 'link': {
         const link = state.schema.marks.link;
         if (!link) break;
@@ -2885,12 +2929,6 @@ const setLanguageInternal = (next: unknown) => {
   });
 };
 
-const setWritingFontInternal = (next: unknown) => {
-  const font = typeof next === 'string' && ['system', 'serif', 'literary'].includes(next) ? next : 'serif';
-  document.documentElement.dataset.weibeiWritingFont = font;
-  scheduleContentHeightReports();
-};
-
 const focusInternal = () => {
   if (!editor) return false;
   editor.action((ctx) => ctx.get(editorViewCtx).focus());
@@ -2928,9 +2966,6 @@ const dispatchEditorCommand = (value: unknown) => {
       return true;
     case 'setLanguage':
       setLanguageInternal(commandPayloadValue(command, 'language'));
-      return true;
-    case 'setWritingFont':
-      setWritingFontInternal(commandPayloadValue(command, 'font'));
       return true;
     case 'setEditable':
       setEditableInternal(commandPayloadValue(command, 'editable'));
@@ -3047,7 +3082,6 @@ window.WeiBeiEditor = {
     },
     setTheme: setThemeInternal,
     setInterfaceLanguage: setLanguageInternal,
-    setWritingFont: setWritingFontInternal,
     focus: focusInternal,
     scrollToHeading: scrollToHeadingInternal,
   }),
@@ -3073,7 +3107,6 @@ if (WEIBEI_EDITOR_RUNTIME && window.weiBeiEditorCheckMode) {
     setDocumentID: (next: any) => setDocumentIdentityInternal(String(next || ''), currentDocumentGeneration + 1),
     setTheme: setThemeInternal,
     setInterfaceLanguage: setLanguageInternal,
-    setWritingFont: setWritingFontInternal,
     focus: focusInternal,
     scrollToHeading: scrollToHeadingInternal,
   });

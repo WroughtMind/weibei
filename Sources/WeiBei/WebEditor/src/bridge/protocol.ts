@@ -5,7 +5,6 @@ export const editorCommandTypes = [
   'requestSnapshot',
   'setTheme',
   'setLanguage',
-  'setWritingFont',
   'setEditable',
   'focus',
   'scrollToHeading',

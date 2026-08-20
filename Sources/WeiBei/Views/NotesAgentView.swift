@@ -446,7 +446,6 @@ private struct AccessibilityFrameProbe: NSViewRepresentable {
 struct NotePaneView: View {
     @EnvironmentObject private var store: WorkspaceStore
     @EnvironmentObject private var paneState: WorkspacePaneState
-    @AppStorage(WeiBeiWritingFont.storageKey) private var writingFontRaw = WeiBeiWritingFont.system.rawValue
     @State private var noteTabTitleDraft = ""
     @State private var editingNoteTabTitle = false
     @State private var editorRecoveryGeneration = 0
@@ -754,7 +753,6 @@ struct NotePaneView: View {
         attachmentDirectory: store.currentAttachmentDirectory,
         appearanceMode: store.appearanceMode,
         interfaceLanguage: store.interfaceLanguage,
-        writingFont: WeiBeiWritingFont(rawValue: writingFontRaw) ?? .system,
         onSelectionChange: { text, anchor in
             store.updateSelection(text, source: .note, anchor: anchor)
         }, onSelectionFormattingChange: { formatting in
@@ -2280,7 +2278,6 @@ struct FloatingSelectionAgentView: View {
     @EnvironmentObject private var store: WorkspaceStore
     @EnvironmentObject private var paneState: WorkspacePaneState
     @EnvironmentObject private var interaction: WorkspaceInteractionState
-    @AppStorage(WeiBeiWritingFont.storageKey) private var writingFontRaw = WeiBeiWritingFont.system.rawValue
     @Binding var expanded: Bool
     var routesToConversation = false
     @State private var dragOffset = CGSize.zero
@@ -2474,11 +2471,11 @@ struct FloatingSelectionAgentView: View {
     }
 
     private var writingFontMenu: some View {
-        let current = WeiBeiWritingFont(rawValue: writingFontRaw) ?? .system
+        let current = WeiBeiWritingFont.allCases.first { isFormattingActive("font:\($0.rawValue)") }
         return Menu {
             ForEach(WeiBeiWritingFont.allCases) { font in
                 Button {
-                    writingFontRaw = font.rawValue
+                    runSelectionCommand("font", value: font.rawValue)
                 } label: {
                     HStack {
                         Text(font.displayName)
@@ -2492,8 +2489,9 @@ struct FloatingSelectionAgentView: View {
             Image(systemName: "textformat")
         }
         .buttonStyle(WeiBeiIconButtonStyle(size: 30, cornerRadius: 5))
-        .help(store.ui("整篇写作字体：\(current.displayName)", "Writing font: \(current.displayName)"))
-        .accessibilityLabel(Text(store.ui("整篇写作字体：\(current.displayName)", "Writing font: \(current.displayName)")))
+        .help(current.map { store.ui("选中文字字体：\($0.displayName)", "Selected font: \($0.displayName)") }
+            ?? store.ui("更改选中文字字体", "Change selected font"))
+        .accessibilityLabel(Text(store.ui("更改选中文字字体", "Change selected font")))
     }
 
     private func formattingButton(
