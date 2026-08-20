@@ -1868,13 +1868,24 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
         let script = """
         (() => {
           const menu = document.querySelector('.weibei-slash-menu');
+          window.WeiBeiEditor.setTheme('glassDark');
           const style = menu && getComputedStyle(menu);
           const rect = menu?.getBoundingClientRect();
-          return {
+          const background = style?.backgroundColor || '';
+          const backgroundValues = (background.match(/[0-9.]+/g) || []).map(Number);
+          const glassResult = {
             show: menu?.dataset.show === 'true',
             position: style?.position || '',
-            visible: !!rect && rect.width > 0 && rect.height > 0 && rect.left >= 0 && rect.top >= 0 && rect.right <= innerWidth && rect.bottom <= innerHeight
+            visible: !!rect && rect.width > 0 && rect.height > 0 && rect.left >= 0 && rect.top >= 0 && rect.right <= innerWidth && rect.bottom <= innerHeight,
+            glassTheme: document.documentElement.dataset.weibeiTheme === 'stele'
+              && document.documentElement.dataset.weibeiGlass === 'glassDark',
+            glassSurface: backgroundValues.length === 4
+              && backgroundValues[3] > 0
+              && backgroundValues[3] < 1,
+            glassBlur: (style?.backdropFilter || style?.webkitBackdropFilter || '').includes('10px')
           };
+          window.WeiBeiEditor.setTheme('paper');
+          return glassResult;
         })();
         """
         webView.evaluateJavaScript(script) { [weak self] value, error in
@@ -1883,7 +1894,10 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
                   let state = value as? [String: Any],
                   state["show"] as? Bool == true,
                   state["position"] as? String == "absolute",
-                  state["visible"] as? Bool == true else {
+                  state["visible"] as? Bool == true,
+                  state["glassTheme"] as? Bool == true,
+                  state["glassSurface"] as? Bool == true,
+                  state["glassBlur"] as? Bool == true else {
                 self.fail("automatic slash menu was not visible in the viewport: \(String(describing: error)); \(String(describing: value))")
                 return
             }
