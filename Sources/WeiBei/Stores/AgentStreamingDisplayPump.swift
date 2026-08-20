@@ -42,15 +42,23 @@ final class AgentStreamingDisplayPump {
     var isRunning: Bool { task != nil }
 
     /// Idempotent. Steps once immediately so the first character keeps its
-    /// historical published-on-arrival latency, then keeps ticking.
+    /// historical published-on-arrival latency, then keeps ticking on
+    /// absolute deadlines so MainActor congestion cannot accumulate drift.
     func start() {
         guard task == nil else { return }
         stepOnce()
         task = Task { @MainActor [weak self] in
+            var nextTick = DispatchTime.now().uptimeNanoseconds &+ Self.tickNanoseconds
             while !Task.isCancelled {
                 guard let self else { return }
                 self.stepOnce()
-                try? await Task.sleep(nanoseconds: Self.tickNanoseconds)
+                let now = DispatchTime.now().uptimeNanoseconds
+                if nextTick <= now {
+                    nextTick = now &+ Self.tickNanoseconds
+                } else {
+                    try? await Task.sleep(nanoseconds: nextTick - now)
+                }
+                nextTick &+= Self.tickNanoseconds
             }
         }
     }

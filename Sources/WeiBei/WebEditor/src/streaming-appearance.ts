@@ -10,7 +10,7 @@ const FADE_SPEC = { class: 'wb-stream-in' };
 const CARET_SPEC = { side: 1 };
 
 /** Match the CSS animation duration of .wb-stream-in in index.html. */
-const FADE_MILLISECONDS = 180;
+const FADE_MILLISECONDS = 260;
 /** Retire the caret shortly after inserts stop flowing. */
 const CARET_IDLE_MILLISECONDS = 400;
 /** Only animate typing-like inserts; wholesale block rewrites skip the fade. */
