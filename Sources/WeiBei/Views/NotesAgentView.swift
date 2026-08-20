@@ -785,33 +785,6 @@ struct NotePaneView: View {
         })
         .id("\(store.activeNoteEditorDocumentID):\(editorRecoveryGeneration)")
         .background(WeiBeiTheme.paper)
-        .overlay(alignment: .topTrailing) {
-            writingFontMenu
-                .padding(10)
-        }
-    }
-
-    private var writingFontMenu: some View {
-        let current = WeiBeiWritingFont(rawValue: writingFontRaw) ?? .system
-        return Menu {
-            ForEach(WeiBeiWritingFont.allCases) { font in
-                Button {
-                    writingFontRaw = font.rawValue
-                } label: {
-                    HStack {
-                        Text(font.displayName)
-                        if font == current {
-                            Image(systemName: "checkmark")
-                        }
-                    }
-                }
-            }
-        } label: {
-            Label(current.displayName, systemImage: "textformat")
-        }
-        .buttonStyle(WeiBeiTextActionButtonStyle())
-        .help(store.ui("切换写作字体", "Change writing font"))
-        .accessibilityLabel(Text(store.ui("写作字体：\(current.displayName)", "Writing font: \(current.displayName)")))
     }
 
 }
@@ -2307,6 +2280,7 @@ struct FloatingSelectionAgentView: View {
     @EnvironmentObject private var store: WorkspaceStore
     @EnvironmentObject private var paneState: WorkspacePaneState
     @EnvironmentObject private var interaction: WorkspaceInteractionState
+    @AppStorage(WeiBeiWritingFont.storageKey) private var writingFontRaw = WeiBeiWritingFont.system.rawValue
     @Binding var expanded: Bool
     var routesToConversation = false
     @State private var dragOffset = CGSize.zero
@@ -2485,6 +2459,8 @@ struct FloatingSelectionAgentView: View {
             formattingButton("quote", icon: "text.quote", label: store.ui("引用", "Quote"), active: interaction.noteSelectionFormatting?.blockType == "blockquote")
 
             promptSeparator
+            writingFontMenu
+            promptSeparator
             Button(store.ui("问", "Ask")) { openExpandedComposer() }
                 .buttonStyle(WeiBeiTextActionButtonStyle(active: true))
                 .accessibilityLabel(Text(store.ui("就这段提问", "Ask about this passage")))
@@ -2495,6 +2471,29 @@ struct FloatingSelectionAgentView: View {
         .padding(.horizontal, 8)
         .frame(height: 34)
         .fixedSize()
+    }
+
+    private var writingFontMenu: some View {
+        let current = WeiBeiWritingFont(rawValue: writingFontRaw) ?? .system
+        return Menu {
+            ForEach(WeiBeiWritingFont.allCases) { font in
+                Button {
+                    writingFontRaw = font.rawValue
+                } label: {
+                    HStack {
+                        Text(font.displayName)
+                        if font == current {
+                            Image(systemName: "checkmark")
+                        }
+                    }
+                }
+            }
+        } label: {
+            Image(systemName: "textformat")
+        }
+        .buttonStyle(WeiBeiIconButtonStyle(size: 30, cornerRadius: 5))
+        .help(store.ui("整篇写作字体：\(current.displayName)", "Writing font: \(current.displayName)"))
+        .accessibilityLabel(Text(store.ui("整篇写作字体：\(current.displayName)", "Writing font: \(current.displayName)")))
     }
 
     private func formattingButton(
