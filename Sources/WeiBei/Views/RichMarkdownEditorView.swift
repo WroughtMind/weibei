@@ -683,7 +683,12 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             window.weiBeiInterfaceLanguage = \(Self.json(interfaceLanguage.rawValue));
             window.weiBeiMarkdownCompactPreview = \(isCompactPreview ? "true" : "false");
             window.weiBeiChatWideTypography = \(isChatWideTypography ? "true" : "false");
-            document.documentElement.dataset.weibeiTheme = window.weiBeiTheme;
+            document.documentElement.dataset.weibeiTheme = window.weiBeiTheme === "glassLight"
+              ? "xuan"
+              : window.weiBeiTheme === "glassDark" ? "stele" : window.weiBeiTheme;
+            if (window.weiBeiTheme === "glassLight" || window.weiBeiTheme === "glassDark") {
+              document.documentElement.dataset.weibeiGlass = window.weiBeiTheme;
+            }
             document.documentElement.dataset.weibeiLanguage = window.weiBeiInterfaceLanguage;
             document.documentElement.dataset.weibeiCompactPreview = window.weiBeiMarkdownCompactPreview ? "true" : "false";
             document.documentElement.dataset.weibeiChatWide = window.weiBeiChatWideTypography ? "true" : "false";

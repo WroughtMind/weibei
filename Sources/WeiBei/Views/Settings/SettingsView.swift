@@ -265,11 +265,16 @@ struct SettingsView: View {
     /// Theme gallery modeled on AionUI `ThemeLayoutPreview` cards:
     /// mini app chrome (top bar + panes) so you can see how the theme feels.
     private var themePicker: some View {
-        HStack(spacing: 10) {
-            ForEach(WeiBeiAppearanceMode.allCases) { mode in
-                themePreviewCard(mode)
+        ScrollView(.horizontal) {
+            LazyHStack(spacing: 10) {
+                ForEach(WeiBeiAppearanceMode.allCases) { mode in
+                    themePreviewCard(mode)
+                        .frame(width: 190)
+                }
             }
+            .padding(.bottom, 6)
         }
+        .scrollIndicators(.visible)
     }
 
     private var themeSwatchRow: some View { themePicker }

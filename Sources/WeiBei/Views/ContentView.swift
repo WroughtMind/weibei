@@ -14,7 +14,7 @@ struct ContentView: View {
     var body: some View {
         GeometryReader { geometry in
             ZStack {
-                WorkspaceChromeBackdrop()
+                WorkspaceChromeBackdrop(isFullScreen: windowIsFullScreen)
 
                 VStack(spacing: 0) {
                     UnifiedTopBarView(
@@ -356,11 +356,15 @@ private struct LibraryAwareEscapeBridge: View {
 private struct WorkspaceChromeBackdrop: View {
     @EnvironmentObject private var store: WorkspaceStore
     @EnvironmentObject private var paneState: WorkspacePaneState
+    let isFullScreen: Bool
 
     var body: some View {
         let empty = !paneState.showReader && !paneState.showAgent && !paneState.showNotes
         ZStack {
-            WeiBeiThemeBackdrop(mode: store.appearanceMode)
+            WeiBeiThemeBackdrop(
+                mode: store.appearanceMode,
+                isFullScreen: isFullScreen
+            )
             if empty {
                 EmptyWorkspacePaperField(mode: store.appearanceMode, compact: false)
             }

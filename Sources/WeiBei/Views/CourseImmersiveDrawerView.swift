@@ -11,11 +11,17 @@ struct CourseImmersiveDrawerView: View {
         SidebarView(store: store, model: model)
             .frame(width: Self.width)
             .frame(maxHeight: .infinity, alignment: .top)
-            .background(WeiBeiTheme.paper)
+            .background(
+                store.appearanceMode.isGlass
+                    ? Color.clear
+                    : WeiBeiTheme.paper
+            )
             .overlay(alignment: .trailing) {
-                Rectangle()
-                    .fill(WeiBeiTheme.hairline.opacity(0.58))
-                    .frame(width: 1)
+                if !store.appearanceMode.isGlass {
+                    Rectangle()
+                        .fill(WeiBeiTheme.hairline.opacity(0.58))
+                        .frame(width: 1)
+                }
             }
             .accessibilityAction(.escape, dismiss)
     }

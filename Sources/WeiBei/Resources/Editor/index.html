@@ -87,6 +87,21 @@
       --selection: rgba(176, 64, 52, .32);
     }
 
+    :root {
+      --floating-surface: color-mix(in srgb, var(--paper-raised) 96%, transparent);
+      --floating-line: var(--line);
+    }
+
+    :root[data-weibei-glass="glassLight"] {
+      --floating-surface: rgba(244, 249, 255, .72);
+      --floating-line: rgba(70, 91, 116, .18);
+    }
+
+    :root[data-weibei-glass="glassDark"] {
+      --floating-surface: rgba(27, 33, 43, .66);
+      --floating-line: rgba(185, 198, 216, .14);
+    }
+
     @font-face {
       font-family: "WeiBei Stele";
       src: url("../Fonts/WeiBeiStele.ttf") format("truetype");
@@ -1115,11 +1130,12 @@
       background: rgba(255, 255, 255, .035);
     }
 
-    .weibei-slash-menu { position: absolute; z-index: 120; width: 204px; max-height: min(420px, calc(100vh - 16px)); overflow: auto; box-sizing: border-box; padding: 5px; color: var(--ink); background: color-mix(in srgb, var(--paper-raised) 96%, transparent); border: 1px solid var(--line); border-radius: 9px; box-shadow: 0 14px 34px rgba(35, 26, 19, .18), 0 2px 8px rgba(35, 26, 19, .10); backdrop-filter: blur(16px); }
+    .weibei-slash-menu { position: absolute; z-index: 120; width: 204px; max-height: min(420px, calc(100vh - 16px)); overflow: auto; box-sizing: border-box; padding: 5px; color: var(--ink); background: var(--floating-surface); border: 1px solid var(--floating-line); border-radius: 9px; box-shadow: 0 14px 34px rgba(35, 26, 19, .18), 0 2px 8px rgba(35, 26, 19, .10); backdrop-filter: blur(16px); }
+    :root[data-weibei-glass] .weibei-slash-menu { -webkit-backdrop-filter: blur(10px) saturate(120%); backdrop-filter: blur(10px) saturate(120%); }
     .weibei-slash-menu[data-show="false"] { display: none; }
     .weibei-line-plus { position: fixed; z-index: 110; width: 24px; height: 24px; padding: 0; color: var(--faint); background: transparent; border: 0; border-radius: 4px; font: 17px/24px -apple-system, BlinkMacSystemFont, sans-serif; cursor: pointer; }
     .weibei-line-plus:hover, .weibei-line-plus:focus-visible { color: var(--ink); background: color-mix(in srgb, var(--paper-raised) 72%, transparent); outline: none; }
-    .weibei-table-toolbar { position: fixed; z-index: 115; display: flex; gap: 2px; padding: 3px; color: var(--ink); background: color-mix(in srgb, var(--paper-raised) 96%, transparent); border: 1px solid var(--line); border-radius: 7px; box-shadow: 0 6px 18px rgba(35, 26, 19, .12); }
+    .weibei-table-toolbar { position: fixed; z-index: 115; display: flex; gap: 2px; padding: 3px; color: var(--ink); background: var(--floating-surface); border: 1px solid var(--floating-line); border-radius: 7px; box-shadow: 0 6px 18px rgba(35, 26, 19, .12); }
     .weibei-table-toolbar[hidden] { display: none; }
     .weibei-table-toolbar button { min-width: 34px; height: 22px; padding: 0 6px; color: var(--muted); background: transparent; border: 0; border-radius: 4px; font: 11px/22px -apple-system, BlinkMacSystemFont, sans-serif; }
     .weibei-table-toolbar button:hover, .weibei-table-toolbar button:focus-visible { color: var(--ink); background: color-mix(in srgb, var(--line) 25%, transparent); outline: none; }
@@ -1130,7 +1146,9 @@
     .weibei-slash-command.is-active > .weibei-slash-command-button { color: var(--cinnabar); background: var(--cinnabar-soft); }
     .weibei-slash-empty { padding: 13px 10px; color: var(--faint); font-size: 12px; }
     .weibei-slash-error { margin: 3px 4px 5px; padding: 6px 7px; color: var(--cinnabar); background: var(--cinnabar-soft); border-radius: 5px; font-size: 11px; }
-    .weibei-slash-table-panel { position: fixed; z-index: 121; width: 164px; box-sizing: border-box; padding: 8px; color: var(--ink); background: var(--paper-raised); border: 1px solid var(--line); border-radius: 9px; box-shadow: 0 14px 34px rgba(35, 26, 19, .18); }
+    .weibei-slash-table-panel { position: fixed; z-index: 121; width: 164px; box-sizing: border-box; padding: 8px; color: var(--ink); background: var(--floating-surface); border: 1px solid var(--floating-line); border-radius: 9px; box-shadow: 0 14px 34px rgba(35, 26, 19, .18); }
+    :root[data-weibei-glass] .weibei-table-toolbar,
+    :root[data-weibei-glass] .weibei-slash-table-panel { -webkit-backdrop-filter: blur(10px) saturate(120%); backdrop-filter: blur(10px) saturate(120%); }
     .weibei-slash-stepper { display: grid; grid-template-columns: minmax(24px, 1fr) 28px 38px 28px; align-items: center; gap: 4px; width: 100%; min-height: 34px; box-sizing: border-box; padding: 0 4px; color: var(--muted); font-size: 12px; border-radius: 6px; }
     .weibei-slash-stepper.is-focused { background: var(--cinnabar-soft); }
     .weibei-slash-stepper-label { min-width: 0; }

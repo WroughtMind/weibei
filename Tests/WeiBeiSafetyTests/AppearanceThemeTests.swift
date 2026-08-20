@@ -6,6 +6,8 @@ final class AppearanceThemeTests: XCTestCase {
         XCTAssertEqual(WeiBeiAppearanceMode.allCases.count, 6)
         XCTAssertEqual(WeiBeiAppearanceMode.glassLight.oppositeFamily, .glassDark)
         XCTAssertEqual(WeiBeiAppearanceMode.glassDark.oppositeFamily, .glassLight)
+        XCTAssertEqual(WeiBeiAppearanceMode.glassLight.webThemeName, "glassLight")
+        XCTAssertEqual(WeiBeiAppearanceMode.glassDark.webThemeName, "glassDark")
         XCTAssertLessThan(WeiBeiNativePalette.paper(for: .glassLight).alphaComponent, 1)
         XCTAssertLessThan(WeiBeiNativePalette.paper(for: .glassDark).alphaComponent, 1)
         XCTAssertGreaterThan(WeiBeiNativePalette.drawerSurface(for: .glassLight).alphaComponent, 0)

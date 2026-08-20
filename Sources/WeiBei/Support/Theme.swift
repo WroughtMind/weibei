@@ -86,11 +86,7 @@ enum WeiBeiAppearanceMode: String, CaseIterable, Identifiable {
     }
 
     var webThemeName: String {
-        switch self {
-        case .glassLight: return WeiBeiAppearanceMode.xuan.rawValue
-        case .glassDark: return WeiBeiAppearanceMode.stele.rawValue
-        default: return rawValue
-        }
+        rawValue
     }
 
     var windowBackground: NSColor {
@@ -224,12 +220,16 @@ enum WeiBeiTheme {
 /// One native behind-window material layer for each glass window.
 struct WeiBeiThemeBackdrop: View {
     let mode: WeiBeiAppearanceMode
+    var isFullScreen = false
 
     @ViewBuilder
     var body: some View {
         if mode.isGlass {
             ZStack {
-                WeiBeiBehindWindowMaterial(mode: mode)
+                WeiBeiBehindWindowMaterial(
+                    mode: mode,
+                    isFullScreen: isFullScreen
+                )
                 Color(nsColor: WeiBeiNativePalette.glassBaseTint(for: mode))
             }
         } else {
@@ -240,6 +240,7 @@ struct WeiBeiThemeBackdrop: View {
 
 private struct WeiBeiBehindWindowMaterial: NSViewRepresentable {
     let mode: WeiBeiAppearanceMode
+    let isFullScreen: Bool
 
     func makeNSView(context: Context) -> NSVisualEffectView {
         let view = NSVisualEffectView()
@@ -254,8 +255,10 @@ private struct WeiBeiBehindWindowMaterial: NSViewRepresentable {
     }
 
     private func configure(_ view: NSVisualEffectView) {
-        view.material = mode.isDark ? .hudWindow : .underWindowBackground
-        view.alphaValue = mode.isDark ? 0.92 : 0.62
+        view.material = mode.isDark
+            ? .hudWindow
+            : isFullScreen ? .windowBackground : .underWindowBackground
+        view.alphaValue = mode.isDark ? 0.68 : isFullScreen ? 0.88 : 0.36
     }
 }
 
@@ -319,9 +322,9 @@ enum WeiBeiNativePalette {
     static func glassBaseTint(for mode: WeiBeiAppearanceMode = current) -> NSColor {
         switch mode {
         case .glassLight:
-            return NSColor(calibratedRed: 0.94, green: 0.98, blue: 1.00, alpha: 0.03)
+            return NSColor(calibratedRed: 0.94, green: 0.98, blue: 1.00, alpha: 0.02)
         case .glassDark:
-            return NSColor(calibratedRed: 0.025, green: 0.040, blue: 0.065, alpha: 0.56)
+            return NSColor(calibratedRed: 0.025, green: 0.040, blue: 0.065, alpha: 0.46)
         default:
             return .clear
         }
@@ -1332,27 +1335,31 @@ extension View {
     }
 
     func weibeiFloatingPanel(cornerRadius: CGFloat = 8, shadowOpacity: Double = 0.10) -> some View {
-        self
+        let isGlass = WeiBeiThemeRuntime.mode.isGlass
+        return self
             .foregroundColor(WeiBeiTheme.ink)
             .background {
                 ZStack {
                     RoundedRectangle(cornerRadius: cornerRadius)
-                        .fill(WeiBeiTheme.paperRaised.opacity(0.985))
+                        .fill(WeiBeiTheme.paperRaised.opacity(isGlass ? 0.58 : 0.985))
                     RoundedRectangle(cornerRadius: cornerRadius)
                         .fill(.ultraThinMaterial)
-                        .opacity(0.015)
+                        .opacity(isGlass ? 0.24 : 0.015)
                 }
             }
             .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
             .overlay(alignment: .top) {
                 Rectangle()
-                    .fill(WeiBeiTheme.glassHighlight.opacity(0.24))
+                    .fill(isGlass ? Color.clear : WeiBeiTheme.glassHighlight.opacity(0.24))
                     .frame(height: 1)
                     .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
             }
             .overlay {
                 RoundedRectangle(cornerRadius: cornerRadius)
-                    .stroke(WeiBeiTheme.hairline, lineWidth: 1)
+                    .stroke(
+                        WeiBeiTheme.hairline.opacity(isGlass ? 0.22 : 1),
+                        lineWidth: 1
+                    )
             }
             .shadow(color: WeiBeiTheme.ink.opacity(shadowOpacity * 0.50), radius: 7, y: 3)
     }
