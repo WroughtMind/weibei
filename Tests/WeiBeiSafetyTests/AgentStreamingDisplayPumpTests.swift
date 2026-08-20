@@ -25,18 +25,33 @@ final class AgentStreamingDisplayPumpTests: XCTestCase {
         XCTAssertEqual(rig.published, ["你", "你好"])
     }
 
-    func testBacklogCatchesUpGeometricallyWithoutExceedingTarget() {
+    func testBacklogDecaysSmoothlyToTypingPace() {
         let rig = Rig()
         rig.target = String(repeating: "字", count: 10)
         for _ in 0..<10 { rig.pump.stepOnce() }
         XCTAssertEqual(rig.published.last, rig.target)
-        // Deficits 10→7→5→4→3→2→1→0 advance 3,2,1,1,1,1,1: seven publications.
-        XCTAssertEqual(rig.published.count, 7)
-        var longest = 0
+        // Rate derives from the live deficit: a 10-character backlog starts at
+        // 2/tick and decays toward single characters without step-size jumps.
+        var previous = 0
         for prefix in rig.published {
-            XCTAssertLessThanOrEqual(longest, prefix.count)
+            let step = prefix.count - previous
+            XCTAssertTrue(step == 1 || step == 2, "unexpected step \(step)")
             XCTAssertTrue(rig.target.hasPrefix(prefix))
-            longest = prefix.count
+            previous = prefix.count
+        }
+    }
+
+    func testLargerBacklogKeepsBoundedEvenSteps() {
+        let rig = Rig()
+        rig.target = String(repeating: "字", count: 15)
+        for _ in 0..<15 { rig.pump.stepOnce() }
+        XCTAssertEqual(rig.published.last, rig.target)
+        // Deficit 15 paces at ≤2.5 characters per tick: steps stay within 1…3.
+        var previous = 0
+        for prefix in rig.published {
+            let step = prefix.count - previous
+            XCTAssertTrue((1...3).contains(step), "unexpected step \(step)")
+            previous = prefix.count
         }
     }
 
@@ -49,14 +64,14 @@ final class AgentStreamingDisplayPumpTests: XCTestCase {
     func testHiddenChatPausesAndCatchesUpWhenShown() {
         let rig = Rig()
         rig.canPublish = false
-        rig.target = "一二三四五六七八"
+        rig.target = String(repeating: "字", count: 30)
         for _ in 0..<3 { rig.pump.stepOnce() }
         XCTAssertTrue(rig.published.isEmpty)
         rig.canPublish = true
         rig.pump.stepOnce()
         XCTAssertEqual(rig.published.count, 1)
-        // Deficit 8 exceeds the runway, so the first visible tick is a bulk step.
-        XCTAssertGreaterThan(rig.published[0].count, 1)
+        // Deficit 30 paces at 1 + 30/10 = 4 characters per tick: a bulk step.
+        XCTAssertEqual(rig.published[0].count, 4)
         XCTAssertTrue(rig.target.hasPrefix(rig.published[0]))
     }
 

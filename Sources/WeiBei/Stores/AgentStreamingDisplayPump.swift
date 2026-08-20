@@ -11,12 +11,13 @@ import Foundation
 final class AgentStreamingDisplayPump {
     /// Tick interval; matches the historical 33 ms streaming publish gate (~30 Hz).
     static let tickNanoseconds: UInt64 = 33_000_000
-    /// While the display trails the target by no more than this many characters,
-    /// advance one character per tick so token bursts become single characters.
-    static let steadyRunwayCharacters = 4
-    /// When further behind than the runway, advance ~1/catchUpDivisor of the
-    /// deficit per tick so catch-up stays geometric instead of linear.
-    static let catchUpDivisor = 3
+    /// Lag (in characters) that adds one extra character per tick of pace, so
+    /// the rate ramps continuously with backlog instead of jumping between
+    /// integer step sizes.
+    static let rampLagCharacters: Double = 10.0
+    /// Hard ceiling on characters per tick so huge backlogs drain as a fast
+    /// but readable rush instead of an instant dump.
+    static let maximumCharsPerTick = 12
 
     struct Hooks {
         let targetText: @MainActor () -> String
@@ -29,6 +30,10 @@ final class AgentStreamingDisplayPump {
     /// Prefix of the target published so far in this run. Only advances while
     /// the target keeps it as a prefix; anomalies snap straight to full text.
     private var displayedPrefix = ""
+    /// Fractional pacing credit carried between ticks so non-integer rates
+    /// (e.g. 1.5 characters per tick) render as an even character flow.
+    /// Clamped to ≤1 after each emit so stale credit cannot burst later.
+    private var pacingCredit = 0.0
 
     init(hooks: Hooks) {
         self.hooks = hooks
@@ -56,6 +61,7 @@ final class AgentStreamingDisplayPump {
         task?.cancel()
         task = nil
         displayedPrefix = ""
+        pacingCredit = 0
     }
 
     /// Advances the display prefix by one tick. Exposed for deterministic tests.
@@ -67,14 +73,23 @@ final class AgentStreamingDisplayPump {
         guard target.hasPrefix(displayedPrefix) else {
             // Non-append anomaly (rewrite or stale run): never stall on it.
             displayedPrefix = target
+            pacingCredit = 0
             hooks.publish(target)
             return
         }
         let deficit = target.count - displayedPrefix.count
         guard deficit > 0 else { return }
-        let step = deficit <= Self.steadyRunwayCharacters
-            ? 1
-            : max(1, deficit / Self.catchUpDivisor)
+        // One character per tick plus a continuous ramp with lag: near target
+        // this is plain single-character typing; sustained backlog settles at
+        // a constant fractional rate that the credit renders evenly.
+        let charsPerTick = min(
+            Double(Self.maximumCharsPerTick),
+            1.0 + Double(deficit) / Self.rampLagCharacters
+        )
+        pacingCredit += charsPerTick
+        let step = min(deficit, Int(pacingCredit.rounded(.down)))
+        pacingCredit -= Double(step)
+        if pacingCredit > 1 { pacingCredit = 1 }
         let newIndex = target.index(
             target.startIndex,
             offsetBy: displayedPrefix.count + step,
