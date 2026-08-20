@@ -269,6 +269,8 @@ if [[ "$CHECK_ONLY" != true ]]; then
   <false/>
   <key>SURequireSignedFeed</key>
   <true/>
+  <key>SUVerifyUpdateBeforeExtraction</key>
+  <true/>
   <key>SUScheduledCheckInterval</key>
   <integer>3600</integer>
 </dict>
