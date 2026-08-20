@@ -12,6 +12,7 @@ import {
   streaming,
   streamingConfig,
 } from '@milkdown/plugin-streaming';
+import { streamingAppearancePlugin } from './streaming-appearance';
 import { SlashProvider, slashFactory } from '@milkdown/kit/plugin/slash';
 import { readImageAsBase64, upload, uploadConfig } from '@milkdown/kit/plugin/upload';
 import { exitCode, lift, setBlockType, toggleMark, wrapIn } from '@milkdown/kit/prose/commands';
@@ -2697,6 +2698,15 @@ const finishStreamingMarkdownInternal = (markdown: any) => {
   updateStreamingMarkdownInternal(markdown);
   streamingCommands().call(endStreamingCmd.key, { diffReview: false });
   streamingMarkdownBuffer = null;
+  // Decorations gate on the live buffer; repaint once so the finished render
+  // drops the streaming caret and fade spans without dispatching a transaction.
+  try {
+    editor?.action((ctx) => {
+      ctx.get(editorViewCtx).updateState(ctx.get(editorViewCtx).state);
+    });
+  } catch {
+    // View not ready yet; decorations clear on the next transaction anyway.
+  }
   scheduleContentHeightReports();
 };
 
@@ -3233,7 +3243,8 @@ editorBuilder = editorBuilder
   .use(gfm)
   .use(structuredMarkdown)
   .use(weiBeiMath)
-  .use(streaming);
+  .use(streaming)
+  .use($prose(() => streamingAppearancePlugin(() => streamingMarkdownBuffer !== null)));
 
 if (WEIBEI_EDITOR_RUNTIME) {
   editorBuilder = editorBuilder
