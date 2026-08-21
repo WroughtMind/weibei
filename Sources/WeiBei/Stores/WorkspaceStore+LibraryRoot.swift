@@ -70,20 +70,42 @@ extension WorkspaceStore {
         return try copyPreservingOriginal(from: sourceURL, into: directory)
     }
 
-    func copyPreservingOriginal(from sourceURL: URL, into directory: URL) throws -> URL {
-        let sourceData = try Data(contentsOf: sourceURL)
+    /// Kernel-side copy with the original dedupe semantics: identical content
+    /// resolves to the existing file, real conflicts get a unique name. Size is
+    /// compared before any byte read, so large imports never enter memory whole.
+    nonisolated func copyPreservingOriginal(from sourceURL: URL, into directory: URL) throws -> URL {
         let preferred = directory.appendingPathComponent(sourceURL.lastPathComponent)
         if FileManager.default.fileExists(atPath: preferred.path) {
-            let existing = try Data(contentsOf: preferred)
-            if existing == sourceData {
+            if try Self.filesHaveIdenticalContents(sourceURL, preferred) {
                 return preferred
             }
             let unique = uniqueCopyURL(in: directory, preferred: preferred)
-            try sourceData.write(to: unique, options: [.atomic])
+            try FileManager.default.copyItem(at: sourceURL, to: unique)
             return unique
         }
-        try sourceData.write(to: preferred, options: [.atomic])
+        try FileManager.default.copyItem(at: sourceURL, to: preferred)
         return preferred
+    }
+
+    nonisolated private static func filesHaveIdenticalContents(_ lhs: URL, _ rhs: URL) throws -> Bool {
+        let lhsSize = try lhs.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? -1
+        let rhsSize = try rhs.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? -1
+        guard lhsSize == rhsSize else { return false }
+        guard let lhsHandle = try? FileHandle(forReadingFrom: lhs),
+              let rhsHandle = try? FileHandle(forReadingFrom: rhs) else {
+            throw CocoaError(.fileReadUnknown)
+        }
+        defer {
+            try? lhsHandle.close()
+            try? rhsHandle.close()
+        }
+        let chunkSize = 1 << 20
+        while true {
+            let lhsChunk = try lhsHandle.read(upToCount: chunkSize) ?? Data()
+            let rhsChunk = try rhsHandle.read(upToCount: chunkSize) ?? Data()
+            if lhsChunk != rhsChunk { return false }
+            if lhsChunk.isEmpty { return true }
+        }
     }
 
     func libraryRelativePath(of url: URL) -> String? {
