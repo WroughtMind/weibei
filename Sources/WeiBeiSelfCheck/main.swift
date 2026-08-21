@@ -961,7 +961,7 @@ let contentViewSource = readSource("Sources/WeiBei/Views/ContentView.swift")
 expect(
     !contentViewSource.contains("environmentObject(store).weiBeiMotionScoped()")
         && !weiBeiAppSource.contains(".environmentObject(updateService)\n                .weiBeiMotionScoped()"),
-    "motion scope must sit below the store injection: @EnvironmentObject flows down the view tree, never up (opening Settings crashed on the missing object)"
+    "SAFETY:motion-scope-below-store-injection the store-backed motion scope must sit below the store injection: @EnvironmentObject flows down the view tree, never up, so the reversed order crashes the Settings window on open"
 )
 expect(
     NoteTabDisplayTitle.resolve(customTitle: nil, noteTitle: "旧文件名", body: "# 货币银行学\n\n第二章 利率") == "货币银行学",
