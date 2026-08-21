@@ -53,17 +53,7 @@ extension WorkspaceStore {
     /// resolves to the existing file, real conflicts get a unique name. Size is
     /// compared before any byte read, so large imports never enter memory whole.
     nonisolated static func copyPreservingOriginal(from sourceURL: URL, into directory: URL) throws -> URL {
-        let preferred = directory.appendingPathComponent(sourceURL.lastPathComponent)
-        if FileManager.default.fileExists(atPath: preferred.path) {
-            if try filesHaveIdenticalContents(sourceURL, preferred) {
-                return preferred
-            }
-            let unique = uniqueCopyURL(in: directory, preferred: preferred)
-            try FileManager.default.copyItem(at: sourceURL, to: unique)
-            return unique
-        }
-        try FileManager.default.copyItem(at: sourceURL, to: preferred)
-        return preferred
+        try ImportFileCopy.copyPreservingOriginal(from: sourceURL, into: directory)
     }
 
     nonisolated static func copyExternalFileIntoLibrary(
@@ -82,28 +72,7 @@ extension WorkspaceStore {
             at: directory,
             withIntermediateDirectories: true
         )
-        return try copyPreservingOriginal(from: sourceURL, into: directory)
-    }
-
-    nonisolated private static func filesHaveIdenticalContents(_ lhs: URL, _ rhs: URL) throws -> Bool {
-        let lhsSize = try lhs.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? -1
-        let rhsSize = try rhs.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? -1
-        guard lhsSize == rhsSize else { return false }
-        guard let lhsHandle = try? FileHandle(forReadingFrom: lhs),
-              let rhsHandle = try? FileHandle(forReadingFrom: rhs) else {
-            throw CocoaError(.fileReadUnknown)
-        }
-        defer {
-            try? lhsHandle.close()
-            try? rhsHandle.close()
-        }
-        let chunkSize = 1 << 20
-        while true {
-            let lhsChunk = try lhsHandle.read(upToCount: chunkSize) ?? Data()
-            let rhsChunk = try rhsHandle.read(upToCount: chunkSize) ?? Data()
-            if lhsChunk != rhsChunk { return false }
-            if lhsChunk.isEmpty { return true }
-        }
+        return try ImportFileCopy.copyPreservingOriginal(from: sourceURL, into: directory)
     }
 
     func libraryRelativePath(of url: URL) -> String? {
@@ -271,20 +240,6 @@ extension WorkspaceStore {
                 }
                 importedItems[index].urlPath = url.path
             }
-        }
-    }
-
-    nonisolated private static func uniqueCopyURL(in directory: URL, preferred: URL) -> URL {
-        let stem = preferred.deletingPathExtension().lastPathComponent
-        let ext = preferred.pathExtension
-        var index = 2
-        while true {
-            let name = ext.isEmpty ? "\(stem) \(index)" : "\(stem) \(index).\(ext)"
-            let candidate = directory.appendingPathComponent(name)
-            if !FileManager.default.fileExists(atPath: candidate.path) {
-                return candidate
-            }
-            index += 1
         }
     }
 
