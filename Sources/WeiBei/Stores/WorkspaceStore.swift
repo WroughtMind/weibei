@@ -328,6 +328,8 @@ final class WorkspaceStore: ObservableObject {
     var courseLibraryRootBookmarkData: Data?
     var courseLibraryRootURL: URL?
     var courseLibraryUnavailableReason: String?
+    /// 资料库迁移进行中：写回、3 秒对账、课程笔记加载全部挂起（计划 §4.2）。
+    @Published var libraryMigrationInFlight = false
     @Published private(set) var courseItemMemberships: [CourseItemMembership] = [] {
         didSet {
             courseMembershipIndex = CourseItemMemberships(values: courseItemMemberships)
@@ -747,8 +749,8 @@ final class WorkspaceStore: ObservableObject {
 #if DEBUG
     private var usesBackgroundWorkspacePersistenceForSelfCheck = false
 #endif
-    private var resolvedCourseRootURLs: [UUID: URL] = [:]
-    private var courseRootUnavailableReasons: [UUID: String] = [:]
+    var resolvedCourseRootURLs: [UUID: URL] = [:]
+    var courseRootUnavailableReasons: [UUID: String] = [:]
     private let courseProjectFileWorker = CourseProjectFileWorker()
     private var courseReconciliationTask: Task<Void, Never>?
     private var courseReconciliationInFlight = false
@@ -17150,7 +17152,7 @@ final class WorkspaceStore: ObservableObject {
     }
 
     @discardableResult
-    private func resolveCourseOwnedItems(for courseID: UUID) -> Bool {
+    func resolveCourseOwnedItems(for courseID: UUID) -> Bool {
         var changed = false
         let itemIDs = importedItems.compactMap { item -> String? in
             guard case .courseOwned(let ownerCourseID, _) = item.storage,
@@ -17175,6 +17177,7 @@ final class WorkspaceStore: ObservableObject {
 
     func reconcileCourseFilesNow(courseID requestedCourseID: UUID? = nil) async {
         guard !courseReconciliationInFlight else { return }
+        guard !libraryMigrationInFlight else { return }
         courseReconciliationInFlight = true
         defer { courseReconciliationInFlight = false }
         if let libraryRoot = courseLibraryRootURL {
@@ -18554,6 +18557,7 @@ final class WorkspaceStore: ObservableObject {
     }
 
     private func scheduleCourseNoteLoad(_ item: StudyItem) {
+        guard !libraryMigrationInFlight else { return }
         guard let access = verifiedCourseOwnedNoteAccess(
             item
         ) else {
