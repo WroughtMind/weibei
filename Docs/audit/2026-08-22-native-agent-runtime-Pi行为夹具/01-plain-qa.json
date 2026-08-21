@@ -1,0 +1,28 @@
+{
+  "backend" : "pi",
+  "contextRevision" : "native-baseline-7480c393-6020-4065-9e93-2501207576b1",
+  "elapsedSeconds" : 2.2000000000000002,
+  "hasCourseProfileUpdate" : false,
+  "hasLearningUpdate" : false,
+  "hasNoteProposal" : false,
+  "hasRelationProposal" : false,
+  "hasRichAnswer" : false,
+  "id" : "01-plain-qa",
+  "progress" : [
+    "preparing",
+    "text",
+    "text"
+  ],
+  "question" : "2+2 等于几？只回答一个数字。",
+  "readItemIDs" : [
+
+  ],
+  "sources" : [
+
+  ],
+  "text" : "4",
+  "toolTrace" : [
+    "provider=deepseek",
+    "model=deepseek-chat"
+  ]
+}

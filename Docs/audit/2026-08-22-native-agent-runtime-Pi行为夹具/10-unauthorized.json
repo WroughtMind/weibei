@@ -1,0 +1,11 @@
+{
+  "contextRevision" : "native-baseline-59836228-606a-4b63-a892-41a8bf48246e",
+  "elapsedSeconds" : 0.59999999999999998,
+  "error" : "PI 拒绝命令：No API key found for deepseek.\n\nUse \/login to log into a provider via OAuth or API key. See:\n  \/Users\/changfenhuang\/projects\/魏碑\/.build\/pi-runtime\/0.82.1\/darwin-arm64\/PiRuntime\/bin\/docs\/providers.md\n  \/Users\/changfenhuang\/projects\/魏碑\/.build\/pi-runtime\/0.82.1\/darwin-arm64\/PiRuntime\/bin\/docs\/models.md",
+  "failureKind" : "generic",
+  "id" : "10-unauthorized",
+  "progress" : [
+    "preparing"
+  ],
+  "question" : "随便打个招呼。"
+}

@@ -1,0 +1,23 @@
+{
+  "model" : "deepseek-chat",
+  "originMain" : "c7018f0",
+  "piVersion" : "0.82.1",
+  "provider" : "deepseek",
+  "recordedAt" : "2026-08-21T23:33:58Z",
+  "scenarioCount" : 13,
+  "scenarios" : [
+    "01-plain-qa",
+    "02-course-search",
+    "03-course-read",
+    "04-learning-memory",
+    "05-course-profile",
+    "06-note-relation",
+    "07-visualize",
+    "08-visual-asset",
+    "09-cancel",
+    "10-unauthorized",
+    "11-resume-a",
+    "12-resume-b",
+    "13-multi-tool"
+  ]
+}

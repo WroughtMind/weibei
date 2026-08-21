@@ -1,0 +1,11 @@
+{
+  "contextRevision" : "native-baseline-0bef06ff-db42-4c3a-822f-f61e34c15f9c",
+  "elapsedSeconds" : 0.80000000000000004,
+  "error" : "PI 请求已取消",
+  "failureKind" : "cancelled",
+  "id" : "09-cancel",
+  "progress" : [
+    "preparing"
+  ],
+  "question" : "请详细解释名义利率、实际利率与通货膨胀的关系，分步骤慢慢讲。"
+}

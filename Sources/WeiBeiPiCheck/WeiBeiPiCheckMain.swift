@@ -21,6 +21,17 @@ struct WeiBeiPiCheckMain {
             return
         }
 
+        if await NativeBaselineFixtures.runIfRequested(
+            arguments: CommandLine.arguments,
+            environment: environment
+        ) {
+            return
+        }
+
+        if await NativeEngineSmoke.runIfRequested(arguments: CommandLine.arguments) {
+            return
+        }
+
         if CommandLine.arguments.contains("--authentication-status") {
             var status = AgentAuthenticationStatus()
             status.recordFailure(
