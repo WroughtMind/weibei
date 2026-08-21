@@ -2277,7 +2277,7 @@ enum ImportedIdentitySelfCheck {
         try store?.configureCourseLibrary(at: library)
         try Data("恢复后的离线资料".utf8).write(to: materialURL)
         let restoredMaterial = try require(
-            store?.importFiles([materialURL], selectsFirstImportedItem: false).first,
+            importFilesAndWait(store, [materialURL], selectsFirstImportedItem: false).first,
             "恢复后的旧资料无法重新导入"
         )
         try check(restoredMaterial.id.hasPrefix("imported:"), "恢复后的旧资料仍使用路径身份")
@@ -2288,7 +2288,7 @@ enum ImportedIdentitySelfCheck {
             "恢复后的旧资料产生了重复项"
         )
         let restoredNote = try require(
-            store?.importFiles(
+            importFilesAndWait(store, 
                 [noteURL],
                 selectsFirstImportedItem: false,
                 markdownNotePaths: [noteURL.path]
@@ -2324,7 +2324,7 @@ enum ImportedIdentitySelfCheck {
             workspaceDirectory: fixture.workspaceDirectory,
             selectionAskThreadDefaults: fixture.selectionAskThreadDefaults
         )
-        _ = store?.importFiles(
+        _ = importFilesAndWait(store, 
             [originalURL, noteURL],
             selectsFirstImportedItem: false,
             markdownNotePaths: [noteURL.path]
@@ -2384,7 +2384,7 @@ enum ImportedIdentitySelfCheck {
 
         let countBeforeDuplicateImport = store?.importedItems.count
         let duplicateImport = try require(
-            store?.importFiles([renamedURL], selectsFirstImportedItem: false).first,
+            importFilesAndWait(store, [renamedURL], selectsFirstImportedItem: false).first,
             "改名资料重复导入失败"
         )
         try check(duplicateImport.id == firstMaterial.id, "重复导入改名资料产生了新身份")
@@ -2480,7 +2480,7 @@ enum ImportedIdentitySelfCheck {
             noteBackupRootURL: backupRoot,
             selectionAskThreadDefaults: fixture.selectionAskThreadDefaults
         )
-        _ = store?.importFiles(
+        _ = importFilesAndWait(store, 
             [noteURL],
             selectsFirstImportedItem: false,
             markdownNotePaths: [noteURL.path]
@@ -2583,7 +2583,7 @@ enum ImportedIdentitySelfCheck {
             importedFileIdentityResolver: resolver,
             selectionAskThreadDefaults: fixture.selectionAskThreadDefaults
         )
-        _ = store?.importFiles(
+        _ = importFilesAndWait(store, 
             [noteBURL, noteAURL],
             selectsFirstImportedItem: false,
             markdownNotePaths: [noteAURL.path, noteBURL.path]
@@ -2690,7 +2690,7 @@ enum ImportedIdentitySelfCheck {
             noteBackupRootURL: backupRoot,
             selectionAskThreadDefaults: fixture.selectionAskThreadDefaults
         )
-        _ = store?.importFiles(
+        _ = importFilesAndWait(store, 
             [noteURL],
             selectsFirstImportedItem: false,
             markdownNotePaths: [noteURL.path]
@@ -2736,7 +2736,7 @@ enum ImportedIdentitySelfCheck {
             noteBackupRootURL: backupRoot,
             selectionAskThreadDefaults: fixture.selectionAskThreadDefaults
         )
-        _ = store.importFiles(
+        _ = importFilesAndWait(store, 
             [noteAURL, noteBURL],
             selectsFirstImportedItem: false,
             markdownNotePaths: [noteAURL.path, noteBURL.path]
@@ -2811,7 +2811,7 @@ enum ImportedIdentitySelfCheck {
             },
             selectionAskThreadDefaults: fixture.selectionAskThreadDefaults
         )
-        _ = store.importFiles(
+        _ = importFilesAndWait(store, 
             [noteURL],
             selectsFirstImportedItem: false,
             markdownNotePaths: [noteURL.path]
@@ -2872,7 +2872,7 @@ enum ImportedIdentitySelfCheck {
             },
             selectionAskThreadDefaults: fixture.selectionAskThreadDefaults
         )
-        _ = store.importFiles(
+        _ = importFilesAndWait(store, 
             [materialURL, noteURL],
             selectsFirstImportedItem: false,
             markdownNotePaths: [noteURL.path]
@@ -2927,7 +2927,7 @@ enum ImportedIdentitySelfCheck {
             },
             selectionAskThreadDefaults: fixture.selectionAskThreadDefaults
         )
-        _ = store.importFiles(
+        _ = importFilesAndWait(store, 
             [materialURL, noteURL],
             selectsFirstImportedItem: false,
             markdownNotePaths: [noteURL.path]
@@ -2976,7 +2976,7 @@ enum ImportedIdentitySelfCheck {
             },
             selectionAskThreadDefaults: fixture.selectionAskThreadDefaults
         )
-        _ = store.importFiles(
+        _ = importFilesAndWait(store, 
             [noteURL],
             selectsFirstImportedItem: false,
             markdownNotePaths: [noteURL.path]
@@ -3027,7 +3027,7 @@ enum ImportedIdentitySelfCheck {
             },
             selectionAskThreadDefaults: fixture.selectionAskThreadDefaults
         )
-        _ = store.importFiles(
+        _ = importFilesAndWait(store, 
             [noteURL],
             selectsFirstImportedItem: false,
             markdownNotePaths: [noteURL.path]
@@ -3064,7 +3064,7 @@ enum ImportedIdentitySelfCheck {
             workspaceDirectory: fixture.workspaceDirectory,
             selectionAskThreadDefaults: fixture.selectionAskThreadDefaults
         )
-        _ = store?.importFiles(
+        _ = importFilesAndWait(store, 
             [materialURL, noteURL],
             selectsFirstImportedItem: false,
             markdownNotePaths: [noteURL.path]
@@ -3235,7 +3235,7 @@ enum ImportedIdentitySelfCheck {
         )
 
         let first = try require(
-            store?.importFiles([sourceURL], selectsFirstImportedItem: false).first,
+            importFilesAndWait(store, [sourceURL], selectsFirstImportedItem: false).first,
             "首次导入身份边界资料失败"
         )
         store?.select(itemID: first.id)
@@ -3253,7 +3253,7 @@ enum ImportedIdentitySelfCheck {
         )
         try check(store?.importedItems.first { $0.id == first.id }?.urlPath == nil, "重启时书签错误接受了世代不同的重建文件")
         let replacement = try require(
-            store?.importFiles([sourceURL], selectsFirstImportedItem: false).first,
+            importFilesAndWait(store, [sourceURL], selectsFirstImportedItem: false).first,
             "删除重建后重新导入失败"
         )
         try check(replacement.id != first.id, "删除重建的文件错误继承了旧身份")
@@ -3261,14 +3261,14 @@ enum ImportedIdentitySelfCheck {
         try check(store?.importedItems.first { $0.id == first.id }?.urlPath == nil, "旧资料仍错误指向删除重建后的文件")
 
         let crossVolumeCopy = try require(
-            store?.importFiles([copyURL], selectsFirstImportedItem: false).first,
+            importFilesAndWait(store, [copyURL], selectsFirstImportedItem: false).first,
             "跨卷副本导入失败"
         )
         try check(crossVolumeCopy.id != first.id, "跨卷副本错误继承了原文件身份")
         try check(crossVolumeCopy.id != replacement.id, "跨卷副本错误继承了重建文件身份")
         let countBeforeDuplicateImport = store?.importedItems.count
         let duplicate = try require(
-            store?.importFiles([copyURL], selectsFirstImportedItem: false).first,
+            importFilesAndWait(store, [copyURL], selectsFirstImportedItem: false).first,
             "重复导入跨卷副本失败"
         )
         try check(duplicate.id == crossVolumeCopy.id, "重复导入同一文件产生了新身份")

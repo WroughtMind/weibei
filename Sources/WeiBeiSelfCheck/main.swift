@@ -113,6 +113,7 @@ checkUnavailableCourseUnregister()
 try checkNotePersistenceScenes()
 try checkImportIdentityScenes()
 try checkLibraryRelativeStorage()
+try checkImportCopySemantics()
 try checkWorkspaceSafetyScenes()
 
 expect(EmptyWorkspaceDayPeriod(hour: 5) == .morning
@@ -2310,6 +2311,42 @@ do {
     let hoppedOffMain = stillMainAfterHop == false
     hopLock.unlock()
     expect(hoppedOffMain, "Phase 2 encode hop leaves main thread")
+}
+
+func checkImportCopySemantics() throws {
+    let scene = FileManager.default.temporaryDirectory
+        .appendingPathComponent("weibei-import-copy-\(UUID().uuidString)", isDirectory: true)
+    let sourceDirectory = scene.appendingPathComponent("source", isDirectory: true)
+    let libraryDirectory = scene.appendingPathComponent("library", isDirectory: true)
+    try FileManager.default.createDirectory(at: sourceDirectory, withIntermediateDirectories: true)
+    try FileManager.default.createDirectory(at: libraryDirectory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: scene) }
+
+    let source = sourceDirectory.appendingPathComponent("material.pdf")
+    let payload = Data((0..<8192).map { UInt8(truncatingIfNeeded: $0 &* 7 &+ 3) })
+    try payload.write(to: source)
+
+    let firstCopy = try ImportFileCopy.copyPreservingOriginal(from: source, into: libraryDirectory)
+    expect(firstCopy == libraryDirectory.appendingPathComponent("material.pdf"), "import copy lands at the preferred path")
+    expect(FileManager.default.fileExists(atPath: source.path), "import copy preserves the original file")
+    let firstCopyContents = try Data(contentsOf: firstCopy)
+    expect(firstCopyContents == payload, "import copy is byte-faithful")
+
+    let deduplicatedCopy = try ImportFileCopy.copyPreservingOriginal(from: source, into: libraryDirectory)
+    expect(deduplicatedCopy == firstCopy, "re-importing identical content reuses the existing library file")
+
+    try Data("changed-content".utf8).write(to: source)
+    let conflictCopy = try ImportFileCopy.copyPreservingOriginal(from: source, into: libraryDirectory)
+    expect(conflictCopy != firstCopy && conflictCopy.lastPathComponent.hasPrefix("material"), "conflicting content copies to a unique name")
+    let untouchedContents = try Data(contentsOf: firstCopy)
+    expect(untouchedContents == payload, "existing library file is untouched by a conflicting import")
+
+    let tinySource = sourceDirectory.appendingPathComponent("tiny.md")
+    try Data("# note".utf8).write(to: tinySource)
+    let sizeMismatchTarget = libraryDirectory.appendingPathComponent("tiny.md")
+    try Data("# note plus much more text than the source".utf8).write(to: sizeMismatchTarget)
+    let sizeMismatchCopy = try ImportFileCopy.copyPreservingOriginal(from: tinySource, into: libraryDirectory)
+    expect(sizeMismatchCopy != sizeMismatchTarget, "size mismatch short-circuits to a unique copy without byte comparison")
 }
 
 print("WeiBei self-check passed")

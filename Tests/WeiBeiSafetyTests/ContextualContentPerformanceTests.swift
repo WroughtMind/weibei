@@ -87,7 +87,8 @@ final class ContextualContentPerformanceTests: XCTestCase {
             storage: .common(relativePath: "")
         )
         store.importedItems = [sentinel]
-        XCTAssertTrue(store.importFiles([first, second]).isEmpty)
+        let limitImport = importFilesAndWait(store, [first, second])
+        XCTAssertTrue(limitImport.isEmpty)
         XCTAssertEqual(store.importedItems, [sentinel])
     }
 

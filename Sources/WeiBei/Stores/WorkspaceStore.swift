@@ -10158,7 +10158,7 @@ final class WorkspaceStore: ObservableObject {
         }
     }
 
-    private func selectMeasured(itemID: String?, opensNotebook: Bool?) {
+    func selectMeasured(itemID: String?, opensNotebook: Bool?) {
         invalidateAgentContext()
         persistCurrentNote()
         notebookCreationDraft = nil
@@ -11525,7 +11525,7 @@ final class WorkspaceStore: ObservableObject {
         }
     }
 
-    private func restoreCurrentStudyLocation() {
+    func restoreCurrentStudyLocation() {
         guard let item = selectedMaterialItem else { return }
         guard let location = studyLocation(for: item.id, in: activeCourseID) else {
             readerLocationID = nil
@@ -12493,138 +12493,100 @@ final class WorkspaceStore: ObservableObject {
             return
         }
         let targetNoteID = linkToActiveNote ? activeNotebookItemID : nil
-        let selectedItems = importFiles(
+        importFiles(
             panel.urls,
             selectsFirstImportedItem: selectsFirstImportedItem,
             markdownAsNotes: markdownAsNotes,
             markdownOnly: markdownOnly,
             reclassifiesExistingMarkdown: reclassifiesExistingMarkdown
-        )
-        if let targetNoteID, targetNoteID == activeNotebookItemID {
-            setLinkedSourceIDsForActiveNote(
-                Set(linkedSourceIDsForActiveNote).union(selectedItems.map(\.id))
-            )
+        ) { selectedItems in
+            if let targetNoteID, self.activeNotebookItemID == targetNoteID {
+                self.setLinkedSourceIDsForActiveNote(
+                    Set(self.linkedSourceIDsForActiveNote).union(selectedItems.map(\.id))
+                )
+            }
         }
     }
 
-    @discardableResult
     func importFiles(
         _ urls: [URL],
         selectsFirstImportedItem: Bool = true,
         markdownAsNotes: Bool = false,
         markdownOnly: Bool = false,
         markdownNotePaths: Set<String>? = nil,
-        reclassifiesExistingMarkdown: Bool = false
-    ) -> [StudyItem] {
-        guard let expandedURLs = CourseProjectFileWorker.expandedSupportedFiles(
-            from: urls,
-            markdownOnly: markdownOnly
-        ) else {
-            showImportLimitExceededAlert()
-            return []
+        reclassifiesExistingMarkdown: Bool = false,
+        completion: @escaping ([StudyItem]) -> Void = { _ in }
+    ) {
+        if courseLibraryRootURL == nil {
+            bootstrapDefaultLibraryIfNeeded()
         }
-        let importsAsNoteOnly: (URL) -> Bool = { url in
-            Self.isMarkdownFile(url)
-                && (markdownNotePaths?.contains(url.path) ?? markdownAsNotes)
+        guard let libraryRoot = courseLibraryRootURL else {
+            showImportantOperationError(ui(
+                "课程资料库不可用，未能导入。请重新打开魏碑，或到课程空间重新选择资料库文件夹。",
+                "The course library is unavailable, so nothing was imported. Restart WeiBei or choose the library folder again in the course space."
+            ))
+            completion([])
+            return
         }
-        let isEditableMarkdown: (URL) -> Bool = Self.isMarkdownFile
-
         if reclassifiesExistingMarkdown || markdownNotePaths != nil {
             persistCurrentNote()
         }
-        var roleChanged = false
-        var importedIDs: [String] = []
-        var didChangeItems = false
-        for rawURL in expandedURLs {
-            let importsIntoNotes = importsAsNoteOnly(rawURL)
-            let url: URL
-            if courseLibraryRootURL != nil {
+        Task.detached(priority: .userInitiated) { [weak self] in
+            guard let expandedURLs = CourseProjectFileWorker.expandedSupportedFiles(
+                from: urls,
+                markdownOnly: markdownOnly
+            ) else {
+                await MainActor.run { [weak self] in
+                    self?.showImportLimitExceededAlert()
+                    completion([])
+                }
+                return
+            }
+            var copied: [(url: URL, isNote: Bool)] = []
+            var failures: [String] = []
+            for (offset, rawURL) in expandedURLs.enumerated() {
+                let importsIntoNotes = Self.isMarkdownFile(rawURL)
+                    && (markdownNotePaths?.contains(rawURL.path) ?? markdownAsNotes)
                 do {
-                    url = try copyExternalFileIntoLibrary(
-                        rawURL,
+                    let url = try Self.copyExternalFileIntoLibrary(
+                        root: libraryRoot,
+                        sourceURL: rawURL,
                         isNote: importsIntoNotes
                     )
+                    copied.append((url, importsIntoNotes))
                 } catch {
-                    showImportantOperationError(error.localizedDescription)
-                    continue
+                    failures.append("“\(rawURL.lastPathComponent)”：\(error.localizedDescription)")
                 }
-            } else {
-                continue
-            }
-            guard let relativePath = libraryRelativePath(of: url) else {
-                continue
-            }
-            let matchingIndex = importedItems.firstIndex { item in
-                item.storage == .common(relativePath: relativePath)
-            }
-            if let matchingIndex {
-                importedIDs.append(importedItems[matchingIndex].id)
-                let nextTitle = url.deletingPathExtension().lastPathComponent
-                let nextSubtitle = url.lastPathComponent
-                let nextKind = StudyItemKind.detect(from: url)
-                let nextRole = isEditableMarkdown(url)
-                let nextMaterialVisibility = !importsIntoNotes
-                if importedItems[matchingIndex].isNotebookNote != nextRole {
-                    roleChanged = true
+                let progress = CourseFileOperationProgress(
+                    completed: offset + 1,
+                    total: expandedURLs.count,
+                    currentFileName: rawURL.lastPathComponent
+                )
+                await MainActor.run { [weak self] in
+                    self?.courseFileOperationProgress = progress
                 }
-                if importedItems[matchingIndex].urlPath != url.path
-                    || importedItems[matchingIndex].title != nextTitle
-                    || importedItems[matchingIndex].subtitle != nextSubtitle
-                    || importedItems[matchingIndex].kind != nextKind
-                    || importedItems[matchingIndex].isNotebookNote != nextRole
-                    || importedItems[matchingIndex].appearsInMaterials != nextMaterialVisibility {
-                    importedItems[matchingIndex].urlPath = url.path
-                    importedItems[matchingIndex].title = nextTitle
-                    importedItems[matchingIndex].subtitle = nextSubtitle
-                    importedItems[matchingIndex].kind = nextKind
-                    importedItems[matchingIndex].isNotebookNote = nextRole
-                    importedItems[matchingIndex].appearsInMaterials = nextMaterialVisibility
-                    didChangeItems = true
+            }
+            await MainActor.run { [weak self] in
+                guard let self else { completion([]); return }
+                self.courseFileOperationProgress = nil
+                let selectedItems = self.applyImportedCommonFiles(
+                    copied,
+                    selectsFirstImportedItem: selectsFirstImportedItem,
+                    reclassifiesExistingMarkdown: reclassifiesExistingMarkdown
+                )
+                if !failures.isEmpty {
+                    let listed = failures.prefix(3).joined(separator: "\n")
+                    let remaining = failures.count - min(3, failures.count)
+                    self.showImportantOperationError(ui(
+                        "导入完成：成功 \(copied.count) 个，失败 \(failures.count) 个。\n\(listed)"
+                            + (remaining > 0 ? ui("\n\n另有 \(remaining) 个失败未列出。", "\n\nPlus \(remaining) more failure(s).") : ""),
+                        "Import finished: \(copied.count) succeeded, \(failures.count) failed.\n\(listed)"
+                            + (remaining > 0 ? "\n\nPlus \(remaining) more failure(s)." : "")
+                    ))
                 }
-                continue
+                completion(selectedItems)
             }
-
-            let item = StudyItem(
-                id: Self.makeImportedItemID(),
-                title: url.deletingPathExtension().lastPathComponent,
-                subtitle: url.lastPathComponent,
-                kind: StudyItemKind.detect(from: url),
-                urlPath: url.path,
-                isSample: false,
-                isNotebookNote: isEditableMarkdown(url),
-                appearsInMaterials: !importsIntoNotes,
-                storage: .common(relativePath: relativePath)
-            )
-            importedItems.append(item)
-            importedIDs.append(item.id)
-            didChangeItems = true
         }
-
-        if roleChanged {
-            if let selectedItemID,
-               importedItems.first(where: { $0.id == selectedItemID })?.isCourseMaterial == false {
-                self.selectedItemID = courseMaterials.first?.id
-                readerLocationTitle = selectedMaterialItem.map(displayTitle)
-                restoreCurrentStudyLocation()
-            }
-            if let activeNotebookItemID,
-               importedItems.first(where: { $0.id == activeNotebookItemID })?.isNotebookNote == false {
-                self.activeNotebookItemID = courseNotebookItems.first?.id
-                noteText = noteText(for: activeNoteItem)
-            }
-            _ = sanitizeNoteSourceLinks()
-            invalidateAgentContext()
-        }
-        courseDocumentSearchIndex.synchronize(allItems)
-        let importedIDSet = Set(importedIDs)
-        let selectedItems = importedItems.filter { importedIDSet.contains($0.id) }
-        if selectsFirstImportedItem,
-           let first = selectedItems.first(where: \.isCourseMaterial) {
-            selectMeasured(itemID: first.id, opensNotebook: false)
-        } else if didChangeItems {
-            save()
-        }
-        return selectedItems
     }
 
     nonisolated private static func resolveImportedFileIdentity(at url: URL) -> ImportedFileIdentity? {
@@ -12694,7 +12656,7 @@ final class WorkspaceStore: ObservableObject {
         "imported:\(UUID().uuidString.lowercased())"
     }
 
-    private static func isMarkdownFile(_ url: URL) -> Bool {
+    nonisolated static func isMarkdownFile(_ url: URL) -> Bool {
         ["md", "markdown"].contains(url.pathExtension.lowercased())
     }
 
@@ -13279,7 +13241,7 @@ final class WorkspaceStore: ObservableObject {
     }
 
     @discardableResult
-    private func sanitizeNoteSourceLinks() -> Bool {
+    func sanitizeNoteSourceLinks() -> Bool {
         let previous = noteSourceLinks
         let validNoteItemIDs = Set(allItems.lazy.filter(\.isNotebookNote).map(\.id))
         let validSourceItemIDs = Set(allItems.lazy.filter(\.isCourseMaterial).map(\.id))
@@ -18695,7 +18657,7 @@ final class WorkspaceStore: ObservableObject {
         }
     }
 
-    private func noteText(for item: StudyItem?) -> String {
+    func noteText(for item: StudyItem?) -> String {
         guard let item else {
             return defaultNote(for: nil)
         }
