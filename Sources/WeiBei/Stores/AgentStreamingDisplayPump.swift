@@ -72,6 +72,25 @@ final class AgentStreamingDisplayPump {
         pacingCredit = 0
     }
 
+    /// Publishes straight to the current target so a completion flip never
+    /// swaps "half-typed prefix" for the full text mid-surface. Call this on
+    /// the completion path right before the message leaves `.generating`.
+    func drainNow() {
+        guard hooks.canPublish() else { return }
+        let target = hooks.targetText()
+        guard target.hasPrefix(displayedPrefix) else {
+            // Non-append anomaly (rewrite or stale run): snap like stepOnce.
+            displayedPrefix = target
+            pacingCredit = 0
+            hooks.publish(target)
+            return
+        }
+        guard target != displayedPrefix else { return }
+        displayedPrefix = target
+        pacingCredit = 0
+        hooks.publish(target)
+    }
+
     /// Advances the display prefix by one tick. Exposed for deterministic tests.
     func stepOnce() {
         let target = hooks.targetText()

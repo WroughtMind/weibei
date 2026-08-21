@@ -6,6 +6,18 @@ enum AgentChatKaTeXMarkdown {
     private static let inlineMath = try? NSRegularExpression(
         pattern: #"(?<!\\)\$(?!\s)(?:\\.|[^$\n])+\$(?!\d)"#
     )
+    private static let singleLineDisplayMath = try? NSRegularExpression(
+        pattern: #"^[ \t]*\$\$([^$\n]+)\$\$[ \t]*$"#,
+        options: [.anchorsMatchLines]
+    )
+    private static let bracketMultiLineMath = try? NSRegularExpression(
+        pattern: #"\[\s*\n([\s\S]*?\\[A-Za-z]+[\s\S]*?)\n\s*\]"#
+    )
+    private static let bracketSingleLineMath = try? NSRegularExpression(
+        pattern: #"(?m)^\[\s*([^\n\]]*?\\[A-Za-z]+[^\n\]]*?)\]\s*$"#
+    )
+    private static let hatSpacedArgument = try? NSRegularExpression(pattern: #"\\hat\s+([A-Za-z\\]+)"#)
+    private static let hatGluedArgument = try? NSRegularExpression(pattern: #"\\hat(?!\{)(\\[A-Za-z]+|[A-Za-z])"#)
 
     static func prepare(_ raw: String) -> String {
         var text = raw
@@ -36,10 +48,7 @@ enum AgentChatKaTeXMarkdown {
     #endif
 
     private static func expandSingleLineDisplayMathUnchecked(_ text: String) -> String {
-        guard let pattern = try? NSRegularExpression(
-            pattern: #"^[ \t]*\$\$([^$\n]+)\$\$[ \t]*$"#,
-            options: [.anchorsMatchLines]
-        ) else { return text }
+        guard let pattern = singleLineDisplayMath else { return text }
         let fullRange = NSRange(text.startIndex..<text.endIndex, in: text)
         var result = text
         for match in pattern.matches(in: text, range: fullRange).reversed() {
@@ -190,16 +199,12 @@ enum AgentChatKaTeXMarkdown {
     /// Citations like `[材料：…]` are stripped before this runs.
     private static func convertBracketDisplayMath(in text: String) -> String {
         var result = text
-        if let multi = try? NSRegularExpression(
-            pattern: #"\[\s*\n([\s\S]*?\\[A-Za-z]+[\s\S]*?)\n\s*\]"#
-        ) {
+        if let multi = bracketMultiLineMath {
             result = replaceMatches(in: result, regex: multi) { match in
                 "$$\n\(match)\n$$"
             }
         }
-        if let single = try? NSRegularExpression(
-            pattern: #"(?m)^\[\s*([^\n\]]*?\\[A-Za-z]+[^\n\]]*?)\]\s*$"#
-        ) {
+        if let single = bracketSingleLineMath {
             result = replaceMatches(in: result, regex: single) { match in
                 "$$\(match)$$"
             }
@@ -210,12 +215,12 @@ enum AgentChatKaTeXMarkdown {
     /// `\hat\beta` / `\hat y` → `\hat{\beta}` / `\hat{y}` (KaTeX-friendly).
     private static func fixHatArguments(in text: String) -> String {
         var result = text
-        if let spaced = try? NSRegularExpression(pattern: #"\\hat\s+([A-Za-z\\]+)"#) {
+        if let spaced = hatSpacedArgument {
             result = replaceMatches(in: result, regex: spaced) { match in
                 "\\hat{\(match)}"
             }
         }
-        if let glued = try? NSRegularExpression(pattern: #"\\hat(?!\{)(\\[A-Za-z]+|[A-Za-z])"#) {
+        if let glued = hatGluedArgument {
             result = replaceMatches(in: result, regex: glued) { match in
                 "\\hat{\(match)}"
             }
