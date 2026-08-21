@@ -4075,12 +4075,42 @@ private struct AgentReplyActionCard: View {
     }
 }
 
+/// Memoizes the citation-parse + KaTeX-prepare pipeline for one message row.
+/// A reference type in @State so recomputation never invalidates the view.
+private final class AgentMessageMarkdownMemo {
+    private var key: String?
+    private var display = ""
+    private var finalized = ""
+
+    func outputs(
+        text: String,
+        sources: [AgentReplySource],
+        language: WeiBeiInterfaceLanguage
+    ) -> (display: String, finalized: String) {
+        let nextKey = "\(language.rawValue)|\(sources.map(\.id.uuidString).joined(separator: ","))|\(text)"
+        if nextKey != key {
+            let presentation = AgentReplySourceInlinePresentation(
+                text: text,
+                sources: sources,
+                language: language
+            )
+            display = AgentCitationParser.parse(presentation.markdown).displayText
+            finalized = AgentChatKaTeXMarkdown.prepare(display)
+            key = nextKey
+        }
+        return (display, finalized)
+    }
+}
+
 private enum AgentCitationParser {
     /// Matches `[材料：…]` / `[学习记录：上次位置]` style Pi citation labels.
     private static let pattern = #"\[(材料|笔记|选区|学习记录|学习记忆|会话)[：:]\s*([^\]\n]{1,300})\]"#
+    private static let regex = try? NSRegularExpression(pattern: pattern)
+    private static let collapsedSpaces = try? NSRegularExpression(pattern: #"[ \t]{2,}"#)
+    private static let collapsedBlankLines = try? NSRegularExpression(pattern: #"\n{3,}"#)
 
     static func parse(_ text: String) -> (displayText: String, citations: [AgentCitation]) {
-        guard let regex = try? NSRegularExpression(pattern: pattern) else {
+        guard let regex else {
             return (text, [])
         }
         let nsRange = NSRange(text.startIndex..<text.endIndex, in: text)
@@ -4106,11 +4136,20 @@ private enum AgentCitationParser {
                 )
             )
         }
-        let cleaned = regex.stringByReplacingMatches(in: text, options: [], range: nsRange, withTemplate: "")
-            .replacingOccurrences(of: #"[ \t]{2,}"#, with: " ", options: .regularExpression)
-            .replacingOccurrences(of: #"\n{3,}"#, with: "\n\n", options: .regularExpression)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        return (cleaned.isEmpty ? text : cleaned, citations)
+        var cleaned = regex.stringByReplacingMatches(in: text, options: [], range: nsRange, withTemplate: "")
+        if let collapsedSpaces {
+            cleaned = collapsedSpaces.stringByReplacingMatches(
+                in: cleaned, options: [], range: fullNSRange(cleaned), withTemplate: " ")
+        }
+        if let collapsedBlankLines {
+            cleaned = collapsedBlankLines.stringByReplacingMatches(
+                in: cleaned, options: [], range: fullNSRange(cleaned), withTemplate: "\n\n")
+        }
+        return (cleaned.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? text : cleaned, citations)
+    }
+
+    private static func fullNSRange(_ text: String) -> NSRange {
+        NSRange(text.startIndex..<text.endIndex, in: text)
     }
 
     private static func kind(from token: String) -> AgentCitationKind? {
@@ -4781,12 +4820,23 @@ private struct AgentMessageMarkdownText: View {
         )
     }
 
+    /// One regex pipeline per input change, not per property access (~30Hz streaming).
+    @State private var markdownMemo = AgentMessageMarkdownMemo()
+
     private var finalizedMarkdown: String {
-        AgentChatKaTeXMarkdown.prepare(displayMarkdown)
+        markdownMemo.outputs(
+            text: text,
+            sources: sources,
+            language: store.interfaceLanguage
+        ).finalized
     }
 
     private var displayMarkdown: String {
-        AgentCitationParser.parse(sourcePresentation.markdown).displayText
+        markdownMemo.outputs(
+            text: text,
+            sources: sources,
+            language: store.interfaceLanguage
+        ).display
     }
 
     /// Coarse cache bucket — also drives MarkdownPreviewView freeze width.
