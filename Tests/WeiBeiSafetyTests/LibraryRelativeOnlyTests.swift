@@ -105,7 +105,7 @@ enum LibraryRelativeOnlyCheck {
         XCTAssertNotEqual(second.lastPathComponent, copiedCommon.lastPathComponent)
         XCTAssertEqual(FileManager.default.contents(atPath: copiedCommon.path), sourceBytes)
 
-        let imported = store.importFiles([copiedCommon], markdownAsNotes: false)
+        let imported = importFilesAndWait(store, [copiedCommon], markdownAsNotes: false)
         XCTAssertFalse(imported.isEmpty)
         let itemID = try XCTUnwrap(imported.first?.id)
         let chat = try XCTUnwrap(store.createStudySession(courseID: originalCourseID))
@@ -218,7 +218,7 @@ enum LibraryInsideOnlyCheck {
         )
         let courseA = try store.createCourseInLibrary(title: "共享甲")
         let courseB = try store.createCourseInLibrary(title: "共享乙")
-        let imported = store.importFiles([commonURL], markdownAsNotes: false)
+        let imported = importFilesAndWait(store, [commonURL], markdownAsNotes: false)
         let sharedItem = try XCTUnwrap(imported.first)
         try store.shareCourseOwnedItemForSelfCheck(itemID: sharedItem.id, withCourseID: courseA)
         try store.shareCourseOwnedItemForSelfCheck(itemID: sharedItem.id, withCourseID: courseB)
