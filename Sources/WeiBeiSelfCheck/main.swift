@@ -114,6 +114,7 @@ try checkNotePersistenceScenes()
 try checkImportIdentityScenes()
 try checkLibraryRelativeStorage()
 try checkImportCopySemantics()
+try checkInterfaceTextScalePersistence()
 try checkWorkspaceSafetyScenes()
 
 expect(EmptyWorkspaceDayPeriod(hour: 5) == .morning
@@ -2369,5 +2370,18 @@ func checkImportCopySemantics() throws {
     let sizeMismatchCopy = try ImportFileCopy.copyPreservingOriginal(from: tinySource, into: libraryDirectory)
     expect(sizeMismatchCopy != sizeMismatchTarget, "size mismatch short-circuits to a unique copy without byte comparison")
 }
+
+func checkInterfaceTextScalePersistence() throws {
+    func roundTrip(_ raw: String?) throws -> String? {
+        let snapshot = PersistedWorkspace(appearanceModeRaw: "paper", interfaceLanguageRaw: "chinese", interfaceTextScaleRaw: raw)
+        let data = try JSONEncoder().encode(snapshot)
+        return try JSONDecoder().decode(PersistedWorkspace.self, from: data).interfaceTextScaleRaw
+    }
+    let persistedRaw = try roundTrip("extraLarge")
+    expect(persistedRaw == "extraLarge", "text scale tier persists across workspace save/load")
+    let absentRaw = try roundTrip(nil)
+    expect(absentRaw == nil, "absent text scale stays absent so older snapshots stay compatible")
+}
+
 
 print("WeiBei self-check passed")
