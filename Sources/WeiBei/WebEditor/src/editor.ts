@@ -1012,10 +1012,12 @@ const scheduleContentHeightReports = () => {
   if (contentHeightTimer) return;
   // A timer still fires for an off-screen WKWebView; the following frame catches
   // painted font/image drift without every caller running its own retry ladder.
+  // Streaming relaxes the cadence: each report re-lays-out the whole chat list.
+  const interval = streamingMarkdownBuffer !== null ? 100 : 40;
   contentHeightTimer = window.setTimeout(() => {
     contentHeightTimer = 0;
     reportContentHeight();
-  }, 40);
+  }, interval);
 };
 
 const installContentHeightObserver = () => {
