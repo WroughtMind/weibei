@@ -467,17 +467,6 @@ struct NotePaneView: View {
                         noteHeader
                     }
 
-                    // S5：仅 transient 提示（自动过期），无常驻 noteFileError 横幅。
-                    if let transientNoteStatus = store.transientNoteStatus {
-                        Text(transientNoteStatus)
-                            .font(.caption)
-                            .foregroundStyle(WeiBeiTheme.secondaryInk)
-                            .lineLimit(1)
-                            .padding(.horizontal, 14)
-                            .padding(.bottom, 8)
-                            .transition(.opacity)
-                    }
-
                     if store.noteEditorRecoveryConflict != nil {
                         HStack(spacing: 12) {
                             Text(store.ui(
@@ -1910,7 +1899,6 @@ struct AgentPaneView: View {
             .padding(.top, wide ? 6 : 4)
             .padding(.bottom, wide ? 16 : 12)
             .frame(maxWidth: .infinity)
-            .animation(WeiBeiMotion.reveal, value: store.agentDraft)
             .accessibilityIdentifier(wide ? "agent-input-tray-wide" : "agent-input-tray-compact")
         }
         .background(WeiBeiTheme.paper)
@@ -3046,6 +3034,9 @@ private struct AgentBubble: View {
     var isChatWideTypography = false
     @State private var hovering = false
     @State private var copiedMessage = false
+    /// Copy feedback identity: a second copy within the 1.2s window re-arms the
+    /// full display instead of being swallowed by the still-running first task.
+    @State private var copyFeedbackGeneration = 0
 
     var body: some View {
         Group {
@@ -3067,9 +3058,10 @@ private struct AgentBubble: View {
                 self.hovering = hovering
             }
         }
-        .task(id: copiedMessage) {
+        .task(id: copyFeedbackGeneration) {
             guard copiedMessage else { return }
             try? await Task.sleep(nanoseconds: 1_200_000_000)
+            guard !Task.isCancelled else { return }
             copiedMessage = false
         }
     }
@@ -3118,6 +3110,7 @@ private struct AgentBubble: View {
         NSPasteboard.general.clearContents()
         if NSPasteboard.general.setString(markdown, forType: .string) {
             copiedMessage = true
+            copyFeedbackGeneration += 1
         }
     }
 
@@ -5211,6 +5204,12 @@ private struct AgentThinkingIndicator: View {
         .onAppear {
             refreshCache(for: statusText)
             motionEpoch = Date()
+            // The 600ms hold starts with the first status: without this the second
+            // status (elapsed = ∞ vs distantPast) would immediately stomp the first.
+            lastStatusSwitch = Date()
+        }
+        .onDisappear {
+            statusSwitchTask?.cancel()
         }
         .onChange(of: statusText) { _, newText in
             // Hold each status >=600ms — rapid tool churn restarted the orbit

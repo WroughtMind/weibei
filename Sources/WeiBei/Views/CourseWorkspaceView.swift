@@ -177,10 +177,10 @@ struct CourseWorkspaceView: View {
                 selectedSessionID: $selectedSessionID,
                 isCompact: size.width < 960,
                 openRelations: {
-                    withAnimation(WeiBeiMotion.panel) { page = .map }
+                    page = .map
                 },
                 openRecords: {
-                    withAnimation(WeiBeiMotion.panel) { page = .records }
+                    page = .records
                 },
                 importMaterials: {
                     store.importCourseMaterialsFromPanel(
@@ -373,7 +373,9 @@ private struct CourseNewNoteSheet: View {
 
 struct CourseWorkspaceHeader: View {
     @EnvironmentObject private var store: WorkspaceStore
+    @Environment(\.weibeiReduceMotion) private var reduceMotion
     @Binding var page: CourseWorkspacePage
+    @Namespace private var tabUnderlineNamespace
     @Binding var search: String
     var searchFocused: FocusState<Bool>.Binding
     let isCompact: Bool
@@ -417,14 +419,20 @@ struct CourseWorkspaceHeader: View {
                         ForEach(CourseWorkspacePage.allCases) { candidate in
                             CourseWorkspaceTab(
                                 title: candidate.label(language: store.interfaceLanguage),
-                                active: candidate == page
+                                active: candidate == page,
+                                underlineNamespace: tabUnderlineNamespace
                             ) {
-                                withAnimation(WeiBeiMotion.panel) {
-                                    page = candidate
-                                }
+                                page = candidate
                             }
                         }
                     }
+                    // The ONLY animated piece of a page switch: the shared cinnabar
+                    // underline sliding across the tab strip. Page content swaps
+                    // immediately — no panel bounce anywhere.
+                    .animation(
+                        reduceMotion ? nil : WeiBeiMotion.tabUnderline,
+                        value: page
+                    )
                 }
             }
 
@@ -556,6 +564,7 @@ struct CourseWorkspaceTab: View {
     @EnvironmentObject private var store: WorkspaceStore
     let title: String
     let active: Bool
+    var underlineNamespace: Namespace.ID
     let action: () -> Void
 
     var body: some View {
@@ -566,9 +575,17 @@ struct CourseWorkspaceTab: View {
                 .padding(.horizontal, 8)
                 .frame(height: 40)
                 .overlay(alignment: .bottom) {
-                    Rectangle()
-                        .fill(active ? WeiBeiTheme.cinnabar : Color.clear)
-                        .frame(height: 2)
+                    // One shared underline (matched geometry) — it slides between
+                    // tabs instead of each tab fading its own marker in and out.
+                    if active {
+                        Rectangle()
+                            .fill(WeiBeiTheme.cinnabar)
+                            .frame(height: 2)
+                            .matchedGeometryEffect(
+                                id: "course-workspace-tab-underline",
+                                in: underlineNamespace
+                            )
+                    }
                 }
                 .contentShape(Rectangle())
         }

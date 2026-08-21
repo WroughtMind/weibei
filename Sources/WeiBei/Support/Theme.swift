@@ -829,6 +829,13 @@ enum WeiBeiMotion {
     static let appearance = Animation.easeOut(duration: 0.12)
     /// Course drawer: snappy ease-out slide (visual only; never wrap focus changes).
     static let sideDrawer = Animation.easeOut(duration: 0.12)
+    /// Content rail preview cards: one short fade for appear/disappear — content
+    /// swaps between ticks must stay instant.
+    static let railPreview = Animation.easeOut(duration: 0.15)
+    /// Immersive hover title bar: plain fade, no dwell, no panel bounce.
+    static let hoverTitleFade = Animation.easeOut(duration: 0.14)
+    /// Course tab underline slide — the only motion of a page switch.
+    static let tabUnderline = Animation.easeInOut(duration: 0.25)
 }
 
 private struct WeiBeiReduceMotionKey: EnvironmentKey {
@@ -1152,9 +1159,14 @@ enum WeiBeiTransition {
         removal: .move(edge: .leading).combined(with: .opacity)
     )
 
+    /// Command palette: the ONLY animation owner is the conditional insertion in
+    /// ContentView — every toggle site changes the flag plainly. Embedded per-side
+    /// animations run because the state change carries no transaction animation.
     static let commandPalette = AnyTransition.asymmetric(
-        insertion: reveal(x: 0, y: -10, scale: 0.982, blur: 2, anchor: .top),
+        insertion: reveal(x: 0, y: -10, scale: 0.982, blur: 2, anchor: .top)
+            .animation(.easeOut(duration: 0.25)),
         removal: reveal(x: 0, y: -5, scale: 0.992, blur: 1, anchor: .top)
+            .animation(.easeOut(duration: 0.15))
     )
 
     static let floating = AnyTransition.asymmetric(

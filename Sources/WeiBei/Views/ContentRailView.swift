@@ -72,7 +72,6 @@ struct ContentRailView: View {
 
     @State private var hoveredID: String?
     @State private var previewID: String?
-    @State private var previewCloseWork: DispatchWorkItem?
     @FocusState private var focusedItemID: String?
 
     @Environment(\.weibeiReduceMotion) private var reduceMotion
@@ -120,7 +119,8 @@ struct ContentRailView: View {
                     label: label,
                     item: isRailOnly ? previewItem : nil,
                     appearanceMode: appearanceMode,
-                    width: ContentRailPolicy.dormantPreviewWidth
+                    width: ContentRailPolicy.dormantPreviewWidth,
+                    reduceMotion: reduceMotion
                 )
                 .frame(width: 1, height: 1)
                 .position(x: floatingPreviewAnchorX, y: previewAnchorY)
@@ -141,7 +141,9 @@ struct ContentRailView: View {
         .accessibilityElement(children: .contain)
         .accessibilityLabel(Text(label))
         .animation(WeiBeiMotion.panel, value: isRailOnly)
-        .animation(WeiBeiMotion.hover, value: previewID)
+        // Animate presence only (nil ↔ item). Moving across ticks swaps content
+        // instantly; appear/disappear get the single 150ms fade.
+        .animation(reduceMotion ? nil : WeiBeiMotion.railPreview, value: previewID != nil)
         .onChange(of: items.map { $0.id }) { _, ids in
             let staleHover = hoveredID.map { !ids.contains($0) } ?? false
             let stalePreview = previewID.map { !ids.contains($0) } ?? false
@@ -153,7 +155,6 @@ struct ContentRailView: View {
             }
         }
         .onDisappear {
-            previewCloseWork?.cancel()
             if previewID != nil {
                 onHover(nil)
             }
@@ -310,7 +311,7 @@ struct ContentRailView: View {
                        let item = items.first(where: { $0.id == hoveredID }) {
                         endHover(item)
                     } else {
-                        schedulePreviewClose()
+                        closePreview(immediately: false)
                     }
                 }
             }
@@ -386,7 +387,6 @@ struct ContentRailView: View {
     }
 
     private func beginHover(_ item: ContentRailItem) {
-        previewCloseWork?.cancel()
         hoveredID = item.id
 
         guard previewID != item.id else {
@@ -394,7 +394,7 @@ struct ContentRailView: View {
             return
         }
 
-        withAnimation(WeiBeiMotion.hover) {
+        withAnimation(reduceMotion ? nil : WeiBeiMotion.railPreview) {
             previewID = item.id
         }
         onHover(item)
@@ -404,26 +404,15 @@ struct ContentRailView: View {
         if hoveredID == item.id {
             hoveredID = nil
         }
-        schedulePreviewClose()
-    }
-
-    private func schedulePreviewClose() {
-        previewCloseWork?.cancel()
-        let work = DispatchWorkItem {
-            guard hoveredID == nil else { return }
-            closePreview(immediately: false)
-        }
-        previewCloseWork = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15, execute: work)
+        closePreview(immediately: false)
     }
 
     private func closePreview(immediately: Bool) {
-        previewCloseWork?.cancel()
         hoveredID = nil
         if immediately {
             previewID = nil
         } else {
-            withAnimation(WeiBeiMotion.hover) {
+            withAnimation(reduceMotion ? nil : WeiBeiMotion.railPreview) {
                 previewID = nil
             }
         }
@@ -507,6 +496,7 @@ private struct ContentRailFloatingPreviewBridge: NSViewRepresentable {
     let item: ContentRailItem?
     let appearanceMode: WeiBeiAppearanceMode
     let width: CGFloat
+    let reduceMotion: Bool
 
     func makeCoordinator() -> Coordinator {
         Coordinator()
@@ -518,7 +508,7 @@ private struct ContentRailFloatingPreviewBridge: NSViewRepresentable {
 
     func updateNSView(_ anchorView: NSView, context: Context) {
         guard let item else {
-            context.coordinator.dismiss()
+            context.coordinator.dismiss(reduceMotion: reduceMotion)
             return
         }
         context.coordinator.update(
@@ -526,27 +516,33 @@ private struct ContentRailFloatingPreviewBridge: NSViewRepresentable {
             label: label,
             item: item,
             appearanceMode: appearanceMode,
-            width: width
+            width: width,
+            reduceMotion: reduceMotion
         )
     }
 
     static func dismantleNSView(_ nsView: NSView, coordinator: Coordinator) {
-        coordinator.dismiss()
+        coordinator.dismiss(reduceMotion: true)
     }
 
     final class Coordinator {
         private var hostingView: ContentRailPassthroughHostingView?
         private weak var containerView: NSView?
         private var updateGeneration = 0
+        /// Bumped by every show and every dismiss so a stale fade-out completion
+        /// can never remove a preview that a newer hover re-opened.
+        private var dismissGeneration = 0
 
         func update(
             anchorView: NSView,
             label: String,
             item: ContentRailItem,
             appearanceMode: WeiBeiAppearanceMode,
-            width: CGFloat
+            width: CGFloat,
+            reduceMotion: Bool
         ) {
             updateGeneration += 1
+            dismissGeneration += 1
             let generation = updateGeneration
             DispatchQueue.main.async { [weak self, weak anchorView] in
                 guard let self, let anchorView, generation == self.updateGeneration,
@@ -561,6 +557,7 @@ private struct ContentRailFloatingPreviewBridge: NSViewRepresentable {
                         width: width
                     )
                     .preferredColorScheme(appearanceMode.colorScheme)
+                    .weiBeiMotionScoped()
                 )
                 let hosting: ContentRailPassthroughHostingView
                 if let existing = self.hostingView {
@@ -574,10 +571,17 @@ private struct ContentRailFloatingPreviewBridge: NSViewRepresentable {
                     self.hostingView = hosting
                 }
 
+                var isNewHosting = false
                 if hosting.superview !== container {
                     hosting.removeFromSuperview()
+                    hosting.alphaValue = reduceMotion ? 1 : 0
                     container.addSubview(hosting, positioned: .above, relativeTo: contentView)
                     self.containerView = container
+                    isNewHosting = true
+                } else {
+                    // Cancel any fade-out still in flight: the preview is live again.
+                    hosting.layer?.removeAllAnimations()
+                    hosting.alphaValue = 1
                 }
 
                 hosting.frame.size = NSSize(width: width, height: max(132, hosting.fittingSize.height))
@@ -593,14 +597,42 @@ private struct ContentRailFloatingPreviewBridge: NSViewRepresentable {
                 let maximumY = max(inset, container.bounds.maxY - hosting.frame.height - inset)
                 let y = min(max(proposedY, inset), maximumY)
                 hosting.frame.origin = NSPoint(x: x, y: y)
+
+                if isNewHosting && !reduceMotion {
+                    NSAnimationContext.runAnimationGroup({ context in
+                        context.duration = 0.15
+                        context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+                        hosting.animator().alphaValue = 1
+                    })
+                }
             }
         }
 
-        func dismiss() {
+        func dismiss(reduceMotion: Bool) {
             updateGeneration += 1
-            hostingView?.removeFromSuperview()
-            hostingView = nil
-            containerView = nil
+            dismissGeneration += 1
+            let generation = dismissGeneration
+            guard let hosting = hostingView else {
+                containerView = nil
+                return
+            }
+            let removeHosting = { [weak self, weak hosting] in
+                guard let self, let hosting,
+                      self.dismissGeneration == generation,
+                      self.hostingView === hosting else { return }
+                hosting.removeFromSuperview()
+                self.hostingView = nil
+                self.containerView = nil
+            }
+            guard !reduceMotion else {
+                removeHosting()
+                return
+            }
+            NSAnimationContext.runAnimationGroup({ context in
+                context.duration = 0.15
+                context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+                hosting.animator().alphaValue = 0
+            }, completionHandler: removeHosting)
         }
     }
 }

@@ -23,7 +23,7 @@ extension WorkspaceStore {
             )
             try configureCourseLibrary(at: root)
         } catch {
-            showTransientNoteStatus(error.localizedDescription)
+            showImportantOperationError(error.localizedDescription)
         }
     }
 

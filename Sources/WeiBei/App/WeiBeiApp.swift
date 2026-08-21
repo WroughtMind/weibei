@@ -237,9 +237,7 @@ struct WeiBeiApp: App {
                 Divider()
 
                 Button(store.ui("命令面板", "Command Palette")) {
-                    animatePanel {
-                        store.commandPalettePresented.toggle()
-                    }
+                    store.commandPalettePresented.toggle()
                 }
                     .keyboardShortcut("k")
 

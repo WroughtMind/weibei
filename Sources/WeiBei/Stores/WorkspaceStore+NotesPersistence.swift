@@ -109,7 +109,7 @@ extension WorkspaceStore {
         guard let index = importedItems.firstIndex(where: { $0.id == itemID && $0.isNotebookNote }) else { return }
         let resolution = resolveTrackedImportedFile(at: index)
         guard let oldURL = resolution.url else {
-            showTransientNoteStatus(
+            showImportantOperationError(
                 ui(
                     "找不到这份笔记的当前位置，最新编辑已保留，未执行重命名。",
                     "The current note location could not be found. The latest edit was retained and the note was not renamed."
@@ -131,7 +131,7 @@ extension WorkspaceStore {
                 "无法重命名笔记：无法读取原 Markdown。",
                 "Could not rename the note because the original Markdown could not be read."
             )
-            showTransientNoteStatus(message)
+            showImportantOperationError(message)
             return
         }
         // P0 重命名哨兵：sourceMarkdown 呈默认模板形态、读盘曾降级、且磁盘另有内容
@@ -141,7 +141,7 @@ extension WorkspaceStore {
            NoteTemplateShape.isDefaultTemplateShape(sourceMarkdown, title: oldTitle),
            let diskDigest = Self.noteContentDigest(at: oldURL),
            diskDigest != Self.noteContentDigest(Data(defaultNote(for: oldItem).utf8)) {
-            showTransientNoteStatus(
+            showImportantOperationError(
                 ui(
                     "正文未能完整读取，为保护内容未执行重命名。",
                     "The note body could not be fully read, so the rename was not performed in order to protect the content."
@@ -197,13 +197,13 @@ extension WorkspaceStore {
                     )
                     courseDocumentSearchIndex.synchronize(allItems)
                     _ = await persistWorkspaceNow()
-                    showTransientNoteStatus(
+                    showImportantOperationError(
                         ui(
                             "重命名已中止：目标位置的文件身份与原笔记不一致，原正文已保留。",
                             "Rename was aborted because the file identity at the destination did not match the original note. The original content was retained."
                         )
                     )
-                    showTransientNoteStatus(ui(
+                    showImportantOperationError(ui(
                         "重命名已中止：目标文件身份异常。",
                         "Rename aborted: unexpected file identity."
                     ))
@@ -309,7 +309,7 @@ extension WorkspaceStore {
                 "无法重命名笔记：\(error.localizedDescription) \(recovery)",
                 "Could not rename the note: \(error.localizedDescription) \(recovery)"
             )
-            showTransientNoteStatus(message)
+            showImportantOperationError(message)
         }
     }
 
@@ -368,7 +368,7 @@ extension WorkspaceStore {
         do {
             try FileManager.default.moveItem(at: currentURL, to: newURL)
         } catch {
-            showTransientNoteStatus(
+            showImportantOperationError(
                 ui(
                     "无法按正文抬头重命名笔记文件：\(error.localizedDescription)",
                     "Could not rename the note file to match its heading: \(error.localizedDescription)"
@@ -435,7 +435,7 @@ extension WorkspaceStore {
             let alreadyRecorded = noteOperationErrorsByItemID[itemID] == message
             noteOperationErrorsByItemID[itemID] = message
             if !alreadyRecorded, activeNoteItemID == itemID {
-                showTransientNoteStatus(message)
+                showImportantOperationError(message)
             }
         } else {
             noteOperationErrorsByItemID.removeValue(forKey: itemID)
@@ -693,7 +693,7 @@ extension WorkspaceStore {
                 )
                 setNoteDraft(markdown, for: itemID)
                 setNoteFileError(message, for: itemID)
-                showTransientNoteStatus(message)
+                showImportantOperationError(message)
                 return false
             }
         }
@@ -718,7 +718,7 @@ extension WorkspaceStore {
         } catch {
             setNoteDraft(markdown, for: itemID)
             pendingNoteWritesByItemID.removeValue(forKey: itemID)
-            showTransientNoteStatus(
+            showImportantOperationError(
                 ui(
                     "无法写回原 Markdown：\(url.lastPathComponent)",
                     "Could not write original Markdown: \(url.lastPathComponent)"

@@ -592,6 +592,12 @@ final class WorkspaceStore: ObservableObject {
     @Published var noteEditorCommand: NoteEditorCommand?
     /// Success / info banner for note create/switch — separate from errors so it auto-dismisses cleanly.
     @Published var transientNoteStatus: String?
+    /// Serious data-operation failures (note read/write/rename/restore/identity,
+    /// security scope, course file move & rollback). Never auto-dismisses — only a
+    /// user close or a newer important error replaces it.
+    @Published var importantOperationError: String?
+    private var transientNoteStatusGeneration = 0
+    private var transientNoteStatusTask: Task<Void, Never>?
     @Published private(set) var workspaceSaveError: String?
     /// S5：真磁盘写失败计数；满 3 次才露出可点重试的轻提示。
     private var consecutiveWorkspaceSaveFailures = 0
@@ -1593,7 +1599,7 @@ final class WorkspaceStore: ObservableObject {
             in: resolvedRoot
         )
         if !legacyOrganization.errors.isEmpty {
-            showTransientNoteStatus(ui(
+            showImportantOperationError(ui(
                 "已有 \(legacyOrganization.migrated) 份旧资料完成整理；另有 \(legacyOrganization.errors.count) 份未完成：\(legacyOrganization.errors.first ?? "")",
                 "Organized \(legacyOrganization.migrated) legacy item(s); \(legacyOrganization.errors.count) remain: \(legacyOrganization.errors.first ?? "")"
             ))
@@ -7323,7 +7329,7 @@ final class WorkspaceStore: ObservableObject {
             } else {
                 // ponytail: a crash here can leave one harmless old duplicate;
                 // add a cleanup journal only if this becomes observable in use.
-                showTransientNoteStatus(ui(
+                showImportantOperationError(ui(
                     "课程关系已移除，但课程文件夹中的旧副本未能清理。",
                     "The course relation was removed, but the old course copy could not be cleaned up."
                 ))
@@ -7403,7 +7409,7 @@ final class WorkspaceStore: ObservableObject {
                         conflictResolution: resolution
                     )
                 } catch {
-                    self?.showTransientNoteStatus(error.localizedDescription)
+                    self?.showImportantOperationError(error.localizedDescription)
                 }
             }
             return
@@ -7460,7 +7466,7 @@ final class WorkspaceStore: ObservableObject {
                         )
                     }
                 } catch {
-                    self?.showTransientNoteStatus(error.localizedDescription)
+                    self?.showImportantOperationError(error.localizedDescription)
                 }
             }
             return
@@ -7494,7 +7500,7 @@ final class WorkspaceStore: ObservableObject {
                         conflictResolution: resolution
                     )
                 } catch {
-                    self?.showTransientNoteStatus(error.localizedDescription)
+                    self?.showImportantOperationError(error.localizedDescription)
                 }
             }
             return
@@ -7523,7 +7529,7 @@ final class WorkspaceStore: ObservableObject {
                             conflictResolution: resolution
                         )
                     } catch {
-                        self?.showTransientNoteStatus(error.localizedDescription)
+                        self?.showImportantOperationError(error.localizedDescription)
                     }
                 }
                 return
@@ -7536,7 +7542,7 @@ final class WorkspaceStore: ObservableObject {
                             fromCourseID: courseID
                         )
                     } catch {
-                        self?.showTransientNoteStatus(error.localizedDescription)
+                        self?.showImportantOperationError(error.localizedDescription)
                     }
                 }
                 return
@@ -7609,7 +7615,7 @@ final class WorkspaceStore: ObservableObject {
         guard let item = importedItems.first(where: { $0.id == itemID }),
               !item.isSample,
               let sourceURL = item.url else {
-            showTransientNoteStatus(
+            showImportantOperationError(
                 ContentSourceRemovalError.itemUnavailable.localizedDescription
             )
             return
@@ -7636,7 +7642,7 @@ final class WorkspaceStore: ObservableObject {
             do {
                 try await self?.moveItemSourceToTrash(itemID)
             } catch {
-                self?.showTransientNoteStatus(error.localizedDescription)
+                self?.showImportantOperationError(error.localizedDescription)
             }
         }
     }
@@ -10397,7 +10403,7 @@ final class WorkspaceStore: ObservableObject {
                     )
                     imported.append(result.item)
                 } catch {
-                    showTransientNoteStatus(ui(
+                    showImportantOperationError(ui(
                         "“\(sourceURL.lastPathComponent)”未能加入课程：\(error.localizedDescription)",
                         "Could not add “\(sourceURL.lastPathComponent)” to the course: \(error.localizedDescription)"
                     ))
@@ -10982,7 +10988,7 @@ final class WorkspaceStore: ObservableObject {
             )
             return result.item.id
         } catch {
-            showTransientNoteStatus(ui(
+            showImportantOperationError(ui(
                 "无法创建课程笔记：\(error.localizedDescription)",
                 "Could not create the course note: \(error.localizedDescription)"
             ))
@@ -12148,7 +12154,7 @@ final class WorkspaceStore: ObservableObject {
     private func performCustomizableShortcut(_ id: AppShortcutID) -> Bool {
         switch id {
         case .commandPalette:
-            animatePanelChange { commandPalettePresented.toggle() }
+            commandPalettePresented.toggle()
         case .toggleAppearance:
             animatePanelChange { toggleAppearanceMode() }
         case .navigateBack:
@@ -12561,7 +12567,7 @@ final class WorkspaceStore: ObservableObject {
                         isNote: importsIntoNotes
                     )
                 } catch {
-                    showTransientNoteStatus(error.localizedDescription)
+                    showImportantOperationError(error.localizedDescription)
                     continue
                 }
             } else {
@@ -12783,7 +12789,7 @@ final class WorkspaceStore: ObservableObject {
             select(itemID: item.id)
             showTransientNoteStatus(ui("已创建双链笔记：\(url.lastPathComponent)", "Created wiki note: \(url.lastPathComponent)"))
         } catch {
-            showTransientNoteStatus(ui("无法创建双链笔记：\(error.localizedDescription)", "Could not create wiki note: \(error.localizedDescription)"))
+            showImportantOperationError(ui("无法创建双链笔记：\(error.localizedDescription)", "Could not create wiki note: \(error.localizedDescription)"))
         }
     }
 
@@ -12882,7 +12888,7 @@ final class WorkspaceStore: ObservableObject {
             showTransientNoteStatus(status)
             return item
         } catch {
-            showTransientNoteStatus(ui("无法创建笔记：\(error.localizedDescription)", "Could not create note: \(error.localizedDescription)"))
+            showImportantOperationError(ui("无法创建笔记：\(error.localizedDescription)", "Could not create note: \(error.localizedDescription)"))
             return nil
         }
     }
@@ -18532,16 +18538,27 @@ final class WorkspaceStore: ObservableObject {
     }
 
     func showTransientNoteStatus(_ message: String) {
-        // S5: sole user-visible note feedback channel (auto-expires).
+        // S5: sole transient feedback channel (auto-expires). Identity is the
+        // generation, not the text — the same sentence shown twice still gets its
+        // own full 2.4s window, and only the newest generation may clear the slot.
+        transientNoteStatusGeneration += 1
+        let generation = transientNoteStatusGeneration
+        transientNoteStatusTask?.cancel()
         transientNoteStatus = message
-        let token = message
-        Task { @MainActor [weak self] in
+        transientNoteStatusTask = Task { @MainActor [weak self] in
             try? await Task.sleep(nanoseconds: 2_400_000_000)
-            guard let self else { return }
-            if self.transientNoteStatus == token {
-                self.transientNoteStatus = nil
-            }
+            guard let self, !Task.isCancelled else { return }
+            guard self.transientNoteStatusGeneration == generation else { return }
+            self.transientNoteStatus = nil
         }
+    }
+
+    func showImportantOperationError(_ message: String) {
+        importantOperationError = message
+    }
+
+    func dismissImportantOperationError() {
+        importantOperationError = nil
     }
 
     private func layoutMatchingThreePaneOrder(_ order: [WorkspacePaneRole]) -> WorkspaceLayout {
@@ -18779,7 +18796,7 @@ final class WorkspaceStore: ObservableObject {
                     for: item.id
                 )
             }
-            showTransientNoteStatus(ui("无法读取原 Markdown：\(url.lastPathComponent)", "Could not read original Markdown: \(url.lastPathComponent)"))
+            showImportantOperationError(ui("无法读取原 Markdown：\(url.lastPathComponent)", "Could not read original Markdown: \(url.lastPathComponent)"))
             return cleanLegacyPlaceholder(notesByItemID[item.id] ?? defaultNote(for: item))
         }
     }

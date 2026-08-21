@@ -131,9 +131,7 @@ struct CommandPaletteView: View {
             }
             .ignoresSafeArea()
             .onTapGesture {
-                withAnimation(WeiBeiMotion.panel) {
-                    store.commandPalettePresented = false
-                }
+                store.commandPalettePresented = false
             }
 
             VStack(spacing: 0) {
@@ -219,16 +217,13 @@ struct CommandPaletteView: View {
             }
             .frame(width: 500)
             .weibeiFloatingPanel(cornerRadius: 8, shadowOpacity: 0.16)
-            .transition(WeiBeiTransition.commandPalette)
             .background {
                 PaletteKeyboardBridge(
                     onUp: { moveSelection(-1) },
                     onDown: { moveSelection(1) },
                     onReturn: { runSelected() },
                     onEscape: {
-                        withAnimation(WeiBeiMotion.panel) {
-                            store.commandPalettePresented = false
-                        }
+                        store.commandPalettePresented = false
                     }
                 )
             }
@@ -257,9 +252,11 @@ struct CommandPaletteView: View {
     }
 
     private func run(_ command: PaletteCommand) {
+        // Close and command layout must not share one animation: the palette's
+        // removal transition owns the close, the command keeps its own layout motion.
+        store.commandPalettePresented = false
         withAnimation(command.animation) {
             command.action()
-            store.commandPalettePresented = false
         }
     }
 }
