@@ -52,6 +52,7 @@ final class CourseDrawerContainerView: NSView {
 
     private let scrim = NSView()
     private let panel = NSView()
+    private let panelMaterial = NSVisualEffectView()
     private var hostingView: NSHostingView<AnyView>?
     private var sidebarModel: CourseSidebarModel?
     private var isOpen = false
@@ -59,6 +60,7 @@ final class CourseDrawerContainerView: NSView {
 
     var sidebarModelForTesting: CourseSidebarModel? { sidebarModel }
     var activeSidebarHostCountForTesting: Int { hostingView == nil ? 0 : 1 }
+    var glassMaterialVisibleForTesting: Bool { !panelMaterial.isHidden }
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -72,6 +74,13 @@ final class CourseDrawerContainerView: NSView {
         panel.wantsLayer = true
         panel.layer?.backgroundColor = Self.panelPaperColor(for: .paper).cgColor
         panel.frame = CGRect(x: -Self.panelWidth, y: 0, width: Self.panelWidth, height: 100)
+
+        panelMaterial.blendingMode = .withinWindow
+        panelMaterial.material = .sidebar
+        panelMaterial.state = .active
+        panelMaterial.alphaValue = 0.55
+        panelMaterial.isHidden = true
+        panel.addSubview(panelMaterial)
 
         addSubview(scrim)
         addSubview(panel)
@@ -92,6 +101,7 @@ final class CourseDrawerContainerView: NSView {
             width: Self.panelWidth,
             height: height
         )
+        panelMaterial.frame = panel.bounds
         hostingView?.frame = panel.bounds
     }
 
@@ -110,6 +120,9 @@ final class CourseDrawerContainerView: NSView {
 
     func apply(isOpen open: Bool, store: WorkspaceStore, animated: Bool) {
         applyPaperChrome(for: store.appearanceMode)
+        if open, store.appearanceMode.isGlass {
+            panelMaterial.isHidden = false
+        }
 
         if open {
             installHostingIfNeeded(store: store)
@@ -122,22 +135,30 @@ final class CourseDrawerContainerView: NSView {
     private func applyPaperChrome(for mode: WeiBeiAppearanceMode) {
         let paper = Self.panelPaperColor(for: mode)
         panel.layer?.backgroundColor = paper.cgColor
+        panel.layer?.borderWidth = 0
+        panel.layer?.borderColor = NSColor.clear.cgColor
+        panelMaterial.material = mode.isDark ? .hudWindow : .sidebar
+        if !mode.isGlass { panelMaterial.isHidden = true }
         scrim.layer?.backgroundColor = Self.scrimColor(for: mode).cgColor
-        hostingView?.layer?.backgroundColor = paper.cgColor
+        hostingView?.layer?.backgroundColor = mode.isGlass ? NSColor.clear.cgColor : paper.cgColor
     }
 
     private static func panelPaperColor(for mode: WeiBeiAppearanceMode) -> NSColor {
-        WeiBeiNativePalette.paper(for: mode)
+        WeiBeiNativePalette.drawerSurface(for: mode)
     }
 
     private static func scrimColor(for mode: WeiBeiAppearanceMode) -> NSColor {
         switch mode {
         case .paper, .xuan:
             return WeiBeiNativePalette.ink(for: mode).withAlphaComponent(mode == .xuan ? 0.030 : 0.035)
+        case .glassLight, .glassMist:
+            return NSColor(calibratedWhite: 0, alpha: 0.10)
         case .inkstone:
             return NSColor(calibratedRed: 0, green: 0, blue: 0, alpha: 0.18)
         case .stele:
             return NSColor(calibratedRed: 0, green: 0, blue: 0, alpha: 0.22)
+        case .glassDark, .glassSlate:
+            return NSColor(calibratedRed: 0, green: 0, blue: 0, alpha: 0.18)
         }
     }
 
@@ -164,6 +185,7 @@ final class CourseDrawerContainerView: NSView {
                       self.transitionGeneration == generation,
                       self.isOpen == open else { return }
                 guard !open else { return }
+                self.panelMaterial.isHidden = true
                 self.scrim.isHidden = true
                 self.removeSidebarContent()
             })
@@ -172,6 +194,7 @@ final class CourseDrawerContainerView: NSView {
             scrim.alphaValue = targetScrimAlpha
             scrim.isHidden = !open
             if !open {
+                panelMaterial.isHidden = true
                 removeSidebarContent()
             }
         }
@@ -184,7 +207,9 @@ final class CourseDrawerContainerView: NSView {
         let root = makeRootView(store: store, model: model)
         let host = NSHostingView(rootView: root)
         host.wantsLayer = true
-        host.layer?.backgroundColor = paper.cgColor
+        host.layer?.backgroundColor = store.appearanceMode.isGlass
+            ? NSColor.clear.cgColor
+            : paper.cgColor
         host.frame = panel.bounds
         host.autoresizingMask = [.width, .height]
         panel.addSubview(host)

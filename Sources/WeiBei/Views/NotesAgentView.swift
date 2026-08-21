@@ -1650,22 +1650,19 @@ struct AgentPaneView: View {
             canvasWide: needsWideCanvas,
             alignment: isUser ? .trailing : .leading
         ) {
-            if message.completionState == .generating {
-                AgentGeneratingBubble(
-                    message: message,
-                    streaming: store.agentStreaming,
-                    isChatWideTypography: wide
-                        || contentWidth >= AgentChatLayoutMetrics.wideTypographyMinContentWidth
-                )
-            } else {
-                AgentBubble(
-                    message: message,
-                    streaming: store.agentStreaming,
-                    // Typography follows the real column width, not the layout enum.
-                    isChatWideTypography: wide
-                        || contentWidth >= AgentChatLayoutMetrics.wideTypographyMinContentWidth
-                )
-            }
+            // One view type owns the row across the generating → completed flip,
+            // so the markdown surface is never torn down at completion. Only the
+            // generating row observes the live streaming state; completed rows
+            // observe a state that never publishes.
+            AgentMessageBubble(
+                message: message,
+                streaming: message.completionState == .generating
+                    ? store.agentStreaming
+                    : inertAgentStreamingState,
+                // Typography follows the real column width, not the layout enum.
+                isChatWideTypography: wide
+                    || contentWidth >= AgentChatLayoutMetrics.wideTypographyMinContentWidth
+            )
         }
         .id(message.id)
         .transition(WeiBeiTransition.message)
@@ -2606,18 +2603,12 @@ struct FloatingSelectionAgentView: View {
                     // Same order as immersive chat: messages → streaming → thinking.
                     LazyVStack(alignment: .leading, spacing: 12) {
                         ForEach(visibleFloatingMessages) { message in
-                            if message.completionState == .generating {
-                                FloatingSelectionGeneratingMessage(
-                                    message: message,
-                                    streaming: store.agentStreaming
-                                )
-                            } else {
-                                FloatingSelectionMessageBubble(
-                                    message: message,
-                                    text: floatingText(for: message),
-                                    isError: WorkspaceStore.isAgentFailureMessage(message.text)
-                                )
-                            }
+                            FloatingSelectionMessageRow(
+                                message: message,
+                                streaming: message.completionState == .generating
+                                    ? store.agentStreaming
+                                    : inertAgentStreamingState
+                            )
                         }
 
                         if store.isAgentRunningInActiveChat
@@ -2829,10 +2820,6 @@ struct FloatingSelectionAgentView: View {
         }
     }
 
-    private func floatingText(for message: AgentMessage) -> String {
-        store.agentDisplayText(for: message)
-    }
-
     private func togglePinnedFloatingAgent() {
         let next = !store.pinnedFloatingAgent
         store.pinnedFloatingAgent = next
@@ -2996,29 +2983,48 @@ private struct FloatingSelectionMessageBubble: View {
     }
 }
 
-private struct FloatingSelectionGeneratingMessage: View {
+/// Floating-panel message row. A single type across the generating →
+/// completed flip keeps the markdown surface mounted at completion. The
+/// caller passes the live streaming state only for the generating row;
+/// completed rows receive `inertAgentStreamingState`, which never publishes.
+private struct FloatingSelectionMessageRow: View {
     @EnvironmentObject private var store: WorkspaceStore
     var message: AgentMessage
     @ObservedObject var streaming: AgentStreamingState
 
     @ViewBuilder
     var body: some View {
-        let text = store.agentDisplayText(for: message)
-        if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            AgentThinkingIndicator(activityText: streaming.activityText)
-                .id(message.id)
-                .padding(.vertical, 4)
-        } else {
+        let isGenerating = message.completionState == .generating
+        let text = isGenerating ? streaming.text : store.agentDisplayText(for: message)
+        // Mount the bubble (and its markdown WebView) while the thinking
+        // overlay is still up, so the renderer's cold start runs in parallel
+        // with the wait for the first token.
+        ZStack(alignment: .topLeading) {
             FloatingSelectionMessageBubble(
                 message: message,
                 text: text,
                 isError: WorkspaceStore.isAgentFailureMessage(message.text)
             )
+            if isGenerating && text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                AgentThinkingIndicator(activityText: streaming.activityText)
+                    .id(message.id)
+                    .padding(.vertical, 4)
+            }
         }
     }
 }
 
-private struct AgentGeneratingBubble: View {
+/// Never publishes. Completed rows observe this instead of the live
+/// AgentStreamingState: @ObservedObject subscribes regardless of whether the
+/// body reads the object, so pointing finished rows at the shared live state
+/// would re-broadcast every token to every mounted bubble (what e058c61
+/// removed). Only the generating row observes the real streaming state.
+@MainActor private let inertAgentStreamingState = AgentStreamingState()
+
+/// Bubble row for one assistant/user message. A single type across the
+/// generating → completed flip keeps the view identity (and the mounted
+/// markdown WKWebView) alive at completion.
+private struct AgentMessageBubble: View {
     var message: AgentMessage
     @ObservedObject var streaming: AgentStreamingState
     var isChatWideTypography = false
@@ -3026,9 +3032,8 @@ private struct AgentGeneratingBubble: View {
     var body: some View {
         AgentBubble(
             message: message,
-            streaming: streaming,
-            liveStreamingText: streaming.text,
-            liveActivityText: streaming.activityText,
+            liveStreamingText: message.completionState == .generating ? streaming.text : nil,
+            liveActivityText: message.completionState == .generating ? streaming.activityText : nil,
             isChatWideTypography: isChatWideTypography
         )
     }
@@ -3038,7 +3043,6 @@ private struct AgentBubble: View {
     @EnvironmentObject private var store: WorkspaceStore
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     var message: AgentMessage
-    var streaming: AgentStreamingState
     var liveStreamingText: String? = nil
     var liveActivityText: String? = nil
     var isChatWideTypography = false
@@ -3209,11 +3213,10 @@ private struct AgentBubble: View {
             }
         }
         let displayedStreamingText = store.agentReplyDisplayedStreamingText(message)
+        let isAwaitingFirstToken = message.completionState == .generating
+            && answerText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         return VStack(alignment: .leading, spacing: 8) {
-            if message.completionState == .generating
-                && answerText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                AgentThinkingIndicator(activityText: liveActivityText)
-            } else if let richAnswer = message.richAnswer,
+            if !isAwaitingFirstToken, let richAnswer = message.richAnswer,
                richAnswer.mode == .rich,
                !richAnswer.scenes.isEmpty,
                !displayedStreamingText {
@@ -3230,17 +3233,24 @@ private struct AgentBubble: View {
                 }) {
                     visualizedMessageFlow(fallbackText: citationParse.displayText)
                 } else {
-                    // One surface owns the answer from its first rendered token through
-                    // completion. State changes may freeze/cache it, but never replace it.
-                    AgentMessageMarkdownText(
-                        text: citationParse.displayText,
-                        rendersRichMarkdown: true,
-                        isChatWideTypography: isChatWideTypography,
-                        usesFinalizedKaTeX: !isFailureMessage,
-                        messageID: message.id,
-                        keepsMarkdownSurfaceMounted: !isFailureMessage,
-                        isStreaming: message.completionState == .generating
-                    )
+                    // One surface owns the answer from question send through
+                    // completion. The WebView mounts while the thinking overlay
+                    // is still up, so its cold start runs in parallel with the
+                    // wait for the first token instead of after it.
+                    ZStack(alignment: .topLeading) {
+                        AgentMessageMarkdownText(
+                            text: citationParse.displayText,
+                            rendersRichMarkdown: true,
+                            isChatWideTypography: isChatWideTypography,
+                            usesFinalizedKaTeX: !isFailureMessage,
+                            messageID: message.id,
+                            keepsMarkdownSurfaceMounted: !isFailureMessage,
+                            isStreaming: message.completionState == .generating
+                        )
+                        if isAwaitingFirstToken {
+                            AgentThinkingIndicator(activityText: liveActivityText)
+                        }
+                    }
                 }
                 if let richAnswer = message.richAnswer,
                    richAnswer.mode == .rich,
@@ -4861,8 +4871,9 @@ private struct AgentMessageMarkdownText: View {
             guard wasStreaming, !isStreaming,
                   keepsMarkdownSurfaceMounted else { return }
             // The streaming measurement only proves the previous DOM was ready.
-            // Keep this WebView mounted, but wait for the finalized snapshot's
-            // own measurement before letting it cover the native text.
+            // Keep this WebView mounted — and visible, since it still shows the
+            // streamed answer — but wait for the finalized snapshot's own
+            // measurement before accepting height updates again.
             finalizedRendererReady = false
             finalizedRendererFailed = false
             awaitsFinalizedRendererReady = true
@@ -4975,14 +4986,19 @@ private struct AgentMessageMarkdownText: View {
                 .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
                 .allowsHitTesting(finalizedRendererReady && !isStreaming)
                 .accessibilityHidden(!finalizedRendererReady)
-                .opacity(isStreaming || finalizedRendererReady ? 1 : 0.01)
+                // Handoff (awaitsFinalizedRendererReady) keeps the live WebView
+                // fully visible: it already shows the streamed answer, and
+                // hiding it behind native text would flash at completion.
+                .opacity(isStreaming || finalizedRendererReady
+                    || awaitsFinalizedRendererReady ? 1 : 0.01)
                 .zIndex(0)
             }
-            // Never flash native/raw Markdown over a live stream. Once streaming
-            // completes, keep native Markdown visible until this same WebView has
-            // measured the finalized snapshot; otherwise a cold Chat can show an
-            // empty answer until the user scrolls.
+            // Never flash native/raw Markdown over a live stream or over the
+            // streamed→finalized handoff. Cold-mounted rows (history after a
+            // relaunch) still need it until this WebView's first measurement;
+            // otherwise a cold Chat can show an empty answer until scroll.
             if !finalizedRendererReady
+                && !awaitsFinalizedRendererReady
                 && (!isStreaming
                     || !keepsMarkdownSurfaceMounted
                     || finalizedRendererFailed) {

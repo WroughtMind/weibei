@@ -12,6 +12,21 @@ final class SidebarPerformanceTests: XCTestCase {
     }
 
     @MainActor
+    func testGlassDrawerUsesMaterialOnlyWhileOpen() {
+        let fixture = makeStore(itemCount: 1)
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        fixture.store.setAppearanceMode(.glassDark)
+        let (drawer, window) = makeDrawer()
+
+        XCTAssertFalse(drawer.glassMaterialVisibleForTesting)
+        drawer.apply(isOpen: true, store: fixture.store, animated: false)
+        XCTAssertTrue(drawer.glassMaterialVisibleForTesting)
+        drawer.apply(isOpen: false, store: fixture.store, animated: false)
+        XCTAssertFalse(drawer.glassMaterialVisibleForTesting)
+        withExtendedLifetime(window) {}
+    }
+
+    @MainActor
     func testClosedDrawerReleasesObservationTreeAndIgnoresUnrelatedState() {
         let fixture = makeStore(itemCount: 540)
         defer { try? FileManager.default.removeItem(at: fixture.root) }
