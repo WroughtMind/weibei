@@ -154,11 +154,10 @@ final class WriteGateSafetyTests: XCTestCase {
         try store.waitForCourseFileOperation {
             await store.renameNotebookNoteInTransaction(itemID: item.id, to: "新标题")
         }
-        let renamedItem = try XCTUnwrap(
-            store.importedItems.first { $0.subtitle.hasPrefix("新标题") } ?? store.importedItems.first { $0.id == item.id }
-        )
-        let renamedURL = try XCTUnwrap(store.resolvedLibraryURL(for: renamedItem))
-        XCTAssertTrue(renamedURL.lastPathComponent.hasPrefix("新标题"))
+        let documentsDir = try XCTUnwrap(url.deletingLastPathComponent())
+        let renamedURL = documentsDir.appendingPathComponent("新标题.md")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: renamedURL.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: url.path))
         let content = try String(contentsOf: renamedURL, encoding: .utf8)
         XCTAssertTrue(content.contains("# 新标题"), "改名后正文抬头应更新：\(content)")
         XCTAssertTrue(content.contains("正文"))
