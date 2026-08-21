@@ -4957,7 +4957,7 @@ private struct AgentMessageMarkdownText: View {
     /// on-screen rows stop waiting behind a whole-conversation boot storm.
     private func updateColdBootSlotRequest() {
         guard shouldUseFinalizedMarkdown, !isStreaming, !rendererSurfaceMounted else { return }
-        bootQueueModel.queue.requestBootSlot(id: bootSlotID, visible: isInScrollViewport == true)
+        bootQueueModel.queue.requestBootSlot(id: bootSlotID, isInViewport: isInScrollViewport)
         if bootQueueModel.queue.isAdmitted(bootSlotID) {
             rendererSurfaceMounted = true
         }
@@ -5077,18 +5077,27 @@ private struct AgentMessageMarkdownText: View {
             // Never flash native/raw Markdown over a live stream or over the
             // streamed→finalized handoff. Cold-mounted rows (history after a
             // relaunch or session switch) still need it until this WebView's
-            // first measurement — dimmed while waiting so it reads as a
-            // transitional placeholder, not a broken final render.
+            // first measurement — structured blocks keep the wait readable,
+            // dimmed so it reads as a placeholder, not a broken final render.
             if !finalizedRendererReady
                 && !awaitsFinalizedRendererReady
                 && (!isStreaming
                     || !keepsMarkdownSurfaceMounted
                     || finalizedRendererFailed) {
-                nativeBody
-                    .background(WeiBeiTheme.paper)
-                    .allowsHitTesting(false)
-                    .opacity(finalizedRendererFailed ? 1 : 0.55)
-                    .zIndex(1)
+                Group {
+                    if rendersRichMarkdown {
+                        AgentMarkdownBlockFallback(
+                            markdown: finalizedMarkdown,
+                            compact: compact
+                        )
+                    } else {
+                        nativeBody
+                    }
+                }
+                .background(WeiBeiTheme.paper)
+                .allowsHitTesting(false)
+                .opacity(finalizedRendererFailed ? 1 : 0.55)
+                .zIndex(1)
             }
         }
         .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)

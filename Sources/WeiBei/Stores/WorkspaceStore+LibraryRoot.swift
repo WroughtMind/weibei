@@ -100,6 +100,25 @@ extension WorkspaceStore {
         if let bookmark {
             courseLibraryRootBookmarkData = bookmark
         }
+        reconcileTransientNoteFileErrorsAfterLibraryBind()
+    }
+
+    /// 库根成功绑定后复核笔记降级错误。绑定窗口期的求值会留下「无法定位
+    /// 笔记文件」这类瞬态误报;文件现在可定位且没有编辑草稿的条目立即撤下,
+    /// 横幅不再常驻。有草稿的条目保留错误标记——它同时是写回守卫拒绝把
+    /// 模板盖回磁盘的依据,只能由真正的读盘成功来清除。
+    func reconcileTransientNoteFileErrorsAfterLibraryBind() {
+        guard !noteOperationErrorsByItemID.isEmpty else { return }
+        for (itemID, _) in noteOperationErrorsByItemID {
+            guard let item = importedItems.first(where: { $0.id == itemID }),
+                  item.editsBackingMarkdownFile,
+                  notesByItemID[itemID] == nil,
+                  let url = resolvedLibraryURL(for: item),
+                  FileManager.default.fileExists(atPath: url.path) else {
+                continue
+            }
+            setNoteFileError(nil, for: itemID)
+        }
     }
 
     func markLibraryUnavailable(_ reason: String) {
