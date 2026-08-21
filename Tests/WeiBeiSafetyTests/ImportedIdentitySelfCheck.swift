@@ -913,6 +913,12 @@ enum ImportedIdentitySelfCheck {
         )
         try FileManager.default.removeItem(at: materialURL)
         reopened.presentCourseWorkspace(.hub, courseID: courseA.id)
+        // 灰态保护：模拟两个对账周期后再移除（计划 §5 阶段2）。
+        if let grayID = reopened.importedItems.first(where: { $0.id == material.id })?.id,
+           reopened.fileMissingSinceByItemID[grayID] != nil {
+            reopened.fileMissingSinceByItemID[grayID] = Date().addingTimeInterval(-7)
+            try reopened.reconcileCourseFilesForSelfCheck(courseID: courseA.id)
+        }
         try check(
             !reopened.resumeCourseReading(courseA.id)
                 && reopened.courseWorkspacePresented

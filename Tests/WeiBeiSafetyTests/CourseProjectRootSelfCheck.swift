@@ -7123,9 +7123,14 @@ enum CourseProjectRootSelfCheck {
         let displacedURL = incoming.appendingPathComponent("暂时移走的原文稿.txt")
         try FileManager.default.moveItem(at: courseURL, to: displacedURL)
         try store.reconcileCourseFilesForSelfCheck(courseID: courseID)
+        // 灰态保护：首缺席保留条目；模拟两个对账周期后移除（计划 §5 阶段2）。
+        if let grayedNoteID = store.importedItems.first(where: { $0.id == noteItem.id })?.id {
+            store.fileMissingSinceByItemID[grayedNoteID] = Date().addingTimeInterval(-7)
+            try store.reconcileCourseFilesForSelfCheck(courseID: courseID)
+        }
         try check(
-            store.importedItems.first { $0.id == item.id } == nil,
-            "移出课程文件夹后文稿还留在魏碑里"
+            store.importedItems.first { $0.id == noteItem.id } == nil,
+            "Finder 删除后课程里还留着这条笔记"
         )
 
         store.presentCourseWorkspace(.hub, courseID: courseID)
