@@ -73,7 +73,9 @@ final class LibraryMigrationSafetyTests: XCTestCase {
             leftoverEntries.isEmpty,
             "旧资料库目录残留：\(leftoverEntries)，当前绑定=\(store.courseLibraryRootPath ?? "nil")"
         )
-        XCTAssertTrue(FileManager.default.fileExists(atPath: destination.appendingPathComponent(".weibei/course.json").path))
+        XCTAssertTrue(FileManager.default.fileExists(
+            atPath: destination.appendingPathComponent("迁移课/.weibei/course.json").path
+        ))
         XCTAssertEqual(store.courseLibraryRootURL?.standardizedFileURL, destination.standardizedFileURL)
         XCTAssertEqual(store.courseLibraryRootPath, destination.standardizedFileURL.path)
         let movedCourseRoot = try XCTUnwrap(store.courseRootURL(for: courseID))
