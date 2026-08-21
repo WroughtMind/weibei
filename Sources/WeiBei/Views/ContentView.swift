@@ -90,6 +90,15 @@ struct ContentView: View {
                         .zIndex(120)
                         .transition(WeiBeiTransition.floating)
                 }
+
+                if store.courseFileOperationProgress != nil {
+                    ImportProgressPill()
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
+                        .padding(.leading, 16)
+                        .padding(.bottom, 16)
+                        .zIndex(120)
+                        .transition(WeiBeiTransition.floating)
+                }
             }
             .animation(WeiBeiMotion.panel, value: store.importantOperationError)
             .animation(WeiBeiMotion.panel, value: store.transientNoteStatus)
@@ -330,6 +339,37 @@ private struct GlobalFloatingSelectionLayer: View {
 
 /// Top-level workspace feedback: important data-operation errors (persistent,
 /// user-dismissed) take priority over the auto-expiring transient status.
+private struct ImportProgressPill: View {
+    @EnvironmentObject private var store: WorkspaceStore
+
+    var body: some View {
+        let progress = store.courseFileOperationProgress
+        HStack(spacing: 8) {
+            ProgressView()
+                .controlSize(.small)
+            Text(store.ui(
+                "正在导入 \(progress?.completed ?? 0)/\(progress?.total ?? 0)：\(progress?.currentFileName ?? "")",
+                "Importing \(progress?.completed ?? 0)/\(progress?.total ?? 0): \(progress?.currentFileName ?? "")"
+            ))
+            .font(.system(size: 12, weight: .medium))
+            .foregroundStyle(WeiBeiTheme.ink)
+            .lineLimit(1)
+            .truncationMode(.middle)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(WeiBeiTheme.paperRaised.opacity(0.97))
+        .clipShape(Capsule())
+        .overlay {
+            Capsule()
+                .stroke(WeiBeiTheme.hairline.opacity(0.6), lineWidth: 1)
+        }
+        .shadow(color: WeiBeiTheme.ink.opacity(store.appearanceMode.isDark ? 0.3 : 0.1), radius: 12, y: 6)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(Text(store.ui("正在导入文件", "Importing files")))
+    }
+}
+
 private struct WorkspaceStatusBanner: View {
     @EnvironmentObject private var store: WorkspaceStore
 

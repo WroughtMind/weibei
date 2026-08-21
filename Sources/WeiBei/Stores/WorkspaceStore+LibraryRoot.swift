@@ -27,27 +27,6 @@ extension WorkspaceStore {
         }
     }
 
-    func copyExternalFileIntoLibrary(
-        _ sourceURL: URL,
-        isNote: Bool
-    ) throws -> URL {
-        guard let libraryRoot = courseLibraryRootURL else {
-            throw CourseProjectRootError.missingLibrary
-        }
-        let directoryName = isNote
-            ? CourseLibraryLayout.commonNotesDirectoryName
-            : CourseLibraryLayout.commonMaterialsDirectoryName
-        let directory = libraryRoot.appendingPathComponent(
-            directoryName,
-            isDirectory: true
-        )
-        try FileManager.default.createDirectory(
-            at: directory,
-            withIntermediateDirectories: true
-        )
-        return try copyPreservingOriginal(from: sourceURL, into: directory)
-    }
-
     func copyExternalFileIntoCourse(
         _ sourceURL: URL,
         courseID: UUID,
@@ -67,23 +46,33 @@ extension WorkspaceStore {
             at: directory,
             withIntermediateDirectories: true
         )
-        return try copyPreservingOriginal(from: sourceURL, into: directory)
+        return try Self.copyPreservingOriginal(from: sourceURL, into: directory)
     }
 
-    func copyPreservingOriginal(from sourceURL: URL, into directory: URL) throws -> URL {
-        let sourceData = try Data(contentsOf: sourceURL)
-        let preferred = directory.appendingPathComponent(sourceURL.lastPathComponent)
-        if FileManager.default.fileExists(atPath: preferred.path) {
-            let existing = try Data(contentsOf: preferred)
-            if existing == sourceData {
-                return preferred
-            }
-            let unique = uniqueCopyURL(in: directory, preferred: preferred)
-            try sourceData.write(to: unique, options: [.atomic])
-            return unique
-        }
-        try sourceData.write(to: preferred, options: [.atomic])
-        return preferred
+    /// Kernel-side copy with the original dedupe semantics: identical content
+    /// resolves to the existing file, real conflicts get a unique name. Size is
+    /// compared before any byte read, so large imports never enter memory whole.
+    nonisolated static func copyPreservingOriginal(from sourceURL: URL, into directory: URL) throws -> URL {
+        try ImportFileCopy.copyPreservingOriginal(from: sourceURL, into: directory)
+    }
+
+    nonisolated static func copyExternalFileIntoLibrary(
+        root: URL,
+        sourceURL: URL,
+        isNote: Bool
+    ) throws -> URL {
+        let directoryName = isNote
+            ? CourseLibraryLayout.commonNotesDirectoryName
+            : CourseLibraryLayout.commonMaterialsDirectoryName
+        let directory = root.appendingPathComponent(
+            directoryName,
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(
+            at: directory,
+            withIntermediateDirectories: true
+        )
+        return try ImportFileCopy.copyPreservingOriginal(from: sourceURL, into: directory)
     }
 
     func libraryRelativePath(of url: URL) -> String? {
@@ -254,17 +243,90 @@ extension WorkspaceStore {
         }
     }
 
-    private func uniqueCopyURL(in directory: URL, preferred: URL) -> URL {
-        let stem = preferred.deletingPathExtension().lastPathComponent
-        let ext = preferred.pathExtension
-        var index = 2
-        while true {
-            let name = ext.isEmpty ? "\(stem) \(index)" : "\(stem) \(index).\(ext)"
-            let candidate = directory.appendingPathComponent(name)
-            if !FileManager.default.fileExists(atPath: candidate.path) {
-                return candidate
+    /// Applies already-copied common-library files to the item model in one
+    /// MainActor transaction after the background copy loop finishes.
+    func applyImportedCommonFiles(
+        _ files: [(url: URL, isNote: Bool)],
+        selectsFirstImportedItem: Bool,
+        reclassifiesExistingMarkdown: Bool
+    ) -> [StudyItem] {
+        var roleChanged = false
+        var importedIDs: [String] = []
+        var didChangeItems = false
+        for (url, importsIntoNotes) in files {
+            guard let relativePath = libraryRelativePath(of: url) else {
+                continue
             }
-            index += 1
+            let matchingIndex = importedItems.firstIndex { item in
+                item.storage == .common(relativePath: relativePath)
+            }
+            if let matchingIndex {
+                importedIDs.append(importedItems[matchingIndex].id)
+                let nextTitle = url.deletingPathExtension().lastPathComponent
+                let nextSubtitle = url.lastPathComponent
+                let nextKind = StudyItemKind.detect(from: url)
+                let nextRole = Self.isMarkdownFile(url)
+                let nextMaterialVisibility = !importsIntoNotes
+                if importedItems[matchingIndex].isNotebookNote != nextRole {
+                    roleChanged = true
+                }
+                if importedItems[matchingIndex].urlPath != url.path
+                    || importedItems[matchingIndex].title != nextTitle
+                    || importedItems[matchingIndex].subtitle != nextSubtitle
+                    || importedItems[matchingIndex].kind != nextKind
+                    || importedItems[matchingIndex].isNotebookNote != nextRole
+                    || importedItems[matchingIndex].appearsInMaterials != nextMaterialVisibility {
+                    importedItems[matchingIndex].urlPath = url.path
+                    importedItems[matchingIndex].title = nextTitle
+                    importedItems[matchingIndex].subtitle = nextSubtitle
+                    importedItems[matchingIndex].kind = nextKind
+                    importedItems[matchingIndex].isNotebookNote = nextRole
+                    importedItems[matchingIndex].appearsInMaterials = nextMaterialVisibility
+                    didChangeItems = true
+                }
+                continue
+            }
+
+            let item = StudyItem(
+                id: Self.makeImportedItemID(),
+                title: url.deletingPathExtension().lastPathComponent,
+                subtitle: url.lastPathComponent,
+                kind: StudyItemKind.detect(from: url),
+                urlPath: url.path,
+                isSample: false,
+                isNotebookNote: Self.isMarkdownFile(url),
+                appearsInMaterials: !importsIntoNotes,
+                storage: .common(relativePath: relativePath)
+            )
+            importedItems.append(item)
+            importedIDs.append(item.id)
+            didChangeItems = true
         }
+
+        if roleChanged {
+            if let selectedItemID,
+               importedItems.first(where: { $0.id == selectedItemID })?.isCourseMaterial == false {
+                self.selectedItemID = courseMaterials.first?.id
+                readerLocationTitle = selectedMaterialItem.map { displayTitle(for: $0) }
+                restoreCurrentStudyLocation()
+            }
+            if let activeNotebookItemID,
+               importedItems.first(where: { $0.id == activeNotebookItemID })?.isNotebookNote == false {
+                self.activeNotebookItemID = courseNotebookItems.first?.id
+                noteText = noteText(for: activeNoteItem)
+            }
+            _ = sanitizeNoteSourceLinks()
+            invalidateAgentContext()
+        }
+        courseDocumentSearchIndex.synchronize(allItems)
+        let importedIDSet = Set(importedIDs)
+        let selectedItems = importedItems.filter { importedIDSet.contains($0.id) }
+        if selectsFirstImportedItem,
+           let first = selectedItems.first(where: \.isCourseMaterial) {
+            selectMeasured(itemID: first.id, opensNotebook: false)
+        } else if didChangeItems {
+            save()
+        }
+        return selectedItems
     }
 }

@@ -796,7 +796,7 @@ enum CourseProjectRootSelfCheck {
         let legacyURL = imports.appendingPathComponent("旧外部.txt")
         try Data("LEGACY_AGENT_SECRET".utf8).write(to: legacyURL)
         let legacyItem = try require(
-            store.importFiles([legacyURL], selectsFirstImportedItem: false).first,
+            importFilesAndWait(store, [legacyURL], selectsFirstImportedItem: false).first,
             "没有建立旧外部资料样本"
         )
         store.injectLegacyCourseMembershipForAgentSelfCheck(
@@ -982,7 +982,8 @@ enum CourseProjectRootSelfCheck {
             at: requestLegacyMaterialURL,
             courseID: courseA
         )
-        _ = store.importFiles(
+        importFilesAndWait(
+            store,
             [requestLegacyNoteURL],
             selectsFirstImportedItem: false,
             markdownAsNotes: true,
@@ -1206,7 +1207,7 @@ enum CourseProjectRootSelfCheck {
         let legacyURL = legacyDirectory.appendingPathComponent("旧课程文章.txt")
         try Data("ROOTLESS_COURSE_ARTICLE_TOKEN".utf8).write(to: legacyURL)
         let legacyItem = try require(
-            reopened.importFiles([legacyURL], selectsFirstImportedItem: false).first,
+            importFilesAndWait(reopened, [legacyURL], selectsFirstImportedItem: false).first,
             "无法建立旧课程外部资料样本"
         )
         reopened.injectLegacyCourseMembershipForAgentSelfCheck(
@@ -7854,7 +7855,7 @@ enum CourseProjectRootSelfCheck {
         let courseB = try store.createCourseInLibrary(title: "课程乙")
         let courseC = try store.createCourseInLibrary(title: "课程丙")
         let legacyItem = try require(
-            store.importFiles([legacySource], selectsFirstImportedItem: false).first,
+            importFilesAndWait(store, [legacySource], selectsFirstImportedItem: false).first,
             "旧外部资料没有进入迁移队列"
         )
         let migrated = try store.migrateLegacyExternalItemForSelfCheck(
@@ -8270,7 +8271,8 @@ enum CourseProjectRootSelfCheck {
         try original.write(to: sourceURL)
         var store = makeStore(fixture: fixture)
         let item = try require(
-            store.importFiles(
+            importFilesAndWait(
+                store,
                 [sourceURL],
                 selectsFirstImportedItem: false
             ).first,
@@ -8323,7 +8325,8 @@ enum CourseProjectRootSelfCheck {
         try sourceData.write(to: source)
         var store = makeStore(fixture: fixture)
         let item = try require(
-            store.importFiles(
+            importFilesAndWait(
+                store,
                 [source],
                 selectsFirstImportedItem: false
             ).first,

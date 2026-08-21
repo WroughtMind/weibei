@@ -84,7 +84,7 @@ enum LibraryRelativeOnlyCheck {
         let source = outside.appendingPathComponent("讲义.txt")
         let sourceBytes = Data("hello-library\n".utf8)
         try sourceBytes.write(to: source)
-        let copiedCommon = try store.copyExternalFileIntoLibrary(source, isNote: false)
+        let copiedCommon = try WorkspaceStore.copyExternalFileIntoLibrary(root: library, sourceURL: source, isNote: false)
         XCTAssertEqual(FileManager.default.contents(atPath: source.path), sourceBytes)
         XCTAssertEqual(copiedCommon.deletingLastPathComponent().lastPathComponent, "通用资料")
         let copiedCourse = try store.copyExternalFileIntoCourse(source, courseID: originalCourseID, isNote: false)
@@ -92,7 +92,7 @@ enum LibraryRelativeOnlyCheck {
         XCTAssertEqual(copiedCourse.deletingLastPathComponent().lastPathComponent, "文稿")
         XCTAssertNotEqual(copiedCommon.path, copiedCourse.path)
 
-        let same = try store.copyExternalFileIntoLibrary(source, isNote: false)
+        let same = try WorkspaceStore.copyExternalFileIntoLibrary(root: library, sourceURL: source, isNote: false)
         XCTAssertEqual(same.path, copiedCommon.path)
         let other = outside.appendingPathComponent("讲义-2.txt")
         try Data("different-content\n".utf8).write(to: other)
@@ -101,11 +101,11 @@ enum LibraryRelativeOnlyCheck {
         let renamedSource = outside.appendingPathComponent("讲义.txt")
         try? FileManager.default.removeItem(at: renamedSource)
         try FileManager.default.moveItem(at: colliding, to: renamedSource)
-        let second = try store.copyExternalFileIntoLibrary(renamedSource, isNote: false)
+        let second = try WorkspaceStore.copyExternalFileIntoLibrary(root: library, sourceURL: renamedSource, isNote: false)
         XCTAssertNotEqual(second.lastPathComponent, copiedCommon.lastPathComponent)
         XCTAssertEqual(FileManager.default.contents(atPath: copiedCommon.path), sourceBytes)
 
-        let imported = store.importFiles([copiedCommon], markdownAsNotes: false)
+        let imported = importFilesAndWait(store, [copiedCommon], markdownAsNotes: false)
         XCTAssertFalse(imported.isEmpty)
         let itemID = try XCTUnwrap(imported.first?.id)
         let chat = try XCTUnwrap(store.createStudySession(courseID: originalCourseID))
@@ -208,8 +208,9 @@ enum LibraryInsideOnlyCheck {
         XCTAssertNil(store.resolvedLibraryURL(for: escapeItem))
 
         let sharedBytes = Data("shared-in-library\n".utf8)
-        let commonURL = try store.copyExternalFileIntoLibrary(
-            {
+        let commonURL = try WorkspaceStore.copyExternalFileIntoLibrary(
+            root: library,
+            sourceURL: {
                 let source = outside.appendingPathComponent("共享讲义.txt")
                 try sharedBytes.write(to: source)
                 return source
@@ -218,7 +219,7 @@ enum LibraryInsideOnlyCheck {
         )
         let courseA = try store.createCourseInLibrary(title: "共享甲")
         let courseB = try store.createCourseInLibrary(title: "共享乙")
-        let imported = store.importFiles([commonURL], markdownAsNotes: false)
+        let imported = importFilesAndWait(store, [commonURL], markdownAsNotes: false)
         let sharedItem = try XCTUnwrap(imported.first)
         try store.shareCourseOwnedItemForSelfCheck(itemID: sharedItem.id, withCourseID: courseA)
         try store.shareCourseOwnedItemForSelfCheck(itemID: sharedItem.id, withCourseID: courseB)
