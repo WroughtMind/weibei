@@ -162,7 +162,7 @@ struct CourseRelationPaperView: View {
         ScrollView(showsIndicators: false) {
             VStack(alignment: .leading, spacing: 4) {
                 Text(store.ui("按课程", "By course"))
-                    .weiBeiText(11, weight: .semibold)
+                    .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(WeiBeiTheme.tertiaryInk)
                     .padding(.horizontal, 12)
                     .padding(.top, 14)
@@ -246,11 +246,11 @@ struct CourseRelationPaperView: View {
 
                 VStack(alignment: .leading, spacing: 2) {
                     Text(title)
-                        .weiBeiText(12.5, weight: selected ? .semibold : .medium)
+                        .font(.system(size: 12.5, weight: selected ? .semibold : .medium))
                         .foregroundStyle(WeiBeiTheme.ink)
                         .lineLimit(1)
                     Text(detail)
-                        .weiBeiText(10.5)
+                        .font(.system(size: 10.5))
                         .foregroundStyle(WeiBeiTheme.secondaryInk)
                         .lineLimit(1)
                 }
@@ -290,10 +290,10 @@ struct CourseRelationPaperView: View {
         } label: {
             HStack(spacing: 6) {
                 Text(scopeTitle(effectiveScope))
-                    .weiBeiText(12, weight: .semibold)
+                    .font(.system(size: 12, weight: .semibold))
                     .lineLimit(1)
                 Image(systemName: "chevron.down")
-                    .weiBeiText(9, weight: .bold)
+                    .font(.system(size: 9, weight: .bold))
             }
             .foregroundStyle(WeiBeiTheme.ink)
             .padding(.horizontal, 10)
@@ -445,7 +445,7 @@ struct CourseRelationPaperView: View {
                 setZoomScale(zoomScale - 0.1)
             } label: {
                 Image(systemName: "minus")
-                    .weiBeiText(10.5, weight: .bold)
+                    .font(.system(size: 10.5, weight: .bold))
                     .frame(width: 30, height: 28)
             }
             .buttonStyle(.plain)
@@ -455,7 +455,7 @@ struct CourseRelationPaperView: View {
             zoomControlDivider
 
             Text("\(Int((zoomScale * 100).rounded()))%")
-                .weiBeiText(10.5, weight: .semibold, design: .monospaced)
+                .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
                 .foregroundStyle(WeiBeiTheme.secondaryInk)
                 .frame(width: 48, height: 28)
                 .accessibilityLabel(store.ui("当前缩放 \(Int((zoomScale * 100).rounded()))%", "Current zoom \(Int((zoomScale * 100).rounded())) percent"))
@@ -466,7 +466,7 @@ struct CourseRelationPaperView: View {
                 setZoomScale(zoomScale + 0.1)
             } label: {
                 Image(systemName: "plus")
-                    .weiBeiText(10.5, weight: .bold)
+                    .font(.system(size: 10.5, weight: .bold))
                     .frame(width: 30, height: 28)
             }
             .buttonStyle(.plain)
@@ -481,9 +481,9 @@ struct CourseRelationPaperView: View {
             } label: {
                 HStack(spacing: 4) {
                     Image(systemName: "arrow.up.left.and.arrow.down.right")
-                        .weiBeiText(9.5, weight: .semibold)
+                        .font(.system(size: 9.5, weight: .semibold))
                     Text(store.ui("适合", "Fit"))
-                        .weiBeiText(10.5, weight: .semibold)
+                        .font(.system(size: 10.5, weight: .semibold))
                 }
                 .padding(.horizontal, 9)
                 .frame(height: 28)
@@ -621,7 +621,7 @@ struct CourseRelationPaperView: View {
     ) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             Text(title)
-                .weiBeiText(12, weight: .semibold)
+                .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(WeiBeiTheme.secondaryInk)
                 .padding(.horizontal, 4)
 
@@ -746,7 +746,7 @@ struct CourseRelationPaperView: View {
 
     private func hiddenCountBadge(_ count: Int) -> some View {
         Text(store.ui("其余 \(count) 项已收起", "\(count) more items hidden"))
-            .weiBeiText(12, weight: .medium)
+            .font(.system(size: 12, weight: .medium))
             .foregroundStyle(WeiBeiTheme.secondaryInk)
             .padding(.horizontal, 12)
             .frame(height: 30)
@@ -1037,17 +1037,17 @@ private struct CourseRelationPaperNodeView: View {
 
             HStack(spacing: 9) {
                 Image(systemName: node.item.symbolName)
-                    .weiBeiText(14, weight: .semibold)
+                    .font(.system(size: 14, weight: .semibold))
                     .foregroundStyle(iconColor)
                     .frame(width: 18)
 
                 VStack(alignment: .leading, spacing: 2) {
                     Text(node.item.title)
-                        .weiBeiText(13, weight: .semibold)
+                        .font(.system(size: 13, weight: .semibold))
                         .foregroundStyle(WeiBeiTheme.ink)
                         .lineLimit(1)
                     Text(detailText)
-                        .weiBeiText(10.5)
+                        .font(.system(size: 10.5))
                         .foregroundStyle(WeiBeiTheme.secondaryInk)
                         .lineLimit(1)
                 }
@@ -1107,7 +1107,7 @@ private struct CourseRelationPaperNodeView: View {
     private func connectionButton(_ state: CourseRelationConnectionState) -> some View {
         Button(action: connect) {
             Image(systemName: state == .linked || state == .source ? "minus" : "plus")
-                .weiBeiText(10.5, weight: .bold)
+                .font(.system(size: 10.5, weight: .bold))
                 .foregroundStyle(connectionForeground(state))
                 .frame(width: 24, height: 24)
                 .background(connectionBackground(state), in: Circle())

@@ -343,7 +343,7 @@ private struct CourseNewNoteSheet: View {
                 Text(store.ui("新建课程笔记", "New course note"))
                     .font(WeiBeiTypography.brandFont(language: store.interfaceLanguage, size: 20, weight: .semibold))
                 Text(store.ui("新笔记会写入当前课程文件夹里的“笔记”目录。", "The note will be written to the Notes folder inside this course."))
-                    .weiBeiText(12)
+                    .font(.system(size: 12))
                     .foregroundStyle(WeiBeiTheme.secondaryInk)
             }
 
@@ -352,7 +352,7 @@ private struct CourseNewNoteSheet: View {
 
             if let error, !error.isEmpty {
                 Text(error)
-                    .weiBeiText(11.5)
+                    .font(.system(size: 11.5))
                     .foregroundStyle(WeiBeiTheme.cinnabar)
             }
 
@@ -390,7 +390,7 @@ struct CourseWorkspaceHeader: View {
                     Image(systemName: "chevron.left")
                     Text(store.ui("返回工作台", "Back to workspace"))
                 }
-                .weiBeiText(12, weight: .medium)
+                .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(WeiBeiTheme.secondaryInk)
                 .frame(minHeight: 32)
                 .contentShape(Rectangle())
@@ -410,7 +410,7 @@ struct CourseWorkspaceHeader: View {
                         }
                     } label: {
                         Label(page.label(language: store.interfaceLanguage), systemImage: "chevron.down")
-                            .weiBeiText(12, weight: .semibold)
+                            .font(.system(size: 12, weight: .semibold))
                     }
                     .menuStyle(.borderlessButton)
                     .fixedSize()
@@ -441,7 +441,7 @@ struct CourseWorkspaceHeader: View {
             if let saveError = store.workspaceSaveError {
                 Button(action: { _ = store.retryWorkspaceSave() }) {
                     Label(store.ui("保存失败，点此重试", "Save failed, retry"), systemImage: "exclamationmark.triangle")
-                        .weiBeiText(10.5, weight: .medium)
+                        .font(.system(size: 10.5, weight: .medium))
                         .foregroundStyle(WeiBeiTheme.cinnabar)
                 }
                 .buttonStyle(.plain)
@@ -454,7 +454,7 @@ struct CourseWorkspaceHeader: View {
                 TextField(searchPrompt, text: $search)
                     .textFieldStyle(.plain)
                     .focused(searchFocused)
-                    .weiBeiText(12)
+                    .font(.system(size: 12))
             }
             .weibeiInputSurface(active: searchFocused.wrappedValue, height: 30)
             .frame(width: isCompact ? 160 : 220)
@@ -570,7 +570,7 @@ struct CourseWorkspaceTab: View {
     var body: some View {
         Button(action: action) {
             Text(title)
-                .weiBeiBrandFont(language: store.interfaceLanguage, size: 12.5, weight: active ? .semibold : .medium)
+                .font(WeiBeiTypography.brandFont(language: store.interfaceLanguage, size: 12.5, weight: active ? .semibold : .medium))
                 .foregroundStyle(active ? WeiBeiTheme.ink : WeiBeiTheme.secondaryInk)
                 .padding(.horizontal, 8)
                 .frame(height: 40)

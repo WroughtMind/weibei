@@ -351,7 +351,7 @@ private struct ImportProgressPill: View {
                 "正在导入 \(progress?.completed ?? 0)/\(progress?.total ?? 0)：\(progress?.currentFileName ?? "")",
                 "Importing \(progress?.completed ?? 0)/\(progress?.total ?? 0): \(progress?.currentFileName ?? "")"
             ))
-            .weiBeiText(12, weight: .medium)
+            .font(.system(size: 12, weight: .medium))
             .foregroundStyle(WeiBeiTheme.ink)
             .lineLimit(1)
             .truncationMode(.middle)
@@ -384,10 +384,10 @@ private struct WorkspaceStatusBanner: View {
     var body: some View {
         HStack(spacing: 8) {
             Image(systemName: isImportant ? "exclamationmark.triangle.fill" : "info.circle")
-                .weiBeiText(12, weight: .medium)
+                .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(isImportant ? WeiBeiTheme.cinnabar : WeiBeiTheme.secondaryInk)
             Text(message)
-                .weiBeiText(12, weight: .medium)
+                .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(WeiBeiTheme.ink)
                 .lineLimit(3)
                 .multilineTextAlignment(.leading)
@@ -397,7 +397,7 @@ private struct WorkspaceStatusBanner: View {
                     store.dismissImportantOperationError()
                 } label: {
                     Image(systemName: "xmark")
-                        .weiBeiText(10, weight: .semibold)
+                        .font(.system(size: 10, weight: .semibold))
                         .foregroundStyle(WeiBeiTheme.secondaryInk)
                         .contentShape(Rectangle())
                 }
@@ -520,7 +520,7 @@ private struct UnifiedTopBarView: View {
                     .foregroundColor(WeiBeiTheme.ink)
                     .foregroundStyle(WeiBeiTheme.ink)
                     .tint(WeiBeiTheme.link)
-                    .weiBeiText(12)
+                    .font(.system(size: 12))
                     .weibeiInputSurface(active: searchFocused.wrappedValue, height: controlHeight)
                     .frame(width: 220)
                 .onExitCommand {
@@ -1192,9 +1192,9 @@ private struct PaneReorderPreviewView: View {
             WeiBeiTheme.paper
             HStack(spacing: 7) {
                 Image(systemName: role.systemImage)
-                    .weiBeiText(12, weight: .semibold)
+                    .font(.system(size: 12, weight: .semibold))
                 Text(role.label(language: store.interfaceLanguage))
-                    .weiBeiText(12, weight: .semibold)
+                    .font(.system(size: 12, weight: .semibold))
             }
             .foregroundStyle(WeiBeiTheme.secondaryInk)
             .padding(.horizontal, 12)
@@ -1211,10 +1211,10 @@ struct EmptyWorkspaceView: View {
             WeiBeiTheme.paper
             VStack(spacing: 14) {
                 Image(systemName: "seal")
-                    .weiBeiText(34, weight: .regular)
+                    .font(.system(size: 34, weight: .regular))
                     .foregroundStyle(WeiBeiTheme.cinnabar.opacity(store.appearanceMode.isDark ? 0.12 : 0.08))
                 Text(store.ui("在顶栏点亮一个板块开始", "Light up a pane above to begin"))
-                    .weiBeiText(13, weight: .medium)
+                    .font(.system(size: 13, weight: .medium))
                     .foregroundStyle(WeiBeiTheme.secondaryInk)
             }
             .padding(.bottom, 18)
@@ -1237,9 +1237,9 @@ private struct PaneDropTargetView: View {
             .overlay(alignment: .topLeading) {
                 HStack(spacing: 7) {
                     Image(systemName: role.systemImage)
-                        .weiBeiText(12, weight: .semibold)
+                        .font(.system(size: 12, weight: .semibold))
                     Text(role.label(language: store.interfaceLanguage))
-                        .weiBeiText(12, weight: .semibold)
+                        .font(.system(size: 12, weight: .semibold))
                 }
                 .foregroundStyle(WeiBeiTheme.cinnabar)
                 .padding(.horizontal, 10)

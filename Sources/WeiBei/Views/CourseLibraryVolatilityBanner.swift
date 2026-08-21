@@ -7,7 +7,7 @@ struct CourseLibraryVolatilityBanner: View {
     var body: some View {
         HStack(alignment: .center, spacing: 12) {
             Image(systemName: "exclamationmark.triangle.fill")
-                .weiBeiText(13, weight: .semibold)
+                .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(WeiBeiTheme.cinnabar)
                 .accessibilityHidden(true)
 
@@ -16,11 +16,11 @@ struct CourseLibraryVolatilityBanner: View {
                     "当前资料库位于临时位置，系统可能清理",
                     "The current library is in a temporary location and the system may delete it"
                 ))
-                .weiBeiText(12, weight: .semibold)
+                .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(WeiBeiTheme.ink)
                 if let path = store.courseLibraryRootPath {
                     Text(path)
-                        .weiBeiText(11)
+                        .font(.system(size: 11))
                         .foregroundStyle(WeiBeiTheme.secondaryInk)
                         .lineLimit(1)
                         .truncationMode(.middle)

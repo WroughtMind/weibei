@@ -238,10 +238,10 @@ struct CourseDocNoteWorkspaceView: View {
     private func sectionHeader(title: String, count: Int, kind: CourseRelationLens) -> some View {
         HStack(spacing: 8) {
             Text(title)
-                .weiBeiText(12, weight: .semibold)
+                .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(WeiBeiTheme.secondaryInk)
             Text("\(count)")
-                .weiBeiText(11, weight: .medium, design: .monospaced)
+                .font(.system(size: 11, weight: .medium, design: .monospaced))
                 .foregroundStyle(WeiBeiTheme.tertiaryInk)
             Spacer(minLength: 0)
             if let courseID {
@@ -297,7 +297,7 @@ struct CourseDocNoteWorkspaceView: View {
                         kind: kind == .materials ? .notes : .materials,
                         counterpart: item
                     ) ? "checkmark.square.fill" : "square")
-                    .weiBeiText(14, weight: .medium)
+                    .font(.system(size: 14, weight: .medium))
                     .foregroundStyle(
                         isLinked(
                             item: counterpart,
@@ -400,12 +400,12 @@ struct CourseDocNoteWorkspaceView: View {
                     .foregroundStyle(WeiBeiTheme.cinnabar)
 
                 Text(store.displayTitle(for: item))
-                    .weiBeiText(16, weight: .semibold)
+                    .font(.system(size: 16, weight: .semibold))
                     .foregroundStyle(WeiBeiTheme.ink)
                     .lineLimit(2)
 
                 Text(itemDetail(item))
-                    .weiBeiText(11)
+                    .font(.system(size: 11))
                     .foregroundStyle(WeiBeiTheme.secondaryInk)
                     .lineLimit(2)
 
@@ -420,7 +420,7 @@ struct CourseDocNoteWorkspaceView: View {
                     .buttonStyle(WeiBeiTextActionButtonStyle(active: true))
 
                     Text(relationCountLabel(for: item, kind: kind))
-                        .weiBeiText(10.5, weight: .medium)
+                        .font(.system(size: 10.5, weight: .medium))
                         .foregroundStyle(WeiBeiTheme.secondaryInk)
                 }
             }
@@ -432,14 +432,14 @@ struct CourseDocNoteWorkspaceView: View {
                 Text(kind == .materials
                      ? store.ui("关联笔记", "Linked notes")
                      : store.ui("关联文稿", "Linked docs"))
-                    .weiBeiText(12.5, weight: .semibold)
+                    .font(.system(size: 12.5, weight: .semibold))
                     .foregroundStyle(WeiBeiTheme.ink)
 
                 Text(store.ui(
                     "勾选即保存；这里只改变文稿—笔记关系，不改变课程归属。",
                     "Checks save immediately. This changes doc–note links, not course membership."
                 ))
-                .weiBeiText(10.5)
+                .font(.system(size: 10.5))
                 .foregroundStyle(WeiBeiTheme.secondaryInk)
                 .fixedSize(horizontal: false, vertical: true)
             }

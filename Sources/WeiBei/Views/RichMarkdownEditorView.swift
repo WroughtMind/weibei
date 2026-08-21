@@ -597,7 +597,6 @@ struct RichMarkdownEditorView: NSViewRepresentable {
     /// Resolved by WeiBeiMotionScope — pushed into the page before first paint and
     /// synced live on preference changes (never reloads the note).
     @Environment(\.weibeiReduceMotion) private var reduceMotion
-    @Environment(\.weiBeiTextScale) private var textScale
     var documentID = ""
     var markdown: String
     @Binding var command: NoteEditorCommand?
@@ -693,7 +692,6 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             window.weiBeiChatWideTypography = \(isChatWideTypography ? "true" : "false");
             window.weiBeiReduceMotion = \(reduceMotion ? "true" : "false");
             document.documentElement.dataset.weibeiReduceMotion = window.weiBeiReduceMotion;
-            document.documentElement.style.setProperty('--weibei-text-scale', String(\(textScale)));
             document.documentElement.dataset.weibeiTheme = window.weiBeiTheme === "glassLight" || window.weiBeiTheme === "glassMist"
               ? "xuan"
               : window.weiBeiTheme === "glassDark" || window.weiBeiTheme === "glassSlate" ? "stele" : window.weiBeiTheme;
@@ -866,13 +864,6 @@ struct RichMarkdownEditorView: NSViewRepresentable {
                 context.coordinator.setReduceMotion(reduceMotion)
             }
         }
-        if context.coordinator.textScale != textScale {
-            let previousScale = context.coordinator.textScale
-            context.coordinator.textScale = textScale
-            if context.coordinator.isReady, previousScale != 0 {
-                context.coordinator.setTextScale(textScale)
-            }
-        }
         context.coordinator.isFocused = isFocused
         context.coordinator.focusRequest = focusRequest
         context.coordinator.onWikiLink = onWikiLink
@@ -1037,7 +1028,6 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         var appearanceMode: WeiBeiAppearanceMode
         var interfaceLanguage: WeiBeiInterfaceLanguage
         var reduceMotion = false
-        var textScale: CGFloat = 1
         var webMarkdown = ""
         var pendingStreamingCompletion = false
         var lastCommandID: UUID?
@@ -1305,7 +1295,6 @@ struct RichMarkdownEditorView: NSViewRepresentable {
                     }
                 }
                 applySearch()
-                setTextScale(textScale)
                 setTheme(appearanceMode)
                 setChatWideTypography(isChatWideTypography)
                 applyFocus()
@@ -1534,10 +1523,6 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         /// protocol extension; the page only ever sees the final boolean.
         func setReduceMotion(_ reduce: Bool) {
             evaluate("window.WeiBeiEditor?.setReduceMotion(\(reduce ? "true" : "false"))")
-        }
-
-        func setTextScale(_ scale: CGFloat) {
-            evaluate("window.WeiBeiEditor?.setTextScale(\(scale))")
         }
 
         func setChatWideTypography(_ wide: Bool) {

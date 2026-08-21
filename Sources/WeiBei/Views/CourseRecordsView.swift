@@ -253,7 +253,7 @@ struct LearningMemoryListSection: View {
                         .font(WeiBeiTypography.brandFont(language: store.interfaceLanguage, size: 14, weight: .semibold))
                     Spacer()
                     Text(store.ui("\(memories.count) 条", "\(memories.count)"))
-                        .weiBeiText(11, weight: .medium)
+                        .font(.system(size: 11, weight: .medium))
                         .foregroundStyle(WeiBeiTheme.secondaryInk)
                 }
                 .padding(.horizontal, 16)
@@ -264,7 +264,7 @@ struct LearningMemoryListSection: View {
                 Text(search.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                     ? store.ui("还没有形成学习记忆。", "No learning memory yet.")
                     : store.ui("没有匹配的学习记忆。", "No matching learning memory."))
-                    .weiBeiText(12)
+                    .font(.system(size: 12))
                     .foregroundStyle(WeiBeiTheme.secondaryInk)
                     .padding(.horizontal, 16)
                     .padding(.bottom, 14)
@@ -325,21 +325,21 @@ struct LearningMemoryListSection: View {
                 VStack(alignment: .leading, spacing: 5) {
                     HStack(spacing: 7) {
                         Text(store.learningMemoryKindLabel(memory.kind))
-                            .weiBeiText(10.5, weight: .semibold)
+                            .font(.system(size: 10.5, weight: .semibold))
                             .foregroundStyle(WeiBeiTheme.cinnabar)
                         if memory.status == .resolved {
                             Text(store.ui("已解决", "Resolved"))
-                                .weiBeiText(10, weight: .medium)
+                                .font(.system(size: 10, weight: .medium))
                                 .foregroundStyle(WeiBeiTheme.tertiaryInk)
                         }
                     }
                     Text(memory.text)
-                        .weiBeiText(13)
+                        .font(.system(size: 13))
                         .foregroundStyle(WeiBeiTheme.ink)
                         .multilineTextAlignment(.leading)
                         .fixedSize(horizontal: false, vertical: true)
                     Text(memorySource(memory))
-                        .weiBeiText(10.5)
+                        .font(.system(size: 10.5))
                         .foregroundStyle(WeiBeiTheme.tertiaryInk)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -412,7 +412,7 @@ private struct LearningMemoryEditSheet: View {
             }
 
             TextEditor(text: $text)
-                .weiBeiText(13)
+                .font(.system(size: 13))
                 .frame(minHeight: 110)
                 .padding(8)
                 .background(WeiBeiTheme.paperInset.opacity(0.45))
@@ -425,7 +425,7 @@ private struct LearningMemoryEditSheet: View {
                 "\(text.count) / 500 字",
                 "\(text.count) / 500 characters"
             ))
-            .weiBeiText(10.5)
+            .font(.system(size: 10.5))
             .foregroundStyle(text.count > 500 ? WeiBeiTheme.cinnabar : WeiBeiTheme.tertiaryInk)
             .frame(maxWidth: .infinity, alignment: .trailing)
 

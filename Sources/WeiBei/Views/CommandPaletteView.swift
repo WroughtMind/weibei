@@ -163,7 +163,7 @@ struct CommandPaletteView: View {
                         LazyVStack(spacing: 3) {
                             if filtered.isEmpty {
                                 Text(store.ui("没有匹配命令", "No matching commands"))
-                                    .weiBeiText(13)
+                                    .font(.system(size: 13))
                                     .foregroundStyle(WeiBeiTheme.tertiaryInk)
                                     .frame(maxWidth: .infinity, alignment: .leading)
                                     .padding(.horizontal, 14)
@@ -175,7 +175,7 @@ struct CommandPaletteView: View {
                                     } label: {
                                         HStack(spacing: 12) {
                                             Text(command.title)
-                                                .weiBeiText(13, weight: .medium)
+                                                .font(.system(size: 13, weight: .medium))
                                                 .lineLimit(1)
                                             Spacer()
                                             if !command.shortcut.isEmpty {
