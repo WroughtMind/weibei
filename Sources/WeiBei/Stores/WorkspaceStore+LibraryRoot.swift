@@ -333,6 +333,18 @@ extension WorkspaceStore {
             throw CourseProjectRootError.rootIdentityUnavailable
         }
         applyBoundLibraryRoot(canonicalDestination, identity: identity, bookmark: bookmark)
+        for course in courses {
+            guard let relativePath = course.sourceRootRelativePath,
+                  let folder = CourseProjectPathPolicy.resolvedRelativePath(
+                      relativePath,
+                      inside: canonicalDestination
+                  ) else {
+                continue
+            }
+            resolvedCourseRootURLs[course.id] = folder
+            courseRootUnavailableReasons.removeValue(forKey: course.id)
+            _ = resolveCourseOwnedItems(for: course.id)
+        }
         refreshRuntimeItemURLs()
         for course in courses {
             guard let relativePath = course.sourceRootRelativePath,

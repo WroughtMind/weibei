@@ -749,8 +749,8 @@ final class WorkspaceStore: ObservableObject {
 #if DEBUG
     private var usesBackgroundWorkspacePersistenceForSelfCheck = false
 #endif
-    private var resolvedCourseRootURLs: [UUID: URL] = [:]
-    private var courseRootUnavailableReasons: [UUID: String] = [:]
+    var resolvedCourseRootURLs: [UUID: URL] = [:]
+    var courseRootUnavailableReasons: [UUID: String] = [:]
     private let courseProjectFileWorker = CourseProjectFileWorker()
     private var courseReconciliationTask: Task<Void, Never>?
     private var courseReconciliationInFlight = false
@@ -17190,7 +17190,7 @@ final class WorkspaceStore: ObservableObject {
     }
 
     @discardableResult
-    private func resolveCourseOwnedItems(for courseID: UUID) -> Bool {
+    func resolveCourseOwnedItems(for courseID: UUID) -> Bool {
         var changed = false
         let itemIDs = importedItems.compactMap { item -> String? in
             guard case .courseOwned(let ownerCourseID, _) = item.storage,
