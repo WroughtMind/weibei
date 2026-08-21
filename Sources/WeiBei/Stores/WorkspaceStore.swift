@@ -18609,6 +18609,7 @@ final class WorkspaceStore: ObservableObject {
                 let markdown = cleanLegacyPlaceholder(result.markdown)
                 loadedCourseNoteTextByItemID[itemID] = markdown
                 let previousDigest = importedItems[currentIndex].contentDigest
+                fileMissingSinceByItemID.removeValue(forKey: itemID)
                 if let previousDigest,
                    previousDigest != result.snapshot.sha256 {
                     backUpUnsavedNoteContentBeforeAdopting(itemID: itemID)
