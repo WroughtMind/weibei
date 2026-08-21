@@ -328,8 +328,6 @@ final class WorkspaceStore: ObservableObject {
     var courseLibraryRootBookmarkData: Data?
     var courseLibraryRootURL: URL?
     var courseLibraryUnavailableReason: String?
-    /// 资料库迁移进行中：写回、3 秒对账、课程笔记加载全部挂起（计划 §4.2）。
-    @Published var libraryMigrationInFlight = false
     @Published private(set) var courseItemMemberships: [CourseItemMembership] = [] {
         didSet {
             courseMembershipIndex = CourseItemMemberships(values: courseItemMemberships)
@@ -17215,7 +17213,6 @@ final class WorkspaceStore: ObservableObject {
 
     func reconcileCourseFilesNow(courseID requestedCourseID: UUID? = nil) async {
         guard !courseReconciliationInFlight else { return }
-        guard !libraryMigrationInFlight else { return }
         courseReconciliationInFlight = true
         defer { courseReconciliationInFlight = false }
         if let libraryRoot = courseLibraryRootURL {
@@ -18595,7 +18592,6 @@ final class WorkspaceStore: ObservableObject {
     }
 
     private func scheduleCourseNoteLoad(_ item: StudyItem) {
-        guard !libraryMigrationInFlight else { return }
         guard let access = verifiedCourseOwnedNoteAccess(
             item
         ) else {

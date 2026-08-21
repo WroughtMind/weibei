@@ -639,7 +639,6 @@ extension WorkspaceStore {
     }
 
     func persistCurrentNote() {
-        guard !libraryMigrationInFlight else { return }
         guard let item = activeNoteItem else { return }
         if pendingNotePersistenceByItemID[item.id] != nil {
             flushPendingNotePersistence(for: item.id)
@@ -677,7 +676,6 @@ extension WorkspaceStore {
     }
 
     func flushPendingNotePersistence(for itemID: String) {
-        guard !libraryMigrationInFlight else { return }
         cancelPendingNotePersistence(for: itemID)
         guard let pending = pendingNotePersistenceByItemID.removeValue(forKey: itemID) else { return }
         WeiBeiPerf.measure("note.persist.flush", extra: "item=\(itemID)") {
