@@ -4802,6 +4802,11 @@ private struct AgentMessageMarkdownText: View {
     /// through the completed message instead of handing off to a second view.
     var keepsMarkdownSurfaceMounted = false
     var isStreaming = false
+    @ObservedObject private var bootQueueModel = AgentChatMarkdownBootQueueModel.shared
+    @State private var fallbackBootID = UUID()
+    /// Cold finalized rows wait for a shared boot slot (visible rows first)
+    /// before mounting their WebKit renderer; streamed rows never queue.
+    @State private var rendererSurfaceMounted = false
     @State private var finalizedRendererReady = false
     @State private var finalizedRendererFailed = false
     @State private var awaitsFinalizedRendererReady = false
@@ -4899,6 +4904,14 @@ private struct AgentMessageMarkdownText: View {
             .padding(.vertical, 6)
         }
         .help(sourceHelp)
+        .onAppear(perform: updateColdBootSlotRequest)
+        .onChange(of: isInScrollViewport) { _, _ in
+            updateColdBootSlotRequest()
+        }
+        .onChange(of: bootQueueModel.admittedIDs) { _, admitted in
+            if admitted.contains(bootSlotID) { rendererSurfaceMounted = true }
+        }
+        .onDisappear(perform: releaseBootSlot)
         .onChange(of: finalizedMarkdown) { _, _ in
             // A live answer owns one renderer. Preserve its visible identity
             // while the same WebView accepts the next snapshot or final text.
@@ -4913,6 +4926,8 @@ private struct AgentMessageMarkdownText: View {
         .onChange(of: isStreaming) { wasStreaming, isStreaming in
             guard wasStreaming, !isStreaming,
                   keepsMarkdownSurfaceMounted else { return }
+            // The live surface stays mounted; it never needed a boot slot.
+            rendererSurfaceMounted = true
             // The streaming measurement only proves the previous DOM was ready.
             // Keep this WebView mounted — and visible, since it still shows the
             // streamed answer — but wait for the finalized snapshot's own
@@ -4932,6 +4947,26 @@ private struct AgentMessageMarkdownText: View {
         )
     }
 
+    private var bootSlotID: UUID {
+        messageID ?? fallbackBootID
+    }
+
+    /// Opening a historical Chat eagerly mounts up to a page of finalized rows,
+    /// each cold-booting its own WKWebView. Requesting a shared boot slot
+    /// (visible rows first, bounded concurrency) staggers those cold starts so
+    /// on-screen rows stop waiting behind a whole-conversation boot storm.
+    private func updateColdBootSlotRequest() {
+        guard shouldUseFinalizedMarkdown, !isStreaming, !rendererSurfaceMounted else { return }
+        bootQueueModel.queue.requestBootSlot(id: bootSlotID, visible: isInScrollViewport == true)
+        if bootQueueModel.queue.isAdmitted(bootSlotID) {
+            rendererSurfaceMounted = true
+        }
+    }
+
+    private func releaseBootSlot() {
+        bootQueueModel.queue.release(bootSlotID)
+    }
+
     private var cachedFinalizedHeight: CGFloat? {
         AgentFinalizedMarkdownHeightCache.height(for: cacheKey)
     }
@@ -4946,7 +4981,7 @@ private struct AgentMessageMarkdownText: View {
         // The 24pt-bucket cache supplies a first-frame seed, never readiness.
         // NEVER wire onContentHeightChange to scrollAgentToBottom.
         ZStack(alignment: .topLeading) {
-            if !finalizedRendererFailed {
+            if !finalizedRendererFailed && (isStreaming || rendererSurfaceMounted) {
                 MarkdownPreviewView(
                     markdown: finalizedMarkdown,
                     markdownBaseURL: store.currentMarkdownBaseURL,
@@ -4981,6 +5016,7 @@ private struct AgentMessageMarkdownText: View {
                     },
                     onFinalizedSnapshotReady: { height in
                         guard !isStreaming else { return }
+                        releaseBootSlot()
                         awaitsFinalizedRendererReady = false
                         finalizedRendererFailed = false
                         if !paneStructureTransitionActive {
@@ -5003,6 +5039,7 @@ private struct AgentMessageMarkdownText: View {
                         }
                     },
                     onRenderFailure: {
+                        releaseBootSlot()
                         finalizedHeightSettleGeneration &+= 1
                         finalizedHeightSettling = false
                         awaitsFinalizedRendererReady = false
@@ -5017,6 +5054,7 @@ private struct AgentMessageMarkdownText: View {
                         }
                         if !awaitsFinalizedRendererReady,
                            !finalizedRendererReady {
+                            releaseBootSlot()
                             finalizedRendererReady = true
                         }
                     }
@@ -5038,8 +5076,9 @@ private struct AgentMessageMarkdownText: View {
             }
             // Never flash native/raw Markdown over a live stream or over the
             // streamed→finalized handoff. Cold-mounted rows (history after a
-            // relaunch) still need it until this WebView's first measurement;
-            // otherwise a cold Chat can show an empty answer until scroll.
+            // relaunch or session switch) still need it until this WebView's
+            // first measurement — dimmed while waiting so it reads as a
+            // transitional placeholder, not a broken final render.
             if !finalizedRendererReady
                 && !awaitsFinalizedRendererReady
                 && (!isStreaming
@@ -5048,6 +5087,7 @@ private struct AgentMessageMarkdownText: View {
                 nativeBody
                     .background(WeiBeiTheme.paper)
                     .allowsHitTesting(false)
+                    .opacity(finalizedRendererFailed ? 1 : 0.55)
                     .zIndex(1)
             }
         }
