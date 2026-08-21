@@ -39,7 +39,19 @@ final class LibraryMigrationSafetyTests: XCTestCase {
         return root
     }
 
-    func testMigrateLibraryMovesTreeAndRebinds() async throws {
+    private func migrate(_ store: WorkspaceStore, to destination: URL) throws -> WorkspaceStore.LibraryMigrationResult {
+        try store.waitForCourseFileOperation {
+            try await store.migrateLibrary(to: destination)
+        }
+    }
+
+    private func reconcile(_ store: WorkspaceStore) throws {
+        try store.waitForCourseFileOperation {
+            await store.reconcileCourseFilesNow()
+        }
+    }
+
+    func testMigrateLibraryMovesTreeAndRebinds() throws {
         let base = makeTempRoot("weibei-migration-move")
         defer { try? FileManager.default.removeItem(at: base) }
         let library = base.appendingPathComponent("旧资料库", isDirectory: true)
@@ -49,12 +61,11 @@ final class LibraryMigrationSafetyTests: XCTestCase {
             library: library
         )
         let courseID = try store.createCourseInLibrary(title: "迁移课")
-        let courseRoot = try XCTUnwrap(store.courseRootURL(for: courseID))
         let noteSource = base.appendingPathComponent("第一讲.md")
         try "第一讲正文".write(to: noteSource, atomically: true, encoding: .utf8)
         _ = try store.importFileIntoCourseForSelfCheck(noteSource, courseID: courseID, role: .material)
 
-        let result = try await store.migrateLibrary(to: destination)
+        let result = try migrate(store, to: destination)
 
         XCTAssertEqual(result.destination.standardizedFileURL, destination.standardizedFileURL)
         XCTAssertFalse(FileManager.default.fileExists(atPath: library.path))
@@ -70,11 +81,12 @@ final class LibraryMigrationSafetyTests: XCTestCase {
             return false
         })
         let itemURL = try XCTUnwrap(store.resolvedLibraryURL(for: migratedItem))
+        XCTAssertTrue(itemURL.path.hasPrefix(destination.path))
         XCTAssertTrue(FileManager.default.fileExists(atPath: itemURL.path))
         XCTAssertEqual(try String(contentsOf: itemURL, encoding: .utf8), "第一讲正文")
     }
 
-    func testMigrateLibraryRejectsNestedAndNonEmpty() async throws {
+    func testMigrateLibraryRejectsNestedAndNonEmpty() throws {
         let base = makeTempRoot("weibei-migration-reject")
         defer { try? FileManager.default.removeItem(at: base) }
         let library = base.appendingPathComponent("资料库", isDirectory: true)
@@ -86,17 +98,16 @@ final class LibraryMigrationSafetyTests: XCTestCase {
 
         let nested = library.appendingPathComponent("嵌套目标", isDirectory: true)
         do {
-            _ = try await store.migrateLibrary(to: nested)
+            _ = try migrate(store, to: nested)
             XCTFail("嵌套目标应被拒绝")
         } catch let error as CourseProjectRootError {
             guard case .destinationInsideLibrary = error else {
                 return XCTFail("期望 destinationInsideLibrary，实际 \(error)")
             }
         }
-        let parentTarget = base.appendingPathComponent("资料库", isDirectory: true)
         do {
-            _ = try await store.migrateLibrary(to: parentTarget)
-            XCTFail("上级目录应被拒绝")
+            _ = try migrate(store, to: library)
+            XCTFail("库自身应被拒绝")
         } catch let error as CourseProjectRootError {
             guard case .destinationIsLibrary = error else {
                 return XCTFail("期望 destinationIsLibrary，实际 \(error)")
@@ -107,7 +118,7 @@ final class LibraryMigrationSafetyTests: XCTestCase {
         try FileManager.default.createDirectory(at: nonEmpty, withIntermediateDirectories: true)
         try "占位".write(to: nonEmpty.appendingPathComponent("其他文件.txt"), atomically: true, encoding: .utf8)
         do {
-            _ = try await store.migrateLibrary(to: nonEmpty)
+            _ = try migrate(store, to: nonEmpty)
             XCTFail("非空目标应被拒绝")
         } catch let error as CourseProjectRootError {
             guard case .destinationNotEmpty = error else {
@@ -121,7 +132,7 @@ final class LibraryMigrationSafetyTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: courseRoot.appendingPathComponent(".weibei/course.json").path))
     }
 
-    func testMigrateLibraryAdoptsExistingLibrary() async throws {
+    func testMigrateLibraryAdoptsExistingLibrary() throws {
         let base = makeTempRoot("weibei-migration-adopt")
         defer { try? FileManager.default.removeItem(at: base) }
         let library = base.appendingPathComponent("原资料库", isDirectory: true)
@@ -139,7 +150,7 @@ final class LibraryMigrationSafetyTests: XCTestCase {
         try manifestData.write(to: existingLibrary.appendingPathComponent(".weibei/course.json"))
 
         do {
-            _ = try await store.migrateLibrary(to: existingLibrary)
+            _ = try migrate(store, to: existingLibrary)
             XCTFail("合法库目标应改走认领而非迁移")
         } catch let error as CourseProjectRootError {
             guard case .destinationIsLibrary = error else {
@@ -151,7 +162,7 @@ final class LibraryMigrationSafetyTests: XCTestCase {
         XCTAssertEqual(store.courseLibraryRootURL?.standardizedFileURL, existingLibrary.standardizedFileURL)
     }
 
-    func testMigrateLibraryFailureKeepsOriginal() async throws {
+    func testMigrateLibraryFailureKeepsOriginal() throws {
         let base = makeTempRoot("weibei-migration-failure")
         defer {
             try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: base.path)
@@ -170,7 +181,7 @@ final class LibraryMigrationSafetyTests: XCTestCase {
         try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: lockedParent.path)
 
         do {
-            _ = try await store.migrateLibrary(to: destination)
+            _ = try migrate(store, to: destination)
             XCTFail("只读目标应导致迁移失败")
         } catch let error as CourseProjectRootError {
             guard case .migrationFailed = error else {
@@ -184,7 +195,7 @@ final class LibraryMigrationSafetyTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: courseRoot.appendingPathComponent(".weibei/course.json").path))
     }
 
-    func testMigrateLibrarySuspendsAndResumesServices() async throws {
+    func testMigrateLibrarySuspendsAndResumesServices() throws {
         let base = makeTempRoot("weibei-migration-suspend")
         defer { try? FileManager.default.removeItem(at: base) }
         let library = base.appendingPathComponent("资料库", isDirectory: true)
@@ -207,13 +218,13 @@ final class LibraryMigrationSafetyTests: XCTestCase {
         store.flushPendingNotePersistence(for: item.id)
         XCTAssertEqual(try String(contentsOf: backingURL, encoding: .utf8), "原始内容")
         try? FileManager.default.removeItem(at: commonNotes)
-        await store.reconcileCourseFilesNow()
+        try reconcile(store)
         XCTAssertFalse(FileManager.default.fileExists(atPath: commonNotes.path))
 
         store.libraryMigrationInFlight = false
         store.flushPendingNotePersistence(for: item.id)
         XCTAssertEqual(try String(contentsOf: backingURL, encoding: .utf8), "迁移期间的新内容")
-        await store.reconcileCourseFilesNow()
+        try reconcile(store)
         XCTAssertTrue(FileManager.default.fileExists(atPath: commonNotes.path))
     }
 }
