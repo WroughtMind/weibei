@@ -51,11 +51,7 @@ struct CourseManagementSheet: View {
         VStack(alignment: .leading, spacing: 18) {
             VStack(alignment: .leading, spacing: 5) {
                 Text(store.ui("课程设置", "Course Settings"))
-                    .font(WeiBeiTypography.brandFont(
-                        language: store.interfaceLanguage,
-                        size: 21,
-                        weight: .semibold
-                    ))
+                    .weiBeiBrandFont(language: store.interfaceLanguage, size: 21, weight: .semibold)
                 if let course {
                     Text(course.title)
                         .weiBeiText(12.5, weight: .medium)
@@ -320,11 +316,7 @@ struct CourseProjectEntrySheet: View {
         VStack(alignment: .leading, spacing: 18) {
             VStack(alignment: .leading, spacing: 6) {
                 Text(heading)
-                    .font(WeiBeiTypography.brandFont(
-                        language: store.interfaceLanguage,
-                        size: 21,
-                        weight: .semibold
-                    ))
+                    .weiBeiBrandFont(language: store.interfaceLanguage, size: 21, weight: .semibold)
                 Text(detail)
                     .weiBeiText(12)
                     .foregroundStyle(WeiBeiTheme.secondaryInk)
@@ -833,7 +825,7 @@ struct CourseRelationDetailHeader: View {
                     .tracking(0.8)
                     .foregroundStyle(WeiBeiTheme.cinnabar.opacity(0.76))
                 Text(title)
-                    .font(WeiBeiTypography.brandFont(language: store.interfaceLanguage, size: 20, weight: .semibold))
+                    .weiBeiBrandFont(language: store.interfaceLanguage, size: 20, weight: .semibold)
                     .lineLimit(2)
                 Text(detail)
                     .weiBeiText(11)

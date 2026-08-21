@@ -243,7 +243,7 @@ private struct WeiBeiScaledTextModifier: ViewModifier {
     let design: Font.Design
 
     func body(content: Content) -> some View {
-        content.weiBeiText(size * scale, weight: weight, design: design)
+        content.font(.system(size: size * scale, weight: weight, design: design))
     }
 }
 

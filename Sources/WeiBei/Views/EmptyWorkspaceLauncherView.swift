@@ -160,7 +160,7 @@ struct EmptyWorkspaceLauncherView: View {
 
     private func greeting(at date: Date, compact: Bool) -> some View {
         Text(EmptyWorkspaceDayPeriod.current(at: date).greeting(language: store.interfaceLanguage))
-            .font(WeiBeiTypography.brandFont(language: store.interfaceLanguage, size: compact ? 14.5 : 16, weight: .regular))
+            .weiBeiBrandFont(language: store.interfaceLanguage, size: compact ? 14.5 : 16, weight: .regular)
             .tracking(store.interfaceLanguage == .chinese ? 0.8 : 0.35)
             .foregroundStyle(EmptyWorkspaceResolvedColor.secondaryInk(liveAppearanceMode).opacity(0.92))
             .multilineTextAlignment(.center)

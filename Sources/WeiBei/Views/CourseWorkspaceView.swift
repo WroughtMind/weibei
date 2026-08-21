@@ -341,7 +341,7 @@ private struct CourseNewNoteSheet: View {
         VStack(alignment: .leading, spacing: 18) {
             VStack(alignment: .leading, spacing: 6) {
                 Text(store.ui("新建课程笔记", "New course note"))
-                    .font(WeiBeiTypography.brandFont(language: store.interfaceLanguage, size: 20, weight: .semibold))
+                    .weiBeiBrandFont(language: store.interfaceLanguage, size: 20, weight: .semibold)
                 Text(store.ui("新笔记会写入当前课程文件夹里的“笔记”目录。", "The note will be written to the Notes folder inside this course."))
                     .weiBeiText(12)
                     .foregroundStyle(WeiBeiTheme.secondaryInk)

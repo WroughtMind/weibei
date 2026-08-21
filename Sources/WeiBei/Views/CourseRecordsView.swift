@@ -250,7 +250,7 @@ struct LearningMemoryListSection: View {
                     Image(systemName: "brain.head.profile")
                         .foregroundStyle(WeiBeiTheme.cinnabar)
                     Text(title)
-                        .font(WeiBeiTypography.brandFont(language: store.interfaceLanguage, size: 14, weight: .semibold))
+                        .weiBeiBrandFont(language: store.interfaceLanguage, size: 14, weight: .semibold)
                     Spacer()
                     Text(store.ui("\(memories.count) 条", "\(memories.count)"))
                         .weiBeiText(11, weight: .medium)
@@ -403,7 +403,7 @@ private struct LearningMemoryEditSheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
             Text(store.ui("修改学习记忆", "Edit Learning Memory"))
-                .font(WeiBeiTypography.brandFont(language: store.interfaceLanguage, size: 19, weight: .semibold))
+                .weiBeiBrandFont(language: store.interfaceLanguage, size: 19, weight: .semibold)
 
             Picker(store.ui("类型", "Kind"), selection: $kind) {
                 ForEach(LearningMemoryKind.allCases, id: \.self) { kind in

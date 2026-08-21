@@ -665,7 +665,7 @@ private struct ProcessStateSceneView: View {
                     } label: {
                         VStack(alignment: .leading, spacing: 5) {
                             Text("\(index + 1)")
-                                .weiBeiText(10, weight: .semibold, design: .monospaced)
+                                .font(.system(size: 10, weight: .semibold, design: .monospaced))
                                 .foregroundStyle(index == activeIndex ? WeiBeiTheme.onCinnabar : WeiBeiTheme.secondaryInk)
                                 .frame(width: 22, height: 22)
                                 .background(index == activeIndex ? WeiBeiTheme.cinnabar : WeiBeiTheme.paperInset.opacity(0.34), in: Circle())
@@ -1445,7 +1445,7 @@ private struct CalculationConstraintSceneView: View {
             ForEach(Array(scene.objects.filter { $0.kind == .formula || $0.kind == .constraint || $0.kind == .quantity }.prefix(8)), id: \.id) { object in
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
                     Text(calculationRoleLabel(object.kind))
-                        .weiBeiText(10, weight: .semibold, design: .monospaced)
+                        .font(.system(size: 10, weight: .semibold, design: .monospaced))
                         .foregroundStyle(WeiBeiTheme.cinnabar)
                     Text(object.text ?? objectValueText(object))
                         .weiBeiText(12.5, design: .monospaced)

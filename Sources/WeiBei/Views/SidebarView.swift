@@ -614,7 +614,7 @@ private struct SidebarCourseNameSheet: View {
         VStack(alignment: .leading, spacing: 18) {
             VStack(alignment: .leading, spacing: 5) {
                 Text(heading)
-                    .font(WeiBeiTypography.brandFont(language: store.interfaceLanguage, size: 21, weight: .semibold))
+                    .weiBeiBrandFont(language: store.interfaceLanguage, size: 21, weight: .semibold)
                 Text(detail)
                     .weiBeiText(12)
                     .foregroundStyle(WeiBeiTheme.secondaryInk)

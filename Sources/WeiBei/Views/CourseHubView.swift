@@ -199,11 +199,7 @@ struct CourseHubView: View {
             VStack(alignment: .leading, spacing: 22) {
                 VStack(alignment: .leading, spacing: 6) {
                     Text(store.ui("选择一门课程", "Choose a course"))
-                        .font(WeiBeiTypography.brandFont(
-                            language: store.interfaceLanguage,
-                            size: 22,
-                            weight: .semibold
-                        ))
+                        .weiBeiBrandFont(language: store.interfaceLanguage, size: 22, weight: .semibold)
                     Text(store.ui(
                         "进入课程后，可以继续阅读并打开这门课里的文稿、笔记与对话。",
                         "Open a course to resume reading and browse its materials, notes, and chats."
@@ -336,11 +332,7 @@ struct CourseHubView: View {
     private var continueReadingSection: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text(store.ui("继续上次", "Continue where you left off"))
-                .font(WeiBeiTypography.brandFont(
-                    language: store.interfaceLanguage,
-                    size: 21,
-                    weight: .semibold
-                ))
+                .weiBeiBrandFont(language: store.interfaceLanguage, size: 21, weight: .semibold)
                 .foregroundStyle(WeiBeiTheme.ink)
 
             if let courseID, let reading = continueReading {
@@ -416,11 +408,7 @@ struct CourseHubView: View {
                 Text(cleanedSearch.isEmpty
                      ? store.ui("最近内容", "Recent content")
                      : store.ui("搜索结果", "Search results"))
-                    .font(WeiBeiTypography.brandFont(
-                        language: store.interfaceLanguage,
-                        size: 18,
-                        weight: .semibold
-                    ))
+                    .weiBeiBrandFont(language: store.interfaceLanguage, size: 18, weight: .semibold)
                     .foregroundStyle(WeiBeiTheme.ink)
 
                 if !cleanedSearch.isEmpty, !isSearching {

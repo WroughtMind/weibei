@@ -731,7 +731,7 @@ private struct GeneratedRichAnswerCanvas: View {
         if let xAxis = canvasNode.xAxis {
             context.draw(
                 Text("\(axisValue(xAxis.minimum, unit: xAxis.unit))   \(xAxis.label)   \(axisValue(xAxis.maximum, unit: xAxis.unit))")
-                    .font(.system(size: 8.5))
+                    .font(.system(size: 8.5, design: .monospaced))
                     .foregroundStyle(WeiBeiTheme.tertiaryInk),
                 at: CGPoint(x: rect.midX, y: rect.maxY + 10),
                 anchor: .top
@@ -740,14 +740,14 @@ private struct GeneratedRichAnswerCanvas: View {
         if let yAxis = canvasNode.yAxis {
             context.draw(
                 Text(axisValue(yAxis.maximum, unit: yAxis.unit))
-                    .font(.system(size: 8.5))
+                    .font(.system(size: 8.5, design: .monospaced))
                     .foregroundStyle(WeiBeiTheme.tertiaryInk),
                 at: CGPoint(x: rect.minX - 5, y: rect.minY),
                 anchor: .trailing
             )
             context.draw(
                 Text(axisValue(yAxis.minimum, unit: yAxis.unit))
-                    .font(.system(size: 8.5))
+                    .font(.system(size: 8.5, design: .monospaced))
                     .foregroundStyle(WeiBeiTheme.tertiaryInk),
                 at: CGPoint(x: rect.minX - 5, y: rect.maxY),
                 anchor: .trailing

@@ -148,7 +148,7 @@ struct CommandPaletteView: View {
                         .textFieldStyle(.plain)
                         .foregroundColor(WeiBeiTheme.ink)
                         .focused($searchFocused)
-                        .font(WeiBeiTypography.brandFont(language: store.interfaceLanguage, size: 18, weight: .semibold))
+                        .weiBeiBrandFont(language: store.interfaceLanguage, size: 18, weight: .semibold)
                 }
                 .weibeiInputSurface(active: searchFocused, height: 36)
                 .padding(.horizontal, 12)

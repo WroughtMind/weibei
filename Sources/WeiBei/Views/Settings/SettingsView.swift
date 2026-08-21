@@ -163,7 +163,7 @@ struct SettingsView: View {
     private var settingsSidebar: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text(store.ui("设置", "Settings"))
-                .font(WeiBeiTypography.brandFont(language: store.interfaceLanguage, size: 20, weight: .semibold))
+                .weiBeiBrandFont(language: store.interfaceLanguage, size: 20, weight: .semibold)
                 .foregroundStyle(WeiBeiTheme.ink)
                 .padding(.horizontal, 22)
                 .padding(.top, 22)
@@ -210,7 +210,7 @@ struct SettingsView: View {
     private var settingsHeader: some View {
         HStack(alignment: .center) {
             Text(selectedSection.title(store))
-                .font(WeiBeiTypography.brandFont(language: store.interfaceLanguage, size: 17, weight: .semibold))
+                .weiBeiBrandFont(language: store.interfaceLanguage, size: 17, weight: .semibold)
                 .foregroundStyle(WeiBeiTheme.ink)
             Spacer()
         }

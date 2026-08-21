@@ -32,7 +32,7 @@ struct LinkedSourcesPopover: View {
                 HStack(alignment: .firstTextBaseline) {
                     VStack(alignment: .leading, spacing: 3) {
                         Text(store.ui("这份笔记的资料", "Sources for this note"))
-                            .font(WeiBeiTypography.brandFont(language: store.interfaceLanguage, size: 16, weight: .semibold))
+                            .weiBeiBrandFont(language: store.interfaceLanguage, size: 16, weight: .semibold)
                         Text(store.ui("选中的资料会一直跟随这份笔记", "Selected sources stay with this note"))
                             .font(.caption)
                             .foregroundStyle(WeiBeiTheme.secondaryInk)
