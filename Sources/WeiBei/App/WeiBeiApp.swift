@@ -266,9 +266,9 @@ struct WeiBeiApp: App {
 
         Settings {
             SettingsView()
+                .weiBeiMotionScoped()
                 .environmentObject(store)
                 .environmentObject(updateService)
-                .weiBeiMotionScoped()
         }
     }
 

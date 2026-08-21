@@ -1273,7 +1273,7 @@ private struct ResizableTwoPane<First: View, Second: View>: NSViewRepresentable 
     }
 
     private func nativeHost<V: View>(_ view: V) -> NSHostingView<AnyView> {
-        let host = NSHostingView(rootView: AnyView(view.environmentObject(store).weiBeiMotionScoped()))
+        let host = NSHostingView(rootView: AnyView(view.weiBeiMotionScoped().environmentObject(store)))
         host.translatesAutoresizingMaskIntoConstraints = false
         host.setContentHuggingPriority(.defaultLow, for: .horizontal)
         host.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
@@ -1283,7 +1283,7 @@ private struct ResizableTwoPane<First: View, Second: View>: NSViewRepresentable 
     private func updateHost<V: View>(at index: Int, in splitView: NSSplitView, with view: V) {
         guard splitView.arrangedSubviews.indices.contains(index),
               let host = splitView.arrangedSubviews[index] as? NSHostingView<AnyView> else { return }
-        host.rootView = AnyView(view.environmentObject(store).weiBeiMotionScoped())
+        host.rootView = AnyView(view.weiBeiMotionScoped().environmentObject(store))
     }
 }
 
@@ -1365,7 +1365,7 @@ private struct ResizableThreePane<First: View, Second: View, Third: View>: NSVie
     }
 
     private func nativeHost<V: View>(_ view: V) -> NSHostingView<AnyView> {
-        let host = NSHostingView(rootView: AnyView(view.environmentObject(store).weiBeiMotionScoped()))
+        let host = NSHostingView(rootView: AnyView(view.weiBeiMotionScoped().environmentObject(store)))
         host.translatesAutoresizingMaskIntoConstraints = false
         host.setContentHuggingPriority(.defaultLow, for: .horizontal)
         host.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
@@ -1375,7 +1375,7 @@ private struct ResizableThreePane<First: View, Second: View, Third: View>: NSVie
     private func updateHost<V: View>(at index: Int, in splitView: NSSplitView, with view: V) {
         guard splitView.arrangedSubviews.indices.contains(index),
               let host = splitView.arrangedSubviews[index] as? NSHostingView<AnyView> else { return }
-        host.rootView = AnyView(view.environmentObject(store).weiBeiMotionScoped())
+        host.rootView = AnyView(view.weiBeiMotionScoped().environmentObject(store))
     }
 }
 

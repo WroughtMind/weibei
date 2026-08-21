@@ -957,6 +957,12 @@ let readerViewSource = readSource("Sources/WeiBei/Views/ReaderView.swift")
 let notesAgentViewSource = readSource("Sources/WeiBei/Views/NotesAgentView.swift")
 let weiBeiAppSource = readSource("Sources/WeiBei/App/WeiBeiApp.swift")
 let commandPaletteViewSource = readSource("Sources/WeiBei/Views/CommandPaletteView.swift")
+let contentViewSource = readSource("Sources/WeiBei/Views/ContentView.swift")
+expect(
+    !contentViewSource.contains("environmentObject(store).weiBeiMotionScoped()")
+        && !weiBeiAppSource.contains(".environmentObject(updateService)\n                .weiBeiMotionScoped()"),
+    "motion scope must sit below the store injection: @EnvironmentObject flows down the view tree, never up (opening Settings crashed on the missing object)"
+)
 expect(
     NoteTabDisplayTitle.resolve(customTitle: nil, noteTitle: "旧文件名", body: "# 货币银行学\n\n第二章 利率") == "货币银行学",
     "body heading outranks the file name so editing the heading renames the tab live"
