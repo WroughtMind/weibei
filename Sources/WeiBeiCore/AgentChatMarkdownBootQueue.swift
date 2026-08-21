@@ -24,8 +24,22 @@ public final class AgentChatMarkdownBootQueue {
     /// without WeiBeiCore depending on Combine.
     public private(set) var admittedIDs: Set<UUID> = []
 
+    private enum ViewportRank: Int {
+        case visible = 0
+        case unprobed = 1
+        case offscreen = 2
+
+        init(isInViewport: Bool?) {
+            switch isInViewport {
+            case .some(true): self = .visible
+            case .some(false): self = .offscreen
+            case .none: self = .unprobed
+            }
+        }
+    }
+
     private struct PendingRequest {
-        var visible: Bool
+        var rank: ViewportRank
         var sequence: Int
     }
 
@@ -34,26 +48,35 @@ public final class AgentChatMarkdownBootQueue {
     private var nextSequence = 0
     private var admissionObserver: ((Set<UUID>) -> Void)?
     private var watchdogTimer: Timer?
+    /// Rows appear before their viewport probe has reported. Admitting on the
+    /// request tick handed the first wave to whatever mounted first (the
+    /// topmost, offscreen rows). Non-visible rows therefore wait one
+    /// main-queue hop; by then probes have reported and the wave is chosen
+    /// with real visibility.
+    private var admissionTickPending = false
 
     public init(concurrentBootLimit: Int = 4, slotTimeout: TimeInterval = 12) {
         self.concurrentBootLimit = max(1, concurrentBootLimit)
         self.slotTimeout = max(1, slotTimeout)
     }
 
-    /// Register (or refresh) one row's boot request. Re-requesting is
-    /// idempotent; a visibility change re-prioritizes a still-pending row but
-    /// never demotes a row that already holds a slot.
-    public func requestBootSlot(id: UUID, visible: Bool) {
+    /// Register (or refresh) one row's boot request. `isInViewport` is the
+    /// row's live probe state: true = on screen, false = off screen,
+    /// nil = mounted but not probed yet. Re-requesting is idempotent; a probe
+    /// update re-ranks a still-pending row but never demotes a row that
+    /// already holds a slot.
+    public func requestBootSlot(id: UUID, isInViewport: Bool?) {
+        let rank = ViewportRank(isInViewport: isInViewport)
         if admittedIDs.contains(id) { return }
         if let existing = pending[id] {
-            guard existing.visible != visible else { return }
-            pending[id] = PendingRequest(visible: visible, sequence: existing.sequence)
-            admitNextRows()
+            guard existing.rank != rank else { return }
+            pending[id] = PendingRequest(rank: rank, sequence: existing.sequence)
+            admitNextRows(allowNonVisibleAdmission: false)
             return
         }
-        pending[id] = PendingRequest(visible: visible, sequence: nextSequence)
+        pending[id] = PendingRequest(rank: rank, sequence: nextSequence)
         nextSequence &+= 1
-        admitNextRows()
+        admitNextRows(allowNonVisibleAdmission: false)
     }
 
     public func isAdmitted(_ id: UUID) -> Bool {
@@ -69,7 +92,7 @@ public final class AgentChatMarkdownBootQueue {
         if wasActive, admittedIDs.remove(id) != nil {
             admissionObserver?(admittedIDs)
         }
-        admitNextRows()
+        admitNextRows(allowNonVisibleAdmission: false)
     }
 
     /// Reclaim slots whose renderers never settled. Public so the watchdog and
@@ -88,18 +111,30 @@ public final class AgentChatMarkdownBootQueue {
         admissionObserver = observer
     }
 
-    /// Visible rows outrank offscreen rows; equal priority keeps request order.
-    private func admitNextRows() {
+    /// Test/watchdog hook: run one admission pass synchronously, equivalent to
+    /// the deferred main-queue tick firing.
+    public func admitPendingRowsForTesting() {
+        admissionTickPending = false
+        admitNextRows(allowNonVisibleAdmission: true)
+    }
+
+    /// Visible rows outrank unprobed rows, which outrank offscreen rows; equal
+    /// rank keeps request order. Visible rows boot immediately; every other
+    /// admission waits one main-queue hop so freshly mounted rows can be
+    /// promoted by their viewport probe before the wave is chosen.
+    private func admitNextRows(allowNonVisibleAdmission: Bool) {
         var admitted = false
         while activeSince.count < concurrentBootLimit, !pending.isEmpty {
             guard let best = pending.min(by: { lhs, rhs in
-                let lhsRank = (visible: lhs.value.visible, sequence: lhs.value.sequence)
-                let rhsRank = (visible: rhs.value.visible, sequence: rhs.value.sequence)
-                if lhsRank.visible != rhsRank.visible {
-                    return lhsRank.visible
+                if lhs.value.rank != rhs.value.rank {
+                    return lhs.value.rank.rawValue < rhs.value.rank.rawValue
                 }
-                return lhsRank.sequence < rhsRank.sequence
+                return lhs.value.sequence < rhs.value.sequence
             }) else { break }
+            if best.value.rank != .visible, !allowNonVisibleAdmission {
+                scheduleAdmissionTick()
+                break
+            }
             pending.removeValue(forKey: best.key)
             activeSince[best.key] = Date()
             admittedIDs.insert(best.key)
@@ -109,6 +144,16 @@ public final class AgentChatMarkdownBootQueue {
             admissionObserver?(admittedIDs)
         }
         scheduleWatchdogIfNeeded()
+    }
+
+    private func scheduleAdmissionTick() {
+        guard !admissionTickPending else { return }
+        admissionTickPending = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.admissionTickPending = false
+            self.admitNextRows(allowNonVisibleAdmission: true)
+        }
     }
 
     private func scheduleWatchdogIfNeeded() {
