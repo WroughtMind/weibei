@@ -16371,8 +16371,7 @@ final class WorkspaceStore: ObservableObject {
                     chatID: target.sessionID
                 )
             }
-            // Must not call flushPendingWorkspaceSave() here: that spins RunLoop on the
-            // MainActor while waiting for another MainActor Task, which deadlocks UI.
+            // Never flushPendingWorkspaceSave() here: RunLoop-spin on MainActor = deadlock.
             guard await flushPendingWorkspaceSaveAsync() else {
                 throw AgentConversationTargetError(
                     message: ui(
@@ -16560,6 +16559,8 @@ final class WorkspaceStore: ObservableObject {
             let sources = reply.sources
             if let messageID = replyMessageID {
                 let visibleContentBlocks = currentAgentVisualizationBlocks(reply.contentBlocks)
+                // Drain before the .completed flip or the tail visibly snaps.
+                agentStreamingDisplayPump.drainNow()
                 _ = updateAgentMessage(messageID, in: target.sessionID) {
                     $0.text = reply.text
                     $0.contentBlocks = visibleContentBlocks
@@ -16597,8 +16598,7 @@ final class WorkspaceStore: ObservableObject {
                     targetCourseID: target.courseID
                 )
             )
-            // The visible reply is durable before this request is considered finished.
-            // A save error must not replace or hide the answer that already arrived.
+            // Durable reply before request finish; save errors must not hide it.
             _ = await flushPendingWorkspaceSaveAsync()
         } catch PiAgentRuntimeError.cancelled, is CancellationError {
             guard activeAgentRequestID == requestID else { return }
