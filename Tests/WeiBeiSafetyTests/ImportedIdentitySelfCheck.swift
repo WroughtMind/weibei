@@ -133,7 +133,7 @@ enum ImportedIdentitySelfCheck {
                 activeNotebookItemID: note.id,
                 studySessions: [oldChat],
                 activeStudySessionID: oldChat.id,
-                workspaceLayout: .documentAgentNotes,
+                workspaceLayout: WorkspaceLayout.documentAgentNotes.rawValue,
                 showReader: true,
                 showAgent: true,
                 showNotes: true

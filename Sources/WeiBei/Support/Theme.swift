@@ -829,6 +829,73 @@ enum WeiBeiMotion {
     static let appearance = Animation.easeOut(duration: 0.12)
     /// Course drawer: snappy ease-out slide (visual only; never wrap focus changes).
     static let sideDrawer = Animation.easeOut(duration: 0.12)
+    /// Content rail preview cards: one short fade for appear/disappear — content
+    /// swaps between ticks must stay instant.
+    static let railPreview = Animation.easeOut(duration: 0.15)
+    /// Immersive hover title bar: plain fade, no dwell, no panel bounce.
+    static let hoverTitleFade = Animation.easeOut(duration: 0.14)
+    /// Course tab underline slide — the only motion of a page switch.
+    static let tabUnderline = Animation.easeInOut(duration: 0.25)
+}
+
+private struct WeiBeiReduceMotionKey: EnvironmentKey {
+    static let defaultValue = false
+}
+
+extension EnvironmentValues {
+    /// WeiBei's resolved reduce-motion result. Native surfaces read this instead of
+    /// `accessibilityReduceMotion` so the "完整动态效果" preference can override the
+    /// macOS switch and "减少动态效果" can force it off app-wide.
+    var weibeiReduceMotion: Bool {
+        get { self[WeiBeiReduceMotionKey.self] }
+        set { self[WeiBeiReduceMotionKey.self] = newValue }
+    }
+}
+
+/// Single motion scope for the whole app: resolves the three-way preference against
+/// the macOS switch, publishes the boolean into WeiBei's own environment, and — when
+/// motion is reduced — strips animation from every transaction inside. Individual
+/// `withAnimation` call sites stay untouched.
+private struct WeiBeiParameterizedMotionScope: ViewModifier {
+    let preference: WeiBeiMotionPreference
+    @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
+
+    func body(content: Content) -> some View {
+        let reduceMotion = preference.resolvesReduceMotion(
+            systemReduceMotion: systemReduceMotion
+        )
+        content
+            .environment(\.weibeiReduceMotion, reduceMotion)
+            .transaction { transaction in
+                guard reduceMotion else { return }
+                transaction.animation = nil
+                transaction.disablesAnimations = true
+            }
+    }
+}
+
+/// Store-backed variant for trees that carry the workspace store in their
+/// environment (window scenes, pane hosts).
+private struct WeiBeiStoreMotionScope: ViewModifier {
+    @EnvironmentObject private var store: WorkspaceStore
+
+    func body(content: Content) -> some View {
+        content.modifier(WeiBeiParameterizedMotionScope(preference: store.motionPreference))
+    }
+}
+
+extension View {
+    /// Applies the app motion scope. Long-lived manually hosted `NSHostingView` roots
+    /// (pane hosts, course drawer, floating previews) must call this — they do not
+    /// inherit the window scene's SwiftUI environment. Use the parameterized variant
+    /// for roots without the store in their environment.
+    func weiBeiMotionScoped() -> some View {
+        modifier(WeiBeiStoreMotionScope())
+    }
+
+    func weiBeiMotionScoped(preference: WeiBeiMotionPreference) -> some View {
+        modifier(WeiBeiParameterizedMotionScope(preference: preference))
+    }
 }
 
 /// Top-bar / settings theme control: compact surface swatches instead of a menu.
@@ -1107,9 +1174,14 @@ enum WeiBeiTransition {
         removal: .move(edge: .leading).combined(with: .opacity)
     )
 
+    /// Command palette: the ONLY animation owner is the conditional insertion in
+    /// ContentView — every toggle site changes the flag plainly. Embedded per-side
+    /// animations run because the state change carries no transaction animation.
     static let commandPalette = AnyTransition.asymmetric(
-        insertion: reveal(x: 0, y: -10, scale: 0.982, blur: 2, anchor: .top),
+        insertion: reveal(x: 0, y: -10, scale: 0.982, blur: 2, anchor: .top)
+            .animation(.easeOut(duration: 0.25)),
         removal: reveal(x: 0, y: -5, scale: 0.992, blur: 1, anchor: .top)
+            .animation(.easeOut(duration: 0.15))
     )
 
     static let floating = AnyTransition.asymmetric(

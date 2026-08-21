@@ -762,12 +762,34 @@
       cursor: pointer;
     }
 
-    body[data-editable="false"] .ProseMirror blockquote.weibei-callout[data-callout-fold="-"] > * {
-      display: none;
+    body[data-editable="false"] .ProseMirror blockquote.weibei-callout[data-callout-fold="-"] .weibei-callout-collapse {
+      display: grid;
+      grid-template-rows: 0fr;
+      opacity: 0;
+      overflow: hidden;
+      transition: grid-template-rows .25s ease-out, opacity .25s ease-out;
     }
 
-    body[data-editable="false"] .ProseMirror blockquote.weibei-callout[data-callout-fold="-"].weibei-callout-open > * {
-      display: revert;
+    body[data-editable="false"] .ProseMirror blockquote.weibei-callout[data-callout-fold="-"].weibei-callout-open .weibei-callout-collapse {
+      grid-template-rows: 1fr;
+      opacity: 1;
+    }
+
+    .weibei-callout-collapse > .weibei-callout-content {
+      min-height: 0;
+    }
+
+    :root[data-weibei-reduce-motion="true"] .weibei-callout-collapse {
+      transition: none;
+    }
+
+    /* Check runs assertions synchronously — visual transitions must not delay
+       computed state. !important beats the fold rule's higher specificity. */
+    :root[data-weibei-check-mode] .weibei-slash-menu,
+    :root[data-weibei-check-mode] .weibei-table-toolbar,
+    :root[data-weibei-check-mode] .weibei-image-controls,
+    :root[data-weibei-check-mode] .weibei-callout-collapse {
+      transition: none !important;
     }
 
     body[data-editable="true"] .ProseMirror blockquote.weibei-callout.weibei-callout-has-heading::before {
@@ -783,10 +805,6 @@
     }
 
     body[data-editable="false"] .ProseMirror blockquote.weibei-callout .weibei-callout-heading {
-      display: none;
-    }
-
-    body[data-editable="false"] .ProseMirror blockquote.weibei-callout[data-callout-fold="-"].weibei-callout-open > .weibei-callout-heading {
       display: none;
     }
 
@@ -1164,8 +1182,9 @@
 
     .weibei-image-node { position: relative; display: inline-block; max-width: 100%; vertical-align: bottom; }
     .weibei-image-node.ProseMirror-selectednode { outline: 1px solid color-mix(in srgb, var(--moss) 55%, transparent); outline-offset: 3px; }
-    .weibei-image-controls { position: absolute; left: 6px; bottom: 8px; z-index: 2; display: flex; gap: 3px; padding: 3px; background: color-mix(in srgb, var(--paper-raised) 96%, transparent); border: 1px solid var(--line); border-radius: 6px; box-shadow: 0 4px 14px rgba(35, 26, 19, .14); }
-    .weibei-image-controls[hidden] { display: none; }
+    .weibei-image-controls { position: absolute; left: 6px; bottom: 8px; z-index: 2; display: flex; gap: 3px; padding: 3px; background: color-mix(in srgb, var(--paper-raised) 96%, transparent); border: 1px solid var(--line); border-radius: 6px; box-shadow: 0 4px 14px rgba(35, 26, 19, .14); opacity: 0; pointer-events: none; transition: opacity .15s ease-out; }
+    .weibei-image-controls[data-state="open"] { opacity: 1; pointer-events: auto; }
+    :root[data-weibei-reduce-motion="true"] .weibei-image-controls { transition: none; }
     .weibei-image-controls button, .weibei-image-controls select { height: 24px; color: var(--ink); background: transparent; border: 0; border-radius: 4px; font: 11px/24px -apple-system, BlinkMacSystemFont, sans-serif; }
     .weibei-image-controls button { padding: 0 7px; }
     .weibei-image-controls select { padding: 0 4px; }
@@ -1190,13 +1209,18 @@
       background: rgba(255, 255, 255, .035);
     }
 
-    .weibei-slash-menu { position: absolute; z-index: 120; width: 204px; max-height: min(420px, calc(100vh - 16px)); overflow: auto; box-sizing: border-box; padding: 5px; color: var(--floating-ink); background: var(--floating-surface); border: 1px solid var(--floating-line); border-radius: 9px; box-shadow: var(--floating-menu-shadow); backdrop-filter: blur(16px); }
+    .weibei-slash-menu { position: absolute; z-index: 120; width: 204px; max-height: min(420px, calc(100vh - 16px)); overflow: auto; box-sizing: border-box; padding: 5px; color: var(--floating-ink); background: var(--floating-surface); border: 1px solid var(--floating-line); border-radius: 9px; box-shadow: var(--floating-menu-shadow); backdrop-filter: blur(16px); transition: opacity .25s ease-out, transform .25s ease-out; }
+    .weibei-slash-menu[data-state="opening"], .weibei-slash-menu[data-state="closing"], .weibei-slash-menu[data-state="closed"] { opacity: 0; transform: scale(.985) translateY(-2px); }
+    .weibei-slash-menu[data-state="closing"] { transition-duration: .15s; pointer-events: none; }
+    .weibei-slash-menu[data-state="closed"] { pointer-events: none; }
+    :root[data-weibei-reduce-motion="true"] .weibei-slash-menu { transition: none; }
     :root[data-weibei-glass] .weibei-slash-menu { -webkit-backdrop-filter: blur(10px) saturate(120%); backdrop-filter: blur(10px) saturate(120%); }
     .weibei-slash-menu[data-show="false"] { display: none; }
     .weibei-line-plus { position: fixed; z-index: 110; width: 24px; height: 24px; padding: 0; color: var(--faint); background: transparent; border: 0; border-radius: 4px; font: 17px/24px -apple-system, BlinkMacSystemFont, sans-serif; cursor: pointer; }
     .weibei-line-plus:hover, .weibei-line-plus:focus-visible { color: var(--ink); background: color-mix(in srgb, var(--paper-raised) 72%, transparent); outline: none; }
-    .weibei-table-toolbar { position: fixed; z-index: 115; display: flex; gap: 2px; padding: 3px; color: var(--floating-ink); background: var(--floating-surface); border: 1px solid var(--floating-line); border-radius: 7px; box-shadow: var(--floating-toolbar-shadow); }
-    .weibei-table-toolbar[hidden] { display: none; }
+    .weibei-table-toolbar { position: fixed; z-index: 115; display: flex; gap: 2px; padding: 3px; color: var(--floating-ink); background: var(--floating-surface); border: 1px solid var(--floating-line); border-radius: 7px; box-shadow: var(--floating-toolbar-shadow); opacity: 0; pointer-events: none; transition: opacity .15s ease-out; }
+    .weibei-table-toolbar[data-state="open"] { opacity: 1; pointer-events: auto; }
+    :root[data-weibei-reduce-motion="true"] .weibei-table-toolbar { transition: none; }
     .weibei-table-toolbar button { min-width: 34px; height: 22px; padding: 0 6px; color: var(--floating-muted); background: transparent; border: 0; border-radius: 4px; font: 11px/22px -apple-system, BlinkMacSystemFont, sans-serif; }
     .weibei-table-toolbar button:hover, .weibei-table-toolbar button:focus-visible { color: var(--floating-ink); background: color-mix(in srgb, var(--floating-line) 25%, transparent); outline: none; }
     .weibei-slash-section + .weibei-slash-section { margin-top: 3px; padding-top: 3px; border-top: 1px solid var(--floating-line); }

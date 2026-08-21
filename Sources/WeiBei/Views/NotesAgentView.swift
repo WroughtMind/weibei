@@ -467,17 +467,6 @@ struct NotePaneView: View {
                         noteHeader
                     }
 
-                    // S5：仅 transient 提示（自动过期），无常驻 noteFileError 横幅。
-                    if let transientNoteStatus = store.transientNoteStatus {
-                        Text(transientNoteStatus)
-                            .font(.caption)
-                            .foregroundStyle(WeiBeiTheme.secondaryInk)
-                            .lineLimit(1)
-                            .padding(.horizontal, 14)
-                            .padding(.bottom, 8)
-                            .transition(.opacity)
-                    }
-
                     if store.noteEditorRecoveryConflict != nil {
                         HStack(spacing: 12) {
                             Text(store.ui(
@@ -512,7 +501,8 @@ struct NotePaneView: View {
                         isRailOnly: railOnly,
                         availableWidth: geometry.size.width,
                         topInset: railOnly ? 0 : (showsPaneHeader ? 44 : 34),
-                        onActivate: { activateNoteRailItem($0, railOnly: railOnly) }
+                        onActivate: { activateNoteRailItem($0, railOnly: railOnly) },
+                        motionPreference: store.motionPreference
                     )
                     .zIndex(4)
                 }
@@ -727,8 +717,7 @@ struct NotePaneView: View {
             store.noteEditorCommand = NoteEditorCommand(kind: .scrollToHeading, markdown: String(index))
         }
         if railOnly {
-            store.requestPaneExpansion(.notes)
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.24, execute: navigate)
+            store.requestPaneExpansion(.notes, onCompleted: navigate)
         } else {
             navigate()
         }
@@ -1217,7 +1206,7 @@ struct AgentPaneView: View {
     @EnvironmentObject private var store: WorkspaceStore
     @EnvironmentObject private var paneState: WorkspacePaneState
     @EnvironmentObject private var interaction: WorkspaceInteractionState
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.weibeiReduceMotion) private var reduceMotion
     var showsPaneHeader = true
     var reorderRole: WorkspacePaneRole? = nil
     @FocusState private var draftFocused: Bool
@@ -1412,7 +1401,8 @@ struct AgentPaneView: View {
                             availableWidth: liveAvailableWidth,
                             topInset: railOnly ? 0 : headerHeight,
                             bottomInset: railOnly ? 0 : agentRailBottomInset,
-                            onActivate: { activateAgentRailItem($0, railOnly: railOnly, proxy: proxy) }
+                            onActivate: { activateAgentRailItem($0, railOnly: railOnly, proxy: proxy) },
+                            motionPreference: store.motionPreference
                         )
                         .zIndex(4)
                     }
@@ -1738,8 +1728,7 @@ struct AgentPaneView: View {
             }
         }
         if railOnly {
-            store.requestPaneExpansion(.agent)
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.24, execute: navigate)
+            store.requestPaneExpansion(.agent, onCompleted: navigate)
         } else {
             navigate()
         }
@@ -1912,7 +1901,6 @@ struct AgentPaneView: View {
             .padding(.top, wide ? 6 : 4)
             .padding(.bottom, wide ? 16 : 12)
             .frame(maxWidth: .infinity)
-            .animation(WeiBeiMotion.reveal, value: store.agentDraft)
             .accessibilityIdentifier(wide ? "agent-input-tray-wide" : "agent-input-tray-compact")
         }
         .background(WeiBeiTheme.paper)
@@ -3041,13 +3029,16 @@ private struct AgentMessageBubble: View {
 
 private struct AgentBubble: View {
     @EnvironmentObject private var store: WorkspaceStore
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.weibeiReduceMotion) private var reduceMotion
     var message: AgentMessage
     var liveStreamingText: String? = nil
     var liveActivityText: String? = nil
     var isChatWideTypography = false
     @State private var hovering = false
     @State private var copiedMessage = false
+    /// Copy feedback identity: a second copy within the 1.2s window re-arms the
+    /// full display instead of being swallowed by the still-running first task.
+    @State private var copyFeedbackGeneration = 0
 
     var body: some View {
         Group {
@@ -3069,9 +3060,10 @@ private struct AgentBubble: View {
                 self.hovering = hovering
             }
         }
-        .task(id: copiedMessage) {
+        .task(id: copyFeedbackGeneration) {
             guard copiedMessage else { return }
             try? await Task.sleep(nanoseconds: 1_200_000_000)
+            guard !Task.isCancelled else { return }
             copiedMessage = false
         }
     }
@@ -3120,6 +3112,7 @@ private struct AgentBubble: View {
         NSPasteboard.general.clearContents()
         if NSPasteboard.general.setString(markdown, forType: .string) {
             copiedMessage = true
+            copyFeedbackGeneration += 1
         }
     }
 
@@ -3647,7 +3640,7 @@ private struct RichAnswerNarrativeText: View {
 
 private struct AgentReplyMemoryUpdateTag: View {
     @EnvironmentObject private var store: WorkspaceStore
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.weibeiReduceMotion) private var reduceMotion
     let message: AgentMessage
     let update: AgentReplyMemoryUpdate
     @State private var expanded = false
@@ -5145,7 +5138,7 @@ private struct AgentLiveResponse: View {
 private struct AgentThinkingIndicator: View {
     @EnvironmentObject private var store: WorkspaceStore
     var activityText: String?
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.weibeiReduceMotion) private var reduceMotion
     @State private var cachedText = ""
     @State private var cachedTextWidth: CGFloat = 1
     @State private var motionEpoch = Date()
@@ -5213,6 +5206,12 @@ private struct AgentThinkingIndicator: View {
         .onAppear {
             refreshCache(for: statusText)
             motionEpoch = Date()
+            // The 600ms hold starts with the first status: without this the second
+            // status (elapsed = ∞ vs distantPast) would immediately stomp the first.
+            lastStatusSwitch = Date()
+        }
+        .onDisappear {
+            statusSwitchTask?.cancel()
         }
         .onChange(of: statusText) { _, newText in
             // Hold each status >=600ms — rapid tool churn restarted the orbit

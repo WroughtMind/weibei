@@ -188,8 +188,6 @@ struct WeiBeiApp: App {
 
                 Button(store.ui("三栏工作台", "Three-Pane Workspace")) { setLayout(.documentAgentNotes) }
                     .keyboardShortcut("1", modifiers: [.command, .option])
-                Button(WorkspaceLayout.documentNotesSplit.label(language: store.interfaceLanguage)) { setLayout(.documentNotesSplit) }
-                    .keyboardShortcut("2", modifiers: [.command, .option])
                 if store.layout.isDocumentThreePane {
                     Button(store.ui("交换笔记与对话", "Swap Notes and Chat")) {
                         animateLayout {
@@ -239,9 +237,7 @@ struct WeiBeiApp: App {
                 Divider()
 
                 Button(store.ui("命令面板", "Command Palette")) {
-                    animatePanel {
-                        store.commandPalettePresented.toggle()
-                    }
+                    store.commandPalettePresented.toggle()
                 }
                     .keyboardShortcut("k")
 
@@ -270,6 +266,7 @@ struct WeiBeiApp: App {
 
         Settings {
             SettingsView()
+                .weiBeiMotionScoped()
                 .environmentObject(store)
                 .environmentObject(updateService)
         }

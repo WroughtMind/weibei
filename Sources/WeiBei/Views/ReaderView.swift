@@ -105,7 +105,7 @@ struct ImmersiveHoverTitleView<Actions: View>: View {
                 .onHover(perform: updateVisibility)
                 // 编辑期间禁用整条拖拽重排，避免高优先级 DragGesture 劫持文本框内的点选。
                 .modifier(PaneHeaderReorderModifier(role: titleRename?.isEditing == true ? nil : reorderRole))
-                .transition(WeiBeiTransition.floating)
+                .transition(.opacity)
             }
         }
         .frame(maxWidth: .infinity, alignment: .top)
@@ -123,19 +123,23 @@ struct ImmersiveHoverTitleView<Actions: View>: View {
     private func updateVisibility(_ hovering: Bool) {
         hideTask?.cancel()
         if hovering {
-            withAnimation(WeiBeiMotion.panel) {
+            withAnimation(WeiBeiMotion.hoverTitleFade) {
                 visible = true
             }
             return
         }
 
         let task = DispatchWorkItem {
-            withAnimation(WeiBeiMotion.panel) {
+            // Editing the title keeps the bar up regardless of pointer state.
+            guard !renameFieldAlive else { return }
+            withAnimation(WeiBeiMotion.hoverTitleFade) {
                 visible = false
             }
         }
         hideTask = task
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8, execute: task)
+        // ~80ms handover grace between the probe region and the real toolbar; with the
+        // 140ms fade the bar is fully gone ~220ms after the pointer leaves.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.08, execute: task)
     }
 
     private var hoverMark: some View {
@@ -224,14 +228,20 @@ struct ReaderView: View {
     @State private var pdfPageCount = 0
     @State private var pdfControlsHovering = false
     @State private var pdfControlsExpanded = false
-    @State private var pdfControlsCollapseToken = UUID()
+    /// Two independent timers, two independent tokens: text auto-collapse and
+    /// mouse-leave collapse. Re-entering cancels only the leave timer, so the
+    /// normal auto-collapse still fires while the pointer stays on the chip.
+    @State private var pdfControlsAutoCollapseToken: UUID?
+    @State private var pdfControlsLeaveCollapseToken: UUID?
     @State private var pendingPDFPageIndex: Int?
     @State private var pendingPDFPageRequestID: UUID?
     @State private var pendingPDFPageRecordsLocation = false
     @State private var pdfHasSelectableText: Bool?
     @State private var pdfContentRailItems: [ContentRailItem] = []
     @State private var pdfRailTargetPageIndex: Int?
-    @State private var pendingPDFRailPreviewPages: Set<Int> = []
+    /// Page currently under the rail pointer — stale render completions (older pages)
+    /// may only fill the loader cache, never replace this page's preview card.
+    @State private var pdfRailHoveredPageIndex: Int?
     @State private var htmlContentRailItems: [ContentRailItem] = []
     @State private var htmlContentRailActiveID: String?
     @State private var htmlContentRailTarget: WebReaderContentRailTarget?
@@ -354,7 +364,7 @@ struct ReaderView: View {
             pdfHasSelectableText = store.selectedMaterialItem?.kind == .pdf && store.selectedMaterialItem?.url == nil ? true : nil
             pdfContentRailItems = []
             pdfRailTargetPageIndex = nil
-            pendingPDFRailPreviewPages = []
+            pdfRailHoveredPageIndex = nil
             htmlContentRailItems = []
             htmlContentRailActiveID = store.readerLocationID
             htmlContentRailTarget = nil
@@ -473,7 +483,8 @@ struct ReaderView: View {
             topInset: showsFloatingTitle && !isRailOnly ? 46 : 14,
             bottomInset: store.selectedMaterialItem?.kind == .pdf ? 52 : 18,
             onActivate: { activateContentRailItem($0, railOnly: isRailOnly) },
-            onHover: hoverContentRailItem
+            onHover: hoverContentRailItem,
+            motionPreference: store.motionPreference
         )
     }
 
@@ -499,14 +510,16 @@ struct ReaderView: View {
               let item,
               let pageIndex = Self.pdfPageIndex(fromContentRailID: item.id),
               let url = store.selectedMaterialItem?.url,
-              item.previewImage == nil,
-              !pendingPDFRailPreviewPages.contains(pageIndex) else { return }
-        pendingPDFRailPreviewPages.insert(pageIndex)
+              item.previewImage == nil else {
+            pdfRailHoveredPageIndex = nil
+            return
+        }
+        pdfRailHoveredPageIndex = pageIndex
         let selectedPath = url.standardizedFileURL.path
         PDFContentRailPreviewLoader.shared.load(url: url, pageIndex: pageIndex) { preview in
-            guard store.selectedMaterialItem?.url?.standardizedFileURL.path == selectedPath else { return }
-            pendingPDFRailPreviewPages.remove(pageIndex)
-            guard let preview,
+            guard store.selectedMaterialItem?.url?.standardizedFileURL.path == selectedPath,
+                  pdfRailHoveredPageIndex == pageIndex,
+                  let preview,
                   let itemIndex = pdfContentRailItems.firstIndex(where: { $0.id == item.id }) else { return }
             let fallbackTitle = store.ui("第 \(pageIndex + 1) 页", "Page \(pageIndex + 1)")
             let excerpt = preview.excerpt.isEmpty
@@ -793,15 +806,21 @@ struct ReaderView: View {
         .scaleEffect(pdfControlsExpanded ? 1 : 0.985, anchor: .trailing)
         .contentShape(RoundedRectangle(cornerRadius: 8))
         .onAppear {
-            schedulePDFControlsCollapse(after: 0.9)
+            schedulePDFControlsAutoCollapse(after: 0.9)
         }
         .onHover { hovering in
             withAnimation(WeiBeiMotion.hover) {
                 pdfControlsHovering = hovering
             }
-            if !hovering {
-                schedulePDFControlsCollapse(after: 0.28)
+            if hovering {
+                cancelPDFControlsLeaveCollapse()
+            } else {
+                schedulePDFControlsLeaveCollapse(after: 0.28)
             }
+        }
+        .onDisappear {
+            pdfControlsAutoCollapseToken = nil
+            pdfControlsLeaveCollapseToken = nil
         }
     }
 
@@ -924,22 +943,36 @@ struct ReaderView: View {
         withAnimation(WeiBeiMotion.hover) {
             pdfControlsExpanded = true
         }
-        schedulePDFControlsCollapse(after: delay)
+        schedulePDFControlsAutoCollapse(after: delay)
     }
 
-    private func schedulePDFControlsCollapse(after delay: TimeInterval) {
+    private func schedulePDFControlsAutoCollapse(after delay: TimeInterval) {
         let token = UUID()
-        pdfControlsCollapseToken = token
+        pdfControlsAutoCollapseToken = token
         DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
-            guard pdfControlsCollapseToken == token else { return }
-            collapsePDFControls()
+            guard pdfControlsAutoCollapseToken == token else { return }
+            collapsePDFControlsExpandedText()
         }
     }
 
-    private func collapsePDFControls() {
+    private func schedulePDFControlsLeaveCollapse(after delay: TimeInterval) {
+        let token = UUID()
+        pdfControlsLeaveCollapseToken = token
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+            guard pdfControlsLeaveCollapseToken == token else { return }
+            collapsePDFControlsExpandedText()
+        }
+    }
+
+    private func cancelPDFControlsLeaveCollapse() {
+        pdfControlsLeaveCollapseToken = nil
+    }
+
+    /// Collapse only folds the expanded text back — `hovering` belongs to real
+    /// onHover events exclusively and must survive any timer.
+    private func collapsePDFControlsExpandedText() {
         withAnimation(WeiBeiMotion.hover) {
             pdfControlsExpanded = false
-            pdfControlsHovering = false
         }
     }
 
@@ -1113,86 +1146,6 @@ enum WebReaderContentRailEventReason: String {
 struct WebReaderContentRailActiveChange {
     var id: String?
     var reason: WebReaderContentRailEventReason
-}
-
-private struct PDFContentRailPreview {
-    var image: NSImage
-    var title: String
-    var excerpt: String
-}
-
-private final class PDFContentRailPreviewBox: NSObject {
-    let preview: PDFContentRailPreview
-
-    init(_ preview: PDFContentRailPreview) {
-        self.preview = preview
-    }
-}
-
-private final class PDFContentRailPreviewLoader {
-    static let shared = PDFContentRailPreviewLoader()
-
-    private let queue = DispatchQueue(label: "WeiBei.PDFContentRailPreview", qos: .userInitiated)
-    private let documentCache = NSCache<NSString, PDFDocument>()
-    private let previewCache = NSCache<NSString, PDFContentRailPreviewBox>()
-
-    private init() {
-        documentCache.countLimit = 3
-        previewCache.countLimit = 80
-    }
-
-    func load(url: URL, pageIndex: Int, completion: @escaping (PDFContentRailPreview?) -> Void) {
-        let documentKey = cacheKey(for: url)
-        let previewKey = "\(documentKey)#page=\(pageIndex)" as NSString
-        if let cached = previewCache.object(forKey: previewKey) {
-            DispatchQueue.main.async {
-                completion(cached.preview)
-            }
-            return
-        }
-
-        queue.async { [documentCache, previewCache] in
-            let key = documentKey as NSString
-            let document: PDFDocument
-            if let cached = documentCache.object(forKey: key) {
-                document = cached
-            } else if let loaded = PDFDocument(url: url) {
-                document = loaded
-                documentCache.setObject(loaded, forKey: key)
-            } else {
-                DispatchQueue.main.async {
-                    completion(nil)
-                }
-                return
-            }
-            guard let page = document.page(at: pageIndex) else {
-                DispatchQueue.main.async {
-                    completion(nil)
-                }
-                return
-            }
-
-            let image = page.thumbnail(of: NSSize(width: 180, height: 240), for: .mediaBox)
-            let lines = (page.string ?? "")
-                .split(whereSeparator: { $0.isNewline })
-                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-                .filter { !$0.isEmpty }
-            let title = lines.first.map { String($0.prefix(52)) } ?? ""
-            let bodyLines = lines.count > 1 ? lines.dropFirst() : lines[...]
-            let excerpt = String(bodyLines.joined(separator: " ").prefix(180))
-            let preview = PDFContentRailPreview(image: image, title: title, excerpt: excerpt)
-            previewCache.setObject(PDFContentRailPreviewBox(preview), forKey: previewKey)
-            DispatchQueue.main.async {
-                completion(preview)
-            }
-        }
-    }
-
-    private func cacheKey(for url: URL) -> String {
-        let modificationDate = (try? FileManager.default.attributesOfItem(atPath: url.path)[.modificationDate] as? Date)?
-            .timeIntervalSince1970 ?? 0
-        return "\(url.standardizedFileURL.path)#\(modificationDate)"
-    }
 }
 
 private enum PDFBrowseMode: String, CaseIterable, Identifiable {

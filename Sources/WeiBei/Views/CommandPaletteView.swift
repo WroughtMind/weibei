@@ -21,7 +21,6 @@ struct CommandPaletteView: View {
             PaletteCommand(title: store.ui("下一份资料", "Next Material"), shortcut: "⌥⌘↓", animation: WeiBeiMotion.layout) { store.selectAdjacentItem(step: 1) },
             PaletteCommand(title: store.showLibrary ? store.ui("收起课程目录", "Hide Course Index") : store.ui("打开课程目录", "Show Course Index"), shortcut: "⌘B") { store.toggleLibrary() },
             PaletteCommand(title: store.ui("三栏工作台", "Three-Pane Workspace"), shortcut: "⌥⌘1", animation: WeiBeiMotion.layout) { store.setLayout(.documentAgentNotes) },
-            PaletteCommand(title: WorkspaceLayout.documentNotesSplit.label(language: store.interfaceLanguage), shortcut: "⌥⌘2", animation: WeiBeiMotion.layout) { store.setLayout(.documentNotesSplit) },
             PaletteCommand(title: WorkspaceLayout.immersiveReading.label(language: store.interfaceLanguage), shortcut: "⌥⌘R", animation: WeiBeiMotion.layout) { store.setLayout(.immersiveReading) },
             PaletteCommand(title: WorkspaceLayout.immersiveConversation.label(language: store.interfaceLanguage), shortcut: "⌥⌘A", animation: WeiBeiMotion.layout) { store.setLayout(.immersiveConversation) },
             PaletteCommand(title: WorkspaceLayout.immersiveWriting.label(language: store.interfaceLanguage), shortcut: "⌥⌘N", animation: WeiBeiMotion.layout) { store.setLayout(.immersiveWriting) },
@@ -132,9 +131,7 @@ struct CommandPaletteView: View {
             }
             .ignoresSafeArea()
             .onTapGesture {
-                withAnimation(WeiBeiMotion.panel) {
-                    store.commandPalettePresented = false
-                }
+                store.commandPalettePresented = false
             }
 
             VStack(spacing: 0) {
@@ -220,16 +217,13 @@ struct CommandPaletteView: View {
             }
             .frame(width: 500)
             .weibeiFloatingPanel(cornerRadius: 8, shadowOpacity: 0.16)
-            .transition(WeiBeiTransition.commandPalette)
             .background {
                 PaletteKeyboardBridge(
                     onUp: { moveSelection(-1) },
                     onDown: { moveSelection(1) },
                     onReturn: { runSelected() },
                     onEscape: {
-                        withAnimation(WeiBeiMotion.panel) {
-                            store.commandPalettePresented = false
-                        }
+                        store.commandPalettePresented = false
                     }
                 )
             }
@@ -258,9 +252,11 @@ struct CommandPaletteView: View {
     }
 
     private func run(_ command: PaletteCommand) {
+        // Close and command layout must not share one animation: the palette's
+        // removal transition owns the close, the command keeps its own layout motion.
+        store.commandPalettePresented = false
         withAnimation(command.animation) {
             command.action()
-            store.commandPalettePresented = false
         }
     }
 }

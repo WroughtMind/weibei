@@ -47,11 +47,6 @@ final class ThreePaneReorderState: ObservableObject {
     @Published var drag: ThreePaneReorderDrag?
 }
 
-struct PaneExpansionRequest: Equatable {
-    let id = UUID()
-    let role: WorkspacePaneRole
-}
-
 enum CourseHomeSearchResultKind: String, Sendable {
     case material
     case note
@@ -585,6 +580,12 @@ final class WorkspaceStore: ObservableObject {
     @Published var noteEditorCommand: NoteEditorCommand?
     /// Success / info banner for note create/switch — separate from errors so it auto-dismisses cleanly.
     @Published var transientNoteStatus: String?
+    /// Serious data-operation failures (note read/write/rename/restore/identity,
+    /// security scope, course file move & rollback). Never auto-dismisses — only a
+    /// user close or a newer important error replaces it.
+    @Published var importantOperationError: String?
+    var transientNoteStatusGeneration = 0
+    var transientNoteStatusTask: Task<Void, Never>?
     @Published private(set) var workspaceSaveError: String?
     /// S5：真磁盘写失败计数；满 3 次才露出可点重试的轻提示。
     private var consecutiveWorkspaceSaveFailures = 0
@@ -602,6 +603,9 @@ final class WorkspaceStore: ObservableObject {
         ?? AgentCredentialProfileStore.loadProfiles().first?.id
         ?? AgentCredentialProfileStore.defaultProfile().id
     @Published var appearanceMode: WeiBeiAppearanceMode = .paper
+    /// App-wide motion preference (system / reduce / full); resolved against the
+    /// macOS switch by `WeiBeiMotionScope`. Persisted in UserDefaults, not workspace.json.
+    @Published var motionPreference: WeiBeiMotionPreference = .system
     @Published var adaptImportedDocumentColors = true
     @Published var interfaceLanguage: WeiBeiInterfaceLanguage = .chinese
     @Published var courseWorkspacePresented = false
@@ -661,7 +665,7 @@ final class WorkspaceStore: ObservableObject {
             Data?,
             () throws -> Void
         ) throws -> Void
-    private let selectionAskThreadDefaults: UserDefaults
+    let selectionAskThreadDefaults: UserDefaults
     private let piRuntime: PiAgentRuntime
     let courseDocumentSearchIndex: CourseDocumentSearchIndex
     private var activeAgentRequestID: UUID?
@@ -959,6 +963,11 @@ final class WorkspaceStore: ObservableObject {
             agentInteractiveVisualizationsEnabled = selectionAskThreadDefaults.bool(
                 forKey: Self.interactiveVisualizationsDefaultsKey
             )
+        }
+        if let motionPreferenceRaw = selectionAskThreadDefaults.string(
+            forKey: WeiBeiMotionPreference.persistedDefaultsKey
+        ), let persistedMotionPreference = WeiBeiMotionPreference(rawValue: motionPreferenceRaw) {
+            motionPreference = persistedMotionPreference
         }
         piRuntime = PiAgentRuntime(runtimeDirectory: folder.appendingPathComponent("AgentRuntime", isDirectory: true))
         let courseIndexDirectory = folder.appendingPathComponent("CourseIndex", isDirectory: true)
@@ -1578,7 +1587,7 @@ final class WorkspaceStore: ObservableObject {
             in: resolvedRoot
         )
         if !legacyOrganization.errors.isEmpty {
-            showTransientNoteStatus(ui(
+            showImportantOperationError(ui(
                 "已有 \(legacyOrganization.migrated) 份旧资料完成整理；另有 \(legacyOrganization.errors.count) 份未完成：\(legacyOrganization.errors.first ?? "")",
                 "Organized \(legacyOrganization.migrated) legacy item(s); \(legacyOrganization.errors.count) remain: \(legacyOrganization.errors.first ?? "")"
             ))
@@ -7308,7 +7317,7 @@ final class WorkspaceStore: ObservableObject {
             } else {
                 // ponytail: a crash here can leave one harmless old duplicate;
                 // add a cleanup journal only if this becomes observable in use.
-                showTransientNoteStatus(ui(
+                showImportantOperationError(ui(
                     "课程关系已移除，但课程文件夹中的旧副本未能清理。",
                     "The course relation was removed, but the old course copy could not be cleaned up."
                 ))
@@ -7388,7 +7397,7 @@ final class WorkspaceStore: ObservableObject {
                         conflictResolution: resolution
                     )
                 } catch {
-                    self?.showTransientNoteStatus(error.localizedDescription)
+                    self?.showImportantOperationError(error.localizedDescription)
                 }
             }
             return
@@ -7445,7 +7454,7 @@ final class WorkspaceStore: ObservableObject {
                         )
                     }
                 } catch {
-                    self?.showTransientNoteStatus(error.localizedDescription)
+                    self?.showImportantOperationError(error.localizedDescription)
                 }
             }
             return
@@ -7479,7 +7488,7 @@ final class WorkspaceStore: ObservableObject {
                         conflictResolution: resolution
                     )
                 } catch {
-                    self?.showTransientNoteStatus(error.localizedDescription)
+                    self?.showImportantOperationError(error.localizedDescription)
                 }
             }
             return
@@ -7508,7 +7517,7 @@ final class WorkspaceStore: ObservableObject {
                             conflictResolution: resolution
                         )
                     } catch {
-                        self?.showTransientNoteStatus(error.localizedDescription)
+                        self?.showImportantOperationError(error.localizedDescription)
                     }
                 }
                 return
@@ -7521,7 +7530,7 @@ final class WorkspaceStore: ObservableObject {
                             fromCourseID: courseID
                         )
                     } catch {
-                        self?.showTransientNoteStatus(error.localizedDescription)
+                        self?.showImportantOperationError(error.localizedDescription)
                     }
                 }
                 return
@@ -7594,7 +7603,7 @@ final class WorkspaceStore: ObservableObject {
         guard let item = importedItems.first(where: { $0.id == itemID }),
               !item.isSample,
               let sourceURL = item.url else {
-            showTransientNoteStatus(
+            showImportantOperationError(
                 ContentSourceRemovalError.itemUnavailable.localizedDescription
             )
             return
@@ -7621,7 +7630,7 @@ final class WorkspaceStore: ObservableObject {
             do {
                 try await self?.moveItemSourceToTrash(itemID)
             } catch {
-                self?.showTransientNoteStatus(error.localizedDescription)
+                self?.showImportantOperationError(error.localizedDescription)
             }
         }
     }
@@ -9724,7 +9733,7 @@ final class WorkspaceStore: ObservableObject {
             return role == .agent
         case .immersiveWriting:
             return role == .notes
-        case .documentAgentNotes, .documentNotesAgent, .documentNotesSplit:
+        case .documentAgentNotes, .documentNotesAgent:
             return isPaneVisible(role)
         }
     }
@@ -10382,7 +10391,7 @@ final class WorkspaceStore: ObservableObject {
                     )
                     imported.append(result.item)
                 } catch {
-                    showTransientNoteStatus(ui(
+                    showImportantOperationError(ui(
                         "“\(sourceURL.lastPathComponent)”未能加入课程：\(error.localizedDescription)",
                         "Could not add “\(sourceURL.lastPathComponent)” to the course: \(error.localizedDescription)"
                     ))
@@ -10967,7 +10976,7 @@ final class WorkspaceStore: ObservableObject {
             )
             return result.item.id
         } catch {
-            showTransientNoteStatus(ui(
+            showImportantOperationError(ui(
                 "无法创建课程笔记：\(error.localizedDescription)",
                 "Could not create the course note: \(error.localizedDescription)"
             ))
@@ -11097,9 +11106,7 @@ final class WorkspaceStore: ObservableObject {
             showLibrary = true
         }
         if pane == .agent {
-            if layout == .documentNotesSplit, !showAgent {
-                showAgent = true
-            } else if layout == .immersiveReading || layout == .immersiveWriting {
+            if layout == .immersiveReading || layout == .immersiveWriting {
                 // Primary chat is immersive conversation, not a deleted overlay surface.
                 layout = .immersiveConversation
                 showAgent = true
@@ -11284,7 +11291,7 @@ final class WorkspaceStore: ObservableObject {
         switch layout {
         case .immersiveReading, .immersiveConversation, .immersiveWriting:
             return true
-        case .documentAgentNotes, .documentNotesAgent, .documentNotesSplit:
+        case .documentAgentNotes, .documentNotesAgent:
             return false
         }
     }
@@ -11315,7 +11322,7 @@ final class WorkspaceStore: ObservableObject {
             return [.agent]
         case .immersiveWriting:
             return [.notes]
-        case .documentAgentNotes, .documentNotesAgent, .documentNotesSplit:
+        case .documentAgentNotes, .documentNotesAgent:
             return Set(visibleDocumentPaneOrder)
         }
     }
@@ -11818,13 +11825,14 @@ final class WorkspaceStore: ObservableObject {
         threePaneReorderFrames = nextFrames
     }
 
-    func requestPaneExpansion(_ role: WorkspacePaneRole) {
-        paneExpansionRequest = PaneExpansionRequest(role: role)
+    func requestPaneExpansion(_ role: WorkspacePaneRole, onCompleted: (() -> Void)? = nil) {
+        paneExpansionRequest = PaneExpansionRequest(role: role, onCompleted: onCompleted)
     }
 
     func completePaneExpansionRequest(_ id: UUID) {
-        guard paneExpansionRequest?.id == id else { return }
+        guard let request = paneExpansionRequest, request.id == id else { return }
         paneExpansionRequest = nil
+        request.onCompleted?()
     }
 
     func threePaneReorderFrameList(order: [WorkspacePaneRole], fallback: [CGRect]) -> [CGRect] {
@@ -11892,7 +11900,7 @@ final class WorkspaceStore: ObservableObject {
 
     var hasPrimaryConversationPaneVisible: Bool {
         switch layout {
-        case .documentAgentNotes, .documentNotesAgent, .documentNotesSplit:
+        case .documentAgentNotes, .documentNotesAgent:
             return showAgent
         case .immersiveConversation:
             return true
@@ -11906,7 +11914,7 @@ final class WorkspaceStore: ObservableObject {
             return true
         }
         switch layout {
-        case .documentAgentNotes, .documentNotesAgent, .documentNotesSplit:
+        case .documentAgentNotes, .documentNotesAgent:
             return false
         case .immersiveConversation:
             return true
@@ -12077,8 +12085,6 @@ final class WorkspaceStore: ObservableObject {
             switch key {
             case "1":
                 animateLayoutChange { setLayout(.documentAgentNotes) }
-            case "2":
-                animateLayoutChange { setLayout(.documentNotesSplit) }
             case "s":
                 guard layout.isDocumentThreePane else { return false }
                 animateLayoutChange { swapThreePaneSecondaryPanes() }
@@ -12136,7 +12142,7 @@ final class WorkspaceStore: ObservableObject {
     private func performCustomizableShortcut(_ id: AppShortcutID) -> Bool {
         switch id {
         case .commandPalette:
-            animatePanelChange { commandPalettePresented.toggle() }
+            commandPalettePresented.toggle()
         case .toggleAppearance:
             animatePanelChange { toggleAppearanceMode() }
         case .navigateBack:
@@ -12287,12 +12293,6 @@ final class WorkspaceStore: ObservableObject {
             appearanceMode = mode
         }
         NotificationCenter.default.post(name: WeiBeiThemeRuntime.didChangeNotification, object: mode)
-        save()
-    }
-
-    func setDailyInspirationEnabled(_ enabled: Bool) {
-        guard showDailyInspiration != enabled else { return }
-        showDailyInspiration = enabled
         save()
     }
 
@@ -12540,7 +12540,7 @@ final class WorkspaceStore: ObservableObject {
                         isNote: importsIntoNotes
                     )
                 } catch {
-                    showTransientNoteStatus(error.localizedDescription)
+                    showImportantOperationError(error.localizedDescription)
                     continue
                 }
             } else {
@@ -12762,7 +12762,7 @@ final class WorkspaceStore: ObservableObject {
             select(itemID: item.id)
             showTransientNoteStatus(ui("已创建双链笔记：\(url.lastPathComponent)", "Created wiki note: \(url.lastPathComponent)"))
         } catch {
-            showTransientNoteStatus(ui("无法创建双链笔记：\(error.localizedDescription)", "Could not create wiki note: \(error.localizedDescription)"))
+            showImportantOperationError(ui("无法创建双链笔记：\(error.localizedDescription)", "Could not create wiki note: \(error.localizedDescription)"))
         }
     }
 
@@ -12861,7 +12861,7 @@ final class WorkspaceStore: ObservableObject {
             showTransientNoteStatus(status)
             return item
         } catch {
-            showTransientNoteStatus(ui("无法创建笔记：\(error.localizedDescription)", "Could not create note: \(error.localizedDescription)"))
+            showImportantOperationError(ui("无法创建笔记：\(error.localizedDescription)", "Could not create note: \(error.localizedDescription)"))
             return nil
         }
     }
@@ -15710,8 +15710,6 @@ final class WorkspaceStore: ObservableObject {
                     layout = .immersiveConversation
                     showAgent = true
                     agentSurface = .hidden
-                } else if layout == .documentNotesSplit {
-                    showAgent = true
                 }
                 focus(.agent)
             }
@@ -18512,19 +18510,6 @@ final class WorkspaceStore: ObservableObject {
         }
     }
 
-    func showTransientNoteStatus(_ message: String) {
-        // S5: sole user-visible note feedback channel (auto-expires).
-        transientNoteStatus = message
-        let token = message
-        Task { @MainActor [weak self] in
-            try? await Task.sleep(nanoseconds: 2_400_000_000)
-            guard let self else { return }
-            if self.transientNoteStatus == token {
-                self.transientNoteStatus = nil
-            }
-        }
-    }
-
     private func layoutMatchingThreePaneOrder(_ order: [WorkspacePaneRole]) -> WorkspaceLayout {
         let normalized = WorkspacePaneRole.normalized(order)
         if normalized == [.reader, .notes, .agent] {
@@ -18760,7 +18745,7 @@ final class WorkspaceStore: ObservableObject {
                     for: item.id
                 )
             }
-            showTransientNoteStatus(ui("无法读取原 Markdown：\(url.lastPathComponent)", "Could not read original Markdown: \(url.lastPathComponent)"))
+            showImportantOperationError(ui("无法读取原 Markdown：\(url.lastPathComponent)", "Could not read original Markdown: \(url.lastPathComponent)"))
             return cleanLegacyPlaceholder(notesByItemID[item.id] ?? defaultNote(for: item))
         }
     }
@@ -20332,10 +20317,16 @@ final class WorkspaceStore: ObservableObject {
         }
         // Legacy field: still read so older workspaces restore immersion/multi-pane;
         // free drag order lives in threePaneOrder and is the source of truth for columns.
-        if let workspaceLayout = snapshot.workspaceLayout {
-            layout = workspaceLayout
-            if let order = workspaceLayout.defaultThreePaneOrder {
-                threePaneOrder = order
+        // Unknown / retired strings only drop the layout field, never the workspace.
+        var migratedRetiredSplitLayout = false
+        if let persistedLayoutRaw = snapshot.workspaceLayout {
+            if let workspaceLayout = WorkspaceLayout.resolve(persistedValue: persistedLayoutRaw) {
+                layout = workspaceLayout
+                if let order = workspaceLayout.defaultThreePaneOrder {
+                    threePaneOrder = order
+                }
+            } else if persistedLayoutRaw == WorkspaceLayout.retiredSplitPersistedValue {
+                migratedRetiredSplitLayout = true
             }
         }
         if let threePaneOrder = snapshot.threePaneOrder {
@@ -20349,6 +20340,14 @@ final class WorkspaceStore: ObservableObject {
         showAgent = snapshot.showAgent ?? legacyRightPane ?? true
         showNotes = snapshot.showNotes ?? legacyRightPane ?? true
         showDailyInspiration = snapshot.showDailyInspiration ?? true
+        if migratedRetiredSplitLayout {
+            // Retired 阅读/笔记对半 → current workbench: reader + notes visible, chat hidden.
+            // Keep the persisted free order when present; next save writes the new layout.
+            layout = layoutMatchingThreePaneOrder(self.threePaneOrder)
+            showReader = true
+            showNotes = true
+            showAgent = false
+        }
         if let appearanceModeRaw = snapshot.appearanceModeRaw,
            let appearanceMode = WeiBeiAppearanceMode(rawValue: appearanceModeRaw) {
             self.appearanceMode = appearanceMode
@@ -20457,7 +20456,7 @@ final class WorkspaceStore: ObservableObject {
                 modelName: modelName,
                 agentProviderID: agentProviderID.rawValue,
                 agentBaseURL: agentBaseURL.isEmpty ? nil : agentBaseURL,
-                workspaceLayout: layout,
+                workspaceLayout: layout.rawValue,
                 threePaneOrder: normalizedThreePaneOrder,
                 agentSurface:
                     agentSurface == .selectionFloat ? .hidden : agentSurface,
@@ -21208,7 +21207,7 @@ final class WorkspaceStore: ObservableObject {
                 modelName: modelName,
                 agentProviderID: agentProviderID.rawValue,
                 agentBaseURL: agentBaseURL.isEmpty ? nil : agentBaseURL,
-                workspaceLayout: layout,
+                workspaceLayout: layout.rawValue,
                 threePaneOrder: normalizedThreePaneOrder,
                 agentSurface: agentSurface == .selectionFloat ? .hidden : agentSurface,
                 showLibrary: nil,

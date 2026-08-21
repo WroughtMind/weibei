@@ -378,6 +378,7 @@ const tableToolbarElement = (WEIBEI_EDITOR_RUNTIME ? document.createElement('div
 if (WEIBEI_EDITOR_RUNTIME) {
   slashMenuElement.className = 'weibei-slash-menu';
   slashMenuElement.dataset.show = 'false';
+  slashMenuElement.dataset.state = 'closed';
   slashMenuElement.setAttribute('role', 'listbox');
   slashMenuElement.setAttribute('aria-label', 'Slash commands');
   slashStatusElement.className = 'weibei-visually-hidden';
@@ -389,7 +390,8 @@ if (WEIBEI_EDITOR_RUNTIME) {
   linePlusElement.setAttribute('aria-label', '插入内容');
   linePlusElement.hidden = true;
   tableToolbarElement.className = 'weibei-table-toolbar';
-  tableToolbarElement.hidden = true;
+  tableToolbarElement.dataset.state = 'closed';
+  tableToolbarElement.setAttribute('aria-hidden', 'true');
   tableToolbarElement.setAttribute('role', 'toolbar');
   for (const [action, label] of [['addRow', 'tableAddRow'], ['deleteRow', 'tableDeleteRow'], ['addColumn', 'tableAddColumn'], ['deleteColumn', 'tableDeleteColumn'], ['header', 'tableHeader']]) {
     const button = document.createElement('button');
@@ -449,6 +451,17 @@ const slashRuntime: {
   error: string;
 } = { provider: null, view: null, context: null, commands: [], activeIndex: 0, dismissedContext: '', activationContext: '', tableOpen: false, tableFocus: 'rows', tableRows: 3, tableColumns: 3, tableMenuBaseLeft: '', error: '' };
 const slashExcludedAncestors = new Set(['list_item', 'task_list_item', 'table', 'table_row', 'table_header_row', 'table_cell', 'table_header', 'code_block', 'math_block']);
+
+/** Slash menu visual phase + the generation that guards every deferred cleanup. */
+const slashMenuPhase: { state: 'closed' | 'opening' | 'open' | 'closing'; generation: number; timer: number; frame: number } = { state: 'closed', generation: 0, timer: 0, frame: 0 };
+
+const isEditorReduceMotion = () => document.documentElement.dataset.weibeiReduceMotion === 'true';
+
+/** Native reduce-motion sync: written before the page scripts run and pushed
+ * live on preference changes — never reloads the note. */
+const setReduceMotionInternal = (next: unknown) => {
+  document.documentElement.dataset.weibeiReduceMotion = next === true || next === 'true' ? 'true' : 'false';
+};
 
 /** Returns the `/query` immediately before the caret without consuming surrounding content. */
 const slashContextForView = (view: any) => {
@@ -677,9 +690,232 @@ const syncSlashAccessibility = () => {
   slashStatusElement.textContent = `${editorLabel(active.label)}，${slashRuntime.activeIndex + 1}/${slashRuntime.commands.length}`;
 };
 
-/** Renders the lightweight command list and optional table dimensions panel. */
+/** Structure identity of the command list: only a real change in query results,
+ * language, or error state may rebuild the DOM. Pointer motion and arrow keys
+ * never enter this path, so button identity stays stable across hovers. */
+const slashMenuStructureKey = () => `${currentLanguage}::${slashRuntime.error ? '!' : ''}::${slashRuntime.commands.length}::${slashRuntime.commands.map((command) => command.id).join(',')}`;
+
+let builtSlashMenuStructureKey: string | null = null;
+
+/** Builds the command list DOM. Called only when the structure key changed. */
+const buildSlashMenuList = () => {
+  slashMenuElement.replaceChildren();
+  if (slashRuntime.error) {
+    const error = document.createElement('div');
+    error.className = 'weibei-slash-error';
+    error.textContent = slashRuntime.error;
+    slashMenuElement.appendChild(error);
+  }
+  if (!slashRuntime.commands.length) {
+    const empty = document.createElement('div');
+    empty.className = 'weibei-slash-empty';
+    empty.textContent = editorLabel('slashNoResults');
+    slashMenuElement.appendChild(empty);
+    return;
+  }
+  for (const group of slashGroups) {
+    const commands = slashRuntime.commands.filter((command) => command.group === group.id);
+    if (!commands.length) continue;
+    const section = document.createElement('section');
+    section.className = 'weibei-slash-section';
+    const title = document.createElement('div');
+    title.className = 'weibei-slash-group';
+    title.textContent = editorLabel(group.label);
+    section.appendChild(title);
+    for (const command of commands) {
+      const index = slashRuntime.commands.indexOf(command);
+      const row = document.createElement('div');
+      row.id = `weibei-slash-command-${command.id}`;
+      row.className = `weibei-slash-command${index === slashRuntime.activeIndex ? ' is-active' : ''}`;
+      row.setAttribute('role', 'option');
+      row.setAttribute('aria-selected', String(index === slashRuntime.activeIndex));
+      row.setAttribute('aria-posinset', String(index + 1));
+      row.setAttribute('aria-setsize', String(slashRuntime.commands.length));
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.tabIndex = -1;
+      button.className = 'weibei-slash-command-button';
+      button.textContent = editorLabel(command.label);
+      button.addEventListener('pointerdown', (event) => event.preventDefault());
+      button.addEventListener('pointermove', (event) => {
+        if (!Number(event.movementX) && !Number(event.movementY)) return;
+        slashRuntime.activeIndex = index;
+        slashRuntime.tableOpen = command.id === 'table';
+        updateSlashActiveItem();
+        syncSlashTablePanel();
+      });
+      button.addEventListener('click', () => { if (command.id !== 'table') executeSlashCommand(command.id); });
+      row.appendChild(button);
+      section.appendChild(row);
+    }
+    slashMenuElement.appendChild(section);
+  }
+};
+
+/** In-place active row update: class + ARIA attributes only — never rebuilds rows. */
+const updateSlashActiveItem = () => {
+  slashMenuElement.querySelectorAll('.weibei-slash-command').forEach((row, index) => {
+    row.classList.toggle('is-active', index === slashRuntime.activeIndex);
+    row.setAttribute('aria-selected', String(index === slashRuntime.activeIndex));
+  });
+  slashMenuElement.querySelector('.weibei-slash-command.is-active')?.scrollIntoView({ block: 'nearest' });
+  syncSlashAccessibility();
+};
+
+type SlashTablePanelParts = {
+  panel: HTMLDivElement;
+  rowsInput: HTMLInputElement;
+  columnsInput: HTMLInputElement;
+  rowsDecrement: HTMLButtonElement;
+  rowsIncrement: HTMLButtonElement;
+  columnsDecrement: HTMLButtonElement;
+  columnsIncrement: HTMLButtonElement;
+  rowsStepper: HTMLDivElement;
+  columnsStepper: HTMLDivElement;
+};
+
+let slashTablePanelParts: SlashTablePanelParts | null = null;
+
+const dismissSlashTablePanel = () => {
+  slashTablePanelElement?.remove();
+  slashTablePanelElement = null;
+  slashTablePanelParts = null;
+  if (slashRuntime.tableMenuBaseLeft) {
+    slashMenuElement.style.left = slashRuntime.tableMenuBaseLeft;
+    slashRuntime.tableMenuBaseLeft = '';
+  }
+};
+
+/** Keeps exactly one table submenu instance alive while open; stepper handlers
+ * read live runtime values at event time, so nothing captures stale rows/columns. */
+const syncSlashTablePanel = () => {
+  const tableButton = slashMenuElement.querySelector<HTMLElement>('#weibei-slash-command-table .weibei-slash-command-button');
+  if (!slashRuntime.tableOpen || slashMenuElement.dataset.show !== 'true' || !tableButton) {
+    dismissSlashTablePanel();
+    return;
+  }
+  let parts = slashTablePanelParts;
+  if (!parts) {
+    const panel = document.createElement('div');
+    panel.className = 'weibei-slash-table-panel';
+    panel.setAttribute('role', 'group');
+    const makeStepper = (kind: 'rows' | 'columns') => {
+      const isRows = kind === 'rows';
+      const stepper = document.createElement('div');
+      stepper.className = `weibei-slash-stepper${slashRuntime.tableFocus === kind ? ' is-focused' : ''}`;
+      const label = document.createElement('span');
+      label.className = 'weibei-slash-stepper-label';
+      label.textContent = editorLabel(isRows ? 'slashRows' : 'slashColumns');
+      stepper.appendChild(label);
+      const readValue = () => isRows ? slashRuntime.tableRows : slashRuntime.tableColumns;
+      const writeValue = (next: number) => { if (isRows) slashRuntime.tableRows = next; else slashRuntime.tableColumns = next; };
+      const decrement = document.createElement('button');
+      decrement.type = 'button';
+      decrement.textContent = '\u2212';
+      decrement.setAttribute('aria-label', `${label.textContent} \u2212`);
+      decrement.addEventListener('pointerdown', (event) => event.preventDefault());
+      decrement.addEventListener('click', () => { writeValue(Math.max(1, readValue() - 1)); slashRuntime.tableFocus = kind; syncSlashTablePanel(); });
+      stepper.appendChild(decrement);
+      const input = document.createElement('input');
+      input.className = 'weibei-slash-stepper-input';
+      input.type = 'number';
+      input.inputMode = 'numeric';
+      input.min = '1';
+      input.max = String(isRows ? 20 : 12);
+      input.step = '1';
+      input.setAttribute('aria-label', label.textContent!);
+      input.addEventListener('focus', () => {
+        slashRuntime.tableFocus = kind;
+        panel.querySelectorAll('.weibei-slash-stepper.is-focused').forEach((element) => element.classList.remove('is-focused'));
+        stepper.classList.add('is-focused');
+      });
+      input.addEventListener('input', () => {
+        const next = Number.parseInt(input.value, 10);
+        if (!Number.isFinite(next)) return;
+        writeValue(Math.min(isRows ? 20 : 12, Math.max(1, next)));
+      });
+      input.addEventListener('change', () => {
+        const next = Math.min(isRows ? 20 : 12, Math.max(1, Number.parseInt(input.value, 10) || 1));
+        input.value = String(next);
+        writeValue(next);
+      });
+      input.addEventListener('keydown', (event) => {
+        event.stopPropagation();
+        if (event.key === 'Enter') {
+          const next = Math.min(isRows ? 20 : 12, Math.max(1, Number.parseInt(input.value, 10) || 1));
+          writeValue(next);
+          executeSlashCommand('table');
+          event.preventDefault();
+        }
+      });
+      stepper.appendChild(input);
+      const increment = document.createElement('button');
+      increment.type = 'button';
+      increment.textContent = '+';
+      increment.setAttribute('aria-label', `${label.textContent} +`);
+      increment.addEventListener('pointerdown', (event) => event.preventDefault());
+      increment.addEventListener('click', () => { writeValue(Math.min(isRows ? 20 : 12, readValue() + 1)); slashRuntime.tableFocus = kind; syncSlashTablePanel(); });
+      stepper.appendChild(increment);
+      return { stepper, input, decrement, increment };
+    };
+    const rows = makeStepper('rows');
+    const columns = makeStepper('columns');
+    const insert = document.createElement('button');
+    insert.type = 'button';
+    insert.className = 'weibei-slash-table-insert';
+    insert.textContent = editorLabel('slashInsertTable');
+    insert.addEventListener('pointerdown', (event) => event.preventDefault());
+    insert.addEventListener('click', () => executeSlashCommand('table'));
+    panel.append(rows.stepper, columns.stepper, insert);
+    document.body.appendChild(panel);
+    parts = {
+      panel,
+      rowsInput: rows.input,
+      rowsDecrement: rows.decrement,
+      rowsIncrement: rows.increment,
+      rowsStepper: rows.stepper,
+      columnsInput: columns.input,
+      columnsDecrement: columns.decrement,
+      columnsIncrement: columns.increment,
+      columnsStepper: columns.stepper,
+    };
+    slashTablePanelElement = panel;
+    slashTablePanelParts = parts;
+  }
+
+  // Value/disabled/focus updates only — inputs are never rebuilt while open, and
+  // the focused input keeps whatever the user is typing.
+  if (document.activeElement !== parts.rowsInput) parts.rowsInput.value = String(slashRuntime.tableRows);
+  if (document.activeElement !== parts.columnsInput) parts.columnsInput.value = String(slashRuntime.tableColumns);
+  parts.rowsDecrement.disabled = slashRuntime.tableRows <= 1;
+  parts.rowsIncrement.disabled = slashRuntime.tableRows >= 20;
+  parts.columnsDecrement.disabled = slashRuntime.tableColumns <= 1;
+  parts.columnsIncrement.disabled = slashRuntime.tableColumns >= 12;
+  parts.rowsStepper.classList.toggle('is-focused', slashRuntime.tableFocus === 'rows');
+  parts.columnsStepper.classList.toggle('is-focused', slashRuntime.tableFocus === 'columns');
+
+  const inset = 8;
+  const gap = 6;
+  const panelWidth = parts.panel.offsetWidth;
+  let menuRect = slashMenuElement.getBoundingClientRect();
+  const fitsRight = menuRect.right + gap + panelWidth <= window.innerWidth - inset;
+  const fitsLeft = menuRect.left - gap - panelWidth >= inset;
+  if (!fitsRight && !fitsLeft && menuRect.width + gap + panelWidth <= window.innerWidth - inset * 2) {
+    if (!slashRuntime.tableMenuBaseLeft) slashRuntime.tableMenuBaseLeft = slashMenuElement.style.left;
+    slashMenuElement.style.left = `${inset}px`;
+    menuRect = slashMenuElement.getBoundingClientRect();
+  }
+  const showRight = menuRect.right + gap + panelWidth <= window.innerWidth - inset;
+  parts.panel.dataset.side = showRight ? 'right' : 'left';
+  const preferredLeft = showRight ? menuRect.right + gap : menuRect.left - gap - panelWidth;
+  parts.panel.style.left = `${Math.max(inset, Math.min(window.innerWidth - panelWidth - inset, preferredLeft))}px`;
+  const tableRect = tableButton.getBoundingClientRect();
+  parts.panel.style.top = `${Math.max(inset, Math.min(window.innerHeight - parts.panel.offsetHeight - inset, tableRect.top))}px`;
+};
+
+/** Renders the slash menu: computes commands, rebuilds the list only when the
+ * structure truly changed, then updates selection and the table submenu in place. */
 const renderSlashMenu = () => {
-  slashTablePanelElement?.remove(); slashTablePanelElement = null;
   const view = slashRuntime.view;
   const context = view && slashContextForView(view);
   if (!view || !context || slashRuntime.dismissedContext === context.key) { slashRuntime.provider?.hide(); syncSlashAccessibility(); return; }
@@ -689,56 +925,15 @@ const renderSlashMenu = () => {
   slashRuntime.context = context;
   slashRuntime.commands = filteredSlashCommands(context.query, context, view.state.schema);
   slashRuntime.activeIndex = Math.min(slashRuntime.activeIndex, Math.max(0, slashRuntime.commands.length - 1));
-  slashMenuElement.replaceChildren();
-  if (slashRuntime.error) { const error = document.createElement('div'); error.className = 'weibei-slash-error'; error.textContent = slashRuntime.error; slashMenuElement.appendChild(error); }
-  if (!slashRuntime.commands.length) { const empty = document.createElement('div'); empty.className = 'weibei-slash-empty'; empty.textContent = editorLabel('slashNoResults'); slashMenuElement.appendChild(empty); syncSlashAccessibility(); return; }
-  let tableButton = null;
-  for (const group of slashGroups) {
-    const commands = slashRuntime.commands.filter((command) => command.group === group.id); if (!commands.length) continue;
-    const section = document.createElement('section'); section.className = 'weibei-slash-section';
-    const title = document.createElement('div'); title.className = 'weibei-slash-group'; title.textContent = editorLabel(group.label); section.appendChild(title);
-    for (const command of commands) {
-      const index = slashRuntime.commands.indexOf(command); const row = document.createElement('div'); row.id = `weibei-slash-command-${command.id}`; row.className = `weibei-slash-command${index === slashRuntime.activeIndex ? ' is-active' : ''}`; row.setAttribute('role', 'option'); row.setAttribute('aria-selected', String(index === slashRuntime.activeIndex)); row.setAttribute('aria-posinset', String(index + 1)); row.setAttribute('aria-setsize', String(slashRuntime.commands.length));
-      const button = document.createElement('button'); button.type = 'button'; button.tabIndex = -1; button.className = 'weibei-slash-command-button'; button.textContent = editorLabel(command.label);
-      button.addEventListener('pointerdown', (event) => event.preventDefault());
-      button.addEventListener('pointermove', (event) => { if (!Number(event.movementX) && !Number(event.movementY)) return; slashRuntime.activeIndex = index; slashRuntime.tableOpen = command.id === 'table'; renderSlashMenu(); });
-      button.addEventListener('click', () => { if (command.id !== 'table') executeSlashCommand(command.id); });
-      row.appendChild(button); section.appendChild(row);
-      if (command.id === 'table') tableButton = button;
-    }
-    slashMenuElement.appendChild(section);
+  const structureKey = slashMenuStructureKey();
+  if (structureKey !== builtSlashMenuStructureKey) {
+    builtSlashMenuStructureKey = structureKey;
+    buildSlashMenuList();
   }
-  slashMenuElement.querySelector('.weibei-slash-command.is-active')?.scrollIntoView({ block: 'nearest' });
-  if (slashRuntime.tableOpen && tableButton) {
-    const panel = document.createElement('div'); panel.className = 'weibei-slash-table-panel'; panel.setAttribute('role', 'group');
-    for (const kind of ['rows', 'columns']) {
-      const isRows = kind === 'rows'; const value = isRows ? slashRuntime.tableRows : slashRuntime.tableColumns; const max = isRows ? 20 : 12;
-      const stepper = document.createElement('div'); stepper.className = `weibei-slash-stepper${slashRuntime.tableFocus === kind ? ' is-focused' : ''}`;
-      const label = document.createElement('span'); label.className = 'weibei-slash-stepper-label'; label.textContent = editorLabel(isRows ? 'slashRows' : 'slashColumns'); stepper.appendChild(label);
-      const decrement = document.createElement('button'); decrement.type = 'button'; decrement.textContent = '−'; decrement.disabled = value <= 1; decrement.setAttribute('aria-label', `${label.textContent} −`); decrement.addEventListener('pointerdown', (event) => event.preventDefault()); decrement.addEventListener('click', () => { if (isRows) slashRuntime.tableRows = Math.max(1, value - 1); else slashRuntime.tableColumns = Math.max(1, value - 1); slashRuntime.tableFocus = kind; renderSlashMenu(); }); stepper.appendChild(decrement);
-      const input = document.createElement('input'); input.className = 'weibei-slash-stepper-input'; input.type = 'number'; input.inputMode = 'numeric'; input.min = '1'; input.max = String(max); input.step = '1'; input.value = String(value); input.setAttribute('aria-label', label.textContent!); input.addEventListener('focus', () => { slashRuntime.tableFocus = kind; panel.querySelectorAll('.weibei-slash-stepper.is-focused').forEach((element) => element.classList.remove('is-focused')); stepper.classList.add('is-focused'); }); input.addEventListener('input', () => { const next = Number.parseInt(input.value, 10); if (!Number.isFinite(next)) return; if (isRows) slashRuntime.tableRows = Math.min(max, Math.max(1, next)); else slashRuntime.tableColumns = Math.min(max, Math.max(1, next)); }); input.addEventListener('change', () => { const next = Math.min(max, Math.max(1, Number.parseInt(input.value, 10) || 1)); input.value = String(next); if (isRows) slashRuntime.tableRows = next; else slashRuntime.tableColumns = next; }); input.addEventListener('keydown', (event) => { event.stopPropagation(); if (event.key === 'Enter') { const next = Math.min(max, Math.max(1, Number.parseInt(input.value, 10) || 1)); if (isRows) slashRuntime.tableRows = next; else slashRuntime.tableColumns = next; executeSlashCommand('table'); event.preventDefault(); } }); stepper.appendChild(input);
-      const increment = document.createElement('button'); increment.type = 'button'; increment.textContent = '+'; increment.disabled = value >= max; increment.setAttribute('aria-label', `${label.textContent} +`); increment.addEventListener('pointerdown', (event) => event.preventDefault()); increment.addEventListener('click', () => { if (isRows) slashRuntime.tableRows = Math.min(max, value + 1); else slashRuntime.tableColumns = Math.min(max, value + 1); slashRuntime.tableFocus = kind; renderSlashMenu(); }); stepper.appendChild(increment);
-      panel.appendChild(stepper);
-    }
-    const insert = document.createElement('button'); insert.type = 'button'; insert.className = 'weibei-slash-table-insert'; insert.textContent = editorLabel('slashInsertTable'); insert.addEventListener('pointerdown', (event) => event.preventDefault()); insert.addEventListener('click', () => executeSlashCommand('table')); panel.appendChild(insert);
-    document.body.appendChild(panel);
-    const inset = 8; const gap = 6; const panelWidth = panel.offsetWidth; let menuRect = slashMenuElement.getBoundingClientRect();
-    const fitsRight = menuRect.right + gap + panelWidth <= window.innerWidth - inset; const fitsLeft = menuRect.left - gap - panelWidth >= inset;
-    if (!fitsRight && !fitsLeft && menuRect.width + gap + panelWidth <= window.innerWidth - inset * 2) {
-      if (!slashRuntime.tableMenuBaseLeft) slashRuntime.tableMenuBaseLeft = slashMenuElement.style.left;
-      slashMenuElement.style.left = `${inset}px`; menuRect = slashMenuElement.getBoundingClientRect();
-    }
-    const showRight = menuRect.right + gap + panelWidth <= window.innerWidth - inset;
-    panel.dataset.side = showRight ? 'right' : 'left';
-    const preferredLeft = showRight ? menuRect.right + gap : menuRect.left - gap - panelWidth;
-    panel.style.left = `${Math.max(inset, Math.min(window.innerWidth - panelWidth - inset, preferredLeft))}px`;
-    const tableRect = tableButton.getBoundingClientRect(); panel.style.top = `${Math.max(inset, Math.min(window.innerHeight - panel.offsetHeight - inset, tableRect.top))}px`;
-    slashTablePanelElement = panel;
-  } else if (slashRuntime.tableMenuBaseLeft) {
-    slashMenuElement.style.left = slashRuntime.tableMenuBaseLeft; slashRuntime.tableMenuBaseLeft = '';
-  }
-  syncSlashAccessibility();
+  updateSlashActiveItem();
+  syncSlashTablePanel();
 };
+
 
 /** Handles command navigation before the editor's ordinary key handlers. */
 const handleSlashMenuKeyDown = (view: any, event: any) => {
@@ -746,19 +941,21 @@ const handleSlashMenuKeyDown = (view: any, event: any) => {
   if (slashMenuElement.dataset.show !== 'true' || !context || event.isComposing || event.keyCode === 229) return false;
   if (event.key === 'Escape') { slashRuntime.dismissedContext = context.key; slashRuntime.provider?.hide(); event.preventDefault(); return true; }
   if (slashRuntime.tableOpen) {
-    if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') { const delta = event.key === 'ArrowLeft' ? -1 : 1; if (slashRuntime.tableFocus === 'rows') slashRuntime.tableRows = Math.min(20, Math.max(1, slashRuntime.tableRows + delta)); else slashRuntime.tableColumns = Math.min(12, Math.max(1, slashRuntime.tableColumns + delta)); renderSlashMenu(); event.preventDefault(); return true; }
-    if (['Tab', 'ArrowUp', 'ArrowDown'].includes(event.key)) { slashRuntime.tableFocus = slashRuntime.tableFocus === 'rows' ? 'columns' : 'rows'; renderSlashMenu(); event.preventDefault(); return true; }
+    if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') { const delta = event.key === 'ArrowLeft' ? -1 : 1; if (slashRuntime.tableFocus === 'rows') slashRuntime.tableRows = Math.min(20, Math.max(1, slashRuntime.tableRows + delta)); else slashRuntime.tableColumns = Math.min(12, Math.max(1, slashRuntime.tableColumns + delta)); syncSlashTablePanel(); event.preventDefault(); return true; }
+    if (['Tab', 'ArrowUp', 'ArrowDown'].includes(event.key)) { slashRuntime.tableFocus = slashRuntime.tableFocus === 'rows' ? 'columns' : 'rows'; syncSlashTablePanel(); event.preventDefault(); return true; }
     if (event.key === 'Enter') { executeSlashCommand('table'); event.preventDefault(); return true; }
   }
-  if (event.key === 'ArrowUp' || event.key === 'ArrowDown') { if (!slashRuntime.commands.length) return true; slashRuntime.activeIndex = (slashRuntime.activeIndex + (event.key === 'ArrowUp' ? -1 : 1) + slashRuntime.commands.length) % slashRuntime.commands.length; slashRuntime.tableOpen = false; renderSlashMenu(); event.preventDefault(); return true; }
+  if (event.key === 'ArrowUp' || event.key === 'ArrowDown') { if (!slashRuntime.commands.length) return true; slashRuntime.activeIndex = (slashRuntime.activeIndex + (event.key === 'ArrowUp' ? -1 : 1) + slashRuntime.commands.length) % slashRuntime.commands.length; slashRuntime.tableOpen = false; updateSlashActiveItem(); syncSlashTablePanel(); event.preventDefault(); return true; }
   const active = slashRuntime.commands[slashRuntime.activeIndex];
-  if (event.key === 'ArrowRight' && active?.id === 'table') { slashRuntime.tableOpen = true; renderSlashMenu(); event.preventDefault(); return true; }
-  if (event.key === 'Enter' && active) { if (active.id === 'table') { slashRuntime.tableOpen = true; renderSlashMenu(); } else executeSlashCommand(active.id); event.preventDefault(); return true; }
+  if (event.key === 'ArrowRight' && active?.id === 'table') { slashRuntime.tableOpen = true; syncSlashTablePanel(); event.preventDefault(); return true; }
+  if (event.key === 'Enter' && active) { if (active.id === 'table') { slashRuntime.tableOpen = true; syncSlashTablePanel(); } else executeSlashCommand(active.id); event.preventDefault(); return true; }
   if (event.key === 'Tab' && active?.id !== 'table') { executeSlashCommand(active.id); event.preventDefault(); return true; }
   return false;
 };
 
 document.documentElement.dataset.weibeiCompactPreview = isCompactPreview ? 'true' : 'false';
+// Deterministic checks: visual transitions are state, not assertions — disable them.
+if (window.weiBeiEditorCheckMode) document.documentElement.dataset.weibeiCheckMode = 'true';
 
 let contentHeightFrame = 0;
 let contentHeightTimer = 0;
@@ -1077,7 +1274,8 @@ const createImageNodeView = (initialNode: any, view: any, getPos: any) => {
   size.setAttribute('aria-label', '图片尺寸');
   controls.append(replaceButton, deleteButton, size);
   dom.append(image, controls);
-  controls.hidden = true;
+  controls.dataset.state = 'closed';
+  controls.setAttribute('aria-hidden', 'true');
 
   const onError = () => {
     image.dataset.weibeiImageMissingFor = image.dataset.weibeiResolvedSrc || image.getAttribute('src') || '';
@@ -1154,8 +1352,8 @@ const createImageNodeView = (initialNode: any, view: any, getPos: any) => {
       if (changed) refresh();
       return true;
     },
-    selectNode() { dom.classList.add('ProseMirror-selectednode'); image.classList.add('ProseMirror-selectednode'); controls.hidden = false; },
-    deselectNode() { dom.classList.remove('ProseMirror-selectednode'); image.classList.remove('ProseMirror-selectednode'); controls.hidden = true; },
+    selectNode() { dom.classList.add('ProseMirror-selectednode'); image.classList.add('ProseMirror-selectednode'); controls.dataset.state = 'open'; controls.setAttribute('aria-hidden', 'false'); },
+    deselectNode() { dom.classList.remove('ProseMirror-selectednode'); image.classList.remove('ProseMirror-selectednode'); controls.dataset.state = 'closed'; controls.setAttribute('aria-hidden', 'true'); },
     stopEvent(event: Event) { return controls.contains(event.target as Node); },
     ignoreMutation(mutation: any) { return controls.contains(mutation.target); },
     destroy() {
@@ -1842,13 +2040,18 @@ const createCalloutNodeView = (initialNode: any, view: any, getPos: any) => {
   const type = document.createElement('select');
   const title = document.createElement('input');
   const content = document.createElement('div');
+  // Collapse wrapper: the only layer allowed to animate height (grid 0fr ↔ 1fr).
+  // `content` stays the editor-managed content DOM — Markdown structure unchanged.
+  const collapse = document.createElement('div');
   header.className = 'weibei-callout-header';
   type.className = 'weibei-callout-type';
   title.className = 'weibei-callout-title';
   title.placeholder = '标题';
   content.className = 'weibei-callout-content';
+  collapse.className = 'weibei-callout-collapse';
   header.append(type, title);
-  dom.append(header, content);
+  collapse.append(content);
+  dom.append(header, collapse);
   const render = () => {
     const value = String(node.attrs.calloutType || 'note');
     const choices = calloutTypes.has(value) ? Array.from(calloutTypes) : [value, ...calloutTypes];
@@ -2173,20 +2376,34 @@ const runTableToolbarAction = (view: any, action: string) => {
   return false;
 };
 
+const setTableToolbarState = (open: boolean) => {
+  if (open) {
+    tableToolbarElement.dataset.state = 'open';
+    tableToolbarElement.setAttribute('aria-hidden', 'false');
+  } else if (tableToolbarElement.dataset.state !== 'closed') {
+    // Closing blocks hits and assistive tech immediately, then rests at closed
+    // after the ~150ms fade. Reopening flips straight back to open.
+    tableToolbarElement.dataset.state = 'closed';
+    tableToolbarElement.setAttribute('aria-hidden', 'true');
+  }
+};
+
 const syncTableToolbar = (view: any) => {
   tableToolbarElement.querySelectorAll('button').forEach((button) => {
     const label = editorLabel((button as HTMLElement).dataset.label);
     button.textContent = label;
     button.setAttribute('aria-label', label);
   });
-  if (!isEditable || !isInTable(view.state)) { tableToolbarElement.hidden = true; return; }
+  if (!isEditable || !isInTable(view.state)) { setTableToolbarState(false); return; }
   const dom = view.domAtPos(view.state.selection.from).node;
   const cell = (dom instanceof Element ? dom : dom.parentElement)?.closest('td, th');
-  if (!(cell instanceof HTMLElement)) { tableToolbarElement.hidden = true; return; }
+  if (!(cell instanceof HTMLElement)) { setTableToolbarState(false); return; }
   const rect = cell.getBoundingClientRect();
-  tableToolbarElement.hidden = false;
+  // Position first, then enter open: moving between cells only updates the
+  // coordinates — the state stays open, so the entrance never replays.
   tableToolbarElement.style.left = `${Math.max(8, Math.min(window.innerWidth - tableToolbarElement.offsetWidth - 8, rect.left))}px`;
   tableToolbarElement.style.top = `${Math.max(8, rect.top - 32)}px`;
+  setTableToolbarState(true);
 };
 
 let decorationCache: {
@@ -2927,8 +3144,15 @@ const scrollToHeadingInternal = (rawIndex: any) => {
   const headings = headingElements();
   const heading = Number.isFinite(index) ? headings[Math.max(0, Math.floor(index))] : null;
   if (!heading) return false;
-  heading.scrollIntoView({ block: 'start', behavior: 'smooth' });
-  window.setTimeout(reportActiveHeading, 180);
+  const reduceMotion = isEditorReduceMotion();
+  heading.scrollIntoView({ block: 'start', behavior: reduceMotion ? 'auto' : 'smooth' });
+  if (reduceMotion) {
+    // Instant jump settled this frame — report the position immediately;
+    // only smooth scrolling needs the delayed report.
+    reportActiveHeading();
+  } else {
+    window.setTimeout(reportActiveHeading, 180);
+  }
   return true;
 };
 
@@ -3133,6 +3357,7 @@ window.WeiBeiEditor = {
     },
     setTheme: setThemeInternal,
     setInterfaceLanguage: setLanguageInternal,
+    setReduceMotion: setReduceMotionInternal,
     focus: focusInternal,
     scrollToHeading: scrollToHeadingInternal,
   }),
@@ -3158,6 +3383,7 @@ if (WEIBEI_EDITOR_RUNTIME && window.weiBeiEditorCheckMode) {
     setDocumentID: (next: any) => setDocumentIdentityInternal(String(next || ''), currentDocumentGeneration + 1),
     setTheme: setThemeInternal,
     setInterfaceLanguage: setLanguageInternal,
+    setReduceMotion: setReduceMotionInternal,
     focus: focusInternal,
     scrollToHeading: scrollToHeadingInternal,
   });
@@ -3256,8 +3482,65 @@ if (WEIBEI_EDITOR_RUNTIME) {
         document.body.append(slashStatusElement, linePlusElement);
         const provider = new SlashProvider({ content: slashMenuElement, debounce: 0, offset: 6, root: document.body, shouldShow: (updatedView) => { const context = slashContextForView(updatedView); return Boolean(context && slashRuntime.dismissedContext !== context.key); } });
         slashRuntime.provider = provider; slashRuntime.view = view;
+        // Visual state machine (closed → opening → open → closing → closed) wraps the
+        // provider's raw show/hide: open fades ~250ms, close fades ~150ms and blocks
+        // hit testing + assistive tech immediately. Every open or close bumps a
+        // generation; cleanup callbacks (transitionend + a missed-event fallback)
+        // only run while their generation is still current, so a fast close → reopen
+        // can never be torn down by the stale close.
+        const providerShow = provider.show.bind(provider);
+        const providerHide = provider.hide.bind(provider);
+        const finishSlashMenuHide = (generation: number) => {
+          if (slashMenuPhase.generation !== generation) return;
+          slashMenuPhase.state = 'closed';
+          slashMenuElement.dataset.state = 'closed';
+          providerHide();
+        };
+        provider.show = () => {
+          slashMenuPhase.generation += 1;
+          window.clearTimeout(slashMenuPhase.timer);
+          if (window.weiBeiEditorCheckMode || isEditorReduceMotion()) {
+            slashMenuPhase.state = 'open';
+            slashMenuElement.dataset.state = 'open';
+            providerShow();
+            return;
+          }
+          providerShow();
+          slashMenuPhase.state = 'opening';
+          slashMenuElement.dataset.state = 'opening';
+          const generation = slashMenuPhase.generation;
+          slashMenuPhase.frame = window.requestAnimationFrame(() => {
+            if (slashMenuPhase.generation !== generation) return;
+            slashMenuPhase.state = 'open';
+            slashMenuElement.dataset.state = 'open';
+          });
+        };
+        provider.hide = () => {
+          slashMenuPhase.generation += 1;
+          window.clearTimeout(slashMenuPhase.timer);
+          window.cancelAnimationFrame(slashMenuPhase.frame);
+          if (slashMenuElement.dataset.show !== 'true' || window.weiBeiEditorCheckMode || isEditorReduceMotion()) {
+            finishSlashMenuHide(slashMenuPhase.generation);
+            return;
+          }
+          slashMenuPhase.state = 'closing';
+          slashMenuElement.dataset.state = 'closing';
+          slashMenuElement.setAttribute('aria-hidden', 'true');
+          const generation = slashMenuPhase.generation;
+          const finish = () => {
+            if (slashMenuPhase.generation !== generation) return;
+            slashMenuElement.removeAttribute('aria-hidden');
+            finishSlashMenuHide(generation);
+          };
+          slashMenuElement.addEventListener('transitionend', function onSlashMenuTransitionEnd(event) {
+            if (event.target !== slashMenuElement || event.propertyName !== 'opacity') return;
+            slashMenuElement.removeEventListener('transitionend', onSlashMenuTransitionEnd);
+            finish();
+          });
+          slashMenuPhase.timer = window.setTimeout(finish, 200);
+        };
         provider.onShow = () => { slashRuntime.view = view; renderSlashMenu(); };
-        provider.onHide = () => { slashRuntime.context = null; slashRuntime.tableOpen = false; if (slashRuntime.tableMenuBaseLeft) { slashMenuElement.style.left = slashRuntime.tableMenuBaseLeft; slashRuntime.tableMenuBaseLeft = ''; } slashTablePanelElement?.remove(); slashTablePanelElement = null; syncSlashAccessibility(); };
+        provider.onHide = () => { slashRuntime.context = null; slashRuntime.tableOpen = false; dismissSlashTablePanel(); syncSlashAccessibility(); };
         provider.update(view);
         syncLinePlus(view);
         return { update(updatedView: any, previousState: any) { slashRuntime.view = updatedView; const context = slashContextForView(updatedView); if (slashRuntime.dismissedContext && context?.key !== slashRuntime.dismissedContext) slashRuntime.dismissedContext = ''; provider.update(updatedView, previousState); syncLinePlus(updatedView); }, destroy() { provider.destroy(); linePlusElement.removeEventListener('mousedown', preventLinePlusBlur); linePlusElement.removeEventListener('click', openLineMenu); slashMenuElement.remove(); slashStatusElement.remove(); linePlusElement.remove(); slashTablePanelElement?.remove(); slashRuntime.provider = null; slashRuntime.view = null; } };

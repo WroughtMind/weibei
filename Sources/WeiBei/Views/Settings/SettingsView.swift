@@ -245,6 +245,25 @@ struct SettingsView: View {
                     .padding(.vertical, 12)
             }
 
+            settingsGroup(store.ui("动态效果", "Motion")) {
+                settingsRow(
+                    title: store.ui("动态效果", "Motion"),
+                    detail: store.ui(
+                        "完整动态效果会覆盖系统的减少动态设置",
+                        "Full motion overrides the system reduce-motion switch"
+                    ),
+                    showsBottomDivider: false
+                ) {
+                    compactMenu(store.motionPreference.label(language: store.interfaceLanguage)) {
+                        ForEach(WeiBeiMotionPreference.allCases) { preference in
+                            Button(preference.label(language: store.interfaceLanguage)) {
+                                store.setMotionPreference(preference)
+                            }
+                        }
+                    }
+                }
+            }
+
             settingsGroup(store.ui("偏好", "Preferences")) {
                 settingsRow(
                     title: store.ui("今日一句", "Today's line"),

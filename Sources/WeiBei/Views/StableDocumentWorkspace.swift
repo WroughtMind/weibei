@@ -10,6 +10,8 @@ extension Notification.Name {
 
 struct StableDocumentWorkspace: NSViewRepresentable {
     @EnvironmentObject private var store: WorkspaceStore
+    /// Resolved by WeiBeiMotionScope — AppKit split animation never reads the system switch.
+    @Environment(\.weibeiReduceMotion) private var reduceMotion
     @Binding var firstSplit: CGFloat
     @Binding var secondSplit: CGFloat
     @Binding var halfSplit: CGFloat
@@ -41,7 +43,8 @@ struct StableDocumentWorkspace: NSViewRepresentable {
                     .environmentObject(store.paneState)
                     .environmentObject(store.interaction)
                     .environmentObject(store.threePaneReorder)
-                    .environmentObject(store.libraryDrawer),
+                    .environmentObject(store.libraryDrawer)
+                    .weiBeiMotionScoped(),
                 identifier: "stable-document-slot-\(role.rawValue)"
             ))
         })
@@ -49,7 +52,8 @@ struct StableDocumentWorkspace: NSViewRepresentable {
             EmptyWorkspaceLauncherView()
                 .environmentObject(store)
                 .environmentObject(store.paneState)
-                .environmentObject(store.interaction),
+                .environmentObject(store.interaction)
+                .weiBeiMotionScoped(),
             identifier: "stable-document-empty-workspace"
         )
         splitView.install(roleHosts: roleHosts, emptyHost: emptyHost)
@@ -86,6 +90,8 @@ struct StableDocumentWorkspace: NSViewRepresentable {
         coordinator.halfSplit = $halfSplit
         coordinator.onFramesChange = onFramesChange
         coordinator.onExpansionRequestHandled = onExpansionRequestHandled
+        coordinator.reduceMotion = reduceMotion
+        splitView.setReduceMotion(reduceMotion)
         coordinator.update(
             state: StableDocumentLayoutState(
                 normalizedOrder: WorkspacePaneRole.normalized(normalizedOrder),
@@ -162,6 +168,12 @@ final class StableDocumentSplitView: NSView {
         assertStableOwnership()
     }
 
+    func setReduceMotion(_ reduce: Bool) {
+        for divider in dividerViews where divider.reduceMotion != reduce {
+            divider.reduceMotion = reduce
+        }
+    }
+
     func assertStableOwnership() {
         assert(emptyHost?.superview === self)
         assert(roleHosts.values.allSatisfy { $0.superview === self })
@@ -184,7 +196,46 @@ private final class StableDocumentDividerView: NSView {
     var onDragStart: (() -> Void)?
     var onDragChange: ((CGFloat) -> Void)?
     var onDragEnd: (() -> Void)?
+    /// Resolved app reduce-motion, pushed from SwiftUI — never read the system switch here.
+    var reduceMotion = false {
+        didSet {
+            if reduceMotion {
+                updateAccentLine()
+            }
+        }
+    }
     private var dragStartX: CGFloat?
+    private let accentLayer = CALayer()
+    private var isHovering = false
+    private var isPressed = false
+
+    /// Fixed 1pt cinnabar emphasis line over the neutral divider line:
+    /// transparent at rest, ~0.55 on hover, full strength while dragging.
+    private enum AccentPhase {
+        case idle
+        case hover
+        case pressed
+    }
+
+    private var accentPhase: AccentPhase = .idle {
+        didSet {
+            guard oldValue != accentPhase else { return }
+            updateAccentLine()
+        }
+    }
+
+    private var accentTargetOpacity: Float {
+        switch accentPhase {
+        case .idle: return 0
+        case .hover: return 0.55
+        case .pressed: return 1
+        }
+    }
+
+    /// Enter fast (80ms), leave a touch slower (140ms).
+    private var accentTransitionDuration: TimeInterval {
+        accentPhase == .idle ? 0.14 : 0.08
+    }
 
     override var isFlipped: Bool { true }
     override var acceptsFirstResponder: Bool { false }
@@ -193,10 +244,23 @@ private final class StableDocumentDividerView: NSView {
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         setAccessibilityRole(.splitter)
+        wantsLayer = true
+        accentLayer.opacity = 0
+        layer?.addSublayer(accentLayer)
     }
 
     required init?(coder: NSCoder) {
         nil
+    }
+
+    override func layout() {
+        super.layout()
+        accentLayer.frame = CGRect(
+            x: bounds.midX - 0.5,
+            y: 14,
+            width: 1,
+            height: max(0, bounds.height - 28)
+        )
     }
 
     override func resetCursorRects() {
@@ -216,6 +280,7 @@ private final class StableDocumentDividerView: NSView {
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
         needsDisplay = true
+        updateAccentLine()
     }
 
     override func draw(_ dirtyRect: NSRect) {
@@ -227,6 +292,17 @@ private final class StableDocumentDividerView: NSView {
 
     override func mouseEntered(with event: NSEvent) {
         NSCursor.resizeLeftRight.set()
+        isHovering = true
+        if !isPressed {
+            accentPhase = .hover
+        }
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        isHovering = false
+        if !isPressed {
+            accentPhase = .idle
+        }
     }
 
     override func updateTrackingAreas() {
@@ -243,6 +319,8 @@ private final class StableDocumentDividerView: NSView {
 
     override func mouseDown(with event: NSEvent) {
         NSCursor.resizeLeftRight.set()
+        isPressed = true
+        accentPhase = .pressed
         dragStartX = event.locationInWindow.x
         onDragStart?()
     }
@@ -254,7 +332,27 @@ private final class StableDocumentDividerView: NSView {
 
     override func mouseUp(with event: NSEvent) {
         dragStartX = nil
+        isPressed = false
+        // Released while still over the divider: back to hover, not idle.
+        accentPhase = isHovering ? .hover : .idle
         onDragEnd?()
+    }
+
+    private func updateAccentLine() {
+        let target = accentTargetOpacity
+        accentLayer.backgroundColor = WeiBeiNativePalette.cinnabar().cgColor
+        guard !reduceMotion else {
+            accentLayer.removeAllAnimations()
+            accentLayer.opacity = target
+            return
+        }
+        let animation = CABasicAnimation(keyPath: "opacity")
+        animation.fromValue = accentLayer.presentation()?.opacity ?? accentLayer.opacity
+        animation.toValue = target
+        animation.duration = accentTransitionDuration
+        animation.timingFunction = CAMediaTimingFunction(name: .easeOut)
+        accentLayer.opacity = target
+        accentLayer.add(animation, forKey: "weiBeiAccentOpacity")
     }
 
     private var dividerFill: NSColor {
@@ -273,6 +371,8 @@ final class StableDocumentSplitCoordinator {
     var halfSplit: Binding<CGFloat>
     var onFramesChange: (([WorkspacePaneRole], [CGRect]) -> Void)?
     var onExpansionRequestHandled: ((UUID) -> Void)?
+    /// Resolved app reduce-motion from SwiftUI; drives every AppKit animation decision here.
+    var reduceMotion = false
 
     private var desiredState: StableDocumentLayoutState?
     private var appliedState: StableDocumentLayoutState?
@@ -425,7 +525,7 @@ final class StableDocumentSplitCoordinator {
         )
         let previousVisible = Set(displayedVisibleOrder)
         let nextVisible = Set(visibleOrder)
-        let shouldAnimate = animated && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        let shouldAnimate = animated && !reduceMotion
 
         prepareHosts(
             previousVisible: previousVisible,
@@ -851,7 +951,7 @@ final class StableDocumentSplitCoordinator {
             }
         }
         NSAnimationContext.runAnimationGroup({ context in
-            context.duration = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? 0 : duration
+            context.duration = reduceMotion ? 0 : duration
             context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
             context.allowsImplicitAnimation = true
             for (role, frame) in frames {
@@ -895,13 +995,20 @@ final class StableDocumentSplitCoordinator {
             return
         }
         let target = expandedWidths(widths, requestedIndex: requestedIndex, role: request.role)
-        animateVisibleWidths(target, duration: layoutAnimationDuration, in: splitView) { [weak self, weak splitView] in
+        let finishExpansion = { [weak self, weak splitView] in
             guard let self, let splitView else { return }
             self.captureReadableWidths(in: splitView)
             self.reportFrames(in: splitView)
             self.onExpansionRequestHandled?(request.id)
             self.applyPendingWork(in: splitView)
         }
+        if reduceMotion {
+            // Reduced motion: apply the width directly and ack synchronously — no wait.
+            applyVisibleWidthsImmediately(target, in: splitView)
+            finishExpansion()
+            return
+        }
+        animateVisibleWidths(target, duration: layoutAnimationDuration, in: splitView, completion: finishExpansion)
     }
 
     private func expandedWidths(_ widths: [CGFloat], requestedIndex: Int, role: WorkspacePaneRole) -> [CGFloat] {

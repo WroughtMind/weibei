@@ -881,16 +881,41 @@ expect(WikiLink.enclosingTitle(in: "参考 [[货币理论|Money]] 继续写", cu
 expect(WikiLink.enclosingTitle(in: "参考 [[货币理论#利率]] 继续写", cursor: 8) == "货币理论", "wikilink heading title at cursor")
 expect(WikiLink.enclosingTitle(in: "没有双链", cursor: 2) == nil, "wikilink title ignores plain text")
 expect(WorkspaceLayout.documentAgentNotes.hasCollapsibleRightPane, "three-pane layout can collapse right pane")
-expect(WorkspaceLayout.documentNotesSplit.hasCollapsibleRightPane, "split layout can collapse right pane")
 expect(!WorkspaceLayout.immersiveReading.hasCollapsibleRightPane, "immersive reading has no right pane to collapse")
 expect(!WorkspaceLayout.immersiveWriting.hasCollapsibleRightPane, "immersive writing keeps one uninterrupted note canvas")
 expect(WorkspaceLayout.documentAgentNotes.isDocumentThreePane
-    && WorkspaceLayout.documentNotesAgent.isDocumentThreePane
-    && !WorkspaceLayout.documentNotesSplit.isDocumentThreePane, "only full document layouts participate in three-pane reordering")
+    && WorkspaceLayout.documentNotesAgent.isDocumentThreePane, "only full document layouts participate in three-pane reordering")
 expect(WorkspaceLayout.documentAgentNotes.allowsRailOnlyPanes
-    && WorkspaceLayout.documentNotesSplit.allowsRailOnlyPanes
+    && WorkspaceLayout.documentNotesAgent.allowsRailOnlyPanes
     && !WorkspaceLayout.immersiveConversation.allowsRailOnlyPanes
     && !WorkspaceLayout.immersiveWriting.allowsRailOnlyPanes, "only normal multi-pane layouts can collapse content panes into rail-only mode")
+expect(WeiBeiMotionPreference.system.resolvesReduceMotion(systemReduceMotion: false) == false
+    && WeiBeiMotionPreference.system.resolvesReduceMotion(systemReduceMotion: true) == true
+    && WeiBeiMotionPreference.reduce.resolvesReduceMotion(systemReduceMotion: false) == true
+    && WeiBeiMotionPreference.reduce.resolvesReduceMotion(systemReduceMotion: true) == true
+    && WeiBeiMotionPreference.full.resolvesReduceMotion(systemReduceMotion: false) == false
+    && WeiBeiMotionPreference.full.resolvesReduceMotion(systemReduceMotion: true) == false,
+    "motion preference resolution covers all six preference × system combinations")
+// Retired 阅读/笔记对半 layout: string survives only as a persisted migration marker.
+expect(WorkspaceLayout.resolve(persistedValue: WorkspaceLayout.retiredSplitPersistedValue) == nil
+    && WorkspaceLayout.resolve(persistedValue: "documentAgentNotes") == .documentAgentNotes
+    && WorkspaceLayout.resolve(persistedValue: "documentNotesAgent") == .documentNotesAgent
+    && WorkspaceLayout.resolve(persistedValue: "immersiveWriting") == .immersiveWriting
+    && WorkspaceLayout.resolve(persistedValue: "futureUnknownLayout") == nil,
+    "persisted layout strings resolve, and retired or unknown strings drop only the layout field")
+do {
+    let legacySplitSnapshotJSON = #"{"importedItems":[],"notesByItemID":{},"workspaceLayout":"documentNotesSplit","threePaneOrder":["reader","notes","agent"],"showAgent":true,"courses":[]}"#
+    let legacySplitSnapshot = try JSONDecoder().decode(PersistedWorkspace.self, from: Data(legacySplitSnapshotJSON.utf8))
+    expect(legacySplitSnapshot.workspaceLayout == "documentNotesSplit"
+        && legacySplitSnapshot.threePaneOrder == [.reader, .notes, .agent],
+        "workspace snapshot with retired layout string still decodes")
+    let unknownLayoutSnapshotJSON = #"{"importedItems":[],"notesByItemID":{},"workspaceLayout":"futureUnknownLayout","courses":[]}"#
+    let unknownLayoutSnapshot = try JSONDecoder().decode(PersistedWorkspace.self, from: Data(unknownLayoutSnapshotJSON.utf8))
+    expect(unknownLayoutSnapshot.workspaceLayout == "futureUnknownLayout",
+        "workspace snapshot with unknown layout string still decodes")
+} catch {
+    expect(false, "workspace snapshot with retired or unknown layout string still decodes")
+}
 expect(WorkspaceLayout.documentAgentNotes.defaultThreePaneOrder == [.reader, .agent, .notes]
     && WorkspaceLayout.documentNotesAgent.defaultThreePaneOrder == [.reader, .notes, .agent], "legacy three-pane layout presets map to pane role order")
 expect(WorkspacePaneRole.normalized([.notes, .reader, .notes]) == [.notes, .reader, .agent], "pane role order normalization preserves user pane order and restores missing panes")
@@ -905,10 +930,15 @@ let reorderFrames: [WorkspacePaneRole: CGRect] = [
 ]
 expect(ThreePaneReorderTargeting.targetIndex(order: reorderOrder, frames: reorderFrames, role: .reader, horizontalDelta: 180) == 1, "pane reorder target follows real resized pane overlap instead of fixed thirds")
 expect(ThreePaneReorderTargeting.targetIndex(order: reorderOrder, frames: reorderFrames, role: .notes, horizontalDelta: -420) == 1, "pane reorder target works from either edge using the current pane widths")
+expect(ThreePaneReorderTargeting.visibleHighlightIndex(completeOrderIndex: 2, completeOrder: [.reader, .agent, .notes], visibleOrder: [.reader, .notes]) == 1
+    && ThreePaneReorderTargeting.visibleHighlightIndex(completeOrderIndex: 1, completeOrder: [.reader, .agent, .notes], visibleOrder: [.reader, .notes]) == nil
+    && ThreePaneReorderTargeting.visibleHighlightIndex(completeOrderIndex: 0, completeOrder: [.reader, .agent, .notes], visibleOrder: [.reader, .notes]) == 0
+    && ThreePaneReorderTargeting.visibleHighlightIndex(completeOrderIndex: 3, completeOrder: [.reader, .agent, .notes], visibleOrder: [.reader, .notes]) == nil,
+    "hidden-pane drag highlight maps complete-order indexes through the pane role into the visible array")
 expect(WorkspaceLayout.documentAgentNotes.label(language: .chinese) == "阅读-对话-笔记"
     && WorkspaceLayout.documentAgentNotes.label(language: .english) == "Reader-Chat-Notes"
     && WorkspaceLayout.documentNotesAgent.label(language: .chinese) == "阅读-笔记-对话"
-    && WorkspaceLayout.documentNotesSplit.label(language: .english) == "Reader / Notes", "layout labels use localized task language instead of internal pane names")
+    && WorkspaceLayout.documentNotesAgent.label(language: .english) == "Reader-Notes-Chat", "layout labels use localized task language instead of internal pane names")
 expect(WorkspaceLayout.immersiveConversation.systemImage == "bubble.left.and.text.bubble.right" && WorkspaceLayout.immersiveWriting.systemImage == "square.and.pencil", "immersive layouts expose semantic menu icons")
 func readSource(_ relativePath: String) -> String {
     let url = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
@@ -927,6 +957,12 @@ let readerViewSource = readSource("Sources/WeiBei/Views/ReaderView.swift")
 let notesAgentViewSource = readSource("Sources/WeiBei/Views/NotesAgentView.swift")
 let weiBeiAppSource = readSource("Sources/WeiBei/App/WeiBeiApp.swift")
 let commandPaletteViewSource = readSource("Sources/WeiBei/Views/CommandPaletteView.swift")
+let contentViewSource = readSource("Sources/WeiBei/Views/ContentView.swift")
+expect(
+    !contentViewSource.contains("environmentObject(store).weiBeiMotionScoped()")
+        && !weiBeiAppSource.contains(".environmentObject(updateService)\n                .weiBeiMotionScoped()"),
+    "SAFETY:motion-scope-below-store-injection the store-backed motion scope must sit below the store injection: @EnvironmentObject flows down the view tree, never up, so the reversed order crashes the Settings window on open"
+)
 expect(
     NoteTabDisplayTitle.resolve(customTitle: nil, noteTitle: "旧文件名", body: "# 货币银行学\n\n第二章 利率") == "货币银行学",
     "body heading outranks the file name so editing the heading renames the tab live"

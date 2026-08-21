@@ -79,7 +79,20 @@ struct ContentView: View {
                     .transition(.opacity.combined(with: .scale(scale: 0.995, anchor: .top)))
                     .zIndex(100)
                 }
+
+                // Single top-level status surface: important errors first, otherwise
+                // the transient note status. Sits above the course space so it stays
+                // visible wherever the user is; the old notes-pane-local copy is gone.
+                if store.importantOperationError != nil || store.transientNoteStatus != nil {
+                    WorkspaceStatusBanner()
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                        .padding(.top, WeiBeiMetric.topBarHeight + 10)
+                        .zIndex(120)
+                        .transition(WeiBeiTransition.floating)
+                }
             }
+            .animation(WeiBeiMotion.panel, value: store.importantOperationError)
+            .animation(WeiBeiMotion.panel, value: store.transientNoteStatus)
             .background {
                 LibraryAwareEscapeBridge(
                     courseWorkspacePresented: store.courseWorkspacePresented,
@@ -315,6 +328,64 @@ private struct GlobalFloatingSelectionLayer: View {
     }
 }
 
+/// Top-level workspace feedback: important data-operation errors (persistent,
+/// user-dismissed) take priority over the auto-expiring transient status.
+private struct WorkspaceStatusBanner: View {
+    @EnvironmentObject private var store: WorkspaceStore
+
+    private var isImportant: Bool {
+        store.importantOperationError != nil
+    }
+
+    private var message: String {
+        store.importantOperationError ?? store.transientNoteStatus ?? ""
+    }
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: isImportant ? "exclamationmark.triangle.fill" : "info.circle")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(isImportant ? WeiBeiTheme.cinnabar : WeiBeiTheme.secondaryInk)
+            Text(message)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(WeiBeiTheme.ink)
+                .lineLimit(3)
+                .multilineTextAlignment(.leading)
+                .fixedSize(horizontal: false, vertical: true)
+            if isImportant {
+                Button {
+                    store.dismissImportantOperationError()
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(WeiBeiTheme.secondaryInk)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(Text(store.ui("关闭错误提示", "Dismiss error")))
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 9)
+        .frame(maxWidth: 440, alignment: .leading)
+        .background(WeiBeiTheme.paperRaised.opacity(0.97))
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(
+                    isImportant
+                        ? WeiBeiTheme.cinnabar.opacity(0.55)
+                        : WeiBeiTheme.hairline.opacity(0.6),
+                    lineWidth: 1
+                )
+        }
+        .shadow(color: WeiBeiTheme.ink.opacity(store.appearanceMode.isDark ? 0.3 : 0.1), radius: 12, y: 6)
+        .allowsHitTesting(isImportant)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(Text(store.ui("工作区状态提示", "Workspace status")))
+    }
+}
+
 /// Escape routing that can observe drawer / pane / selection chrome without forcing ContentView to do so.
 private struct LibraryAwareEscapeBridge: View {
     @EnvironmentObject private var libraryDrawer: LibraryDrawerState
@@ -428,9 +499,7 @@ private struct UnifiedTopBarView: View {
             // Copy-reference is not top-bar chrome: use ⌘⇧C, menu, or command palette when needed.
 
             topIconButton("command", help: store.ui("命令面板", "Command palette")) {
-                withAnimation(WeiBeiMotion.panel) {
-                    store.commandPalettePresented.toggle()
-                }
+                store.commandPalettePresented.toggle()
             }
 
             // Theme lives only in Settings → Appearance (and ⌥⌘T). Top bar stays task chrome.
@@ -707,10 +776,19 @@ private struct ThreePaneWorkspaceChrome: View {
            let sourceIndex = visibleOrder.firstIndex(of: drag.role),
            frames.indices.contains(sourceIndex) {
             let sourceFrame = frames[sourceIndex]
-            if let targetIndex = drag.targetIndex, frames.indices.contains(targetIndex) {
-                PaneDropTargetView(role: visibleOrder[targetIndex])
-                    .frame(width: frames[targetIndex].width, height: frames[targetIndex].height)
-                    .position(x: frames[targetIndex].midX, y: frames[targetIndex].midY)
+            // drag.targetIndex indexes the complete three-pane order (submission space).
+            // Translate it through the role before reading the visible-frame array —
+            // indexing frames directly misplaces the highlight once a pane is hidden.
+            if let targetIndex = drag.targetIndex,
+               let visibleTargetIndex = ThreePaneReorderTargeting.visibleHighlightIndex(
+                   completeOrderIndex: targetIndex,
+                   completeOrder: normalizedOrder,
+                   visibleOrder: visibleOrder
+               ),
+               frames.indices.contains(visibleTargetIndex) {
+                PaneDropTargetView(role: visibleOrder[visibleTargetIndex])
+                    .frame(width: frames[visibleTargetIndex].width, height: frames[visibleTargetIndex].height)
+                    .position(x: frames[visibleTargetIndex].midX, y: frames[visibleTargetIndex].midY)
             }
 
             PaneReorderPreviewView(role: drag.role)
@@ -749,7 +827,7 @@ private struct LayoutContentView: View {
     var body: some View {
         Group {
             switch store.layout {
-            case .documentAgentNotes, .documentNotesAgent, .documentNotesSplit:
+            case .documentAgentNotes, .documentNotesAgent:
                 documentPaneLayoutView()
             case .immersiveReading:
                 PersistentPaneHost(role: .reader, registry: paneHostRegistry)
@@ -1057,7 +1135,7 @@ private struct PersistentPaneRoot: View {
     private var reorderRole: WorkspacePaneRole? {
         guard store.visibleDocumentPaneOrder.count > 1 else { return nil }
         switch store.layout {
-        case .documentAgentNotes, .documentNotesAgent, .documentNotesSplit:
+        case .documentAgentNotes, .documentNotesAgent:
             return role
         case .immersiveReading, .immersiveConversation, .immersiveWriting:
             return nil
@@ -1195,7 +1273,7 @@ private struct ResizableTwoPane<First: View, Second: View>: NSViewRepresentable 
     }
 
     private func nativeHost<V: View>(_ view: V) -> NSHostingView<AnyView> {
-        let host = NSHostingView(rootView: AnyView(view.environmentObject(store)))
+        let host = NSHostingView(rootView: AnyView(view.weiBeiMotionScoped().environmentObject(store)))
         host.translatesAutoresizingMaskIntoConstraints = false
         host.setContentHuggingPriority(.defaultLow, for: .horizontal)
         host.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
@@ -1205,7 +1283,7 @@ private struct ResizableTwoPane<First: View, Second: View>: NSViewRepresentable 
     private func updateHost<V: View>(at index: Int, in splitView: NSSplitView, with view: V) {
         guard splitView.arrangedSubviews.indices.contains(index),
               let host = splitView.arrangedSubviews[index] as? NSHostingView<AnyView> else { return }
-        host.rootView = AnyView(view.environmentObject(store))
+        host.rootView = AnyView(view.weiBeiMotionScoped().environmentObject(store))
     }
 }
 
@@ -1287,7 +1365,7 @@ private struct ResizableThreePane<First: View, Second: View, Third: View>: NSVie
     }
 
     private func nativeHost<V: View>(_ view: V) -> NSHostingView<AnyView> {
-        let host = NSHostingView(rootView: AnyView(view.environmentObject(store)))
+        let host = NSHostingView(rootView: AnyView(view.weiBeiMotionScoped().environmentObject(store)))
         host.translatesAutoresizingMaskIntoConstraints = false
         host.setContentHuggingPriority(.defaultLow, for: .horizontal)
         host.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
@@ -1297,7 +1375,7 @@ private struct ResizableThreePane<First: View, Second: View, Third: View>: NSVie
     private func updateHost<V: View>(at index: Int, in splitView: NSSplitView, with view: V) {
         guard splitView.arrangedSubviews.indices.contains(index),
               let host = splitView.arrangedSubviews[index] as? NSHostingView<AnyView> else { return }
-        host.rootView = AnyView(view.environmentObject(store))
+        host.rootView = AnyView(view.weiBeiMotionScoped().environmentObject(store))
     }
 }
 
