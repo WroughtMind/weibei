@@ -64,11 +64,13 @@ WeiBei therefore ships:
 - the pinned `pi` binary and its integrity digests;  
 - Pi’s MIT license;  
 - Bun’s full license text and static-link disclosures;  
-- pointers to public source and rebuild/relink documentation.
+- LGPL-2.0 and LGPL-2.1 full texts plus `RELINK.md`;
+- a separately downloadable, fingerprint-locked relink bundle containing the
+  exact Pi, Bun, WebKit, and TinyCC source materials used by this runtime.
 
-This is a **source-available rebuild path** aligned with open distribution of
-Bun-compiled tools; it is **not** a claim of a turnkey one-click object-file
-SDK for every static dependency.
+The relink bundle is generated once per runtime/toolchain baseline and reused
+across ordinary WeiBei releases. Every release verifies its fingerprint and
+SHA-256 before packaging.
 
 ## What WeiBei source covers
 
@@ -79,6 +81,6 @@ SDK for every static dependency.
 ## Release process note
 
 Packaging a community or notarized DMG via `script/build_release_dmg.sh`
-requires the environment variable `WEIBEI_PI_REDISTRIBUTION_REVIEWED=1`. That
-flag is an **engineering release gate** (a human confirmed these notices and
-pins). It is **not** a legal opinion or third-party certification.
+requires both `WEIBEI_PI_REDISTRIBUTION_REVIEWED=1` and a verified bundle path
+in `WEIBEI_PI_RELINK_BUNDLE`. These are engineering release gates, not a legal
+opinion or third-party certification.

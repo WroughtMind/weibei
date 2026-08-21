@@ -191,7 +191,7 @@ if [[ "$CHECK_ONLY" != true ]]; then
   cp "$PI_RUNTIME_DIR/bin/pi" "$PACKAGED_PI_ROOT/bin/pi"
   cp "$PI_RUNTIME_DIR/bin/package.json" "$PACKAGED_PI_ROOT/bin/package.json"
   cp -R "$PI_RUNTIME_DIR/bin/theme" "$PACKAGED_PI_ROOT/bin/theme"
-  for pi_metadata in manifest.json LICENSE THIRD_PARTY_NOTICES.md BUN_LICENSE.md artifact.sha256 binary.sha256; do
+  for pi_metadata in manifest.json LICENSE THIRD_PARTY_NOTICES.md BUN_LICENSE.md LGPL-2.0.txt LGPL-2.1.txt RELINK.md artifact.sha256 binary.sha256; do
     if [[ ! -f "$PI_RUNTIME_DIR/$pi_metadata" ]]; then
       echo "package failed: embedded PI runtime is missing $pi_metadata" >&2
       exit 23
@@ -220,6 +220,9 @@ if [[ "$CHECK_ONLY" != true ]]; then
     || [[ ! -f "$APP_RESOURCES/PiRuntime/manifest.json" ]] \
     || [[ ! -f "$APP_RESOURCES/PiRuntime/LICENSE" ]] \
     || [[ ! -f "$APP_RESOURCES/PiRuntime/THIRD_PARTY_NOTICES.md" ]] \
+    || [[ ! -f "$APP_RESOURCES/PiRuntime/LGPL-2.0.txt" ]] \
+    || [[ ! -f "$APP_RESOURCES/PiRuntime/LGPL-2.1.txt" ]] \
+    || [[ ! -f "$APP_RESOURCES/PiRuntime/RELINK.md" ]] \
     || [[ ! -f "$APP_RESOURCES/PiRuntime/binary.sha256" ]] \
     || ! /usr/bin/codesign --verify --strict "$PACKAGED_PI" >/dev/null 2>&1 \
     || [[ "$(/usr/bin/shasum -a 256 "$PACKAGED_PI" | /usr/bin/awk '{print $1}')" != "$(<"$APP_RESOURCES/PiRuntime/binary.sha256")" ]] \

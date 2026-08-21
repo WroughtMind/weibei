@@ -19,7 +19,7 @@ classify_path() {
   esac
 
   case "$path" in
-    Sources/*Pi*|Sources/WeiBeiCore/AgentResources/*|Sources/WeiBeiCore/StudyAgentRuntime.swift|Sources/WeiBeiCore/Agent*|Sources/WeiBei/Views/NotesAgentView.swift|script/check-agent-project-tools.ts|script/prepare_pi_runtime.sh|Config/PiRuntime.entitlements|Vendor/PiRuntime/manifest.json|tsconfig.agent.json|package.json|package-lock.json)
+    Sources/*Pi*|Sources/WeiBeiCore/AgentResources/*|Sources/WeiBeiCore/StudyAgentRuntime.swift|Sources/WeiBeiCore/Agent*|Sources/WeiBei/Views/NotesAgentView.swift|script/check-agent-project-tools.ts|script/prepare_pi_runtime.sh|script/prepare_pi_runtime_relink_bundle.sh|Config/PiRuntime.entitlements|Vendor/PiRuntime/manifest.json|Vendor/PiRuntime/BUN_LICENSE.md|Vendor/PiRuntime/LGPL-*.txt|Vendor/PiRuntime/RELINK.md|Vendor/PiRuntime/THIRD_PARTY_NOTICES.md|Vendor/PiRuntime/license-review-inputs.json|Vendor/PiRuntime/relink-bundle.lock.json|tsconfig.agent.json|package.json|package-lock.json)
       pi=true
       ;;
   esac
@@ -46,7 +46,7 @@ classify_path() {
   esac
 
   case "$path" in
-    VERSION|Package.swift|Package.resolved|package.json|package-lock.json|.github/workflows/*|script/build_and_run.sh|script/build_release_dmg.sh|script/dmg/*|script/homebrew/*|script/prepare_pi_runtime.sh|Sources/WeiBeiDev/*|Docs/releases/*|LICENSE|PRIVACY.md|THIRD_PARTY_NOTICES.md|ASSET_ATTRIBUTIONS.md|DesignSystem/assets/app-icon/*|Config/*|Vendor/PiRuntime/manifest.json|Vendor/PiRuntime/LICENSE|Vendor/PiRuntime/THIRD_PARTY_NOTICES.md|*.entitlements|*/Info.plist)
+    VERSION|Package.swift|Package.resolved|package.json|package-lock.json|.github/workflows/*|script/build_and_run.sh|script/build_release_dmg.sh|script/dmg/*|script/homebrew/*|script/prepare_pi_runtime.sh|script/prepare_pi_runtime_relink_bundle.sh|Sources/WeiBeiDev/*|Docs/releases/*|LICENSE|PRIVACY.md|THIRD_PARTY_NOTICES.md|ASSET_ATTRIBUTIONS.md|DesignSystem/assets/app-icon/*|Config/*|Vendor/PiRuntime/manifest.json|Vendor/PiRuntime/LICENSE|Vendor/PiRuntime/BUN_LICENSE.md|Vendor/PiRuntime/LGPL-*.txt|Vendor/PiRuntime/RELINK.md|Vendor/PiRuntime/THIRD_PARTY_NOTICES.md|Vendor/PiRuntime/license-review-inputs.json|Vendor/PiRuntime/relink-bundle.lock.json|*.entitlements|*/Info.plist)
       release=true
       ;;
   esac
@@ -140,8 +140,11 @@ if [[ "${1:-}" == "--self-check" ]]; then
     "code=false pi=false editor=false data_safety=false release=true rich_answer=false tools=false " \
     "Vendor/PiRuntime/LICENSE"
   expect_scopes \
-    "code=false pi=false editor=false data_safety=false release=true rich_answer=false tools=false " \
+    "code=false pi=true editor=false data_safety=false release=true rich_answer=false tools=false " \
     "Vendor/PiRuntime/THIRD_PARTY_NOTICES.md"
+  expect_scopes \
+    "code=false pi=true editor=false data_safety=false release=true rich_answer=false tools=false " \
+    "Vendor/PiRuntime/RELINK.md"
   expect_scopes \
     "code=false pi=false editor=false data_safety=false release=false rich_answer=false tools=false " \
     "Vendor/PiRuntime/README.md"

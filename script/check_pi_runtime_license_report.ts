@@ -28,7 +28,31 @@ const assertEqual = (actual: unknown, expected: unknown, label: string) => {
   }
 };
 
-if (inputs.reviewStatus !== "disclosure-ready" || inputs.runtimeKind !== "bun-compile") {
+const relinkFingerprint = sha256([
+  inputs.pi.version,
+  inputs.pi.sourceCommit,
+  inputs.pi.sourceArchive.sha256,
+  inputs.bun.version,
+  inputs.bun.sourceCommit,
+  inputs.bun.sourceArchive.sha256,
+  inputs.bun.license.sha256,
+  inputs.lgplRelink.webkit.sourceCommit,
+  inputs.lgplRelink.webkit.sourceTree,
+  inputs.lgplRelink.webkit.sourceArchive.sha256,
+  inputs.lgplRelink.webkit.macosArm64Archive.sha256,
+  inputs.lgplRelink.tinycc.sourceCommit,
+  inputs.lgplRelink.tinycc.sourceTree,
+  inputs.lgplRelink.tinycc.sourceArchive.sha256,
+  ...inputs.lgplRelink.licenses.map((license: { sha256: string }) => license.sha256),
+  sha256(readFileSync(resolve(root, inputs.lgplRelink.instructions))),
+].join("\n"));
+
+if (process.argv.includes("--fingerprint")) {
+  console.log(relinkFingerprint);
+  process.exit(0);
+}
+
+if (inputs.schemaVersion !== 3 || inputs.reviewStatus !== "disclosure-ready" || inputs.runtimeKind !== "bun-compile") {
   throw new Error("license-review-inputs must be disclosure-ready bun-compile");
 }
 if (manifest.runtimeKind === "node") {
@@ -57,6 +81,28 @@ for (const required of ["JavaScriptCore", "LGPL-2", "tinycc", "LGPL v2.1", "make
   }
 }
 
+for (const license of inputs.lgplRelink.licenses) {
+  const licensePath = resolve(root, license.packagedAs);
+  if (!existsSync(licensePath)) {
+    throw new Error(`missing ${license.packagedAs}`);
+  }
+  assertEqual(sha256(readFileSync(licensePath)), license.sha256, `${license.spdx} hash`);
+}
+
+const relinkInstructions = readFileSync(resolve(root, inputs.lgplRelink.instructions), "utf8");
+for (const required of [
+  inputs.bun.sourceCommit,
+  inputs.lgplRelink.webkit.sourceCommit,
+  inputs.lgplRelink.tinycc.sourceCommit,
+  "bun run build:release:local",
+  "bun build --compile",
+  "WEIBEI_PI_RELINK_BUNDLE",
+]) {
+  if (!relinkInstructions.includes(required)) {
+    throw new Error(`RELINK.md missing required text: ${required}`);
+  }
+}
+
 for (const required of [
   "Bun `build --compile`",
   "BUN_LICENSE.md",
@@ -78,4 +124,5 @@ console.log(`runtime_kind=${inputs.runtimeKind}`);
 console.log(`pi_version=${manifest.piVersion}`);
 console.log(`bun_version=${inputs.bun.version}`);
 console.log(`bun_license_sha256=${inputs.bun.license.sha256}`);
+console.log(`relink_fingerprint=${relinkFingerprint}`);
 console.log("check_pi_runtime_license_report=passed");
