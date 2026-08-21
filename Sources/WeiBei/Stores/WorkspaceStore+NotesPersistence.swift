@@ -429,16 +429,46 @@ extension WorkspaceStore {
         (try? Data(contentsOf: url)).map(noteContentDigest)
     }
 
+    /// P0 降级文案按实况区分（仅在降级分支做一次 lstat）：真的定位不到，还是
+    /// 文件在但内容与本机记录不一致——后者对账循环通常几秒内以活体文件自愈。
+    func noteFileUnavailableMessage(for item: StudyItem) -> String {
+        let filePresent = resolvedLibraryURL(for: item).map {
+            if case .present = CourseProjectFileWorker.entryPresence(at: $0) {
+                return true
+            }
+            return false
+        } ?? false
+        return filePresent
+            ? ui(
+                "笔记文件内容与本机记录不一致（可能被外部修改），正文展示已降级为模板；已暂停自动写回以保护磁盘内容。",
+                "The note file's content does not match this device's record (it may have been modified externally), so a template is shown instead of the note body. Automatic write-back is paused to protect the on-disk content."
+            )
+            : ui(
+                "无法定位笔记文件，正文展示已降级为模板；已暂停自动写回以保护磁盘内容。",
+                "The note file could not be located, so a template is shown instead of the note body. Automatic write-back is paused to protect the on-disk content."
+            )
+    }
+
     func setNoteFileError(_ message: String?, for itemID: String) {
         if let message {
             // P0：同一条错误已记录时不重复弹 transient，避免渲染期反复触发提示。
             let alreadyRecorded = noteOperationErrorsByItemID[itemID] == message
             noteOperationErrorsByItemID[itemID] = message
+            if !alreadyRecorded {
+                WeiBeiLog.noteRepair.error("note file error raised: \(message, privacy: .public)")
+            }
             if !alreadyRecorded, activeNoteItemID == itemID {
                 showImportantOperationError(message)
             }
         } else {
-            noteOperationErrorsByItemID.removeValue(forKey: itemID)
+            let cleared = noteOperationErrorsByItemID.removeValue(forKey: itemID)
+            // 恢复时同步撤下横幅：横幅仍显示这条消息、且没有其他条目因同一消息
+            // 出错时才清除——既不留下误报，也不误撤他人或更新后的错误。
+            if let cleared,
+               importantOperationError == cleared,
+               !noteOperationErrorsByItemID.values.contains(cleared) {
+                importantOperationError = nil
+            }
         }
     }
 

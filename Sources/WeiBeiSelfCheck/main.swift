@@ -964,6 +964,15 @@ expect(
     "SAFETY:motion-scope-below-store-injection the store-backed motion scope must sit below the store injection: @EnvironmentObject flows down the view tree, never up, so the reversed order crashes the Settings window on open"
 )
 expect(
+    workspaceStoreSource.contains("if !startsAtBlankEntries,\n           resolvedImportedFileBookmarks"),
+    "SAFETY:blank-launch-no-note-error-banner on a blank-start launch the restored active note must not be evaluated before the reset clears the selection, otherwise a transient degradation raises a sticky banner on a blank page the user never interacted with"
+)
+expect(
+    notesPersistenceSource.contains("func noteFileUnavailableMessage(for item: StudyItem)")
+        && notesPersistenceSource.contains("内容与本机记录不一致"),
+    "SAFETY:note-unavailable-message-matches-facts the degraded-note message must distinguish a genuinely missing file from a present-but-diverged one instead of always claiming the file cannot be located"
+)
+expect(
     NoteTabDisplayTitle.resolve(customTitle: nil, noteTitle: "旧文件名", body: "# 货币银行学\n\n第二章 利率") == "货币银行学",
     "body heading outranks the file name so editing the heading renames the tab live"
 )
