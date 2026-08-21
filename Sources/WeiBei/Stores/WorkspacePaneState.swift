@@ -66,3 +66,15 @@ final class WorkspacePaneState: ObservableObject {
         suppressPublish = false
     }
 }
+
+struct PaneExpansionRequest: Equatable {
+    let id = UUID()
+    let role: WorkspacePaneRole
+    /// One-shot completion bound to this request's id: runs after AppKit finishes the
+    /// pane expansion. A newer request replaces (and drops) an older pending closure.
+    let onCompleted: (() -> Void)?
+
+    static func == (lhs: PaneExpansionRequest, rhs: PaneExpansionRequest) -> Bool {
+        lhs.id == rhs.id
+    }
+}

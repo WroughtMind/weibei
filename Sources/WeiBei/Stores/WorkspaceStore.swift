@@ -47,18 +47,6 @@ final class ThreePaneReorderState: ObservableObject {
     @Published var drag: ThreePaneReorderDrag?
 }
 
-struct PaneExpansionRequest: Equatable {
-    let id = UUID()
-    let role: WorkspacePaneRole
-    /// One-shot completion bound to this request's id: runs after AppKit finishes the
-    /// pane expansion. A newer request replaces (and drops) an older pending closure.
-    let onCompleted: (() -> Void)?
-
-    static func == (lhs: PaneExpansionRequest, rhs: PaneExpansionRequest) -> Bool {
-        lhs.id == rhs.id
-    }
-}
-
 enum CourseHomeSearchResultKind: String, Sendable {
     case material
     case note
@@ -596,8 +584,8 @@ final class WorkspaceStore: ObservableObject {
     /// security scope, course file move & rollback). Never auto-dismisses — only a
     /// user close or a newer important error replaces it.
     @Published var importantOperationError: String?
-    private var transientNoteStatusGeneration = 0
-    private var transientNoteStatusTask: Task<Void, Never>?
+    var transientNoteStatusGeneration = 0
+    var transientNoteStatusTask: Task<Void, Never>?
     @Published private(set) var workspaceSaveError: String?
     /// S5：真磁盘写失败计数；满 3 次才露出可点重试的轻提示。
     private var consecutiveWorkspaceSaveFailures = 0
@@ -677,7 +665,7 @@ final class WorkspaceStore: ObservableObject {
             Data?,
             () throws -> Void
         ) throws -> Void
-    private let selectionAskThreadDefaults: UserDefaults
+    let selectionAskThreadDefaults: UserDefaults
     private let piRuntime: PiAgentRuntime
     let courseDocumentSearchIndex: CourseDocumentSearchIndex
     private var activeAgentRequestID: UUID?
@@ -12308,21 +12296,6 @@ final class WorkspaceStore: ObservableObject {
         save()
     }
 
-    func setMotionPreference(_ preference: WeiBeiMotionPreference) {
-        guard motionPreference != preference else { return }
-        motionPreference = preference
-        selectionAskThreadDefaults.set(
-            preference.rawValue,
-            forKey: WeiBeiMotionPreference.persistedDefaultsKey
-        )
-    }
-
-    func setDailyInspirationEnabled(_ enabled: Bool) {
-        guard showDailyInspiration != enabled else { return }
-        showDailyInspiration = enabled
-        save()
-    }
-
     func toggleImportedDocumentColorAdaptation() {
         setImportedDocumentColorAdaptation(!adaptImportedDocumentColors)
     }
@@ -18535,30 +18508,6 @@ final class WorkspaceStore: ObservableObject {
         } else {
             try? data.write(to: url)
         }
-    }
-
-    func showTransientNoteStatus(_ message: String) {
-        // S5: sole transient feedback channel (auto-expires). Identity is the
-        // generation, not the text — the same sentence shown twice still gets its
-        // own full 2.4s window, and only the newest generation may clear the slot.
-        transientNoteStatusGeneration += 1
-        let generation = transientNoteStatusGeneration
-        transientNoteStatusTask?.cancel()
-        transientNoteStatus = message
-        transientNoteStatusTask = Task { @MainActor [weak self] in
-            try? await Task.sleep(nanoseconds: 2_400_000_000)
-            guard let self, !Task.isCancelled else { return }
-            guard self.transientNoteStatusGeneration == generation else { return }
-            self.transientNoteStatus = nil
-        }
-    }
-
-    func showImportantOperationError(_ message: String) {
-        importantOperationError = message
-    }
-
-    func dismissImportantOperationError() {
-        importantOperationError = nil
     }
 
     private func layoutMatchingThreePaneOrder(_ order: [WorkspacePaneRole]) -> WorkspaceLayout {
