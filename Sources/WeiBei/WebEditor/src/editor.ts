@@ -467,6 +467,14 @@ const setReduceMotionInternal = (next: unknown) => {
   document.documentElement.dataset.weibeiReduceMotion = next === true || next === 'true' ? 'true' : 'false';
 };
 
+/** Native text-scale sync: drives --weibei-text-scale so editor body copy
+ * follows the app-wide interface text tier without a reload. */
+const setTextScaleInternal = (next: unknown) => {
+  const value = Number(next);
+  const scale = Number.isFinite(value) && value > 0 ? value : 1;
+  document.documentElement.style.setProperty('--weibei-text-scale', String(scale));
+};
+
 /** Returns the `/query` immediately before the caret without consuming surrounding content. */
 const slashContextForView = (view: any) => {
   if (!isEditable || view.composing) return null;
@@ -3385,6 +3393,7 @@ window.WeiBeiEditor = {
     setTheme: setThemeInternal,
     setInterfaceLanguage: setLanguageInternal,
     setReduceMotion: setReduceMotionInternal,
+    setTextScale: setTextScaleInternal,
     focus: focusInternal,
     scrollToHeading: scrollToHeadingInternal,
   }),
@@ -3412,6 +3421,7 @@ if (WEIBEI_EDITOR_RUNTIME && window.weiBeiEditorCheckMode) {
     setTheme: setThemeInternal,
     setInterfaceLanguage: setLanguageInternal,
     setReduceMotion: setReduceMotionInternal,
+    setTextScale: setTextScaleInternal,
     focus: focusInternal,
     scrollToHeading: scrollToHeadingInternal,
   });
