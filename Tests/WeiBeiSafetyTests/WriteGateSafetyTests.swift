@@ -76,10 +76,7 @@ final class WriteGateSafetyTests: XCTestCase {
 
     func testGateRefusesWhenRereadFails() throws {
         let base = makeTempRoot("weibei-gate-unreadable")
-        defer {
-            try? FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: "")
-            try? FileManager.default.removeItem(at: base)
-        }
+        defer { try? FileManager.default.removeItem(at: base) }
         let backupRoot = base.appendingPathComponent("backups", isDirectory: true)
         let library = base.appendingPathComponent("资料库", isDirectory: true)
         let store = try makeStore(base: base, library: library, backupRoot: backupRoot)
@@ -154,7 +151,7 @@ final class WriteGateSafetyTests: XCTestCase {
         try store.waitForCourseFileOperation {
             await store.renameNotebookNoteInTransaction(itemID: item.id, to: "新标题")
         }
-        let documentsDir = try XCTUnwrap(url.deletingLastPathComponent())
+        let documentsDir = url.deletingLastPathComponent()
         let renamedURL = documentsDir.appendingPathComponent("新标题.md")
         XCTAssertTrue(FileManager.default.fileExists(atPath: renamedURL.path))
         XCTAssertFalse(FileManager.default.fileExists(atPath: url.path))
