@@ -263,8 +263,23 @@ extension WorkspaceStore {
         guard let libraryRoot = courseLibraryRootURL else {
             throw CourseProjectRootError.missingLibrary
         }
-        let canonicalDestination = try CourseProjectPathPolicy.existingDirectory(destination)
-        try validateMigrationDestination(canonicalDestination, libraryRoot: libraryRoot)
+        try validateMigrationDestinationRelationship(
+            destination,
+            libraryRoot: libraryRoot
+        )
+        let canonicalDestination: URL
+        if FileManager.default.fileExists(atPath: destination.path) {
+            canonicalDestination = try CourseProjectPathPolicy.existingDirectory(destination)
+            try validateMigrationDestinationContent(canonicalDestination)
+        } else {
+            let parent = try CourseProjectPathPolicy.existingDirectory(
+                destination.deletingLastPathComponent()
+            )
+            canonicalDestination = parent.appendingPathComponent(
+                destination.lastPathComponent,
+                isDirectory: true
+            )
+        }
 
         flushPendingNotePersistence()
         libraryMigrationInFlight = true
@@ -343,7 +358,7 @@ extension WorkspaceStore {
         )
     }
 
-    private func validateMigrationDestination(_ destination: URL, libraryRoot: URL) throws {
+    private func validateMigrationDestinationRelationship(_ destination: URL, libraryRoot: URL) throws {
         let rootPath = libraryRoot.standardizedFileURL.path
         let destinationPath = destination.standardizedFileURL.path
         if destinationPath == rootPath {
@@ -355,9 +370,10 @@ extension WorkspaceStore {
         if rootPath.hasPrefix(destinationPath + "/") {
             throw CourseProjectRootError.destinationContainsLibrary
         }
-        let fileManager = FileManager.default
-        guard fileManager.fileExists(atPath: destinationPath) else { return }
-        let entries = try fileManager.contentsOfDirectory(atPath: destinationPath)
+    }
+
+    private func validateMigrationDestinationContent(_ destination: URL) throws {
+        let entries = try FileManager.default.contentsOfDirectory(atPath: destination.path)
         guard !entries.isEmpty else { return }
         if courseManifestCourseID(at: destination) != nil {
             throw CourseProjectRootError.destinationIsLibrary

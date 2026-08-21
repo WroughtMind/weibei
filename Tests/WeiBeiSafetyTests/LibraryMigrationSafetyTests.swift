@@ -157,7 +157,10 @@ final class LibraryMigrationSafetyTests: XCTestCase {
                 return XCTFail("期望 destinationIsLibrary，实际 \(error)")
             }
         }
-        XCTAssertTrue(FileManager.default.fileExists(atPath: library.appendingPathComponent(".weibei").path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: library.path))
+        XCTAssertTrue(FileManager.default.fileExists(
+            atPath: existingLibrary.appendingPathComponent(".weibei/course.json").path
+        ))
         try store.configureCourseLibrary(at: existingLibrary)
         XCTAssertEqual(store.courseLibraryRootURL?.standardizedFileURL, existingLibrary.standardizedFileURL)
     }
