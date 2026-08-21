@@ -2280,6 +2280,27 @@ do {
     )
 }
 
+// MARK: - Phase 1 write gate: single writer choke point (source assertions)
+do {
+    let directWriterCalls = notesPersistenceSource
+        .components(separatedBy: "notebookMarkdownWriter(")
+        .count - 1
+    let storeDirectWriterCalls = workspaceStoreSource
+        .components(separatedBy: "notebookMarkdownWriter(")
+        .count - 1
+    expect(
+        directWriterCalls == 1 && storeDirectWriterCalls == 0,
+        "SAFETY:write-gate-single-writer all note disk writes must route through writeNotebookMarkdownThroughGate; direct notebookMarkdownWriter( calls are whitelisted to exactly one inside the gate"
+    )
+    expect(
+        notesPersistenceSource.contains("writeRefusedKeepContent")
+            && notesPersistenceSource.contains("diskChangedAdoptDisk")
+            && notesPersistenceSource.contains("content: Data(markdown.utf8)")
+            && notesPersistenceSource.contains("expectedBaseline"),
+        "SAFETY:write-gate-compare the gate must refuse writes without a trusted baseline or an unreadable disk, back up pending content before adopting external changes, and pass an explicit baseline at every write path"
+    )
+}
+
 // MARK: - Performance Phase 1+2: workspace encode guardrail + off-main hop
 do {
     // Warm-up encode so first-run JSONEncoder overhead does not dominate.
