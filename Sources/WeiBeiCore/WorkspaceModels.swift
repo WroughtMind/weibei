@@ -388,12 +388,25 @@ public enum SourceReferenceTitle {
 public enum WorkspaceLayout: String, Codable, CaseIterable, Identifiable, Sendable {
     case documentAgentNotes
     case documentNotesAgent
-    case documentNotesSplit
     case immersiveReading
     case immersiveConversation
     case immersiveWriting
 
+    /// Retired "Reader / Notes" split persisted before the free-order workbench.
+    /// Old `workspace.json` files may still carry this string.
+    public static let retiredSplitPersistedValue = "documentNotesSplit"
+
     public var id: String { rawValue }
+
+    /// Maps a persisted layout string back to the runtime enum.
+    /// Unknown (including future) strings resolve to nil so only the layout field
+    /// is ignored instead of failing the whole workspace decode.
+    public static func resolve(persistedValue: String) -> WorkspaceLayout? {
+        if persistedValue == retiredSplitPersistedValue {
+            return nil
+        }
+        return WorkspaceLayout(rawValue: persistedValue)
+    }
 
     public func label(language: WeiBeiInterfaceLanguage) -> String {
         switch self {
@@ -401,8 +414,6 @@ public enum WorkspaceLayout: String, Codable, CaseIterable, Identifiable, Sendab
             return language.text("阅读-对话-笔记", "Reader-Chat-Notes")
         case .documentNotesAgent:
             return language.text("阅读-笔记-对话", "Reader-Notes-Chat")
-        case .documentNotesSplit:
-            return language.text("阅读/笔记对半", "Reader / Notes")
         case .immersiveReading:
             return language.text("沉浸阅读", "Immersive Reading")
         case .immersiveConversation:
@@ -414,7 +425,7 @@ public enum WorkspaceLayout: String, Codable, CaseIterable, Identifiable, Sendab
 
     public var hasCollapsibleRightPane: Bool {
         switch self {
-        case .documentAgentNotes, .documentNotesAgent, .documentNotesSplit, .immersiveConversation:
+        case .documentAgentNotes, .documentNotesAgent, .immersiveConversation:
             return true
         case .immersiveReading, .immersiveWriting:
             return false
@@ -425,7 +436,7 @@ public enum WorkspaceLayout: String, Codable, CaseIterable, Identifiable, Sendab
         switch self {
         case .documentAgentNotes, .documentNotesAgent:
             return true
-        case .documentNotesSplit, .immersiveReading, .immersiveConversation, .immersiveWriting:
+        case .immersiveReading, .immersiveConversation, .immersiveWriting:
             return false
         }
     }
@@ -436,14 +447,14 @@ public enum WorkspaceLayout: String, Codable, CaseIterable, Identifiable, Sendab
         switch self {
         case .immersiveReading, .immersiveConversation, .immersiveWriting:
             return true
-        case .documentAgentNotes, .documentNotesAgent, .documentNotesSplit:
+        case .documentAgentNotes, .documentNotesAgent:
             return false
         }
     }
 
     public var allowsRailOnlyPanes: Bool {
         switch self {
-        case .documentAgentNotes, .documentNotesAgent, .documentNotesSplit:
+        case .documentAgentNotes, .documentNotesAgent:
             return true
         case .immersiveReading, .immersiveConversation, .immersiveWriting:
             return false
@@ -456,7 +467,7 @@ public enum WorkspaceLayout: String, Codable, CaseIterable, Identifiable, Sendab
             return [.reader, .agent, .notes]
         case .documentNotesAgent:
             return [.reader, .notes, .agent]
-        case .documentNotesSplit, .immersiveReading, .immersiveConversation, .immersiveWriting:
+        case .immersiveReading, .immersiveConversation, .immersiveWriting:
             return nil
         }
     }
@@ -467,8 +478,6 @@ public enum WorkspaceLayout: String, Codable, CaseIterable, Identifiable, Sendab
             return "rectangle.split.3x1"
         case .documentNotesAgent:
             return "rectangle.split.3x1.fill"
-        case .documentNotesSplit:
-            return "rectangle.split.2x1"
         case .immersiveReading:
             return "doc.text.magnifyingglass"
         case .immersiveConversation:
@@ -482,7 +491,44 @@ public enum WorkspaceLayout: String, Codable, CaseIterable, Identifiable, Sendab
         switch self {
         case .documentAgentNotes, .documentNotesAgent, .immersiveConversation:
             return true
-        case .documentNotesSplit, .immersiveReading, .immersiveWriting:
+        case .immersiveReading, .immersiveWriting:
+            return false
+        }
+    }
+}
+
+/// App-wide motion preference: follow macOS, force WeiBei's motion off, or force it on
+/// even when the system asks for reduced motion. Persisted as a raw string in
+/// UserDefaults (`weibei.motion.preference`), never inside `workspace.json`.
+public enum WeiBeiMotionPreference: String, CaseIterable, Identifiable, Sendable {
+    case system
+    case reduce
+    case full
+
+    public var id: String { rawValue }
+
+    public static let persistedDefaultsKey = "weibei.motion.preference"
+
+    public func label(language: WeiBeiInterfaceLanguage) -> String {
+        switch self {
+        case .system:
+            return language.text("跟随系统", "Follow System")
+        case .reduce:
+            return language.text("减少动态效果", "Reduce Motion")
+        case .full:
+            return language.text("完整动态效果", "Full Motion")
+        }
+    }
+
+    /// The only resolution rule: `system` defers to the macOS switch; the other
+    /// two force their outcome so "full" overrides a system reduce request.
+    public func resolvesReduceMotion(systemReduceMotion: Bool) -> Bool {
+        switch self {
+        case .system:
+            return systemReduceMotion
+        case .reduce:
+            return true
+        case .full:
             return false
         }
     }
@@ -1865,7 +1911,9 @@ public struct PersistedWorkspace: Codable, Sendable {
     public var modelName: String?
     public var agentProviderID: String?
     public var agentBaseURL: String?
-    public var workspaceLayout: WorkspaceLayout?
+    /// Persisted as the raw string so unknown / retired values (see
+    /// `WorkspaceLayout.retiredSplitPersistedValue`) never fail the whole decode.
+    public var workspaceLayout: String?
     public var threePaneOrder: [WorkspacePaneRole]?
     public var agentSurface: AgentSurface?
     public var showLibrary: Bool?
@@ -1913,7 +1961,7 @@ public struct PersistedWorkspace: Codable, Sendable {
         modelName: String? = nil,
         agentProviderID: String? = nil,
         agentBaseURL: String? = nil,
-        workspaceLayout: WorkspaceLayout? = nil,
+        workspaceLayout: String? = nil,
         threePaneOrder: [WorkspacePaneRole]? = nil,
         agentSurface: AgentSurface? = nil,
         showLibrary: Bool? = nil,

@@ -50,6 +50,13 @@ final class ThreePaneReorderState: ObservableObject {
 struct PaneExpansionRequest: Equatable {
     let id = UUID()
     let role: WorkspacePaneRole
+    /// One-shot completion bound to this request's id: runs after AppKit finishes the
+    /// pane expansion. A newer request replaces (and drops) an older pending closure.
+    let onCompleted: (() -> Void)?
+
+    static func == (lhs: PaneExpansionRequest, rhs: PaneExpansionRequest) -> Bool {
+        lhs.id == rhs.id
+    }
 }
 
 enum CourseHomeSearchResultKind: String, Sendable {
@@ -602,6 +609,9 @@ final class WorkspaceStore: ObservableObject {
         ?? AgentCredentialProfileStore.loadProfiles().first?.id
         ?? AgentCredentialProfileStore.defaultProfile().id
     @Published var appearanceMode: WeiBeiAppearanceMode = .paper
+    /// App-wide motion preference (system / reduce / full); resolved against the
+    /// macOS switch by `WeiBeiMotionScope`. Persisted in UserDefaults, not workspace.json.
+    @Published var motionPreference: WeiBeiMotionPreference = .system
     @Published var adaptImportedDocumentColors = true
     @Published var interfaceLanguage: WeiBeiInterfaceLanguage = .chinese
     @Published var courseWorkspacePresented = false
@@ -959,6 +969,11 @@ final class WorkspaceStore: ObservableObject {
             agentInteractiveVisualizationsEnabled = selectionAskThreadDefaults.bool(
                 forKey: Self.interactiveVisualizationsDefaultsKey
             )
+        }
+        if let motionPreferenceRaw = selectionAskThreadDefaults.string(
+            forKey: WeiBeiMotionPreference.persistedDefaultsKey
+        ), let persistedMotionPreference = WeiBeiMotionPreference(rawValue: motionPreferenceRaw) {
+            motionPreference = persistedMotionPreference
         }
         piRuntime = PiAgentRuntime(runtimeDirectory: folder.appendingPathComponent("AgentRuntime", isDirectory: true))
         let courseIndexDirectory = folder.appendingPathComponent("CourseIndex", isDirectory: true)
@@ -9724,7 +9739,7 @@ final class WorkspaceStore: ObservableObject {
             return role == .agent
         case .immersiveWriting:
             return role == .notes
-        case .documentAgentNotes, .documentNotesAgent, .documentNotesSplit:
+        case .documentAgentNotes, .documentNotesAgent:
             return isPaneVisible(role)
         }
     }
@@ -11097,9 +11112,7 @@ final class WorkspaceStore: ObservableObject {
             showLibrary = true
         }
         if pane == .agent {
-            if layout == .documentNotesSplit, !showAgent {
-                showAgent = true
-            } else if layout == .immersiveReading || layout == .immersiveWriting {
+            if layout == .immersiveReading || layout == .immersiveWriting {
                 // Primary chat is immersive conversation, not a deleted overlay surface.
                 layout = .immersiveConversation
                 showAgent = true
@@ -11284,7 +11297,7 @@ final class WorkspaceStore: ObservableObject {
         switch layout {
         case .immersiveReading, .immersiveConversation, .immersiveWriting:
             return true
-        case .documentAgentNotes, .documentNotesAgent, .documentNotesSplit:
+        case .documentAgentNotes, .documentNotesAgent:
             return false
         }
     }
@@ -11315,7 +11328,7 @@ final class WorkspaceStore: ObservableObject {
             return [.agent]
         case .immersiveWriting:
             return [.notes]
-        case .documentAgentNotes, .documentNotesAgent, .documentNotesSplit:
+        case .documentAgentNotes, .documentNotesAgent:
             return Set(visibleDocumentPaneOrder)
         }
     }
@@ -11818,13 +11831,14 @@ final class WorkspaceStore: ObservableObject {
         threePaneReorderFrames = nextFrames
     }
 
-    func requestPaneExpansion(_ role: WorkspacePaneRole) {
-        paneExpansionRequest = PaneExpansionRequest(role: role)
+    func requestPaneExpansion(_ role: WorkspacePaneRole, onCompleted: (() -> Void)? = nil) {
+        paneExpansionRequest = PaneExpansionRequest(role: role, onCompleted: onCompleted)
     }
 
     func completePaneExpansionRequest(_ id: UUID) {
-        guard paneExpansionRequest?.id == id else { return }
+        guard let request = paneExpansionRequest, request.id == id else { return }
         paneExpansionRequest = nil
+        request.onCompleted?()
     }
 
     func threePaneReorderFrameList(order: [WorkspacePaneRole], fallback: [CGRect]) -> [CGRect] {
@@ -11892,7 +11906,7 @@ final class WorkspaceStore: ObservableObject {
 
     var hasPrimaryConversationPaneVisible: Bool {
         switch layout {
-        case .documentAgentNotes, .documentNotesAgent, .documentNotesSplit:
+        case .documentAgentNotes, .documentNotesAgent:
             return showAgent
         case .immersiveConversation:
             return true
@@ -11906,7 +11920,7 @@ final class WorkspaceStore: ObservableObject {
             return true
         }
         switch layout {
-        case .documentAgentNotes, .documentNotesAgent, .documentNotesSplit:
+        case .documentAgentNotes, .documentNotesAgent:
             return false
         case .immersiveConversation:
             return true
@@ -12077,8 +12091,6 @@ final class WorkspaceStore: ObservableObject {
             switch key {
             case "1":
                 animateLayoutChange { setLayout(.documentAgentNotes) }
-            case "2":
-                animateLayoutChange { setLayout(.documentNotesSplit) }
             case "s":
                 guard layout.isDocumentThreePane else { return false }
                 animateLayoutChange { swapThreePaneSecondaryPanes() }
@@ -12288,6 +12300,15 @@ final class WorkspaceStore: ObservableObject {
         }
         NotificationCenter.default.post(name: WeiBeiThemeRuntime.didChangeNotification, object: mode)
         save()
+    }
+
+    func setMotionPreference(_ preference: WeiBeiMotionPreference) {
+        guard motionPreference != preference else { return }
+        motionPreference = preference
+        selectionAskThreadDefaults.set(
+            preference.rawValue,
+            forKey: WeiBeiMotionPreference.persistedDefaultsKey
+        )
     }
 
     func setDailyInspirationEnabled(_ enabled: Bool) {
@@ -15710,8 +15731,6 @@ final class WorkspaceStore: ObservableObject {
                     layout = .immersiveConversation
                     showAgent = true
                     agentSurface = .hidden
-                } else if layout == .documentNotesSplit {
-                    showAgent = true
                 }
                 focus(.agent)
             }
@@ -20332,10 +20351,16 @@ final class WorkspaceStore: ObservableObject {
         }
         // Legacy field: still read so older workspaces restore immersion/multi-pane;
         // free drag order lives in threePaneOrder and is the source of truth for columns.
-        if let workspaceLayout = snapshot.workspaceLayout {
-            layout = workspaceLayout
-            if let order = workspaceLayout.defaultThreePaneOrder {
-                threePaneOrder = order
+        // Unknown / retired strings only drop the layout field, never the workspace.
+        var migratedRetiredSplitLayout = false
+        if let persistedLayoutRaw = snapshot.workspaceLayout {
+            if let workspaceLayout = WorkspaceLayout.resolve(persistedValue: persistedLayoutRaw) {
+                layout = workspaceLayout
+                if let order = workspaceLayout.defaultThreePaneOrder {
+                    threePaneOrder = order
+                }
+            } else if persistedLayoutRaw == WorkspaceLayout.retiredSplitPersistedValue {
+                migratedRetiredSplitLayout = true
             }
         }
         if let threePaneOrder = snapshot.threePaneOrder {
@@ -20349,6 +20374,14 @@ final class WorkspaceStore: ObservableObject {
         showAgent = snapshot.showAgent ?? legacyRightPane ?? true
         showNotes = snapshot.showNotes ?? legacyRightPane ?? true
         showDailyInspiration = snapshot.showDailyInspiration ?? true
+        if migratedRetiredSplitLayout {
+            // Retired 阅读/笔记对半 → current workbench: reader + notes visible, chat hidden.
+            // Keep the persisted free order when present; next save writes the new layout.
+            layout = layoutMatchingThreePaneOrder(self.threePaneOrder)
+            showReader = true
+            showNotes = true
+            showAgent = false
+        }
         if let appearanceModeRaw = snapshot.appearanceModeRaw,
            let appearanceMode = WeiBeiAppearanceMode(rawValue: appearanceModeRaw) {
             self.appearanceMode = appearanceMode
@@ -20457,7 +20490,7 @@ final class WorkspaceStore: ObservableObject {
                 modelName: modelName,
                 agentProviderID: agentProviderID.rawValue,
                 agentBaseURL: agentBaseURL.isEmpty ? nil : agentBaseURL,
-                workspaceLayout: layout,
+                workspaceLayout: layout.rawValue,
                 threePaneOrder: normalizedThreePaneOrder,
                 agentSurface:
                     agentSurface == .selectionFloat ? .hidden : agentSurface,
@@ -21208,7 +21241,7 @@ final class WorkspaceStore: ObservableObject {
                 modelName: modelName,
                 agentProviderID: agentProviderID.rawValue,
                 agentBaseURL: agentBaseURL.isEmpty ? nil : agentBaseURL,
-                workspaceLayout: layout,
+                workspaceLayout: layout.rawValue,
                 threePaneOrder: normalizedThreePaneOrder,
                 agentSurface: agentSurface == .selectionFloat ? .hidden : agentSurface,
                 showLibrary: nil,

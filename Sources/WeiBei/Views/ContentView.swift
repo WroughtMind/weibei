@@ -707,10 +707,16 @@ private struct ThreePaneWorkspaceChrome: View {
            let sourceIndex = visibleOrder.firstIndex(of: drag.role),
            frames.indices.contains(sourceIndex) {
             let sourceFrame = frames[sourceIndex]
-            if let targetIndex = drag.targetIndex, frames.indices.contains(targetIndex) {
-                PaneDropTargetView(role: visibleOrder[targetIndex])
-                    .frame(width: frames[targetIndex].width, height: frames[targetIndex].height)
-                    .position(x: frames[targetIndex].midX, y: frames[targetIndex].midY)
+            // drag.targetIndex indexes the complete three-pane order (submission space).
+            // Translate it through the role before reading the visible-frame array —
+            // indexing frames directly misplaces the highlight once a pane is hidden.
+            if let targetIndex = drag.targetIndex,
+               normalizedOrder.indices.contains(targetIndex),
+               let visibleTargetIndex = visibleOrder.firstIndex(of: normalizedOrder[targetIndex]),
+               frames.indices.contains(visibleTargetIndex) {
+                PaneDropTargetView(role: visibleOrder[visibleTargetIndex])
+                    .frame(width: frames[visibleTargetIndex].width, height: frames[visibleTargetIndex].height)
+                    .position(x: frames[visibleTargetIndex].midX, y: frames[visibleTargetIndex].midY)
             }
 
             PaneReorderPreviewView(role: drag.role)
@@ -749,7 +755,7 @@ private struct LayoutContentView: View {
     var body: some View {
         Group {
             switch store.layout {
-            case .documentAgentNotes, .documentNotesAgent, .documentNotesSplit:
+            case .documentAgentNotes, .documentNotesAgent:
                 documentPaneLayoutView()
             case .immersiveReading:
                 PersistentPaneHost(role: .reader, registry: paneHostRegistry)
@@ -1057,7 +1063,7 @@ private struct PersistentPaneRoot: View {
     private var reorderRole: WorkspacePaneRole? {
         guard store.visibleDocumentPaneOrder.count > 1 else { return nil }
         switch store.layout {
-        case .documentAgentNotes, .documentNotesAgent, .documentNotesSplit:
+        case .documentAgentNotes, .documentNotesAgent:
             return role
         case .immersiveReading, .immersiveConversation, .immersiveWriting:
             return nil
@@ -1195,7 +1201,7 @@ private struct ResizableTwoPane<First: View, Second: View>: NSViewRepresentable 
     }
 
     private func nativeHost<V: View>(_ view: V) -> NSHostingView<AnyView> {
-        let host = NSHostingView(rootView: AnyView(view.environmentObject(store)))
+        let host = NSHostingView(rootView: AnyView(view.environmentObject(store).weiBeiMotionScoped()))
         host.translatesAutoresizingMaskIntoConstraints = false
         host.setContentHuggingPriority(.defaultLow, for: .horizontal)
         host.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
@@ -1205,7 +1211,7 @@ private struct ResizableTwoPane<First: View, Second: View>: NSViewRepresentable 
     private func updateHost<V: View>(at index: Int, in splitView: NSSplitView, with view: V) {
         guard splitView.arrangedSubviews.indices.contains(index),
               let host = splitView.arrangedSubviews[index] as? NSHostingView<AnyView> else { return }
-        host.rootView = AnyView(view.environmentObject(store))
+        host.rootView = AnyView(view.environmentObject(store).weiBeiMotionScoped())
     }
 }
 
@@ -1287,7 +1293,7 @@ private struct ResizableThreePane<First: View, Second: View, Third: View>: NSVie
     }
 
     private func nativeHost<V: View>(_ view: V) -> NSHostingView<AnyView> {
-        let host = NSHostingView(rootView: AnyView(view.environmentObject(store)))
+        let host = NSHostingView(rootView: AnyView(view.environmentObject(store).weiBeiMotionScoped()))
         host.translatesAutoresizingMaskIntoConstraints = false
         host.setContentHuggingPriority(.defaultLow, for: .horizontal)
         host.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
@@ -1297,7 +1303,7 @@ private struct ResizableThreePane<First: View, Second: View, Third: View>: NSVie
     private func updateHost<V: View>(at index: Int, in splitView: NSSplitView, with view: V) {
         guard splitView.arrangedSubviews.indices.contains(index),
               let host = splitView.arrangedSubviews[index] as? NSHostingView<AnyView> else { return }
-        host.rootView = AnyView(view.environmentObject(store))
+        host.rootView = AnyView(view.environmentObject(store).weiBeiMotionScoped())
     }
 }
 

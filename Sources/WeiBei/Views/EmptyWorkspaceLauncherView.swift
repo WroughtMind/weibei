@@ -15,7 +15,7 @@ private enum EmptyWorkspaceLayoutMetrics {
 
 struct EmptyWorkspaceLauncherView: View {
     @EnvironmentObject private var store: WorkspaceStore
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.weibeiReduceMotion) private var reduceMotion
 
     @State private var selectedInspirationID: String?
     /// Bumped on theme change so a long-lived NSHostingView cannot keep a stale paper snapshot.
@@ -301,7 +301,7 @@ private struct EmptyWorkspaceEntryRow: View {
 }
 
 private struct EmptyWorkspaceEntryButton: View {
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.weibeiReduceMotion) private var reduceMotion
 
     let title: String
     let accessibilityLabel: String

@@ -727,8 +727,7 @@ struct NotePaneView: View {
             store.noteEditorCommand = NoteEditorCommand(kind: .scrollToHeading, markdown: String(index))
         }
         if railOnly {
-            store.requestPaneExpansion(.notes)
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.24, execute: navigate)
+            store.requestPaneExpansion(.notes, onCompleted: navigate)
         } else {
             navigate()
         }
@@ -1217,7 +1216,7 @@ struct AgentPaneView: View {
     @EnvironmentObject private var store: WorkspaceStore
     @EnvironmentObject private var paneState: WorkspacePaneState
     @EnvironmentObject private var interaction: WorkspaceInteractionState
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.weibeiReduceMotion) private var reduceMotion
     var showsPaneHeader = true
     var reorderRole: WorkspacePaneRole? = nil
     @FocusState private var draftFocused: Bool
@@ -1738,8 +1737,7 @@ struct AgentPaneView: View {
             }
         }
         if railOnly {
-            store.requestPaneExpansion(.agent)
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.24, execute: navigate)
+            store.requestPaneExpansion(.agent, onCompleted: navigate)
         } else {
             navigate()
         }
@@ -3041,7 +3039,7 @@ private struct AgentMessageBubble: View {
 
 private struct AgentBubble: View {
     @EnvironmentObject private var store: WorkspaceStore
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.weibeiReduceMotion) private var reduceMotion
     var message: AgentMessage
     var liveStreamingText: String? = nil
     var liveActivityText: String? = nil
@@ -3647,7 +3645,7 @@ private struct RichAnswerNarrativeText: View {
 
 private struct AgentReplyMemoryUpdateTag: View {
     @EnvironmentObject private var store: WorkspaceStore
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.weibeiReduceMotion) private var reduceMotion
     let message: AgentMessage
     let update: AgentReplyMemoryUpdate
     @State private var expanded = false
@@ -5145,7 +5143,7 @@ private struct AgentLiveResponse: View {
 private struct AgentThinkingIndicator: View {
     @EnvironmentObject private var store: WorkspaceStore
     var activityText: String?
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.weibeiReduceMotion) private var reduceMotion
     @State private var cachedText = ""
     @State private var cachedTextWidth: CGFloat = 1
     @State private var motionEpoch = Date()

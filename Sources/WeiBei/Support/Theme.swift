@@ -831,6 +831,51 @@ enum WeiBeiMotion {
     static let sideDrawer = Animation.easeOut(duration: 0.12)
 }
 
+private struct WeiBeiReduceMotionKey: EnvironmentKey {
+    static let defaultValue = false
+}
+
+extension EnvironmentValues {
+    /// WeiBei's resolved reduce-motion result. Native surfaces read this instead of
+    /// `accessibilityReduceMotion` so the "完整动态效果" preference can override the
+    /// macOS switch and "减少动态效果" can force it off app-wide.
+    var weibeiReduceMotion: Bool {
+        get { self[WeiBeiReduceMotionKey.self] }
+        set { self[WeiBeiReduceMotionKey.self] = newValue }
+    }
+}
+
+/// Single motion scope for the whole app: resolves the three-way preference against
+/// the macOS switch, publishes the boolean into WeiBei's own environment, and — when
+/// motion is reduced — strips animation from every transaction inside. Individual
+/// `withAnimation` call sites stay untouched.
+struct WeiBeiMotionScope: ViewModifier {
+    @EnvironmentObject private var store: WorkspaceStore
+    @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
+
+    func body(content: Content) -> some View {
+        let reduceMotion = store.motionPreference.resolvesReduceMotion(
+            systemReduceMotion: systemReduceMotion
+        )
+        content
+            .environment(\.weibeiReduceMotion, reduceMotion)
+            .transaction { transaction in
+                guard reduceMotion else { return }
+                transaction.animation = nil
+                transaction.disablesAnimations = true
+            }
+    }
+}
+
+extension View {
+    /// Applies the app motion scope. Long-lived manually hosted `NSHostingView` roots
+    /// (pane hosts, course drawer, floating previews) must call this — they do not
+    /// inherit the window scene's SwiftUI environment.
+    func weiBeiMotionScoped() -> some View {
+        modifier(WeiBeiMotionScope())
+    }
+}
+
 /// Top-bar / settings theme control: compact surface swatches instead of a menu.
 struct AppearanceThemePaletteButton: View {
     @EnvironmentObject private var store: WorkspaceStore

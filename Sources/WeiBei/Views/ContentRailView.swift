@@ -75,7 +75,7 @@ struct ContentRailView: View {
     @State private var previewCloseWork: DispatchWorkItem?
     @FocusState private var focusedItemID: String?
 
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.weibeiReduceMotion) private var reduceMotion
 
     init(
         label: String,
