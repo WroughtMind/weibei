@@ -332,3 +332,34 @@ private extension Substring {
         return rest
     }
 }
+
+/// Quiet loading placeholder for a cold chat row. Deliberately content-free:
+/// any real-content preview renders a typography that never matches the
+/// WebView's final layout, and that mismatch read as a glitch ("它闪一下") —
+/// an abstract skeleton reads as loading instead.
+struct AgentMarkdownSkeleton: View {
+    var compact = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: compact ? 8 : 10) {
+            RoundedRectangle(cornerRadius: 4, style: .continuous)
+                .fill(WeiBeiTheme.ink.opacity(0.10))
+                .frame(height: compact ? 9 : 11)
+                .frame(maxWidth: .infinity)
+            RoundedRectangle(cornerRadius: 4, style: .continuous)
+                .fill(WeiBeiTheme.ink.opacity(0.10))
+                .frame(height: compact ? 9 : 11)
+                .frame(maxWidth: .infinity)
+            RoundedRectangle(cornerRadius: 4, style: .continuous)
+                .fill(WeiBeiTheme.ink.opacity(0.10))
+                .frame(height: compact ? 9 : 11)
+                .frame(maxWidth: .infinity)
+            RoundedRectangle(cornerRadius: 4, style: .continuous)
+                .fill(WeiBeiTheme.ink.opacity(0.10))
+                .frame(height: compact ? 9 : 11)
+                .frame(maxWidth: .infinity)
+                .padding(.trailing, compact ? 64 : 96)
+        }
+        .accessibilityHidden(true)
+    }
+}

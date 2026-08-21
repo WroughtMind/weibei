@@ -5075,32 +5075,23 @@ private struct AgentMessageMarkdownText: View {
                 .zIndex(0)
             }
             // Never flash native/raw Markdown over a live stream or over the
-            // streamed→finalized handoff. Cold-mounted rows (history after a
-            // relaunch or session switch) still need it until this WebView's
-            // first measurement — structured blocks keep the wait readable,
-            // dimmed so it reads as a placeholder, not a broken final render.
+            // streamed→finalized handoff. Cold-mounted rows show a content-free
+            // skeleton until this WebView's first measurement — any real-content
+            // preview used a typography that never matched the final render and
+            // the swap read as a glitch, not as loading.
             if !finalizedRendererReady
                 && !awaitsFinalizedRendererReady
                 && (!isStreaming
                     || !keepsMarkdownSurfaceMounted
                     || finalizedRendererFailed) {
-                Group {
-                    if rendersRichMarkdown {
-                        AgentMarkdownBlockFallback(
-                            markdown: finalizedMarkdown,
-                            compact: compact
-                        )
-                    } else {
-                        nativeBody
-                    }
-                }
-                .background(WeiBeiTheme.paper)
-                .allowsHitTesting(false)
-                .opacity(finalizedRendererFailed ? 1 : 0.55)
-                .zIndex(1)
+                coldPlaceholderBody
+                    .background(WeiBeiTheme.paper)
+                    .allowsHitTesting(false)
+                    .zIndex(1)
             }
         }
         .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
+        .animation(WeiBeiMotion.micro, value: finalizedRendererReady)
         .clipped()
         .background {
             AgentScrollViewportVisibilityProbe { visible in
@@ -5108,6 +5099,34 @@ private struct AgentMessageMarkdownText: View {
                     isInScrollViewport = visible
                 }
             }
+        }
+    }
+
+    /// Interim surface for rows whose rich renderer is not authoritative yet.
+    /// A cold finalized row shows a quiet skeleton — the native text underneath
+    /// stays mounted invisibly so it reserves an approximate height and the
+    /// first real measurement barely moves the row. Live-streaming and failed
+    /// rows show structured native text at full opacity: there the native
+    /// surface IS the content.
+    @ViewBuilder
+    private var coldPlaceholderBody: some View {
+        if finalizedRendererFailed || isStreaming {
+            if rendersRichMarkdown {
+                AgentMarkdownBlockFallback(
+                    markdown: finalizedMarkdown,
+                    compact: compact
+                )
+            } else {
+                nativeBody
+            }
+        } else {
+            nativeBody
+                .opacity(0.001)
+                .overlay(alignment: .topLeading) {
+                    AgentMarkdownSkeleton(compact: compact)
+                        .padding(.top, 2)
+                }
+                .accessibilityHidden(true)
         }
     }
 
