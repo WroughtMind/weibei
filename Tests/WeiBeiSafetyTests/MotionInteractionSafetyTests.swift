@@ -94,6 +94,40 @@ final class MotionInteractionSafetyTests: XCTestCase {
         XCTAssertNil(store.importantOperationError)
     }
 
+    /// Recovery retracts the banner: when a note's file error clears and the
+    /// banner still shows that exact message (with no other item failing on the
+    /// same message), the banner is dismissed instead of lingering as a false alarm.
+    @MainActor
+    func testNoteFileErrorRecoveryRetractsMatchingBanner() {
+        let store = makeStore()
+        let message = "无法定位笔记文件，正文展示已降级为模板；已暂停自动写回以保护磁盘内容。"
+        store.setNoteFileError(message, for: "note-a")
+        store.showImportantOperationError(message)
+
+        store.setNoteFileError(nil, for: "note-a")
+        XCTAssertNil(store.importantOperationError, "a recovered note error must not leave a stale banner")
+    }
+
+    /// The retract only fires for the exact message still on screen: a newer or
+    /// different banner is left alone, and another item failing on the same
+    /// message keeps the banner up.
+    @MainActor
+    func testNoteFileErrorRecoveryKeepsUnrelatedOrSharedBanner() {
+        let store = makeStore()
+        let message = "无法定位笔记文件，正文展示已降级为模板；已暂停自动写回以保护磁盘内容。"
+
+        store.setNoteFileError(message, for: "note-a")
+        store.showImportantOperationError("另一条重要错误")
+        store.setNoteFileError(nil, for: "note-a")
+        XCTAssertEqual(store.importantOperationError, "另一条重要错误", "a different banner must not be dismissed")
+
+        store.setNoteFileError(message, for: "note-a")
+        store.setNoteFileError(message, for: "note-b")
+        store.showImportantOperationError(message)
+        store.setNoteFileError(nil, for: "note-a")
+        XCTAssertEqual(store.importantOperationError, message, "note-b still fails on the same message, so the banner stays")
+    }
+
     /// The render-queue admission policy: the executing page finishes, queued
     /// pages are cancelled, so after the blocked page the LATEST page runs next
     /// and the stale middle page never renders.

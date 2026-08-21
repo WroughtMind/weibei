@@ -434,11 +434,21 @@ extension WorkspaceStore {
             // P0：同一条错误已记录时不重复弹 transient，避免渲染期反复触发提示。
             let alreadyRecorded = noteOperationErrorsByItemID[itemID] == message
             noteOperationErrorsByItemID[itemID] = message
+            if !alreadyRecorded {
+                WeiBeiLog.noteRepair.error("note file error raised: \(message, privacy: .public)")
+            }
             if !alreadyRecorded, activeNoteItemID == itemID {
                 showImportantOperationError(message)
             }
         } else {
-            noteOperationErrorsByItemID.removeValue(forKey: itemID)
+            let cleared = noteOperationErrorsByItemID.removeValue(forKey: itemID)
+            // 恢复时同步撤下横幅：横幅仍显示这条消息、且没有其他条目因同一消息
+            // 出错时才清除——既不留下误报，也不误撤他人或更新后的错误。
+            if let cleared,
+               importantOperationError == cleared,
+               !noteOperationErrorsByItemID.values.contains(cleared) {
+                importantOperationError = nil
+            }
         }
     }
 
