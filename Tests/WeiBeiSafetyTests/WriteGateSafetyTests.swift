@@ -151,7 +151,9 @@ final class WriteGateSafetyTests: XCTestCase {
         let courseID = try store.createCourseInLibrary(title: "闸门课")
         let (item, _) = try importNote(store, base: base, courseID: courseID, content: "# 旧标题\n正文")
 
-        store.renameNotebookNote(itemID: item.id, to: "新标题")
+        try store.waitForCourseFileOperation {
+            await store.renameNotebookNoteInTransaction(itemID: item.id, to: "新标题")
+        }
         let renamedItem = try XCTUnwrap(
             store.importedItems.first { $0.subtitle.hasPrefix("新标题") } ?? store.importedItems.first { $0.id == item.id }
         )
@@ -200,6 +202,7 @@ final class WriteGateSafetyTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: base) }
         let backupRoot = base.appendingPathComponent("backups", isDirectory: true)
         let library = base.appendingPathComponent("资料库", isDirectory: true)
+        try FileManager.default.createDirectory(at: library, withIntermediateDirectories: true)
         struct ExplodingWriterError: Error {}
         let store = WorkspaceStore(
             workspaceDirectory: base.appendingPathComponent("workspace", isDirectory: true),

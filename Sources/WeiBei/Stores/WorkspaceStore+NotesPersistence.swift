@@ -106,7 +106,7 @@ extension WorkspaceStore {
         }
     }
 
-    private func renameNotebookNoteInTransaction(
+    func renameNotebookNoteInTransaction(
         itemID: String,
         to rawTitle: String
     ) async {
