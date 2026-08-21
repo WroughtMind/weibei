@@ -124,6 +124,10 @@ let streamingMarkdownBuffer: string | null = null;
 // of the characters the normalization rules react to can splice the raw tail
 // directly, skipping the full-text passes. Any rewriting push clears it.
 let streamingRawBody: string | null = null;
+// Full markdown text the JS side currently believes is rendered. While set,
+// the native side may send only the appended suffix (appendStreamingMarkdown)
+// instead of re-sending the whole document on every streaming push.
+let streamingFullTextBase: string | null = null;
 let selectionAskMarks: any[] = [];
 let decorationGeneration = 0;
 const insertionCursorMarker = '{{WEIBEI_CURSOR}}';
@@ -2898,11 +2902,14 @@ const stopStreamingMarkdown = (keep = true) => {
   streamingCommands().call(abortStreamingCmd.key, { keep });
   streamingMarkdownBuffer = null;
   streamingRawBody = null;
+  streamingFullTextBase = null;
 };
 
 const updateStreamingMarkdownInternal = (markdown: any) => {
   ensureEditor();
-  const document = splitFrontmatter(markdown || '');
+  const fullText = String(markdown || '');
+  streamingFullTextBase = fullText;
+  const document = splitFrontmatter(fullText);
   frontmatterBlock = document.frontmatter;
   syncFrontmatterPanel();
   // Full-text normalization and the withFrontmatter serialization walk the
@@ -2938,6 +2945,16 @@ const updateStreamingMarkdownInternal = (markdown: any) => {
   scheduleContentHeightReports();
 };
 
+// Native streaming pushes normally carry only the suffix appended since the
+// previous push. Without a baseline (cold start, after setMarkdown) the
+// suffix IS the full document, which keeps the bridge safe with one rule.
+const appendStreamingMarkdownInternal = (suffix: any) => {
+  const tail = String(suffix || '');
+  if (!tail) return;
+  const base = streamingFullTextBase;
+  updateStreamingMarkdownInternal(base === null ? tail : base + tail);
+};
+
 const finishStreamingMarkdownInternal = (markdown: any) => {
   streamingRawBody = null; // force the full normalize + serialization pass
   updateStreamingMarkdownInternal(markdown);
@@ -2959,6 +2976,7 @@ const finishStreamingMarkdownInternal = (markdown: any) => {
 const setMarkdownInternal = (markdown: any) => {
   ensureEditor();
   stopStreamingMarkdown();
+  streamingFullTextBase = null;
   compositionStartMarkdown = null;
   compositionTextblockFrom = null;
   compositionEndPending = false;
@@ -3342,6 +3360,13 @@ window.WeiBeiEditor = {
         showFailure(error);
       }
     },
+    appendStreamingMarkdown: (suffix: any) => {
+      try {
+        appendStreamingMarkdownInternal(suffix);
+      } catch (error) {
+        showFailure(error);
+      }
+    },
     finishStreamingMarkdown: (markdown: any) => {
       try {
         finishStreamingMarkdownInternal(markdown);
@@ -3373,6 +3398,7 @@ if (WEIBEI_EDITOR_RUNTIME && window.weiBeiEditorCheckMode) {
     getMarkdown: getMarkdownInternal,
     setMarkdown: setMarkdownInternal,
     updateStreamingMarkdown: updateStreamingMarkdownInternal,
+    appendStreamingMarkdown: appendStreamingMarkdownInternal,
     finishStreamingMarkdown: (markdown: any) => { finishStreamingMarkdownInternal(markdown); return true; },
     replaceSelection: replaceSelectionInternal,
     executeSelectionCommand: executeSelectionCommandInternal,

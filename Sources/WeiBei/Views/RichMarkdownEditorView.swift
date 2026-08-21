@@ -1427,8 +1427,19 @@ struct RichMarkdownEditorView: NSViewRepresentable {
 
         func updateStreamingMarkdown(_ text: String) {
             finalizedRenderGeneration &+= 1
+            let previous = webMarkdown
             webMarkdown = text
-            evaluate("window.WeiBeiEditor?.updateStreamingMarkdown(\(Self.json(text)))")
+            // The WebView already holds `previous`, so a pure extension only
+            // needs the appended suffix; re-sending the full document would
+            // JSON-encode and cross-process-compile an ever-growing script
+            // on every streaming tick. Any non-extension falls back to full.
+            if !previous.isEmpty, text.hasPrefix(previous) {
+                let suffix = text[previous.endIndex...]
+                guard !suffix.isEmpty else { return }
+                evaluate("window.WeiBeiEditor?.appendStreamingMarkdown(\(Self.json(String(suffix))))")
+            } else {
+                evaluate("window.WeiBeiEditor?.updateStreamingMarkdown(\(Self.json(text)))")
+            }
         }
 
         func finishStreamingMarkdown(_ text: String) {
