@@ -38,9 +38,10 @@ final class WriteGateSafetyTests: XCTestCase {
         _ store: WorkspaceStore,
         base: URL,
         courseID: UUID,
-        content: String
+        content: String,
+        fileName: String? = nil
     ) throws -> (item: StudyItem, url: URL) {
-        let source = base.appendingPathComponent("笔记-\(UUID().uuidString).md")
+        let source = base.appendingPathComponent("\(fileName ?? "笔记-\(UUID().uuidString)").md")
         try content.write(to: source, atomically: true, encoding: .utf8)
         let imported = try store.importFileIntoCourseForSelfCheck(
             source, courseID: courseID, role: .material
@@ -146,7 +147,13 @@ final class WriteGateSafetyTests: XCTestCase {
         let library = base.appendingPathComponent("资料库", isDirectory: true)
         let store = try makeStore(base: base, library: library, backupRoot: backupRoot)
         let courseID = try store.createCourseInLibrary(title: "闸门课")
-        let (item, url) = try importNote(store, base: base, courseID: courseID, content: "# 旧标题\n正文")
+        let (item, url) = try importNote(
+            store,
+            base: base,
+            courseID: courseID,
+            content: "# 旧标题\n正文",
+            fileName: "旧标题"
+        )
 
         try store.waitForCourseFileOperation {
             await store.renameNotebookNoteInTransaction(itemID: item.id, to: "新标题")
