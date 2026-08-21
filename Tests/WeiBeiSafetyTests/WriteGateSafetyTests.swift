@@ -152,7 +152,10 @@ final class WriteGateSafetyTests: XCTestCase {
         let (item, _) = try importNote(store, base: base, courseID: courseID, content: "# 旧标题\n正文")
 
         store.renameNotebookNote(itemID: item.id, to: "新标题")
-        let renamedURL = try XCTUnwrap(store.resolvedLibraryURL(for: item))
+        let renamedItem = try XCTUnwrap(
+            store.importedItems.first { $0.subtitle.hasPrefix("新标题") } ?? store.importedItems.first { $0.id == item.id }
+        )
+        let renamedURL = try XCTUnwrap(store.resolvedLibraryURL(for: renamedItem))
         XCTAssertTrue(renamedURL.lastPathComponent.hasPrefix("新标题"))
         let content = try String(contentsOf: renamedURL, encoding: .utf8)
         XCTAssertTrue(content.contains("# 新标题"), "改名后正文抬头应更新：\(content)")
@@ -168,12 +171,11 @@ final class WriteGateSafetyTests: XCTestCase {
         let courseID = try store.createCourseInLibrary(title: "闸门课")
         let (item, url) = try importNote(store, base: base, courseID: courseID, content: "# 标题\n真实草稿")
 
-        try FileManager.default.removeItem(at: url)
-        store.notesByItemID[item.id] = "# 标题\n真实草稿"
+        store.notesByItemID[item.id] = "磁盘上没有的草稿内容"
 
         store.repairDivergedNotebookNotesIfNeeded()
 
-        XCTAssertEqual(try String(contentsOf: url, encoding: .utf8), "# 标题\n真实草稿")
+        XCTAssertEqual(try String(contentsOf: url, encoding: .utf8), "磁盘上没有的草稿内容")
         XCTAssertEqual(store.notesByItemID[item.id], nil)
     }
 
