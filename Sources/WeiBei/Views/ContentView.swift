@@ -780,8 +780,11 @@ private struct ThreePaneWorkspaceChrome: View {
             // Translate it through the role before reading the visible-frame array —
             // indexing frames directly misplaces the highlight once a pane is hidden.
             if let targetIndex = drag.targetIndex,
-               normalizedOrder.indices.contains(targetIndex),
-               let visibleTargetIndex = visibleOrder.firstIndex(of: normalizedOrder[targetIndex]),
+               let visibleTargetIndex = ThreePaneReorderTargeting.visibleHighlightIndex(
+                   completeOrderIndex: targetIndex,
+                   completeOrder: normalizedOrder,
+                   visibleOrder: visibleOrder
+               ),
                frames.indices.contains(visibleTargetIndex) {
                 PaneDropTargetView(role: visibleOrder[visibleTargetIndex])
                     .frame(width: frames[visibleTargetIndex].width, height: frames[visibleTargetIndex].height)

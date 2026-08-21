@@ -501,7 +501,8 @@ struct NotePaneView: View {
                         isRailOnly: railOnly,
                         availableWidth: geometry.size.width,
                         topInset: railOnly ? 0 : (showsPaneHeader ? 44 : 34),
-                        onActivate: { activateNoteRailItem($0, railOnly: railOnly) }
+                        onActivate: { activateNoteRailItem($0, railOnly: railOnly) },
+                        motionPreference: store.motionPreference
                     )
                     .zIndex(4)
                 }
@@ -1400,7 +1401,8 @@ struct AgentPaneView: View {
                             availableWidth: liveAvailableWidth,
                             topInset: railOnly ? 0 : headerHeight,
                             bottomInset: railOnly ? 0 : agentRailBottomInset,
-                            onActivate: { activateAgentRailItem($0, railOnly: railOnly, proxy: proxy) }
+                            onActivate: { activateAgentRailItem($0, railOnly: railOnly, proxy: proxy) },
+                            motionPreference: store.motionPreference
                         )
                         .zIndex(4)
                     }

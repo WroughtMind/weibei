@@ -594,6 +594,9 @@ final class MarkdownWebView: WKWebView {
 }
 
 struct RichMarkdownEditorView: NSViewRepresentable {
+    /// Resolved by WeiBeiMotionScope — pushed into the page before first paint and
+    /// synced live on preference changes (never reloads the note).
+    @Environment(\.weibeiReduceMotion) private var reduceMotion
     var documentID = ""
     var markdown: String
     @Binding var command: NoteEditorCommand?
@@ -687,6 +690,8 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             window.weiBeiInterfaceLanguage = \(Self.json(interfaceLanguage.rawValue));
             window.weiBeiMarkdownCompactPreview = \(isCompactPreview ? "true" : "false");
             window.weiBeiChatWideTypography = \(isChatWideTypography ? "true" : "false");
+            window.weiBeiReduceMotion = \(reduceMotion ? "true" : "false");
+            document.documentElement.dataset.weibeiReduceMotion = window.weiBeiReduceMotion;
             document.documentElement.dataset.weibeiTheme = window.weiBeiTheme === "glassLight" || window.weiBeiTheme === "glassMist"
               ? "xuan"
               : window.weiBeiTheme === "glassDark" || window.weiBeiTheme === "glassSlate" ? "stele" : window.weiBeiTheme;
@@ -853,6 +858,12 @@ struct RichMarkdownEditorView: NSViewRepresentable {
                 context.coordinator.setInterfaceLanguage(interfaceLanguage)
             }
         }
+        if context.coordinator.reduceMotion != reduceMotion {
+            context.coordinator.reduceMotion = reduceMotion
+            if context.coordinator.isReady {
+                context.coordinator.setReduceMotion(reduceMotion)
+            }
+        }
         context.coordinator.isFocused = isFocused
         context.coordinator.focusRequest = focusRequest
         context.coordinator.onWikiLink = onWikiLink
@@ -1016,6 +1027,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         var searchQuery: String
         var appearanceMode: WeiBeiAppearanceMode
         var interfaceLanguage: WeiBeiInterfaceLanguage
+        var reduceMotion = false
         var webMarkdown = ""
         var pendingStreamingCompletion = false
         var lastCommandID: UUID?
@@ -1494,6 +1506,12 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             } else {
                 evaluate("window.WeiBeiEditor?.setInterfaceLanguage(\(Self.json(language.rawValue)))")
             }
+        }
+
+        /// Live reduce-motion sync into the existing page — no reload, no
+        /// protocol extension; the page only ever sees the final boolean.
+        func setReduceMotion(_ reduce: Bool) {
+            evaluate("window.WeiBeiEditor?.setReduceMotion(\(reduce ? "true" : "false"))")
         }
 
         func setChatWideTypography(_ wide: Bool) {

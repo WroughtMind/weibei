@@ -1983,6 +1983,89 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
         webView.evaluateJavaScript(script) { [weak self] value, error in
             guard let self else { return }
             guard error == nil, let result = value as? [String: Any], let markdown = result["markdown"] as? String, markdown.contains("|") else { self.fail("slash command check failed: \(String(describing: error)); \(String(describing: value))"); return }
+            self.validateMotionStableMenus()
+        }
+    }
+
+    /// Motion rework guards: slash menu rows keep DOM identity across pointer
+    /// motion, the table submenu keeps input focus across arrow-key changes,
+    /// reduce-motion reaches the page, and the folded callout wrapper survives
+    /// a read-mode toggle round trip without touching the Markdown.
+    private func validateMotionStableMenus() {
+        let script = """
+        (() => {
+          const open = (text) => { window.WeiBeiEditor.setMarkdown(text); return window.WeiBeiEditor.openSlashMenuForCheck(); };
+          // 1. DOM identity: pointer motion must not rebuild the command rows.
+          if (!open('/')) throw new Error('slash menu did not open for identity check');
+          const menu = document.querySelector('.weibei-slash-menu');
+          const rows = Array.from(menu.querySelectorAll('.weibei-slash-command-button'));
+          if (rows.length < 4) throw new Error('slash rows missing for identity check');
+          const probe = rows[1];
+          probe.dataset.domIdentityProbe = '1';
+          const hoverMove = (element) => { const event = new Event('pointermove', { bubbles: true }); Object.defineProperties(event, { movementX: { value: 2 }, movementY: { value: 0 } }); element.dispatchEvent(event); };
+          hoverMove(rows[3]);
+          if (!document.contains(probe) || probe.dataset.domIdentityProbe !== '1') throw new Error('pointer motion rebuilt slash rows');
+          if (probe.closest('.weibei-slash-command')?.classList.contains('is-active')) throw new Error('active row did not move off the probed row');
+          if (!rows[3].closest('.weibei-slash-command')?.classList.contains('is-active')) throw new Error('pointer motion did not update the active row');
+          const ariaDescendant = menu.getAttribute('aria-activedescendant') || '';
+          if (rows[3].parentElement && ariaDescendant !== rows[3].parentElement.id) throw new Error('aria-activedescendant did not follow the pointer: ' + ariaDescendant);
+
+          // 2. Table submenu: one instance, stepper clicks keep input focus and
+          //    always read live values (no stale captures from build time).
+          window.WeiBeiEditor.setDocumentID('motion-table-focus'); open('/table');
+          window.WeiBeiEditor.pressKeyForCheck('ArrowRight');
+          const panel = document.querySelector('.weibei-slash-table-panel');
+          if (!panel) throw new Error('table submenu did not open');
+          panel.dataset.identityProbe = '1';
+          const rowsStepper = panel.querySelectorAll('.weibei-slash-stepper')[0];
+          const rowsInput = rowsStepper.querySelector('input');
+          const increment = rowsStepper.querySelectorAll('button')[1];
+          rowsInput.focus();
+          increment.click();
+          if (document.querySelector('.weibei-slash-table-panel') !== panel || panel.dataset.identityProbe !== '1') throw new Error('table submenu was rebuilt by a stepper click');
+          if (document.activeElement !== rowsInput) throw new Error('stepper click stole the table input focus');
+          if (window.WeiBeiEditor.slashStateForCheck().rows !== 4) throw new Error('stepper click did not read the live row value');
+          increment.click();
+          if (window.WeiBeiEditor.slashStateForCheck().rows !== 5) throw new Error('stale handler captured the build-time value');
+          window.WeiBeiEditor.pressKeyForCheck('Escape');
+
+          // 3. Reduce-motion boolean reaches the page and gates CSS motion.
+          window.WeiBeiEditor.setReduceMotion(true);
+          if (document.documentElement.dataset.weibeiReduceMotion !== 'true') throw new Error('reduce-motion did not reach the document');
+          if (getComputedStyle(menu).transitionDuration !== '0s') throw new Error('reduce-motion did not disable menu transitions: ' + getComputedStyle(menu).transitionDuration);
+          window.WeiBeiEditor.setReduceMotion(false);
+          if (document.documentElement.dataset.weibeiReduceMotion !== 'false') throw new Error('reduce-motion could not be cleared');
+
+          // 4. Folded callout: wrapper present, click toggles open state, Markdown intact.
+          window.WeiBeiEditor.setDocumentID('motion-callout');
+          window.WeiBeiEditor.setEditable(false);
+          window.WeiBeiEditor.setMarkdown('> [!note]- 折叠标题\\n>\\n> 正文第一行\\n> 正文第二行');
+          const callout = document.querySelector('blockquote.weibei-callout[data-callout-fold="-"]');
+          const collapse = callout?.querySelector('.weibei-callout-collapse');
+          const content = collapse?.querySelector('.weibei-callout-content');
+          if (!callout || !collapse || !content) throw new Error('callout collapse wrapper missing: ' + JSON.stringify({
+            callouts: Array.from(document.querySelectorAll('blockquote.weibei-callout')).map((node) => ({ fold: node.getAttribute('data-callout-fold'), cls: node.className, children: Array.from(node.children).map((child) => child.className) })),
+            editable: document.body.dataset.editable
+          }));
+          const closedRows = getComputedStyle(collapse).gridTemplateRows;
+          callout.click();
+          if (!callout.classList.contains('weibei-callout-open')) throw new Error('click did not open the folded callout');
+          const openRows = getComputedStyle(collapse).gridTemplateRows;
+          if (closedRows === openRows) throw new Error('collapse grid rows did not change on toggle: ' + closedRows + ' / ' + openRows);
+          callout.click();
+          if (callout.classList.contains('weibei-callout-open')) throw new Error('click did not re-fold the callout');
+          window.WeiBeiEditor.setEditable(true);
+          const markdown = window.WeiBeiEditor.getMarkdown();
+          if (!markdown.includes('[!note]-') || !markdown.includes('正文第二行')) throw new Error('callout round trip polluted the Markdown: ' + JSON.stringify(markdown));
+          return true;
+        })();
+        """
+        webView.evaluateJavaScript(script) { [weak self] value, error in
+            guard let self else { return }
+            guard error == nil, value as? Bool == true else {
+                self.fail("motion-stable menus check failed: \(String(describing: error)); \(String(describing: value))")
+                return
+            }
             self.validateIMECompositionBridge()
         }
     }

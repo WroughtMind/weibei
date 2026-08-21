@@ -483,7 +483,8 @@ struct ReaderView: View {
             topInset: showsFloatingTitle && !isRailOnly ? 46 : 14,
             bottomInset: store.selectedMaterialItem?.kind == .pdf ? 52 : 18,
             onActivate: { activateContentRailItem($0, railOnly: isRailOnly) },
-            onHover: hoverContentRailItem
+            onHover: hoverContentRailItem,
+            motionPreference: store.motionPreference
         )
     }
 

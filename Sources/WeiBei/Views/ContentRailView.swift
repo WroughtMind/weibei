@@ -69,6 +69,9 @@ struct ContentRailView: View {
     let bottomInset: CGFloat
     let onActivate: (ContentRailItem) -> Void
     let onHover: (ContentRailItem?) -> Void
+    /// Needed by the cross-pane floating preview host, whose root has no store
+    /// in its environment.
+    let motionPreference: WeiBeiMotionPreference
 
     @State private var hoveredID: String?
     @State private var previewID: String?
@@ -86,7 +89,8 @@ struct ContentRailView: View {
         topInset: CGFloat = 0,
         bottomInset: CGFloat = 0,
         onActivate: @escaping (ContentRailItem) -> Void,
-        onHover: @escaping (ContentRailItem?) -> Void = { _ in }
+        onHover: @escaping (ContentRailItem?) -> Void = { _ in },
+        motionPreference: WeiBeiMotionPreference = .system
     ) {
         self.label = label
         self.items = items
@@ -98,6 +102,7 @@ struct ContentRailView: View {
         self.bottomInset = bottomInset
         self.onActivate = onActivate
         self.onHover = onHover
+        self.motionPreference = motionPreference
     }
 
     var body: some View {
@@ -120,7 +125,8 @@ struct ContentRailView: View {
                     item: isRailOnly ? previewItem : nil,
                     appearanceMode: appearanceMode,
                     width: ContentRailPolicy.dormantPreviewWidth,
-                    reduceMotion: reduceMotion
+                    reduceMotion: reduceMotion,
+                    motionPreference: motionPreference
                 )
                 .frame(width: 1, height: 1)
                 .position(x: floatingPreviewAnchorX, y: previewAnchorY)
@@ -497,6 +503,7 @@ private struct ContentRailFloatingPreviewBridge: NSViewRepresentable {
     let appearanceMode: WeiBeiAppearanceMode
     let width: CGFloat
     let reduceMotion: Bool
+    let motionPreference: WeiBeiMotionPreference
 
     func makeCoordinator() -> Coordinator {
         Coordinator()
@@ -517,7 +524,8 @@ private struct ContentRailFloatingPreviewBridge: NSViewRepresentable {
             item: item,
             appearanceMode: appearanceMode,
             width: width,
-            reduceMotion: reduceMotion
+            reduceMotion: reduceMotion,
+            motionPreference: motionPreference
         )
     }
 
@@ -539,7 +547,8 @@ private struct ContentRailFloatingPreviewBridge: NSViewRepresentable {
             item: ContentRailItem,
             appearanceMode: WeiBeiAppearanceMode,
             width: CGFloat,
-            reduceMotion: Bool
+            reduceMotion: Bool,
+            motionPreference: WeiBeiMotionPreference
         ) {
             updateGeneration += 1
             dismissGeneration += 1
@@ -557,7 +566,7 @@ private struct ContentRailFloatingPreviewBridge: NSViewRepresentable {
                         width: width
                     )
                     .preferredColorScheme(appearanceMode.colorScheme)
-                    .weiBeiMotionScoped()
+                    .weiBeiMotionScoped(preference: motionPreference)
                 )
                 let hosting: ContentRailPassthroughHostingView
                 if let existing = self.hostingView {

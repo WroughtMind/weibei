@@ -236,7 +236,7 @@ final class CourseDrawerContainerView: NSView {
             ) { [weak self] in
                 self?.onDismiss?()
             }
-            .weiBeiMotionScoped()
+            .weiBeiMotionScoped(preference: store.motionPreference)
         )
     }
 }

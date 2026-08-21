@@ -856,12 +856,12 @@ extension EnvironmentValues {
 /// the macOS switch, publishes the boolean into WeiBei's own environment, and — when
 /// motion is reduced — strips animation from every transaction inside. Individual
 /// `withAnimation` call sites stay untouched.
-struct WeiBeiMotionScope: ViewModifier {
-    @EnvironmentObject private var store: WorkspaceStore
+private struct WeiBeiParameterizedMotionScope: ViewModifier {
+    let preference: WeiBeiMotionPreference
     @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
 
     func body(content: Content) -> some View {
-        let reduceMotion = store.motionPreference.resolvesReduceMotion(
+        let reduceMotion = preference.resolvesReduceMotion(
             systemReduceMotion: systemReduceMotion
         )
         content
@@ -874,12 +874,27 @@ struct WeiBeiMotionScope: ViewModifier {
     }
 }
 
+/// Store-backed variant for trees that carry the workspace store in their
+/// environment (window scenes, pane hosts).
+private struct WeiBeiStoreMotionScope: ViewModifier {
+    @EnvironmentObject private var store: WorkspaceStore
+
+    func body(content: Content) -> some View {
+        content.modifier(WeiBeiParameterizedMotionScope(preference: store.motionPreference))
+    }
+}
+
 extension View {
     /// Applies the app motion scope. Long-lived manually hosted `NSHostingView` roots
     /// (pane hosts, course drawer, floating previews) must call this — they do not
-    /// inherit the window scene's SwiftUI environment.
+    /// inherit the window scene's SwiftUI environment. Use the parameterized variant
+    /// for roots without the store in their environment.
     func weiBeiMotionScoped() -> some View {
-        modifier(WeiBeiMotionScope())
+        modifier(WeiBeiStoreMotionScope())
+    }
+
+    func weiBeiMotionScoped(preference: WeiBeiMotionPreference) -> some View {
+        modifier(WeiBeiParameterizedMotionScope(preference: preference))
     }
 }
 

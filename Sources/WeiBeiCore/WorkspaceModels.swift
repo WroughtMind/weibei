@@ -154,6 +154,19 @@ public enum WorkspacePaneRole: String, Codable, CaseIterable, Identifiable, Hash
 }
 
 public enum ThreePaneReorderTargeting {
+    /// Converts a complete-order target index (the submission space `targetIndex`
+    /// lives in) into the visible-order index the highlight overlay must use.
+    /// Indexing the visible array directly misplaces the highlight once a pane
+    /// is hidden; returns nil when the target pane itself is hidden.
+    public static func visibleHighlightIndex(
+        completeOrderIndex: Int,
+        completeOrder: [WorkspacePaneRole],
+        visibleOrder: [WorkspacePaneRole]
+    ) -> Int? {
+        guard completeOrder.indices.contains(completeOrderIndex) else { return nil }
+        return visibleOrder.firstIndex(of: completeOrder[completeOrderIndex])
+    }
+
     public static func targetIndex(
         order rawOrder: [WorkspacePaneRole],
         frames: [WorkspacePaneRole: CGRect],

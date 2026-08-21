@@ -930,6 +930,11 @@ let reorderFrames: [WorkspacePaneRole: CGRect] = [
 ]
 expect(ThreePaneReorderTargeting.targetIndex(order: reorderOrder, frames: reorderFrames, role: .reader, horizontalDelta: 180) == 1, "pane reorder target follows real resized pane overlap instead of fixed thirds")
 expect(ThreePaneReorderTargeting.targetIndex(order: reorderOrder, frames: reorderFrames, role: .notes, horizontalDelta: -420) == 1, "pane reorder target works from either edge using the current pane widths")
+expect(ThreePaneReorderTargeting.visibleHighlightIndex(completeOrderIndex: 2, completeOrder: [.reader, .agent, .notes], visibleOrder: [.reader, .notes]) == 1
+    && ThreePaneReorderTargeting.visibleHighlightIndex(completeOrderIndex: 1, completeOrder: [.reader, .agent, .notes], visibleOrder: [.reader, .notes]) == nil
+    && ThreePaneReorderTargeting.visibleHighlightIndex(completeOrderIndex: 0, completeOrder: [.reader, .agent, .notes], visibleOrder: [.reader, .notes]) == 0
+    && ThreePaneReorderTargeting.visibleHighlightIndex(completeOrderIndex: 3, completeOrder: [.reader, .agent, .notes], visibleOrder: [.reader, .notes]) == nil,
+    "hidden-pane drag highlight maps complete-order indexes through the pane role into the visible array")
 expect(WorkspaceLayout.documentAgentNotes.label(language: .chinese) == "阅读-对话-笔记"
     && WorkspaceLayout.documentAgentNotes.label(language: .english) == "Reader-Chat-Notes"
     && WorkspaceLayout.documentNotesAgent.label(language: .chinese) == "阅读-笔记-对话"
