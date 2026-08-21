@@ -17954,6 +17954,8 @@ final class WorkspaceStore: ObservableObject {
             guard !Task.isCancelled else { return }
             // P0：先跑分叉修复（会丢弃/写回草稿），再跑 retry——顺序不能反，
             // 否则 retry 会把「读盘失败回退的模板草稿」直接盖回磁盘。
+            // 约束出处：Docs/plans/2026-08-22-file-model-convergence-and-library-relocation.md §5 阶段4
+            // （阶段4 写闸门落地、repair 例程拆除后，此顺序锁随之删除）。
             await self?.repairDivergedNotebookNotesIfNeeded()
             guard !Task.isCancelled else { return }
             await self?.retryRestoredPendingNoteWrites()
