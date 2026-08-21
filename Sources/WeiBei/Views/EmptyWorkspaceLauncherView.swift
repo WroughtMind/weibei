@@ -367,7 +367,7 @@ private struct EmptyWorkspaceInspirationView: View {
                     inspirationContent
 
                     Text(inspiration.credit)
-                        .font(.system(size: compact ? 10.5 : 11.5, weight: .medium, design: .serif))
+                        .weiBeiText(compact ? 10.5 : 11.5, weight: .medium, design: .serif)
                         .foregroundStyle(WeiBeiTheme.secondaryInk)
                         .multilineTextAlignment(.center)
                         .lineLimit(2)
@@ -447,7 +447,7 @@ private struct EmptyWorkspaceInspirationView: View {
 
     private func inspirationText(size: CGFloat) -> some View {
         Text(inspiration.text)
-            .font(.system(size: size, weight: .regular, design: .serif))
+            .weiBeiText(size, weight: .regular, design: .serif)
             .foregroundStyle(WeiBeiTheme.ink.opacity(0.90))
             .multilineTextAlignment(.center)
             .lineLimit(compact ? 3 : 2)
@@ -469,7 +469,7 @@ private struct EmptyWorkspaceInspirationView: View {
                 rightsLink
             }
         }
-        .font(.system(size: compact ? 9 : 9.5, weight: .regular))
+        .weiBeiText(compact ? 9 : 9.5, weight: .regular)
         .foregroundStyle(WeiBeiTheme.tertiaryInk)
         .multilineTextAlignment(.center)
         .lineLimit(2)

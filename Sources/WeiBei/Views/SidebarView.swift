@@ -69,9 +69,9 @@ struct SidebarView: View {
                     HStack(spacing: 3) {
                         Text(ui("课程空间", "Course Space"))
                         Image(systemName: "chevron.right")
-                            .font(.system(size: 8, weight: .bold))
+                            .weiBeiText(8, weight: .bold)
                     }
-                    .font(.system(size: 12, weight: .semibold))
+                    .weiBeiText(12, weight: .semibold)
                     .foregroundStyle(WeiBeiTheme.cinnabar.opacity(0.82))
                 }
                 .buttonStyle(.plain)
@@ -117,7 +117,7 @@ struct SidebarView: View {
             .textFieldStyle(.plain)
             .focused($librarySearchFocused)
             .foregroundColor(WeiBeiTheme.ink)
-            .font(.system(size: 13))
+            .weiBeiText(13)
             .weibeiInputSurface(active: librarySearchFocused)
             .padding(.horizontal, 14)
             .padding(.bottom, 10)
@@ -247,7 +247,7 @@ struct CourseSidebarList: View {
 
             Button { store.openCourseSpace(course.id) } label: {
                 Text(ui("进入", "Enter"))
-                    .font(.system(size: 10.5, weight: .semibold))
+                    .weiBeiText(10.5, weight: .semibold)
                     .foregroundStyle(WeiBeiTheme.cinnabar.opacity(0.88))
                     .padding(.horizontal, 8)
                     .frame(height: 28)
@@ -484,7 +484,7 @@ private struct SidebarSectionHeader: View {
 
     var body: some View {
         Text(title)
-            .font(.system(size: 11, weight: .semibold))
+            .weiBeiText(11, weight: .semibold)
             .foregroundStyle(WeiBeiTheme.tertiaryInk)
             .textCase(nil)
     }
@@ -495,7 +495,7 @@ private struct SidebarEmptyRow: View {
 
     var body: some View {
         Text(title)
-            .font(.system(size: 11))
+            .weiBeiText(11)
             .foregroundStyle(WeiBeiTheme.tertiaryInk.opacity(0.78))
             .frame(height: 28, alignment: .leading)
     }
@@ -512,19 +512,19 @@ private struct SidebarCourseGroupHeader: View {
     var body: some View {
         HStack(spacing: 5) {
             Image(systemName: systemImage)
-                .font(.system(size: 9.5, weight: .semibold))
+                .weiBeiText(9.5, weight: .semibold)
                 .foregroundStyle(accent.opacity(0.74))
             Text(title)
-                .font(.system(size: 10.5, weight: .semibold))
+                .weiBeiText(10.5, weight: .semibold)
                 .foregroundStyle(WeiBeiTheme.secondaryInk)
             Spacer(minLength: 4)
             Text("\(count)")
-                .font(.system(size: 9.5, weight: .medium, design: .monospaced))
+                .weiBeiText(9.5, weight: .medium, design: .monospaced)
                 .foregroundStyle(WeiBeiTheme.tertiaryInk)
             if let add {
                 Button(action: add) {
                     Image(systemName: "plus")
-                        .font(.system(size: 9.5, weight: .semibold))
+                        .weiBeiText(9.5, weight: .semibold)
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(accent.opacity(0.82))
@@ -561,7 +561,7 @@ private struct SidebarCourseRow: View {
                 .scaleEffect(expanded || hovering ? 1.08 : 1)
             VStack(alignment: .leading, spacing: 2) {
                 Text(course.title)
-                    .font(.system(size: 13, weight: .medium))
+                    .weiBeiText(13, weight: .medium)
                     .lineLimit(1)
                     .foregroundStyle(WeiBeiTheme.ink)
                 Text(language.text(
@@ -574,7 +574,7 @@ private struct SidebarCourseRow: View {
             }
             Spacer(minLength: 6)
             Image(systemName: "chevron.right")
-                .font(.system(size: 9, weight: .semibold))
+                .weiBeiText(9, weight: .semibold)
                 .foregroundStyle(expanded ? accent.opacity(0.78) : WeiBeiTheme.tertiaryInk)
                 .rotationEffect(.degrees(expanded ? 90 : 0))
         }
@@ -616,13 +616,13 @@ private struct SidebarCourseNameSheet: View {
                 Text(heading)
                     .font(WeiBeiTypography.brandFont(language: store.interfaceLanguage, size: 21, weight: .semibold))
                 Text(detail)
-                    .font(.system(size: 12))
+                    .weiBeiText(12)
                     .foregroundStyle(WeiBeiTheme.secondaryInk)
             }
             TextField(store.ui("课程名", "Course title"), text: $title)
                 .textFieldStyle(.plain)
                 .focused($titleFocused)
-                .font(.system(size: 13))
+                .weiBeiText(13)
                 .foregroundColor(WeiBeiTheme.ink)
                 .weibeiInputSurface(active: titleFocused, height: 32)
                 .onSubmit(confirm)
@@ -674,7 +674,7 @@ private struct NotebookRenameRow: View {
             )
             .textFieldStyle(.plain)
             .focused($focused)
-            .font(.system(size: compact ? 12.5 : 13, weight: .medium))
+            .weiBeiText(compact ? 12.5 : 13, weight: .medium)
             .foregroundColor(WeiBeiTheme.ink)
             .onSubmit {
                 if !title.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -717,7 +717,7 @@ private struct LibraryRow: View {
                 .opacity(selected || hovering ? 1 : 0.78)
             VStack(alignment: .leading, spacing: compact ? 1 : 2) {
                 Text(resolvedTitle ?? item.title)
-                    .font(.system(size: compact ? 12.5 : 13, weight: compact ? .medium : .regular))
+                    .weiBeiText(compact ? 12.5 : 13, weight: compact ? .medium : .regular)
                     .lineLimit(1)
                     .foregroundStyle(WeiBeiTheme.ink)
                 Text(item.subtitle)
@@ -726,7 +726,7 @@ private struct LibraryRow: View {
                     .lineLimit(1)
                 if !compact, !tags.isEmpty {
                     Text(tags.prefix(3).joined(separator: " "))
-                        .font(.system(size: 10, weight: .medium))
+                        .weiBeiText(10, weight: .medium)
                         .foregroundStyle(WeiBeiTheme.cinnabar.opacity(0.72))
                         .lineLimit(1)
                 }

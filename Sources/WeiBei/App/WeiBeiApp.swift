@@ -121,6 +121,7 @@ struct WeiBeiApp: App {
                 .environmentObject(store.paneState)
                 .environmentObject(store.interaction)
                 .preferredColorScheme(store.appearanceMode.colorScheme)
+                .environment(\.weiBeiTextScale, store.interfaceTextScale.multiplier)
                 .modifier(WeiBeiAppearanceTransition(mode: store.appearanceMode))
                 .background(WindowChromeConfigurator(appearanceMode: store.appearanceMode))
                 .background(MainWindowReopenBridge(appDelegate: appDelegate))

@@ -148,6 +148,43 @@ enum WeiBeiTypography {
     static let englishDisplayFontName = "WeiBeiStele-Regular"
     static let englishMonoFontName = "WeiBeiSteleMono-Regular"
 
+    /// App-side text size tiers. The multiplier applies to every token-driven
+    /// font so SwiftUI chrome and the Milkdown web runtime scale together.
+    enum TextScale: String, CaseIterable, Identifiable {
+        case compact
+        case standard
+        case large
+        case extraLarge
+        case maximum
+
+        var id: String { rawValue }
+
+        var multiplier: CGFloat {
+            switch self {
+            case .compact: return 0.9
+            case .standard: return 1.0
+            case .large: return 1.15
+            case .extraLarge: return 1.35
+            case .maximum: return 1.6
+            }
+        }
+
+        func label(language: WeiBeiInterfaceLanguage) -> String {
+            switch self {
+            case .compact:
+                return language.text("紧凑", "Compact")
+            case .standard:
+                return language.text("标准", "Standard")
+            case .large:
+                return language.text("大", "Large")
+            case .extraLarge:
+                return language.text("特大", "Extra Large")
+            case .maximum:
+                return language.text("最大", "Maximum")
+            }
+        }
+    }
+
     private static var didRegisterBundledFonts = false
 
     static func registerBundledFonts() {
@@ -184,6 +221,69 @@ enum WeiBeiTypography {
             registerBundledFonts()
             return .custom(englishMonoFontName, size: size)
         }
+    }
+}
+
+private struct WeiBeiTextScaleKey: EnvironmentKey {
+    static let defaultValue: CGFloat = 1
+}
+
+extension EnvironmentValues {
+    /// Multiplier applied by the weiBei* font modifiers; injected at the app root.
+    var weiBeiTextScale: CGFloat {
+        get { self[WeiBeiTextScaleKey.self] }
+        set { self[WeiBeiTextScaleKey.self] = newValue }
+    }
+}
+
+private struct WeiBeiScaledTextModifier: ViewModifier {
+    @Environment(\.weiBeiTextScale) private var scale
+    let size: CGFloat
+    let weight: Font.Weight
+    let design: Font.Design
+
+    func body(content: Content) -> some View {
+        content.weiBeiText(size * scale, weight: weight, design: design)
+    }
+}
+
+private struct WeiBeiScaledBrandTextModifier: ViewModifier {
+    @Environment(\.weiBeiTextScale) private var scale
+    let language: WeiBeiInterfaceLanguage
+    let size: CGFloat
+    let weight: Font.Weight
+
+    func body(content: Content) -> some View {
+        content.font(WeiBeiTypography.brandFont(language: language, size: size * scale, weight: weight))
+    }
+}
+
+private struct WeiBeiScaledMonoTextModifier: ViewModifier {
+    @Environment(\.weiBeiTextScale) private var scale
+    let language: WeiBeiInterfaceLanguage
+    let size: CGFloat
+
+    func body(content: Content) -> some View {
+        content.font(WeiBeiTypography.monoFont(language: language, size: size * scale))
+    }
+}
+
+extension View {
+    /// Token-driven fixed-size text that scales with the user's text tier.
+    func weiBeiText(_ size: CGFloat, weight: Font.Weight = .regular, design: Font.Design = .default) -> some View {
+        modifier(WeiBeiScaledTextModifier(size: size, weight: weight, design: design))
+    }
+
+    func weiBeiBrandFont(language: WeiBeiInterfaceLanguage, size: CGFloat, weight: Font.Weight = .semibold) -> some View {
+        modifier(WeiBeiScaledBrandTextModifier(language: language, size: size, weight: weight))
+    }
+
+    func weiBeiEnglishBrandFont(size: CGFloat, weight: Font.Weight = .semibold) -> some View {
+        modifier(WeiBeiScaledBrandTextModifier(language: .english, size: size, weight: weight))
+    }
+
+    func weiBeiMonoFont(language: WeiBeiInterfaceLanguage, size: CGFloat) -> some View {
+        modifier(WeiBeiScaledMonoTextModifier(language: language, size: size))
     }
 }
 
@@ -957,7 +1057,7 @@ private struct AppearanceThemePalettePopover: View {
                                 .frame(width: 22, height: 2)
                         }
                         Text(mode.label(language: store.interfaceLanguage))
-                            .font(.system(size: 11, weight: mode == store.appearanceMode ? .semibold : .medium))
+                            .weiBeiText(11, weight: mode == store.appearanceMode ? .semibold : .medium)
                             .foregroundStyle(
                                 mode == store.appearanceMode ? WeiBeiTheme.ink : WeiBeiTheme.secondaryInk
                             )
@@ -1354,7 +1454,7 @@ private struct WeiBeiIconButtonBody: View {
 
     var body: some View {
         configuration.label
-            .font(.system(size: 13, weight: .semibold))
+            .weiBeiText(13, weight: .semibold)
             .frame(width: size, height: size)
             .foregroundStyle(foreground(isPressed: configuration.isPressed))
             .background(background(isPressed: configuration.isPressed))
@@ -1441,7 +1541,7 @@ struct WeiBeiTextActionButtonStyle: ButtonStyle {
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.system(size: 11, weight: .medium))
+            .weiBeiText(11, weight: .medium)
             .foregroundStyle(foreground)
             .padding(.horizontal, 8)
             .frame(height: 24)

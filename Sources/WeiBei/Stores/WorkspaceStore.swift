@@ -610,6 +610,7 @@ final class WorkspaceStore: ObservableObject {
     @Published var motionPreference: WeiBeiMotionPreference = .system
     @Published var adaptImportedDocumentColors = true
     @Published var interfaceLanguage: WeiBeiInterfaceLanguage = .chinese
+    @Published var interfaceTextScale: WeiBeiTypography.TextScale = .standard
     @Published var courseWorkspacePresented = false
     @Published private(set) var courseWorkspaceCourseID: UUID?
     @Published private(set) var courseWorkspaceDestination: CourseWorkspaceDestination = .hub
@@ -12319,6 +12320,12 @@ final class WorkspaceStore: ObservableObject {
         save()
     }
 
+    func setInterfaceTextScale(_ scale: WeiBeiTypography.TextScale) {
+        guard interfaceTextScale != scale else { return }
+        interfaceTextScale = scale
+        save()
+    }
+
     func setAgentAuthMethod(_ method: AgentAuthMethod) {
         guard agentAuthMethod != method else { return }
         agentAuthMethod = method
@@ -20322,6 +20329,10 @@ final class WorkspaceStore: ObservableObject {
            let interfaceLanguage = WeiBeiInterfaceLanguage(rawValue: interfaceLanguageRaw) {
             self.interfaceLanguage = interfaceLanguage
         }
+        if let interfaceTextScaleRaw = snapshot.interfaceTextScaleRaw,
+           let interfaceTextScale = WeiBeiTypography.TextScale(rawValue: interfaceTextScaleRaw) {
+            self.interfaceTextScale = interfaceTextScale
+        }
         noteText = noteText(for: activeNoteItem)
     }
 
@@ -20432,7 +20443,8 @@ final class WorkspaceStore: ObservableObject {
                 showDailyInspiration: showDailyInspiration,
                 appearanceModeRaw: appearanceMode.rawValue,
                 adaptImportedDocumentColors: adaptImportedDocumentColors,
-                interfaceLanguageRaw: interfaceLanguage.rawValue
+                interfaceLanguageRaw: interfaceLanguage.rawValue,
+                interfaceTextScaleRaw: interfaceTextScale.rawValue
             ),
             resumePoints
         )
@@ -21182,7 +21194,8 @@ final class WorkspaceStore: ObservableObject {
                 showDailyInspiration: showDailyInspiration,
                 appearanceModeRaw: appearanceMode.rawValue,
                 adaptImportedDocumentColors: adaptImportedDocumentColors,
-                interfaceLanguageRaw: interfaceLanguage.rawValue
+                interfaceLanguageRaw: interfaceLanguage.rawValue,
+                interfaceTextScaleRaw: interfaceTextScale.rawValue
             )
             let noteEditorSaveReceipt = makeNoteEditorWorkspaceSaveReceipt(snapshot)
             do {

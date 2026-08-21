@@ -271,6 +271,24 @@ struct SettingsView: View {
 
             settingsGroup(store.ui("偏好", "Preferences")) {
                 settingsRow(
+                    title: store.ui("界面文字大小", "Interface Text Size"),
+                    detail: store.ui(
+                        "调整整个界面的文字大小，笔记正文同步缩放",
+                        "Scales text across the interface; note content follows"
+                    ),
+                    showsBottomDivider: false
+                ) {
+                    compactMenu(store.interfaceTextScale.label(language: store.interfaceLanguage)) {
+                        ForEach(WeiBeiTypography.TextScale.allCases) { scale in
+                            Button(
+                                "\(scale.label(language: store.interfaceLanguage)) · \(Int((scale.multiplier * 100).rounded()))%"
+                            ) {
+                                store.setInterfaceTextScale(scale)
+                            }
+                        }
+                    }
+                }
+                settingsRow(
                     title: store.ui("今日一句", "Today's line"),
                     showsBottomDivider: false
                 ) {
@@ -456,14 +474,14 @@ struct SettingsView: View {
 
                     if selected {
                         Image(systemName: "checkmark.circle.fill")
-                            .font(.system(size: 15, weight: .semibold))
+                            .weiBeiText(15, weight: .semibold)
                             .foregroundStyle(WeiBeiTheme.cinnabar)
                             .padding(7)
                     }
                 }
 
                 Text(mode.label(language: store.interfaceLanguage))
-                    .font(.system(size: 12, weight: selected ? .semibold : .medium))
+                    .weiBeiText(12, weight: selected ? .semibold : .medium)
                     .foregroundStyle(selected ? WeiBeiTheme.ink : WeiBeiTheme.secondaryInk)
                     .lineLimit(1)
             }
@@ -534,7 +552,7 @@ struct SettingsView: View {
             Text(recording
                  ? store.ui("按下…", "Press…")
                  : chord.display)
-                .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                .weiBeiText(11, weight: .semibold, design: .monospaced)
                 .foregroundStyle(recording ? WeiBeiTheme.cinnabar : WeiBeiTheme.secondaryInk)
                 .padding(.horizontal, 7)
                 .frame(height: 22)
@@ -701,7 +719,7 @@ struct SettingsView: View {
     private var feedbackSheet: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text(store.ui("提交反馈", "Send Feedback"))
-                .font(.system(size: 15, weight: .semibold))
+                .weiBeiText(15, weight: .semibold)
                 .foregroundStyle(WeiBeiTheme.ink)
 
             Text(store.ui(
@@ -718,21 +736,21 @@ struct SettingsView: View {
                     .foregroundStyle(WeiBeiTheme.placeholderInk)
             )
             .textFieldStyle(.plain)
-            .font(.system(size: 13))
+            .weiBeiText(13)
             .foregroundColor(WeiBeiTheme.ink)
             .weibeiInputSurface(active: true, height: 34)
 
             ZStack(alignment: .topLeading) {
                 if feedbackBody.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     Text(store.ui("发生了什么？如何复现？", "What happened? How can we reproduce it?"))
-                        .font(.system(size: 13))
+                        .weiBeiText(13)
                         .foregroundStyle(WeiBeiTheme.placeholderInk)
                         .padding(.horizontal, 10)
                         .padding(.vertical, 10)
                         .allowsHitTesting(false)
                 }
                 TextEditor(text: $feedbackBody)
-                    .font(.system(size: 13))
+                    .weiBeiText(13)
                     .foregroundColor(WeiBeiTheme.ink)
                     .scrollContentBackground(.hidden)
                     .frame(minHeight: 140, maxHeight: 200)
@@ -896,7 +914,7 @@ struct SettingsView: View {
         } label: {
             HStack(spacing: 10) {
                 Image(systemName: section.icon)
-                    .font(.system(size: 13, weight: .semibold))
+                    .weiBeiText(13, weight: .semibold)
                     .frame(width: 18)
                 Text(section.title(store))
                     .font(SettingsType.rowTitle(active: active))
@@ -974,7 +992,7 @@ struct SettingsView: View {
     func settingsNote(_ text: String, icon: String) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             Image(systemName: icon)
-                .font(.system(size: 12, weight: .semibold))
+                .weiBeiText(12, weight: .semibold)
                 .foregroundStyle(WeiBeiTheme.cinnabar.opacity(0.90))
             Text(text)
                 .font(SettingsType.detail)
@@ -989,7 +1007,7 @@ struct SettingsView: View {
     func settingsPill(title: String, icon: String, active: Bool) -> some View {
         HStack(spacing: 7) {
             Image(systemName: icon)
-                .font(.system(size: 11, weight: .semibold))
+                .weiBeiText(11, weight: .semibold)
             Text(title)
                 .font(SettingsType.pill)
                 .lineLimit(1)
@@ -1031,7 +1049,7 @@ struct SettingsView: View {
                     .font(SettingsType.menu)
                     .lineLimit(1)
                 Image(systemName: "chevron.down")
-                    .font(.system(size: 8, weight: .bold))
+                    .weiBeiText(8, weight: .bold)
             }
             .foregroundStyle(WeiBeiTheme.ink)
             .padding(.horizontal, 9)
@@ -1050,7 +1068,7 @@ struct SettingsView: View {
     /// Shared Settings group title label.
     func sectionTitle(_ title: String) -> some View {
         Text(title)
-            .font(WeiBeiTypography.brandFont(language: store.interfaceLanguage, size: 12, weight: .semibold))
+            .weiBeiBrandFont(language: store.interfaceLanguage, size: 12, weight: .semibold)
             .foregroundStyle(WeiBeiTheme.tertiaryInk)
     }
 }

@@ -39,7 +39,7 @@ struct LinkedSourcesPopover: View {
                     }
                     Spacer()
                     Text("\(draftIDs.count)")
-                        .font(.system(size: 18, weight: .medium, design: .serif))
+                        .weiBeiText(18, weight: .medium, design: .serif)
                         .foregroundStyle(WeiBeiTheme.cinnabar)
                 }
 
@@ -49,7 +49,7 @@ struct LinkedSourcesPopover: View {
                     TextField(store.ui("搜索标题、文件名", "Search title or file name"), text: $query)
                         .textFieldStyle(.plain)
                 }
-                .font(.system(size: 13))
+                .weiBeiText(13)
                 .weibeiInputSurface(height: 32)
 
                 if let current = store.selectedMaterialItem {
@@ -65,7 +65,7 @@ struct LinkedSourcesPopover: View {
                     ForEach(groupedMaterials, id: \.0) { group in
                         VStack(alignment: .leading, spacing: 4) {
                             Text(group.0)
-                                .font(.system(size: 10, weight: .semibold))
+                                .weiBeiText(10, weight: .semibold)
                                 .foregroundStyle(WeiBeiTheme.tertiaryInk)
                                 .padding(.horizontal, 7)
                             ForEach(group.1) { item in
