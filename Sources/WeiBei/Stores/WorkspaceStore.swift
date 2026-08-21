@@ -996,8 +996,11 @@ final class WorkspaceStore: ObservableObject {
         WeiBeiThemeRuntime.mode = appearanceMode
         let resolvedImportedFileBookmarks = resolvePersistedImportedFileBookmarks()
         let migratedImportedItemIdentities = migrateLegacyImportedItemIdentities()
-        if resolvedImportedFileBookmarks
-            || migratedImportedItemIdentities {
+        // 空页启动（生产默认）时活跃选择随即被 resetPrimaryEntriesForLaunch 清空：
+        // 此刻求值恢复出来的笔记正文，其降级错误会弹到用户永远看不到的界面上，
+        // 形成「空白页+常驻误报横幅」。空页启动直接跳过这次求值。
+        if !startsAtBlankEntries,
+           resolvedImportedFileBookmarks || migratedImportedItemIdentities {
             noteText = noteText(for: activeNoteItem)
         }
         let migratedStudyLocationTitles = refreshStudyLocationReferenceTitles()
@@ -18701,15 +18704,8 @@ final class WorkspaceStore: ObservableObject {
         }
         guard item.editsBackingMarkdownFile, let url = item.url else {
             if item.editsBackingMarkdownFile, notesByItemID[item.id] == nil {
-                // P0 降级标记：有背书文件但定位不到，展示的是模板而非正文；
-                // 留痕让写回守卫拒绝把模板盖回磁盘。
-                setNoteFileError(
-                    ui(
-                        "无法定位笔记文件，正文展示已降级为模板；已暂停自动写回以保护磁盘内容。",
-                        "The note file could not be located, so a template is shown instead of the note body. Automatic write-back is paused to protect the on-disk content."
-                    ),
-                    for: item.id
-                )
+                // P0 降级标记：展示的是模板而非正文；留痕让写回守卫拒绝把模板盖回磁盘。
+                setNoteFileError(noteFileUnavailableMessage(for: item), for: item.id)
             }
             return cleanLegacyPlaceholder(notesByItemID[item.id] ?? defaultNote(for: item))
         }

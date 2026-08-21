@@ -429,6 +429,26 @@ extension WorkspaceStore {
         (try? Data(contentsOf: url)).map(noteContentDigest)
     }
 
+    /// P0 降级文案按实况区分（仅在降级分支做一次 lstat）：真的定位不到，还是
+    /// 文件在但内容与本机记录不一致——后者对账循环通常几秒内以活体文件自愈。
+    func noteFileUnavailableMessage(for item: StudyItem) -> String {
+        let filePresent = resolvedLibraryURL(for: item).map {
+            if case .present = CourseProjectFileWorker.entryPresence(at: $0) {
+                return true
+            }
+            return false
+        } ?? false
+        return filePresent
+            ? ui(
+                "笔记文件内容与本机记录不一致（可能被外部修改），正文展示已降级为模板；已暂停自动写回以保护磁盘内容。",
+                "The note file's content does not match this device's record (it may have been modified externally), so a template is shown instead of the note body. Automatic write-back is paused to protect the on-disk content."
+            )
+            : ui(
+                "无法定位笔记文件，正文展示已降级为模板；已暂停自动写回以保护磁盘内容。",
+                "The note file could not be located, so a template is shown instead of the note body. Automatic write-back is paused to protect the on-disk content."
+            )
+    }
+
     func setNoteFileError(_ message: String?, for itemID: String) {
         if let message {
             // P0：同一条错误已记录时不重复弹 transient，避免渲染期反复触发提示。
