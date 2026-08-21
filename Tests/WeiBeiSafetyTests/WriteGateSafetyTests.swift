@@ -201,11 +201,11 @@ final class WriteGateSafetyTests: XCTestCase {
         struct ExplodingWriterError: Error {}
         let store = WorkspaceStore(
             workspaceDirectory: base.appendingPathComponent("workspace", isDirectory: true),
-            noteBackupRootURL: backupRoot,
             notebookMarkdownWriter: { markdown, url in
                 try "半截".write(to: url, atomically: true, encoding: .utf8)
                 throw ExplodingWriterError()
             },
+            noteBackupRootURL: backupRoot,
             startsAtBlankEntries: true,
             startsCourseFileMaintenance: false
         )
