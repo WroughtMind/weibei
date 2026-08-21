@@ -146,7 +146,7 @@ final class WriteGateSafetyTests: XCTestCase {
         let library = base.appendingPathComponent("资料库", isDirectory: true)
         let store = try makeStore(base: base, library: library, backupRoot: backupRoot)
         let courseID = try store.createCourseInLibrary(title: "闸门课")
-        let (item, _) = try importNote(store, base: base, courseID: courseID, content: "# 旧标题\n正文")
+        let (item, url) = try importNote(store, base: base, courseID: courseID, content: "# 旧标题\n正文")
 
         try store.waitForCourseFileOperation {
             await store.renameNotebookNoteInTransaction(itemID: item.id, to: "新标题")
