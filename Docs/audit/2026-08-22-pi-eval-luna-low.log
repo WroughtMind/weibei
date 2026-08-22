@@ -1,0 +1,148 @@
+native-eval backend=pi model=gpt-5.6-luna effort=low items=42
+pi-eval 01 scene=plain-qa tools=provider=openai-codex,model=gpt-5.6-luna prefix=4
+pi-eval 02 scene=plain-qa tools=provider=openai-codex,model=gpt-5.6-luna prefix=\[
+\frac{3}{12}=\frac{1}{4}
+\]
+
+最简分数是 **1/4**。
+pi-eval 03 scene=plain-qa tools=provider=openai-codex,model=gpt-5.6-luna prefix=简单说：
+
+- **利息**：实际多付或多收的那笔钱，是**金额**。
+- **利率**：利息相对于本金的比例，是**百分比**。
+
+公式：
+
+\[
+\text
+pi-eval 04 scene=course-search tools=weibei_course_search,weibei_course_map,provider=openai-codex,model=gpt-5.6-luna prefix=我刚尝试搜索课程资料，但课程检索工具当前不可用，暂时无法确认教材原文。
+
+按《货币金融学》的常见结构，“利率”一节大概会讲：
+
+- **利率是什么**：借款人使
+pi-eval 05 scene=course-search tools=weibei_course_search,weibei_course_map,weibei_course_search,provider=openai-codex,model=gpt-5.6-luna prefix=暂时无法读取课程索引：课程工具返回“宿主工具响应根目录发生了变化”。因此目前不能可靠列出「准备金」出现过的材料标题。
+pi-eval 06 scene=course-read tools=weibei_course_search,weibei_course_map,weibei_course_search,provider=openai-codex,model=gpt-5.6-luna prefix=我暂时无法读取课程正文，因此不能准确引用原文中的那句话。
+pi-eval 07 scene=course-read tools=weibei_course_search,weibei_course_map,weibei_course_search,provider=openai-codex,model=gpt-5.6-luna prefix=我目前无法读取该段课程正文，因此不能确认课文是否提到这一区分。请重新提供或打开材料后，我再依据原文判断；在未核对前不作推断。
+pi-eval 08 scene=memory tools=weibei_learning_memory,provider=openai-codex,model=gpt-5.6-luna prefix=记忆里没有上次阅读到哪一节的记录。
+pi-eval 09 scene=memory-update tools=weibei_learning_memory,provider=openai-codex,model=gpt-5.6-luna prefix=我打算这样记录：
+
+> **理解：已掌握复利的基本概念。**  
+> 依据：用户明确表示“刚搞懂了复利”。  
+> 来源：用户自述
+
+目前只是提案，**还没有写
+pi-eval 10 scene=profile tools=weibei_course_search,weibei_course_map,provider=openai-codex,model=gpt-5.6-luna prefix=暂时不能提交知识档案更新：本轮没有成功读取到课程材料，无法为“单利/复利”结论附上可核对的课程来源。你已明确说明“掌握单利、复利尚不熟”，这更适合记录为学习状态
+pi-eval 11 scene=note tools=weibei_course_search,weibei_course_map,weibei_note_proposal,provider=openai-codex,model=gpt-5.6-luna prefix=我暂时无法提交正式笔记建议：当前没有读取到可引用的课程材料、笔记或选区证据。
+
+可先整理为：
+
+> **利率是资金使用的价格。**  
+> 借款人使用资金需要支
+pi-eval 12 scene=relation tools=weibei_course_map,provider=openai-codex,model=gpt-5.6-luna prefix=目前课程记录显示 **0 条笔记**，而且课程目录读取失败，所以暂时无法提交“笔记—利率课文”的关联确认。请先打开或提供这条笔记后，我再为你生成待确认的关联建议
+pi-eval 13 skipped scene=cancel
+pi-eval 14 skipped scene=error
+pi-eval 15 scene=resume tools=provider=openai-codex,model=gpt-5.6-luna prefix=因为**债券的票面利息通常是固定的**，而市场利率会变化。
+
+举例：
+
+- 你持有一张债券，每年固定支付 **50 元利息**。
+- 如果市场利率是 **5%*
+pi-eval 16 scene=multi-tool tools=provider=openai-codex,model=gpt-5.6-luna prefix=截至2026年8月20日，美国联邦基金有效利率为 **3.63%**。 ([fred.stlouisfed.org](https://fred.stlouisf
+pi-eval 17 scene=learning tools=provider=openai-codex,model=gpt-5.6-luna prefix=最稳的方法是：**先把时间画成点，再数“发生了几次计息”**。
+
+复利公式：
+
+\[
+FV=PV(1+r)^n
+\]
+
+其中 \(n\) 不是“横跨了几年”这么
+pi-eval 18 scene=learning tools=provider=openai-codex,model=gpt-5.6-luna prefix=可以，口头说“实际利率大约是 3%”通常没问题，但要说明这是**近似值**。
+
+精确关系是：
+
+\[
+1+r_{\text{实际}}=\frac{1+r_{\t
+pi-eval 19 scene=learning tools=provider=openai-codex,model=gpt-5.6-luna prefix=单利利息 = 本金 × 年利率 × 年数  
+= 1000 × 6% × 3 = **180 元**。
+pi-eval 20 scene=learning tools=provider=openai-codex,model=gpt-5.6-luna prefix=本利和 = \(1000 \times (1+6\%)^3 = 1191.016\) 元，约 **1191 元**。
+pi-eval 21 scene=learning tools=provider=openai-codex,model=gpt-5.6-luna prefix=因为**挂牌利率只是一个“标价”**，而你实际承担的是贷款的**综合年化成本**。两者不同，常见原因有：
+
+1. **计息方式不同**：按日、按月复利，实际成本
+pi-eval 22 scene=learning tools=provider=openai-codex,model=gpt-5.6-luna prefix=不完全是同一件事，但**核心都在说“资产变现的容易程度”**。
+
+- **货币的流动性**：强调它能否迅速、方便地用于支付，且价值相对稳定。现金流动性最高，活期
+pi-eval 23 scene=learning tools=provider=openai-codex,model=gpt-5.6-luna prefix=简单存款乘数上限为：
+
+\[
+\frac{1}{准备金率}=\frac{1}{10\%}=10
+\]
+
+所以，**上限是 10 倍**。
+pi-eval 24 scene=learning tools=provider=openai-codex,model=gpt-5.6-luna prefix=**如果央行加息，固定利率旧债券的市场价格通常更可能下跌。**
+
+原因是：新发行债券的利率提高后，投资者更愿意买新债。你手里的旧债票面利率较低，若想卖出，通常需
+pi-eval 25 scene=chat tools=provider=openai-codex,model=gpt-5.6-luna prefix=那今天就先不学了，累的时候休息也是正事。  
+你可以什么都不用想，躺一会儿、喝点水，先把自己照顾好。
+pi-eval 26 scene=chat tools=provider=openai-codex,model=gpt-5.6-luna prefix=明天（8月23日）早上可以这样安排 **20分钟利率阅读**：
+
+- **0–3分钟：回顾**  
+  写下你对“利率”的一个已有理解和一个疑问。
+- **3–
+pi-eval 27 scene=chat tools=provider=openai-codex,model=gpt-5.6-luna prefix=**机会成本**就是：
+
+> 你选择做一件事时，放弃的那个“最好的其他选择”。
+
+比如你晚上有两个小时：
+
+- 选择看电影；
+- 那你就放弃了用这两个小时复习考
+pi-eval 28 scene=chat tools=provider=openai-codex,model=gpt-5.6-luna prefix=不是，你不是笨，**贴现本来就容易把“未来的钱”和“现在的钱”绕在一起**。
+
+先只记一句话：
+
+> **贴现 = 把未来收到的钱，换算成它今天值多少钱。**
+
+pi-eval 29 scene=deep tools=provider=openai-codex,model=gpt-5.6-luna prefix=可以把“负利率”拆成三层：**价格层、行为层、制度层**。关键是：利率为负，不等于“所有借钱都赚钱、所有存钱都亏钱”，因为还要看通胀、风险、手续费和资产价格。
+
+pi-eval 30 scene=deep tools=provider=openai-codex,model=gpt-5.6-luna prefix=- **“货币是一层面纱”**：在**长期**更说得通。价格、工资和货币供给调整充分后，货币主要改变名义变量（价格、工资、货币金额），实际产出、就业等由技术、资
+pi-eval 31 scene=deep tools=provider=openai-codex,model=gpt-5.6-luna prefix=按这个顺序讲，最不容易混淆：
+
+1. **先从普通银行讲起**  
+   普通银行服务个人和企业：收存款、发贷款、办理转账。它的核心对象是普通客户，目标通常是经
+pi-eval 32 scene=deep tools=provider=openai-codex,model=gpt-5.6-luna prefix=三个常见错误：
+
+1. **把“利率高＝借钱一定更贵”直接套用**  
+   忽略了还要看**期限、复利方式和通货膨胀**。名义利率高，不一定意味着实际借贷成本
+pi-eval 33 scene=plain-qa tools=provider=openai-codex,model=gpt-5.6-luna prefix=中国法定节假日中的**元旦是每年1月1日**。
+pi-eval 34 scene=plain-qa tools=provider=openai-codex,model=gpt-5.6-luna prefix=\(2x+6=0\)
+
+\(2x=-6\)
+
+所以 \(x=-3\)。
+pi-eval 35 scene=learning tools=provider=openai-codex,model=gpt-5.6-luna prefix=不对。正确的是：**利率上升，债券价格下降；利率下降，债券价格上升。**
+pi-eval 36 scene=course-search tools=weibei_course_search,weibei_course_map,provider=openai-codex,model=gpt-5.6-luna prefix=课程搜索工具当前报错，没能完成检索；因此我不能可靠确认这门课是否有专门讲通货膨胀的材料。
+pi-eval 37 scene=chat tools=provider=openai-codex,model=gpt-5.6-luna prefix=章鱼有三个心脏，但它一游泳，负责给全身供血的那颗心脏就会暂时“罢工”。所以章鱼更喜欢爬着走——连海底都在劝它：别游了，怪累的。
+pi-eval 38 scene=deep tools=provider=openai-codex,model=gpt-5.6-luna prefix=**风险**和**不确定性**的关键区别在于：**概率是否已知或至少可以估计**。
+
+- **风险**：可能结果已知，发生概率可以估计。  
+  例：考试选择题
+pi-eval 39 scene=learning tools=provider=openai-codex,model=gpt-5.6-luna prefix=有效年利率：
+
+\[
+(1+\frac{12\%}{12})^{12}-1=(1.01)^{12}-1\approx 12.68\%
+\]
+
+**答案：约 12
+pi-eval 40 scene=plain-qa tools=provider=openai-codex,model=gpt-5.6-luna prefix=中位数是将一组数据按大小排序后位于正中间的数。
+pi-eval 41 scene=resume tools=provider=openai-codex,model=gpt-5.6-luna prefix=会。更准确地说，**现金会变成一种“有持有成本、但不一定显性收费的库存”**。
+
+接着三层看：
+
+### 第一层：价格层——持有现金的机会成本变成负收益
+
+如果
+pi-eval 42 scene=learning tools=weibei_course_search,provider=openai-codex,model=gpt-5.6-luna prefix=只剩 15 分钟，优先看这三个：
+
+1. **利率与债券价格反向变动**  
+   利率上升，债券价格下降；利率下降，债券价格上升。重点会考现值计算和原因解释。
+pi-eval live-ran=40 model=gpt-5.6-luna effort=low

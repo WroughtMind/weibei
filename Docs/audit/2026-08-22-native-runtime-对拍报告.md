@@ -56,10 +56,12 @@ luna+low live 评测里，课程搜索/正文/记忆/档案/笔记题也会调�
 
 ## 4. 评测集质量
 
-- 42 题，模型 **`gpt-5.6-luna` + `low`**。命令 `WeiBeiPiCheck --native-eval`。
-- 2026-08-22 重新登录后跑完：**live-ran=40**（cancel/error 两题按设计跳过）。日志：`Docs/audit/2026-08-22-native-eval-luna-low.log`。
-- 闭式题从 prefix 看正确：`01→4`，`02→1/4`，`19→180`，`20→1191`，`23→10`，`34→-3`，`35→利率升债券跌`，`39→12.68%`。闲聊短、不灌讲义。课程题有 search/read。
-- **没有编造 5 分制分数**。独立 judge（Kimi）未评；Pi 后端未用 luna 再跑一遍。这不是双评均分，只是 native 单侧 live。
+- 42 题，模型 **`gpt-5.6-luna` + `low`**。
+- Native：`WeiBeiPiCheck --native-eval` → live-ran=40。日志 `Docs/audit/2026-08-22-native-eval-luna-low.log`。
+- Pi：`WeiBeiPiCheck --native-eval --backend pi` → live-ran=40。日志 `Docs/audit/2026-08-22-pi-eval-luna-low.log`。同一模型、同一题集。cancel/error 两题两边都跳过。
+- 闭式题两边 prefix 一致：`01→4`，`02→1/4`，`19→180`，`20→1191`，`23→10`，`33→1月1日`，`34→-3`，`35→利率升债券跌`，`39→12.68%`，`40→中位数是正中间`。
+- 课程工具：native 能 search/read 到夹具正文；Pi 多次报「宿主工具响应根目录发生了变化」（与第一棒 Pi 夹具同类），因此 04–07、10–12、36 的课程引用 Pi 更常拒答。这是 CLI 宿主差异，不是 luna 答错。
+- **没有编造 5 分制分数**。独立 judge（Kimi）仍未逐题打分。闭式题两边一致，开放题需人工/Kimi 再评。
 
 ## 5. 性能
 
@@ -99,7 +101,7 @@ luna+low live 评测里，课程搜索/正文/记忆/档案/笔记题也会调�
 
 - 401 用户文案正确，但 `AgentFailureKind.classify` 对「认证已失效」仍可能落到 generic。
 - Azure / Vertex / Bedrock / Cloudflare 未覆盖。
-- 无独立 judge 双评均分，无 Pi+luna 对照。
+- 无独立 judge 5 分制双评均分。Pi 课程宿主在 CLI 里仍会报响应目录变化。
 - 完整 `.app` 体积未组装测量。
 - 本分支不删 Pi、不改发布脚本、不打标签。
 
@@ -107,6 +109,6 @@ luna+low live 评测里，课程搜索/正文/记忆/档案/笔记题也会调�
 
 **仍是条件 go。**
 
-已有：OAuth 六步、三件套、默认 pi、DeepSeek/ChatGPT 三闭环、12 场景 native 脚本全绿、luna+low 40 题 native live、Release 二进制+资源约 38 MB（不含 Pi）。
+已有：OAuth 六步、三件套、默认 pi、DeepSeek/ChatGPT 三闭环、12 场景 native 脚本、**luna+low 40 题 Pi 与 native 都 live 跑完**、闭式题两边一致、Release 二进制+资源约 38 MB（不含 Pi）。
 
-仍缺：Kimi 双评均分、Pi/native 同一 luna 账本 diff、未压缩 `.app` 实装、性能中位。删除 Pi 需单独授权。保持草稿。
+仍缺：Kimi 5 分制双评、未压缩 `.app` 实装、性能中位。删除 Pi 需单独授权。保持草稿。

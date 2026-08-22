@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 import WeiBeiCore
 
@@ -14,21 +15,22 @@ enum NativeEvalCLI {
     }
 
     static func run(arguments: [String]) async throws {
-        let store = try NativeAgentCredentialStore.defaultStore()
-        let signedIn = try NativeOpenAIOAuth.leftoverCredentialExists(in: store)
         let model = ProcessInfo.processInfo.environment["WEIBEI_NATIVE_EVAL_MODEL"] ?? "gpt-5.6-luna"
         let effort = ProcessInfo.processInfo.environment["WEIBEI_NATIVE_EVAL_EFFORT"] ?? "low"
+        let backend: String
+        if let index = arguments.firstIndex(of: "--backend"),
+           let raw = arguments.dropFirst(index + 1).first,
+           !raw.hasPrefix("--") {
+            backend = raw
+        } else {
+            backend = "native"
+        }
         let setURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
             .appendingPathComponent("Docs/audit/2026-08-22-native-agent-runtime-评测集.json")
         let data = try Data(contentsOf: setURL)
         guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
               let items = object["items"] as? [[String: Any]] else {
             throw NSError(domain: "WeiBei.NativeEval", code: 1, userInfo: [NSLocalizedDescriptionKey: "eval set JSON missing items"])
-        }
-        print("native-eval model=\(model) effort=\(effort) items=\(items.count) signed-in=\(signedIn)")
-        guard signedIn else {
-            print("native-eval skipped live ChatGPT run: native oauth is signed-out. Re-login then rerun --native-eval.")
-            return
         }
         let limit: Int
         if let index = arguments.firstIndex(of: "--limit"),
@@ -37,6 +39,33 @@ enum NativeEvalCLI {
             limit = parsed
         } else {
             limit = items.count
+        }
+        let selected = Array(items.prefix(limit))
+        print("native-eval backend=\(backend) model=\(model) effort=\(effort) items=\(selected.count)")
+        fflush()
+        switch backend {
+        case "pi":
+            try await runPi(items: selected, model: model, effort: effort)
+        case "native":
+            try await runNative(items: selected, model: model)
+        default:
+            throw NSError(domain: "WeiBei.NativeEval", code: 2, userInfo: [NSLocalizedDescriptionKey: "backend must be native or pi"])
+        }
+        _ = effort
+    }
+
+    private static func fflush() {
+        Darwin.fflush(stdout)
+    }
+
+    private static func runNative(items: [[String: Any]], model: String) async throws {
+        let store = try NativeAgentCredentialStore.defaultStore()
+        let signedIn = try NativeOpenAIOAuth.leftoverCredentialExists(in: store)
+        print("native-eval signed-in=\(signedIn)")
+        fflush()
+        guard signedIn else {
+            print("native-eval skipped live ChatGPT run: native oauth is signed-out. Re-login then rerun --native-eval.")
+            return
         }
         let endpoint = try AgentProviderEndpoint(provider: .openaiCodex, baseURL: "")
         let adapter = try await NativeLLMAdapterFactory.make(
@@ -49,12 +78,13 @@ enum NativeEvalCLI {
             skillRegistry: skillRoot.flatMap { try? NativeSkillRegistry.load(from: $0) } ?? NativeSkillRegistry()
         )
         var ran = 0
-        for item in items.prefix(limit) {
+        for item in items {
             let id = item["id"] as? String ?? "?"
             let scene = item["scene"] as? String ?? ""
             let question = item["question"] as? String ?? ""
             if scene == "cancel" || scene == "error" {
                 print("native-eval \(id) skipped scene=\(scene)")
+                fflush()
                 continue
             }
             let root = FileManager.default.temporaryDirectory.appendingPathComponent("native-eval-\(id)-\(UUID().uuidString)")
@@ -112,9 +142,129 @@ enum NativeEvalCLI {
             )
             let prefix = reply.text.trimmingCharacters(in: .whitespacesAndNewlines).prefix(80)
             print("native-eval \(id) scene=\(scene) tools=\(reply.toolTrace.joined(separator: ",")) prefix=\(prefix)")
+            fflush()
             ran += 1
         }
-        _ = effort
         print("native-eval live-ran=\(ran) model=\(model) effort=low")
+        fflush()
+    }
+
+    private static func runPi(items: [[String: Any]], model: String, effort: String) async throws {
+        let executable: URL
+        let cached = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+            .appendingPathComponent(".build/pi-runtime/0.82.1/darwin-arm64/PiRuntime/bin/pi")
+        if FileManager.default.isExecutableFile(atPath: cached.path) {
+            executable = cached
+        } else if let located = PiExecutableLocator.locate() {
+            executable = located
+        } else {
+            throw NSError(domain: "WeiBei.NativeEval", code: 3, userInfo: [NSLocalizedDescriptionKey: "embedded PI runtime not found"])
+        }
+        let authSource = URL(fileURLWithPath: NSHomeDirectory())
+            .appendingPathComponent("Library/Application Support/com.changfenhuang.weibei/PiAgent/auth.json")
+        guard FileManager.default.fileExists(atPath: authSource.path) else {
+            throw NSError(domain: "WeiBei.NativeEval", code: 4, userInfo: [NSLocalizedDescriptionKey: "missing Pi auth.json"])
+        }
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("weibei-pi-eval-\(UUID().uuidString)", isDirectory: true)
+        let piAgent = root.appendingPathComponent("PiAgent", isDirectory: true)
+        let runtimeDir = root.appendingPathComponent("Runtime", isDirectory: true)
+        try FileManager.default.createDirectory(at: piAgent, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: runtimeDir, withIntermediateDirectories: true)
+        let authDest = piAgent.appendingPathComponent("auth.json")
+        try FileManager.default.copyItem(at: authSource, to: authDest)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: NSNumber(value: Int16(0o600))],
+            ofItemAtPath: authDest.path
+        )
+        let runtime = PiAgentRuntime(
+            executableURL: executable,
+            runtimeDirectory: runtimeDir,
+            persistentPiConfigurationDirectory: piAgent
+        )
+        await runtime.configure(
+            PiAgentProviderConfiguration(provider: "openai-codex", model: model, thinkingLevel: effort)
+        )
+        defer {
+            Task { await runtime.shutdown() }
+            try? FileManager.default.removeItem(at: root)
+        }
+        var ran = 0
+        for item in items {
+            let id = item["id"] as? String ?? "?"
+            let scene = item["scene"] as? String ?? ""
+            let question = item["question"] as? String ?? ""
+            if scene == "cancel" || scene == "error" {
+                print("pi-eval \(id) skipped scene=\(scene)")
+                fflush()
+                continue
+            }
+            let sessionID = UUID()
+            let request = evalRequest(id: id, question: question, sessionID: sessionID)
+            do {
+                let reply = try await runtime.respond(
+                    to: request,
+                    sessionID: sessionID,
+                    workingDirectory: runtimeDir,
+                    hostToolHandler: evalHost,
+                    progress: nil
+                )
+                let prefix = reply.text.trimmingCharacters(in: .whitespacesAndNewlines).prefix(80)
+                print("pi-eval \(id) scene=\(scene) tools=\(reply.toolTrace.joined(separator: ",")) prefix=\(prefix)")
+                ran += 1
+            } catch {
+                let message = error.localizedDescription.replacingOccurrences(of: "\n", with: " ")
+                print("pi-eval \(id) scene=\(scene) failed=\(message.prefix(120))")
+            }
+            fflush()
+        }
+        print("pi-eval live-ran=\(ran) model=\(model) effort=\(effort)")
+        fflush()
+    }
+
+    private static func evalRequest(id: String, question: String, sessionID: UUID) -> StudyAgentRequest {
+        StudyAgentRequest(
+            purpose: .conversation,
+            question: question,
+            materialTitle: "利率课程",
+            materialText: "利率是资金使用价格的表达。",
+            noteTitle: "",
+            noteText: "",
+            courseContext: StudyAgentCourseContext(
+                title: "货币金融学",
+                items: [
+                    StudyAgentCourseItem(
+                        id: "material-rates",
+                        title: "利率课程",
+                        subtitle: "",
+                        kind: "html",
+                        role: "material",
+                        searchText: "利率是资金使用价格的表达。"
+                    ),
+                ]
+            ),
+            projectScope: StudyAgentProjectScope(
+                kind: .course,
+                chatID: sessionID.uuidString.lowercased(),
+                courseID: UUID().uuidString.lowercased()
+            ),
+            contextRevision: "eval-\(id)"
+        )
+    }
+
+    private static let evalHost: StudyAgentHostToolHandler = { request in
+        let item = StudyAgentCourseItem(
+            id: "material-rates",
+            title: "利率课程",
+            subtitle: "",
+            kind: "html",
+            role: "material",
+            searchText: "利率是资金使用价格的表达。"
+        )
+        _ = request
+        return StudyAgentHostToolResult(
+            query: "利率",
+            items: [StudyAgentHostToolItem(item: item, sourceRevision: "rev-eval")]
+        )
     }
 }
