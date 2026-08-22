@@ -1,22 +1,6 @@
 import SwiftUI
 import WeiBeiCore
 
-enum CourseDocNotePresentation: String, CaseIterable, Identifiable {
-    case list
-    case map
-
-    var id: String { rawValue }
-
-    func label(language: WeiBeiInterfaceLanguage) -> String {
-        switch self {
-        case .list:
-            language.text("列表", "List")
-        case .map:
-            language.text("关系图", "Map")
-        }
-    }
-}
-
 /// Course-local management for the two durable knowledge objects in WeiBei:
 /// source documents and user notes. The list is the default management view;
 /// the graph remains a secondary visualization of explicit NoteSourceLink data.

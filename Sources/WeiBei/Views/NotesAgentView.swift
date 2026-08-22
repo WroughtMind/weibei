@@ -44,42 +44,6 @@ private extension View {
 
     }
 
-    func weibeiFloatingHeaderChrome(appearanceMode: WeiBeiAppearanceMode) -> some View {
-        self
-            .padding(.horizontal, 10)
-            .frame(height: 32)
-            .background(WeiBeiGlassHeaderBackground(paperOpacity: 0.60, materialOpacity: 0.08))
-            .clipShape(RoundedRectangle(cornerRadius: 8))
-            .overlay(alignment: .bottom) {
-                WeiBeiHeaderHandoffFade(height: 10, opacity: 0.22)
-                    .offset(y: 10)
-            }
-
-    }
-
-    func weibeiHeaderAccessoryGroup() -> some View {
-        self
-            .padding(3)
-            .background {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(.ultraThinMaterial)
-                        .opacity(0.05)
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(WeiBeiTheme.paperInset.opacity(0.22))
-                }
-            }
-            .clipShape(RoundedRectangle(cornerRadius: 8))
-            .overlay(alignment: .top) {
-                RoundedRectangle(cornerRadius: 8)
-                    .stroke(WeiBeiTheme.glassHighlight.opacity(0.18), lineWidth: 1)
-                    .padding(0.5)
-            }
-            .overlay {
-                RoundedRectangle(cornerRadius: 8)
-                    .stroke(WeiBeiTheme.hairline.opacity(0.62), lineWidth: 1)
-            }
-    }
 }
 
 struct WeiBeiPaneHeader<Actions: View>: View {
