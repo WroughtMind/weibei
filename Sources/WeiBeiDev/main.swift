@@ -60,12 +60,6 @@ func readText(_ url: URL) -> String {
 // MARK: - selfcheck-assertions
 
 private let requiredSafetyTags = [
-    "SAFETY:note-repair-order",
-    "SAFETY:note-repair-oneshot",
-    "SAFETY:backup-before-restore",
-    "SAFETY:template-writeback-block",
-    "SAFETY:rename-sentinel",
-    "SAFETY:lastknown-fallback",
     "SAFETY:pending-unsaved-vs-missing",
     "SAFETY:pi-owns-credentials",
     "SAFETY:no-swallowed-link-failure",

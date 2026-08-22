@@ -2056,6 +2056,16 @@ do {
     expect(restored == original, "S2 triple backup preserves external content")
 }
 
+// MARK: - New notes start blank
+do {
+    expect(
+        !workspaceStoreSource.contains("## \\(ui(\"核心要点\", \"Key Points\"))")
+            && !notesPersistenceSource.contains("## \\(ui(\"核心要点\", \"Key Points\"))")
+            && notesPersistenceSource.contains("func defaultNotebookNote() -> String"),
+        "SAFETY:blank-new-note new notes must start blank so a template cannot overwrite a learner's first save"
+    )
+}
+
 // MARK: - Phase 1 write gate: single writer choke point (source assertions)
 do {
     let directWriterCalls = notesPersistenceSource
