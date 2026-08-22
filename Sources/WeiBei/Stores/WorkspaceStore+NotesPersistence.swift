@@ -3,20 +3,6 @@ import CryptoKit
 import Foundation
 import WeiBeiCore
 
-enum NoteWriteGateError: LocalizedError {
-    case writeRefusedKeepContent
-    case diskChangedAdoptDisk
-
-    var errorDescription: String? {
-        switch self {
-        case .writeRefusedKeepContent:
-            return "磁盘内容无法确认，写入已暂停以保护正文。"
-        case .diskChangedAdoptDisk:
-            return "笔记文件已被外部修改，已采用磁盘内容。"
-        }
-    }
-}
-
 @MainActor
 extension WorkspaceStore {
     func quotedReferenceBlock(text: String, sourceTitle: String) -> String {
@@ -106,7 +92,7 @@ extension WorkspaceStore {
         }
     }
 
-    func renameNotebookNoteInTransaction(
+    private func renameNotebookNoteInTransaction(
         itemID: String,
         to rawTitle: String
     ) async {
@@ -228,17 +214,7 @@ extension WorkspaceStore {
                 Data(retitledMarkdown.utf8)
             )
             if willRewriteMarkdown {
-                // 写闸门：以移动后磁盘现况为基线；不符即中止并走统一回滚。
-                let priorBackingDigest = noteBackingContentDigestsByItemID[oldID]
-                let priorLastSelfDigest = lastSelfWrittenNoteDigestsByItemID[oldID]
-                try writeNotebookMarkdownThroughGate(
-                    retitledMarkdown,
-                    itemID: oldID,
-                    url: newURL,
-                    expectedBaseline: Self.noteContentDigest(at: newURL)
-                )
-                noteBackingContentDigestsByItemID[oldID] = priorBackingDigest
-                lastSelfWrittenNoteDigestsByItemID[oldID] = priorLastSelfDigest
+                try notebookMarkdownWriter(retitledMarkdown, newURL)
                 let writtenDigest = Self.noteContentDigest(at: newURL)
                 guard writtenDigest == expectedOutputDigest else {
                     throw NSError(
@@ -605,13 +581,10 @@ extension WorkspaceStore {
                     continue
                 }
                 do {
-                    // 写闸门：以刚备份的磁盘现况为基线；不符则拒绝写回（草稿保留）。
-                    try writeNotebookMarkdownThroughGate(
-                        draft,
-                        itemID: itemID,
-                        url: plan.url,
-                        expectedBaseline: Self.noteContentDigest(at: plan.url)
-                    )
+                    try notebookMarkdownWriter(draft, plan.url)
+                    let writtenDigest = Self.noteContentDigest(Data(draft.utf8))
+                    noteBackingContentDigestsByItemID[itemID] = writtenDigest
+                    lastSelfWrittenNoteDigestsByItemID[itemID] = writtenDigest
                     setNoteDraft(nil, for: itemID)
                     setNoteFileError(nil, for: itemID)
                     if let refreshed = refreshImportedFileTracking(
@@ -718,9 +691,8 @@ extension WorkspaceStore {
         pendingNotePersistenceTasks[itemID] = nil
     }
 
-    /// S2 三件套：备份（外部改动）→ 闸门比对 → 原子写 → 失败留草稿。
-    /// 阶段1 写闸门：比对下沉到唯一底层入口，模板守卫此阶段并存（计划 §5 阶段1）。
-    /// 返回是否成功写回磁盘。
+    /// S2 三件套：备份（外部改动）→ 原子写 → 失败留草稿。
+    /// 返回是否成功写回磁盘。永不因 digest 冲突拒绝写回。
     @discardableResult
     func writeNoteMarkdownTriple(
         _ markdown: String,
@@ -765,23 +737,16 @@ extension WorkspaceStore {
                 rootURL: noteBackupRootURL
             )
         }
-        if noteBackingContentDigestsByItemID[itemID] == nil,
-           let digest = importedItems.first(where: { $0.id == itemID })?.contentDigest {
-            noteBackingContentDigestsByItemID[itemID] = digest
-        }
         do {
-            try writeNotebookMarkdownThroughGate(
-                markdown,
-                itemID: itemID,
-                url: url,
-                expectedBaseline: noteBackingContentDigestsByItemID[itemID]
-            )
-        } catch NoteWriteGateError.writeRefusedKeepContent {
-            retainUnreachableNoteDraft(markdown, itemID: itemID)
-            return false
-        } catch NoteWriteGateError.diskChangedAdoptDisk {
-            adoptExternalDiskNote(itemID: itemID, url: url)
-            return false
+            try notebookMarkdownWriter(markdown, url)
+            let writtenDigest = Self.noteContentDigest(Data(markdown.utf8))
+            noteBackingContentDigestsByItemID[itemID] = writtenDigest
+            lastSelfWrittenNoteDigestsByItemID[itemID] = writtenDigest
+            setNoteDraft(nil, for: itemID)
+            pendingNoteWritesByItemID.removeValue(forKey: itemID)
+            setNoteFileError(nil, for: itemID)
+            noteEditorDidPersist(markdown, documentID: itemID)
+            return true
         } catch {
             setNoteDraft(markdown, for: itemID)
             pendingNoteWritesByItemID.removeValue(forKey: itemID)
@@ -793,60 +758,6 @@ extension WorkspaceStore {
             )
             return false
         }
-        setNoteDraft(nil, for: itemID)
-        pendingNoteWritesByItemID.removeValue(forKey: itemID)
-        setNoteFileError(nil, for: itemID)
-        noteEditorDidPersist(markdown, documentID: itemID)
-        return true
-    }
-
-    /// 磁盘内容被外部修改时采用磁盘：待写内容已先入备份环，这里刷新编辑器状态。
-    func adoptExternalDiskNote(itemID: String, url: URL) {
-        guard let diskMarkdown = try? String(contentsOf: url, encoding: .utf8) else { return }
-        let digest = Self.noteContentDigest(Data(diskMarkdown.utf8))
-        noteBackingContentDigestsByItemID[itemID] = digest
-        lastSelfWrittenNoteDigestsByItemID[itemID] = digest
-        pendingNoteWritesByItemID.removeValue(forKey: itemID)
-        setNoteDraft(nil, for: itemID)
-        loadedCourseNoteTextByItemID[itemID] = diskMarkdown
-        if activeNoteItemID == itemID {
-            noteText = diskMarkdown
-            noteEditingSession.replaceDocument(with: itemID)
-            noteEditorCommand = NoteEditorCommand(
-                kind: .reloadDocument,
-                markdown: diskMarkdown
-            )
-        }
-    }
-
-    /// 全仓唯一笔记写盘闸门（计划 §5 阶段1）：所有写路径必须经此函数。
-    /// 文件在场时写前重读磁盘 digest：重读失败或无基线 ⇒ 拒写并保留待写内容；
-    /// 摘要不符 ⇒ 待写内容先入备份环再抛采用磁盘；一致才落盘并刷新双 digest。
-    /// 禁止绕过本函数直接调用 notebookMarkdownWriter（SelfCheck SAFETY 断言白名单）。
-    func writeNotebookMarkdownThroughGate(
-        _ markdown: String,
-        itemID: String,
-        url: URL,
-        expectedBaseline: String?
-    ) throws {
-        if FileManager.default.fileExists(atPath: url.path) {
-            guard let expectedBaseline,
-                  let diskDigest = Self.noteContentDigest(at: url) else {
-                throw NoteWriteGateError.writeRefusedKeepContent
-            }
-            if diskDigest != expectedBaseline {
-                _ = try? NoteBackupRing.capture(
-                    content: Data(markdown.utf8),
-                    itemID: itemID,
-                    rootURL: noteBackupRootURL
-                )
-                throw NoteWriteGateError.diskChangedAdoptDisk
-            }
-        }
-        try notebookMarkdownWriter(markdown, url)
-        let writtenDigest = Self.noteContentDigest(Data(markdown.utf8))
-        noteBackingContentDigestsByItemID[itemID] = writtenDigest
-        lastSelfWrittenNoteDigestsByItemID[itemID] = writtenDigest
     }
 
     /// 文件不可达时静默保留草稿（无冲突横幅）。

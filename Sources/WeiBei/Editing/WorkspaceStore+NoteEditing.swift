@@ -235,12 +235,6 @@ extension WorkspaceStore {
         noteEditorRecoveryConflict = nil
         if useDisk {
             let documentID = conflict.checkpoint.metadata.documentID
-            // 副本先行（计划 §5 阶段2）：选磁盘版本前，用户版本先入备份环。
-            _ = try? NoteBackupRing.capture(
-                content: Data(conflict.checkpoint.markdown.utf8),
-                itemID: documentID,
-                rootURL: noteBackupRootURL
-            )
             try? await noteRecoveryStore.remove(documentID: documentID)
             cancelPendingNotePersistence(for: documentID)
             pendingNotePersistenceByItemID.removeValue(forKey: documentID)

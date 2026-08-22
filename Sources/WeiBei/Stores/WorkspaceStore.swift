@@ -329,8 +329,6 @@ final class WorkspaceStore: ObservableObject {
     var courseLibraryUnavailableReason: String?
     /// 资料库迁移进行中：写回、3 秒对账、课程笔记加载全部挂起（计划 §4.2）。
     @Published var libraryMigrationInFlight = false
-    /// 外部文件缺席灰态（计划 §5 阶段2）：首缺席记时间，两个对账周期仍缺席才移除条目。
-    var fileMissingSinceByItemID: [String: Date] = [:]
     @Published private(set) var courseItemMemberships: [CourseItemMembership] = [] {
         didSet {
             courseMembershipIndex = CourseItemMemberships(values: courseItemMemberships)
@@ -633,7 +631,7 @@ final class WorkspaceStore: ObservableObject {
     /// 只有基线==当前文件名时才跟随抬头改名；对不上说明文件名被外部动过，
     /// 先登记、不动文件。内存态即可：重启丢基线只少一次自动改名，方向安全。
     var headingSyncedNoteStemByItemID: [String: String] = [:]
-    var loadedCourseNoteTextByItemID: [String: String] = [:]
+    private var loadedCourseNoteTextByItemID: [String: String] = [:]
     var courseNoteLoadTasksByItemID: [String: Task<Void, Never>] = [:]
     private var courseNoteLoadGenerationByItemID: [String: UInt64] = [:]
     private var courseNoteWritesInFlight = Set<String>()
@@ -7796,7 +7794,6 @@ final class WorkspaceStore: ObservableObject {
     }
 
     func removeItemRegistration(_ itemID: String) {
-        fileMissingSinceByItemID.removeValue(forKey: itemID)
         pendingNotePersistenceTasks.removeValue(forKey: itemID)?.cancel()
         courseNoteLoadTasksByItemID.removeValue(forKey: itemID)?.cancel()
         courseNoteWriteTasksByItemID.removeValue(forKey: itemID)?.cancel()
@@ -10075,10 +10072,7 @@ final class WorkspaceStore: ObservableObject {
     }
 
     func displaySubtitle(for item: StudyItem) -> String {
-        if fileMissingSinceByItemID[item.id] != nil {
-            return ui("文件不存在", "File missing")
-        }
-        return item.subtitle
+        item.subtitle
     }
 
     func displayTags(for item: StudyItem, limit: Int = 3) -> [String] {
@@ -17834,10 +17828,6 @@ final class WorkspaceStore: ObservableObject {
             }
 
             var nextItem = importedItems[itemIndex]
-            if nextDigest != item.contentDigest {
-                backUpUnsavedNoteContentBeforeAdopting(itemID: itemID)
-            }
-            fileMissingSinceByItemID.removeValue(forKey: itemID)
             nextItem.title = observation.url.deletingPathExtension().lastPathComponent
             nextItem.subtitle = observation.url.lastPathComponent
             nextItem.kind = StudyItemKind.detect(from: observation.url)
@@ -17927,8 +17917,6 @@ final class WorkspaceStore: ObservableObject {
             guard !Task.isCancelled else { return }
             // P0：先跑分叉修复（会丢弃/写回草稿），再跑 retry——顺序不能反，
             // 否则 retry 会把「读盘失败回退的模板草稿」直接盖回磁盘。
-            // 约束出处：Docs/plans/2026-08-22-file-model-convergence-and-library-relocation.md §5 阶段4
-            // （阶段4 写闸门落地、repair 例程拆除后，此顺序锁随之删除）。
             await self?.repairDivergedNotebookNotesIfNeeded()
             guard !Task.isCancelled else { return }
             await self?.retryRestoredPendingNoteWrites()
@@ -18572,10 +18560,8 @@ final class WorkspaceStore: ObservableObject {
                 let markdown = cleanLegacyPlaceholder(result.markdown)
                 loadedCourseNoteTextByItemID[itemID] = markdown
                 let previousDigest = importedItems[currentIndex].contentDigest
-                fileMissingSinceByItemID.removeValue(forKey: itemID)
                 if let previousDigest,
                    previousDigest != result.snapshot.sha256 {
-                    backUpUnsavedNoteContentBeforeAdopting(itemID: itemID)
                     importedItems[currentIndex].contentRevision &+= 1
                 }
                 importedItems[currentIndex].contentDigest =
