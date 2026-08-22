@@ -11027,11 +11027,13 @@ final class WorkspaceStore: ObservableObject {
                 result = .failure(error)
             }
         }
+        // 生产 60 秒兜底：交互等待不再无限挂死；大导入走后台进度路径不经过本闸门。
         let deadline = WeiBeiSafetyTestMode.isEnabled
             ? Date().addingTimeInterval(45)
-            : Date.distantFuture
+            : Date().addingTimeInterval(60)
         while result == nil {
             if Date() > deadline {
+                showImportantOperationError(ui("文件操作超过 60 秒未完成，已停止等待；请重试该操作。", "A file operation did not finish within 60 seconds; please retry."))
                 throw NSError(
                     domain: "WeiBei.WorkspaceStore",
                     code: NSUserCancelledError,
@@ -18481,8 +18483,7 @@ final class WorkspaceStore: ObservableObject {
     /// 安全自检仍立即暴露，便于断言注入的单次失败。
     private func reportWorkspaceSaveFailure(_ message: String) {
         consecutiveWorkspaceSaveFailures += 1
-        // 保存失败连续 3 次才上横幅，但每次都落日志——删除、退出等下游
-        // 操作会因保存失败被拒绝，没有日志就完全无法事后定位。
+        // 连续 3 次失败才上横幅；每次都落日志（下游操作会被拒绝，事后定位全靠它）。
         appendWorkspaceSaveFailureLog(message)
         if WeiBeiSafetyTestMode.isEnabled
             || consecutiveWorkspaceSaveFailures >= 3 {
@@ -20201,7 +20202,8 @@ final class WorkspaceStore: ObservableObject {
     }
 
     private func load() {
-        guard let data = try? Data(contentsOf: storageURL),
+        let data = restoredSnapshotDataOrNotice(storageURL: storageURL)
+        guard let data,
               let snapshot = try? JSONDecoder().decode(PersistedWorkspace.self, from: data) else {
             return
         }
@@ -20314,8 +20316,7 @@ final class WorkspaceStore: ObservableObject {
         if let agentBaseURL = snapshot.agentBaseURL {
             self.agentBaseURL = agentBaseURL
         }
-        // Legacy field: still read so older workspaces restore immersion/multi-pane;
-        // threePaneOrder owns free drag order; retired strings only drop this field.
+        // Legacy field: still read for older workspaces; threePaneOrder now owns drag order.
         var migratedRetiredSplitLayout = false
         if let persistedLayoutRaw = snapshot.workspaceLayout {
             if let workspaceLayout = WorkspaceLayout.resolve(persistedValue: persistedLayoutRaw) {
@@ -20339,8 +20340,7 @@ final class WorkspaceStore: ObservableObject {
         showNotes = snapshot.showNotes ?? legacyRightPane ?? true
         showDailyInspiration = snapshot.showDailyInspiration ?? true
         if migratedRetiredSplitLayout {
-            // Retired 阅读/笔记对半 → current workbench: reader + notes visible, chat hidden.
-            // Keep the persisted free order when present; next save writes the new layout.
+            // Retired 对半布局 → workbench：阅读+笔记可见、对话隐藏，保留既有自由顺序。
             layout = layoutMatchingThreePaneOrder(self.threePaneOrder)
             showReader = true
             showNotes = true
@@ -20655,11 +20655,11 @@ final class WorkspaceStore: ObservableObject {
     }
 
     nonisolated private static func writeWorkspaceSnapshot(_ data: Data, to url: URL) throws {
+        WorkspaceSnapshotRecovery.rotateBackups(primary: url)
         try data.write(to: url, options: [.atomic])
     }
 
-    /// Schedule a coalesced workspace snapshot write. Verification keeps the
-    /// legacy synchronous path; production saves use the file worker actor.
+    /// Coalesced snapshot write; verification keeps the legacy synchronous path.
     @discardableResult
     func save() -> Bool {
         if Self.mustSaveImmediately {
