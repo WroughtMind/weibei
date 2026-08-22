@@ -631,7 +631,7 @@ final class WorkspaceStore: ObservableObject {
     /// 只有基线==当前文件名时才跟随抬头改名；对不上说明文件名被外部动过，
     /// 先登记、不动文件。内存态即可：重启丢基线只少一次自动改名，方向安全。
     var headingSyncedNoteStemByItemID: [String: String] = [:]
-    private var loadedCourseNoteTextByItemID: [String: String] = [:]
+    var loadedCourseNoteTextByItemID: [String: String] = [:]
     var courseNoteLoadTasksByItemID: [String: Task<Void, Never>] = [:]
     private var courseNoteLoadGenerationByItemID: [String: UInt64] = [:]
     private var courseNoteWritesInFlight = Set<String>()
