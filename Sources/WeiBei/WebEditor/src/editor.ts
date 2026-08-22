@@ -3641,11 +3641,8 @@ if (WEIBEI_EDITOR_RUNTIME) {
     .use($prose(() => createSyntaxMarksPlugin({
       isEditable: () => isEditable,
       isStreaming: () => streamingMarkdownBuffer !== null,
-      consumeMathLanding: () => {
-        const landing = mathTypedLandingPosition;
-        mathTypedLandingPosition = null;
-        return landing;
-      },
+      mathLanding: () => mathTypedLandingPosition,
+      clearMathLanding: () => { mathTypedLandingPosition = null; },
     })))
     .use(weiBeiSlash)
     .use(history)

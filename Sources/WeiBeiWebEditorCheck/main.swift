@@ -1823,14 +1823,23 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
           const mathTypingCursor = (() => {
             editor.setMarkdown('');
             editor.insertMarkdown('\\n\\n{{WEIBEI_CURSOR}}');
-            if (!editor.typeTextForCheck('$ ?$')) return false;
-            const converted = editor.getMarkdown().includes('$?$');
+            if (!editor.typeTextForCheck('$x$')) return false;
+            // Conversion is proven by the atom node existing while no literal $ remains.
+            const converted = !!document.querySelector('.weibei-math-inline')
+              && !(document.querySelector('.ProseMirror')?.textContent || '').includes('$');
             // Landing from the input rule must keep the formula rendered — the
-            // adjacent-source peek stays off for that caret placement.
+            // adjacent-source peek stays suppressed while the caret rests there.
             const renderedOnLanding = !document.querySelector('.weibei-math-adjacent')
               && !!document.querySelector('.weibei-math-inline .weibei-math-preview');
             editor.typeTextForCheck('后');
-            return converted && renderedOnLanding && editor.getMarkdown().includes('$?$后');
+            return converted && renderedOnLanding && editor.getMarkdown().includes('$x$后');
+          })();
+          const emptyHeadingMarker = (() => {
+            editor.setMarkdown('');
+            editor.insertMarkdown('\\n\\n{{WEIBEI_CURSOR}}');
+            if (!editor.typeTextForCheck('## ')) return false;
+            return !!document.querySelector('h2 .weibei-syntax-mark, h2.weibei-syntax-mark[data-marker="##"]')
+              || !!document.querySelector('.weibei-syntax-mark[data-marker="##"]');
           })();
           editor.setMarkdown('## 标记显隐\\n\\n> 引用显隐\\n\\n正文');
           editor.selectFirstTextForCheck('标记显隐');
@@ -1842,7 +1851,7 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
           const mathAdjacent = !!document.querySelector('.weibei-math-adjacent');
           editor.selectFirstTextForCheck('结尾段落');
           const mathAdjacentCleared = !document.querySelector('.weibei-math-adjacent');
-          return { pendingWhileTyping, convertedOnClose, revealInsideStrong, adjacentReveal, arrowExitsRun, mathTypingCursor, headingRevealed, quoteRevealed, mathAdjacent, mathAdjacentCleared };
+          return { pendingWhileTyping, convertedOnClose, revealInsideStrong, adjacentReveal, arrowExitsRun, mathTypingCursor, emptyHeadingMarker, headingRevealed, quoteRevealed, mathAdjacent, mathAdjacentCleared };
         })();
         """
         webView.evaluateJavaScript(script) { [weak self] value, error in
@@ -1858,6 +1867,7 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
                   result["adjacentReveal"] as? Bool == true,
                   result["arrowExitsRun"] as? Bool == true,
                   result["mathTypingCursor"] as? Bool == true,
+                  result["emptyHeadingMarker"] as? Bool == true,
                   result["headingRevealed"] as? Bool == true,
                   result["quoteRevealed"] as? Bool == true,
                   result["mathAdjacent"] as? Bool == true,

@@ -101,11 +101,13 @@ export interface SyntaxMarksDeps {
   isEditable: () => boolean;
   isStreaming: () => boolean;
   /**
-   * Consumes the "caret just landed from typing a formula" position (if any) for
-   * this update. The adjacent-source peek must not fire on that landing — the
-   * user wants to see the freshly rendered formula, not its source.
+   * Position where the inline-math input rule just landed the caret. Real
+   * WebKit typing fires extra normalization updates after the input
+   * transaction, so the adjacent-source peek must stay suppressed while the
+   * caret RESTS on the landing (cleared once it moves away).
    */
-  consumeMathLanding: () => number | null;
+  mathLanding: () => number | null;
+  clearMathLanding: () => void;
 }
 
 interface SyntaxMarksCache {
@@ -135,10 +137,15 @@ export const createSyntaxMarksPlugin = (deps: SyntaxMarksDeps): Plugin => {
     key: syntaxMarksKey,
     view: () => ({
       update(view: any) {
-        const landing = deps.consumeMathLanding();
-        const next = landing !== null && landing === view.state.selection.from
-          ? null
-          : adjacentMathDom(view);
+        const landing = deps.mathLanding();
+        if (landing !== null) {
+          if (view.state.selection.from === landing) {
+            clearAdjacent();
+            return;
+          }
+          deps.clearMathLanding();
+        }
+        const next = adjacentMathDom(view);
         if (next === adjacentDom) return;
         clearAdjacent();
         adjacentDom = next;
@@ -193,19 +200,40 @@ export const createSyntaxMarksPlugin = (deps: SyntaxMarksDeps): Plugin => {
             run = markRunAround(doc, selection.to, markType);
           }
           if (!run || run.to <= run.from) continue;
-          decorations.push(markerDecoration(run.from, Math.min(run.from + 1, run.to), candidate.marker, candidate.kind, 'open'));
-          decorations.push(markerDecoration(Math.max(run.to - 1, run.from), run.to, candidate.marker, candidate.kind, 'close'));
+          // Boundary positions show only the marker on the caret's side, so it
+          // reads as "at the edge" rather than "still trapped inside".
+          const rel = selection.$from.parentOffset;
+          const relFrom = run.from - blockStart;
+          const relTo = run.to - blockStart;
+          if (rel < relTo) {
+            decorations.push(markerDecoration(run.from, Math.min(run.from + 1, run.to), candidate.marker, candidate.kind, 'open'));
+          }
+          if (rel > relFrom) {
+            decorations.push(markerDecoration(Math.max(run.to - 1, run.from), run.to, candidate.marker, candidate.kind, 'close'));
+          }
         }
-        const blockLeadingMarker = (nodeStart: number, contentSize: number, marker: string, kind: PendingSyntaxKind) => {
-          if (contentSize <= 0) return;
-          decorations.push(markerDecoration(nodeStart, Math.min(nodeStart + 1, nodeStart + contentSize), marker, kind, 'open'));
-        };
+        const nodeMarkerDecoration = (nodePos: number, nodeSize: number, marker: string, kind: PendingSyntaxKind) =>
+          Decoration.node(nodePos, nodePos + nodeSize, {
+            class: 'weibei-syntax-mark weibei-syntax-mark-node',
+            'data-marker': marker,
+            style: `--weibei-marker-color: var(--weibei-syntax-${kind})`,
+          });
         const heading = closestAncestorOfName(selection.$from, 'heading');
         if (heading) {
-          blockLeadingMarker(selection.$from.before(heading.depth) + 1, heading.node.content.size, '#'.repeat(heading.node.attrs.level || 1), 'heading');
+          decorations.push(nodeMarkerDecoration(
+            selection.$from.before(heading.depth),
+            heading.node.nodeSize,
+            '#'.repeat(heading.node.attrs.level || 1),
+            'heading',
+          ));
         }
         if (closestAncestorOfName(selection.$from, 'blockquote')) {
-          blockLeadingMarker(selection.$from.before(selection.$from.depth) + 1, selection.$from.parent.content.size, '>', 'quote');
+          decorations.push(nodeMarkerDecoration(
+            selection.$from.before(selection.$from.depth),
+            selection.$from.parent.nodeSize,
+            '>',
+            'quote',
+          ));
         }
         const set = DecorationSet.create(doc, decorations);
         cache = { doc, from, to, set };

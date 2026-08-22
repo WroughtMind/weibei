@@ -1090,14 +1090,20 @@
     .weibei-syntax-k-highlight { color: var(--weibei-syntax-highlight); }
 
     /* Source markers ride on real characters via pseudo-elements — no synthetic
-       cursor positions, so arrow keys pass through the run boundaries freely. */
+       cursor positions, so arrow keys pass through the run boundaries freely.
+       Node-level markers (heading #, quote >) show on empty blocks too. */
     .weibei-syntax-mark-open::before,
-    .weibei-syntax-mark-close::after {
+    .weibei-syntax-mark-close::after,
+    .weibei-syntax-mark-node::before {
       content: attr(data-marker);
       color: var(--weibei-marker-color, var(--muted));
       font-size: .88em;
       font-weight: 600;
       letter-spacing: 0;
+    }
+
+    .weibei-syntax-mark-node::before {
+      margin-right: .15em;
     }
 
     /* Quiet source peek when the caret is adjacent to a formula; click still enters editing. */
