@@ -512,6 +512,7 @@ struct NotePaneView: View {
         .onChange(of: store.activeNoteItemID) { _, _ in
             editingNoteTabTitle = false
             noteOutline = []
+            activeNoteRailID = nil
         }
         .onChange(of: paneState.focusedPane) { _, pane in
             if pane != .notes {
@@ -1216,6 +1217,10 @@ struct AgentPaneView: View {
     @State private var agentVisibleMessageLimit = AgentPaneView.agentHistoryPageSize
     @State private var isRevealingEarlierAgentHistory = false
     @State private var isAgentHistoryRevealButtonHovered = false
+    /// Turn-start rows report reading-line crossings here at scroll rate. A
+    /// reference type on purpose: per-event dictionary writes must not publish
+    /// SwiftUI state; only the derived activeAgentRailID write renders.
+    @State private var turnReadingPositions = AgentTurnReadingPositionModel()
 
     private static let agentHistoryPageSize = AgentHistoryRevealPolicy.pageSize
     private static let paneStructureTransitionDuration: TimeInterval = 0.24
@@ -1255,6 +1260,8 @@ struct AgentPaneView: View {
         let wide = AgentChatLayoutMetrics.isWide(layout: store.layout)
         let showsContentRail = !wide && store.layout.allowsRailOnlyPanes
         let railItems = showsContentRail ? agentRailItems : []
+        // One O(n) set per render — row backgrounds only do Set.contains.
+        let railTurnStartMessageIDs = showsContentRail ? agentRailTurnStartMessageIDs : []
         // The native split host changes this proposal on every divider frame.
         // Read it locally so visible content and the rail follow continuously;
         // never publish those frame-level values into the eager message tree.
@@ -1313,6 +1320,13 @@ struct AgentPaneView: View {
                                         contentWidth: contentWidth,
                                         wide: wide
                                     )
+                                    .background {
+                                        if railTurnStartMessageIDs.contains(message.id) {
+                                            AgentTurnReadingPositionProbe(messageID: message.id) {
+                                                handleTurnReadingPosition(messageID: $0, passed: $1)
+                                            }
+                                        }
+                                    }
                                 }
                                 if store.isAgentRunningInActiveChat
                                     && !store.hasPersistedGeneratingAgentReply
@@ -1438,6 +1452,8 @@ struct AgentPaneView: View {
                 .onChange(of: store.activeStudySessionID) { _, _ in
                     agentVisibleMessageLimit = Self.agentHistoryPageSize
                     isRevealingEarlierAgentHistory = false
+                    turnReadingPositions.passedByMessageID.removeAll()
+                    activeAgentRailID = nil
                 }
             }
             .preference(
@@ -1700,6 +1716,12 @@ struct AgentPaneView: View {
         }
     }
 
+    /// Rows whose message starts a rail turn — the only rows that need a
+    /// reading-position probe. Rail ticks are turns, not messages.
+    private var agentRailTurnStartMessageIDs: Set<UUID> {
+        Set(agentRailTurns.map(\.startMessageID))
+    }
+
     private func activateAgentRailItem(_ item: ContentRailItem, railOnly: Bool, proxy: ScrollViewProxy) {
         guard let turn = agentRailTurns.first(where: { "chat-turn-\($0.id.uuidString)" == item.id }) else { return }
         activeAgentRailID = item.id
@@ -1724,6 +1746,21 @@ struct AgentPaneView: View {
         agentFollowsLatest = messageID == store.messages.last?.id
         if let turn = agentRailTurns.last(where: { $0.startIndex <= visibleIndex }) {
             activeAgentRailID = "chat-turn-\(turn.id.uuidString)"
+        }
+    }
+
+    /// Mirrors the web editors' reading-line rule: the rail marks the last
+    /// turn whose question row top has crossed the upper third of the viewport.
+    private func handleTurnReadingPosition(messageID: UUID, passed: Bool) {
+        guard turnReadingPositions.passedByMessageID[messageID] != passed else { return }
+        turnReadingPositions.passedByMessageID[messageID] = passed
+        let turns = agentRailTurns
+        guard let activeTurn = turns.last(where: {
+            turnReadingPositions.passedByMessageID[$0.startMessageID] == true
+        }) ?? turns.first else { return }
+        let id = "chat-turn-\(activeTurn.id.uuidString)"
+        if activeAgentRailID != id {
+            activeAgentRailID = id
         }
     }
 
@@ -4552,6 +4589,111 @@ private struct AgentScrollMetrics: Equatable {
     let distanceFromBottom: CGFloat
     let isUserScrolling: Bool
     let isScrollingTowardTop: Bool
+}
+
+/// Scroll-rate reading-line crossings for chat turn starts, keyed by message id.
+/// Mutated inside probe callbacks only — never a SwiftUI-published value.
+private final class AgentTurnReadingPositionModel {
+    var passedByMessageID: [UUID: Bool] = [:]
+}
+
+/// Reports whether the reading line (upper third of the chat viewport) has
+/// crossed this row's top edge. Same coalescing contract as the viewport
+/// visibility probe: the callback fires only on a flip, so ordinary scrolling
+/// never re-enters SwiftUI per frame.
+private struct AgentTurnReadingPositionProbe: NSViewRepresentable {
+    var messageID: UUID
+    var onChange: (UUID, Bool) -> Void
+
+    func makeNSView(context: Context) -> ProbeView {
+        let view = ProbeView()
+        view.messageID = messageID
+        view.onChange = onChange
+        return view
+    }
+
+    func updateNSView(_ nsView: ProbeView, context: Context) {
+        nsView.messageID = messageID
+        nsView.onChange = onChange
+        nsView.ensureObserversInstalled()
+        nsView.report()
+    }
+
+    final class ProbeView: NSView {
+        var messageID: UUID?
+        var onChange: ((UUID, Bool) -> Void)?
+        private var observers: [NSObjectProtocol] = []
+        private var lastReported: Bool?
+        private weak var observedClipView: NSClipView?
+
+        override func layout() {
+            super.layout()
+            ensureObserversInstalled()
+            report()
+        }
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            ensureObserversInstalled()
+        }
+
+        override func viewDidMoveToSuperview() {
+            super.viewDidMoveToSuperview()
+            ensureObserversInstalled()
+        }
+
+        fileprivate func report() {
+            guard let clipView = enclosingScrollView?.contentView,
+                  window != nil,
+                  bounds.width > 1,
+                  bounds.height > 1 else { return }
+            let frameInClip = convert(bounds, to: clipView)
+            // Flip-aware reading line: SwiftUI hosting content is flipped, but
+            // the predicate must not depend on that.
+            let viewportHeight = clipView.bounds.height
+            let rowTop: CGFloat
+            let readingLine: CGFloat
+            if clipView.isFlipped {
+                rowTop = frameInClip.minY
+                readingLine = clipView.bounds.minY + viewportHeight * 0.32
+            } else {
+                rowTop = frameInClip.maxY
+                readingLine = clipView.bounds.maxY - viewportHeight * 0.32
+            }
+            let passed = clipView.isFlipped ? rowTop <= readingLine : rowTop >= readingLine
+            guard passed != lastReported else { return }
+            lastReported = passed
+            guard let id = messageID else { return }
+            DispatchQueue.main.async { [weak self] in
+                self?.onChange?(id, passed)
+            }
+        }
+
+        fileprivate func ensureObserversInstalled() {
+            guard let clipView = enclosingScrollView?.contentView else { return }
+            guard observedClipView !== clipView else { return }
+            observers.forEach(NotificationCenter.default.removeObserver)
+            observers.removeAll()
+            observedClipView = clipView
+            clipView.postsBoundsChangedNotifications = true
+            let center = NotificationCenter.default
+            observers.append(center.addObserver(
+                forName: NSView.boundsDidChangeNotification,
+                object: clipView,
+                queue: .main
+            ) { [weak self] _ in self?.report() })
+            observers.append(center.addObserver(
+                forName: NSView.frameDidChangeNotification,
+                object: clipView,
+                queue: .main
+            ) { [weak self] _ in self?.report() })
+            report()
+        }
+
+        deinit {
+            observers.forEach(NotificationCenter.default.removeObserver)
+        }
+    }
 }
 
 /// Reports whether one finalized Markdown row intersects the chat viewport.
