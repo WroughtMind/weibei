@@ -3394,6 +3394,13 @@ struct ContextualContentPicker: View {
                             .weiBeiText(12)
                             .foregroundStyle(WeiBeiTheme.secondaryInk)
                             .frame(height: 54)
+                        Button(emptyImportTitle) {
+                            importIntoCurrentLevel()
+                        }
+                        .buttonStyle(.plain)
+                        .weiBeiText(11.5, weight: .medium)
+                        .foregroundStyle(WeiBeiTheme.cinnabar.opacity(0.88))
+                        .padding(.bottom, 8)
                     } else {
                         ForEach(visibleRows) { row in
                             rowButton(row)
@@ -3456,6 +3463,27 @@ struct ContextualContentPicker: View {
         kind == .note
             ? store.ui("这里还没有笔记", "No notes here yet")
             : store.ui("这里还没有资料", "No materials here yet")
+    }
+
+    private var emptyImportTitle: String {
+        kind == .note
+            ? store.ui("导入笔记…", "Import notes…")
+            : store.ui("导入资料…", "Import materials…")
+    }
+
+    /// 空态导入入口：课程层级导入进该课程，其余进通用资料/笔记。
+    private func importIntoCurrentLevel() {
+        if case let .course(courseID) = level {
+            if kind == .note {
+                store.importCourseNotesFromPanel(courseID: courseID)
+            } else {
+                store.importCourseMaterialsFromPanel(courseID: courseID)
+            }
+        } else if kind == .note {
+            store.importCourseNotesFromPanel()
+        } else {
+            store.importCourseMaterialsFromPanel()
+        }
     }
 
     private var rows: [PickerRow] {
