@@ -155,7 +155,7 @@ struct ImmersiveHoverTitleView<Actions: View>: View {
     private func renameField(_ titleRename: HoverTitleRename) -> some View {
         TextField(title, text: titleRename.draft)
             .textFieldStyle(.plain)
-            .weiBeiText(11.8, weight: .medium)
+            .weiBeiText(12, weight: .medium)
             .foregroundStyle(WeiBeiTheme.ink)
             .frame(width: 220)
             .focused($titleFieldFocused)
@@ -195,7 +195,7 @@ struct ImmersiveHoverTitleView<Actions: View>: View {
 
     private var titleView: some View {
         Text(title)
-            .weiBeiText(11.8, weight: .medium)
+            .weiBeiText(12, weight: .medium)
             .lineLimit(1)
             .truncationMode(.tail)
             .foregroundStyle(WeiBeiTheme.secondaryInk)
@@ -715,7 +715,7 @@ struct ReaderView: View {
                             Text(Self.truncatedAskMenuLabel(thread.selectionText))
                             if !thread.ownerTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                                 Text(thread.ownerTitle)
-                                    .font(.caption2)
+                                    .weiBeiText(9.5)
                                     .foregroundStyle(.secondary)
                             }
                         }
@@ -723,7 +723,7 @@ struct ReaderView: View {
                 }
             } label: {
                 Text(store.ui("已问 · \(threads.count)", "Asked · \(threads.count)"))
-                    .weiBeiText(11, weight: .semibold)
+                    .weiBeiText(12, weight: .semibold)
                     .foregroundStyle(WeiBeiTheme.cinnabar.opacity(0.9))
                     .padding(.horizontal, 8)
                     .frame(height: 22)
@@ -827,9 +827,9 @@ struct ReaderView: View {
     private var pdfTextLayerNotice: some View {
         HStack(spacing: 7) {
             Image(systemName: "text.viewfinder")
-                .weiBeiText(11, weight: .medium)
+                .weiBeiText(12, weight: .medium)
             Text(store.ui("未检测到可选文本层", "No selectable text layer"))
-                .weiBeiText(11, weight: .medium)
+                .weiBeiText(12, weight: .medium)
         }
         .foregroundStyle(WeiBeiTheme.secondaryInk)
         .padding(.horizontal, 9)
@@ -870,7 +870,7 @@ struct ReaderView: View {
                 .help(store.ui("上一页", "Previous page"))
 
                 Text(PageNavigator.display(pdfPageIndex, pageCount: pdfPageCount))
-                    .weiBeiText(11, weight: .medium, design: .monospaced)
+                    .weiBeiText(12, weight: .medium, design: .monospaced)
                     .foregroundStyle(WeiBeiTheme.secondaryInk)
                     .frame(width: 50, height: 22)
 
@@ -905,7 +905,7 @@ struct ReaderView: View {
                     .weiBeiText(12, weight: .semibold)
                 if showsPDFModeLabel {
                     Text(pdfBrowseMode.label(language: store.interfaceLanguage))
-                        .weiBeiText(11, weight: .medium)
+                        .weiBeiText(12, weight: .medium)
                 }
             }
             .foregroundStyle(pdfModeForeground)
@@ -3384,7 +3384,7 @@ struct ContextualContentPicker: View {
                         backButton
                     }
                     Text(title)
-                        .weiBeiText(19, weight: .semibold, design: .serif)
+                        .weiBeiText(18, weight: .semibold, design: .serif)
                         .foregroundStyle(WeiBeiTheme.ink)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.bottom, 3)
@@ -3406,7 +3406,7 @@ struct ContextualContentPicker: View {
                             showsAll = true
                         }
                         .buttonStyle(.plain)
-                        .weiBeiText(11, weight: .medium)
+                        .weiBeiText(12, weight: .medium)
                         .foregroundStyle(WeiBeiTheme.secondaryInk)
                         .padding(.top, 3)
                     }
@@ -3417,7 +3417,7 @@ struct ContextualContentPicker: View {
                         importIntoCurrentLevel()
                     }
                     .buttonStyle(.plain)
-                    .weiBeiText(11.5, weight: .medium)
+                    .weiBeiText(12, weight: .medium)
                     .foregroundStyle(WeiBeiTheme.cinnabar.opacity(0.88))
                     .padding(.top, 6)
                 }
@@ -3545,7 +3545,7 @@ struct ContextualContentPicker: View {
             Label(store.ui("全部", "All"), systemImage: "chevron.left")
         }
         .buttonStyle(.plain)
-        .weiBeiText(11, weight: .medium)
+        .weiBeiText(12, weight: .medium)
         .foregroundStyle(WeiBeiTheme.secondaryInk)
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -3573,11 +3573,11 @@ struct ContextualContentPicker: View {
                 Spacer(minLength: 8)
                 if let count = row.count {
                     Text("\(count)")
-                        .weiBeiText(11, weight: .medium)
+                        .weiBeiText(12, weight: .medium)
                         .foregroundStyle(WeiBeiTheme.tertiaryInk)
                 }
                 Image(systemName: row.isContainer ? "chevron.right" : "arrow.up.right")
-                    .weiBeiText(9, weight: .semibold)
+                    .weiBeiText(9.5, weight: .semibold)
                     .foregroundStyle(WeiBeiTheme.tertiaryInk.opacity(0.72))
             }
             .padding(.horizontal, 17)

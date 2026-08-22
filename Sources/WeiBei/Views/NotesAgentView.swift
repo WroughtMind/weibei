@@ -119,7 +119,7 @@ struct WeiBeiPaneHeader<Actions: View>: View {
                 }
                 // Always present for accessibility / self-check; hide visually when the strip is narrow.
                 Text(subtitle)
-                    .weiBeiText(11, weight: .medium)
+                    .weiBeiText(12, weight: .medium)
                     .foregroundStyle(WeiBeiTheme.secondaryInk)
                     .lineLimit(1)
                     .truncationMode(.tail)
@@ -465,7 +465,7 @@ struct NotePaneView: View {
                                 Task { await store.resolveNoteEditorRecoveryConflict(useDisk: false) }
                             }
                         }
-                        .font(.caption)
+                        .weiBeiText(10.5)
                         .padding(.horizontal, 14)
                         .padding(.vertical, 7)
                         .background(WeiBeiTheme.paperRaised)
@@ -778,7 +778,7 @@ private struct NotebookCreationPanel: View {
     var body: some View {
         HStack(spacing: 9) {
             Text(draft.kind == .blank ? store.ui("新建笔记", "New Note") : store.ui("资料笔记", "Material Note"))
-                .weiBeiText(12.5, weight: .semibold, design: .serif)
+                .weiBeiText(12, weight: .semibold)
                 .foregroundStyle(WeiBeiTheme.cinnabar.opacity(0.86))
                 .lineLimit(1)
                 .fixedSize(horizontal: true, vertical: false)
@@ -790,7 +790,7 @@ private struct NotebookCreationPanel: View {
                     .foregroundStyle(WeiBeiTheme.placeholderInk)
             )
             .textFieldStyle(.plain)
-            .weiBeiText(14.5, weight: .medium)
+            .weiBeiText(15, weight: .medium)
             .foregroundColor(WeiBeiTheme.ink)
             .focused($focused)
             .onSubmit(confirm)
@@ -801,7 +801,7 @@ private struct NotebookCreationPanel: View {
                 Image(systemName: "checkmark")
             }
             .buttonStyle(.plain)
-            .weiBeiText(16, weight: .semibold)
+            .weiBeiText(15, weight: .semibold)
             .foregroundStyle(confirmColor)
             .frame(width: 28, height: 26)
             .background {
@@ -1156,8 +1156,8 @@ private enum AgentChatLayoutMetrics {
     /// Immersive min height — grows with typed lines; never a giant empty white void.
     static let wideComposerMinHeight: CGFloat = 88
     static let wideComposerMaxHeight: CGFloat = 340
-    static let compactFontSize: CGFloat = 14.5
-    static let wideFontSize: CGFloat = 16.5
+    static let compactFontSize: CGFloat = 15
+    static let wideFontSize: CGFloat = 15
 
     static func isWide(layout: WorkspaceLayout) -> Bool {
         // Immersive conversation only — document multi-pane keeps compact strip metrics.
@@ -1854,7 +1854,7 @@ struct AgentPaneView: View {
         } label: {
             HStack(spacing: 6) {
                 Image(systemName: "chevron.up")
-                    .weiBeiText(9, weight: .semibold)
+                    .weiBeiText(9.5, weight: .semibold)
                 Text(store.ui("查看更早的 \(revealCount) 条消息", "Show \(revealCount) earlier messages"))
                     .weiBeiText(12, weight: .medium)
             }
@@ -2098,7 +2098,7 @@ private struct AgentSelectionAttachmentPill: View {
                 // click is not eaten by hover-popover dismissal.
                 HStack(spacing: 6) {
                     Image(systemName: "text.bubble")
-                        .weiBeiText(11, weight: .medium)
+                        .weiBeiText(12, weight: .medium)
                     Text(store.ui("\(interaction.selectionAttachments.count) 个已选文本片段", "\(interaction.selectionAttachments.count) selected text fragments"))
                         .weiBeiText(12, weight: .medium)
                 }
@@ -2110,7 +2110,7 @@ private struct AgentSelectionAttachmentPill: View {
 
                 Button(action: clearAllAttachments) {
                     Image(systemName: "xmark")
-                        .weiBeiText(9, weight: .semibold)
+                        .weiBeiText(9.5, weight: .semibold)
                 }
                 .buttonStyle(WeiBeiIconButtonStyle(size: 18))
                 .accessibilityLabel(Text(store.ui("清空已选文本片段", "Clear selected text fragments")))
@@ -2159,7 +2159,7 @@ private struct AgentSelectionAttachmentPill: View {
                     .foregroundStyle(WeiBeiTheme.ink)
                 Spacer()
                 Text(store.ui("发问时会作为上下文", "Used as context when asking"))
-                    .weiBeiText(10, weight: .medium)
+                    .weiBeiText(10.5, weight: .medium)
                     .foregroundStyle(WeiBeiTheme.tertiaryInk)
                 Button(store.ui("清空", "Clear")) {
                     clearAllAttachments()
@@ -2189,10 +2189,10 @@ private struct AgentSelectionAttachmentPill: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {
                 Text(store.ui("片段 \(index + 1)", "Fragment \(index + 1)"))
-                    .weiBeiText(11, weight: .semibold)
+                    .weiBeiText(12, weight: .semibold)
                     .foregroundStyle(WeiBeiTheme.ink)
                 Text(selection.ownerTitle)
-                    .weiBeiText(10, weight: .medium)
+                    .weiBeiText(10.5, weight: .medium)
                     .lineLimit(1)
                     .foregroundStyle(WeiBeiTheme.secondaryInk)
                 Spacer(minLength: 8)
@@ -2269,7 +2269,7 @@ private struct FloatingSelectionPreview: View {
 
     var body: some View {
         Text(cleanedText)
-            .weiBeiText(11.5, weight: .medium)
+            .weiBeiText(12, weight: .medium)
             .foregroundStyle(WeiBeiTheme.secondaryInk)
             .lineLimit(1)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -2576,7 +2576,7 @@ struct FloatingSelectionAgentView: View {
                     withAnimation(WeiBeiMotion.micro) { togglePinnedFloatingAgent() }
                 } label: {
                     Image(systemName: store.pinnedFloatingAgent ? "pin.fill" : "pin")
-                        .weiBeiText(11, weight: .semibold)
+                        .weiBeiText(12, weight: .semibold)
                         .foregroundStyle(store.pinnedFloatingAgent ? WeiBeiTheme.cinnabar : WeiBeiTheme.secondaryInk)
                         .frame(width: 24, height: 24)
                 }
@@ -2590,7 +2590,7 @@ struct FloatingSelectionAgentView: View {
                     closeFloatingAgent()
                 } label: {
                     Image(systemName: "xmark")
-                        .weiBeiText(10, weight: .bold)
+                        .weiBeiText(10.5, weight: .bold)
                         .foregroundStyle(WeiBeiTheme.secondaryInk)
                         .frame(width: 24, height: 24)
                 }
@@ -2665,7 +2665,7 @@ struct FloatingSelectionAgentView: View {
                     ? store.ui("再问一点…", "Ask a follow-up…")
                     : store.ui("问点什么…", "Ask anything…"),
                 focused: $draftFocused,
-                fontSize: 13.5,
+                fontSize: 15,
                 lineLimit: 1...5,
                 height: SelectionFloatingAgentPlacement.expandedComposerCollapsedHeight,
                 compactMaxHeight: SelectionFloatingAgentPlacement.expandedComposerMaxHeight,
@@ -3309,7 +3309,7 @@ private struct AgentBubble: View {
             if message.completionState == .interrupted && !isFailureMessage {
                 HStack(spacing: 6) {
                     Text(store.ui("回答已中断，已保留现有内容", "Response interrupted; existing content was kept"))
-                        .font(.caption)
+                        .weiBeiText(10.5)
                         .foregroundStyle(WeiBeiTheme.secondaryInk)
                     if store.canRetryAgentRequest(
                         question: message.retryQuestion,
@@ -3567,7 +3567,7 @@ private struct RichAnswerNarrativeText: View {
                         .fixedSize(horizontal: false, vertical: true)
                 case .paragraph:
                     Text(attributed(block.text))
-                        .weiBeiText(14)
+                        .weiBeiText(15)
                         .lineSpacing(4)
                         .foregroundStyle(WeiBeiTheme.ink)
                         .fixedSize(horizontal: false, vertical: true)
@@ -3576,14 +3576,14 @@ private struct RichAnswerNarrativeText: View {
                         Text("•")
                             .foregroundStyle(WeiBeiTheme.cinnabar)
                         Text(attributed(block.text))
-                            .weiBeiText(14)
+                            .weiBeiText(15)
                             .lineSpacing(4)
                             .foregroundStyle(WeiBeiTheme.ink)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 case .quote:
                     Text(attributed(block.text))
-                        .weiBeiText(13.5)
+                        .weiBeiText(13)
                         .lineSpacing(3)
                         .foregroundStyle(WeiBeiTheme.secondaryInk)
                         .fixedSize(horizontal: false, vertical: true)
@@ -3710,7 +3710,7 @@ private struct AgentReplyMemoryUpdateTag: View {
                         "Learning memory updated · \(update.memoryIDs.count)"
                     ))
                     Image(systemName: expanded ? "chevron.up" : "chevron.down")
-                        .weiBeiText(8.5, weight: .bold)
+                        .weiBeiText(9.5, weight: .bold)
                         .accessibilityHidden(true)
                 }
                 .weiBeiText(10.5, weight: .semibold)
@@ -3743,14 +3743,14 @@ private struct AgentReplyMemoryUpdateTag: View {
                                     .foregroundStyle(WeiBeiTheme.cinnabar)
                                     .fixedSize()
                                 Text(revision.text)
-                                    .font(.caption)
+                                    .weiBeiText(10.5)
                                     .foregroundStyle(WeiBeiTheme.secondaryInk)
                                     .lineLimit(2)
                             }
                         }
                     } else {
                         Text(update.summary)
-                            .font(.caption)
+                            .weiBeiText(10.5)
                             .foregroundStyle(WeiBeiTheme.secondaryInk)
                             .fixedSize(horizontal: false, vertical: true)
                     }
@@ -3874,7 +3874,7 @@ private struct AgentReplyActionCard: View {
 
             if let target = store.agentReplyActionTargetTitle(action) {
                 Label(target, systemImage: "note.text")
-                    .font(.caption)
+                    .weiBeiText(10.5)
                     .foregroundStyle(WeiBeiTheme.secondaryInk)
             }
 
@@ -3883,7 +3883,7 @@ private struct AgentReplyActionCard: View {
                 .weibeiInputSurface(height: 32)
 
             TextEditor(text: $bodyText)
-                .weiBeiText(12.5)
+                .weiBeiText(12)
                 .scrollContentBackground(.hidden)
                 .weibeiInputSurface(height: 104, horizontalPadding: 6)
         } else {
@@ -3894,14 +3894,14 @@ private struct AgentReplyActionCard: View {
                 HStack(spacing: 8) {
                     relationNoteLabel
                     Image(systemName: "arrow.left.and.right")
-                        .font(.caption)
+                        .weiBeiText(10.5)
                         .foregroundStyle(WeiBeiTheme.tertiaryInk)
                     relationSourceLabel
                 }
                 VStack(alignment: .leading, spacing: 6) {
                     relationNoteLabel
                     Image(systemName: "arrow.up.and.down")
-                        .font(.caption)
+                        .weiBeiText(10.5)
                         .foregroundStyle(WeiBeiTheme.tertiaryInk)
                     relationSourceLabel
                 }
@@ -3910,14 +3910,14 @@ private struct AgentReplyActionCard: View {
 
         if let failure = action.failureMessage, !failure.isEmpty {
             Label(failure, systemImage: "exclamationmark.triangle")
-                .font(.caption)
+                .weiBeiText(10.5)
                 .foregroundStyle(WeiBeiTheme.cinnabar)
                 .fixedSize(horizontal: false, vertical: true)
         }
 
         if !action.evidence.isEmpty {
             Text(action.evidence.joined(separator: " · "))
-                .font(.caption2)
+                .weiBeiText(9.5)
                 .foregroundStyle(WeiBeiTheme.tertiaryInk)
                 .lineLimit(2)
         }
@@ -3973,7 +3973,7 @@ private struct AgentReplyActionCard: View {
                     ),
                 systemImage: "checkmark.circle"
             )
-            .font(.caption)
+            .weiBeiText(10.5)
             .foregroundStyle(WeiBeiTheme.secondaryInk)
             .lineLimit(1)
 
@@ -4002,7 +4002,7 @@ private struct AgentReplyActionCard: View {
                 ),
             systemImage: "minus.circle"
         )
-        .font(.caption)
+        .weiBeiText(10.5)
         .foregroundStyle(WeiBeiTheme.tertiaryInk)
         .lineLimit(1)
     }
@@ -4037,7 +4037,7 @@ private struct AgentReplyActionCard: View {
 
     private func actionItemLabel(_ title: String, systemImage: String) -> some View {
         Label(title, systemImage: systemImage)
-            .font(.caption)
+            .weiBeiText(10.5)
             .foregroundStyle(WeiBeiTheme.secondaryInk)
             .lineLimit(1)
             .padding(.horizontal, 8)
@@ -4272,7 +4272,7 @@ private struct AgentReplySourceTag: View {
         Button(action: action) {
             HStack(spacing: 4) {
                 Image(systemName: source.kind.sourceSystemImage)
-                    .weiBeiText(9, weight: .semibold)
+                    .weiBeiText(9.5, weight: .semibold)
                 Text(label)
                     .weiBeiText(10.5, weight: .semibold)
                     .lineLimit(1)
@@ -4335,7 +4335,7 @@ private struct AgentReplySourceDetail: View {
     var body: some View {
         HStack(alignment: .top, spacing: 9) {
             Image(systemName: source.kind.sourceSystemImage)
-                .weiBeiText(11, weight: .semibold)
+                .weiBeiText(12, weight: .semibold)
                 .foregroundStyle(WeiBeiTheme.cinnabar.opacity(0.82))
                 .frame(width: 16)
             VStack(alignment: .leading, spacing: 4) {
@@ -4352,14 +4352,14 @@ private struct AgentReplySourceDetail: View {
                     }
                 }
                 Text(source.excerpt)
-                    .weiBeiText(11.5)
+                    .weiBeiText(12)
                     .foregroundStyle(WeiBeiTheme.secondaryInk)
                     .lineLimit(3)
                     .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 4)
             Image(systemName: "arrow.up.right")
-                .weiBeiText(9, weight: .semibold)
+                .weiBeiText(9.5, weight: .semibold)
                 .foregroundStyle(WeiBeiTheme.tertiaryInk)
         }
         .padding(.horizontal, 12)
@@ -4444,7 +4444,7 @@ private struct AgentCitationTag: View {
         Button(action: action) {
             HStack(spacing: 4) {
                 Image(systemName: citation.kind.systemImage)
-                    .weiBeiText(9, weight: .semibold)
+                    .weiBeiText(9.5, weight: .semibold)
                 Text(chipLabel)
                     .weiBeiText(10.5, weight: .semibold)
                     .lineLimit(1)

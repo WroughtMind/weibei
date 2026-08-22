@@ -101,7 +101,7 @@ struct SidebarView: View {
     private var librarySearchField: some View {
         HStack(spacing: 5) {
             Image(systemName: "magnifyingglass")
-                .weiBeiText(10, weight: .medium)
+                .weiBeiText(10.5, weight: .medium)
                 .foregroundStyle(librarySearchFocused
                     ? WeiBeiTheme.link.opacity(0.72)
                     : WeiBeiTheme.placeholderInk)
@@ -112,13 +112,12 @@ struct SidebarView: View {
                     set: model.updateQuery
                 ),
                 prompt: Text(ui("搜索课程资料与笔记", "Search course materials and notes"))
-                    .font(.system(size: 12))
                     .foregroundStyle(WeiBeiTheme.placeholderInk)
             )
             .textFieldStyle(.plain)
             .focused($librarySearchFocused)
             .foregroundColor(WeiBeiTheme.ink)
-            .weiBeiText(12.5)
+            .weiBeiText(12)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .weibeiInputSurface(
@@ -476,7 +475,7 @@ private struct SidebarSectionHeader: View {
 
     var body: some View {
         Text(title)
-            .weiBeiText(11, weight: .semibold)
+            .weiBeiText(12, weight: .semibold)
             .foregroundStyle(WeiBeiTheme.tertiaryInk)
             .textCase(nil)
     }
@@ -492,7 +491,7 @@ private struct SidebarEmptyRow: View {
     var body: some View {
         HStack(spacing: 8) {
             Text(title)
-                .weiBeiText(11)
+                .weiBeiText(12)
                 .foregroundStyle(WeiBeiTheme.tertiaryInk.opacity(0.78))
             Spacer(minLength: 8)
             if let actionTitle, let action {
@@ -599,7 +598,7 @@ private struct SidebarCourseRow: View {
                             "\(materialCount) 份资料 · \(noteCount) 份笔记",
                             "\(materialCount) materials · \(noteCount) notes"
                         ))
-                        .font(.caption)
+                        .weiBeiText(10.5)
                         .foregroundStyle(WeiBeiTheme.secondaryInk)
                         .lineLimit(1)
                     }
@@ -727,7 +726,7 @@ private struct SidebarCourseNameSheet: View {
         VStack(alignment: .leading, spacing: 18) {
             VStack(alignment: .leading, spacing: 5) {
                 Text(heading)
-                    .weiBeiBrandFont(language: store.interfaceLanguage, size: 21, weight: .semibold)
+                    .weiBeiBrandFont(language: store.interfaceLanguage, size: 22, weight: .semibold)
                 Text(detail)
                     .weiBeiText(12)
                     .foregroundStyle(WeiBeiTheme.secondaryInk)
@@ -839,7 +838,7 @@ private struct LibraryRow: View {
                     .lineLimit(1)
                 if !compact, !tags.isEmpty {
                     Text(tags.prefix(3).joined(separator: " "))
-                        .weiBeiText(10, weight: .medium)
+                        .weiBeiText(10.5, weight: .medium)
                         .foregroundStyle(WeiBeiTheme.cinnabar.opacity(0.72))
                         .lineLimit(1)
                 }
