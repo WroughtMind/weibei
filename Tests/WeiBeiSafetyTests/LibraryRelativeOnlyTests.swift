@@ -116,13 +116,6 @@ enum LibraryRelativeOnlyCheck {
         if let index = store.importedItems.firstIndex(where: { $0.id == itemID }) {
             _ = store.forgetGoneImportedItem(at: index)
         }
-        // 灰态保护：模拟两个对账周期后再判移除（计划 §5 阶段2）。
-        if let index = store.importedItems.firstIndex(where: { $0.id == itemID }) {
-            if let missingSince = store.fileMissingSinceByItemID[itemID] {
-                store.fileMissingSinceByItemID[itemID] = missingSince.addingTimeInterval(-7)
-            }
-            _ = store.forgetGoneImportedItem(at: index)
-        }
         XCTAssertNil(store.importedItems.first(where: { $0.id == itemID }))
         XCTAssertTrue(store.studySessions.contains(where: { $0.id == chat.id && !$0.messages.isEmpty }))
 

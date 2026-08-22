@@ -3,19 +3,6 @@ import WeiBeiCore
 
 @MainActor
 extension WorkspaceStore {
-    /// 副本先行（计划 §5 阶段2）：采用外部内容或销毁条目前，把未落盘内容存入备份环。
-    func backUpUnsavedNoteContentBeforeAdopting(itemID: String) {
-        guard let unsaved = pendingNotePersistenceByItemID[itemID]?.markdown
-            ?? notesByItemID[itemID] else {
-            return
-        }
-        _ = try? NoteBackupRing.capture(
-            content: Data(unsaved.utf8),
-            itemID: itemID,
-            rootURL: noteBackupRootURL
-        )
-    }
-
     @discardableResult
     func forgetGoneImportedItem(at index: Int) -> (url: URL?, changed: Bool) {
         guard importedItems.indices.contains(index) else { return (nil, false) }
@@ -36,7 +23,6 @@ extension WorkspaceStore {
         }
         switch CourseProjectFileWorker.entryPresence(at: candidate) {
         case .present:
-            fileMissingSinceByItemID.removeValue(forKey: item.id)
             return (candidate.standardizedFileURL, false)
         case .inaccessible:
             return keepUnavailableImportedItem(at: index)
@@ -44,20 +30,8 @@ extension WorkspaceStore {
             let parent = candidate.deletingLastPathComponent()
             switch CourseProjectFileWorker.entryPresence(at: parent) {
             case .present:
-                // 灰态保护（计划 §5 阶段2）：iCloud 瞬断/同步延迟期间文件缺席
-                // 不立即销毁条目；连续两个对账周期（≈6 秒）仍缺席才移除，
-                // 移除前对未落盘内容副本先行。文件重新出现按相对路径认领回原条目。
-                if let missingSince = fileMissingSinceByItemID[item.id] {
-                    if Date().timeIntervalSince(missingSince) >= 6.0 {
-                        backUpUnsavedNoteContentBeforeAdopting(itemID: item.id)
-                        removeItemRegistration(item.id)
-                        fileMissingSinceByItemID.removeValue(forKey: item.id)
-                        return (nil, true)
-                    }
-                } else {
-                    fileMissingSinceByItemID[item.id] = Date()
-                }
-                return keepUnavailableImportedItem(at: index)
+                removeItemRegistration(item.id)
+                return (nil, true)
             case .absent, .inaccessible:
                 return keepUnavailableImportedItem(at: index)
             }

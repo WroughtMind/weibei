@@ -329,8 +329,6 @@ final class WorkspaceStore: ObservableObject {
     var courseLibraryUnavailableReason: String?
     /// 资料库迁移进行中：写回、3 秒对账、课程笔记加载全部挂起（计划 §4.2）。
     @Published var libraryMigrationInFlight = false
-    /// 外部文件缺席灰态（计划 §5 阶段2）：首缺席记时间，两个对账周期仍缺席才移除条目。
-    var fileMissingSinceByItemID: [String: Date] = [:]
     @Published private(set) var courseItemMemberships: [CourseItemMembership] = [] {
         didSet {
             courseMembershipIndex = CourseItemMemberships(values: courseItemMemberships)
@@ -7796,7 +7794,6 @@ final class WorkspaceStore: ObservableObject {
     }
 
     func removeItemRegistration(_ itemID: String) {
-        fileMissingSinceByItemID.removeValue(forKey: itemID)
         pendingNotePersistenceTasks.removeValue(forKey: itemID)?.cancel()
         courseNoteLoadTasksByItemID.removeValue(forKey: itemID)?.cancel()
         courseNoteWriteTasksByItemID.removeValue(forKey: itemID)?.cancel()
@@ -10075,10 +10072,7 @@ final class WorkspaceStore: ObservableObject {
     }
 
     func displaySubtitle(for item: StudyItem) -> String {
-        if fileMissingSinceByItemID[item.id] != nil {
-            return ui("文件不存在", "File missing")
-        }
-        return item.subtitle
+        item.subtitle
     }
 
     func displayTags(for item: StudyItem, limit: Int = 3) -> [String] {
@@ -17872,10 +17866,6 @@ final class WorkspaceStore: ObservableObject {
             }
 
             var nextItem = importedItems[itemIndex]
-            if nextDigest != item.contentDigest {
-                backUpUnsavedNoteContentBeforeAdopting(itemID: itemID)
-            }
-            fileMissingSinceByItemID.removeValue(forKey: itemID)
             nextItem.title = observation.url.deletingPathExtension().lastPathComponent
             nextItem.subtitle = observation.url.lastPathComponent
             nextItem.kind = StudyItemKind.detect(from: observation.url)
@@ -18610,10 +18600,8 @@ final class WorkspaceStore: ObservableObject {
                 let markdown = cleanLegacyPlaceholder(result.markdown)
                 loadedCourseNoteTextByItemID[itemID] = markdown
                 let previousDigest = importedItems[currentIndex].contentDigest
-                fileMissingSinceByItemID.removeValue(forKey: itemID)
                 if let previousDigest,
                    previousDigest != result.snapshot.sha256 {
-                    backUpUnsavedNoteContentBeforeAdopting(itemID: itemID)
                     importedItems[currentIndex].contentRevision &+= 1
                 }
                 importedItems[currentIndex].contentDigest =
