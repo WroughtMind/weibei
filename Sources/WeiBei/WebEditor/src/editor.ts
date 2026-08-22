@@ -2980,6 +2980,12 @@ const finishStreamingMarkdownInternal = (markdown: any) => {
   } catch {
     // View not ready yet; decorations clear on the next transaction anyway.
   }
+  // Measure synchronously so the height returned to native reflects the
+  // finalized DOM, not the last streamed report. The finish re-layout can
+  // grow the document (last wrapped lines, KaTeX), and native reads
+  // WeiBeiCompactPreviewHeight the instant this call returns — a stale
+  // smaller value left the completed row clipping its final lines.
+  publishContentHeight();
   scheduleContentHeightReports();
 };
 

@@ -910,6 +910,10 @@ struct MarkdownPreviewView: View {
     @State private var maxObservedMeasuredHeight: CGFloat = 0
     @State private var lastLayoutWidthKey = 0
     @State private var lastChatWideTypography = false
+    /// Largest measurement rejected while the finalized-snapshot gate is closed.
+    /// The web side de-duplicates identical height reports, so one swallowed
+    /// during the gate would otherwise never arrive again.
+    @State private var latestGatedHeight: CGFloat = 0
 
     /// Post-streaming height corrections ease instead of snapping: the finalized
     /// snapshot and the async re-measures that follow (KaTeX, fonts) can land
@@ -940,13 +944,6 @@ struct MarkdownPreviewView: View {
             onSelectionChange: onSelectionChange,
             onAskAgentWithSelection: onSelectionChange,
             onContentHeightChange: { height in
-                guard acceptsHeightMeasurements else {
-                    WeiBeiPerf.event(
-                        "webview.markdown_height_ignored",
-                        extra: "reason=finalizing"
-                    )
-                    return
-                }
                 guard compact && fitsContentHeight else {
                     WeiBeiPerf.event(
                         "webview.markdown_height_ignored",
@@ -965,6 +962,19 @@ struct MarkdownPreviewView: View {
                 }
                 let measuredHeight = ceil(height)
                 let nextFrameHeight = max(measuredHeight, Self.compactPreviewLoadingHeight)
+                guard acceptsHeightMeasurements else {
+                    // Gate window before the finalized snapshot lands. Keep the
+                    // freshest rejected height: the web side dedups repeated
+                    // reports, so one swallowed here never re-arrives, and the
+                    // row would stay at the stale pre-finish height — clipping
+                    // the last wrapped lines after completion.
+                    latestGatedHeight = max(latestGatedHeight, nextFrameHeight)
+                    WeiBeiPerf.event(
+                        "webview.markdown_height_ignored",
+                        extra: "reason=finalizing"
+                    )
+                    return
+                }
                 if freezeHeightAfterMeasure, heightFrozen {
                     // Keep rejecting recycled-row shrink and jitter, but accept
                     // real late growth from Mermaid, formulas, fonts or images.
@@ -1034,13 +1044,18 @@ struct MarkdownPreviewView: View {
                     measuredHeight,
                     Self.compactPreviewLoadingHeight
                 )
+                // Reconcile with measurements rejected during the gate: the
+                // snapshot may have been read before the finish re-layout, and
+                // a smaller height clips the answer's last wrapped lines.
+                let settledHeight = max(nextFrameHeight, latestGatedHeight)
+                latestGatedHeight = 0
                 heightFrozen = false
                 acceptedMeasureCount = 0
-                applySettledHeight(nextFrameHeight)
-                maxObservedMeasuredHeight = nextFrameHeight
+                applySettledHeight(settledHeight)
+                maxObservedMeasuredHeight = settledHeight
                 onMeasuredHeight(measuredHeight)
                 onContentHeightChange()
-                onFinalizedSnapshotReady(measuredHeight)
+                onFinalizedSnapshotReady(settledHeight)
             },
             onRenderFailure: onRenderFailure
         )
