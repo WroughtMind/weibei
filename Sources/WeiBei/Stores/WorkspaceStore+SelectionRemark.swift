@@ -57,6 +57,23 @@ extension WorkspaceStore {
         return selectionRemarkRecords.filter { $0.itemID == nil || $0.itemID == itemID }
     }
 
+    /// 点击原文朱砂短棒:以该记录回访,浮层进"记"模式并预填已有札记(续记)。
+    func openSelectionRemarkRecord(_ recordID: String, anchor: CGPoint?) {
+        guard let record = selectionRemarkRecords.first(where: { $0.id.uuidString == recordID }) else { return }
+        selectionContext = SelectionContext(
+            text: record.selectionText,
+            source: record.source,
+            ownerTitle: record.ownerTitle,
+            itemID: record.itemID,
+            documentAnchor: record.documentAnchor
+        )
+        selectionAnchor = anchor
+        interaction.floatingComposerMode = .remark
+        interaction.selectionNoteDraft = record.remarkText
+        agentSurface = .selectionFloat
+        keepFloatingSelectionForAnswer = true
+    }
+
     // MARK: - 自 WorkspaceStore.swift 原样搬入(冻结行数抵扣,行为未变)
 
     func lastAgentAnswerContentForCurrentNote() -> String? {

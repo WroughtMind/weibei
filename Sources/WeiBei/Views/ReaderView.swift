@@ -994,12 +994,18 @@ struct ReaderView: View {
                         railTargetPageIndex: $pdfRailTargetPageIndex,
                         underlineSnippets: store.selectionAskThreads(forItemID: item.id).map(\.selectionText),
                         askUnderlineMarks: store.selectionAskThreads(forItemID: item.id).map {
-                            (id: $0.id.uuidString, text: $0.selectionText)
+                            (id: $0.id.uuidString, text: $0.selectionText, anchor: $0.documentAnchor)
                         },
                         onAskUnderlineActivate: { threadID, anchor in
                             if let uuid = UUID(uuidString: threadID) {
                                 store.openSelectionAskThread(uuid, jumpToConversation: false, anchor: anchor)
                             }
+                        },
+                        remarkMarks: store.selectionRemarkRecords(forItemID: item.id).map {
+                            (id: $0.id.uuidString, anchor: $0.documentAnchor, text: $0.selectionText)
+                        },
+                        onRemarkMarkActivate: { recordID, anchor in
+                            store.openSelectionRemarkRecord(recordID, anchor: anchor)
                         },
                         onUserPageChange: schedulePDFLocationCommit,
                         onSelectableTextChange: { available in pdfHasSelectableText = available }
@@ -1154,7 +1160,7 @@ struct WebReaderContentRailActiveChange {
     var reason: WebReaderContentRailEventReason
 }
 
-private enum PDFBrowseMode: String, CaseIterable, Identifiable {
+enum PDFBrowseMode: String, CaseIterable, Identifiable {
     case scroll
     case page
 
@@ -1217,7 +1223,7 @@ private enum ReaderPlatformViewSizing {
     }
 }
 
-private struct PDFReaderRepresentable: NSViewRepresentable {
+struct PDFReaderRepresentable: NSViewRepresentable {
     var url: URL
     var browseMode: PDFBrowseMode
     var searchQuery: String
@@ -1229,8 +1235,11 @@ private struct PDFReaderRepresentable: NSViewRepresentable {
     @Binding var railTargetPageIndex: Int?
     var underlineSnippets: [String] = []
     /// Asked-selection marks with thread ids for hover/click reopen.
-    var askUnderlineMarks: [(id: String, text: String)] = []
+    var askUnderlineMarks: [(id: String, text: String, anchor: SelectionDocumentAnchor?)] = []
     var onAskUnderlineActivate: (String, CGPoint?) -> Void = { _, _ in }
+    /// 记过原文标记(句末朱砂短棒):数据来自 selectionRemarkRecords,渲染在 ReaderPDFRemarkMarks。
+    var remarkMarks: [(id: String, anchor: SelectionDocumentAnchor?, text: String)] = []
+    var onRemarkMarkActivate: (String, CGPoint?) -> Void = { _, _ in }
     var onUserPageChange: (Int) -> Void
     var onSelectableTextChange: (Bool?) -> Void = { _ in }
     var onSelectionChange: (String, CGPoint?, Int, PDFSelectionAnchor?) -> Void
@@ -1242,7 +1251,8 @@ private struct PDFReaderRepresentable: NSViewRepresentable {
             onUserPageChange: onUserPageChange,
             onSelectableTextChange: onSelectableTextChange,
             onSelectionChange: onSelectionChange,
-            onAskUnderlineActivate: onAskUnderlineActivate
+            onAskUnderlineActivate: onAskUnderlineActivate,
+            onRemarkMarkActivate: onRemarkMarkActivate
         )
     }
 
@@ -1269,10 +1279,14 @@ private struct PDFReaderRepresentable: NSViewRepresentable {
         view.handleAskUnderlineHover = { [weak coordinator = context.coordinator, weak view] point in
             guard let view else { return }
             coordinator?.handleAskUnderlineHover(at: point, in: view)
+            coordinator?.handleRemarkMarkHover(at: point, in: view)
         }
         view.handleAskUnderlineClick = { [weak coordinator = context.coordinator, weak view] point in
             guard let view else { return false }
-            return coordinator?.handleAskUnderlineClick(at: point, in: view) ?? false
+            // 朱砂短棒热区小,优先于下划线命中。
+            return coordinator?.handleRemarkMarkClick(at: point, in: view)
+                ?? coordinator?.handleAskUnderlineClick(at: point, in: view)
+                ?? false
         }
         return view
     }
@@ -1295,6 +1309,7 @@ private struct PDFReaderRepresentable: NSViewRepresentable {
         context.coordinator.onSelectableTextChange = onSelectableTextChange
         context.coordinator.onSelectionChange = onSelectionChange
         context.coordinator.onAskUnderlineActivate = onAskUnderlineActivate
+        context.coordinator.onRemarkMarkActivate = onRemarkMarkActivate
         view.backgroundColor = WeiBeiNativePalette.paper(for: appearanceMode)
         view.configureDocumentColorAdaptation(enabled: adaptsDocumentColors, appearanceMode: appearanceMode)
 
@@ -1333,8 +1348,9 @@ private struct PDFReaderRepresentable: NSViewRepresentable {
             in: view
         )
         context.coordinator.applyAskUnderlines(askUnderlineMarks.isEmpty
-            ? underlineSnippets.map { (id: "", text: $0) }
+            ? underlineSnippets.map { (id: "", text: $0, anchor: nil) }
             : askUnderlineMarks, in: view)
+        context.coordinator.applyRemarkMarks(remarkMarks, in: view)
         DispatchQueue.main.async {
             WeiBeiQuietScrollers.configureRecursively(
                 in: view,
@@ -1374,9 +1390,13 @@ private struct PDFReaderRepresentable: NSViewRepresentable {
         private var loadGeneration = 0
         private var userNavigationDeadline = Date.distantPast
         private(set) var loadedURL: URL?
-        private var lastAppliedAskUnderlineMarks: [(id: String, text: String)] = []
+        private var lastAppliedAskUnderlineMarks: [(id: String, text: String, anchor: SelectionDocumentAnchor?)] = []
         private var askUnderlineHits: [(threadID: String, pageIndex: Int, hitBounds: CGRect)] = []
         private var hoveredAskThreadID: String?
+        var onRemarkMarkActivate: (String, CGPoint?) -> Void = { _, _ in }
+        var remarkHits: [PDFRemarkMarkHit] = []
+        var hoveredRemarkRecordID: String?
+        var lastAppliedRemarkMarkSignature: String?
         private var selectionReportGate = PDFSelectionReportGate()
         private var lastPointerInView: CGPoint?
         private let askUnderlineMarker = "weibei-selection-ask"
@@ -1388,7 +1408,8 @@ private struct PDFReaderRepresentable: NSViewRepresentable {
             onUserPageChange: @escaping (Int) -> Void,
             onSelectableTextChange: @escaping (Bool?) -> Void,
             onSelectionChange: @escaping (String, CGPoint?, Int, PDFSelectionAnchor?) -> Void,
-            onAskUnderlineActivate: @escaping (String, CGPoint?) -> Void
+            onAskUnderlineActivate: @escaping (String, CGPoint?) -> Void,
+            onRemarkMarkActivate: @escaping (String, CGPoint?) -> Void = { _, _ in }
         ) {
             self.pageIndex = pageIndex
             self.pageCount = pageCount
@@ -1396,6 +1417,7 @@ private struct PDFReaderRepresentable: NSViewRepresentable {
             self.onSelectableTextChange = onSelectableTextChange
             self.onSelectionChange = onSelectionChange
             self.onAskUnderlineActivate = onAskUnderlineActivate
+            self.onRemarkMarkActivate = onRemarkMarkActivate
         }
 
         func suspend() {
@@ -1777,10 +1799,11 @@ private struct PDFReaderRepresentable: NSViewRepresentable {
 
         /// Cinnabar underlines for selection-ask history (PDF text layer).
         /// Uses per-line thin strips — never the multi-line union bounds (those look like red highlights).
-        func applyAskUnderlines(_ marks: [(id: String, text: String)], in view: PDFView) {
+        /// Anchored threads (第二刀起) draw straight from anchor rects; text search stays as fallback.
+        func applyAskUnderlines(_ marks: [(id: String, text: String, anchor: SelectionDocumentAnchor?)], in view: PDFView) {
             guard let document = view.document else { return }
-            let signature = marks.map { "\($0.id)|\($0.text)" }
-            let previous = lastAppliedAskUnderlineMarks.map { "\($0.id)|\($0.text)" }
+            let signature = marks.map { "\($0.id)|\($0.text)|\($0.anchor?.pdf != nil)" }
+            let previous = lastAppliedAskUnderlineMarks.map { "\($0.id)|\($0.text)|\($0.anchor?.pdf != nil)" }
             guard signature != previous else { return }
             lastAppliedAskUnderlineMarks = marks
             askUnderlineHits = []
@@ -1788,6 +1811,14 @@ private struct PDFReaderRepresentable: NSViewRepresentable {
             clearAskUnderlineAnnotations(in: document, includingHover: true)
             let cinnabar = NSColor(calibratedRed: 0.56, green: 0.16, blue: 0.12, alpha: 0.92)
             for mark in marks {
+                if let pdf = mark.anchor?.pdf, pdf.pageIndex != NSNotFound,
+                   let page = document.page(at: pdf.pageIndex) {
+                    let pageIndex = pdf.pageIndex
+                    for lineBounds in pdf.lineRects.map(\.cgRect) {
+                        addAskUnderline(page: page, pageIndex: pageIndex, lineBounds: lineBounds, threadID: mark.id, cinnabar: cinnabar)
+                    }
+                    continue
+                }
                 let needle = mark.text.trimmingCharacters(in: .whitespacesAndNewlines)
                 guard needle.count >= 4 else { continue }
                 let matches = document.findString(needle, withOptions: [.caseInsensitive])
@@ -1795,26 +1826,36 @@ private struct PDFReaderRepresentable: NSViewRepresentable {
                     for line in selection.selectionsByLine() {
                         for page in line.pages {
                             let lineBounds = line.bounds(for: page)
-                            guard lineBounds.width > 2, lineBounds.height > 0.5 else { continue }
-                            var underlineBounds = lineBounds
-                            let thickness = min(2.0, max(1.15, lineBounds.height * 0.1))
-                            underlineBounds.origin.y = lineBounds.minY
-                            underlineBounds.size.height = thickness
-                            let annotation = PDFAnnotation(bounds: underlineBounds, forType: .underline, withProperties: nil)
-                            annotation.color = cinnabar
-                            annotation.userName = askUnderlineMarker
-                            page.addAnnotation(annotation)
                             let pageIndex = document.index(for: page)
-                            if !mark.id.isEmpty, pageIndex != NSNotFound {
-                                askUnderlineHits.append((
-                                    threadID: mark.id,
-                                    pageIndex: pageIndex,
-                                    hitBounds: lineBounds.insetBy(dx: -2, dy: -2)
-                                ))
-                            }
+                            addAskUnderline(page: page, pageIndex: pageIndex, lineBounds: lineBounds, threadID: mark.id, cinnabar: cinnabar)
                         }
                     }
                 }
+            }
+        }
+
+        private func addAskUnderline(
+            page: PDFPage,
+            pageIndex: Int,
+            lineBounds: CGRect,
+            threadID: String,
+            cinnabar: NSColor
+        ) {
+            guard lineBounds.width > 2, lineBounds.height > 0.5, pageIndex != NSNotFound else { return }
+            var underlineBounds = lineBounds
+            let thickness = min(2.0, max(1.15, lineBounds.height * 0.1))
+            underlineBounds.origin.y = lineBounds.minY
+            underlineBounds.size.height = thickness
+            let annotation = PDFAnnotation(bounds: underlineBounds, forType: .underline, withProperties: nil)
+            annotation.color = cinnabar
+            annotation.userName = askUnderlineMarker
+            page.addAnnotation(annotation)
+            if !threadID.isEmpty {
+                askUnderlineHits.append((
+                    threadID: threadID,
+                    pageIndex: pageIndex,
+                    hitBounds: lineBounds.insetBy(dx: -2, dy: -2)
+                ))
             }
         }
 
@@ -1936,7 +1977,7 @@ private struct PDFReaderRepresentable: NSViewRepresentable {
     }
 }
 
-private final class ReaderPDFView: PDFView {
+final class ReaderPDFView: PDFView {
     var reportCurrentSelection: (() -> Void)?
     var handleAskUnderlineHover: ((CGPoint) -> Void)?
     var handleAskUnderlineClick: ((CGPoint) -> Bool)?
