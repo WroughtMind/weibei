@@ -11,6 +11,8 @@ private enum EmptyWorkspaceLayoutMetrics {
     static let inspirationMaxWidth: CGFloat = 660
     static let inspirationSlotHeight: CGFloat = 210
     static let compactInspirationSlotHeight: CGFloat = 176
+    static let watermarkMaxWidth: CGFloat = 720
+    static let watermarkCenterRatio: CGFloat = 0.64
 }
 
 struct EmptyWorkspaceLauncherView: View {
@@ -42,6 +44,23 @@ struct EmptyWorkspaceLauncherView: View {
                         EmptyWorkspacePaperField(mode: mode, compact: compact)
                             .frame(height: geometry.size.height + WeiBeiMetric.topBarHeight * textScale)
                             .offset(y: -WeiBeiMetric.topBarHeight * textScale)
+                    }
+
+                    if store.showDailyInspiration && store.inspirationAsWatermark {
+                        // Paper-grain mode: the daily line sits behind the entry
+                        // cluster as a faint ink impression. Still tappable —
+                        // one click shuffles to another line.
+                        EmptyWorkspaceInkWatermarkView(
+                            inspiration: currentInspiration,
+                            mode: mode,
+                            compact: compact,
+                            onAdvance: { advanceInspiration(from: currentInspiration.id) }
+                        )
+                        .frame(width: min(EmptyWorkspaceLayoutMetrics.watermarkMaxWidth, geometry.size.width - horizontalPadding * 2))
+                        .position(
+                            x: geometry.size.width / 2,
+                            y: geometry.size.height * EmptyWorkspaceLayoutMetrics.watermarkCenterRatio
+                        )
                     }
 
                     workspaceContent(
@@ -87,10 +106,10 @@ struct EmptyWorkspaceLauncherView: View {
             1,
             min(EmptyWorkspaceLayoutMetrics.contentMaxWidth, availableSize.width - horizontalPadding * 2)
         )
+        let showsInspirationBlock = store.showDailyInspiration && !store.inspirationAsWatermark
         let entryHeight: CGFloat = (compact ? 84 : 98) * textScale
-        let entryCenterRatio: CGFloat = store.showDailyInspiration ? EmptyWorkspaceLayoutMetrics.entryCenterRatio : 0.5
         let entryCenterY = clampedCenterY(
-            ratio: entryCenterRatio,
+            ratio: showsInspirationBlock ? EmptyWorkspaceLayoutMetrics.entryCenterRatio : 0.5,
             elementHeight: entryHeight,
             availableHeight: availableSize.height,
             edgeInset: compact ? 14 : 20
@@ -113,13 +132,13 @@ struct EmptyWorkspaceLauncherView: View {
             entryCluster(
                 at: date,
                 compact: compact,
-                spacing: (store.showDailyInspiration ? (compact ? 18 : 26) : (compact ? 16 : 29)) * textScale,
+                spacing: (showsInspirationBlock ? (compact ? 18 : 26) : (compact ? 16 : 29)) * textScale,
                 entryWidth: entryWidth
             )
             .frame(width: contentWidth)
             .position(x: availableSize.width / 2, y: entryCenterY)
 
-            if store.showDailyInspiration {
+            if showsInspirationBlock {
                 ZStack {
                     EmptyWorkspaceInspirationView(
                         inspiration: inspiration,
@@ -170,13 +189,9 @@ struct EmptyWorkspaceLauncherView: View {
     }
 
     private func inspiration(at date: Date) -> EmptyWorkspaceInspiration {
-        let baseInspiration = dailyInspiration(at: date)
+        let baseInspiration = EmptyWorkspaceInspirationCatalog.item(for: date)
         guard let selectedInspirationID else { return baseInspiration }
         return EmptyWorkspaceInspirationCatalog.rotationItems.first(where: { $0.id == selectedInspirationID }) ?? baseInspiration
-    }
-
-    private func dailyInspiration(at date: Date) -> EmptyWorkspaceInspiration {
-        return EmptyWorkspaceInspirationCatalog.item(for: date)
     }
 
     private func advanceInspiration(from currentID: String) {
@@ -356,6 +371,9 @@ private struct EmptyWorkspaceEntryButton: View {
     }
 }
 
+/// Block presentation: quote + credit as content below the entries; the
+/// source/rights row stays mounted (fixed slot layout, VoiceOver reachable)
+/// but only paints on hover.
 private struct EmptyWorkspaceInspirationView: View {
     @EnvironmentObject private var store: WorkspaceStore
     @Environment(\.weibeiReduceMotion) private var reduceMotion
@@ -364,8 +382,6 @@ private struct EmptyWorkspaceInspirationView: View {
     let compact: Bool
     let onAdvance: () -> Void
 
-    /// Source/rights stay mounted so the fixed slot layout never reflows and
-    /// VoiceOver can always reach the attribution; they only paint on hover.
     @State private var revealsSources = false
 
     var body: some View {
@@ -507,6 +523,70 @@ private struct EmptyWorkspaceInspirationView: View {
         } else {
             Text(inspiration.rightsLabel)
         }
+    }
+}
+
+/// Faint ink impression of the daily line — paper grain, not content.
+/// No credit line or links; attribution stays in the bundled SOURCES.md
+/// ledger. Opacity is tuned per light/dark mode like the paper field
+/// gradients so all eight themes carry the watermark coherently. One click
+/// shuffles to another line; hovering deepens the ink as the only affordance.
+private struct EmptyWorkspaceInkWatermarkView: View {
+    @EnvironmentObject private var store: WorkspaceStore
+    @Environment(\.weibeiReduceMotion) private var reduceMotion
+
+    let inspiration: EmptyWorkspaceInspiration
+    let mode: WeiBeiAppearanceMode
+    let compact: Bool
+    let onAdvance: () -> Void
+
+    @State private var hovering = false
+
+    private var ink: Color {
+        let base: CGFloat = mode.isDark ? 0.08 : 0.055
+        return EmptyWorkspaceResolvedColor.ink(mode).opacity(hovering ? min(base * 1.7, 0.16) : base)
+    }
+
+    var body: some View {
+        Button(action: onAdvance) {
+            Group {
+                switch inspiration.presentation {
+                case let .calligraphy(assetName):
+                    if let image = EmptyWorkspaceCalligraphyResource.image(named: assetName) {
+                        Image(nsImage: image)
+                            .renderingMode(.template)
+                            .resizable()
+                            .scaledToFit()
+                            .foregroundStyle(ink)
+                            .padding(.horizontal, compact ? 24 : 40)
+                    } else {
+                        lineText
+                    }
+                default:
+                    lineText
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: compact ? 180 : 230)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .id(inspiration.id)
+        .animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: hovering)
+        .onHover { isHovering in
+            hovering = isHovering
+        }
+        .accessibilityLabel(Text(inspiration.text))
+        .accessibilityHint(Text(store.ui("随机换一句", "Show another line")))
+        .accessibilityIdentifier("empty-workspace-inspiration-next")
+    }
+
+    private var lineText: some View {
+        Text(inspiration.text)
+            .weiBeiText(compact ? 40 : 50, weight: .regular, design: .serif)
+            .foregroundStyle(ink)
+            .multilineTextAlignment(.center)
+            .lineLimit(2)
+            .minimumScaleFactor(0.55)
     }
 }
 

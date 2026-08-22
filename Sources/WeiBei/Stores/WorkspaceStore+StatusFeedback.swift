@@ -1,6 +1,8 @@
 import Foundation
 import WeiBeiCore
 
+private let inspirationAsWatermarkDefaultsKey = "weibei.dailyInspiration.watermark"
+
 /// Transient/important feedback and small settings setters — split out so
 /// WorkspaceStore.swift itself stays within its frozen size budget.
 @MainActor
@@ -18,6 +20,22 @@ extension WorkspaceStore {
         guard showDailyInspiration != enabled else { return }
         showDailyInspiration = enabled
         save()
+    }
+
+    /// Paper-watermark presentation for the daily line. Defaults-backed app
+    /// preference so the growth-frozen WorkspaceStore.swift stays untouched;
+    /// the manual objectWillChange keeps @EnvironmentObject views in sync.
+    var inspirationAsWatermark: Bool {
+        get { selectionAskThreadDefaults.bool(forKey: inspirationAsWatermarkDefaultsKey) }
+        set {
+            selectionAskThreadDefaults.set(newValue, forKey: inspirationAsWatermarkDefaultsKey)
+            objectWillChange.send()
+        }
+    }
+
+    func setInspirationAsWatermark(_ enabled: Bool) {
+        guard inspirationAsWatermark != enabled else { return }
+        inspirationAsWatermark = enabled
     }
 
     func showTransientNoteStatus(_ message: String) {
