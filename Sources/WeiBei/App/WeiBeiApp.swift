@@ -130,12 +130,9 @@ struct WeiBeiApp: App {
                 .onOpenURL { url in
                     store.importFiles([url])
                 }
-                // 自适应窗口：多窗格文档族 780 起（窗格可收成 28pt 细轨），
-                // 沉浸式单栏 520 起——塞得进分屏，也激活既有窄屏布局路径。
-                .frame(
-                    minWidth: store.layout.isImmersiveFamily ? 520 : 780,
-                    minHeight: 720
-                )
+                // 自适应窗口：统一 520 起——必须小于半个屏宽，macOS 才会在
+                // 拖近屏幕边缘时给出贴边分屏吸附区；窄窗下窗格收 28pt 细轨。
+                .frame(minWidth: 520, minHeight: 720)
                 .ignoresSafeArea(.container, edges: .top)
         }
         .defaultSize(width: 1240, height: 760)
