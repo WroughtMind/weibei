@@ -125,7 +125,7 @@ public struct OpenAIChatCompletionsProvider: NativeLLMAdapter {
         return NativeLLMFailure(code: code, status: status, message: "HTTP \(status) \(body)")
     }
 
-    static func translate(payload: String, textIndex: inout Int) throws -> [NativeStreamChunk] {
+    public static func translate(payload: String, textIndex: inout Int) throws -> [NativeStreamChunk] {
         guard let data = payload.data(using: .utf8),
               let object = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             throw NativeLLMFailure(code: "invalid_sse", message: "provider returned non-JSON SSE data")

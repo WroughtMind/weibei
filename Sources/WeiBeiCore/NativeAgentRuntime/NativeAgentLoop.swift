@@ -77,7 +77,11 @@ public actor NativeAgentLoop {
                 if let invariant = NativeAgentInvariant.mismatch(logged: await ledger.deriveMessages(), outgoing: Array(messages.dropFirst())) {
                     assertionFailure(invariant)
                 }
-                let llmRequest = NativeLLMRequest(model: model, messages: messages, tools: tools)
+                var llmRequest = NativeLLMRequest(model: model, messages: messages, tools: tools)
+                if adapter.family.contains("responses") {
+                    llmRequest.enableNativeWebSearch = tools.contains { $0.name == "weibei_course_map" }
+                    llmRequest.reasoningEffort = "low"
+                }
                 var assembler = NativeToolCallAssembler()
                 var finish: NativeFinishReason = .stop
                 var stepText = ""

@@ -94,37 +94,19 @@ extension WorkspaceStore {
         replyMessageID: UUID,
         hostToolHandler: @escaping StudyAgentHostToolHandler
     ) async throws -> StudyAgentReply {
-        if selectedProvider.kind == .subscription {
-            throw NativeLLMFailure(
-                code: "unsupported_provider",
-                message: ui(
-                    "原生引擎第一棒尚未接入订阅登录，请改用 API Key 服务商，或先不设置 WEIBEI_AGENT_BACKEND。",
-                    "Native backend baton 1 does not support subscription login yet. Use an API-key provider, or leave WEIBEI_AGENT_BACKEND unset."
-                )
-            )
-        }
         let endpoint = try AgentProviderEndpoint(
             provider: selectedProvider,
             baseURL: agentBaseURL
         )
-        guard let baseURL = NativeChatCompletionsRoute.baseURL(
-            provider: selectedProvider,
-            endpoint: endpoint
-        ) else {
-            throw NativeLLMFailure(
-                code: "unsupported_provider",
-                message: ui(
-                    "当前服务商还不在原生 OpenAI 兼容族里。",
-                    "This provider is not on the native OpenAI-compatible family yet."
-                )
-            )
-        }
-        guard let apiKey = try NativeAgentCredentialStore.apiKey(forProviderID: selectedProvider.rawValue) else {
-            throw NativeLLMFailure(code: "unauthorized", status: 401, message: "missing API key")
-        }
         let selectedModel = modelName.trimmingCharacters(in: .whitespacesAndNewlines)
-        let model = selectedModel.isEmpty ? "deepseek-chat" : selectedModel
-        let adapter = OpenAIChatCompletionsProvider(baseURL: baseURL, apiKey: apiKey)
+        let model = selectedModel.isEmpty
+            ? (selectedProvider == .openaiCodex ? "gpt-5.6-luna" : "deepseek-chat")
+            : selectedModel
+        let adapter = try await NativeLLMAdapterFactory.make(
+            provider: selectedProvider,
+            model: model,
+            endpoint: endpoint
+        )
         let systemPrompt = (try? PiAgentResources.bundled().systemPrompt) ?? "you are webi"
         let liveStores = NativeLiveStores(
             learning: { [weak self] in

@@ -5,17 +5,26 @@ public struct NativeLLMRequest: Sendable {
     public var messages: [NativeModelMessage]
     public var tools: [NativeToolDefinition]
     public var temperature: Double?
+    public var reasoningEffort: String?
+    public var enableNativeWebSearch: Bool
+    public var replayState: Data?
 
     public init(
         model: String,
         messages: [NativeModelMessage],
         tools: [NativeToolDefinition] = [],
-        temperature: Double? = nil
+        temperature: Double? = nil,
+        reasoningEffort: String? = nil,
+        enableNativeWebSearch: Bool = false,
+        replayState: Data? = nil
     ) {
         self.model = model
         self.messages = messages
         self.tools = tools
         self.temperature = temperature
+        self.reasoningEffort = reasoningEffort
+        self.enableNativeWebSearch = enableNativeWebSearch
+        self.replayState = replayState
     }
 }
 

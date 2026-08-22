@@ -9,6 +9,12 @@ func runNativeAgentSelfChecks() throws {
     try checkCrashCloser()
     try checkCredentialFile()
     try checkFailureMapping()
+    try checkOAuthPKCEAndAuthorizeURL()
+    try checkResponsesWebSearchPayload()
+    try checkResponsesTranslation()
+    try checkAnthropicTranslation()
+    try checkGeminiTranslation()
+    try checkOAuthLogoutLeavesNoCredential()
 }
 
 private func nativeRequire(_ condition: @autoclosure () throws -> Bool, _ message: String) throws {
@@ -110,6 +116,99 @@ private func checkCredentialFile() throws {
     try Data("{".utf8).write(to: url, options: .atomic)
     let restored = try store.load()
     try nativeRequire(restored["deepseek"]?.apiKey == "sk-test", "corrupt credential file restores from backup")
+}
+
+private func checkOAuthPKCEAndAuthorizeURL() throws {
+    let pkce = NativeOpenAIOAuth.makePKCE(entropy: Data(repeating: 7, count: 64))
+    try nativeRequire(pkce.verifier.count >= 43 && pkce.challenge.count >= 43, "PKCE verifier/challenge are long enough")
+    try nativeRequire(pkce.verifier != pkce.challenge, "PKCE challenge is not the verifier")
+    let url = NativeOpenAIOAuth.authorizeURL(
+        redirectURI: "http://localhost:1455/auth/callback",
+        pkce: pkce,
+        state: "abc"
+    )
+    let query = url.query ?? ""
+    try nativeRequire(query.contains("code_challenge="), "authorize URL includes PKCE challenge")
+    try nativeRequire(query.contains("client_id=\(NativeOpenAIOAuth.clientID)") || query.contains("client_id=app_"), "authorize URL includes Codex client id")
+    try nativeRequire(url.host == "auth.openai.com", "authorize host is auth.openai.com")
+    let code = NativeOpenAIOAuth.parseCallbackCode(
+        fromHTTP: "GET /auth/callback?code=tok&state=abc HTTP/1.1\r\n",
+        expectedState: "abc"
+    )
+    try nativeRequire(code == "tok", "callback parser reads code when state matches")
+    try nativeRequire(
+        NativeOpenAIOAuth.parseCallbackCode(
+            fromHTTP: "GET /auth/callback?code=tok&state=nope HTTP/1.1\r\n",
+            expectedState: "abc"
+        ) == nil,
+        "callback parser rejects state mismatch"
+    )
+}
+
+private func checkResponsesWebSearchPayload() throws {
+    let tools = [
+        NativeToolDefinition(
+            name: "weibei_course_map",
+            description: "map",
+            permission: .read,
+            schema: NativeJSONSchema(["type": "object"]),
+            execute: { _, _ in NativeToolExecutionResult(text: "") }
+        ),
+    ]
+    let payload = OpenAIResponsesProvider.payload(
+        for: NativeLLMRequest(model: "gpt-5.6-luna", messages: [
+            NativeModelMessage(role: .user, content: "利率"),
+        ], tools: tools, enableNativeWebSearch: true)
+    )
+    let encoded = payload["tools"] as? [[String: Any]] ?? []
+    try nativeRequire(encoded.contains(where: { $0["type"] as? String == "web_search" }), "Responses payload adds web_search")
+    let include = payload["include"] as? [String] ?? []
+    try nativeRequire(include.contains("web_search_call.action.sources"), "Responses payload asks for search sources")
+    try nativeRequire(include.contains("reasoning.encrypted_content"), "Responses payload keeps reasoning include")
+}
+
+private func checkResponsesTranslation() throws {
+    let text = try OpenAIResponsesProvider.translate(
+        #"{"type":"response.output_text.delta","output_index":0,"delta":"利率"}"#
+    )
+    try nativeRequire(text.first == .textDelta(index: 0, text: "利率"), "Responses text delta maps")
+    let tool = try OpenAIResponsesProvider.translate(
+        #"{"type":"response.output_item.added","output_index":1,"item":{"type":"function_call","call_id":"c1","name":"weibei_course_search"}}"#
+    )
+    try nativeRequire(tool.first == .toolCallDelta(index: 1, id: "c1", name: "weibei_course_search", argumentsDelta: ""), "Responses tool start maps")
+}
+
+private func checkAnthropicTranslation() throws {
+    let text = try AnthropicMessagesProvider.translate(
+        #"{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"hi"}}"#
+    )
+    try nativeRequire(text.first == .textDelta(index: 0, text: "hi"), "Anthropic text delta maps")
+    let thinking = try AnthropicMessagesProvider.translate(
+        #"{"type":"content_block_delta","index":1,"delta":{"type":"thinking_delta","thinking":"...","signature":"sig-1"}}"#
+    )
+    try nativeRequire(
+        thinking.contains(where: { if case .reasoningDelta = $0 { return true }; return false }),
+        "Anthropic thinking delta maps to reasoning"
+    )
+}
+
+private func checkGeminiTranslation() throws {
+    let chunks = try GoogleGenerativeAIProvider.translate(
+        #"{"candidates":[{"content":{"parts":[{"text":"4"}]},"finishReason":"STOP"}]}"#
+    )
+    try nativeRequire(chunks.contains(.textDelta(index: 0, text: "4")), "Gemini text maps")
+    try nativeRequire(chunks.contains(.finish(reason: .stop, replayState: nil)), "Gemini STOP finishes")
+}
+
+private func checkOAuthLogoutLeavesNoCredential() throws {
+    let url = FileManager.default.temporaryDirectory.appendingPathComponent("native-oauth-\(UUID().uuidString).json")
+    defer { try? FileManager.default.removeItem(at: url) }
+    let store = NativeAgentCredentialStore(fileURL: url)
+    try store.upsert(NativeAgentCredentialRecord(provider: "openai-codex", accessToken: "tok", refreshToken: "ref"))
+    try waitFor {
+        try await NativeOpenAIOAuth.logout(from: store)
+    }
+    try nativeRequire(try NativeOpenAIOAuth.leftoverCredentialExists(in: store) == false, "logout removes openai-codex")
 }
 
 private func checkFailureMapping() throws {

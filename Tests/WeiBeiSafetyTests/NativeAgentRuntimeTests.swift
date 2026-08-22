@@ -129,6 +129,53 @@ final class NativeAgentRuntimeTests: XCTestCase {
         )
         XCTAssertEqual(chunks.first, .textDelta(index: 0, text: "利率"))
     }
+
+    func testResponsesAndOAuthHelpers() throws {
+        let pkce = NativeOpenAIOAuth.makePKCE(entropy: Data(repeating: 3, count: 64))
+        XCTAssertNotEqual(pkce.verifier, pkce.challenge)
+        let url = NativeOpenAIOAuth.authorizeURL(
+            redirectURI: "http://localhost:1455/auth/callback",
+            pkce: pkce,
+            state: "st"
+        )
+        XCTAssertEqual(url.host, "auth.openai.com")
+        XCTAssertTrue(url.query?.contains("code_challenge=") == true)
+        XCTAssertEqual(
+            NativeOpenAIOAuth.parseCallbackCode(
+                fromHTTP: "GET /auth/callback?code=abc&state=st HTTP/1.1\r\n",
+                expectedState: "st"
+            ),
+            "abc"
+        )
+        let tools = [
+            NativeToolDefinition(
+                name: "weibei_course_map",
+                description: "map",
+                permission: .read,
+                schema: NativeJSONSchema(["type": "object"]),
+                execute: { _, _ in NativeToolExecutionResult(text: "") }
+            ),
+        ]
+        let payload = OpenAIResponsesProvider.payload(
+            for: NativeLLMRequest(model: "gpt-5.6-luna", messages: [
+                NativeModelMessage(role: .user, content: "q"),
+            ], tools: tools)
+        )
+        let encodedTools = payload["tools"] as? [[String: Any]] ?? []
+        XCTAssertTrue(encodedTools.contains { $0["type"] as? String == "web_search" })
+        let text = try OpenAIResponsesProvider.translate(
+            #"{"type":"response.output_text.delta","output_index":0,"delta":"hi"}"#
+        )
+        XCTAssertEqual(text.first, .textDelta(index: 0, text: "hi"))
+        let anthropic = try AnthropicMessagesProvider.translate(
+            #"{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ok"}}"#
+        )
+        XCTAssertEqual(anthropic.first, .textDelta(index: 0, text: "ok"))
+        let gemini = try GoogleGenerativeAIProvider.translate(
+            #"{"candidates":[{"content":{"parts":[{"text":"4"}]},"finishReason":"STOP"}]}"#
+        )
+        XCTAssertTrue(gemini.contains(.textDelta(index: 0, text: "4")))
+    }
 }
 
 private struct MockLLMAdapter: NativeLLMAdapter {

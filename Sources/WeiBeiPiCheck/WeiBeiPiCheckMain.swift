@@ -32,6 +32,17 @@ struct WeiBeiPiCheckMain {
             return
         }
 
+        if await NativeOAuthCLI.runIfRequested(arguments: CommandLine.arguments) {
+            return
+        }
+
+        if await NativePiSubscriptionProbe.runIfRequested(
+            arguments: CommandLine.arguments,
+            environment: environment
+        ) {
+            return
+        }
+
         if CommandLine.arguments.contains("--authentication-status") {
             var status = AgentAuthenticationStatus()
             status.recordFailure(
