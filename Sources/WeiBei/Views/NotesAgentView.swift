@@ -1310,6 +1310,10 @@ struct AgentPaneView: View {
                             // Long histories fold behind a reveal button instead — unrendered
                             // rows cost nothing; keep full Markdown rendering for visible ones.
                             VStack(alignment: .leading, spacing: comfy ? 22 : 12) {
+                                if store.messages.isEmpty,
+                                   !AgentProviderReadiness.isConfigured(for: store) {
+                                    AgentUnconfiguredHint(store: store)
+                                }
                                 if hiddenAgentHistoryCount > 0 {
                                     agentHistoryRevealButton(proxy: proxy)
                                         .transition(WeiBeiTransition.message)
@@ -3045,6 +3049,7 @@ private struct AgentMessageBubble: View {
 
 private struct AgentBubble: View {
     @EnvironmentObject private var store: WorkspaceStore
+    @Environment(\.openSettings) private var openSettings
     @Environment(\.weibeiReduceMotion) private var reduceMotion
     var message: AgentMessage
     var liveStreamingText: String? = nil
@@ -3337,6 +3342,13 @@ private struct AgentBubble: View {
                     if let question = message.retryQuestion, !question.isEmpty {
                         Button(store.ui("回填问题", "Restore question")) {
                             store.agentDraft = question
+                        }
+                        .buttonStyle(WeiBeiTextActionButtonStyle())
+                    }
+                    if message.failureKind == .unauthorized
+                        || !AgentProviderReadiness.isConfigured(for: store) {
+                        Button(store.ui("去设置", "Open Settings")) {
+                            openSettings()
                         }
                         .buttonStyle(WeiBeiTextActionButtonStyle())
                     }

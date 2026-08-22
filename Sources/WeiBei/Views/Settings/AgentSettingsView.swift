@@ -416,19 +416,11 @@ extension SettingsView {
     }
 
     private var activeAgentAuthMethod: AgentAuthMethod {
-        if activePiAuthTypes.contains(.oauth), activePiAuthTypes.contains(.apiKey) {
-            return store.agentAuthMethod
-        }
-        return activePiAuthTypes.contains(.oauth) ? .subscription : .apiKey
+        AgentProviderReadiness.effectiveAuthMethod(for: store)
     }
 
     private func piAuthTypes(for provider: AgentProviderID) -> [PiCredentialType] {
-        if let types = oauthService.catalog?.providers.first(where: {
-            $0.id == piProviderID(for: provider)
-        })?.authTypes, !types.isEmpty {
-            return types
-        }
-        return provider.kind == .subscription ? [.oauth] : [.apiKey]
+        AgentProviderReadiness.piAuthTypes(for: provider, store: store)
     }
 
     /// The runtime's step question, styled like a quiet right-aligned field label —
@@ -566,20 +558,7 @@ extension SettingsView {
     }
 
     private var activeAPICredentialIsConfigured: Bool {
-        let isStored = oauthService.isConfigured(
-            providerID: activePiProviderID,
-            type: .apiKey
-        )
-        guard store.agentProviderID == .azureOpenAI else { return isStored }
-        guard let endpoint = try? AgentProviderEndpoint(
-            provider: .azureOpenAI,
-            baseURL: store.agentBaseURL
-        ) else { return false }
-        return isStored && oauthService.catalog?.credentials.contains(where: {
-            $0.providerId == AgentProviderID.azureOpenAI.piProviderName
-                && $0.type == .apiKey
-                && $0.boundEndpoint == endpoint.baseURL
-        }) == true
+        AgentProviderReadiness.hasActiveAPICredential(for: store)
     }
 
     private var hasStaleAzureCredential: Bool {
@@ -592,8 +571,7 @@ extension SettingsView {
     }
 
     private var oauthLinked: Bool {
-        guard let provider = currentOAuthProvider else { return false }
-        return activeAgentAuthMethod == .subscription && oauthService.isLinked(provider)
+        AgentProviderReadiness.isSubscriptionLinked(for: store)
     }
 
     // MARK: Advanced (collapsed) — removed; Base URL sits flat in the card and
