@@ -111,38 +111,17 @@ enum NativeEvalCLI {
                 liveStores: liveStores
             )
             let reply = try await runtime.respond(
-                to: StudyAgentRequest(
-                    purpose: .conversation,
-                    question: question,
-                    materialTitle: "利率课程",
-                    materialText: "利率是资金使用价格的表达。",
-                    noteTitle: "",
-                    noteText: "",
-                    courseContext: StudyAgentCourseContext(
-                        title: "货币金融学",
-                        items: [
-                            StudyAgentCourseItem(
-                                id: "material-rates",
-                                title: "利率课程",
-                                subtitle: "",
-                                kind: "html",
-                                role: "material",
-                                searchText: "利率是资金使用价格的表达。"
-                            ),
-                        ]
-                    ),
-                    projectScope: StudyAgentProjectScope(
-                        kind: .course,
-                        chatID: UUID().uuidString.lowercased(),
-                        courseID: UUID().uuidString.lowercased()
-                    ),
-                    contextRevision: "eval-\(id)"
-                ),
+                to: evalRequest(id: id, question: question, sessionID: UUID()),
                 progress: nil
             )
-            let prefix = reply.text.trimmingCharacters(in: .whitespacesAndNewlines).prefix(80)
-            print("native-eval \(id) scene=\(scene) tools=\(reply.toolTrace.joined(separator: ",")) prefix=\(prefix)")
-            fflush()
+            try recordAnswer(
+                backend: "native",
+                id: id,
+                scene: scene,
+                question: question,
+                text: reply.text,
+                tools: reply.toolTrace
+            )
             ran += 1
         }
         print("native-eval live-ran=\(ran) model=\(model) effort=low")
@@ -209,16 +188,84 @@ enum NativeEvalCLI {
                     hostToolHandler: evalHost,
                     progress: nil
                 )
-                let prefix = reply.text.trimmingCharacters(in: .whitespacesAndNewlines).prefix(80)
-                print("pi-eval \(id) scene=\(scene) tools=\(reply.toolTrace.joined(separator: ",")) prefix=\(prefix)")
+                try recordAnswer(
+                    backend: "pi",
+                    id: id,
+                    scene: scene,
+                    question: question,
+                    text: reply.text,
+                    tools: reply.toolTrace
+                )
                 ran += 1
             } catch {
                 let message = error.localizedDescription.replacingOccurrences(of: "\n", with: " ")
-                print("pi-eval \(id) scene=\(scene) failed=\(message.prefix(120))")
+                try recordAnswer(
+                    backend: "pi",
+                    id: id,
+                    scene: scene,
+                    question: question,
+                    text: "",
+                    tools: [],
+                    error: message
+                )
             }
             fflush()
         }
         print("pi-eval live-ran=\(ran) model=\(model) effort=\(effort)")
+        fflush()
+    }
+
+    private static func recordAnswer(
+        backend: String,
+        id: String,
+        scene: String,
+        question: String,
+        text: String,
+        tools: [String],
+        error: String? = nil
+    ) throws {
+        let root = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+            .appendingPathComponent("Docs/audit/2026-08-22-eval-luna-low/\(backend)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        var body = """
+        # \(id) · \(scene)
+
+        ## 问题
+
+        \(question)
+
+        ## 工具
+
+        \(tools.isEmpty ? "（无）" : tools.joined(separator: ", "))
+
+        """
+        if let error {
+            body += "## 错误\n\n\(error)\n\n"
+        }
+        body += "## 完整回答\n\n\(text)\n"
+        try Data(body.utf8).write(to: root.appendingPathComponent("\(id).md"), options: .atomic)
+        var record: [String: Any] = [
+            "id": id,
+            "scene": scene,
+            "question": question,
+            "tools": tools,
+            "text": text,
+            "chars": (text as NSString).length,
+        ]
+        if let error { record["error"] = error }
+        let line = try JSONSerialization.data(withJSONObject: record)
+        let jsonl = root.appendingPathComponent("answers.jsonl")
+        if FileManager.default.fileExists(atPath: jsonl.path),
+           let handle = try? FileHandle(forWritingTo: jsonl) {
+            defer { try? handle.close() }
+            try handle.seekToEnd()
+            handle.write(line)
+            handle.write(Data("\n".utf8))
+        } else {
+            try (line + Data("\n".utf8)).write(to: jsonl, options: .atomic)
+        }
+        let shown = error == nil ? "chars=\((text as NSString).length)" : "failed"
+        print("\(backend)-eval \(id) scene=\(scene) \(shown) tools=\(tools.joined(separator: ","))")
         fflush()
     }
 

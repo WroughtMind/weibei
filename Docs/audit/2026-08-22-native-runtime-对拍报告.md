@@ -57,8 +57,9 @@ luna+low live 评测里，课程搜索/正文/记忆/档案/笔记题也会调�
 ## 4. 评测集质量
 
 - 42 题，模型 **`gpt-5.6-luna` + `low`**。
-- Native：`WeiBeiPiCheck --native-eval` → live-ran=40。日志 `Docs/audit/2026-08-22-native-eval-luna-low.log`。
-- Pi：`WeiBeiPiCheck --native-eval --backend pi` → live-ran=40。日志 `Docs/audit/2026-08-22-pi-eval-luna-low.log`。同一模型、同一题集。cancel/error 两题两边都跳过。
+- Native：`WeiBeiPiCheck --native-eval` → live-ran=40。
+- Pi：`WeiBeiPiCheck --native-eval --backend pi` → live-ran=40。
+- **完整答卷**在 `Docs/audit/2026-08-22-eval-luna-low/{native,pi}/`（每题一份 `.md` + `answers.jsonl`）。早期 `*-eval-luna-low.log` 只有前 80 字，不能当全文。cancel/error 两题两边都跳过。
 - 闭式题两边 prefix 一致：`01→4`，`02→1/4`，`19→180`，`20→1191`，`23→10`，`33→1月1日`，`34→-3`，`35→利率升债券跌`，`39→12.68%`，`40→中位数是正中间`。
 - 课程工具：native 能 search/read 到夹具正文；Pi 多次报「宿主工具响应根目录发生了变化」（与第一棒 Pi 夹具同类），因此 04–07、10–12、36 的课程引用 Pi 更常拒答。这是 CLI 宿主差异，不是 luna 答错。
 - **没有编造 5 分制分数**。独立 judge（Kimi）仍未逐题打分。闭式题两边一致，开放题需人工/Kimi 再评。
