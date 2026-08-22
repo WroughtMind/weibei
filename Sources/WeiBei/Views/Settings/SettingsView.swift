@@ -798,7 +798,11 @@ struct SettingsView: View {
                     .padding(12)
             }
             .frame(minHeight: 260, maxHeight: 420)
-            .background(WeiBeiTheme.paperRaised.opacity(0.52))
+            .weibeiEtchedBackground(
+                fill: WeiBeiTheme.paperRaised.opacity(0.52),
+                stroke: WeiBeiTheme.hairline.opacity(0.3),
+                cornerRadius: 8
+            )
 
             Button(store.ui("关闭", "Close")) {
                 showInspirationSourcesSheet = false
@@ -880,7 +884,11 @@ struct SettingsView: View {
                     .frame(minHeight: 140, maxHeight: 200)
                     .padding(6)
             }
-            .background(WeiBeiTheme.paperRaised.opacity(0.52))
+            .weibeiEtchedBackground(
+                fill: WeiBeiTheme.paperRaised.opacity(0.52),
+                stroke: WeiBeiTheme.hairline.opacity(0.3),
+                cornerRadius: 8
+            )
             .clipShape(RoundedRectangle(cornerRadius: 7))
             .overlay {
                 RoundedRectangle(cornerRadius: 7)
@@ -1178,7 +1186,11 @@ struct SettingsView: View {
             .foregroundStyle(WeiBeiTheme.ink)
             .padding(.horizontal, 9)
             .frame(height: 26)
-            .background(WeiBeiTheme.paperRaised.opacity(0.52))
+            .weibeiEtchedBackground(
+                fill: WeiBeiTheme.paperRaised.opacity(0.52),
+                stroke: WeiBeiTheme.hairline.opacity(0.3),
+                cornerRadius: 8
+            )
             .clipShape(RoundedRectangle(cornerRadius: 6))
             .overlay {
                 RoundedRectangle(cornerRadius: 6)

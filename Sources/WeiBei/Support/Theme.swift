@@ -1804,6 +1804,40 @@ struct WeiBeiDialogButtonStyle: ButtonStyle {
 }
 
 extension View {
+    /// One-line etched backdrop for upgrading existing flat-fill surfaces;
+    /// keeps call sites compact inside frozen files.
+    func weibeiEtchedBackground(
+        fill: Color,
+        stroke: Color,
+        cornerRadius: CGFloat,
+        contactShadow: Bool = false
+    ) -> some View {
+        background {
+            WeiBeiEtchedBackdrop(
+                shape: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous),
+                fill: fill,
+                stroke: stroke,
+                showsContactShadow: contactShadow
+            )
+        }
+    }
+
+    /// Capsule variant of `weibeiEtchedBackground`.
+    func weibeiEtchedCapsuleBackground(
+        fill: Color,
+        stroke: Color,
+        contactShadow: Bool = false
+    ) -> some View {
+        background {
+            WeiBeiEtchedBackdrop(
+                shape: Capsule(),
+                fill: fill,
+                stroke: stroke,
+                showsContactShadow: contactShadow
+            )
+        }
+    }
+
     func weibeiPanel() -> some View {
         self
             .foregroundColor(WeiBeiTheme.ink)

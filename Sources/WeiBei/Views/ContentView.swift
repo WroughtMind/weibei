@@ -362,12 +362,12 @@ private struct ImportProgressPill: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
-        .background(WeiBeiTheme.paperRaised.opacity(0.97))
+        .weibeiEtchedCapsuleBackground(
+            fill: WeiBeiTheme.paperRaised.opacity(0.97),
+            stroke: WeiBeiTheme.hairline.opacity(0.6),
+            contactShadow: true
+        )
         .clipShape(Capsule())
-        .overlay {
-            Capsule()
-                .stroke(WeiBeiTheme.hairline.opacity(0.6), lineWidth: 1)
-        }
         .shadow(color: WeiBeiTheme.ink.opacity(store.appearanceMode.isDark ? 0.3 : 0.1), radius: 12, y: 6)
         .accessibilityElement(children: .combine)
         .accessibilityLabel(Text(store.ui("正在导入文件", "Importing files")))
@@ -432,17 +432,17 @@ private struct WorkspaceStatusBanner: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 9)
         .frame(maxWidth: 440, alignment: .leading)
-        .background(WeiBeiTheme.paperRaised.opacity(0.97))
-        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .stroke(
-                    isAlert
-                        ? WeiBeiTheme.cinnabar.opacity(0.55)
-                        : WeiBeiTheme.hairline.opacity(0.6),
-                    lineWidth: 1
-                )
+        .background {
+            WeiBeiEtchedBackdrop(
+                shape: RoundedRectangle(cornerRadius: 8, style: .continuous),
+                fill: WeiBeiTheme.paperRaised.opacity(0.97),
+                stroke: isAlert
+                    ? WeiBeiTheme.cinnabar.opacity(0.55)
+                    : WeiBeiTheme.hairline.opacity(0.6),
+                showsContactShadow: true
+            )
         }
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         .shadow(color: WeiBeiTheme.ink.opacity(store.appearanceMode.isDark ? 0.3 : 0.1), radius: 12, y: 6)
         .allowsHitTesting(isAlert)
         .accessibilityElement(children: .contain)
@@ -1257,7 +1257,12 @@ private struct PaneDropTargetView: View {
                 .foregroundStyle(WeiBeiTheme.cinnabar)
                 .padding(.horizontal, 10)
                 .padding(.vertical, 6)
-                .background(WeiBeiTheme.paperRaised.opacity(0.72), in: Capsule())
+                .weibeiEtchedCapsuleBackground(
+                    fill: WeiBeiTheme.paperRaised.opacity(0.72),
+                    stroke: WeiBeiTheme.hairline.opacity(0.4),
+                    contactShadow: true
+                )
+                .clipShape(Capsule())
                 .padding(14)
             }
             .allowsHitTesting(false)
