@@ -1003,11 +1003,17 @@ struct ReaderView: View {
                         },
                         onUserPageChange: schedulePDFLocationCommit,
                         onSelectableTextChange: { available in pdfHasSelectableText = available }
-                    ) { text, anchor, selectionPageIndex in
+                    ) { text, anchor, selectionPageIndex, documentAnchor in
                         let title = store.displayTitle(for: item)
                         let ownerTitle = store.ui("\(title)，第 \(selectionPageIndex + 1) 页", "\(title), page \(selectionPageIndex + 1)")
                         store.updateReaderLocationTitle(ownerTitle)
-                        store.updateSelection(text, source: .document, anchor: anchor, ownerTitle: ownerTitle)
+                        store.updateSelection(
+                            text,
+                            source: .document,
+                            anchor: anchor,
+                            ownerTitle: ownerTitle,
+                            documentAnchor: documentAnchor.map { SelectionDocumentAnchor(pdf: $0) }
+                        )
                     }
                 } else {
                     MaterialReadFailureView(fileName: store.displayTitle(for: item))
@@ -1227,7 +1233,7 @@ private struct PDFReaderRepresentable: NSViewRepresentable {
     var onAskUnderlineActivate: (String, CGPoint?) -> Void = { _, _ in }
     var onUserPageChange: (Int) -> Void
     var onSelectableTextChange: (Bool?) -> Void = { _ in }
-    var onSelectionChange: (String, CGPoint?, Int) -> Void
+    var onSelectionChange: (String, CGPoint?, Int, PDFSelectionAnchor?) -> Void
 
     func makeCoordinator() -> Coordinator {
         Coordinator(
@@ -1351,7 +1357,7 @@ private struct PDFReaderRepresentable: NSViewRepresentable {
         var pageCount: Binding<Int>
         var onUserPageChange: (Int) -> Void
         var onSelectableTextChange: (Bool?) -> Void
-        var onSelectionChange: (String, CGPoint?, Int) -> Void
+        var onSelectionChange: (String, CGPoint?, Int, PDFSelectionAnchor?) -> Void
         var onAskUnderlineActivate: (String, CGPoint?) -> Void
         var appearanceMode: WeiBeiAppearanceMode = .paper
         private weak var observedView: PDFView?
@@ -1381,7 +1387,7 @@ private struct PDFReaderRepresentable: NSViewRepresentable {
             pageCount: Binding<Int>,
             onUserPageChange: @escaping (Int) -> Void,
             onSelectableTextChange: @escaping (Bool?) -> Void,
-            onSelectionChange: @escaping (String, CGPoint?, Int) -> Void,
+            onSelectionChange: @escaping (String, CGPoint?, Int, PDFSelectionAnchor?) -> Void,
             onAskUnderlineActivate: @escaping (String, CGPoint?) -> Void
         ) {
             self.pageIndex = pageIndex
@@ -1679,10 +1685,12 @@ private struct PDFReaderRepresentable: NSViewRepresentable {
             guard let selection = view.currentSelection,
                   !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                 selectionWork?.cancel()
-                onSelectionChange("", nil, pageIndex.wrappedValue)
+                onSelectionChange("", nil, pageIndex.wrappedValue, nil)
                 return
             }
             selection.color = WeiBeiNativePalette.selectionFill(for: appearanceMode)
+            let selectionPageIndex = PDFReaderOpenSafety.pageIndex(for: selection, in: view)
+                ?? pageIndex.wrappedValue
             reportSelectionAfterDragSettles(
                 text: text,
                 anchor: PDFReaderOpenSafety.selectionAnchor(
@@ -1690,15 +1698,31 @@ private struct PDFReaderRepresentable: NSViewRepresentable {
                     in: view,
                     fallbackLocalPoint: lastPointerInView
                 ),
-                pageIndex: PDFReaderOpenSafety.pageIndex(for: selection, in: view)
-                    ?? pageIndex.wrappedValue
+                pageIndex: selectionPageIndex,
+                documentAnchor: Self.lineAnchor(for: selection, pageIndex: selectionPageIndex)
             )
         }
 
-        private func reportSelectionAfterDragSettles(text: String, anchor: CGPoint?, pageIndex: Int) {
+        /// 把 PDFSelection 收敛成行矩形锚(页面坐标),供问/记线程与原文标记使用。
+        private static func lineAnchor(for selection: PDFSelection, pageIndex: Int) -> PDFSelectionAnchor {
+            var rects: [SelectionRect] = []
+            for line in selection.selectionsByLine() {
+                for page in line.pages {
+                    rects.append(SelectionRect(line.bounds(for: page)))
+                }
+            }
+            return PDFSelectionAnchor(pageIndex: pageIndex, lineRects: rects)
+        }
+
+        private func reportSelectionAfterDragSettles(
+            text: String,
+            anchor: CGPoint?,
+            pageIndex: Int,
+            documentAnchor: PDFSelectionAnchor?
+        ) {
             selectionWork?.cancel()
             let work = DispatchWorkItem { [weak self] in
-                self?.onSelectionChange(text, anchor, pageIndex)
+                self?.onSelectionChange(text, anchor, pageIndex, documentAnchor)
             }
             selectionWork = work
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.06, execute: work)
@@ -2027,10 +2051,11 @@ extension PDFReaderRepresentable.Coordinator: PDFPageOverlayViewProvider {
             guard self.selectionReportGate.shouldPublish(text: text, now: now) else { return }
             guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                 self.selectionWork?.cancel()
-                self.onSelectionChange("", nil, index)
+                self.onSelectionChange("", nil, index, nil)
                 return
             }
-            self.reportSelectionAfterDragSettles(text: text, anchor: anchor, pageIndex: index)
+            // OCR 页没有原生选区,锚点缺省 nil,回访沿用文字匹配兜底。
+            self.reportSelectionAfterDragSettles(text: text, anchor: anchor, pageIndex: index, documentAnchor: nil)
         }
     }
 }

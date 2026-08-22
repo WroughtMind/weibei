@@ -1144,6 +1144,37 @@ let legacySelection = try! JSONDecoder().decode(
     from: Data(#"{"id":"40000000-0000-0000-0000-000000000001","text":"旧选区","source":"note","ownerTitle":"旧笔记","isEditable":true}"#.utf8)
 )
 expect(legacySelection.itemID == nil && legacySelection.text == "旧选区", "selection records saved before stable item IDs still reopen")
+// 第二刀兼容:旧提问线程/选区 JSON 没有锚点字段,解码后锚点为 nil,不炸不丢。
+let legacyThread = try! JSONDecoder().decode(
+    SelectionAskThread.self,
+    from: Data(#"{"id":"40000000-0000-0000-0000-000000000002","selectionText":"旧提问原文","source":"document","ownerTitle":"旧材料","messageIDs":[],"createdAt":0,"updatedAt":0}"#.utf8)
+)
+expect(legacyThread.documentAnchor == nil && legacyThread.selectionText == "旧提问原文", "legacy ask threads decode without document anchors")
+let anchorRoundtrip = SelectionRemarkRecord(
+    selectionText: "利率是资金使用价格的表达。",
+    remarkText: "价格视角",
+    source: .document,
+    ownerTitle: "讲义",
+    itemID: "m1",
+    documentAnchor: SelectionDocumentAnchor(
+        pdf: PDFSelectionAnchor(pageIndex: 3, lineRects: [SelectionRect(x: 1, y: 2, width: 30, height: 8)])
+    )
+)
+let anchorData = try! JSONEncoder().encode(anchorRoundtrip)
+let anchorDecoded = try! JSONDecoder().decode(SelectionRemarkRecord.self, from: anchorData)
+expect(
+    anchorDecoded.remarkText == "价格视角"
+        && anchorDecoded.documentAnchor?.pdf?.pageIndex == 3
+        && anchorDecoded.documentAnchor?.pdf?.lineRects.first?.width == 30
+        && anchorDecoded.documentAnchor!.matches(anchorRoundtrip.documentAnchor),
+    "remark records roundtrip pdf anchors and self-match"
+)
+expect(
+    SelectionDocumentAnchor(pdf: PDFSelectionAnchor(pageIndex: 4, lineRects: [])).matches(
+        SelectionDocumentAnchor(pdf: PDFSelectionAnchor(pageIndex: 3, lineRects: []))
+    ) == false,
+    "anchors on different pdf pages never match"
+)
 expect(SelectionAttachmentMerge.mergedText(existing: "当前笔记已经覆盖材", incoming: "开头。建议检查是否写了来源、例子和待追问。", withinSelectionGesture: true) == "当前笔记已经覆盖材开头。建议检查是否写了来源、例子和待追问。", "same-gesture selection attachment stitches split live selection fragments into one attachment")
 expect(SelectionAttachmentMerge.mergedText(existing: "利率是资金使用", incoming: "使用价格的表达", withinSelectionGesture: true) == "利率是资金使用价格的表达", "same-gesture overlapping fragments merge without duplicate overlap text")
 expect(SelectionAttachmentMerge.mergedText(existing: "你们", incoming: "好", withinSelectionGesture: true) == "你们好", "same-gesture single-character live-selection fragments merge into one human selection")

@@ -773,6 +773,8 @@ public struct SelectionContext: Identifiable, Codable, Hashable, Sendable {
     public var ownerTitle: String
     public var itemID: String?
     public var isEditable: Bool
+    /// 原文位置锚;阅读器上报时写入,旧调用缺省 nil。
+    public var documentAnchor: SelectionDocumentAnchor?
 
     public init(
         id: UUID = UUID(),
@@ -780,7 +782,8 @@ public struct SelectionContext: Identifiable, Codable, Hashable, Sendable {
         source: SelectionSource,
         ownerTitle: String,
         itemID: String? = nil,
-        isEditable: Bool = true
+        isEditable: Bool = true,
+        documentAnchor: SelectionDocumentAnchor? = nil
     ) {
         self.id = id
         self.text = text
@@ -788,6 +791,7 @@ public struct SelectionContext: Identifiable, Codable, Hashable, Sendable {
         self.ownerTitle = ownerTitle
         self.itemID = itemID
         self.isEditable = isEditable
+        self.documentAnchor = documentAnchor
     }
 
     public func label(language: WeiBeiInterfaceLanguage) -> String {
@@ -821,6 +825,8 @@ public struct SelectionAskThread: Identifiable, Codable, Hashable, Sendable {
     public var messageIDs: [UUID]
     public var createdAt: Date
     public var updatedAt: Date
+    /// 原文位置锚;旧数据解码为 nil,回访匹配时锚点优先、文字匹配兜底。
+    public var documentAnchor: SelectionDocumentAnchor?
 
     public init(
         id: UUID = UUID(),
@@ -830,7 +836,8 @@ public struct SelectionAskThread: Identifiable, Codable, Hashable, Sendable {
         itemID: String? = nil,
         messageIDs: [UUID] = [],
         createdAt: Date = Date(),
-        updatedAt: Date = Date()
+        updatedAt: Date = Date(),
+        documentAnchor: SelectionDocumentAnchor? = nil
     ) {
         self.id = id
         self.selectionText = selectionText
@@ -840,6 +847,7 @@ public struct SelectionAskThread: Identifiable, Codable, Hashable, Sendable {
         self.messageIDs = messageIDs
         self.createdAt = createdAt
         self.updatedAt = updatedAt
+        self.documentAnchor = documentAnchor
     }
 
     public var normalizedText: String {
@@ -1897,6 +1905,7 @@ public struct PersistedWorkspace: Codable, Sendable {
     public var studySessionScopeMigrationVersion: Int?
     public var activeStudySessionID: UUID?
     public var selectionAskThreads: [SelectionAskThread]?
+    public var selectionRemarkRecords: [SelectionRemarkRecord]?
     public var modelName: String?
     public var agentProviderID: String?
     public var agentBaseURL: String?
@@ -1948,6 +1957,7 @@ public struct PersistedWorkspace: Codable, Sendable {
         studySessionScopeMigrationVersion: Int? = nil,
         activeStudySessionID: UUID? = nil,
         selectionAskThreads: [SelectionAskThread]? = nil,
+        selectionRemarkRecords: [SelectionRemarkRecord]? = nil,
         modelName: String? = nil,
         agentProviderID: String? = nil,
         agentBaseURL: String? = nil,
