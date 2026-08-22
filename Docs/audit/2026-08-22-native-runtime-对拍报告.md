@@ -20,6 +20,7 @@ swift build
 .build/debug/WeiBeiPiCheck --native-capability-demo
 .build/debug/WeiBeiPiCheck --native-eval
 .build/debug/WeiBeiPiCheck --native-eval --backend pi
+.build/debug/WeiBeiPiCheck --native-eval --ids 16,08,10,11
 .build/debug/WeiBeiPiCheck --native-live available
 .build/debug/WeiBeiPiCheck --native-perf
 ```
@@ -71,7 +72,13 @@ luna+low live 评测里，课程搜索/正文/记忆/档案/笔记题也会调�
 | native | 4.95 | 5.00 | 4.98 | **4.98** |
 | pi | 4.88 | 5.00 | 5.00 | **4.96** |
 
-均分差 0.02，低于 0.3 门槛；无单题回退 ≥2。Judge 结论：内容质量无实质差别，Pi 少的 2 分来自 CLI 宿主拒答。Q10 native「内部错误」根因见第 9 节（未重跑 luna 答卷）。
+均分差 0.02，低于 0.3 门槛；无单题回退 ≥2。Judge 结论：内容质量无实质差别，Pi 少的 2 分来自 CLI 宿主拒答。
+
+收尾重跑（native / luna+low，`--ids`，完整答卷覆盖原 `.md` / jsonl 对应行）：
+
+- **16**：工具描述已加课程优先引导；评测预期改为「优先课程 search→read，课程无材料时允许说明后转网页」。重跑未调课程工具，也未转网页，改成追问「查哪种利率」。夹具里有《利率课程》，按方案不算自动失败，交 judge 复核。
+- **08**：`load_skill` 已幂等。重跑工具序列只有 `weibei_learning_memory`，不再连发两次 `load_skill`；仍如实说没有记忆。
+- **10 / 11**：见第 9 节。Kimi 原双评均分不因这 4 题重跑改写。
 
 ## 5. 性能
 
@@ -118,18 +125,18 @@ native 明显更快、更省内存；无 Pi/Bun 常驻子进程。这是 CLI 路
 ## 9. 已知差异与风险
 
 - 401：`WeiBei.NativeAgent` 的 401/「认证已失效」归到 unauthorized（自测覆盖；场景 10 现为 `unauthorized`）。
-- Q10 live「内部错误」：`NativeLLMFailure` 原先不是 `LocalizedError`，工具失败喂给模型的是泛化 NSError 文案；模型写成「内部错误」。现已让 `errorDescription` 等于真实 `message`。确定性脚本里 `profile_update` 一直能过（会回传 `eval-<id>` 修订号）。未重跑 luna 答卷。
-- Q11「暂未成功提交」：CLI live 没有真实笔记库；成功路径文案也写「尚未写回」。与 12 场景脚本通过不矛盾。
+- Q10/Q11 定点重跑（luna low）：工具失败不再变成「内部错误」。Q10 先 `profile_update` 再 `course_map` 再重试，模型答「已提交知识档案更新建议」。Q11 复述真实原因「上下文版本不匹配」，不再说内部错误。
+- 提案闭环：CLI live 没有真实笔记库 / WorkspaceStore，即便工具回执写「已提交」也不会落库。12 场景脚本只能验协议。**闭环方式 = 真实 App 冒烟**，四条提案清单见 `Docs/audit/2026-08-22-native-runtime-用户验收清单草稿.md`。
+- Q16 引导后仍未走课程工具（改成澄清问），按方案交 judge 复核，不记自动失败。
 - Azure / Vertex / Bedrock / Cloudflare 未覆盖。
 - Pi 课程宿主在 CLI 里仍会报响应目录变化。
 - 正式公证包未出；体积是临时目录按同一清单组装的测量值。
-- 上一轮 CI 在无关用例 `NoteEditingSessionTests.testDirtyInputSchedulesOneIdleSnapshot` 上失败（本分支前一 SHA 绿，属时序 flake）；本任务未改该文件。
 - 本分支不删 Pi、不改发布脚本、不打标签。
 
 ## 10. go / no-go
 
-**质量 + 体积 + DeepSeek 性能：通过。整体仍是条件 go**（公证包与删除 Pi 未授权）。
+**质量 + 体积 + DeepSeek 性能：通过。整体仍是条件 go**（公证包、删 Pi、真实 App 提案四条未验收）。
 
-已有：OAuth 六步、三件套、默认 pi、DeepSeek/ChatGPT 三闭环、12 场景 native 脚本（401 已对齐）、luna+low 40 题两侧 live 全文、Kimi 双评 native 4.98 / pi 4.96、本地组装不含 Pi **44.9 MiB**、DeepSeek 短问答 native 墙钟 0.678 s / 首字 0.526 s、CLI 峰值 22.3 MiB、Pi 子进程约 171 MiB。
+已有：OAuth 六步、三件套、默认 pi、DeepSeek/ChatGPT 三闭环、12 场景 native 脚本（401 已对齐，本轮 `--native-scenario-pair` / `--native-capability-demo` 仍绿）、luna+low 40 题两侧 live 全文、Kimi 双评 native 4.98 / pi 4.96、16/08/10/11 收尾重跑、本地组装不含 Pi **44.9 MiB**、DeepSeek 短问答 native 墙钟 0.678 s / 首字 0.526 s、CLI 峰值 22.3 MiB、Pi 子进程约 171 MiB。
 
-仍缺：公证安装包、luna 首字中位（刻意未测）。删除 Pi 需单独授权。保持草稿。
+仍缺：公证安装包、luna 首字中位（刻意未测）、真实 App 提案四条冒烟。删除 Pi 需单独授权。保持草稿。

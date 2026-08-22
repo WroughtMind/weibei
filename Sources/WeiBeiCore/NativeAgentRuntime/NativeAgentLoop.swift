@@ -322,6 +322,7 @@ public actor NativeAgentLoop {
                let skillName = loaded["name"] as? String,
                let sha = loaded["sha256"] as? String,
                let relative = loaded["relativePath"] as? String {
+                context.loadedSkillIDs.insert(id)
                 let skill = StudyAgentLoadedSkill(
                     id: id,
                     name: skillName,

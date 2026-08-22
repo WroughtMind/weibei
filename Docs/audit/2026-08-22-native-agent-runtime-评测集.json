@@ -20,7 +20,7 @@
     {"id": "13", "scene": "cancel", "source": "generated", "question": "请从 1 写到 200，每个数字一行。", "expect": "取消后停止"},
     {"id": "14", "scene": "error", "source": "generated", "question": "用一个无效密钥请求（测试用）。", "expect": "unauthorized"},
     {"id": "15", "scene": "resume", "source": "learning", "question": "那债券价格和利率为什么常常反向？", "expect": "接上利率定义"},
-    {"id": "16", "scene": "multi-tool", "source": "learning", "question": "先搜索利率，再读最相关的一条，最后用一句话总结。", "expect": "search 后 read"},
+    {"id": "16", "scene": "multi-tool", "source": "learning", "question": "先搜索利率，再读最相关的一条，最后用一句话总结。", "expect": "优先课程 search→read；课程确实无材料时，允许说明后转网页搜索"},
     {"id": "17", "scene": "learning", "source": "learning", "question": "我算复利总是把期数搞错，应该怎么检查自己有没有算错？", "expect": "可执行检查步骤"},
     {"id": "18", "scene": "learning", "source": "learning", "question": "名义利率 5%，通胀大约 2%，我能不能口头说实际利率大概 3%？要注意什么？", "expect": "费雪近似与精确式差别"},
     {"id": "19", "scene": "learning", "source": "web", "question": "本金 1000 元，年利率 6%，单利 3 年，利息是多少？", "expect": "180"},

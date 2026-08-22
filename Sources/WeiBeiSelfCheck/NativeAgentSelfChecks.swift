@@ -17,6 +17,7 @@ func runNativeAgentSelfChecks() throws {
     try checkOAuthLogoutLeavesNoCredential()
     try checkProviderRouting()
     try checkSkillCatalogAndLoad()
+    try checkLoadSkillIdempotent()
     try checkCreateDocumentSandbox()
     try checkDelegateCapabilities()
     try checkEvalSetLunaLow()
@@ -258,6 +259,54 @@ private func checkSkillCatalogAndLoad() throws {
     try nativeRequire(loaded?.body.contains("苏格拉底") == true, "socratic body loads")
     try nativeRequire(registry.packs.map(\.id) == before, "load is instruction-only and does not change registration")
     try nativeRequire(NativeSkillRegistry.isSignedBuiltin("visualize"), "visualize is a signed builtin")
+    let toolRegistry = NativeToolRegistry()
+    _ = try waitFor { await NativeBuiltinTools.registerAll(into: toolRegistry, skillRoot: root) }
+    let tools = try waitFor { await toolRegistry.resolved(scope: .global) }
+    let search = tools.first { $0.name == "weibei_course_search" }
+    try nativeRequire(search?.description.contains("优先") == true, "course_search description prefers the course index")
+    try nativeRequire(search?.description.contains("网页搜索") == true, "course_search description still allows web search after a miss")
+}
+
+private func checkLoadSkillIdempotent() throws {
+    let root = try PiAgentResources.bundled().skillsURL
+    let packs = try NativeSkillRegistry.load(from: root)
+    let registry = NativeToolRegistry()
+    _ = try waitFor { await NativeBuiltinTools.registerAll(into: registry, skillRoot: root) }
+    let request = StudyAgentRequest(
+        purpose: .conversation,
+        question: "加载技能",
+        materialTitle: "",
+        materialText: "",
+        noteTitle: "",
+        noteText: "",
+        contextRevision: "skill-idempotent"
+    )
+    var context = NativeToolExecutionContext(
+        request: request,
+        liveStores: NativeLiveStores(skillRegistry: packs)
+    )
+    let first = try waitFor {
+        try await registry.execute(
+            NativeToolCallRequest(name: "load_skill", argumentsJSON: "{\"id\":\"socratic-questioning\"}", callID: "1"),
+            context: context,
+            scope: .global
+        )
+    }
+    try nativeRequire(first.text.contains("苏格拉底"), "first load_skill injects the skill body")
+    try nativeRequire(first.details["alreadyLoaded"] as? Bool != true, "first load is not marked alreadyLoaded")
+    if let loaded = first.details["loaded"] as? [String: Any], let id = loaded["id"] as? String {
+        context.loadedSkillIDs.insert(id)
+    }
+    let second = try waitFor {
+        try await registry.execute(
+            NativeToolCallRequest(name: "load_skill", argumentsJSON: "{\"id\":\"socratic-questioning\"}", callID: "2"),
+            context: context,
+            scope: .global
+        )
+    }
+    try nativeRequire(second.text.contains("已加载"), "second load_skill returns a short already-loaded hint")
+    try nativeRequire(second.text.count < first.text.count, "second load_skill does not re-inject the full body")
+    try nativeRequire(second.details["alreadyLoaded"] as? Bool == true, "second load is marked alreadyLoaded")
 }
 
 private func checkCreateDocumentSandbox() throws {
@@ -302,6 +351,11 @@ private func checkEvalSetLunaLow() throws {
     try nativeRequire(object?["reasoningEffort"] as? String == "low", "eval set effort is low")
     let items = object?["items"] as? [[String: Any]] ?? []
     try nativeRequire(items.count >= 40, "eval set has at least 40 items")
+    let item16 = items.first { $0["id"] as? String == "16" }
+    try nativeRequire(
+        (item16?["expect"] as? String)?.contains("优先课程") == true,
+        "eval item 16 prefers course search then read"
+    )
 }
 
 private func checkFailureMapping() throws {

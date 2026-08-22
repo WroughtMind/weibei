@@ -32,15 +32,36 @@ enum NativeEvalCLI {
               let items = object["items"] as? [[String: Any]] else {
             throw NSError(domain: "WeiBei.NativeEval", code: 1, userInfo: [NSLocalizedDescriptionKey: "eval set JSON missing items"])
         }
-        let limit: Int
-        if let index = arguments.firstIndex(of: "--limit"),
+        let selected: [[String: Any]]
+        if let index = arguments.firstIndex(of: "--ids"),
            let raw = arguments.dropFirst(index + 1).first,
-           let parsed = Int(raw) {
-            limit = parsed
+           !raw.hasPrefix("--") {
+            let wanted = Set(
+                raw.split(separator: ",").map {
+                    $0.trimmingCharacters(in: .whitespacesAndNewlines)
+                }.filter { !$0.isEmpty }
+            )
+            selected = items.filter { wanted.contains($0["id"] as? String ?? "") }
+            let found = Set(selected.compactMap { $0["id"] as? String })
+            let missing = wanted.subtracting(found)
+            guard missing.isEmpty else {
+                throw NSError(
+                    domain: "WeiBei.NativeEval",
+                    code: 5,
+                    userInfo: [NSLocalizedDescriptionKey: "unknown eval ids: \(missing.sorted().joined(separator: ","))"]
+                )
+            }
         } else {
-            limit = items.count
+            let limit: Int
+            if let index = arguments.firstIndex(of: "--limit"),
+               let raw = arguments.dropFirst(index + 1).first,
+               let parsed = Int(raw) {
+                limit = parsed
+            } else {
+                limit = items.count
+            }
+            selected = Array(items.prefix(limit))
         }
-        let selected = Array(items.prefix(limit))
         print("native-eval backend=\(backend) model=\(model) effort=\(effort) items=\(selected.count)")
         fflush()
         switch backend {
@@ -254,19 +275,39 @@ enum NativeEvalCLI {
         ]
         if let error { record["error"] = error }
         let line = try JSONSerialization.data(withJSONObject: record)
-        let jsonl = root.appendingPathComponent("answers.jsonl")
-        if FileManager.default.fileExists(atPath: jsonl.path),
-           let handle = try? FileHandle(forWritingTo: jsonl) {
-            defer { try? handle.close() }
-            try handle.seekToEnd()
-            handle.write(line)
-            handle.write(Data("\n".utf8))
-        } else {
-            try (line + Data("\n".utf8)).write(to: jsonl, options: .atomic)
-        }
+        try upsertJSONL(root.appendingPathComponent("answers.jsonl"), id: id, line: line)
         let shown = error == nil ? "chars=\((text as NSString).length)" : "failed"
         print("\(backend)-eval \(id) scene=\(scene) \(shown) tools=\(tools.joined(separator: ","))")
         fflush()
+    }
+
+    private static func upsertJSONL(_ url: URL, id: String, line: Data) throws {
+        var records: [Data] = []
+        var replaced = false
+        if FileManager.default.fileExists(atPath: url.path),
+           let existing = try? String(contentsOf: url, encoding: .utf8) {
+            for raw in existing.split(separator: "\n", omittingEmptySubsequences: true) {
+                guard let data = String(raw).data(using: .utf8),
+                      let object = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                    continue
+                }
+                if object["id"] as? String == id {
+                    records.append(line)
+                    replaced = true
+                } else {
+                    records.append(data)
+                }
+            }
+        }
+        if !replaced {
+            records.append(line)
+        }
+        var payload = Data()
+        for record in records {
+            payload.append(record)
+            payload.append(Data("\n".utf8))
+        }
+        try payload.write(to: url, options: .atomic)
     }
 
     private static func evalRequest(id: String, question: String, sessionID: UUID) -> StudyAgentRequest {

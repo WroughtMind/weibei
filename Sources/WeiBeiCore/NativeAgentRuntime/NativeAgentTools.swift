@@ -63,6 +63,7 @@ public struct NativeToolExecutionContext: Sendable {
     public var readSourceRevisions: [String: String]
     public var lastReadMemoryRevision: UInt64?
     public var courseProfileUpdated: Bool
+    public var loadedSkillIDs: Set<String>
     public var liveStores: NativeLiveStores
 
     public init(
@@ -74,6 +75,7 @@ public struct NativeToolExecutionContext: Sendable {
         readSourceRevisions: [String: String] = [:],
         lastReadMemoryRevision: UInt64? = nil,
         courseProfileUpdated: Bool = false,
+        loadedSkillIDs: Set<String> = [],
         liveStores: NativeLiveStores = .empty
     ) {
         self.request = request
@@ -84,6 +86,7 @@ public struct NativeToolExecutionContext: Sendable {
         self.readSourceRevisions = readSourceRevisions
         self.lastReadMemoryRevision = lastReadMemoryRevision
         self.courseProfileUpdated = courseProfileUpdated
+        self.loadedSkillIDs = loadedSkillIDs
         self.liveStores = liveStores
     }
 }
@@ -298,7 +301,7 @@ public enum NativeBuiltinTools {
     private static var loadSkill: NativeToolDefinition {
         NativeToolDefinition(
             name: "load_skill",
-            description: "按技能 id 加载技能正文并注入当前对话。加载不改变工具注册，附带工具声明只解析不落注册。",
+            description: "按技能 id 加载技能正文并注入当前对话。同一会话每个技能只需加载一次；再次加载同一技能会返回已加载短提示，不再注入全文。加载不改变工具注册，附带工具声明只解析不落注册。",
             permission: .read,
             schema: NativeJSONSchema(["type": "object", "properties": ["id": ["type": "string"]], "required": ["id"]]),
             execute: { arguments, context in
@@ -308,18 +311,31 @@ public enum NativeBuiltinTools {
                 }
                 _ = pack.manifest.tools
                 _ = pack.manifest.jscHook
+                let loaded: [String: Any] = [
+                    "id": pack.manifest.id,
+                    "name": pack.manifest.name,
+                    "version": pack.manifest.version,
+                    "relativePath": pack.relativePath,
+                    "sha256": pack.sha256,
+                    "byteCount": pack.byteCount,
+                ]
+                if context.loadedSkillIDs.contains(pack.manifest.id) || context.loadedSkillIDs.contains(id) {
+                    return NativeToolExecutionResult(
+                        text: "技能 \(pack.manifest.id) 已加载。",
+                        details: [
+                            "kind": "weibei_skill_read",
+                            "alreadyLoaded": true,
+                            "loaded": loaded,
+                            "declaredTools": pack.manifest.tools,
+                            "jscHookPresent": pack.manifest.jscHook != nil,
+                        ]
+                    )
+                }
                 return NativeToolExecutionResult(
                     text: pack.body,
                     details: [
                         "kind": "weibei_skill_read",
-                        "loaded": [
-                            "id": pack.manifest.id,
-                            "name": pack.manifest.name,
-                            "version": pack.manifest.version,
-                            "relativePath": pack.relativePath,
-                            "sha256": pack.sha256,
-                            "byteCount": pack.byteCount,
-                        ],
+                        "loaded": loaded,
                         "declaredTools": pack.manifest.tools,
                         "jscHookPresent": pack.manifest.jscHook != nil,
                     ]
@@ -492,7 +508,7 @@ public enum NativeBuiltinTools {
     private static var courseSearch: NativeToolDefinition {
         hostTool(
             name: "weibei_course_search",
-            description: "在课程索引片段中搜索相关材料与笔记。",
+            description: "在课程索引片段中搜索相关材料与笔记。当问题涉及课程、教材或章节内容时优先使用本工具；确认课程内没有相关材料后，可以使用网页搜索并说明原因。",
             permission: .read,
             makeRequest: { arguments, _ in
                 .courseSearch(
