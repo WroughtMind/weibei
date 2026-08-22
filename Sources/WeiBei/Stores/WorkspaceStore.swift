@@ -9793,7 +9793,7 @@ final class WorkspaceStore: ObservableObject {
     }
 
     var hasPersistedGeneratingAgentReply: Bool {
-        messages.contains { $0.role == .assistant && $0.completionState == .generating }
+        messages.contains { $0.role == .assistant && $0.origin?.requestID == activeAgentRequestID }
     }
 
     func agentDisplayText(for message: AgentMessage) -> String {

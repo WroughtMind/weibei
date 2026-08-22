@@ -786,7 +786,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         WeiBeiPerf.event(
             "webview.markdown_create",
             extra:
-                "instance=\(context.coordinator.performanceInstanceID.uuidString.lowercased())"
+                "instance=\(context.coordinator.performanceInstanceID.uuidString.lowercased()) surface=\(isEditable ? "editor" : "preview") compact=\(isCompactPreview ? 1 : 0) wide=\(isChatWideTypography ? 1 : 0) doc=\(documentID) mdlen=\(markdown.count)"
         )
         let resourceURL = WeiBeiResources.bundle.url(
             forResource: "index",
