@@ -1802,11 +1802,23 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
             && !document.querySelector('.weibei-syntax-pending')
             && !!document.querySelector('.ProseMirror strong');
           const revealInsideStrong = !!document.querySelector('.weibei-syntax-mark[data-marker="**"]');
+          const adjacentReveal = (() => {
+            editor.setMarkdown('前**粗体**后');
+            editor.selectFirstTextForCheck('前');
+            const besideLeft = !!document.querySelector('.weibei-syntax-mark[data-marker="**"]');
+            editor.selectFirstTextForCheck('后');
+            const besideRight = !!document.querySelector('.weibei-syntax-mark[data-marker="**"]');
+            return besideLeft && besideRight;
+          })();
           const arrowExitsRun = (() => {
+            editor.setMarkdown('');
+            editor.insertMarkdown('\\n\\n{{WEIBEI_CURSOR}}');
+            if (!editor.typeTextForCheck('**加粗**')) return false;
+            if (!document.querySelector('.ProseMirror strong')) return false;
             editor.pressKeyForCheck('ArrowRight');
             editor.typeTextForCheck('尾');
-            return editor.getMarkdown().includes('**未闭合**尾')
-              && document.querySelector('.ProseMirror strong')?.textContent === '未闭合';
+            return editor.getMarkdown().includes('**加粗**尾')
+              && document.querySelector('.ProseMirror strong')?.textContent === '加粗';
           })();
           const mathTypingCursor = (() => {
             editor.setMarkdown('');
@@ -1826,7 +1838,7 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
           const mathAdjacent = !!document.querySelector('.weibei-math-adjacent');
           editor.selectFirstTextForCheck('结尾段落');
           const mathAdjacentCleared = !document.querySelector('.weibei-math-adjacent');
-          return { pendingWhileTyping, convertedOnClose, revealInsideStrong, arrowExitsRun, mathTypingCursor, headingRevealed, quoteRevealed, mathAdjacent, mathAdjacentCleared };
+          return { pendingWhileTyping, convertedOnClose, revealInsideStrong, adjacentReveal, arrowExitsRun, mathTypingCursor, headingRevealed, quoteRevealed, mathAdjacent, mathAdjacentCleared };
         })();
         """
         webView.evaluateJavaScript(script) { [weak self] value, error in
@@ -1839,6 +1851,7 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
                   result["pendingWhileTyping"] as? Bool == true,
                   result["convertedOnClose"] as? Bool == true,
                   result["revealInsideStrong"] as? Bool == true,
+                  result["adjacentReveal"] as? Bool == true,
                   result["arrowExitsRun"] as? Bool == true,
                   result["mathTypingCursor"] as? Bool == true,
                   result["headingRevealed"] as? Bool == true,

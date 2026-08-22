@@ -159,10 +159,26 @@ export const createSyntaxMarksPlugin = (deps: SyntaxMarksDeps): Plugin => {
           ));
         }
         const schemaMarks = doc.type.schema.marks;
-        for (const mark of selection.$from.marks() || []) {
-          const marker = markMarkerFor(schemaMarks, mark.type, markerCache);
-          if (!marker) continue;
-          const run = markRunAround(doc, from, mark.type);
+        // Reveal not only when the caret carries the mark, but also when it sits
+        // immediately beside a marked run — adjacency is the natural "I want to
+        // edit around here" state.
+        const candidateTypes: any[] = [];
+        const seenTypes = new Set<string>();
+        const collectType = (mark: any) => {
+          if (!mark || seenTypes.has(mark.type.name)) return;
+          if (!markMarkerFor(schemaMarks, mark.type, markerCache)) return;
+          seenTypes.add(mark.type.name);
+          candidateTypes.push(mark.type);
+        };
+        for (const mark of selection.$from.marks() || []) collectType(mark);
+        for (const mark of selection.$from.nodeBefore?.marks || []) collectType(mark);
+        for (const mark of selection.$to.nodeAfter?.marks || []) collectType(mark);
+        for (const markType of candidateTypes) {
+          const marker = markMarkerFor(schemaMarks, markType, markerCache);
+          let run = markRunAround(doc, from, markType);
+          if (!run && selection.$to.parent === selection.$from.parent) {
+            run = markRunAround(doc, selection.to, markType);
+          }
           if (!run || run.to <= run.from) continue;
           decorations.push(markerDecoration(run.from, Math.min(run.from + 1, run.to), marker, 'open'));
           decorations.push(markerDecoration(Math.max(run.to - 1, run.from), run.to, marker, 'close'));
