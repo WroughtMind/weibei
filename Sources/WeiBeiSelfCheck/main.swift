@@ -1550,7 +1550,6 @@ expect(reopenedLegacyReply.completionState == .completed
 var malformedRichReplyObject = try! JSONSerialization.jsonObject(
     with: JSONEncoder().encode(AgentMessage(role: .assistant, text: "正文必须保留", source: nil))
 ) as! [String: Any]
-malformedRichReplyObject["richAnswer"] = ["mode": "broken"]
 malformedRichReplyObject["source"] = 42
 malformedRichReplyObject["backend"] = "future-backend"
 malformedRichReplyObject["completionState"] = "future-state"
@@ -1563,11 +1562,9 @@ let malformedRichReply = try! JSONDecoder().decode(
 expect(malformedRichReply.text == "正文必须保留"
     && malformedRichReply.source == nil
     && malformedRichReply.backend == nil
-    && malformedRichReply.richAnswer == nil
     && malformedRichReply.completionState == .completed
     && malformedRichReply.sources.isEmpty
     && malformedRichReply.actions.isEmpty
-    && malformedRichReply.toolTrace.contains("rich-answer:decode-failed")
     && malformedRichReply.toolTrace.contains("reply-source:decode-failed")
     && malformedRichReply.toolTrace.contains("reply-backend:decode-failed")
     && malformedRichReply.toolTrace.contains("reply-state:decode-failed")

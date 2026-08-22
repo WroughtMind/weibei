@@ -1,7 +1,0 @@
-{
-  "status": "rejected",
-  "validationKind": "invalid-protocol",
-  "passedChecks": ["schema"],
-  "issues": ["required field missing: evidenceLedgerLabels"],
-  "protocolDiagnostics": ["protocol validation failed", "ledger missing"]
-}

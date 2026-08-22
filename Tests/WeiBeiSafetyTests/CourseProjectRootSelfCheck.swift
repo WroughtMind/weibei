@@ -2913,7 +2913,7 @@ enum CourseProjectRootSelfCheck {
             !serialized.contains(fixture.workspaceDirectory.path)
                 && !serialized.contains(courseARoot.path)
                 && !serialized.contains("toolTrace")
-                && !serialized.contains(fixtureState.firstRichNarrative)
+                && !serialized.contains("最早一条课程回答。")
                 && !serialized.contains(foreignMaterial.id),
             "课程状态泄露本机路径、完整 Chat、内部日志或另一门课程 ID"
         )

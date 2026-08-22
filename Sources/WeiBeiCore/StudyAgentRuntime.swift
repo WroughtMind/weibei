@@ -727,7 +727,6 @@ public struct StudyAgentReply: Equatable, Sendable {
     public var text: String
     public var contentBlocks: [AgentMessageContentBlock]
     public var backend: StudyAgentBackend
-    public var richAnswer: RichAnswerPresentation?
     public var sources: [AgentReplySource]
     public var noteProposal: StudyAgentNoteProposal?
     public var relationProposal: StudyAgentRelationProposal?
@@ -741,7 +740,6 @@ public struct StudyAgentReply: Equatable, Sendable {
         text: String,
         contentBlocks: [AgentMessageContentBlock] = [],
         backend: StudyAgentBackend,
-        richAnswer: RichAnswerPresentation? = nil,
         sources: [AgentReplySource] = [],
         noteProposal: StudyAgentNoteProposal? = nil,
         relationProposal: StudyAgentRelationProposal? = nil,
@@ -754,7 +752,6 @@ public struct StudyAgentReply: Equatable, Sendable {
         self.text = text
         self.contentBlocks = contentBlocks
         self.backend = backend
-        self.richAnswer = richAnswer
         self.sources = sources
         self.noteProposal = noteProposal
         self.relationProposal = relationProposal

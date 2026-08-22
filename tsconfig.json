@@ -13,6 +13,5 @@
   "include": [
     "script/**/*.ts",
     "DesignSystem/scripts/**/*.ts",
-    "Prototypes/RichAnswerWebRuntime/scripts/**/*.ts"
   ]
 }
