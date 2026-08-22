@@ -9,7 +9,7 @@ const revealMarkCandidates: Array<{ typeNames: string[]; marker: string }> = [
   { typeNames: ['emphasis'], marker: '*' },
   { typeNames: ['code'], marker: '`' },
   { typeNames: ['highlight'], marker: '==' },
-  { typeNames: ['strike', 'strikethrough', 'strikeThrough'], marker: '~~' },
+  { typeNames: ['strike', 'strike_through', 'strikethrough', 'strikeThrough'], marker: '~~' },
 ];
 
 const isCodeContext = (state: any) => {
