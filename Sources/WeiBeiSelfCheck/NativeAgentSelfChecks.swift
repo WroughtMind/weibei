@@ -16,6 +16,10 @@ func runNativeAgentSelfChecks() throws {
     try checkGeminiTranslation()
     try checkOAuthLogoutLeavesNoCredential()
     try checkProviderRouting()
+    try checkSkillCatalogAndLoad()
+    try checkCreateDocumentSandbox()
+    try checkDelegateCapabilities()
+    try checkEvalSetLunaLow()
 }
 
 private func nativeRequire(_ condition: @autoclosure () throws -> Bool, _ message: String) throws {
@@ -241,6 +245,63 @@ private func checkProviderRouting() throws {
             try nativeRequire(route.baseURL != nil, "\(provider.rawValue) has a base URL")
         }
     }
+}
+
+private func checkSkillCatalogAndLoad() throws {
+    let root = try PiAgentResources.bundled().skillsURL
+    let registry = try NativeSkillRegistry.load(from: root)
+    try nativeRequire(registry.pack(named: "visualize") != nil, "visualize skill pack exists")
+    try nativeRequire(registry.pack(named: "socratic-questioning") != nil, "socratic skill pack exists")
+    try nativeRequire(registry.catalogSummary().contains("visualize"), "catalog lists visualize")
+    let before = registry.packs.map(\.id)
+    let loaded = registry.pack(named: "socratic-questioning")
+    try nativeRequire(loaded?.body.contains("苏格拉底") == true, "socratic body loads")
+    try nativeRequire(registry.packs.map(\.id) == before, "load is instruction-only and does not change registration")
+    try nativeRequire(NativeSkillRegistry.isSignedBuiltin("visualize"), "visualize is a signed builtin")
+}
+
+private func checkCreateDocumentSandbox() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("native-doc-check-\(UUID().uuidString)")
+    defer { try? FileManager.default.removeItem(at: root) }
+    let created = try NativeDocumentSandbox.write(
+        title: "利率",
+        format: .html,
+        content: "<p>利率是资金使用价格。</p>",
+        documentsRoot: root
+    )
+    let html = try String(contentsOf: created.viewerURL, encoding: .utf8)
+    try nativeRequire(html.contains("Content-Security-Policy"), "viewer has CSP")
+    try nativeRequire(html.contains("script-src 'none'"), "viewer denies script")
+    try nativeRequire(FileManager.default.fileExists(atPath: created.fileURL.path), "source file exists")
+}
+
+private func checkDelegateCapabilities() throws {
+    let unsupported = NativeSubagentCapabilities.parse(["nestedDelegate"])
+    try nativeRequire(!NativeSubagentCapabilities.supported.contains(unsupported), "nestedDelegate is not silently allowed")
+    try nativeRequire(NativeSubagentRunner.maximumDepth == 2, "delegate depth constant is 2")
+    let result = try waitFor {
+        await NativeSubagentRunner.start(
+            NativeSubagentRequest(task: "x", capabilities: .nestedDelegate, depth: 1),
+            adapter: OpenAIChatCompletionsProvider(apiKey: "invalid"),
+            model: "mock",
+            systemPrompt: "x",
+            ledgerRoot: FileManager.default.temporaryDirectory,
+            hostToolHandler: nil,
+            liveStores: .empty
+        )
+    }
+    try nativeRequire(result.ok == false, "unsupported capability fails as a value")
+    try nativeRequire(result.text.contains("不受支持"), "capability failure is explained")
+}
+
+private func checkEvalSetLunaLow() throws {
+    let url = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+        .appendingPathComponent("Docs/audit/2026-08-22-native-agent-runtime-评测集.json")
+    let object = try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any]
+    try nativeRequire(object?["model"] as? String == "gpt-5.6-luna", "eval set model is gpt-5.6-luna")
+    try nativeRequire(object?["reasoningEffort"] as? String == "low", "eval set effort is low")
+    let items = object?["items"] as? [[String: Any]] ?? []
+    try nativeRequire(items.count >= 40, "eval set has at least 40 items")
 }
 
 private func checkFailureMapping() throws {

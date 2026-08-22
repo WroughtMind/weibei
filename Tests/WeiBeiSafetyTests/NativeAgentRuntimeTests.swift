@@ -194,6 +194,14 @@ final class NativeAgentRuntimeTests: XCTestCase {
         XCTAssertTrue(gemini.contains(.textDelta(index: 0, text: "4")))
     }
 
+    func testSkillRegistryLoadsVisualizeAndSocratic() throws {
+        let root = try PiAgentResources.bundled().skillsURL
+        let registry = try NativeSkillRegistry.load(from: root)
+        XCTAssertNotNil(registry.pack(named: "visualize"))
+        XCTAssertNotNil(registry.pack(named: "socratic-questioning"))
+        XCTAssertTrue(registry.catalogSummary().contains("socratic-questioning"))
+    }
+
     func testProviderRoutingCoversCatalog() {
         XCTAssertEqual(AgentProviderID.allCases.count, 40)
         XCTAssertEqual(NativeProviderRouting.route(.deepseek).family, .openaiChatCompletions)

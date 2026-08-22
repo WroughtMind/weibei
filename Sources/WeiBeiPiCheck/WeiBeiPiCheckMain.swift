@@ -32,6 +32,14 @@ struct WeiBeiPiCheckMain {
             return
         }
 
+        if await NativeCapabilityDemo.runIfRequested(arguments: CommandLine.arguments) {
+            return
+        }
+
+        if await NativeEvalCLI.runIfRequested(arguments: CommandLine.arguments) {
+            return
+        }
+
         if await NativeOAuthCLI.runIfRequested(arguments: CommandLine.arguments) {
             return
         }

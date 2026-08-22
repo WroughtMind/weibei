@@ -29,11 +29,18 @@ public struct NativePromptAssembler: Sendable {
         sections.map(\.text).filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }.joined(separator: "\n\n")
     }
 
-    public static func webiSystemPrompt(bundledText: String, tools: [NativeToolDefinition]) -> String {
+    public static func webiSystemPrompt(
+        bundledText: String,
+        tools: [NativeToolDefinition],
+        skillCatalog: String = ""
+    ) -> String {
         var assembler = NativePromptAssembler()
         assembler.add(NativePromptSection(id: "persona", order: 10, text: bundledText))
         let catalog = tools.map { "- \($0.name): \($0.description)" }.joined(separator: "\n")
         assembler.add(NativePromptSection(id: "tools", order: 20, text: "可用工具：\n\(catalog)"))
+        if !skillCatalog.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            assembler.add(NativePromptSection(id: "skills", order: 15, text: skillCatalog))
+        }
         return assembler.assemble()
     }
 }

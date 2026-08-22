@@ -23,6 +23,7 @@ public actor NativeAgentLoop {
         hostToolHandler: StudyAgentHostToolHandler?,
         systemPrompt: String,
         liveStores: NativeLiveStores = .empty,
+        mode: NativeAgentMode = .assistant,
         progress: StudyAgentProgressHandler?
     ) async throws -> NativeLoopResult {
         await progress?(.preparing)
@@ -42,6 +43,7 @@ public actor NativeAgentLoop {
 
         var context = NativeToolExecutionContext(
             request: request,
+            mode: mode,
             hostToolHandler: hostToolHandler,
             persistentAssetIDsByContextID: Dictionary(
                 uniqueKeysWithValues: request.courseContext.items.map { ($0.id, $0.id) }
@@ -302,10 +304,31 @@ public actor NativeAgentLoop {
         if name == "weibei_course_profile_update" {
             context.courseProfileUpdated = true
         }
+        if name == "load_skill" || name == "read" {
+            if let loaded = details["loaded"] as? [String: Any],
+               let id = loaded["id"] as? String,
+               let skillName = loaded["name"] as? String,
+               let sha = loaded["sha256"] as? String,
+               let relative = loaded["relativePath"] as? String {
+                let skill = StudyAgentLoadedSkill(
+                    id: id,
+                    name: skillName,
+                    version: loaded["version"] as? String ?? "1.0.0",
+                    sha256: sha,
+                    byteCount: loaded["byteCount"] as? Int ?? 0,
+                    relativePath: relative,
+                    loadedAtContextRevision: contextRevision
+                )
+                if let index = loadedSkills.firstIndex(where: { $0.id == skill.id }) {
+                    loadedSkills[index] = skill
+                } else {
+                    loadedSkills.append(skill)
+                }
+            }
+        }
         _ = learningUpdate
         _ = courseProfileUpdate
         _ = richAnswer
-        _ = loadedSkills
     }
 }
 

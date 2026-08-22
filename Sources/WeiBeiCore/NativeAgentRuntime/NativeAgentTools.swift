@@ -243,6 +243,9 @@ public enum NativeBuiltinTools {
         skillRoot: URL?
     ) async {
         await registry.register(readSkill(skillRoot: skillRoot))
+        await registry.register(loadSkill)
+        await registry.register(createDocument)
+        await registry.register(delegate)
         await registry.register(visualize)
         await registry.register(visualAsset)
         await registry.register(courseMap)
@@ -287,6 +290,127 @@ public enum NativeBuiltinTools {
                             "byteCount": content.utf8.count,
                         ],
                     ]
+                )
+            }
+        )
+    }
+
+    private static var loadSkill: NativeToolDefinition {
+        NativeToolDefinition(
+            name: "load_skill",
+            description: "按技能 id 加载技能正文并注入当前对话。加载不改变工具注册，附带工具声明只解析不落注册。",
+            permission: .read,
+            schema: NativeJSONSchema(["type": "object", "properties": ["id": ["type": "string"]], "required": ["id"]]),
+            execute: { arguments, context in
+                let id = arguments["id"] as? String ?? ""
+                guard let pack = context.liveStores.skillRegistry.pack(named: id) else {
+                    throw NativeLLMFailure(code: "skill_missing", message: "未找到技能 \(id)")
+                }
+                _ = pack.manifest.tools
+                _ = pack.manifest.jscHook
+                return NativeToolExecutionResult(
+                    text: pack.body,
+                    details: [
+                        "kind": "weibei_skill_read",
+                        "loaded": [
+                            "id": pack.manifest.id,
+                            "name": pack.manifest.name,
+                            "version": pack.manifest.version,
+                            "relativePath": pack.relativePath,
+                            "sha256": pack.sha256,
+                            "byteCount": pack.byteCount,
+                        ],
+                        "declaredTools": pack.manifest.tools,
+                        "jscHookPresent": pack.manifest.jscHook != nil,
+                    ]
+                )
+            }
+        )
+    }
+
+    private static var createDocument: NativeToolDefinition {
+        NativeToolDefinition(
+            name: "create_document",
+            description: "把 HTML、Markdown 或 SVG 落盘为工作区文稿，并生成沙箱查看页。Assistant 模式默认不可用。",
+            permission: .writeConfirm,
+            schema: NativeJSONSchema([
+                "type": "object",
+                "properties": [
+                    "title": ["type": "string"],
+                    "format": ["type": "string", "enum": ["html", "markdown", "svg"]],
+                    "content": ["type": "string"],
+                ],
+                "required": ["title", "format", "content"],
+            ]),
+            execute: { arguments, context in
+                guard context.mode != .assistant else {
+                    throw NativeLLMFailure(code: "guard_denied", message: "create_document 在 Assistant 模式默认关闭")
+                }
+                guard let root = context.liveStores.documentsRoot else {
+                    throw NativeLLMFailure(code: "invalid_document", message: "工作区文稿目录未配置")
+                }
+                let title = arguments["title"] as? String ?? ""
+                let formatRaw = arguments["format"] as? String ?? "markdown"
+                guard let format = NativeDocumentFormat(rawValue: formatRaw) else {
+                    throw NativeLLMFailure(code: "invalid_document", message: "format 必须是 html、markdown 或 svg")
+                }
+                let content = arguments["content"] as? String ?? ""
+                let created = try NativeDocumentSandbox.write(
+                    title: title,
+                    format: format,
+                    content: content,
+                    documentsRoot: root
+                )
+                return NativeToolExecutionResult(
+                    text: "已写入文稿 \(created.title)，查看页 \(created.viewerURL.lastPathComponent)。",
+                    details: [
+                        "kind": "weibei_document",
+                        "title": created.title,
+                        "format": created.format.rawValue,
+                        "path": created.fileURL.path,
+                        "viewer": created.viewerURL.path,
+                        "byteCount": created.byteCount,
+                    ]
+                )
+            }
+        )
+    }
+
+    private static var delegate: NativeToolDefinition {
+        NativeToolDefinition(
+            name: "delegate",
+            description: "把一项子任务交给子智能体。子智能体有独立账本和工具子集。Assistant 模式默认不可用。",
+            permission: .writeConfirm,
+            schema: NativeJSONSchema([
+                "type": "object",
+                "properties": [
+                    "task": ["type": "string"],
+                    "capabilities": ["type": "array", "items": ["type": "string"]],
+                ],
+                "required": ["task"],
+            ]),
+            execute: { arguments, context in
+                guard context.mode != .assistant else {
+                    throw NativeLLMFailure(code: "guard_denied", message: "delegate 在 Assistant 模式默认关闭")
+                }
+                guard let start = context.liveStores.startSubagent else {
+                    throw NativeLLMFailure(code: "delegate_unavailable", message: "子智能体未接线")
+                }
+                let task = arguments["task"] as? String ?? ""
+                let names = arguments["capabilities"] as? [String] ?? ["hostTools"]
+                let capabilities = NativeSubagentCapabilities.parse(names)
+                let result = await start(
+                    NativeSubagentRequest(task: task, capabilities: capabilities, depth: 1)
+                )
+                return NativeToolExecutionResult(
+                    text: result.text,
+                    details: [
+                        "kind": "weibei_delegate",
+                        "ok": result.ok,
+                        "partial": result.partial,
+                        "toolTrace": result.toolTrace,
+                    ],
+                    isError: !result.ok
                 )
             }
         )

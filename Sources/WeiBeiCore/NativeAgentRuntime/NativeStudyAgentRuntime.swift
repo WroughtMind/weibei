@@ -7,6 +7,8 @@ public actor NativeStudyAgentRuntime: StudyAgentRuntime {
     public var liveStores: NativeLiveStores
     public var ledgerRoot: URL
     public var systemPromptText: String
+    public var mode: NativeAgentMode
+    public var delegateDepth: Int
 
     private let registry = NativeToolRegistry()
     private let loop = NativeAgentLoop()
@@ -18,7 +20,9 @@ public actor NativeStudyAgentRuntime: StudyAgentRuntime {
         ledgerRoot: URL,
         systemPromptText: String,
         hostToolHandler: StudyAgentHostToolHandler? = nil,
-        liveStores: NativeLiveStores = .empty
+        liveStores: NativeLiveStores = .empty,
+        mode: NativeAgentMode = .assistant,
+        delegateDepth: Int = 0
     ) {
         self.model = model
         self.adapter = adapter
@@ -26,6 +30,8 @@ public actor NativeStudyAgentRuntime: StudyAgentRuntime {
         self.systemPromptText = systemPromptText
         self.hostToolHandler = hostToolHandler
         self.liveStores = liveStores
+        self.mode = mode
+        self.delegateDepth = delegateDepth
     }
 
     public func respond(
@@ -41,8 +47,43 @@ public actor NativeStudyAgentRuntime: StudyAgentRuntime {
             .appendingPathComponent("ledger.jsonl")
         let ledger = try NativeAgentLedger(fileURL: ledgerURL)
         try await ledger.synthesizeCloserIfNeeded()
-        let tools = await registry.resolved(scope: .session(request.id.uuidString))
-        let prompt = NativePromptAssembler.webiSystemPrompt(bundledText: systemPromptText, tools: tools)
+        let scope = NativeToolScope.session(request.id.uuidString)
+        if mode == .assistant {
+            await registry.hide("create_document", scope: scope)
+            await registry.hide("delegate", scope: scope)
+        }
+        if delegateDepth >= NativeSubagentRunner.maximumDepth {
+            await registry.hide("delegate", scope: scope)
+        }
+        let tools = await registry.resolved(scope: scope)
+        let prompt = NativePromptAssembler.webiSystemPrompt(
+            bundledText: systemPromptText,
+            tools: tools,
+            skillCatalog: liveStores.skillRegistry.catalogSummary()
+        )
+        var stores = liveStores
+        if stores.startSubagent == nil {
+            let adapter = self.adapter
+            let model = self.model
+            let systemPromptText = self.systemPromptText
+            let ledgerRoot = self.ledgerRoot
+            let hostToolHandler = self.hostToolHandler
+            let depth = delegateDepth
+            let baseStores = liveStores
+            stores.startSubagent = { request in
+                var next = request
+                next.depth = max(request.depth, depth + 1)
+                return await NativeSubagentRunner.start(
+                    next,
+                    adapter: adapter,
+                    model: model,
+                    systemPrompt: systemPromptText,
+                    ledgerRoot: ledgerRoot,
+                    hostToolHandler: hostToolHandler,
+                    liveStores: baseStores
+                )
+            }
+        }
         await loop.reset()
         do {
             let result = try await loop.run(
@@ -53,7 +94,8 @@ public actor NativeStudyAgentRuntime: StudyAgentRuntime {
                 model: model,
                 hostToolHandler: hostToolHandler,
                 systemPrompt: prompt,
-                liveStores: liveStores,
+                liveStores: stores,
+                mode: mode,
                 progress: progress
             )
             return StudyAgentReply(
@@ -84,6 +126,11 @@ public actor NativeStudyAgentRuntime: StudyAgentRuntime {
     private func ensureTools() async throws {
         guard !didRegisterTools else { return }
         let skillRoot = try? PiAgentResources.bundled().skillsURL
+        var stores = liveStores
+        if stores.skillRegistry.packs.isEmpty, let skillRoot {
+            stores.skillRegistry = (try? NativeSkillRegistry.load(from: skillRoot)) ?? stores.skillRegistry
+            liveStores = stores
+        }
         await NativeBuiltinTools.registerAll(into: registry, skillRoot: skillRoot)
         didRegisterTools = true
     }
