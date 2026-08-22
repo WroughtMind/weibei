@@ -81,10 +81,11 @@ struct ContentView: View {
                     .zIndex(100)
                 }
 
-                // Single top-level status surface: important errors first, otherwise
-                // the transient note status. Sits above the course space so it stays
-                // visible wherever the user is; the old notes-pane-local copy is gone.
-                if store.importantOperationError != nil || store.transientNoteStatus != nil {
+                // Single top-level status surface: important errors first, then
+                // persistent save failures, otherwise the transient note status.
+                // Sits above the course space so it stays visible wherever the
+                // user is; the old notes-pane-local copy is gone.
+                if store.importantOperationError != nil || store.workspaceSaveError != nil || store.transientNoteStatus != nil {
                     WorkspaceStatusBanner()
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
                         .padding(.top, WeiBeiMetric.topBarHeight * textScale + 10)
@@ -102,6 +103,7 @@ struct ContentView: View {
                 }
             }
             .animation(WeiBeiMotion.panel, value: store.importantOperationError)
+            .animation(WeiBeiMotion.panel, value: store.workspaceSaveError)
             .animation(WeiBeiMotion.panel, value: store.transientNoteStatus)
             .background {
                 LibraryAwareEscapeBridge(
@@ -379,22 +381,42 @@ private struct WorkspaceStatusBanner: View {
         store.importantOperationError != nil
     }
 
+    // 持续保存失败（连续 3 次置位）与角落标记同源，这里让它在全 App 可见。
+    private var isSaveFailure: Bool {
+        !isImportant && store.workspaceSaveError != nil
+    }
+
+    private var isAlert: Bool {
+        isImportant || isSaveFailure
+    }
+
     private var message: String {
-        store.importantOperationError ?? store.transientNoteStatus ?? ""
+        store.importantOperationError ?? store.workspaceSaveError ?? store.transientNoteStatus ?? ""
     }
 
     var body: some View {
         HStack(spacing: 8) {
-            Image(systemName: isImportant ? "exclamationmark.triangle.fill" : "info.circle")
+            Image(systemName: isAlert ? "exclamationmark.triangle.fill" : "info.circle")
                 .weiBeiText(12, weight: .medium)
-                .foregroundStyle(isImportant ? WeiBeiTheme.cinnabar : WeiBeiTheme.secondaryInk)
+                .foregroundStyle(isAlert ? WeiBeiTheme.cinnabar : WeiBeiTheme.secondaryInk)
             Text(message)
                 .weiBeiText(12, weight: .medium)
                 .foregroundStyle(WeiBeiTheme.ink)
                 .lineLimit(3)
                 .multilineTextAlignment(.leading)
                 .fixedSize(horizontal: false, vertical: true)
-            if isImportant {
+            if isSaveFailure {
+                Button {
+                    _ = store.retryWorkspaceSave()
+                } label: {
+                    Text(store.ui("重试", "Retry"))
+                        .weiBeiText(11, weight: .semibold)
+                        .foregroundStyle(WeiBeiTheme.cinnabar)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(Text(store.ui("重试保存", "Retry save")))
+            } else if isImportant {
                 Button {
                     store.dismissImportantOperationError()
                 } label: {
@@ -415,14 +437,14 @@ private struct WorkspaceStatusBanner: View {
         .overlay {
             RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .stroke(
-                    isImportant
+                    isAlert
                         ? WeiBeiTheme.cinnabar.opacity(0.55)
                         : WeiBeiTheme.hairline.opacity(0.6),
                     lineWidth: 1
                 )
         }
         .shadow(color: WeiBeiTheme.ink.opacity(store.appearanceMode.isDark ? 0.3 : 0.1), radius: 12, y: 6)
-        .allowsHitTesting(isImportant)
+        .allowsHitTesting(isAlert)
         .accessibilityElement(children: .contain)
         .accessibilityLabel(Text(store.ui("工作区状态提示", "Workspace status")))
     }
