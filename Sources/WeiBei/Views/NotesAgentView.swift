@@ -3010,7 +3010,7 @@ private struct FloatingSelectionMessageRow: View {
                 isError: WorkspaceStore.isAgentFailureMessage(message.text)
             )
             if isGenerating && text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                AgentThinkingIndicator(activityText: streaming.activityText)
+                AgentThinkingIndicator(activityText: streaming.activityText, compact: true)
                     .id(message.id)
                     .padding(.vertical, 4)
             }
@@ -3257,7 +3257,10 @@ private struct AgentBubble: View {
                             isStreaming: message.completionState == .generating
                         )
                         if isAwaitingFirstToken {
-                            AgentThinkingIndicator(activityText: liveActivityText)
+                            AgentThinkingIndicator(
+                                activityText: liveActivityText,
+                                chatWideTypography: isChatWideTypography
+                            )
                         }
                     }
                 }
@@ -5237,7 +5240,11 @@ private struct AgentLiveResponse: View {
     @ViewBuilder
     var body: some View {
         if streaming.text.isEmpty {
-            AgentThinkingIndicator(activityText: streaming.activityText)
+            AgentThinkingIndicator(
+                activityText: streaming.activityText,
+                chatWideTypography: isChatWideTypography,
+                compact: compact
+            )
                 .id(compact ? "selection-float-thinking" : "agent-thinking")
                 .padding(.vertical, compact ? 4 : 0)
         } else {
@@ -5277,7 +5284,15 @@ private struct AgentLiveResponse: View {
 private struct AgentThinkingIndicator: View {
     @EnvironmentObject private var store: WorkspaceStore
     var activityText: String?
+    /// Match the answer text that follows this indicator in the same surface:
+    /// main conversation rows are chat-wide 16pt (17pt when narrow), the
+    /// selection float is compact 14pt — the same bases as the Milkdown
+    /// `.ProseMirror` CSS, so the status word never reads larger or smaller
+    /// than the reply it precedes.
+    var chatWideTypography = false
+    var compact = false
     @Environment(\.weibeiReduceMotion) private var reduceMotion
+    @Environment(\.weiBeiTextScale) private var textScale
     @State private var cachedText = ""
     @State private var cachedTextWidth: CGFloat = 1
     @State private var motionEpoch = Date()
@@ -5286,20 +5301,31 @@ private struct AgentThinkingIndicator: View {
 
     private static let minimumStatusHold: TimeInterval = 0.6
 
-    /// 14.5pt — user feedback: the 12pt status read as an afterthought; the
-    /// status line is the primary signal of what the agent is doing.
-    private static let statusFontSize: CGFloat = 14.5
+    /// Answer-text bases in pt, mirroring `.ProseMirror` in Editor/index.html
+    /// (17 base / 16 chat-wide / 14 compact preview). ⌘± changes the text tier,
+    /// so the status word must scale with it exactly like the reply text.
+    private static let answerBaseFontSize: CGFloat = 17
+    private static let chatWideFontSize: CGFloat = 16
+    private static let compactFontSize: CGFloat = 14
+    private var baseFontSize: CGFloat {
+        compact ? Self.compactFontSize
+            : (chatWideTypography ? Self.chatWideFontSize : Self.answerBaseFontSize)
+    }
+    /// Single source for measure + line box + AppKit painting. Drawing at a
+    /// different size than the measured width is what made the orbit sit far
+    /// from the text on the right and close on the left.
+    private var scaledFontSize: CGFloat { baseFontSize * max(0.1, textScale) }
     /// Clear gap from line-box edge → stroke centerline (all four sides).
     private static let orbitPadding: CGFloat = 6.5
     private static let lineWidth: CGFloat = 1.25
     /// Line box height matches the font’s typographic bounds so top/bottom pad stay equal.
-    private static var textLineHeight: CGFloat {
-        let font = NSFont.systemFont(ofSize: statusFontSize, weight: .medium)
+    private var textLineHeight: CGFloat {
+        let font = NSFont.systemFont(ofSize: scaledFontSize, weight: .medium)
         return max(1, ceil(font.ascender - font.descender))
     }
     /// Outer view size = line box + equal pad on both sides + half stroke outside the path.
     private static var pathOuterInset: CGFloat { orbitPadding + lineWidth / 2 }
-    private static var pathHeight: CGFloat { textLineHeight + pathOuterInset * 2 }
+    private var pathHeight: CGFloat { textLineHeight + Self.pathOuterInset * 2 }
 
     private var statusText: String {
         activityText ?? store.ui("正在思考", "Thinking")
@@ -5309,15 +5335,14 @@ private struct AgentThinkingIndicator: View {
         let text = cachedText.isEmpty ? statusText : cachedText
         let textWidth = max(1, cachedTextWidth)
         let orbitWidth = textWidth + Self.pathOuterInset * 2
-        let pathHeight = Self.pathHeight
 
         Group {
             if reduceMotion {
                 Text(text)
-                    .weiBeiText(Self.statusFontSize, weight: .medium)
+                    .weiBeiText(baseFontSize, weight: .medium)
                     .foregroundStyle(WeiBeiTheme.ink.opacity(0.93))
                     .lineLimit(1)
-                    .frame(width: textWidth, height: Self.textLineHeight, alignment: .leading)
+                    .frame(width: textWidth, height: textLineHeight, alignment: .leading)
                     .padding(Self.pathOuterInset)
             } else {
                 // AppKit host: fixed intrinsic size; ticks only repaint the NSView.
@@ -5327,8 +5352,9 @@ private struct AgentThinkingIndicator: View {
                     orbitWidth: orbitWidth,
                     pathHeight: pathHeight,
                     orbitPadding: Self.orbitPadding,
-                    textLineHeight: Self.textLineHeight,
+                    textLineHeight: textLineHeight,
                     lineWidth: Self.lineWidth,
+                    fontSize: scaledFontSize,
                     motionEpoch: motionEpoch,
                     appearanceMode: store.appearanceMode
                 )
@@ -5373,15 +5399,20 @@ private struct AgentThinkingIndicator: View {
                 motionEpoch = Date()
             }
         }
+        .onChange(of: textScale) { _, _ in
+            // ⌘± tier change: re-measure the box at the new size so the orbit
+            // keeps equal padding; the motion phase itself is untouched.
+            refreshCache(for: statusText)
+        }
     }
 
     private func refreshCache(for text: String) {
         cachedText = text
-        cachedTextWidth = Self.measuredWidth(for: text)
+        cachedTextWidth = Self.measuredWidth(for: text, fontSize: scaledFontSize)
     }
 
-    private static func measuredWidth(for text: String) -> CGFloat {
-        let font = NSFont.systemFont(ofSize: statusFontSize, weight: .medium)
+    private static func measuredWidth(for text: String, fontSize: CGFloat) -> CGFloat {
+        let font = NSFont.systemFont(ofSize: fontSize, weight: .medium)
         let size = (text as NSString).size(withAttributes: [.font: font])
         return max(1, ceil(size.width))
     }
@@ -5396,6 +5427,8 @@ private struct AgentThinkingOrbitHost: NSViewRepresentable {
     let orbitPadding: CGFloat
     let textLineHeight: CGFloat
     let lineWidth: CGFloat
+    /// Already scaled by the ⌘± tier — the same size used to measure `textWidth`.
+    let fontSize: CGFloat
     let motionEpoch: Date
     let appearanceMode: WeiBeiAppearanceMode
 
@@ -5410,6 +5443,7 @@ private struct AgentThinkingOrbitHost: NSViewRepresentable {
             orbitPadding: orbitPadding,
             textLineHeight: textLineHeight,
             lineWidth: lineWidth,
+            fontSize: fontSize,
             motionEpoch: motionEpoch,
             appearanceMode: appearanceMode
         )
@@ -5434,6 +5468,7 @@ private struct AgentThinkingOrbitHost: NSViewRepresentable {
             orbitPadding: orbitPadding,
             textLineHeight: textLineHeight,
             lineWidth: lineWidth,
+            fontSize: fontSize,
             motionEpoch: motionEpoch,
             appearanceMode: appearanceMode
         )
@@ -5443,7 +5478,6 @@ private struct AgentThinkingOrbitHost: NSViewRepresentable {
 /// Fixed-size AppKit painter for 「行文进行中 V3」: reveal + first-pass underline + TextOrbitSegment.
 /// Text sits in a line box; orbit stroke centerline keeps equal `orbitPadding` on all four sides.
 final class AgentThinkingOrbitNSView: NSView {
-    private static let statusFontSize: CGFloat = 12
     private static let segmentLength: CGFloat = 10
     private static let firstPassDuration: TimeInterval = 0.88
     private static let orbitDuration: TimeInterval = 2.25
@@ -5455,6 +5489,9 @@ final class AgentThinkingOrbitNSView: NSView {
     private var orbitPadding: CGFloat = 5.5
     private var textLineHeight: CGFloat = 15
     private var lineWidth: CGFloat = 1.25
+    /// Painted at the caller-measured size — a divergent local constant here is
+    /// what made the right gap ~10pt wider than the left.
+    private var fontSize: CGFloat = 16
     private var motionEpoch = Date()
     private var appearanceMode: WeiBeiAppearanceMode = .paper
     private var displayLink: CADisplayLink?
@@ -5486,6 +5523,7 @@ final class AgentThinkingOrbitNSView: NSView {
         orbitPadding: CGFloat,
         textLineHeight: CGFloat,
         lineWidth: CGFloat,
+        fontSize: CGFloat,
         motionEpoch: Date,
         appearanceMode: WeiBeiAppearanceMode
     ) {
@@ -5498,6 +5536,7 @@ final class AgentThinkingOrbitNSView: NSView {
         self.orbitPadding = max(1, orbitPadding)
         self.textLineHeight = max(1, textLineHeight)
         self.lineWidth = max(0.5, lineWidth)
+        self.fontSize = max(1, fontSize)
         self.motionEpoch = motionEpoch
         self.appearanceMode = appearanceMode
         if sizeChanged {
@@ -5550,7 +5589,7 @@ final class AgentThinkingOrbitNSView: NSView {
         let dim = WeiBeiNativePalette.tertiaryInk(for: appearanceMode).withAlphaComponent(0.70)
         let cinnabar = WeiBeiNativePalette.cinnabar(for: appearanceMode).withAlphaComponent(0.82)
 
-        let font = NSFont.systemFont(ofSize: Self.statusFontSize, weight: .medium)
+        let font = NSFont.systemFont(ofSize: fontSize, weight: .medium)
         // Line box inset so every side has the same gap to the stroke centerline.
         // view edge → stroke center = lineWidth/2
         // stroke center → line box edge = orbitPadding
