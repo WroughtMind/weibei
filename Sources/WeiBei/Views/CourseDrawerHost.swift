@@ -46,7 +46,7 @@ struct CourseDrawerHost: NSViewRepresentable {
 }
 
 final class CourseDrawerContainerView: NSView {
-    static let panelWidth: CGFloat = 292
+    static let panelWidth: CGFloat = 252
 
     var onDismiss: (() -> Void)?
 
