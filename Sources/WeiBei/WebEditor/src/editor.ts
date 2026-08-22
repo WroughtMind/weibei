@@ -35,6 +35,7 @@ import {
   calloutTypePattern,
   inlineMathInputPattern,
   joinFrontmatter,
+  looksLikeMarkdownSyntax,
   normalizeMarkdownSource,
   splitFrontmatter,
 } from './markdownRules';
@@ -2565,7 +2566,7 @@ const weiBeiDialectPlugin = $prose(() => new Plugin({
     };
   },
   props: {
-    handlePaste: WEIBEI_EDITOR_RUNTIME ? (_: any, event: ClipboardEvent) => {
+    handlePaste: WEIBEI_EDITOR_RUNTIME ? (view: any, event: ClipboardEvent) => {
       if (!isEditable) return false;
       const files = imageFilesFromItems(event.clipboardData?.items);
       if (files.length > 0) {
@@ -2573,9 +2574,10 @@ const weiBeiDialectPlugin = $prose(() => new Plugin({
         insertImageFiles(files).catch(showFailure);
         return true;
       }
+      if (pasteTargetIsCode(view)) return false;
       const text = event.clipboardData?.getData('text/plain') || '';
       const normalized = normalizeMarkdownSource(text, 'userPaste');
-      if (!text || normalized === text) return false;
+      if (!text || (normalized === text && !looksLikeMarkdownSyntax(normalized))) return false;
       event.preventDefault();
       replaceSelectionInternal(normalized);
       return true;
@@ -3022,6 +3024,14 @@ const getMarkdownInternal = () => {
   ensureEditor();
   addEditorMetric(checkMetrics, 'fullSerializations');
   return withFrontmatter(editor.action(readMarkdown()));
+};
+
+const pasteTargetIsCode = (view: any) => {
+  const selection = view?.state?.selection;
+  if (!selection?.$from) return false;
+  if (selection.$from.parent.type.spec.code) return true;
+  const marks = selection.$from.marks() || [];
+  return marks.some((mark: any) => String(mark?.type?.name || '').toLowerCase().includes('code'));
 };
 
 const replaceSelectionInternal = (markdown: any) => {
