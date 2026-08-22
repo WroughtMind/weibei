@@ -709,7 +709,7 @@ public struct StudyAgentCourseProfileUpdate: Codable, Equatable, Sendable {
     }
 
     public var allowsEntriesWithoutSources: Bool {
-        checkpoint == "userRequested"
+        checkpoint == "userRequested" || entries.contains { $0.text.hasPrefix("用户自述：") }
     }
 }
 

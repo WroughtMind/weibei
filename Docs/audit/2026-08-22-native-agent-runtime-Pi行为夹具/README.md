@@ -17,7 +17,7 @@ WEIBEI_PI_EXECUTABLE=.build/pi-runtime/0.82.1/darwin-arm64/PiRuntime/bin/pi \
 |---|---|
 | 01 普通问答 | 通过，答 `4` |
 | 02/03/05/13 课程 host 工具 | 模型确实调用了 search/read/map，但 CLI 夹具把 runtime 放在 `/var/folders`，`realpath` 变成 `/private/var/folders`，extension 报「宿主工具响应根目录发生了变化」。这是 Pi 现有护栏 + macOS 临时目录符号链接，不是课程内容问题。App 数据目录路径不受影响。 |
-| 04 学习记忆 | 调用 `weibei_learning_memory`，读到期限结构 |
+| 04 学习记忆 | 调用 `weibei_read_learning_memory`，读到期限结构 |
 | 06 笔记建议 | `hasNoteProposal=true`；关系建议调用了但未落 reply 字段 |
 | 07 可视化 | 先 `read` visualize Skill，再 `weibei_visualize` |
 | 08 图像 | 模型调用了 `weibei_visual_asset`，1×1 PNG 未进入本轮 envelope 的可观察集 |

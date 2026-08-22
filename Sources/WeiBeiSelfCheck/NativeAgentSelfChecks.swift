@@ -24,6 +24,7 @@ func runNativeAgentSelfChecks() throws {
     try checkRetrievalPrompt()
     try checkBackendSelection()
     try checkContextRevisionEcho()
+    try checkMemoryPreviewWriteContract()
     try checkNativeProductContract()
 }
 
@@ -33,6 +34,19 @@ private func nativeRequire(_ condition: @autoclosure () throws -> Bool, _ messag
             NSLocalizedDescriptionKey: message,
         ])
     }
+}
+
+private func jsonObject(_ raw: Any?) -> [String: Any]? {
+    if let object = raw as? [String: Any] { return object }
+    if let object = raw as? [String: String] {
+        return object.mapValues { $0 as Any }
+    }
+    guard let raw, JSONSerialization.isValidJSONObject(raw),
+          let data = try? JSONSerialization.data(withJSONObject: raw),
+          let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+        return nil
+    }
+    return object
 }
 
 private func checkSSEFraming() throws {
@@ -364,6 +378,15 @@ private func checkEvalSetLunaLow() throws {
         (item16?["expect"] as? String)?.contains("不反问") == true,
         "eval item 16 requires course_search then course_read without a clarifying question"
     )
+    let item09 = items.first { $0["id"] as? String == "09" }
+    try nativeRequire(
+        (item09?["question"] as? String)?.contains("记下进度，但先给我看怎么写、不要直接改记忆") == true,
+        "eval item 09 locks the preview-write phrasing"
+    )
+    try nativeRequire(
+        (item09?["expect"] as? String)?.contains("weibei_update_learning_memory") == true,
+        "eval item 09 requires calling the write tool"
+    )
 }
 
 private func checkRetrievalPrompt() throws {
@@ -397,6 +420,42 @@ private func checkBackendSelection() throws {
     try nativeRequire(NativeAgentBackendSelection.current == .native, "debug override selects native")
     NativeAgentBackendSelection.persistedDebugBackend = nil
     try nativeRequire(NativeAgentBackendSelection.current == .pi, "clearing override returns to pi")
+}
+
+private func checkMemoryPreviewWriteContract() throws {
+    let url = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+        .appendingPathComponent("Sources/WeiBeiCore/AgentResources/system.md")
+    let system = try String(contentsOf: url, encoding: .utf8)
+    try nativeRequire(
+        system.contains("记下进度，但先给我看怎么写、不要直接改记忆"),
+        "system.md keeps the acceptance sentence as a demonstration"
+    )
+    try nativeRequire(
+        system.contains("weibei_update_learning_memory"),
+        "system.md demonstration calls the write tool"
+    )
+    try nativeRequire(
+        !system.contains("`weibei_learning_memory`") && !system.contains("`weibei_learning_update`"),
+        "system.md no longer names the ambiguous learning tool titles"
+    )
+
+    let registry = NativeToolRegistry()
+    _ = try waitFor { await NativeBuiltinTools.registerAll(into: registry, skillRoot: nil) }
+    let tools = try waitFor { await registry.resolved(scope: .global) }
+    let readTool = tools.first { $0.name == "weibei_read_learning_memory" }
+    let writeTool = tools.first { $0.name == "weibei_update_learning_memory" }
+    try nativeRequire(readTool != nil, "read learning memory tool is registered under the verb-first name")
+    try nativeRequire(writeTool != nil, "write learning memory tool is registered under the verb-first name")
+    try nativeRequire(
+        readTool?.description.contains("不要调用本工具") == true
+            && readTool?.description.contains("weibei_update_learning_memory") == true,
+        "read tool tells the model not to use it for recording"
+    )
+    try nativeRequire(
+        writeTool?.description.contains("不要直接改") == true
+            && writeTool?.description.contains("weibei_read_learning_memory") == true,
+        "write tool says preview-write phrasing still requires calling it"
+    )
 }
 
 private func checkContextRevisionEcho() throws {
@@ -438,7 +497,7 @@ private func checkContextRevisionEcho() throws {
     let context = NativeToolExecutionContext(request: request)
     let memory = try waitFor {
         try await registry.execute(
-            NativeToolCallRequest(name: "weibei_learning_memory", argumentsJSON: "{}", callID: "m1"),
+            NativeToolCallRequest(name: "weibei_read_learning_memory", argumentsJSON: "{}", callID: "m1"),
             context: context,
             scope: .global
         )
@@ -448,7 +507,7 @@ private func checkContextRevisionEcho() throws {
         _ = try waitFor {
             try await registry.execute(
                 NativeToolCallRequest(
-                    name: "weibei_learning_update",
+                    name: "weibei_update_learning_memory",
                     argumentsJSON: "{\"contextRevision\":1,\"memoryRevision\":1,\"entries\":[]}",
                     callID: "u1"
                 ),
@@ -467,7 +526,7 @@ private func checkContextRevisionEcho() throws {
         _ = try waitFor {
             try await registry.execute(
                 NativeToolCallRequest(
-                    name: "weibei_learning_update",
+                    name: "weibei_update_learning_memory",
                     argumentsJSON: "{\"contextRevision\":\"stale\",\"memoryRevision\":0,\"entries\":[]}",
                     callID: "u2"
                 ),
@@ -517,7 +576,7 @@ private func checkNativeProductContract() throws {
     _ = try waitFor { await NativeBuiltinTools.registerAll(into: registry, skillRoot: nil) }
     let tools = try waitFor { await registry.resolved(scope: .global) }
     for name in [
-        "weibei_learning_update",
+        "weibei_update_learning_memory",
         "weibei_course_profile_update",
         "weibei_note_proposal",
         "weibei_relation_proposal",
@@ -530,6 +589,36 @@ private func checkNativeProductContract() throws {
             ])
         }
         try nativeRequire(tool.schema.object["properties"] is [String: Any], "\(name) schema includes properties")
+    }
+    if let profileTool = tools.first(where: { $0.name == "weibei_course_profile_update" }),
+       let schema = jsonObject(profileTool.schema.object),
+       let properties = jsonObject(schema["properties"]),
+       let entries = jsonObject(properties["entries"]),
+       let items = jsonObject(entries["items"]),
+       let entryProperties = jsonObject(items["properties"]),
+       let kind = jsonObject(entryProperties["kind"]),
+        let kindEnum = ((kind["enum"] as? [String]) ?? (kind["enum"] as? [Any])?.compactMap({ $0 as? String })),
+       let sources = jsonObject(entryProperties["sources"]),
+       let sourceItems = jsonObject(sources["items"]),
+       let sourceProperties = jsonObject(sourceItems["properties"]) {
+        try nativeRequire(
+            Set(kindEnum) == Set(["overview", "section", "concept", "relation"]),
+            "profile entry kind enum is the canonical set"
+        )
+        try nativeRequire(entryProperties["text"] != nil, "profile entries expose text")
+        try nativeRequire(entryProperties["entryID"] != nil, "profile entries expose optional entryID")
+        try nativeRequire(sourceProperties["itemID"] != nil, "profile sources expose itemID")
+        try nativeRequire(sourceProperties["role"] != nil, "profile sources expose role")
+        try nativeRequire(sourceProperties["sourceRevision"] != nil, "profile sources expose sourceRevision")
+        try nativeRequire(
+            profileTool.description.contains("用户自述：")
+                && profileTool.description.contains("kind=concept"),
+            "profile tool describes self-report shape"
+        )
+    } else {
+        throw NSError(domain: "WeiBei.NativeAgentSelfCheck", code: 20, userInfo: [
+            NSLocalizedDescriptionKey: "course_profile_update entries schema is incomplete",
+        ])
     }
 
     let request = StudyAgentRequest(
@@ -600,7 +689,7 @@ private func checkNativeProductContract() throws {
     let learningResult = try waitFor {
         try await registry.execute(
             NativeToolCallRequest(
-                name: "weibei_learning_update",
+                name: "weibei_update_learning_memory",
                 argumentsJSON: learningJSON,
                 callID: "learn-1"
             ),
@@ -642,6 +731,50 @@ private func checkNativeProductContract() throws {
     try nativeRequire(profile.entries.count == 1, "profile entries are preserved")
     try nativeRequire(profile.entries[0].sources.isEmpty, "userRequested entries may omit sources")
     try nativeRequire(profile.allowsEntriesWithoutSources, "Store gate allows empty sources for userRequested")
+
+    do {
+        _ = try waitFor {
+            try await registry.execute(
+                NativeToolCallRequest(
+                    name: "weibei_course_profile_update",
+                    argumentsJSON: """
+                    {"contextRevision":"\(revision)","profileRevision":2,"checkpoint":"userRequested","entries":[{"kind":"userStatement","text":"用户自述：已掌握单利","sources":[]}]}
+                    """,
+                    callID: "profile-bad-kind"
+                ),
+                context: context,
+                scope: .global
+            )
+        }
+        throw NSError(domain: "WeiBei.NativeAgentSelfCheck", code: 21, userInfo: [
+            NSLocalizedDescriptionKey: "invented profile kind userStatement should fail before success text",
+        ])
+    } catch let failure as NativeLLMFailure {
+        try nativeRequire(failure.code == "invalid_arguments", "invented profile kind is invalid_arguments")
+        try nativeRequire(failure.message.contains("kind"), "profile shape error names kind")
+    }
+
+    do {
+        _ = try waitFor {
+            try await registry.execute(
+                NativeToolCallRequest(
+                    name: "weibei_update_learning_memory",
+                    argumentsJSON: """
+                    {"contextRevision":"\(revision)","memoryRevision":3,"suggestedNext":[],"entries":[{"kind":"progress","text":"刚搞懂复利","evidence":"[用户：本轮] \(question)"}],"resolutions":[]}
+                    """,
+                    callID: "learn-missing-origin"
+                ),
+                context: context,
+                scope: .global
+            )
+        }
+        throw NSError(domain: "WeiBei.NativeAgentSelfCheck", code: 22, userInfo: [
+            NSLocalizedDescriptionKey: "learning update missing origin should fail before success text",
+        ])
+    } catch let failure as NativeLLMFailure {
+        try nativeRequire(failure.code == "invalid_arguments", "missing origin is invalid_arguments")
+        try nativeRequire(failure.message.contains("origin"), "learning shape error names origin")
+    }
 
     let noteResult = try waitFor {
         try await registry.execute(

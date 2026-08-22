@@ -33,10 +33,28 @@ enum NativeScenarioPair {
             ],
             [.textDelta(index: 0, text: "原文：利率是资金使用价格的表达。"), .finish(reason: .stop, replayState: nil)],
         ], host: courseHost))
-        rows.append(try await row(id: "04-learning-memory", tools: ["weibei_learning_memory"], textMustContain: "记忆", chunks: [
-            [.toolCallDelta(index: 0, id: "c1", name: "weibei_learning_memory", argumentsDelta: "{}"), .finish(reason: .toolCalls, replayState: nil)],
+        rows.append(try await row(id: "04-learning-memory", tools: ["weibei_read_learning_memory"], textMustContain: "记忆", chunks: [
+            [.toolCallDelta(index: 0, id: "c1", name: "weibei_read_learning_memory", argumentsDelta: "{}"), .finish(reason: .toolCalls, replayState: nil)],
             [.textDelta(index: 0, text: "学习记忆已读取，上次停在利率定义。"), .finish(reason: .stop, replayState: nil)],
         ]))
+        rows.append(try await row(
+            id: "14-memory-preview-write",
+            tools: ["weibei_update_learning_memory"],
+            textMustContain: "复利",
+            expectLearning: true,
+            chunks: [
+                [
+                    .toolCallDelta(
+                        index: 0,
+                        id: "u1",
+                        name: "weibei_update_learning_memory",
+                        argumentsDelta: "{\"contextRevision\":\"pair\",\"memoryRevision\":0,\"suggestedNext\":[],\"entries\":[{\"kind\":\"progress\",\"text\":\"记下复利进度\",\"evidence\":\"[用户：本轮] 记下进度，但先给我看怎么写、不要直接改记忆\",\"origin\":\"userStatement\"}],\"resolutions\":[]}"
+                    ),
+                    .finish(reason: .toolCalls, replayState: nil),
+                ],
+                [.textDelta(index: 0, text: "已写入：记下复利进度。"), .finish(reason: .stop, replayState: nil)],
+            ]
+        ))
         rows.append(try await row(id: "05-course-profile", tools: ["weibei_course_profile_update"], expectProfile: true, chunks: [
             [
                 .toolCallDelta(index: 0, id: "c1", name: "weibei_course_profile_update", argumentsDelta: "{\"contextRevision\":\"pair\",\"profileRevision\":0,\"checkpoint\":\"userRequested\"}"),
@@ -153,6 +171,7 @@ enum NativeScenarioPair {
         expectNote: Bool = false,
         expectRelation: Bool = false,
         expectProfile: Bool = false,
+        expectLearning: Bool = false,
         expectSources: Bool = false,
         chunks: [[NativeStreamChunk]],
         host: StudyAgentHostToolHandler? = nil,
@@ -182,6 +201,9 @@ enum NativeScenarioPair {
         }
         if expectProfile, reply.courseProfileUpdate == nil {
             throw NSError(domain: "WeiBei.Pair", code: 5, userInfo: [NSLocalizedDescriptionKey: "\(id) missing profile proposal"])
+        }
+        if expectLearning, reply.learningUpdate == nil {
+            throw NSError(domain: "WeiBei.Pair", code: 9, userInfo: [NSLocalizedDescriptionKey: "\(id) missing learning update"])
         }
         if expectSources, reply.sources.isEmpty {
             throw NSError(domain: "WeiBei.Pair", code: 8, userInfo: [NSLocalizedDescriptionKey: "\(id) missing reply sources"])

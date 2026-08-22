@@ -15489,7 +15489,7 @@ final class WorkspaceStore: ObservableObject {
         expectedContextRevision: String,
         expectedProfileRevision: UInt64,
         target: AgentConversationTarget
-    ) {
+    ) -> AgentReplyProfileUpdate? {
         guard let courseID = target.courseID,
               activeCourseRemovalTokens[courseID] == nil,
               let update,
@@ -15497,12 +15497,12 @@ final class WorkspaceStore: ObservableObject {
               update.profileRevision == expectedProfileRevision,
               let profileIndex = courseKnowledgeProfiles.firstIndex(where: {
                   $0.courseID == courseID && $0.revision == expectedProfileRevision
-              }) else { return }
+              }) else { return nil }
         var profile = courseKnowledgeProfiles[profileIndex]
         let existingIDs = Set(profile.entries.map(\.id))
         let removedIDs = Set(update.removedEntryIDs.compactMap(UUID.init(uuidString:)))
         guard removedIDs.count == update.removedEntryIDs.count,
-              removedIDs.isSubset(of: existingIDs) else { return }
+              removedIDs.isSubset(of: existingIDs) else { return nil }
         let itemsByID = Dictionary(
             uniqueKeysWithValues: courseItems(in: courseID).map { ($0.id, $0) }
         )
@@ -15514,17 +15514,17 @@ final class WorkspaceStore: ObservableObject {
             let entryID = proposal.entryID.flatMap(UUID.init(uuidString:))
             guard proposal.entryID == nil || entryID != nil,
                   entryID.map(existingIDs.contains) ?? true,
-                  entryID.map({ targetIDs.insert($0).inserted }) ?? true else { return }
+                  entryID.map({ targetIDs.insert($0).inserted }) ?? true else { return nil }
             var sources: [CourseKnowledgeProfileSource] = []
             for source in proposal.sources {
                 guard let item = itemsByID[source.itemID],
-                (item.isNotebookNote ? "note" : "material") == source.role else { return }
+                (item.isNotebookNote ? "note" : "material") == source.role else { return nil }
                 let revision = item.isNotebookNote
                     ? loadedAgentNoteText(for: item).map(
                         CourseDocumentSearchIndex.sourceRevision(forMarkdown:)
                     )
                     : CourseDocumentSearchIndex.sourceRevision(for: item)
-                guard revision == source.sourceRevision else { return }
+                guard revision == source.sourceRevision else { return nil }
                 sources.append(
                     CourseKnowledgeProfileSource(
                         itemID: source.itemID,
@@ -15534,7 +15534,9 @@ final class WorkspaceStore: ObservableObject {
                     )
                 )
             }
-            guard !sources.isEmpty || update.allowsEntriesWithoutSources else { return }
+            let allowsEmptySources = update.checkpoint == "userRequested"
+                || proposal.text.hasPrefix("用户自述：")
+            guard !sources.isEmpty || allowsEmptySources else { return nil }
             let existing = entryID.flatMap { id in
                 profile.entries.first(where: { $0.id == id })
             }
@@ -15562,8 +15564,8 @@ final class WorkspaceStore: ObservableObject {
                 profile.entries.append(replacement)
             }
         }
-        guard profile.entries.count <= 200 else { return }
-        guard profile.entries != courseKnowledgeProfiles[profileIndex].entries else { return }
+        guard profile.entries.count <= 200 else { return nil }
+        guard profile.entries != courseKnowledgeProfiles[profileIndex].entries else { return nil }
         profile.overview = profile.entries
             .filter { $0.kind == .overview }
             .max(by: { $0.updatedAt < $1.updatedAt })?.text ?? ""
@@ -15571,6 +15573,12 @@ final class WorkspaceStore: ObservableObject {
         profile.updatedAt = now
         courseKnowledgeProfiles[profileIndex] = profile
         dirtyPortableCourseIDs.insert(courseID)
+        let texts = replacements.map { $0.1.text }
+        return AgentReplyProfileUpdate(
+            entryIDs: replacements.map { $0.1.id },
+            summary: texts.prefix(3).joined(separator: "；"),
+            texts: texts
+        )
     }
 
     func isLearningMemoryResolved(_ memoryID: String, in scope: LearningMemoryScope) -> Bool {
@@ -16566,7 +16574,7 @@ final class WorkspaceStore: ObservableObject {
                 target: target,
                 messageID: assistantMessage.id
             )
-            applyCourseProfileUpdate(
+            let profileUpdate = applyCourseProfileUpdate(
                 reply.courseProfileUpdate,
                 expectedContextRevision: request.contextRevision,
                 expectedProfileRevision: sentCourseProfile.revision,
@@ -16616,6 +16624,7 @@ final class WorkspaceStore: ObservableObject {
                     $0.sources = sources
                     $0.actions = actions
                     $0.memoryUpdate = memoryUpdate
+                    $0.profileUpdate = profileUpdate
                     $0.failureKind = nil
                     $0.retryQuestion = nil
                     $0.toolTrace = reply.toolTrace
@@ -16973,10 +16982,12 @@ final class WorkspaceStore: ObservableObject {
                 base = ui("正在读取", "Reading")
             case "weibei_course_map":
                 base = ui("正在查找课程关联", "Finding course connections")
-            case "weibei_learning_memory":
+            case "weibei_read_learning_memory":
                 base = ui("正在回顾学习记忆", "Reviewing learning memory")
-            case "weibei_learning_update":
+            case "weibei_update_learning_memory":
                 base = ui("正在整理学习进展", "Updating study progress")
+            case "weibei_course_profile_update":
+                base = ui("正在更新课程知识档案", "Updating course profile")
             case "weibei_note_proposal":
                 base = ui("正在整理写入建议", "Preparing a note proposal")
             case "weibei_rich_answer":

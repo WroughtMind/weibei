@@ -37,7 +37,17 @@
       "profile" : false,
       "relation" : false,
       "tools" : [
-        "weibei_learning_memory"
+        "weibei_read_learning_memory"
+      ]
+    },
+    {
+      "backend" : "native",
+      "id" : "14-memory-preview-write",
+      "note" : false,
+      "profile" : false,
+      "relation" : false,
+      "tools" : [
+        "weibei_update_learning_memory"
       ]
     },
     {

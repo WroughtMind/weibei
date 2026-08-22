@@ -229,7 +229,7 @@ enum NativeToolGuard {
                 throw NativeLLMFailure(code: "guard_denied", message: "网页工具只能读取用户本轮明确提供的地址")
             }
         }
-        if ["weibei_learning_memory", "weibei_learning_update", "weibei_course_profile_update", "weibei_relation_proposal"].contains(name) {
+        if ["weibei_read_learning_memory", "weibei_update_learning_memory", "weibei_course_profile_update", "weibei_relation_proposal"].contains(name) {
             let courseID = context.request.projectScope.courseID?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             if courseID.isEmpty {
                 throw NativeLLMFailure(code: "guard_denied", message: "该工具只在课程 Chat 中使用")
@@ -613,8 +613,8 @@ public enum NativeBuiltinTools {
 
     private static var learningMemory: NativeToolDefinition {
         NativeToolDefinition(
-            name: "weibei_learning_memory",
-            description: "读取用户上次学到的位置与学习状态。记忆不是课程事实证据。返回里的 contextRevision 必须原样回传给写入类工具。userStatement 条目的 evidence 必须以「[用户：本轮]」开头。",
+            name: "weibei_read_learning_memory",
+            description: "只读取本课程学习记忆和上次位置，不会写入或改变任何内容。用户要求记下、记住或更新进度时不要调用本工具，改用 weibei_update_learning_memory。返回里的 contextRevision 必须原样回传给写入类工具。",
             permission: .read,
             schema: NativeJSONSchema(["type": "object", "properties": [:]]),
             execute: { _, context in
@@ -638,8 +638,8 @@ public enum NativeBuiltinTools {
 
     private static var learningUpdate: NativeToolDefinition {
         NativeToolDefinition(
-            name: "weibei_learning_update",
-            description: "根据真实阅读位置或用户自述更新本课程学习状态。contextRevision 必须原样回传本轮字符串。userStatement 的 evidence 必须以「[用户：本轮]」开头，并带上用户原话。魏碑校验通过后会写入记忆。",
+            name: "weibei_update_learning_memory",
+            description: "记录或更新本课程学习记忆的唯一入口。读取请用 weibei_read_learning_memory。用户要求记下/记住/更新进度或掌握情况时必须调用；即使用户说先看看怎么写、不要直接改，也仍要调用，写入后在回答里逐条展示内容。contextRevision 必须原样回传。userStatement 的 evidence 必须以「[用户：本轮]」开头并带上用户原话。",
             permission: .writeConfirm,
             schema: NativeJSONSchema([
                 "type": "object",
@@ -652,8 +652,46 @@ public enum NativeBuiltinTools {
                         "enum": ["orient", "explore", "closeRead", "note", "recall", "consolidate", "plan"],
                     ],
                     "suggestedNext": ["type": "array", "items": ["type": "string"]],
-                    "entries": ["type": "array", "items": ["type": "object"]],
-                    "resolutions": ["type": "array", "items": ["type": "object"]],
+                    "entries": [
+                        "type": "array",
+                        "items": [
+                            "type": "object",
+                            "properties": [
+                                "memoryID": ["type": "string"],
+                                "kind": [
+                                    "type": "string",
+                                    "enum": [
+                                        "goal",
+                                        "progress",
+                                        "understood",
+                                        "confusion",
+                                        "nextStep",
+                                        "summary",
+                                        "preference",
+                                    ],
+                                ],
+                                "text": ["type": "string"],
+                                "evidence": ["type": "string"],
+                                "origin": [
+                                    "type": "string",
+                                    "enum": ["userStatement", "agentInference"],
+                                ],
+                            ],
+                            "required": ["kind", "text", "evidence", "origin"],
+                        ],
+                    ],
+                    "resolutions": [
+                        "type": "array",
+                        "items": [
+                            "type": "object",
+                            "properties": [
+                                "memoryID": ["type": "string"],
+                                "text": ["type": "string"],
+                                "evidence": ["type": "string"],
+                            ],
+                            "required": ["memoryID", "evidence"],
+                        ],
+                    ],
                 ],
                 "required": ["contextRevision", "memoryRevision", "entries"],
             ]),
@@ -682,6 +720,7 @@ public enum NativeBuiltinTools {
                 if let phase = arguments["suggestedPhase"] as? String {
                     details["suggestedPhase"] = phase
                 }
+                try requireDecodableLearningUpdate(details)
                 return NativeToolExecutionResult(
                     text: "学习状态更新已校验并交给魏碑；魏碑只会保存当前作用域中的实际变化。",
                     details: details
@@ -693,7 +732,7 @@ public enum NativeBuiltinTools {
     private static var courseProfileUpdate: NativeToolDefinition {
         NativeToolDefinition(
             name: "weibei_course_profile_update",
-            description: "把课程认识或用户自述掌握状态写入课程知识档案。用户明确要求时必须提交。自述掌握状态不要求材料来源，checkpoint 用 userRequested。材料认识仍须带来源。contextRevision 必须原样回传本轮字符串。",
+            description: "把课程认识或用户自述掌握状态写入课程知识档案。用户明确要求时必须提交。自述掌握用 kind=concept、text 以「用户自述：」开头、sources 可空，checkpoint 用 userRequested。不要把学习记忆的 origin userStatement 当成档案 kind。材料认识仍须带来源。contextRevision 必须原样回传本轮字符串。",
             permission: .writeConfirm,
             schema: NativeJSONSchema([
                 "type": "object",
@@ -710,7 +749,37 @@ public enum NativeBuiltinTools {
                             "userRequested",
                         ],
                     ],
-                    "entries": ["type": "array", "items": ["type": "object"]],
+                    "entries": [
+                        "type": "array",
+                        "items": [
+                            "type": "object",
+                            "properties": [
+                                "entryID": ["type": "string"],
+                                "kind": [
+                                    "type": "string",
+                                    "enum": ["overview", "section", "concept", "relation"],
+                                ],
+                                "text": ["type": "string"],
+                                "sources": [
+                                    "type": "array",
+                                    "items": [
+                                        "type": "object",
+                                        "properties": [
+                                            "itemID": ["type": "string"],
+                                            "role": [
+                                                "type": "string",
+                                                "enum": ["material", "note"],
+                                            ],
+                                            "location": ["type": "string"],
+                                            "sourceRevision": ["type": "string"],
+                                        ],
+                                        "required": ["itemID", "role", "sourceRevision"],
+                                    ],
+                                ],
+                            ],
+                            "required": ["kind", "text"],
+                        ],
+                    ],
                     "removedEntryIDs": ["type": "array", "items": ["type": "string"]],
                 ],
                 "required": ["contextRevision", "profileRevision", "checkpoint"],
@@ -726,16 +795,20 @@ public enum NativeBuiltinTools {
                     expected: context.request.courseProfile.revision,
                     message: "课程知识档案版本已变化；当前 profileRevision 为 \(context.request.courseProfile.revision)，请原样回传"
                 )
+                let details: [String: Any] = [
+                    "kind": "course_profile_update",
+                    "contextRevision": context.request.contextRevision,
+                    "profileRevision": NSNumber(value: context.request.courseProfile.revision),
+                    "checkpoint": arguments["checkpoint"] as? String ?? "userRequested",
+                    "entries": arguments["entries"] as? [Any] ?? [],
+                    "removedEntryIDs": arguments["removedEntryIDs"] as? [String]
+                        ?? (arguments["removedEntryIDs"] as? [Any])?.compactMap { $0 as? String }
+                        ?? [],
+                ]
+                try requireDecodableCourseProfileUpdate(details)
                 return NativeToolExecutionResult(
                     text: "本轮阶段性课程认识已提交保存。",
-                    details: [
-                        "kind": "course_profile_update",
-                        "contextRevision": context.request.contextRevision,
-                        "profileRevision": NSNumber(value: context.request.courseProfile.revision),
-                        "checkpoint": arguments["checkpoint"] as? String ?? "userRequested",
-                        "entries": arguments["entries"] as? [Any] ?? [],
-                        "removedEntryIDs": arguments["removedEntryIDs"] as? [String] ?? [],
-                    ]
+                    details: details
                 )
             }
         )
@@ -868,6 +941,105 @@ public enum NativeBuiltinTools {
             return [value]
         }
         return []
+    }
+
+    private static func requireDecodableLearningUpdate(_ details: [String: Any]) throws {
+        guard StudyAgentProposalDecoding.learningUpdate(from: details) != nil else {
+            throw NativeLLMFailure(code: "invalid_arguments", message: learningUpdateShapeError(details))
+        }
+    }
+
+    private static func requireDecodableCourseProfileUpdate(_ details: [String: Any]) throws {
+        guard StudyAgentProposalDecoding.courseProfileUpdate(from: details) != nil else {
+            throw NativeLLMFailure(code: "invalid_arguments", message: courseProfileUpdateShapeError(details))
+        }
+    }
+
+    private static func learningUpdateShapeError(_ details: [String: Any]) -> String {
+        var problems: [String] = []
+        if details["suggestedNext"] as? [String] == nil {
+            problems.append("suggestedNext 必须是字符串数组")
+        }
+        if details["resolutions"] as? [Any] == nil {
+            problems.append("resolutions 必须是数组")
+        }
+        guard let rawEntries = details["entries"] as? [Any] else {
+            problems.append("entries 必须是数组")
+            return "学习记忆写入无法解析：\(problems.joined(separator: "；"))。每条 entries 需要 kind（goal/progress/understood/confusion/nextStep/summary/preference）、text、evidence、origin（userStatement 或 agentInference）。"
+        }
+        for (index, raw) in rawEntries.enumerated() {
+            guard let entry = raw as? [String: Any] else {
+                problems.append("entries[\(index)] 必须是对象")
+                continue
+            }
+            let kind = entry["kind"] as? String ?? ""
+            if LearningMemoryKind(rawValue: kind) == nil {
+                problems.append("entries[\(index)].kind 必须是 goal/progress/understood/confusion/nextStep/summary/preference")
+            }
+            if entry["text"] as? String == nil {
+                problems.append("entries[\(index)].text 必须是字符串")
+            }
+            if entry["evidence"] as? String == nil {
+                problems.append("entries[\(index)].evidence 必须是字符串")
+            }
+            let origin = entry["origin"] as? String ?? ""
+            if LearningMemoryOrigin(rawValue: origin) == nil {
+                problems.append("entries[\(index)].origin 必须是 userStatement 或 agentInference")
+            }
+        }
+        if problems.isEmpty {
+            return "学习记忆写入无法解析。期望 entries 每条含 kind、text、evidence、origin；suggestedNext 为字符串数组。"
+        }
+        return "学习记忆写入无法解析：\(problems.joined(separator: "；"))。用户自述用 origin=userStatement，evidence 以「[用户：本轮]」开头。"
+    }
+
+    private static func courseProfileUpdateShapeError(_ details: [String: Any]) -> String {
+        var problems: [String] = []
+        let rawEntries: [Any]
+        if let typed = details["entries"] as? [Any] {
+            rawEntries = typed
+        } else if details["entries"] == nil {
+            rawEntries = []
+        } else {
+            problems.append("entries 必须是对象数组")
+            rawEntries = []
+        }
+        for (index, raw) in rawEntries.enumerated() {
+            guard let entry = raw as? [String: Any] else {
+                problems.append("entries[\(index)] 必须是对象")
+                continue
+            }
+            let kind = entry["kind"] as? String ?? ""
+            if CourseKnowledgeProfileEntryKind(rawValue: kind) == nil {
+                problems.append("entries[\(index)].kind 必须是 overview/section/concept/relation，不要用 userStatement")
+            }
+            if entry["text"] as? String == nil {
+                problems.append("entries[\(index)].text 必须是字符串")
+            }
+            if let sources = entry["sources"] {
+                let list = sources as? [[String: Any]]
+                    ?? (sources as? [Any])?.compactMap { $0 as? [String: Any] }
+                if list == nil {
+                    problems.append("entries[\(index)].sources 必须是对象数组")
+                } else {
+                    for (sourceIndex, source) in (list ?? []).enumerated() {
+                        if source["itemID"] as? String == nil {
+                            problems.append("entries[\(index)].sources[\(sourceIndex)].itemID 必须是字符串")
+                        }
+                        if source["role"] as? String == nil {
+                            problems.append("entries[\(index)].sources[\(sourceIndex)].role 必须是 material 或 note")
+                        }
+                        if source["sourceRevision"] as? String == nil {
+                            problems.append("entries[\(index)].sources[\(sourceIndex)].sourceRevision 必须是字符串")
+                        }
+                    }
+                }
+            }
+        }
+        if problems.isEmpty {
+            return "课程知识档案写入无法解析。期望 entries 每条含 kind（overview/section/concept/relation）和 text；sources 每项含 itemID、role、sourceRevision。"
+        }
+        return "课程知识档案写入无法解析：\(problems.joined(separator: "；"))。自述掌握用 kind=concept、text 以「用户自述：」开头、sources 可空。"
     }
 
     fileprivate static func requireMatchingRevision(_ raw: Any?, expected: String, message: String) throws {

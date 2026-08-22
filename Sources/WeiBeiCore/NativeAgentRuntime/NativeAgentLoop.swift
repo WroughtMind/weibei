@@ -313,10 +313,10 @@ public actor NativeAgentLoop {
         if name == "weibei_relation_proposal" {
             relationProposal = StudyAgentProposalDecoding.relationProposal(from: details)
         }
-        if name == "weibei_learning_memory" {
+        if name == "weibei_read_learning_memory" {
             context.lastReadMemoryRevision = context.request.learningContext.memoryRevision
         }
-        if name == "weibei_learning_update" {
+        if name == "weibei_update_learning_memory" {
             learningUpdate = StudyAgentProposalDecoding.learningUpdate(from: details)
         }
         if name == "weibei_course_profile_update" {

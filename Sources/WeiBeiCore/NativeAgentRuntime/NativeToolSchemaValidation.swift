@@ -2,39 +2,65 @@ import Foundation
 
 enum NativeToolSchemaValidation {
     static func validate(arguments: [String: Any], schema: NativeJSONSchema) throws {
-        let object = schema.object
-        if let required = object["required"] as? [String] {
-            for key in required {
-                if arguments[key] == nil {
-                    throw NativeLLMFailure(code: "invalid_arguments", message: "缺少参数 \(key)")
-                }
-            }
-        }
-        guard let properties = object["properties"] as? [String: Any] else { return }
-        for (key, value) in arguments {
-            guard let property = properties[key] as? [String: Any] else { continue }
-            try validateValue(value, schema: property, path: key)
-        }
+        try validateValue(arguments, schema: schema.object, path: "")
     }
 
     private static func validateValue(_ value: Any, schema: [String: Any], path: String) throws {
         if let allowed = schema["enum"] as? [Any], !allowed.contains(where: { jsonEqual($0, value) }) {
-            throw NativeLLMFailure(code: "invalid_arguments", message: "参数 \(path) 不在允许的枚举值里")
+            let location = path.isEmpty ? "参数" : "参数 \(path)"
+            throw NativeLLMFailure(code: "invalid_arguments", message: "\(location) 不在允许的枚举值里")
         }
         let types = schemaTypes(schema["type"])
-        guard !types.isEmpty else { return }
-        if types.contains(jsonTypeName(of: value)) { return }
-        if types.contains("number"), jsonTypeName(of: value) == "integer" { return }
-        throw NativeLLMFailure(
-            code: "invalid_arguments",
-            message: "参数 \(path) 必须是 \(types.joined(separator: " 或 "))"
-        )
+        if !types.isEmpty {
+            let actual = jsonTypeName(of: value)
+            let typeOK = types.contains(actual) || (types.contains("number") && actual == "integer")
+            if !typeOK {
+                let location = path.isEmpty ? "参数" : "参数 \(path)"
+                throw NativeLLMFailure(
+                    code: "invalid_arguments",
+                    message: "\(location) 必须是 \(types.joined(separator: " 或 "))"
+                )
+            }
+        }
+        if let object = jsonObject(value) {
+            if let required = schema["required"] as? [String] {
+                for key in required where object[key] == nil {
+                    let location = path.isEmpty ? key : "\(path).\(key)"
+                    throw NativeLLMFailure(code: "invalid_arguments", message: "缺少参数 \(location)")
+                }
+            }
+            if let properties = jsonObject(schema["properties"]) {
+                for (key, child) in object {
+                    guard let property = jsonObject(properties[key]) else { continue }
+                    try validateValue(child, schema: property, path: path.isEmpty ? key : "\(path).\(key)")
+                }
+            }
+        }
+        if let array = value as? [Any], let items = jsonObject(schema["items"]) {
+            for (index, element) in array.enumerated() {
+                let childPath = path.isEmpty ? "[\(index)]" : "\(path)[\(index)]"
+                try validateValue(element, schema: items, path: childPath)
+            }
+        }
     }
 
     private static func schemaTypes(_ raw: Any?) -> [String] {
         if let name = raw as? String { return [name] }
         if let names = raw as? [String] { return names }
         return []
+    }
+
+    private static func jsonObject(_ raw: Any?) -> [String: Any]? {
+        if let object = raw as? [String: Any] { return object }
+        if let object = raw as? [String: String] {
+            return object.mapValues { $0 as Any }
+        }
+        guard let raw, JSONSerialization.isValidJSONObject(raw),
+              let data = try? JSONSerialization.data(withJSONObject: raw),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return nil
+        }
+        return object
     }
 
     private static func jsonTypeName(of value: Any) -> String {

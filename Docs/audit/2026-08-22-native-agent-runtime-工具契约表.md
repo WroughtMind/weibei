@@ -112,7 +112,7 @@ Native 化口径：4 个 host tool 已由 Swift 执行；其余 8 个按契约�
 | 输出 | `{ url, title, text, isTruncated }` 单页 |
 | Native | 同一 policy + 同一打开实现 |
 
-## 8. `weibei_learning_memory`
+## 8. `weibei_read_learning_memory`
 
 | 项 | 契约 |
 |---|---|
@@ -124,7 +124,7 @@ Native 化口径：4 个 host tool 已由 Swift 执行；其余 8 个按契约�
 | Native 升级 | 调用 `WorkspaceStore.learningMemoryEntries(in:)` / `learningMemoryRevision(in:)` 等现有方法，不读提问前快照 |
 | 复用目标 | `learningMemoryEntries(in:)`、`learningMemoryRevision(in:)`、`learningMemoryScope(courseID:)` |
 
-## 9. `weibei_learning_update`
+## 9. `weibei_update_learning_memory`
 
 | 项 | 契约 |
 |---|---|

@@ -44,7 +44,7 @@ public struct NativePromptAssembler: Sendable {
                     id: "revision",
                     order: 16,
                     text: """
-                    本轮 contextRevision 是 `\(contextRevision)`。weibei_learning_update、weibei_course_profile_update、weibei_note_proposal、weibei_relation_proposal 必须原样回传这个字符串，不要改成数字，也不要从 memoryRevision 或 profileRevision 推断。
+                    本轮 contextRevision 是 `\(contextRevision)`。weibei_update_learning_memory、weibei_course_profile_update、weibei_note_proposal、weibei_relation_proposal 必须原样回传这个字符串，不要改成数字，也不要从 memoryRevision 或 profileRevision 推断。
                     """
                 )
             )

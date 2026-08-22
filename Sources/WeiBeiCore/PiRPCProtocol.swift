@@ -382,7 +382,7 @@ public enum PiRPCMessageDecoder {
                     byteCount: byteCount.intValue
                 )
             }
-            if name == "weibei_learning_memory",
+            if name == "weibei_read_learning_memory",
                let details = result?["details"] as? [String: Any],
                details["kind"] as? String == "learning_memory",
                let contextRevision = details["contextRevision"] as? String,
@@ -485,7 +485,7 @@ public enum PiRPCMessageDecoder {
                     proposal
                 )
             }
-            if name == "weibei_learning_update",
+            if name == "weibei_update_learning_memory",
                let details = result?["details"] as? [String: Any],
                let update = StudyAgentProposalDecoding.learningUpdate(from: details) {
                 return .learningUpdate(

@@ -108,3 +108,41 @@ CLI 全绿但 App 全断，缺的就是这一层。WeiBeiSelfCheck 新增「真�
 - 四条提案在真实 App（native 开关开）逐条过：记忆（自动落库+信息条）、档案（自述状态可落库且标注用户自述）、笔记（确认卡→确认→落库）、关系（笔记落库后→确认卡→确认→落库）；
 - 回答带来源 chips；滚动不卡；
 - WeiBeiSelfCheck 含 F8 新检查全绿；12 场景、能力三件套保持绿。
+
+## 4. 第二轮验收（包 1.0.0 (1405) · 9e5e5f74）后的问题与解法
+
+结果：笔记、关系两条已通过（确认卡→确认→落库）。记忆、档案失败，根因不同，解法如下。约束：目标是真的写入成功；契约只管安全；`StudyAgentProposalDecoding` 是 Pi/Native 共用，**不许放宽**（Pi 自检「缺 origin 整包拒绝」必须保持绿）。
+
+### 第 0 步：先收拾工作树（任何修复前）
+
+当前工作树混着两摊未提交改动且自检红。先拆分，在绿的基础上开工：
+
+- **保留并单独提交**：60 秒死锁修复（`persistAgentActionNote` 不再 sync flush）+ 笔记/关系确认闭环。注意 `WorkspaceStore.swift` 里两摊改动混在一起，需要按 hunk 拆，不能整文件签出。
+- **推倒重想（不接着堆）**：记忆/档案半截改动（`NativeAgentTools.swift`、`NativeToolSchemaValidation.swift`、`StudyAgentProposalDecoding.swift`、`system.md`、以及 `WorkspaceModels`/`NotesAgentView`/`WorkspaceStore` 里的档案标签半截）。其中解码器宽容化（userStatement+topic/status 收成 concept）方向**错误**，必须撤——那是替模型猜数据，且撞坏 Pi 自检。
+- 拆分完成后 `swift run WeiBeiSelfCheck` 必须转绿，再开始 R1/R2。
+
+### R1 记忆：让写入工具一定被调用（提示层修复）
+
+根因：模型把「先给我看、不要直接改」理解成不写入，只调了读取工具；`weibei_learning_memory`（读）与 `weibei_learning_update`（写）名字相近助长了误判。
+
+产品口径（用户裁决）：记忆**没有确认卡**；这种句式的含义是「写入后让我看到你写了什么」，不是取消写入。
+
+修法（三层叠加；产品层撤销为可选项，用户拍板后再单列）：
+
+1. **结构消歧（根因层）**：两个工具改为动词开头命名——`weibei_learning_memory` → `weibei_read_learning_memory`，`weibei_learning_update` → `weibei_update_learning_memory`，Pi 侧 `extension.ts` 同步改名保持契约一致。动作不可混淆，模型选工具时不再面对近义词。
+2. **系统提示 = 硬规则 + 范例**：`system.md` 学习记忆段加规则——用户要求记下/记住/更新进度或掌握情况时必须调用写入工具；「先给我看 / 别直接改」= 写入后在回答里逐条展示内容，回答下方出「已更新学习记忆」标签；用户自述是合法证据（`origin=userStatement`，evidence 用 `[用户：本轮] + 原话`）。**并附一轮示范对话**（用户验收原句 → 调写入工具 → 展示写入内容），低推理档模型照范文学比背规则可靠。
+3. 两个工具的描述划清界限并互相指路：读工具 = 「只读取，不改变任何内容；用户要求记下/记住/更新时不要调用本工具，改用写入工具」；写工具 = 「记录/更新学习记忆的唯一入口，『先看看/别直接改』类说法也要调用，写入后在回答里逐条展示内容」。
+4. **回归锁**：验收原句锁进 CLI 夹具（「先给我看」句式必须调写入工具），行为回退立即红。验收：真实 App 重跑第 1 条 + 夹具绿。仍不通过则下一刀是合并为单工具 + `action` 参数；不许用代码拦截意图兜底。
+5. 可选（产品层治本，用户拍板后单列工作项）：记忆写入后在回答里附撤销入口（Store 已有修订历史），用确定性消除「先给我看」背后的焦虑，而不是靠模型理解模糊指令。
+
+### R2 档案：容错放在执行时反馈，不放在解码器
+
+失败链：entries schema 近乎空 object → 模型发明字段（`kind:userStatement`、`topic`、`status`）→ 工具 execute 不校验直接回「已提交保存」→ 共用解码器解不出 → nil → Store 静默 return → 回答谎称已更新。
+
+修法（三层，全部不碰解码器）：
+
+1. **schema 补全（根因，F1 范围内）**：entries 的 properties 写全——`entryID?`、`kind`（枚举 overview/section/concept/relation）、`text`、`sources`（itemID/role/location?/sourceRevision）。描述里写明：自述掌握状态用 `kind=concept`、`text` 以「用户自述：」开头、`sources` 可空。模型看得见真形状就不会发明字段。
+2. **execute 用共享解码器自检（反馈回路）**：`weibei_course_profile_update` 的 execute 在返回成功前，拿自己的 details 过一遍 `StudyAgentProposalDecoding.courseProfileUpdate`；解不出就抛 `NativeLLMFailure`，带上缺哪个字段、期望什么形状——模型本轮就能改正重试。同理用于 `learning_update`。**成功文案只在解码通过后才返回。** 解码器保持严格、共用、不动，Pi 自检不受影响。
+3. **落库可见**：F5 的 Store 放行（自述条目允许空 sources）落地；补「已更新课程知识档案」信息标签（`AgentReplyProfileUpdate`，对齐 `AgentReplyMemoryUpdate` 的挂法：WorkspaceModels 类型 → Store 在 applyCourseProfileUpdate 成功后挂到消息 → NotesAgentView 渲染）。
+
+验收：真实 App 重跑第 2 条，档案 revision 与条目数真实变化 + 标签出现；WeiBeiSelfCheck 全绿（含 Pi 那条整包拒绝自检）；笔记/关系两条回归一次（写入路径动过死锁修复）。

@@ -1635,6 +1635,18 @@ public struct AgentReplyMemoryUpdate: Codable, Hashable, Sendable {
     }
 }
 
+public struct AgentReplyProfileUpdate: Codable, Hashable, Sendable {
+    public var entryIDs: [UUID]
+    public var summary: String
+    public var texts: [String]
+
+    public init(entryIDs: [UUID], summary: String, texts: [String]) {
+        self.entryIDs = entryIDs
+        self.summary = summary
+        self.texts = texts
+    }
+}
+
 public struct AgentReplyOrigin: Codable, Hashable, Sendable {
     public var requestID: UUID
     public var chatID: UUID
@@ -1684,6 +1696,7 @@ public struct AgentMessage: Identifiable, Codable, Hashable, Sendable {
     public var sources: [AgentReplySource]
     public var actions: [AgentReplyAction]
     public var memoryUpdate: AgentReplyMemoryUpdate?
+    public var profileUpdate: AgentReplyProfileUpdate?
     public var origin: AgentReplyOrigin?
     public var failureKind: AgentFailureKind?
     public var retryQuestion: String?
@@ -1702,6 +1715,7 @@ public struct AgentMessage: Identifiable, Codable, Hashable, Sendable {
         sources: [AgentReplySource] = [],
         actions: [AgentReplyAction] = [],
         memoryUpdate: AgentReplyMemoryUpdate? = nil,
+        profileUpdate: AgentReplyProfileUpdate? = nil,
         origin: AgentReplyOrigin? = nil,
         failureKind: AgentFailureKind? = nil,
         retryQuestion: String? = nil,
@@ -1721,6 +1735,7 @@ public struct AgentMessage: Identifiable, Codable, Hashable, Sendable {
         self.sources = sources
         self.actions = actions
         self.memoryUpdate = memoryUpdate
+        self.profileUpdate = profileUpdate
         self.origin = origin
         self.failureKind = failureKind
         self.retryQuestion = retryQuestion
@@ -1740,6 +1755,7 @@ public struct AgentMessage: Identifiable, Codable, Hashable, Sendable {
         case sources
         case actions
         case memoryUpdate
+        case profileUpdate
         case origin
         case failureKind
         case retryQuestion
@@ -1818,6 +1834,11 @@ public struct AgentMessage: Identifiable, Codable, Hashable, Sendable {
             forKey: .memoryUpdate,
             marker: "reply-memory:decode-failed"
         )
+        profileUpdate = decodeLossy(
+            AgentReplyProfileUpdate.self,
+            forKey: .profileUpdate,
+            marker: "reply-profile:decode-failed"
+        )
         origin = decodeLossy(
             AgentReplyOrigin.self,
             forKey: .origin,
@@ -1858,6 +1879,7 @@ public struct AgentMessage: Identifiable, Codable, Hashable, Sendable {
             try container.encode(actions, forKey: .actions)
         }
         try container.encodeIfPresent(memoryUpdate, forKey: .memoryUpdate)
+        try container.encodeIfPresent(profileUpdate, forKey: .profileUpdate)
         try container.encodeIfPresent(origin, forKey: .origin)
         try container.encodeIfPresent(failureKind, forKey: .failureKind)
         try container.encodeIfPresent(retryQuestion, forKey: .retryQuestion)

@@ -300,11 +300,11 @@ try {
   );
 
   const learningMemoryTool = requireValue(
-    registeredTools.get("weibei_learning_memory"),
+    registeredTools.get("weibei_read_learning_memory"),
     "真实扩展没有注册课程学习记忆读取工具",
   );
   const learningUpdateTool = requireValue(
-    registeredTools.get("weibei_learning_update"),
+    registeredTools.get("weibei_update_learning_memory"),
     "真实扩展没有注册课程学习状态更新工具",
   );
   await learningMemoryTool.execute("course-memory-read", {});
@@ -378,7 +378,7 @@ try {
     { model: undefined },
   );
   const blockedGlobalMemory = await toolCallHook({
-    toolName: "weibei_learning_memory",
+    toolName: "weibei_read_learning_memory",
     input: {},
   });
   requireValue(

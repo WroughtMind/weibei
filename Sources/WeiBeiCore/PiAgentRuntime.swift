@@ -287,8 +287,8 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         "weibei_course_read",
         "weibei_web_open",
         "weibei_visual_asset",
-        "weibei_learning_memory",
-        "weibei_learning_update",
+        "weibei_read_learning_memory",
+        "weibei_update_learning_memory",
         "weibei_course_profile_update",
         "weibei_visualize",
         // `read` is limited by the extension to bundled Skills.
@@ -2419,7 +2419,7 @@ public actor PiAgentRuntime: StudyAgentRuntime {
             guard update.contextRevision == run.contextRevision,
                   update.memoryRevision == run.memoryRevision else {
                 recordRejectedAction(
-                    "weibei_learning_update",
+                    "weibei_update_learning_memory",
                     reason: "PI proposed a stale learning-memory update",
                     run: &run
                 )
@@ -2429,7 +2429,7 @@ public actor PiAgentRuntime: StudyAgentRuntime {
             }
             if let validationError = learningUpdateValidationError(update, run: run) {
                 recordRejectedAction(
-                    "weibei_learning_update",
+                    "weibei_update_learning_memory",
                     reason: validationError,
                     run: &run
                 )
