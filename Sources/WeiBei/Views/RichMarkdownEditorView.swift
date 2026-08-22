@@ -1,4 +1,5 @@
 import AppKit
+import os
 import SwiftUI
 import WebKit
 import WeiBeiCore
@@ -1043,6 +1044,8 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         var webMarkdown = ""
         var pendingStreamingCompletion = false
         var lastCommandID: UUID?
+        private var queuedCommands: [NoteEditorCommand] = []
+        private let queuedCommandLimit = 16
         private var editingSessionBindingToken: UUID?
         private var pendingV2DocumentID: String?
         let performanceInstanceID = UUID()
@@ -1182,7 +1185,6 @@ struct RichMarkdownEditorView: NSViewRepresentable {
                   let json = String(data: data, encoding: .utf8) else { return }
             evaluate("window.WeiBeiEditor?.dispatchCommand(\(json))")
         }
-
         private func decodeV2Event<Event: Decodable>(_ type: Event.Type, from body: Any) -> Event? {
             guard JSONSerialization.isValidJSONObject(body),
                   let data = try? JSONSerialization.data(withJSONObject: body) else { return nil }
@@ -1600,21 +1602,53 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         }
 
         func runPendingCommandIfReady() {
+            ingestCommandBinding()
             guard isReady,
                   pendingV2DocumentID == nil,
-                  let pendingCommand = command.wrappedValue,
-                  lastCommandID != pendingCommand.id else { return }
-            lastCommandID = pendingCommand.id
-            run(pendingCommand)
+                  let next = queuedCommands.first else { return }
+            queuedCommands.removeFirst()
+            lastCommandID = next.id
+            run(next)
+        }
+
+        /// 编辑器就绪前连发的命令不再只留最后一条：入队保序，
+        /// 同类可互相覆盖的命令（替换选区/整档重载）只留最新，其余保序排队。
+        private func ingestCommandBinding() {
+            guard let pending = command.wrappedValue,
+                  pending.id != lastCommandID,
+                  !queuedCommands.contains(where: { $0.id == pending.id }) else { return }
+            if let tail = queuedCommands.last,
+               tail.kind == pending.kind,
+               pending.kind == .replaceSelection || pending.kind == .reloadDocument {
+                queuedCommands[queuedCommands.count - 1] = pending
+            } else {
+                queuedCommands.append(pending)
+                if queuedCommands.count > queuedCommandLimit {
+                    queuedCommands.removeFirst(queuedCommands.count - queuedCommandLimit)
+                }
+            }
+            let ingestedID = pending.id
             DispatchQueue.main.async {
-                if self.command.wrappedValue?.id == pendingCommand.id {
+                if self.command.wrappedValue?.id == ingestedID {
                     self.command.wrappedValue = nil
                 }
             }
         }
 
+        private static let bridgeLogger = Logger(
+            subsystem: "app.weibei.Weibei",
+            category: "NoteEditorBridge"
+        )
+
         private func evaluate(_ script: String) {
-            webView?.evaluateJavaScript(script)
+            // 出错不再无声吞掉：脚本头 160 字符进统一日志，排查编辑器桥问题有迹可循。
+            webView?.evaluateJavaScript(script) { _, error in
+                if let error {
+                    Self.bridgeLogger.warning(
+                        "editor script failed: \(error.localizedDescription) script: \(script.prefix(160), privacy: .public)"
+                    )
+                }
+            }
         }
 
         func applySearch() {
