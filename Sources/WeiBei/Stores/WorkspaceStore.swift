@@ -13848,37 +13848,52 @@ final class WorkspaceStore: ObservableObject {
             rootIdentity = expectedIdentity
         } else {
             guard let course = course(withID: courseID),
-                  let expectedIdentity = course.sourceRootIdentity,
+                  course.sourceRootIdentity != nil,
                   let rawRoot = courseRootURL(for: courseID),
                   let resolvedRoot = try? CourseProjectPathPolicy.existingDirectory(rawRoot),
-                  CourseProjectFileWorker.identity(at: resolvedRoot) == expectedIdentity else {
+                  let liveRootIdentity = CourseProjectFileWorker.identity(at: resolvedRoot) else {
                 return nil
             }
+            // identity 只用于找回、永不用于拒绝（计划 §5 阶段5）：不一致时
+            // 采用活体身份继续授权，最多记一条日志。
+            if liveRootIdentity != course.sourceRootIdentity {
+                WeiBeiLog.workspace.notice("agent_grant_root_identity_refreshed")
+            }
             rootURL = resolvedRoot
-            rootIdentity = expectedIdentity
+            rootIdentity = liveRootIdentity
         }
-        guard CourseProjectFileWorker.identity(at: rootURL) == rootIdentity,
+        guard let liveRootIdentity = CourseProjectFileWorker.identity(at: rootURL),
               let membership = courseItemMemberships.first(where: {
                   $0.courseID == courseID && $0.itemID == item.id
               }),
               let relativePath = membership.courseRelativePath,
               Self.isVisibleAgentProjectPath(relativePath),
               let targetURL = item.url?.standardizedFileURL,
-              let entryIdentity = membership.entryIdentity,
               let targetIdentity = item.importedFileIdentity else {
             return nil
+        }
+        if liveRootIdentity != rootIdentity {
+            WeiBeiLog.workspace.notice("agent_grant_root_identity_drifted")
         }
         let entryURL = relativePath.split(separator: "/", omittingEmptySubsequences: true)
             .map(String.init)
             .reduce(rootURL) { $0.appendingPathComponent($1) }
             .standardizedFileURL
-        guard CourseProjectFileWorker.identity(at: entryURL) == entryIdentity,
-              CourseProjectFileWorker.identity(at: targetURL) == targetIdentity,
+        guard let liveEntryIdentity = CourseProjectFileWorker.identity(at: entryURL),
+              let liveTargetIdentity = CourseProjectFileWorker.identity(at: targetURL),
               CourseProjectPathPolicy.isSame(
                   targetURL,
                   targetURL.resolvingSymlinksInPath().standardizedFileURL
               ) else {
             return nil
+        }
+        // identity 只用于找回、永不用于拒绝：条目/目标身份漂移时刷新继续，
+        // 授权以活体身份为准（Pi 扩展协议字段不变）。
+        if let entryIdentity = membership.entryIdentity, entryIdentity != liveEntryIdentity {
+            WeiBeiLog.workspace.notice("agent_grant_entry_identity_refreshed")
+        }
+        if liveTargetIdentity != targetIdentity {
+            WeiBeiLog.workspace.notice("agent_grant_target_identity_refreshed")
         }
         let isShared: Bool
         switch item.storage {
@@ -13908,11 +13923,11 @@ final class WorkspaceStore: ObservableObject {
             courseID: courseID,
             courseTitle: courseTitle,
             rootURL: rootURL,
-            rootIdentity: rootIdentity,
+            rootIdentity: liveRootIdentity,
             entryURL: entryURL,
-            entryIdentity: entryIdentity,
+            entryIdentity: liveEntryIdentity,
             targetURL: targetURL,
-            targetIdentity: targetIdentity,
+            targetIdentity: liveTargetIdentity,
             relativePath: relativePath,
             isShared: isShared
         )
@@ -18006,10 +18021,9 @@ final class WorkspaceStore: ObservableObject {
               case .courseOwned(let courseID, _) = item.storage,
               courseRootUnavailableReasons[courseID] == nil,
               let course = course(withID: courseID),
-              let expectedRootIdentity = course.sourceRootIdentity,
+              course.sourceRootIdentity != nil,
               let root = courseRootURL(for: courseID),
-              importedFileIdentityResolver(root)
-                == expectedRootIdentity,
+              let rootIdentity = importedFileIdentityResolver(root),
               let membershipIndex =
                 uniqueCourseOwnedMembershipIndex(
                     itemID: item.id,
@@ -18028,18 +18042,32 @@ final class WorkspaceStore: ObservableObject {
                 resolvedURL,
                 itemURL
               ),
-              let fileIdentity = item.importedFileIdentity,
-              importedFileIdentityResolver(resolvedURL)
-                == fileIdentity,
-              courseItemMemberships[membershipIndex]
-                .entryIdentity.map({ $0 == fileIdentity })
-                ?? true else {
+              let fileIdentity = importedFileIdentityResolver(resolvedURL) else {
             return nil
+        }
+        // identity 只用于尽力找回、永不用于拒绝（存储简化红线，与
+        // resolveTrackedImportedFile 一致）：课程内文件以课程相对路径为准，
+        // 路径下文件可读即接受。identity 不一致（iCloud 驱逐重下换 inode、
+        // APFS 卷号漂移等）时刷新记录并继续，最多记一条日志（计划 §5 阶段5）。
+        if course.sourceRootIdentity != rootIdentity {
+            if let courseIndex = courses.firstIndex(where: { $0.id == courseID }) {
+                courses[courseIndex].sourceRootIdentity = rootIdentity
+            }
+            WeiBeiLog.workspace.notice("note_access_root_identity_refreshed")
+        }
+        if item.importedFileIdentity != fileIdentity {
+            if let itemIndex = importedItems.firstIndex(where: { $0.id == item.id }) {
+                importedItems[itemIndex].importedFileIdentity = fileIdentity
+            }
+            WeiBeiLog.workspace.notice("note_access_file_identity_refreshed")
+        }
+        if courseItemMemberships[membershipIndex].entryIdentity != fileIdentity {
+            courseItemMemberships[membershipIndex].entryIdentity = fileIdentity
         }
         return VerifiedCourseOwnedNoteAccess(
             courseID: courseID,
             root: root,
-            rootIdentity: expectedRootIdentity,
+            rootIdentity: rootIdentity,
             url: resolvedURL,
             fileIdentity: fileIdentity,
             membershipIndex: membershipIndex

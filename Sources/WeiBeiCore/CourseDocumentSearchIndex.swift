@@ -119,9 +119,11 @@ public final class CourseDocumentSearchIndex: @unchecked Sendable {
                 birthTimeNanoseconds: Int64(fileStat.st_birthtimespec.tv_nsec)
             )
             if let expectedIdentity = item.importedFileIdentity {
-                guard identity == expectedIdentity else {
-                    Darwin.close(descriptor)
-                    return nil
+                // identity 只用于找回、永不用于拒绝（计划 §5 阶段5）：不符时
+                // 降级为日志照常索引——fd 已先开、读取后 isStillCurrent 复验，
+                // TOCTOU 保护不依赖 identity 相等。
+                if identity != expectedIdentity {
+                    WeiBeiLog.workspace.notice("search_index_identity_refreshed")
                 }
             } else {
                 switch item.storage {
