@@ -512,6 +512,7 @@ struct NotePaneView: View {
         .onChange(of: store.activeNoteItemID) { _, _ in
             editingNoteTabTitle = false
             noteOutline = []
+            activeNoteRailID = nil
         }
         .onChange(of: paneState.focusedPane) { _, pane in
             if pane != .notes {
@@ -1216,6 +1217,10 @@ struct AgentPaneView: View {
     @State private var agentVisibleMessageLimit = AgentPaneView.agentHistoryPageSize
     @State private var isRevealingEarlierAgentHistory = false
     @State private var isAgentHistoryRevealButtonHovered = false
+    /// Turn-start rows report reading-line crossings here at scroll rate. A
+    /// reference type on purpose: per-event dictionary writes must not publish
+    /// SwiftUI state; only the derived activeAgentRailID write renders.
+    @State private var turnReadingPositions = AgentTurnReadingPositionModel()
 
     private static let agentHistoryPageSize = AgentHistoryRevealPolicy.pageSize
     private static let paneStructureTransitionDuration: TimeInterval = 0.24
@@ -1255,6 +1260,8 @@ struct AgentPaneView: View {
         let wide = AgentChatLayoutMetrics.isWide(layout: store.layout)
         let showsContentRail = !wide && store.layout.allowsRailOnlyPanes
         let railItems = showsContentRail ? agentRailItems : []
+        // One O(n) set per render — row backgrounds only do Set.contains.
+        let railTurnStartMessageIDs = showsContentRail ? agentRailTurnStartMessageIDs : []
         // The native split host changes this proposal on every divider frame.
         // Read it locally so visible content and the rail follow continuously;
         // never publish those frame-level values into the eager message tree.
@@ -1313,6 +1320,13 @@ struct AgentPaneView: View {
                                         contentWidth: contentWidth,
                                         wide: wide
                                     )
+                                    .background {
+                                        if railTurnStartMessageIDs.contains(message.id) {
+                                            AgentTurnReadingPositionProbe(messageID: message.id) {
+                                                handleTurnReadingPosition(messageID: $0, passed: $1)
+                                            }
+                                        }
+                                    }
                                 }
                                 if store.isAgentRunningInActiveChat
                                     && !store.hasPersistedGeneratingAgentReply
@@ -1438,6 +1452,8 @@ struct AgentPaneView: View {
                 .onChange(of: store.activeStudySessionID) { _, _ in
                     agentVisibleMessageLimit = Self.agentHistoryPageSize
                     isRevealingEarlierAgentHistory = false
+                    turnReadingPositions.passedByMessageID.removeAll()
+                    activeAgentRailID = nil
                 }
             }
             .preference(
@@ -1700,6 +1716,12 @@ struct AgentPaneView: View {
         }
     }
 
+    /// Rows whose message starts a rail turn — the only rows that need a
+    /// reading-position probe. Rail ticks are turns, not messages.
+    private var agentRailTurnStartMessageIDs: Set<UUID> {
+        Set(agentRailTurns.map(\.startMessageID))
+    }
+
     private func activateAgentRailItem(_ item: ContentRailItem, railOnly: Bool, proxy: ScrollViewProxy) {
         guard let turn = agentRailTurns.first(where: { "chat-turn-\($0.id.uuidString)" == item.id }) else { return }
         activeAgentRailID = item.id
@@ -1724,6 +1746,21 @@ struct AgentPaneView: View {
         agentFollowsLatest = messageID == store.messages.last?.id
         if let turn = agentRailTurns.last(where: { $0.startIndex <= visibleIndex }) {
             activeAgentRailID = "chat-turn-\(turn.id.uuidString)"
+        }
+    }
+
+    /// Mirrors the web editors' reading-line rule: the rail marks the last
+    /// turn whose question row top has crossed the upper third of the viewport.
+    private func handleTurnReadingPosition(messageID: UUID, passed: Bool) {
+        guard turnReadingPositions.passedByMessageID[messageID] != passed else { return }
+        turnReadingPositions.passedByMessageID[messageID] = passed
+        let turns = agentRailTurns
+        guard let activeTurn = turns.last(where: {
+            turnReadingPositions.passedByMessageID[$0.startMessageID] == true
+        }) ?? turns.first else { return }
+        let id = "chat-turn-\(activeTurn.id.uuidString)"
+        if activeAgentRailID != id {
+            activeAgentRailID = id
         }
     }
 
@@ -4553,6 +4590,7 @@ private struct AgentScrollMetrics: Equatable {
     let isUserScrolling: Bool
     let isScrollingTowardTop: Bool
 }
+
 
 /// Reports whether one finalized Markdown row intersects the chat viewport.
 /// The boolean changes only at viewport boundaries, keeping offscreen WebKit

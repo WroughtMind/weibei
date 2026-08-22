@@ -40,6 +40,13 @@ enum ContentRailMetrics {
     static let readableWidth = ContentRailPolicy.readableWidth
     static let defaultReadableWidth = ContentRailPolicy.defaultReadableWidth
 
+    /// Vertical budget for the tick strip. The old 160pt cap crushed long
+    /// documents into near-zero gaps; the strip now stretches up to this
+    /// before gaps start shrinking.
+    static let maxRailHeight: CGFloat = 420
+    /// Gap between adjacent ticks while the strip still fits maxRailHeight.
+    static let tickSpacing: CGFloat = 11
+
     static func isRailOnly(availableWidth: CGFloat, allowed: Bool) -> Bool {
         ContentRailPolicy.presentation(
             availableWidth: availableWidth,
@@ -246,8 +253,11 @@ struct ContentRailView: View {
         let top = max(topInset, 0) + 10
         let bottom = max(bottomInset, 0) + 10
         let available = max(totalHeight - top - bottom, 1)
-        let desiredHeight = max(20, 14 + CGFloat(max(items.count - 1, 0)) * 8)
-        return min(desiredHeight, min(160, available))
+        let desiredHeight = max(
+            20,
+            14 + CGFloat(max(items.count - 1, 0)) * ContentRailMetrics.tickSpacing
+        )
+        return min(desiredHeight, min(ContentRailMetrics.maxRailHeight, available))
     }
 
     private func compactCenterY(in totalHeight: CGFloat) -> CGFloat {
@@ -355,7 +365,7 @@ struct ContentRailView: View {
         guard count > 1 else { return 0 }
         let verticalInset = min(7, height / 2)
         let available = max(height - verticalInset * 2, 0)
-        return min(8, available / CGFloat(count - 1))
+        return min(ContentRailMetrics.tickSpacing, available / CGFloat(count - 1))
     }
 
     private func railY(index: Int, count: Int, height: CGFloat) -> CGFloat {
