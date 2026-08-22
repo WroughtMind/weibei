@@ -1033,6 +1033,7 @@ struct ReaderView: View {
                         adaptsDocumentColors: store.adaptImportedDocumentColors,
                         contentRailTarget: htmlContentRailTarget,
                         selectionAskMarks: selectionAskMarksJSON(for: item.id),
+                        selectionRemarkMarks: selectionRemarkMarksJSON(store.selectionRemarkRecords(forItemID: item.id)),
                         onContentRailChange: applyHTMLContentRailSections,
                         onContentRailActiveChange: applyHTMLContentRailActiveID,
                         onAppShortcut: { key, modifiers in store.handleAppShortcut(key: key, modifiers: modifiers) },
@@ -1040,6 +1041,9 @@ struct ReaderView: View {
                             if let uuid = UUID(uuidString: threadID) {
                                 store.openSelectionAskThread(uuid, jumpToConversation: false)
                             }
+                        },
+                        onSelectionRemarkMark: { recordID in
+                            store.openSelectionRemarkRecord(recordID, anchor: nil)
                         }
                     ) { text, anchor in
                         store.updateSelection(text, source: .document, anchor: anchor)
@@ -1116,6 +1120,9 @@ struct ReaderView: View {
             appearanceMode: store.appearanceMode,
             interfaceLanguage: store.interfaceLanguage,
             selectionAskMarks: selectionAskMarksJSON(for: store.selectedMaterialItem?.id ?? ""),
+            selectionRemarkMarks: selectionRemarkMarksJSON(
+                store.selectionRemarkRecords(forItemID: store.selectedMaterialItem?.id ?? "")
+            ),
             onWikiLink: { title in store.openOrCreateWikiNote(title: title) },
             onSourceReference: { reference in store.openSourceReference(reference) },
             onAppShortcut: { key, modifiers in store.handleAppShortcut(key: key, modifiers: modifiers) },
@@ -1123,6 +1130,9 @@ struct ReaderView: View {
                 if let uuid = UUID(uuidString: threadID) {
                     store.openSelectionAskThread(uuid, jumpToConversation: false)
                 }
+            },
+            onSelectionRemarkMark: { recordID in
+                store.openSelectionRemarkRecord(recordID, anchor: nil)
             }
         ) { text, anchor in
             store.updateSelection(text, source: .document, anchor: anchor)
@@ -2360,10 +2370,13 @@ struct WebReaderRepresentable: NSViewRepresentable {
     var onAppShortcut: (String, NSEvent.ModifierFlags) -> Bool
     var onSelectionChange: (String, CGPoint?) -> Void
     var onSelectionAskMark: (String) -> Void = { _ in }
+    var selectionRemarkMarks: String = "[]"
+    var onSelectionRemarkMark: (String) -> Void = { _ in }
 
     private static let scriptMessageNames = [
         "selection",
         "selectionAskMark",
+        "remarkMark",
         "appShortcut",
         "contentRailSections",
         "contentRailActive"
@@ -2376,10 +2389,12 @@ struct WebReaderRepresentable: NSViewRepresentable {
         adaptsDocumentColors: Bool = true,
         contentRailTarget: WebReaderContentRailTarget? = nil,
         selectionAskMarks: String = "[]",
+        selectionRemarkMarks: String = "[]",
         onContentRailChange: @escaping ([WebReaderContentRailSection]) -> Void = { _ in },
         onContentRailActiveChange: @escaping (WebReaderContentRailActiveChange) -> Void = { _ in },
         onAppShortcut: @escaping (String, NSEvent.ModifierFlags) -> Bool = { _, _ in false },
         onSelectionAskMark: @escaping (String) -> Void = { _ in },
+        onSelectionRemarkMark: @escaping (String) -> Void = { _ in },
         onSelectionChange: @escaping (String, CGPoint?) -> Void
     ) {
         self.html = html
@@ -2389,10 +2404,12 @@ struct WebReaderRepresentable: NSViewRepresentable {
         self.adaptsDocumentColors = adaptsDocumentColors
         self.contentRailTarget = contentRailTarget
         self.selectionAskMarks = selectionAskMarks
+        self.selectionRemarkMarks = selectionRemarkMarks
         self.onContentRailChange = onContentRailChange
         self.onContentRailActiveChange = onContentRailActiveChange
         self.onAppShortcut = onAppShortcut
         self.onSelectionAskMark = onSelectionAskMark
+        self.onSelectionRemarkMark = onSelectionRemarkMark
         self.onSelectionChange = onSelectionChange
     }
 
@@ -2403,10 +2420,12 @@ struct WebReaderRepresentable: NSViewRepresentable {
         adaptsDocumentColors: Bool = true,
         contentRailTarget: WebReaderContentRailTarget? = nil,
         selectionAskMarks: String = "[]",
+        selectionRemarkMarks: String = "[]",
         onContentRailChange: @escaping ([WebReaderContentRailSection]) -> Void = { _ in },
         onContentRailActiveChange: @escaping (WebReaderContentRailActiveChange) -> Void = { _ in },
         onAppShortcut: @escaping (String, NSEvent.ModifierFlags) -> Bool = { _, _ in false },
         onSelectionAskMark: @escaping (String) -> Void = { _ in },
+        onSelectionRemarkMark: @escaping (String) -> Void = { _ in },
         onSelectionChange: @escaping (String, CGPoint?) -> Void
     ) {
         self.html = nil
@@ -2416,10 +2435,12 @@ struct WebReaderRepresentable: NSViewRepresentable {
         self.adaptsDocumentColors = adaptsDocumentColors
         self.contentRailTarget = contentRailTarget
         self.selectionAskMarks = selectionAskMarks
+        self.selectionRemarkMarks = selectionRemarkMarks
         self.onContentRailChange = onContentRailChange
         self.onContentRailActiveChange = onContentRailActiveChange
         self.onAppShortcut = onAppShortcut
         self.onSelectionAskMark = onSelectionAskMark
+        self.onSelectionRemarkMark = onSelectionRemarkMark
         self.onSelectionChange = onSelectionChange
     }
 
@@ -2448,7 +2469,7 @@ struct WebReaderRepresentable: NSViewRepresentable {
             forMainFrameOnly: true
         ))
         controller.addUserScript(WKUserScript(
-            source: Self.selectionScript,
+            source: Self.selectionScript + Self.readerRemarkMarksScript,
             injectionTime: .atDocumentEnd,
             forMainFrameOnly: false
         ))
@@ -2493,8 +2514,10 @@ struct WebReaderRepresentable: NSViewRepresentable {
         context.coordinator.onContentRailChange = onContentRailChange
         context.coordinator.onContentRailActiveChange = onContentRailActiveChange
         context.coordinator.onSelectionAskMark = onSelectionAskMark
+        context.coordinator.onSelectionRemarkMark = onSelectionRemarkMark
         context.coordinator.contentRailTarget = contentRailTarget
         context.coordinator.selectionAskMarks = selectionAskMarks
+        context.coordinator.selectionRemarkMarks = selectionRemarkMarks
         if context.coordinator.appearanceMode != appearanceMode
             || context.coordinator.adaptsDocumentColors != adaptsDocumentColors {
             context.coordinator.appearanceMode = appearanceMode
@@ -3048,6 +3071,9 @@ struct WebReaderRepresentable: NSViewRepresentable {
         var appearanceMode: WeiBeiAppearanceMode = .paper
         var adaptsDocumentColors = true
         var selectionAskMarks = "[]"
+        var selectionRemarkMarks = "[]"
+        var onSelectionRemarkMark: (String) -> Void = { _ in }
+        var lastAppliedSelectionRemarkMarks = ""
         var htmlReadTask: Task<Data?, Never>?
         var htmlLoadTask: Task<Void, Never>?
         var htmlLoadRequestID: UUID?
@@ -3148,15 +3174,20 @@ struct WebReaderRepresentable: NSViewRepresentable {
                 guard let self, let view else { return }
                 self.searchAndMarksApplyScheduled = false
                 self.applySearch(in: view)
-                self.applySelectionAskMarksIfNeeded()
+                self.applySelectionMarksIfNeeded()
             }
         }
 
-        func applySelectionAskMarksIfNeeded() {
-            guard let webView, selectionAskMarks != lastAppliedSelectionAskMarks else { return }
-            lastAppliedSelectionAskMarks = selectionAskMarks
-            let js = "window.WeiBeiSelectionAskMarks && window.WeiBeiSelectionAskMarks.apply(\(selectionAskMarks));"
-            webView.evaluateJavaScript(js, completionHandler: nil)
+        func applySelectionMarksIfNeeded() {
+            guard let webView else { return }
+            if selectionAskMarks != lastAppliedSelectionAskMarks {
+                lastAppliedSelectionAskMarks = selectionAskMarks
+                webView.evaluateJavaScript("window.WeiBeiSelectionAskMarks && window.WeiBeiSelectionAskMarks.apply(\(selectionAskMarks));", completionHandler: nil)
+            }
+            if selectionRemarkMarks != lastAppliedSelectionRemarkMarks {
+                lastAppliedSelectionRemarkMarks = selectionRemarkMarks
+                webView.evaluateJavaScript("window.WeiBeiRemarkMarks && window.WeiBeiRemarkMarks.apply(\(selectionRemarkMarks));", completionHandler: nil)
+            }
         }
 
         func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
@@ -3179,6 +3210,12 @@ struct WebReaderRepresentable: NSViewRepresentable {
                 Task { @MainActor in
                     self.onSelectionAskMark(threadID)
                 }
+                return
+            }
+            if message.name == "remarkMark",
+               let body = message.body as? [String: Any],
+               let recordID = body["recordId"] as? String, !recordID.isEmpty {
+                Task { @MainActor in self.onSelectionRemarkMark(recordID) }
                 return
             }
 
@@ -3269,10 +3306,11 @@ struct WebReaderRepresentable: NSViewRepresentable {
             lastAppliedSearchQuery = ""
             lastAppliedContentRailTargetRequestID = nil
             lastAppliedSelectionAskMarks = ""
+            lastAppliedSelectionRemarkMarks = ""
             webView.evaluateJavaScript(WebReaderRepresentable.readerStyleScript(for: appearanceMode, adaptsDocumentColors: adaptsDocumentColors))
             applySearch(in: webView)
             applyContentRailTarget(in: webView)
-            applySelectionAskMarksIfNeeded()
+            applySelectionMarksIfNeeded()
         }
 
         func applySearch(in view: WKWebView) {
@@ -3321,10 +3359,12 @@ private struct MarkdownDocumentReaderView: View {
     var appearanceMode: WeiBeiAppearanceMode = .paper
     var interfaceLanguage: WeiBeiInterfaceLanguage = .chinese
     var selectionAskMarks: String = "[]"
+    var selectionRemarkMarks: String = "[]"
     var onWikiLink: (String) -> Void = { _ in }
     var onSourceReference: (String) -> Void = { _ in }
     var onAppShortcut: (String, NSEvent.ModifierFlags) -> Bool = { _, _ in false }
     var onSelectionAskMark: (String) -> Void = { _ in }
+    var onSelectionRemarkMark: (String) -> Void = { _ in }
     var onSelectionChange: (String, CGPoint?) -> Void
     @State private var command: NoteEditorCommand?
 
@@ -3344,7 +3384,9 @@ private struct MarkdownDocumentReaderView: View {
             onAppShortcut: onAppShortcut,
             onSearchResult: { _, _ in },
             selectionAskMarks: selectionAskMarks,
-            onSelectionAskMark: onSelectionAskMark
+            onSelectionAskMark: onSelectionAskMark,
+            selectionRemarkMarks: selectionRemarkMarks,
+            onSelectionRemarkMark: onSelectionRemarkMark
         )
     }
 }

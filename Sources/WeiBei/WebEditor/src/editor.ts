@@ -130,6 +130,7 @@ let streamingRawBody: string | null = null;
 // instead of re-sending the whole document on every streaming push.
 let streamingFullTextBase: string | null = null;
 let selectionAskMarks: any[] = [];
+let selectionRemarkMarks: any[] = [];
 let decorationGeneration = 0;
 const insertionCursorMarker = '{{WEIBEI_CURSOR}}';
 const insertionSelectionStartMarker = '{{WEIBEI_SELECT_START}}';
@@ -1415,6 +1416,39 @@ const normalizeSelectionAskMarks = (marks: any) => (Array.isArray(marks) ? marks
   }))
   .filter((mark) => mark.id && mark.text.length >= 4);
 
+// 记过原文标记:句末朱砂短棒(样式由原生 bootstrap 注入),点击回访续记。
+const normalizeSelectionRemarkMarks = (marks: any) => (Array.isArray(marks) ? marks : [])
+  .map((mark) => ({
+    id: String(mark?.id || ''),
+    text: String(mark?.text || '').trim(),
+  }))
+  .filter((mark) => mark.id && mark.text.length >= 2);
+
+const decorateSelectionRemarkMarks = (decorations: any, text: any, pos: any, counts: any) => {
+  if (isEditable || selectionRemarkMarks.length === 0) return;
+  selectionRemarkMarks.forEach((mark) => {
+    let start = 0;
+    let count = counts.get(mark.id) || 0;
+    while (count < 3) {
+      const index = text.indexOf(mark.text, start);
+      if (index < 0) break;
+      addRangeDecoration(
+        decorations,
+        pos + index,
+        pos + index + mark.text.length,
+        'weibei-remark-mark',
+        {
+          'data-record-id': mark.id,
+          title: '回访这句的札记',
+        },
+      );
+      count += 1;
+      start = index + mark.text.length;
+    }
+    counts.set(mark.id, count);
+  });
+};
+
 const decorateSelectionAskMarks = (decorations: any, text: any, pos: any, counts: any) => {
   if (isEditable || selectionAskMarks.length === 0) return;
   selectionAskMarks.forEach((mark) => {
@@ -1653,6 +1687,16 @@ const activateSelectionAskMark = (target: any) => {
   const threadId = mark?.getAttribute('data-thread-id') || '';
   if (!threadId) return false;
   post('selectionAskMark', { threadId, text: mark!.textContent || '' });
+  return true;
+};
+
+const activateSelectionRemarkMark = (target: any) => {
+  const mark = target instanceof Element
+    ? target.closest('.weibei-remark-mark[data-record-id]')
+    : null;
+  const recordId = mark?.getAttribute('data-record-id') || '';
+  if (!recordId) return false;
+  post('remarkMark', { recordId, text: mark!.textContent || '' });
   return true;
 };
 
@@ -2607,7 +2651,8 @@ const weiBeiDialectPlugin = $prose(() => new Plugin({
       return true;
     } : () => false,
     handleClick(view, pos, event) {
-      return activateSelectionAskMark(event.target)
+      return activateSelectionRemarkMark(event.target)
+        || activateSelectionAskMark(event.target)
         || activateWikiLink(event.target)
         || activateSourceReference(event.target)
         || toggleFoldedCallout(event.target);
@@ -2665,6 +2710,7 @@ const weiBeiDialectPlugin = $prose(() => new Plugin({
       const decorations: any[] = [];
       const commentState = { open: false };
       const selectionAskCounts = new Map();
+      const selectionRemarkCounts = new Map();
 
       state.doc.descendants((node, pos, parent) => {
         addEditorMetric(checkMetrics, 'decorationNodes');
@@ -2695,6 +2741,7 @@ const weiBeiDialectPlugin = $prose(() => new Plugin({
           decorateSourceReferences(decorations, text, textPos);
           decorateTagsAndBlocks(decorations, text, textPos);
           decorateSelectionAskMarks(decorations, text, textPos, selectionAskCounts);
+          decorateSelectionRemarkMarks(decorations, text, textPos, selectionRemarkCounts);
 
         }
 
@@ -2859,6 +2906,16 @@ const ensureEditor = () => {
 
 const setSelectionAskMarksInternal = (marks: any) => {
   selectionAskMarks = normalizeSelectionAskMarks(marks);
+  decorationGeneration += 1;
+  if (!editor) return;
+  editor.action((ctx) => {
+    const view = ctx.get(editorViewCtx);
+    view.dispatch(view.state.tr.setMeta('weibeiSelectionAskMarksChanged', true));
+  });
+};
+
+const setSelectionRemarkMarksInternal = (marks: any) => {
+  selectionRemarkMarks = normalizeSelectionRemarkMarks(marks);
   decorationGeneration += 1;
   if (!editor) return;
   editor.action((ctx) => {
@@ -3210,6 +3267,7 @@ const setDocumentIdentityInternal = (documentID: string, documentGeneration: num
   pendingImagePickers.clear();
   pendingAttachments.clear();
   setSelectionAskMarksInternal([]);
+  setSelectionRemarkMarksInternal([]);
 };
 
 const setEditableInternal = (next: unknown) => {
@@ -3419,6 +3477,7 @@ window.WeiBeiEditor = {
   focus: focusInternal,
   scrollToHeading: scrollToHeadingInternal,
   setSelectionAskMarks: setSelectionAskMarksInternal,
+  setSelectionRemarkMarks: setSelectionRemarkMarksInternal,
   setMarkdownBaseURL: (next: any) => {
     markdownBaseURL = next || '';
     refreshRenderedImages();
@@ -3648,7 +3707,8 @@ editorBuilder
     }, true);
     document.addEventListener('click', (event) => {
       if (isEditable && event.target instanceof Element && event.target.closest('.weibei-structured-node')) return;
-      if (!activateSelectionAskMark(event.target)
+      if (!activateSelectionRemarkMark(event.target)
+          && !activateSelectionAskMark(event.target)
           && !activateWikiLink(event.target)
           && !activateSourceReference(event.target)
           && !toggleFoldedCallout(event.target)) return;
