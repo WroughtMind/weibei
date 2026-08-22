@@ -6,6 +6,7 @@ struct ContentView: View {
     /// Intentionally does NOT observe `libraryDrawer` / `paneState` / `interaction` —
     /// those chrome surfaces rebuild dedicated child layers so reader/agent/notes stay put.
     @EnvironmentObject private var store: WorkspaceStore
+    @Environment(\.weiBeiTextScale) private var textScale
     @FocusState private var focusedPane: PaneFocus?
     @FocusState private var topSearchFocused: Bool
     @State private var floatingAgentExpanded = false
@@ -86,7 +87,7 @@ struct ContentView: View {
                 if store.importantOperationError != nil || store.transientNoteStatus != nil {
                     WorkspaceStatusBanner()
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-                        .padding(.top, WeiBeiMetric.topBarHeight + 10)
+                        .padding(.top, WeiBeiMetric.topBarHeight * textScale + 10)
                         .zIndex(120)
                         .transition(WeiBeiTransition.floating)
                 }
@@ -273,6 +274,7 @@ private struct PaneChromeFocusBridge: View {
 private struct GlobalFloatingSelectionLayer: View {
     @EnvironmentObject private var store: WorkspaceStore
     @EnvironmentObject private var interaction: WorkspaceInteractionState
+    @Environment(\.weiBeiTextScale) private var textScale
     @Binding var expanded: Bool
     let canvasSize: CGSize
 
@@ -325,7 +327,7 @@ private struct GlobalFloatingSelectionLayer: View {
         let point = SelectionFloatingAgentPlacement.position(
             anchor: interaction.selectionAnchor.map { FloatingAgentCoordinate(x: Double($0.x), y: Double($0.y)) },
             canvas: FloatingAgentCoordinate(x: Double(canvasSize.width), y: Double(canvasSize.height)),
-            topInset: Double(WeiBeiMetric.topBarHeight),
+            topInset: Double(WeiBeiMetric.topBarHeight * textScale),
             surfaceHalfWidth: expanded
                 ? SelectionFloatingAgentPlacement.expandedHalfWidth
                 : (store.selectionContext?.isReplaceableNoteSelection == true
@@ -493,6 +495,7 @@ private struct UnifiedTopBarView: View {
     @EnvironmentObject private var paneState: WorkspacePaneState
     @EnvironmentObject private var interaction: WorkspaceInteractionState
     @Environment(\.openSettings) private var openSettings
+    @Environment(\.weiBeiTextScale) private var textScale
     let isImmersiveLayout: Bool
     let isFullScreen: Bool
     var searchFocused: FocusState<Bool>.Binding
@@ -575,7 +578,7 @@ private struct UnifiedTopBarView: View {
     }
 
     private var barHeight: CGFloat {
-        WeiBeiMetric.topBarHeight
+        WeiBeiMetric.topBarHeight * textScale
     }
 
     private var leftInset: CGFloat {
@@ -587,7 +590,7 @@ private struct UnifiedTopBarView: View {
     }
 
     private var controlHeight: CGFloat {
-        28
+        28 * textScale
     }
 
     private var shouldShowSearchAction: Bool {

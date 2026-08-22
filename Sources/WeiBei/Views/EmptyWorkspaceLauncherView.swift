@@ -16,6 +16,7 @@ private enum EmptyWorkspaceLayoutMetrics {
 struct EmptyWorkspaceLauncherView: View {
     @EnvironmentObject private var store: WorkspaceStore
     @Environment(\.weibeiReduceMotion) private var reduceMotion
+    @Environment(\.weiBeiTextScale) private var textScale
 
     @State private var selectedInspirationID: String?
     /// Bumped on theme change so a long-lived NSHostingView cannot keep a stale paper snapshot.
@@ -39,8 +40,8 @@ struct EmptyWorkspaceLauncherView: View {
                 ZStack {
                     if !mode.isGlass {
                         EmptyWorkspacePaperField(mode: mode, compact: compact)
-                            .frame(height: geometry.size.height + WeiBeiMetric.topBarHeight)
-                            .offset(y: -WeiBeiMetric.topBarHeight)
+                            .frame(height: geometry.size.height + WeiBeiMetric.topBarHeight * textScale)
+                            .offset(y: -WeiBeiMetric.topBarHeight * textScale)
                     }
 
                     workspaceContent(
@@ -160,8 +161,8 @@ struct EmptyWorkspaceLauncherView: View {
 
     private func greeting(at date: Date, compact: Bool) -> some View {
         Text(EmptyWorkspaceDayPeriod.current(at: date).greeting(language: store.interfaceLanguage))
-            .weiBeiBrandFont(language: store.interfaceLanguage, size: compact ? 14.5 : 16, weight: .regular)
-            .tracking(store.interfaceLanguage == .chinese ? 0.8 : 0.35)
+            .weiBeiBrandFont(language: store.interfaceLanguage, size: compact ? 23 : 25.5, weight: .regular)
+            .tracking(store.interfaceLanguage == .chinese ? 1.3 : 0.55)
             .foregroundStyle(EmptyWorkspaceResolvedColor.secondaryInk(liveAppearanceMode).opacity(0.92))
             .multilineTextAlignment(.center)
             .fixedSize(horizontal: false, vertical: true)
