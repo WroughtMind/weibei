@@ -2375,7 +2375,7 @@ struct FloatingSelectionAgentView: View {
             }
         }
         .onChange(of: interaction.floatingComposerMode) { _, mode in
-            if mode == .ask { draftFocused = true }
+            if mode == .ask { focusAskComposerUntilFocused() }
         }
     }
 
@@ -2864,8 +2864,17 @@ struct FloatingSelectionAgentView: View {
             store.askSelection()
             draftFocused = true
         }
-        // 输入框随展开动画挂载,同步设焦点会丢;延迟落焦,点完"问"直接打字。
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { draftFocused = true }
+        focusAskComposerUntilFocused()
+    }
+
+    /// 展开动画/挂载时序竞态会让单次设焦点丢失;分次重试直到浮层仍在问模式。
+    private func focusAskComposerUntilFocused(attempt: Int = 0) {
+        guard attempt < 5 else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
+            guard showsExpandedBody, interaction.floatingComposerMode == .ask else { return }
+            draftFocused = true
+            focusAskComposerUntilFocused(attempt: attempt + 1)
+        }
     }
 
     /// 胶囊"记":展开共用浮层进入札记模式,不建提问线程、不带附件。

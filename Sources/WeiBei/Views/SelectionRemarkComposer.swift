@@ -82,9 +82,15 @@ struct SelectionRemarkField: View {
             focused: focused,
             showsChrome: false
         )
-        .onAppear {
-            // 浮层展开动画挂载后再抢焦点,同步设会丢
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { focused = true }
+        .onAppear { focusUntilFocused(attempt: 0) }
+    }
+
+    /// 展开动画/挂载时序竞态会让单次设焦点丢失;分次重试直到真正聚焦。
+    private func focusUntilFocused(attempt: Int) {
+        guard attempt < 5 else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
+            if focused != true { focused = true }
+            focusUntilFocused(attempt: attempt + 1)
         }
     }
 }
