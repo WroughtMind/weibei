@@ -410,7 +410,7 @@ private struct WorkspaceStatusBanner: View {
                     _ = store.retryWorkspaceSave()
                 } label: {
                     Text(store.ui("重试", "Retry"))
-                        .weiBeiText(11, weight: .semibold)
+                        .weiBeiText(12, weight: .semibold)
                         .foregroundStyle(WeiBeiTheme.cinnabar)
                         .contentShape(Rectangle())
                 }
@@ -421,7 +421,7 @@ private struct WorkspaceStatusBanner: View {
                     store.dismissImportantOperationError()
                 } label: {
                     Image(systemName: "xmark")
-                        .weiBeiText(10, weight: .semibold)
+                        .weiBeiText(10.5, weight: .semibold)
                         .foregroundStyle(WeiBeiTheme.secondaryInk)
                         .contentShape(Rectangle())
                 }
@@ -537,10 +537,10 @@ private struct UnifiedTopBarView: View {
                     "",
                     text: $store.readerSearch,
                     prompt: Text(store.ui("资料内搜索", "Search in material"))
-                        .font(.system(size: 12))
                         .foregroundStyle(WeiBeiTheme.placeholderInk)
                 )
                     .textFieldStyle(.plain)
+                    .weiBeiText(12)
                     .focused(searchFocused)
                     .foregroundColor(WeiBeiTheme.ink)
                     .foregroundStyle(WeiBeiTheme.ink)

@@ -395,7 +395,7 @@ private struct EmptyWorkspaceInspirationView: View {
                     inspirationContent
 
                     Text(inspiration.credit)
-                        .weiBeiText(compact ? 10.5 : 11.5, weight: .medium, design: .serif)
+                        .weiBeiText(compact ? 10.5 : 12, weight: .medium)
                         .foregroundStyle(WeiBeiTheme.secondaryInk)
                         .multilineTextAlignment(.center)
                         .lineLimit(2)
@@ -630,7 +630,7 @@ private struct LibraryPlacementNoticeCard: View {
                 "课程资料库文件夹将安放在这里，可现在更换，之后随时能在设置里改。",
                 "Your course library folder will live here — you can move it now or later in Settings."
             ))
-            .weiBeiText(11.5)
+            .weiBeiText(12)
             .foregroundStyle(WeiBeiTheme.secondaryInk)
             .multilineTextAlignment(.center)
             .fixedSize(horizontal: false, vertical: true)

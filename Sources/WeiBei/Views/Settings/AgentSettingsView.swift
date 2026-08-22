@@ -71,10 +71,10 @@ extension SettingsView {
                             set: { store.updateAgentBaseURL($0) }
                         ),
                         prompt: Text(baseURLPlaceholder)
-                            .font(.system(size: 13))
                             .foregroundStyle(WeiBeiTheme.placeholderInk)
                     )
                     .textFieldStyle(.plain)
+                    .weiBeiText(13)
                     .foregroundColor(WeiBeiTheme.ink)
                     .weiBeiText(13)
                     .weibeiInputSurface(active: false, height: 38)
@@ -141,10 +141,10 @@ extension SettingsView {
                 "",
                 text: $profileRenameDraft,
                 prompt: Text(store.ui("配置名称", "Profile name"))
-                    .font(.system(size: 13))
                     .foregroundStyle(WeiBeiTheme.placeholderInk)
             )
             .textFieldStyle(.plain)
+            .weiBeiText(13)
             .foregroundColor(WeiBeiTheme.ink)
             .weiBeiText(13)
             .weibeiInputSurface(active: true, height: 30)
@@ -246,10 +246,10 @@ extension SettingsView {
                     "",
                     text: $apiKeyDraft,
                     prompt: Text(store.ui("粘贴 API Key", "Paste API key"))
-                        .font(.system(size: 13))
                         .foregroundStyle(WeiBeiTheme.placeholderInk)
                 )
                 .textFieldStyle(.plain)
+                .weiBeiText(13)
                 .foregroundColor(WeiBeiTheme.ink)
                 .focused($focusedField, equals: .apiKey)
                 .weiBeiText(13)
@@ -446,10 +446,10 @@ extension SettingsView {
                             "",
                             text: $oauthService.promptValue,
                             prompt: Text(prompt.placeholder ?? "")
-                                .font(.system(size: 13))
-                                .foregroundStyle(WeiBeiTheme.placeholderInk)
+                                                                .foregroundStyle(WeiBeiTheme.placeholderInk)
                         )
                         .textFieldStyle(.plain)
+                        .weiBeiText(13)
                         .foregroundColor(WeiBeiTheme.ink)
                         .weiBeiText(13)
                         .weibeiInputSurface(active: true, height: 38)
@@ -460,10 +460,10 @@ extension SettingsView {
                             "",
                             text: $oauthService.promptValue,
                             prompt: Text(prompt.placeholder ?? "")
-                                .font(.system(size: 13))
-                                .foregroundStyle(WeiBeiTheme.placeholderInk)
+                                                                .foregroundStyle(WeiBeiTheme.placeholderInk)
                         )
                         .textFieldStyle(.plain)
+                        .weiBeiText(13)
                         .foregroundColor(WeiBeiTheme.ink)
                         .weiBeiText(13)
                         .weibeiInputSurface(active: true, height: 38)
@@ -597,10 +597,10 @@ extension SettingsView {
                     set: { store.updateModelName($0) }
                 ),
                 prompt: Text(oauthService.models(providerID: activePiProviderID).first ?? "model-id")
-                    .font(.system(size: 13))
                     .foregroundStyle(WeiBeiTheme.placeholderInk)
             )
             .textFieldStyle(.plain)
+            .weiBeiText(13)
             .foregroundColor(WeiBeiTheme.ink)
             .weiBeiText(13)
             .weibeiInputSurface(active: true, height: 38)

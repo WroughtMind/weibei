@@ -462,20 +462,20 @@ private struct ContentRailPreviewCard: View {
 
             VStack(alignment: .leading, spacing: 7) {
                 Text(label)
-                    .weiBeiText(9.5, weight: .semibold, design: .serif)
+                    .weiBeiText(9.5, weight: .semibold)
                     .tracking(0.7)
                     .foregroundStyle(WeiBeiTheme.cinnabar.opacity(0.78))
                     .lineLimit(1)
 
                 Text(item.title)
-                    .weiBeiText(13.5, weight: .semibold)
+                    .weiBeiText(13, weight: .semibold)
                     .foregroundStyle(WeiBeiTheme.ink)
                     .lineLimit(2)
                     .frame(maxWidth: .infinity, alignment: .leading)
 
                 if !item.excerpt.isEmpty {
                     Text(item.excerpt)
-                        .weiBeiText(12.5)
+                        .weiBeiText(12)
                         .lineSpacing(3)
                         .foregroundStyle(WeiBeiTheme.secondaryInk)
                         .lineLimit(showsPreviewImage ? 3 : 4)

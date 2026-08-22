@@ -152,7 +152,7 @@ struct SettingsView: View {
     private var settingsSidebar: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text(store.ui("设置", "Settings"))
-                .weiBeiBrandFont(language: store.interfaceLanguage, size: 20, weight: .semibold)
+                .weiBeiBrandFont(language: store.interfaceLanguage, size: 22, weight: .semibold)
                 .foregroundStyle(WeiBeiTheme.ink)
                 .padding(.horizontal, 22)
                 .padding(.top, 22)
@@ -199,7 +199,7 @@ struct SettingsView: View {
     private var settingsHeader: some View {
         HStack(alignment: .center) {
             Text(selectedSection.title(store))
-                .weiBeiBrandFont(language: store.interfaceLanguage, size: 17, weight: .semibold)
+                .weiBeiBrandFont(language: store.interfaceLanguage, size: 18, weight: .semibold)
                 .foregroundStyle(WeiBeiTheme.ink)
             Spacer()
         }
@@ -604,7 +604,7 @@ struct SettingsView: View {
             Text(recording
                  ? store.ui("按下…", "Press…")
                  : chord.display)
-                .weiBeiText(11, weight: .semibold, design: .monospaced)
+                .weiBeiText(12, weight: .semibold, design: .monospaced)
                 .foregroundStyle(recording ? WeiBeiTheme.cinnabar : WeiBeiTheme.secondaryInk)
                 .padding(.horizontal, 7)
                 .frame(height: 22)
@@ -780,7 +780,7 @@ struct SettingsView: View {
 
             ScrollView {
                 Text(inspirationSourcesLedgerText)
-                    .font(.system(size: 11, design: .monospaced))
+                    .weiBeiText(10.5, design: .monospaced)
                     .foregroundStyle(WeiBeiTheme.secondaryInk)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(12)
@@ -1127,7 +1127,7 @@ struct SettingsView: View {
     func settingsPill(title: String, icon: String, active: Bool) -> some View {
         HStack(spacing: 7) {
             Image(systemName: icon)
-                .weiBeiText(11, weight: .semibold)
+                .weiBeiText(12, weight: .semibold)
             Text(title)
                 .font(SettingsType.pill)
                 .lineLimit(1)
@@ -1169,7 +1169,7 @@ struct SettingsView: View {
                     .font(SettingsType.menu)
                     .lineLimit(1)
                 Image(systemName: "chevron.down")
-                    .weiBeiText(8, weight: .bold)
+                    .weiBeiText(9.5, weight: .bold)
             }
             .foregroundStyle(WeiBeiTheme.ink)
             .padding(.horizontal, 9)

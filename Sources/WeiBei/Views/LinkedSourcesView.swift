@@ -32,9 +32,9 @@ struct LinkedSourcesPopover: View {
                 HStack(alignment: .firstTextBaseline) {
                     VStack(alignment: .leading, spacing: 3) {
                         Text(store.ui("这份笔记的资料", "Sources for this note"))
-                            .weiBeiBrandFont(language: store.interfaceLanguage, size: 16, weight: .semibold)
+                            .weiBeiBrandFont(language: store.interfaceLanguage, size: 15, weight: .semibold)
                         Text(store.ui("选中的资料会一直跟随这份笔记", "Selected sources stay with this note"))
-                            .font(.caption)
+                            .weiBeiText(10.5)
                             .foregroundStyle(WeiBeiTheme.secondaryInk)
                     }
                     Spacer()
@@ -65,7 +65,7 @@ struct LinkedSourcesPopover: View {
                     ForEach(groupedMaterials, id: \.0) { group in
                         VStack(alignment: .leading, spacing: 4) {
                             Text(group.0)
-                                .weiBeiText(10, weight: .semibold)
+                                .weiBeiText(10.5, weight: .semibold)
                                 .foregroundStyle(WeiBeiTheme.tertiaryInk)
                                 .padding(.horizontal, 7)
                             ForEach(group.1) { item in
@@ -75,7 +75,7 @@ struct LinkedSourcesPopover: View {
                     }
                     if materials.isEmpty {
                         Text(store.ui("没有匹配的资料", "No matching sources"))
-                            .font(.caption)
+                            .weiBeiText(10.5)
                             .foregroundStyle(WeiBeiTheme.secondaryInk)
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 36)
@@ -140,14 +140,14 @@ struct LinkedSourcesPopover: View {
                     Text(store.displayTitle(for: item)).lineLimit(1)
                     if !showsCurrentLabel {
                         Text(item.url?.deletingLastPathComponent().path.replacingOccurrences(of: NSHomeDirectory(), with: "~") ?? store.displaySubtitle(for: item))
-                            .font(.caption2)
+                            .weiBeiText(9.5)
                             .foregroundStyle(WeiBeiTheme.secondaryInk)
                             .lineLimit(1)
                     }
                 }
                 Spacer()
                 Text(showsCurrentLabel ? store.ui("当前", "Open") : item.kind.label(language: store.interfaceLanguage))
-                    .font(.caption2)
+                    .weiBeiText(9.5)
                     .foregroundStyle(WeiBeiTheme.tertiaryInk)
             }
             .contentShape(Rectangle())

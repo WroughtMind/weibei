@@ -10487,7 +10487,7 @@ final class WorkspaceStore: ObservableObject {
                 "New file name when choosing Keep Both"
             )
         )
-        keepBothLabel.font = .systemFont(ofSize: 11, weight: .medium)
+        keepBothLabel.font = .systemFont(ofSize: 12, weight: .medium)
         keepBothLabel.textColor = .secondaryLabelColor
         let keepBothNameField = NSTextField(string: suggestedName)
         keepBothNameField.placeholderString = suggestedName
