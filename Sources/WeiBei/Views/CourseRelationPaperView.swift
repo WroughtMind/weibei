@@ -503,9 +503,9 @@ struct CourseRelationPaperView: View {
             .help(store.ui("完整显示关系画布", "Fit the relationship canvas"))
         }
         .foregroundStyle(WeiBeiTheme.ink)
-        .background(WeiBeiTheme.paper.opacity(0.94), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+        .background(WeiBeiTheme.paper.opacity(0.94), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 9, style: .continuous)
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .stroke(WeiBeiTheme.hairline.opacity(0.74), lineWidth: 1)
         )
         .shadow(color: WeiBeiTheme.ink.opacity(0.055), radius: 8, y: 3)
@@ -1083,7 +1083,7 @@ private struct CourseRelationPaperNodeView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .contentShape(Rectangle())
         .opacity(opacity)
-        .background(nodeBackground, in: RoundedRectangle(cornerRadius: 11, style: .continuous))
+        .background(nodeBackground, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
         .overlay(alignment: .bottomLeading) {
             Rectangle()
                 .fill(underlineColor)

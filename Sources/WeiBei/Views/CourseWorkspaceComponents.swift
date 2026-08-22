@@ -468,7 +468,7 @@ struct CourseProjectEntrySheet: View {
         .weibeiEtchedBackground(
             fill: WeiBeiTheme.paperRaised.opacity(0.34),
             stroke: WeiBeiTheme.hairline.opacity(0.3),
-            cornerRadius: 10
+            cornerRadius: 12
         )
     }
 
@@ -544,7 +544,7 @@ struct CourseProjectEntrySheet: View {
         .weibeiEtchedBackground(
             fill: WeiBeiTheme.paperRaised.opacity(0.30),
             stroke: WeiBeiTheme.hairline.opacity(0.28),
-            cornerRadius: 9
+            cornerRadius: 12
         )
     }
 
@@ -566,7 +566,7 @@ struct CourseProjectEntrySheet: View {
         .weibeiEtchedBackground(
             fill: WeiBeiTheme.paperRaised.opacity(0.30),
             stroke: WeiBeiTheme.hairline.opacity(0.28),
-            cornerRadius: 9
+            cornerRadius: 12
         )
     }
 

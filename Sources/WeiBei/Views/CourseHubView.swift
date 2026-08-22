@@ -672,7 +672,7 @@ struct CourseHubView: View {
         .padding(14)
         .background(
             WeiBeiTheme.cinnabarSoft.opacity(0.22),
-            in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+            in: RoundedRectangle(cornerRadius: 12, style: .continuous)
         )
     }
 
@@ -998,7 +998,7 @@ private struct CourseHubContinueActionButtonStyle: ButtonStyle {
             .padding(.horizontal, 20)
             .frame(minWidth: 132, minHeight: 42)
             .background(
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
                     .fill(
                         primary
                             ? WeiBeiTheme.cinnabar.opacity(
@@ -1011,7 +1011,7 @@ private struct CourseHubContinueActionButtonStyle: ButtonStyle {
             )
             .overlay {
                 if !primary {
-                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
                         .stroke(WeiBeiTheme.cinnabar.opacity(0.72), lineWidth: 1)
                 }
             }

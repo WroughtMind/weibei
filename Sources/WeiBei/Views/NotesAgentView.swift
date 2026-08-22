@@ -49,7 +49,7 @@ private extension View {
             .padding(.horizontal, 10)
             .frame(height: 32)
             .background(WeiBeiGlassHeaderBackground(paperOpacity: 0.60, materialOpacity: 0.08))
-            .clipShape(RoundedRectangle(cornerRadius: 7))
+            .clipShape(RoundedRectangle(cornerRadius: 8))
             .overlay(alignment: .bottom) {
                 WeiBeiHeaderHandoffFade(height: 10, opacity: 0.22)
                     .offset(y: 10)
@@ -805,14 +805,14 @@ private struct NotebookCreationPanel: View {
             .foregroundStyle(confirmColor)
             .frame(width: 28, height: 26)
             .background {
-                RoundedRectangle(cornerRadius: 6)
+                RoundedRectangle(cornerRadius: 8)
                     .fill(confirmBackground)
             }
             .overlay {
-                RoundedRectangle(cornerRadius: 6)
+                RoundedRectangle(cornerRadius: 8)
                     .stroke(confirmBorder, lineWidth: 1)
             }
-            .contentShape(RoundedRectangle(cornerRadius: 6))
+            .contentShape(RoundedRectangle(cornerRadius: 8))
             .scaleEffect(hoveredConfirm && canCreate ? 1.04 : 1)
             .opacity(canCreate ? 1 : 0.42)
             .disabled(!canCreate)
@@ -833,14 +833,14 @@ private struct NotebookCreationPanel: View {
             .foregroundStyle(cancelColor)
             .frame(width: 28, height: 26)
             .background {
-                RoundedRectangle(cornerRadius: 6)
+                RoundedRectangle(cornerRadius: 8)
                     .fill(cancelBackground)
             }
             .overlay {
-                RoundedRectangle(cornerRadius: 6)
+                RoundedRectangle(cornerRadius: 8)
                     .stroke(cancelBorder, lineWidth: 1)
             }
-            .contentShape(RoundedRectangle(cornerRadius: 6))
+            .contentShape(RoundedRectangle(cornerRadius: 8))
             .scaleEffect(hoveredCancel ? 1.04 : 1)
             .onHover { hovering in
                 withAnimation(WeiBeiMotion.hover) {
@@ -855,11 +855,11 @@ private struct NotebookCreationPanel: View {
         .frame(maxWidth: .infinity)
         .frame(height: 30)
         .background {
-            RoundedRectangle(cornerRadius: 7)
+            RoundedRectangle(cornerRadius: 8)
                 .fill(WeiBeiTheme.paperInset.opacity(0.24))
         }
         .overlay {
-            RoundedRectangle(cornerRadius: 7)
+            RoundedRectangle(cornerRadius: 8)
                 .stroke(WeiBeiTheme.hairline.opacity(0.34), lineWidth: 1)
         }
         .onExitCommand(perform: cancel)
@@ -2221,9 +2221,9 @@ private struct AgentSelectionAttachmentPill: View {
         .weibeiEtchedBackground(
             fill: WeiBeiTheme.paperInset.opacity(0.32),
             stroke: WeiBeiTheme.hairline.opacity(0.36),
-            cornerRadius: 7
+            cornerRadius: 8
         )
-        .clipShape(RoundedRectangle(cornerRadius: 7))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
     }
 
     private func setPillHovering(_ value: Bool) {
@@ -2443,7 +2443,7 @@ struct FloatingSelectionAgentView: View {
             } label: {
                 Image(systemName: "link")
             }
-            .buttonStyle(WeiBeiIconButtonStyle(active: isFormattingActive("link"), size: 30, cornerRadius: 5))
+            .buttonStyle(WeiBeiIconButtonStyle(active: isFormattingActive("link"), size: 30, cornerRadius: 4))
             .help(store.ui("链接", "Link"))
             .accessibilityLabel(Text(store.ui("链接", "Link")))
             .popover(isPresented: $showsLinkEditor, arrowEdge: .bottom) {
@@ -2492,7 +2492,7 @@ struct FloatingSelectionAgentView: View {
         } label: {
             Image(systemName: "textformat")
         }
-        .buttonStyle(WeiBeiIconButtonStyle(size: 30, cornerRadius: 5))
+        .buttonStyle(WeiBeiIconButtonStyle(size: 30, cornerRadius: 4))
         .help(current.map { store.ui("选中文字字体：\($0.displayName)", "Selected font: \($0.displayName)") }
             ?? store.ui("更改选中文字字体", "Change selected font"))
         .accessibilityLabel(Text(store.ui("更改选中文字字体", "Change selected font")))
@@ -2508,7 +2508,7 @@ struct FloatingSelectionAgentView: View {
         Button { runSelectionCommand(action) } label: {
             Image(systemName: icon)
         }
-        .buttonStyle(WeiBeiIconButtonStyle(active: active ?? isFormattingActive(action), size: 30, cornerRadius: 5))
+        .buttonStyle(WeiBeiIconButtonStyle(active: active ?? isFormattingActive(action), size: 30, cornerRadius: 4))
         .disabled(!enabled)
         .help(label)
         .accessibilityLabel(Text(label))
@@ -2937,13 +2937,13 @@ private struct SelectionFloatChrome: ViewModifier {
             .foregroundColor(WeiBeiTheme.ink)
             .background {
                 WeiBeiEtchedBackdrop(
-                    shape: RoundedRectangle(cornerRadius: expanded ? 12 : 9, style: .continuous),
+                    shape: RoundedRectangle(cornerRadius: expanded ? 12 : 8, style: .continuous),
                     fill: WeiBeiTheme.paperRaised.opacity(0.98),
                     stroke: WeiBeiTheme.hairline.opacity(0.65),
                     showsContactShadow: true
                 )
             }
-            .clipShape(RoundedRectangle(cornerRadius: expanded ? 12 : 9, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: expanded ? 12 : 8, style: .continuous))
             .shadow(color: WeiBeiTheme.ink.opacity(0.06), radius: 8, y: 3)
     }
 }
@@ -3146,10 +3146,10 @@ private struct AgentBubble: View {
             .padding(.horizontal, 15)
             .padding(.vertical, 11)
             .background {
-                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
                     .fill(userBubbleFill)
                     .overlay {
-                        RoundedRectangle(cornerRadius: 9, style: .continuous)
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
                             .strokeBorder(userBubbleStroke, lineWidth: 1)
                     }
                     .shadow(
@@ -3158,7 +3158,7 @@ private struct AgentBubble: View {
                         y: hovering ? 2 : 1.2
                     )
             }
-            .contentShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
             .onTapGesture {
                 copyMessage()
             }
@@ -3845,7 +3845,7 @@ private struct AgentReplyActionCard: View {
         )
         .background {
             WeiBeiEtchedBackdrop(
-                shape: RoundedRectangle(cornerRadius: 10, style: .continuous),
+                shape: RoundedRectangle(cornerRadius: 12, style: .continuous),
                 fill: WeiBeiTheme.paperRaised.opacity(0.82),
                 stroke: WeiBeiTheme.hairline.opacity(0.58),
                 showsContactShadow: true
@@ -4033,9 +4033,9 @@ private struct AgentReplyActionCard: View {
             .weibeiEtchedBackground(
                 fill: WeiBeiTheme.paperInset.opacity(0.34),
                 stroke: WeiBeiTheme.hairline.opacity(0.3),
-                cornerRadius: 6
+                cornerRadius: 8
             )
-            .clipShape(RoundedRectangle(cornerRadius: 6))
+            .clipShape(RoundedRectangle(cornerRadius: 8))
     }
 
     private func performConfirmation() {
@@ -4211,10 +4211,10 @@ private struct AgentReplySourceTagRow: View {
                 .frame(height: 22)
                 .background(
                     WeiBeiTheme.paperInset.opacity(0.48),
-                    in: RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    in: RoundedRectangle(cornerRadius: 8, style: .continuous)
                 )
                 .overlay {
-                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
                         .strokeBorder(WeiBeiTheme.hairline.opacity(0.42), lineWidth: 1)
                 }
                 .buttonStyle(.plain)
@@ -4270,10 +4270,10 @@ private struct AgentReplySourceTag: View {
             .frame(height: 22)
             .background(
                 WeiBeiTheme.paperInset.opacity(hovering ? 0.58 : 0.40),
-                in: RoundedRectangle(cornerRadius: 6, style: .continuous)
+                in: RoundedRectangle(cornerRadius: 8, style: .continuous)
             )
             .overlay {
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
                     .strokeBorder(
                         hovering
                             ? WeiBeiTheme.cinnabar.opacity(0.28)
@@ -4440,9 +4440,9 @@ private struct AgentCitationTag: View {
             .foregroundStyle(foreground)
             .padding(.horizontal, 8)
             .frame(height: 22)
-            .background(background, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+            .background(background, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
             .overlay {
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
                     .strokeBorder(border, lineWidth: 1)
             }
         }

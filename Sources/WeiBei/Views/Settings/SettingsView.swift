@@ -518,9 +518,9 @@ struct SettingsView: View {
                     }
                     .frame(maxWidth: .infinity)
                     .frame(height: 96)
-                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                     .overlay {
-                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
                             .stroke(
                                 selected
                                     ? WeiBeiTheme.cinnabar.opacity(0.90)
@@ -625,9 +625,9 @@ struct SettingsView: View {
                         ? WeiBeiTheme.cinnabar.opacity(0.10)
                         : WeiBeiTheme.paperInset.opacity(0.45)
                 )
-                .clipShape(RoundedRectangle(cornerRadius: 5))
+                .clipShape(RoundedRectangle(cornerRadius: 4))
                 .overlay {
-                    RoundedRectangle(cornerRadius: 5)
+                    RoundedRectangle(cornerRadius: 4)
                         .stroke(
                             recording ? WeiBeiTheme.cinnabar.opacity(0.55) : WeiBeiTheme.hairline.opacity(0.36),
                             lineWidth: 1
@@ -889,9 +889,9 @@ struct SettingsView: View {
                 stroke: WeiBeiTheme.hairline.opacity(0.3),
                 cornerRadius: 8
             )
-            .clipShape(RoundedRectangle(cornerRadius: 7))
+            .clipShape(RoundedRectangle(cornerRadius: 8))
             .overlay {
-                RoundedRectangle(cornerRadius: 7)
+                RoundedRectangle(cornerRadius: 8)
                     .stroke(WeiBeiTheme.hairline.opacity(0.48), lineWidth: 1)
             }
 
@@ -1148,9 +1148,9 @@ struct SettingsView: View {
         .padding(.horizontal, 9)
         .frame(height: 28)
         .background(active ? WeiBeiTheme.paperRaised.opacity(0.54) : WeiBeiTheme.paperInset.opacity(0.38))
-        .clipShape(RoundedRectangle(cornerRadius: 7))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
         .overlay {
-            RoundedRectangle(cornerRadius: 7)
+            RoundedRectangle(cornerRadius: 8)
                 .stroke(WeiBeiTheme.hairline.opacity(active ? 0.46 : 0.24), lineWidth: 1)
         }
     }
@@ -1191,9 +1191,9 @@ struct SettingsView: View {
                 stroke: WeiBeiTheme.hairline.opacity(0.3),
                 cornerRadius: 8
             )
-            .clipShape(RoundedRectangle(cornerRadius: 6))
+            .clipShape(RoundedRectangle(cornerRadius: 8))
             .overlay {
-                RoundedRectangle(cornerRadius: 6)
+                RoundedRectangle(cornerRadius: 8)
                     .stroke(WeiBeiTheme.hairline.opacity(0.48), lineWidth: 1)
             }
         }

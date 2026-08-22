@@ -1240,10 +1240,10 @@ private struct PaneDropTargetView: View {
     var role: WorkspacePaneRole
 
     var body: some View {
-        RoundedRectangle(cornerRadius: 10)
+        RoundedRectangle(cornerRadius: 12)
             .fill(WeiBeiTheme.cinnabarSoft.opacity(store.appearanceMode.isDark ? 0.16 : 0.12))
             .overlay {
-                RoundedRectangle(cornerRadius: 10)
+                RoundedRectangle(cornerRadius: 12)
                     .stroke(WeiBeiTheme.cinnabar.opacity(0.30), lineWidth: 1)
                     .padding(8)
             }
