@@ -111,13 +111,13 @@
 
 .ra-metric-strip strong {
   color: #332d26;
-  font-size: calc(17px * var(--weibei-text-scale, 1));
+  font-size: calc(18px * var(--weibei-text-scale, 1));
   font-weight: 600;
 }
 
 .ra-metric-strip i {
   color: #8a8073;
-  font-size: calc(9px * var(--weibei-text-scale, 1));
+  font-size: calc(9.5px * var(--weibei-text-scale, 1));
   font-style: normal;
 }
 
@@ -155,7 +155,7 @@
   padding: 5px 9px 5px 0;
   color: #675f55;
   border-left: 2px solid transparent;
-  font: calc(10px * var(--weibei-text-scale, 1))/1.5 "SFMono-Regular", Menlo, monospace;
+  font: calc(9.5px * var(--weibei-text-scale, 1))/1.5 "SFMono-Regular", Menlo, monospace;
 }
 
 .ra-code-list pre.is-active {
@@ -214,13 +214,13 @@
 
 .ra-state-frame__values strong {
   color: #332d26;
-  font: calc(14px * var(--weibei-text-scale, 1)) "SFMono-Regular", Menlo, monospace;
+  font: calc(15px * var(--weibei-text-scale, 1)) "SFMono-Regular", Menlo, monospace;
 }
 
 .ra-state-frame > p {
   margin: 0;
   color: #5f564a;
-  font-size: calc(11px * var(--weibei-text-scale, 1));
+  font-size: calc(12px * var(--weibei-text-scale, 1));
   line-height: 1.6;
 }
 
@@ -236,7 +236,7 @@
   color: #5f5549;
   border: 0;
   background: transparent;
-  font-size: calc(10px * var(--weibei-text-scale, 1));
+  font-size: calc(9.5px * var(--weibei-text-scale, 1));
 }
 
 .ra-execution-controls button:disabled {
@@ -309,7 +309,7 @@
 .ra-argument-reader > aside span,
 .ra-causal-track > aside span {
   color: var(--cinnabar);
-  font: calc(9px * var(--weibei-text-scale, 1)) "SFMono-Regular", Menlo, monospace;
+  font: calc(9.5px * var(--weibei-text-scale, 1)) "SFMono-Regular", Menlo, monospace;
   letter-spacing: 0.08em;
 }
 
@@ -389,7 +389,7 @@
 .ra-causal-track__rail small,
 .ra-causal-track__rail span {
   color: #93887a;
-  font-size: calc(8.5px * var(--weibei-text-scale, 1));
+  font-size: calc(9.5px * var(--weibei-text-scale, 1));
 }
 
 .ra-causal-track__rail strong {
@@ -435,7 +435,7 @@
 
 .ra-two-point-lab__readout small {
   color: #8b8073;
-  font: calc(8.5px * var(--weibei-text-scale, 1)) "SFMono-Regular", Menlo, monospace;
+  font: calc(9.5px * var(--weibei-text-scale, 1)) "SFMono-Regular", Menlo, monospace;
 }
 
 .ra-two-point-lab__readout strong {
@@ -462,7 +462,7 @@
 
 .ra-balance-experiment__field > div > span {
   color: #72685b;
-  font-size: calc(10px * var(--weibei-text-scale, 1));
+  font-size: calc(9.5px * var(--weibei-text-scale, 1));
   text-align: center;
 }
 

@@ -43,7 +43,7 @@ button {
   align-items: baseline;
   margin: 0 0 10px 34px;
   color: #6d6253;
-  font-size: calc(14px * var(--weibei-text-scale, 1));
+  font-size: calc(15px * var(--weibei-text-scale, 1));
 }
 
 .answer-head span {
@@ -154,7 +154,7 @@ button {
 .answer-intro p {
   color: #665b4b;
   line-height: 1.6;
-  font-size: calc(14px * var(--weibei-text-scale, 1));
+  font-size: calc(15px * var(--weibei-text-scale, 1));
 }
 
 .slider-field {

@@ -15,7 +15,7 @@
 .argument-page > aside {
   padding: 14px 0;
   color: #8c4c3d;
-  font-size: calc(11px * var(--weibei-text-scale, 1));
+  font-size: calc(12px * var(--weibei-text-scale, 1));
   letter-spacing: 0.1em;
   text-align: center;
   writing-mode: vertical-rl;
@@ -34,7 +34,7 @@
   border: 0;
   border-bottom: 1px solid transparent;
   background: transparent;
-  font-size: calc(14px * var(--weibei-text-scale, 1));
+  font-size: calc(15px * var(--weibei-text-scale, 1));
   line-height: 1.82;
   text-align: left;
   transition: color 120ms ease, background 120ms ease;
@@ -49,7 +49,7 @@
 .argument-copy sup {
   margin-right: 7px;
   color: #a27a6f;
-  font: calc(10px * var(--weibei-text-scale, 1)) ui-monospace, SFMono-Regular, Menlo, monospace;
+  font: calc(9.5px * var(--weibei-text-scale, 1)) ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
 .argument-margin {
@@ -61,7 +61,7 @@
 
 .argument-margin span {
   color: #8c4c3d;
-  font-size: calc(11px * var(--weibei-text-scale, 1));
+  font-size: calc(12px * var(--weibei-text-scale, 1));
 }
 
 .argument-margin strong {
@@ -103,7 +103,7 @@
   border-radius: 50%;
   background: #c8bdb0;
   color: #fffaf1;
-  font: calc(10px * var(--weibei-text-scale, 1)) ui-monospace, SFMono-Regular, Menlo, monospace;
+  font: calc(9.5px * var(--weibei-text-scale, 1)) ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
 .argument-spine button.is-selected span {
@@ -111,7 +111,7 @@
 }
 
 .argument-spine button strong {
-  font-size: calc(11px * var(--weibei-text-scale, 1));
+  font-size: calc(12px * var(--weibei-text-scale, 1));
 }
 
 .argument-spine button i {
@@ -242,14 +242,14 @@
 
 .history-note span {
   color: #8a6337;
-  font-size: calc(10px * var(--weibei-text-scale, 1));
+  font-size: calc(9.5px * var(--weibei-text-scale, 1));
 }
 
 .history-note p,
 .history-note ul {
   margin: 0;
   color: #6b604f;
-  font-size: calc(11px * var(--weibei-text-scale, 1));
+  font-size: calc(12px * var(--weibei-text-scale, 1));
   line-height: 1.45;
 }
 
@@ -268,7 +268,7 @@
   padding: 9px 0;
   border-top: 1px solid rgb(63 107 104 / 18%);
   color: #536966;
-  font-size: calc(11px * var(--weibei-text-scale, 1));
+  font-size: calc(12px * var(--weibei-text-scale, 1));
 }
 
 .map-tools label {
@@ -283,7 +283,7 @@
 
 .map-tools > span {
   margin-left: auto;
-  font: calc(10px * var(--weibei-text-scale, 1)) ui-monospace, SFMono-Regular, Menlo, monospace;
+  font: calc(9.5px * var(--weibei-text-scale, 1)) ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
 .map-canvas {
@@ -366,7 +366,7 @@
   color: #3f4e4c;
   border: 0;
   background: transparent;
-  font-size: calc(11px * var(--weibei-text-scale, 1));
+  font-size: calc(12px * var(--weibei-text-scale, 1));
 }
 
 .map-canvas > button i {
@@ -403,7 +403,7 @@
 .map-note p {
   margin: 0;
   color: #615b50;
-  font-size: calc(11px * var(--weibei-text-scale, 1));
+  font-size: calc(12px * var(--weibei-text-scale, 1));
   line-height: 1.5;
 }
 
@@ -588,7 +588,7 @@
   border: 1px solid rgb(255 248 238 / 84%);
   border-radius: 50%;
   background: rgb(66 54 41 / 68%);
-  font: calc(10px * var(--weibei-text-scale, 1)) ui-monospace, SFMono-Regular, Menlo, monospace;
+  font: calc(9.5px * var(--weibei-text-scale, 1)) ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
 .art-canvas > button.is-selected {
@@ -610,13 +610,13 @@
 
 .art-note span {
   color: #9a493b;
-  font-size: calc(10px * var(--weibei-text-scale, 1));
+  font-size: calc(9.5px * var(--weibei-text-scale, 1));
 }
 
 .art-note p {
   margin: 0;
   color: #665b4d;
-  font-size: calc(11px * var(--weibei-text-scale, 1));
+  font-size: calc(12px * var(--weibei-text-scale, 1));
   line-height: 1.5;
 }
 
@@ -627,7 +627,7 @@
   align-items: center;
   padding-top: 10px;
   color: #6e6355;
-  font-size: calc(11.5px * var(--weibei-text-scale, 1));
+  font-size: calc(12px * var(--weibei-text-scale, 1));
 }
 
 .art-controls label {

@@ -44,7 +44,7 @@ button {
 
 .generation-proofbar > div strong {
   font-family: "Songti SC", "STSong", serif;
-  font-size: calc(14px * var(--weibei-text-scale, 1));
+  font-size: calc(15px * var(--weibei-text-scale, 1));
   font-weight: 600;
 }
 
@@ -73,7 +73,7 @@ button {
 .generation-proofbar button span {
   color: #a09587;
   font-family: "SFMono-Regular", Menlo, monospace;
-  font-size: calc(8.5px * var(--weibei-text-scale, 1));
+  font-size: calc(9.5px * var(--weibei-text-scale, 1));
 }
 
 .generation-proofbar button.is-active {
@@ -107,7 +107,7 @@ button {
   color: #817668;
   border-bottom: 1px solid rgb(68 57 43 / 10%);
   background: #eee6da;
-  font-size: calc(8.5px * var(--weibei-text-scale, 1));
+  font-size: calc(9.5px * var(--weibei-text-scale, 1));
 }
 
 .generation-answer__status span::before {
@@ -130,7 +130,7 @@ button {
   padding: 18px;
   color: #7d2f27;
   background: #f7e8e1;
-  font-size: calc(11px * var(--weibei-text-scale, 1));
+  font-size: calc(12px * var(--weibei-text-scale, 1));
   line-height: 1.6;
 }
 
@@ -196,7 +196,7 @@ button {
   margin: 0;
   color: #2c261f;
   font-family: "Songti SC", STSong, serif;
-  font-size: calc(14.5px * var(--weibei-text-scale, 1));
+  font-size: calc(15px * var(--weibei-text-scale, 1));
   font-weight: 600;
   line-height: 1.45;
 }
@@ -295,7 +295,7 @@ button {
 
 .generation-source summary small {
   color: #8a8073;
-  font-size: calc(9px * var(--weibei-text-scale, 1));
+  font-size: calc(9.5px * var(--weibei-text-scale, 1));
 }
 
 .generation-source > div {
@@ -314,13 +314,13 @@ button {
   padding: 14px;
   color: #d8cbbc;
   border-right: 1px solid rgb(255 255 255 / 8%);
-  font-size: calc(9px * var(--weibei-text-scale, 1));
+  font-size: calc(9.5px * var(--weibei-text-scale, 1));
 }
 
 .generation-source aside strong {
   margin-top: 4px;
   color: #f3eadf;
-  font-size: calc(9px * var(--weibei-text-scale, 1));
+  font-size: calc(9.5px * var(--weibei-text-scale, 1));
   letter-spacing: 0.06em;
 }
 
@@ -348,7 +348,7 @@ button {
   padding: 14px 16px;
   color: #eee3d6;
   font-family: "SFMono-Regular", Menlo, monospace;
-  font-size: calc(9px * var(--weibei-text-scale, 1));
+  font-size: calc(9.5px * var(--weibei-text-scale, 1));
   line-height: 1.65;
   white-space: pre-wrap;
 }
