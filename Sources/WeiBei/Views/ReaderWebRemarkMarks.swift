@@ -17,8 +17,8 @@ func selectionRemarkMarksJSON(_ records: [SelectionRemarkRecord]) -> String {
 }
 
 extension WebReaderRepresentable {
-    /// HTML 材料阅读器的记过标记:整句 wrap + 句末朱砂短棒(::after)+ hover 整句高亮 + 点击回传。
-    /// 与 selectionScript 里的问过下划线同构,独立脚本便于单独演进。
+    /// HTML 材料阅读器的记过标记:整句 wrap + **行右缘朱砂圆点**(绝对定位,不用 float——满行时 float 会掉到下一行看不见)。
+    /// hover 圆点或整句 → 整句高亮;点击回传 remarkMark。
     static let readerRemarkMarksScript = """
     (() => {
       if (window.WeiBeiRemarkMarks) return;
@@ -29,23 +29,68 @@ extension WebReaderRepresentable {
           border-radius: 2px;
           transition: background-color 120ms ease;
         }
-        .weibei-remark-mark::after {
-          content: "";
-          float: right;
-          width: 7px;
-          height: 7px;
-          margin-left: 4px;
+        .weibei-remark-mark:hover,
+        .weibei-remark-mark.weibei-remark-hover {
+          background-color: rgba(145, 38, 27, 0.14);
+        }
+        .weibei-remark-dot {
+          position: absolute;
+          width: 9px;
+          height: 9px;
+          margin-left: 5px;
           border-radius: 50%;
           background-color: rgba(145, 38, 27, 1.0);
-        }
-        .weibei-remark-mark:hover {
-          background-color: rgba(145, 38, 27, 0.14);
+          cursor: pointer;
+          z-index: 3;
         }
       `;
       document.documentElement.appendChild(style);
+
+      const placeDots = function() {
+        document.querySelectorAll(".weibei-remark-dot").forEach((dot) => dot.remove());
+        const placedByLine = new Map();
+        document.querySelectorAll(".weibei-remark-mark").forEach((span) => {
+          const recordId = span.dataset.recordId || "";
+          if (!recordId) return;
+          const rects = span.getClientRects();
+          if (!rects || rects.length === 0) return;
+          const last = rects[rects.length - 1];
+          // 圆点挂在句子末行:同一文本行(top 相近)堆叠,从行右缘向左排
+          const lineKey = Math.round(last.top / 4);
+          const host = span.closest("p, div, li, blockquote, td, section, article") || span.parentElement;
+          if (!host) return;
+          const hostRect = host.getBoundingClientRect();
+          const relativeTop = last.top - hostRect.top + (last.height - 9) / 2;
+          const slot = placedByLine.get(lineKey) || 0;
+          placedByLine.set(lineKey, slot + 1);
+          // 行右缘=宿主段落右缘;同行多条从右缘向左堆叠
+          const rightOffset = 6 + slot * 13;
+          const dot = document.createElement("span");
+          dot.className = "weibei-remark-dot";
+          dot.dataset.recordId = recordId;
+          dot.style.top = `${relativeTop}px`;
+          dot.style.right = `${rightOffset}px`;
+          host.style.position = "relative";
+          host.appendChild(dot);
+          dot.onmouseenter = function() { span.classList.add("weibei-remark-hover"); };
+          dot.onmouseleave = function() { span.classList.remove("weibei-remark-hover"); };
+          dot.onclick = function(ev) {
+            ev.preventDefault();
+            ev.stopPropagation();
+            if (window.webkit?.messageHandlers?.remarkMark) {
+              window.webkit.messageHandlers.remarkMark.postMessage({
+                recordId,
+                text: span.textContent || ""
+              });
+            }
+          };
+        });
+      };
+
       window.WeiBeiRemarkMarks = {
         apply: function(marks) {
           try {
+            document.querySelectorAll(".weibei-remark-dot").forEach((dot) => dot.remove());
             document.querySelectorAll(".weibei-remark-mark").forEach((el) => {
               const parent = el.parentNode;
               if (!parent) return;
@@ -102,6 +147,9 @@ extension WebReaderRepresentable {
                 }
               };
             });
+            // 字体加载/布局稳定后再定点位
+            window.requestAnimationFrame(placeDots);
+            window.setTimeout(placeDots, 350);
           } catch (e) {}
         }
       };

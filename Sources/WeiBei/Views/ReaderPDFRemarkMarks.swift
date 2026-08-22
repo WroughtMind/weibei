@@ -21,8 +21,8 @@ extension PDFReaderRepresentable.Coordinator {
         NSColor(calibratedRed: 0.56, green: 0.16, blue: 0.12, alpha: 1.0)
     }
 
-    private static let dotDiameter: CGFloat = 6
-    private static let dotSpacing: CGFloat = 3
+    private static let dotDiameter: CGFloat = 8
+    private static let dotSpacing: CGFloat = 4
 
     /// 渲染记过朱砂圆点。只有带 PDF 锚点的记录能画;无锚旧数据不渲染。
     func applyRemarkMarks(
@@ -82,15 +82,18 @@ extension PDFReaderRepresentable.Coordinator {
         }
 
         let cinnabar = remarkCinnabar
+        // cropBox 才是真正显示出来的页面范围,圆点必须收在它里面。
         let pageRightLimit = { (page: PDFPage) -> CGFloat in
-            page.bounds(for: .mediaBox).maxX - Self.dotDiameter - 2
+            page.bounds(for: .cropBox).maxX - Self.dotDiameter - 2
         }
+        // baseLeft = 首个点允许的最靠右"左缘"。
         for group in grouped {
             guard let page = document.page(at: group[0].pageIndex) else { continue }
             let ordered = group.sorted(by: { $0.textEndX > $1.textEndX })
-            let baseRight = min(ordered[0].lineRight, pageRightLimit(page))
+            // 点贴在整行右缘外侧留一点空隙;行写满到页缘时向内收,仍压不住可见性。
+            let baseLeft = min(ordered[0].lineRight + 4, pageRightLimit(page))
             for (slot, dot) in ordered.enumerated() {
-                let dotX = baseRight - Self.dotDiameter - CGFloat(slot) * (Self.dotDiameter + Self.dotSpacing)
+                let dotX = baseLeft - CGFloat(slot) * (Self.dotDiameter + Self.dotSpacing)
                 let dotRect = CGRect(
                     x: dotX,
                     y: dot.lineMidY - Self.dotDiameter / 2,
@@ -100,6 +103,9 @@ extension PDFReaderRepresentable.Coordinator {
                 let annotation = PDFAnnotation(bounds: dotRect, forType: .circle, withProperties: nil)
                 annotation.color = cinnabar
                 annotation.setValue(cinnabar, forAnnotationKey: .interiorColor)
+                let border = PDFBorder()
+                border.lineWidth = 1.2
+                annotation.border = border
                 annotation.userName = Self.remarkMarkMarker
                 page.addAnnotation(annotation)
                 remarkHits.append(
