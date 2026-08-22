@@ -198,7 +198,7 @@ final class PoetryIncidentRegressionTests: XCTestCase {
             "用户草稿必须保留"
         )
     }
-}}
+}
 
 private extension WorkspaceStore {
     func configuredForLibrary(at library: URL) throws -> WorkspaceStore {
