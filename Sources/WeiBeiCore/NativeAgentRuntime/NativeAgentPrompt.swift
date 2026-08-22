@@ -33,7 +33,8 @@ public struct NativePromptAssembler: Sendable {
         bundledText: String,
         tools: [NativeToolDefinition],
         skillCatalog: String = "",
-        contextRevision: String = ""
+        contextRevision: String = "",
+        confirmedNotes: [StudyAgentPersistedNoteRef] = []
     ) -> String {
         var assembler = NativePromptAssembler()
         assembler.add(NativePromptSection(id: "persona", order: 10, text: bundledText))
@@ -44,6 +45,19 @@ public struct NativePromptAssembler: Sendable {
                     order: 16,
                     text: """
                     本轮 contextRevision 是 `\(contextRevision)`。weibei_learning_update、weibei_course_profile_update、weibei_note_proposal、weibei_relation_proposal 必须原样回传这个字符串，不要改成数字，也不要从 memoryRevision 或 profileRevision 推断。
+                    """
+                )
+            )
+        }
+        if !confirmedNotes.isEmpty {
+            let lines = confirmedNotes.map { "- noteItemID `\($0.itemID)` 标题「\($0.title)」" }.joined(separator: "\n")
+            assembler.add(
+                NativePromptSection(
+                    id: "confirmed-notes",
+                    order: 17,
+                    text: """
+                    本会话用户已确认写入、已经落库的笔记如下。可以对它们调用 weibei_relation_proposal；不要再说这些笔记尚未落库，也不要仅凭上一轮工具回执「尚未写回」判断。
+                    \(lines)
                     """
                 )
             )

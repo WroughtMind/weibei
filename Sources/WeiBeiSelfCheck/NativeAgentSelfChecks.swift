@@ -408,6 +408,16 @@ private func checkContextRevisionEcho() throws {
     )
     try nativeRequire(prompt.contains(revision), "system prompt includes this turn's contextRevision")
     try nativeRequire(prompt.contains("必须原样回传"), "system prompt tells the model to echo contextRevision")
+    let confirmedPrompt = NativePromptAssembler.webiSystemPrompt(
+        bundledText: "you are webi",
+        tools: [],
+        contextRevision: revision,
+        confirmedNotes: [
+            StudyAgentPersistedNoteRef(itemID: "note-rates", title: "利率是资金使用价格 2"),
+        ]
+    )
+    try nativeRequire(confirmedPrompt.contains("note-rates"), "confirmed notes expose the persisted noteItemID")
+    try nativeRequire(confirmedPrompt.contains("已经落库"), "confirmed notes tell the model not to treat them as pending")
 
     let registry = NativeToolRegistry()
     _ = try waitFor { await NativeBuiltinTools.registerAll(into: registry, skillRoot: nil) }
@@ -671,6 +681,105 @@ private func checkNativeProductContract() throws {
     try nativeRequire(relation.noteItemID == "note-1", "relation noteItemID is preserved")
     try nativeRequire(relation.sourceItemID == "material-rates", "relation sourceItemID is preserved")
     try nativeRequire(relation.contextRevision == revision, "relation contextRevision is preserved")
+    try checkAgentActionFlushDoesNotSpinRunLoop()
+}
+
+private func checkAgentActionFlushDoesNotSpinRunLoop() throws {
+    let url = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+        .appendingPathComponent("Sources/WeiBei/Stores/WorkspaceStore.swift")
+    let source = try String(contentsOf: url, encoding: .utf8)
+    let names = [
+        "cancelAgentReplyAction",
+        "confirmAgentNoteAction",
+        "markAgentNewCourseNoteExecuted",
+        "undoAgentNoteAction",
+        "confirmAgentRelationAction",
+        "undoAgentRelationAction",
+        "failAgentReplyAction",
+        "persistAgentActionNote",
+    ]
+    for name in names {
+        guard let body = topLevelFunctionBody(source, named: name) else {
+            throw NSError(domain: "WeiBei.NativeAgentSelfCheck", code: 16, userInfo: [
+                NSLocalizedDescriptionKey: "missing \(name) while checking MainActor flush contract",
+            ])
+        }
+        try nativeRequire(
+            !containsSyncWorkspaceFlushCall(body),
+            "SAFETY:agent-action-no-mainactor-runloop-flush \(name) must await flushPendingWorkspaceSaveAsync; sync flush or flushPendingNotePersistence() spins RunLoop on MainActor and times out after 写入"
+        )
+        try nativeRequire(
+            body.contains("flushPendingWorkspaceSaveAsync"),
+            "SAFETY:agent-action-no-mainactor-runloop-flush \(name) must persist with flushPendingWorkspaceSaveAsync"
+        )
+    }
+    guard let persistNoteBody = topLevelFunctionBody(source, named: "persistAgentActionNote") else {
+        throw NSError(domain: "WeiBei.NativeAgentSelfCheck", code: 18, userInfo: [
+            NSLocalizedDescriptionKey: "missing persistAgentActionNote while checking existing-note flush",
+        ])
+    }
+    try nativeRequire(
+        persistNoteBody.contains("flushPendingNotePersistence(flushWorkspace: false)"),
+        "SAFETY:agent-action-no-mainactor-runloop-flush persistAgentActionNote must flush notes without the sync workspace wait; writing an existing note otherwise hits the 60s file-operation banner"
+    )
+    guard let newNoteBody = topLevelFunctionBody(source, named: "confirmAgentNewCourseNoteAction") else {
+        throw NSError(domain: "WeiBei.NativeAgentSelfCheck", code: 17, userInfo: [
+            NSLocalizedDescriptionKey: "missing confirmAgentNewCourseNoteAction while checking same-name retry",
+        ])
+    }
+    try nativeRequire(
+        newNoteBody.contains("courseNoteMatchingFileStem")
+            && newNoteBody.contains("keepBoth"),
+        "SAFETY:agent-new-note-same-name-retry confirm after a leftover same-named note must reuse matching content or keep both, not surface targetConflict"
+    )
+}
+
+private func topLevelFunctionBody(_ source: String, named name: String) -> String? {
+    let signatures = ["    func \(name)(", "    private func \(name)("]
+    guard let start = signatures.compactMap({ source.range(of: $0)?.lowerBound }).min() else {
+        return nil
+    }
+    let fromStart = source[start...]
+    let rest = fromStart.dropFirst()
+    let markers = ["\n    func ", "\n    private func ", "\n    @discardableResult", "\n    nonisolated ", "\n    static "]
+    var end = fromStart.endIndex
+    for marker in markers {
+        if let range = rest.range(of: marker), range.lowerBound < end {
+            end = range.lowerBound
+        }
+    }
+    return String(fromStart[..<end])
+}
+
+private func containsSyncWorkspaceFlushCall(_ body: String) -> Bool {
+    for line in body.split(separator: "\n", omittingEmptySubsequences: false) {
+        let trimmed = line.trimmingCharacters(in: .whitespaces)
+        let code: Substring
+        if trimmed.hasPrefix("//") {
+            continue
+        } else if let comment = trimmed.range(of: "//") {
+            code = trimmed[..<comment.lowerBound]
+        } else {
+            code = Substring(trimmed)
+        }
+        if code.contains("flushPendingWorkspaceSave()") {
+            return true
+        }
+        if code.contains("waitForCourseFileOperation") {
+            return true
+        }
+        if code.contains("flushPendingNotePersistenceAsync") {
+            continue
+        }
+        if code.contains("flushPendingNotePersistence(flushWorkspace: false)")
+            || code.contains("flushPendingNotePersistence(for:") {
+            continue
+        }
+        if code.contains("flushPendingNotePersistence") {
+            return true
+        }
+    }
+    return false
 }
 
 private func waitFor<T>(_ body: @escaping () async throws -> T) throws -> T {

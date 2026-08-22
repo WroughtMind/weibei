@@ -517,6 +517,8 @@ public struct StudyAgentRequest: Sendable {
     public var language: WeiBeiInterfaceLanguage
     public var contextRevision: String
     public var interactiveVisualizationsEnabled: Bool
+    /// Notes the user already confirmed in this Chat. Native must treat these as persisted.
+    public var confirmedNotes: [StudyAgentPersistedNoteRef]
 
     public init(
         id: UUID = UUID(),
@@ -539,7 +541,8 @@ public struct StudyAgentRequest: Sendable {
         courseProfile: StudyAgentCourseProfileContext = .empty,
         language: WeiBeiInterfaceLanguage = .chinese,
         contextRevision: String,
-        interactiveVisualizationsEnabled: Bool = true
+        interactiveVisualizationsEnabled: Bool = true,
+        confirmedNotes: [StudyAgentPersistedNoteRef] = []
     ) {
         self.id = id
         self.purpose = purpose
@@ -562,8 +565,19 @@ public struct StudyAgentRequest: Sendable {
         self.language = language
         self.contextRevision = contextRevision
         self.interactiveVisualizationsEnabled = interactiveVisualizationsEnabled
+        self.confirmedNotes = confirmedNotes
     }
 
+}
+
+public struct StudyAgentPersistedNoteRef: Sendable, Equatable {
+    public var itemID: String
+    public var title: String
+
+    public init(itemID: String, title: String) {
+        self.itemID = itemID
+        self.title = title
+    }
 }
 
 public struct StudyAgentNoteProposal: Codable, Equatable, Sendable {

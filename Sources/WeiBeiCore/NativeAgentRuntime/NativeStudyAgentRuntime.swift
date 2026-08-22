@@ -60,7 +60,8 @@ public actor NativeStudyAgentRuntime: StudyAgentRuntime {
             bundledText: systemPromptText,
             tools: tools,
             skillCatalog: liveStores.skillRegistry.catalogSummary(),
-            contextRevision: request.contextRevision
+            contextRevision: request.contextRevision,
+            confirmedNotes: request.confirmedNotes
         )
         var stores = liveStores
         if stores.startSubagent == nil {

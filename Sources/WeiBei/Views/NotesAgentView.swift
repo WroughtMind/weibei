@@ -3969,10 +3969,14 @@ private struct AgentReplyActionCard: View {
             .disabled(isWorking)
         } else {
             Button(store.ui("取消", "Cancel")) {
-                store.cancelAgentReplyAction(
-                    messageID: messageID,
-                    actionID: action.id
-                )
+                isWorking = true
+                Task {
+                    await store.cancelAgentReplyAction(
+                        messageID: messageID,
+                        actionID: action.id
+                    )
+                    isWorking = false
+                }
             }
             .buttonStyle(WeiBeiTextActionButtonStyle())
             .disabled(isWorking)
