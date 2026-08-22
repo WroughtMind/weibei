@@ -35,6 +35,7 @@ import {
   calloutTypePattern,
   inlineMathInputPattern,
   joinFrontmatter,
+  looksLikeMarkdownSyntax,
   normalizeMarkdownSource,
   splitFrontmatter,
 } from './markdownRules';
@@ -129,6 +130,7 @@ let streamingRawBody: string | null = null;
 // instead of re-sending the whole document on every streaming push.
 let streamingFullTextBase: string | null = null;
 let selectionAskMarks: any[] = [];
+let selectionRemarkMarks: any[] = [];
 let decorationGeneration = 0;
 const insertionCursorMarker = '{{WEIBEI_CURSOR}}';
 const insertionSelectionStartMarker = '{{WEIBEI_SELECT_START}}';
@@ -1414,6 +1416,39 @@ const normalizeSelectionAskMarks = (marks: any) => (Array.isArray(marks) ? marks
   }))
   .filter((mark) => mark.id && mark.text.length >= 4);
 
+// 记过原文标记:句末朱砂短棒(样式由原生 bootstrap 注入),点击回访续记。
+const normalizeSelectionRemarkMarks = (marks: any) => (Array.isArray(marks) ? marks : [])
+  .map((mark) => ({
+    id: String(mark?.id || ''),
+    text: String(mark?.text || '').trim(),
+  }))
+  .filter((mark) => mark.id && mark.text.length >= 2);
+
+const decorateSelectionRemarkMarks = (decorations: any, text: any, pos: any, counts: any) => {
+  if (isEditable || selectionRemarkMarks.length === 0) return;
+  selectionRemarkMarks.forEach((mark) => {
+    let start = 0;
+    let count = counts.get(mark.id) || 0;
+    while (count < 3) {
+      const index = text.indexOf(mark.text, start);
+      if (index < 0) break;
+      addRangeDecoration(
+        decorations,
+        pos + index,
+        pos + index + mark.text.length,
+        'weibei-remark-mark',
+        {
+          'data-record-id': mark.id,
+          title: '回访这句的札记',
+        },
+      );
+      count += 1;
+      start = index + mark.text.length;
+    }
+    counts.set(mark.id, count);
+  });
+};
+
 const decorateSelectionAskMarks = (decorations: any, text: any, pos: any, counts: any) => {
   if (isEditable || selectionAskMarks.length === 0) return;
   selectionAskMarks.forEach((mark) => {
@@ -1652,6 +1687,16 @@ const activateSelectionAskMark = (target: any) => {
   const threadId = mark?.getAttribute('data-thread-id') || '';
   if (!threadId) return false;
   post('selectionAskMark', { threadId, text: mark!.textContent || '' });
+  return true;
+};
+
+const activateSelectionRemarkMark = (target: any) => {
+  const mark = target instanceof Element
+    ? target.closest('.weibei-remark-mark[data-record-id]')
+    : null;
+  const recordId = mark?.getAttribute('data-record-id') || '';
+  if (!recordId) return false;
+  post('remarkMark', { recordId, text: mark!.textContent || '' });
   return true;
 };
 
@@ -2565,7 +2610,7 @@ const weiBeiDialectPlugin = $prose(() => new Plugin({
     };
   },
   props: {
-    handlePaste: WEIBEI_EDITOR_RUNTIME ? (_: any, event: ClipboardEvent) => {
+    handlePaste: WEIBEI_EDITOR_RUNTIME ? (view: any, event: ClipboardEvent) => {
       if (!isEditable) return false;
       const files = imageFilesFromItems(event.clipboardData?.items);
       if (files.length > 0) {
@@ -2573,9 +2618,10 @@ const weiBeiDialectPlugin = $prose(() => new Plugin({
         insertImageFiles(files).catch(showFailure);
         return true;
       }
+      if (pasteTargetIsCode(view)) return false;
       const text = event.clipboardData?.getData('text/plain') || '';
       const normalized = normalizeMarkdownSource(text, 'userPaste');
-      if (!text || normalized === text) return false;
+      if (!text || (normalized === text && !looksLikeMarkdownSyntax(normalized))) return false;
       event.preventDefault();
       replaceSelectionInternal(normalized);
       return true;
@@ -2605,7 +2651,8 @@ const weiBeiDialectPlugin = $prose(() => new Plugin({
       return true;
     } : () => false,
     handleClick(view, pos, event) {
-      return activateSelectionAskMark(event.target)
+      return activateSelectionRemarkMark(event.target)
+        || activateSelectionAskMark(event.target)
         || activateWikiLink(event.target)
         || activateSourceReference(event.target)
         || toggleFoldedCallout(event.target);
@@ -2663,6 +2710,7 @@ const weiBeiDialectPlugin = $prose(() => new Plugin({
       const decorations: any[] = [];
       const commentState = { open: false };
       const selectionAskCounts = new Map();
+      const selectionRemarkCounts = new Map();
 
       state.doc.descendants((node, pos, parent) => {
         addEditorMetric(checkMetrics, 'decorationNodes');
@@ -2693,6 +2741,7 @@ const weiBeiDialectPlugin = $prose(() => new Plugin({
           decorateSourceReferences(decorations, text, textPos);
           decorateTagsAndBlocks(decorations, text, textPos);
           decorateSelectionAskMarks(decorations, text, textPos, selectionAskCounts);
+          decorateSelectionRemarkMarks(decorations, text, textPos, selectionRemarkCounts);
 
         }
 
@@ -2865,6 +2914,16 @@ const setSelectionAskMarksInternal = (marks: any) => {
   });
 };
 
+const setSelectionRemarkMarksInternal = (marks: any) => {
+  selectionRemarkMarks = normalizeSelectionRemarkMarks(marks);
+  decorationGeneration += 1;
+  if (!editor) return;
+  editor.action((ctx) => {
+    const view = ctx.get(editorViewCtx);
+    view.dispatch(view.state.tr.setMeta('weibeiSelectionAskMarksChanged', true));
+  });
+};
+
 /** Removes WebKit-created line breaks when IME composition began in an empty text block. */
 const normalizeCompletedEmptyTextblockComposition = () => {
   if (!editor || compositionTextblockFrom === null) return;
@@ -2908,6 +2967,7 @@ const publishCompletedCompositionMarkdown = () => {
 const streamingCommands = () => editor.action((ctx) => ctx.get(commandsCtx));
 
 const stopStreamingMarkdown = (keep = true) => {
+  cancelPacedStreamingTail();
   if (streamingMarkdownBuffer === null) return;
   streamingCommands().call(abortStreamingCmd.key, { keep });
   streamingMarkdownBuffer = null;
@@ -2917,6 +2977,7 @@ const stopStreamingMarkdown = (keep = true) => {
 
 const updateStreamingMarkdownInternal = (markdown: any) => {
   ensureEditor();
+  cancelPacedStreamingTail();
   const fullText = String(markdown || '');
   streamingFullTextBase = fullText;
   const document = splitFrontmatter(fullText);
@@ -2965,14 +3026,55 @@ const appendStreamingMarkdownInternal = (suffix: any) => {
   updateStreamingMarkdownInternal(base === null ? tail : base + tail);
 };
 
-const finishStreamingMarkdownInternal = (markdown: any) => {
-  streamingRawBody = null; // force the full normalize + serialization pass
-  updateStreamingMarkdownInternal(markdown);
+/** Paced tail reveal. The completion payload often carries text that never
+ * streamed (the model's closing segment arrives only in the end event, and
+ * the native display pump drains whatever it had not revealed). Applying that
+ * tail in one push made the finished answer dump a block of unfaded text and
+ * jump its height. Instead the tail keeps typing out at the streaming
+ * cadence — same fade, same caret — and the session finalizes when it lands. */
+let pacedTailTimer: number | null = null;
+/** Above the fade plugin's per-insert limit a chunk cannot fade, so pace it. */
+const PACED_TAIL_FADE_LIMIT_CHARACTERS = 24;
+const PACED_TAIL_CHUNK_CHARACTERS = 12;
+const PACED_TAIL_TICK_MILLISECONDS = 33;
+/** Wall-clock cap: throttled (hidden/occluded) WebViews slow timers to a crawl,
+ * so past this the whole tail lands at once instead of stalling half-typed. */
+const PACED_TAIL_MAXIMUM_MILLISECONDS = 3_000;
+/** Hard stop so an abandoned tail can never pace forever (~8s at cadence). */
+const PACED_TAIL_MAXIMUM_TICKS = 240;
+
+const cancelPacedStreamingTail = () => {
+  if (pacedTailTimer == null) return;
+  window.clearTimeout(pacedTailTimer);
+  pacedTailTimer = null;
+};
+
+/** Push a caller-normalized body through the streaming session, mirroring
+ * updateStreamingMarkdownInternal's session bookkeeping. */
+const pushStreamingBodyForFinish = (body: string) => {
+  const commands = streamingCommands();
+  if (streamingMarkdownBuffer === null) {
+    commands.call(startStreamingCmd.key);
+    streamingMarkdownBuffer = '';
+  } else if (!body.startsWith(streamingMarkdownBuffer)) {
+    commands.call(endStreamingCmd.key, { diffReview: false });
+    commands.call(startStreamingCmd.key);
+    streamingMarkdownBuffer = '';
+  }
+  const delta = body.slice(streamingMarkdownBuffer.length);
+  if (delta) commands.call(pushChunkCmd.key, delta);
+  streamingMarkdownBuffer = body;
+  scheduleContentHeightReports();
+};
+
+const finalizeStreamingSession = () => {
   streamingCommands().call(endStreamingCmd.key, { diffReview: false });
   streamingRawBody = null;
   streamingMarkdownBuffer = null;
+  streamingFullTextBase = null;
+  cancelPacedStreamingTail();
   // Decorations gate on the live buffer; repaint once so the finished render
-  // drops the streaming caret and fade spans without dispatching a transaction.
+  // drops the streaming caret without dispatching a transaction.
   try {
     editor?.action((ctx) => {
       ctx.get(editorViewCtx).updateState(ctx.get(editorViewCtx).state);
@@ -2980,7 +3082,67 @@ const finishStreamingMarkdownInternal = (markdown: any) => {
   } catch {
     // View not ready yet; decorations clear on the next transaction anyway.
   }
+  // Measure synchronously so the height returned to native reflects the
+  // finalized DOM, not the last streamed report.
+  publishContentHeight();
   scheduleContentHeightReports();
+};
+
+const finishStreamingMarkdownInternal = (markdown: any, options?: { paced?: boolean }) => {
+  cancelPacedStreamingTail();
+  streamingRawBody = null; // force the full normalize + serialization pass
+  const fullText = String(markdown || '');
+  const document = splitFrontmatter(fullText);
+  frontmatterBlock = document.frontmatter;
+  syncFrontmatterPanel();
+  const body = normalizeMarkdownSource(document.body, 'agentGenerated');
+  lastMarkdown = withFrontmatter(body);
+  streamingFullTextBase = fullText;
+  const currentBuffer = streamingMarkdownBuffer;
+  // Pace only a pure append; a divergent prefix needs the full replace now.
+  // Pacing is opt-in from native: hidden/windowless WebViews suspend timers
+  // entirely, and a paced reveal there would strand the answer half-typed.
+  const pacesAppendTail = options?.paced === true
+    && currentBuffer !== null
+    && body.startsWith(currentBuffer)
+    && body.length - currentBuffer.length > PACED_TAIL_FADE_LIMIT_CHARACTERS;
+  if (currentBuffer !== null && pacesAppendTail) {
+    let revealed = currentBuffer.length;
+    let ticks = 0;
+    const pacingStartedAt = Date.now();
+    const step = () => {
+      pacedTailTimer = null;
+      const now = Date.now();
+      ticks += 1;
+      revealed = Math.min(body.length, revealed + PACED_TAIL_CHUNK_CHARACTERS);
+      const done = revealed >= body.length
+        || now - pacingStartedAt >= PACED_TAIL_MAXIMUM_MILLISECONDS
+        || ticks >= PACED_TAIL_MAXIMUM_TICKS;
+      try {
+        pushStreamingBodyForFinish(done ? body : body.slice(0, revealed));
+        if (!done) {
+          pacedTailTimer = window.setTimeout(step, PACED_TAIL_TICK_MILLISECONDS);
+          return;
+        }
+        finalizeStreamingSession();
+      } catch {
+        // A paced push must never strand the answer half-typed (one throwing
+        // tick would silently end the timer chain): tear the session down and
+        // land the full document through the plain replace path instead.
+        pacedTailTimer = null;
+        streamingMarkdownBuffer = null;
+        streamingRawBody = null;
+        try { streamingCommands().call(abortStreamingCmd.key, { keep: false }); } catch { /* session already gone */ }
+        try { setMarkdownInternal(fullText); } catch { /* nothing left to try */ }
+        scheduleContentHeightReports();
+      }
+    };
+    pacedTailTimer = window.setTimeout(step, PACED_TAIL_TICK_MILLISECONDS);
+    scheduleContentHeightReports();
+    return;
+  }
+  pushStreamingBodyForFinish(body);
+  finalizeStreamingSession();
 };
 
 const setMarkdownInternal = (markdown: any) => {
@@ -3016,6 +3178,14 @@ const getMarkdownInternal = () => {
   ensureEditor();
   addEditorMetric(checkMetrics, 'fullSerializations');
   return withFrontmatter(editor.action(readMarkdown()));
+};
+
+const pasteTargetIsCode = (view: any) => {
+  const selection = view?.state?.selection;
+  if (!selection?.$from) return false;
+  if (selection.$from.parent.type.spec.code) return true;
+  const marks = selection.$from.marks() || [];
+  return marks.some((mark: any) => String(mark?.type?.name || '').toLowerCase().includes('code'));
 };
 
 const replaceSelectionInternal = (markdown: any) => {
@@ -3194,6 +3364,7 @@ const setDocumentIdentityInternal = (documentID: string, documentGeneration: num
   pendingImagePickers.clear();
   pendingAttachments.clear();
   setSelectionAskMarksInternal([]);
+  setSelectionRemarkMarksInternal([]);
 };
 
 const setEditableInternal = (next: unknown) => {
@@ -3377,9 +3548,9 @@ window.WeiBeiEditor = {
         showFailure(error);
       }
     },
-    finishStreamingMarkdown: (markdown: any) => {
+    finishStreamingMarkdown: (markdown: any, options?: { paced?: boolean }) => {
       try {
-        finishStreamingMarkdownInternal(markdown);
+        finishStreamingMarkdownInternal(markdown, options);
         return true;
       } catch (error) {
         showFailure(error);
@@ -3403,6 +3574,7 @@ window.WeiBeiEditor = {
   focus: focusInternal,
   scrollToHeading: scrollToHeadingInternal,
   setSelectionAskMarks: setSelectionAskMarksInternal,
+  setSelectionRemarkMarks: setSelectionRemarkMarksInternal,
   setMarkdownBaseURL: (next: any) => {
     markdownBaseURL = next || '';
     refreshRenderedImages();
@@ -3415,7 +3587,7 @@ if (WEIBEI_EDITOR_RUNTIME && window.weiBeiEditorCheckMode) {
     setMarkdown: setMarkdownInternal,
     updateStreamingMarkdown: updateStreamingMarkdownInternal,
     appendStreamingMarkdown: appendStreamingMarkdownInternal,
-    finishStreamingMarkdown: (markdown: any) => { finishStreamingMarkdownInternal(markdown); return true; },
+    finishStreamingMarkdown: (markdown: any, options?: { paced?: boolean }) => { finishStreamingMarkdownInternal(markdown, options); return true; },
     replaceSelection: replaceSelectionInternal,
     executeSelectionCommand: executeSelectionCommandInternal,
     applyAgentPatch: appendMarkdownInternal,
@@ -3632,7 +3804,8 @@ editorBuilder
     }, true);
     document.addEventListener('click', (event) => {
       if (isEditable && event.target instanceof Element && event.target.closest('.weibei-structured-node')) return;
-      if (!activateSelectionAskMark(event.target)
+      if (!activateSelectionRemarkMark(event.target)
+          && !activateSelectionAskMark(event.target)
           && !activateWikiLink(event.target)
           && !activateSourceReference(event.target)
           && !toggleFoldedCallout(event.target)) return;

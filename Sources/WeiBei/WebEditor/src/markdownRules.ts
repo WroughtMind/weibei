@@ -118,6 +118,50 @@ export const normalizeMarkdownSource = (markdown: string, source: MarkdownSource
   return protectCurrencyDollars(normalized);
 };
 
+const markdownSyntaxLineProbes: RegExp[] = [
+  /^#{1,6}\s+\S/,
+  /^>\s+\S/,
+  /^>\s*\[![A-Za-z][A-Za-z0-9_-]*\]/,
+  /^\s*[-*+]\s+\S/,
+  /^\s*\d{1,9}[.)]\s+\S/,
+  /^\s*(?:-{3,}|\*{3,}|_{3,})\s*$/,
+  /^\s*(?:>\s*)*(?:```|~~~)/,
+  /^\|.*\|\s*$/,
+  /!?\[[^\]\n]*\]\([^)\n]+\)/,
+  /\[\[[^\]\n]+(?:\|[^\]\n]*)?\]\]/,
+];
+
+const markdownSyntaxInlineProbes: RegExp[] = [
+  /\*\*|__/,
+  /~~/,
+  /==/,
+  /`[^`\n]+`/,
+  /\$\$/,
+  /\$(?![\d\s$])[^$\n]+\$/,
+];
+
+/**
+ * Conservative probe used by the editor paste path: does this clipboard text carry
+ * Markdown worth parsing? Chat windows and browsers also put text/html on the
+ * clipboard, and the Milkdown clipboard plugin prefers that HTML slice — plain
+ * Markdown source then lands as literal text. Probing positive lets the editor
+ * intercept and parse the Markdown before that fallback.
+ */
+export const looksLikeMarkdownSyntax = (text: string) => {
+  const source = String(text || '');
+  if (!source.trim()) return false;
+  if (/^---[ \t]*\r?\n[\s\S]*?\r?\n---[ \t]*(?:\r?\n|$)/.test(source)) return true;
+  for (const line of source.split(/\r?\n/)) {
+    for (const probe of markdownSyntaxLineProbes) {
+      if (probe.test(line)) return true;
+    }
+    for (const probe of markdownSyntaxInlineProbes) {
+      if (probe.test(line)) return true;
+    }
+  }
+  return false;
+};
+
 export const splitFrontmatter = (markdown: string) => {
   const source = markdown || '';
   const match = source.match(/^(---\n[\s\S]*?\n---)(?:\n+|$)/);

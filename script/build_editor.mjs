@@ -38,7 +38,8 @@ const [editorMeta, viewerMeta] = await Promise.all([
   build({
     entryPoints: [resolve(root, 'node_modules/katex/dist/katex.css')], bundle: true, minify: true,
     outfile: resolve(output, 'editor.css'), loader: { '.woff': 'file', '.woff2': 'file', '.ttf': 'file' },
-    assetNames: 'fonts/[name]', logLevel: 'warning',
+    // SPM .process 会把 bundle 内目录拍平;字体平铺输出 + css 同级相对路径才能在拍平后仍可解析。
+    assetNames: '[name]', logLevel: 'warning',
   }),
 ]);
 

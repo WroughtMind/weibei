@@ -1,5 +1,7 @@
 # 顶栏三板块开关图标 · 实现计划
 
+> **历史文档(2026-07 方案记录)。** 本计划描述的分栏实现(`EmptyWorkspaceView`、`ResizableTwoPane`/`ResizableThreePane`、`NativeSplitCoordinator`)已于 2026-08 被 `StableDocumentWorkspace` 体系取代,文中引用的组件与行号已从代码库删除。三板块开关与拖拽排序的产品规则仍有效;现行实现入口见 `Sources/WeiBei/Views/StableDocumentWorkspace.swift`。阅读本文时请以现行实现为准,不要按文中代码位置检索。
+
 > 给 Codex 执行用。本文自包含,带全部上下文和 file:line 引用,不用重新摸索。
 
 ## 一句话规则(整个设计的地基)

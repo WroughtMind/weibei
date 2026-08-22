@@ -773,6 +773,8 @@ public struct SelectionContext: Identifiable, Codable, Hashable, Sendable {
     public var ownerTitle: String
     public var itemID: String?
     public var isEditable: Bool
+    /// 原文位置锚;阅读器上报时写入,旧调用缺省 nil。
+    public var documentAnchor: SelectionDocumentAnchor?
 
     public init(
         id: UUID = UUID(),
@@ -780,7 +782,8 @@ public struct SelectionContext: Identifiable, Codable, Hashable, Sendable {
         source: SelectionSource,
         ownerTitle: String,
         itemID: String? = nil,
-        isEditable: Bool = true
+        isEditable: Bool = true,
+        documentAnchor: SelectionDocumentAnchor? = nil
     ) {
         self.id = id
         self.text = text
@@ -788,6 +791,7 @@ public struct SelectionContext: Identifiable, Codable, Hashable, Sendable {
         self.ownerTitle = ownerTitle
         self.itemID = itemID
         self.isEditable = isEditable
+        self.documentAnchor = documentAnchor
     }
 
     public func label(language: WeiBeiInterfaceLanguage) -> String {
@@ -821,6 +825,8 @@ public struct SelectionAskThread: Identifiable, Codable, Hashable, Sendable {
     public var messageIDs: [UUID]
     public var createdAt: Date
     public var updatedAt: Date
+    /// 原文位置锚;旧数据解码为 nil,回访匹配时锚点优先、文字匹配兜底。
+    public var documentAnchor: SelectionDocumentAnchor?
 
     public init(
         id: UUID = UUID(),
@@ -830,7 +836,8 @@ public struct SelectionAskThread: Identifiable, Codable, Hashable, Sendable {
         itemID: String? = nil,
         messageIDs: [UUID] = [],
         createdAt: Date = Date(),
-        updatedAt: Date = Date()
+        updatedAt: Date = Date(),
+        documentAnchor: SelectionDocumentAnchor? = nil
     ) {
         self.id = id
         self.selectionText = selectionText
@@ -840,6 +847,7 @@ public struct SelectionAskThread: Identifiable, Codable, Hashable, Sendable {
         self.messageIDs = messageIDs
         self.createdAt = createdAt
         self.updatedAt = updatedAt
+        self.documentAnchor = documentAnchor
     }
 
     public var normalizedText: String {
@@ -1691,7 +1699,6 @@ public struct AgentMessage: Identifiable, Codable, Hashable, Sendable {
     public var contentBlocks: [AgentMessageContentBlock]
     public var source: String?
     public var backend: StudyAgentBackend?
-    public var richAnswer: RichAnswerPresentation?
     public var completionState: AgentReplyCompletionState
     public var sources: [AgentReplySource]
     public var actions: [AgentReplyAction]
@@ -1710,7 +1717,6 @@ public struct AgentMessage: Identifiable, Codable, Hashable, Sendable {
         contentBlocks: [AgentMessageContentBlock] = [],
         source: String?,
         backend: StudyAgentBackend? = nil,
-        richAnswer: RichAnswerPresentation? = nil,
         completionState: AgentReplyCompletionState = .completed,
         sources: [AgentReplySource] = [],
         actions: [AgentReplyAction] = [],
@@ -1728,9 +1734,6 @@ public struct AgentMessage: Identifiable, Codable, Hashable, Sendable {
         self.contentBlocks = contentBlocks
         self.source = source
         self.backend = backend
-        self.richAnswer = richAnswer.map {
-            RichAnswerEngine.admit(presentation: $0)
-        }
         self.completionState = completionState
         self.sources = sources
         self.actions = actions
@@ -1750,7 +1753,6 @@ public struct AgentMessage: Identifiable, Codable, Hashable, Sendable {
         case contentBlocks
         case source
         case backend
-        case richAnswer
         case completionState
         case sources
         case actions
@@ -1801,19 +1803,6 @@ public struct AgentMessage: Identifiable, Codable, Hashable, Sendable {
             forKey: .backend,
             marker: "reply-backend:decode-failed"
         )
-        let decodedRichAnswer: RichAnswerPresentation?
-        do {
-            decodedRichAnswer = try container.decodeIfPresent(
-                RichAnswerPresentation.self,
-                forKey: .richAnswer
-            )
-        } catch {
-            decodedRichAnswer = nil
-            decodedToolTrace.append("rich-answer:decode-failed")
-        }
-        richAnswer = decodedRichAnswer.map {
-            RichAnswerEngine.admit(presentation: $0)
-        }
         completionState = decodeLossy(
             AgentReplyCompletionState.self,
             forKey: .completionState,
@@ -1868,7 +1857,6 @@ public struct AgentMessage: Identifiable, Codable, Hashable, Sendable {
         }
         try container.encodeIfPresent(source, forKey: .source)
         try container.encodeIfPresent(backend, forKey: .backend)
-        try container.encodeIfPresent(richAnswer, forKey: .richAnswer)
         if completionState != .completed {
             try container.encode(completionState, forKey: .completionState)
         }
@@ -1940,6 +1928,7 @@ public struct PersistedWorkspace: Codable, Sendable {
     public var studySessionScopeMigrationVersion: Int?
     public var activeStudySessionID: UUID?
     public var selectionAskThreads: [SelectionAskThread]?
+    public var selectionRemarkRecords: [SelectionRemarkRecord]?
     public var modelName: String?
     public var agentProviderID: String?
     public var agentBaseURL: String?
@@ -1991,6 +1980,7 @@ public struct PersistedWorkspace: Codable, Sendable {
         studySessionScopeMigrationVersion: Int? = nil,
         activeStudySessionID: UUID? = nil,
         selectionAskThreads: [SelectionAskThread]? = nil,
+        selectionRemarkRecords: [SelectionRemarkRecord]? = nil,
         modelName: String? = nil,
         agentProviderID: String? = nil,
         agentBaseURL: String? = nil,

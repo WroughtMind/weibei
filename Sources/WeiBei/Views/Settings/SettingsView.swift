@@ -1144,22 +1144,6 @@ struct SettingsView: View {
         }
     }
 
-    private func segmented<Item: Identifiable & Hashable>(
-        _ items: [Item],
-        active: Item,
-        label: @escaping (Item) -> String,
-        action: @escaping (Item) -> Void
-    ) -> some View {
-        HStack(spacing: 5) {
-            ForEach(items) { item in
-                Button(label(item)) {
-                    action(item)
-                }
-                .buttonStyle(WeiBeiTextActionButtonStyle(active: item == active))
-            }
-        }
-    }
-
     /// Shared compact dropdown — hugs label width, no forced wide track.
     func compactMenu<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
         Menu {

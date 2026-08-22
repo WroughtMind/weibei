@@ -4,9 +4,6 @@
   "private": true,
   "license": "MIT",
   "repository": "https://github.com/weibei-app/weibei",
-  "workspaces": [
-    "Prototypes/RichAnswerWebRuntime"
-  ],
   "scripts": {
     "build:editor": "node script/build_editor.mjs",
     "typecheck:tools": "tsc --noEmit -p tsconfig.json",

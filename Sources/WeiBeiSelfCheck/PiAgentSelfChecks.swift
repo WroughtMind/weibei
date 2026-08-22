@@ -222,22 +222,6 @@ private func checkRPCDecoding() throws {
         // Expected: same-id updates require one canonical lowercase identifier.
     }
 
-    let artifactComputed = try PiRPCMessageDecoder.decode(Data(#"{"type":"tool_execution_end","toolCallId":"tool-python","toolName":"weibei_compute_artifact","isError":false,"result":{"details":{"kind":"compute_artifact","schemaVersion":1,"contextRevision":"revision-7","requestID":"stats-1","operation":"compute_statistics","workerVersion":"1.0.0","requestSHA256":"request-hash","outputSHA256":"output-hash","durationMS":23,"artifacts":[{"sha256":"artifact-hash"}]}}}"#.utf8))
-    try piRequire(
-        artifactComputed == .artifactComputed(
-            id: "tool-python",
-            contextRevision: "revision-7",
-            requestID: "stats-1",
-            operation: "compute_statistics",
-            workerVersion: "1.0.0",
-            requestSHA256: "request-hash",
-            outputSHA256: "output-hash",
-            artifactSHA256s: ["artifact-hash"],
-            durationMS: 23
-        ),
-        "PI controlled Python results preserve operation, hashes, source run, and duration evidence"
-    )
-
     let courseRead = try PiRPCMessageDecoder.decode(Data(#"{"type":"tool_execution_end","toolCallId":"tool-course","toolName":"weibei_course_search","isError":false,"result":{"details":{"kind":"course_search","contextRevision":"revision-7","results":[{"id":"material-rates","title":"利率","role":"material","searchText":"利率正文","sourceRevision":"source-revision-1"},{"id":"note-rates","title":"课堂笔记","role":"note","searchText":"笔记正文"},{"id":"title-only","title":"只有标题","role":"material","searchText":""}],"evidenceLabels":["[材料：利率，条目：2]","[笔记：课堂笔记]"],"jumpEvidence":{"来源：利率":"[材料：利率，条目：2]","来源：利率，条目：2，第 3 页":"[材料：利率，条目：2]"}}}}"#.utf8))
     if case let .courseSourcesRead(
         id,
@@ -312,45 +296,6 @@ private func checkRPCDecoding() throws {
             jumpEvidence: [:]
         ),
         "PI learning-memory reads preserve the validated revision and expose only the memory evidence that actually exists"
-    )
-
-    let richAnswerData = try JSONSerialization.data(withJSONObject: [
-        "type": "tool_execution_end",
-        "toolCallId": "tool-rich",
-        "toolName": "weibei_rich_answer",
-        "isError": false,
-        "result": [
-            "details": [
-                "kind": "rich_answer",
-                "contextRevision": "revision-7",
-                "envelope": [
-                    "schemaVersion": 2,
-                    "contextRevision": "revision-7",
-                    "narrative": "利率关系说明",
-                    "expressionPlan": [
-                        "action": "explain",
-                        "summary": "解释利率关系",
-                        "families": ["quantityAndCoordinates"],
-                        "preferredSurface": "inline",
-                        "directManipulation": false,
-                    ],
-                    "scenes": [],
-                    "evidenceLedger": [],
-                    "fallback": ["text": "利率关系说明", "reason": "文本回退"],
-                ],
-            ],
-        ],
-    ])
-    let richAnswer = try PiRPCMessageDecoder.decode(richAnswerData)
-    guard case let .richAnswer(id, envelopeData) = richAnswer,
-          let envelope = try JSONSerialization.jsonObject(with: envelopeData) as? [String: Any] else {
-        throw PiAgentSelfCheckError.failed("PI rich-answer tool result did not decode")
-    }
-    try piRequire(
-        id == "tool-rich"
-            && envelope["contextRevision"] as? String == "revision-7"
-            && envelope["schemaVersion"] as? Int == 2,
-        "PI rich-answer results preserve their isolated semantic envelope"
     )
 
     let proposalData = try JSONSerialization.data(withJSONObject: [
@@ -930,45 +875,6 @@ private func checkStudyAgentContext() throws {
         "course index keeps every file name and ranks a relevant file beyond the first eighty into the search window"
     )
 
-    let richEnvelope = RichAnswerEnvelope(
-        contextRevision: "message-revision",
-        narrative: "PI answer",
-        expressionPlan: RichAnswerExpressionPlan(
-            action: .explain,
-            summary: "对齐材料与解释",
-            families: [.textAndAlignment],
-            preferredSurface: .inline,
-            directManipulation: true
-        ),
-        scenes: [
-            RichAnswerScene(
-                id: "message-scene",
-                title: "材料解释",
-                family: .textAndAlignment,
-                objects: [RichAnswerObject(id: "message-claim", kind: .text, label: "结论", text: "PI answer")],
-                operations: [
-                    RichAnswerOperation(
-                        id: "message-select",
-                        kind: .select,
-                        label: "选择解释",
-                        targetIDs: ["message-claim"]
-                    ),
-                ],
-                evidenceIDs: ["message-evidence"]
-            ),
-        ],
-        evidenceLedger: [
-            RichAnswerEvidence(id: "message-evidence", sourceLabel: "[材料：材料]", excerpt: "PI answer"),
-        ],
-        fallback: RichAnswerFallback(text: "PI answer", reason: "scene unavailable")
-    )
-    let richPresentation = RichAnswerEngine.prepare(
-        envelope: richEnvelope,
-        environment: RichAnswerEnvironment(
-            contextRevision: "message-revision",
-            allowedSourceLabels: ["[材料：材料]"]
-        )
-    )
     let message = AgentMessage(
         role: .assistant,
         text: "PI answer",
@@ -982,15 +888,12 @@ private func checkStudyAgentContext() throws {
             .text("再比较结果。"),
         ],
         source: "材料",
-        backend: .pi,
-        richAnswer: richPresentation
+        backend: .pi
     )
     let encoded = try JSONEncoder().encode(message)
     let decodedMessage = try JSONDecoder().decode(AgentMessage.self, from: encoded)
     try piRequire(
         decodedMessage.backend == .pi
-            && decodedMessage.richAnswer?.mode == .rich
-            && decodedMessage.richAnswer?.scenes.first?.id == "message-scene"
             && decodedMessage.contentBlocks.count == 3
             && decodedMessage.contentBlocks[1] == .visualization(
                 AgentVisualization(
@@ -999,27 +902,15 @@ private func checkStudyAgentContext() throws {
                     stateJSON: #"{"value":3}"#
                 )
             ),
-        "agent backend, ordered Visualize blocks, and validated rich-answer sidecar round-trip together"
+        "agent backend and ordered Visualize blocks round-trip together"
     )
     var legacyObject = try JSONSerialization.jsonObject(with: encoded) as? [String: Any] ?? [:]
     legacyObject.removeValue(forKey: "backend")
-    legacyObject.removeValue(forKey: "richAnswer")
     let legacyData = try JSONSerialization.data(withJSONObject: legacyObject)
     let legacyMessage = try JSONDecoder().decode(AgentMessage.self, from: legacyData)
     try piRequire(
-        legacyMessage.backend == nil && legacyMessage.richAnswer == nil,
-        "legacy agent messages remain decodable without rich-answer sidecars"
-    )
-    var malformedSidecarObject = try JSONSerialization.jsonObject(with: encoded) as? [String: Any] ?? [:]
-    malformedSidecarObject["richAnswer"] = ["mode": "future-unsupported-mode"]
-    let malformedSidecarData = try JSONSerialization.data(withJSONObject: malformedSidecarObject)
-    let messageWithMalformedSidecar = try JSONDecoder().decode(AgentMessage.self, from: malformedSidecarData)
-    try piRequire(
-        messageWithMalformedSidecar.id == message.id
-            && messageWithMalformedSidecar.text == message.text
-            && messageWithMalformedSidecar.backend == .pi
-            && messageWithMalformedSidecar.richAnswer == nil,
-        "a malformed rich-answer sidecar is discarded without losing the durable conversation message"
+        legacyMessage.backend == nil,
+        "legacy agent messages remain decodable without optional sidecar fields"
     )
     let sessionID = UUID()
     let persisted = PersistedWorkspace(

@@ -109,18 +109,6 @@ public enum PiRPCIncomingMessage: Equatable, Sendable {
     case visualAssetRead(id: String, contextRevision: String, assetID: String, sha256: String, byteCount: Int)
     case learningMemoryRead(id: String, contextRevision: String, memoryRevision: UInt64, labels: [String], jumpEvidence: [String: String])
     case skillsLoaded(id: String, contextRevision: String, skills: [StudyAgentLoadedSkill])
-    case artifactComputed(
-        id: String,
-        contextRevision: String,
-        requestID: String,
-        operation: String,
-        workerVersion: String,
-        requestSHA256: String,
-        outputSHA256: String,
-        artifactSHA256s: [String],
-        durationMS: Int
-    )
-    case richAnswer(id: String, data: Data)
     case visualization(id: String, fragment: AgentVisualization)
     case noteProposal(id: String, StudyAgentNoteProposal)
     case relationProposal(id: String, StudyAgentRelationProposal)
@@ -434,39 +422,6 @@ public enum PiRPCMessageDecoder {
                     id: object["toolCallId"] as? String ?? "",
                     contextRevision: contextRevision,
                     skills: [skill]
-                )
-            }
-            if name == "weibei_compute_artifact",
-               let details = result?["details"] as? [String: Any],
-               details["kind"] as? String == "compute_artifact",
-               let contextRevision = details["contextRevision"] as? String,
-               let requestID = details["requestID"] as? String,
-               let operation = details["operation"] as? String,
-               let workerVersion = details["workerVersion"] as? String,
-               let requestSHA256 = details["requestSHA256"] as? String,
-               let outputSHA256 = details["outputSHA256"] as? String,
-               let durationMS = details["durationMS"] as? NSNumber {
-                let artifactSHA256s = (details["artifacts"] as? [[String: Any]] ?? [])
-                    .compactMap { $0["sha256"] as? String }
-                return .artifactComputed(
-                    id: object["toolCallId"] as? String ?? "",
-                    contextRevision: contextRevision,
-                    requestID: requestID,
-                    operation: operation,
-                    workerVersion: workerVersion,
-                    requestSHA256: requestSHA256,
-                    outputSHA256: outputSHA256,
-                    artifactSHA256s: artifactSHA256s,
-                    durationMS: durationMS.intValue
-                )
-            }
-            if name == "weibei_rich_answer",
-               let details = result?["details"] as? [String: Any],
-               details["kind"] as? String == "rich_answer",
-               let envelopeData = jsonData(details["envelope"]) {
-                return .richAnswer(
-                    id: object["toolCallId"] as? String ?? "",
-                    data: envelopeData
                 )
             }
             if name == "weibei_note_proposal",

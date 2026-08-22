@@ -2346,9 +2346,6 @@ public actor PiAgentRuntime: StudyAgentRuntime {
             activeRun = run
             refreshRunWatchdog()
 
-        case .artifactComputed, .richAnswer:
-            break
-
         case let .visualization(_, fragment):
             guard var run = activeRun else { return }
             if let index = run.contentBlocks.firstIndex(where: { block in
@@ -2561,7 +2558,6 @@ public actor PiAgentRuntime: StudyAgentRuntime {
                 text: finalText,
                 contentBlocks: finalContentBlocks,
                 backend: .pi,
-                richAnswer: nil,
                 sources: run.sources,
                 noteProposal: run.proposal,
                 relationProposal: run.relationProposal,

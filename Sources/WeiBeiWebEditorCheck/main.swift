@@ -1085,9 +1085,71 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
                 self.fail("editable Markdown paste did not replace and parse the document: \(String(describing: value))")
                 return
             }
+            self.validateRichClipboardPaste()
+        }
+    }
+
+    /// Chat windows and browsers put text/html next to text/plain on the clipboard; the
+    /// Markdown source in text/plain must still parse into math/bold nodes on paste.
+    /// Phase 1 clears the document, phase 2 (past prosemirror-history's 500ms grouping
+    /// window, so undo reverts the paste alone) pastes and asserts.
+    private func validateRichClipboardPaste() {
+        webView.evaluateJavaScript("window.WeiBeiEditor.setMarkdown('')") { [weak self] _, error in
+            guard let self else { return }
+            if let error {
+                self.fail("rich clipboard paste could not clear baseline: \(error.localizedDescription)")
+                return
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+                self.runRichClipboardPasteAssertion()
+            }
+        }
+    }
+
+    private func runRichClipboardPasteAssertion() {
+        let script = """
+        (() => {
+          const data = new DataTransfer();
+          data.setData('text/plain', '公式 $\\\\mathcal{F}(x)$ 与 \\\\(x^2\\\\) 加 **粗体**,价格 $100');
+          data.setData('text/html', '<div>公式与粗体与价格</div>');
+          const event = new ClipboardEvent('paste', { bubbles: true, cancelable: true, clipboardData: data });
+          const beforePaste = window.WeiBeiEditor.getMarkdown();
+          document.querySelector('.ProseMirror')?.dispatchEvent(event);
+          const markdown = window.WeiBeiEditor.getMarkdown();
+          const text = document.querySelector('.ProseMirror')?.textContent || '';
+          const mathNodes = document.querySelectorAll('.ProseMirror [data-type="math_inline"]').length;
+          const strongNodes = document.querySelectorAll('.ProseMirror strong').length;
+          window.WeiBeiEditor.undoForCheck();
+          const afterUndo = window.WeiBeiEditor.getMarkdown();
+          return {
+            mathNodes,
+            strongNodes,
+            boldRendered: text.includes('粗体') && !text.includes('**'),
+            mathConverted: markdown.includes('x^2') && !markdown.includes('\\\\(x^2\\\\)'),
+            currencyKept: markdown.includes('$100') || markdown.includes('\\\\$100'),
+            undoRestoresBaseline: afterUndo === beforePaste
+          };
+        })();
+        """
+        webView.evaluateJavaScript(script) { [weak self] value, error in
+            guard let self else { return }
+            if let error {
+                self.fail("rich clipboard paste check threw \(error.localizedDescription)")
+                return
+            }
+            guard let result = value as? [String: Any],
+                  result["mathNodes"] as? Int == 2,
+                  result["strongNodes"] as? Int == 1,
+                  result["boldRendered"] as? Bool == true,
+                  result["mathConverted"] as? Bool == true,
+                  result["currencyKept"] as? Bool == true,
+                  result["undoRestoresBaseline"] as? Bool == true else {
+                self.fail("rich clipboard paste did not parse Markdown source: \(String(describing: value))")
+                return
+            }
             self.webView.evaluateJavaScript("window.WeiBeiEditor.setMarkdown(\(json(sampleMarkdown)))") { _, error in
                 if let error {
-                    self.fail("editable Markdown paste could not restore fixture: \(error.localizedDescription)")
+                    self.fail("rich clipboard paste could not restore fixture: \(error.localizedDescription)")
                     return
                 }
                 self.validateSelectionReplacement()
@@ -2564,7 +2626,7 @@ private final class FinalizedAgentMarkdownHarness: NSObject, WKScriptMessageHand
             .appendingPathComponent("Sources/WeiBei/Resources/Editor/index.html")
         webView.loadFileURL(indexURL, allowingReadAccessTo: indexURL.deletingLastPathComponent())
 
-        let timeout = Date().addingTimeInterval(15)
+        let timeout = Date().addingTimeInterval(30)
         while !isDone && Date() < timeout {
             RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.05))
         }
@@ -2730,7 +2792,8 @@ private final class FinalizedAgentMarkdownHarness: NSObject, WKScriptMessageHand
                 return
             }
             self.finishReportedHeight = height
-            self.validateDOM(until: Date().addingTimeInterval(3))
+            // 收尾尾巴按流式节奏逐字补完(大尾巴可达十余秒),验证窗口须覆盖补完后的最终态
+            self.validateDOM(until: Date().addingTimeInterval(14))
         }
     }
 
@@ -2776,12 +2839,30 @@ private final class FinalizedAgentMarkdownHarness: NSObject, WKScriptMessageHand
                 self.fail("finalized agent Markdown DOM check threw \(error.localizedDescription)")
                 return
             }
-            guard let result = value as? [String: Any],
-                  result["ok"] as? Bool == true else {
+            guard let result = value as? [String: Any] else {
+                self.fail("finalized agent Markdown DOM check returned no result")
+                return
+            }
+            // The completion tail now types out at the streaming cadence, so
+            // polls can land mid-reveal: structural checks retry to the
+            // deadline instead of failing on an intermediate document.
+            if result["ok"] as? Bool != true {
+                if Date() < deadline {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                        self.validateDOM(until: deadline)
+                    }
+                    return
+                }
                 self.fail("finalized agent Markdown lost block structure: \(String(describing: value))")
                 return
             }
             if !(result["mermaidError"] as? String ?? "").isEmpty {
+                if Date() < deadline {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                        self.validateDOM(until: deadline)
+                    }
+                    return
+                }
                 self.fail("finalized Agent Mermaid failed: \(String(describing: result["mermaidError"]))")
                 return
             }

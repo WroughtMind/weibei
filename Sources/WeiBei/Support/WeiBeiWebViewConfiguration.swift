@@ -1,8 +1,8 @@
 import WebKit
 
-/// 四个 WebKit 面的标记，报错桥用它归类日志。
+/// 各 WebKit 面的标记，报错桥用它归类日志。
 enum WeiBeiWebSurface: String {
-    case reader, editor, richAnswer, genui
+    case reader, editor, genui
 }
 
 /// Shared WebKit configuration helpers (performance Phase 4).
@@ -42,7 +42,7 @@ enum WeiBeiWebViewConfiguration {
     }
 
     /// 供整体替换 `userContentController` 的调用方在替换后补注入报错桥，
-    /// 保证四个面都覆盖（replace 后的 controller 是全新实例，make() 里的
+    /// 保证所有面都覆盖（replace 后的 controller 是全新实例，make() 里的
     /// 注入会被丢弃）。
     static func installConsoleErrorBridge(
         on controller: WKUserContentController,

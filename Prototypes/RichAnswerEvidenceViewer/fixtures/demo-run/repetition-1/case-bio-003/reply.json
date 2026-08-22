@@ -1,4 +1,0 @@
-{
-  "backend": "mock-backend",
-  "text": "协议验证未通过，当前样本缺少 evidence ledger，暂无法稳定渲染。"
-}

@@ -6,7 +6,6 @@ pi=false
 editor=false
 data_safety=false
 release=false
-rich_answer=false
 tools=false
 
 classify_path() {
@@ -51,29 +50,19 @@ classify_path() {
       ;;
   esac
 
-  # 原型工具面：富回答运行时（源码/脚本/embed 输出产物）与 Evidence Viewer
-  # 等 Prototypes 下的 TS 工具（CI 只做类型检查，不跑生成）。
-  # package.json/lockfile 变化可能改变依赖解析（workspaces 合并曾因此改变产物），必须触发。
-  case "$path" in
-    Prototypes/*|Sources/WeiBei/Resources/rich-answer.html|Sources/WeiBei/Resources/rich-answer-runtime.css|Sources/WeiBei/Resources/rich-answer-runtime.js|package.json|package-lock.json)
-      rich_answer=true
-      ;;
-  esac
-
   # Node 工具脚本类型检查（npm run typecheck:tools 的触发面）。
-  # 根 tsconfig.json 的 include 覆盖 Prototypes/RichAnswerWebRuntime/scripts/**/*.ts，
-  # 因此这些原型脚本同样触发 tools；package.json/lockfile 变化可能改动
-  # typescript/@types/node 版本或 typecheck:tools 本身，也必须触发。
+  # 根 tsconfig.json 的 include 覆盖 DesignSystem/scripts;package.json/lockfile 变化
+  # 可能改动 typescript/@types/node 版本或 typecheck:tools 本身，也必须触发。
   case "$path" in
-    script/*.ts|DesignSystem/scripts/*.ts|tsconfig.json|Prototypes/RichAnswerWebRuntime/scripts/*.ts|package.json|package-lock.json)
+    script/*.ts|DesignSystem/scripts/*.ts|tsconfig.json|package.json|package-lock.json)
       tools=true
       ;;
   esac
 }
 
 emit_scopes() {
-  printf 'code=%s\npi=%s\neditor=%s\ndata_safety=%s\nrelease=%s\nrich_answer=%s\ntools=%s\n' \
-    "$code" "$pi" "$editor" "$data_safety" "$release" "$rich_answer" "$tools"
+  printf 'code=%s\npi=%s\neditor=%s\ndata_safety=%s\nrelease=%s\ntools=%s\n' \
+    "$code" "$pi" "$editor" "$data_safety" "$release" "$tools"
 }
 
 reset_scopes() {
@@ -82,7 +71,6 @@ reset_scopes() {
   editor=false
   data_safety=false
   release=false
-  rich_answer=false
   tools=false
 }
 
@@ -104,83 +92,68 @@ expect_scopes() {
 
 if [[ "${1:-}" == "--self-check" ]]; then
   expect_scopes \
-    "code=false pi=false editor=false data_safety=false release=false rich_answer=false tools=false " \
+    "code=false pi=false editor=false data_safety=false release=false tools=false " \
     "Docs/plans/example.md"
   expect_scopes \
-    "code=true pi=true editor=true data_safety=true release=false rich_answer=false tools=false " \
+    "code=true pi=true editor=true data_safety=true release=false tools=false " \
     "Sources/WeiBei/Stores/WorkspaceStore.swift"
   expect_scopes \
-    "code=true pi=false editor=true data_safety=false release=false rich_answer=false tools=false " \
+    "code=true pi=false editor=true data_safety=false release=false tools=false " \
     "Sources/WeiBei/WebEditor/src/editor.ts"
   expect_scopes \
-    "code=true pi=false editor=true data_safety=false release=false rich_answer=false tools=false " \
+    "code=true pi=false editor=true data_safety=false release=false tools=false " \
     "Sources/WeiBeiCore/MarkdownAttachmentStore.swift"
   expect_scopes \
-    "code=true pi=false editor=false data_safety=true release=false rich_answer=false tools=false " \
+    "code=true pi=false editor=false data_safety=true release=false tools=false " \
     "Tests/WeiBeiSafetyTests/CourseProjectRootSelfCheck.swift"
   expect_scopes \
-    "code=true pi=false editor=false data_safety=true release=false rich_answer=false tools=false " \
+    "code=true pi=false editor=false data_safety=true release=false tools=false " \
     "Sources/WeiBei/Views/SidebarView.swift" \
     "Sources/WeiBei/Views/CourseDrawerHost.swift"
   expect_scopes \
-    "code=true pi=false editor=false data_safety=true release=false rich_answer=false tools=false " \
+    "code=true pi=false editor=false data_safety=true release=false tools=false " \
     "Sources/WeiBeiCore/LearningModels.swift" \
     "Sources/WeiBeiCore/CourseDocumentSearchIndex.swift" \
     "Sources/WeiBeiCore/NoteSourceRelations.swift"
   expect_scopes \
-    "code=true pi=true editor=true data_safety=true release=true rich_answer=false tools=false " \
+    "code=true pi=true editor=true data_safety=true release=true tools=false " \
     ".github/workflows/pr-checks.yml"
   expect_scopes \
-    "code=true pi=true editor=false data_safety=false release=true rich_answer=false tools=false " \
+    "code=true pi=true editor=false data_safety=false release=true tools=false " \
     "Vendor/PiRuntime/manifest.json"
   expect_scopes \
-    "code=false pi=false editor=false data_safety=false release=true rich_answer=false tools=false " \
+    "code=false pi=false editor=false data_safety=false release=true tools=false " \
     "LICENSE"
   expect_scopes \
-    "code=false pi=false editor=false data_safety=false release=true rich_answer=false tools=false " \
+    "code=false pi=false editor=false data_safety=false release=true tools=false " \
     "Vendor/PiRuntime/LICENSE"
   expect_scopes \
-    "code=false pi=true editor=false data_safety=false release=true rich_answer=false tools=false " \
+    "code=false pi=true editor=false data_safety=false release=true tools=false " \
     "Vendor/PiRuntime/THIRD_PARTY_NOTICES.md"
   expect_scopes \
-    "code=false pi=true editor=false data_safety=false release=true rich_answer=false tools=false " \
+    "code=false pi=true editor=false data_safety=false release=true tools=false " \
     "Vendor/PiRuntime/RELINK.md"
   expect_scopes \
-    "code=false pi=false editor=false data_safety=false release=false rich_answer=false tools=false " \
+    "code=false pi=false editor=false data_safety=false release=false tools=false " \
     "Vendor/PiRuntime/README.md"
   expect_scopes \
-    "code=false pi=false editor=false data_safety=false release=false rich_answer=true tools=false " \
-    "Prototypes/RichAnswerWebRuntime/src/main.tsx"
-  expect_scopes \
-    "code=false pi=false editor=false data_safety=false release=false rich_answer=true tools=true " \
-    "Prototypes/RichAnswerWebRuntime/scripts/embed-runtime.ts"
-  expect_scopes \
-    "code=false pi=false editor=false data_safety=false release=false rich_answer=true tools=false " \
-    "Prototypes/RichAnswerEvidenceViewer/generate-evidence-package.ts" \
-    "Prototypes/RichAnswerEvidenceViewer/tsconfig.json"
-  expect_scopes \
-    "code=true pi=false editor=false data_safety=false release=false rich_answer=true tools=false " \
-    "Sources/WeiBei/Resources/rich-answer-runtime.js" \
-    "Sources/WeiBei/Resources/rich-answer.html" \
-    "Sources/WeiBei/Resources/rich-answer-runtime.css"
-  expect_scopes \
-    "code=false pi=true editor=false data_safety=false release=false rich_answer=false tools=false " \
+    "code=false pi=true editor=false data_safety=false release=false tools=false " \
     "tsconfig.agent.json"
   expect_scopes \
-    "code=false pi=false editor=true data_safety=false release=false rich_answer=false tools=false " \
+    "code=false pi=false editor=true data_safety=false release=false tools=false " \
     "tsconfig.editor.json"
   expect_scopes \
-    "code=true pi=false editor=false data_safety=false release=false rich_answer=false tools=true " \
+    "code=true pi=false editor=false data_safety=false release=false tools=true " \
     "script/check-genui-math.ts" \
     "DesignSystem/scripts/build-icns.ts" \
     "tsconfig.json"
   # 依赖清单变化影响 Pi 类型（pi-ai/pi-coding-agent）、编辑器与富回答产物解析，
   # 以及 typescript/@types/node 版本与 typecheck:tools 本身 → 全部触发。
   expect_scopes \
-    "code=true pi=true editor=true data_safety=false release=true rich_answer=true tools=true " \
+    "code=true pi=true editor=true data_safety=false release=true tools=true " \
     "package.json"
   expect_scopes \
-    "code=true pi=true editor=true data_safety=false release=true rich_answer=true tools=true " \
+    "code=true pi=true editor=true data_safety=false release=true tools=true " \
     "package-lock.json"
   echo "CI scope self-check passed"
   exit 0

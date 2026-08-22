@@ -1,0 +1,43 @@
+import Foundation
+import WeiBeiCore
+import XCTest
+
+/// 富回答旧系统退役(2026-08)的数据兼容专项:
+/// 旧存档里 AgentMessage 携带 richAnswer 字段,退役后解码必须忽略该键、
+/// 正文原样保留,且重新保存时不再写出 richAnswer。
+final class RichAnswerRetirementDataSafetyTests: XCTestCase {
+    /// 旧格式消息样例:正文 + 已废弃的 richAnswer 载荷(program/ui 形状)。
+    private func legacyMessageJSON() throws -> Data {
+        let payload: [String: Any] = [
+            "id": "11111111-2222-3333-4444-555555555555",
+            "role": "assistant",
+            "text": "利率是资金使用价格的表达。",
+            "toolTrace": [],
+            "createdAt": 538_124_800.0,
+            "richAnswer": [
+                "kind": "program",
+                "program": [
+                    "type": "columnTable",
+                    "columns": ["期数", "利率"],
+                    "rows": [["1", "3.25%"]],
+                ],
+                "ui": ["emphasis": "strong"],
+            ],
+        ]
+        return try JSONSerialization.data(withJSONObject: payload)
+    }
+
+    func testLegacyRichAnswerFieldIsIgnoredOnDecode() throws {
+        let message = try JSONDecoder().decode(AgentMessage.self, from: legacyMessageJSON())
+        XCTAssertEqual(message.text, "利率是资金使用价格的表达。")
+        XCTAssertEqual(message.role, .assistant)
+    }
+
+    func testReencodedMessageDropsRichAnswerKey() throws {
+        let message = try JSONDecoder().decode(AgentMessage.self, from: legacyMessageJSON())
+        let data = try JSONEncoder().encode(message)
+        let object = try XCTUnwrap(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+        XCTAssertNil(object["richAnswer"], "退役后的消息不得再写出 richAnswer 键")
+        XCTAssertEqual(object["text"] as? String, "利率是资金使用价格的表达。")
+    }
+}

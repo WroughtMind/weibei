@@ -10,7 +10,6 @@ public enum WeiBeiLog {
     public static let subsystem = "com.changfenhuang.weibei"
     public static let workspace  = Logger(subsystem: subsystem, category: "workspace")
     public static let noteRepair = Logger(subsystem: subsystem, category: "noteRepair")
-    public static let richAnswer = Logger(subsystem: subsystem, category: "richAnswer")
     public static let web        = Logger(subsystem: subsystem, category: "web")
     public static let pi         = Logger(subsystem: subsystem, category: "pi")
 

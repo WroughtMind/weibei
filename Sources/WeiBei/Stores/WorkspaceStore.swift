@@ -561,6 +561,8 @@ final class WorkspaceStore: ObservableObject {
     }
     /// Durable selection→chat threads (underline marks + reopen floating Q&A).
     @Published var selectionAskThreads: [SelectionAskThread] = []
+    /// 选区"记"留痕(原文标记渲染与回访;管理逻辑在 WorkspaceStore+SelectionRemark)。
+    @Published var selectionRemarkRecords: [SelectionRemarkRecord] = []
     /// Thread currently shown in the floating selection agent (full answer surface).
     var activeSelectionAskThreadID: UUID? {
         get { interaction.activeSelectionAskThreadID }
@@ -887,7 +889,7 @@ final class WorkspaceStore: ObservableObject {
         var fingerprint: TransactionDirectoryFingerprint
     }
 
-    private var lastUsableAgentAnswer: AgentMessage? {
+    var lastUsableAgentAnswer: AgentMessage? {
         return messages.last { $0.isUsableAgentAnswer }
     }
 
@@ -7840,6 +7842,7 @@ final class WorkspaceStore: ObservableObject {
             }
         }
         selectionAskThreads.removeAll { $0.itemID == itemID }
+        selectionRemarkRecords.removeAll { $0.itemID == itemID }
         if activeSelectionAskThreadID.map({ id in
             !selectionAskThreads.contains { $0.id == id }
         }) == true {
@@ -9779,14 +9782,6 @@ final class WorkspaceStore: ObservableObject {
             return url.deletingLastPathComponent().appendingPathComponent(".weibei-assets", isDirectory: true)
         }
         return appOwnedFilesDirectory().appendingPathComponent("Attachments", isDirectory: true)
-    }
-
-    var selectedContextText: String {
-        guard let item = selectedMaterialItem else { return "" }
-        if let text = DocumentTextExtractor.cachedText(for: item), !text.isEmpty {
-            return text
-        }
-        return ""
     }
 
     var selectedMaterialTitle: String {
@@ -12486,10 +12481,6 @@ final class WorkspaceStore: ObservableObject {
         )
     }
 
-    func importAndLinkSourcesFromPanel() {
-        presentImportPanel(linkToActiveNote: true)
-    }
-
     private func presentImportPanel(
         linkToActiveNote: Bool,
         selectsFirstImportedItem: Bool = true,
@@ -12902,7 +12893,7 @@ final class WorkspaceStore: ObservableObject {
         NSPasteboard.general.setString(reference, forType: .string)
     }
 
-    func updateSelection(_ text: String, source: SelectionSource, anchor: CGPoint? = nil, ownerTitle: String? = nil, isEditable: Bool = true) {
+    func updateSelection(_ text: String, source: SelectionSource, anchor: CGPoint? = nil, ownerTitle: String? = nil, isEditable: Bool = true, documentAnchor: SelectionDocumentAnchor? = nil) {
         guard !courseWorkspacePresented else { return }
         let cleaned = MarkdownSelectionSanitizer.clean(text)
         guard Self.hasMeaningfulSelectionCharacter(cleaned) else {
@@ -12929,7 +12920,7 @@ final class WorkspaceStore: ObservableObject {
 
         // Drag stream: same text, only anchor moves — no spring, no new SelectionContext id.
         if contentMatches {
-            let anchorUnchanged = Self.anchorsApproximatelyEqual(selectionAnchor, anchor, epsilon: 8)
+            let anchorUnchanged = WorkspaceInteractionState.anchorsApproximatelyEqual(selectionAnchor, anchor, epsilon: 8)
             let surfaceAlreadyCorrect = shouldRevealSelectionPrompt
                 ? agentSurface == .selectionFloat
                 : agentSurface != .selectionFloat
@@ -12974,7 +12965,8 @@ final class WorkspaceStore: ObservableObject {
             source: source,
             ownerTitle: resolvedOwnerTitle,
             itemID: source == .note ? activeNotebookItemID : selectedItemID,
-            isEditable: isEditable
+            isEditable: isEditable,
+            documentAnchor: documentAnchor
         )
         // Continuous fields update immediately so the capsule tracks like a native selection tool.
         // Only agentSurface show/hide keeps a one-shot panel spring.
@@ -12999,10 +12991,6 @@ final class WorkspaceStore: ObservableObject {
                 agentSurface = .hidden
             }
         }
-    }
-
-    private static func anchorsApproximatelyEqual(_ lhs: CGPoint?, _ rhs: CGPoint?, epsilon: CGFloat = 0.5) -> Bool {
-        WorkspaceInteractionState.anchorsApproximatelyEqual(lhs, rhs, epsilon: epsilon)
     }
 
     func removeSelectionAttachment(id: UUID) {
@@ -14114,8 +14102,7 @@ final class WorkspaceStore: ObservableObject {
         sessionID: UUID,
         memoryID: UUID,
         draft: String,
-        firstMessageID: UUID,
-        firstRichNarrative: String
+        firstMessageID: UUID
     ) {
         precondition(WeiBeiSafetyTestMode.isEnabled)
         guard item(materialItemID, belongsTo: courseID),
@@ -14216,18 +14203,12 @@ final class WorkspaceStore: ObservableObject {
             targetItemID: noteItemID,
             sourceItemID: materialItemID
         )
-        let firstRichNarrative =
-            "最早一条课程回复的富回答附件必须长期保留。"
         let firstReply = AgentMessage(
             id: firstMessageID,
             role: .assistant,
             text: "最早一条课程回答。",
             source: "课程 Chat",
             backend: .pi,
-            richAnswer: RichAnswerPresentation(
-                mode: .narrativeOnly,
-                narrative: firstRichNarrative
-            ),
             actions: [
                 AgentReplyAction(
                     kind: .writeNote,
@@ -14348,8 +14329,7 @@ final class WorkspaceStore: ObservableObject {
             sessionID,
             memoryID,
             draft,
-            firstMessageID,
-            firstRichNarrative
+            firstMessageID
         )
     }
 
@@ -15912,12 +15892,15 @@ final class WorkspaceStore: ObservableObject {
         let itemID = selection.itemID
             ?? (selection.source == .note ? activeNotebookItemID : selectedItemID)
         if let index = selectionAskThreads.firstIndex(where: {
-            $0.normalizedText == normalized
-                && $0.source == selection.source
-                && ($0.itemID == nil || $0.itemID == itemID || itemID == nil)
+            // 锚点优先(同处原文续同线程),文字匹配兜底。
+            selection.documentAnchor?.matches($0.documentAnchor) == true
+                || ($0.normalizedText == normalized
+                    && $0.source == selection.source
+                    && ($0.itemID == nil || $0.itemID == itemID || itemID == nil))
         }) {
             selectionAskThreads[index].updatedAt = Date()
             selectionAskThreads[index].itemID = selectionAskThreads[index].itemID ?? itemID
+            selectionAskThreads[index].documentAnchor = selectionAskThreads[index].documentAnchor ?? selection.documentAnchor
             save()
             return selectionAskThreads[index]
         }
@@ -15925,7 +15908,8 @@ final class WorkspaceStore: ObservableObject {
             selectionText: selection.text,
             source: selection.source,
             ownerTitle: selection.ownerTitle,
-            itemID: itemID
+            itemID: itemID,
+            documentAnchor: selection.documentAnchor
         )
         selectionAskThreads.insert(thread, at: 0)
         if selectionAskThreads.count > 80 {
@@ -16005,16 +15989,6 @@ final class WorkspaceStore: ObservableObject {
         guard let content = lastAgentAnswerContentForCurrentNote() else { return }
         noteEditorCommand = NoteEditorCommand(kind: .applyAgentPatch, markdown: "\n\(noteBlockForAgentAnswer(content))")
         focus(.notes)
-    }
-
-    private func lastAgentAnswerContentForCurrentNote() -> String? {
-        lastUsableAgentAnswer?.text
-    }
-
-    private func noteBlockForAgentAnswer(_ answer: String) -> String {
-        let text = answer.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.hasPrefix("#") else { return text }
-        return "## \(ui("整理建议", "Organization suggestion"))\n\(text)"
     }
 
     func submitAgentDraft(targetCourseID: UUID? = nil) {
@@ -16697,7 +16671,6 @@ final class WorkspaceStore: ObservableObject {
                     $0.text = reply.text
                     $0.contentBlocks = visibleContentBlocks
                     $0.backend = reply.backend
-                    $0.richAnswer = reply.richAnswer
                     $0.completionState = .completed
                     $0.sources = sources
                     $0.actions = actions
@@ -17068,8 +17041,6 @@ final class WorkspaceStore: ObservableObject {
                 base = ui("正在更新课程知识档案", "Updating course profile")
             case "weibei_note_proposal":
                 base = ui("正在整理写入建议", "Preparing a note proposal")
-            case "weibei_rich_answer":
-                base = ui("正在组织富回答", "Building a rich answer")
             default:
                 base = ui("正在处理", "Working")
             }
@@ -20404,6 +20375,7 @@ final class WorkspaceStore: ObservableObject {
             selectionAskThreads = persistedSelectionAskThreads
             selectionAskThreadDefaults.removeObject(forKey: Self.legacySelectionAskThreadsDefaultsKey)
         }
+        selectionRemarkRecords = snapshot.selectionRemarkRecords ?? selectionRemarkRecords
         if selectedItem?.isCourseMaterial == false,
            selectedItem?.isNotebookNote == true {
             activeNotebookItemID = selectedItemID
@@ -20573,6 +20545,7 @@ final class WorkspaceStore: ObservableObject {
                     studySessionScopeMigrationVersion,
                 activeStudySessionID: persistedActiveStudySessionID,
                 selectionAskThreads: selectionAskThreads,
+                selectionRemarkRecords: selectionRemarkRecords,
                 modelName: modelName,
                 agentProviderID: agentProviderID.rawValue,
                 agentBaseURL: agentBaseURL.isEmpty ? nil : agentBaseURL,
@@ -20710,6 +20683,9 @@ final class WorkspaceStore: ObservableObject {
                 }
                 return thread
             }
+        workspace.selectionRemarkRecords = workspace.selectionRemarkRecords?.filter {
+            $0.itemID.map(removedItemIDs.contains) != true
+        }
         return workspace
     }
 
@@ -21323,6 +21299,7 @@ final class WorkspaceStore: ObservableObject {
                 studySessionScopeMigrationVersion: studySessionScopeMigrationVersion,
                 activeStudySessionID: persistedActiveStudySessionID,
                 selectionAskThreads: selectionAskThreads,
+                selectionRemarkRecords: selectionRemarkRecords,
                 modelName: modelName,
                 agentProviderID: agentProviderID.rawValue,
                 agentBaseURL: agentBaseURL.isEmpty ? nil : agentBaseURL,

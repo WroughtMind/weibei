@@ -108,14 +108,6 @@ jobs:
           git diff --exit-code -- Sources/WeiBei/Resources/Editor
           swift run WeiBeiWebEditorCheck
 
-      - name: 校验富回答运行时产物一致
-        if: (github.event_name == 'pull_request' && steps.scope.outputs.rich_answer == 'true') || (github.event_name == 'workflow_dispatch' && inputs.full_suite)
-        run: |
-          npm ci
-          npm -w Prototypes/RichAnswerWebRuntime run build:embed
-          git diff --exit-code -- Sources/WeiBei/Resources/rich-answer.html Sources/WeiBei/Resources/rich-answer-runtime.css Sources/WeiBei/Resources/rich-answer-runtime.js
-          npx tsc --noEmit -p Prototypes/RichAnswerEvidenceViewer/tsconfig.json
-
       - name: 运行课程目录与数据安全自检
         if: (github.event_name == 'pull_request' && steps.scope.outputs.data_safety == 'true') || (github.event_name == 'workflow_dispatch' && inputs.full_suite)
         run: stdbuf -oL -eL swift test --filter WeiBeiSafetyTests

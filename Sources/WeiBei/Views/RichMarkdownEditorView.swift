@@ -634,6 +634,9 @@ struct RichMarkdownEditorView: NSViewRepresentable {
     /// JSON array of `{id,text}` for selection-ask underline marks (read-only surfaces).
     var selectionAskMarks: String = "[]"
     var onSelectionAskMark: (String) -> Void = { _ in }
+    /// JSON array of `{id,text}` for remark marks — 句末朱砂短棒(记过)。
+    var selectionRemarkMarks: String = "[]"
+    var onSelectionRemarkMark: (String) -> Void = { _ in }
     private static let localImageScheme = "weibeiimage"
 
     func makeCoordinator() -> Coordinator {
@@ -652,6 +655,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             interfaceLanguage: interfaceLanguage,
             streamsMarkdownUpdates: streamsMarkdownUpdates,
             selectionAskMarks: selectionAskMarks,
+            selectionRemarkMarks: selectionRemarkMarks,
             onContentHeightChange: onContentHeightChange,
             onActiveHeadingChange: onActiveHeadingChange,
             onOutlineChange: onOutlineChange,
@@ -665,7 +669,8 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             onFinalizedRenderReady: onFinalizedRenderReady,
             onRenderFailure: onRenderFailure,
             onSearchResult: onSearchResult,
-            onSelectionAskMark: onSelectionAskMark
+            onSelectionAskMark: onSelectionAskMark,
+            onSelectionRemarkMark: onSelectionRemarkMark
         )
     }
 
@@ -759,7 +764,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
                 }, { capture: true, passive: false });
               }
             })();
-            """ + Self.selectionAskMarksBootstrapScript,
+            """ + Self.selectionAskMarksBootstrapScript + Self.selectionRemarkMarksBootstrapScript,
             injectionTime: .atDocumentStart,
             forMainFrameOnly: true
         ))
@@ -902,6 +907,8 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         context.coordinator.onOutlineChange = onOutlineChange
         context.coordinator.onSelectionAskMark = onSelectionAskMark
         context.coordinator.selectionAskMarks = selectionAskMarks
+        context.coordinator.onSelectionRemarkMark = onSelectionRemarkMark
+        context.coordinator.selectionRemarkMarks = selectionRemarkMarks
         if context.coordinator.isChatWideTypography != isChatWideTypography {
             context.coordinator.isChatWideTypography = isChatWideTypography
             if context.coordinator.isReady {
@@ -925,6 +932,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             context.coordinator.applySearch()
             context.coordinator.applyFocus()
             context.coordinator.applySelectionAskMarks()
+            context.coordinator.applySelectionRemarkMarks()
         }
 
         context.coordinator.runPendingCommandIfReady()
@@ -960,7 +968,8 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         "activeHeadingChanged",
         "compactPreviewWheel",
         "appShortcut",
-        "selectionAskMark"
+        "selectionAskMark",
+        "remarkMark"
     ]
 
     /// CSS + apply helper for cinnabar underlines on asked selections (read-only markdown).
@@ -997,6 +1006,45 @@ struct RichMarkdownEditorView: NSViewRepresentable {
     })();
     """
 
+    private static let selectionRemarkMarksBootstrapScript = """
+    (() => {
+      if (window.WeiBeiSelectionRemarkMarks) return;
+      const style = document.createElement("style");
+      style.textContent = `
+        .weibei-remark-mark {
+          cursor: pointer;
+          border-radius: 2px;
+          transition: background-color 120ms ease;
+        }
+        .weibei-remark-mark::after {
+          content: "";
+          display: inline-block;
+          width: 9px;
+          height: 9px;
+          margin-left: 5px;
+          vertical-align: -0.06em;
+          border-radius: 50%;
+          background-color: rgba(145, 38, 27, 1.0);
+        }
+        .weibei-remark-mark:hover {
+          background-color: rgba(145, 38, 27, 0.14);
+        }
+        [data-weibei-theme="inkstone"] .weibei-remark-mark::after {
+          background-color: rgba(200, 120, 100, 1.0);
+        }
+        [data-weibei-theme="inkstone"] .weibei-remark-mark:hover {
+          background-color: rgba(200, 120, 100, 0.18);
+        }
+      `;
+      document.documentElement.appendChild(style);
+      window.WeiBeiSelectionRemarkMarks = {
+        apply: function(marks) {
+          window.WeiBeiEditor?.setSelectionRemarkMarks(marks);
+        }
+      };
+    })();
+    """
+
     private static func applyWebAppearance(to view: WKWebView, appearanceMode: WeiBeiAppearanceMode) {
         view.underPageBackgroundColor = WeiBeiNativePalette.paper(for: appearanceMode)
         view.appearance = NSAppearance(named: appearanceMode.isDark ? .darkAqua : .aqua)
@@ -1027,6 +1075,8 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         var onSearchResult: (String, Bool) -> Void
         var onSelectionAskMark: (String) -> Void
         var selectionAskMarks: String
+        var onSelectionRemarkMark: (String) -> Void
+        var selectionRemarkMarks: String
         var isChatWideTypography = false
         var streamsMarkdownUpdates: Bool
         weak var webView: WKWebView?
@@ -1053,6 +1103,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         private var lastAppliedSearchQuery = ""
         private var lastAppliedFocusRequest = -1
         private var lastAppliedSelectionAskMarks = ""
+        private var lastAppliedSelectionRemarkMarks = ""
         private var finalizedRenderGeneration = 0
 
         init(
@@ -1070,6 +1121,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             interfaceLanguage: WeiBeiInterfaceLanguage,
             streamsMarkdownUpdates: Bool,
             selectionAskMarks: String,
+            selectionRemarkMarks: String,
             onContentHeightChange: @escaping (CGFloat) -> Void,
             onActiveHeadingChange: @escaping (Int?) -> Void,
             onOutlineChange: @escaping ([NoteEditorOutlineItem]) -> Void,
@@ -1083,7 +1135,8 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             onFinalizedRenderReady: @escaping (CGFloat) -> Void,
             onRenderFailure: @escaping () -> Void,
             onSearchResult: @escaping (String, Bool) -> Void,
-            onSelectionAskMark: @escaping (String) -> Void
+            onSelectionAskMark: @escaping (String) -> Void,
+            onSelectionRemarkMark: @escaping (String) -> Void
         ) {
             self.documentID = documentID
             self.markdown = markdown
@@ -1099,6 +1152,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             self.interfaceLanguage = interfaceLanguage
             self.streamsMarkdownUpdates = streamsMarkdownUpdates
             self.selectionAskMarks = selectionAskMarks
+            self.selectionRemarkMarks = selectionRemarkMarks
             self.onContentHeightChange = onContentHeightChange
             self.onActiveHeadingChange = onActiveHeadingChange
             self.onOutlineChange = onOutlineChange
@@ -1113,6 +1167,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             self.onRenderFailure = onRenderFailure
             self.onSearchResult = onSearchResult
             self.onSelectionAskMark = onSelectionAskMark
+            self.onSelectionRemarkMark = onSelectionRemarkMark
         }
 
         func bindEditingSession() {
@@ -1314,6 +1369,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
                 setTextScale(textScale)
                 applyFocus()
                 applySelectionAskMarks(force: true)
+                applySelectionRemarkMarks(force: true)
                 runPendingCommandIfReady()
                 onRenderReady()
             case "dirtyChanged":
@@ -1354,6 +1410,11 @@ struct RichMarkdownEditorView: NSViewRepresentable {
                       let threadID = body["threadId"] as? String,
                       !threadID.isEmpty else { return }
                 onSelectionAskMark(threadID)
+            case "remarkMark":
+                guard let body = message.body as? [String: Any],
+                      let recordID = body["recordId"] as? String,
+                      !recordID.isEmpty else { return }
+                onSelectionRemarkMark(recordID)
             case "wikiLinkActivated":
                 guard let body = message.body as? [String: Any],
                       let title = body["title"] as? String else { return }
@@ -1464,7 +1525,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             webMarkdown = text
             webView?.evaluateJavaScript("""
             (() => {
-              const didFinish = window.WeiBeiEditor?.finishStreamingMarkdown(\(Self.json(text)));
+              const didFinish = window.WeiBeiEditor?.finishStreamingMarkdown(\(Self.json(text)), { paced: true });
               return {
                 didFinish: didFinish === true,
                 height: Number(window.WeiBeiCompactPreviewHeight || 1)
@@ -1703,6 +1764,17 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) { [weak self] in
                 guard let self, self.isReady, !self.isEditable else { return }
                 self.evaluate("window.WeiBeiSelectionAskMarks && window.WeiBeiSelectionAskMarks.apply(\(marks));")
+            }
+        }
+
+        func applySelectionRemarkMarks(force: Bool = false) {
+            guard isReady, !isEditable else { return }
+            guard force || selectionRemarkMarks != lastAppliedSelectionRemarkMarks else { return }
+            lastAppliedSelectionRemarkMarks = selectionRemarkMarks
+            let marks = selectionRemarkMarks
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) { [weak self] in
+                guard let self, self.isReady, !self.isEditable else { return }
+                self.evaluate("window.WeiBeiSelectionRemarkMarks && window.WeiBeiSelectionRemarkMarks.apply(\(marks));")
             }
         }
 

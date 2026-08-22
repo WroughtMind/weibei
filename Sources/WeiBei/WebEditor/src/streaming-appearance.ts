@@ -54,16 +54,19 @@ export function streamingAppearancePlugin(isStreamingActive: () => boolean): Plu
       apply(tr, previous): AppearanceState {
         const now = Date.now();
         let fades: FadeEntry[] = [];
+        const docSize = tr.doc.content.size;
         for (const entry of previous.fades) {
-          const from = tr.mapping.map(entry.from);
-          const to = tr.mapping.map(entry.to);
+          // Big replace steps (finalization diff) can map a fade past the new
+          // document's end; resolve() would throw and kill the whole dispatch.
+          const from = Math.min(tr.mapping.map(entry.from), docSize);
+          const to = Math.min(tr.mapping.map(entry.to), docSize);
           if (from >= to || now >= entry.expiresAt) continue;
           if (tr.doc.resolve(from).parent !== tr.doc.resolve(to).parent) continue;
           fades.push({ from, to, expiresAt: entry.expiresAt });
         }
         let caretPosition = previous.caretPosition === null
           ? null
-          : tr.mapping.map(previous.caretPosition);
+          : Math.min(tr.mapping.map(previous.caretPosition), docSize);
         let caretExpiresAt = previous.caretExpiresAt;
 
         if (tr.docChanged && isStreamingActive()) {
@@ -100,11 +103,22 @@ export function streamingAppearancePlugin(isStreamingActive: () => boolean): Plu
       },
     },
     props: {
-      // Hidden entirely once the streaming session is over, so the finished
-      // render never keeps a caret or stale fade spans.
+      // Once the streaming session is over the caret is gone, but in-flight
+      // fades keep their spans until they expire so the last streamed
+      // characters finish their 260ms fade instead of popping to full
+      // opacity when the finish repaint unwraps the decoration spans.
       decorations(state) {
         const appearance = appearanceKey.getState(state) as AppearanceState | undefined;
-        if (!appearance || !isStreamingActive()) return DecorationSet.empty;
+        if (!appearance) return DecorationSet.empty;
+        if (!isStreamingActive()) {
+          const now = Date.now();
+          const remaining = appearance.fades.filter((entry) => now < entry.expiresAt);
+          if (remaining.length === 0) return DecorationSet.empty;
+          return DecorationSet.create(
+            state.doc,
+            remaining.map((entry) => Decoration.inline(entry.from, entry.to, FADE_SPEC)),
+          );
+        }
         return appearance.set;
       },
     },

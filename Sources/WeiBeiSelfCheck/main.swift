@@ -264,6 +264,37 @@ expect(clearBreezeStats.width == 856 && clearBreezeStats.height == 132
     && clearBreezeStats.opaqueWhite == 0 && universeStats.opaqueWhite == 0
     && clearBreezeStats.outerInk == 0 && universeStats.outerInk == 0, "bundled Lanting calligraphy masks are transparent, uncropped, and free of hard white backgrounds")
 
+// SPM `.process` flattens Resources into the bundle root, so any subdirectory under
+// Editor/ silently breaks url("./...") references in editor.css (the 2026-08 KaTeX
+// font 404: fonts were emitted under fonts/ while the css resolved ./fonts/...).
+let editorResourcesURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+    .appendingPathComponent("Sources/WeiBei/Resources/Editor", isDirectory: true)
+let editorEntries = try FileManager.default.contentsOfDirectory(
+    at: editorResourcesURL,
+    includingPropertiesForKeys: [.isDirectoryKey]
+)
+let editorSubdirectories = editorEntries.filter {
+    (try? $0.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true
+}
+expect(editorSubdirectories.isEmpty, "editor assets stay flat: no subdirectories under Resources/Editor")
+let editorCSS = try String(contentsOf: editorResourcesURL.appendingPathComponent("editor.css"), encoding: .utf8)
+if let cssURLRegex = try? NSRegularExpression(pattern: #"url\(\"?\.\/([^)"]+)"?\)"#) {
+    let matches = cssURLRegex.matches(
+        in: editorCSS,
+        range: NSRange(editorCSS.startIndex..., in: editorCSS)
+    )
+    let referencedNames = matches.compactMap { match -> String? in
+        guard let range = Range(match.range(at: 1), in: editorCSS) else { return nil }
+        return String(editorCSS[range])
+    }
+    let missing = referencedNames.filter {
+        !FileManager.default.fileExists(atPath: editorResourcesURL.appendingPathComponent($0).path)
+    }
+    expect(!referencedNames.isEmpty && missing.isEmpty, "every relative url() in editor.css resolves next to the css file")
+} else {
+    expect(false, "editor css url regex compiles")
+}
+
 
 expect(StudyItemKind.detect(from: URL(fileURLWithPath: "/tmp/a.pdf")) == .pdf, "pdf detection")
 expect(StudyItemKind.detect(from: URL(fileURLWithPath: "/tmp/a.html")) == .html, "html detection")
@@ -1114,6 +1145,37 @@ let legacySelection = try! JSONDecoder().decode(
     from: Data(#"{"id":"40000000-0000-0000-0000-000000000001","text":"旧选区","source":"note","ownerTitle":"旧笔记","isEditable":true}"#.utf8)
 )
 expect(legacySelection.itemID == nil && legacySelection.text == "旧选区", "selection records saved before stable item IDs still reopen")
+// 第二刀兼容:旧提问线程/选区 JSON 没有锚点字段,解码后锚点为 nil,不炸不丢。
+let legacyThread = try! JSONDecoder().decode(
+    SelectionAskThread.self,
+    from: Data(#"{"id":"40000000-0000-0000-0000-000000000002","selectionText":"旧提问原文","source":"document","ownerTitle":"旧材料","messageIDs":[],"createdAt":0,"updatedAt":0}"#.utf8)
+)
+expect(legacyThread.documentAnchor == nil && legacyThread.selectionText == "旧提问原文", "legacy ask threads decode without document anchors")
+let anchorRoundtrip = SelectionRemarkRecord(
+    selectionText: "利率是资金使用价格的表达。",
+    remarkText: "价格视角",
+    source: .document,
+    ownerTitle: "讲义",
+    itemID: "m1",
+    documentAnchor: SelectionDocumentAnchor(
+        pdf: PDFSelectionAnchor(pageIndex: 3, lineRects: [SelectionRect(x: 1, y: 2, width: 30, height: 8)])
+    )
+)
+let anchorData = try! JSONEncoder().encode(anchorRoundtrip)
+let anchorDecoded = try! JSONDecoder().decode(SelectionRemarkRecord.self, from: anchorData)
+expect(
+    anchorDecoded.remarkText == "价格视角"
+        && anchorDecoded.documentAnchor?.pdf?.pageIndex == 3
+        && anchorDecoded.documentAnchor?.pdf?.lineRects.first?.width == 30
+        && anchorDecoded.documentAnchor!.matches(anchorRoundtrip.documentAnchor),
+    "remark records roundtrip pdf anchors and self-match"
+)
+expect(
+    SelectionDocumentAnchor(pdf: PDFSelectionAnchor(pageIndex: 4, lineRects: [])).matches(
+        SelectionDocumentAnchor(pdf: PDFSelectionAnchor(pageIndex: 3, lineRects: []))
+    ) == false,
+    "anchors on different pdf pages never match"
+)
 expect(SelectionAttachmentMerge.mergedText(existing: "当前笔记已经覆盖材", incoming: "开头。建议检查是否写了来源、例子和待追问。", withinSelectionGesture: true) == "当前笔记已经覆盖材开头。建议检查是否写了来源、例子和待追问。", "same-gesture selection attachment stitches split live selection fragments into one attachment")
 expect(SelectionAttachmentMerge.mergedText(existing: "利率是资金使用", incoming: "使用价格的表达", withinSelectionGesture: true) == "利率是资金使用价格的表达", "same-gesture overlapping fragments merge without duplicate overlap text")
 expect(SelectionAttachmentMerge.mergedText(existing: "你们", incoming: "好", withinSelectionGesture: true) == "你们好", "same-gesture single-character live-selection fragments merge into one human selection")
@@ -1520,7 +1582,6 @@ expect(reopenedLegacyReply.completionState == .completed
 var malformedRichReplyObject = try! JSONSerialization.jsonObject(
     with: JSONEncoder().encode(AgentMessage(role: .assistant, text: "正文必须保留", source: nil))
 ) as! [String: Any]
-malformedRichReplyObject["richAnswer"] = ["mode": "broken"]
 malformedRichReplyObject["source"] = 42
 malformedRichReplyObject["backend"] = "future-backend"
 malformedRichReplyObject["completionState"] = "future-state"
@@ -1533,11 +1594,9 @@ let malformedRichReply = try! JSONDecoder().decode(
 expect(malformedRichReply.text == "正文必须保留"
     && malformedRichReply.source == nil
     && malformedRichReply.backend == nil
-    && malformedRichReply.richAnswer == nil
     && malformedRichReply.completionState == .completed
     && malformedRichReply.sources.isEmpty
     && malformedRichReply.actions.isEmpty
-    && malformedRichReply.toolTrace.contains("rich-answer:decode-failed")
     && malformedRichReply.toolTrace.contains("reply-source:decode-failed")
     && malformedRichReply.toolTrace.contains("reply-backend:decode-failed")
     && malformedRichReply.toolTrace.contains("reply-state:decode-failed")

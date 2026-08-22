@@ -44,42 +44,6 @@ private extension View {
 
     }
 
-    func weibeiFloatingHeaderChrome(appearanceMode: WeiBeiAppearanceMode) -> some View {
-        self
-            .padding(.horizontal, 10)
-            .frame(height: 32)
-            .background(WeiBeiGlassHeaderBackground(paperOpacity: 0.60, materialOpacity: 0.08))
-            .clipShape(RoundedRectangle(cornerRadius: 8))
-            .overlay(alignment: .bottom) {
-                WeiBeiHeaderHandoffFade(height: 10, opacity: 0.22)
-                    .offset(y: 10)
-            }
-
-    }
-
-    func weibeiHeaderAccessoryGroup() -> some View {
-        self
-            .padding(3)
-            .background {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(.ultraThinMaterial)
-                        .opacity(0.05)
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(WeiBeiTheme.paperInset.opacity(0.22))
-                }
-            }
-            .clipShape(RoundedRectangle(cornerRadius: 8))
-            .overlay(alignment: .top) {
-                RoundedRectangle(cornerRadius: 8)
-                    .stroke(WeiBeiTheme.glassHighlight.opacity(0.18), lineWidth: 1)
-                    .padding(0.5)
-            }
-            .overlay {
-                RoundedRectangle(cornerRadius: 8)
-                    .stroke(WeiBeiTheme.hairline.opacity(0.62), lineWidth: 1)
-            }
-    }
 }
 
 struct WeiBeiPaneHeader<Actions: View>: View {
@@ -945,6 +909,10 @@ struct MarkdownPreviewView: View {
     @State private var maxObservedMeasuredHeight: CGFloat = 0
     @State private var lastLayoutWidthKey = 0
     @State private var lastChatWideTypography = false
+    /// Largest measurement rejected while the finalized-snapshot gate is closed.
+    /// The web side de-duplicates identical height reports, so one swallowed
+    /// during the gate would otherwise never arrive again.
+    @State private var latestGatedHeight: CGFloat = 0
 
     var body: some View {
         RichMarkdownEditorView(
@@ -960,13 +928,6 @@ struct MarkdownPreviewView: View {
             onSelectionChange: onSelectionChange,
             onAskAgentWithSelection: onSelectionChange,
             onContentHeightChange: { height in
-                guard acceptsHeightMeasurements else {
-                    WeiBeiPerf.event(
-                        "webview.markdown_height_ignored",
-                        extra: "reason=finalizing"
-                    )
-                    return
-                }
                 guard compact && fitsContentHeight else {
                     WeiBeiPerf.event(
                         "webview.markdown_height_ignored",
@@ -985,6 +946,19 @@ struct MarkdownPreviewView: View {
                 }
                 let measuredHeight = ceil(height)
                 let nextFrameHeight = max(measuredHeight, Self.compactPreviewLoadingHeight)
+                guard acceptsHeightMeasurements else {
+                    // Gate window before the finalized snapshot lands. Keep the
+                    // freshest rejected height: the web side dedups repeated
+                    // reports, so one swallowed here never re-arrives, and the
+                    // row would stay at the stale pre-finish height — clipping
+                    // the last wrapped lines after completion.
+                    latestGatedHeight = max(latestGatedHeight, nextFrameHeight)
+                    WeiBeiPerf.event(
+                        "webview.markdown_height_ignored",
+                        extra: "reason=finalizing"
+                    )
+                    return
+                }
                 if freezeHeightAfterMeasure, heightFrozen {
                     // Keep rejecting recycled-row shrink and jitter, but accept
                     // real late growth from Mermaid, formulas, fonts or images.
@@ -1020,6 +994,11 @@ struct MarkdownPreviewView: View {
                     )
                     return
                 }
+                // Instant apply: an eased frame lags the WebView content for the
+                // animation's duration and .clipped() cuts the last wrapped
+                // line mid-flight. Growth now arrives in streaming-sized steps
+                // (the web side types the completion tail out), so there is no
+                // large snap left to smooth.
                 contentHeight = nextFrameHeight
                 // Do NOT freeze on a fresh accept: KaTeX displayMode re-layout
                 // and font loading can still grow the content. Freeze happens
@@ -1054,13 +1033,18 @@ struct MarkdownPreviewView: View {
                     measuredHeight,
                     Self.compactPreviewLoadingHeight
                 )
+                // Reconcile with measurements rejected during the gate: the
+                // snapshot may have been read before the finish re-layout, and
+                // a smaller height clips the answer's last wrapped lines.
+                let settledHeight = max(nextFrameHeight, latestGatedHeight)
+                latestGatedHeight = 0
                 heightFrozen = false
                 acceptedMeasureCount = 0
-                contentHeight = nextFrameHeight
-                maxObservedMeasuredHeight = nextFrameHeight
+                contentHeight = settledHeight
+                maxObservedMeasuredHeight = settledHeight
                 onMeasuredHeight(measuredHeight)
                 onContentHeightChange()
-                onFinalizedSnapshotReady(measuredHeight)
+                onFinalizedSnapshotReady(settledHeight)
             },
             onRenderFailure: onRenderFailure
         )
@@ -1629,20 +1613,9 @@ struct AgentPaneView: View {
         wide: Bool
     ) -> some View {
         let isUser = message.role == .user
-        let wideFamilies: Set<RichAnswerCapabilityFamily> = [
-            .quantityAndCoordinates,
-            .processAndState,
-            .timeAndSpace,
-            .imageAndOverlay,
-            .comparisonAndEvaluation,
-        ]
-        let needsWideCanvas = message.richAnswer?.scenes.contains {
-            wideFamilies.contains($0.family)
-        } == true
 
         // Native text rows: no per-message WKWebView height callbacks that thrash scroll.
         return agentReadingColumn(
-            canvasWide: needsWideCanvas,
             alignment: isUser ? .trailing : .leading
         ) {
             // One view type owns the row across the generating → completed flip,
@@ -1667,11 +1640,10 @@ struct AgentPaneView: View {
     /// The parent proposal is the source of truth: it shrinks this flexible cap
     /// with the real pane instead of applying an offset derived from sampled width.
     private func agentReadingColumn<Content: View>(
-        canvasWide: Bool = false,
         alignment: HorizontalAlignment,
         @ViewBuilder content: () -> Content
     ) -> some View {
-        let readingWidth = AgentChatLayoutMetrics.wideMaxWidth + (canvasWide ? 40 : 0)
+        let readingWidth = AgentChatLayoutMetrics.wideMaxWidth
         return content()
             .frame(maxWidth: readingWidth, alignment: Alignment(horizontal: alignment, vertical: .center))
             .frame(maxWidth: .infinity, alignment: .center)
@@ -1960,15 +1932,7 @@ struct AgentPaneView: View {
         // re-entered sizeThatFits every scroll frame and froze the app.
         // Tray already sits outside the ScrollView (VStack), so keep this small;
         // large fixed insets stole message viewport height and made immersive feel tiny.
-        hasVisibleRichAnswer
-            ? (usesWideChatLayout ? 28 : 20)
-            : (usesWideChatLayout ? 16 : 12)
-    }
-
-    private var hasVisibleRichAnswer: Bool {
-        store.messages.contains { message in
-            message.richAnswer?.mode == .rich && message.richAnswer?.scenes.isEmpty == false
-        }
+        usesWideChatLayout ? 16 : 12
     }
 
     private var agentRailBottomInset: CGFloat {
@@ -2400,7 +2364,18 @@ struct FloatingSelectionAgentView: View {
             }
         }
         .onExitCommand {
-            closeFloatingAgent()
+            // 两段式 Esc:先收成胶囊,再按才整体关闭;流式/固定状态下保持直接关闭。
+            if showsExpandedBody && !store.isAgentRunningInActiveChat && !interaction.pinnedFloatingAgent {
+                withAnimation(WeiBeiMotion.panel) {
+                    expanded = false
+                    store.keepFloatingSelectionForAnswer = false
+                }
+            } else {
+                closeFloatingAgent()
+            }
+        }
+        .onChange(of: interaction.floatingComposerMode) { _, mode in
+            if mode == .ask { draftFocused = true }
         }
     }
 
@@ -2437,10 +2412,12 @@ struct FloatingSelectionAgentView: View {
 
             if store.selectionContext != nil {
                 promptSeparator
-                Button(store.ui("摘录", "Excerpt")) {
-                    store.appendSelectionToNote()
-                    closeFloatingAgent()
+                Button(store.ui("记", "Remark")) {
+                    openRemarkComposer()
                 }
+                .foregroundStyle(WeiBeiTheme.link)
+                .accessibilityLabel(Text(store.ui("记下这段", "Remark on this passage")))
+                .help(store.ui("记下这段(留空只存原文)", "Remark on this passage (empty saves excerpt only)"))
             }
         }
         .weiBeiText(12, weight: .semibold)
@@ -2587,6 +2564,7 @@ struct FloatingSelectionAgentView: View {
     private var expandedBody: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 8) {
+                FloatingAgentModeSwitch()
                 if let selection = store.selectionContext?.text, !selection.isEmpty {
                     FloatingSelectionPreview(text: selection)
                 }
@@ -2679,6 +2657,32 @@ struct FloatingSelectionAgentView: View {
                 }
             }
 
+            composerField
+        }
+        .frame(width: panelWidth, alignment: .leading)
+        .overlay {
+            floatingResizeBorder
+        }
+        .onChange(of: showsFloatingFeed) { _, _ in
+            unlockFeedHeightFeedback()
+        }
+        .onChange(of: visibleFloatingMessages.count) { _, _ in
+            unlockFeedHeightFeedback()
+        }
+        .onAppear {
+            draftFocused = true
+        }
+    }
+
+    /// 问/记共用同一浮层,底部输入框按模式切换;两种草稿互不覆盖。
+    @ViewBuilder private var composerField: some View {
+        if interaction.floatingComposerMode == .remark {
+            SelectionRemarkField {
+                submitRemark()
+            }
+            .padding(.horizontal, 14)
+            .padding(.bottom, 5)
+        } else {
             AgentComposerField(
                 prompt: showsFloatingFeed
                     ? store.ui("再问一点…", "Ask a follow-up…")
@@ -2700,19 +2704,6 @@ struct FloatingSelectionAgentView: View {
             }
             .padding(.horizontal, 14)
             .padding(.bottom, 5)
-        }
-        .frame(width: panelWidth, alignment: .leading)
-        .overlay {
-            floatingResizeBorder
-        }
-        .onChange(of: showsFloatingFeed) { _, _ in
-            unlockFeedHeightFeedback()
-        }
-        .onChange(of: visibleFloatingMessages.count) { _, _ in
-            unlockFeedHeightFeedback()
-        }
-        .onAppear {
-            draftFocused = true
         }
     }
 
@@ -2866,12 +2857,31 @@ struct FloatingSelectionAgentView: View {
 
     private func openExpandedComposer() {
         withAnimation(WeiBeiMotion.panel) {
+            interaction.floatingComposerMode = .ask
             expanded = true
             store.keepFloatingSelectionForAnswer = true
             // Do not invent a prompt or auto-send — only open a normal composer.
             store.askSelection()
             draftFocused = true
         }
+        // 输入框随展开动画挂载,同步设焦点会丢;延迟落焦,点完"问"直接打字。
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { draftFocused = true }
+    }
+
+    /// 胶囊"记":展开共用浮层进入札记模式,不建提问线程、不带附件。
+    private func openRemarkComposer() {
+        withAnimation(WeiBeiMotion.panel) {
+            interaction.floatingComposerMode = .remark
+            expanded = true
+            store.keepFloatingSelectionForAnswer = true
+        }
+    }
+
+    /// 提交札记:空输入=纯摘录;保存后收浮层,草稿清空。
+    private func submitRemark() {
+        store.saveSelectionRemark(interaction.selectionNoteDraft)
+        interaction.selectionNoteDraft = ""
+        closeFloatingAgent()
     }
 
     private func openSourceReference() {
@@ -3245,58 +3255,40 @@ private struct AgentBubble: View {
                 return true
             }
         }
-        let displayedStreamingText = store.agentReplyDisplayedStreamingText(message)
         let isAwaitingFirstToken = message.completionState == .generating
             && answerText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         return VStack(alignment: .leading, spacing: 8) {
-            if !isAwaitingFirstToken, let richAnswer = message.richAnswer,
-               richAnswer.mode == .rich,
-               !richAnswer.scenes.isEmpty,
-               !displayedStreamingText {
-                richAnswerFlow(richAnswer)
-                if !availableSources.isEmpty {
-                    AgentReplySourceTagRow(sources: availableSources) { source in
-                        activateSource(source)
-                    }
-                }
+            if message.contentBlocks.contains(where: {
+                if case .visualization = $0 { return true }
+                return false
+            }) {
+                visualizedMessageFlow(fallbackText: citationParse.displayText)
             } else {
-                if message.contentBlocks.contains(where: {
-                    if case .visualization = $0 { return true }
-                    return false
-                }) {
-                    visualizedMessageFlow(fallbackText: citationParse.displayText)
-                } else {
-                    // One surface owns the answer from question send through
-                    // completion. The WebView mounts while the thinking overlay
-                    // is still up, so its cold start runs in parallel with the
-                    // wait for the first token instead of after it.
-                    ZStack(alignment: .topLeading) {
-                        AgentMessageMarkdownText(
-                            text: citationParse.displayText,
-                            rendersRichMarkdown: true,
-                            isChatWideTypography: isChatWideTypography,
-                            usesFinalizedKaTeX: !isFailureMessage,
-                            messageID: message.id,
-                            keepsMarkdownSurfaceMounted: !isFailureMessage,
-                            isStreaming: message.completionState == .generating
+                // One surface owns the answer from question send through
+                // completion. The WebView mounts while the thinking overlay
+                // is still up, so its cold start runs in parallel with the
+                // wait for the first token instead of after it.
+                ZStack(alignment: .topLeading) {
+                    AgentMessageMarkdownText(
+                        text: citationParse.displayText,
+                        rendersRichMarkdown: true,
+                        isChatWideTypography: isChatWideTypography,
+                        usesFinalizedKaTeX: !isFailureMessage,
+                        messageID: message.id,
+                        keepsMarkdownSurfaceMounted: !isFailureMessage,
+                        isStreaming: message.completionState == .generating
+                    )
+                    if isAwaitingFirstToken {
+                        AgentThinkingIndicator(
+                            activityText: liveActivityText,
+                            chatWideTypography: isChatWideTypography
                         )
-                        if isAwaitingFirstToken {
-                            AgentThinkingIndicator(
-                                activityText: liveActivityText,
-                                chatWideTypography: isChatWideTypography
-                            )
-                        }
                     }
                 }
-                if let richAnswer = message.richAnswer,
-                   richAnswer.mode == .rich,
-                   !richAnswer.scenes.isEmpty {
-                    richAnswerSceneFlow(richAnswer)
-                }
-                if !availableSources.isEmpty {
-                    AgentReplySourceTagRow(sources: availableSources) { source in
-                        activateSource(source)
-                    }
+            }
+            if !availableSources.isEmpty {
+                AgentReplySourceTagRow(sources: availableSources) { source in
+                    activateSource(source)
                 }
             }
 
@@ -3408,6 +3400,35 @@ private struct AgentBubble: View {
         }
     }
 
+    private func activateCitation(_ citation: AgentCitation) {
+        switch citation.kind {
+        case .material:
+            withAnimation(WeiBeiMotion.panel) {
+                _ = store.openAgentCitation(kind: "material", value: citation.value)
+            }
+        case .note:
+            withAnimation(WeiBeiMotion.panel) {
+                _ = store.openAgentCitation(kind: "note", value: citation.value)
+            }
+        case .selection:
+            withAnimation(WeiBeiMotion.panel) {
+                _ = store.openAgentCitation(kind: "selection", value: citation.value)
+            }
+        case .learningRecord:
+            withAnimation(WeiBeiMotion.panel) {
+                store.resumePreviousStudy()
+            }
+        case .learningMemory:
+            if let courseID = message.origin?.courseID {
+                withAnimation(WeiBeiMotion.panel) {
+                    store.presentCourseWorkspace(.memory, courseID: courseID)
+                }
+            }
+        case .session:
+            break
+        }
+    }
+
     @ViewBuilder
     private func visualizedMessageFlow(fallbackText: String) -> some View {
         let hasTextBlock = message.contentBlocks.contains {
@@ -3449,127 +3470,6 @@ private struct AgentBubble: View {
         }
     }
 
-    @ViewBuilder
-    private func richAnswerFlow(_ presentation: RichAnswerPresentation) -> some View {
-        ForEach(Array(presentation.resolvedParts.enumerated()), id: \.offset) { index, part in
-            switch part.kind {
-            case .narrative:
-                if let text = part.text, !text.isEmpty {
-                    RichAnswerNarrativeText(
-                        text: AgentCitationParser.parse(text).displayText
-                    )
-                        .frame(
-                            // Same Codex-like column as chat text in every layout.
-                            maxWidth: AgentChatLayoutMetrics.wideMaxWidth,
-                            alignment: .leading
-                        )
-                }
-            case .scene:
-                if let sceneID = part.sceneID,
-                   let scopedPresentation = scopedRichAnswer(presentation, sceneID: sceneID) {
-                    RichAnswerHost(
-                        presentation: scopedPresentation,
-                        onOpenEvidence: openRichAnswerEvidence,
-                        onOpenAsset: openRichAnswerAsset,
-                        assetPreview: richAnswerAssetPreview,
-                        onAction: submitRichAnswerAction
-                    )
-                    .id("rich-answer-\(message.id.uuidString)-\(sceneID)-\(index)")
-                    .frame(
-                        // Same Codex-like column as chat text in every layout.
-                        maxWidth: AgentChatLayoutMetrics.wideMaxWidth,
-                        alignment: .leading
-                    )
-                }
-            }
-        }
-    }
-
-    private func richAnswerSceneFlow(_ presentation: RichAnswerPresentation) -> some View {
-        var scenesOnly = presentation
-        scenesOnly.parts = presentation.resolvedParts.filter { $0.kind == .scene }
-        return richAnswerFlow(scenesOnly)
-    }
-
-    private func scopedRichAnswer(
-        _ presentation: RichAnswerPresentation,
-        sceneID: String
-    ) -> RichAnswerPresentation? {
-        guard let scene = presentation.scenes.first(where: { $0.id == sceneID }) else { return nil }
-        var scoped = presentation
-        scoped.scenes = [scene]
-        scoped.parts = nil
-        let evidenceIDs = Set(scene.evidenceIDs)
-        let openableSourceLabels = Set(message.sources.compactMap { source in
-            store.canOpenAgentReplySource(source) ? source.label : nil
-        })
-        scoped.evidenceLedger = presentation.evidenceLedger.filter {
-            evidenceIDs.contains($0.id) && openableSourceLabels.contains($0.sourceLabel)
-        }
-        return scoped
-    }
-
-    private func submitRichAnswerAction(_ prompt: String) {
-        guard !store.isStoppingAgent else { return }
-        let trimmed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
-        store.agentDraft = trimmed
-        store.submitAgentDraft()
-    }
-
-    private func activateCitation(_ citation: AgentCitation) {
-        switch citation.kind {
-        case .material:
-            withAnimation(WeiBeiMotion.panel) {
-                _ = store.openAgentCitation(kind: "material", value: citation.value)
-            }
-        case .note:
-            withAnimation(WeiBeiMotion.panel) {
-                _ = store.openAgentCitation(kind: "note", value: citation.value)
-            }
-        case .selection:
-            withAnimation(WeiBeiMotion.panel) {
-                _ = store.openAgentCitation(kind: "selection", value: citation.value)
-            }
-        case .learningRecord:
-            withAnimation(WeiBeiMotion.panel) {
-                store.resumePreviousStudy()
-            }
-        case .learningMemory:
-            if let courseID = message.origin?.courseID {
-                withAnimation(WeiBeiMotion.panel) {
-                    store.presentCourseWorkspace(.memory, courseID: courseID)
-                }
-            }
-        case .session:
-            break
-        }
-    }
-
-    private func openRichAnswerEvidence(_ evidence: RichAnswerEvidence) {
-        if let source = message.sources.first(where: {
-            $0.label == evidence.sourceLabel
-                && store.canOpenAgentReplySource($0)
-        }) {
-            _ = store.openAgentReplySource(source)
-        }
-    }
-
-    private func openRichAnswerAsset(_ assetID: String) {
-        withAnimation(WeiBeiMotion.panel) {
-            store.select(itemID: assetID)
-        }
-    }
-
-    private func richAnswerAssetPreview(_ assetID: String) -> NSImage? {
-        guard let item = store.item(withID: assetID), let url = item.url else { return nil }
-        if item.kind == .pdf,
-           let page = PDFDocument(url: url)?.page(at: 0) {
-            return page.thumbnail(of: NSSize(width: 1200, height: 1500), for: .mediaBox)
-        }
-        return NSImage(contentsOf: url)
-    }
-
     private var isUser: Bool {
         message.role == .user
     }
@@ -3578,122 +3478,6 @@ private struct AgentBubble: View {
         message.role == .assistant && WorkspaceStore.isAgentFailureMessage(message.text)
     }
 
-}
-
-private struct RichAnswerNarrativeText: View {
-    let text: String
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 7) {
-            ForEach(Array(blocks.enumerated()), id: \.offset) { _, block in
-                switch block.kind {
-                case let .heading(level):
-                    Text(attributed(block.text))
-                        .weiBeiText(level <= 2 ? 21 : 17, weight: .semibold)
-                        .foregroundStyle(WeiBeiTheme.ink)
-                        .fixedSize(horizontal: false, vertical: true)
-                case .paragraph:
-                    Text(attributed(block.text))
-                        .weiBeiText(15)
-                        .lineSpacing(4)
-                        .foregroundStyle(WeiBeiTheme.ink)
-                        .fixedSize(horizontal: false, vertical: true)
-                case .bullet:
-                    HStack(alignment: .firstTextBaseline, spacing: 8) {
-                        Text("•")
-                            .foregroundStyle(WeiBeiTheme.cinnabar)
-                        Text(attributed(block.text))
-                            .weiBeiText(15)
-                            .lineSpacing(4)
-                            .foregroundStyle(WeiBeiTheme.ink)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                case .quote:
-                    Text(attributed(block.text))
-                        .weiBeiText(13)
-                        .lineSpacing(3)
-                        .foregroundStyle(WeiBeiTheme.secondaryInk)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .padding(.leading, 10)
-                        .overlay(alignment: .leading) {
-                            Rectangle()
-                                .fill(WeiBeiTheme.hairline.opacity(0.72))
-                                .frame(width: 1)
-                        }
-                }
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    private var blocks: [Block] {
-        var result: [Block] = []
-        var paragraphLines: [String] = []
-
-        func flushParagraph() {
-            guard !paragraphLines.isEmpty else { return }
-            result.append(Block(kind: .paragraph, text: paragraphLines.joined(separator: " ")))
-            paragraphLines.removeAll()
-        }
-
-        for rawLine in text.components(separatedBy: .newlines) {
-            let line = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
-            if line.isEmpty {
-                flushParagraph()
-                continue
-            }
-            if isStandaloneSourceReference(line) {
-                flushParagraph()
-                continue
-            }
-            let headingMarkers = line.prefix { $0 == "#" }.count
-            if headingMarkers > 0, headingMarkers <= 6, line.dropFirst(headingMarkers).first == " " {
-                flushParagraph()
-                result.append(
-                    Block(
-                        kind: .heading(level: headingMarkers),
-                        text: String(line.dropFirst(headingMarkers)).trimmingCharacters(in: .whitespaces)
-                    )
-                )
-                continue
-            }
-            if line.hasPrefix("- ") || line.hasPrefix("* ") || line.hasPrefix("+ ") {
-                flushParagraph()
-                result.append(Block(kind: .bullet, text: String(line.dropFirst(2))))
-                continue
-            }
-            if line.hasPrefix("> ") {
-                flushParagraph()
-                result.append(Block(kind: .quote, text: String(line.dropFirst(2))))
-                continue
-            }
-            paragraphLines.append(line)
-        }
-        flushParagraph()
-        return result
-    }
-
-    private func isStandaloneSourceReference(_ line: String) -> Bool {
-        guard line.hasPrefix("["), line.hasSuffix("]") else { return false }
-        return ["[材料：", "[笔记：", "[选区："].contains { line.hasPrefix($0) }
-    }
-
-    private func attributed(_ value: String) -> AttributedString {
-        let displayValue = RichAnswerDisplayText.normalizedInlineMath(value)
-        return (try? AttributedString(markdown: displayValue)) ?? AttributedString(displayValue)
-    }
-
-    private struct Block {
-        enum Kind {
-            case heading(level: Int)
-            case paragraph
-            case bullet
-            case quote
-        }
-
-        let kind: Kind
-        let text: String
-    }
 }
 
 private struct AgentReplyMemoryUpdateTag: View {
@@ -5274,7 +5058,7 @@ private struct AgentMessageMarkdownText: View {
 
     private var renderedText: AttributedString {
         // Streaming / no-math path: Unicode math readability without WKWebView.
-        let display = RichAnswerDisplayText.normalizedInlineMath(displayMarkdown)
+        let display = AgentDisplayText.normalizedInlineMath(displayMarkdown)
         var attributed = (try? AttributedString(markdown: display))
             ?? AttributedString(display)
         let sourceRanges = attributed.runs.compactMap { run -> Range<AttributedString.Index>? in
@@ -5390,10 +5174,10 @@ private struct AgentThinkingIndicator: View {
     @EnvironmentObject private var store: WorkspaceStore
     var activityText: String?
     /// Match the answer text that follows this indicator in the same surface:
-    /// main conversation rows are chat-wide 16pt (17pt when narrow), the
-    /// selection float is compact 14pt — the same bases as the Milkdown
-    /// `.ProseMirror` CSS, so the status word never reads larger or smaller
-    /// than the reply it precedes.
+    /// every hosting surface renders the reply in a compact Milkdown preview
+    /// (14pt base), lifted to 16pt only by the chat-wide attribute — the
+    /// selection float and narrow conversation columns both stay at 14pt,
+    /// which is exactly what the `.ProseMirror` CSS shows next to this word.
     var chatWideTypography = false
     var compact = false
     @Environment(\.weibeiReduceMotion) private var reduceMotion
@@ -5406,15 +5190,17 @@ private struct AgentThinkingIndicator: View {
 
     private static let minimumStatusHold: TimeInterval = 0.6
 
-    /// Answer-text bases in pt, mirroring `.ProseMirror` in Editor/index.html
-    /// (17 base / 16 chat-wide / 14 compact preview). ⌘± changes the text tier,
-    /// so the status word must scale with it exactly like the reply text.
-    private static let answerBaseFontSize: CGFloat = 17
+    /// Answer-text bases in pt, mirroring `.ProseMirror` in Editor/index.html.
+    /// The reply WebView is always a compact preview (14), raised to 16 by
+    /// `data-weibei-chat-wide`; the 17 non-compact base never applies here —
+    /// using it made the word read 3pt larger than the reply in narrow
+    /// conversation columns once the 520pt window minimum made those common.
+    /// ⌘± changes the text tier, so the status word must scale with it
+    /// exactly like the reply text.
     private static let chatWideFontSize: CGFloat = 16
     private static let compactFontSize: CGFloat = 14
     private var baseFontSize: CGFloat {
-        compact ? Self.compactFontSize
-            : (chatWideTypography ? Self.chatWideFontSize : Self.answerBaseFontSize)
+        chatWideTypography && !compact ? Self.chatWideFontSize : Self.compactFontSize
     }
     /// Single source for measure + line box + AppKit painting. Drawing at a
     /// different size than the measured width is what made the orbit sit far
