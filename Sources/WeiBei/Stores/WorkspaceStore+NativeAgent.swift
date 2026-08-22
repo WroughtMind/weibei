@@ -116,6 +116,11 @@ extension WorkspaceStore {
                     self?.makeLearningContext(target: target) ?? .empty
                 }
             },
+            profile: { [weak self] in
+                await MainActor.run {
+                    self?.refreshCourseProfileContext(target: target) ?? .empty
+                }
+            },
             documentsRoot: workspaceDirectory.appendingPathComponent("NativeAgent/Documents", isDirectory: true),
             skillRegistry: skillRoot.flatMap { try? NativeSkillRegistry.load(from: $0) } ?? NativeSkillRegistry()
         )

@@ -101,8 +101,10 @@ public actor NativeStudyAgentRuntime: StudyAgentRuntime {
             )
             return StudyAgentReply(
                 text: result.text,
+                contentBlocks: result.contentBlocks,
                 backend: .native,
                 richAnswer: result.richAnswer,
+                sources: result.sources,
                 noteProposal: result.noteProposal,
                 relationProposal: result.relationProposal,
                 learningUpdate: result.learningUpdate,

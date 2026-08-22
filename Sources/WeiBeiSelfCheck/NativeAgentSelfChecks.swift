@@ -24,6 +24,7 @@ func runNativeAgentSelfChecks() throws {
     try checkRetrievalPrompt()
     try checkBackendSelection()
     try checkContextRevisionEcho()
+    try checkNativeProductContract()
 }
 
 private func nativeRequire(_ condition: @autoclosure () throws -> Bool, _ message: String) throws {
@@ -438,7 +439,7 @@ private func checkContextRevisionEcho() throws {
             try await registry.execute(
                 NativeToolCallRequest(
                     name: "weibei_learning_update",
-                    argumentsJSON: "{\"contextRevision\":1,\"memoryRevision\":1}",
+                    argumentsJSON: "{\"contextRevision\":1,\"memoryRevision\":1,\"entries\":[]}",
                     callID: "u1"
                 ),
                 context: context,
@@ -449,20 +450,39 @@ private func checkContextRevisionEcho() throws {
             NSLocalizedDescriptionKey: "numeric contextRevision 1 should not match a namespaced revision",
         ])
     } catch let failure as NativeLLMFailure {
-        try nativeRequire(failure.code == "revision_mismatch", "numeric 1 is not accepted as the live revision")
+        try nativeRequire(failure.code == "invalid_arguments", "numeric contextRevision is a type error")
+        try nativeRequire(failure.message.contains("contextRevision"), "type error names contextRevision")
+    }
+    do {
+        _ = try waitFor {
+            try await registry.execute(
+                NativeToolCallRequest(
+                    name: "weibei_learning_update",
+                    argumentsJSON: "{\"contextRevision\":\"stale\",\"memoryRevision\":0,\"entries\":[]}",
+                    callID: "u2"
+                ),
+                context: context,
+                scope: .global
+            )
+        }
+        throw NSError(domain: "WeiBei.NativeAgentSelfCheck", code: 9, userInfo: [
+            NSLocalizedDescriptionKey: "stale string contextRevision should not match",
+        ])
+    } catch let failure as NativeLLMFailure {
+        try nativeRequire(failure.code == "revision_mismatch", "stale string revision is revision_mismatch")
     }
     let accepted = try waitFor {
         try await registry.execute(
             NativeToolCallRequest(
                 name: "weibei_note_proposal",
-                argumentsJSON: "{\"markdown\":\"利率是资金使用价格。\",\"evidence\":\"原文\",\"contextRevision\":\"\(revision)\"}",
+                argumentsJSON: "{\"markdown\":\"利率是资金使用价格。\",\"evidence\":[\"[材料：利率] 利率是资金使用价格。\"],\"contextRevision\":\"\(revision)\"}",
                 callID: "n1"
             ),
             context: context,
             scope: .global
         )
     }
-    try nativeRequire(accepted.text.contains("待确认"), "string evidence is accepted for a note proposal")
+    try nativeRequire(accepted.text.contains("待确认"), "array evidence is accepted for a note proposal")
 }
 
 private func checkFailureMapping() throws {
@@ -478,6 +498,179 @@ private func checkFailureMapping() throws {
     try nativeRequire(AgentFailureKind.classify(mapped) == .unauthorized, "NativeAgent 401 + 认证已失效 maps unauthorized")
     let revision = NativeLLMFailure(code: "revision_mismatch", message: "课程知识档案版本已变化")
     try nativeRequire(revision.localizedDescription.contains("课程知识档案"), "tool errors surface the real message, not a generic NSError")
+}
+
+private func checkNativeProductContract() throws {
+    let revision = "12:aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+    let question = "我已掌握单利，复利还不熟。"
+    let registry = NativeToolRegistry()
+    _ = try waitFor { await NativeBuiltinTools.registerAll(into: registry, skillRoot: nil) }
+    let tools = try waitFor { await registry.resolved(scope: .global) }
+    for name in [
+        "weibei_learning_update",
+        "weibei_course_profile_update",
+        "weibei_note_proposal",
+        "weibei_relation_proposal",
+        "weibei_course_search",
+        "weibei_course_read",
+    ] {
+        guard let tool = tools.first(where: { $0.name == name }) else {
+            throw NSError(domain: "WeiBei.NativeAgentSelfCheck", code: 10, userInfo: [
+                NSLocalizedDescriptionKey: "missing tool \(name)",
+            ])
+        }
+        try nativeRequire(tool.schema.object["properties"] is [String: Any], "\(name) schema includes properties")
+    }
+
+    let request = StudyAgentRequest(
+        purpose: .conversation,
+        question: question,
+        materialTitle: "利率课程",
+        materialText: "利率是资金使用价格的表达。",
+        noteTitle: "",
+        noteText: "",
+        projectScope: StudyAgentProjectScope(
+            kind: .course,
+            chatID: UUID().uuidString.lowercased(),
+            courseID: UUID().uuidString.lowercased()
+        ),
+        learningContext: StudyAgentLearningContext(memoryRevision: 3),
+        courseProfile: StudyAgentCourseProfileContext(revision: 2),
+        contextRevision: revision
+    )
+    let context = NativeToolExecutionContext(request: request)
+
+    do {
+        _ = try waitFor {
+            try await registry.execute(
+                NativeToolCallRequest(
+                    name: "weibei_note_proposal",
+                    argumentsJSON: "{\"markdown\":\"利率是资金使用价格。\",\"evidence\":\"原文\",\"contextRevision\":\"\(revision)\"}",
+                    callID: "type-1"
+                ),
+                context: context,
+                scope: .global
+            )
+        }
+        throw NSError(domain: "WeiBei.NativeAgentSelfCheck", code: 11, userInfo: [
+            NSLocalizedDescriptionKey: "string evidence should fail type validation",
+        ])
+    } catch let failure as NativeLLMFailure {
+        try nativeRequire(failure.code == "invalid_arguments", "wrong evidence type is invalid_arguments")
+        try nativeRequire(failure.message.contains("evidence"), "type error names evidence")
+    }
+
+    let liveContext = NativeToolExecutionContext(
+        request: request,
+        liveStores: NativeLiveStores(
+            profile: {
+                StudyAgentCourseProfileContext(revision: 7)
+            }
+        )
+    )
+    let liveProfileResult = try waitFor {
+        try await registry.execute(
+            NativeToolCallRequest(
+                name: "weibei_course_profile_update",
+                argumentsJSON: "{\"contextRevision\":\"\(revision)\",\"profileRevision\":7,\"checkpoint\":\"userRequested\",\"entries\":[{\"kind\":\"concept\",\"text\":\"用户自述：已掌握单利，复利还不熟。\",\"sources\":[]}]}",
+                callID: "profile-live"
+            ),
+            context: liveContext,
+            scope: .global
+        )
+    }
+    try nativeRequire(
+        StudyAgentProposalDecoding.courseProfileUpdate(from: liveProfileResult.details)?.profileRevision == 7,
+        "profile live store supplies the current revision"
+    )
+
+    let learningJSON = """
+    {"contextRevision":"\(revision)","memoryRevision":3,"suggestedNext":["继续读复利"],"entries":[{"kind":"progress","text":"刚搞懂复利","evidence":"[用户：本轮] \(question)","origin":"userStatement"}],"resolutions":[]}
+    """
+    let learningResult = try waitFor {
+        try await registry.execute(
+            NativeToolCallRequest(
+                name: "weibei_learning_update",
+                argumentsJSON: learningJSON,
+                callID: "learn-1"
+            ),
+            context: context,
+            scope: .global
+        )
+    }
+    guard let learning = StudyAgentProposalDecoding.learningUpdate(from: learningResult.details) else {
+        throw NSError(domain: "WeiBei.NativeAgentSelfCheck", code: 12, userInfo: [
+            NSLocalizedDescriptionKey: "learning_update details did not decode",
+        ])
+    }
+    try nativeRequire(learning.entries.count == 1, "learning_update keeps entries")
+    try nativeRequire(learning.entries[0].text == "刚搞懂复利", "learning_update entry text is preserved")
+    try nativeRequire(learning.entries[0].origin == .userStatement, "learning_update origin is preserved")
+    try nativeRequire(learning.suggestedNext == ["继续读复利"], "learning_update suggestedNext is preserved")
+    try nativeRequire(
+        StudyAgentCurrentTurnEvidence.matches(learning.entries[0].evidence, question: question),
+        "Store evidence gate accepts this turn's user statement"
+    )
+
+    let profileResult = try waitFor {
+        try await registry.execute(
+            NativeToolCallRequest(
+                name: "weibei_course_profile_update",
+                argumentsJSON: "{\"contextRevision\":\"\(revision)\",\"profileRevision\":2,\"checkpoint\":\"userRequested\",\"entries\":[{\"kind\":\"concept\",\"text\":\"用户自述：已掌握单利，复利还不熟。\",\"sources\":[]}]}",
+                callID: "profile-1"
+            ),
+            context: context,
+            scope: .global
+        )
+    }
+    guard let profile = StudyAgentProposalDecoding.courseProfileUpdate(from: profileResult.details) else {
+        throw NSError(domain: "WeiBei.NativeAgentSelfCheck", code: 13, userInfo: [
+            NSLocalizedDescriptionKey: "course_profile_update details did not decode",
+        ])
+    }
+    try nativeRequire(profile.checkpoint == "userRequested", "profile checkpoint is preserved")
+    try nativeRequire(profile.entries.count == 1, "profile entries are preserved")
+    try nativeRequire(profile.entries[0].sources.isEmpty, "userRequested entries may omit sources")
+    try nativeRequire(profile.allowsEntriesWithoutSources, "Store gate allows empty sources for userRequested")
+
+    let noteResult = try waitFor {
+        try await registry.execute(
+            NativeToolCallRequest(
+                name: "weibei_note_proposal",
+                argumentsJSON: "{\"markdown\":\"## 利率\\n利率是资金使用价格。\",\"evidence\":[\"[材料：利率课程] 利率是资金使用价格的表达。\"],\"contextRevision\":\"\(revision)\"}",
+                callID: "note-1"
+            ),
+            context: context,
+            scope: .global
+        )
+    }
+    guard let note = StudyAgentProposalDecoding.noteProposal(from: noteResult.details) else {
+        throw NSError(domain: "WeiBei.NativeAgentSelfCheck", code: 14, userInfo: [
+            NSLocalizedDescriptionKey: "note_proposal details did not decode",
+        ])
+    }
+    try nativeRequire(note.markdown.contains("利率是资金使用价格"), "note markdown is preserved")
+    try nativeRequire(note.evidence.count == 1, "note evidence is preserved as an array")
+
+    let relationResult = try waitFor {
+        try await registry.execute(
+            NativeToolCallRequest(
+                name: "weibei_relation_proposal",
+                argumentsJSON: "{\"noteItemID\":\"note-1\",\"sourceItemID\":\"material-rates\",\"contextRevision\":\"\(revision)\"}",
+                callID: "rel-1"
+            ),
+            context: context,
+            scope: .global
+        )
+    }
+    guard let relation = StudyAgentProposalDecoding.relationProposal(from: relationResult.details) else {
+        throw NSError(domain: "WeiBei.NativeAgentSelfCheck", code: 15, userInfo: [
+            NSLocalizedDescriptionKey: "relation_proposal details did not decode",
+        ])
+    }
+    try nativeRequire(relation.noteItemID == "note-1", "relation noteItemID is preserved")
+    try nativeRequire(relation.sourceItemID == "material-rates", "relation sourceItemID is preserved")
+    try nativeRequire(relation.contextRevision == revision, "relation contextRevision is preserved")
 }
 
 private func waitFor<T>(_ body: @escaping () async throws -> T) throws -> T {

@@ -693,6 +693,10 @@ public struct StudyAgentCourseProfileUpdate: Codable, Equatable, Sendable {
         self.entries = entries
         self.removedEntryIDs = removedEntryIDs
     }
+
+    public var allowsEntriesWithoutSources: Bool {
+        checkpoint == "userRequested"
+    }
 }
 
 public struct StudyAgentLoadedSkill: Codable, Equatable, Sendable {

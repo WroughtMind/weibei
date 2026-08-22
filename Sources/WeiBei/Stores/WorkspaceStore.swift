@@ -9018,9 +9018,14 @@ final class WorkspaceStore: ObservableObject {
     }
 
     func agentReplyActionTargetTitle(_ action: AgentReplyAction) -> String? {
-        action.targetItemID
-            .flatMap { itemID in allItems.first(where: { $0.id == itemID }) }
-            .map(displayTitle)
+        if let itemID = action.targetItemID,
+           let item = allItems.first(where: { $0.id == itemID }) {
+            return displayTitle(item)
+        }
+        if action.kind == .writeNote, action.targetItemID == nil {
+            return ui("新建笔记", "New note")
+        }
+        return nil
     }
 
     func agentReplyActionSourceTitle(_ action: AgentReplyAction) -> String? {
@@ -9113,8 +9118,27 @@ final class WorkspaceStore: ObservableObject {
         var action = snapshot.action
         let proposal = (proposedMarkdown ?? action.proposedMarkdown ?? "")
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !proposal.isEmpty,
-              let targetItemID = action.targetItemID,
+        guard !proposal.isEmpty else {
+            failAgentReplyAction(
+                messageID: messageID,
+                actionID: action.id,
+                chatID: snapshot.chatID,
+                message: ui(
+                    "笔记建议是空的。",
+                    "The note proposal is empty."
+                )
+            )
+            return
+        }
+        if action.targetItemID == nil {
+            await confirmAgentNewCourseNoteAction(
+                messageID: messageID,
+                snapshot: snapshot,
+                proposal: proposal
+            )
+            return
+        }
+        guard let targetItemID = action.targetItemID,
               let target = allItems.first(where: {
                   $0.id == targetItemID && $0.isNotebookNote
               }),
@@ -9225,6 +9249,87 @@ final class WorkspaceStore: ObservableObject {
                 )
             )
         }
+    }
+
+    private func confirmAgentNewCourseNoteAction(
+        messageID: UUID,
+        snapshot: (chatID: UUID, courseID: UUID?, action: AgentReplyAction),
+        proposal: String
+    ) async {
+        guard let courseID = snapshot.courseID else {
+            failAgentReplyAction(
+                messageID: messageID,
+                actionID: snapshot.action.id,
+                chatID: snapshot.chatID,
+                message: ui(
+                    "当前没有可归属的课程，不能新建笔记。",
+                    "This Chat has no course, so a new note cannot be created."
+                )
+            )
+            return
+        }
+        let title = notebookTitle(fromProposedMarkdown: proposal)
+        guard let itemID = await createCourseNotebookNote(
+            courseID: courseID,
+            title: title,
+            markdown: proposal
+        ) else {
+            failAgentReplyAction(
+                messageID: messageID,
+                actionID: snapshot.action.id,
+                chatID: snapshot.chatID,
+                message: workspaceSaveError ?? ui(
+                    "笔记没有成功写入，建议内容已保留，可以重试。",
+                    "The note was not written. The proposal was kept for retry."
+                )
+            )
+            return
+        }
+        updateAgentReplyAction(
+            messageID: messageID,
+            actionID: snapshot.action.id,
+            chatID: snapshot.chatID
+        ) {
+            $0.proposedMarkdown = proposal
+            $0.targetItemID = itemID
+            $0.baselineContentDigest = Self.noteContentDigest(Data())
+            $0.resultContentDigest = Self.noteContentDigest(Data(proposal.utf8))
+            $0.state = .executed
+            $0.failureMessage = nil
+        }
+        guard flushPendingWorkspaceSave() else {
+            failAgentReplyAction(
+                messageID: messageID,
+                actionID: snapshot.action.id,
+                chatID: snapshot.chatID,
+                message: workspaceSaveError ?? ui(
+                    "笔记已写入，但动作状态没有成功保存；可以安全重试。",
+                    "The note was written, but the action status was not saved."
+                )
+            )
+            return
+        }
+    }
+
+    private func notebookTitle(fromProposedMarkdown markdown: String) -> String {
+        for line in markdown.split(whereSeparator: \.isNewline) {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if trimmed.hasPrefix("#") {
+                let title = trimmed.drop(while: { $0 == "#" || $0.isWhitespace })
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                if !title.isEmpty {
+                    return String(title.prefix(36))
+                }
+            }
+        }
+        let first = markdown
+            .split(whereSeparator: \.isNewline)
+            .first
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) } ?? ""
+        if !first.isEmpty {
+            return String(first.prefix(36))
+        }
+        return ui("整理建议", "Organization suggestion")
     }
 
     private func undoAgentNoteAction(
@@ -15082,6 +15187,15 @@ final class WorkspaceStore: ObservableObject {
         )
     }
 
+    func refreshCourseProfileContext(
+        target: AgentConversationTarget
+    ) -> StudyAgentCourseProfileContext {
+        makeCourseProfileContext(
+            courseID: target.courseID,
+            access: makeAgentProjectAccessSnapshot(target: target)
+        )
+    }
+
     private func lastStudyLocation(in courseID: UUID?) -> StudyLocation? {
         guard let courseID else { return lastStudyLocation }
         let itemIDs = Set(courseItems(in: courseID).map(\.id))
@@ -15455,7 +15569,7 @@ final class WorkspaceStore: ObservableObject {
                     )
                 )
             }
-            guard !sources.isEmpty else { return }
+            guard !sources.isEmpty || update.allowsEntriesWithoutSources else { return }
             let existing = entryID.flatMap { id in
                 profile.entries.first(where: { $0.id == id })
             }
@@ -16496,7 +16610,7 @@ final class WorkspaceStore: ObservableObject {
             }
             var actions: [AgentReplyAction] = []
             if let proposal = reply.noteProposal,
-               let sentNoteItemID {
+               sentNoteItemID != nil || target.courseID != nil {
                 actions.append(
                     AgentReplyAction(
                         kind: .writeNote,
@@ -16505,9 +16619,9 @@ final class WorkspaceStore: ObservableObject {
                         proposedMarkdown: proposal.markdown,
                         evidence: proposal.evidence,
                         contextRevision: proposal.contextRevision,
-                        baselineContentDigest: Self.noteContentDigest(
-                            Data(sentNoteText.utf8)
-                        )
+                        baselineContentDigest: sentNoteItemID == nil
+                            ? Self.noteContentDigest(Data())
+                            : Self.noteContentDigest(Data(sentNoteText.utf8))
                     )
                 )
             }

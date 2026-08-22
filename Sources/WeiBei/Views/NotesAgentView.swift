@@ -3854,6 +3854,7 @@ private struct AgentReplyActionCard: View {
             TextEditor(text: $bodyText)
                 .weiBeiText(12.5)
                 .scrollContentBackground(.hidden)
+                .scrollDisabled(true)
                 .weibeiInputSurface(height: 104, horizontalPadding: 6)
         } else {
             Text(store.ui("建议建立关系：", "Suggested relation:"))
@@ -3995,7 +3996,7 @@ private struct AgentReplyActionCard: View {
     private var actionIdentityTitle: String {
         if action.kind == .writeNote {
             return store.agentReplyActionTargetTitle(action)
-                ?? store.ui("目标笔记", "target note")
+                ?? store.ui("新建笔记", "New note")
         }
         let note = store.agentReplyActionTargetTitle(action)
             ?? store.ui("笔记", "note")

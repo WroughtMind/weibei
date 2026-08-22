@@ -2101,8 +2101,8 @@ export default function weibeiExtension(pi: ExtensionAPI) {
     name: COURSE_PROFILE_UPDATE_TOOL,
     label: "整理课程知识档案",
     description:
-      "只在完成一节、完成一个主题、确认新的跨来源联系或准备切换上下文时，把本轮真实读到的课程认识批量写入课程知识档案。不要每轮调用。",
-    promptSnippet: "到达明确学习节点时，批量整理本轮已读内容；普通问答不更新",
+      "把课程认识或用户自述掌握状态写入课程知识档案。用户明确要求时必须提交。自述掌握状态不要求材料来源，checkpoint 用 userRequested。材料认识仍须带来源。",
+    promptSnippet: "用户明确要求时必须整理；自述掌握状态按原话记录；材料认识仍须带来源",
     parameters: Type.Object(
       {
         contextRevision: Type.String({ minLength: 1, maxLength: LIMITS.identifier }),
@@ -2112,6 +2112,7 @@ export default function weibeiExtension(pi: ExtensionAPI) {
           Type.Literal("topicCompleted"),
           Type.Literal("crossSourceConnection"),
           Type.Literal("beforeContextSwitch"),
+          Type.Literal("userRequested"),
         ]),
         entries: Type.Optional(Type.Array(Type.Object(
           {
@@ -2133,7 +2134,7 @@ export default function weibeiExtension(pi: ExtensionAPI) {
                 sourceRevision: Type.String({ minLength: 1, maxLength: 500 }),
               },
               { additionalProperties: false },
-            ), { minItems: 1, maxItems: 8 }),
+            ), { minItems: 0, maxItems: 8 }),
           },
           { additionalProperties: false },
         ), { maxItems: 12 })),
@@ -2173,7 +2174,11 @@ export default function weibeiExtension(pi: ExtensionAPI) {
         throw new Error("课程知识档案条目已变化，请重新查看课程地图");
       }
       for (const entry of entries) {
-        for (const source of entry.sources) {
+        const sources = entry.sources ?? [];
+        if (sources.length === 0 && params.checkpoint !== "userRequested") {
+          throw new Error("材料认识必须带来源；自述掌握状态请用 checkpoint userRequested");
+        }
+        for (const source of sources) {
           if (
             catalogByID.get(source.itemID)?.role !== source.role ||
             readCourseSourceRevisions.get(source.itemID) !== source.sourceRevision

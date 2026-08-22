@@ -2443,6 +2443,7 @@ public actor PiAgentRuntime: StudyAgentRuntime {
                       "topicCompleted",
                       "crossSourceConnection",
                       "beforeContextSwitch",
+                      "userRequested",
                   ].contains(update.checkpoint),
                   !update.entries.isEmpty || !update.removedEntryIDs.isEmpty,
                   update.entries.count <= 12,
@@ -2451,7 +2452,7 @@ public actor PiAgentRuntime: StudyAgentRuntime {
             for entry in update.entries {
                 guard !entry.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                       entry.text.count <= 1_200,
-                      !entry.sources.isEmpty,
+                      !entry.sources.isEmpty || update.checkpoint == "userRequested",
                       entry.sources.count <= 8 else { return }
                 var mappedSources: [StudyAgentCourseProfileSource] = []
                 for source in entry.sources {

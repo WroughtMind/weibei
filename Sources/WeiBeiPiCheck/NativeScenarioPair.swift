@@ -19,14 +19,14 @@ enum NativeScenarioPair {
         rows.append(try await row(id: "01-plain-qa", tools: [], textMustContain: "4", chunks: [
             [.textDelta(index: 0, text: "4"), .finish(reason: .stop, replayState: nil)],
         ]))
-        rows.append(try await row(id: "02-course-search", tools: ["weibei_course_search"], textMustContain: "资金", chunks: [
+        rows.append(try await row(id: "02-course-search", tools: ["weibei_course_search"], textMustContain: "资金", expectSources: true, chunks: [
             [
                 .toolCallDelta(index: 0, id: "c1", name: "weibei_course_search", argumentsDelta: "{\"query\":\"利率\"}"),
                 .finish(reason: .toolCalls, replayState: nil),
             ],
             [.textDelta(index: 0, text: "利率是资金使用价格。"), .finish(reason: .stop, replayState: nil)],
         ], host: courseHost))
-        rows.append(try await row(id: "03-course-read", tools: ["weibei_course_read"], textMustContain: "资金", chunks: [
+        rows.append(try await row(id: "03-course-read", tools: ["weibei_course_read"], textMustContain: "资金", expectSources: true, chunks: [
             [
                 .toolCallDelta(index: 0, id: "c1", name: "weibei_course_read", argumentsDelta: "{\"itemID\":\"material-rates\",\"query\":\"利率\"}"),
                 .finish(reason: .toolCalls, replayState: nil),
@@ -39,7 +39,7 @@ enum NativeScenarioPair {
         ]))
         rows.append(try await row(id: "05-course-profile", tools: ["weibei_course_profile_update"], expectProfile: true, chunks: [
             [
-                .toolCallDelta(index: 0, id: "c1", name: "weibei_course_profile_update", argumentsDelta: "{\"contextRevision\":\"pair\",\"profileRevision\":0,\"checkpoint\":\"利率定义\"}"),
+                .toolCallDelta(index: 0, id: "c1", name: "weibei_course_profile_update", argumentsDelta: "{\"contextRevision\":\"pair\",\"profileRevision\":0,\"checkpoint\":\"userRequested\"}"),
                 .finish(reason: .toolCalls, replayState: nil),
             ],
             [.textDelta(index: 0, text: "档案建议已提交，尚未落库。"), .finish(reason: .stop, replayState: nil)],
@@ -153,6 +153,7 @@ enum NativeScenarioPair {
         expectNote: Bool = false,
         expectRelation: Bool = false,
         expectProfile: Bool = false,
+        expectSources: Bool = false,
         chunks: [[NativeStreamChunk]],
         host: StudyAgentHostToolHandler? = nil,
         visualURL: URL? = nil,
@@ -181,6 +182,9 @@ enum NativeScenarioPair {
         }
         if expectProfile, reply.courseProfileUpdate == nil {
             throw NSError(domain: "WeiBei.Pair", code: 5, userInfo: [NSLocalizedDescriptionKey: "\(id) missing profile proposal"])
+        }
+        if expectSources, reply.sources.isEmpty {
+            throw NSError(domain: "WeiBei.Pair", code: 8, userInfo: [NSLocalizedDescriptionKey: "\(id) missing reply sources"])
         }
         print("native-scenario-pair \(id) tools=\(reply.toolTrace.joined(separator: ","))")
         return [

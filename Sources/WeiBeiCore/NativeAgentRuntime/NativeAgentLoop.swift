@@ -66,6 +66,8 @@ public actor NativeAgentLoop {
         var richAnswer: RichAnswerPresentation?
         var loadedSkills: [StudyAgentLoadedSkill] = []
         var readItemIDs: [String] = []
+        var sources: [AgentReplySource] = []
+        var contentBlocks: [AgentMessageContentBlock] = []
         var pendingUnstarted: [NativeToolCall] = []
 
         do {
@@ -180,6 +182,8 @@ public actor NativeAgentLoop {
                         richAnswer: &richAnswer,
                         loadedSkills: &loadedSkills,
                         readItemIDs: &readItemIDs,
+                        sources: &sources,
+                        contentBlocks: &contentBlocks,
                         context: &context
                     )
                     _ = try await ledger.append { seq, time in
@@ -203,6 +207,8 @@ public actor NativeAgentLoop {
             try await ledger.closeTurn(turn: turn, reason: .completed)
             return NativeLoopResult(
                 text: collectedText,
+                contentBlocks: contentBlocks,
+                sources: sources,
                 toolTrace: toolTrace,
                 noteProposal: noteProposal,
                 relationProposal: relationProposal,
@@ -268,53 +274,60 @@ public actor NativeAgentLoop {
         richAnswer: inout RichAnswerPresentation?,
         loadedSkills: inout [StudyAgentLoadedSkill],
         readItemIDs: inout [String],
+        sources: inout [AgentReplySource],
+        contentBlocks: inout [AgentMessageContentBlock],
         context: inout NativeToolExecutionContext
     ) {
+        if result.isError { return }
         let details = result.details
         if name == "weibei_course_search" || name == "weibei_course_read" {
             if let items = (try? JSONDecoder().decode(StudyAgentHostToolResult.self, from: Data(result.text.utf8)))?.items {
                 for item in items {
-                    context.searchedItemIDs.insert(item.item.id)
+                    if !context.searchedItemIDs.contains(item.item.id) {
+                        context.searchedItemIDs.append(item.item.id)
+                    }
                     readItemIDs.append(item.item.id)
                     if let revision = item.sourceRevision {
                         context.readSourceRevisions[item.item.id] = revision
+                    }
+                    let excerpt = item.item.searchText
+                    let kind: AgentReplySourceKind = item.item.role == "note" ? .note : .material
+                    let label = kind == .note ? "[笔记：\(item.item.title)]" : "[材料：\(item.item.title)]"
+                    if !sources.contains(where: { $0.itemID == item.item.id }) {
+                        sources.append(
+                            AgentReplySource(
+                                itemID: item.item.id,
+                                kind: kind,
+                                title: item.item.title,
+                                label: label,
+                                excerpt: String(excerpt.prefix(160))
+                            )
+                        )
                     }
                 }
             }
         }
         if name == "weibei_note_proposal" {
-            let markdown = details["markdown"] as? String ?? ""
-            let evidence = details["evidence"] as? [String] ?? []
-            noteProposal = StudyAgentNoteProposal(
-                markdown: markdown,
-                evidence: evidence,
-                contextRevision: contextRevision
-            )
+            noteProposal = StudyAgentProposalDecoding.noteProposal(from: details)
         }
         if name == "weibei_relation_proposal" {
-            relationProposal = StudyAgentRelationProposal(
-                noteItemID: details["noteItemID"] as? String ?? "",
-                sourceItemID: details["sourceItemID"] as? String ?? "",
-                contextRevision: contextRevision
-            )
+            relationProposal = StudyAgentProposalDecoding.relationProposal(from: details)
         }
         if name == "weibei_learning_memory" {
             context.lastReadMemoryRevision = context.request.learningContext.memoryRevision
         }
         if name == "weibei_learning_update" {
-            learningUpdate = StudyAgentLearningUpdate(
-                contextRevision: contextRevision,
-                memoryRevision: context.request.learningContext.memoryRevision
-            )
+            learningUpdate = StudyAgentProposalDecoding.learningUpdate(from: details)
         }
         if name == "weibei_course_profile_update" {
-            context.courseProfileUpdated = true
-            courseProfileUpdate = StudyAgentCourseProfileUpdate(
-                contextRevision: contextRevision,
-                profileRevision: context.request.courseProfile.revision,
-                checkpoint: (details["checkpoint"] as? String) ?? "native",
-                entries: []
-            )
+            courseProfileUpdate = StudyAgentProposalDecoding.courseProfileUpdate(from: details)
+        }
+        if name == "weibei_visualize",
+           let id = details["id"] as? String,
+           let spec = details["spec"],
+           let specData = try? JSONSerialization.data(withJSONObject: spec),
+           let specJSON = String(data: specData, encoding: .utf8) {
+            contentBlocks.append(.visualization(AgentVisualization(id: id, specJSON: specJSON)))
         }
         if name == "load_skill" || name == "read" {
             if let loaded = details["loaded"] as? [String: Any],
@@ -339,14 +352,13 @@ public actor NativeAgentLoop {
                 }
             }
         }
-        _ = learningUpdate
-        _ = courseProfileUpdate
-        _ = richAnswer
     }
 }
 
 public struct NativeLoopResult: Sendable {
     public var text: String
+    public var contentBlocks: [AgentMessageContentBlock]
+    public var sources: [AgentReplySource]
     public var toolTrace: [String]
     public var noteProposal: StudyAgentNoteProposal?
     public var relationProposal: StudyAgentRelationProposal?
