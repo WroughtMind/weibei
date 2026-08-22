@@ -17873,8 +17873,8 @@ final class WorkspaceStore: ObservableObject {
             var nextItem = importedItems[itemIndex]
             if nextDigest != item.contentDigest {
                 backUpUnsavedNoteContentBeforeAdopting(itemID: itemID)
-                fileMissingSinceByItemID.removeValue(forKey: itemID)
             }
+            fileMissingSinceByItemID.removeValue(forKey: itemID)
             nextItem.title = observation.url.deletingPathExtension().lastPathComponent
             nextItem.subtitle = observation.url.lastPathComponent
             nextItem.kind = StudyItemKind.detect(from: observation.url)
