@@ -92,12 +92,12 @@ struct ImmersiveHoverTitleView<Actions: View>: View {
                 .padding(.horizontal, 12)
                 .frame(height: 34)
                 .background {
-                    WeiBeiEtchedBackdrop(
-                        shape: RoundedRectangle(cornerRadius: 8, style: .continuous),
-                        fill: WeiBeiTheme.paperRaised.opacity(appearanceMode.isDark ? 0.88 : 0.92),
-                        stroke: WeiBeiTheme.hairline.opacity(appearanceMode.isDark ? 0.42 : 0.48),
-                        showsContactShadow: true
-                    )
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(WeiBeiTheme.paperRaised.opacity(appearanceMode.isDark ? 0.88 : 0.92))
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 8)
+                                .stroke(WeiBeiTheme.hairline.opacity(appearanceMode.isDark ? 0.42 : 0.48), lineWidth: 1)
+                        }
                 }
                 .shadow(color: WeiBeiTheme.ink.opacity(appearanceMode.isDark ? 0.28 : 0.08), radius: 9, y: 4)
                 .padding(.top, 7)
@@ -788,18 +788,18 @@ struct ReaderView: View {
         .padding(3)
         .background {
             ZStack {
-                WeiBeiEtchedBackdrop(
-                    shape: RoundedRectangle(cornerRadius: 8, style: .continuous),
-                    fill: WeiBeiTheme.paperRaised.opacity(PDFModeChipPresentation.fillOpacity(isExpanded: pdfControlsExpanded, isHovering: pdfControlsHovering)),
-                    stroke: WeiBeiTheme.hairline.opacity(PDFModeChipPresentation.strokeOpacity(isExpanded: pdfControlsExpanded, isHovering: pdfControlsHovering)),
-                    showsContactShadow: pdfControlsExpanded
-                )
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(WeiBeiTheme.paperRaised.opacity(PDFModeChipPresentation.fillOpacity(isExpanded: pdfControlsExpanded, isHovering: pdfControlsHovering)))
                 RoundedRectangle(cornerRadius: 8)
                     .fill(.regularMaterial)
                     .opacity(pdfControlsExpanded ? 0.055 : 0.0)
             }
         }
         .clipShape(RoundedRectangle(cornerRadius: 8))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(WeiBeiTheme.hairline.opacity(PDFModeChipPresentation.strokeOpacity(isExpanded: pdfControlsExpanded, isHovering: pdfControlsHovering)), lineWidth: 1)
+        }
         .shadow(color: WeiBeiTheme.ink.opacity(pdfControlsExpanded ? 0.045 : 0.0), radius: 7, y: 3)
         .opacity(PDFModeChipPresentation.controlOpacity(isExpanded: pdfControlsExpanded, isHovering: pdfControlsHovering))
         .offset(x: 0)
@@ -3582,11 +3582,14 @@ struct ContextualContentPicker: View {
             }
             .padding(.horizontal, 17)
             .frame(height: 54)
-            .weibeiEtchedBackground(
-                fill: WeiBeiTheme.paperRaised.opacity(0.58),
-                stroke: WeiBeiTheme.hairline.opacity(0.62),
-                cornerRadius: 16
-            )
+            .background {
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .fill(WeiBeiTheme.paperRaised.opacity(0.58))
+            }
+            .overlay {
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .stroke(WeiBeiTheme.hairline.opacity(0.62), lineWidth: 0.7)
+            }
             .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         }
         .buttonStyle(.plain)
