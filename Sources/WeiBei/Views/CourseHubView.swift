@@ -994,7 +994,7 @@ private struct CourseHubContinueActionButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .weiBeiText(13, weight: .semibold)
-            .foregroundStyle(primary ? Color.white : WeiBeiTheme.cinnabar)
+            .foregroundStyle(primary ? WeiBeiTheme.onCinnabar : WeiBeiTheme.cinnabar)
             .padding(.horizontal, 20)
             .frame(minWidth: 132, minHeight: 42)
             .background(

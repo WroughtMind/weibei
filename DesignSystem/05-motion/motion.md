@@ -6,13 +6,17 @@
 
 | Token | 当前实现 | 用途 |
 |---|---|---|
-| `press` | spring `0.18 / 0.82` | 按下反馈 |
+| `press` | interactiveSpring `0.18 / 0.82` | 按下反馈 |
 | `micro` | easeOut `0.14s` | 小型状态变化 |
-| `hover` | spring `0.20 / 0.86` | hover 进入与退出 |
-| `reveal` | spring `0.24 / 0.88` | 局部内容出现 |
-| `panel` | spring `0.30 / 0.88` | 抽屉、浮层、面板 |
-| `layout` | spring `0.38 / 0.90` | pane 重排和布局模式 |
-| `appearance` | easeInOut `0.42s` | 纸面 / 墨石主题切换 |
+| `hover` | interactiveSpring `0.20 / 0.86`（blend `0.02`） | hover 进入与退出 |
+| `reveal` | interactiveSpring `0.24 / 0.88`（blend `0.04`） | 局部内容出现 |
+| `panel` | interactiveSpring `0.26 / 0.90`（blend `0.04`） | 抽屉、浮层、面板 |
+| `layout` | easeOut `0.18s` | pane 重排和布局模式（长弹簧在 WebView 面板上有迟滞感，改短 ease-out） |
+| `appearance` | easeOut `0.12s` | 主题切换（更短的全局 ease，避免各面板失步） |
+| `sideDrawer` | easeOut `0.12s` | 课程抽屉滑入滑出（纯视觉；绝不包住焦点变化） |
+| `railPreview` | easeOut `0.15s` | 内容栏预览卡出现 / 消失（内容逐帧切换必须瞬时） |
+| `hoverTitleFade` | easeOut `0.14s` | 沉浸式悬停标题栏淡入淡出（无停留、无面板弹跳） |
+| `tabUnderline` | easeInOut `0.25s` | 课程页签下划线滑动（页面切换的唯一动效） |
 
 斜杠后的数值沿用代码当前定义的 spring 参数；若 SwiftUI API 调整，以 `WeiBeiMotion` 的源码和 SelfCheck 为准。
 
