@@ -4,16 +4,16 @@
 
 # WeiBei / 魏碑
 
-WeiBei is a source-grounded macOS study workspace for reading course materials, asking questions, and writing notes without breaking context.
+WeiBei is a source-grounded study workspace for macOS. Reading, asking questions, and writing notes happen in one native window, so the learning flow never has to be rebuilt across apps — every answer cites the material it came from, and every note stays connected to its sources.
 
-It is submitted to the **Education** track of OpenAI Build Week 2026.
+WeiBei began as a submission to the **Education** track of OpenAI Build Week 2026 and has been developed continuously since. The submission record — scope, commit range, and the original judge walkthrough — is preserved in [Docs/build-week.md](Docs/build-week.md).
 
 WeiBei's source code is open source under the MIT License. Its custom English
 fonts are open under the SIL Open Font License 1.1. Brand assets, project media,
 and third-party reference material have separate terms; see
 [Licensing](#licensing).
 
-## Why I built it
+## Why WeiBei
 
 During final-exam revision, I was reading PDFs and HTML pages in a browser, asking questions in a separate AI chat, and writing Markdown notes in another app. Each tool worked on its own, but the learning flow broke whenever I switched windows and reconstructed the context.
 
@@ -25,28 +25,17 @@ I built WeiBei so the material, the question, its evidence, and the resulting no
 </p>
 <!-- WEIBEI_VISUAL:workspace:END -->
 
-## What it does
+## What WeiBei does
 
-- Imports individual files or course folders containing PDF, HTML, Markdown, and plain text.
-- Keeps the reader, Agent conversation, and Milkdown note editor in one native macOS window.
-- Searches the current course locally and returns citations that can jump to the exact file, PDF page, HTML section, or note.
+- Imports individual files or course folders containing PDF, HTML, Markdown, and plain text, and indexes them locally.
+- Keeps the reader, the Agent conversation, and the WYSIWYG Milkdown note editor in one native macOS window, with panes that stay legible during cold starts and long streaming answers.
+- Searches the current course locally (SQLite FTS5) and returns citations that jump to the exact file, PDF page, HTML section, or note.
 - Opens a persistent question thread from a selected passage. The passage keeps a visible cinnabar underline that can reopen the related conversation later.
-- Links notes and source materials through real many-to-many course relationships.
-- Saves meaningful learning-memory updates automatically, while formal note and relationship writes still require a light confirmation card.
-- Can render source-bound interactive explanations through a constrained generative UI protocol. Plain text remains the default and the fallback.
-
-## OpenAI Build Week scope
-
-WeiBei existed as an early prototype before the submission period. The last repository checkpoint before the July 13, 2026 9:00 AM Pacific start is [`366892c1`](https://github.com/weibei-app/weibei/commit/366892c1). It already supported the basic native read, ask, and write workflow, course-aware retrieval, local notes, study memory, and a three-pane workspace.
-
-The Build Week work is the range from `366892c1` to the merged `main` submission commit [`c05ca69b`](https://github.com/weibei-app/weibei/commit/c05ca69b). This range contains 59 commits. The main additions were:
-
-- A course hub and a material-to-note relationship workbench.
-- A host-validated, evidence-linked rich-answer protocol with readable text fallback.
-- Selection-based question threads and persistent marks across PDF, HTML, Markdown, and notes.
-- Explicit citation labels and verified jumps back to files, PDF pages, and HTML sections.
-- Agent provider profiles, OpenAI Codex OAuth support, clearer failure states, cancellation, and retry.
-- Persistent study-session grouping, performance work, final chat math rendering, and pane interaction fixes.
+- Renders rich answers with plain Markdown as the default: KaTeX math and Mermaid diagrams inline, and interactive `visualize` fragments only inside a host-validated sandbox that cannot reach the network or local files. Every rich form has a readable text fallback.
+- Writes notes through a live editor with slash commands, image insertion, and code blocks; formal note writes arrive as a reviewable proposal instead of silent edits.
+- Links notes and source materials through real many-to-many course relationships, managed in a relationship workbench.
+- Saves meaningful learning-memory updates automatically with a light end-of-answer notice, while formal note and relationship writes still require a confirmation card.
+- Stays comfortable for long sessions: eight themes (paper, xuan, inkstone, stele, and four Liquid Glass variants), app-wide text scaling with keyboard shortcuts, and a daily calligraphy line (灵感句) drawn from the stele tradition.
 
 <!-- WEIBEI_VISUAL:course-relations:START -->
 <p align="center">
@@ -54,17 +43,33 @@ The Build Week work is the range from `366892c1` to the merged `main` submission
 </p>
 <!-- WEIBEI_VISUAL:course-relations:END -->
 
-This separation is intentional. The submission should be evaluated on the work added during Build Week, not on the earlier prototype as a whole.
+## Download
 
-## How I used Codex and GPT-5.6
+[WeiBei 1.0.0 for macOS (Apple silicon)](https://github.com/weibei-app/weibei/releases/download/v1.0.0/WeiBei-1.0.0-macOS-arm64.dmg) — see [Releases](https://github.com/weibei-app/weibei/releases) for all assets and SHA-256 checksums.
 
-I used Codex as my primary AI engineering collaborator. Across the Build Week work, Codex helped inspect the existing codebase, plan bounded changes, implement and refactor Swift code, write self-checks, trace failures, compare real app behavior with the intended design, and prepare release evidence.
+- Requires macOS 14 or later. The packaged build targets Apple silicon; on other Macs, build from source below.
+- The community build is ad-hoc signed and not Apple-notarized, so Gatekeeper blocks the first launch. Allow it for this app only: right-click `魏碑.app` in Applications and choose **Open**, then confirm **Open** in the dialog (or use System Settings → Privacy & Security → **Open Anyway**). Do not disable Gatekeeper globally.
+- A Homebrew cask is planned; until the tap is published, use the DMG or build from source.
 
-GPT-5.6 was used inside Codex for selected architecture, implementation, debugging, and review work. It contributed to the source-grounded Agent design, the course relationship workbench, the rich-answer protocol, and the selection-linked question flow. Other coding models also helped on smaller exploration and review tasks.
+You choose the model provider in Agent settings — bring an OpenAI-compatible provider, or sign in with OpenAI Codex OAuth where available. No provider is hard-coded.
 
-I remained responsible for the original problem, product architecture, UX direction, acceptance criteria, hands-on testing, and every final shipping decision. I also rejected generated directions when they added complexity without improving the study flow.
+## Build from source
 
-This describes the development process. Inside the product, Pi is the Agent orchestration layer and the user chooses a configured model provider. GPT-5.6 is not hard-coded as WeiBei's runtime default.
+Requirements:
+
+- macOS 14 or later
+- Xcode Command Line Tools with Swift 5.9 support
+- Internet access on the first build to download and verify the pinned Pi runtime
+- A configured supported model provider for live Agent responses
+- Node.js only when rebuilding the Milkdown web editor source
+
+```bash
+git clone https://github.com/weibei-app/weibei.git
+cd weibei
+./script/build_and_run.sh
+```
+
+The script builds and opens `dist/魏碑.app`.
 
 ## How it is built
 
@@ -76,27 +81,9 @@ WeiBei is a native Swift 5.9 application for macOS 14 and later.
 - A pinned Pi 0.82.1 runtime provides the Agent loop.
 - WeiBei owns the material context, citations, learning memory, note write-back, and interface rendering.
 
-The Agent does not receive unrestricted file, terminal, or network access. Each request gets a bounded and revisioned snapshot of the current material, selection, note, course search results, and learning state. The Swift host validates citations, source jumps, learning updates, note proposals, and generative UI payloads before displaying or applying them.
+The Agent does not receive unrestricted file, terminal, or network access. Each request gets a bounded and revisioned snapshot of the current material, selection, note, course search results, and learning state. The Swift host validates citations, source jumps, learning updates, note proposals, and rich-answer payloads before displaying or applying them. Interactive `visualize` fragments run in a sandboxed web runtime with no network or local file access, and anything with real side effects requires explicit user confirmation.
 
 For long or scanned PDFs, WeiBei extracts text in a resource-bounded helper process, indexes available text locally, and uses Vision OCR only when a page has no native text. Partial and incomplete indexing states remain visible instead of being presented as complete reads.
-
-## Requirements
-
-- macOS 14 or later
-- Xcode Command Line Tools with Swift 5.9 support
-- Internet access on the first build to download and verify the pinned Pi runtime
-- A configured supported model provider for live Agent responses
-- Node.js only when rebuilding the Milkdown web editor source
-
-## Build and run
-
-```bash
-git clone https://github.com/weibei-app/weibei.git
-cd weibei
-./script/build_and_run.sh
-```
-
-The script builds and opens `dist/魏碑.app`.
 
 ## Development and tooling
 
@@ -119,22 +106,16 @@ The root `Makefile` is a thin entry point that forwards to the underlying build 
 
 Node tooling: the repository has a **single root lockfile** (`package-lock.json`) covering the `Prototypes/RichAnswerWebRuntime` workspace, and exactly one `npm ci` installs everything. Tool scripts under `script/`, `DesignSystem/scripts/` and the prototype `scripts/` are TypeScript run with `tsx` (e.g. `npx tsx script/check-genui-math.ts`); `npm run typecheck:tools` type-checks them.
 
-## Suggested judge test
+## Documentation
 
-No private course data is included. Use a small folder containing a PDF, HTML page, Markdown file, or plain-text document that you are allowed to test with.
-
-1. Launch WeiBei and import the folder as a course.
-2. Open a material and create or select a related note.
-3. Open Agent settings and configure an available provider, or use OpenAI Codex OAuth if it is available to the testing account.
-4. Select a passage in the reader and ask a question from the selection surface.
-5. Inspect the answer's citation labels and click one to return to the source location.
-6. Return to the marked passage and reopen its persistent question thread.
-7. Open the course relationship view and inspect or change the links between notes and materials.
-8. Ask for a note update and confirm that WeiBei presents a proposal instead of silently changing the note.
+- [Docs/build-week.md](Docs/build-week.md) — OpenAI Build Week 2026 submission record and judge walkthrough
+- [Docs/note-slash-commands.md](Docs/note-slash-commands.md) — note editor slash commands, image insertion, and code block behavior
+- [Docs/course-library-architecture.md](Docs/course-library-architecture.md) — course library and storage architecture
+- [Docs/pi-unified-runtime.md](Docs/pi-unified-runtime.md) — the pinned Pi agent runtime
+- [Docs/生成式界面基础与Visualize借鉴.md](Docs/生成式界面基础与Visualize借鉴.md) — generative UI foundations and the `visualize` decision
+- [Docs/releases/v1.0.0.md](Docs/releases/v1.0.0.md) — v1.0.0 release notes and evidence
 
 ## Checks
-
-笔记编辑器的 Slash 命令、图片选择与代码块行为见 [Docs/note-slash-commands.md](Docs/note-slash-commands.md)。
 
 ```bash
 ./script/build_and_run.sh check
@@ -154,11 +135,11 @@ Live-provider checks require valid local credentials and are not silently replac
 
 ## Current limits
 
-- WeiBei currently supports macOS 14 and later. Windows and web versions are future work.
-- Course files and indexes are local-first, but live model responses may require a network connection.
+- WeiBei currently supports macOS 14 and later, on Apple silicon for packaged builds. Windows and web versions are future work.
+- Course files and indexes are local-first, but live model responses require a network connection.
 - Learning memory is written automatically into the Chat's global or course scope and shown with a light end-of-answer notice. Formal notes and relationships still use a confirmation card.
 - Large or difficult source files may be reported as partially indexed or incomplete.
-- The repository version is `1.0.0`. The downloadable community build is ad-hoc signed and is not Apple-notarized.
+- The community build is ad-hoc signed and is not Apple-notarized.
 
 ## Licensing
 
