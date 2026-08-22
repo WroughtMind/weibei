@@ -12,8 +12,10 @@ private enum EmptyWorkspaceLayoutMetrics {
 
 struct EmptyWorkspaceLauncherView: View {
     @EnvironmentObject private var store: WorkspaceStore
+    @Environment(\.weibeiReduceMotion) private var reduceMotion
     @Environment(\.weiBeiTextScale) private var textScale
 
+    @State private var selectedInspirationID: String?
     /// Bumped on theme change so a long-lived NSHostingView cannot keep a stale paper snapshot.
     @State private var appearanceEpoch = 0
 
@@ -26,7 +28,7 @@ struct EmptyWorkspaceLauncherView: View {
                     || geometry.size.height < EmptyWorkspaceLayoutMetrics.compactHeightThreshold
                 let horizontalPadding: CGFloat = compact ? 24 : 52
                 let entryWidth = min(116, max(76, (geometry.size.width - (horizontalPadding * 2) - 2) / 3))
-                let currentInspiration = EmptyWorkspaceInspirationCatalog.item(for: timeline.date)
+                let currentInspiration = inspiration(at: timeline.date)
                 let mode = liveAppearanceMode
 
                 ZStack {
@@ -37,15 +39,20 @@ struct EmptyWorkspaceLauncherView: View {
                     }
 
                     if store.showDailyInspiration {
-                        // Paper-grain layer, not content: the daily line sits behind
-                        // the entry cluster as a faint ink impression.
-                        EmptyWorkspaceInkWatermarkView(inspiration: currentInspiration, mode: mode, compact: compact)
-                            .frame(width: min(EmptyWorkspaceLayoutMetrics.watermarkMaxWidth, geometry.size.width - horizontalPadding * 2))
-                            .position(
-                                x: geometry.size.width / 2,
-                                y: geometry.size.height * EmptyWorkspaceLayoutMetrics.watermarkCenterRatio
-                            )
-                            .allowsHitTesting(false)
+                        // Paper-grain layer: the daily line sits behind the entry
+                        // cluster as a faint ink impression. Still tappable —
+                        // one click shuffles to another line.
+                        EmptyWorkspaceInkWatermarkView(
+                            inspiration: currentInspiration,
+                            mode: mode,
+                            compact: compact,
+                            onAdvance: { advanceInspiration(from: currentInspiration.id) }
+                        )
+                        .frame(width: min(EmptyWorkspaceLayoutMetrics.watermarkMaxWidth, geometry.size.width - horizontalPadding * 2))
+                        .position(
+                            x: geometry.size.width / 2,
+                            y: geometry.size.height * EmptyWorkspaceLayoutMetrics.watermarkCenterRatio
+                        )
                     }
 
                     workspaceContent(
@@ -136,6 +143,25 @@ struct EmptyWorkspaceLauncherView: View {
             .multilineTextAlignment(.center)
             .fixedSize(horizontal: false, vertical: true)
             .accessibilityIdentifier("empty-workspace-greeting")
+    }
+
+    private func inspiration(at date: Date) -> EmptyWorkspaceInspiration {
+        let baseInspiration = EmptyWorkspaceInspirationCatalog.item(for: date)
+        guard let selectedInspirationID else { return baseInspiration }
+        return EmptyWorkspaceInspirationCatalog.rotationItems.first(where: { $0.id == selectedInspirationID }) ?? baseInspiration
+    }
+
+    private func advanceInspiration(from currentID: String) {
+        guard !EmptyWorkspaceInspirationCatalog.rotationItems.isEmpty else { return }
+        var generator = SystemRandomNumberGenerator()
+        let nextID = EmptyWorkspaceInspirationCatalog.randomItem(excludingID: currentID, using: &generator).id
+        if reduceMotion {
+            selectedInspirationID = nextID
+        } else {
+            withAnimation(.easeInOut(duration: 0.24)) {
+                selectedInspirationID = nextID
+            }
+        }
     }
 }
 
@@ -303,38 +329,57 @@ private struct EmptyWorkspaceEntryButton: View {
 }
 
 /// Faint ink impression of the daily line — paper grain, not content.
-/// No credit line, links, or interaction; attribution stays in the bundled
-/// SOURCES.md ledger. Opacity is tuned per light/dark mode like the paper
-/// field gradients so all eight themes carry the watermark coherently.
+/// No credit line or links; attribution stays in the bundled SOURCES.md
+/// ledger. Opacity is tuned per light/dark mode like the paper field
+/// gradients so all eight themes carry the watermark coherently. One click
+/// shuffles to another line; hovering deepens the ink as the only affordance.
 private struct EmptyWorkspaceInkWatermarkView: View {
+    @EnvironmentObject private var store: WorkspaceStore
+    @Environment(\.weibeiReduceMotion) private var reduceMotion
+
     let inspiration: EmptyWorkspaceInspiration
     let mode: WeiBeiAppearanceMode
     let compact: Bool
+    let onAdvance: () -> Void
+
+    @State private var hovering = false
 
     private var ink: Color {
-        EmptyWorkspaceResolvedColor.ink(mode).opacity(mode.isDark ? 0.08 : 0.055)
+        let base: CGFloat = mode.isDark ? 0.08 : 0.055
+        return EmptyWorkspaceResolvedColor.ink(mode).opacity(hovering ? min(base * 1.7, 0.16) : base)
     }
 
     var body: some View {
-        Group {
-            switch inspiration.presentation {
-            case let .calligraphy(assetName):
-                if let image = EmptyWorkspaceCalligraphyResource.image(named: assetName) {
-                    Image(nsImage: image)
-                        .renderingMode(.template)
-                        .resizable()
-                        .scaledToFit()
-                        .foregroundStyle(ink)
-                        .padding(.horizontal, compact ? 24 : 40)
-                } else {
+        Button(action: onAdvance) {
+            Group {
+                switch inspiration.presentation {
+                case let .calligraphy(assetName):
+                    if let image = EmptyWorkspaceCalligraphyResource.image(named: assetName) {
+                        Image(nsImage: image)
+                            .renderingMode(.template)
+                            .resizable()
+                            .scaledToFit()
+                            .foregroundStyle(ink)
+                            .padding(.horizontal, compact ? 24 : 40)
+                    } else {
+                        lineText
+                    }
+                default:
                     lineText
                 }
-            default:
-                lineText
             }
+            .frame(maxWidth: .infinity, maxHeight: compact ? 180 : 230)
+            .contentShape(Rectangle())
         }
-        .frame(maxWidth: .infinity, maxHeight: compact ? 180 : 230)
-        .accessibilityHidden(true)
+        .buttonStyle(.plain)
+        .id(inspiration.id)
+        .animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: hovering)
+        .onHover { isHovering in
+            hovering = isHovering
+        }
+        .accessibilityLabel(Text(inspiration.text))
+        .accessibilityHint(Text(store.ui("随机换一句", "Show another line")))
+        .accessibilityIdentifier("empty-workspace-inspiration-next")
     }
 
     private var lineText: some View {
