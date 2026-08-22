@@ -139,6 +139,7 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
     private var failure: String?
     private var activatedWikiTitle: String?
     private var attachmentRequests = 0
+    private var linkEditorRequests = 0
     private var imagePickerRequests = 0
     private var activatedSelectionAskThreadID: String?
     private var editorFailures = 0
@@ -166,7 +167,7 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
         configuration.userContentController = controller
         webView = WKWebView(frame: CGRect(x: 0, y: 0, width: 960, height: 720), configuration: configuration)
         super.init()
-        for name in ["editorReady", "dirtyChanged", "snapshotReady", "outlineChanged", "selectionChanged", "askAgentWithSelection", "wikiLinkActivated", "imageAttachmentRequested", "imagePickerRequested", "selectionAskMark", "editorFailure"] {
+        for name in ["editorReady", "dirtyChanged", "snapshotReady", "outlineChanged", "selectionChanged", "askAgentWithSelection", "linkEditorRequested", "wikiLinkActivated", "imageAttachmentRequested", "imagePickerRequested", "selectionAskMark", "editorFailure"] {
             controller.add(self, name: name)
         }
     }
@@ -230,6 +231,8 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
             activatedWikiTitle = (message.body as? [String: Any])?["title"] as? String
         case "imageAttachmentRequested":
             attachmentRequests += 1
+        case "linkEditorRequested":
+            linkEditorRequests += 1
         case "imagePickerRequested":
             imagePickerRequests += 1
         case "selectionAskMark":
@@ -1398,6 +1401,47 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
             guard let self else { return }
             guard error == nil, value as? Bool == true else {
                 self.fail("formula NodeView interaction check failed: \(String(describing: error)); \(String(describing: value))")
+                return
+            }
+            self.validateWritingExtras()
+        }
+    }
+
+    /// Strikethrough command round-trip and ⌘K link-editor request gating.
+    private func validateWritingExtras() {
+        let script = """
+        (() => {
+          const editor = window.WeiBeiEditor;
+          editor.setDocumentID('writing-extras');
+          editor.setMarkdown('删除线目标 后接文字');
+          let strikeApplied = false;
+          let strikeToggledOff = false;
+          if (editor.selectFirstTextForCheck('删除线目标')) {
+            strikeApplied = editor.executeSelectionCommand('strike') && editor.getMarkdown().includes('~~删除线目标~~');
+            strikeToggledOff = editor.executeSelectionCommand('strike') && !editor.getMarkdown().includes('~~');
+          }
+          editor.setMarkdown('链接文字 其他');
+          editor.selectFirstTextForCheck('链接文字');
+          const cmdKWithSelection = editor.pressKeyForCheck('k', { metaKey: true });
+          editor.setMarkdown('');
+          editor.selectDocumentEndForCheck();
+          const cmdKWithoutSelection = editor.pressKeyForCheck('k', { metaKey: true });
+          return { strikeApplied, strikeToggledOff, cmdKWithSelection, cmdKWithoutSelection };
+        })();
+        """
+        webView.evaluateJavaScript(script) { [weak self] value, error in
+            guard let self else { return }
+            if let error {
+                self.fail("writing extras check threw \(error.localizedDescription)")
+                return
+            }
+            guard let result = value as? [String: Any],
+                  result["strikeApplied"] as? Bool == true,
+                  result["strikeToggledOff"] as? Bool == true,
+                  result["cmdKWithSelection"] as? Bool == true,
+                  result["cmdKWithoutSelection"] as? Bool == true,
+                  self.linkEditorRequests == 1 else {
+                self.fail("writing extras check failed (linkEditorRequests=\(self.linkEditorRequests)): \(String(describing: value))")
                 return
             }
             self.validateWorkPackageEStructures()

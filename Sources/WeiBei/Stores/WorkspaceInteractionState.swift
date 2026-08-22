@@ -28,6 +28,8 @@ final class WorkspaceInteractionState: ObservableObject {
     @Published var activeSelectionAskThreadID: UUID?
     @Published var keepFloatingSelectionForAnswer = false
     @Published var noteSelectionFormatting: NoteSelectionFormatting?
+    /// ⌘K in the note editor asks the selection capsule to open its link popover; bump to request.
+    @Published var noteLinkEditorRequest = 0
     /// 问/记共用浮层的当前模式;胶囊"问/记"点击时切换。
     @Published var floatingComposerMode: FloatingSelectionComposerMode = .ask
     /// "记"模式的独立草稿;与问的 agentDraft 互不覆盖,提交后清空。

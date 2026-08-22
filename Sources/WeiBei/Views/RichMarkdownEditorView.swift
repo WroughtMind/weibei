@@ -620,6 +620,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
     var streamsMarkdownUpdates = false
     var onSelectionChange: (String, CGPoint?) -> Void
     var onSelectionFormattingChange: (NoteSelectionFormatting?) -> Void = { _ in }
+    var onLinkEditorRequest: () -> Void = {}
     var onAskAgentWithSelection: (String, CGPoint?) -> Void
     var onContentHeightChange: (CGFloat) -> Void = { _ in }
     var onActiveHeadingChange: (Int?) -> Void = { _ in }
@@ -657,6 +658,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             onOutlineChange: onOutlineChange,
             onSelectionChange: onSelectionChange,
             onSelectionFormattingChange: onSelectionFormattingChange,
+            onLinkEditorRequest: onLinkEditorRequest,
             onAskAgentWithSelection: onAskAgentWithSelection,
             onWikiLink: onWikiLink,
             onSourceReference: onSourceReference,
@@ -896,6 +898,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         }
         context.coordinator.onSelectionChange = onSelectionChange
         context.coordinator.onSelectionFormattingChange = onSelectionFormattingChange
+        context.coordinator.onLinkEditorRequest = onLinkEditorRequest
         context.coordinator.onAskAgentWithSelection = onAskAgentWithSelection
         context.coordinator.onContentHeightChange = onContentHeightChange
         context.coordinator.onActiveHeadingChange = onActiveHeadingChange
@@ -951,6 +954,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         "outlineChanged",
         "selectionChanged",
         "askAgentWithSelection",
+        "linkEditorRequested",
         "wikiLinkActivated",
         "sourceReferenceActivated",
         "editorFailure",
@@ -1014,6 +1018,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         var documentID: String
         var onSelectionChange: (String, CGPoint?) -> Void
         var onSelectionFormattingChange: (NoteSelectionFormatting?) -> Void
+        var onLinkEditorRequest: () -> Void
         var onAskAgentWithSelection: (String, CGPoint?) -> Void
         var onContentHeightChange: (CGFloat) -> Void
         var onActiveHeadingChange: (Int?) -> Void
@@ -1075,6 +1080,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             onOutlineChange: @escaping ([NoteEditorOutlineItem]) -> Void,
             onSelectionChange: @escaping (String, CGPoint?) -> Void,
             onSelectionFormattingChange: @escaping (NoteSelectionFormatting?) -> Void,
+            onLinkEditorRequest: @escaping () -> Void,
             onAskAgentWithSelection: @escaping (String, CGPoint?) -> Void,
             onWikiLink: @escaping (String) -> Void,
             onSourceReference: @escaping (String) -> Void,
@@ -1104,6 +1110,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             self.onOutlineChange = onOutlineChange
             self.onSelectionChange = onSelectionChange
             self.onSelectionFormattingChange = onSelectionFormattingChange
+            self.onLinkEditorRequest = onLinkEditorRequest
             self.onAskAgentWithSelection = onAskAgentWithSelection
             self.onWikiLink = onWikiLink
             self.onSourceReference = onSourceReference
@@ -1349,6 +1356,8 @@ struct RichMarkdownEditorView: NSViewRepresentable {
                 guard let body = message.body as? [String: Any] else { return }
                 let text = body["text"] as? String ?? ""
                 onAskAgentWithSelection(text, anchor(from: body["rect"] as? [String: Any]))
+            case "linkEditorRequested":
+                onLinkEditorRequest()
             case "selectionAskMark":
                 guard let body = message.body as? [String: Any],
                       let threadID = body["threadId"] as? String,

@@ -21,7 +21,7 @@ import { nodeRule } from '@milkdown/kit/prose';
 import { Fragment } from '@milkdown/kit/prose/model';
 import { NodeSelection, Plugin, Selection, TextSelection } from '@milkdown/kit/prose/state';
 import { liftListItem } from '@milkdown/kit/prose/schema-list';
-import { addColumnAfter, addRowAfter, deleteColumn, deleteRow, goToNextCell, isInTable, selectedRect } from '@milkdown/kit/prose/tables';
+import { addColumnAfter, addRowAfter, columnResizing, deleteColumn, deleteRow, goToNextCell, isInTable, selectedRect } from '@milkdown/kit/prose/tables';
 import { Decoration, DecorationSet } from '@milkdown/kit/prose/view';
 import { getMarkdown as readMarkdown, insert, replaceAll, replaceRange, $inputRule, $prose } from '@milkdown/kit/utils';
 import {
@@ -2614,6 +2614,14 @@ const weiBeiDialectPlugin = $prose(() => new Plugin({
       if (WEIBEI_EDITOR_RUNTIME) {
         if (appendTableRowFromLastCell(view, event)) { event.preventDefault(); return true; }
         if (handleSlashMenuKeyDown(view, event)) return true;
+        if ((event.metaKey || event.ctrlKey) && !event.altKey && (event.key === 'k' || event.key === 'K')) {
+          const selection = view.state.selection;
+          if (isEditable && !selection.empty) {
+            post('linkEditorRequested', {});
+            event.preventDefault();
+            return true;
+          }
+        }
         if (event.key === 'Enter' && view.state.selection instanceof NodeSelection) {
           const selected = view.state.selection.node;
           if (selected.type.name === 'math_inline' || selected.type.name === 'math_block') {
@@ -2718,7 +2726,7 @@ const reportSelection = () => {
   const details = text && editor ? editor.action((ctx) => {
     const { state } = ctx.get(editorViewCtx);
     const { selection } = state;
-    const markNames = ['strong', 'emphasis', 'highlight', 'link', 'inlineCode'];
+    const markNames = ['strong', 'emphasis', 'strike_through', 'highlight', 'link', 'inlineCode'];
     const activeMarks = markNames.filter((name) => state.schema.marks[name] && state.doc.rangeHasMark(selection.from, selection.to, state.schema.marks[name]));
     const writingFont = state.schema.marks.writing_font;
     let selectedFont: string | undefined;
@@ -2788,6 +2796,7 @@ const executeSelectionCommandInternal = (action: unknown, value: unknown = '') =
     switch (action) {
       case 'bold': applied = toggle('strong'); break;
       case 'italic': applied = toggle('emphasis'); break;
+      case 'strike': applied = toggle('strike_through'); break;
       case 'highlight': applied = toggle('highlight'); break;
       case 'inlineCode': applied = toggle('inlineCode'); break;
       case 'font': {
@@ -3603,6 +3612,7 @@ editorBuilder = editorBuilder
 
 if (WEIBEI_EDITOR_RUNTIME) {
   editorBuilder = editorBuilder
+    .use($prose(() => columnResizing()))
     .use(weiBeiSlash)
     .use(history)
     .use(clipboard)
