@@ -3,9 +3,7 @@ import Foundation
 import WeiBeiCore
 import XCTest
 
-/// 阶段 0 行为基线冻结（计划 §5 阶段 0）。
-/// 两个用例描述阶段 2「副本先行」落地后的目标行为；当前实现尚未满足，
-/// 用 XCTExpectFailure 标注为预期失败，不进 CI 门槛，阶段 2 转正式。
+/// 阶段 0 行为基线 → 阶段 2「副本先行」落地后转正式（计划 §5 阶段0→阶段2）。
 @MainActor
 final class FileModelPhase0BaselineTests: XCTestCase {
     override class func setUp() {
@@ -36,12 +34,21 @@ final class FileModelPhase0BaselineTests: XCTestCase {
         return store
     }
 
-    func testExternalDeleteKeepsUnsavedInput() throws {
-        XCTExpectFailure("阶段2副本先行落地后转正式（计划 §5 阶段0→阶段2）")
-        try runExternalDeleteScenario()
+    private func reconcile(_ store: WorkspaceStore) throws {
+        try store.waitForCourseFileOperation {
+            await store.reconcileCourseFilesNow()
+        }
     }
 
-    private func runExternalDeleteScenario() throws {
+    private func backupContents(
+        _ backupRoot: URL,
+        itemID: String
+    ) throws -> [String] {
+        try NoteBackupRing.list(itemID: itemID, rootURL: backupRoot)
+            .compactMap { try? String(contentsOf: $0.url, encoding: .utf8) }
+    }
+
+    func testExternalDeleteKeepsUnsavedInput() throws {
         let base = makeTempRoot("weibei-phase0-external-delete")
         defer { try? FileManager.default.removeItem(at: base) }
         let backupRoot = base.appendingPathComponent("backups", isDirectory: true)
@@ -58,14 +65,19 @@ final class FileModelPhase0BaselineTests: XCTestCase {
 
         let backingURL = try XCTUnwrap(store.resolvedLibraryURL(for: item))
         try FileManager.default.removeItem(at: backingURL)
-        try store.waitForCourseFileOperation {
-            await store.reconcileCourseFilesNow()
-        }
+        try reconcile(store)
 
-        let backups = try NoteBackupRing.list(itemID: item.id, rootURL: backupRoot)
-        let recovered = backups.compactMap { entry in
-            try? String(contentsOf: entry.url, encoding: .utf8)
-        }
+        XCTAssertEqual(
+            store.displaySubtitle(for: item),
+            store.ui("文件不存在", "File missing"),
+            "首缺席应进入灰态而不是立即移除"
+        )
+        XCTAssertNotNil(store.importedItems.first { $0.id == item.id })
+
+        store.fileMissingSinceByItemID[item.id] = Date().addingTimeInterval(-7)
+        try reconcile(store)
+
+        let recovered = try backupContents(backupRoot, itemID: item.id)
         XCTAssertTrue(
             recovered.contains(unsavedInput),
             "外部删除后未落盘输入应已存入备份环；实际备份内容：\(recovered)"
@@ -73,11 +85,6 @@ final class FileModelPhase0BaselineTests: XCTestCase {
     }
 
     func testUseDiskConflictKeepsUserVersion() throws {
-        XCTExpectFailure("阶段2冲突条备份落地后转正式（计划 §5 阶段0→阶段2）")
-        try runUseDiskConflictScenario()
-    }
-
-    private func runUseDiskConflictScenario() throws {
         let base = makeTempRoot("weibei-phase0-conflict-use-disk")
         defer { try? FileManager.default.removeItem(at: base) }
         let backupRoot = base.appendingPathComponent("backups", isDirectory: true)
@@ -110,20 +117,72 @@ final class FileModelPhase0BaselineTests: XCTestCase {
             await store.resolveNoteEditorRecoveryConflict(useDisk: true)
         }
 
-        XCTAssertEqual(store.noteText, "磁盘版本")
-
-        let backups = try NoteBackupRing.list(itemID: item.id, rootURL: backupRoot)
-        let recovered = backups.compactMap { entry in
-            try? String(contentsOf: entry.url, encoding: .utf8)
-        }
+        let recovered = try backupContents(backupRoot, itemID: item.id)
         XCTAssertTrue(
             recovered.contains(userVersion),
             "冲突选「使用磁盘版本」后用户版本应已存入备份环；实际备份内容：\(recovered)"
         )
     }
 
+    func testGoneItemGraysAndReclaims() throws {
+        let base = makeTempRoot("weibei-phase2-gray-reclaim")
+        defer { try? FileManager.default.removeItem(at: base) }
+        let backupRoot = base.appendingPathComponent("backups", isDirectory: true)
+        let library = base.appendingPathComponent("资料库", isDirectory: true)
+        let store = try makeStore(base: base, library: library, backupRoot: backupRoot)
+        let courseID = try store.createCourseInLibrary(title: "灰态课")
+        let source = base.appendingPathComponent("讲义.md")
+        try "讲义内容".write(to: source, atomically: true, encoding: .utf8)
+        let imported = try store.importFileIntoCourseForSelfCheck(source, courseID: courseID, role: .material)
+        let item = imported.item
+        let backingURL = try XCTUnwrap(store.resolvedLibraryURL(for: item))
+
+        try FileManager.default.removeItem(at: backingURL)
+        try reconcile(store)
+
+        XCTAssertEqual(store.displaySubtitle(for: item), store.ui("文件不存在", "File missing"))
+        XCTAssertNotNil(store.importedItems.first { $0.id == item.id }, "灰态期间条目必须保留")
+        XCTAssertNotNil(store.fileMissingSinceByItemID[item.id])
+
+        try "讲义内容".write(to: backingURL, atomically: true, encoding: .utf8)
+        try reconcile(store)
+
+        let reclaimed = try XCTUnwrap(
+            store.importedItems.first { $0.id == item.id },
+            "文件重现后应认领回同一 itemID"
+        )
+        XCTAssertTrue(reclaimed.urlPath?.hasSuffix("讲义.md") == true)
+        XCTAssertNil(store.fileMissingSinceByItemID[item.id])
+        XCTAssertEqual(store.displaySubtitle(for: reclaimed), reclaimed.subtitle)
+    }
+
+    func testGoneItemRemovalBacksUpDraft() throws {
+        let base = makeTempRoot("weibei-phase2-removal-backup")
+        defer { try? FileManager.default.removeItem(at: base) }
+        let backupRoot = base.appendingPathComponent("backups", isDirectory: true)
+        let library = base.appendingPathComponent("资料库", isDirectory: true)
+        let store = try makeStore(base: base, library: library, backupRoot: backupRoot)
+        let courseID = try store.createCourseInLibrary(title: "移除课")
+        let source = base.appendingPathComponent("草稿.md")
+        try "原稿".write(to: source, atomically: true, encoding: .utf8)
+        let imported = try store.importFileIntoCourseForSelfCheck(source, courseID: courseID, role: .material)
+        let item = imported.item
+        let backingURL = try XCTUnwrap(store.resolvedLibraryURL(for: item))
+
+        let draft = "未落盘草稿内容"
+        store.scheduleNotePersistence(draft, for: item)
+
+        try FileManager.default.removeItem(at: backingURL)
+        try reconcile(store)
+        store.fileMissingSinceByItemID[item.id] = Date().addingTimeInterval(-7)
+        try reconcile(store)
+
+        XCTAssertNil(store.importedItems.first { $0.id == item.id }, "两个周期仍缺席应移除条目")
+        let recovered = try backupContents(backupRoot, itemID: item.id)
+        XCTAssertTrue(recovered.contains(draft), "移除前草稿应入备份环；实际：\(recovered)")
+    }
+
     private static func digest(of text: String) -> String {
-        let data = Data(text.utf8)
-        return WorkspaceStore.noteContentDigest(data)
+        WorkspaceStore.noteContentDigest(Data(text.utf8))
     }
 }
