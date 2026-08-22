@@ -2,7 +2,7 @@ import PDFKit
 import SwiftUI
 import WeiBeiCore
 
-/// 单条记过标记的命中信息:朱砂短棒热区 + hover 时要高亮的整句行矩形。
+/// 单条记过标记的命中信息:朱砂圆点热区 + hover 时要高亮的整句行矩形。
 struct PDFRemarkMarkHit {
     var recordID: String
     var pageIndex: Int
@@ -10,9 +10,9 @@ struct PDFRemarkMarkHit {
     var highlightRects: [CGRect]
 }
 
-// 记过原文标记渲染:句末右侧全饱和朱砂短棒(用户定稿 2026-08-22:
-// 放在"整个句子的最右边"、要显眼;hover 时整句高亮;点击回访续记浮层)。
-// 问过下划线沿用 ReaderView 内既有实现,这里只负责"记"。
+// 记过原文标记渲染(用户定稿 2026-08-22 验收修订):
+// 圆点(非竖线)、放在**整行的最右端**(非句子文字末端)、同行多条堆叠从右往左排。
+// hover 圆点时整句高亮;点击回访续记浮层。问过下划线沿用 ReaderView 内既有实现。
 extension PDFReaderRepresentable.Coordinator {
     static let remarkMarkMarker = "weibei-selection-remark"
     static let remarkMarkHoverMarker = "weibei-selection-remark-hover"
@@ -21,7 +21,10 @@ extension PDFReaderRepresentable.Coordinator {
         NSColor(calibratedRed: 0.56, green: 0.16, blue: 0.12, alpha: 1.0)
     }
 
-    /// 渲染记过朱砂短棒。只有带 PDF 锚点的记录能画;无锚旧数据沿用文字匹配链路(第三刀不渲染)。
+    private static let dotDiameter: CGFloat = 6
+    private static let dotSpacing: CGFloat = 3
+
+    /// 渲染记过朱砂圆点。只有带 PDF 锚点的记录能画;无锚旧数据不渲染。
     func applyRemarkMarks(
         _ marks: [(id: String, anchor: SelectionDocumentAnchor?, text: String)],
         in view: PDFView
@@ -34,35 +37,99 @@ extension PDFReaderRepresentable.Coordinator {
         hoveredRemarkRecordID = nil
         clearRemarkAnnotations(in: document, includingHover: true)
 
+        struct PendingDot {
+            var recordID: String
+            var pageIndex: Int
+            var lineMidY: CGFloat
+            var lineRight: CGFloat
+            var textEndX: CGFloat
+            var highlightRects: [CGRect]
+        }
+        var pendings: [PendingDot] = []
         for mark in marks {
             guard let pdf = mark.anchor?.pdf,
                   pdf.pageIndex != NSNotFound,
                   let page = document.page(at: pdf.pageIndex) else { continue }
             let rects = pdf.lineRects.map(\.cgRect).filter { $0.width > 1 && $0.height > 0.5 }
             guard let lastLine = rects.last else { continue }
-
-            // 棒贴在整句最右端(所有行最右沿),竖在末行行高中点。
-            let sentenceRight = rects.map(\.maxX).max() ?? lastLine.maxX
-            let pageRight = page.bounds(for: .mediaBox).maxX
-            let barX = min(sentenceRight + 3, pageRight - 6)
-            let barHeight = min(lastLine.height * 0.72, 14)
-            let barRect = CGRect(x: barX, y: lastLine.midY - barHeight / 2, width: 2.6, height: barHeight)
-
-            let annotation = PDFAnnotation(bounds: barRect, forType: .square, withProperties: nil)
-            annotation.color = remarkCinnabar
-            annotation.setValue(remarkCinnabar, forAnnotationKey: .interiorColor)
-            annotation.userName = Self.remarkMarkMarker
-            page.addAnnotation(annotation)
-
-            remarkHits.append(
-                PDFRemarkMarkHit(
+            pendings.append(
+                PendingDot(
                     recordID: mark.id,
                     pageIndex: pdf.pageIndex,
-                    hitBounds: barRect.insetBy(dx: -6, dy: -6),
+                    lineMidY: lastLine.midY,
+                    lineRight: Self.pageLineRightEdge(
+                        containing: lastLine,
+                        in: page,
+                        document: document
+                    ),
+                    textEndX: lastLine.maxX,
                     highlightRects: rects
                 )
             )
         }
+
+        // 同一行(pageIndex + midY 相近)堆叠:句尾越靠右的点越贴行缘。
+        var grouped: [[PendingDot]] = []
+        for dot in pendings.sorted(by: { $0.pageIndex < $1.pageIndex || $0.lineMidY < $1.lineMidY }) {
+            if var lastGroup = grouped.last,
+               lastGroup.first!.pageIndex == dot.pageIndex,
+               abs(lastGroup.first!.lineMidY - dot.lineMidY) < 4 {
+                lastGroup.append(dot)
+                grouped[grouped.count - 1] = lastGroup
+            } else {
+                grouped.append([dot])
+            }
+        }
+
+        let cinnabar = remarkCinnabar
+        let pageRightLimit = { (page: PDFPage) -> CGFloat in
+            page.bounds(for: .mediaBox).maxX - Self.dotDiameter - 2
+        }
+        for group in grouped {
+            guard let page = document.page(at: group[0].pageIndex) else { continue }
+            let ordered = group.sorted(by: { $0.textEndX > $1.textEndX })
+            let baseRight = min(ordered[0].lineRight, pageRightLimit(page))
+            for (slot, dot) in ordered.enumerated() {
+                let dotX = baseRight - Self.dotDiameter - CGFloat(slot) * (Self.dotDiameter + Self.dotSpacing)
+                let dotRect = CGRect(
+                    x: dotX,
+                    y: dot.lineMidY - Self.dotDiameter / 2,
+                    width: Self.dotDiameter,
+                    height: Self.dotDiameter
+                )
+                let annotation = PDFAnnotation(bounds: dotRect, forType: .circle, withProperties: nil)
+                annotation.color = cinnabar
+                annotation.setValue(cinnabar, forAnnotationKey: .interiorColor)
+                annotation.userName = Self.remarkMarkMarker
+                page.addAnnotation(annotation)
+                remarkHits.append(
+                    PDFRemarkMarkHit(
+                        recordID: dot.recordID,
+                        pageIndex: dot.pageIndex,
+                        hitBounds: dotRect.insetBy(dx: -6, dy: -6),
+                        highlightRects: dot.highlightRects
+                    )
+                )
+            }
+        }
+    }
+
+    /// 整页文本按行分解,取"句子末行所在整行"的右缘(同列判定:行起点最接近)。
+    /// 拿不到行布局时退回句子自身末行右缘。
+    static func pageLineRightEdge(containing line: CGRect, in page: PDFPage, document: PDFDocument) -> CGFloat {
+        guard let full = page.selection(for: page.bounds(for: .mediaBox)) else {
+            return line.maxX
+        }
+        var best: CGRect?
+        for pageLine in full.selectionsByLine() {
+            let bounds = pageLine.bounds(for: page)
+            guard line.midY >= bounds.minY - 1, line.midY <= bounds.maxY + 1 else { continue }
+            if best == nil
+                || abs(bounds.minX - line.minX) < abs(best!.minX - line.minX) {
+                best = bounds
+            }
+        }
+        return best?.maxX ?? line.maxX
     }
 
     func handleRemarkMarkHover(at viewPoint: CGPoint, in view: PDFView) {

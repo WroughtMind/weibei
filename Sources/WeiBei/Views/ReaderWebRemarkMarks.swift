@@ -31,12 +31,11 @@ extension WebReaderRepresentable {
         }
         .weibei-remark-mark::after {
           content: "";
-          display: inline-block;
-          width: 3px;
-          height: 0.85em;
-          margin-left: 3px;
-          vertical-align: -0.08em;
-          border-radius: 1.5px;
+          float: right;
+          width: 7px;
+          height: 7px;
+          margin-left: 4px;
+          border-radius: 50%;
           background-color: rgba(145, 38, 27, 1.0);
         }
         .weibei-remark-mark:hover {
