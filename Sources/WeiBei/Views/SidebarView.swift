@@ -120,23 +120,12 @@ struct SidebarView: View {
             .foregroundColor(WeiBeiTheme.ink)
             .weiBeiText(12.5)
         }
-        .padding(.horizontal, 8)
-        .frame(height: 28)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background {
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(WeiBeiTheme.paperInset.opacity(librarySearchFocused ? 0.20 : 0.34))
-        }
-        .overlay {
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .strokeBorder(
-                    librarySearchFocused
-                        ? WeiBeiTheme.link.opacity(0.36)
-                        : WeiBeiTheme.hairline.opacity(0.46),
-                    lineWidth: 1
-                )
-        }
-        .animation(WeiBeiMotion.reveal, value: librarySearchFocused)
+        .weibeiInputSurface(
+            active: librarySearchFocused,
+            height: 28,
+            horizontalPadding: 8
+        )
     }
 
     private func importMaterialsFromSidebar() {
@@ -496,6 +485,8 @@ private struct SidebarCourseGroupHeader: View {
     var add: (() -> Void)? = nil
     var onDropItem: ((String) -> Void)? = nil
 
+    @State private var hoveringAdd = false
+
     var body: some View {
         HStack(spacing: 5) {
             Image(systemName: systemImage)
@@ -512,8 +503,19 @@ private struct SidebarCourseGroupHeader: View {
                 Button(action: add) {
                     Image(systemName: "plus")
                         .weiBeiText(9.5, weight: .semibold)
+                        .frame(width: 18, height: 18)
+                        .background {
+                            if hoveringAdd {
+                                WeiBeiEtchedBackdrop(
+                                    shape: Circle(),
+                                    fill: WeiBeiTheme.paperInset.opacity(0.34),
+                                    stroke: WeiBeiTheme.hairline.opacity(0.30)
+                                )
+                            }
+                        }
                 }
                 .buttonStyle(.plain)
+                .onHover { hoveringAdd = $0 }
                 .foregroundStyle(accent.opacity(0.82))
                 .accessibilityLabel(Text("添加\(title)"))
                 .help("添加\(title)")
@@ -580,7 +582,13 @@ private struct SidebarCourseRow: View {
                     .foregroundStyle(enterTint)
                     .frame(width: 22, height: 22)
                     .background {
-                        Circle().fill(WeiBeiTheme.paperInset.opacity(enterBackdropOpacity))
+                        if enterBackdropOpacity > 0 {
+                            WeiBeiEtchedBackdrop(
+                                shape: Circle(),
+                                fill: WeiBeiTheme.paperInset.opacity(enterBackdropOpacity),
+                                stroke: WeiBeiTheme.hairline.opacity(0.30)
+                            )
+                        }
                     }
             }
             .buttonStyle(.plain)
@@ -591,7 +599,7 @@ private struct SidebarCourseRow: View {
         .padding(.horizontal, 9)
         .frame(height: 48)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(rowBackground)
+        .background { rowBackdrop }
         .offset(x: expanded || hovering ? 2 : 0)
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         .onHover { hovering = $0 }
@@ -600,10 +608,21 @@ private struct SidebarCourseRow: View {
         .animation(WeiBeiMotion.hover, value: hoveringEnter)
     }
 
-    private var rowBackground: Color {
-        if expanded { return WeiBeiTheme.paperInset.opacity(0.70) }
-        if hovering { return WeiBeiTheme.paperInset.opacity(0.30) }
-        return .clear
+    @ViewBuilder
+    private var rowBackdrop: some View {
+        if expanded {
+            WeiBeiEtchedBackdrop(
+                shape: RoundedRectangle(cornerRadius: 8, style: .continuous),
+                fill: WeiBeiTheme.paperInset.opacity(0.70),
+                stroke: WeiBeiTheme.hairline.opacity(0.40)
+            )
+        } else if hovering {
+            WeiBeiEtchedBackdrop(
+                shape: RoundedRectangle(cornerRadius: 8, style: .continuous),
+                fill: WeiBeiTheme.paperInset.opacity(0.30),
+                stroke: WeiBeiTheme.hairline.opacity(0.30)
+            )
+        }
     }
 
     private var accent: Color {
@@ -640,15 +659,11 @@ private struct SidebarAddMenuButtonBody: View {
             .foregroundStyle(hovering ? WeiBeiTheme.ink : WeiBeiTheme.secondaryInk)
             .frame(width: 28, height: 28)
             .background {
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(WeiBeiTheme.paperInset.opacity(highlighted ? 0.42 : 0.18))
-            }
-            .overlay {
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .strokeBorder(
-                        WeiBeiTheme.hairline.opacity(highlighted ? 0.62 : 0.42),
-                        lineWidth: 1
-                    )
+                WeiBeiEtchedBackdrop(
+                    shape: RoundedRectangle(cornerRadius: 7, style: .continuous),
+                    fill: WeiBeiTheme.paperInset.opacity(highlighted ? 0.42 : 0.18),
+                    stroke: WeiBeiTheme.hairline.opacity(highlighted ? 0.62 : 0.42)
+                )
             }
             .scaleEffect(configuration.isPressed ? 0.95 : 1)
             .animation(WeiBeiMotion.press, value: configuration.isPressed)
@@ -796,7 +811,7 @@ private struct LibraryRow: View {
         .padding(.horizontal, compact ? 7 : 9)
         .frame(height: compact ? 38 : (tags.isEmpty ? 48 : 58))
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(rowBackground)
+        .background { rowBackdrop }
         .offset(x: selected || hovering ? (compact ? 1 : 2) : 0)
         .clipShape(RoundedRectangle(cornerRadius: compact ? 6 : 8, style: .continuous))
         .overlay(alignment: .leading) {
@@ -812,10 +827,21 @@ private struct LibraryRow: View {
         .animation(WeiBeiMotion.hover, value: hovering)
     }
 
-    private var rowBackground: Color {
-        if selected { return WeiBeiTheme.paperInset.opacity(compact ? 0.54 : 0.70) }
-        if hovering { return WeiBeiTheme.paperInset.opacity(compact ? 0.22 : 0.30) }
-        return .clear
+    @ViewBuilder
+    private var rowBackdrop: some View {
+        if selected {
+            WeiBeiEtchedBackdrop(
+                shape: RoundedRectangle(cornerRadius: compact ? 6 : 8, style: .continuous),
+                fill: WeiBeiTheme.paperInset.opacity(compact ? 0.54 : 0.70),
+                stroke: WeiBeiTheme.hairline.opacity(0.40)
+            )
+        } else if hovering {
+            WeiBeiEtchedBackdrop(
+                shape: RoundedRectangle(cornerRadius: compact ? 6 : 8, style: .continuous),
+                fill: WeiBeiTheme.paperInset.opacity(compact ? 0.22 : 0.30),
+                stroke: WeiBeiTheme.hairline.opacity(0.30)
+            )
+        }
     }
 
     private var iconColor: Color {

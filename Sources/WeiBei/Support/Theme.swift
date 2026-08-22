@@ -1455,6 +1455,63 @@ private struct WeiBeiRevealModifier: ViewModifier {
     }
 }
 
+/// The single texture primitive behind hover pills, selected rows, and small
+/// control chrome: base fill + top inner sheen + bottom inner shade + hairline
+/// frame, over any insettable shape. Render nothing when invisible so idle
+/// ghosts stay perfectly clean.
+struct WeiBeiEtchedBackdrop<Shape: InsettableShape>: View {
+    @Environment(\.colorScheme) private var colorScheme
+
+    let shape: Shape
+    var fill: Color
+    var stroke: Color = .clear
+    /// Tight contact shadow so a hover pill sits on the surface (controls only;
+    /// lists skip it to stay light).
+    var showsContactShadow = false
+
+    init(
+        shape: Shape,
+        fill: Color,
+        stroke: Color = .clear,
+        showsContactShadow: Bool = false
+    ) {
+        self.shape = shape
+        self.fill = fill
+        self.stroke = stroke
+        self.showsContactShadow = showsContactShadow
+    }
+
+    var body: some View {
+        let dark = colorScheme == .dark
+        return ZStack {
+            shape.fill(fill)
+            LinearGradient(
+                colors: [
+                    WeiBeiTheme.glassHighlight.opacity(dark ? 0.20 : 0.34),
+                    .clear,
+                ],
+                startPoint: .top,
+                endPoint: UnitPoint(x: 0.5, y: 0.6)
+            )
+            .clipShape(shape)
+        }
+        .clipShape(shape)
+        .overlay(alignment: .bottom) {
+            shape
+                .stroke(WeiBeiTheme.paperInset.opacity(dark ? 0.50 : 0.52), lineWidth: 1)
+                .padding(0.5)
+        }
+        .overlay {
+            shape.stroke(stroke, lineWidth: 1)
+        }
+        .shadow(
+            color: WeiBeiTheme.ink.opacity(showsContactShadow ? (dark ? 0.24 : 0.10) : 0),
+            radius: 1.5,
+            y: 1
+        )
+    }
+}
+
 enum WeiBeiIconButtonProminence {
     case neutral
     /// Solid cinnabar fill with an on-cinnabar (米白) icon in every state —
@@ -1497,11 +1554,13 @@ private struct WeiBeiIconButtonBody: View {
             .weiBeiText(13, weight: .semibold)
             .frame(width: size * textScale, height: size * textScale)
             .foregroundStyle(foreground(isPressed: configuration.isPressed))
-            .background(background(isPressed: configuration.isPressed))
+            .background { chromeBackground }
             .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
             .overlay {
-                RoundedRectangle(cornerRadius: cornerRadius)
-                    .stroke(border, lineWidth: 1)
+                if prominence == .primary {
+                    RoundedRectangle(cornerRadius: cornerRadius)
+                        .stroke(border, lineWidth: 1)
+                }
             }
             .scaleEffect(configuration.isPressed ? 0.94 : hovering ? 1.015 : 1)
             .animation(WeiBeiMotion.press, value: configuration.isPressed)
@@ -1514,6 +1573,25 @@ private struct WeiBeiIconButtonBody: View {
                     hovering = false
                 }
             }
+    }
+
+    /// Neutral hover/active states go through the etched backdrop (top sheen +
+    /// bottom shade + hairline + contact shadow); the filled `.primary` keeps
+    /// its solid cinnabar fill untouched.
+    @ViewBuilder
+    private var chromeBackground: some View {
+        let chromeShape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+        if prominence == .primary {
+            chromeShape
+                .fill(background(isPressed: configuration.isPressed))
+        } else if active || hovering || configuration.isPressed {
+            WeiBeiEtchedBackdrop(
+                shape: chromeShape,
+                fill: background(isPressed: configuration.isPressed),
+                stroke: border,
+                showsContactShadow: !configuration.isPressed
+            )
+        }
     }
 
     private func foreground(isPressed: Bool) -> Color {
