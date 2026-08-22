@@ -104,7 +104,6 @@ public actor NativeStudyAgentRuntime: StudyAgentRuntime {
                 text: result.text,
                 contentBlocks: result.contentBlocks,
                 backend: .native,
-                richAnswer: result.richAnswer,
                 sources: result.sources,
                 noteProposal: result.noteProposal,
                 relationProposal: result.relationProposal,

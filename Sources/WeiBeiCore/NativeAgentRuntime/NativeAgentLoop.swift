@@ -65,7 +65,6 @@ public actor NativeAgentLoop {
         var courseProfileUpdate: StudyAgentCourseProfileUpdate?
         var appliedMemoryUpdate: AgentReplyMemoryUpdate?
         var appliedProfileUpdate: AgentReplyProfileUpdate?
-        var richAnswer: RichAnswerPresentation?
         var loadedSkills: [StudyAgentLoadedSkill] = []
         var readItemIDs: [String] = []
         var sources: [AgentReplySource] = []
@@ -183,7 +182,6 @@ public actor NativeAgentLoop {
                         courseProfileUpdate: &courseProfileUpdate,
                         appliedMemoryUpdate: &appliedMemoryUpdate,
                         appliedProfileUpdate: &appliedProfileUpdate,
-                        richAnswer: &richAnswer,
                         loadedSkills: &loadedSkills,
                         readItemIDs: &readItemIDs,
                         sources: &sources,
@@ -220,7 +218,6 @@ public actor NativeAgentLoop {
                 courseProfileUpdate: courseProfileUpdate,
                 appliedMemoryUpdate: appliedMemoryUpdate,
                 appliedProfileUpdate: appliedProfileUpdate,
-                richAnswer: richAnswer,
                 loadedSkills: loadedSkills,
                 readItemIDs: readItemIDs
             )
@@ -279,7 +276,6 @@ public actor NativeAgentLoop {
         courseProfileUpdate: inout StudyAgentCourseProfileUpdate?,
         appliedMemoryUpdate: inout AgentReplyMemoryUpdate?,
         appliedProfileUpdate: inout AgentReplyProfileUpdate?,
-        richAnswer: inout RichAnswerPresentation?,
         loadedSkills: inout [StudyAgentLoadedSkill],
         readItemIDs: inout [String],
         sources: inout [AgentReplySource],
@@ -403,7 +399,6 @@ public struct NativeLoopResult: Sendable {
     public var courseProfileUpdate: StudyAgentCourseProfileUpdate?
     public var appliedMemoryUpdate: AgentReplyMemoryUpdate?
     public var appliedProfileUpdate: AgentReplyProfileUpdate?
-    public var richAnswer: RichAnswerPresentation?
     public var loadedSkills: [StudyAgentLoadedSkill]
     public var readItemIDs: [String]
 }
