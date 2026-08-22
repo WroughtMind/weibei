@@ -72,26 +72,6 @@ final class TransientToleranceSafetyTests: XCTestCase {
         }
     }
 
-    func testScanRecognizesPlaceholderAsMaterialItem() async throws {
-        let base = makeTempRoot("weibei-phase3-scan")
-        defer { try? FileManager.default.removeItem(at: base) }
-        let courseRoot = base.appendingPathComponent("课程", isDirectory: true)
-        let docsDir = courseRoot.appendingPathComponent("文稿", isDirectory: true)
-        try FileManager.default.createDirectory(at: docsDir, withIntermediateDirectories: true)
-        try "占位".write(to: docsDir.appendingPathComponent(".讲义.md.icloud"), atomically: true, encoding: .utf8)
-        try Data("%PDF-1.4\n".utf8).write(
-            to: docsDir.appendingPathComponent(".论文.pdf.icloud"), options: [.atomic]
-        )
-        try FileManager.default.createDirectory(at: docsDir.appendingPathComponent(".git"), withIntermediateDirectories: true)
-
-        let snapshot = try await CourseProjectFileWorker().scanCourse(at: courseRoot)
-
-        let paths = snapshot.observations.map(\.relativePath)
-        XCTAssertTrue(paths.contains("文稿/讲义.md"), "占位符应还原为逻辑路径；实际：\(paths)")
-        XCTAssertTrue(paths.contains("文稿/论文.pdf"))
-        XCTAssertFalse(paths.contains { $0.contains(".icloud") }, "不应出现占位符原始名")
-        XCTAssertFalse(paths.contains { $0.contains(".git") }, "其他隐藏目录仍应跳过")
-    }
 
     func testGrayStateNotEnteredForPlaceholder() async throws {
         let base = makeTempRoot("weibei-phase3-gray")
@@ -167,5 +147,36 @@ final class TransientToleranceSafetyTests: XCTestCase {
         } else {
             _ = current
         }
+    }
+}
+
+
+/// 纯异步扫描用例独立成类：与同步 store 用例隔离，避免 XCTest 混排上下文。
+final class TransientToleranceScanTests: XCTestCase {
+    override class func setUp() {
+        super.setUp()
+        setenv("WEIBEI_SAFETY_TEST_MODE", "1", 1)
+    }
+
+    func testScanRecognizesPlaceholderAsMaterialItem() async throws {
+        let base = FileManager.default.temporaryDirectory
+            .appendingPathComponent("weibei-phase3-scan-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: base) }
+        let courseRoot = base.appendingPathComponent("课程", isDirectory: true)
+        let docsDir = courseRoot.appendingPathComponent("文稿", isDirectory: true)
+        try FileManager.default.createDirectory(at: docsDir, withIntermediateDirectories: true)
+        try "占位".write(to: docsDir.appendingPathComponent(".讲义.md.icloud"), atomically: true, encoding: .utf8)
+        try Data("%PDF-1.4\n".utf8).write(
+            to: docsDir.appendingPathComponent(".论文.pdf.icloud"), options: [.atomic]
+        )
+        try FileManager.default.createDirectory(at: docsDir.appendingPathComponent(".git"), withIntermediateDirectories: true)
+
+        let snapshot = try await CourseProjectFileWorker().scanCourse(at: courseRoot)
+
+        let paths = snapshot.observations.map(\.relativePath)
+        XCTAssertTrue(paths.contains("文稿/讲义.md"), "占位符应还原为逻辑路径；实际：\(paths)")
+        XCTAssertTrue(paths.contains("文稿/论文.pdf"))
+        XCTAssertFalse(paths.contains { $0.contains(".icloud") }, "不应出现占位符原始名")
+        XCTAssertFalse(paths.contains { $0.contains(".git") }, "其他隐藏目录仍应跳过")
     }
 }
