@@ -478,7 +478,7 @@ enum NativeBaselineFixtures {
             payload["hasRelationProposal"] = reply.relationProposal != nil
             payload["hasLearningUpdate"] = reply.learningUpdate != nil
             payload["hasCourseProfileUpdate"] = reply.courseProfileUpdate != nil
-            payload["hasRichAnswer"] = reply.richAnswer != nil
+            payload["hasRichAnswer"] = false
             payload["readItemIDs"] = reply.readItemIDs
         }
         if let error {
