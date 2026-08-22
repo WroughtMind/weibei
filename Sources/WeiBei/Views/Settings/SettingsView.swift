@@ -246,9 +246,42 @@ struct SettingsView: View {
 
             // AionUI-style gallery: each card is a miniature workspace, not a flat chip.
             settingsGroup(store.ui("主题", "Theme")) {
+                settingsRow(
+                    title: store.ui("外观", "Appearance"),
+                    detail: store.ui(
+                        "跟随系统时，深浅切换自动换到同对主题",
+                        "With Match System, appearance switches pick the paired theme"
+                    )
+                ) {
+                    compactMenu(store.appearancePreference.label(ui: store.ui)) {
+                        ForEach(WeiBeiAppearancePreference.allCases) { preference in
+                            Button(preference.label(ui: store.ui)) {
+                                store.appearancePreference = preference
+                            }
+                        }
+                    }
+                }
+
                 themePicker
                     .padding(.horizontal, 12)
                     .padding(.vertical, 12)
+
+                if store.appearanceMode.isGlass {
+                    settingsRow(
+                        title: store.ui("玻璃浓度", "Glass intensity"),
+                        detail: store.ui(
+                            "无级调节玻璃主题的透明浓度",
+                            "Continuously adjust glass translucency"
+                        ),
+                        showsBottomDivider: false
+                    ) {
+                        Slider(value: Binding(
+                            get: { store.glassIntensity },
+                            set: { store.glassIntensity = $0 }
+                        ), in: 0...1)
+                        .frame(width: 170)
+                    }
+                }
             }
 
             settingsGroup(store.ui("动态效果", "Motion")) {
