@@ -1857,14 +1857,11 @@ struct AgentPaneView: View {
                 .foregroundStyle(isAgentHistoryRevealButtonHovered ? WeiBeiTheme.link : WeiBeiTheme.secondaryInk)
                 .padding(.vertical, 6)
                 .padding(.horizontal, 12)
-                .background {
-                    Capsule()
-                        .fill(WeiBeiTheme.paperInset.opacity(isAgentHistoryRevealButtonHovered ? 0.42 : 0.24))
-                }
-                .overlay {
-                    Capsule()
-                        .stroke(WeiBeiTheme.hairline.opacity(isAgentHistoryRevealButtonHovered ? 0.72 : 0.44), lineWidth: 1)
-                }
+                .weibeiEtchedCapsuleBackground(
+                    fill: WeiBeiTheme.paperInset.opacity(isAgentHistoryRevealButtonHovered ? 0.42 : 0.24),
+                    stroke: WeiBeiTheme.hairline.opacity(isAgentHistoryRevealButtonHovered ? 0.72 : 0.44),
+                    contactShadow: isAgentHistoryRevealButtonHovered
+                )
         }
         .buttonStyle(.plain)
         .scaleEffect(isAgentHistoryRevealButtonHovered ? 1.015 : 1)
@@ -2119,12 +2116,13 @@ private struct AgentSelectionAttachmentPill: View {
             .padding(.leading, 10)
             .padding(.trailing, 6)
             .frame(height: 28)
-            .background(WeiBeiTheme.paperRaised.opacity(pillHovering ? 0.72 : 0.54))
+            .weibeiEtchedBackground(
+                fill: WeiBeiTheme.paperRaised.opacity(pillHovering ? 0.72 : 0.54),
+                stroke: WeiBeiTheme.hairline.opacity(pillHovering ? 0.68 : 0.38),
+                cornerRadius: 8,
+                contactShadow: pillHovering
+            )
             .clipShape(RoundedRectangle(cornerRadius: 8))
-            .overlay {
-                RoundedRectangle(cornerRadius: 8)
-                    .stroke(WeiBeiTheme.hairline.opacity(pillHovering ? 0.68 : 0.38), lineWidth: 1)
-            }
             .accessibilityLabel(Text(store.ui("\(interaction.selectionAttachments.count) 个已选文本片段", "\(interaction.selectionAttachments.count) selected text fragments")))
             .help(store.ui("悬停查看选区", "Hover to preview selections"))
         }
@@ -2220,12 +2218,12 @@ private struct AgentSelectionAttachmentPill: View {
                 .padding(.leading, 1)
         }
         .padding(9)
-        .background(WeiBeiTheme.paperInset.opacity(0.32))
+        .weibeiEtchedBackground(
+            fill: WeiBeiTheme.paperInset.opacity(0.32),
+            stroke: WeiBeiTheme.hairline.opacity(0.36),
+            cornerRadius: 7
+        )
         .clipShape(RoundedRectangle(cornerRadius: 7))
-        .overlay {
-            RoundedRectangle(cornerRadius: 7)
-                .stroke(WeiBeiTheme.hairline.opacity(0.36), lineWidth: 1)
-        }
     }
 
     private func setPillHovering(_ value: Bool) {
@@ -2938,17 +2936,14 @@ private struct SelectionFloatChrome: ViewModifier {
         content
             .foregroundColor(WeiBeiTheme.ink)
             .background {
-                RoundedRectangle(cornerRadius: expanded ? 12 : 9, style: .continuous)
-                    .fill(WeiBeiTheme.paperRaised.opacity(0.98))
+                WeiBeiEtchedBackdrop(
+                    shape: RoundedRectangle(cornerRadius: expanded ? 12 : 9, style: .continuous),
+                    fill: WeiBeiTheme.paperRaised.opacity(0.98),
+                    stroke: WeiBeiTheme.hairline.opacity(0.65),
+                    showsContactShadow: true
+                )
             }
             .clipShape(RoundedRectangle(cornerRadius: expanded ? 12 : 9, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: expanded ? 12 : 9, style: .continuous)
-                    .strokeBorder(
-                        WeiBeiTheme.hairline.opacity(0.65),
-                        lineWidth: 1
-                    )
-            }
             .shadow(color: WeiBeiTheme.ink.opacity(0.06), radius: 8, y: 3)
     }
 }
@@ -3846,12 +3841,12 @@ private struct AgentReplyActionCard: View {
             alignment: .leading
         )
         .background {
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(WeiBeiTheme.paperRaised.opacity(0.82))
-        }
-        .overlay {
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .strokeBorder(WeiBeiTheme.hairline.opacity(0.58), lineWidth: 1)
+            WeiBeiEtchedBackdrop(
+                shape: RoundedRectangle(cornerRadius: 10, style: .continuous),
+                fill: WeiBeiTheme.paperRaised.opacity(0.82),
+                stroke: WeiBeiTheme.hairline.opacity(0.58),
+                showsContactShadow: true
+            )
         }
     }
 
@@ -4032,7 +4027,11 @@ private struct AgentReplyActionCard: View {
             .lineLimit(1)
             .padding(.horizontal, 8)
             .frame(height: 28)
-            .background(WeiBeiTheme.paperInset.opacity(0.34))
+            .weibeiEtchedBackground(
+                fill: WeiBeiTheme.paperInset.opacity(0.34),
+                stroke: WeiBeiTheme.hairline.opacity(0.3),
+                cornerRadius: 6
+            )
             .clipShape(RoundedRectangle(cornerRadius: 6))
     }
 

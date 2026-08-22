@@ -465,7 +465,11 @@ struct CourseProjectEntrySheet: View {
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(WeiBeiTheme.paperRaised.opacity(0.34), in: RoundedRectangle(cornerRadius: 10))
+        .weibeiEtchedBackground(
+            fill: WeiBeiTheme.paperRaised.opacity(0.34),
+            stroke: WeiBeiTheme.hairline.opacity(0.3),
+            cornerRadius: 10
+        )
     }
 
     @ViewBuilder
@@ -537,7 +541,11 @@ struct CourseProjectEntrySheet: View {
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(WeiBeiTheme.paperRaised.opacity(0.30), in: RoundedRectangle(cornerRadius: 9))
+        .weibeiEtchedBackground(
+            fill: WeiBeiTheme.paperRaised.opacity(0.30),
+            stroke: WeiBeiTheme.hairline.opacity(0.28),
+            cornerRadius: 9
+        )
     }
 
     private func pathLine(label: String, path: String) -> some View {
@@ -555,7 +563,11 @@ struct CourseProjectEntrySheet: View {
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(WeiBeiTheme.paperRaised.opacity(0.30), in: RoundedRectangle(cornerRadius: 9))
+        .weibeiEtchedBackground(
+            fill: WeiBeiTheme.paperRaised.opacity(0.30),
+            stroke: WeiBeiTheme.hairline.opacity(0.28),
+            cornerRadius: 9
+        )
     }
 
     @ViewBuilder
@@ -845,7 +857,11 @@ struct CourseRelationDetailHeader: View {
         }
         .padding(.horizontal, 24)
         .frame(minHeight: 88)
-        .background(WeiBeiTheme.paperRaised.opacity(0.28))
+        .weibeiEtchedBackground(
+            fill: WeiBeiTheme.paperRaised.opacity(0.28),
+            stroke: WeiBeiTheme.hairline.opacity(0.26),
+            cornerRadius: 8
+        )
     }
 }
 
@@ -1049,7 +1065,11 @@ struct CourseContextLine: View {
         }
         .padding(.horizontal, 12)
         .frame(minHeight: 44)
-        .background(WeiBeiTheme.paperRaised.opacity(0.30))
+        .weibeiEtchedBackground(
+            fill: WeiBeiTheme.paperRaised.opacity(0.30),
+            stroke: WeiBeiTheme.hairline.opacity(0.28),
+            cornerRadius: 8
+        )
     }
 }
 
@@ -1081,7 +1101,11 @@ struct CourseActionRow: View {
         }
         .padding(.horizontal, 12)
         .frame(minHeight: 50)
-        .background(WeiBeiTheme.paperRaised.opacity(0.24))
+        .weibeiEtchedBackground(
+            fill: WeiBeiTheme.paperRaised.opacity(0.24),
+            stroke: WeiBeiTheme.hairline.opacity(0.24),
+            cornerRadius: 8
+        )
     }
 }
 
@@ -1253,7 +1277,11 @@ func relationFooter(
     }
     .padding(.horizontal, 18)
     .frame(height: 46)
-    .background(WeiBeiTheme.paperRaised.opacity(0.36))
+    .weibeiEtchedBackground(
+    fill: WeiBeiTheme.paperRaised.opacity(0.36),
+    stroke: WeiBeiTheme.hairline.opacity(0.3),
+    cornerRadius: 8
+)
 }
 
 func toggled(_ itemID: String, in values: Set<String>) -> Set<String> {

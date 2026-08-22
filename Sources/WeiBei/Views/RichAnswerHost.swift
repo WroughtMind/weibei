@@ -705,7 +705,11 @@ private struct ProcessStateSceneView: View {
         }
         .padding(.vertical, 8)
         .padding(.horizontal, 10)
-        .background(WeiBeiTheme.paperRaised.opacity(0.34), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .weibeiEtchedBackground(
+                fill: WeiBeiTheme.paperRaised.opacity(0.34),
+                stroke: WeiBeiTheme.hairline.opacity(0.3),
+                cornerRadius: 8
+            )
     }
 
     @ViewBuilder
@@ -846,7 +850,11 @@ private struct RelationEvidenceSceneView: View {
             }
             .padding(.vertical, 7)
             .padding(.horizontal, 9)
-            .background(WeiBeiTheme.paperInset.opacity(0.22), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+            .weibeiEtchedBackground(
+                fill: WeiBeiTheme.paperInset.opacity(0.22),
+                stroke: WeiBeiTheme.hairline.opacity(0.26),
+                cornerRadius: 7
+            )
         }
     }
 
@@ -1456,7 +1464,11 @@ private struct CalculationConstraintSceneView: View {
         }
         .padding(.vertical, 9)
         .padding(.horizontal, 10)
-        .background(WeiBeiTheme.paperRaised.opacity(0.30), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .weibeiEtchedBackground(
+                fill: WeiBeiTheme.paperRaised.opacity(0.30),
+                stroke: WeiBeiTheme.hairline.opacity(0.28),
+                cornerRadius: 8
+            )
     }
 
     private var parameterControls: some View {
@@ -2146,23 +2158,26 @@ private extension View {
 
     func visualCanvasSurface() -> some View {
         self
-            .background(WeiBeiTheme.paperInset.opacity(0.11))
-            .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 5, style: .continuous)
-                    .stroke(WeiBeiTheme.hairline.opacity(0.42), lineWidth: 1)
+            .background {
+                WeiBeiEtchedBackdrop(
+                    shape: RoundedRectangle(cornerRadius: 5, style: .continuous),
+                    fill: WeiBeiTheme.paperInset.opacity(0.11),
+                    stroke: WeiBeiTheme.hairline.opacity(0.42)
+                )
             }
+            .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
     }
 
     func operationControlSurface() -> some View {
         self
             .padding(.vertical, 5)
             .padding(.horizontal, 7)
-            .background(WeiBeiTheme.paperRaised.opacity(0.38), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 7, style: .continuous)
-                    .stroke(WeiBeiTheme.hairline.opacity(0.32), lineWidth: 1)
-            }
+            .weibeiEtchedBackground(
+                fill: WeiBeiTheme.paperRaised.opacity(0.38),
+                stroke: WeiBeiTheme.hairline.opacity(0.32),
+                cornerRadius: 7,
+                contactShadow: true
+            )
     }
 }
 

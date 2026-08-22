@@ -154,7 +154,11 @@ struct CourseRelationPaperView: View {
         }
         .padding(.horizontal, 16)
         .frame(height: 40)
-        .background(WeiBeiTheme.paperRaised.opacity(0.22))
+        .weibeiEtchedBackground(
+            fill: WeiBeiTheme.paperRaised.opacity(0.22),
+            stroke: WeiBeiTheme.hairline.opacity(0.24),
+            cornerRadius: 8
+        )
     }
 
     /// Left rail: courses as primary units (plus all / unassigned / unlinked).
@@ -227,7 +231,11 @@ struct CourseRelationPaperView: View {
         }
         .frame(width: 212)
         .frame(maxHeight: .infinity)
-        .background(WeiBeiTheme.paperRaised.opacity(0.22))
+        .weibeiEtchedBackground(
+            fill: WeiBeiTheme.paperRaised.opacity(0.22),
+            stroke: WeiBeiTheme.hairline.opacity(0.24),
+            cornerRadius: 8
+        )
     }
 
     private func courseScopeRow(
@@ -298,7 +306,10 @@ struct CourseRelationPaperView: View {
             .foregroundStyle(WeiBeiTheme.ink)
             .padding(.horizontal, 10)
             .frame(height: 28)
-            .background(WeiBeiTheme.paperInset.opacity(0.34), in: Capsule())
+            .weibeiEtchedCapsuleBackground(
+                fill: WeiBeiTheme.paperInset.opacity(0.34),
+                stroke: WeiBeiTheme.hairline.opacity(0.3)
+            )
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
@@ -611,7 +622,11 @@ struct CourseRelationPaperView: View {
             }
             .padding(18)
         }
-        .background(WeiBeiTheme.paperRaised.opacity(0.18))
+        .weibeiEtchedBackground(
+            fill: WeiBeiTheme.paperRaised.opacity(0.18),
+            stroke: WeiBeiTheme.hairline.opacity(0.22),
+            cornerRadius: 8
+        )
     }
 
     private func compactSection(
