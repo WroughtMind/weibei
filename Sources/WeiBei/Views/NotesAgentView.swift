@@ -1999,8 +1999,17 @@ struct AgentPaneView: View {
            let course = store.course(withID: courseID),
            !store.studySessions(in: courseID).isEmpty {
             Menu(store.ui("当前课程 · \(course.title)", "Current Course · \(course.title)")) {
-                ForEach(store.studySessions(in: courseID).prefix(30)) { session in
+                let courseSessions = store.studySessions(in: courseID)
+                ForEach(courseSessions.prefix(30)) { session in
                     sessionMenuButton(session)
+                }
+                if courseSessions.count > 30 {
+                    Button(store.ui(
+                        "查看全部 \(courseSessions.count) 个对话",
+                        "View all \(courseSessions.count) chats"
+                    )) {
+                        store.presentCourseWorkspace(.sessions, courseID: courseID)
+                    }
                 }
             }
         }
@@ -2009,6 +2018,15 @@ struct AgentPaneView: View {
             Section(store.ui("全部对话", "All Chats")) {
                 ForEach(store.historicalStudySessions.prefix(30)) { session in
                     sessionMenuButton(session)
+                }
+                if store.historicalStudySessions.count > 30,
+                   let courseID = store.activeCourseID {
+                    Button(store.ui(
+                        "查看全部 \(store.historicalStudySessions.count) 个对话",
+                        "View all \(store.historicalStudySessions.count) chats"
+                    )) {
+                        store.presentCourseWorkspace(.sessions, courseID: courseID)
+                    }
                 }
             }
         }
