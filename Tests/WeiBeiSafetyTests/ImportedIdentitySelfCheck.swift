@@ -1845,8 +1845,8 @@ enum ImportedIdentitySelfCheck {
                 legacyID: "旧项不同草稿",
             ],
             pendingNoteWritesByItemID: [
-                canonicalID: PendingNoteWriteState(baselineContentDigest: "canonical-baseline"),
-                legacyID: PendingNoteWriteState(baselineContentDigest: nil),
+                canonicalID: PendingNoteWriteState(),
+                legacyID: PendingNoteWriteState(),
             ],
             noteBackingContentDigestsByItemID: [
                 canonicalID: "canonical-digest",
