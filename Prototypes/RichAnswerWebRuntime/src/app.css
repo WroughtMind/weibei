@@ -33,12 +33,12 @@ body {
 }
 
 .prototype-toolbar strong {
-  font-size: 13px;
+  font-size: calc(13px * var(--weibei-text-scale, 1));
 }
 
 .prototype-toolbar span {
   color: #756b5d;
-  font-size: 10.5px;
+  font-size: calc(10.5px * var(--weibei-text-scale, 1));
 }
 
 .group-tabs {
@@ -52,7 +52,7 @@ body {
   border: 0;
   border-bottom: 1px solid transparent;
   background: transparent;
-  font-size: 11.5px;
+  font-size: calc(11.5px * var(--weibei-text-scale, 1));
 }
 
 .group-tabs button.is-active {
@@ -86,12 +86,12 @@ body {
 }
 
 .scene-tabs span {
-  font-size: 9.5px;
+  font-size: calc(9.5px * var(--weibei-text-scale, 1));
 }
 
 .scene-tabs strong {
   overflow: hidden;
-  font-size: 11.5px;
+  font-size: calc(11.5px * var(--weibei-text-scale, 1));
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -111,7 +111,7 @@ body {
   margin-top: 2px;
   color: #f5eee2;
   background: #433a2f;
-  font-size: 12px;
+  font-size: calc(12px * var(--weibei-text-scale, 1));
 }
 
 .agent-answer {
@@ -128,12 +128,12 @@ body {
 }
 
 .agent-answer__meta strong {
-  font-size: 12px;
+  font-size: calc(12px * var(--weibei-text-scale, 1));
 }
 
 .agent-answer__meta span {
   color: #7a7062;
-  font-size: 10.5px;
+  font-size: calc(10.5px * var(--weibei-text-scale, 1));
 }
 
 .renderer-shell {
@@ -145,7 +145,7 @@ body {
 .runtime-error {
   margin: 8px 0 0;
   color: #9a3f35;
-  font-size: 11px;
+  font-size: calc(11px * var(--weibei-text-scale, 1));
 }
 
 .prototype-footnote {
@@ -154,7 +154,7 @@ body {
   flex-wrap: wrap;
   margin: 12px 0 0 34px;
   color: #827767;
-  font-size: 9.5px;
+  font-size: calc(9.5px * var(--weibei-text-scale, 1));
 }
 
 .evidence-toast {
@@ -166,7 +166,7 @@ body {
   color: #f7f0e4;
   background: #3f372e;
   box-shadow: 0 10px 30px rgb(42 34 24 / 18%);
-  font-size: 11px;
+  font-size: calc(11px * var(--weibei-text-scale, 1));
 }
 
 @media (max-width: 700px) {

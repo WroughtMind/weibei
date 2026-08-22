@@ -26,7 +26,7 @@
 .ra-two-point-lab > header span,
 .ra-balance-experiment > header span {
   color: #50483e;
-  font-size: 13px;
+  font-size: calc(13px * var(--weibei-text-scale, 1));
   font-weight: 600;
 }
 
@@ -38,7 +38,7 @@
 .ra-balance-experiment > header strong {
   color: var(--cinnabar);
   font-family: "SFMono-Regular", Menlo, monospace;
-  font-size: 10.5px;
+  font-size: calc(10.5px * var(--weibei-text-scale, 1));
   font-weight: 600;
 }
 
@@ -60,24 +60,24 @@
 .ra-linked-chart__readout small {
   grid-column: 1 / -1;
   color: #817668;
-  font-size: 9.5px;
+  font-size: calc(9.5px * var(--weibei-text-scale, 1));
 }
 
 .ra-linked-chart__readout strong {
   color: #302a23;
-  font-size: 15px;
+  font-size: calc(15px * var(--weibei-text-scale, 1));
 }
 
 .ra-linked-chart__readout i {
   color: #8a8073;
-  font-size: 9.5px;
+  font-size: calc(9.5px * var(--weibei-text-scale, 1));
   font-style: normal;
 }
 
 .ra-linked-chart > p,
 .ra-balance-experiment > p {
   color: #766c5f;
-  font-size: 10.5px;
+  font-size: calc(10.5px * var(--weibei-text-scale, 1));
   line-height: 1.55;
 }
 
@@ -106,18 +106,18 @@
 .ra-metric-strip small {
   grid-column: 1 / -1;
   color: #817668;
-  font-size: 9.5px;
+  font-size: calc(9.5px * var(--weibei-text-scale, 1));
 }
 
 .ra-metric-strip strong {
   color: #332d26;
-  font-size: 17px;
+  font-size: calc(17px * var(--weibei-text-scale, 1));
   font-weight: 600;
 }
 
 .ra-metric-strip i {
   color: #8a8073;
-  font-size: 9px;
+  font-size: calc(9px * var(--weibei-text-scale, 1));
   font-style: normal;
 }
 
@@ -155,7 +155,7 @@
   padding: 5px 9px 5px 0;
   color: #675f55;
   border-left: 2px solid transparent;
-  font: 10px/1.5 "SFMono-Regular", Menlo, monospace;
+  font: calc(10px * var(--weibei-text-scale, 1))/1.5 "SFMono-Regular", Menlo, monospace;
 }
 
 .ra-code-list pre.is-active {
@@ -209,18 +209,18 @@
 
 .ra-state-frame__values small {
   color: #94897b;
-  font: 8px "SFMono-Regular", Menlo, monospace;
+  font: calc(8px * var(--weibei-text-scale, 1)) "SFMono-Regular", Menlo, monospace;
 }
 
 .ra-state-frame__values strong {
   color: #332d26;
-  font: 14px "SFMono-Regular", Menlo, monospace;
+  font: calc(14px * var(--weibei-text-scale, 1)) "SFMono-Regular", Menlo, monospace;
 }
 
 .ra-state-frame > p {
   margin: 0;
   color: #5f564a;
-  font-size: 11px;
+  font-size: calc(11px * var(--weibei-text-scale, 1));
   line-height: 1.6;
 }
 
@@ -236,7 +236,7 @@
   color: #5f5549;
   border: 0;
   background: transparent;
-  font-size: 10px;
+  font-size: calc(10px * var(--weibei-text-scale, 1));
 }
 
 .ra-execution-controls button:disabled {
@@ -280,7 +280,7 @@
   border: 0;
   border-left: 2px solid transparent;
   background: transparent;
-  font: 13px/1.72 "Songti SC", "STSong", serif;
+  font: calc(13px * var(--weibei-text-scale, 1))/1.72 "Songti SC", "STSong", serif;
   text-align: left;
 }
 
@@ -295,7 +295,7 @@
   top: 10px;
   left: 10px;
   color: #9c9184;
-  font: 8px "SFMono-Regular", Menlo, monospace;
+  font: calc(8px * var(--weibei-text-scale, 1)) "SFMono-Regular", Menlo, monospace;
 }
 
 .ra-argument-reader > aside,
@@ -309,7 +309,7 @@
 .ra-argument-reader > aside span,
 .ra-causal-track > aside span {
   color: var(--cinnabar);
-  font: 9px "SFMono-Regular", Menlo, monospace;
+  font: calc(9px * var(--weibei-text-scale, 1)) "SFMono-Regular", Menlo, monospace;
   letter-spacing: 0.08em;
 }
 
@@ -317,7 +317,7 @@
 .ra-causal-track > aside p {
   margin: 8px 0 12px;
   color: #5f564a;
-  font-size: 10.5px;
+  font-size: calc(10.5px * var(--weibei-text-scale, 1));
   line-height: 1.62;
 }
 
@@ -328,7 +328,7 @@
   border: 0;
   border-bottom: 1px solid rgb(83 67 49 / 24%);
   background: transparent;
-  font-size: 9.5px;
+  font-size: calc(9.5px * var(--weibei-text-scale, 1));
 }
 
 .ra-causal-track__rail {
@@ -389,11 +389,11 @@
 .ra-causal-track__rail small,
 .ra-causal-track__rail span {
   color: #93887a;
-  font-size: 8.5px;
+  font-size: calc(8.5px * var(--weibei-text-scale, 1));
 }
 
 .ra-causal-track__rail strong {
-  font-size: 10.5px;
+  font-size: calc(10.5px * var(--weibei-text-scale, 1));
   font-weight: 600;
 }
 
@@ -407,7 +407,7 @@
   display: block;
   margin-top: 5px;
   color: #352f28;
-  font-size: 13px;
+  font-size: calc(13px * var(--weibei-text-scale, 1));
 }
 
 .ra-two-point-lab canvas {
@@ -435,12 +435,12 @@
 
 .ra-two-point-lab__readout small {
   color: #8b8073;
-  font: 8.5px "SFMono-Regular", Menlo, monospace;
+  font: calc(8.5px * var(--weibei-text-scale, 1)) "SFMono-Regular", Menlo, monospace;
 }
 
 .ra-two-point-lab__readout strong {
   color: #3d362e;
-  font: 13px "SFMono-Regular", Menlo, monospace;
+  font: calc(13px * var(--weibei-text-scale, 1)) "SFMono-Regular", Menlo, monospace;
 }
 
 .ra-balance-experiment__field {
@@ -462,7 +462,7 @@
 
 .ra-balance-experiment__field > div > span {
   color: #72685b;
-  font-size: 10px;
+  font-size: calc(10px * var(--weibei-text-scale, 1));
   text-align: center;
 }
 
@@ -490,7 +490,7 @@
 
 .ra-balance-experiment__field > b {
   color: #776b5d;
-  font-size: 28px;
+  font-size: calc(28px * var(--weibei-text-scale, 1));
   font-weight: 400;
 }
 
@@ -509,7 +509,7 @@
 
 .ra-balance-experiment__rates small {
   color: #756b5e;
-  font-size: 9.5px;
+  font-size: calc(9.5px * var(--weibei-text-scale, 1));
 }
 
 .ra-balance-experiment__rates i {
@@ -525,7 +525,7 @@
 
 .ra-balance-experiment__rates strong {
   color: #62584c;
-  font: 9.5px "SFMono-Regular", Menlo, monospace;
+  font: calc(9.5px * var(--weibei-text-scale, 1)) "SFMono-Regular", Menlo, monospace;
   text-align: right;
 }
 

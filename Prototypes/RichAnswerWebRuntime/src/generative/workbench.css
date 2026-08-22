@@ -37,14 +37,14 @@ button {
 
 .generation-proofbar > div span {
   color: #8f3f2f;
-  font-size: 9.5px;
+  font-size: calc(9.5px * var(--weibei-text-scale, 1));
   font-weight: 650;
   letter-spacing: 0.12em;
 }
 
 .generation-proofbar > div strong {
   font-family: "Songti SC", "STSong", serif;
-  font-size: 14px;
+  font-size: calc(14px * var(--weibei-text-scale, 1));
   font-weight: 600;
 }
 
@@ -64,7 +64,7 @@ button {
   border: 0;
   border-bottom: 1px solid transparent;
   background: transparent;
-  font-size: 10.5px;
+  font-size: calc(10.5px * var(--weibei-text-scale, 1));
   cursor: pointer;
   flex: 0 0 auto;
   white-space: nowrap;
@@ -73,7 +73,7 @@ button {
 .generation-proofbar button span {
   color: #a09587;
   font-family: "SFMono-Regular", Menlo, monospace;
-  font-size: 8.5px;
+  font-size: calc(8.5px * var(--weibei-text-scale, 1));
 }
 
 .generation-proofbar button.is-active {
@@ -107,7 +107,7 @@ button {
   color: #817668;
   border-bottom: 1px solid rgb(68 57 43 / 10%);
   background: #eee6da;
-  font-size: 8.5px;
+  font-size: calc(8.5px * var(--weibei-text-scale, 1));
 }
 
 .generation-answer__status span::before {
@@ -130,7 +130,7 @@ button {
   padding: 18px;
   color: #7d2f27;
   background: #f7e8e1;
-  font-size: 11px;
+  font-size: calc(11px * var(--weibei-text-scale, 1));
   line-height: 1.6;
 }
 
@@ -158,7 +158,7 @@ button {
   align-items: baseline;
   min-height: 18px;
   color: #71675c;
-  font-size: 10.5px;
+  font-size: calc(10.5px * var(--weibei-text-scale, 1));
   line-height: 1.55;
 }
 
@@ -174,7 +174,7 @@ button {
 
 .weibei-chart__readout strong {
   color: #8f3f2f;
-  font-size: 10.5px;
+  font-size: calc(10.5px * var(--weibei-text-scale, 1));
 }
 
 .weibei-chart__caption {
@@ -196,7 +196,7 @@ button {
   margin: 0;
   color: #2c261f;
   font-family: "Songti SC", STSong, serif;
-  font-size: 14.5px;
+  font-size: calc(14.5px * var(--weibei-text-scale, 1));
   font-weight: 600;
   line-height: 1.45;
 }
@@ -220,7 +220,7 @@ button {
   gap: 10px;
   align-items: center;
   color: #665c50;
-  font-size: 10.5px;
+  font-size: calc(10.5px * var(--weibei-text-scale, 1));
 }
 
 .weibei-function__parameter input {
@@ -241,7 +241,7 @@ button {
   min-height: 18px;
   padding: 0 2px;
   color: #71675c;
-  font-size: 10.5px;
+  font-size: calc(10.5px * var(--weibei-text-scale, 1));
   line-height: 1.55;
 }
 
@@ -270,7 +270,7 @@ button {
   gap: 14px;
   padding: 10px 2px;
   color: #4e473d;
-  font-size: 10.5px;
+  font-size: calc(10.5px * var(--weibei-text-scale, 1));
   cursor: pointer;
   list-style: none;
 }
@@ -295,7 +295,7 @@ button {
 
 .generation-source summary small {
   color: #8a8073;
-  font-size: 9px;
+  font-size: calc(9px * var(--weibei-text-scale, 1));
 }
 
 .generation-source > div {
@@ -314,13 +314,13 @@ button {
   padding: 14px;
   color: #d8cbbc;
   border-right: 1px solid rgb(255 255 255 / 8%);
-  font-size: 9px;
+  font-size: calc(9px * var(--weibei-text-scale, 1));
 }
 
 .generation-source aside strong {
   margin-top: 4px;
   color: #f3eadf;
-  font-size: 9px;
+  font-size: calc(9px * var(--weibei-text-scale, 1));
   letter-spacing: 0.06em;
 }
 
@@ -348,7 +348,7 @@ button {
   padding: 14px 16px;
   color: #eee3d6;
   font-family: "SFMono-Regular", Menlo, monospace;
-  font-size: 9px;
+  font-size: calc(9px * var(--weibei-text-scale, 1));
   line-height: 1.65;
   white-space: pre-wrap;
 }
@@ -362,7 +362,7 @@ button {
   color: #fff8ed;
   background: #3c342c;
   box-shadow: 0 12px 30px rgb(37 30 23 / 18%);
-  font-size: 10.5px;
+  font-size: calc(10.5px * var(--weibei-text-scale, 1));
 }
 
 .generation-page.is-embedded {

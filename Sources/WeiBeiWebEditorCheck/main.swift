@@ -2313,9 +2313,46 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
                         self.fail("patched Mermaid inputs destabilized the editor: \(String(describing: value)); error=\(String(describing: error))")
                         return
                     }
-                    self.validateExternalMarkdownAcknowledgement()
+                    self.validateTextScaleSync()
                 }
             }
+        }
+    }
+
+    /// The Swift host pushes the app-wide text tier through
+    /// `window.WeiBeiEditor.setTextScale`; the page must translate it into the
+    /// `--weibei-text-scale` variable and a proportional `.ProseMirror` font.
+    private func validateTextScaleSync() {
+        webView.evaluateJavaScript("""
+        (() => {
+          const editor = document.querySelector('.ProseMirror');
+          if (!editor) return { ok: false, detail: 'missing editor surface' };
+          const before = parseFloat(getComputedStyle(editor).fontSize);
+          window.WeiBeiEditor.setTextScale(1.5);
+          const applied = document.documentElement.style.getPropertyValue('--weibei-text-scale');
+          const after = parseFloat(getComputedStyle(editor).fontSize);
+          window.WeiBeiEditor.setTextScale(1);
+          const restored = parseFloat(getComputedStyle(editor).fontSize);
+          const ratio = before > 0 ? after / before : 0;
+          return {
+            ok: applied === '1.5' && ratio > 1.45 && ratio < 1.55 && Math.abs(restored - before) <= 0.5,
+            applied: applied,
+            before: before,
+            after: after,
+            ratio: ratio,
+          };
+        })();
+        """) { [weak self] value, error in
+            guard let self else { return }
+            if let error {
+                self.fail("text-scale check threw \(error.localizedDescription)")
+                return
+            }
+            guard let result = value as? [String: Any], result["ok"] as? Bool == true else {
+                self.fail("text-scale sync did not resize editor copy: \(String(describing: value))")
+                return
+            }
+            self.validateExternalMarkdownAcknowledgement()
         }
     }
 
