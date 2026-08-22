@@ -9981,7 +9981,7 @@ final class WorkspaceStore: ObservableObject {
         else { return }
         _ = updateAgentMessage(messageID, in: chatID) {
             $0.text = latestAgentStreamingText
-            $0.backend = .pi
+            $0.backend = .native
         }
     }
 
@@ -14208,7 +14208,7 @@ final class WorkspaceStore: ObservableObject {
             role: .assistant,
             text: "最早一条课程回答。",
             source: "课程 Chat",
-            backend: .pi,
+            backend: .native,
             actions: [
                 AgentReplyAction(
                     kind: .writeNote,
@@ -14232,7 +14232,7 @@ final class WorkspaceStore: ObservableObject {
             role: .assistant,
             text: "课程回答正文必须保留。",
             source: "课程 Chat",
-            backend: .pi,
+            backend: .native,
             sources: [validSource, foreignSourceWithoutCourseID],
             actions: [validAction, foreignActionWithoutCourseID],
             memoryUpdate: AgentReplyMemoryUpdate(
@@ -16491,7 +16491,7 @@ final class WorkspaceStore: ObservableObject {
                 role: .assistant,
                 text: "",
                 source: sourceTitle,
-                backend: .pi,
+                backend: .native,
                 completionState: .generating,
                 origin: AgentReplyOrigin(
                     requestID: requestID,
@@ -16977,7 +16977,7 @@ final class WorkspaceStore: ObservableObject {
             selfCheckCapturedAgentRequest = request
             return StudyAgentReply(
                 text: "课程请求授权自检完成",
-                backend: .pi
+                backend: .native
             )
         }
 #endif

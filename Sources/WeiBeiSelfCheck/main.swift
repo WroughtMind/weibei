@@ -1502,7 +1502,7 @@ let persistentReply = AgentMessage(
     role: .assistant,
     text: "已经生成的安全正文",
     source: "利率",
-    backend: .pi,
+    backend: .native,
     completionState: .interrupted,
     sources: [replySource],
     actions: [replyAction],
