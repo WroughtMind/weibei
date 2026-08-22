@@ -888,12 +888,12 @@ private func checkStudyAgentContext() throws {
             .text("再比较结果。"),
         ],
         source: "材料",
-        backend: .pi
+        backend: .native
     )
     let encoded = try JSONEncoder().encode(message)
     let decodedMessage = try JSONDecoder().decode(AgentMessage.self, from: encoded)
     try piRequire(
-        decodedMessage.backend == .pi
+        decodedMessage.backend == .native
             && decodedMessage.contentBlocks.count == 3
             && decodedMessage.contentBlocks[1] == .visualization(
                 AgentVisualization(

@@ -44,7 +44,6 @@ struct SettingsView: View {
     @State private var migrationErrorText: String?
     @State private var migrationSuccessText: String?
     @State private var isMigratingLibrary = false
-    @AppStorage(NativeAgentBackendSelection.debugDefaultsKey) var debugStudyAgentBackendRaw = ""
 
     private var buildInfo: WeiBeiAppBuildInfo { .current() }
 

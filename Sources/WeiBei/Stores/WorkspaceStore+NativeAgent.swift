@@ -5,7 +5,6 @@ import WeiBeiCore
 extension WorkspaceStore {
     func cancelStudyAgentRuntimes() async {
         await NativeAgentRuntimeBox.runtime?.cancel()
-        await piRuntime.cancel()
     }
 
     func dispatchStudyAgentRequest(
@@ -15,76 +14,13 @@ extension WorkspaceStore {
         replyMessageID: UUID,
         hostToolHandler: @escaping StudyAgentHostToolHandler
     ) async throws -> StudyAgentReply {
-        if NativeAgentBackendSelection.current == .native {
-            return try await executeNativeStudyAgentRequest(
-                request,
-                provider: selectedProvider,
-                target: target,
-                replyMessageID: replyMessageID,
-                hostToolHandler: hostToolHandler
-            )
-        }
-        return try await executePiStudyAgentRequest(
+        try await executeNativeStudyAgentRequest(
             request,
             provider: selectedProvider,
             target: target,
             replyMessageID: replyMessageID,
             hostToolHandler: hostToolHandler
         )
-    }
-
-    private func executePiStudyAgentRequest(
-        _ request: StudyAgentRequest,
-        provider selectedProvider: AgentProviderID,
-        target: AgentConversationTarget,
-        replyMessageID: UUID,
-        hostToolHandler: @escaping StudyAgentHostToolHandler
-    ) async throws -> StudyAgentReply {
-        let selectedModel = modelName.trimmingCharacters(in: .whitespacesAndNewlines)
-        let endpoint = try AgentProviderEndpoint(
-            provider: selectedProvider,
-            baseURL: agentBaseURL
-        )
-        if selectedProvider == .azureOpenAI {
-            let credentialIsBound = try await piRuntime.managementCatalog()
-                .credentials
-                .contains {
-                    $0.providerId == endpoint.piProviderID
-                        && $0.type == .apiKey
-                        && $0.boundEndpoint == endpoint.baseURL
-                }
-            guard credentialIsBound else {
-                throw AgentProviderEndpointError.azureCredentialRequiresReentry
-            }
-        }
-        await piRuntime.configure(
-            PiAgentProviderConfiguration(
-                provider: endpoint.piProviderID,
-                model: selectedModel.isEmpty ? nil : selectedModel,
-                baseURL: endpoint.baseURL
-            )
-        )
-        try await piRuntime.writeCustomModelsJSONIfNeeded(
-            providerID: selectedProvider,
-            baseURL: endpoint.baseURL ?? "",
-            model: selectedModel
-        )
-        return try await piRuntime.respond(
-            to: request,
-            sessionID: target.sessionID,
-            workingDirectory: target.workingDirectory,
-            hostToolHandler: hostToolHandler,
-            sessionTitleHandler: { [weak self] title in
-                await self?.applySemanticSessionTitleAndSave(title, to: target.sessionID)
-            }
-        ) { [weak self] progress in
-            await self?.applyAgentProgress(
-                progress,
-                requestID: request.id,
-                replyMessageID: replyMessageID,
-                chatID: target.sessionID
-            )
-        }
     }
 
     private func executeNativeStudyAgentRequest(

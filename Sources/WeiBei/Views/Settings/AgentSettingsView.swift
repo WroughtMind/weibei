@@ -11,7 +11,6 @@ extension SettingsView {
     func agentSettingsContent() -> some View {
         VStack(alignment: .leading, spacing: 16) {
             agentServiceCard
-            nativeBackendDebugCard
         }
         .sheet(isPresented: $showManualModelEntry) {
             agentManualModelSheet
@@ -85,27 +84,6 @@ extension SettingsView {
 
             // Quiet reminder — only when attention is needed.
             agentStatusReminder
-        }
-    }
-
-    private var nativeBackendDebugCard: some View {
-        settingsGroup(store.ui("调试（临时）", "Debug (temporary)")) {
-            settingsRow(
-                title: store.ui("使用 Native 引擎", "Use Native engine"),
-                detail: store.ui(
-                    "只为这次验收。默认仍是 Pi；关掉即回去。删除 Pi 时会去掉这个开关。当前生效：\(NativeAgentBackendSelection.current == .native ? "Native" : "Pi")",
-                    "Temporary acceptance switch. Default stays Pi; turn off to revert. Remove with Pi. Active: \(NativeAgentBackendSelection.current == .native ? "Native" : "Pi")"
-                ),
-                showsBottomDivider: false
-            ) {
-                settingsSwitch(
-                    isOn: Binding(
-                        get: { debugStudyAgentBackendRaw == StudyAgentBackend.native.rawValue },
-                        set: { debugStudyAgentBackendRaw = $0 ? StudyAgentBackend.native.rawValue : "" }
-                    ),
-                    accessibilityLabel: store.ui("使用 Native 引擎", "Use Native engine")
-                )
-            }
         }
     }
 

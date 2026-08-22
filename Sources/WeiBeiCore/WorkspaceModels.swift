@@ -1359,7 +1359,6 @@ public enum AgentRole: String, Codable, Sendable {
 }
 
 public enum StudyAgentBackend: String, Codable, Hashable, Sendable {
-    case pi
     case openAI
     case offline
     case native
