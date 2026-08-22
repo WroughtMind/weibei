@@ -48,23 +48,11 @@ struct SettingsView: View {
     private var buildInfo: WeiBeiAppBuildInfo { .current() }
 
     var activePiProviderID: String {
-        guard store.agentProviderID == .custom || store.agentProviderID == .llamaCpp else {
-            return store.agentProviderID.piProviderName
-        }
-        return (try? AgentProviderEndpoint(
-            provider: store.agentProviderID,
-            baseURL: store.agentBaseURL
-        ).piProviderID) ?? "weibei-invalid-endpoint"
+        AgentProviderReadiness.activePiProviderID(for: store)
     }
 
     func piProviderID(for provider: AgentProviderID) -> String {
-        guard provider == .custom || provider == .llamaCpp else {
-            return provider.piProviderName
-        }
-        return (try? AgentProviderEndpoint(
-            provider: provider,
-            baseURL: store.agentBaseURL
-        ).piProviderID) ?? "weibei-invalid-endpoint"
+        AgentProviderReadiness.piProviderID(for: provider, store: store)
     }
 
     /// Max width for long text fields (Base URL, API key) — not for every control.
