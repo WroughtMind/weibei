@@ -12752,7 +12752,7 @@ final class WorkspaceStore: ObservableObject {
 
         // Drag stream: same text, only anchor moves — no spring, no new SelectionContext id.
         if contentMatches {
-            let anchorUnchanged = Self.anchorsApproximatelyEqual(selectionAnchor, anchor, epsilon: 8)
+            let anchorUnchanged = WorkspaceInteractionState.anchorsApproximatelyEqual(selectionAnchor, anchor, epsilon: 8)
             let surfaceAlreadyCorrect = shouldRevealSelectionPrompt
                 ? agentSurface == .selectionFloat
                 : agentSurface != .selectionFloat
@@ -12823,10 +12823,6 @@ final class WorkspaceStore: ObservableObject {
                 agentSurface = .hidden
             }
         }
-    }
-
-    private static func anchorsApproximatelyEqual(_ lhs: CGPoint?, _ rhs: CGPoint?, epsilon: CGFloat = 0.5) -> Bool {
-        WorkspaceInteractionState.anchorsApproximatelyEqual(lhs, rhs, epsilon: epsilon)
     }
 
     func removeSelectionAttachment(id: UUID) {
@@ -15593,7 +15589,7 @@ final class WorkspaceStore: ObservableObject {
         let itemID = selection.itemID
             ?? (selection.source == .note ? activeNotebookItemID : selectedItemID)
         if let index = selectionAskThreads.firstIndex(where: {
-            // 锚点优先:同处原文(PDF 重排/连字导致文字抽取微差)仍续同一线程。
+            // 锚点优先(同处原文续同线程),文字匹配兜底。
             selection.documentAnchor?.matches($0.documentAnchor) == true
                 || ($0.normalizedText == normalized
                     && $0.source == selection.source
@@ -20109,9 +20105,7 @@ final class WorkspaceStore: ObservableObject {
             selectionAskThreads = persistedSelectionAskThreads
             selectionAskThreadDefaults.removeObject(forKey: Self.legacySelectionAskThreadsDefaultsKey)
         }
-        if let persistedRemarkRecords = snapshot.selectionRemarkRecords {
-            selectionRemarkRecords = persistedRemarkRecords
-        }
+        selectionRemarkRecords = snapshot.selectionRemarkRecords ?? selectionRemarkRecords
         if selectedItem?.isCourseMaterial == false,
            selectedItem?.isNotebookNote == true {
             activeNotebookItemID = selectedItemID
