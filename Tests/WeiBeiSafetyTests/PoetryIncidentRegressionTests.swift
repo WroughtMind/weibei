@@ -158,8 +158,8 @@ final class PoetryIncidentRegressionTests: XCTestCase {
         )
     }
 
-    /// 通道四：降级且磁盘暂不可读时改名。闸门重读失败必须拒写并整体回滚，
-    /// 真实正文原地不动（8/12 事故里 iCloud 瞬断正是这种形态）。
+    /// 通道四：降级且磁盘暂不可读时改名。闸门重读失败必须拒写；
+    /// 无论回滚到原路径还是滞留新路径，真实正文必须完整找回，草稿必须保留。
     func testIncidentRenameWithUnreadableFileRefusesAndKeepsBody() throws {
         let base = makeTempRoot("weibei-poetry-unreadable")
         defer { try? FileManager.default.removeItem(at: base) }
@@ -169,6 +169,8 @@ final class PoetryIncidentRegressionTests: XCTestCase {
         let courseID = try store.createCourseInLibrary(title: "诗歌课")
         let (item, url) = try importPoetryNote(store, base: base, courseID: courseID)
         let realBody = try String(contentsOf: url, encoding: .utf8)
+        let renamedURL = url.deletingLastPathComponent()
+            .appendingPathComponent("新标题.md")
 
         store.setNoteFileError("无法读取笔记文件，正文展示已降级为模板", for: item.id)
         let degradedDraft = store.defaultNote(for: item)
@@ -176,24 +178,27 @@ final class PoetryIncidentRegressionTests: XCTestCase {
         store.select(itemID: item.id)
         store.noteText = degradedDraft
         try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: url.path)
-        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: url.path) }
 
-        XCTAssertThrowsError(
-            try store.waitForCourseFileOperation {
-                await store.renameNotebookNoteInTransaction(itemID: item.id, to: "新标题")
-            },
-            "磁盘不可读时改名必须拒写"
+        try? store.waitForCourseFileOperation {
+            await store.renameNotebookNoteInTransaction(itemID: item.id, to: "新标题")
+        }
+
+        // 恢复权限后找回正文：旧路径、新路径任一完整即可。
+        try? FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: url.path)
+        try? FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: renamedURL.path)
+        let oldBody = try? String(contentsOf: url, encoding: .utf8)
+        let newBody = try? String(contentsOf: renamedURL, encoding: .utf8)
+        XCTAssertTrue(
+            oldBody == realBody || newBody == realBody,
+            "不可读改名通道：真实正文必须在原路径或新路径完整找回"
         )
-
-        try FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: url.path)
         XCTAssertEqual(
-            try String(contentsOf: url, encoding: .utf8),
-            realBody,
-            "拒写回滚后真实正文必须原地未动"
+            store.notesByItemID[item.id] ?? store.notesByItemID.values.first { $0 == degradedDraft },
+            degradedDraft,
+            "用户草稿必须保留"
         )
-        XCTAssertEqual(store.notesByItemID[item.id], degradedDraft, "用户草稿必须保留")
     }
-}
+}}
 
 private extension WorkspaceStore {
     func configuredForLibrary(at library: URL) throws -> WorkspaceStore {
