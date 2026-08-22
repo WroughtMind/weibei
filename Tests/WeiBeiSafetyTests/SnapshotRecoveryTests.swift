@@ -38,16 +38,19 @@ final class SnapshotRecoveryTests: XCTestCase {
         let primary = primaryURL(dir)
         let fm = FileManager.default
 
-        for content in ["A", "B", "C", "D"] {
-            try Data(content.utf8).write(to: primary, options: .atomic)
+        // 生产时序：先旋转备份链，再写新主档。
+        for content in ["A", "B", "C", "D", "E"] {
             WorkspaceSnapshotRecovery.rotateBackups(primary: primary)
+            try Data(content.utf8).write(to: primary, options: .atomic)
         }
 
         let generation = { (n: Int) -> String in
             let url = WorkspaceSnapshotRecovery.backupURL(generation: n, primary: primary)
             return String(data: try! Data(contentsOf: url), encoding: .utf8)!
         }
-        XCTAssertTrue(fm.fileExists(atPath: primary.path))
+        XCTAssertEqual(
+            String(data: try Data(contentsOf: primary), encoding: .utf8), "E"
+        )
         XCTAssertEqual(generation(1), "D")
         XCTAssertEqual(generation(2), "C")
         XCTAssertEqual(generation(3), "B")
