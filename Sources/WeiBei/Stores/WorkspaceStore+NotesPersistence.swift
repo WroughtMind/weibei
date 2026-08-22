@@ -692,8 +692,6 @@ extension WorkspaceStore {
     }
 
     /// S2 三件套：备份（外部改动）→ 原子写 → 失败留草稿。
-    /// 全仓唯一底层笔记写盘函数；阶段1 写闸门在此内置比对（计划 §5 阶段1），
-    /// 所有写路径必须经此函数，禁止绕过。
     /// 返回是否成功写回磁盘。永不因 digest 冲突拒绝写回。
     @discardableResult
     func writeNoteMarkdownTriple(
