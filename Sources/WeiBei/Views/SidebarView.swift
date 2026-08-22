@@ -63,65 +63,32 @@ struct SidebarView: View {
     }
 
     private var header: some View {
-        VStack(spacing: 0) {
-            HStack(spacing: 8) {
-                Button { store.presentCourseWorkspace(.hub) } label: {
-                    HStack(spacing: 3) {
-                        Text(ui("课程空间", "Course Space"))
-                        Image(systemName: "chevron.right")
-                            .weiBeiText(8, weight: .bold)
-                    }
-                    .weiBeiText(12, weight: .semibold)
-                    .foregroundStyle(WeiBeiTheme.cinnabar.opacity(0.82))
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel(Text(ui("打开课程空间", "Open course space")))
-                .help(ui("打开课程空间", "Open course space"))
+        HStack(spacing: 6) {
+            librarySearchField
 
-                Spacer(minLength: 0)
-
-                Menu {
-                    Button(ui("新建课程", "New Course")) {
-                        courseEntryPresentation = CourseProjectEntryPresentation(intent: .create)
-                    }
-                    Divider()
-                    Button(ui("导入文稿", "Import materials")) {
-                        importMaterialsFromSidebar()
-                    }
-                    Button(ui("导入笔记", "Import notes")) {
-                        importNotesFromSidebar()
-                    }
-                } label: {
-                    Image(systemName: "plus")
+            Menu {
+                Button(ui("新建课程", "New Course")) {
+                    courseEntryPresentation = CourseProjectEntryPresentation(intent: .create)
                 }
-                .menuStyle(.borderlessButton)
-                .menuIndicator(.hidden)
-                .buttonStyle(WeiBeiIconButtonStyle())
-                .accessibilityLabel(Text(ui("添加", "Add")))
-                .help(ui("新建课程，或导入文稿和笔记", "Create a course, or import materials and notes"))
+                Divider()
+                Button(ui("导入文稿", "Import materials")) {
+                    importMaterialsFromSidebar()
+                }
+                Button(ui("导入笔记", "Import notes")) {
+                    importNotesFromSidebar()
+                }
+            } label: {
+                Image(systemName: "plus")
             }
-            .padding(.horizontal, 16)
-            .padding(.top, 14)
-            .padding(.bottom, 8)
-
-            TextField(
-                "",
-                text: Binding(
-                    get: { model.query },
-                    set: model.updateQuery
-                ),
-                prompt: Text(ui("搜索课程资料与笔记", "Search course materials and notes"))
-                    .font(.system(size: 13))
-                    .foregroundStyle(WeiBeiTheme.placeholderInk)
-            )
-            .textFieldStyle(.plain)
-            .focused($librarySearchFocused)
-            .foregroundColor(WeiBeiTheme.ink)
-            .weiBeiText(13)
-            .weibeiInputSurface(active: librarySearchFocused)
-            .padding(.horizontal, 14)
-            .padding(.bottom, 10)
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .buttonStyle(SidebarAddMenuButtonStyle())
+            .accessibilityLabel(Text(ui("添加", "Add")))
+            .help(ui("新建课程，或导入文稿和笔记", "Create a course, or import materials and notes"))
         }
+        .padding(.horizontal, 10)
+        .padding(.top, 12)
+        .padding(.bottom, 9)
         .background(WeiBeiTheme.paper)
         .overlay(alignment: .bottom) {
             Rectangle()
@@ -129,6 +96,47 @@ struct SidebarView: View {
                 .frame(height: 1)
         }
         .zIndex(1)
+    }
+
+    private var librarySearchField: some View {
+        HStack(spacing: 5) {
+            Image(systemName: "magnifyingglass")
+                .weiBeiText(10, weight: .medium)
+                .foregroundStyle(librarySearchFocused
+                    ? WeiBeiTheme.link.opacity(0.72)
+                    : WeiBeiTheme.placeholderInk)
+            TextField(
+                "",
+                text: Binding(
+                    get: { model.query },
+                    set: model.updateQuery
+                ),
+                prompt: Text(ui("搜索课程资料与笔记", "Search course materials and notes"))
+                    .font(.system(size: 12))
+                    .foregroundStyle(WeiBeiTheme.placeholderInk)
+            )
+            .textFieldStyle(.plain)
+            .focused($librarySearchFocused)
+            .foregroundColor(WeiBeiTheme.ink)
+            .weiBeiText(12.5)
+        }
+        .padding(.horizontal, 8)
+        .frame(height: 28)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(WeiBeiTheme.paperInset.opacity(librarySearchFocused ? 0.20 : 0.34))
+        }
+        .overlay {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .strokeBorder(
+                    librarySearchFocused
+                        ? WeiBeiTheme.link.opacity(0.36)
+                        : WeiBeiTheme.hairline.opacity(0.46),
+                    lineWidth: 1
+                )
+        }
+        .animation(WeiBeiMotion.reveal, value: librarySearchFocused)
     }
 
     private func importMaterialsFromSidebar() {
@@ -229,34 +237,15 @@ struct CourseSidebarList: View {
         let accent = sidebarCourseAccent(colorIndex: course.colorIndex)
 
         HStack(spacing: 4) {
-            Button {
-                store.activateCourse(expanded ? nil : course.id)
-            } label: {
-                SidebarCourseRow(
-                    course: course,
-                    materialCount: row.materialCount,
-                    noteCount: row.noteCount,
-                    expanded: expanded,
-                    language: model.interfaceLanguage
-                )
-            }
-            .buttonStyle(.plain)
-            .accessibilityHint(Text(expanded
-                ? ui("收起课程内容", "Collapse course contents")
-                : ui("展开课程内容", "Expand course contents")))
-
-            Button { store.openCourseSpace(course.id) } label: {
-                Text(ui("进入", "Enter"))
-                    .weiBeiText(10.5, weight: .semibold)
-                    .foregroundStyle(WeiBeiTheme.cinnabar.opacity(0.88))
-                    .padding(.horizontal, 8)
-                    .frame(height: 28)
-                    .background(WeiBeiTheme.cinnabarSoft.opacity(0.42), in: Capsule())
-            }
-            .buttonStyle(.plain)
-            .help(ui("进入课程空间", "Enter course space"))
-            .accessibilityLabel(Text(ui("进入课程空间", "Enter course space")))
-
+            SidebarCourseRow(
+                course: course,
+                materialCount: row.materialCount,
+                noteCount: row.noteCount,
+                expanded: expanded,
+                language: model.interfaceLanguage,
+                onToggle: { store.activateCourse(expanded ? nil : course.id) },
+                onEnter: { store.openCourseSpace(course.id) }
+            )
         }
         .contextMenu { courseContextMenu(for: course) }
         .draggable("course:\(course.id.uuidString)")
@@ -551,42 +540,66 @@ private struct SidebarCourseRow: View {
     let noteCount: Int
     let expanded: Bool
     let language: WeiBeiInterfaceLanguage
+    let onToggle: () -> Void
+    let onEnter: () -> Void
     @State private var hovering = false
+    @State private var hoveringEnter = false
 
     var body: some View {
-        HStack(spacing: 10) {
-            Image(systemName: expanded ? "book.closed.fill" : "book.closed")
-                .foregroundStyle(accent.opacity(expanded || hovering ? 1 : 0.78))
-                .frame(width: 18)
-                .scaleEffect(expanded || hovering ? 1.08 : 1)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(course.title)
-                    .weiBeiText(13, weight: .medium)
-                    .lineLimit(1)
-                    .foregroundStyle(WeiBeiTheme.ink)
-                Text(language.text(
-                    "\(materialCount) 份资料 · \(noteCount) 份笔记",
-                    "\(materialCount) materials · \(noteCount) notes"
-                ))
-                .font(.caption)
-                .foregroundStyle(WeiBeiTheme.secondaryInk)
-                .lineLimit(1)
+        HStack(spacing: 8) {
+            Button(action: onToggle) {
+                HStack(spacing: 10) {
+                    Image(systemName: expanded ? "book.closed.fill" : "book.closed")
+                        .foregroundStyle(accent.opacity(expanded || hovering ? 1 : 0.78))
+                        .frame(width: 18)
+                        .scaleEffect(expanded || hovering ? 1.08 : 1)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(course.title)
+                            .weiBeiText(13, weight: .medium)
+                            .lineLimit(1)
+                            .foregroundStyle(WeiBeiTheme.ink)
+                        Text(language.text(
+                            "\(materialCount) 份资料 · \(noteCount) 份笔记",
+                            "\(materialCount) materials · \(noteCount) notes"
+                        ))
+                        .font(.caption)
+                        .foregroundStyle(WeiBeiTheme.secondaryInk)
+                        .lineLimit(1)
+                    }
+                    Spacer(minLength: 0)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
             }
-            Spacer(minLength: 6)
-            Image(systemName: "chevron.right")
-                .weiBeiText(9, weight: .semibold)
-                .foregroundStyle(expanded ? accent.opacity(0.78) : WeiBeiTheme.tertiaryInk)
-                .rotationEffect(.degrees(expanded ? 90 : 0))
+            .buttonStyle(.plain)
+            .accessibilityHint(Text(expanded
+                ? language.text("收起课程内容", "Collapse course contents")
+                : language.text("展开课程内容", "Expand course contents")))
+
+            Button(action: onEnter) {
+                Image(systemName: "arrow.right")
+                    .weiBeiText(9.5, weight: .semibold)
+                    .foregroundStyle(enterTint)
+                    .frame(width: 22, height: 22)
+                    .background {
+                        Circle().fill(WeiBeiTheme.paperInset.opacity(enterBackdropOpacity))
+                    }
+            }
+            .buttonStyle(.plain)
+            .help(language.text("进入课程空间", "Enter course space"))
+            .accessibilityLabel(Text(language.text("进入课程空间", "Enter course space")))
+            .onHover { hoveringEnter = $0 }
         }
         .padding(.horizontal, 9)
         .frame(height: 48)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(rowBackground)
         .offset(x: expanded || hovering ? 2 : 0)
-        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         .onHover { hovering = $0 }
         .animation(WeiBeiMotion.layout, value: expanded)
         .animation(WeiBeiMotion.hover, value: hovering)
+        .animation(WeiBeiMotion.hover, value: hoveringEnter)
     }
 
     private var rowBackground: Color {
@@ -597,6 +610,56 @@ private struct SidebarCourseRow: View {
 
     private var accent: Color {
         sidebarCourseAccent(colorIndex: course.colorIndex)
+    }
+
+    private var enterTint: Color {
+        if hoveringEnter { return accent.opacity(0.95) }
+        if expanded || hovering { return accent.opacity(0.82) }
+        return WeiBeiTheme.tertiaryInk.opacity(0.85)
+    }
+
+    private var enterBackdropOpacity: Double {
+        if hoveringEnter { return 0.52 }
+        if expanded || hovering { return 0.38 }
+        return 0
+    }
+}
+
+/// 侧栏搜索框旁边的加号菜单按钮：与搜索框同高度、同圆角语言，弱化到次级操作的分量。
+private struct SidebarAddMenuButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        SidebarAddMenuButtonBody(configuration: configuration)
+    }
+}
+
+private struct SidebarAddMenuButtonBody: View {
+    let configuration: ButtonStyle.Configuration
+    @State private var hovering = false
+
+    var body: some View {
+        configuration.label
+            .weiBeiText(12, weight: .medium)
+            .foregroundStyle(hovering ? WeiBeiTheme.ink : WeiBeiTheme.secondaryInk)
+            .frame(width: 28, height: 28)
+            .background {
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(WeiBeiTheme.paperInset.opacity(highlighted ? 0.42 : 0.18))
+            }
+            .overlay {
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .strokeBorder(
+                        WeiBeiTheme.hairline.opacity(highlighted ? 0.62 : 0.42),
+                        lineWidth: 1
+                    )
+            }
+            .scaleEffect(configuration.isPressed ? 0.95 : 1)
+            .animation(WeiBeiMotion.press, value: configuration.isPressed)
+            .animation(WeiBeiMotion.hover, value: hovering)
+            .onHover { hovering = $0 }
+    }
+
+    private var highlighted: Bool {
+        hovering || configuration.isPressed
     }
 }
 
@@ -692,7 +755,7 @@ private struct NotebookRenameRow: View {
         .frame(height: compact ? 38 : 48)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(WeiBeiTheme.paperInset.opacity(selected ? 0.74 : 0.44))
-        .clipShape(RoundedRectangle(cornerRadius: compact ? 6 : 8))
+        .clipShape(RoundedRectangle(cornerRadius: compact ? 6 : 8, style: .continuous))
         .onAppear { focused = true }
     }
 }
@@ -737,7 +800,7 @@ private struct LibraryRow: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(rowBackground)
         .offset(x: selected || hovering ? (compact ? 1 : 2) : 0)
-        .clipShape(RoundedRectangle(cornerRadius: compact ? 6 : 8))
+        .clipShape(RoundedRectangle(cornerRadius: compact ? 6 : 8, style: .continuous))
         .overlay(alignment: .leading) {
             if selected {
                 Capsule()

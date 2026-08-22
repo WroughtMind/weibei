@@ -150,7 +150,7 @@ final class SidebarPerformanceTests: XCTestCase {
         let host = NSHostingView(
             rootView: SidebarView(store: fixture.store, model: model)
         )
-        host.frame = NSRect(x: 0, y: 0, width: 292, height: 600)
+        host.frame = NSRect(x: 0, y: 0, width: CourseDrawerContainerView.panelWidth, height: 600)
         let window = NSWindow(
             contentRect: host.frame,
             styleMask: [.borderless],
