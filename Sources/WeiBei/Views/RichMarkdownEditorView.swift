@@ -1515,7 +1515,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
                     payload: NoteEditorThemePayload(theme: mode.webThemeName)
                 ))
             } else {
-                evaluate("window.WeiBeiEditor?.setTheme(\(Self.json(mode.webThemeName)))")
+                evaluate("window.WeiBeiEditor?.setTheme?.(\(Self.json(mode.webThemeName)))")
             }
         }
 
@@ -1528,20 +1528,20 @@ struct RichMarkdownEditorView: NSViewRepresentable {
                     payload: NoteEditorLanguagePayload(language: language.rawValue)
                 ))
             } else {
-                evaluate("window.WeiBeiEditor?.setInterfaceLanguage(\(Self.json(language.rawValue)))")
+                evaluate("window.WeiBeiEditor?.setInterfaceLanguage?.(\(Self.json(language.rawValue)))")
             }
         }
 
         /// Live reduce-motion sync into the existing page — no reload, no
         /// protocol extension; the page only ever sees the final boolean.
         func setReduceMotion(_ reduce: Bool) {
-            evaluate("window.WeiBeiEditor?.setReduceMotion(\(reduce ? "true" : "false"))")
+            evaluate("window.WeiBeiEditor?.setReduceMotion?.(\(reduce ? "true" : "false"))")
         }
 
         /// Live text-scale sync into the existing page — same contract as the
         /// page-side `--weibei-text-scale` variable, no reload involved.
         func setTextScale(_ scale: CGFloat) {
-            evaluate("window.WeiBeiEditor?.setTextScale(\(scale))")
+            evaluate("window.WeiBeiEditor?.setTextScale?.(\(scale))")
         }
 
         func setChatWideTypography(_ wide: Bool) {
