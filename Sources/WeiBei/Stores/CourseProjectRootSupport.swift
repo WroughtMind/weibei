@@ -5363,6 +5363,11 @@ enum CourseProjectRootError: LocalizedError {
     case metadataConflict
     case manifestMismatch
     case workspaceSaveFailed
+    case destinationInsideLibrary
+    case destinationContainsLibrary
+    case destinationIsLibrary
+    case destinationNotEmpty
+    case migrationFailed(String)
 
     var errorDescription: String? {
         switch self {
@@ -5406,6 +5411,18 @@ enum CourseProjectRootError: LocalizedError {
             return "课程 manifest 与当前课程记录冲突。"
         case .workspaceSaveFailed:
             return "课程状态没有成功保存。魏碑只撤销能确认属于本次操作的内容；如果磁盘内容已经变化，会原样保留。"
+        case .destinationInsideLibrary:
+            return "所选位置在当前资料库内部，请选择资料库之外的位置。"
+        case .destinationContainsLibrary:
+            return "所选位置是当前资料库的上级目录，请选择其他位置。"
+        case .destinationIsLibrary:
+            return "所选位置已经是一个魏碑资料库，可以直接认领。"
+        case .destinationNotEmpty:
+            return "所选文件夹不是空的，迁移需要一个空文件夹。"
+        case .migrationFailed(let detail):
+            return detail.isEmpty
+                ? "资料库迁移未完成，原资料库保持不变。"
+                : "资料库迁移未完成：\(detail)。原资料库保持不变。"
         }
     }
 }
