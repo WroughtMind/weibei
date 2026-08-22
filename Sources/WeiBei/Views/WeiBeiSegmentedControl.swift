@@ -6,6 +6,10 @@ import SwiftUI
 /// Selected segments keep a persistent raised pill with the cinnabar accent
 /// icon (WeiBei's active-state convention), mirroring how a multi-select
 /// native segmented control keeps its selected segments lit.
+///
+/// Layout contract: every button is a real layout cell of the `HStack`, so
+/// segment positions can never drift outside the capsule; pills and dividers
+/// are purely decorative layers pinned to the same fixed grid.
 struct WeiBeiSegmentedControl: View {
     struct Segment: Identifiable {
         let id: String
@@ -31,47 +35,48 @@ struct WeiBeiSegmentedControl: View {
     private var pillInset: CGFloat { 2 * textScale }
 
     var body: some View {
-        ZStack(alignment: .leading) {
-            dividers
-            selectedPills
-            hoverPill
-            segmentButtons
+        HStack(spacing: 0) {
+            ForEach(Array(segments.enumerated()), id: \.element.id) { index, segment in
+                segmentButton(segment, index: index)
+            }
         }
-        .frame(width: segmentWidth * CGFloat(segments.count), height: height)
-        .background {
-            Capsule()
-                .fill(WeiBeiTheme.paperInset.opacity(colorScheme == .dark ? 0.50 : 0.44))
-                .overlay {
-                    Capsule()
-                        .stroke(WeiBeiTheme.glassHighlight.opacity(0.16), lineWidth: 1)
-                }
-        }
+        .frame(height: height)
+        .background(alignment: .leading) { hoverPill }
+        .background(alignment: .leading) { selectedPills }
+        .background(alignment: .leading) { dividers }
+        .background { capsuleFill }
         .accessibilityElement(children: .contain)
+    }
+
+    // MARK: Container
+
+    private var capsuleFill: some View {
+        Capsule()
+            .fill(WeiBeiTheme.paperInset.opacity(colorScheme == .dark ? 0.50 : 0.44))
+            .overlay {
+                Capsule()
+                    .stroke(WeiBeiTheme.glassHighlight.opacity(0.16), lineWidth: 1)
+            }
     }
 
     // MARK: Highlights
 
+    /// Selected pills render below the hover pill; the hovered segment's own
+    /// pill is suppressed so the two fills never stack on one segment.
     @ViewBuilder
     private var selectedPills: some View {
-        ZStack(alignment: .leading) {
-            ForEach(Array(segments.enumerated()), id: \.element.id) { index, segment in
-                // The hover pill takes over the hovered segment so the two
-                // fills never stack; while sliding it may briefly overlap a
-                // neighbouring selected pill, as the native control does.
-                if segment.isSelected, hoveredIndex != index {
-                    pillShape
-                        .fill(WeiBeiTheme.paperRaised.opacity(colorScheme == .dark ? 0.72 : 0.96))
-                        .frame(width: segmentWidth - pillInset * 2, height: height - pillInset * 2)
-                        .overlay {
-                            pillShape
-                                .stroke(WeiBeiTheme.hairline.opacity(colorScheme == .dark ? 0.5 : 0.35), lineWidth: 1)
-                        }
-                        .offset(x: pillInset + CGFloat(index) * segmentWidth)
-                        .transition(.opacity)
-                }
+        ForEach(Array(segments.enumerated()), id: \.element.id) { index, segment in
+            if segment.isSelected, hoveredIndex != index {
+                pillShape
+                    .fill(WeiBeiTheme.paperRaised.opacity(colorScheme == .dark ? 0.72 : 0.96))
+                    .frame(width: pillWidth, height: pillHeight)
+                    .overlay {
+                        pillShape
+                            .stroke(WeiBeiTheme.hairline.opacity(colorScheme == .dark ? 0.5 : 0.35), lineWidth: 1)
+                    }
+                    .offset(x: pillInset + CGFloat(index) * segmentWidth)
             }
         }
-        .allowsHitTesting(false)
     }
 
     @ViewBuilder
@@ -84,7 +89,7 @@ struct WeiBeiSegmentedControl: View {
                     ? WeiBeiTheme.paperRaised.opacity(colorScheme == .dark ? 0.72 : 0.96)
                     : WeiBeiTheme.paperRaised.opacity(colorScheme == .dark ? 0.42 : 0.80)
             )
-            .frame(width: segmentWidth - pillInset * 2, height: height - pillInset * 2)
+            .frame(width: pillWidth, height: pillHeight)
             .overlay {
                 pillShape
                     .stroke(WeiBeiTheme.hairline.opacity(colorScheme == .dark ? 0.5 : 0.35), lineWidth: 1)
@@ -93,28 +98,29 @@ struct WeiBeiSegmentedControl: View {
             .offset(x: pillInset + CGFloat(target) * segmentWidth)
             .opacity(hoveredIndex == nil ? 0 : 1)
             .animation(reduceMotion ? nil : WeiBeiMotion.hover, value: hoveredIndex)
-            .allowsHitTesting(false)
     }
 
-    private var pillShape: some InsettableShape {
-        RoundedRectangle(cornerRadius: (height - pillInset * 2) / 2, style: .continuous)
+    private var pillShape: RoundedRectangle {
+        RoundedRectangle(
+            cornerRadius: (height - pillInset * 2) / 2,
+            style: .continuous
+        )
     }
+
+    private var pillWidth: CGFloat { segmentWidth - pillInset * 2 }
+    private var pillHeight: CGFloat { height - pillInset * 2 }
 
     // MARK: Dividers
 
     @ViewBuilder
     private var dividers: some View {
-        ZStack(alignment: .leading) {
-            ForEach(1..<max(segments.count, 1), id: \.self) { boundary in
-                Rectangle()
-                    .fill(Color.white.opacity(colorScheme == .dark ? 0.26 : 0.80))
-                    .frame(width: 1, height: 12 * textScale)
-                    .offset(x: CGFloat(boundary) * segmentWidth - 0.5)
-                    .opacity(hasHighlight(at: boundary - 1) || hasHighlight(at: boundary) ? 0 : 1)
-            }
+        ForEach(1..<max(segments.count, 1), id: \.self) { boundary in
+            Rectangle()
+                .fill(Color.white.opacity(colorScheme == .dark ? 0.26 : 0.80))
+                .frame(width: 1, height: 12 * textScale)
+                .offset(x: CGFloat(boundary) * segmentWidth - 0.5)
+                .opacity(hasHighlight(at: boundary - 1) || hasHighlight(at: boundary) ? 0 : 1)
         }
-        .allowsHitTesting(false)
-        .animation(reduceMotion ? nil : WeiBeiMotion.hover, value: hoveredIndex)
     }
 
     /// A segment "has a highlight" when it is selected or hovered; dividers
@@ -126,32 +132,25 @@ struct WeiBeiSegmentedControl: View {
 
     // MARK: Segments
 
-    @ViewBuilder
-    private var segmentButtons: some View {
-        ZStack(alignment: .leading) {
-            ForEach(Array(segments.enumerated()), id: \.element.id) { index, segment in
-                Button(action: segment.action) {
-                    Image(systemName: segment.systemImage)
-                        .weiBeiText(13, weight: .semibold)
-                        .foregroundStyle(iconColor(for: segment, at: index))
-                        .frame(width: segmentWidth, height: height)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(WeiBeiSegmentPressStyle(reduceMotion: reduceMotion))
-                .onHover { hovering in
-                    guard segments.indices.contains(index) else { return }
-                    if hovering {
-                        hoveredIndex = index
-                        restingIndex = index
-                    } else if hoveredIndex == index {
-                        hoveredIndex = nil
-                    }
-                }
-                .help(segment.help)
-                .accessibilityLabel(Text(segment.help))
-                .offset(x: CGFloat(index) * segmentWidth)
+    private func segmentButton(_ segment: Segment, index: Int) -> some View {
+        Button(action: segment.action) {
+            Image(systemName: segment.systemImage)
+                .weiBeiText(13, weight: .semibold)
+                .foregroundStyle(iconColor(for: segment, at: index))
+                .frame(width: segmentWidth, height: height)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(WeiBeiSegmentPressStyle(reduceMotion: reduceMotion))
+        .onHover { hovering in
+            if hovering {
+                hoveredIndex = index
+                restingIndex = index
+            } else if hoveredIndex == index {
+                hoveredIndex = nil
             }
         }
+        .help(segment.help)
+        .accessibilityLabel(Text(segment.help))
     }
 
     private func iconColor(for segment: Segment, at index: Int) -> Color {
