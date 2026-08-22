@@ -493,9 +493,9 @@ struct SettingsView: View {
     private var themePicker: some View {
         ScrollView(.horizontal) {
             LazyHStack(spacing: 10) {
-                ForEach(WeiBeiAppearanceMode.allCases) { mode in
-                    themePreviewCard(mode)
-                        .frame(width: 190)
+                ForEach(WeiBeiAppearanceStyle.allCases) { style in
+                    stylePreviewCard(style)
+                        .frame(width: 226)
                 }
             }
             .padding(.bottom, 6)
@@ -503,28 +503,31 @@ struct SettingsView: View {
         .scrollIndicators(.visible)
     }
 
-    private var themeSwatchRow: some View { themePicker }
-
-    private func themePreviewCard(_ mode: WeiBeiAppearanceMode) -> some View {
-        let selected = mode == store.appearanceMode
+    /// 四组风格卡：左浅右深两个实景预览并排；点卡选风格，
+    /// 具体浅/深由上方“外观”偏好（跟随系统/浅色/深色）解析，卡上标注当前生效主题。
+    private func stylePreviewCard(_ style: WeiBeiAppearanceStyle) -> some View {
+        let selected = style == store.appearanceStyle
         return Button {
-            store.setAppearanceMode(mode)
+            store.appearanceStyle = style
         } label: {
             VStack(alignment: .leading, spacing: 7) {
                 ZStack(alignment: .topTrailing) {
-                    WeiBeiThemeLayoutPreview(mode: mode)
-                        .frame(maxWidth: .infinity)
-                        .frame(height: 96)
-                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                        .overlay {
-                            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                .stroke(
-                                    selected
-                                        ? WeiBeiTheme.cinnabar.opacity(0.90)
-                                        : WeiBeiTheme.hairline.opacity(0.42),
-                                    lineWidth: selected ? 2 : 1
-                                )
-                        }
+                    HStack(spacing: 0) {
+                        WeiBeiThemeLayoutPreview(mode: style.lightMode)
+                        WeiBeiThemeLayoutPreview(mode: style.darkMode)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 96)
+                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .stroke(
+                                selected
+                                    ? WeiBeiTheme.cinnabar.opacity(0.90)
+                                    : WeiBeiTheme.hairline.opacity(0.42),
+                                lineWidth: selected ? 2 : 1
+                            )
+                    }
 
                     if selected {
                         Image(systemName: "checkmark.circle.fill")
@@ -534,17 +537,24 @@ struct SettingsView: View {
                     }
                 }
 
-                Text(mode.label(language: store.interfaceLanguage))
+                Text(style.label(ui: store.ui))
                     .weiBeiText(12, weight: selected ? .semibold : .medium)
                     .foregroundStyle(selected ? WeiBeiTheme.ink : WeiBeiTheme.secondaryInk)
                     .lineLimit(1)
+
+                Text(
+                    store.ui("当前生效", "Active") + " · "
+                        + store.appearanceMode.label(language: store.interfaceLanguage)
+                )
+                .weiBeiText(10.5)
+                .foregroundStyle(WeiBeiTheme.tertiaryInk)
+                .lineLimit(1)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .help(mode.detail(language: store.interfaceLanguage))
-        .accessibilityLabel(Text(mode.label(language: store.interfaceLanguage)))
+        .accessibilityLabel(Text(style.label(ui: store.ui)))
         .accessibilityAddTraits(selected ? .isSelected : [])
     }
 

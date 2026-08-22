@@ -13,11 +13,13 @@ final class AppearancePreferenceTests: XCTestCase {
     override func setUp() {
         super.setUp()
         UserDefaults.standard.removeObject(forKey: "weibei.appearancePreference")
+        UserDefaults.standard.removeObject(forKey: "weibei.appearanceStyle")
         UserDefaults.standard.removeObject(forKey: "weibei.glassIntensity")
     }
 
     override func tearDown() {
         UserDefaults.standard.removeObject(forKey: "weibei.appearancePreference")
+        UserDefaults.standard.removeObject(forKey: "weibei.appearanceStyle")
         UserDefaults.standard.removeObject(forKey: "weibei.glassIntensity")
         super.tearDown()
     }
@@ -36,41 +38,57 @@ final class AppearancePreferenceTests: XCTestCase {
         )
     }
 
-    func testDefaultPreferenceIsStaticLight() throws {
+    func testStyleMappingCoversAllModes() {
+        XCTAssertEqual(WeiBeiAppearanceStyle.of(.paper), .paperInk)
+        XCTAssertEqual(WeiBeiAppearanceStyle.of(.inkstone), .paperInk)
+        XCTAssertEqual(WeiBeiAppearanceStyle.of(.xuan), .xuanStele)
+        XCTAssertEqual(WeiBeiAppearanceStyle.of(.stele), .xuanStele)
+        XCTAssertEqual(WeiBeiAppearanceStyle.of(.glassLight), .clearGlass)
+        XCTAssertEqual(WeiBeiAppearanceStyle.of(.glassDark), .clearGlass)
+        XCTAssertEqual(WeiBeiAppearanceStyle.of(.glassMist), .mistGlass)
+        XCTAssertEqual(WeiBeiAppearanceStyle.of(.glassSlate), .mistGlass)
+    }
+
+    func testPreferenceDerivesFromCurrentModeForLegacyUsers() throws {
         let store = try makeStore()
         XCTAssertEqual(store.appearancePreference, .light)
-        // 静态浅色下系统变深也不翻转。
-        store.setAppearanceMode(.paper)
-        store.refreshAppearanceForSystemChange(systemIsDark: true)
-        XCTAssertEqual(store.appearanceMode, .paper)
-    }
+        XCTAssertEqual(store.appearanceStyle, .paperInk)
 
-    func testFollowSystemFlipsToPairedTheme() throws {
-        let store = try makeStore()
-        store.appearancePreference = .system
-        store.setAppearanceMode(.paper)
-        store.refreshAppearanceForSystemChange(systemIsDark: true)
+        // 深色老用户：偏好与风格按当前主题落位，解析后保持不变。
+        store.setAppearanceMode(.inkstone)
+        XCTAssertEqual(store.appearancePreference, .dark)
+        store.applyResolvedAppearance(systemIsDark: false)
         XCTAssertEqual(store.appearanceMode, .inkstone)
-        // 系统回浅色：对称配对保证回到原主题。
-        store.refreshAppearanceForSystemChange(systemIsDark: false)
-        XCTAssertEqual(store.appearanceMode, .paper)
     }
 
-    func testFollowSystemPairsAllFourFamilies() throws {
+    func testStyleSelectionResolvesByStaticPreference() throws {
         let store = try makeStore()
+        store.appearanceStyle = .xuanStele
+        XCTAssertEqual(store.appearanceMode, .xuan)
+
+        store.appearancePreference = .dark
+        XCTAssertEqual(store.appearanceMode, .stele)
+
+        store.appearanceStyle = .clearGlass
+        XCTAssertEqual(store.appearanceMode, .glassDark)
+
+        store.appearancePreference = .light
+        XCTAssertEqual(store.appearanceMode, .glassLight)
+    }
+
+    func testFollowSystemFlipsWithinSelectedStyle() throws {
+        let store = try makeStore()
+        store.appearanceStyle = .mistGlass
         store.appearancePreference = .system
-        let pairs: [(WeiBeiAppearanceMode, WeiBeiAppearanceMode)] = [
-            (.xuan, .stele),
-            (.glassLight, .glassDark),
-            (.glassMist, .glassSlate),
-        ]
-        for (light, dark) in pairs {
-            store.setAppearanceMode(light)
-            store.refreshAppearanceForSystemChange(systemIsDark: true)
-            XCTAssertEqual(store.appearanceMode, dark)
-            store.refreshAppearanceForSystemChange(systemIsDark: false)
-            XCTAssertEqual(store.appearanceMode, light)
-        }
+        store.applyResolvedAppearance(systemIsDark: true)
+        XCTAssertEqual(store.appearanceMode, .glassSlate)
+        store.applyResolvedAppearance(systemIsDark: false)
+        XCTAssertEqual(store.appearanceMode, .glassMist)
+
+        // 静态模式下系统变化不动作。
+        store.appearancePreference = .light
+        store.refreshAppearanceForSystemChange()
+        XCTAssertEqual(store.appearanceMode, .glassMist)
     }
 
     func testGlassIntensityClampsAndPersists() throws {
