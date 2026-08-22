@@ -183,8 +183,6 @@ struct CourseSidebarList: View {
                         courseRow(row)
                     }
                 }
-            } header: {
-                SidebarSectionHeader(title: ui("课程", "Courses"))
             }
 
             if !model.unassignedMaterials.isEmpty {
