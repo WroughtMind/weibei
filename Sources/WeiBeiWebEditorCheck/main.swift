@@ -1807,15 +1807,28 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
             editor.selectFirstTextForCheck('粗体');
             return !!document.querySelector('.weibei-syntax-mark[data-marker="**"]');
           })();
-          const adjacentReveal = (() => {
+          const boundaryClean = (() => {
             editor.setMarkdown('前**粗体**后');
             editor.selectFirstTextForCheck('前');
-            // Left edge shows the opener; the right edge shows nothing so the
-            // caret reads as cleanly outside (no "trapped" perception).
-            const besideLeft = !!document.querySelector('.weibei-syntax-mark[data-marker="**"]');
+            const leftEdge = !document.querySelector('.weibei-syntax-mark[data-marker="**"]');
             editor.selectFirstTextForCheck('后');
-            const rightEdgeClean = !document.querySelector('.weibei-syntax-mark-close[data-marker="**"]');
-            return besideLeft && rightEdgeClean;
+            const rightEdge = !document.querySelector('.weibei-syntax-mark[data-marker="**"]');
+            return leftEdge && rightEdge;
+          })();
+          const boundaryTypingEscapes = (() => {
+            editor.setMarkdown('前**粗体**后');
+            editor.selectFirstTextForCheck('粗体');
+            const runFrom = editor.selectionForCheck().from;
+            editor.setSelectionForCheck(runFrom, runFrom);
+            editor.typeTextForCheck('左');
+            const leftOk = editor.getMarkdown().includes('前左**粗体**后');
+            editor.setMarkdown('前**粗体**后');
+            editor.selectFirstTextForCheck('粗体');
+            const runTo = editor.selectionForCheck().to;
+            editor.setSelectionForCheck(runTo, runTo);
+            editor.typeTextForCheck('右');
+            const rightOk = editor.getMarkdown().includes('**粗体**右后');
+            return leftOk && rightOk;
           })();
           const arrowExitsRun = (() => {
             editor.setMarkdown('');
@@ -1871,7 +1884,7 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
           const mathAdjacent = !!document.querySelector('.weibei-math-adjacent');
           editor.selectFirstTextForCheck('结尾段落');
           const mathAdjacentCleared = !document.querySelector('.weibei-math-adjacent');
-          return { pendingWhileTyping, convertedOnClose, cleanLandingAfterClose, revealInsideStrong, adjacentReveal, arrowExitsRun, prefilledMathRenders, mathTypingCursor, emptyHeadingMarker, headingRevealed, quoteRevealed, mathAdjacent, mathAdjacentCleared };
+          return { pendingWhileTyping, convertedOnClose, cleanLandingAfterClose, revealInsideStrong, boundaryClean, boundaryTypingEscapes, arrowExitsRun, prefilledMathRenders, mathTypingCursor, emptyHeadingMarker, headingRevealed, quoteRevealed, mathAdjacent, mathAdjacentCleared };
         })();
         """
         webView.evaluateJavaScript(script) { [weak self] value, error in
@@ -1885,7 +1898,8 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
                   result["convertedOnClose"] as? Bool == true,
                   result["revealInsideStrong"] as? Bool == true,
                   result["cleanLandingAfterClose"] as? Bool == true,
-                  result["adjacentReveal"] as? Bool == true,
+                  result["boundaryClean"] as? Bool == true,
+                  result["boundaryTypingEscapes"] as? Bool == true,
                   result["arrowExitsRun"] as? Bool == true,
                   result["prefilledMathRenders"] as? Bool == true,
                   result["mathTypingCursor"] as? Bool == true,
