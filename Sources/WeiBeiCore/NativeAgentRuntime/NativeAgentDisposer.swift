@@ -15,33 +15,6 @@ public struct NativeRegistration: Sendable {
     }
 }
 
-public final class NativeDisposableStore: @unchecked Sendable {
-    private let lock = NSLock()
-    private var registrations: [NativeRegistration] = []
-
-    public init() {}
-
-    public func add(_ registration: NativeRegistration) {
-        lock.lock()
-        registrations.append(registration)
-        lock.unlock()
-    }
-
-    public func disposeAll() {
-        lock.lock()
-        let copy = registrations.reversed()
-        registrations.removeAll()
-        lock.unlock()
-        for registration in copy {
-            registration.dispose()
-        }
-    }
-
-    deinit {
-        disposeAll()
-    }
-}
-
 private final class LockedFlag: @unchecked Sendable {
     private let lock = NSLock()
     private var value = false
