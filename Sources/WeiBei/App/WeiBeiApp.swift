@@ -213,6 +213,26 @@ struct WeiBeiApp: App {
                 }
                     .keyboardShortcut("t", modifiers: [.command, .option])
 
+                Button(store.ui("放大文字", "Zoom Text In")) {
+                    if let larger = store.interfaceTextScale.nextLarger {
+                        store.setInterfaceTextScale(larger)
+                    }
+                }
+                    .keyboardShortcut("+", modifiers: .command)
+                    .disabled(store.interfaceTextScale.nextLarger == nil)
+                Button(store.ui("缩小文字", "Zoom Text Out")) {
+                    if let smaller = store.interfaceTextScale.nextSmaller {
+                        store.setInterfaceTextScale(smaller)
+                    }
+                }
+                    .keyboardShortcut("-", modifiers: .command)
+                    .disabled(store.interfaceTextScale.nextSmaller == nil)
+                Button(store.ui("重置文字大小", "Reset Text Size")) {
+                    store.setInterfaceTextScale(.standard)
+                }
+                    .keyboardShortcut("0", modifiers: [.command, .option])
+                    .disabled(store.interfaceTextScale == .standard)
+
                 Divider()
 
                 if store.canUseSelectionAgentSurface {
