@@ -44,37 +44,38 @@ WeiBei keeps the material, the question, its evidence, and the resulting note as
 | | Chat window + notes app | WeiBei |
 |---|---|---|
 | Your material | re-pasted or attached in pieces | imported, indexed, in the same window |
-| Answers | may sound right, sources unclear | every claim cited; one click back to the page |
+| Answers | may sound right, sources unclear | answers cite the course files behind them; one click back to the page |
 | A week later | scroll a long chat history to reconstruct why | the underlined passage reopens its exact thread |
-| Notes | you retype the useful parts by hand | proposals you accept, already linked to their sources |
+| Notes | you retype the useful parts by hand | proposals you review and accept — never silent edits |
 | Your data | split across services | a local-first library on your Mac |
 
 ## Private by structure
 
 - Your library and full-text index stay on your Mac.
-- The Agent has no open file, terminal, or network access. Each request sees a bounded snapshot of the current material, selection, note, and search results — and the Swift host validates citations, source jumps, memory writes, note proposals, and rich-answer payloads before anything is displayed or applied.
+- The Agent runs on a closed set of host-mediated tools — course search and reading, note and relationship proposals, learning memory. It gets no shell and no open file system; each request sees a bounded snapshot of the current material, selection, note, and search results. The only web pages it reads are HTTPS URLs you yourself provided in that same turn, and the Swift host validates citations, source jumps, memory writes, note proposals, and rich-answer payloads before anything is displayed or applied.
+- Web pages, course materials, notes, and tool results are treated strictly as data, never as instructions — a page telling the Agent to do something can't change its behavior. Search queries carry only the public topic of your question, never your course text, notes, or local paths.
 - Interactive `visualize` fragments run sandboxed, with no network and no local file access; anything with real side effects asks for your confirmation first.
-- You choose the model provider — any OpenAI-compatible endpoint, or OpenAI Codex OAuth. No provider is hard-coded, and no answer is faked when a provider is missing.
+- You choose the model provider: dozens of built-in profiles (OpenAI, Anthropic, Google, DeepSeek, Kimi, OpenRouter, and more), OAuth subscriptions such as OpenAI Codex, a local llama.cpp, or any OpenAI-compatible endpoint. No provider is hard-coded.
 
 ## Get WeiBei
 
 **[Download WeiBei 1.0.0](https://github.com/weibei-app/weibei/releases/download/v1.0.0/WeiBei-1.0.0-macOS-arm64.dmg)** — macOS 14 or later, Apple silicon. SHA-256 checksums are published alongside in [Releases](https://github.com/weibei-app/weibei/releases).
 
-The community build is ad-hoc signed and not Apple-notarized, so Gatekeeper blocks the very first launch. Allow it for this app only: right-click `魏碑.app` in Applications, choose **Open**, then confirm **Open** (or System Settings → Privacy & Security → **Open Anyway**). Don't disable Gatekeeper globally.
+The community build is ad-hoc signed and not Apple-notarized, so Gatekeeper blocks the very first launch. Allow it for this app only: right-click `魏碑.app` in Applications, choose **Open**, then confirm **Open** (or System Settings → Privacy & Security → **Open Anyway**). Don't disable Gatekeeper globally. WeiBei checks for new versions from Settings, so you don't need to watch the Releases page yourself.
 
 **Five minutes to your first cited answer:**
 
 1. Launch WeiBei and import a folder of your own material as a course — PDF, HTML, Markdown, and plain text all work. (No sample data ships in the app; nothing is bundled that you didn't bring.)
-2. In Agent settings, connect a provider — an OpenAI-compatible endpoint or OpenAI Codex OAuth.
+2. In Agent settings, connect a provider — pick a built-in profile, sign in with an OAuth subscription, or point at an OpenAI-compatible endpoint.
 3. Select a passage in the reader and ask a question from the selection.
 4. Click a citation label to jump back to the source.
-5. Accept the note proposal the Agent drafts for you.
+5. Ask the Agent to save something to your notes, then review the proposal card before it is applied.
 
 A Homebrew cask is planned; until the tap is published, use the DMG or build from source.
 
 ## Made for long nights
 
-WeiBei is named after the stele inscription style, and it leans into that: paper, xuan, inkstone, and stele themes alongside four Liquid Glass variants; app-wide text scaling with keyboard shortcuts when 3 a.m. eyes need bigger type; quiet skeleton states instead of blank flashes while long documents and cold chats load; and a small daily calligraphy line (灵感句) from the stele tradition worked into the chrome.
+WeiBei is named after the stele inscription style, and it leans into that: paper, xuan, inkstone, and stele themes alongside four frosted-glass variants; app-wide text scaling with keyboard shortcuts (⌘+ / ⌘−) when 3 a.m. eyes need bigger type; quiet skeleton states instead of blank flashes while long documents and cold chats load; and a daily calligraphy line (灵感句) from the stele tradition, shown as a quiet background watermark — every one of the 50 lines carries its source and rights basis in a ledger you can open in Settings.
 
 ## For developers
 
@@ -96,7 +97,7 @@ The script builds and opens `dist/魏碑.app`.
 
 WeiBei is a native Swift 5.9 application: SwiftUI for the interface, AppKit hosting the long-lived reader, Agent, and note panes. PDFKit reads PDFs, WebKit renders HTML and the Milkdown editor, Vision handles OCR for scanned pages, and SQLite FTS5 stores the local course index. A pinned Pi 0.82.1 runtime provides the Agent loop; WeiBei itself owns the material context, citations, learning memory, note write-back, and interface rendering.
 
-Each Agent request receives a bounded, revisioned snapshot of the working context — never open access to files, terminal, or network. The host validates citations, source jumps, learning updates, note proposals, and rich-answer payloads before display or application; `visualize` fragments execute in a sandboxed web runtime with no network or local file access. For long or scanned PDFs, text extraction runs in a resource-bounded helper process, with Vision OCR only where a page has no native text, and partial or incomplete indexing is reported honestly rather than passed off as complete.
+Each Agent request receives a bounded, revisioned snapshot of the working context — no open file system, no shell, and web reading limited to HTTPS URLs the user explicitly provided. The host validates citations, source jumps, learning updates, note proposals, and rich-answer payloads before display or application; `visualize` fragments execute in a sandboxed web runtime with no network or local file access. For long or scanned PDFs, text extraction runs in a resource-bounded helper process, with Vision OCR only where a page has no native text, and partial or incomplete indexing is reported honestly rather than passed off as complete.
 
 ### Tooling
 
