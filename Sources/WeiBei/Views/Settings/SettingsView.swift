@@ -38,11 +38,6 @@ struct SettingsView: View {
     @State private var feedbackBody = ""
     @State private var feedbackBusy = false
     @State private var feedbackStatus: String?
-    // 资料库位置迁移（计划 §4.1）。
-    @State private var pendingMigrationDestination: URL?
-    @State private var migrationErrorText: String?
-    @State private var migrationSuccessText: String?
-    @State private var isMigratingLibrary = false
 
     private var buildInfo: WeiBeiAppBuildInfo { .current() }
 
@@ -301,137 +296,7 @@ struct SettingsView: View {
                     )
                 }
             }
-
-            libraryLocationSettings
         }
-    }
-
-    private var libraryLocationSettings: some View {
-        settingsGroup(store.ui("资料库", "Library")) {
-            settingsRow(
-                title: store.ui("资料库位置", "Library location"),
-                detail: store.courseLibraryRootPath ?? CourseLibraryLayout.defaultRootURL().path,
-                showsBottomDivider: false
-            ) {
-                Button(store.ui("更改…", "Change…")) {
-                    pickMigrationDestination()
-                }
-                .disabled(isMigratingLibrary)
-            }
-            if let destination = pendingMigrationDestination {
-                migrationConfirmation(destination)
-            }
-            if isMigratingLibrary {
-                VStack(alignment: .leading, spacing: 6) {
-                    ProgressView()
-                        .progressViewStyle(.linear)
-                    Text(store.ui(
-                        "正在迁移资料库，请勿操作魏碑…",
-                        "Migrating the library. Please do not use WeiBei during the move…"
-                    ))
-                    .font(SettingsType.detail)
-                    .foregroundStyle(WeiBeiTheme.secondaryInk)
-                }
-                .padding(.horizontal, 14)
-                .padding(.bottom, 12)
-            }
-            if let migrationErrorText {
-                Text(migrationErrorText)
-                    .font(SettingsType.detail)
-                    .foregroundStyle(.red)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(.horizontal, 14)
-                    .padding(.bottom, 12)
-            }
-            if let migrationSuccessText {
-                Text(migrationSuccessText)
-                    .font(SettingsType.detail)
-                    .foregroundStyle(WeiBeiTheme.cinnabar)
-                    .padding(.horizontal, 14)
-                    .padding(.bottom, 12)
-            }
-        }
-        .disabled(isMigratingLibrary)
-    }
-
-    @ViewBuilder
-    private func migrationConfirmation(_ destination: URL) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(store.ui(
-                "从 \(store.courseLibraryRootPath ?? "—") 迁移到 \(destination.path)",
-                "Move from \(store.courseLibraryRootPath ?? "—") to \(destination.path)"
-            ))
-            .font(SettingsType.detail)
-            .foregroundStyle(WeiBeiTheme.ink)
-            .fixedSize(horizontal: false, vertical: true)
-            if Self.isCloudSyncPath(destination) {
-                Text(store.ui(
-                    "目标位于 iCloud 或网盘同步目录，可能出现文件未下载或同步冲突。",
-                    "The destination is inside an iCloud or cloud-sync folder; files may be evicted or conflict."
-                ))
-                .font(SettingsType.detail)
-                .foregroundStyle(.orange)
-                .fixedSize(horizontal: false, vertical: true)
-            }
-            HStack(spacing: 10) {
-                Button(store.ui("开始迁移", "Start Migration")) {
-                    confirmMigration(to: destination)
-                }
-                .buttonStyle(.borderedProminent)
-                Button(store.ui("取消", "Cancel")) {
-                    pendingMigrationDestination = nil
-                }
-            }
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 4)
-        .padding(.bottom, 8)
-    }
-
-    private func pickMigrationDestination() {
-        migrationErrorText = nil
-        migrationSuccessText = nil
-        let panel = NSOpenPanel()
-        panel.canChooseFiles = false
-        panel.canChooseDirectories = true
-        panel.canCreateDirectories = true
-        panel.allowsMultipleSelection = false
-        panel.prompt = store.ui("选择", "Choose")
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        pendingMigrationDestination = url.standardizedFileURL
-    }
-
-    private func confirmMigration(to destination: URL) {
-        pendingMigrationDestination = nil
-        isMigratingLibrary = true
-        migrationErrorText = nil
-        migrationSuccessText = nil
-        Task { @MainActor in
-            do {
-                let result = try await store.migrateLibrary(to: destination)
-                migrationSuccessText = store.ui(
-                    "已迁移到 \(result.destination.path)",
-                    "Moved to \(result.destination.path)"
-                )
-            } catch CourseProjectRootError.destinationIsLibrary {
-                migrationErrorText = store.ui(
-                    "所选位置已经是一个魏碑资料库，请在对话中打开它或选择其他空文件夹。",
-                    "That location is already a WeiBei library. Open it instead, or choose an empty folder."
-                )
-            } catch {
-                migrationErrorText = error.localizedDescription
-            }
-            isMigratingLibrary = false
-        }
-    }
-
-    static func isCloudSyncPath(_ url: URL) -> Bool {
-        let path = url.path
-        if path.contains("Library/Mobile Documents") || path.contains("com~apple~CloudDocs") {
-            return true
-        }
-        let cloudNames = ["Dropbox", "Google Drive", "OneDrive", "坚果云", "iCloud"]
-        return cloudNames.contains { path.contains($0) }
     }
 
     /// Theme gallery modeled on AionUI `ThemeLayoutPreview` cards:
