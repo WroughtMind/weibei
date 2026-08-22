@@ -134,14 +134,36 @@ enum WeiBeiAppearanceMode: String, CaseIterable, Identifiable {
         default: return isDark ? .paper : .inkstone
         }
     }
+
+    /// 对称深浅配对（跟随系统用）：纸面↔砚黑、宣纸↔碑石、玻璃亮↔玻璃暗、薄雾↔石板。
+    var lightDarkPartner: WeiBeiAppearanceMode {
+        switch self {
+        case .paper: return .inkstone
+        case .inkstone: return .paper
+        case .xuan: return .stele
+        case .stele: return .xuan
+        case .glassLight: return .glassDark
+        case .glassDark: return .glassLight
+        case .glassMist: return .glassSlate
+        case .glassSlate: return .glassMist
+        }
+    }
 }
 
 /// Live appearance used by theme colors. Always update **before** publishing
 /// `appearanceMode` so SwiftUI bodies that re-read `WeiBeiTheme.*` see the new palette.
 enum WeiBeiThemeRuntime {
     static var mode: WeiBeiAppearanceMode = .paper
+    /// Glass theme translucency 0–1, driven by the Settings slider; persisted in defaults.
+    static var glassIntensity: Double = 1.0 {
+        didSet {
+            guard oldValue != glassIntensity else { return }
+            NotificationCenter.default.post(name: glassIntensityDidChangeNotification, object: nil)
+        }
+    }
     /// Posted after mode changes so AppKit views (PDF mask, splitters) can redraw.
     static let didChangeNotification = Notification.Name("WeiBeiThemeRuntimeDidChange")
+    static let glassIntensityDidChangeNotification = Notification.Name("WeiBeiGlassIntensityDidChange")
 }
 
 enum WeiBeiTypography {
@@ -400,23 +422,62 @@ private struct WeiBeiBehindWindowMaterial: NSViewRepresentable {
     let mode: WeiBeiAppearanceMode
     let isFullScreen: Bool
 
+    final class Coordinator {
+        var apply: (() -> Void)?
+        private var observer: NSObjectProtocol?
+
+        func startObserving() {
+            guard observer == nil else { return }
+            observer = NotificationCenter.default.addObserver(
+                forName: WeiBeiThemeRuntime.glassIntensityDidChangeNotification,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                self?.apply?()
+            }
+        }
+
+        deinit {
+            if let observer {
+                NotificationCenter.default.removeObserver(observer)
+            }
+        }
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator()
+    }
+
     func makeNSView(context: Context) -> NSVisualEffectView {
         let view = NSVisualEffectView()
         view.blendingMode = .behindWindow
         view.state = .active
+        context.coordinator.startObserving()
         configure(view)
+        context.coordinator.apply = applyClosure(for: view)
         return view
     }
 
     func updateNSView(_ view: NSVisualEffectView, context: Context) {
         configure(view)
+        context.coordinator.apply = applyClosure(for: view)
+    }
+
+    /// 捕获当前 mode / isFullScreen 与实时玻璃浓度的应用闭包；滑杆变化时由
+    /// Coordinator 重放，SwiftUI 不重渲染主窗口也能生效。
+    private func applyClosure(for view: NSVisualEffectView?) -> () -> Void {
+        { [weak view] in
+            guard let view else { return }
+            view.material = mode.isDark
+                ? .hudWindow
+                : isFullScreen ? .windowBackground : .underWindowBackground
+            let baseAlpha: CGFloat = mode.isDark ? 0.68 : isFullScreen ? 0.88 : 0.36
+            view.alphaValue = baseAlpha * CGFloat(WeiBeiThemeRuntime.glassIntensity)
+        }
     }
 
     private func configure(_ view: NSVisualEffectView) {
-        view.material = mode.isDark
-            ? .hudWindow
-            : isFullScreen ? .windowBackground : .underWindowBackground
-        view.alphaValue = mode.isDark ? 0.68 : isFullScreen ? 0.88 : 0.36
+        applyClosure(for: view)()
     }
 }
 
