@@ -1,4 +1,5 @@
 import Foundation
+import WeiBeiCore
 
 @MainActor
 extension WorkspaceStore {
