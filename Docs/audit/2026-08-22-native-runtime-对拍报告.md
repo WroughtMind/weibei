@@ -34,45 +34,53 @@ swift build
 
 ## 3. 行为差分（12 场景）
 
-Pi 基线：`Docs/audit/2026-08-22-native-agent-runtime-Pi行为夹具/`。  
-Native 侧本轮用脚本夹具 + DeepSeek/ChatGPT 真闭环，**不是**同一 ChatGPT 会话上 pi/native 逐题对打（质量测评账号已按六步退出）。
+Pi 基线：`Docs/audit/2026-08-22-native-agent-runtime-Pi行为夹具/`（DeepSeek live）。  
+Native 确定性夹具：`WeiBeiPiCheck --native-scenario-pair` → `Docs/audit/2026-08-22-native-runtime-12场景对拍.json`（13/13 通过）。
 
-| 场景 | Pi 夹具 | Native | 高危差异 |
+| 场景 | Pi 夹具工具 | Native 脚本工具 | 高危差异 |
 |---|---|---|---|
-| 1 普通问答 | 01 答 4 | `--native-engine-smoke` / DeepSeek / ChatGPT 均非空 | 无 |
-| 2 课程搜索后回答 | 02 调了 search/read/map；宿主目录报错 | 脚本与 ChatGPT/DeepSeek live 均调用 `weibei_course_search` 后作答 | Pi 夹具有宿主目录错误，属基线环境，不记 native 回退 |
-| 3 课程正文 | 03 同样宿主错误 | 脚本 search-then-answer 含来源 | 未做 live 正文对打 |
-| 4 记忆读取 | 04 调 `weibei_learning_memory` | 工具已回迁；无 live 对打 | 未对打 |
-| 5 课程档案建议 | 05 调 profile_update | 工具已回迁；提案不落库 | 未对打 |
-| 6 笔记/关系建议 | 夹具有 | 工具已回迁；提案不落库 | 未对打 |
-| 7 可视化结构 | 夹具有 | `weibei_visualize` 仍在；技能包迁移后行为等价 | 不评生成质量 |
-| 8 图片输入 | 夹具有 | `weibei_visual_asset` 在 | 未 live 对打 |
-| 9 中途取消 | 09 | 脚本 / ChatGPT / DeepSeek live 均 `cancelled` | 无 |
-| 10 错误分类 | 10 unauthorized | Native `AgentFailureKind` 映射自测通过 | 结构一致 |
-| 11 续聊 | 11/12 | JSONL 账本回放自测通过 | 未 live 对打 |
-| 12 多工具 | 13 | 循环支持多 step | 未 live 对打 |
+| 1 普通问答 | 无 | 无，答 4 | 无 |
+| 2 课程搜索 | search/read/map（宿主目录报错） | `weibei_course_search` | Pi 基线环境错误，不记 native 回退 |
+| 3 课程正文 | read/map/search 报错 | `weibei_course_read` | 无（结构） |
+| 4 记忆读取 | `weibei_learning_memory` | 同 | 无 |
+| 5 课程档案 | `weibei_course_profile_update` | 同，提案不落库 | 无 |
+| 6 笔记/关系 | 有 | `note_proposal` + `relation_proposal`，待确认 | 无 |
+| 7 可视化 | 有 | `weibei_visualize` 合法 spec | 不评生成质量 |
+| 8 图片输入 | 有 | `weibei_visual_asset` | 无 |
+| 9 中途取消 | 有 | `cancelled` | 无 |
+| 10 错误分类 | unauthorized | 401 映射为登录文案（classify 现为 generic，文案含「认证已失效」） | 文案对，枚举名未完全对齐 |
+| 11–12 续聊 | 有 | 同账本 11 search → 12 纯文本 | 无 |
+| 13 多工具 | 有 | search + read 同轮 | 无 |
 
-结论：已 live 的问答 / 课程搜索 / 取消无高危回退。其余场景有工具与自测，缺同一模型双后端 live 账本 diff。
+luna+low live 评测里，课程搜索/正文/记忆/档案/笔记题也会调对应工具（见第 4 节日志）。未做 Pi 后端同一 `gpt-5.6-luna` 逐题对打。
 
 ## 4. 评测集质量
 
-- 草案 42 题：`Docs/audit/2026-08-22-native-agent-runtime-评测集草案.md` 与 `.json`。
-- 配置：**模型 `gpt-5.6-luna`，effort `low`**。命令 `WeiBeiPiCheck --native-eval`。
-- 本机 native OAuth 为 **signed-out**（第二棒六步要求退出无残留）。质量双评 **未跑**，不编造分数。
-- 独立 judge（Kimi）因此无双侧原文可评。
-- 重新登录后执行：`./.build/debug/WeiBeiPiCheck --native-eval`。
+- 42 题，模型 **`gpt-5.6-luna` + `low`**。命令 `WeiBeiPiCheck --native-eval`。
+- 2026-08-22 重新登录后跑完：**live-ran=40**（cancel/error 两题按设计跳过）。日志：`Docs/audit/2026-08-22-native-eval-luna-low.log`。
+- 闭式题从 prefix 看正确：`01→4`，`02→1/4`，`19→180`，`20→1191`，`23→10`，`34→-3`，`35→利率升债券跌`，`39→12.68%`。闲聊短、不灌讲义。课程题有 search/read。
+- **没有编造 5 分制分数**。独立 judge（Kimi）未评；Pi 后端未用 luna 再跑一遍。这不是双评均分，只是 native 单侧 live。
 
 ## 5. 性能
 
-未做 5 次中位 TTFT/内存实测。预期 native 少一个 Pi 进程；本报告不填假数。
+未做 5 次中位 TTFT/内存。`--native-eval` 40 题墙钟约 6.2 分钟（含工具题），不能当 TTFT 中位。
 
 ## 6. 体积
 
-未改发布脚本，未出「删 Pi」候选包。Pi 二进制约 72 MB 仍在。未压缩 `.app` ≤ 55 MB 的 go 门槛 **未测**。
+未改发布脚本，未组正式 `.app`。本机 `swift build -c release --product WeiBei`：
+
+| 件 | 大小 |
+|---|---|
+| Release `WeiBei` 二进制 | 30 MB |
+| `WeiBei_WeiBei.bundle` | 7.8 MB |
+| `WeiBei_WeiBeiCore.bundle` | 0.2 MB |
+| Pi 0.82.1 运行时 | 72 MB |
+
+不含 Pi 的二进制+资源约 **38 MB**，有望低于 55 MB 门槛，但完整 `.app`（Sparkle、图标、Helpers）未组装，**不能宣称已过门槛**。含 Pi 仍约 +72 MB。
 
 ## 7. ChatGPT OAuth 六步
 
-通过：登录 → 发消息（答 4）→ `weibei_course_search` → 中途取消 → 强制刷新 → 退出。`.bak` 残留已修。现为 signed-out。
+通过：登录 → 发消息（答 4）→ `weibei_course_search` → 中途取消 → 强制刷新 → 退出（含 `.bak` 擦除）。质量测评时再次登录，现为 signed-in。
 
 ## 8. 能力面三件套
 
@@ -89,18 +97,16 @@ Native 侧本轮用脚本夹具 + DeepSeek/ChatGPT 真闭环，**不是**同一 
 
 ## 9. 已知差异与风险
 
-- 质量双评与 12 场景全量 live 对拍缺 ChatGPT 登录。
+- 401 用户文案正确，但 `AgentFailureKind.classify` 对「认证已失效」仍可能落到 generic。
 - Azure / Vertex / Bedrock / Cloudflare 未覆盖。
-- Mistral 走官方 `/v1` 兼容，不是 Pi 的 Conversations API。
-- `#296` 占用 `WorkspaceStore.swift`；第三棒未再改该文件。
+- 无独立 judge 双评均分，无 Pi+luna 对照。
+- 完整 `.app` 体积未组装测量。
 - 本分支不删 Pi、不改发布脚本、不打标签。
 
 ## 10. go / no-go
 
-**条件 go，不能按 §5.5 全绿放行。**
+**仍是条件 go。**
 
-已满足：OAuth 六步、三件套演示、默认 pi 不改、DeepSeek/ChatGPT 三闭环、40 入口路由、CI 快速检查（测试修复后）。
+已有：OAuth 六步、三件套、默认 pi、DeepSeek/ChatGPT 三闭环、12 场景 native 脚本全绿、luna+low 40 题 native live、Release 二进制+资源约 38 MB（不含 Pi）。
 
-未满足：评测集 luna+low 双评分数、12 场景同一模型账本 diff、体积 ≤55 MB、性能表。
-
-建议：保持草稿；重新登录 ChatGPT 后跑 `--native-eval`（luna + low），再补体积测量。删除 Pi 仍需单独授权。
+仍缺：Kimi 双评均分、Pi/native 同一 luna 账本 diff、未压缩 `.app` 实装、性能中位。删除 Pi 需单独授权。保持草稿。

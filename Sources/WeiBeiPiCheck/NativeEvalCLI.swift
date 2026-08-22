@@ -63,6 +63,21 @@ enum NativeEvalCLI {
                 adapter: adapter,
                 ledgerRoot: root,
                 systemPromptText: (try? PiAgentResources.bundled().systemPrompt) ?? "you are webi",
+                hostToolHandler: { request in
+                    let item = StudyAgentCourseItem(
+                        id: "material-rates",
+                        title: "利率课程",
+                        subtitle: "",
+                        kind: "html",
+                        role: "material",
+                        searchText: "利率是资金使用价格的表达。"
+                    )
+                    _ = request
+                    return StudyAgentHostToolResult(
+                        query: "利率",
+                        items: [StudyAgentHostToolItem(item: item, sourceRevision: "rev-eval")]
+                    )
+                },
                 liveStores: liveStores
             )
             let reply = try await runtime.respond(
@@ -73,6 +88,24 @@ enum NativeEvalCLI {
                     materialText: "利率是资金使用价格的表达。",
                     noteTitle: "",
                     noteText: "",
+                    courseContext: StudyAgentCourseContext(
+                        title: "货币金融学",
+                        items: [
+                            StudyAgentCourseItem(
+                                id: "material-rates",
+                                title: "利率课程",
+                                subtitle: "",
+                                kind: "html",
+                                role: "material",
+                                searchText: "利率是资金使用价格的表达。"
+                            ),
+                        ]
+                    ),
+                    projectScope: StudyAgentProjectScope(
+                        kind: .course,
+                        chatID: UUID().uuidString.lowercased(),
+                        courseID: UUID().uuidString.lowercased()
+                    ),
                     contextRevision: "eval-\(id)"
                 ),
                 progress: nil

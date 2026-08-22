@@ -40,6 +40,10 @@ struct WeiBeiPiCheckMain {
             return
         }
 
+        if await NativeScenarioPair.runIfRequested(arguments: CommandLine.arguments) {
+            return
+        }
+
         if await NativeOAuthCLI.runIfRequested(arguments: CommandLine.arguments) {
             return
         }

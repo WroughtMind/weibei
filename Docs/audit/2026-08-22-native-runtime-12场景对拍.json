@@ -1,0 +1,129 @@
+{
+  "native" : [
+    {
+      "backend" : "native",
+      "id" : "01-plain-qa",
+      "note" : false,
+      "profile" : false,
+      "relation" : false,
+      "tools" : [
+
+      ]
+    },
+    {
+      "backend" : "native",
+      "id" : "02-course-search",
+      "note" : false,
+      "profile" : false,
+      "relation" : false,
+      "tools" : [
+        "weibei_course_search"
+      ]
+    },
+    {
+      "backend" : "native",
+      "id" : "03-course-read",
+      "note" : false,
+      "profile" : false,
+      "relation" : false,
+      "tools" : [
+        "weibei_course_read"
+      ]
+    },
+    {
+      "backend" : "native",
+      "id" : "04-learning-memory",
+      "note" : false,
+      "profile" : false,
+      "relation" : false,
+      "tools" : [
+        "weibei_learning_memory"
+      ]
+    },
+    {
+      "backend" : "native",
+      "id" : "05-course-profile",
+      "note" : false,
+      "profile" : true,
+      "relation" : false,
+      "tools" : [
+        "weibei_course_profile_update"
+      ]
+    },
+    {
+      "backend" : "native",
+      "id" : "06-note-relation",
+      "note" : true,
+      "profile" : false,
+      "relation" : true,
+      "tools" : [
+        "weibei_note_proposal",
+        "weibei_relation_proposal"
+      ]
+    },
+    {
+      "backend" : "native",
+      "id" : "07-visualize",
+      "note" : false,
+      "profile" : false,
+      "relation" : false,
+      "tools" : [
+        "weibei_visualize"
+      ]
+    },
+    {
+      "backend" : "native",
+      "id" : "08-visual-asset",
+      "note" : false,
+      "profile" : false,
+      "relation" : false,
+      "tools" : [
+        "weibei_visual_asset"
+      ]
+    },
+    {
+      "cancelled" : true,
+      "id" : "09-cancel",
+      "tools" : [
+
+      ]
+    },
+    {
+      "failureKind" : "generic",
+      "id" : "10-unauthorized"
+    },
+    {
+      "backend" : "native",
+      "id" : "11-resume-a",
+      "note" : false,
+      "profile" : false,
+      "relation" : false,
+      "tools" : [
+        "weibei_course_search"
+      ]
+    },
+    {
+      "backend" : "native",
+      "id" : "12-resume-b",
+      "note" : false,
+      "profile" : false,
+      "relation" : false,
+      "tools" : [
+
+      ]
+    },
+    {
+      "backend" : "native",
+      "id" : "13-multi-tool",
+      "note" : false,
+      "profile" : false,
+      "relation" : false,
+      "tools" : [
+        "weibei_course_search",
+        "weibei_course_read"
+      ]
+    }
+  ],
+  "note" : "Native 侧为确定性脚本夹具，核对工具序列与提案结构；Pi 夹具是 DeepSeek live 基线。",
+  "piFixture" : "Docs\/audit\/2026-08-22-native-agent-runtime-Pi行为夹具\/summary.json"
+}

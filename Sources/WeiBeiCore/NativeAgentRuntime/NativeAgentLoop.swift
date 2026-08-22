@@ -301,8 +301,20 @@ public actor NativeAgentLoop {
         if name == "weibei_learning_memory" {
             context.lastReadMemoryRevision = context.request.learningContext.memoryRevision
         }
+        if name == "weibei_learning_update" {
+            learningUpdate = StudyAgentLearningUpdate(
+                contextRevision: contextRevision,
+                memoryRevision: context.request.learningContext.memoryRevision
+            )
+        }
         if name == "weibei_course_profile_update" {
             context.courseProfileUpdated = true
+            courseProfileUpdate = StudyAgentCourseProfileUpdate(
+                contextRevision: contextRevision,
+                profileRevision: context.request.courseProfile.revision,
+                checkpoint: (details["checkpoint"] as? String) ?? "native",
+                entries: []
+            )
         }
         if name == "load_skill" || name == "read" {
             if let loaded = details["loaded"] as? [String: Any],

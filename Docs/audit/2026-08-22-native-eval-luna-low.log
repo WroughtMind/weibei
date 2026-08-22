@@ -1,0 +1,172 @@
+native-eval model=gpt-5.6-luna effort=low items=42 signed-in=true
+native-eval 01 scene=plain-qa tools= prefix=4
+native-eval 02 scene=plain-qa tools= prefix=\[
+\frac{3}{12}=\frac{1}{4}
+\]
+
+因为 3 和 12 的最大公因数是 3，同时除以 3 得到最简分数 \(\frac14\)。
+native-eval 03 scene=plain-qa tools= prefix=简单说：
+
+- **利率**：表示“利息占本金的比例”，是一个**百分比**。
+- **利息**：根据利率实际算出来的钱，是一笔**金额**。
+
+例如，你存入 
+native-eval 04 scene=course-search tools=weibei_course_search,weibei_course_read prefix=教材里「利率」这一节目前能确认的核心内容是：
+
+> **利率是资金使用价格的表达。**  
+> [材料：利率课程]
+
+也就是说，借用资金并不是免费的，利率就是使
+native-eval 05 scene=course-search tools=weibei_course_search,weibei_course_search,weibei_course_search prefix=目前课程搜索返回的结果里，只有一份材料：
+
+- **利率课程**
+
+但返回的匹配片段是“利率是资金使用价格的表达”，没有出现“准备金”。因此我暂时不能确认“准备
+native-eval 06 scene=course-read tools=weibei_course_search,weibei_course_read prefix=利率是资金使用价格的表达。 [材料：利率课程]
+native-eval 07 scene=course-read tools=weibei_course_read,weibei_course_read prefix=课文只提到：“利率是资金使用价格的表达。”[材料：利率课程]
+
+课文**没有说明“名义利率”和“实际利率”应如何区分**。
+native-eval 08 scene=memory tools=load_skill,weibei_learning_memory prefix=没有学习记忆记录，所以我不知道你上次看到哪一节。
+native-eval 09 scene=memory-update tools=weibei_learning_memory,weibei_learning_update prefix=我打算这样记录：
+
+> **学习进度：** 已理解复利的基本概念，知道收益会计入本金，并在后续周期继续产生收益。  
+> **依据：** 你明确表示“刚搞懂了复
+native-eval 10 scene=profile tools=weibei_course_map,weibei_course_read,weibei_course_profile_update prefix=知识档案建议暂未成功提交，系统返回了错误。
+
+本次建议内容是：
+
+- **已掌握：** 单利
+- **尚不熟悉：** 复利
+- **下一步：** 学习复利的计算
+native-eval 11 scene=note tools=weibei_course_search,weibei_note_proposal,weibei_note_proposal prefix=## 笔记建议：利率是资金使用价格
+
+利率可以理解为**资金使用的价格**：借款人使用资金，需要支付一定比例的费用；这个比例就是利率。
+
+**证据句：**  
+
+native-eval 12 scene=relation tools= prefix=可以。请把要关联的**笔记名称或 noteItemID** 发给我；“利率课文”作为材料还需要对应的 **sourceItemID**。确认这两项后，我会先生成
+native-eval 13 skipped scene=cancel
+native-eval 14 skipped scene=error
+native-eval 15 scene=resume tools= prefix=因为**债券的票面利息通常是固定的**，而市场利率会变化。
+
+举个例子：
+
+- 你持有一张债券，面值 100 元，每年固定支付 5 元利息，相当于 **5%收益
+native-eval 16 scene=multi-tool tools= prefix=截至 **2026年6月18日**，美联储联邦基金利率目标区间为 **3.50%–3.75%**。 ([federalreserve.gov](https://
+native-eval 17 scene=learning tools= prefix=检查复利期数，关键是先把**利率的周期**和**总时间的周期**统一。
+
+## 1. 先问自己：利率多久结算一次？
+
+复利公式是：
+
+\[
+A=P\left(1
+native-eval 18 scene=learning tools= prefix=可以，**口头上说“实际利率大概是 3%”通常没问题**，因为低通胀时常用近似：
+
+\[
+\text{实际利率} \approx \text{名义利率}-\te
+native-eval 19 scene=learning tools= prefix=单利利息 = 本金 × 年利率 × 年数  
+= 1000 × 6% × 3 = **180 元**。
+native-eval 20 scene=learning tools= prefix=本利和：
+
+\[
+1000(1+6\%)^3=1000\times1.06^3\approx1191
+\]
+
+**约为 1191 元。**
+native-eval 21 scene=learning tools= prefix=因为**“挂牌利率”通常只是利息价格的一部分，而你感受到的是整笔贷款的综合融资成本**。
+
+可以把它拆成几层：
+
+1. **挂牌利率不一定等于你的成交利率** 
+native-eval 22 scene=learning tools= prefix=不完全是同一件事，但核心都在说：**某种资产能不能快速交易，并且不明显改变价格**。
+
+- **货币里的流动性**：通常指市场中“钱是否充足、资金是否容易获得”
+native-eval 23 scene=learning tools= prefix=简单存款乘数上限为：
+
+\[
+\frac{1}{准备金率}=\frac{1}{10\%}=10
+\]
+
+所以，**简单存款乘数上限是 10 倍**。
+native-eval 24 scene=learning tools= prefix=**更可能跌。**
+
+因为你手里的旧债券票面利率通常是固定的。央行加息后，新发行债券往往提供更高利率，投资者就不愿意按原价买低利率的旧债券；旧债券只能通过**降
+native-eval 25 scene=chat tools= prefix=那今天就先不学了。累的时候，休息不是偷懒，是给自己充电——去喝点水，躺一会儿，什么都不用证明。陪你安静待两句也行。
+native-eval 26 scene=chat tools= prefix=明天早上可以这样安排 **20 分钟利率阅读**：
+
+- **0–3 分钟：回顾概念**  
+  写下或回想：利率是什么？它影响谁？最常见的利率有哪些？
+
+- 
+native-eval 27 scene=chat tools= prefix=**机会成本**，就是：
+
+> 你选择了一件事，就等于放弃了“本来可以选、而且最值得选的另一件事”。
+
+比如：
+
+- 你晚上花两小时看电影，就放弃了用这两小时复
+native-eval 28 scene=chat tools= prefix=不是。**贴现本来就容易绕**，因为它要你反着理解时间：不是问“现在的钱以后值多少”，而是问“以后的钱放到今天值多少”。
+
+最简单的例子：
+
+- 你一年后能拿到
+native-eval 29 scene=deep tools= prefix=先区分一句：**“负利率”可能指名义利率为负，也可能指实际利率为负**。下面主要按“名义利率为负”讲；如果只是实际利率为负，方向类似，但未必会出现银行倒贴给你贷
+native-eval 30 scene=deep tools= prefix=两种看法都可能成立，关键在于**时间尺度和价格、工资是否能调整**。
+
+- **短期：货币会改变实际产出。**  
+  如果价格和工资有黏性，货币供给增加会先推
+native-eval 31 scene=deep tools= prefix=可以按这个顺序讲：**先讲“它服务谁”，再讲“它做什么”，最后讲“它为什么不像普通银行”。**
+
+## 1. 先从普通银行讲起
+
+先问朋友：
+
+> “你把钱存进
+native-eval 32 scene=deep tools= prefix=三个常见错误：
+
+1. **把“利率高，利息一定更多”直接套用**  
+   忽略了本金和计息时间。利息取决于本金、利率和期限；小额高利率未必超过大额低利率。
+
+native-eval 33 scene=plain-qa tools= prefix=中国法定节假日中的**元旦是每年1月1日**。
+native-eval 34 scene=plain-qa tools= prefix=解方程：
+
+\[
+2x+6=0
+\]
+
+\[
+2x=-6
+\]
+
+\[
+x=-3
+\]
+
+答案：\(\boxed{x=-3}\)
+native-eval 35 scene=learning tools= prefix=不对。通常情况下，**利率上升，债券价格下降**。
+native-eval 36 scene=course-search tools=weibei_course_search prefix=没搜到专门讲**通货膨胀**的材料。目前只找到一份《利率课程》，其中有“利率是资金使用价格的表达”这条内容，但不能据此说它专门讲通货膨胀。
+native-eval 37 scene=chat tools= prefix=章鱼有三个心脏，但它们也会偷懒：**章鱼游泳时，负责把血液送到全身的那颗心脏会暂时停止跳动**。
+
+所以章鱼更喜欢“走路”——不是因为优雅，而是因为游泳太累，甚
+native-eval 38 scene=deep tools= prefix=可以把它们先压缩成一句话：
+
+- **风险**：你知道可能发生什么，并且大致能估计发生概率和后果。
+- **不确定性**：你连可能发生什么、概率多大，或信息是否
+native-eval 39 scene=learning tools= prefix=有效年利率：
+
+\[
+\left(1+\frac{12\%}{12}\right)^{12}-1
+= (1.01)^{12}-1
+\approx 12.68\%
+native-eval 40 scene=plain-qa tools= prefix=中位数是一组按大小排列的数据中位于正中间的数。
+native-eval 41 scene=resume tools= prefix=会，但要区分**“现金”**和**“现金等价物”**，也区分三层传导：
+
+## 第一层：价格层——持有现金的机会成本变成显性费用
+
+在正利率环境里，现金的成本通
+native-eval 42 scene=learning tools=weibei_course_search prefix=只剩 15 分钟，优先看这三个点：
+
+1. **利率的含义与作用**  
+   利率本质上是资金使用价格，表示借款人使用资金的成本，也是贷款人的收益。[材料：利
+native-eval live-ran=40 model=gpt-5.6-luna effort=low
