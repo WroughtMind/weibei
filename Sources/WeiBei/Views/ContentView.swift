@@ -689,41 +689,29 @@ private struct UnifiedTopBarView: View {
     }
 
     private var paneToggleCluster: some View {
-        HStack(spacing: max(5, topBarSpacing - 1)) {
-            topIconButton(
-                "doc.text",
+        WeiBeiSegmentedControl(segments: [
+            WeiBeiSegmentedControl.Segment(
+                id: "reader",
+                systemImage: "doc.text",
                 help: store.isPaneToggleActive(.reader) ? store.ui("隐藏文稿", "Hide document") : store.ui("显示文稿", "Show document"),
-                active: store.isPaneToggleActive(.reader)
-            ) {
-                store.toggleReader()
-            }
-
-            topIconButton(
-                "bubble.left.and.text.bubble.right",
+                isSelected: store.isPaneToggleActive(.reader),
+                action: store.toggleReader
+            ),
+            WeiBeiSegmentedControl.Segment(
+                id: "agent",
+                systemImage: "bubble.left.and.text.bubble.right",
                 help: agentPaneToggleHelp,
-                active: store.isPaneToggleActive(.agent)
-            ) {
-                store.toggleAgent()
-            }
-
-            topIconButton(
-                "note.text",
+                isSelected: store.isPaneToggleActive(.agent),
+                action: store.toggleAgent
+            ),
+            WeiBeiSegmentedControl.Segment(
+                id: "notes",
+                systemImage: "note.text",
                 help: store.isPaneToggleActive(.notes) ? store.ui("隐藏笔记", "Hide notes") : store.ui("显示笔记", "Show notes"),
-                active: store.isPaneToggleActive(.notes)
-            ) {
-                store.toggleNotes()
-            }
-        }
-        .padding(.horizontal, 4)
-        .frame(height: controlHeight)
-        .background {
-            Capsule()
-                .fill(controlFill.opacity(0.62))
-                .overlay {
-                    Capsule()
-                        .stroke(WeiBeiTheme.glassHighlight.opacity(0.16), lineWidth: 1)
-                }
-        }
+                isSelected: store.isPaneToggleActive(.notes),
+                action: store.toggleNotes
+            ),
+        ])
     }
 
     private var agentPaneToggleHelp: String {
