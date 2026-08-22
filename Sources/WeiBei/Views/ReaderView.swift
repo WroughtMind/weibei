@@ -3394,13 +3394,6 @@ struct ContextualContentPicker: View {
                             .weiBeiText(12)
                             .foregroundStyle(WeiBeiTheme.secondaryInk)
                             .frame(height: 54)
-                        Button(emptyImportTitle) {
-                            importIntoCurrentLevel()
-                        }
-                        .buttonStyle(.plain)
-                        .weiBeiText(11.5, weight: .medium)
-                        .foregroundStyle(WeiBeiTheme.cinnabar.opacity(0.88))
-                        .padding(.bottom, 8)
                     } else {
                         ForEach(visibleRows) { row in
                             rowButton(row)
@@ -3417,6 +3410,16 @@ struct ContextualContentPicker: View {
                         .foregroundStyle(WeiBeiTheme.secondaryInk)
                         .padding(.top, 3)
                     }
+
+                    // 导入入口常驻列表底部：文稿/笔记窗口里打开列表任何时刻都能导入，
+                    // 不再只在列表为空时出现（有内容的用户看不到空分支）。
+                    Button(emptyImportTitle) {
+                        importIntoCurrentLevel()
+                    }
+                    .buttonStyle(.plain)
+                    .weiBeiText(11.5, weight: .medium)
+                    .foregroundStyle(WeiBeiTheme.cinnabar.opacity(0.88))
+                    .padding(.top, 6)
                 }
                 .frame(maxWidth: min(420, max(240, geometry.size.width - 48)))
                 .padding(.horizontal, 24)
