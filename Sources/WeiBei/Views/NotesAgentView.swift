@@ -3294,6 +3294,7 @@ private struct AgentBubble: View {
                         )
                     }
                 }
+                .onAppear { WeiBeiPerf.event("agent.mdrow", extra: "where=bubblePlain msg=\(message.id.uuidString.prefix(8)) streaming=\(message.completionState == .generating ? 1 : 0) textlen=\(citationParse.displayText.count) blocks=\(message.contentBlocks.count)") }
             }
             if !availableSources.isEmpty {
                 AgentReplySourceTagRow(sources: availableSources) { source in
@@ -3455,6 +3456,7 @@ private struct AgentBubble: View {
                 keepsMarkdownSurfaceMounted: !isFailureMessage,
                 isStreaming: message.completionState == .generating
             )
+            .onAppear { WeiBeiPerf.event("agent.mdrow", extra: "where=vizFallback msg=\(message.id.uuidString.prefix(8)) textlen=\(fallbackText.count) blocks=\(message.contentBlocks.count)") }
         }
         ForEach(Array(message.contentBlocks.enumerated()), id: \.offset) { _, block in
             switch block {
@@ -3468,6 +3470,7 @@ private struct AgentBubble: View {
                         keepsMarkdownSurfaceMounted: !isFailureMessage,
                         isStreaming: message.completionState == .generating
                     )
+                    .onAppear { WeiBeiPerf.event("agent.mdrow", extra: "where=vizBlockText msg=\(message.id.uuidString.prefix(8)) textlen=\(text.count)") }
                 }
             case let .visualization(fragment):
                 AgentVisualizationView(
@@ -5762,6 +5765,7 @@ private struct AgentStreamingResponse: View {
         .padding(.leading, compact ? 0 : 20)
         .padding(.trailing, compact ? 0 : 8)
         .frame(maxWidth: .infinity, alignment: .leading)
+        .onAppear { WeiBeiPerf.event("agent.mdrow", extra: "where=liveRow textlen=\(text.count) compact=\(compact ? 1 : 0)") }
         .accessibilityLabel(Text(store.ui("魏碑正在回答", "WeiBei is responding")))
     }
 }
