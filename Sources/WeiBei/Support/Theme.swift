@@ -1642,6 +1642,57 @@ extension View {
             .animation(WeiBeiMotion.reveal, value: active)
     }
 
+    /// Chat composer card: the etched input-surface treatment scaled up —
+    /// top inner light, bottom inner shade, hairline frame, and a two-layer
+    /// shadow (tight contact + soft ambient) so the card sits on the thread
+    /// instead of floating flat. Keeps the shape handed in via `cornerRadius`.
+    func weibeiComposerCard(
+        cornerRadius: CGFloat,
+        focused: Bool,
+        showsChrome: Bool = true
+    ) -> some View {
+        let dark = WeiBeiThemeRuntime.mode.isDark
+        let glass = WeiBeiThemeRuntime.mode.isGlass
+        return self
+            .background {
+                if showsChrome {
+                    ZStack {
+                        RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                            .fill(WeiBeiTheme.paperRaised.opacity(dark ? 0.40 : 0.62))
+                        RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                            .fill(.ultraThinMaterial)
+                            .opacity(glass ? 0.06 : 0.02)
+                    }
+                }
+            }
+            .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+            .overlay(alignment: .top) {
+                if showsChrome {
+                    RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                        .stroke(WeiBeiTheme.glassHighlight.opacity(dark ? 0.20 : 0.26), lineWidth: 1)
+                        .padding(1)
+                }
+            }
+            .overlay(alignment: .bottom) {
+                if showsChrome {
+                    RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                        .stroke(WeiBeiTheme.paperInset.opacity(dark ? 0.38 : 0.32), lineWidth: 1)
+                        .padding(0.5)
+                }
+            }
+            .overlay {
+                if showsChrome {
+                    RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                        .stroke(
+                            focused ? WeiBeiTheme.link.opacity(0.32) : WeiBeiTheme.hairline.opacity(0.55),
+                            lineWidth: 1
+                        )
+                }
+            }
+            .shadow(color: WeiBeiTheme.ink.opacity(showsChrome ? 0.07 : 0), radius: 2, y: 1)
+            .shadow(color: WeiBeiTheme.ink.opacity(showsChrome ? 0.05 : 0), radius: 10, y: 3)
+    }
+
     func weibeiFloatingPanel(cornerRadius: CGFloat = 8, shadowOpacity: Double = 0.10) -> some View {
         let isGlass = WeiBeiThemeRuntime.mode.isGlass
         return self

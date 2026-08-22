@@ -348,28 +348,12 @@ private struct AgentComposerField: View {
             alignment: .topLeading
         )
         .fixedSize(horizontal: false, vertical: true)
-        .background {
-            if showsChrome {
-                // ChatGPT-like: same paper as the thread, lifted only by a soft
-                // border and a whisper of shadow — no fill-color seam.
-                RoundedRectangle(cornerRadius: corner, style: .continuous)
-                    .fill(WeiBeiTheme.paperRaised.opacity(store.appearanceMode.isDark ? 0.34 : 0.5))
-            }
-        }
-        .clipShape(RoundedRectangle(cornerRadius: corner, style: .continuous))
-        .overlay {
-            if showsChrome {
-                RoundedRectangle(cornerRadius: corner, style: .continuous)
-                    .stroke(
-                        focused.wrappedValue ? WeiBeiTheme.hairline.opacity(0.9) : WeiBeiTheme.hairline.opacity(0.55),
-                        lineWidth: 1
-                    )
-            }
-        }
-        .shadow(
-            color: showsChrome ? WeiBeiTheme.ink.opacity(0.05) : .clear,
-            radius: showsChrome ? 10 : 0,
-            y: showsChrome ? 3 : 0
+        // Etched paper card: graded fill + inner light/shade + hairline frame
+        // + two-layer shadow (see weibeiComposerCard), same shape as before.
+        .weibeiComposerCard(
+            cornerRadius: corner,
+            focused: focused.wrappedValue,
+            showsChrome: showsChrome
         )
         .contentShape(Rectangle())
         .onTapGesture {
