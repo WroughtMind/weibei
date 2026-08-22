@@ -27,8 +27,9 @@ final class NativeAgentRuntimeTests: XCTestCase {
         try await ledger.synthesizeCloserIfNeeded()
         let reloaded = try NativeAgentLedger(fileURL: url)
         let events = await reloaded.allEvents()
+        let messages = await reloaded.deriveMessages()
         XCTAssertEqual(events.last?.type, .closer)
-        XCTAssertEqual(await reloaded.deriveMessages().first?.content, "hi")
+        XCTAssertEqual(messages.first?.content, "hi")
     }
 
     func testCredentialPermissionsAndBackup() throws {

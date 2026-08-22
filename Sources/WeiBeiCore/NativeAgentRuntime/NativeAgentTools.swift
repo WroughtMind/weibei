@@ -97,6 +97,12 @@ public struct NativeToolCallRequest: Sendable {
     public var name: String
     public var argumentsJSON: String
     public var callID: String
+
+    public init(name: String, argumentsJSON: String, callID: String) {
+        self.name = name
+        self.argumentsJSON = argumentsJSON
+        self.callID = callID
+    }
 }
 
 public actor NativeToolRegistry {
