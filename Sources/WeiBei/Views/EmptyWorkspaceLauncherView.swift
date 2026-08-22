@@ -87,7 +87,7 @@ struct EmptyWorkspaceLauncherView: View {
             1,
             min(EmptyWorkspaceLayoutMetrics.contentMaxWidth, availableSize.width - horizontalPadding * 2)
         )
-        let entryHeight: CGFloat = compact ? 84 : 98
+        let entryHeight: CGFloat = (compact ? 84 : 98) * textScale
         let entryCenterRatio: CGFloat = store.showDailyInspiration ? EmptyWorkspaceLayoutMetrics.entryCenterRatio : 0.5
         let entryCenterY = clampedCenterY(
             ratio: entryCenterRatio,
@@ -113,7 +113,7 @@ struct EmptyWorkspaceLauncherView: View {
             entryCluster(
                 at: date,
                 compact: compact,
-                spacing: store.showDailyInspiration ? (compact ? 18 : 26) : (compact ? 16 : 29),
+                spacing: (store.showDailyInspiration ? (compact ? 18 : 26) : (compact ? 16 : 29)) * textScale,
                 entryWidth: entryWidth
             )
             .frame(width: contentWidth)
@@ -257,6 +257,7 @@ struct EmptyWorkspacePaperField: View {
 
 private struct EmptyWorkspaceEntryRow: View {
     @EnvironmentObject private var store: WorkspaceStore
+    @Environment(\.weiBeiTextScale) private var textScale
     let entryWidth: CGFloat
 
     var body: some View {
@@ -296,13 +297,14 @@ private struct EmptyWorkspaceEntryRow: View {
     private var entryDivider: some View {
         Rectangle()
             .fill(WeiBeiTheme.hairline.opacity(0.78))
-            .frame(width: 1, height: 18)
+            .frame(width: 1, height: 18 * textScale)
             .accessibilityHidden(true)
     }
 }
 
 private struct EmptyWorkspaceEntryButton: View {
     @Environment(\.weibeiReduceMotion) private var reduceMotion
+    @Environment(\.weiBeiTextScale) private var textScale
 
     let title: String
     let accessibilityLabel: String
@@ -317,26 +319,26 @@ private struct EmptyWorkspaceEntryButton: View {
         let active = focused || hovering
 
         Button(action: action) {
-            VStack(spacing: 2) {
+            VStack(spacing: 2 * textScale) {
                 Text(title)
-                    .font(WeiBeiTypography.englishBrandFont(size: 22, weight: .semibold))
-                    .tracking(active ? 3.5 : 2.2)
+                    .weiBeiEnglishBrandFont(size: 22, weight: .semibold)
+                    .tracking((active ? 3.5 : 2.2) * textScale)
                     .foregroundStyle(active ? WeiBeiTheme.ink : WeiBeiTheme.secondaryInk.opacity(0.88))
-                    .offset(y: active && !reduceMotion ? -2.5 : 0)
+                    .offset(y: active && !reduceMotion ? -2.5 * textScale : 0)
 
                 ZStack {
                     Rectangle()
                         .fill(WeiBeiTheme.hairline.opacity(0.52))
-                        .frame(width: active ? 42 : 14, height: 1)
+                        .frame(width: (active ? 42 : 14) * textScale, height: 1)
 
                     Rectangle()
                         .fill(WeiBeiTheme.ink.opacity(focused ? 0.64 : hovering ? 0.42 : 0))
-                        .frame(width: active ? 32 : 0, height: 1)
+                        .frame(width: (active ? 32 : 0) * textScale, height: 1)
                 }
-                .frame(height: 4)
+                .frame(height: 4 * textScale)
                 .opacity(active ? 1 : 0.72)
             }
-            .frame(width: width, height: 52)
+            .frame(width: width * textScale, height: 52 * textScale)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
