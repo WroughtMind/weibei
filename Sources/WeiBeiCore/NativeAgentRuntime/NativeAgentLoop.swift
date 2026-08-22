@@ -63,6 +63,8 @@ public actor NativeAgentLoop {
         var relationProposal: StudyAgentRelationProposal?
         var learningUpdate: StudyAgentLearningUpdate?
         var courseProfileUpdate: StudyAgentCourseProfileUpdate?
+        var appliedMemoryUpdate: AgentReplyMemoryUpdate?
+        var appliedProfileUpdate: AgentReplyProfileUpdate?
         var richAnswer: RichAnswerPresentation?
         var loadedSkills: [StudyAgentLoadedSkill] = []
         var readItemIDs: [String] = []
@@ -179,6 +181,8 @@ public actor NativeAgentLoop {
                         relationProposal: &relationProposal,
                         learningUpdate: &learningUpdate,
                         courseProfileUpdate: &courseProfileUpdate,
+                        appliedMemoryUpdate: &appliedMemoryUpdate,
+                        appliedProfileUpdate: &appliedProfileUpdate,
                         richAnswer: &richAnswer,
                         loadedSkills: &loadedSkills,
                         readItemIDs: &readItemIDs,
@@ -214,6 +218,8 @@ public actor NativeAgentLoop {
                 relationProposal: relationProposal,
                 learningUpdate: learningUpdate,
                 courseProfileUpdate: courseProfileUpdate,
+                appliedMemoryUpdate: appliedMemoryUpdate,
+                appliedProfileUpdate: appliedProfileUpdate,
                 richAnswer: richAnswer,
                 loadedSkills: loadedSkills,
                 readItemIDs: readItemIDs
@@ -271,6 +277,8 @@ public actor NativeAgentLoop {
         relationProposal: inout StudyAgentRelationProposal?,
         learningUpdate: inout StudyAgentLearningUpdate?,
         courseProfileUpdate: inout StudyAgentCourseProfileUpdate?,
+        appliedMemoryUpdate: inout AgentReplyMemoryUpdate?,
+        appliedProfileUpdate: inout AgentReplyProfileUpdate?,
         richAnswer: inout RichAnswerPresentation?,
         loadedSkills: inout [StudyAgentLoadedSkill],
         readItemIDs: inout [String],
@@ -318,9 +326,15 @@ public actor NativeAgentLoop {
         }
         if name == "weibei_update_learning_memory" {
             learningUpdate = StudyAgentProposalDecoding.learningUpdate(from: details)
+            if let applied = memoryApplyReceipt(from: details) {
+                appliedMemoryUpdate = applied
+            }
         }
         if name == "weibei_course_profile_update" {
             courseProfileUpdate = StudyAgentProposalDecoding.courseProfileUpdate(from: details)
+            if let applied = profileApplyReceipt(from: details) {
+                appliedProfileUpdate = applied
+            }
         }
         if name == "weibei_visualize",
            let id = details["id"] as? String,
@@ -353,6 +367,29 @@ public actor NativeAgentLoop {
             }
         }
     }
+
+    private func memoryApplyReceipt(from details: [String: Any]) -> AgentReplyMemoryUpdate? {
+        guard let applied = details["appliedMemoryUpdate"] as? [String: Any],
+              let rawIDs = applied["memoryIDs"] as? [String] else { return nil }
+        let ids = rawIDs.compactMap { UUID(uuidString: $0) }
+        guard !ids.isEmpty else { return nil }
+        return AgentReplyMemoryUpdate(
+            memoryIDs: ids,
+            summary: applied["summary"] as? String ?? ""
+        )
+    }
+
+    private func profileApplyReceipt(from details: [String: Any]) -> AgentReplyProfileUpdate? {
+        guard let applied = details["appliedProfileUpdate"] as? [String: Any],
+              let rawIDs = applied["entryIDs"] as? [String] else { return nil }
+        let ids = rawIDs.compactMap { UUID(uuidString: $0) }
+        guard !ids.isEmpty else { return nil }
+        return AgentReplyProfileUpdate(
+            entryIDs: ids,
+            summary: applied["summary"] as? String ?? "",
+            texts: applied["texts"] as? [String] ?? []
+        )
+    }
 }
 
 public struct NativeLoopResult: Sendable {
@@ -364,6 +401,8 @@ public struct NativeLoopResult: Sendable {
     public var relationProposal: StudyAgentRelationProposal?
     public var learningUpdate: StudyAgentLearningUpdate?
     public var courseProfileUpdate: StudyAgentCourseProfileUpdate?
+    public var appliedMemoryUpdate: AgentReplyMemoryUpdate?
+    public var appliedProfileUpdate: AgentReplyProfileUpdate?
     public var richAnswer: RichAnswerPresentation?
     public var loadedSkills: [StudyAgentLoadedSkill]
     public var readItemIDs: [String]

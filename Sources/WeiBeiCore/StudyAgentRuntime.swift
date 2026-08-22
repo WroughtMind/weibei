@@ -751,6 +751,8 @@ public struct StudyAgentReply: Equatable, Sendable {
     public var relationProposal: StudyAgentRelationProposal?
     public var learningUpdate: StudyAgentLearningUpdate?
     public var courseProfileUpdate: StudyAgentCourseProfileUpdate?
+    public var appliedMemoryUpdate: AgentReplyMemoryUpdate?
+    public var appliedProfileUpdate: AgentReplyProfileUpdate?
     public var loadedSkills: [StudyAgentLoadedSkill]
     public var readItemIDs: [String]
     public var toolTrace: [String]
@@ -765,6 +767,8 @@ public struct StudyAgentReply: Equatable, Sendable {
         relationProposal: StudyAgentRelationProposal? = nil,
         learningUpdate: StudyAgentLearningUpdate? = nil,
         courseProfileUpdate: StudyAgentCourseProfileUpdate? = nil,
+        appliedMemoryUpdate: AgentReplyMemoryUpdate? = nil,
+        appliedProfileUpdate: AgentReplyProfileUpdate? = nil,
         loadedSkills: [StudyAgentLoadedSkill] = [],
         readItemIDs: [String] = [],
         toolTrace: [String] = []
@@ -778,6 +782,8 @@ public struct StudyAgentReply: Equatable, Sendable {
         self.relationProposal = relationProposal
         self.learningUpdate = learningUpdate
         self.courseProfileUpdate = courseProfileUpdate
+        self.appliedMemoryUpdate = appliedMemoryUpdate
+        self.appliedProfileUpdate = appliedProfileUpdate
         self.loadedSkills = loadedSkills
         self.readItemIDs = readItemIDs
         self.toolTrace = toolTrace

@@ -15227,9 +15227,17 @@ final class WorkspaceStore: ObservableObject {
             }
             let memoryID: UUID?
             let scope: LearningMemoryScope
-            if let rawMemoryID = proposal.memoryID {
-                guard let parsedMemoryID = UUID(uuidString: rawMemoryID),
-                      entryTargetIDs.insert(parsedMemoryID).inserted,
+            switch Self.parseOptionalRecordID(proposal.memoryID) {
+            case .omitted:
+                memoryID = nil
+                scope = learningMemoryScope(
+                    for: proposal.kind,
+                    courseID: target.courseID
+                )
+            case .invalid:
+                return nil
+            case .id(let parsedMemoryID):
+                guard entryTargetIDs.insert(parsedMemoryID).inserted,
                       let located = locatedMemory(parsedMemoryID),
                       located.2.status == .active,
                       located.0 == learningMemoryScope(
@@ -15245,12 +15253,6 @@ final class WorkspaceStore: ObservableObject {
                 }
                 memoryID = parsedMemoryID
                 scope = located.0
-            } else {
-                memoryID = nil
-                scope = learningMemoryScope(
-                    for: proposal.kind,
-                    courseID: target.courseID
-                )
             }
             validatedEntries.append(
                 (
@@ -15511,9 +15513,16 @@ final class WorkspaceStore: ObservableObject {
         var replacements: [(UUID?, CourseKnowledgeProfileEntry)] = []
         let now = Date()
         for proposal in update.entries {
-            let entryID = proposal.entryID.flatMap(UUID.init(uuidString:))
-            guard proposal.entryID == nil || entryID != nil,
-                  entryID.map(existingIDs.contains) ?? true,
+            let entryID: UUID?
+            switch Self.parseOptionalRecordID(proposal.entryID) {
+            case .omitted:
+                entryID = nil
+            case .invalid:
+                return nil
+            case .id(let parsed):
+                entryID = parsed
+            }
+            guard entryID.map(existingIDs.contains) ?? true,
                   entryID.map({ targetIDs.insert($0).inserted }) ?? true else { return nil }
             var sources: [CourseKnowledgeProfileSource] = []
             for source in proposal.sources {
@@ -15579,6 +15588,75 @@ final class WorkspaceStore: ObservableObject {
             summary: texts.prefix(3).joined(separator: "；"),
             texts: texts
         )
+    }
+
+    private enum OptionalRecordID {
+        case omitted
+        case invalid
+        case id(UUID)
+    }
+
+    private static func parseOptionalRecordID(_ raw: String?) -> OptionalRecordID {
+        let trimmed = raw?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if trimmed.isEmpty { return .omitted }
+        guard let id = UUID(uuidString: trimmed) else { return .invalid }
+        return .id(id)
+    }
+
+    func persistNativeLearningUpdate(
+        _ update: StudyAgentLearningUpdate,
+        expectedContextRevision: String,
+        expectedUserQuestion: String,
+        target: AgentConversationTarget,
+        messageID: UUID
+    ) -> NativeStorePersistReceipt {
+        if let applied = applyLearningUpdate(
+            update,
+            expectedContextRevision: expectedContextRevision,
+            expectedMemoryRevision: update.memoryRevision,
+            expectedUserQuestion: expectedUserQuestion,
+            target: target,
+            messageID: messageID
+        ) {
+            return NativeStorePersistReceipt(
+                accepted: true,
+                message: "已写入学习记忆",
+                memoryUpdate: applied
+            )
+        }
+        let hasClientID = update.entries.contains {
+            !($0.memoryID?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "").isEmpty
+        }
+        if hasClientID {
+            return .rejected("魏碑没有保存这次学习记忆。更新只能沿用 weibei_read_learning_memory 返回的 memoryID；新建请省略该字段，不要传空字符串，也不要自己编 UUID。")
+        }
+        return .rejected("魏碑没有保存这次学习记忆。用户自述请用 origin=userStatement，evidence 以「[用户：本轮]」开头并带上用户原话。")
+    }
+
+    func persistNativeCourseProfileUpdate(
+        _ update: StudyAgentCourseProfileUpdate,
+        expectedContextRevision: String,
+        target: AgentConversationTarget
+    ) -> NativeStorePersistReceipt {
+        if let applied = applyCourseProfileUpdate(
+            update,
+            expectedContextRevision: expectedContextRevision,
+            expectedProfileRevision: update.profileRevision,
+            target: target
+        ) {
+            return NativeStorePersistReceipt(
+                accepted: true,
+                message: "已写入课程知识档案",
+                profileUpdate: applied
+            )
+        }
+        let hasClientID = update.entries.contains {
+            !($0.entryID?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "").isEmpty
+        }
+        if hasClientID {
+            return .rejected("魏碑没有保存这次课程档案。更新只能沿用当前档案已有条目的 entryID；新建请省略该字段，不要传空字符串，也不要自己编 UUID。")
+        }
+        return .rejected("魏碑没有保存这次课程档案。自述掌握用 kind=concept、text 以「用户自述：」开头、checkpoint=userRequested。")
     }
 
     func isLearningMemoryResolved(_ memoryID: String, in scope: LearningMemoryScope) -> Bool {
@@ -16566,7 +16644,7 @@ final class WorkspaceStore: ObservableObject {
             if activeStudySessionID == target.sessionID {
                 latestAgentNoteProposal = reply.noteProposal
             }
-            let memoryUpdate = applyLearningUpdate(
+            let memoryUpdate = reply.appliedMemoryUpdate ?? applyLearningUpdate(
                 reply.learningUpdate,
                 expectedContextRevision: request.contextRevision,
                 expectedMemoryRevision: requestMemoryRevision,
@@ -16574,7 +16652,7 @@ final class WorkspaceStore: ObservableObject {
                 target: target,
                 messageID: assistantMessage.id
             )
-            let profileUpdate = applyCourseProfileUpdate(
+            let profileUpdate = reply.appliedProfileUpdate ?? applyCourseProfileUpdate(
                 reply.courseProfileUpdate,
                 expectedContextRevision: request.contextRevision,
                 expectedProfileRevision: sentCourseProfile.revision,

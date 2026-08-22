@@ -110,6 +110,8 @@ public actor NativeStudyAgentRuntime: StudyAgentRuntime {
                 relationProposal: result.relationProposal,
                 learningUpdate: result.learningUpdate,
                 courseProfileUpdate: result.courseProfileUpdate,
+                appliedMemoryUpdate: result.appliedMemoryUpdate,
+                appliedProfileUpdate: result.appliedProfileUpdate,
                 loadedSkills: result.loadedSkills,
                 readItemIDs: result.readItemIDs,
                 toolTrace: result.toolTrace

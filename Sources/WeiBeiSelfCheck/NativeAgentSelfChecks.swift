@@ -36,6 +36,23 @@ private func nativeRequire(_ condition: @autoclosure () throws -> Bool, _ messag
     }
 }
 
+private final class NativePersistProbe: @unchecked Sendable {
+    private let lock = NSLock()
+    private var stored: [StudyAgentLearningUpdate] = []
+
+    func append(_ update: StudyAgentLearningUpdate) {
+        lock.lock()
+        stored.append(update)
+        lock.unlock()
+    }
+
+    var updates: [StudyAgentLearningUpdate] {
+        lock.lock()
+        defer { lock.unlock() }
+        return stored
+    }
+}
+
 private func jsonObject(_ raw: Any?) -> [String: Any]? {
     if let object = raw as? [String: Any] { return object }
     if let object = raw as? [String: String] {
@@ -452,9 +469,14 @@ private func checkMemoryPreviewWriteContract() throws {
         "read tool tells the model not to use it for recording"
     )
     try nativeRequire(
+        system.contains("不要传空字符串") && system.contains("不要自己编 UUID"),
+        "system.md forbids empty and invented memory IDs"
+    )
+    try nativeRequire(
         writeTool?.description.contains("不要直接改") == true
-            && writeTool?.description.contains("weibei_read_learning_memory") == true,
-        "write tool says preview-write phrasing still requires calling it"
+            && writeTool?.description.contains("weibei_read_learning_memory") == true
+            && writeTool?.description.contains("不要传空字符串") == true,
+        "write tool says preview-write phrasing still requires calling it and forbids empty IDs"
     )
 }
 
@@ -709,6 +731,163 @@ private func checkNativeProductContract() throws {
     try nativeRequire(
         StudyAgentCurrentTurnEvidence.matches(learning.entries[0].evidence, question: question),
         "Store evidence gate accepts this turn's user statement"
+    )
+
+    let blankIDJSON = """
+    {"contextRevision":"\(revision)","memoryRevision":3,"suggestedNext":[],"entries":[{"memoryID":"","kind":"understood","text":"用户自述：刚搞懂了复利。","evidence":"[用户：本轮] \(question)","origin":"userStatement"}],"resolutions":[]}
+    """
+    let blankIDResult = try waitFor {
+        try await registry.execute(
+            NativeToolCallRequest(
+                name: "weibei_update_learning_memory",
+                argumentsJSON: blankIDJSON,
+                callID: "learn-blank-id"
+            ),
+            context: context,
+            scope: .global
+        )
+    }
+    guard let blankDecoded = StudyAgentProposalDecoding.learningUpdate(from: blankIDResult.details) else {
+        throw NSError(domain: "WeiBei.NativeAgentSelfCheck", code: 23, userInfo: [
+            NSLocalizedDescriptionKey: "empty memoryID should still decode after omit",
+        ])
+    }
+    try nativeRequire(blankDecoded.entries[0].memoryID == nil, "empty memoryID is omitted as a new entry")
+
+    let blankEntryJSON = """
+    {"contextRevision":"\(revision)","profileRevision":2,"checkpoint":"userRequested","entries":[{"entryID":"","kind":"concept","text":"用户自述：刚搞懂了复利。","sources":[]}]}
+    """
+    let blankEntryResult = try waitFor {
+        try await registry.execute(
+            NativeToolCallRequest(
+                name: "weibei_course_profile_update",
+                argumentsJSON: blankEntryJSON,
+                callID: "profile-blank-id"
+            ),
+            context: context,
+            scope: .global
+        )
+    }
+    guard let blankProfile = StudyAgentProposalDecoding.courseProfileUpdate(from: blankEntryResult.details) else {
+        throw NSError(domain: "WeiBei.NativeAgentSelfCheck", code: 24, userInfo: [
+            NSLocalizedDescriptionKey: "empty entryID should still decode after omit",
+        ])
+    }
+    try nativeRequire(blankProfile.entries[0].entryID == nil, "empty entryID is omitted as a new entry")
+
+    let assignedMemoryID = UUID(uuidString: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")!
+    let persistProbe = NativePersistProbe()
+    let persistContext = NativeToolExecutionContext(
+        request: request,
+        liveStores: NativeLiveStores(
+            persistLearningUpdate: { update in
+                persistProbe.append(update)
+                return NativeStorePersistReceipt(
+                    accepted: true,
+                    message: "ok",
+                    memoryUpdate: AgentReplyMemoryUpdate(
+                        memoryIDs: [assignedMemoryID],
+                        summary: update.entries[0].text
+                    )
+                )
+            },
+            persistCourseProfileUpdate: { _ in
+                NativeStorePersistReceipt.rejected("档案保存失败，请省略空的 entryID")
+            }
+        )
+    )
+    let persisted = try waitFor {
+        try await registry.execute(
+            NativeToolCallRequest(
+                name: "weibei_update_learning_memory",
+                argumentsJSON: blankIDJSON,
+                callID: "learn-persist"
+            ),
+            context: persistContext,
+            scope: .global
+        )
+    }
+    try nativeRequire(persistProbe.updates.count == 1, "Store persist runs inside the tool loop")
+    try nativeRequire(persistProbe.updates[0].entries[0].memoryID == nil, "Store persist sees omitted memoryID")
+    try nativeRequire(
+        persisted.text.contains(assignedMemoryID.uuidString.lowercased()),
+        "write receipt returns the system-assigned memoryID"
+    )
+    try nativeRequire(
+        persisted.details["appliedMemoryUpdate"] != nil,
+        "write details carry the Store receipt"
+    )
+
+    do {
+        _ = try waitFor {
+            try await registry.execute(
+                NativeToolCallRequest(
+                    name: "weibei_course_profile_update",
+                    argumentsJSON: blankEntryJSON,
+                    callID: "profile-persist-reject"
+                ),
+                context: persistContext,
+                scope: .global
+            )
+        }
+        throw NSError(domain: "WeiBei.NativeAgentSelfCheck", code: 25, userInfo: [
+            NSLocalizedDescriptionKey: "Store rejection must fail the tool instead of reporting success",
+        ])
+    } catch let failure as NativeLLMFailure {
+        try nativeRequire(failure.code == "store_rejected", "Store rejection is store_rejected")
+        try nativeRequire(failure.message.contains("entryID"), "Store rejection names the ID contract")
+    }
+
+    let memoryID = UUID(uuidString: "bbbbbbbb-cccc-dddd-eeee-ffffffffffff")!
+    let readContext = NativeToolExecutionContext(
+        request: {
+            var next = request
+            next.learningContext = StudyAgentLearningContext(
+                memoryRevision: 3,
+                memories: [
+                    LearningMemoryEntry(
+                        id: memoryID,
+                        kind: .understood,
+                        text: "用户自述：刚搞懂了复利。",
+                        evidence: "[用户：本轮] 我刚搞懂了复利。",
+                        origin: .userStatement
+                    )
+                ]
+            )
+            return next
+        }(),
+        liveStores: NativeLiveStores(
+            learning: {
+                StudyAgentLearningContext(
+                    memoryRevision: 3,
+                    memories: [
+                        LearningMemoryEntry(
+                            id: memoryID,
+                            kind: .understood,
+                            text: "用户自述：刚搞懂了复利。",
+                            evidence: "[用户：本轮] 我刚搞懂了复利。",
+                            origin: .userStatement
+                        )
+                    ]
+                )
+            }
+        )
+    )
+    let readResult = try waitFor {
+        try await registry.execute(
+            NativeToolCallRequest(
+                name: "weibei_read_learning_memory",
+                argumentsJSON: "{}",
+                callID: "read-memory-id"
+            ),
+            context: readContext,
+            scope: .global
+        )
+    }
+    try nativeRequire(
+        readResult.text.contains("\"memoryID\"")
+            && readResult.text.lowercased().contains(memoryID.uuidString.lowercased()),
+        "read result exposes memoryID for the model to copy"
     )
 
     let profileResult = try waitFor {
