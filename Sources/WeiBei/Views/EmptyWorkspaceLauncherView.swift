@@ -590,11 +590,15 @@ private struct EmptyWorkspaceInkWatermarkView: View {
     }
 }
 
-private enum EmptyWorkspaceCalligraphyResource {
+enum EmptyWorkspaceCalligraphyResource {
     static func image(named name: String) -> NSImage? {
-        let url = Bundle.module.url(forResource: name, withExtension: "png", subdirectory: "Inspiration/Calligraphy")
-            ?? Bundle.module.url(forResource: name, withExtension: "png", subdirectory: "Calligraphy")
-            ?? Bundle.module.url(forResource: name, withExtension: "png")
+        // WeiBeiResources resolves the staged/packaged bundle via Bundle(url:);
+        // a bare Bundle.module access can fatalError inside assembled apps when
+        // both the packaged path and the compiled-in dev fallback are missing.
+        let bundle = WeiBeiResources.bundle
+        let url = bundle.url(forResource: name, withExtension: "png", subdirectory: "Inspiration/Calligraphy")
+            ?? bundle.url(forResource: name, withExtension: "png", subdirectory: "Calligraphy")
+            ?? bundle.url(forResource: name, withExtension: "png")
         guard let url else { return nil }
         return NSImage(contentsOf: url)
     }
