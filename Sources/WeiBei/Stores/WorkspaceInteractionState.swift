@@ -10,6 +10,12 @@ struct NoteSelectionFormatting: Equatable {
     var linkTarget: String
 }
 
+/// 问/记共用浮层的当前面向:问=提问模式,记=札记模式。
+enum FloatingSelectionComposerMode {
+    case ask
+    case remark
+}
+
 /// Transient selection / floating-agent interaction chrome.
 /// Isolated from `WorkspaceStore` so selection drag does not rebuild the whole workspace tree.
 @MainActor
@@ -22,6 +28,10 @@ final class WorkspaceInteractionState: ObservableObject {
     @Published var activeSelectionAskThreadID: UUID?
     @Published var keepFloatingSelectionForAnswer = false
     @Published var noteSelectionFormatting: NoteSelectionFormatting?
+    /// 问/记共用浮层的当前模式;胶囊"问/记"点击时切换。
+    @Published var floatingComposerMode: FloatingSelectionComposerMode = .ask
+    /// "记"模式的独立草稿;与问的 agentDraft 互不覆盖,提交后清空。
+    @Published var selectionNoteDraft = ""
 
     /// Selection capsule position. Anchor-only drag/scroll updates can suppress
     /// publish so agent chat SelectionOverlay is not remasured every pixel.

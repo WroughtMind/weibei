@@ -2360,7 +2360,18 @@ struct FloatingSelectionAgentView: View {
             }
         }
         .onExitCommand {
-            closeFloatingAgent()
+            // 两段式 Esc:先收成胶囊,再按才整体关闭;流式/固定状态下保持直接关闭。
+            if showsExpandedBody && !store.isAgentRunningInActiveChat && !interaction.pinnedFloatingAgent {
+                withAnimation(WeiBeiMotion.panel) {
+                    expanded = false
+                    store.keepFloatingSelectionForAnswer = false
+                }
+            } else {
+                closeFloatingAgent()
+            }
+        }
+        .onChange(of: interaction.floatingComposerMode) { _, mode in
+            if mode == .ask { draftFocused = true }
         }
     }
 
@@ -2397,10 +2408,12 @@ struct FloatingSelectionAgentView: View {
 
             if store.selectionContext != nil {
                 promptSeparator
-                Button(store.ui("摘录", "Excerpt")) {
-                    store.appendSelectionToNote()
-                    closeFloatingAgent()
+                Button(store.ui("记", "Remark")) {
+                    openRemarkComposer()
                 }
+                .foregroundStyle(WeiBeiTheme.link)
+                .accessibilityLabel(Text(store.ui("记下这段", "Remark on this passage")))
+                .help(store.ui("记下这段(留空只存原文)", "Remark on this passage (empty saves excerpt only)"))
             }
         }
         .weiBeiText(12, weight: .semibold)
@@ -2547,6 +2560,7 @@ struct FloatingSelectionAgentView: View {
     private var expandedBody: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 8) {
+                FloatingAgentModeSwitch()
                 if let selection = store.selectionContext?.text, !selection.isEmpty {
                     FloatingSelectionPreview(text: selection)
                 }
@@ -2639,6 +2653,32 @@ struct FloatingSelectionAgentView: View {
                 }
             }
 
+            composerField
+        }
+        .frame(width: panelWidth, alignment: .leading)
+        .overlay {
+            floatingResizeBorder
+        }
+        .onChange(of: showsFloatingFeed) { _, _ in
+            unlockFeedHeightFeedback()
+        }
+        .onChange(of: visibleFloatingMessages.count) { _, _ in
+            unlockFeedHeightFeedback()
+        }
+        .onAppear {
+            draftFocused = true
+        }
+    }
+
+    /// 问/记共用同一浮层,底部输入框按模式切换;两种草稿互不覆盖。
+    @ViewBuilder private var composerField: some View {
+        if interaction.floatingComposerMode == .remark {
+            SelectionRemarkField {
+                submitRemark()
+            }
+            .padding(.horizontal, 14)
+            .padding(.bottom, 5)
+        } else {
             AgentComposerField(
                 prompt: showsFloatingFeed
                     ? store.ui("再问一点…", "Ask a follow-up…")
@@ -2660,19 +2700,6 @@ struct FloatingSelectionAgentView: View {
             }
             .padding(.horizontal, 14)
             .padding(.bottom, 5)
-        }
-        .frame(width: panelWidth, alignment: .leading)
-        .overlay {
-            floatingResizeBorder
-        }
-        .onChange(of: showsFloatingFeed) { _, _ in
-            unlockFeedHeightFeedback()
-        }
-        .onChange(of: visibleFloatingMessages.count) { _, _ in
-            unlockFeedHeightFeedback()
-        }
-        .onAppear {
-            draftFocused = true
         }
     }
 
@@ -2826,12 +2853,29 @@ struct FloatingSelectionAgentView: View {
 
     private func openExpandedComposer() {
         withAnimation(WeiBeiMotion.panel) {
+            interaction.floatingComposerMode = .ask
             expanded = true
             store.keepFloatingSelectionForAnswer = true
             // Do not invent a prompt or auto-send — only open a normal composer.
             store.askSelection()
             draftFocused = true
         }
+    }
+
+    /// 胶囊"记":展开共用浮层进入札记模式,不建提问线程、不带附件。
+    private func openRemarkComposer() {
+        withAnimation(WeiBeiMotion.panel) {
+            interaction.floatingComposerMode = .remark
+            expanded = true
+            store.keepFloatingSelectionForAnswer = true
+        }
+    }
+
+    /// 提交札记:空输入=纯摘录;保存后收浮层,草稿清空。
+    private func submitRemark() {
+        store.saveSelectionRemark(interaction.selectionNoteDraft)
+        interaction.selectionNoteDraft = ""
+        closeFloatingAgent()
     }
 
     private func openSourceReference() {
