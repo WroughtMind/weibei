@@ -94,13 +94,3 @@ public struct NativeLiveStores: Sendable {
     public static let empty = NativeLiveStores()
 }
 
-public enum NativeChatCompletionsRoute {
-    public static func baseURL(
-        provider: AgentProviderID,
-        endpoint: AgentProviderEndpoint
-    ) -> URL? {
-        let routed = NativeProviderRouting.route(provider)
-        guard routed.family == .openaiChatCompletions else { return nil }
-        return NativeProviderRouting.resolvedBaseURL(provider: provider, endpoint: endpoint)
-    }
-}
