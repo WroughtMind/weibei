@@ -1,4 +1,5 @@
 import SwiftUI
+import WeiBeiCore
 
 struct AgentReplyProfileUpdateTag: View {
     @EnvironmentObject private var store: WorkspaceStore
