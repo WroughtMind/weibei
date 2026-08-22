@@ -2626,7 +2626,7 @@ private final class FinalizedAgentMarkdownHarness: NSObject, WKScriptMessageHand
             .appendingPathComponent("Sources/WeiBei/Resources/Editor/index.html")
         webView.loadFileURL(indexURL, allowingReadAccessTo: indexURL.deletingLastPathComponent())
 
-        let timeout = Date().addingTimeInterval(15)
+        let timeout = Date().addingTimeInterval(30)
         while !isDone && Date() < timeout {
             RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.05))
         }
@@ -2792,7 +2792,8 @@ private final class FinalizedAgentMarkdownHarness: NSObject, WKScriptMessageHand
                 return
             }
             self.finishReportedHeight = height
-            self.validateDOM(until: Date().addingTimeInterval(3))
+            // 收尾尾巴按流式节奏逐字补完(大尾巴可达十余秒),验证窗口须覆盖补完后的最终态
+            self.validateDOM(until: Date().addingTimeInterval(14))
         }
     }
 
@@ -2838,12 +2839,30 @@ private final class FinalizedAgentMarkdownHarness: NSObject, WKScriptMessageHand
                 self.fail("finalized agent Markdown DOM check threw \(error.localizedDescription)")
                 return
             }
-            guard let result = value as? [String: Any],
-                  result["ok"] as? Bool == true else {
+            guard let result = value as? [String: Any] else {
+                self.fail("finalized agent Markdown DOM check returned no result")
+                return
+            }
+            // The completion tail now types out at the streaming cadence, so
+            // polls can land mid-reveal: structural checks retry to the
+            // deadline instead of failing on an intermediate document.
+            if result["ok"] as? Bool != true {
+                if Date() < deadline {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                        self.validateDOM(until: deadline)
+                    }
+                    return
+                }
                 self.fail("finalized agent Markdown lost block structure: \(String(describing: value))")
                 return
             }
             if !(result["mermaidError"] as? String ?? "").isEmpty {
+                if Date() < deadline {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                        self.validateDOM(until: deadline)
+                    }
+                    return
+                }
                 self.fail("finalized Agent Mermaid failed: \(String(describing: result["mermaidError"]))")
                 return
             }

@@ -54,16 +54,19 @@ export function streamingAppearancePlugin(isStreamingActive: () => boolean): Plu
       apply(tr, previous): AppearanceState {
         const now = Date.now();
         let fades: FadeEntry[] = [];
+        const docSize = tr.doc.content.size;
         for (const entry of previous.fades) {
-          const from = tr.mapping.map(entry.from);
-          const to = tr.mapping.map(entry.to);
+          // Big replace steps (finalization diff) can map a fade past the new
+          // document's end; resolve() would throw and kill the whole dispatch.
+          const from = Math.min(tr.mapping.map(entry.from), docSize);
+          const to = Math.min(tr.mapping.map(entry.to), docSize);
           if (from >= to || now >= entry.expiresAt) continue;
           if (tr.doc.resolve(from).parent !== tr.doc.resolve(to).parent) continue;
           fades.push({ from, to, expiresAt: entry.expiresAt });
         }
         let caretPosition = previous.caretPosition === null
           ? null
-          : tr.mapping.map(previous.caretPosition);
+          : Math.min(tr.mapping.map(previous.caretPosition), docSize);
         let caretExpiresAt = previous.caretExpiresAt;
 
         if (tr.docChanged && isStreamingActive()) {

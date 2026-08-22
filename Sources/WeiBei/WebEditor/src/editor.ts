@@ -3037,6 +3037,9 @@ let pacedTailTimer: number | null = null;
 const PACED_TAIL_FADE_LIMIT_CHARACTERS = 24;
 const PACED_TAIL_CHUNK_CHARACTERS = 12;
 const PACED_TAIL_TICK_MILLISECONDS = 33;
+/** Wall-clock cap: throttled (hidden/occluded) WebViews slow timers to a crawl,
+ * so past this the whole tail lands at once instead of stalling half-typed. */
+const PACED_TAIL_MAXIMUM_MILLISECONDS = 3_000;
 /** Hard stop so an abandoned tail can never pace forever (~8s at cadence). */
 const PACED_TAIL_MAXIMUM_TICKS = 240;
 
@@ -3085,7 +3088,7 @@ const finalizeStreamingSession = () => {
   scheduleContentHeightReports();
 };
 
-const finishStreamingMarkdownInternal = (markdown: any) => {
+const finishStreamingMarkdownInternal = (markdown: any, options?: { paced?: boolean }) => {
   cancelPacedStreamingTail();
   streamingRawBody = null; // force the full normalize + serialization pass
   const fullText = String(markdown || '');
@@ -3097,23 +3100,42 @@ const finishStreamingMarkdownInternal = (markdown: any) => {
   streamingFullTextBase = fullText;
   const currentBuffer = streamingMarkdownBuffer;
   // Pace only a pure append; a divergent prefix needs the full replace now.
-  const pacesAppendTail = currentBuffer !== null
+  // Pacing is opt-in from native: hidden/windowless WebViews suspend timers
+  // entirely, and a paced reveal there would strand the answer half-typed.
+  const pacesAppendTail = options?.paced === true
+    && currentBuffer !== null
     && body.startsWith(currentBuffer)
     && body.length - currentBuffer.length > PACED_TAIL_FADE_LIMIT_CHARACTERS;
   if (currentBuffer !== null && pacesAppendTail) {
     let revealed = currentBuffer.length;
     let ticks = 0;
+    const pacingStartedAt = Date.now();
     const step = () => {
       pacedTailTimer = null;
+      const now = Date.now();
       ticks += 1;
       revealed = Math.min(body.length, revealed + PACED_TAIL_CHUNK_CHARACTERS);
-      if (revealed >= body.length || ticks >= PACED_TAIL_MAXIMUM_TICKS) {
-        pushStreamingBodyForFinish(body);
+      const done = revealed >= body.length
+        || now - pacingStartedAt >= PACED_TAIL_MAXIMUM_MILLISECONDS
+        || ticks >= PACED_TAIL_MAXIMUM_TICKS;
+      try {
+        pushStreamingBodyForFinish(done ? body : body.slice(0, revealed));
+        if (!done) {
+          pacedTailTimer = window.setTimeout(step, PACED_TAIL_TICK_MILLISECONDS);
+          return;
+        }
         finalizeStreamingSession();
-        return;
+      } catch {
+        // A paced push must never strand the answer half-typed (one throwing
+        // tick would silently end the timer chain): tear the session down and
+        // land the full document through the plain replace path instead.
+        pacedTailTimer = null;
+        streamingMarkdownBuffer = null;
+        streamingRawBody = null;
+        try { streamingCommands().call(abortStreamingCmd.key, { keep: false }); } catch { /* session already gone */ }
+        try { setMarkdownInternal(fullText); } catch { /* nothing left to try */ }
+        scheduleContentHeightReports();
       }
-      pushStreamingBodyForFinish(body.slice(0, revealed));
-      pacedTailTimer = window.setTimeout(step, PACED_TAIL_TICK_MILLISECONDS);
     };
     pacedTailTimer = window.setTimeout(step, PACED_TAIL_TICK_MILLISECONDS);
     scheduleContentHeightReports();
@@ -3526,9 +3548,9 @@ window.WeiBeiEditor = {
         showFailure(error);
       }
     },
-    finishStreamingMarkdown: (markdown: any) => {
+    finishStreamingMarkdown: (markdown: any, options?: { paced?: boolean }) => {
       try {
-        finishStreamingMarkdownInternal(markdown);
+        finishStreamingMarkdownInternal(markdown, options);
         return true;
       } catch (error) {
         showFailure(error);
@@ -3565,7 +3587,7 @@ if (WEIBEI_EDITOR_RUNTIME && window.weiBeiEditorCheckMode) {
     setMarkdown: setMarkdownInternal,
     updateStreamingMarkdown: updateStreamingMarkdownInternal,
     appendStreamingMarkdown: appendStreamingMarkdownInternal,
-    finishStreamingMarkdown: (markdown: any) => { finishStreamingMarkdownInternal(markdown); return true; },
+    finishStreamingMarkdown: (markdown: any, options?: { paced?: boolean }) => { finishStreamingMarkdownInternal(markdown, options); return true; },
     replaceSelection: replaceSelectionInternal,
     executeSelectionCommand: executeSelectionCommandInternal,
     applyAgentPatch: appendMarkdownInternal,

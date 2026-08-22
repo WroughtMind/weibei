@@ -1525,7 +1525,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             webMarkdown = text
             webView?.evaluateJavaScript("""
             (() => {
-              const didFinish = window.WeiBeiEditor?.finishStreamingMarkdown(\(Self.json(text)));
+              const didFinish = window.WeiBeiEditor?.finishStreamingMarkdown(\(Self.json(text)), { paced: true });
               return {
                 didFinish: didFinish === true,
                 height: Number(window.WeiBeiCompactPreviewHeight || 1)
