@@ -27,7 +27,7 @@ extension WorkspaceStore {
             switch CourseProjectFileWorker.entryPresence(at: libraryRoot) {
             case .absent, .inaccessible:
                 return keepUnavailableImportedItem(at: index)
-            case .present:
+            case .present, .presentUnmaterialized:
                 break
             }
         }
@@ -38,12 +38,16 @@ extension WorkspaceStore {
         case .present:
             fileMissingSinceByItemID.removeValue(forKey: item.id)
             return (candidate.standardizedFileURL, false)
+        case .presentUnmaterialized:
+            // iCloud 占位符在：永不判缺席，也不进入灰态（计划 §5 阶段3）。
+            fileMissingSinceByItemID.removeValue(forKey: item.id)
+            return (candidate.standardizedFileURL, false)
         case .inaccessible:
             return keepUnavailableImportedItem(at: index)
         case .absent:
             let parent = candidate.deletingLastPathComponent()
             switch CourseProjectFileWorker.entryPresence(at: parent) {
-            case .present:
+            case .present, .presentUnmaterialized:
                 // 灰态保护（计划 §5 阶段2）：iCloud 瞬断/同步延迟期间文件缺席
                 // 不立即销毁条目；连续两个对账周期（≈6 秒）仍缺席才移除，
                 // 移除前对未落盘内容副本先行。文件重新出现按相对路径认领回原条目。

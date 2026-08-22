@@ -6162,7 +6162,7 @@ final class WorkspaceStore: ObservableObject {
         switch CourseProjectFileWorker.entryPresence(at: libraryRoot) {
         case .absent, .inaccessible:
             return
-        case .present:
+        case .present, .presentUnmaterialized:
             break
         }
         let reserved: Set<String> = [
@@ -18576,6 +18576,12 @@ final class WorkspaceStore: ObservableObject {
         ) else {
             return
         }
+        if case .presentUnmaterialized = CourseProjectFileWorker.entryPresence(at: access.url) {
+            setNoteFileError(
+                ui("正在从 iCloud 下载…", "Downloading from iCloud…"),
+                for: item.id
+            )
+        }
         let url = access.url
         let identity = access.fileIdentity
         let itemID = item.id
@@ -18661,11 +18667,21 @@ final class WorkspaceStore: ObservableObject {
                 guard courseNoteLoadGenerationByItemID[itemID] == generation else {
                     return
                 }
+                let presence = CourseProjectFileWorker.entryPresence(at: url)
+                let unmaterialized: Bool = {
+                    if case .presentUnmaterialized = presence { return true }
+                    return false
+                }()
                 setNoteFileError(
-                    ui(
-                        "无法读取原 Markdown：\(url.lastPathComponent)",
-                        "Could not read original Markdown: \(url.lastPathComponent)"
-                    ),
+                    unmaterialized
+                        ? ui(
+                            "当前不可用，iCloud 文件未下载。",
+                            "Currently unavailable; the iCloud file has not been downloaded."
+                        )
+                        : ui(
+                            "无法读取原 Markdown：\(url.lastPathComponent)",
+                            "Could not read original Markdown: \(url.lastPathComponent)"
+                        ),
                     for: itemID
                 )
             }
@@ -19380,7 +19396,7 @@ final class WorkspaceStore: ObservableObject {
         documentIdentifier: UInt64?
     )? {
         switch CourseProjectFileWorker.entryPresence(at: candidate) {
-        case .absent:
+        case .absent, .presentUnmaterialized:
             return nil
         case .inaccessible:
             throw CoursePortableStateError.unsafeRelativePath
@@ -19457,7 +19473,7 @@ final class WorkspaceStore: ObservableObject {
             throw CoursePortableStateError.crossCourseReference
         }
         switch CourseProjectFileWorker.entryPresence(at: candidate) {
-        case .absent:
+        case .absent, .presentUnmaterialized:
             return nil
         case .inaccessible:
             throw CoursePortableStateError.crossCourseReference
@@ -19498,7 +19514,7 @@ final class WorkspaceStore: ObservableObject {
         sharedURL: URL
     ) throws -> ImportedFileIdentity? {
         switch CourseProjectFileWorker.entryPresence(at: candidate) {
-        case .absent:
+        case .absent, .presentUnmaterialized:
             return nil
         case .inaccessible:
             throw CoursePortableStateError.invalidItemStorage

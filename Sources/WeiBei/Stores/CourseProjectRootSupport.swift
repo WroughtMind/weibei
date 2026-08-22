@@ -97,6 +97,8 @@ struct CourseFileSourceInfo: Equatable, Sendable {
 
 enum CourseFileEntryPresence: Equatable, Sendable {
     case present(ImportedFileIdentity)
+    /// iCloud 占位符在而实体未下载（计划 §5 阶段3）：永不判 absent。
+    case presentUnmaterialized(ImportedFileIdentity)
     case absent
     case inaccessible
 }
@@ -2649,7 +2651,9 @@ actor CourseProjectFileWorker {
         guard let enumerator = fileManager.enumerator(
             at: canonicalRoot,
             includingPropertiesForKeys: Array(keys),
-            options: [.skipsHiddenFiles, .skipsPackageDescendants],
+            // 不再一刀切跳过隐藏文件：iCloud 占位符 `.名字.md.icloud` 是隐藏文件，
+            // 必须识别为逻辑路径（计划 §5 阶段3）；其余隐藏项在循环内显式跳过。
+            options: [.skipsPackageDescendants],
             errorHandler: { _, _ in false }
         ) else {
             return CourseFileScanSnapshot(
@@ -2673,6 +2677,19 @@ actor CourseProjectFileWorker {
             if relativePath == ".weibei" || relativePath.hasPrefix(".weibei/") {
                 enumerator.skipDescendants()
                 continue
+            }
+            // iCloud 占位符还原为逻辑路径；其余隐藏项维持跳过。
+            let icloudLogicalName = Self.logicalName(
+                forICloudPlaceholderFileName: rawURL.lastPathComponent
+            )
+            if rawURL.lastPathComponent.hasPrefix(".") {
+                guard let icloudLogicalName else {
+                    if (try? rawURL.resourceValues(forKeys: [.isDirectoryKey]))?
+                        .isDirectory == true {
+                        enumerator.skipDescendants()
+                    }
+                    continue
+                }
             }
             let values = try rawURL.resourceValues(forKeys: keys)
             if values.isDirectory == true {
@@ -2714,27 +2731,39 @@ actor CourseProjectFileWorker {
                 fileURL = rawURL.standardizedFileURL
                 fileValues = values
             }
+            // 占位符按逻辑路径登记：扩展名与相对路径取自还原后的逻辑名。
+            let effectiveName = icloudLogicalName ?? fileURL.lastPathComponent
+            let effectiveRelativePath: String
+            if let icloudLogicalName {
+                let dir = (relativePath as NSString).deletingLastPathComponent
+                effectiveRelativePath = dir.isEmpty
+                    ? icloudLogicalName
+                    : dir + "/\(icloudLogicalName)"
+            } else {
+                effectiveRelativePath = relativePath
+            }
             guard Self.supportedExtensions.contains(
-                    fileURL.pathExtension.lowercased()
+                    URL(fileURLWithPath: effectiveName)
+                        .pathExtension.lowercased()
                   ),
                   let identity = Self.identity(at: fileURL) else {
                 continue
             }
             let identityKey =
-                "\(identity.volumeID).\(identity.fileID).\(relativePath)"
+                "\(identity.volumeID).\(identity.fileID).\(effectiveRelativePath)"
             if visitedFileKeys.contains(identityKey) {
                 continue
             }
             visitedFileKeys.insert(identityKey)
-            let firstComponent = relativePath
+            let firstComponent = effectiveRelativePath
                 .split(separator: "/", omittingEmptySubsequences: true)
                 .first
             let isMarkdown = ["md", "markdown"]
-                .contains(fileURL.pathExtension.lowercased())
+                .contains(URL(fileURLWithPath: effectiveName).pathExtension.lowercased())
             result.append(
                 CourseFileMetadata(
                     url: fileURL,
-                    relativePath: relativePath,
+                    relativePath: effectiveRelativePath,
                     identity: identity,
                     documentIdentifier: fileValues.documentIdentifier.flatMap {
                         $0 >= 0 ? UInt64($0) : nil
@@ -3536,8 +3565,46 @@ actor CourseProjectFileWorker {
             )
         }
         return errno == ENOENT || errno == ENOTDIR
-            ? .absent
+            ? presenceWithICloudPlaceholderCheck(at: url)
             : .inaccessible
+    }
+
+    /// 逻辑路径实体缺席但同名 iCloud 占位符在 ⇒ 未物化在场，永不判 absent。
+    nonisolated private static func presenceWithICloudPlaceholderCheck(
+        at url: URL
+    ) -> CourseFileEntryPresence {
+        let placeholder = url.deletingLastPathComponent()
+            .appendingPathComponent("." + url.lastPathComponent + ".icloud")
+        var fileStat = Darwin.stat()
+        let result = placeholder.withUnsafeFileSystemRepresentation { path -> Int32 in
+            guard let path else { return -1 }
+            return Darwin.lstat(path, &fileStat)
+        }
+        guard result == 0 else { return .absent }
+        return .presentUnmaterialized(
+            ImportedFileIdentity(
+                volumeID: UInt64(fileStat.st_dev),
+                fileID: UInt64(fileStat.st_ino),
+                birthTimeSeconds: Int64(
+                    fileStat.st_birthtimespec.tv_sec
+                ),
+                birthTimeNanoseconds: Int64(
+                    fileStat.st_birthtimespec.tv_nsec
+                )
+            )
+        )
+    }
+
+    /// iCloud 占位符文件名 `.讲义.md.icloud` ⇒ 逻辑名 `讲义.md`；非占位符返回 nil。
+    nonisolated static func logicalName(
+        forICloudPlaceholderFileName fileName: String
+    ) -> String? {
+        guard fileName.hasPrefix("."), fileName.hasSuffix(".icloud") else {
+            return nil
+        }
+        let base = fileName.dropFirst().dropLast(".icloud".count)
+        guard !base.isEmpty, base.contains(".") else { return nil }
+        return String(base)
     }
 
     nonisolated static func isSymbolicLink(at url: URL) -> Bool {
