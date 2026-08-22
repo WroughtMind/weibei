@@ -76,9 +76,11 @@ luna+low live 评测里，课程搜索/正文/记忆/档案/笔记题也会调�
 
 收尾重跑（native / luna+low，`--ids`，完整答卷覆盖原 `.md` / jsonl 对应行）：
 
-- **16**：工具描述已加课程优先引导；评测预期改为「优先课程 search→read，课程无材料时允许说明后转网页」。重跑未调课程工具，也未转网页，改成追问「查哪种利率」。夹具里有《利率课程》，按方案不算自动失败，交 judge 复核。
+- **16**：W5 级联检索后 luna 重跑走 `weibei_course_search` → `weibei_course_read`，答「利率是资金使用价格的表达」，不再反问。
+- **05**：先搜课程再读命中，如实报无「准备金」。
+- **37**：未触发课程检索，直接冷知识。
 - **08**：`load_skill` 已幂等。重跑工具序列只有 `weibei_learning_memory`，不再连发两次 `load_skill`；仍如实说没有记忆。
-- **10 / 11**：见第 9 节。Kimi 原双评均分不因这 4 题重跑改写。
+- **10 / 11**：见第 9 节。Kimi 原双评均分不因定点重跑改写。
 
 ## 5. 性能
 
@@ -126,8 +128,9 @@ native 明显更快、更省内存；无 Pi/Bun 常驻子进程。这是 CLI 路
 
 - 401：`WeiBei.NativeAgent` 的 401/「认证已失效」归到 unauthorized（自测覆盖；场景 10 现为 `unauthorized`）。
 - Q10/Q11 定点重跑（luna low）：工具失败不再变成「内部错误」。Q10 先 `profile_update` 再 `course_map` 再重试，模型答「已提交知识档案更新建议」。Q11 复述真实原因「上下文版本不匹配」，不再说内部错误。
-- 提案闭环：CLI live 没有真实笔记库 / WorkspaceStore，即便工具回执写「已提交」也不会落库。12 场景脚本只能验协议。**闭环方式 = 真实 App 冒烟**，四条提案清单见 `Docs/audit/2026-08-22-native-runtime-用户验收清单草稿.md`。
-- Q16 引导后仍未走课程工具（改成澄清问），按方案交 judge 复核，不记自动失败。
+- 提案闭环：CLI live 没有真实笔记库 / WorkspaceStore，即便工具回执写「已提交」也不会落库。12 场景脚本只能验协议。**闭环方式 = 真实 App 冒烟**，四条提案清单见 `Docs/audit/2026-08-22-native-runtime-用户验收清单草稿.md`（开头已补 Native 切换步骤）。
+- W5 级联检索（只引导，不改引擎）：native 系统提示加检索策略段；`weibei_course_search` / `weibei_course_read` 描述要求先搜再读、不许反问。luna 重跑 16/05/37 均达预期。工作区文件检索本轮没有对应工具，已在提示里标明跳过，列为后续能力。
+- W6 调试开关：设置 → 对话 →「使用 Native 引擎」。UserDefaults 持久化，默认仍是 Pi；环境变量 `WEIBEI_AGENT_BACKEND` 仍可覆盖。此开关是临时设施，删 Pi 时一并去掉。未改 `WorkspaceStore.swift`。
 - Azure / Vertex / Bedrock / Cloudflare 未覆盖。
 - Pi 课程宿主在 CLI 里仍会报响应目录变化。
 - 正式公证包未出；体积是临时目录按同一清单组装的测量值。
@@ -137,6 +140,6 @@ native 明显更快、更省内存；无 Pi/Bun 常驻子进程。这是 CLI 路
 
 **质量 + 体积 + DeepSeek 性能：通过。整体仍是条件 go**（公证包、删 Pi、真实 App 提案四条未验收）。
 
-已有：OAuth 六步、三件套、默认 pi、DeepSeek/ChatGPT 三闭环、12 场景 native 脚本（401 已对齐，本轮 `--native-scenario-pair` / `--native-capability-demo` 仍绿）、luna+low 40 题两侧 live 全文、Kimi 双评 native 4.98 / pi 4.96、16/08/10/11 收尾重跑、本地组装不含 Pi **44.9 MiB**、DeepSeek 短问答 native 墙钟 0.678 s / 首字 0.526 s、CLI 峰值 22.3 MiB、Pi 子进程约 171 MiB。
+已有：OAuth 六步、三件套、默认 pi、DeepSeek/ChatGPT 三闭环、12 场景 native 脚本、luna+low 40 题两侧 live 全文、Kimi 双评 native 4.98 / pi 4.96、W5 级联检索 16/05/37 达标、W6 真实 App Native 调试开关、本地组装不含 Pi **44.9 MiB**、DeepSeek 短问答 native 墙钟 0.678 s / 首字 0.526 s。
 
-仍缺：公证安装包、luna 首字中位（刻意未测）、真实 App 提案四条冒烟。删除 Pi 需单独授权。保持草稿。
+仍缺：公证安装包、luna 首字中位（刻意未测）、用户打开 Native 开关后的提案四条冒烟。删除 Pi 需单独授权。保持草稿。

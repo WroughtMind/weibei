@@ -21,6 +21,8 @@ func runNativeAgentSelfChecks() throws {
     try checkCreateDocumentSandbox()
     try checkDelegateCapabilities()
     try checkEvalSetLunaLow()
+    try checkRetrievalPrompt()
+    try checkBackendSelection()
 }
 
 private func nativeRequire(_ condition: @autoclosure () throws -> Bool, _ message: String) throws {
@@ -263,8 +265,12 @@ private func checkSkillCatalogAndLoad() throws {
     _ = try waitFor { await NativeBuiltinTools.registerAll(into: toolRegistry, skillRoot: root) }
     let tools = try waitFor { await toolRegistry.resolved(scope: .global) }
     let search = tools.first { $0.name == "weibei_course_search" }
-    try nativeRequire(search?.description.contains("优先") == true, "course_search description prefers the course index")
+    try nativeRequire(search?.description.contains("不要先反问") == true, "course_search description forbids clarifying questions")
+    try nativeRequire(search?.description.contains("weibei_course_read") == true, "course_search description continues into course_read")
     try nativeRequire(search?.description.contains("网页搜索") == true, "course_search description still allows web search after a miss")
+    try nativeRequire(search?.description.contains("闲聊") == true, "course_search description skips unrelated chat")
+    let read = tools.first { $0.name == "weibei_course_read" }
+    try nativeRequire(read?.description.contains("不要停下来反问") == true, "course_read description forbids interrupting to ask")
 }
 
 private func checkLoadSkillIdempotent() throws {
@@ -353,9 +359,42 @@ private func checkEvalSetLunaLow() throws {
     try nativeRequire(items.count >= 40, "eval set has at least 40 items")
     let item16 = items.first { $0["id"] as? String == "16" }
     try nativeRequire(
-        (item16?["expect"] as? String)?.contains("优先课程") == true,
-        "eval item 16 prefers course search then read"
+        (item16?["expect"] as? String)?.contains("不反问") == true,
+        "eval item 16 requires course_search then course_read without a clarifying question"
     )
+}
+
+private func checkRetrievalPrompt() throws {
+    let prompt = NativePromptAssembler.webiSystemPrompt(
+        bundledText: "you are webi",
+        tools: []
+    )
+    try nativeRequire(prompt.contains("检索策略"), "native system prompt includes retrieval strategy")
+    try nativeRequire(prompt.contains("不要先问"), "retrieval strategy forbids asking which rate first")
+    try nativeRequire(prompt.contains("weibei_course_search"), "retrieval strategy names course_search")
+    try nativeRequire(prompt.contains("闲聊"), "retrieval strategy skips unrelated chat")
+    try nativeRequire(prompt.contains("工作区文件检索"), "retrieval strategy notes missing workspace search")
+}
+
+private func checkBackendSelection() throws {
+    let key = NativeAgentBackendSelection.debugDefaultsKey
+    let previous = UserDefaults.standard.string(forKey: key)
+    defer {
+        if let previous {
+            UserDefaults.standard.set(previous, forKey: key)
+        } else {
+            UserDefaults.standard.removeObject(forKey: key)
+        }
+    }
+    let env = ProcessInfo.processInfo.environment["WEIBEI_AGENT_BACKEND"]?
+        .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    guard env.isEmpty else { return }
+    NativeAgentBackendSelection.persistedDebugBackend = nil
+    try nativeRequire(NativeAgentBackendSelection.current == .pi, "default backend stays pi")
+    NativeAgentBackendSelection.persistedDebugBackend = .native
+    try nativeRequire(NativeAgentBackendSelection.current == .native, "debug override selects native")
+    NativeAgentBackendSelection.persistedDebugBackend = nil
+    try nativeRequire(NativeAgentBackendSelection.current == .pi, "clearing override returns to pi")
 }
 
 private func checkFailureMapping() throws {

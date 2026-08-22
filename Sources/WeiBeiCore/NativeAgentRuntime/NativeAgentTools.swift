@@ -508,7 +508,7 @@ public enum NativeBuiltinTools {
     private static var courseSearch: NativeToolDefinition {
         hostTool(
             name: "weibei_course_search",
-            description: "在课程索引片段中搜索相关材料与笔记。当问题涉及课程、教材或章节内容时优先使用本工具；确认课程内没有相关材料后，可以使用网页搜索并说明原因。",
+            description: "在课程索引中搜索材料与笔记。用户点名课程、教材、章节，或问题可能落在当前课程里时，先用本工具再读正文，不要先反问要查哪一种。搜到命中后应接着 weibei_course_read。确认课程里没有后，可以网页搜索并说明「课程里没有，我上网查了」。闲聊、冷知识、与课程无关的问题不要调用本工具。",
             permission: .read,
             makeRequest: { arguments, _ in
                 .courseSearch(
@@ -522,7 +522,7 @@ public enum NativeBuiltinTools {
     private static var courseRead: NativeToolDefinition {
         hostTool(
             name: "weibei_course_read",
-            description: "按临时资料 ID 渐进读取真实正文。",
+            description: "按临时资料 ID 渐进读取真实正文。课程搜索命中后应读取最相关的一条，不要停下来反问用户。",
             permission: .read,
             makeRequest: { arguments, context in
                 let itemID = string(arguments["itemID"]) ?? ""

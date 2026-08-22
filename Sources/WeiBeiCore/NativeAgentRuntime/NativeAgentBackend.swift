@@ -1,10 +1,42 @@
 import Foundation
 
 public enum NativeAgentBackendSelection {
+    public static let debugDefaultsKey = "weibei.debug.studyAgentBackend"
+
     public static var current: StudyAgentBackend {
+        if let env = environmentValue {
+            return env
+        }
+        return persistedDebugBackend ?? .pi
+    }
+
+    public static var persistedDebugBackend: StudyAgentBackend? {
+        get {
+            switch UserDefaults.standard.string(forKey: debugDefaultsKey)?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .lowercased() {
+            case "native":
+                return .native
+            case "pi":
+                return .pi
+            default:
+                return nil
+            }
+        }
+        set {
+            if let newValue {
+                UserDefaults.standard.set(newValue.rawValue, forKey: debugDefaultsKey)
+            } else {
+                UserDefaults.standard.removeObject(forKey: debugDefaultsKey)
+            }
+        }
+    }
+
+    private static var environmentValue: StudyAgentBackend? {
         let raw = ProcessInfo.processInfo.environment["WEIBEI_AGENT_BACKEND"]?
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased() ?? ""
+        if raw.isEmpty { return nil }
         return raw == "native" ? .native : .pi
     }
 }
