@@ -177,6 +177,7 @@ struct EmptyWorkspaceLauncherView: View {
             EmptyWorkspaceEntryRow(entryWidth: entryWidth)
             if store.courses.isEmpty && store.importedItems.isEmpty {
                 LibraryPlacementNoticeCard()
+                AgentSetupPromptCard()
             }
         }
     }
