@@ -80,7 +80,7 @@ final class TransientToleranceSafetyTests: XCTestCase {
         try FileManager.default.createDirectory(at: docsDir, withIntermediateDirectories: true)
         try "占位".write(to: docsDir.appendingPathComponent(".讲义.md.icloud"), atomically: true, encoding: .utf8)
         try Data("%PDF-1.4\n".utf8).write(
-            to: docsDir.appendingPathComponent(".论文.pdf.icloud"), atomically: true, encoding: .utf8
+            to: docsDir.appendingPathComponent(".论文.pdf.icloud"), options: [.atomic]
         )
         try FileManager.default.createDirectory(at: docsDir.appendingPathComponent(".git"), withIntermediateDirectories: true)
 
@@ -150,7 +150,7 @@ final class TransientToleranceSafetyTests: XCTestCase {
         let store = try makeStore(base: base, library: library)
         let courseID = try store.createCourseInLibrary(title: "世代课")
         let source = base.appendingPathComponent("资料.pdf")
-        try Data("%PDF-1.4\n旧".utf8).write(to: source, atomically: true, encoding: .utf8)
+        try Data("%PDF-1.4\n旧".utf8).write(to: source, options: [.atomic])
         let imported = try store.importFileIntoCourseForSelfCheck(source, courseID: courseID, role: .material)
         let item = imported.item
         let backingURL = try XCTUnwrap(store.resolvedLibraryURL(for: item))
@@ -158,7 +158,7 @@ final class TransientToleranceSafetyTests: XCTestCase {
 
         // 删除重建：新文件世代不同（identity 变化 + 内容变化）。
         try FileManager.default.removeItem(at: backingURL)
-        try Data("%PDF-1.4\n全新的重建内容".utf8).write(to: backingURL, atomically: true, encoding: .utf8)
+        try Data("%PDF-1.4\n全新的重建内容".utf8).write(to: backingURL, options: [.atomic])
         store.refreshRuntimeItemURLs()
 
         let current = try XCTUnwrap(store.importedItems.first { $0.id == item.id })
