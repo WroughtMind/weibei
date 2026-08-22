@@ -227,10 +227,10 @@ struct CourseDocNoteWorkspaceView: View {
         }
         .background(
             WeiBeiTheme.paperRaised.opacity(0.14),
-            in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+            in: RoundedRectangle(cornerRadius: 12, style: .continuous)
         )
         .overlay {
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .stroke(WeiBeiTheme.hairline.opacity(0.62), lineWidth: 1)
         }
     }

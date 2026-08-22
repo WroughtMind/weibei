@@ -72,10 +72,10 @@ extension SettingsView {
                             set: { store.updateAgentBaseURL($0) }
                         ),
                         prompt: Text(baseURLPlaceholder)
-                            .font(.system(size: 13))
                             .foregroundStyle(WeiBeiTheme.placeholderInk)
                     )
                     .textFieldStyle(.plain)
+                    .weiBeiText(13)
                     .foregroundColor(WeiBeiTheme.ink)
                     .weiBeiText(13)
                     .weibeiInputSurface(active: false, height: 38)
@@ -163,10 +163,10 @@ extension SettingsView {
                 "",
                 text: $profileRenameDraft,
                 prompt: Text(store.ui("配置名称", "Profile name"))
-                    .font(.system(size: 13))
                     .foregroundStyle(WeiBeiTheme.placeholderInk)
             )
             .textFieldStyle(.plain)
+            .weiBeiText(13)
             .foregroundColor(WeiBeiTheme.ink)
             .weiBeiText(13)
             .weibeiInputSurface(active: true, height: 30)
@@ -268,10 +268,10 @@ extension SettingsView {
                     "",
                     text: $apiKeyDraft,
                     prompt: Text(store.ui("粘贴 API Key", "Paste API key"))
-                        .font(.system(size: 13))
                         .foregroundStyle(WeiBeiTheme.placeholderInk)
                 )
                 .textFieldStyle(.plain)
+                .weiBeiText(13)
                 .foregroundColor(WeiBeiTheme.ink)
                 .focused($focusedField, equals: .apiKey)
                 .weiBeiText(13)
@@ -438,19 +438,11 @@ extension SettingsView {
     }
 
     private var activeAgentAuthMethod: AgentAuthMethod {
-        if activePiAuthTypes.contains(.oauth), activePiAuthTypes.contains(.apiKey) {
-            return store.agentAuthMethod
-        }
-        return activePiAuthTypes.contains(.oauth) ? .subscription : .apiKey
+        AgentProviderReadiness.effectiveAuthMethod(for: store)
     }
 
     private func piAuthTypes(for provider: AgentProviderID) -> [PiCredentialType] {
-        if let types = oauthService.catalog?.providers.first(where: {
-            $0.id == piProviderID(for: provider)
-        })?.authTypes, !types.isEmpty {
-            return types
-        }
-        return provider.kind == .subscription ? [.oauth] : [.apiKey]
+        AgentProviderReadiness.piAuthTypes(for: provider, store: store)
     }
 
     /// The runtime's step question, styled like a quiet right-aligned field label —
@@ -476,10 +468,10 @@ extension SettingsView {
                             "",
                             text: $oauthService.promptValue,
                             prompt: Text(prompt.placeholder ?? "")
-                                .font(.system(size: 13))
-                                .foregroundStyle(WeiBeiTheme.placeholderInk)
+                                                                .foregroundStyle(WeiBeiTheme.placeholderInk)
                         )
                         .textFieldStyle(.plain)
+                        .weiBeiText(13)
                         .foregroundColor(WeiBeiTheme.ink)
                         .weiBeiText(13)
                         .weibeiInputSurface(active: true, height: 38)
@@ -490,10 +482,10 @@ extension SettingsView {
                             "",
                             text: $oauthService.promptValue,
                             prompt: Text(prompt.placeholder ?? "")
-                                .font(.system(size: 13))
-                                .foregroundStyle(WeiBeiTheme.placeholderInk)
+                                                                .foregroundStyle(WeiBeiTheme.placeholderInk)
                         )
                         .textFieldStyle(.plain)
+                        .weiBeiText(13)
                         .foregroundColor(WeiBeiTheme.ink)
                         .weiBeiText(13)
                         .weibeiInputSurface(active: true, height: 38)
@@ -588,20 +580,7 @@ extension SettingsView {
     }
 
     private var activeAPICredentialIsConfigured: Bool {
-        let isStored = oauthService.isConfigured(
-            providerID: activePiProviderID,
-            type: .apiKey
-        )
-        guard store.agentProviderID == .azureOpenAI else { return isStored }
-        guard let endpoint = try? AgentProviderEndpoint(
-            provider: .azureOpenAI,
-            baseURL: store.agentBaseURL
-        ) else { return false }
-        return isStored && oauthService.catalog?.credentials.contains(where: {
-            $0.providerId == AgentProviderID.azureOpenAI.piProviderName
-                && $0.type == .apiKey
-                && $0.boundEndpoint == endpoint.baseURL
-        }) == true
+        AgentProviderReadiness.hasActiveAPICredential(for: store)
     }
 
     private var hasStaleAzureCredential: Bool {
@@ -614,8 +593,7 @@ extension SettingsView {
     }
 
     private var oauthLinked: Bool {
-        guard let provider = currentOAuthProvider else { return false }
-        return activeAgentAuthMethod == .subscription && oauthService.isLinked(provider)
+        AgentProviderReadiness.isSubscriptionLinked(for: store)
     }
 
     // MARK: Advanced (collapsed) — removed; Base URL sits flat in the card and
@@ -641,10 +619,10 @@ extension SettingsView {
                     set: { store.updateModelName($0) }
                 ),
                 prompt: Text(oauthService.models(providerID: activePiProviderID).first ?? "model-id")
-                    .font(.system(size: 13))
                     .foregroundStyle(WeiBeiTheme.placeholderInk)
             )
             .textFieldStyle(.plain)
+            .weiBeiText(13)
             .foregroundColor(WeiBeiTheme.ink)
             .weiBeiText(13)
             .weibeiInputSurface(active: true, height: 38)

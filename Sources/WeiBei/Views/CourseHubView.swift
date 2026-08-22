@@ -18,7 +18,7 @@ struct CourseHubView: View {
     let createNote: () -> Void
 
     @State private var showsAllContent = false
-    @State private var searchResults: [CourseHomeSearchResult] = []
+    @State private var searchResults: [GlobalSearchHit] = []
     @State private var isSearching = false
     @State private var searchAvailability: CourseDocumentIndexAvailability = .ready
     @State private var searchRetryToken = 0
@@ -204,14 +204,14 @@ struct CourseHubView: View {
                         "进入课程后，可以继续阅读并打开这门课里的文稿、笔记与对话。",
                         "Open a course to resume reading and browse its materials, notes, and chats."
                     ))
-                    .weiBeiText(12.5)
+                    .weiBeiText(12)
                     .foregroundStyle(WeiBeiTheme.secondaryInk)
                 }
 
                 if store.courses.isEmpty {
                     VStack(alignment: .leading, spacing: 14) {
                         Text(store.ui("还没有课程", "No courses yet"))
-                            .weiBeiText(14, weight: .semibold)
+                            .weiBeiText(15, weight: .semibold)
                         Text(store.ui(
                             "每门课程都有自己的本地项目文件夹，可以容纳多份文稿与笔记。",
                             "Each course has a local project folder for multiple materials and notes."
@@ -235,7 +235,7 @@ struct CourseHubView: View {
                             } label: {
                                 HStack(spacing: 12) {
                                     Image(systemName: "book.closed")
-                                        .weiBeiText(14, weight: .medium)
+                                        .weiBeiText(15, weight: .medium)
                                         .foregroundStyle(
                                             courseWorkspaceAccent(colorIndex: course.colorIndex)
                                         )
@@ -251,14 +251,14 @@ struct CourseHubView: View {
                                             .foregroundStyle(WeiBeiTheme.ink)
                                             .lineLimit(1)
                                         Text(courseContentCount(for: course.id))
-                                            .weiBeiText(11)
+                                            .weiBeiText(12)
                                             .foregroundStyle(WeiBeiTheme.secondaryInk)
                                     }
 
                                     Spacer(minLength: 8)
 
                                     Image(systemName: "chevron.right")
-                                        .weiBeiText(10, weight: .semibold)
+                                        .weiBeiText(10.5, weight: .semibold)
                                         .foregroundStyle(WeiBeiTheme.tertiaryInk)
                                 }
                                 .padding(.horizontal, 14)
@@ -332,7 +332,7 @@ struct CourseHubView: View {
     private var continueReadingSection: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text(store.ui("继续上次", "Continue where you left off"))
-                .weiBeiBrandFont(language: store.interfaceLanguage, size: 21, weight: .semibold)
+                .weiBeiBrandFont(language: store.interfaceLanguage, size: 22, weight: .semibold)
                 .foregroundStyle(WeiBeiTheme.ink)
 
             if let courseID, let reading = continueReading {
@@ -416,7 +416,7 @@ struct CourseHubView: View {
                         "\(searchResults.count) 项",
                         "\(searchResults.count) results"
                     ))
-                    .weiBeiText(11)
+                    .weiBeiText(12)
                     .foregroundStyle(WeiBeiTheme.secondaryInk)
                 }
 
@@ -539,7 +539,7 @@ struct CourseHubView: View {
                                 "部分课程资料无法读取或建立搜索索引，请检查课程文件夹后重试。",
                                 "Some course materials could not be read or indexed. Check the course folder and retry."
                              ))
-                            .weiBeiText(12.5)
+                            .weiBeiText(12)
                             .foregroundStyle(WeiBeiTheme.secondaryInk)
 
                         Spacer(minLength: 8)
@@ -556,25 +556,26 @@ struct CourseHubView: View {
                     }
                 } else if searchResults.isEmpty {
                     Text(store.ui(
-                        "没有找到与“\(cleanedSearch)”相关的课程内容。",
-                        "No course content matched “\(cleanedSearch)”."
+                        "没有找到与“\(cleanedSearch)”相关的内容，已搜索全部课程。",
+                        "Nothing matched “\(cleanedSearch)” — all courses were searched."
                     ))
-                    .weiBeiText(12.5)
+                    .weiBeiText(12)
                     .foregroundStyle(WeiBeiTheme.secondaryInk)
                     .frame(maxWidth: .infinity, minHeight: 72, alignment: .leading)
                 }
 
-                ForEach(searchResults) { result in
+                ForEach(searchResults) { hit in
                     CourseHubContentRow(
-                        icon: searchResultIcon(result),
-                        title: result.title,
-                        detail: result.detail,
-                        snippet: result.matchedText,
-                        selected: searchResultIsSelected(result),
-                        action: { open(result) }
+                        icon: searchResultIcon(hit.result),
+                        title: hit.result.title,
+                        detail: hit.result.detail,
+                        snippet: hit.result.matchedText,
+                        courseBadge: hit.isCurrentCourse ? nil : hit.courseTitle,
+                        selected: searchResultIsSelected(hit.result),
+                        action: { open(hit) }
                     )
 
-                    if result.id != searchResults.last?.id {
+                    if hit.id != searchResults.last?.id {
                         CourseHairline().padding(.leading, 42)
                     }
                 }
@@ -588,7 +589,7 @@ struct CourseHubView: View {
                 "这门课还没有文稿、笔记或对话。",
                 "This course has no materials, notes, or chats yet."
             ))
-            .weiBeiText(12.5)
+            .weiBeiText(12)
             .foregroundStyle(WeiBeiTheme.secondaryInk)
 
             importAndCreateActions
@@ -612,9 +613,9 @@ struct CourseHubView: View {
                             "View all materials, notes, and chats"
                          ))
                     Image(systemName: showsAllContent ? "chevron.up" : "chevron.down")
-                        .weiBeiText(9, weight: .semibold)
+                        .weiBeiText(9.5, weight: .semibold)
                 }
-                .weiBeiText(12.5, weight: .medium)
+                .weiBeiText(12, weight: .medium)
                 .foregroundStyle(WeiBeiTheme.cinnabar)
                 .frame(maxWidth: .infinity, minHeight: 52)
                 .contentShape(Rectangle())
@@ -655,9 +656,9 @@ struct CourseHubView: View {
                     "课程文件夹暂时不可用",
                     "Course folder unavailable"
                 ))
-                .weiBeiText(12.5, weight: .semibold)
+                .weiBeiText(12, weight: .semibold)
                 Text(reason)
-                    .weiBeiText(11)
+                    .weiBeiText(12)
                     .foregroundStyle(WeiBeiTheme.secondaryInk)
                     .lineLimit(2)
             }
@@ -672,7 +673,7 @@ struct CourseHubView: View {
         .padding(14)
         .background(
             WeiBeiTheme.cinnabarSoft.opacity(0.22),
-            in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+            in: RoundedRectangle(cornerRadius: 12, style: .continuous)
         )
     }
 
@@ -688,17 +689,17 @@ struct CourseHubView: View {
 
         let span = WeiBeiPerf.begin("course.search_to_next_main_queue_proxy")
         isSearching = true
-        let outcome = await store.searchCourseHome(
-            courseID: courseID,
+        let outcome = await store.searchAllCourses(
+            currentCourseID: courseID,
             query: request.query
         )
         guard !Task.isCancelled,
               request == searchTaskID,
               store.courseWorkspaceCourseID == courseID else {
-            WeiBeiPerf.end(span, extra: "outcome=superseded")
+            WeiBeiPerf.end(span, extra: "outcome=superseded scope=global")
             return
         }
-        searchResults = outcome.results
+        searchResults = outcome.hits
         searchAvailability = outcome.availability
         isSearching = false
         guard let span else { return }
@@ -708,7 +709,7 @@ struct CourseHubView: View {
                 WeiBeiPerf.end(
                     span,
                     extra:
-                        "outcome=completed endpoint=next_main_queue_proxy input=manual_ui results=\(outcome.results.count)"
+                        "outcome=completed endpoint=next_main_queue_proxy input=manual_ui scope=global results=\(outcome.hits.count)"
                 )
                 continuation.resume()
             }
@@ -734,23 +735,22 @@ struct CourseHubView: View {
         }
     }
 
-    private func open(_ result: CourseHomeSearchResult) {
-        guard let courseID else { return }
-        switch result.kind {
+    private func open(_ hit: GlobalSearchHit) {
+        switch hit.result.kind {
         case .material:
-            guard let itemID = result.itemID else { return }
+            guard let itemID = hit.result.itemID, let courseID = hit.courseID else { return }
             selectedMaterialID = itemID
             _ = store.openCourseMaterial(itemID, in: courseID)
         case .note:
-            guard let itemID = result.itemID else { return }
+            guard let itemID = hit.result.itemID, let courseID = hit.courseID else { return }
             selectedNoteID = itemID
             store.openCourseNote(itemID, in: courseID)
         case .chat:
-            guard let sessionID = result.sessionID else { return }
+            guard let sessionID = hit.result.sessionID else { return }
             selectedSessionID = sessionID
             store.continueCourseSession(
                 sessionID,
-                expectedCourseID: courseID,
+                expectedCourseID: hit.courseID,
                 expectedScopeNeedsReview: false
             )
         }
@@ -945,17 +945,17 @@ private struct CourseHubContinueCard: View {
     var body: some View {
         HStack(spacing: 18) {
             Image(systemName: icon)
-                .weiBeiText(24, weight: .regular)
+                .weiBeiText(22, weight: .regular)
                 .foregroundStyle(WeiBeiTheme.cinnabar)
                 .frame(width: 46)
 
             VStack(alignment: .leading, spacing: 6) {
                 Text(title)
-                    .weiBeiText(17, weight: .semibold)
+                    .weiBeiText(18, weight: .semibold)
                     .foregroundStyle(WeiBeiTheme.ink)
                     .lineLimit(1)
                 Text(detail)
-                    .weiBeiText(11.5)
+                    .weiBeiText(12)
                     .foregroundStyle(WeiBeiTheme.secondaryInk)
                     .lineLimit(2)
             }
@@ -994,11 +994,11 @@ private struct CourseHubContinueActionButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .weiBeiText(13, weight: .semibold)
-            .foregroundStyle(primary ? Color.white : WeiBeiTheme.cinnabar)
+            .foregroundStyle(primary ? WeiBeiTheme.onCinnabar : WeiBeiTheme.cinnabar)
             .padding(.horizontal, 20)
             .frame(minWidth: 132, minHeight: 42)
             .background(
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
                     .fill(
                         primary
                             ? WeiBeiTheme.cinnabar.opacity(
@@ -1011,7 +1011,7 @@ private struct CourseHubContinueActionButtonStyle: ButtonStyle {
             )
             .overlay {
                 if !primary {
-                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
                         .stroke(WeiBeiTheme.cinnabar.opacity(0.72), lineWidth: 1)
                 }
             }
@@ -1039,7 +1039,7 @@ private struct CourseHubStartReadingRow: View {
                     .weiBeiText(15, weight: .semibold)
                     .foregroundStyle(WeiBeiTheme.ink)
                 Text(detail)
-                    .weiBeiText(11.5)
+                    .weiBeiText(12)
                     .foregroundStyle(WeiBeiTheme.secondaryInk)
             }
 
@@ -1065,6 +1065,7 @@ private struct CourseHubContentRow: View {
     let title: String
     let detail: String
     var snippet: String? = nil
+    var courseBadge: String? = nil
     let selected: Bool
     let action: () -> Void
 
@@ -1074,7 +1075,7 @@ private struct CourseHubContentRow: View {
         Button(action: action) {
             HStack(spacing: 14) {
                 Image(systemName: icon)
-                    .weiBeiText(14, weight: .medium)
+                    .weiBeiText(15, weight: .medium)
                     .foregroundStyle(selected
                                      ? WeiBeiTheme.cinnabar
                                      : WeiBeiTheme.secondaryInk)
@@ -1082,7 +1083,7 @@ private struct CourseHubContentRow: View {
 
                 VStack(alignment: .leading, spacing: 4) {
                     Text(title)
-                        .weiBeiText(13.5, weight: selected ? .semibold : .medium)
+                        .weiBeiText(13, weight: selected ? .semibold : .medium)
                         .foregroundStyle(WeiBeiTheme.ink)
                         .lineLimit(1)
 
@@ -1094,13 +1095,26 @@ private struct CourseHubContentRow: View {
                     if let snippet,
                        !snippet.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                         Text(snippet)
-                            .weiBeiText(11)
+                            .weiBeiText(12)
                             .foregroundStyle(WeiBeiTheme.tertiaryInk)
                             .lineLimit(2)
                     }
                 }
 
                 Spacer(minLength: 10)
+
+                if let courseBadge {
+                    Text(courseBadge)
+                        .weiBeiText(10)
+                        .foregroundStyle(WeiBeiTheme.tertiaryInk)
+                        .lineLimit(1)
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 3)
+                        .background(
+                            WeiBeiTheme.paperInset.opacity(0.4),
+                            in: RoundedRectangle(cornerRadius: 5, style: .continuous)
+                        )
+                }
 
                 Image(systemName: "chevron.right")
                     .weiBeiText(9.5, weight: .semibold)
@@ -1157,12 +1171,12 @@ private struct CourseHubMemoryLine: View {
                 .frame(width: 24)
 
             Text(title)
-                .weiBeiText(13.5, weight: .semibold)
+                .weiBeiText(13, weight: .semibold)
                 .foregroundStyle(WeiBeiTheme.ink)
                 .frame(width: 104, alignment: .leading)
 
             Text(text)
-                .weiBeiText(11.5)
+                .weiBeiText(12)
                 .foregroundStyle(
                     isPlaceholder
                         ? WeiBeiTheme.tertiaryInk

@@ -7082,6 +7082,11 @@ enum CourseProjectRootSelfCheck {
         let finderAdded = courseRoot.appendingPathComponent("资料/Finder 新增.pdf")
         try Data("%PDF-1.4\nFinder".utf8).write(to: finderAdded)
         try store.reconcileCourseFilesForSelfCheck(courseID: courseID)
+        // 灰态保护：首缺席保留条目；模拟两个对账周期后移除（计划 §5 阶段2）。
+        if store.importedItems.contains(where: { $0.id == noteItem.id }) {
+            store.fileMissingSinceByItemID[noteItem.id] = Date().addingTimeInterval(-7)
+            try store.reconcileCourseFilesForSelfCheck(courseID: courseID)
+        }
 
         try check(
             store.importedItems.first { $0.id == materialItem.id }?.urlPath == movedMaterial.path,
@@ -7123,9 +7128,15 @@ enum CourseProjectRootSelfCheck {
         let displacedURL = incoming.appendingPathComponent("暂时移走的原文稿.txt")
         try FileManager.default.moveItem(at: courseURL, to: displacedURL)
         try store.reconcileCourseFilesForSelfCheck(courseID: courseID)
+        // 灰态保护：首缺席保留条目；模拟两个对账周期后移除（计划 §5 阶段2）。
+        if store.importedItems.contains(where: { $0.id == item.id }),
+           store.fileMissingSinceByItemID[item.id] != nil {
+            store.fileMissingSinceByItemID[item.id] = Date().addingTimeInterval(-7)
+            try store.reconcileCourseFilesForSelfCheck(courseID: courseID)
+        }
         try check(
             store.importedItems.first { $0.id == item.id } == nil,
-            "移出课程文件夹后文稿还留在魏碑里"
+            "Finder 删除后课程里还留着这条笔记"
         )
 
         store.presentCourseWorkspace(.hub, courseID: courseID)

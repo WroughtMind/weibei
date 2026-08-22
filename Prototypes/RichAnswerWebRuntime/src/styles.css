@@ -43,7 +43,7 @@ button {
   align-items: baseline;
   margin: 0 0 10px 34px;
   color: #6d6253;
-  font-size: 14px;
+  font-size: calc(15px * var(--weibei-text-scale, 1));
 }
 
 .answer-head span {
@@ -75,7 +75,7 @@ button {
   padding: 0 10px;
   color: #554a3b;
   background: transparent;
-  font-size: 13px;
+  font-size: calc(13px * var(--weibei-text-scale, 1));
 }
 
 .segmented button.active {
@@ -89,7 +89,7 @@ button {
   gap: 12px;
   margin: 0 0 8px 34px;
   color: #736654;
-  font-size: 13px;
+  font-size: calc(13px * var(--weibei-text-scale, 1));
 }
 
 .context-strip strong {
@@ -116,13 +116,13 @@ button {
 
 .runtime-title span {
   color: #7f705e;
-  font: 12px ui-monospace, SFMono-Regular, Menlo, monospace;
+  font: calc(12px * var(--weibei-text-scale, 1)) ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
 .runtime-title p {
   margin: 0;
   color: #817361;
-  font-size: 12px;
+  font-size: calc(12px * var(--weibei-text-scale, 1));
 }
 
 .answer-block {
@@ -137,7 +137,7 @@ button {
 
 .answer-intro span {
   color: #8f5135;
-  font: 12px ui-monospace, SFMono-Regular, Menlo, monospace;
+  font: calc(12px * var(--weibei-text-scale, 1)) ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
 .answer-intro h2,
@@ -146,7 +146,7 @@ button {
 }
 
 .answer-intro h2 {
-  font-size: 25px;
+  font-size: calc(25px * var(--weibei-text-scale, 1));
   line-height: 1.15;
   letter-spacing: -0.03em;
 }
@@ -154,7 +154,7 @@ button {
 .answer-intro p {
   color: #665b4b;
   line-height: 1.6;
-  font-size: 14px;
+  font-size: calc(15px * var(--weibei-text-scale, 1));
 }
 
 .slider-field {
@@ -166,7 +166,7 @@ button {
   display: flex;
   justify-content: space-between;
   color: #5c5144;
-  font-size: 13px;
+  font-size: calc(13px * var(--weibei-text-scale, 1));
 }
 
 .slider-field strong {
@@ -182,7 +182,7 @@ button {
   margin: 0;
   color: #5d5346;
   line-height: 1.6;
-  font-size: 13px;
+  font-size: calc(13px * var(--weibei-text-scale, 1));
 }
 
 .function-workbench {
@@ -200,13 +200,13 @@ button {
 }
 
 .formula-strip strong {
-  font-size: 22px;
+  font-size: calc(22px * var(--weibei-text-scale, 1));
   color: #2e281f;
 }
 
 .formula-strip span {
   color: #8f5135;
-  font-size: 13px;
+  font-size: calc(13px * var(--weibei-text-scale, 1));
 }
 
 .graph-panel {
@@ -259,7 +259,7 @@ button {
   padding: 3px 7px;
   color: #5d5346;
   background: rgba(249, 244, 235, 0.82);
-  font-size: 12px;
+  font-size: calc(12px * var(--weibei-text-scale, 1));
 }
 
 .slope-note {
@@ -285,7 +285,7 @@ button {
   grid-template-columns: repeat(5, 1fr);
   gap: 1px;
   color: #4f4639;
-  font-size: 12px;
+  font-size: calc(12px * var(--weibei-text-scale, 1));
 }
 
 .point-table span {
@@ -310,12 +310,12 @@ button {
   grid-template-columns: 1fr auto 1fr;
   align-items: center;
   color: #655a4b;
-  font-size: 13px;
+  font-size: calc(13px * var(--weibei-text-scale, 1));
 }
 
 .reaction-caption strong {
   color: #2e281f;
-  font-size: 22px;
+  font-size: calc(22px * var(--weibei-text-scale, 1));
 }
 
 .reaction-caption strong:last-child {
@@ -343,7 +343,7 @@ button {
 
 .atom strong {
   z-index: 2;
-  font-size: 43px;
+  font-size: calc(43px * var(--weibei-text-scale, 1));
 }
 
 .atom > span {
@@ -352,7 +352,7 @@ button {
   top: 42px;
   right: 38px;
   color: #8f5135;
-  font-size: 18px;
+  font-size: calc(18px * var(--weibei-text-scale, 1));
 }
 
 .shells {
@@ -376,7 +376,7 @@ button {
   padding: 0 4px;
   color: #4f4639;
   background: #f2e9da;
-  font-size: 12px;
+  font-size: calc(12px * var(--weibei-text-scale, 1));
 }
 
 .electron-flow {
@@ -448,13 +448,13 @@ button {
 
 .state-list dt {
   color: #756957;
-  font-size: 12px;
+  font-size: calc(12px * var(--weibei-text-scale, 1));
 }
 
 .state-list dd {
   margin: 0;
   color: #2e281f;
-  font-size: 13px;
+  font-size: calc(13px * var(--weibei-text-scale, 1));
 }
 
 .image-observer {
@@ -504,7 +504,7 @@ button {
 .rub-char.main {
   left: 42px;
   top: 8px;
-  font-size: 230px;
+  font-size: calc(230px * var(--weibei-text-scale, 1));
   transform: scaleX(0.78) rotate(-1deg);
   text-shadow:
     8px 0 rgba(24, 22, 17, 0.08),
@@ -514,7 +514,7 @@ button {
 .rub-char.ghost {
   right: 20px;
   top: 70px;
-  font-size: 138px;
+  font-size: calc(138px * var(--weibei-text-scale, 1));
   transform: scaleX(0.72) rotate(2deg);
 }
 
@@ -601,7 +601,7 @@ button {
   position: absolute;
   right: 14px;
   color: #7a6d5a;
-  font-size: 12px;
+  font-size: calc(12px * var(--weibei-text-scale, 1));
   writing-mode: vertical-rl;
 }
 
@@ -622,7 +622,7 @@ button {
 .subject-line {
   grid-column: 1 / -1;
   color: #8f5135;
-  font-size: 15px;
+  font-size: calc(15px * var(--weibei-text-scale, 1));
 }
 
 .toggle-row {
@@ -630,7 +630,7 @@ button {
   gap: 8px;
   align-items: center;
   color: #5d5346;
-  font-size: 13px;
+  font-size: calc(13px * var(--weibei-text-scale, 1));
 }
 
 .toggle-row input {

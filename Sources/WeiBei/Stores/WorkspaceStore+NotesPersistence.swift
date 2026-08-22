@@ -3,6 +3,20 @@ import CryptoKit
 import Foundation
 import WeiBeiCore
 
+enum NoteWriteGateError: LocalizedError {
+    case writeRefusedKeepContent
+    case diskChangedAdoptDisk
+
+    var errorDescription: String? {
+        switch self {
+        case .writeRefusedKeepContent:
+            return "磁盘内容无法确认，写入已暂停以保护正文。"
+        case .diskChangedAdoptDisk:
+            return "笔记文件已被外部修改，已采用磁盘内容。"
+        }
+    }
+}
+
 @MainActor
 extension WorkspaceStore {
     func quotedReferenceBlock(text: String, sourceTitle: String) -> String {
@@ -92,7 +106,7 @@ extension WorkspaceStore {
         }
     }
 
-    private func renameNotebookNoteInTransaction(
+    func renameNotebookNoteInTransaction(
         itemID: String,
         to rawTitle: String
     ) async {
@@ -132,22 +146,6 @@ extension WorkspaceStore {
                 "Could not rename the note because the original Markdown could not be read."
             )
             showImportantOperationError(message)
-            return
-        }
-        // P0 重命名哨兵：sourceMarkdown 呈默认模板形态、读盘曾降级、且磁盘另有内容
-        // （digest 不同于模板），说明正文未能完整读出——继续 rename 会把模板写回新旧
-        // 两个文件（8/12 诗歌笔记事故的通道）。中止并保留现状。
-        if noteOperationErrorsByItemID[oldID] != nil,
-           NoteTemplateShape.isDefaultTemplateShape(sourceMarkdown, title: oldTitle),
-           let diskDigest = Self.noteContentDigest(at: oldURL),
-           diskDigest != Self.noteContentDigest(Data(defaultNote(for: oldItem).utf8)) {
-            showImportantOperationError(
-                ui(
-                    "正文未能完整读取，为保护内容未执行重命名。",
-                    "The note body could not be fully read, so the rename was not performed in order to protect the content."
-                )
-            )
-            save()
             return
         }
         let retitledMarkdown = retitledMarkdown(sourceMarkdown, from: oldTitle, to: newTitle)
@@ -192,9 +190,7 @@ extension WorkspaceStore {
                         importedItems[idx] = rolled
                     }
                     setNoteDraft(sourceMarkdown, for: oldID)
-                    pendingNoteWritesByItemID[oldID] = PendingNoteWriteState(
-                        baselineContentDigest: nil
-                    )
+                    pendingNoteWritesByItemID[oldID] = PendingNoteWriteState()
                     courseDocumentSearchIndex.synchronize(allItems)
                     _ = await persistWorkspaceNow()
                     showImportantOperationError(
@@ -214,7 +210,17 @@ extension WorkspaceStore {
                 Data(retitledMarkdown.utf8)
             )
             if willRewriteMarkdown {
-                try notebookMarkdownWriter(retitledMarkdown, newURL)
+                // 写闸门：以移动后磁盘现况为基线；不符即中止并走统一回滚。
+                let priorBackingDigest = noteBackingContentDigestsByItemID[oldID]
+                let priorLastSelfDigest = lastSelfWrittenNoteDigestsByItemID[oldID]
+                try writeNotebookMarkdownThroughGate(
+                    retitledMarkdown,
+                    itemID: oldID,
+                    url: newURL,
+                    expectedBaseline: Self.noteContentDigest(at: newURL)
+                )
+                noteBackingContentDigestsByItemID[oldID] = priorBackingDigest
+                lastSelfWrittenNoteDigestsByItemID[oldID] = priorLastSelfDigest
                 let writtenDigest = Self.noteContentDigest(at: newURL)
                 guard writtenDigest == expectedOutputDigest else {
                     throw NSError(
@@ -288,9 +294,7 @@ extension WorkspaceStore {
                     // 磁盘上是陌生内容或路径未恢复：切断路径关系，保留正文草稿。
                     rolled.urlPath = nil
                     setNoteDraft(sourceMarkdown, for: oldID)
-                    pendingNoteWritesByItemID[oldID] = PendingNoteWriteState(
-                        baselineContentDigest: originalContentDigest
-                    )
+                    pendingNoteWritesByItemID[oldID] = PendingNoteWriteState()
                 }
                 importedItems[idx] = rolled
                 if wasActiveNotebook {
@@ -381,8 +385,6 @@ extension WorkspaceStore {
         importedItems[index].title = newStem
         importedItems[index].subtitle = newURL.lastPathComponent
         importedItems[index].urlPath = newURL.path
-        if let bookmark = Self.makeImportedFileBookmark(for: newURL) {
-        }
         if let refreshed = refreshImportedFileTracking(itemID: itemID, url: newURL) {
             courseDocumentSearchIndex.schedule([refreshed])
         }
@@ -458,7 +460,23 @@ extension WorkspaceStore {
                 WeiBeiLog.noteRepair.error("note file error raised: \(message, privacy: .public)")
             }
             if !alreadyRecorded, activeNoteItemID == itemID {
-                showImportantOperationError(message)
+                // 阶段3 横幅降格（计划 §5 阶段3）：文件缺席/未物化等不可用场景
+                // 只保留条内状态，不再弹重要操作横幅；其余真实错误维持横幅。
+                let itemUnavailable: Bool = {
+                    guard let item = importedItems.first(where: { $0.id == itemID }),
+                          let url = resolvedLibraryURL(for: item) else {
+                        return true
+                    }
+                    switch CourseProjectFileWorker.entryPresence(at: url) {
+                    case .present:
+                        return false
+                    case .presentUnmaterialized, .absent, .inaccessible:
+                        return true
+                    }
+                }()
+                if !itemUnavailable {
+                    showImportantOperationError(message)
+                }
             }
         } else {
             let cleared = noteOperationErrorsByItemID.removeValue(forKey: itemID)
@@ -495,145 +513,6 @@ extension WorkspaceStore {
         // 写出时尽量清空已迁移的 pending 状态机字段。
         if !pendingNoteWritesByItemID.isEmpty {
             pendingNoteWritesByItemID = [:]
-            save()
-        }
-    }
-
-    /// P0 启动修复：收敛「磁盘 vs 草稿」双真相源分叉，并修复 fileID 指纹漂移。
-    ///
-    /// 必须在 retryRestoredPendingNoteWrites 之前运行：retry 会把草稿直接写回，
-    /// 若草稿是「读盘失败回退的模板」而磁盘仍有真实内容，先跑 repair 才能把
-    /// 这种嫌疑草稿安全丢弃（否则模板会被 retry 盖回磁盘）。
-    ///
-    /// 安全性质：
-    /// - 判定与执行分离：NoteDivergenceRepairPlanner（WeiBeiCore 纯函数）出清单，
-    ///   这里只负责采集现场和执行；UserDefaults `WeiBeiNoteRepairDisabled=1`
-    ///   时干跑（只打日志不写盘）。
-    /// - 备份先行：restoreDraft 写盘前先把磁盘现内容入 NoteBackupRing，备份失败
-    ///   则不写。
-    /// - 幂等：收敛后再次运行所有项的 action 都是 .none。
-    /// - 全程不弹窗；结果写 NSLog。
-    func repairDivergedNotebookNotesIfNeeded() {
-        guard !noteDivergenceRepairDidRun else { return }
-        noteDivergenceRepairDidRun = true
-        let dryRun = UserDefaults.standard.bool(forKey: "WeiBeiNoteRepairDisabled")
-        var plans: [(
-            itemID: String,
-            action: NoteRepairAction,
-            url: URL,
-            draft: String?,
-            identityDrifted: Bool
-        )] = []
-        for item in importedItems where item.editsBackingMarkdownFile {
-            // 用资料库相对路径定位笔记；是否可信由 planner 按 digest 判断。
-            guard let url = resolvedLibraryURL(for: item)?.standardizedFileURL
-                ?? item.url?.standardizedFileURL else { continue }
-            let draft = notesByItemID[item.id]
-            let diskDigest = Self.noteContentDigest(at: url)
-            let liveIdentity = importedFileIdentityResolver(url)
-            let state = NoteRepairItemState(
-                draftDigest: draft.map { Self.noteContentDigest(Data($0.utf8)) },
-                draftIsTemplateShape: draft.map {
-                    NoteTemplateShape.isDefaultTemplateShape(
-                        $0,
-                        title: displayTitle(for: item)
-                    )
-                } ?? false,
-                diskDigest: diskDigest,
-                templateDigest: Self.noteContentDigest(
-                    Data(defaultNote(for: item).utf8)
-                ),
-                identityDrifted: liveIdentity.map { live in
-                    item.importedFileIdentity?.matchesAcrossVolumeDrift(live) != true
-                } ?? false,
-                liveIdentityAvailable: liveIdentity != nil,
-                lastSelfWrittenDigest: lastSelfWrittenNoteDigestsByItemID[item.id],
-                recordedContentDigest: item.contentDigest
-            )
-            let action = NoteDivergenceRepairPlanner.action(for: state)
-            if action != .none {
-                plans.append((item.id, action, url, draft, state.identityDrifted))
-            }
-        }
-        guard !plans.isEmpty else { return }
-        WeiBeiLog.noteRepair.notice("note_repair_planned count=\(plans.count, privacy: .public) dryRun=\(dryRun, privacy: .public)")
-        for plan in plans {
-            WeiBeiLog.noteRepair.notice("note_repair_plan action=\(plan.action.rawValue, privacy: .public)")
-        }
-        guard !dryRun else { return }
-        var changed = false
-        for plan in plans {
-            let itemID = plan.itemID
-            switch plan.action {
-            case .none:
-                continue
-            case .restoreDraft:
-                guard let draft = plan.draft else { continue }
-                // 备份先行；备份失败绝不写盘。
-                do {
-                    _ = try NoteBackupRing.capture(
-                        sourceURL: plan.url,
-                        itemID: itemID,
-                        rootURL: noteBackupRootURL
-                    )
-                } catch {
-                    WeiBeiLog.noteRepair.error("note_repair_backup_failed code=\(WeiBeiLog.code(error), privacy: .public)")
-                    continue
-                }
-                do {
-                    try notebookMarkdownWriter(draft, plan.url)
-                    let writtenDigest = Self.noteContentDigest(Data(draft.utf8))
-                    noteBackingContentDigestsByItemID[itemID] = writtenDigest
-                    lastSelfWrittenNoteDigestsByItemID[itemID] = writtenDigest
-                    setNoteDraft(nil, for: itemID)
-                    setNoteFileError(nil, for: itemID)
-                    if let refreshed = refreshImportedFileTracking(
-                        itemID: itemID,
-                        url: plan.url
-                    ) {
-                        courseDocumentSearchIndex.schedule([refreshed])
-                    }
-                    changed = true
-                } catch {
-                    WeiBeiLog.noteRepair.error("note_repair_restore_write_failed code=\(WeiBeiLog.code(error), privacy: .public)")
-                }
-            case .discardRedundantDraft:
-                // 磁盘==草稿：只清草稿不动内容；仅指纹漂移时才刷指纹（幂等）。
-                setNoteDraft(nil, for: itemID)
-                setNoteFileError(nil, for: itemID)
-                if plan.identityDrifted,
-                   let refreshed = refreshImportedFileTracking(
-                       itemID: itemID,
-                       url: plan.url
-                   ) {
-                    courseDocumentSearchIndex.schedule([refreshed])
-                }
-                changed = true
-            case .discardSuspectTemplateDraft:
-                // 草稿是模板形态但磁盘另有真实内容：草稿是降级产物，丢弃它让
-                // 显示层回到磁盘真相；不写盘、不刷指纹（磁盘内容未辨认为可信）。
-                setNoteDraft(nil, for: itemID)
-                setNoteFileError(nil, for: itemID)
-                showTransientNoteStatus(
-                    ui(
-                        "检测到笔记正文曾降级显示为模板，已恢复为磁盘上的真实内容。",
-                        "The note body had fallen back to a template; it has been restored to the real on-disk content."
-                    )
-                )
-                changed = true
-            case .refreshIdentityOnly:
-                if let refreshed = refreshImportedFileTracking(
-                    itemID: itemID,
-                    url: plan.url
-                ) {
-                    courseDocumentSearchIndex.schedule([refreshed])
-                    changed = true
-                } else {
-                    WeiBeiLog.noteRepair.error("note_repair_identity_refresh_failed")
-                }
-            }
-        }
-        if changed {
             save()
         }
     }
@@ -691,8 +570,9 @@ extension WorkspaceStore {
         pendingNotePersistenceTasks[itemID] = nil
     }
 
-    /// S2 三件套：备份（外部改动）→ 原子写 → 失败留草稿。
-    /// 返回是否成功写回磁盘。永不因 digest 冲突拒绝写回。
+    /// S2 三件套：备份（外部改动）→ 闸门比对 → 原子写 → 失败留草稿。
+    /// 阶段1 写闸门：比对下沉到唯一底层入口，模板守卫此阶段并存（计划 §5 阶段1）。
+    /// 返回是否成功写回磁盘。
     @discardableResult
     func writeNoteMarkdownTriple(
         _ markdown: String,
@@ -702,33 +582,6 @@ extension WorkspaceStore {
         // 备份判定只用「上次自写」基线，不受 reconcile/load 刷写的磁盘观察值影响。
         let lastSelfDigest = lastSelfWrittenNoteDigestsByItemID[itemID]
         let currentDigest = Self.noteContentDigest(at: url)
-        // P0 模板覆盖守卫：读取降级（noteOperationErrorsByItemID 有记录）期间，
-        // 拒绝把默认模板写回「另有真实内容」的磁盘文件——这正是诗歌笔记被覆盖的通道。
-        // 磁盘内容是我们上次自己写的（digest == lastSelfDigest）时放行，
-        // 不误伤「用户真的把正文删成模板」的连续编辑。
-        if noteOperationErrorsByItemID[itemID] != nil,
-           let item = importedItems.first(where: { $0.id == itemID }),
-           item.editsBackingMarkdownFile {
-            let template = defaultNote(for: item)
-            let templateDigest = Self.noteContentDigest(Data(template.utf8))
-            let writingIsTemplate = NoteTemplateShape.isDefaultTemplateShape(
-                markdown,
-                title: displayTitle(for: item)
-            ) || Self.noteContentDigest(Data(markdown.utf8)) == templateDigest
-            if writingIsTemplate,
-               let currentDigest,
-               currentDigest != templateDigest,
-               currentDigest != lastSelfDigest {
-                let message = ui(
-                    "已拦截模板写回：笔记正文此前未能完整读取，为保护磁盘内容未执行写入，最新内容已保留在草稿中。",
-                    "Template write-back was blocked because the note body could not be fully read earlier. The on-disk content was protected and the latest text was kept as a draft."
-                )
-                setNoteDraft(markdown, for: itemID)
-                setNoteFileError(message, for: itemID)
-                showImportantOperationError(message)
-                return false
-            }
-        }
         if FileManager.default.fileExists(atPath: url.path),
            currentDigest != lastSelfDigest {
             _ = try? NoteBackupRing.capture(
@@ -737,16 +590,23 @@ extension WorkspaceStore {
                 rootURL: noteBackupRootURL
             )
         }
+        if noteBackingContentDigestsByItemID[itemID] == nil,
+           let digest = importedItems.first(where: { $0.id == itemID })?.contentDigest {
+            noteBackingContentDigestsByItemID[itemID] = digest
+        }
         do {
-            try notebookMarkdownWriter(markdown, url)
-            let writtenDigest = Self.noteContentDigest(Data(markdown.utf8))
-            noteBackingContentDigestsByItemID[itemID] = writtenDigest
-            lastSelfWrittenNoteDigestsByItemID[itemID] = writtenDigest
-            setNoteDraft(nil, for: itemID)
-            pendingNoteWritesByItemID.removeValue(forKey: itemID)
-            setNoteFileError(nil, for: itemID)
-            noteEditorDidPersist(markdown, documentID: itemID)
-            return true
+            try writeNotebookMarkdownThroughGate(
+                markdown,
+                itemID: itemID,
+                url: url,
+                expectedBaseline: noteBackingContentDigestsByItemID[itemID]
+            )
+        } catch NoteWriteGateError.writeRefusedKeepContent {
+            retainUnreachableNoteDraft(markdown, itemID: itemID)
+            return false
+        } catch NoteWriteGateError.diskChangedAdoptDisk {
+            adoptExternalDiskNote(itemID: itemID, url: url)
+            return false
         } catch {
             setNoteDraft(markdown, for: itemID)
             pendingNoteWritesByItemID.removeValue(forKey: itemID)
@@ -758,6 +618,60 @@ extension WorkspaceStore {
             )
             return false
         }
+        setNoteDraft(nil, for: itemID)
+        pendingNoteWritesByItemID.removeValue(forKey: itemID)
+        setNoteFileError(nil, for: itemID)
+        noteEditorDidPersist(markdown, documentID: itemID)
+        return true
+    }
+
+    /// 磁盘内容被外部修改时采用磁盘：待写内容已先入备份环，这里刷新编辑器状态。
+    func adoptExternalDiskNote(itemID: String, url: URL) {
+        guard let diskMarkdown = try? String(contentsOf: url, encoding: .utf8) else { return }
+        let digest = Self.noteContentDigest(Data(diskMarkdown.utf8))
+        noteBackingContentDigestsByItemID[itemID] = digest
+        lastSelfWrittenNoteDigestsByItemID[itemID] = digest
+        pendingNoteWritesByItemID.removeValue(forKey: itemID)
+        setNoteDraft(nil, for: itemID)
+        loadedCourseNoteTextByItemID[itemID] = diskMarkdown
+        if activeNoteItemID == itemID {
+            noteText = diskMarkdown
+            noteEditingSession.replaceDocument(with: itemID)
+            noteEditorCommand = NoteEditorCommand(
+                kind: .reloadDocument,
+                markdown: diskMarkdown
+            )
+        }
+    }
+
+    /// 全仓唯一笔记写盘闸门（计划 §5 阶段1）：所有写路径必须经此函数。
+    /// 文件在场时写前重读磁盘 digest：重读失败或无基线 ⇒ 拒写并保留待写内容；
+    /// 摘要不符 ⇒ 待写内容先入备份环再抛采用磁盘；一致才落盘并刷新双 digest。
+    /// 禁止绕过本函数直接调用 notebookMarkdownWriter（SelfCheck SAFETY 断言白名单）。
+    func writeNotebookMarkdownThroughGate(
+        _ markdown: String,
+        itemID: String,
+        url: URL,
+        expectedBaseline: String?
+    ) throws {
+        if FileManager.default.fileExists(atPath: url.path) {
+            guard let expectedBaseline,
+                  let diskDigest = Self.noteContentDigest(at: url) else {
+                throw NoteWriteGateError.writeRefusedKeepContent
+            }
+            if diskDigest != expectedBaseline {
+                _ = try? NoteBackupRing.capture(
+                    content: Data(markdown.utf8),
+                    itemID: itemID,
+                    rootURL: noteBackupRootURL
+                )
+                throw NoteWriteGateError.diskChangedAdoptDisk
+            }
+        }
+        try notebookMarkdownWriter(markdown, url)
+        let writtenDigest = Self.noteContentDigest(Data(markdown.utf8))
+        noteBackingContentDigestsByItemID[itemID] = writtenDigest
+        lastSelfWrittenNoteDigestsByItemID[itemID] = writtenDigest
     }
 
     /// 文件不可达时静默保留草稿（无冲突横幅）。

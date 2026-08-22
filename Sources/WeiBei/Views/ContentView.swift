@@ -81,10 +81,11 @@ struct ContentView: View {
                     .zIndex(100)
                 }
 
-                // Single top-level status surface: important errors first, otherwise
-                // the transient note status. Sits above the course space so it stays
-                // visible wherever the user is; the old notes-pane-local copy is gone.
-                if store.importantOperationError != nil || store.transientNoteStatus != nil {
+                // Single top-level status surface: important errors first, then
+                // persistent save failures, otherwise the transient note status.
+                // Sits above the course space so it stays visible wherever the
+                // user is; the old notes-pane-local copy is gone.
+                if store.importantOperationError != nil || store.workspaceSaveError != nil || store.transientNoteStatus != nil {
                     WorkspaceStatusBanner()
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
                         .padding(.top, WeiBeiMetric.topBarHeight * textScale + 10)
@@ -102,6 +103,7 @@ struct ContentView: View {
                 }
             }
             .animation(WeiBeiMotion.panel, value: store.importantOperationError)
+            .animation(WeiBeiMotion.panel, value: store.workspaceSaveError)
             .animation(WeiBeiMotion.panel, value: store.transientNoteStatus)
             .background {
                 LibraryAwareEscapeBridge(
@@ -360,12 +362,12 @@ private struct ImportProgressPill: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
-        .background(WeiBeiTheme.paperRaised.opacity(0.97))
+        .weibeiEtchedCapsuleBackground(
+            fill: WeiBeiTheme.paperRaised.opacity(0.97),
+            stroke: WeiBeiTheme.hairline.opacity(0.6),
+            contactShadow: true
+        )
         .clipShape(Capsule())
-        .overlay {
-            Capsule()
-                .stroke(WeiBeiTheme.hairline.opacity(0.6), lineWidth: 1)
-        }
         .shadow(color: WeiBeiTheme.ink.opacity(store.appearanceMode.isDark ? 0.3 : 0.1), radius: 12, y: 6)
         .accessibilityElement(children: .combine)
         .accessibilityLabel(Text(store.ui("正在导入文件", "Importing files")))
@@ -379,27 +381,47 @@ private struct WorkspaceStatusBanner: View {
         store.importantOperationError != nil
     }
 
+    // 持续保存失败（连续 3 次置位）与角落标记同源，这里让它在全 App 可见。
+    private var isSaveFailure: Bool {
+        !isImportant && store.workspaceSaveError != nil
+    }
+
+    private var isAlert: Bool {
+        isImportant || isSaveFailure
+    }
+
     private var message: String {
-        store.importantOperationError ?? store.transientNoteStatus ?? ""
+        store.importantOperationError ?? store.workspaceSaveError ?? store.transientNoteStatus ?? ""
     }
 
     var body: some View {
         HStack(spacing: 8) {
-            Image(systemName: isImportant ? "exclamationmark.triangle.fill" : "info.circle")
+            Image(systemName: isAlert ? "exclamationmark.triangle.fill" : "info.circle")
                 .weiBeiText(12, weight: .medium)
-                .foregroundStyle(isImportant ? WeiBeiTheme.cinnabar : WeiBeiTheme.secondaryInk)
+                .foregroundStyle(isAlert ? WeiBeiTheme.cinnabar : WeiBeiTheme.secondaryInk)
             Text(message)
                 .weiBeiText(12, weight: .medium)
                 .foregroundStyle(WeiBeiTheme.ink)
                 .lineLimit(3)
                 .multilineTextAlignment(.leading)
                 .fixedSize(horizontal: false, vertical: true)
-            if isImportant {
+            if isSaveFailure {
+                Button {
+                    _ = store.retryWorkspaceSave()
+                } label: {
+                    Text(store.ui("重试", "Retry"))
+                        .weiBeiText(12, weight: .semibold)
+                        .foregroundStyle(WeiBeiTheme.cinnabar)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(Text(store.ui("重试保存", "Retry save")))
+            } else if isImportant {
                 Button {
                     store.dismissImportantOperationError()
                 } label: {
                     Image(systemName: "xmark")
-                        .weiBeiText(10, weight: .semibold)
+                        .weiBeiText(10.5, weight: .semibold)
                         .foregroundStyle(WeiBeiTheme.secondaryInk)
                         .contentShape(Rectangle())
                 }
@@ -410,19 +432,19 @@ private struct WorkspaceStatusBanner: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 9)
         .frame(maxWidth: 440, alignment: .leading)
-        .background(WeiBeiTheme.paperRaised.opacity(0.97))
-        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .stroke(
-                    isImportant
-                        ? WeiBeiTheme.cinnabar.opacity(0.55)
-                        : WeiBeiTheme.hairline.opacity(0.6),
-                    lineWidth: 1
-                )
+        .background {
+            WeiBeiEtchedBackdrop(
+                shape: RoundedRectangle(cornerRadius: 8, style: .continuous),
+                fill: WeiBeiTheme.paperRaised.opacity(0.97),
+                stroke: isAlert
+                    ? WeiBeiTheme.cinnabar.opacity(0.55)
+                    : WeiBeiTheme.hairline.opacity(0.6),
+                showsContactShadow: true
+            )
         }
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         .shadow(color: WeiBeiTheme.ink.opacity(store.appearanceMode.isDark ? 0.3 : 0.1), radius: 12, y: 6)
-        .allowsHitTesting(isImportant)
+        .allowsHitTesting(isAlert)
         .accessibilityElement(children: .contain)
         .accessibilityLabel(Text(store.ui("工作区状态提示", "Workspace status")))
     }
@@ -515,10 +537,10 @@ private struct UnifiedTopBarView: View {
                     "",
                     text: $store.readerSearch,
                     prompt: Text(store.ui("资料内搜索", "Search in material"))
-                        .font(.system(size: 12))
                         .foregroundStyle(WeiBeiTheme.placeholderInk)
                 )
                     .textFieldStyle(.plain)
+                    .weiBeiText(12)
                     .focused(searchFocused)
                     .foregroundColor(WeiBeiTheme.ink)
                     .foregroundStyle(WeiBeiTheme.ink)
@@ -689,41 +711,29 @@ private struct UnifiedTopBarView: View {
     }
 
     private var paneToggleCluster: some View {
-        HStack(spacing: max(5, topBarSpacing - 1)) {
-            topIconButton(
-                "doc.text",
+        WeiBeiSegmentedControl(segments: [
+            WeiBeiSegmentedControl.Segment(
+                id: "reader",
+                systemImage: "doc.text",
                 help: store.isPaneToggleActive(.reader) ? store.ui("隐藏文稿", "Hide document") : store.ui("显示文稿", "Show document"),
-                active: store.isPaneToggleActive(.reader)
-            ) {
-                store.toggleReader()
-            }
-
-            topIconButton(
-                "bubble.left.and.text.bubble.right",
+                isSelected: store.isPaneToggleActive(.reader),
+                action: store.toggleReader
+            ),
+            WeiBeiSegmentedControl.Segment(
+                id: "agent",
+                systemImage: "bubble.left.and.text.bubble.right",
                 help: agentPaneToggleHelp,
-                active: store.isPaneToggleActive(.agent)
-            ) {
-                store.toggleAgent()
-            }
-
-            topIconButton(
-                "note.text",
+                isSelected: store.isPaneToggleActive(.agent),
+                action: store.toggleAgent
+            ),
+            WeiBeiSegmentedControl.Segment(
+                id: "notes",
+                systemImage: "note.text",
                 help: store.isPaneToggleActive(.notes) ? store.ui("隐藏笔记", "Hide notes") : store.ui("显示笔记", "Show notes"),
-                active: store.isPaneToggleActive(.notes)
-            ) {
-                store.toggleNotes()
-            }
-        }
-        .padding(.horizontal, 4)
-        .frame(height: controlHeight)
-        .background {
-            Capsule()
-                .fill(controlFill.opacity(0.62))
-                .overlay {
-                    Capsule()
-                        .stroke(WeiBeiTheme.glassHighlight.opacity(0.16), lineWidth: 1)
-                }
-        }
+                isSelected: store.isPaneToggleActive(.notes),
+                action: store.toggleNotes
+            ),
+        ])
     }
 
     private var agentPaneToggleHelp: String {
@@ -1230,10 +1240,10 @@ private struct PaneDropTargetView: View {
     var role: WorkspacePaneRole
 
     var body: some View {
-        RoundedRectangle(cornerRadius: 10)
+        RoundedRectangle(cornerRadius: 12)
             .fill(WeiBeiTheme.cinnabarSoft.opacity(store.appearanceMode.isDark ? 0.16 : 0.12))
             .overlay {
-                RoundedRectangle(cornerRadius: 10)
+                RoundedRectangle(cornerRadius: 12)
                     .stroke(WeiBeiTheme.cinnabar.opacity(0.30), lineWidth: 1)
                     .padding(8)
             }
@@ -1247,7 +1257,12 @@ private struct PaneDropTargetView: View {
                 .foregroundStyle(WeiBeiTheme.cinnabar)
                 .padding(.horizontal, 10)
                 .padding(.vertical, 6)
-                .background(WeiBeiTheme.paperRaised.opacity(0.72), in: Capsule())
+                .weibeiEtchedCapsuleBackground(
+                    fill: WeiBeiTheme.paperRaised.opacity(0.72),
+                    stroke: WeiBeiTheme.hairline.opacity(0.4),
+                    contactShadow: true
+                )
+                .clipShape(Capsule())
                 .padding(14)
             }
             .allowsHitTesting(false)

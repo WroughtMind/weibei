@@ -11,6 +11,8 @@ private enum EmptyWorkspaceLayoutMetrics {
     static let inspirationMaxWidth: CGFloat = 660
     static let inspirationSlotHeight: CGFloat = 210
     static let compactInspirationSlotHeight: CGFloat = 176
+    static let watermarkMaxWidth: CGFloat = 720
+    static let watermarkCenterRatio: CGFloat = 0.64
 }
 
 struct EmptyWorkspaceLauncherView: View {
@@ -42,6 +44,23 @@ struct EmptyWorkspaceLauncherView: View {
                         EmptyWorkspacePaperField(mode: mode, compact: compact)
                             .frame(height: geometry.size.height + WeiBeiMetric.topBarHeight * textScale)
                             .offset(y: -WeiBeiMetric.topBarHeight * textScale)
+                    }
+
+                    if store.showDailyInspiration && store.inspirationAsWatermark {
+                        // Paper-grain mode: the daily line sits behind the entry
+                        // cluster as a faint ink impression. Still tappable —
+                        // one click shuffles to another line.
+                        EmptyWorkspaceInkWatermarkView(
+                            inspiration: currentInspiration,
+                            mode: mode,
+                            compact: compact,
+                            onAdvance: { advanceInspiration(from: currentInspiration.id) }
+                        )
+                        .frame(width: min(EmptyWorkspaceLayoutMetrics.watermarkMaxWidth, geometry.size.width - horizontalPadding * 2))
+                        .position(
+                            x: geometry.size.width / 2,
+                            y: geometry.size.height * EmptyWorkspaceLayoutMetrics.watermarkCenterRatio
+                        )
                     }
 
                     workspaceContent(
@@ -87,10 +106,10 @@ struct EmptyWorkspaceLauncherView: View {
             1,
             min(EmptyWorkspaceLayoutMetrics.contentMaxWidth, availableSize.width - horizontalPadding * 2)
         )
+        let showsInspirationBlock = store.showDailyInspiration && !store.inspirationAsWatermark
         let entryHeight: CGFloat = (compact ? 84 : 98) * textScale
-        let entryCenterRatio: CGFloat = store.showDailyInspiration ? EmptyWorkspaceLayoutMetrics.entryCenterRatio : 0.5
         let entryCenterY = clampedCenterY(
-            ratio: entryCenterRatio,
+            ratio: showsInspirationBlock ? EmptyWorkspaceLayoutMetrics.entryCenterRatio : 0.5,
             elementHeight: entryHeight,
             availableHeight: availableSize.height,
             edgeInset: compact ? 14 : 20
@@ -113,13 +132,13 @@ struct EmptyWorkspaceLauncherView: View {
             entryCluster(
                 at: date,
                 compact: compact,
-                spacing: (store.showDailyInspiration ? (compact ? 18 : 26) : (compact ? 16 : 29)) * textScale,
+                spacing: (showsInspirationBlock ? (compact ? 18 : 26) : (compact ? 16 : 29)) * textScale,
                 entryWidth: entryWidth
             )
             .frame(width: contentWidth)
             .position(x: availableSize.width / 2, y: entryCenterY)
 
-            if store.showDailyInspiration {
+            if showsInspirationBlock {
                 ZStack {
                     EmptyWorkspaceInspirationView(
                         inspiration: inspiration,
@@ -156,6 +175,10 @@ struct EmptyWorkspaceLauncherView: View {
         VStack(spacing: spacing) {
             greeting(at: date, compact: compact)
             EmptyWorkspaceEntryRow(entryWidth: entryWidth)
+            if store.courses.isEmpty && store.importedItems.isEmpty {
+                LibraryPlacementNoticeCard()
+                AgentSetupPromptCard()
+            }
         }
     }
 
@@ -170,13 +193,9 @@ struct EmptyWorkspaceLauncherView: View {
     }
 
     private func inspiration(at date: Date) -> EmptyWorkspaceInspiration {
-        let baseInspiration = dailyInspiration(at: date)
+        let baseInspiration = EmptyWorkspaceInspirationCatalog.item(for: date)
         guard let selectedInspirationID else { return baseInspiration }
         return EmptyWorkspaceInspirationCatalog.rotationItems.first(where: { $0.id == selectedInspirationID }) ?? baseInspiration
-    }
-
-    private func dailyInspiration(at date: Date) -> EmptyWorkspaceInspiration {
-        return EmptyWorkspaceInspirationCatalog.item(for: date)
     }
 
     private func advanceInspiration(from currentID: String) {
@@ -356,6 +375,9 @@ private struct EmptyWorkspaceEntryButton: View {
     }
 }
 
+/// Block presentation: quote + credit as content below the entries; the
+/// source/rights row stays mounted (fixed slot layout, VoiceOver reachable)
+/// but only paints on hover.
 private struct EmptyWorkspaceInspirationView: View {
     @EnvironmentObject private var store: WorkspaceStore
     @Environment(\.weibeiReduceMotion) private var reduceMotion
@@ -364,8 +386,6 @@ private struct EmptyWorkspaceInspirationView: View {
     let compact: Bool
     let onAdvance: () -> Void
 
-    /// Source/rights stay mounted so the fixed slot layout never reflows and
-    /// VoiceOver can always reach the attribution; they only paint on hover.
     @State private var revealsSources = false
 
     var body: some View {
@@ -375,7 +395,7 @@ private struct EmptyWorkspaceInspirationView: View {
                     inspirationContent
 
                     Text(inspiration.credit)
-                        .weiBeiText(compact ? 10.5 : 11.5, weight: .medium, design: .serif)
+                        .weiBeiText(compact ? 10.5 : 12, weight: .medium)
                         .foregroundStyle(WeiBeiTheme.secondaryInk)
                         .multilineTextAlignment(.center)
                         .lineLimit(2)
@@ -510,12 +530,199 @@ private struct EmptyWorkspaceInspirationView: View {
     }
 }
 
-private enum EmptyWorkspaceCalligraphyResource {
+/// Faint ink impression of the daily line — paper grain, not content.
+/// No credit line or links; attribution stays in the bundled SOURCES.md
+/// ledger. Opacity is tuned per light/dark mode like the paper field
+/// gradients so all eight themes carry the watermark coherently. One click
+/// shuffles to another line; hovering deepens the ink as the only affordance.
+private struct EmptyWorkspaceInkWatermarkView: View {
+    @EnvironmentObject private var store: WorkspaceStore
+    @Environment(\.weibeiReduceMotion) private var reduceMotion
+
+    let inspiration: EmptyWorkspaceInspiration
+    let mode: WeiBeiAppearanceMode
+    let compact: Bool
+    let onAdvance: () -> Void
+
+    @State private var hovering = false
+
+    private var ink: Color {
+        let base: CGFloat = mode.isDark ? 0.08 : 0.055
+        return EmptyWorkspaceResolvedColor.ink(mode).opacity(hovering ? min(base * 1.7, 0.16) : base)
+    }
+
+    var body: some View {
+        Button(action: onAdvance) {
+            Group {
+                switch inspiration.presentation {
+                case let .calligraphy(assetName):
+                    if let image = EmptyWorkspaceCalligraphyResource.image(named: assetName) {
+                        Image(nsImage: image)
+                            .renderingMode(.template)
+                            .resizable()
+                            .scaledToFit()
+                            .foregroundStyle(ink)
+                            .padding(.horizontal, compact ? 24 : 40)
+                    } else {
+                        lineText
+                    }
+                default:
+                    lineText
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: compact ? 180 : 230)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .id(inspiration.id)
+        .animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: hovering)
+        .onHover { isHovering in
+            hovering = isHovering
+        }
+        .accessibilityLabel(Text(inspiration.text))
+        .accessibilityHint(Text(store.ui("随机换一句", "Show another line")))
+        .accessibilityIdentifier("empty-workspace-inspiration-next")
+    }
+
+    private var lineText: some View {
+        Text(inspiration.text)
+            .weiBeiText(compact ? 40 : 50, weight: .regular, design: .serif)
+            .foregroundStyle(ink)
+            .multilineTextAlignment(.center)
+            .lineLimit(2)
+            .minimumScaleFactor(0.55)
+    }
+}
+
+enum EmptyWorkspaceCalligraphyResource {
     static func image(named name: String) -> NSImage? {
-        let url = Bundle.module.url(forResource: name, withExtension: "png", subdirectory: "Inspiration/Calligraphy")
-            ?? Bundle.module.url(forResource: name, withExtension: "png", subdirectory: "Calligraphy")
-            ?? Bundle.module.url(forResource: name, withExtension: "png")
+        // WeiBeiResources resolves the staged/packaged bundle via Bundle(url:);
+        // a bare Bundle.module access can fatalError inside assembled apps when
+        // both the packaged path and the compiled-in dev fallback are missing.
+        let bundle = WeiBeiResources.bundle
+        let url = bundle.url(forResource: name, withExtension: "png", subdirectory: "Inspiration/Calligraphy")
+            ?? bundle.url(forResource: name, withExtension: "png", subdirectory: "Calligraphy")
+            ?? bundle.url(forResource: name, withExtension: "png")
         guard let url else { return nil }
         return NSImage(contentsOf: url)
+    }
+}
+
+/// First-run notice under the entries: the library folder is pre-picked by
+/// default; the user may confirm or relocate it, then explore on their own.
+/// Import guidance itself lives in the reader / notes pickers, not here.
+private struct LibraryPlacementNoticeCard: View {
+    @EnvironmentObject private var store: WorkspaceStore
+
+    /// 确认过一次就不再出现；偏好走 UserDefaults，不进冻结的 WorkspaceStore。
+    @AppStorage("weibei.libraryPlacementConfirmed") private var confirmed = false
+
+    @State private var isRelocating = false
+    @State private var relocationErrorText: String?
+
+    private var libraryPath: String {
+        store.courseLibraryRootPath ?? CourseLibraryLayout.defaultRootURL().path
+    }
+
+    var body: some View {
+        VStack(spacing: 9) {
+            Text(store.ui(
+                "课程资料库文件夹将安放在这里，可现在更换，之后随时能在设置里改。",
+                "Your course library folder will live here — you can move it now or later in Settings."
+            ))
+            .weiBeiText(12)
+            .foregroundStyle(WeiBeiTheme.secondaryInk)
+            .multilineTextAlignment(.center)
+            .fixedSize(horizontal: false, vertical: true)
+
+            HStack(spacing: 7) {
+                Image(systemName: "folder")
+                    .weiBeiText(11, weight: .medium)
+                    .foregroundStyle(WeiBeiTheme.tertiaryInk)
+                Text(libraryPath)
+                    .weiBeiText(11, weight: .medium)
+                    .foregroundStyle(WeiBeiTheme.ink)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 7)
+            .frame(maxWidth: .infinity)
+            .background {
+                WeiBeiEtchedBackdrop(
+                    shape: RoundedRectangle(cornerRadius: 8, style: .continuous),
+                    fill: WeiBeiTheme.paperInset.opacity(0.32),
+                    stroke: WeiBeiTheme.hairline.opacity(0.45)
+                )
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+
+            if let relocationErrorText {
+                Text(relocationErrorText)
+                    .weiBeiText(11)
+                    .foregroundStyle(WeiBeiTheme.cinnabar)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            if isRelocating {
+                ProgressView()
+                    .progressViewStyle(.linear)
+            } else {
+                HStack(spacing: 10) {
+                    Button(store.ui("换个位置…", "Choose Another Location…")) {
+                        relocateLibrary()
+                    }
+                    .buttonStyle(WeiBeiDialogButtonStyle(prominence: .secondary))
+
+                    Button(store.ui("就用这里", "Use This Folder")) {
+                        confirmed = true
+                    }
+                    .buttonStyle(WeiBeiDialogButtonStyle(prominence: .primary))
+                }
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 13)
+        .frame(maxWidth: 470)
+        .background {
+            WeiBeiEtchedBackdrop(
+                shape: RoundedRectangle(cornerRadius: 8, style: .continuous),
+                fill: WeiBeiTheme.paperRaised.opacity(0.55),
+                stroke: WeiBeiTheme.hairline.opacity(0.5)
+            )
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .shadow(color: WeiBeiTheme.ink.opacity(0.06), radius: 2, y: 1)
+        .shadow(color: WeiBeiTheme.ink.opacity(0.05), radius: 10, y: 3)
+        .padding(.top, 10)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("library-placement-notice")
+    }
+
+    private func relocateLibrary() {
+        relocationErrorText = nil
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.canCreateDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.prompt = store.ui("选择", "Choose")
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        isRelocating = true
+        Task { @MainActor in
+            do {
+                _ = try await store.migrateLibrary(to: url.standardizedFileURL)
+                confirmed = true
+            } catch CourseProjectRootError.destinationIsLibrary {
+                relocationErrorText = store.ui(
+                    "所选位置已经是一个魏碑资料库，请选择其他空文件夹。",
+                    "That location is already a WeiBei library. Choose an empty folder instead."
+                )
+            } catch {
+                relocationErrorText = error.localizedDescription
+            }
+            isRelocating = false
+        }
     }
 }

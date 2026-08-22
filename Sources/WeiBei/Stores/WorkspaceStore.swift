@@ -329,6 +329,8 @@ final class WorkspaceStore: ObservableObject {
     var courseLibraryUnavailableReason: String?
     /// 资料库迁移进行中：写回、3 秒对账、课程笔记加载全部挂起（计划 §4.2）。
     @Published var libraryMigrationInFlight = false
+    /// 外部文件缺席灰态（计划 §5 阶段2）：首缺席记时间，两个对账周期仍缺席才移除条目。
+    var fileMissingSinceByItemID: [String: Date] = [:]
     @Published private(set) var courseItemMemberships: [CourseItemMembership] = [] {
         didSet {
             courseMembershipIndex = CourseItemMemberships(values: courseItemMemberships)
@@ -626,12 +628,11 @@ final class WorkspaceStore: ObservableObject {
     /// 不持久化：重启后首次写回无基线会多备份一份，方向安全。
     var lastSelfWrittenNoteDigestsByItemID: [String: String] = [:]
     /// P0：启动修复例程每次启动只跑一轮（幂等，重复启动无副作用）。
-    var noteDivergenceRepairDidRun = false
     /// 文件名跟随抬头的基线：上次由抬头体系登记/同步的文件名（不含扩展名）。
     /// 只有基线==当前文件名时才跟随抬头改名；对不上说明文件名被外部动过，
     /// 先登记、不动文件。内存态即可：重启丢基线只少一次自动改名，方向安全。
     var headingSyncedNoteStemByItemID: [String: String] = [:]
-    private var loadedCourseNoteTextByItemID: [String: String] = [:]
+    var loadedCourseNoteTextByItemID: [String: String] = [:]
     var courseNoteLoadTasksByItemID: [String: Task<Void, Never>] = [:]
     private var courseNoteLoadGenerationByItemID: [String: UInt64] = [:]
     private var courseNoteWritesInFlight = Set<String>()
@@ -640,7 +641,7 @@ final class WorkspaceStore: ObservableObject {
     private var pendingBlankNoteText = ""
     private var lastCourseNoteReadRanOnMainThread: Bool?
     private var lastCourseNoteWriteRanOnMainThread: Bool?
-    private var lastCourseHomeSearchRanOnMainThread: Bool?
+    var lastCourseHomeSearchRanOnMainThread: Bool?
     private var lastPortableAdoptionReadRanOnMainThread: Bool?
     private var lastCourseRebindRootSearchRanOnMainThread: Bool?
     let workspaceDirectory: URL
@@ -6160,7 +6161,7 @@ final class WorkspaceStore: ObservableObject {
         switch CourseProjectFileWorker.entryPresence(at: libraryRoot) {
         case .absent, .inaccessible:
             return
-        case .present:
+        case .present, .presentUnmaterialized:
             break
         }
         let reserved: Set<String> = [
@@ -7794,6 +7795,7 @@ final class WorkspaceStore: ObservableObject {
     }
 
     func removeItemRegistration(_ itemID: String) {
+        fileMissingSinceByItemID.removeValue(forKey: itemID)
         pendingNotePersistenceTasks.removeValue(forKey: itemID)?.cancel()
         courseNoteLoadTasksByItemID.removeValue(forKey: itemID)?.cancel()
         courseNoteWriteTasksByItemID.removeValue(forKey: itemID)?.cancel()
@@ -8111,158 +8113,6 @@ final class WorkspaceStore: ObservableObject {
             !$0.messages.isEmpty
                 && $0.relatedCourseIDs.contains(courseID)
         }
-    }
-
-    func searchCourseHome(
-        courseID: UUID,
-        query rawQuery: String
-    ) async -> CourseHomeSearchOutcome {
-        let query = rawQuery.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !query.isEmpty,
-              courses.contains(where: { $0.id == courseID }) else {
-            return CourseHomeSearchOutcome(results: [], availability: .ready)
-        }
-        let itemInputs = courseItems(in: courseID).map { item in
-            (
-                item: item,
-                title: displayTitle(for: item),
-                detail: displaySubtitle(for: item),
-                memoryText: item.isNotebookNote
-                    ? (item.id == activeNotebookItemID
-                        ? noteText
-                        : notesByItemID[item.id] ?? loadedCourseNoteTextByItemID[item.id])
-                    : nil
-            )
-        }
-        let sessions = sessionsTouchingCourse(courseID)
-        let searchIndex = courseDocumentSearchIndex
-        let chatDetail = ui("%d 条消息", "%d messages")
-        let searchTask = Task.detached(priority: .userInitiated) {
-            let ranOnMainThread = pthread_main_np() != 0
-            let indexedItems = itemInputs.compactMap {
-                $0.memoryText == nil ? $0.item : nil
-            }
-            let indexed = searchIndex.lookup(
-                items: indexedItems,
-                query: query,
-                maximumCharactersPerItem: 1_200
-            )
-            let availability: CourseDocumentIndexAvailability
-            if indexedItems.contains(where: {
-                indexed[$0.id]?.availability == .unavailable
-                    || indexed[$0.id] == nil
-            }) {
-                availability = .unavailable
-            } else if indexedItems.contains(where: {
-                indexed[$0.id]?.availability == .indexing
-            }) {
-                availability = .indexing
-            } else {
-                availability = .ready
-            }
-            func snippet(_ text: String?) -> String? {
-                guard let text else { return nil }
-                let compact = text
-                    .split(whereSeparator: \.isWhitespace)
-                    .joined(separator: " ")
-                guard !compact.isEmpty else { return nil }
-                return String(compact.prefix(150))
-            }
-
-            var scored: [(score: Int, result: CourseHomeSearchResult)] = []
-            for input in itemInputs {
-                guard !Task.isCancelled else {
-                    return (
-                        results: [CourseHomeSearchResult](),
-                        availability: CourseDocumentIndexAvailability.ready,
-                        ranOnMainThread: ranOnMainThread
-                    )
-                }
-                let titleMatches = input.title.localizedCaseInsensitiveContains(query)
-                let detailMatches = input.detail.localizedCaseInsensitiveContains(query)
-                let bodyMatch: String?
-                if let memoryText = input.memoryText {
-                    bodyMatch = memoryText.localizedCaseInsensitiveContains(query)
-                        ? snippet(memoryText)
-                        : nil
-                } else {
-                    bodyMatch = snippet(indexed[input.item.id]?.text)
-                }
-                guard titleMatches || detailMatches || bodyMatch != nil else { continue }
-                let kind: CourseHomeSearchResultKind = input.item.isNotebookNote
-                    ? .note
-                    : .material
-                scored.append((
-                    titleMatches ? 0 : (detailMatches ? 1 : 2),
-                    CourseHomeSearchResult(
-                        id: "\(kind.rawValue):\(input.item.id)",
-                        kind: kind,
-                        itemID: input.item.id,
-                        sessionID: nil,
-                        title: input.title,
-                        detail: input.detail,
-                        matchedText: bodyMatch
-                    )
-                ))
-            }
-
-            for session in sessions {
-                guard !Task.isCancelled else {
-                    return (
-                        results: [CourseHomeSearchResult](),
-                        availability: CourseDocumentIndexAvailability.ready,
-                        ranOnMainThread: ranOnMainThread
-                    )
-                }
-                let titleMatches = session.title.localizedCaseInsensitiveContains(query)
-                let summaryMatches = session.summary.localizedCaseInsensitiveContains(query)
-                let matchingMessage = session.messages.first {
-                    $0.text.localizedCaseInsensitiveContains(query)
-                }?.text
-                guard titleMatches || summaryMatches || matchingMessage != nil else { continue }
-                let summary = session.summary.trimmingCharacters(in: .whitespacesAndNewlines)
-                scored.append((
-                    titleMatches ? 0 : (summaryMatches ? 1 : 2),
-                    CourseHomeSearchResult(
-                        id: "chat:\(session.id.uuidString)",
-                        kind: .chat,
-                        itemID: nil,
-                        sessionID: session.id,
-                        title: session.title,
-                        detail: summary.isEmpty
-                            ? String(format: chatDetail, session.messages.count)
-                            : String(summary.prefix(150)),
-                        matchedText: snippet(matchingMessage)
-                    )
-                ))
-            }
-            return (
-                results: scored
-                .sorted {
-                    $0.score == $1.score
-                        ? $0.result.title.localizedStandardCompare($1.result.title)
-                            == .orderedAscending
-                        : $0.score < $1.score
-                }
-                .prefix(50)
-                .map(\.result),
-                availability: availability,
-                ranOnMainThread: ranOnMainThread
-            )
-        }
-        let search = await withTaskCancellationHandler {
-            await searchTask.value
-        } onCancel: {
-            searchTask.cancel()
-        }
-        guard !Task.isCancelled else {
-            return CourseHomeSearchOutcome(results: [], availability: .ready)
-        }
-        lastCourseHomeSearchRanOnMainThread = search.ranOnMainThread
-        return CourseHomeSearchOutcome(
-            results: search.results,
-            availability: search.availability
-        )
     }
 
     /// Sessions that reference a specific material (and optionally other focus items).
@@ -10177,7 +10027,10 @@ final class WorkspaceStore: ObservableObject {
     }
 
     func displaySubtitle(for item: StudyItem) -> String {
-        item.subtitle
+        if fileMissingSinceByItemID[item.id] != nil {
+            return ui("文件不存在", "File missing")
+        }
+        return item.subtitle
     }
 
     func displayTags(for item: StudyItem, limit: Int = 3) -> [String] {
@@ -10587,7 +10440,7 @@ final class WorkspaceStore: ObservableObject {
                 "New file name when choosing Keep Both"
             )
         )
-        keepBothLabel.font = .systemFont(ofSize: 11, weight: .medium)
+        keepBothLabel.font = .systemFont(ofSize: 12, weight: .medium)
         keepBothLabel.textColor = .secondaryLabelColor
         let keepBothNameField = NSTextField(string: suggestedName)
         keepBothNameField.placeholderString = suggestedName
@@ -11127,11 +10980,13 @@ final class WorkspaceStore: ObservableObject {
                 result = .failure(error)
             }
         }
+        // 生产 60 秒兜底：交互等待不再无限挂死；大导入走后台进度路径不经过本闸门。
         let deadline = WeiBeiSafetyTestMode.isEnabled
             ? Date().addingTimeInterval(45)
-            : Date.distantFuture
+            : Date().addingTimeInterval(60)
         while result == nil {
             if Date() > deadline {
+                showImportantOperationError(ui("文件操作超过 60 秒未完成，已停止等待；请重试该操作。", "A file operation did not finish within 60 seconds; please retry."))
                 throw NSError(
                     domain: "WeiBei.WorkspaceStore",
                     code: NSUserCancelledError,
@@ -13948,37 +13803,52 @@ final class WorkspaceStore: ObservableObject {
             rootIdentity = expectedIdentity
         } else {
             guard let course = course(withID: courseID),
-                  let expectedIdentity = course.sourceRootIdentity,
+                  course.sourceRootIdentity != nil,
                   let rawRoot = courseRootURL(for: courseID),
                   let resolvedRoot = try? CourseProjectPathPolicy.existingDirectory(rawRoot),
-                  CourseProjectFileWorker.identity(at: resolvedRoot) == expectedIdentity else {
+                  let liveRootIdentity = CourseProjectFileWorker.identity(at: resolvedRoot) else {
                 return nil
             }
+            // identity 只用于找回、永不用于拒绝（计划 §5 阶段5）：不一致时
+            // 采用活体身份继续授权，最多记一条日志。
+            if liveRootIdentity != course.sourceRootIdentity {
+                WeiBeiLog.workspace.notice("agent_grant_root_identity_refreshed")
+            }
             rootURL = resolvedRoot
-            rootIdentity = expectedIdentity
+            rootIdentity = liveRootIdentity
         }
-        guard CourseProjectFileWorker.identity(at: rootURL) == rootIdentity,
+        guard let liveRootIdentity = CourseProjectFileWorker.identity(at: rootURL),
               let membership = courseItemMemberships.first(where: {
                   $0.courseID == courseID && $0.itemID == item.id
               }),
               let relativePath = membership.courseRelativePath,
               Self.isVisibleAgentProjectPath(relativePath),
               let targetURL = item.url?.standardizedFileURL,
-              let entryIdentity = membership.entryIdentity,
               let targetIdentity = item.importedFileIdentity else {
             return nil
+        }
+        if liveRootIdentity != rootIdentity {
+            WeiBeiLog.workspace.notice("agent_grant_root_identity_drifted")
         }
         let entryURL = relativePath.split(separator: "/", omittingEmptySubsequences: true)
             .map(String.init)
             .reduce(rootURL) { $0.appendingPathComponent($1) }
             .standardizedFileURL
-        guard CourseProjectFileWorker.identity(at: entryURL) == entryIdentity,
-              CourseProjectFileWorker.identity(at: targetURL) == targetIdentity,
+        guard let liveEntryIdentity = CourseProjectFileWorker.identity(at: entryURL),
+              let liveTargetIdentity = CourseProjectFileWorker.identity(at: targetURL),
               CourseProjectPathPolicy.isSame(
                   targetURL,
                   targetURL.resolvingSymlinksInPath().standardizedFileURL
               ) else {
             return nil
+        }
+        // identity 只用于找回、永不用于拒绝：条目/目标身份漂移时刷新继续，
+        // 授权以活体身份为准（Pi 扩展协议字段不变）。
+        if let entryIdentity = membership.entryIdentity, entryIdentity != liveEntryIdentity {
+            WeiBeiLog.workspace.notice("agent_grant_entry_identity_refreshed")
+        }
+        if liveTargetIdentity != targetIdentity {
+            WeiBeiLog.workspace.notice("agent_grant_target_identity_refreshed")
         }
         let isShared: Bool
         switch item.storage {
@@ -14008,11 +13878,11 @@ final class WorkspaceStore: ObservableObject {
             courseID: courseID,
             courseTitle: courseTitle,
             rootURL: rootURL,
-            rootIdentity: rootIdentity,
+            rootIdentity: liveRootIdentity,
             entryURL: entryURL,
-            entryIdentity: entryIdentity,
+            entryIdentity: liveEntryIdentity,
             targetURL: targetURL,
-            targetIdentity: targetIdentity,
+            targetIdentity: liveTargetIdentity,
             relativePath: relativePath,
             isShared: isShared
         )
@@ -14370,11 +14240,7 @@ final class WorkspaceStore: ObservableObject {
             )
         )
         setNoteDraft(draft, for: noteItemID)
-        pendingNoteWritesByItemID[noteItemID] = PendingNoteWriteState(
-            baselineContentDigest: importedItems.first {
-                $0.id == noteItemID
-            }?.contentDigest
-        )
+        pendingNoteWritesByItemID[noteItemID] = PendingNoteWriteState()
         return (
             sessionID,
             memoryID,
@@ -14487,11 +14353,7 @@ final class WorkspaceStore: ObservableObject {
         )
         setNoteDraft(noteText, for: noteItemID)
         loadedCourseNoteTextByItemID[noteItemID] = noteText
-        pendingNoteWritesByItemID[noteItemID] = PendingNoteWriteState(
-            baselineContentDigest: importedItems.first {
-                $0.id == noteItemID
-            }?.contentDigest
-        )
+        pendingNoteWritesByItemID[noteItemID] = PendingNoteWriteState()
         dirtyPortableCourseIDs.insert(courseID)
     }
 
@@ -17942,6 +17804,10 @@ final class WorkspaceStore: ObservableObject {
             }
 
             var nextItem = importedItems[itemIndex]
+            if nextDigest != item.contentDigest {
+                backUpUnsavedNoteContentBeforeAdopting(itemID: itemID)
+            }
+            fileMissingSinceByItemID.removeValue(forKey: itemID)
             nextItem.title = observation.url.deletingPathExtension().lastPathComponent
             nextItem.subtitle = observation.url.lastPathComponent
             nextItem.kind = StudyItemKind.detect(from: observation.url)
@@ -18029,10 +17895,6 @@ final class WorkspaceStore: ObservableObject {
             guard !Task.isCancelled else { return }
             await self?.reconcileCourseFilesNow()
             guard !Task.isCancelled else { return }
-            // P0：先跑分叉修复（会丢弃/写回草稿），再跑 retry——顺序不能反，
-            // 否则 retry 会把「读盘失败回退的模板草稿」直接盖回磁盘。
-            await self?.repairDivergedNotebookNotesIfNeeded()
-            guard !Task.isCancelled else { return }
             await self?.retryRestoredPendingNoteWrites()
             while !Task.isCancelled {
                 do {
@@ -18085,10 +17947,9 @@ final class WorkspaceStore: ObservableObject {
               case .courseOwned(let courseID, _) = item.storage,
               courseRootUnavailableReasons[courseID] == nil,
               let course = course(withID: courseID),
-              let expectedRootIdentity = course.sourceRootIdentity,
+              course.sourceRootIdentity != nil,
               let root = courseRootURL(for: courseID),
-              importedFileIdentityResolver(root)
-                == expectedRootIdentity,
+              let rootIdentity = importedFileIdentityResolver(root),
               let membershipIndex =
                 uniqueCourseOwnedMembershipIndex(
                     itemID: item.id,
@@ -18107,18 +17968,32 @@ final class WorkspaceStore: ObservableObject {
                 resolvedURL,
                 itemURL
               ),
-              let fileIdentity = item.importedFileIdentity,
-              importedFileIdentityResolver(resolvedURL)
-                == fileIdentity,
-              courseItemMemberships[membershipIndex]
-                .entryIdentity.map({ $0 == fileIdentity })
-                ?? true else {
+              let fileIdentity = importedFileIdentityResolver(resolvedURL) else {
             return nil
+        }
+        // identity 只用于尽力找回、永不用于拒绝（存储简化红线，与
+        // resolveTrackedImportedFile 一致）：课程内文件以课程相对路径为准，
+        // 路径下文件可读即接受。identity 不一致（iCloud 驱逐重下换 inode、
+        // APFS 卷号漂移等）时刷新记录并继续，最多记一条日志（计划 §5 阶段5）。
+        if course.sourceRootIdentity != rootIdentity {
+            if let courseIndex = courses.firstIndex(where: { $0.id == courseID }) {
+                courses[courseIndex].sourceRootIdentity = rootIdentity
+            }
+            WeiBeiLog.workspace.notice("note_access_root_identity_refreshed")
+        }
+        if item.importedFileIdentity != fileIdentity {
+            if let itemIndex = importedItems.firstIndex(where: { $0.id == item.id }) {
+                importedItems[itemIndex].importedFileIdentity = fileIdentity
+            }
+            WeiBeiLog.workspace.notice("note_access_file_identity_refreshed")
+        }
+        if courseItemMemberships[membershipIndex].entryIdentity != fileIdentity {
+            courseItemMemberships[membershipIndex].entryIdentity = fileIdentity
         }
         return VerifiedCourseOwnedNoteAccess(
             courseID: courseID,
             root: root,
-            rootIdentity: expectedRootIdentity,
+            rootIdentity: rootIdentity,
             url: resolvedURL,
             fileIdentity: fileIdentity,
             membershipIndex: membershipIndex
@@ -18532,8 +18407,7 @@ final class WorkspaceStore: ObservableObject {
     /// 安全自检仍立即暴露，便于断言注入的单次失败。
     private func reportWorkspaceSaveFailure(_ message: String) {
         consecutiveWorkspaceSaveFailures += 1
-        // 保存失败连续 3 次才上横幅，但每次都落日志——删除、退出等下游
-        // 操作会因保存失败被拒绝，没有日志就完全无法事后定位。
+        // 连续 3 次失败才上横幅；每次都落日志（下游操作会被拒绝，事后定位全靠它）。
         appendWorkspaceSaveFailureLog(message)
         if WeiBeiSafetyTestMode.isEnabled
             || consecutiveWorkspaceSaveFailures >= 3 {
@@ -18640,6 +18514,12 @@ final class WorkspaceStore: ObservableObject {
         ) else {
             return
         }
+        if case .presentUnmaterialized = CourseProjectFileWorker.entryPresence(at: access.url) {
+            setNoteFileError(
+                ui("正在从 iCloud 下载…", "Downloading from iCloud…"),
+                for: item.id
+            )
+        }
         let url = access.url
         let identity = access.fileIdentity
         let itemID = item.id
@@ -18674,8 +18554,10 @@ final class WorkspaceStore: ObservableObject {
                 let markdown = cleanLegacyPlaceholder(result.markdown)
                 loadedCourseNoteTextByItemID[itemID] = markdown
                 let previousDigest = importedItems[currentIndex].contentDigest
+                fileMissingSinceByItemID.removeValue(forKey: itemID)
                 if let previousDigest,
                    previousDigest != result.snapshot.sha256 {
+                    backUpUnsavedNoteContentBeforeAdopting(itemID: itemID)
                     importedItems[currentIndex].contentRevision &+= 1
                 }
                 importedItems[currentIndex].contentDigest =
@@ -18723,11 +18605,21 @@ final class WorkspaceStore: ObservableObject {
                 guard courseNoteLoadGenerationByItemID[itemID] == generation else {
                     return
                 }
+                let presence = CourseProjectFileWorker.entryPresence(at: url)
+                let unmaterialized: Bool = {
+                    if case .presentUnmaterialized = presence { return true }
+                    return false
+                }()
                 setNoteFileError(
-                    ui(
-                        "无法读取原 Markdown：\(url.lastPathComponent)",
-                        "Could not read original Markdown: \(url.lastPathComponent)"
-                    ),
+                    unmaterialized
+                        ? ui(
+                            "当前不可用，iCloud 文件未下载。",
+                            "Currently unavailable; the iCloud file has not been downloaded."
+                        )
+                        : ui(
+                            "无法读取原 Markdown：\(url.lastPathComponent)",
+                            "Could not read original Markdown: \(url.lastPathComponent)"
+                        ),
                     for: itemID
                 )
             }
@@ -19211,8 +19103,7 @@ final class WorkspaceStore: ObservableObject {
             return CoursePortableNoteDraft(
                 itemID: itemID,
                 markdown: markdown,
-                baselineContentDigest: pendingNoteWritesByItemID[itemID]?
-                    .baselineContentDigest
+                baselineContentDigest: nil
             )
         }
         return try CoursePortableState(
@@ -19442,7 +19333,7 @@ final class WorkspaceStore: ObservableObject {
         documentIdentifier: UInt64?
     )? {
         switch CourseProjectFileWorker.entryPresence(at: candidate) {
-        case .absent:
+        case .absent, .presentUnmaterialized:
             return nil
         case .inaccessible:
             throw CoursePortableStateError.unsafeRelativePath
@@ -19519,7 +19410,7 @@ final class WorkspaceStore: ObservableObject {
             throw CoursePortableStateError.crossCourseReference
         }
         switch CourseProjectFileWorker.entryPresence(at: candidate) {
-        case .absent:
+        case .absent, .presentUnmaterialized:
             return nil
         case .inaccessible:
             throw CoursePortableStateError.crossCourseReference
@@ -19560,7 +19451,7 @@ final class WorkspaceStore: ObservableObject {
         sharedURL: URL
     ) throws -> ImportedFileIdentity? {
         switch CourseProjectFileWorker.entryPresence(at: candidate) {
-        case .absent:
+        case .absent, .presentUnmaterialized:
             return nil
         case .inaccessible:
             throw CoursePortableStateError.invalidItemStorage
@@ -19913,9 +19804,7 @@ final class WorkspaceStore: ObservableObject {
             }
             setNoteDraft(draft.markdown, for: draft.itemID)
             pendingNoteWritesByItemID[draft.itemID] =
-                PendingNoteWriteState(
-                    baselineContentDigest: draft.baselineContentDigest
-                )
+                PendingNoteWriteState()
         }
         rebuildCourseMembershipsFromStorage()
         refreshRuntimeItemURLs()
@@ -20237,7 +20126,8 @@ final class WorkspaceStore: ObservableObject {
     }
 
     private func load() {
-        guard let data = try? Data(contentsOf: storageURL),
+        let data = restoredSnapshotDataOrNotice(storageURL: storageURL)
+        guard let data,
               let snapshot = try? JSONDecoder().decode(PersistedWorkspace.self, from: data) else {
             return
         }
@@ -20350,8 +20240,7 @@ final class WorkspaceStore: ObservableObject {
         if let agentBaseURL = snapshot.agentBaseURL {
             self.agentBaseURL = agentBaseURL
         }
-        // Legacy field: still read so older workspaces restore immersion/multi-pane;
-        // threePaneOrder owns free drag order; retired strings only drop this field.
+        // Legacy field: still read for older workspaces; threePaneOrder now owns drag order.
         var migratedRetiredSplitLayout = false
         if let persistedLayoutRaw = snapshot.workspaceLayout {
             if let workspaceLayout = WorkspaceLayout.resolve(persistedValue: persistedLayoutRaw) {
@@ -20375,8 +20264,7 @@ final class WorkspaceStore: ObservableObject {
         showNotes = snapshot.showNotes ?? legacyRightPane ?? true
         showDailyInspiration = snapshot.showDailyInspiration ?? true
         if migratedRetiredSplitLayout {
-            // Retired 阅读/笔记对半 → current workbench: reader + notes visible, chat hidden.
-            // Keep the persisted free order when present; next save writes the new layout.
+            // Retired 对半布局 → workbench：阅读+笔记可见、对话隐藏，保留既有自由顺序。
             layout = layoutMatchingThreePaneOrder(self.threePaneOrder)
             showReader = true
             showNotes = true
@@ -20691,11 +20579,11 @@ final class WorkspaceStore: ObservableObject {
     }
 
     nonisolated private static func writeWorkspaceSnapshot(_ data: Data, to url: URL) throws {
+        WorkspaceSnapshotRecovery.rotateBackups(primary: url)
         try data.write(to: url, options: [.atomic])
     }
 
-    /// Schedule a coalesced workspace snapshot write. Verification keeps the
-    /// legacy synchronous path; production saves use the file worker actor.
+    /// Coalesced snapshot write; verification keeps the legacy synchronous path.
     @discardableResult
     func save() -> Bool {
         if Self.mustSaveImmediately {

@@ -49,7 +49,7 @@ private extension View {
             .padding(.horizontal, 10)
             .frame(height: 32)
             .background(WeiBeiGlassHeaderBackground(paperOpacity: 0.60, materialOpacity: 0.08))
-            .clipShape(RoundedRectangle(cornerRadius: 7))
+            .clipShape(RoundedRectangle(cornerRadius: 8))
             .overlay(alignment: .bottom) {
                 WeiBeiHeaderHandoffFade(height: 10, opacity: 0.22)
                     .offset(y: 10)
@@ -119,7 +119,7 @@ struct WeiBeiPaneHeader<Actions: View>: View {
                 }
                 // Always present for accessibility / self-check; hide visually when the strip is narrow.
                 Text(subtitle)
-                    .weiBeiText(11, weight: .medium)
+                    .weiBeiText(12, weight: .medium)
                     .foregroundStyle(WeiBeiTheme.secondaryInk)
                     .lineLimit(1)
                     .truncationMode(.tail)
@@ -348,28 +348,12 @@ private struct AgentComposerField: View {
             alignment: .topLeading
         )
         .fixedSize(horizontal: false, vertical: true)
-        .background {
-            if showsChrome {
-                // ChatGPT-like: same paper as the thread, lifted only by a soft
-                // border and a whisper of shadow — no fill-color seam.
-                RoundedRectangle(cornerRadius: corner, style: .continuous)
-                    .fill(WeiBeiTheme.paperRaised.opacity(store.appearanceMode.isDark ? 0.34 : 0.5))
-            }
-        }
-        .clipShape(RoundedRectangle(cornerRadius: corner, style: .continuous))
-        .overlay {
-            if showsChrome {
-                RoundedRectangle(cornerRadius: corner, style: .continuous)
-                    .stroke(
-                        focused.wrappedValue ? WeiBeiTheme.hairline.opacity(0.9) : WeiBeiTheme.hairline.opacity(0.55),
-                        lineWidth: 1
-                    )
-            }
-        }
-        .shadow(
-            color: showsChrome ? WeiBeiTheme.ink.opacity(0.05) : .clear,
-            radius: showsChrome ? 10 : 0,
-            y: showsChrome ? 3 : 0
+        // Etched paper card: graded fill + inner light/shade + hairline frame
+        // + two-layer shadow (see weibeiComposerCard), same shape as before.
+        .weibeiComposerCard(
+            cornerRadius: corner,
+            focused: focused.wrappedValue,
+            showsChrome: showsChrome
         )
         .contentShape(Rectangle())
         .onTapGesture {
@@ -481,7 +465,7 @@ struct NotePaneView: View {
                                 Task { await store.resolveNoteEditorRecoveryConflict(useDisk: false) }
                             }
                         }
-                        .font(.caption)
+                        .weiBeiText(10.5)
                         .padding(.horizontal, 14)
                         .padding(.vertical, 7)
                         .background(WeiBeiTheme.paperRaised)
@@ -528,6 +512,7 @@ struct NotePaneView: View {
         .onChange(of: store.activeNoteItemID) { _, _ in
             editingNoteTabTitle = false
             noteOutline = []
+            activeNoteRailID = nil
         }
         .onChange(of: paneState.focusedPane) { _, pane in
             if pane != .notes {
@@ -793,7 +778,7 @@ private struct NotebookCreationPanel: View {
     var body: some View {
         HStack(spacing: 9) {
             Text(draft.kind == .blank ? store.ui("新建笔记", "New Note") : store.ui("资料笔记", "Material Note"))
-                .weiBeiText(12.5, weight: .semibold, design: .serif)
+                .weiBeiText(12, weight: .semibold)
                 .foregroundStyle(WeiBeiTheme.cinnabar.opacity(0.86))
                 .lineLimit(1)
                 .fixedSize(horizontal: true, vertical: false)
@@ -805,7 +790,7 @@ private struct NotebookCreationPanel: View {
                     .foregroundStyle(WeiBeiTheme.placeholderInk)
             )
             .textFieldStyle(.plain)
-            .weiBeiText(14.5, weight: .medium)
+            .weiBeiText(15, weight: .medium)
             .foregroundColor(WeiBeiTheme.ink)
             .focused($focused)
             .onSubmit(confirm)
@@ -816,18 +801,18 @@ private struct NotebookCreationPanel: View {
                 Image(systemName: "checkmark")
             }
             .buttonStyle(.plain)
-            .weiBeiText(16, weight: .semibold)
+            .weiBeiText(15, weight: .semibold)
             .foregroundStyle(confirmColor)
             .frame(width: 28, height: 26)
             .background {
-                RoundedRectangle(cornerRadius: 6)
+                RoundedRectangle(cornerRadius: 8)
                     .fill(confirmBackground)
             }
             .overlay {
-                RoundedRectangle(cornerRadius: 6)
+                RoundedRectangle(cornerRadius: 8)
                     .stroke(confirmBorder, lineWidth: 1)
             }
-            .contentShape(RoundedRectangle(cornerRadius: 6))
+            .contentShape(RoundedRectangle(cornerRadius: 8))
             .scaleEffect(hoveredConfirm && canCreate ? 1.04 : 1)
             .opacity(canCreate ? 1 : 0.42)
             .disabled(!canCreate)
@@ -848,14 +833,14 @@ private struct NotebookCreationPanel: View {
             .foregroundStyle(cancelColor)
             .frame(width: 28, height: 26)
             .background {
-                RoundedRectangle(cornerRadius: 6)
+                RoundedRectangle(cornerRadius: 8)
                     .fill(cancelBackground)
             }
             .overlay {
-                RoundedRectangle(cornerRadius: 6)
+                RoundedRectangle(cornerRadius: 8)
                     .stroke(cancelBorder, lineWidth: 1)
             }
-            .contentShape(RoundedRectangle(cornerRadius: 6))
+            .contentShape(RoundedRectangle(cornerRadius: 8))
             .scaleEffect(hoveredCancel ? 1.04 : 1)
             .onHover { hovering in
                 withAnimation(WeiBeiMotion.hover) {
@@ -870,11 +855,11 @@ private struct NotebookCreationPanel: View {
         .frame(maxWidth: .infinity)
         .frame(height: 30)
         .background {
-            RoundedRectangle(cornerRadius: 7)
+            RoundedRectangle(cornerRadius: 8)
                 .fill(WeiBeiTheme.paperInset.opacity(0.24))
         }
         .overlay {
-            RoundedRectangle(cornerRadius: 7)
+            RoundedRectangle(cornerRadius: 8)
                 .stroke(WeiBeiTheme.hairline.opacity(0.34), lineWidth: 1)
         }
         .onExitCommand(perform: cancel)
@@ -1171,8 +1156,8 @@ private enum AgentChatLayoutMetrics {
     /// Immersive min height — grows with typed lines; never a giant empty white void.
     static let wideComposerMinHeight: CGFloat = 88
     static let wideComposerMaxHeight: CGFloat = 340
-    static let compactFontSize: CGFloat = 14.5
-    static let wideFontSize: CGFloat = 16.5
+    static let compactFontSize: CGFloat = 15
+    static let wideFontSize: CGFloat = 15
 
     static func isWide(layout: WorkspaceLayout) -> Bool {
         // Immersive conversation only — document multi-pane keeps compact strip metrics.
@@ -1232,6 +1217,10 @@ struct AgentPaneView: View {
     @State private var agentVisibleMessageLimit = AgentPaneView.agentHistoryPageSize
     @State private var isRevealingEarlierAgentHistory = false
     @State private var isAgentHistoryRevealButtonHovered = false
+    /// Turn-start rows report reading-line crossings here at scroll rate. A
+    /// reference type on purpose: per-event dictionary writes must not publish
+    /// SwiftUI state; only the derived activeAgentRailID write renders.
+    @State private var turnReadingPositions = AgentTurnReadingPositionModel()
 
     private static let agentHistoryPageSize = AgentHistoryRevealPolicy.pageSize
     private static let paneStructureTransitionDuration: TimeInterval = 0.24
@@ -1271,6 +1260,8 @@ struct AgentPaneView: View {
         let wide = AgentChatLayoutMetrics.isWide(layout: store.layout)
         let showsContentRail = !wide && store.layout.allowsRailOnlyPanes
         let railItems = showsContentRail ? agentRailItems : []
+        // One O(n) set per render — row backgrounds only do Set.contains.
+        let railTurnStartMessageIDs = showsContentRail ? agentRailTurnStartMessageIDs : []
         // The native split host changes this proposal on every divider frame.
         // Read it locally so visible content and the rail follow continuously;
         // never publish those frame-level values into the eager message tree.
@@ -1319,6 +1310,11 @@ struct AgentPaneView: View {
                             // Long histories fold behind a reveal button instead — unrendered
                             // rows cost nothing; keep full Markdown rendering for visible ones.
                             VStack(alignment: .leading, spacing: comfy ? 22 : 12) {
+                                // 显隐条件在 AgentUnconfiguredHint 自身判断——它观察 PiOAuthService,
+                                // 配置完成后能即时消失;这里只看消息是否为空。
+                                if store.messages.isEmpty {
+                                    AgentUnconfiguredHint(store: store)
+                                }
                                 if hiddenAgentHistoryCount > 0 {
                                     agentHistoryRevealButton(proxy: proxy)
                                         .transition(WeiBeiTransition.message)
@@ -1329,6 +1325,13 @@ struct AgentPaneView: View {
                                         contentWidth: contentWidth,
                                         wide: wide
                                     )
+                                    .background {
+                                        if railTurnStartMessageIDs.contains(message.id) {
+                                            AgentTurnReadingPositionProbe(messageID: message.id) {
+                                                handleTurnReadingPosition(messageID: $0, passed: $1)
+                                            }
+                                        }
+                                    }
                                 }
                                 if store.isAgentRunningInActiveChat
                                     && !store.hasPersistedGeneratingAgentReply
@@ -1454,6 +1457,8 @@ struct AgentPaneView: View {
                 .onChange(of: store.activeStudySessionID) { _, _ in
                     agentVisibleMessageLimit = Self.agentHistoryPageSize
                     isRevealingEarlierAgentHistory = false
+                    turnReadingPositions.passedByMessageID.removeAll()
+                    activeAgentRailID = nil
                 }
             }
             .preference(
@@ -1716,6 +1721,12 @@ struct AgentPaneView: View {
         }
     }
 
+    /// Rows whose message starts a rail turn — the only rows that need a
+    /// reading-position probe. Rail ticks are turns, not messages.
+    private var agentRailTurnStartMessageIDs: Set<UUID> {
+        Set(agentRailTurns.map(\.startMessageID))
+    }
+
     private func activateAgentRailItem(_ item: ContentRailItem, railOnly: Bool, proxy: ScrollViewProxy) {
         guard let turn = agentRailTurns.first(where: { "chat-turn-\($0.id.uuidString)" == item.id }) else { return }
         activeAgentRailID = item.id
@@ -1740,6 +1751,21 @@ struct AgentPaneView: View {
         agentFollowsLatest = messageID == store.messages.last?.id
         if let turn = agentRailTurns.last(where: { $0.startIndex <= visibleIndex }) {
             activeAgentRailID = "chat-turn-\(turn.id.uuidString)"
+        }
+    }
+
+    /// Mirrors the web editors' reading-line rule: the rail marks the last
+    /// turn whose question row top has crossed the upper third of the viewport.
+    private func handleTurnReadingPosition(messageID: UUID, passed: Bool) {
+        guard turnReadingPositions.passedByMessageID[messageID] != passed else { return }
+        turnReadingPositions.passedByMessageID[messageID] = passed
+        let turns = agentRailTurns
+        guard let activeTurn = turns.last(where: {
+            turnReadingPositions.passedByMessageID[$0.startMessageID] == true
+        }) ?? turns.first else { return }
+        let id = "chat-turn-\(activeTurn.id.uuidString)"
+        if activeAgentRailID != id {
+            activeAgentRailID = id
         }
     }
 
@@ -1829,21 +1855,18 @@ struct AgentPaneView: View {
         } label: {
             HStack(spacing: 6) {
                 Image(systemName: "chevron.up")
-                    .weiBeiText(9, weight: .semibold)
+                    .weiBeiText(9.5, weight: .semibold)
                 Text(store.ui("查看更早的 \(revealCount) 条消息", "Show \(revealCount) earlier messages"))
                     .weiBeiText(12, weight: .medium)
             }
                 .foregroundStyle(isAgentHistoryRevealButtonHovered ? WeiBeiTheme.link : WeiBeiTheme.secondaryInk)
                 .padding(.vertical, 6)
                 .padding(.horizontal, 12)
-                .background {
-                    Capsule()
-                        .fill(WeiBeiTheme.paperInset.opacity(isAgentHistoryRevealButtonHovered ? 0.42 : 0.24))
-                }
-                .overlay {
-                    Capsule()
-                        .stroke(WeiBeiTheme.hairline.opacity(isAgentHistoryRevealButtonHovered ? 0.72 : 0.44), lineWidth: 1)
-                }
+                .weibeiEtchedCapsuleBackground(
+                    fill: WeiBeiTheme.paperInset.opacity(isAgentHistoryRevealButtonHovered ? 0.42 : 0.24),
+                    stroke: WeiBeiTheme.hairline.opacity(isAgentHistoryRevealButtonHovered ? 0.72 : 0.44),
+                    contactShadow: isAgentHistoryRevealButtonHovered
+                )
         }
         .buttonStyle(.plain)
         .scaleEffect(isAgentHistoryRevealButtonHovered ? 1.015 : 1)
@@ -1977,8 +2000,17 @@ struct AgentPaneView: View {
            let course = store.course(withID: courseID),
            !store.studySessions(in: courseID).isEmpty {
             Menu(store.ui("当前课程 · \(course.title)", "Current Course · \(course.title)")) {
-                ForEach(store.studySessions(in: courseID).prefix(30)) { session in
+                let courseSessions = store.studySessions(in: courseID)
+                ForEach(courseSessions.prefix(30)) { session in
                     sessionMenuButton(session)
+                }
+                if courseSessions.count > 30 {
+                    Button(store.ui(
+                        "查看全部 \(courseSessions.count) 个对话",
+                        "View all \(courseSessions.count) chats"
+                    )) {
+                        store.presentCourseWorkspace(.sessions, courseID: courseID)
+                    }
                 }
             }
         }
@@ -1987,6 +2019,15 @@ struct AgentPaneView: View {
             Section(store.ui("全部对话", "All Chats")) {
                 ForEach(store.historicalStudySessions.prefix(30)) { session in
                     sessionMenuButton(session)
+                }
+                if store.historicalStudySessions.count > 30,
+                   let courseID = store.activeCourseID {
+                    Button(store.ui(
+                        "查看全部 \(store.historicalStudySessions.count) 个对话",
+                        "View all \(store.historicalStudySessions.count) chats"
+                    )) {
+                        store.presentCourseWorkspace(.sessions, courseID: courseID)
+                    }
                 }
             }
         }
@@ -2076,7 +2117,7 @@ private struct AgentSelectionAttachmentPill: View {
                 // click is not eaten by hover-popover dismissal.
                 HStack(spacing: 6) {
                     Image(systemName: "text.bubble")
-                        .weiBeiText(11, weight: .medium)
+                        .weiBeiText(12, weight: .medium)
                     Text(store.ui("\(interaction.selectionAttachments.count) 个已选文本片段", "\(interaction.selectionAttachments.count) selected text fragments"))
                         .weiBeiText(12, weight: .medium)
                 }
@@ -2088,7 +2129,7 @@ private struct AgentSelectionAttachmentPill: View {
 
                 Button(action: clearAllAttachments) {
                     Image(systemName: "xmark")
-                        .weiBeiText(9, weight: .semibold)
+                        .weiBeiText(9.5, weight: .semibold)
                 }
                 .buttonStyle(WeiBeiIconButtonStyle(size: 18))
                 .accessibilityLabel(Text(store.ui("清空已选文本片段", "Clear selected text fragments")))
@@ -2098,12 +2139,13 @@ private struct AgentSelectionAttachmentPill: View {
             .padding(.leading, 10)
             .padding(.trailing, 6)
             .frame(height: 28)
-            .background(WeiBeiTheme.paperRaised.opacity(pillHovering ? 0.72 : 0.54))
+            .weibeiEtchedBackground(
+                fill: WeiBeiTheme.paperRaised.opacity(pillHovering ? 0.72 : 0.54),
+                stroke: WeiBeiTheme.hairline.opacity(pillHovering ? 0.68 : 0.38),
+                cornerRadius: 8,
+                contactShadow: pillHovering
+            )
             .clipShape(RoundedRectangle(cornerRadius: 8))
-            .overlay {
-                RoundedRectangle(cornerRadius: 8)
-                    .stroke(WeiBeiTheme.hairline.opacity(pillHovering ? 0.68 : 0.38), lineWidth: 1)
-            }
             .accessibilityLabel(Text(store.ui("\(interaction.selectionAttachments.count) 个已选文本片段", "\(interaction.selectionAttachments.count) selected text fragments")))
             .help(store.ui("悬停查看选区", "Hover to preview selections"))
         }
@@ -2136,7 +2178,7 @@ private struct AgentSelectionAttachmentPill: View {
                     .foregroundStyle(WeiBeiTheme.ink)
                 Spacer()
                 Text(store.ui("发问时会作为上下文", "Used as context when asking"))
-                    .weiBeiText(10, weight: .medium)
+                    .weiBeiText(10.5, weight: .medium)
                     .foregroundStyle(WeiBeiTheme.tertiaryInk)
                 Button(store.ui("清空", "Clear")) {
                     clearAllAttachments()
@@ -2166,10 +2208,10 @@ private struct AgentSelectionAttachmentPill: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {
                 Text(store.ui("片段 \(index + 1)", "Fragment \(index + 1)"))
-                    .weiBeiText(11, weight: .semibold)
+                    .weiBeiText(12, weight: .semibold)
                     .foregroundStyle(WeiBeiTheme.ink)
                 Text(selection.ownerTitle)
-                    .weiBeiText(10, weight: .medium)
+                    .weiBeiText(10.5, weight: .medium)
                     .lineLimit(1)
                     .foregroundStyle(WeiBeiTheme.secondaryInk)
                 Spacer(minLength: 8)
@@ -2199,12 +2241,12 @@ private struct AgentSelectionAttachmentPill: View {
                 .padding(.leading, 1)
         }
         .padding(9)
-        .background(WeiBeiTheme.paperInset.opacity(0.32))
-        .clipShape(RoundedRectangle(cornerRadius: 7))
-        .overlay {
-            RoundedRectangle(cornerRadius: 7)
-                .stroke(WeiBeiTheme.hairline.opacity(0.36), lineWidth: 1)
-        }
+        .weibeiEtchedBackground(
+            fill: WeiBeiTheme.paperInset.opacity(0.32),
+            stroke: WeiBeiTheme.hairline.opacity(0.36),
+            cornerRadius: 8
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 8))
     }
 
     private func setPillHovering(_ value: Bool) {
@@ -2246,7 +2288,7 @@ private struct FloatingSelectionPreview: View {
 
     var body: some View {
         Text(cleanedText)
-            .weiBeiText(11.5, weight: .medium)
+            .weiBeiText(12, weight: .medium)
             .foregroundStyle(WeiBeiTheme.secondaryInk)
             .lineLimit(1)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -2424,7 +2466,7 @@ struct FloatingSelectionAgentView: View {
             } label: {
                 Image(systemName: "link")
             }
-            .buttonStyle(WeiBeiIconButtonStyle(active: isFormattingActive("link"), size: 30, cornerRadius: 5))
+            .buttonStyle(WeiBeiIconButtonStyle(active: isFormattingActive("link"), size: 30, cornerRadius: 4))
             .help(store.ui("链接", "Link"))
             .accessibilityLabel(Text(store.ui("链接", "Link")))
             .popover(isPresented: $showsLinkEditor, arrowEdge: .bottom) {
@@ -2473,7 +2515,7 @@ struct FloatingSelectionAgentView: View {
         } label: {
             Image(systemName: "textformat")
         }
-        .buttonStyle(WeiBeiIconButtonStyle(size: 30, cornerRadius: 5))
+        .buttonStyle(WeiBeiIconButtonStyle(size: 30, cornerRadius: 4))
         .help(current.map { store.ui("选中文字字体：\($0.displayName)", "Selected font: \($0.displayName)") }
             ?? store.ui("更改选中文字字体", "Change selected font"))
         .accessibilityLabel(Text(store.ui("更改选中文字字体", "Change selected font")))
@@ -2489,7 +2531,7 @@ struct FloatingSelectionAgentView: View {
         Button { runSelectionCommand(action) } label: {
             Image(systemName: icon)
         }
-        .buttonStyle(WeiBeiIconButtonStyle(active: active ?? isFormattingActive(action), size: 30, cornerRadius: 5))
+        .buttonStyle(WeiBeiIconButtonStyle(active: active ?? isFormattingActive(action), size: 30, cornerRadius: 4))
         .disabled(!enabled)
         .help(label)
         .accessibilityLabel(Text(label))
@@ -2553,7 +2595,7 @@ struct FloatingSelectionAgentView: View {
                     withAnimation(WeiBeiMotion.micro) { togglePinnedFloatingAgent() }
                 } label: {
                     Image(systemName: store.pinnedFloatingAgent ? "pin.fill" : "pin")
-                        .weiBeiText(11, weight: .semibold)
+                        .weiBeiText(12, weight: .semibold)
                         .foregroundStyle(store.pinnedFloatingAgent ? WeiBeiTheme.cinnabar : WeiBeiTheme.secondaryInk)
                         .frame(width: 24, height: 24)
                 }
@@ -2567,7 +2609,7 @@ struct FloatingSelectionAgentView: View {
                     closeFloatingAgent()
                 } label: {
                     Image(systemName: "xmark")
-                        .weiBeiText(10, weight: .bold)
+                        .weiBeiText(10.5, weight: .bold)
                         .foregroundStyle(WeiBeiTheme.secondaryInk)
                         .frame(width: 24, height: 24)
                 }
@@ -2642,7 +2684,7 @@ struct FloatingSelectionAgentView: View {
                     ? store.ui("再问一点…", "Ask a follow-up…")
                     : store.ui("问点什么…", "Ask anything…"),
                 focused: $draftFocused,
-                fontSize: 13.5,
+                fontSize: 15,
                 lineLimit: 1...5,
                 height: SelectionFloatingAgentPlacement.expandedComposerCollapsedHeight,
                 compactMaxHeight: SelectionFloatingAgentPlacement.expandedComposerMaxHeight,
@@ -2917,17 +2959,14 @@ private struct SelectionFloatChrome: ViewModifier {
         content
             .foregroundColor(WeiBeiTheme.ink)
             .background {
-                RoundedRectangle(cornerRadius: expanded ? 12 : 9, style: .continuous)
-                    .fill(WeiBeiTheme.paperRaised.opacity(0.98))
+                WeiBeiEtchedBackdrop(
+                    shape: RoundedRectangle(cornerRadius: expanded ? 12 : 8, style: .continuous),
+                    fill: WeiBeiTheme.paperRaised.opacity(0.98),
+                    stroke: WeiBeiTheme.hairline.opacity(0.65),
+                    showsContactShadow: true
+                )
             }
-            .clipShape(RoundedRectangle(cornerRadius: expanded ? 12 : 9, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: expanded ? 12 : 9, style: .continuous)
-                    .strokeBorder(
-                        WeiBeiTheme.hairline.opacity(0.65),
-                        lineWidth: 1
-                    )
-            }
+            .clipShape(RoundedRectangle(cornerRadius: expanded ? 12 : 8, style: .continuous))
             .shadow(color: WeiBeiTheme.ink.opacity(0.06), radius: 8, y: 3)
     }
 }
@@ -2994,7 +3033,7 @@ private struct FloatingSelectionMessageRow: View {
                 isError: WorkspaceStore.isAgentFailureMessage(message.text)
             )
             if isGenerating && text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                AgentThinkingIndicator(activityText: streaming.activityText)
+                AgentThinkingIndicator(activityText: streaming.activityText, compact: true)
                     .id(message.id)
                     .padding(.vertical, 4)
             }
@@ -3029,6 +3068,7 @@ private struct AgentMessageBubble: View {
 
 private struct AgentBubble: View {
     @EnvironmentObject private var store: WorkspaceStore
+    @Environment(\.openSettings) private var openSettings
     @Environment(\.weibeiReduceMotion) private var reduceMotion
     var message: AgentMessage
     var liveStreamingText: String? = nil
@@ -3130,10 +3170,10 @@ private struct AgentBubble: View {
             .padding(.horizontal, 15)
             .padding(.vertical, 11)
             .background {
-                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
                     .fill(userBubbleFill)
                     .overlay {
-                        RoundedRectangle(cornerRadius: 9, style: .continuous)
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
                             .strokeBorder(userBubbleStroke, lineWidth: 1)
                     }
                     .shadow(
@@ -3142,7 +3182,7 @@ private struct AgentBubble: View {
                         y: hovering ? 2 : 1.2
                     )
             }
-            .contentShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
             .onTapGesture {
                 copyMessage()
             }
@@ -3241,7 +3281,10 @@ private struct AgentBubble: View {
                             isStreaming: message.completionState == .generating
                         )
                         if isAwaitingFirstToken {
-                            AgentThinkingIndicator(activityText: liveActivityText)
+                            AgentThinkingIndicator(
+                                activityText: liveActivityText,
+                                chatWideTypography: isChatWideTypography
+                            )
                         }
                     }
                 }
@@ -3285,7 +3328,7 @@ private struct AgentBubble: View {
             if message.completionState == .interrupted && !isFailureMessage {
                 HStack(spacing: 6) {
                     Text(store.ui("回答已中断，已保留现有内容", "Response interrupted; existing content was kept"))
-                        .font(.caption)
+                        .weiBeiText(10.5)
                         .foregroundStyle(WeiBeiTheme.secondaryInk)
                     if store.canRetryAgentRequest(
                         question: message.retryQuestion,
@@ -3318,6 +3361,13 @@ private struct AgentBubble: View {
                     if let question = message.retryQuestion, !question.isEmpty {
                         Button(store.ui("回填问题", "Restore question")) {
                             store.agentDraft = question
+                        }
+                        .buttonStyle(WeiBeiTextActionButtonStyle())
+                    }
+                    if message.failureKind == .unauthorized
+                        || !AgentProviderReadiness.isConfigured(for: store) {
+                        Button(store.ui("去设置", "Open Settings")) {
+                            openSettings()
                         }
                         .buttonStyle(WeiBeiTextActionButtonStyle())
                     }
@@ -3536,7 +3586,7 @@ private struct RichAnswerNarrativeText: View {
                         .fixedSize(horizontal: false, vertical: true)
                 case .paragraph:
                     Text(attributed(block.text))
-                        .weiBeiText(14)
+                        .weiBeiText(15)
                         .lineSpacing(4)
                         .foregroundStyle(WeiBeiTheme.ink)
                         .fixedSize(horizontal: false, vertical: true)
@@ -3545,14 +3595,14 @@ private struct RichAnswerNarrativeText: View {
                         Text("•")
                             .foregroundStyle(WeiBeiTheme.cinnabar)
                         Text(attributed(block.text))
-                            .weiBeiText(14)
+                            .weiBeiText(15)
                             .lineSpacing(4)
                             .foregroundStyle(WeiBeiTheme.ink)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 case .quote:
                     Text(attributed(block.text))
-                        .weiBeiText(13.5)
+                        .weiBeiText(13)
                         .lineSpacing(3)
                         .foregroundStyle(WeiBeiTheme.secondaryInk)
                         .fixedSize(horizontal: false, vertical: true)
@@ -3679,7 +3729,7 @@ private struct AgentReplyMemoryUpdateTag: View {
                         "Learning memory updated · \(update.memoryIDs.count)"
                     ))
                     Image(systemName: expanded ? "chevron.up" : "chevron.down")
-                        .weiBeiText(8.5, weight: .bold)
+                        .weiBeiText(9.5, weight: .bold)
                         .accessibilityHidden(true)
                 }
                 .weiBeiText(10.5, weight: .semibold)
@@ -3712,14 +3762,14 @@ private struct AgentReplyMemoryUpdateTag: View {
                                     .foregroundStyle(WeiBeiTheme.cinnabar)
                                     .fixedSize()
                                 Text(revision.text)
-                                    .font(.caption)
+                                    .weiBeiText(10.5)
                                     .foregroundStyle(WeiBeiTheme.secondaryInk)
                                     .lineLimit(2)
                             }
                         }
                     } else {
                         Text(update.summary)
-                            .font(.caption)
+                            .weiBeiText(10.5)
                             .foregroundStyle(WeiBeiTheme.secondaryInk)
                             .fixedSize(horizontal: false, vertical: true)
                     }
@@ -3825,12 +3875,12 @@ private struct AgentReplyActionCard: View {
             alignment: .leading
         )
         .background {
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(WeiBeiTheme.paperRaised.opacity(0.82))
-        }
-        .overlay {
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .strokeBorder(WeiBeiTheme.hairline.opacity(0.58), lineWidth: 1)
+            WeiBeiEtchedBackdrop(
+                shape: RoundedRectangle(cornerRadius: 12, style: .continuous),
+                fill: WeiBeiTheme.paperRaised.opacity(0.82),
+                stroke: WeiBeiTheme.hairline.opacity(0.58),
+                showsContactShadow: true
+            )
         }
     }
 
@@ -3843,7 +3893,7 @@ private struct AgentReplyActionCard: View {
 
             if let target = store.agentReplyActionTargetTitle(action) {
                 Label(target, systemImage: "note.text")
-                    .font(.caption)
+                    .weiBeiText(10.5)
                     .foregroundStyle(WeiBeiTheme.secondaryInk)
             }
 
@@ -3852,7 +3902,7 @@ private struct AgentReplyActionCard: View {
                 .weibeiInputSurface(height: 32)
 
             TextEditor(text: $bodyText)
-                .weiBeiText(12.5)
+                .weiBeiText(12)
                 .scrollContentBackground(.hidden)
                 .scrollDisabled(true)
                 .weibeiInputSurface(height: 104, horizontalPadding: 6)
@@ -3864,14 +3914,14 @@ private struct AgentReplyActionCard: View {
                 HStack(spacing: 8) {
                     relationNoteLabel
                     Image(systemName: "arrow.left.and.right")
-                        .font(.caption)
+                        .weiBeiText(10.5)
                         .foregroundStyle(WeiBeiTheme.tertiaryInk)
                     relationSourceLabel
                 }
                 VStack(alignment: .leading, spacing: 6) {
                     relationNoteLabel
                     Image(systemName: "arrow.up.and.down")
-                        .font(.caption)
+                        .weiBeiText(10.5)
                         .foregroundStyle(WeiBeiTheme.tertiaryInk)
                     relationSourceLabel
                 }
@@ -3880,14 +3930,14 @@ private struct AgentReplyActionCard: View {
 
         if let failure = action.failureMessage, !failure.isEmpty {
             Label(failure, systemImage: "exclamationmark.triangle")
-                .font(.caption)
+                .weiBeiText(10.5)
                 .foregroundStyle(WeiBeiTheme.cinnabar)
                 .fixedSize(horizontal: false, vertical: true)
         }
 
         if !action.evidence.isEmpty {
             Text(action.evidence.joined(separator: " · "))
-                .font(.caption2)
+                .weiBeiText(9.5)
                 .foregroundStyle(WeiBeiTheme.tertiaryInk)
                 .lineLimit(2)
         }
@@ -3943,7 +3993,7 @@ private struct AgentReplyActionCard: View {
                     ),
                 systemImage: "checkmark.circle"
             )
-            .font(.caption)
+            .weiBeiText(10.5)
             .foregroundStyle(WeiBeiTheme.secondaryInk)
             .lineLimit(1)
 
@@ -3972,7 +4022,7 @@ private struct AgentReplyActionCard: View {
                 ),
             systemImage: "minus.circle"
         )
-        .font(.caption)
+        .weiBeiText(10.5)
         .foregroundStyle(WeiBeiTheme.tertiaryInk)
         .lineLimit(1)
     }
@@ -4007,13 +4057,17 @@ private struct AgentReplyActionCard: View {
 
     private func actionItemLabel(_ title: String, systemImage: String) -> some View {
         Label(title, systemImage: systemImage)
-            .font(.caption)
+            .weiBeiText(10.5)
             .foregroundStyle(WeiBeiTheme.secondaryInk)
             .lineLimit(1)
             .padding(.horizontal, 8)
             .frame(height: 28)
-            .background(WeiBeiTheme.paperInset.opacity(0.34))
-            .clipShape(RoundedRectangle(cornerRadius: 6))
+            .weibeiEtchedBackground(
+                fill: WeiBeiTheme.paperInset.opacity(0.34),
+                stroke: WeiBeiTheme.hairline.opacity(0.3),
+                cornerRadius: 8
+            )
+            .clipShape(RoundedRectangle(cornerRadius: 8))
     }
 
     private func performConfirmation() {
@@ -4189,10 +4243,10 @@ private struct AgentReplySourceTagRow: View {
                 .frame(height: 22)
                 .background(
                     WeiBeiTheme.paperInset.opacity(0.48),
-                    in: RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    in: RoundedRectangle(cornerRadius: 8, style: .continuous)
                 )
                 .overlay {
-                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
                         .strokeBorder(WeiBeiTheme.hairline.opacity(0.42), lineWidth: 1)
                 }
                 .buttonStyle(.plain)
@@ -4238,7 +4292,7 @@ private struct AgentReplySourceTag: View {
         Button(action: action) {
             HStack(spacing: 4) {
                 Image(systemName: source.kind.sourceSystemImage)
-                    .weiBeiText(9, weight: .semibold)
+                    .weiBeiText(9.5, weight: .semibold)
                 Text(label)
                     .weiBeiText(10.5, weight: .semibold)
                     .lineLimit(1)
@@ -4248,10 +4302,10 @@ private struct AgentReplySourceTag: View {
             .frame(height: 22)
             .background(
                 WeiBeiTheme.paperInset.opacity(hovering ? 0.58 : 0.40),
-                in: RoundedRectangle(cornerRadius: 6, style: .continuous)
+                in: RoundedRectangle(cornerRadius: 8, style: .continuous)
             )
             .overlay {
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
                     .strokeBorder(
                         hovering
                             ? WeiBeiTheme.cinnabar.opacity(0.28)
@@ -4301,7 +4355,7 @@ private struct AgentReplySourceDetail: View {
     var body: some View {
         HStack(alignment: .top, spacing: 9) {
             Image(systemName: source.kind.sourceSystemImage)
-                .weiBeiText(11, weight: .semibold)
+                .weiBeiText(12, weight: .semibold)
                 .foregroundStyle(WeiBeiTheme.cinnabar.opacity(0.82))
                 .frame(width: 16)
             VStack(alignment: .leading, spacing: 4) {
@@ -4318,14 +4372,14 @@ private struct AgentReplySourceDetail: View {
                     }
                 }
                 Text(source.excerpt)
-                    .weiBeiText(11.5)
+                    .weiBeiText(12)
                     .foregroundStyle(WeiBeiTheme.secondaryInk)
                     .lineLimit(3)
                     .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 4)
             Image(systemName: "arrow.up.right")
-                .weiBeiText(9, weight: .semibold)
+                .weiBeiText(9.5, weight: .semibold)
                 .foregroundStyle(WeiBeiTheme.tertiaryInk)
         }
         .padding(.horizontal, 12)
@@ -4410,7 +4464,7 @@ private struct AgentCitationTag: View {
         Button(action: action) {
             HStack(spacing: 4) {
                 Image(systemName: citation.kind.systemImage)
-                    .weiBeiText(9, weight: .semibold)
+                    .weiBeiText(9.5, weight: .semibold)
                 Text(chipLabel)
                     .weiBeiText(10.5, weight: .semibold)
                     .lineLimit(1)
@@ -4418,9 +4472,9 @@ private struct AgentCitationTag: View {
             .foregroundStyle(foreground)
             .padding(.horizontal, 8)
             .frame(height: 22)
-            .background(background, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+            .background(background, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
             .overlay {
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
                     .strokeBorder(border, lineWidth: 1)
             }
         }
@@ -4570,6 +4624,7 @@ private struct AgentScrollMetrics: Equatable {
     let isUserScrolling: Bool
     let isScrollingTowardTop: Bool
 }
+
 
 /// Reports whether one finalized Markdown row intersects the chat viewport.
 /// The boolean changes only at viewport boundaries, keeping offscreen WebKit
@@ -5217,7 +5272,11 @@ private struct AgentLiveResponse: View {
     @ViewBuilder
     var body: some View {
         if streaming.text.isEmpty {
-            AgentThinkingIndicator(activityText: streaming.activityText)
+            AgentThinkingIndicator(
+                activityText: streaming.activityText,
+                chatWideTypography: isChatWideTypography,
+                compact: compact
+            )
                 .id(compact ? "selection-float-thinking" : "agent-thinking")
                 .padding(.vertical, compact ? 4 : 0)
         } else {
@@ -5257,7 +5316,15 @@ private struct AgentLiveResponse: View {
 private struct AgentThinkingIndicator: View {
     @EnvironmentObject private var store: WorkspaceStore
     var activityText: String?
+    /// Match the answer text that follows this indicator in the same surface:
+    /// main conversation rows are chat-wide 16pt (17pt when narrow), the
+    /// selection float is compact 14pt — the same bases as the Milkdown
+    /// `.ProseMirror` CSS, so the status word never reads larger or smaller
+    /// than the reply it precedes.
+    var chatWideTypography = false
+    var compact = false
     @Environment(\.weibeiReduceMotion) private var reduceMotion
+    @Environment(\.weiBeiTextScale) private var textScale
     @State private var cachedText = ""
     @State private var cachedTextWidth: CGFloat = 1
     @State private var motionEpoch = Date()
@@ -5266,20 +5333,31 @@ private struct AgentThinkingIndicator: View {
 
     private static let minimumStatusHold: TimeInterval = 0.6
 
-    /// 14.5pt — user feedback: the 12pt status read as an afterthought; the
-    /// status line is the primary signal of what the agent is doing.
-    private static let statusFontSize: CGFloat = 14.5
+    /// Answer-text bases in pt, mirroring `.ProseMirror` in Editor/index.html
+    /// (17 base / 16 chat-wide / 14 compact preview). ⌘± changes the text tier,
+    /// so the status word must scale with it exactly like the reply text.
+    private static let answerBaseFontSize: CGFloat = 17
+    private static let chatWideFontSize: CGFloat = 16
+    private static let compactFontSize: CGFloat = 14
+    private var baseFontSize: CGFloat {
+        compact ? Self.compactFontSize
+            : (chatWideTypography ? Self.chatWideFontSize : Self.answerBaseFontSize)
+    }
+    /// Single source for measure + line box + AppKit painting. Drawing at a
+    /// different size than the measured width is what made the orbit sit far
+    /// from the text on the right and close on the left.
+    private var scaledFontSize: CGFloat { baseFontSize * max(0.1, textScale) }
     /// Clear gap from line-box edge → stroke centerline (all four sides).
     private static let orbitPadding: CGFloat = 6.5
     private static let lineWidth: CGFloat = 1.25
     /// Line box height matches the font’s typographic bounds so top/bottom pad stay equal.
-    private static var textLineHeight: CGFloat {
-        let font = NSFont.systemFont(ofSize: statusFontSize, weight: .medium)
+    private var textLineHeight: CGFloat {
+        let font = NSFont.systemFont(ofSize: scaledFontSize, weight: .medium)
         return max(1, ceil(font.ascender - font.descender))
     }
     /// Outer view size = line box + equal pad on both sides + half stroke outside the path.
     private static var pathOuterInset: CGFloat { orbitPadding + lineWidth / 2 }
-    private static var pathHeight: CGFloat { textLineHeight + pathOuterInset * 2 }
+    private var pathHeight: CGFloat { textLineHeight + Self.pathOuterInset * 2 }
 
     private var statusText: String {
         activityText ?? store.ui("正在思考", "Thinking")
@@ -5289,15 +5367,14 @@ private struct AgentThinkingIndicator: View {
         let text = cachedText.isEmpty ? statusText : cachedText
         let textWidth = max(1, cachedTextWidth)
         let orbitWidth = textWidth + Self.pathOuterInset * 2
-        let pathHeight = Self.pathHeight
 
         Group {
             if reduceMotion {
                 Text(text)
-                    .weiBeiText(Self.statusFontSize, weight: .medium)
+                    .weiBeiText(baseFontSize, weight: .medium)
                     .foregroundStyle(WeiBeiTheme.ink.opacity(0.93))
                     .lineLimit(1)
-                    .frame(width: textWidth, height: Self.textLineHeight, alignment: .leading)
+                    .frame(width: textWidth, height: textLineHeight, alignment: .leading)
                     .padding(Self.pathOuterInset)
             } else {
                 // AppKit host: fixed intrinsic size; ticks only repaint the NSView.
@@ -5307,8 +5384,9 @@ private struct AgentThinkingIndicator: View {
                     orbitWidth: orbitWidth,
                     pathHeight: pathHeight,
                     orbitPadding: Self.orbitPadding,
-                    textLineHeight: Self.textLineHeight,
+                    textLineHeight: textLineHeight,
                     lineWidth: Self.lineWidth,
+                    fontSize: scaledFontSize,
                     motionEpoch: motionEpoch,
                     appearanceMode: store.appearanceMode
                 )
@@ -5353,15 +5431,20 @@ private struct AgentThinkingIndicator: View {
                 motionEpoch = Date()
             }
         }
+        .onChange(of: textScale) { _, _ in
+            // ⌘± tier change: re-measure the box at the new size so the orbit
+            // keeps equal padding; the motion phase itself is untouched.
+            refreshCache(for: statusText)
+        }
     }
 
     private func refreshCache(for text: String) {
         cachedText = text
-        cachedTextWidth = Self.measuredWidth(for: text)
+        cachedTextWidth = Self.measuredWidth(for: text, fontSize: scaledFontSize)
     }
 
-    private static func measuredWidth(for text: String) -> CGFloat {
-        let font = NSFont.systemFont(ofSize: statusFontSize, weight: .medium)
+    private static func measuredWidth(for text: String, fontSize: CGFloat) -> CGFloat {
+        let font = NSFont.systemFont(ofSize: fontSize, weight: .medium)
         let size = (text as NSString).size(withAttributes: [.font: font])
         return max(1, ceil(size.width))
     }
@@ -5376,6 +5459,8 @@ private struct AgentThinkingOrbitHost: NSViewRepresentable {
     let orbitPadding: CGFloat
     let textLineHeight: CGFloat
     let lineWidth: CGFloat
+    /// Already scaled by the ⌘± tier — the same size used to measure `textWidth`.
+    let fontSize: CGFloat
     let motionEpoch: Date
     let appearanceMode: WeiBeiAppearanceMode
 
@@ -5390,6 +5475,7 @@ private struct AgentThinkingOrbitHost: NSViewRepresentable {
             orbitPadding: orbitPadding,
             textLineHeight: textLineHeight,
             lineWidth: lineWidth,
+            fontSize: fontSize,
             motionEpoch: motionEpoch,
             appearanceMode: appearanceMode
         )
@@ -5414,6 +5500,7 @@ private struct AgentThinkingOrbitHost: NSViewRepresentable {
             orbitPadding: orbitPadding,
             textLineHeight: textLineHeight,
             lineWidth: lineWidth,
+            fontSize: fontSize,
             motionEpoch: motionEpoch,
             appearanceMode: appearanceMode
         )
@@ -5423,7 +5510,6 @@ private struct AgentThinkingOrbitHost: NSViewRepresentable {
 /// Fixed-size AppKit painter for 「行文进行中 V3」: reveal + first-pass underline + TextOrbitSegment.
 /// Text sits in a line box; orbit stroke centerline keeps equal `orbitPadding` on all four sides.
 final class AgentThinkingOrbitNSView: NSView {
-    private static let statusFontSize: CGFloat = 12
     private static let segmentLength: CGFloat = 10
     private static let firstPassDuration: TimeInterval = 0.88
     private static let orbitDuration: TimeInterval = 2.25
@@ -5435,6 +5521,9 @@ final class AgentThinkingOrbitNSView: NSView {
     private var orbitPadding: CGFloat = 5.5
     private var textLineHeight: CGFloat = 15
     private var lineWidth: CGFloat = 1.25
+    /// Painted at the caller-measured size — a divergent local constant here is
+    /// what made the right gap ~10pt wider than the left.
+    private var fontSize: CGFloat = 16
     private var motionEpoch = Date()
     private var appearanceMode: WeiBeiAppearanceMode = .paper
     private var displayLink: CADisplayLink?
@@ -5466,6 +5555,7 @@ final class AgentThinkingOrbitNSView: NSView {
         orbitPadding: CGFloat,
         textLineHeight: CGFloat,
         lineWidth: CGFloat,
+        fontSize: CGFloat,
         motionEpoch: Date,
         appearanceMode: WeiBeiAppearanceMode
     ) {
@@ -5478,6 +5568,7 @@ final class AgentThinkingOrbitNSView: NSView {
         self.orbitPadding = max(1, orbitPadding)
         self.textLineHeight = max(1, textLineHeight)
         self.lineWidth = max(0.5, lineWidth)
+        self.fontSize = max(1, fontSize)
         self.motionEpoch = motionEpoch
         self.appearanceMode = appearanceMode
         if sizeChanged {
@@ -5530,7 +5621,7 @@ final class AgentThinkingOrbitNSView: NSView {
         let dim = WeiBeiNativePalette.tertiaryInk(for: appearanceMode).withAlphaComponent(0.70)
         let cinnabar = WeiBeiNativePalette.cinnabar(for: appearanceMode).withAlphaComponent(0.82)
 
-        let font = NSFont.systemFont(ofSize: Self.statusFontSize, weight: .medium)
+        let font = NSFont.systemFont(ofSize: fontSize, weight: .medium)
         // Line box inset so every side has the same gap to the stroke centerline.
         // view edge → stroke center = lineWidth/2
         // stroke center → line box edge = orbitPadding

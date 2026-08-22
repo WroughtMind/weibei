@@ -175,7 +175,15 @@ final class NoteEditingSessionTests: XCTestCase {
 
         session.receive(dirtyEvent(for: session, revision: 1))
         session.receive(dirtyEvent(for: session, revision: 2))
-        try await Task.sleep(for: .milliseconds(100))
+        // Poll instead of one fixed sleep: on a loaded CI runner the 20ms idle
+        // timer can outrun the main thread well past any fixed window, which
+        // made this test flap (commands still empty at assertion time). The
+        // happy path still returns in one idle delay; only a real failure now
+        // waits out the deadline.
+        let deadline = Date().addingTimeInterval(2)
+        while commands.isEmpty && Date() < deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
 
         XCTAssertEqual(commands.count, 1)
         XCTAssertEqual(commands.first?.minimumRevision, 2)

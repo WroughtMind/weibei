@@ -3390,13 +3390,18 @@ window.WeiBeiEditor = {
       const nextID = next || '';
       if (nextID !== currentDocumentID) setDocumentIdentityInternal(nextID, currentDocumentGeneration + 1);
     },
-    setTheme: setThemeInternal,
-    setInterfaceLanguage: setLanguageInternal,
-    setReduceMotion: setReduceMotionInternal,
-    setTextScale: setTextScaleInternal,
-    focus: focusInternal,
-    scrollToHeading: scrollToHeadingInternal,
   }),
+  // Unconditional exports: the native side calls these right after editor
+  // ready (theme / language / reduce-motion / text-tier sync / focus / rail
+  // scroll). They must exist in plain app boots, not only check mode — a
+  // missing method throws inside the page, and the editorFailure hook then
+  // remounts the webview in a loop (2026-08-22 notes flicker regression).
+  setTheme: setThemeInternal,
+  setInterfaceLanguage: setLanguageInternal,
+  setReduceMotion: setReduceMotionInternal,
+  setTextScale: setTextScaleInternal,
+  focus: focusInternal,
+  scrollToHeading: scrollToHeadingInternal,
   setSelectionAskMarks: setSelectionAskMarksInternal,
   setMarkdownBaseURL: (next: any) => {
     markdownBaseURL = next || '';

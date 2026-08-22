@@ -109,6 +109,7 @@ struct WeiBeiApp: App {
 
     init() {
         WeiBeiTypography.registerBundledFonts()
+        WorkspaceStore.loadPersistedGlassIntensity()
     }
 
     var body: some Scene {
@@ -125,10 +126,13 @@ struct WeiBeiApp: App {
                 .modifier(WeiBeiAppearanceTransition(mode: store.appearanceMode))
                 .background(WindowChromeConfigurator(appearanceMode: store.appearanceMode))
                 .background(MainWindowReopenBridge(appDelegate: appDelegate))
+                .modifier(SystemAppearanceObserver(store: store))
                 .onOpenURL { url in
                     store.importFiles([url])
                 }
-                .frame(minWidth: 1120, minHeight: 720)
+                // 自适应窗口：统一 520 起——必须小于半个屏宽，macOS 才会在
+                // 拖近屏幕边缘时给出贴边分屏吸附区；窄窗下窗格收 28pt 细轨。
+                .frame(minWidth: 520, minHeight: 720)
                 .ignoresSafeArea(.container, edges: .top)
         }
         .defaultSize(width: 1240, height: 760)
@@ -419,5 +423,27 @@ private struct WindowChromeConfigurator: NSViewRepresentable {
         window.contentView?.wantsLayer = appearanceMode.isGlass
         window.contentView?.layer?.backgroundColor = appearanceMode.isGlass ? NSColor.clear.cgColor : nil
         window.isMovableByWindowBackground = true
+    }
+}
+
+/// 跟随系统：启动时与系统深浅切换时，把主题换到同对伙伴（仅当偏好为“跟随系统”）。
+private struct SystemAppearanceObserver: ViewModifier {
+    @ObservedObject var store: WorkspaceStore
+    @State private var distributedObserver: NSObjectProtocol?
+
+    func body(content: Content) -> some View {
+        content.onAppear {
+            store.refreshAppearanceForSystemChange()
+            guard distributedObserver == nil else { return }
+            distributedObserver = DistributedNotificationCenter.default().addObserver(
+                forName: NSNotification.Name("AppleInterfaceThemeChangedNotification"),
+                object: nil,
+                queue: .main
+            ) { [weak store] _ in
+                Task { @MainActor in
+                    store?.refreshAppearanceForSystemChange()
+                }
+            }
+        }
     }
 }

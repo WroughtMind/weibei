@@ -92,12 +92,12 @@ struct ImmersiveHoverTitleView<Actions: View>: View {
                 .padding(.horizontal, 12)
                 .frame(height: 34)
                 .background {
-                    RoundedRectangle(cornerRadius: 7)
-                        .fill(WeiBeiTheme.paperRaised.opacity(appearanceMode.isDark ? 0.88 : 0.92))
-                        .overlay {
-                            RoundedRectangle(cornerRadius: 7)
-                                .stroke(WeiBeiTheme.hairline.opacity(appearanceMode.isDark ? 0.42 : 0.48), lineWidth: 1)
-                        }
+                    WeiBeiEtchedBackdrop(
+                        shape: RoundedRectangle(cornerRadius: 8, style: .continuous),
+                        fill: WeiBeiTheme.paperRaised.opacity(appearanceMode.isDark ? 0.88 : 0.92),
+                        stroke: WeiBeiTheme.hairline.opacity(appearanceMode.isDark ? 0.42 : 0.48),
+                        showsContactShadow: true
+                    )
                 }
                 .shadow(color: WeiBeiTheme.ink.opacity(appearanceMode.isDark ? 0.28 : 0.08), radius: 9, y: 4)
                 .padding(.top, 7)
@@ -155,7 +155,7 @@ struct ImmersiveHoverTitleView<Actions: View>: View {
     private func renameField(_ titleRename: HoverTitleRename) -> some View {
         TextField(title, text: titleRename.draft)
             .textFieldStyle(.plain)
-            .weiBeiText(11.8, weight: .medium)
+            .weiBeiText(12, weight: .medium)
             .foregroundStyle(WeiBeiTheme.ink)
             .frame(width: 220)
             .focused($titleFieldFocused)
@@ -195,7 +195,7 @@ struct ImmersiveHoverTitleView<Actions: View>: View {
 
     private var titleView: some View {
         Text(title)
-            .weiBeiText(11.8, weight: .medium)
+            .weiBeiText(12, weight: .medium)
             .lineLimit(1)
             .truncationMode(.tail)
             .foregroundStyle(WeiBeiTheme.secondaryInk)
@@ -715,7 +715,7 @@ struct ReaderView: View {
                             Text(Self.truncatedAskMenuLabel(thread.selectionText))
                             if !thread.ownerTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                                 Text(thread.ownerTitle)
-                                    .font(.caption2)
+                                    .weiBeiText(9.5)
                                     .foregroundStyle(.secondary)
                             }
                         }
@@ -723,7 +723,7 @@ struct ReaderView: View {
                 }
             } label: {
                 Text(store.ui("已问 · \(threads.count)", "Asked · \(threads.count)"))
-                    .weiBeiText(11, weight: .semibold)
+                    .weiBeiText(12, weight: .semibold)
                     .foregroundStyle(WeiBeiTheme.cinnabar.opacity(0.9))
                     .padding(.horizontal, 8)
                     .frame(height: 22)
@@ -788,18 +788,18 @@ struct ReaderView: View {
         .padding(3)
         .background {
             ZStack {
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(WeiBeiTheme.paperRaised.opacity(PDFModeChipPresentation.fillOpacity(isExpanded: pdfControlsExpanded, isHovering: pdfControlsHovering)))
+                WeiBeiEtchedBackdrop(
+                    shape: RoundedRectangle(cornerRadius: 8, style: .continuous),
+                    fill: WeiBeiTheme.paperRaised.opacity(PDFModeChipPresentation.fillOpacity(isExpanded: pdfControlsExpanded, isHovering: pdfControlsHovering)),
+                    stroke: WeiBeiTheme.hairline.opacity(PDFModeChipPresentation.strokeOpacity(isExpanded: pdfControlsExpanded, isHovering: pdfControlsHovering)),
+                    showsContactShadow: pdfControlsExpanded
+                )
                 RoundedRectangle(cornerRadius: 8)
                     .fill(.regularMaterial)
                     .opacity(pdfControlsExpanded ? 0.055 : 0.0)
             }
         }
         .clipShape(RoundedRectangle(cornerRadius: 8))
-        .overlay {
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(WeiBeiTheme.hairline.opacity(PDFModeChipPresentation.strokeOpacity(isExpanded: pdfControlsExpanded, isHovering: pdfControlsHovering)), lineWidth: 1)
-        }
         .shadow(color: WeiBeiTheme.ink.opacity(pdfControlsExpanded ? 0.045 : 0.0), radius: 7, y: 3)
         .opacity(PDFModeChipPresentation.controlOpacity(isExpanded: pdfControlsExpanded, isHovering: pdfControlsHovering))
         .offset(x: 0)
@@ -827,19 +827,19 @@ struct ReaderView: View {
     private var pdfTextLayerNotice: some View {
         HStack(spacing: 7) {
             Image(systemName: "text.viewfinder")
-                .weiBeiText(11, weight: .medium)
+                .weiBeiText(12, weight: .medium)
             Text(store.ui("未检测到可选文本层", "No selectable text layer"))
-                .weiBeiText(11, weight: .medium)
+                .weiBeiText(12, weight: .medium)
         }
         .foregroundStyle(WeiBeiTheme.secondaryInk)
         .padding(.horizontal, 9)
         .frame(height: 26)
-        .background(WeiBeiTheme.paperRaised.opacity(0.34))
-        .clipShape(RoundedRectangle(cornerRadius: 7))
-        .overlay {
-            RoundedRectangle(cornerRadius: 7)
-                .stroke(WeiBeiTheme.hairline.opacity(0.24), lineWidth: 1)
-        }
+        .weibeiEtchedBackground(
+            fill: WeiBeiTheme.paperRaised.opacity(0.34),
+            stroke: WeiBeiTheme.hairline.opacity(0.24),
+            cornerRadius: 8
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 8))
         .allowsHitTesting(false)
     }
 
@@ -870,7 +870,7 @@ struct ReaderView: View {
                 .help(store.ui("上一页", "Previous page"))
 
                 Text(PageNavigator.display(pdfPageIndex, pageCount: pdfPageCount))
-                    .weiBeiText(11, weight: .medium, design: .monospaced)
+                    .weiBeiText(12, weight: .medium, design: .monospaced)
                     .foregroundStyle(WeiBeiTheme.secondaryInk)
                     .frame(width: 50, height: 22)
 
@@ -905,19 +905,19 @@ struct ReaderView: View {
                     .weiBeiText(12, weight: .semibold)
                 if showsPDFModeLabel {
                     Text(pdfBrowseMode.label(language: store.interfaceLanguage))
-                        .weiBeiText(11, weight: .medium)
+                        .weiBeiText(12, weight: .medium)
                 }
             }
             .foregroundStyle(pdfModeForeground)
             .padding(.horizontal, showsPDFModeLabel ? 7 : 4)
             .frame(width: showsPDFModeLabel ? nil : 18, height: 24)
-            .background(WeiBeiTheme.paperInset.opacity(pdfControlsActive ? 0.16 : 0.08))
-            .contentShape(RoundedRectangle(cornerRadius: 6))
-            .clipShape(RoundedRectangle(cornerRadius: 6))
-            .overlay {
-                RoundedRectangle(cornerRadius: 6)
-                    .stroke(WeiBeiTheme.hairline.opacity(pdfControlsActive ? 0.58 : 0.18), lineWidth: 1)
-            }
+            .weibeiEtchedBackground(
+                fill: WeiBeiTheme.paperInset.opacity(pdfControlsActive ? 0.16 : 0.08),
+                stroke: WeiBeiTheme.hairline.opacity(pdfControlsActive ? 0.58 : 0.18),
+                cornerRadius: 8
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 8))
+            .clipShape(RoundedRectangle(cornerRadius: 8))
             .animation(WeiBeiMotion.micro, value: showsPDFModeLabel)
         }
         .accessibilityLabel(Text(store.ui("切换 PDF 浏览方式，当前\(pdfBrowseMode.label(language: store.interfaceLanguage))", "Switch PDF browsing mode. Current: \(pdfBrowseMode.label(language: store.interfaceLanguage))")))
@@ -3384,7 +3384,7 @@ struct ContextualContentPicker: View {
                         backButton
                     }
                     Text(title)
-                        .weiBeiText(19, weight: .semibold, design: .serif)
+                        .weiBeiText(18, weight: .semibold, design: .serif)
                         .foregroundStyle(WeiBeiTheme.ink)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.bottom, 3)
@@ -3406,10 +3406,20 @@ struct ContextualContentPicker: View {
                             showsAll = true
                         }
                         .buttonStyle(.plain)
-                        .weiBeiText(11, weight: .medium)
+                        .weiBeiText(12, weight: .medium)
                         .foregroundStyle(WeiBeiTheme.secondaryInk)
                         .padding(.top, 3)
                     }
+
+                    // 导入入口常驻列表底部：文稿/笔记窗口里打开列表任何时刻都能导入，
+                    // 不再只在列表为空时出现（有内容的用户看不到空分支）。
+                    Button(emptyImportTitle) {
+                        importIntoCurrentLevel()
+                    }
+                    .buttonStyle(.plain)
+                    .weiBeiText(12, weight: .medium)
+                    .foregroundStyle(WeiBeiTheme.cinnabar.opacity(0.88))
+                    .padding(.top, 6)
                 }
                 .frame(maxWidth: min(420, max(240, geometry.size.width - 48)))
                 .padding(.horizontal, 24)
@@ -3456,6 +3466,27 @@ struct ContextualContentPicker: View {
         kind == .note
             ? store.ui("这里还没有笔记", "No notes here yet")
             : store.ui("这里还没有资料", "No materials here yet")
+    }
+
+    private var emptyImportTitle: String {
+        kind == .note
+            ? store.ui("导入笔记…", "Import notes…")
+            : store.ui("导入资料…", "Import materials…")
+    }
+
+    /// 空态导入入口：课程层级导入进该课程，其余进通用资料/笔记。
+    private func importIntoCurrentLevel() {
+        if case let .course(courseID) = level {
+            if kind == .note {
+                store.importCourseNotesFromPanel(courseID: courseID)
+            } else {
+                store.importCourseMaterialsFromPanel(courseID: courseID)
+            }
+        } else if kind == .note {
+            store.importCourseNotesFromPanel()
+        } else {
+            store.importCourseMaterialsFromPanel()
+        }
     }
 
     private var rows: [PickerRow] {
@@ -3514,7 +3545,7 @@ struct ContextualContentPicker: View {
             Label(store.ui("全部", "All"), systemImage: "chevron.left")
         }
         .buttonStyle(.plain)
-        .weiBeiText(11, weight: .medium)
+        .weiBeiText(12, weight: .medium)
         .foregroundStyle(WeiBeiTheme.secondaryInk)
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -3542,24 +3573,21 @@ struct ContextualContentPicker: View {
                 Spacer(minLength: 8)
                 if let count = row.count {
                     Text("\(count)")
-                        .weiBeiText(11, weight: .medium)
+                        .weiBeiText(12, weight: .medium)
                         .foregroundStyle(WeiBeiTheme.tertiaryInk)
                 }
                 Image(systemName: row.isContainer ? "chevron.right" : "arrow.up.right")
-                    .weiBeiText(9, weight: .semibold)
+                    .weiBeiText(9.5, weight: .semibold)
                     .foregroundStyle(WeiBeiTheme.tertiaryInk.opacity(0.72))
             }
             .padding(.horizontal, 17)
             .frame(height: 54)
-            .background {
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .fill(WeiBeiTheme.paperRaised.opacity(0.58))
-            }
-            .overlay {
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .stroke(WeiBeiTheme.hairline.opacity(0.62), lineWidth: 0.7)
-            }
-            .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .weibeiEtchedBackground(
+                fill: WeiBeiTheme.paperRaised.opacity(0.58),
+                stroke: WeiBeiTheme.hairline.opacity(0.62),
+                cornerRadius: 16
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         }
         .buttonStyle(.plain)
         .contextMenu {

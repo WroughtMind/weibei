@@ -134,14 +134,36 @@ enum WeiBeiAppearanceMode: String, CaseIterable, Identifiable {
         default: return isDark ? .paper : .inkstone
         }
     }
+
+    /// 对称深浅配对（跟随系统用）：纸面↔砚黑、宣纸↔碑石、玻璃亮↔玻璃暗、薄雾↔石板。
+    var lightDarkPartner: WeiBeiAppearanceMode {
+        switch self {
+        case .paper: return .inkstone
+        case .inkstone: return .paper
+        case .xuan: return .stele
+        case .stele: return .xuan
+        case .glassLight: return .glassDark
+        case .glassDark: return .glassLight
+        case .glassMist: return .glassSlate
+        case .glassSlate: return .glassMist
+        }
+    }
 }
 
 /// Live appearance used by theme colors. Always update **before** publishing
 /// `appearanceMode` so SwiftUI bodies that re-read `WeiBeiTheme.*` see the new palette.
 enum WeiBeiThemeRuntime {
     static var mode: WeiBeiAppearanceMode = .paper
+    /// Glass theme translucency 0–1, driven by the Settings slider; persisted in defaults.
+    static var glassIntensity: Double = 1.0 {
+        didSet {
+            guard oldValue != glassIntensity else { return }
+            NotificationCenter.default.post(name: glassIntensityDidChangeNotification, object: nil)
+        }
+    }
     /// Posted after mode changes so AppKit views (PDF mask, splitters) can redraw.
     static let didChangeNotification = Notification.Name("WeiBeiThemeRuntimeDidChange")
+    static let glassIntensityDidChangeNotification = Notification.Name("WeiBeiGlassIntensityDidChange")
 }
 
 enum WeiBeiTypography {
@@ -400,23 +422,62 @@ private struct WeiBeiBehindWindowMaterial: NSViewRepresentable {
     let mode: WeiBeiAppearanceMode
     let isFullScreen: Bool
 
+    final class Coordinator {
+        var apply: (() -> Void)?
+        private var observer: NSObjectProtocol?
+
+        func startObserving() {
+            guard observer == nil else { return }
+            observer = NotificationCenter.default.addObserver(
+                forName: WeiBeiThemeRuntime.glassIntensityDidChangeNotification,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                self?.apply?()
+            }
+        }
+
+        deinit {
+            if let observer {
+                NotificationCenter.default.removeObserver(observer)
+            }
+        }
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator()
+    }
+
     func makeNSView(context: Context) -> NSVisualEffectView {
         let view = NSVisualEffectView()
         view.blendingMode = .behindWindow
         view.state = .active
+        context.coordinator.startObserving()
         configure(view)
+        context.coordinator.apply = applyClosure(for: view)
         return view
     }
 
     func updateNSView(_ view: NSVisualEffectView, context: Context) {
         configure(view)
+        context.coordinator.apply = applyClosure(for: view)
+    }
+
+    /// 捕获当前 mode / isFullScreen 与实时玻璃浓度的应用闭包；滑杆变化时由
+    /// Coordinator 重放，SwiftUI 不重渲染主窗口也能生效。
+    private func applyClosure(for view: NSVisualEffectView?) -> () -> Void {
+        { [weak view] in
+            guard let view else { return }
+            view.material = mode.isDark
+                ? .hudWindow
+                : isFullScreen ? .windowBackground : .underWindowBackground
+            let baseAlpha: CGFloat = mode.isDark ? 0.68 : isFullScreen ? 0.88 : 0.36
+            view.alphaValue = baseAlpha * CGFloat(WeiBeiThemeRuntime.glassIntensity)
+        }
     }
 
     private func configure(_ view: NSVisualEffectView) {
-        view.material = mode.isDark
-            ? .hudWindow
-            : isFullScreen ? .windowBackground : .underWindowBackground
-        view.alphaValue = mode.isDark ? 0.68 : isFullScreen ? 0.88 : 0.36
+        applyClosure(for: view)()
     }
 }
 
@@ -935,7 +996,7 @@ enum WeiBeiNativePalette {
 enum WeiBeiMetric {
     static let iconButton: CGFloat = 26
     static let inputHeight: CGFloat = 30
-    static let controlRadius: CGFloat = 7
+    static let controlRadius: CGFloat = 8
     static let topBarHeight: CGFloat = 36
 }
 
@@ -1044,10 +1105,10 @@ struct AppearanceThemePaletteButton: View {
         Button {
             isPresented.toggle()
         } label: {
-            RoundedRectangle(cornerRadius: 5, style: .continuous)
+            RoundedRectangle(cornerRadius: 4, style: .continuous)
                 .fill(Color(nsColor: WeiBeiNativePalette.paper(for: store.appearanceMode)))
                 .overlay {
-                    RoundedRectangle(cornerRadius: 5, style: .continuous)
+                    RoundedRectangle(cornerRadius: 4, style: .continuous)
                         .stroke(WeiBeiTheme.hairline.opacity(0.85), lineWidth: 1)
                 }
                 .frame(width: 18, height: 18)
@@ -1224,10 +1285,10 @@ struct WeiBeiThemeLayoutPreview: View {
             chatBubble(alignment: .leading, fill: inset.opacity(0.95), width: 0.88)
             chatBubble(alignment: .leading, fill: inset.opacity(0.80), width: 0.64)
             Spacer(minLength: 0)
-            RoundedRectangle(cornerRadius: 3, style: .continuous)
+            RoundedRectangle(cornerRadius: 4, style: .continuous)
                 .stroke(hairline.opacity(0.55), lineWidth: 1)
                 .background(
-                    RoundedRectangle(cornerRadius: 3, style: .continuous)
+                    RoundedRectangle(cornerRadius: 4, style: .continuous)
                         .fill(raised.opacity(0.55))
                 )
                 .frame(height: 8)
@@ -1287,7 +1348,7 @@ struct WeiBeiThemeLayoutPreview: View {
     private func chatBubble(alignment: HorizontalAlignment, fill: Color, width fraction: CGFloat) -> some View {
         HStack {
             if alignment == .trailing { Spacer(minLength: 0) }
-            RoundedRectangle(cornerRadius: 3, style: .continuous)
+            RoundedRectangle(cornerRadius: 4, style: .continuous)
                 .fill(fill)
                 .frame(height: 7)
                 .frame(maxWidth: .infinity)
@@ -1455,8 +1516,67 @@ private struct WeiBeiRevealModifier: ViewModifier {
     }
 }
 
+/// The single texture primitive behind hover pills, selected rows, and small
+/// control chrome: base fill + top inner sheen + bottom inner shade + hairline
+/// frame, over any insettable shape. Render nothing when invisible so idle
+/// ghosts stay perfectly clean.
+struct WeiBeiEtchedBackdrop<Shape: InsettableShape>: View {
+    @Environment(\.colorScheme) private var colorScheme
+
+    let shape: Shape
+    var fill: Color
+    var stroke: Color = .clear
+    /// Tight contact shadow so a hover pill sits on the surface (controls only;
+    /// lists skip it to stay light).
+    var showsContactShadow = false
+
+    init(
+        shape: Shape,
+        fill: Color,
+        stroke: Color = .clear,
+        showsContactShadow: Bool = false
+    ) {
+        self.shape = shape
+        self.fill = fill
+        self.stroke = stroke
+        self.showsContactShadow = showsContactShadow
+    }
+
+    var body: some View {
+        let dark = colorScheme == .dark
+        return ZStack {
+            shape.fill(fill)
+            LinearGradient(
+                colors: [
+                    WeiBeiTheme.glassHighlight.opacity(dark ? 0.20 : 0.34),
+                    .clear,
+                ],
+                startPoint: .top,
+                endPoint: UnitPoint(x: 0.5, y: 0.6)
+            )
+            .clipShape(shape)
+        }
+        .clipShape(shape)
+        .overlay(alignment: .bottom) {
+            shape
+                .stroke(WeiBeiTheme.paperInset.opacity(dark ? 0.50 : 0.52), lineWidth: 1)
+                .padding(0.5)
+        }
+        .overlay {
+            shape.stroke(stroke, lineWidth: 1)
+        }
+        .shadow(
+            color: WeiBeiTheme.ink.opacity(showsContactShadow ? (dark ? 0.24 : 0.10) : 0),
+            radius: 1.5,
+            y: 1
+        )
+    }
+}
+
 enum WeiBeiIconButtonProminence {
     case neutral
+    /// Solid cinnabar fill with an on-cinnabar (米白) icon in every state —
+    /// the filled action look (send button), not a translucent glass tint.
     case primary
 }
 
@@ -1495,11 +1615,13 @@ private struct WeiBeiIconButtonBody: View {
             .weiBeiText(13, weight: .semibold)
             .frame(width: size * textScale, height: size * textScale)
             .foregroundStyle(foreground(isPressed: configuration.isPressed))
-            .background(background(isPressed: configuration.isPressed))
+            .background { chromeBackground }
             .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
             .overlay {
-                RoundedRectangle(cornerRadius: cornerRadius)
-                    .stroke(border, lineWidth: 1)
+                if prominence == .primary {
+                    RoundedRectangle(cornerRadius: cornerRadius)
+                        .stroke(border, lineWidth: 1)
+                }
             }
             .scaleEffect(configuration.isPressed ? 0.94 : hovering ? 1.015 : 1)
             .animation(WeiBeiMotion.press, value: configuration.isPressed)
@@ -1514,10 +1636,29 @@ private struct WeiBeiIconButtonBody: View {
             }
     }
 
+    /// Neutral hover/active states go through the etched backdrop (top sheen +
+    /// bottom shade + hairline + contact shadow); the filled `.primary` keeps
+    /// its solid cinnabar fill untouched.
+    @ViewBuilder
+    private var chromeBackground: some View {
+        let chromeShape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+        if prominence == .primary {
+            chromeShape
+                .fill(background(isPressed: configuration.isPressed))
+        } else if active || hovering || configuration.isPressed {
+            WeiBeiEtchedBackdrop(
+                shape: chromeShape,
+                fill: background(isPressed: configuration.isPressed),
+                stroke: border,
+                showsContactShadow: !configuration.isPressed
+            )
+        }
+    }
+
     private func foreground(isPressed: Bool) -> Color {
         guard isEnabled else { return WeiBeiTheme.tertiaryInk.opacity(0.58) }
         if prominence == .primary {
-            return (isPressed || hovering) ? WeiBeiTheme.onCinnabar : WeiBeiTheme.cinnabar
+            return WeiBeiTheme.onCinnabar
         }
         if active { return WeiBeiTheme.cinnabar }
         if isPressed || hovering { return WeiBeiTheme.ink }
@@ -1527,12 +1668,13 @@ private struct WeiBeiIconButtonBody: View {
     private func background(isPressed: Bool) -> Color {
         guard isEnabled else { return Color.clear }
         if prominence == .primary {
-            if isPressed || hovering {
-                return WeiBeiTheme.cinnabar.opacity(primaryOpacity(isPressed: isPressed))
+            if isPressed {
+                return WeiBeiTheme.cinnabar.opacity(colorScheme == .dark ? 0.78 : 0.86)
             }
-            return colorScheme == .dark
-                ? WeiBeiTheme.paperInset.opacity(0.58)
-                : WeiBeiTheme.cinnabarSoft.opacity(0.72)
+            if hovering {
+                return WeiBeiTheme.cinnabar.opacity(colorScheme == .dark ? 0.86 : 0.92)
+            }
+            return WeiBeiTheme.cinnabar
         }
         if active {
             return WeiBeiTheme.cinnabarSoft.opacity(activeOpacity(isPressed: isPressed))
@@ -1545,24 +1687,12 @@ private struct WeiBeiIconButtonBody: View {
     private var border: Color {
         guard isEnabled else { return Color.clear }
         if prominence == .primary {
-            if configuration.isPressed || hovering {
-                return WeiBeiTheme.cinnabar.opacity(colorScheme == .dark ? 0.62 : 0.42)
-            }
-            return colorScheme == .dark
-                ? WeiBeiTheme.hairline.opacity(0.76)
-                : WeiBeiTheme.cinnabar.opacity(0.18)
+            return Color.clear
         }
         if active {
             return WeiBeiTheme.cinnabar.opacity(hovering ? (colorScheme == .dark ? 0.50 : 0.42) : (colorScheme == .dark ? 0.34 : 0.25))
         }
         return hovering ? WeiBeiTheme.hairline.opacity(colorScheme == .dark ? 0.92 : 0.72) : Color.clear
-    }
-
-    private func primaryOpacity(isPressed: Bool) -> Double {
-        if colorScheme == .dark {
-            return isPressed ? 0.88 : 0.70
-        }
-        return isPressed ? 0.90 : 0.78
     }
 
     private func activeOpacity(isPressed: Bool) -> Double {
@@ -1584,7 +1714,7 @@ struct WeiBeiTextActionButtonStyle: ButtonStyle {
             .padding(.horizontal, 8)
             .frame(height: 24)
             .background(background(isPressed: configuration.isPressed))
-            .clipShape(RoundedRectangle(cornerRadius: 6))
+            .clipShape(RoundedRectangle(cornerRadius: 8))
             .scaleEffect(configuration.isPressed ? 0.98 : 1)
             .animation(WeiBeiMotion.press, value: configuration.isPressed)
     }
@@ -1600,7 +1730,114 @@ struct WeiBeiTextActionButtonStyle: ButtonStyle {
     }
 }
 
+/// Dialog / sheet action buttons in the paper language: the solid-cinnabar
+/// primary (same filled treatment as the send action) and the etched
+/// secondary, so sheets stop mixing system `.bordered` chrome in.
+struct WeiBeiDialogButtonStyle: ButtonStyle {
+    enum Prominence {
+        case primary
+        case secondary
+    }
+
+    @Environment(\.isEnabled) private var isEnabled
+    @Environment(\.colorScheme) private var colorScheme
+    var prominence: Prominence = .secondary
+    @State private var hovering = false
+
+    func makeBody(configuration: Configuration) -> some View {
+        let shape = RoundedRectangle(cornerRadius: WeiBeiMetric.controlRadius, style: .continuous)
+        return configuration.label
+            .weiBeiText(12, weight: prominence == .primary ? .semibold : .medium)
+            .foregroundStyle(foreground)
+            .padding(.horizontal, 14)
+            .frame(height: 28)
+            .background { background(isPressed: configuration.isPressed, shape: shape) }
+            .clipShape(shape)
+            .scaleEffect(configuration.isPressed ? 0.97 : 1)
+            .animation(WeiBeiMotion.press, value: configuration.isPressed)
+            .animation(WeiBeiMotion.hover, value: hovering)
+            .onHover { hovering = isEnabled && $0 }
+            .onChange(of: isEnabled) { _, enabled in
+                if !enabled { hovering = false }
+            }
+    }
+
+    private var foreground: Color {
+        guard isEnabled else {
+            return prominence == .primary
+                ? WeiBeiTheme.onCinnabar.opacity(0.66)
+                : WeiBeiTheme.tertiaryInk.opacity(0.60)
+        }
+        if prominence == .primary { return WeiBeiTheme.onCinnabar }
+        return hovering ? WeiBeiTheme.ink : WeiBeiTheme.secondaryInk
+    }
+
+    @ViewBuilder
+    private func background(isPressed: Bool, shape: RoundedRectangle) -> some View {
+        if !isEnabled {
+            if prominence == .primary {
+                shape.fill(WeiBeiTheme.cinnabar.opacity(0.38))
+            } else {
+                WeiBeiEtchedBackdrop(
+                    shape: shape,
+                    fill: WeiBeiTheme.paperInset.opacity(0.16),
+                    stroke: WeiBeiTheme.hairline.opacity(0.28)
+                )
+            }
+        } else if prominence == .primary {
+            if isPressed {
+                shape.fill(WeiBeiTheme.cinnabar.opacity(colorScheme == .dark ? 0.78 : 0.86))
+            } else if hovering {
+                shape.fill(WeiBeiTheme.cinnabar.opacity(colorScheme == .dark ? 0.86 : 0.92))
+            } else {
+                shape.fill(WeiBeiTheme.cinnabar)
+            }
+        } else {
+            WeiBeiEtchedBackdrop(
+                shape: shape,
+                fill: WeiBeiTheme.paperInset.opacity(isPressed ? 0.40 : hovering ? 0.34 : 0.22),
+                stroke: WeiBeiTheme.hairline.opacity(hovering || isPressed ? 0.55 : 0.40),
+                showsContactShadow: hovering && !isPressed
+            )
+        }
+    }
+}
+
 extension View {
+    /// One-line etched backdrop for upgrading existing flat-fill surfaces;
+    /// keeps call sites compact inside frozen files.
+    func weibeiEtchedBackground(
+        fill: Color,
+        stroke: Color,
+        cornerRadius: CGFloat,
+        contactShadow: Bool = false
+    ) -> some View {
+        background {
+            WeiBeiEtchedBackdrop(
+                shape: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous),
+                fill: fill,
+                stroke: stroke,
+                showsContactShadow: contactShadow
+            )
+        }
+    }
+
+    /// Capsule variant of `weibeiEtchedBackground`.
+    func weibeiEtchedCapsuleBackground(
+        fill: Color,
+        stroke: Color,
+        contactShadow: Bool = false
+    ) -> some View {
+        background {
+            WeiBeiEtchedBackdrop(
+                shape: Capsule(),
+                fill: fill,
+                stroke: stroke,
+                showsContactShadow: contactShadow
+            )
+        }
+    }
+
     func weibeiPanel() -> some View {
         self
             .foregroundColor(WeiBeiTheme.ink)
@@ -1649,6 +1886,57 @@ extension View {
                     .stroke(active ? WeiBeiTheme.link.opacity(0.34) : WeiBeiTheme.hairline.opacity(0.54), lineWidth: 1)
             }
             .animation(WeiBeiMotion.reveal, value: active)
+    }
+
+    /// Chat composer card: the etched input-surface treatment scaled up —
+    /// top inner light, bottom inner shade, hairline frame, and a two-layer
+    /// shadow (tight contact + soft ambient) so the card sits on the thread
+    /// instead of floating flat. Keeps the shape handed in via `cornerRadius`.
+    func weibeiComposerCard(
+        cornerRadius: CGFloat,
+        focused: Bool,
+        showsChrome: Bool = true
+    ) -> some View {
+        let dark = WeiBeiThemeRuntime.mode.isDark
+        let glass = WeiBeiThemeRuntime.mode.isGlass
+        return self
+            .background {
+                if showsChrome {
+                    ZStack {
+                        RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                            .fill(WeiBeiTheme.paperRaised.opacity(dark ? 0.40 : 0.62))
+                        RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                            .fill(.ultraThinMaterial)
+                            .opacity(glass ? 0.06 : 0.02)
+                    }
+                }
+            }
+            .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+            .overlay(alignment: .top) {
+                if showsChrome {
+                    RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                        .stroke(WeiBeiTheme.glassHighlight.opacity(dark ? 0.20 : 0.26), lineWidth: 1)
+                        .padding(1)
+                }
+            }
+            .overlay(alignment: .bottom) {
+                if showsChrome {
+                    RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                        .stroke(WeiBeiTheme.paperInset.opacity(dark ? 0.38 : 0.32), lineWidth: 1)
+                        .padding(0.5)
+                }
+            }
+            .overlay {
+                if showsChrome {
+                    RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                        .stroke(
+                            focused ? WeiBeiTheme.link.opacity(0.32) : WeiBeiTheme.hairline.opacity(0.55),
+                            lineWidth: 1
+                        )
+                }
+            }
+            .shadow(color: WeiBeiTheme.ink.opacity(showsChrome ? 0.07 : 0), radius: 2, y: 1)
+            .shadow(color: WeiBeiTheme.ink.opacity(showsChrome ? 0.05 : 0), radius: 10, y: 3)
     }
 
     func weibeiFloatingPanel(cornerRadius: CGFloat = 8, shadowOpacity: Double = 0.10) -> some View {

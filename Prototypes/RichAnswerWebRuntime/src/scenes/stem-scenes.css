@@ -76,7 +76,7 @@
 .force-label,
 .inertia-label {
   fill: #665c4c;
-  font: 13px ui-serif, "Songti SC", Georgia, serif;
+  font: calc(13px * var(--weibei-text-scale, 1)) ui-serif, "Songti SC", Georgia, serif;
 }
 
 .math-point {
@@ -124,13 +124,13 @@
 
 .math-table b {
   color: #746856;
-  font-size: 11px;
+  font-size: calc(12px * var(--weibei-text-scale, 1));
   font-weight: 500;
 }
 
 .math-table strong {
   color: #28241d;
-  font-size: 15px;
+  font-size: calc(15px * var(--weibei-text-scale, 1));
 }
 
 .physics-canvas {
@@ -230,12 +230,12 @@
 
 .perturbation-card strong {
   color: #2f2921;
-  font-size: 13px;
+  font-size: calc(13px * var(--weibei-text-scale, 1));
 }
 
 .perturbation-card span {
   color: #6b604f;
-  font-size: 11px;
+  font-size: calc(12px * var(--weibei-text-scale, 1));
   line-height: 1.35;
 }
 
@@ -300,7 +300,7 @@
   color: #f8f1e6;
   border-radius: 999px;
   background: var(--scene-accent);
-  font-size: 14px;
+  font-size: calc(15px * var(--weibei-text-scale, 1));
   font-weight: 700;
   text-align: center;
   transform: translate(-50%, -50%) scale(calc(0.82 + var(--recover) * 0.18));
@@ -337,7 +337,7 @@
 
 .rate-line text {
   fill: #665c4c;
-  font: 13px ui-serif, "Songti SC", Georgia, serif;
+  font: calc(13px * var(--weibei-text-scale, 1)) ui-serif, "Songti SC", Georgia, serif;
 }
 
 .chem-readouts,
@@ -431,7 +431,7 @@
   right: 0;
   bottom: 6px;
   color: #4f463b;
-  font-size: 13px;
+  font-size: calc(13px * var(--weibei-text-scale, 1));
   text-align: center;
 }
 
@@ -507,13 +507,13 @@
 
 .stage-token strong {
   color: #2f2921;
-  font-size: 15px;
+  font-size: calc(15px * var(--weibei-text-scale, 1));
   line-height: 1.25;
 }
 
 .stage-token span {
   color: #665c4c;
-  font-size: 12px;
+  font-size: calc(12px * var(--weibei-text-scale, 1));
   line-height: 1.45;
 }
 

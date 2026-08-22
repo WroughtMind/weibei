@@ -272,7 +272,7 @@ private struct GeneratedRichAnswerMetric: View {
                 .foregroundStyle(generatedToneColor(node.tone))
             if let text = node.text, !text.isEmpty {
                 Text(text)
-                    .font(.caption2)
+                    .weiBeiText(9.5)
                     .foregroundStyle(WeiBeiTheme.tertiaryInk)
             }
         }
@@ -384,7 +384,7 @@ private struct GeneratedRichAnswerSequence: View {
                         marker(index: index, row: row)
                             .padding(.top, 1)
                         Text(row.label ?? "")
-                            .weiBeiText(11, weight: isActive(row) ? .semibold : .regular)
+                            .weiBeiText(12, weight: isActive(row) ? .semibold : .regular)
                             .foregroundStyle(isActive(row) ? WeiBeiTheme.cinnabar : WeiBeiTheme.ink)
                             .fixedSize(horizontal: false, vertical: true)
                     }
@@ -414,7 +414,7 @@ private struct GeneratedRichAnswerSequence: View {
                         .stroke(active ? WeiBeiTheme.cinnabar : WeiBeiTheme.hairline.opacity(0.74), lineWidth: 1)
                 }
             Text("\(index + 1)")
-                .weiBeiText(8.5, weight: .semibold, design: .monospaced)
+                .weiBeiText(9.5, weight: .semibold, design: .monospaced)
                 .foregroundStyle(active ? WeiBeiTheme.onCinnabar : WeiBeiTheme.secondaryInk)
         }
         .frame(width: 18, height: 18)
@@ -459,7 +459,7 @@ private struct GeneratedRichAnswerControl: View {
                             .foregroundStyle(WeiBeiTheme.secondaryInk)
                         Spacer(minLength: 8)
                         Text(formattedValue(binding))
-                            .weiBeiText(11.5, weight: .medium, design: .monospaced)
+                            .weiBeiText(12, weight: .medium, design: .monospaced)
                             .foregroundStyle(WeiBeiTheme.ink)
                     }
                     Slider(
@@ -484,13 +484,13 @@ private struct GeneratedRichAnswerControl: View {
                 )
                 .toggleStyle(.switch)
                 .controlSize(.small)
-                .weiBeiText(11.5, weight: .medium)
+                .weiBeiText(12, weight: .medium)
                 .accessibilityIdentifier("rich-answer-control-\(node.id)-\(binding.id)")
             }
         case .select:
             HStack(spacing: 6) {
                 Image(systemName: "cursorarrow.click")
-                    .weiBeiText(10, weight: .semibold)
+                    .weiBeiText(10.5, weight: .semibold)
                 Text(node.label ?? "点选图中元素")
                     .weiBeiText(10.5, weight: .medium)
             }
@@ -560,7 +560,7 @@ private struct GeneratedRichAnswerEvidence: View {
             } label: {
                 HStack(spacing: 5) {
                     Image(systemName: "arrow.up.right")
-                        .weiBeiText(8.5, weight: .semibold)
+                        .weiBeiText(9.5, weight: .semibold)
                     Text(item.sourceLabel)
                         .weiBeiText(10.5, weight: .medium)
                         .lineLimit(1)
@@ -613,9 +613,9 @@ private struct GeneratedRichAnswerCanvas: View {
         }
         .frame(height: canvasHeight)
         .background(WeiBeiTheme.paperInset.opacity(0.10))
-        .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
         .overlay {
-            RoundedRectangle(cornerRadius: 5, style: .continuous)
+            RoundedRectangle(cornerRadius: 4, style: .continuous)
                 .stroke(WeiBeiTheme.hairline.opacity(0.42), lineWidth: 1)
         }
         .accessibilityLabel(canvasAccessibilityLabel)
@@ -731,7 +731,7 @@ private struct GeneratedRichAnswerCanvas: View {
         if let xAxis = canvasNode.xAxis {
             context.draw(
                 Text("\(axisValue(xAxis.minimum, unit: xAxis.unit))   \(xAxis.label)   \(axisValue(xAxis.maximum, unit: xAxis.unit))")
-                    .font(.system(size: 8.5, design: .monospaced))
+                    .font(.system(size: 9.5, design: .monospaced))
                     .foregroundStyle(WeiBeiTheme.tertiaryInk),
                 at: CGPoint(x: rect.midX, y: rect.maxY + 10),
                 anchor: .top
@@ -740,14 +740,14 @@ private struct GeneratedRichAnswerCanvas: View {
         if let yAxis = canvasNode.yAxis {
             context.draw(
                 Text(axisValue(yAxis.maximum, unit: yAxis.unit))
-                    .font(.system(size: 8.5, design: .monospaced))
+                    .font(.system(size: 9.5, design: .monospaced))
                     .foregroundStyle(WeiBeiTheme.tertiaryInk),
                 at: CGPoint(x: rect.minX - 5, y: rect.minY),
                 anchor: .trailing
             )
             context.draw(
                 Text(axisValue(yAxis.minimum, unit: yAxis.unit))
-                    .font(.system(size: 8.5, design: .monospaced))
+                    .font(.system(size: 9.5, design: .monospaced))
                     .foregroundStyle(WeiBeiTheme.tertiaryInk),
                 at: CGPoint(x: rect.minX - 5, y: rect.maxY),
                 anchor: .trailing
@@ -926,7 +926,7 @@ private struct GeneratedRichAnswerCanvas: View {
         let displayLabel = trimmedCanvasLabel(label, maxWidth: maxWidth)
         context.draw(
             Text(displayLabel)
-                .font(.system(size: node.size == .compact ? 8.2 : 9.2, weight: .semibold))
+                .font(.system(size: 9.5, weight: .semibold))
                 .foregroundStyle(node.fill == .solid ? WeiBeiTheme.onCinnabar : generatedToneColor(node.tone)),
             at: CGPoint(x: instance.rect.midX, y: instance.rect.midY),
             anchor: .center
@@ -1003,7 +1003,7 @@ private struct GeneratedRichAnswerCanvas: View {
         )
         context.draw(
             Text(displayLabel)
-                .font(.system(size: 8.3, weight: selected ? .semibold : .medium))
+                .font(.system(size: 9.5, weight: selected ? .semibold : .medium))
                 .foregroundStyle(selected ? WeiBeiTheme.cinnabar : WeiBeiTheme.tertiaryInk),
             at: CGPoint(x: labelCenterX, y: rect.maxY + 7),
             anchor: .top
@@ -1167,7 +1167,7 @@ private struct GeneratedRichAnswerCanvas: View {
             let label = placement.label
             context.draw(
                 Text(label.text)
-                    .font(.system(size: 9, weight: label.required ? .semibold : .medium))
+                    .font(.system(size: 9.5, weight: label.required ? .semibold : .medium))
                     .foregroundStyle(label.selected ? WeiBeiTheme.cinnabar : generatedToneColor(label.tone)),
                 at: placement.drawPoint,
                 anchor: placement.anchor.unitPoint

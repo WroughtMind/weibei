@@ -34,6 +34,7 @@ struct SettingsView: View {
     @State private var shortcutStatusMessage: String?
     // In-app feedback sheet.
     @State private var showFeedbackSheet = false
+    @State private var showInspirationSourcesSheet = false
     @State private var feedbackTitle = ""
     @State private var feedbackBody = ""
     @State private var feedbackBusy = false
@@ -48,23 +49,11 @@ struct SettingsView: View {
     private var buildInfo: WeiBeiAppBuildInfo { .current() }
 
     var activePiProviderID: String {
-        guard store.agentProviderID == .custom || store.agentProviderID == .llamaCpp else {
-            return store.agentProviderID.piProviderName
-        }
-        return (try? AgentProviderEndpoint(
-            provider: store.agentProviderID,
-            baseURL: store.agentBaseURL
-        ).piProviderID) ?? "weibei-invalid-endpoint"
+        AgentProviderReadiness.activePiProviderID(for: store)
     }
 
     func piProviderID(for provider: AgentProviderID) -> String {
-        guard provider == .custom || provider == .llamaCpp else {
-            return provider.piProviderName
-        }
-        return (try? AgentProviderEndpoint(
-            provider: provider,
-            baseURL: store.agentBaseURL
-        ).piProviderID) ?? "weibei-invalid-endpoint"
+        AgentProviderReadiness.piProviderID(for: provider, store: store)
     }
 
     /// Max width for long text fields (Base URL, API key) — not for every control.
@@ -164,7 +153,7 @@ struct SettingsView: View {
     private var settingsSidebar: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text(store.ui("设置", "Settings"))
-                .weiBeiBrandFont(language: store.interfaceLanguage, size: 20, weight: .semibold)
+                .weiBeiBrandFont(language: store.interfaceLanguage, size: 22, weight: .semibold)
                 .foregroundStyle(WeiBeiTheme.ink)
                 .padding(.horizontal, 22)
                 .padding(.top, 22)
@@ -211,7 +200,7 @@ struct SettingsView: View {
     private var settingsHeader: some View {
         HStack(alignment: .center) {
             Text(selectedSection.title(store))
-                .weiBeiBrandFont(language: store.interfaceLanguage, size: 17, weight: .semibold)
+                .weiBeiBrandFont(language: store.interfaceLanguage, size: 18, weight: .semibold)
                 .foregroundStyle(WeiBeiTheme.ink)
             Spacer()
         }
@@ -246,9 +235,42 @@ struct SettingsView: View {
 
             // AionUI-style gallery: each card is a miniature workspace, not a flat chip.
             settingsGroup(store.ui("主题", "Theme")) {
+                settingsRow(
+                    title: store.ui("外观", "Appearance"),
+                    detail: store.ui(
+                        "跟随系统时，深浅切换自动换到同对主题",
+                        "With Match System, appearance switches pick the paired theme"
+                    )
+                ) {
+                    compactMenu(store.appearancePreference.label(ui: store.ui)) {
+                        ForEach(WeiBeiAppearancePreference.allCases) { preference in
+                            Button(preference.label(ui: store.ui)) {
+                                store.appearancePreference = preference
+                            }
+                        }
+                    }
+                }
+
                 themePicker
                     .padding(.horizontal, 12)
                     .padding(.vertical, 12)
+
+                if store.appearanceMode.isGlass {
+                    settingsRow(
+                        title: store.ui("玻璃浓度", "Glass intensity"),
+                        detail: store.ui(
+                            "无级调节玻璃主题的透明浓度",
+                            "Continuously adjust glass translucency"
+                        ),
+                        showsBottomDivider: false
+                    ) {
+                        Slider(value: Binding(
+                            get: { store.glassIntensity },
+                            set: { store.glassIntensity = $0 }
+                        ), in: 0...1)
+                        .frame(width: 170)
+                    }
+                }
             }
 
             settingsGroup(store.ui("动态效果", "Motion")) {
@@ -291,7 +313,7 @@ struct SettingsView: View {
                 }
                 settingsRow(
                     title: store.ui("今日一句", "Today's line"),
-                    showsBottomDivider: false
+                    showsBottomDivider: store.showDailyInspiration
                 ) {
                     settingsSwitch(
                         isOn: Binding(
@@ -300,6 +322,25 @@ struct SettingsView: View {
                         ),
                         accessibilityLabel: store.ui("显示今日一句", "Show today's line")
                     )
+                }
+
+                if store.showDailyInspiration {
+                    settingsRow(
+                        title: store.ui("以底纹呈现", "As paper watermark"),
+                        detail: store.ui(
+                            "开:句子化作纸面淡墨,点击换句;关:句子成块展示,悬停看出处。",
+                            "On: the line becomes faint ink in the paper. Off: shown as a block with credit on hover."
+                        ),
+                        showsBottomDivider: false
+                    ) {
+                        settingsSwitch(
+                            isOn: Binding(
+                                get: { store.inspirationAsWatermark },
+                                set: { store.setInspirationAsWatermark($0) }
+                            ),
+                            accessibilityLabel: store.ui("今日一句以底纹呈现", "Show today's line as paper watermark")
+                        )
+                    }
                 }
             }
 
@@ -378,10 +419,11 @@ struct SettingsView: View {
                 Button(store.ui("开始迁移", "Start Migration")) {
                     confirmMigration(to: destination)
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(WeiBeiDialogButtonStyle(prominence: .primary))
                 Button(store.ui("取消", "Cancel")) {
                     pendingMigrationDestination = nil
                 }
+                .buttonStyle(WeiBeiDialogButtonStyle(prominence: .secondary))
             }
         }
         .padding(.horizontal, 14)
@@ -440,9 +482,9 @@ struct SettingsView: View {
     private var themePicker: some View {
         ScrollView(.horizontal) {
             LazyHStack(spacing: 10) {
-                ForEach(WeiBeiAppearanceMode.allCases) { mode in
-                    themePreviewCard(mode)
-                        .frame(width: 190)
+                ForEach(WeiBeiAppearanceStyle.allCases) { style in
+                    stylePreviewCard(style)
+                        .frame(width: 226)
                 }
             }
             .padding(.bottom, 6)
@@ -450,28 +492,31 @@ struct SettingsView: View {
         .scrollIndicators(.visible)
     }
 
-    private var themeSwatchRow: some View { themePicker }
-
-    private func themePreviewCard(_ mode: WeiBeiAppearanceMode) -> some View {
-        let selected = mode == store.appearanceMode
+    /// 四组风格卡：左浅右深两个实景预览并排；点卡选风格，
+    /// 具体浅/深由上方“外观”偏好（跟随系统/浅色/深色）解析，卡上标注当前生效主题。
+    private func stylePreviewCard(_ style: WeiBeiAppearanceStyle) -> some View {
+        let selected = style == store.appearanceStyle
         return Button {
-            store.setAppearanceMode(mode)
+            store.appearanceStyle = style
         } label: {
             VStack(alignment: .leading, spacing: 7) {
                 ZStack(alignment: .topTrailing) {
-                    WeiBeiThemeLayoutPreview(mode: mode)
-                        .frame(maxWidth: .infinity)
-                        .frame(height: 96)
-                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                        .overlay {
-                            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                .stroke(
-                                    selected
-                                        ? WeiBeiTheme.cinnabar.opacity(0.90)
-                                        : WeiBeiTheme.hairline.opacity(0.42),
-                                    lineWidth: selected ? 2 : 1
-                                )
-                        }
+                    HStack(spacing: 0) {
+                        WeiBeiThemeLayoutPreview(mode: style.lightMode)
+                        WeiBeiThemeLayoutPreview(mode: style.darkMode)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 96)
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .stroke(
+                                selected
+                                    ? WeiBeiTheme.cinnabar.opacity(0.90)
+                                    : WeiBeiTheme.hairline.opacity(0.42),
+                                lineWidth: selected ? 2 : 1
+                            )
+                    }
 
                     if selected {
                         Image(systemName: "checkmark.circle.fill")
@@ -481,17 +526,24 @@ struct SettingsView: View {
                     }
                 }
 
-                Text(mode.label(language: store.interfaceLanguage))
+                Text(style.label(ui: store.ui))
                     .weiBeiText(12, weight: selected ? .semibold : .medium)
                     .foregroundStyle(selected ? WeiBeiTheme.ink : WeiBeiTheme.secondaryInk)
                     .lineLimit(1)
+
+                Text(
+                    store.ui("当前生效", "Active") + " · "
+                        + store.appearanceMode.label(language: store.interfaceLanguage)
+                )
+                .weiBeiText(10.5)
+                .foregroundStyle(WeiBeiTheme.tertiaryInk)
+                .lineLimit(1)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .help(mode.detail(language: store.interfaceLanguage))
-        .accessibilityLabel(Text(mode.label(language: store.interfaceLanguage)))
+        .accessibilityLabel(Text(style.label(ui: store.ui)))
         .accessibilityAddTraits(selected ? .isSelected : [])
     }
 
@@ -553,7 +605,7 @@ struct SettingsView: View {
             Text(recording
                  ? store.ui("按下…", "Press…")
                  : chord.display)
-                .weiBeiText(11, weight: .semibold, design: .monospaced)
+                .weiBeiText(12, weight: .semibold, design: .monospaced)
                 .foregroundStyle(recording ? WeiBeiTheme.cinnabar : WeiBeiTheme.secondaryInk)
                 .padding(.horizontal, 7)
                 .frame(height: 22)
@@ -562,9 +614,9 @@ struct SettingsView: View {
                         ? WeiBeiTheme.cinnabar.opacity(0.10)
                         : WeiBeiTheme.paperInset.opacity(0.45)
                 )
-                .clipShape(RoundedRectangle(cornerRadius: 5))
+                .clipShape(RoundedRectangle(cornerRadius: 4))
                 .overlay {
-                    RoundedRectangle(cornerRadius: 5)
+                    RoundedRectangle(cornerRadius: 4)
                         .stroke(
                             recording ? WeiBeiTheme.cinnabar.opacity(0.55) : WeiBeiTheme.hairline.opacity(0.36),
                             lineWidth: 1
@@ -680,6 +732,22 @@ struct SettingsView: View {
                 }
             }
 
+            settingsGroup(store.ui("灵感句", "Daily Line")) {
+                settingsRow(
+                    title: store.ui("来源与权利台账", "Sources & rights ledger"),
+                    detail: store.ui(
+                        "50 条灵感句的原文出处与版权依据。底纹模式不内联展示署名,以此台账为准。",
+                        "Source and rights basis for all 50 daily lines. The watermark mode shows no inline credit; this ledger is authoritative."
+                    ),
+                    showsBottomDivider: false
+                ) {
+                    Button(store.ui("查看台账…", "View…")) {
+                        showInspirationSourcesSheet = true
+                    }
+                    .buttonStyle(WeiBeiTextActionButtonStyle(active: true))
+                }
+            }
+
             if case let .failed(message) = updateService.status {
                 Text(store.ui("更新失败：\(message)", "Update failed: \(message)"))
                     .font(SettingsType.detail)
@@ -698,6 +766,54 @@ struct SettingsView: View {
         .sheet(isPresented: $showFeedbackSheet) {
             feedbackSheet
         }
+        .sheet(isPresented: $showInspirationSourcesSheet) {
+            inspirationSourcesSheet
+        }
+    }
+
+    /// Plain-text rendering of the bundled SOURCES.md ledger — the attribution
+    /// record for daily lines when the watermark mode shows no inline credit.
+    private var inspirationSourcesSheet: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text(store.ui("灵感句来源与权利", "Daily line sources & rights"))
+                .weiBeiText(15, weight: .semibold)
+                .foregroundStyle(WeiBeiTheme.ink)
+
+            ScrollView {
+                Text(inspirationSourcesLedgerText)
+                    .weiBeiText(10.5, design: .monospaced)
+                    .foregroundStyle(WeiBeiTheme.secondaryInk)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(12)
+            }
+            .frame(minHeight: 260, maxHeight: 420)
+            .weibeiEtchedBackground(
+                fill: WeiBeiTheme.paperRaised.opacity(0.52),
+                stroke: WeiBeiTheme.hairline.opacity(0.3),
+                cornerRadius: 8
+            )
+
+            Button(store.ui("关闭", "Close")) {
+                showInspirationSourcesSheet = false
+            }
+            .buttonStyle(WeiBeiTextActionButtonStyle(active: true))
+            .frame(maxWidth: .infinity, alignment: .trailing)
+        }
+        .padding(20)
+        .frame(width: 620)
+    }
+
+    private var inspirationSourcesLedgerText: String {
+        let bundle = WeiBeiResources.bundle
+        let url = bundle.url(forResource: "SOURCES", withExtension: "md", subdirectory: "Inspiration")
+            ?? bundle.url(forResource: "SOURCES", withExtension: "md")
+        guard let url, let text = try? String(contentsOf: url, encoding: .utf8), !text.isEmpty else {
+            return store.ui(
+                "台账文件缺失。完整台账见仓库 Sources/WeiBei/Resources/Inspiration/SOURCES.md。",
+                "Ledger file missing. Full ledger: Sources/WeiBei/Resources/Inspiration/SOURCES.md in the repository."
+            )
+        }
+        return text
     }
 
     private var updateActionLabel: String {
@@ -757,10 +873,14 @@ struct SettingsView: View {
                     .frame(minHeight: 140, maxHeight: 200)
                     .padding(6)
             }
-            .background(WeiBeiTheme.paperRaised.opacity(0.52))
-            .clipShape(RoundedRectangle(cornerRadius: 7))
+            .weibeiEtchedBackground(
+                fill: WeiBeiTheme.paperRaised.opacity(0.52),
+                stroke: WeiBeiTheme.hairline.opacity(0.3),
+                cornerRadius: 8
+            )
+            .clipShape(RoundedRectangle(cornerRadius: 8))
             .overlay {
-                RoundedRectangle(cornerRadius: 7)
+                RoundedRectangle(cornerRadius: 8)
                     .stroke(WeiBeiTheme.hairline.opacity(0.48), lineWidth: 1)
             }
 
@@ -1008,7 +1128,7 @@ struct SettingsView: View {
     func settingsPill(title: String, icon: String, active: Bool) -> some View {
         HStack(spacing: 7) {
             Image(systemName: icon)
-                .weiBeiText(11, weight: .semibold)
+                .weiBeiText(12, weight: .semibold)
             Text(title)
                 .font(SettingsType.pill)
                 .lineLimit(1)
@@ -1017,9 +1137,9 @@ struct SettingsView: View {
         .padding(.horizontal, 9)
         .frame(height: 28)
         .background(active ? WeiBeiTheme.paperRaised.opacity(0.54) : WeiBeiTheme.paperInset.opacity(0.38))
-        .clipShape(RoundedRectangle(cornerRadius: 7))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
         .overlay {
-            RoundedRectangle(cornerRadius: 7)
+            RoundedRectangle(cornerRadius: 8)
                 .stroke(WeiBeiTheme.hairline.opacity(active ? 0.46 : 0.24), lineWidth: 1)
         }
     }
@@ -1050,15 +1170,19 @@ struct SettingsView: View {
                     .font(SettingsType.menu)
                     .lineLimit(1)
                 Image(systemName: "chevron.down")
-                    .weiBeiText(8, weight: .bold)
+                    .weiBeiText(9.5, weight: .bold)
             }
             .foregroundStyle(WeiBeiTheme.ink)
             .padding(.horizontal, 9)
             .frame(height: 26)
-            .background(WeiBeiTheme.paperRaised.opacity(0.52))
-            .clipShape(RoundedRectangle(cornerRadius: 6))
+            .weibeiEtchedBackground(
+                fill: WeiBeiTheme.paperRaised.opacity(0.52),
+                stroke: WeiBeiTheme.hairline.opacity(0.3),
+                cornerRadius: 8
+            )
+            .clipShape(RoundedRectangle(cornerRadius: 8))
             .overlay {
-                RoundedRectangle(cornerRadius: 6)
+                RoundedRectangle(cornerRadius: 8)
                     .stroke(WeiBeiTheme.hairline.opacity(0.48), lineWidth: 1)
             }
         }

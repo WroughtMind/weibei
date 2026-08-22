@@ -221,7 +221,7 @@ struct RichAnswerHost: View {
                         selectedSceneID = scene.id
                     } label: {
                         Text(scenePickerLabel(scene))
-                            .weiBeiText(11.5, weight: isSelected ? .semibold : .medium)
+                            .weiBeiText(12, weight: isSelected ? .semibold : .medium)
                             .foregroundStyle(isSelected ? WeiBeiTheme.cinnabar : WeiBeiTheme.secondaryInk)
                             .padding(.horizontal, 4)
                             .padding(.vertical, 7)
@@ -410,11 +410,11 @@ private struct TextAlignmentSceneView: View {
                 } label: {
                     VStack(alignment: .leading, spacing: 3) {
                         Text(object.label)
-                            .weiBeiText(12.5, weight: .semibold)
+                            .weiBeiText(12, weight: .semibold)
                             .foregroundStyle(selectedObjectID == object.id ? WeiBeiTheme.cinnabar : WeiBeiTheme.ink)
                         if let text = object.text, !text.isEmpty {
                             Text(text)
-                                .weiBeiText(13.5)
+                                .weiBeiText(13)
                                 .lineSpacing(4)
                                 .foregroundStyle(WeiBeiTheme.secondaryInk)
                                 .fixedSize(horizontal: false, vertical: true)
@@ -424,7 +424,7 @@ private struct TextAlignmentSceneView: View {
                     .padding(.horizontal, 8)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .background(selectedObjectID == object.id ? WeiBeiTheme.cinnabarSoft.opacity(0.52) : Color.clear)
-                    .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                 }
                 .buttonStyle(.plain)
             }
@@ -434,11 +434,11 @@ private struct TextAlignmentSceneView: View {
     private var relationMargin: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(selectedObjectID == nil ? "选择原文查看对应边注" : "当前段落的关系与依据")
-                .font(.caption)
+                .weiBeiText(10.5)
                 .foregroundStyle(WeiBeiTheme.tertiaryInk)
             ForEach(Array(visibleRelations.prefix(revealsNotes ? 6 : 3)), id: \.id) { relation in
                 Text(relationLabel(relation))
-                    .font(.caption)
+                    .weiBeiText(10.5)
                     .foregroundStyle(WeiBeiTheme.secondaryInk)
                     .padding(.leading, 8)
                     .overlay(alignment: .leading) {
@@ -522,11 +522,11 @@ private struct QuantityCoordinateSceneView: View {
             VStack(alignment: .leading, spacing: 5) {
                 HStack(spacing: 8) {
                     Text(operation.label)
-                        .font(.caption)
+                        .weiBeiText(10.5)
                         .foregroundStyle(WeiBeiTheme.secondaryInk)
                     Spacer(minLength: 8)
                     Text(parameterText(parameter, value: adjustmentValue(for: operation, parameter: parameter)))
-                        .weiBeiText(11, design: .monospaced)
+                        .weiBeiText(12, design: .monospaced)
                         .foregroundStyle(WeiBeiTheme.ink)
                     if let resetOperation {
                         Button(resetOperation.label) {
@@ -542,18 +542,18 @@ private struct QuantityCoordinateSceneView: View {
                 )
                 .tint(WeiBeiTheme.cinnabar)
                 Text("拖动参数，图中的朱砂探针会同步移动。")
-                    .font(.caption2)
+                    .weiBeiText(9.5)
                     .foregroundStyle(WeiBeiTheme.tertiaryInk)
             }
         } else if scene.operations.contains(where: { $0.kind == .probe }) {
             HStack(spacing: 10) {
                 Text("观察位置")
-                    .font(.caption)
+                    .weiBeiText(10.5)
                     .foregroundStyle(WeiBeiTheme.tertiaryInk)
                 Slider(value: $fallbackProbeValue, in: 0...1)
                     .tint(WeiBeiTheme.cinnabar)
                 Text(String(format: "%.0f%%", fallbackProbeValue * 100))
-                    .weiBeiText(11, design: .monospaced)
+                    .weiBeiText(12, design: .monospaced)
                     .foregroundStyle(WeiBeiTheme.secondaryInk)
             }
         }
@@ -665,12 +665,12 @@ private struct ProcessStateSceneView: View {
                     } label: {
                         VStack(alignment: .leading, spacing: 5) {
                             Text("\(index + 1)")
-                                .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                                .weiBeiText(10.5, weight: .semibold, design: .monospaced)
                                 .foregroundStyle(index == activeIndex ? WeiBeiTheme.onCinnabar : WeiBeiTheme.secondaryInk)
                                 .frame(width: 22, height: 22)
                                 .background(index == activeIndex ? WeiBeiTheme.cinnabar : WeiBeiTheme.paperInset.opacity(0.34), in: Circle())
                             Text(object.label)
-                                .font(.caption)
+                                .weiBeiText(10.5)
                                 .foregroundStyle(WeiBeiTheme.ink)
                                 .lineLimit(2)
                                 .frame(width: 96, alignment: .leading)
@@ -699,13 +699,17 @@ private struct ProcessStateSceneView: View {
                 .weiBeiText(13, weight: .semibold)
                 .foregroundStyle(WeiBeiTheme.ink)
             Text(object?.text ?? "这里仅切换本地步骤观察状态，不推断新的过程结果。")
-                .font(.caption)
+                .weiBeiText(10.5)
                 .lineSpacing(3)
                 .foregroundStyle(WeiBeiTheme.secondaryInk)
         }
         .padding(.vertical, 8)
         .padding(.horizontal, 10)
-        .background(WeiBeiTheme.paperRaised.opacity(0.34), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .weibeiEtchedBackground(
+                fill: WeiBeiTheme.paperRaised.opacity(0.34),
+                stroke: WeiBeiTheme.hairline.opacity(0.3),
+                cornerRadius: 8
+            )
     }
 
     @ViewBuilder
@@ -719,7 +723,7 @@ private struct ProcessStateSceneView: View {
                     }
                     .buttonStyle(WeiBeiTextActionButtonStyle())
                     Text("\(min(activeIndex + 1, max(processObjects.count, 1))) / \(max(processObjects.count, 1))")
-                        .weiBeiText(11, design: .monospaced)
+                        .weiBeiText(12, design: .monospaced)
                         .foregroundStyle(WeiBeiTheme.secondaryInk)
                     Button("下一步") {
                         isPlaying = false
@@ -835,18 +839,22 @@ private struct RelationEvidenceSceneView: View {
                     .weiBeiText(10.5, weight: .semibold)
                     .foregroundStyle(relationColor(relation.kind))
                 Text("\(objectLabel(relation.sourceID)) → \(objectLabel(relation.targetID))")
-                    .weiBeiText(12.5, weight: .semibold)
+                    .weiBeiText(12, weight: .semibold)
                     .foregroundStyle(WeiBeiTheme.ink)
                 if let label = relation.label, !label.isEmpty {
                     Text(label)
-                        .font(.caption)
+                        .weiBeiText(10.5)
                         .foregroundStyle(WeiBeiTheme.secondaryInk)
                 }
                 Spacer(minLength: 0)
             }
             .padding(.vertical, 7)
             .padding(.horizontal, 9)
-            .background(WeiBeiTheme.paperInset.opacity(0.22), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+            .weibeiEtchedBackground(
+                fill: WeiBeiTheme.paperInset.opacity(0.22),
+                stroke: WeiBeiTheme.hairline.opacity(0.26),
+                cornerRadius: 8
+            )
         }
     }
 
@@ -997,7 +1005,7 @@ private struct RelationMapNode: View {
     var body: some View {
         Button(action: action) {
             Text(object.label)
-                .weiBeiText(11.5, weight: .semibold)
+                .weiBeiText(12, weight: .semibold)
                 .multilineTextAlignment(.center)
                 .foregroundStyle(focused ? WeiBeiTheme.ink : WeiBeiTheme.secondaryInk)
                 .lineLimit(3)
@@ -1046,7 +1054,7 @@ private struct TimeSpaceSceneView: View {
             if scene.operations.contains(where: { $0.kind == .scrub }) {
                 HStack(spacing: 10) {
                     Text("时间尺")
-                        .font(.caption)
+                        .weiBeiText(10.5)
                         .foregroundStyle(WeiBeiTheme.tertiaryInk)
                     Slider(value: $scrubPosition, in: 0...1)
                         .tint(WeiBeiTheme.cinnabar)
@@ -1075,7 +1083,7 @@ private struct TimeSpaceSceneView: View {
                     }
                 } label: {
                     Label(frame.title, systemImage: activeLayerIDs.contains(frame.id) ? "checkmark.circle.fill" : "circle")
-                        .font(.caption)
+                        .weiBeiText(10.5)
                         .foregroundStyle(activeLayerIDs.contains(frame.id) ? WeiBeiTheme.cinnabar : WeiBeiTheme.secondaryInk)
                 }
                 .buttonStyle(.plain)
@@ -1146,12 +1154,12 @@ private struct ImageOverlaySceneView: View {
             if hasZoomOperation, previewImage != nil {
                 HStack(spacing: 10) {
                     Text("缩放")
-                        .font(.caption)
+                        .weiBeiText(10.5)
                         .foregroundStyle(WeiBeiTheme.tertiaryInk)
                     Slider(value: $zoomScale, in: 1...2.4, step: 0.1)
                         .tint(WeiBeiTheme.cinnabar)
                     Text(String(format: "%.1f×", zoomScale))
-                        .weiBeiText(11, design: .monospaced)
+                        .weiBeiText(12, design: .monospaced)
                         .foregroundStyle(WeiBeiTheme.secondaryInk)
                     Button("复位") {
                         zoomScale = 1
@@ -1194,13 +1202,13 @@ private struct ImageOverlaySceneView: View {
         } else {
             VStack(spacing: 5) {
                 Image(systemName: "photo.on.rectangle.angled")
-                    .weiBeiText(24)
+                    .weiBeiText(22)
                     .foregroundStyle(WeiBeiTheme.tertiaryInk)
                 Text("当前素材无法在回答中预览")
-                    .weiBeiText(12.5, weight: .semibold)
+                    .weiBeiText(12, weight: .semibold)
                     .foregroundStyle(WeiBeiTheme.secondaryInk)
                 Text("保留区域说明，并可打开原始素材核对。")
-                    .font(.caption)
+                    .weiBeiText(10.5)
                     .foregroundStyle(WeiBeiTheme.tertiaryInk)
             }
             .frame(maxWidth: .infinity, minHeight: 170)
@@ -1215,7 +1223,7 @@ private struct ImageOverlaySceneView: View {
                     onOpenAsset(assetID)
                 } label: {
                     Text("打开原始素材")
-                        .font(.caption)
+                        .weiBeiText(10.5)
                         .lineLimit(1)
                 }
                 .buttonStyle(WeiBeiTextActionButtonStyle())
@@ -1324,7 +1332,7 @@ private struct ComparisonEvaluationSceneView: View {
                 }
                 .buttonStyle(.plain)
                 Text(object.text ?? objectValueText(object))
-                    .font(.caption)
+                    .weiBeiText(10.5)
                     .lineSpacing(3)
                     .foregroundStyle(WeiBeiTheme.secondaryInk)
                     .fixedSize(horizontal: false, vertical: true)
@@ -1347,7 +1355,7 @@ private struct ComparisonEvaluationSceneView: View {
         VStack(alignment: .leading, spacing: 4) {
             ForEach(comparisonRelations, id: \.id) { relation in
                 Text("\(relation.kind.label)：\(relation.label ?? "\(objectLabel(relation.sourceID)) 与 \(objectLabel(relation.targetID))")")
-                    .font(.caption)
+                    .weiBeiText(10.5)
                     .foregroundStyle(WeiBeiTheme.secondaryInk)
             }
         }
@@ -1428,7 +1436,7 @@ private struct CalculationConstraintSceneView: View {
             parameterControls
             if calculableOperations.isEmpty {
                 Text("当前场景没有可验证的结果采样，因此只展示公式与约束，不提供假计算。")
-                    .font(.caption)
+                    .weiBeiText(10.5)
                     .foregroundStyle(WeiBeiTheme.tertiaryInk)
             }
             UnsupportedOperationNotice(
@@ -1445,10 +1453,10 @@ private struct CalculationConstraintSceneView: View {
             ForEach(Array(scene.objects.filter { $0.kind == .formula || $0.kind == .constraint || $0.kind == .quantity }.prefix(8)), id: \.id) { object in
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
                     Text(calculationRoleLabel(object.kind))
-                        .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                        .weiBeiText(10.5, weight: .semibold, design: .monospaced)
                         .foregroundStyle(WeiBeiTheme.cinnabar)
                     Text(object.text ?? objectValueText(object))
-                        .weiBeiText(12.5, design: .monospaced)
+                        .weiBeiText(12, design: .monospaced)
                         .foregroundStyle(WeiBeiTheme.ink)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -1456,7 +1464,11 @@ private struct CalculationConstraintSceneView: View {
         }
         .padding(.vertical, 9)
         .padding(.horizontal, 10)
-        .background(WeiBeiTheme.paperRaised.opacity(0.30), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .weibeiEtchedBackground(
+                fill: WeiBeiTheme.paperRaised.opacity(0.30),
+                stroke: WeiBeiTheme.hairline.opacity(0.28),
+                cornerRadius: 8
+            )
     }
 
     private var parameterControls: some View {
@@ -1466,11 +1478,11 @@ private struct CalculationConstraintSceneView: View {
                 VStack(alignment: .leading, spacing: 4) {
                     HStack {
                         Text(parameter.label)
-                            .font(.caption)
+                            .weiBeiText(10.5)
                             .foregroundStyle(WeiBeiTheme.secondaryInk)
                         Spacer(minLength: 8)
                         Text(parameterText(parameter, value: value(for: parameter)))
-                            .weiBeiText(11, design: .monospaced)
+                            .weiBeiText(12, design: .monospaced)
                             .foregroundStyle(WeiBeiTheme.tertiaryInk)
                     }
                     Slider(
@@ -1625,7 +1637,7 @@ private struct UnsupportedOperationNotice: View {
     var body: some View {
         if !unsupportedOperations.isEmpty {
             Text("当前宿主尚未开放：\(unsupportedOperations.map(\.label).joined(separator: "、"))。已保留正文与静态场景，不提供假操作。")
-                .font(.caption2)
+                .weiBeiText(9.5)
                 .foregroundStyle(WeiBeiTheme.tertiaryInk)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -1642,7 +1654,7 @@ private struct SceneTitle: View {
 
     var body: some View {
         Text(scene.title)
-            .weiBeiText(15.5, weight: .semibold)
+            .weiBeiText(15, weight: .semibold)
             .foregroundStyle(WeiBeiTheme.ink)
             .fixedSize(horizontal: false, vertical: true)
     }
@@ -1705,7 +1717,7 @@ private struct CoordinateCanvas: View {
                         let labelX = min(drawingRect.maxX - 24, max(drawingRect.minX + 24, probeX))
                         context.draw(
                             Text(probeLabel)
-                                .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                                .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
                                 .foregroundStyle(WeiBeiTheme.cinnabar),
                             at: CGPoint(x: labelX, y: drawingRect.minY + 2),
                             anchor: .top
@@ -1725,7 +1737,7 @@ private struct CoordinateCanvas: View {
             HStack(spacing: 10) {
                 ForEach(scene.frames.prefix(2), id: \.id) { frame in
                     Text(frameAxisLabel(frame))
-                        .weiBeiText(10.5, design: .monospaced)
+                        .font(.system(size: 10.5, design: .monospaced))
                         .foregroundStyle(WeiBeiTheme.tertiaryInk)
                 }
             }
@@ -1753,7 +1765,7 @@ private struct CoordinateCanvas: View {
                 let value = xAxis.minimum + (xAxis.maximum - xAxis.minimum) * Double(progress)
                 context.draw(
                     Text(axisTickText(value, unit: xAxis.unit))
-                        .font(.system(size: 8.5, design: .monospaced))
+                        .font(.system(size: 9.5, design: .monospaced))
                         .foregroundStyle(WeiBeiTheme.tertiaryInk),
                     at: CGPoint(x: x, y: drawingRect.maxY + 8),
                     anchor: .top
@@ -1763,7 +1775,7 @@ private struct CoordinateCanvas: View {
                 let value = yAxis.minimum + (yAxis.maximum - yAxis.minimum) * Double(progress)
                 context.draw(
                     Text(axisTickText(value, unit: yAxis.unit))
-                        .font(.system(size: 8.5, design: .monospaced))
+                        .font(.system(size: 9.5, design: .monospaced))
                         .foregroundStyle(WeiBeiTheme.tertiaryInk),
                     at: CGPoint(x: drawingRect.minX - 5, y: y),
                     anchor: .trailing
@@ -2091,7 +2103,7 @@ private struct EvidenceChip: View {
         } label: {
             HStack(spacing: 5) {
                 Image(systemName: "arrow.up.right")
-                    .weiBeiText(8.5, weight: .semibold)
+                    .weiBeiText(9.5, weight: .semibold)
                 Text(evidence.sourceLabel)
                     .weiBeiText(10.5, weight: .medium)
                     .lineLimit(1)
@@ -2146,23 +2158,26 @@ private extension View {
 
     func visualCanvasSurface() -> some View {
         self
-            .background(WeiBeiTheme.paperInset.opacity(0.11))
-            .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 5, style: .continuous)
-                    .stroke(WeiBeiTheme.hairline.opacity(0.42), lineWidth: 1)
+            .background {
+                WeiBeiEtchedBackdrop(
+                    shape: RoundedRectangle(cornerRadius: 4, style: .continuous),
+                    fill: WeiBeiTheme.paperInset.opacity(0.11),
+                    stroke: WeiBeiTheme.hairline.opacity(0.42)
+                )
             }
+            .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
     }
 
     func operationControlSurface() -> some View {
         self
             .padding(.vertical, 5)
             .padding(.horizontal, 7)
-            .background(WeiBeiTheme.paperRaised.opacity(0.38), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 7, style: .continuous)
-                    .stroke(WeiBeiTheme.hairline.opacity(0.32), lineWidth: 1)
-            }
+            .weibeiEtchedBackground(
+                fill: WeiBeiTheme.paperRaised.opacity(0.38),
+                stroke: WeiBeiTheme.hairline.opacity(0.32),
+                cornerRadius: 8,
+                contactShadow: true
+            )
     }
 }
 

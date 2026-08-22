@@ -341,7 +341,7 @@ private struct CourseNewNoteSheet: View {
         VStack(alignment: .leading, spacing: 18) {
             VStack(alignment: .leading, spacing: 6) {
                 Text(store.ui("新建课程笔记", "New course note"))
-                    .weiBeiBrandFont(language: store.interfaceLanguage, size: 20, weight: .semibold)
+                    .weiBeiBrandFont(language: store.interfaceLanguage, size: 22, weight: .semibold)
                 Text(store.ui("新笔记会写入当前课程文件夹里的“笔记”目录。", "The note will be written to the Notes folder inside this course."))
                     .weiBeiText(12)
                     .foregroundStyle(WeiBeiTheme.secondaryInk)
@@ -352,7 +352,7 @@ private struct CourseNewNoteSheet: View {
 
             if let error, !error.isEmpty {
                 Text(error)
-                    .weiBeiText(11.5)
+                    .weiBeiText(12)
                     .foregroundStyle(WeiBeiTheme.cinnabar)
             }
 
@@ -570,7 +570,7 @@ struct CourseWorkspaceTab: View {
     var body: some View {
         Button(action: action) {
             Text(title)
-                .weiBeiBrandFont(language: store.interfaceLanguage, size: 12.5, weight: active ? .semibold : .medium)
+                .weiBeiBrandFont(language: store.interfaceLanguage, size: 12, weight: active ? .semibold : .medium)
                 .foregroundStyle(active ? WeiBeiTheme.ink : WeiBeiTheme.secondaryInk)
                 .padding(.horizontal, 8)
                 .frame(height: 40)

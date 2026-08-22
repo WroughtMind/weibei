@@ -6,7 +6,7 @@
   padding: 8px 0 10px;
   color: #536267;
   border-top: 1px solid rgb(63 104 112 / 18%);
-  font-size: 12.5px;
+  font-size: calc(12px * var(--weibei-text-scale, 1));
 }
 
 .stats-plot {
@@ -30,7 +30,7 @@
 
 .stats-tick {
   fill: #766e62;
-  font-size: 11px;
+  font-size: calc(12px * var(--weibei-text-scale, 1));
 }
 
 .stats-brush {
@@ -73,7 +73,7 @@
 .stats-readout-line p {
   margin: 0;
   color: #4e5d61;
-  font-size: 12.5px;
+  font-size: calc(12px * var(--weibei-text-scale, 1));
   line-height: 1.55;
 }
 
@@ -92,7 +92,7 @@
 .finance-assumptions > p {
   margin: 0 0 13px;
   color: #637052;
-  font-size: 11.5px;
+  font-size: calc(12px * var(--weibei-text-scale, 1));
   line-height: 1.45;
 }
 
@@ -104,7 +104,7 @@
   padding: 8px 0;
   border-bottom: 1px solid rgb(74 88 55 / 14%);
   color: #4d5940;
-  font-size: 12px;
+  font-size: calc(12px * var(--weibei-text-scale, 1));
 }
 
 .finance-assumptions label.is-active {
@@ -131,12 +131,12 @@
 
 .finance-path span {
   color: #718060;
-  font-size: 10.5px;
+  font-size: calc(10.5px * var(--weibei-text-scale, 1));
 }
 
 .finance-path strong {
   color: #3c4930;
-  font-size: 12px;
+  font-size: calc(12px * var(--weibei-text-scale, 1));
   line-height: 1.5;
 }
 
@@ -155,12 +155,12 @@
 
 .finance-flow__headline span {
   color: #6a6255;
-  font-size: 12px;
+  font-size: calc(12px * var(--weibei-text-scale, 1));
 }
 
 .finance-flow__headline strong {
   color: #455535;
-  font-size: 17px;
+  font-size: calc(18px * var(--weibei-text-scale, 1));
 }
 
 .finance-waterfall {
@@ -178,7 +178,7 @@
   gap: 4px;
   justify-items: center;
   color: #6b6458;
-  font-size: 10.5px;
+  font-size: calc(10.5px * var(--weibei-text-scale, 1));
 }
 
 .finance-year__bar {
@@ -200,7 +200,7 @@
   position: absolute;
   inset: 5px 0 auto;
   color: #fbf8f0;
-  font: 10px ui-monospace, SFMono-Regular, Menlo, monospace;
+  font: calc(9.5px * var(--weibei-text-scale, 1)) ui-monospace, SFMono-Regular, Menlo, monospace;
   text-align: center;
 }
 
@@ -215,7 +215,7 @@
 .finance-ledger-line p {
   margin: 0;
   color: #59644d;
-  font-size: 12px;
+  font-size: calc(12px * var(--weibei-text-scale, 1));
   line-height: 1.5;
 }
 
@@ -279,18 +279,18 @@
 
 .policy-river button span {
   order: 1;
-  font: 10px ui-monospace, SFMono-Regular, Menlo, monospace;
+  font: calc(9.5px * var(--weibei-text-scale, 1)) ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
 .policy-river button strong {
   order: 3;
   color: #443a2f;
-  font-size: 11.5px;
+  font-size: calc(12px * var(--weibei-text-scale, 1));
 }
 
 .policy-river button small {
   order: 4;
-  font-size: 10px;
+  font-size: calc(9.5px * var(--weibei-text-scale, 1));
 }
 
 .policy-analysis {
@@ -334,18 +334,18 @@
 
 .policy-evidence-rail span {
   color: #9a5a36;
-  font-size: 10.5px;
+  font-size: calc(10.5px * var(--weibei-text-scale, 1));
 }
 
 .policy-evidence-rail strong {
-  font-size: 17px;
+  font-size: calc(18px * var(--weibei-text-scale, 1));
 }
 
 .policy-evidence-rail p,
 .policy-caveat {
   margin: 0;
   color: #675d4f;
-  font-size: 12px;
+  font-size: calc(12px * var(--weibei-text-scale, 1));
   line-height: 1.55;
 }
 
@@ -354,7 +354,7 @@
   padding: 2px 0;
   color: #5d5144;
   border-bottom: 2px solid #9a5a36;
-  font-size: 11px;
+  font-size: calc(12px * var(--weibei-text-scale, 1));
 }
 
 .policy-evidence-rail b[data-strength="因果不足"] {
@@ -400,7 +400,7 @@
 }
 
 .code-list code {
-  font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
+  font: calc(12px * var(--weibei-text-scale, 1))/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
 .code-execution {
@@ -426,7 +426,7 @@
   gap: 4px;
   justify-items: center;
   color: #756d79;
-  font-size: 10px;
+  font-size: calc(9.5px * var(--weibei-text-scale, 1));
 }
 
 .array-track i {
@@ -458,11 +458,11 @@
 .execution-message span,
 .keyboard-hint {
   color: #7a7180;
-  font-size: 10.5px;
+  font-size: calc(10.5px * var(--weibei-text-scale, 1));
 }
 
 .execution-message strong {
-  font-size: 13px;
+  font-size: calc(13px * var(--weibei-text-scale, 1));
   line-height: 1.45;
 }
 
@@ -479,7 +479,7 @@
   border: 0;
   border-bottom: 1px solid #8a739a;
   background: transparent;
-  font-size: 11.5px;
+  font-size: calc(12px * var(--weibei-text-scale, 1));
 }
 
 .execution-controls button:disabled {

@@ -1882,11 +1882,7 @@ public struct AgentMessage: Identifiable, Codable, Hashable, Sendable {
 }
 
 public struct PendingNoteWriteState: Codable, Hashable, Sendable {
-    public var baselineContentDigest: String?
-
-    public init(baselineContentDigest: String?) {
-        self.baselineContentDigest = baselineContentDigest
-    }
+    public init() {}
 }
 
 public struct PersistedWorkspace: Codable, Sendable {

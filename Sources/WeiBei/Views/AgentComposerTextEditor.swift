@@ -2,6 +2,9 @@ import AppKit
 import SwiftUI
 
 struct AgentComposerTextEditor: NSViewRepresentable {
+    /// App-wide text tier multiplier — the native input must track the same
+    /// tier as the weiBeiText-scaled placeholder drawn above it.
+    @Environment(\.weiBeiTextScale) private var textScale
     @Binding var text: String
     @Binding var measuredHeight: CGFloat
     @Binding var active: Bool
@@ -110,7 +113,7 @@ struct AgentComposerTextEditor: NSViewRepresentable {
     }
 
     private func applyPresentation(to textView: NSTextView) {
-        textView.font = NSFont.systemFont(ofSize: fontSize)
+        textView.font = NSFont.systemFont(ofSize: fontSize * textScale)
         textView.textColor = WeiBeiNativePalette.ink(for: appearanceMode)
         textView.insertionPointColor = WeiBeiNativePalette.ink(for: appearanceMode)
         textView.setAccessibilityLabel(accessibilityLabel)

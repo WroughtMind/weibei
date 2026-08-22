@@ -47,7 +47,7 @@
   margin-bottom: 7px;
   color: var(--cinnabar);
   font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif;
-  font-size: 10px;
+  font-size: calc(9.5px * var(--weibei-text-scale, 1));
   font-weight: 650;
   letter-spacing: 0.16em;
   text-transform: uppercase;
@@ -65,7 +65,7 @@
   max-width: 50ch;
   margin: 9px 0 0;
   color: var(--muted);
-  font-size: 12.5px;
+  font-size: calc(12px * var(--weibei-text-scale, 1));
   line-height: 1.7;
 }
 
@@ -85,7 +85,7 @@
   margin: 0 0 14px;
   color: #675d50;
   font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif;
-  font-size: 10px;
+  font-size: calc(9.5px * var(--weibei-text-scale, 1));
   font-weight: 650;
   letter-spacing: 0.1em;
 }
@@ -211,14 +211,14 @@
   align-items: baseline;
   color: #4e473e;
   font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif;
-  font-size: 11px;
+  font-size: calc(12px * var(--weibei-text-scale, 1));
 }
 
 .ra-slider__topline output {
   min-width: 43px;
   color: var(--cinnabar);
   font-family: "SFMono-Regular", Menlo, monospace;
-  font-size: 21px;
+  font-size: calc(22px * var(--weibei-text-scale, 1));
   font-weight: 650;
   text-align: right;
 }
@@ -237,7 +237,7 @@
   justify-content: space-between;
   color: #958a7c;
   font-family: "SFMono-Regular", Menlo, monospace;
-  font-size: 9px;
+  font-size: calc(9.5px * var(--weibei-text-scale, 1));
 }
 
 .ra-slider__scale i {
@@ -251,7 +251,7 @@
 .ra-slider small,
 .ra-plot > small {
   color: #817668;
-  font-size: 10.5px;
+  font-size: calc(10.5px * var(--weibei-text-scale, 1));
   line-height: 1.55;
 }
 
@@ -277,11 +277,11 @@
 .ra-readout span {
   color: #887d70;
   font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif;
-  font-size: 9.5px;
+  font-size: calc(9.5px * var(--weibei-text-scale, 1));
 }
 
 .ra-readout strong {
-  font-size: 13px;
+  font-size: calc(13px * var(--weibei-text-scale, 1));
   font-weight: 600;
 }
 
@@ -291,7 +291,7 @@
   padding: 9px 0 10px;
   color: #6f6558;
   border-top: 1px solid var(--hairline);
-  font-size: 10.5px;
+  font-size: calc(10.5px * var(--weibei-text-scale, 1));
   line-height: 1.55;
 }
 
@@ -305,7 +305,7 @@
 .ra-picker > span {
   color: #685f52;
   font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif;
-  font-size: 10.5px;
+  font-size: calc(10.5px * var(--weibei-text-scale, 1));
 }
 
 .ra-picker > div {
@@ -322,7 +322,7 @@
   border: 0;
   background: transparent;
   font-family: "SFMono-Regular", Menlo, monospace;
-  font-size: 10.5px;
+  font-size: calc(10.5px * var(--weibei-text-scale, 1));
   cursor: pointer;
 }
 
@@ -346,14 +346,14 @@
 }
 
 .ra-plot figcaption span {
-  font-size: 13px;
+  font-size: calc(13px * var(--weibei-text-scale, 1));
   font-weight: 600;
 }
 
 .ra-plot figcaption strong {
   color: var(--cinnabar);
   font-family: "SFMono-Regular", Menlo, monospace;
-  font-size: 10px;
+  font-size: calc(9.5px * var(--weibei-text-scale, 1));
   font-weight: 500;
 }
 
@@ -391,7 +391,7 @@
 .ra-narrative > span {
   color: #635a4e;
   font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif;
-  font-size: 9.5px;
+  font-size: calc(9.5px * var(--weibei-text-scale, 1));
   font-weight: 650;
   letter-spacing: 0.08em;
 }
@@ -399,7 +399,7 @@
 .ra-narrative p {
   margin: 6px 0 0;
   color: #4e463c;
-  font-size: 12px;
+  font-size: calc(12px * var(--weibei-text-scale, 1));
   line-height: 1.72;
 }
 
@@ -412,7 +412,7 @@
 .ra-comparison {
   width: 100%;
   border-collapse: collapse;
-  font-size: 11px;
+  font-size: calc(12px * var(--weibei-text-scale, 1));
 }
 
 .ra-comparison th,
@@ -426,7 +426,7 @@
 .ra-comparison thead th {
   color: #827769;
   font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif;
-  font-size: 9.5px;
+  font-size: calc(9.5px * var(--weibei-text-scale, 1));
   font-weight: 550;
 }
 
@@ -462,7 +462,7 @@
 
 .ra-evidence__mark {
   color: var(--cinnabar);
-  font-size: 26px;
+  font-size: calc(26px * var(--weibei-text-scale, 1));
   line-height: 1;
 }
 
@@ -474,28 +474,28 @@
 .ra-evidence strong {
   color: #675d50;
   font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif;
-  font-size: 9.5px;
+  font-size: calc(9.5px * var(--weibei-text-scale, 1));
   font-weight: 650;
 }
 
 .ra-evidence q {
   overflow: hidden;
   color: #3e382f;
-  font-size: 11px;
+  font-size: calc(12px * var(--weibei-text-scale, 1));
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .ra-evidence small {
   color: #887d70;
-  font-size: 9.5px;
+  font-size: calc(9.5px * var(--weibei-text-scale, 1));
 }
 
 .ra-evidence > i,
 .ra-followup > i {
   color: var(--cinnabar);
   font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif;
-  font-size: 9.5px;
+  font-size: calc(9.5px * var(--weibei-text-scale, 1));
   font-style: normal;
   white-space: nowrap;
 }
@@ -547,12 +547,12 @@
   border-radius: 50%;
   background: var(--paper-deep);
   font-family: "SFMono-Regular", Menlo, monospace;
-  font-size: 9px;
+  font-size: calc(9.5px * var(--weibei-text-scale, 1));
   z-index: 1;
 }
 
 .ra-stepper__rail button strong {
-  font-size: 11.5px;
+  font-size: calc(12px * var(--weibei-text-scale, 1));
   font-weight: 500;
 }
 
@@ -584,18 +584,18 @@
 .ra-stepper__detail > span {
   color: #b7aa99;
   font-family: "SFMono-Regular", Menlo, monospace;
-  font-size: 20px;
+  font-size: calc(22px * var(--weibei-text-scale, 1));
 }
 
 .ra-stepper__detail strong {
-  font-size: 13px;
+  font-size: calc(13px * var(--weibei-text-scale, 1));
   font-weight: 600;
 }
 
 .ra-stepper__detail p {
   margin: 5px 0 0;
   color: #655b4f;
-  font-size: 11px;
+  font-size: calc(12px * var(--weibei-text-scale, 1));
   line-height: 1.65;
 }
 
@@ -611,8 +611,8 @@
   justify-content: center;
   gap: 8px;
   align-items: baseline;
-  font-family: "Times New Roman", serif;
-  font-size: 26px;
+  font-family: ui-serif, "Songti SC", "Noto Serif CJK SC", Georgia, serif;
+  font-size: calc(26px * var(--weibei-text-scale, 1));
   font-style: italic;
 }
 
@@ -623,7 +623,7 @@
 
 .ra-mechanism__formula strong {
   color: var(--cinnabar);
-  font-size: 31px;
+  font-size: calc(31px * var(--weibei-text-scale, 1));
 }
 
 .ra-mechanism__track {
@@ -660,14 +660,14 @@
 .ra-mechanism__track span,
 .ra-mechanism__track small {
   overflow: hidden;
-  font-size: 8.5px;
+  font-size: calc(9.5px * var(--weibei-text-scale, 1));
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .ra-mechanism__track strong {
   font-family: "SFMono-Regular", Menlo, monospace;
-  font-size: 11px;
+  font-size: calc(12px * var(--weibei-text-scale, 1));
 }
 
 .ra-mechanism__area {
@@ -721,7 +721,7 @@
   bottom: 0;
   left: 0;
   color: #766c5f;
-  font-size: 9.5px;
+  font-size: calc(9.5px * var(--weibei-text-scale, 1));
   text-align: center;
 }
 
@@ -736,7 +736,7 @@
   border: 0;
   border-top: 1px solid var(--hairline);
   background: transparent;
-  font-size: 11.5px;
+  font-size: calc(12px * var(--weibei-text-scale, 1));
   text-align: left;
   cursor: pointer;
 }
@@ -835,7 +835,7 @@
   }
 
   .ra-root__header h1 {
-    font-size: 20px;
+    font-size: calc(22px * var(--weibei-text-scale, 1));
   }
 
   .ra-root--workbench .ra-stage,
@@ -963,7 +963,7 @@
 .weibei-embedded .ra-stage h3 {
   margin-bottom: 9px;
   color: var(--muted);
-  font-size: 9px;
+  font-size: calc(9.5px * var(--weibei-text-scale, 1));
   letter-spacing: 0.06em;
 }
 
@@ -1039,7 +1039,7 @@
 
   .weibei-embedded .ra-plot > small {
     margin-top: -1px;
-    font-size: 9px;
+    font-size: calc(9.5px * var(--weibei-text-scale, 1));
   }
 
   .weibei-embedded .ra-evidence > i {

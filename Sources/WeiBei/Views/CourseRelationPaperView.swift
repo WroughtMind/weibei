@@ -154,7 +154,11 @@ struct CourseRelationPaperView: View {
         }
         .padding(.horizontal, 16)
         .frame(height: 40)
-        .background(WeiBeiTheme.paperRaised.opacity(0.22))
+        .weibeiEtchedBackground(
+            fill: WeiBeiTheme.paperRaised.opacity(0.22),
+            stroke: WeiBeiTheme.hairline.opacity(0.24),
+            cornerRadius: 8
+        )
     }
 
     /// Left rail: courses as primary units (plus all / unassigned / unlinked).
@@ -227,7 +231,11 @@ struct CourseRelationPaperView: View {
         }
         .frame(width: 212)
         .frame(maxHeight: .infinity)
-        .background(WeiBeiTheme.paperRaised.opacity(0.22))
+        .weibeiEtchedBackground(
+            fill: WeiBeiTheme.paperRaised.opacity(0.22),
+            stroke: WeiBeiTheme.hairline.opacity(0.24),
+            cornerRadius: 8
+        )
     }
 
     private func courseScopeRow(
@@ -298,7 +306,10 @@ struct CourseRelationPaperView: View {
             .foregroundStyle(WeiBeiTheme.ink)
             .padding(.horizontal, 10)
             .frame(height: 28)
-            .background(WeiBeiTheme.paperInset.opacity(0.34), in: Capsule())
+            .weibeiEtchedCapsuleBackground(
+                fill: WeiBeiTheme.paperInset.opacity(0.34),
+                stroke: WeiBeiTheme.hairline.opacity(0.3)
+            )
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
@@ -492,9 +503,9 @@ struct CourseRelationPaperView: View {
             .help(store.ui("完整显示关系画布", "Fit the relationship canvas"))
         }
         .foregroundStyle(WeiBeiTheme.ink)
-        .background(WeiBeiTheme.paper.opacity(0.94), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+        .background(WeiBeiTheme.paper.opacity(0.94), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 9, style: .continuous)
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .stroke(WeiBeiTheme.hairline.opacity(0.74), lineWidth: 1)
         )
         .shadow(color: WeiBeiTheme.ink.opacity(0.055), radius: 8, y: 3)
@@ -611,7 +622,11 @@ struct CourseRelationPaperView: View {
             }
             .padding(18)
         }
-        .background(WeiBeiTheme.paperRaised.opacity(0.18))
+        .weibeiEtchedBackground(
+            fill: WeiBeiTheme.paperRaised.opacity(0.18),
+            stroke: WeiBeiTheme.hairline.opacity(0.22),
+            cornerRadius: 8
+        )
     }
 
     private func compactSection(
@@ -1068,7 +1083,7 @@ private struct CourseRelationPaperNodeView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .contentShape(Rectangle())
         .opacity(opacity)
-        .background(nodeBackground, in: RoundedRectangle(cornerRadius: 11, style: .continuous))
+        .background(nodeBackground, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
         .overlay(alignment: .bottomLeading) {
             Rectangle()
                 .fill(underlineColor)

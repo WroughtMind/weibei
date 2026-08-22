@@ -20,7 +20,7 @@
 .ra-distribution-brush > header > span,
 .ra-dependency-flow > header > span {
   color: #50483e;
-  font-size: 13px;
+  font-size: calc(13px * var(--weibei-text-scale, 1));
   font-weight: 600;
 }
 
@@ -43,7 +43,7 @@
   align-items: center;
   min-height: 24px;
   color: #776d61;
-  font: 10.5px ui-sans-serif, -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif;
+  font: calc(10.5px * var(--weibei-text-scale, 1)) ui-sans-serif, -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif;
   cursor: pointer;
 }
 
@@ -86,7 +86,7 @@
   border: 0;
   background: rgb(247 242 232 / 78%);
   box-shadow: 0 1px 0 rgb(48 40 31 / 8%);
-  font-size: 10.5px;
+  font-size: calc(10.5px * var(--weibei-text-scale, 1));
   text-align: left;
   transform: translate(-8px, -50%);
   white-space: nowrap;
@@ -132,7 +132,7 @@
   gap: 3px;
   min-width: 74px;
   color: #62594f;
-  font: 8.5px "SFMono-Regular", Menlo, monospace;
+  font: calc(9.5px * var(--weibei-text-scale, 1)) "SFMono-Regular", Menlo, monospace;
   text-align: right;
 }
 
@@ -157,7 +157,7 @@
 
 .ra-spatial-view aside strong {
   color: #352f28;
-  font-size: 12px;
+  font-size: calc(12px * var(--weibei-text-scale, 1));
 }
 
 .ra-spatial-view aside p,
@@ -166,7 +166,7 @@
 .ra-dependency-flow > p {
   margin: 5px 0 0;
   color: #756b5e;
-  font-size: 10px;
+  font-size: calc(9.5px * var(--weibei-text-scale, 1));
   line-height: 1.55;
 }
 
@@ -177,7 +177,7 @@
   border: 0;
   border-bottom: 1px solid rgb(87 69 50 / 24%);
   background: transparent;
-  font-size: 9px;
+  font-size: calc(9.5px * var(--weibei-text-scale, 1));
 }
 
 .ra-distribution-brush canvas {
@@ -195,7 +195,7 @@
   padding: 8px 0;
   border-bottom: 1px solid var(--hairline, rgb(68 57 43 / 14%));
   color: #746a5e;
-  font-size: 9.5px;
+  font-size: calc(9.5px * var(--weibei-text-scale, 1));
 }
 
 .ra-distribution-brush__span input {
@@ -206,7 +206,7 @@
 
 .ra-distribution-brush__span output {
   color: var(--cinnabar, #8f3f2f);
-  font: 10px "SFMono-Regular", Menlo, monospace;
+  font: calc(9.5px * var(--weibei-text-scale, 1)) "SFMono-Regular", Menlo, monospace;
 }
 
 .ra-distribution-brush__stats {
@@ -230,18 +230,18 @@
 .ra-distribution-brush__stats span {
   grid-column: 1 / -1;
   color: #82776a;
-  font-size: 8.5px;
+  font-size: calc(9.5px * var(--weibei-text-scale, 1));
 }
 
 .ra-distribution-brush__stats strong {
   color: #342e27;
-  font-size: 14px;
+  font-size: calc(15px * var(--weibei-text-scale, 1));
   font-weight: 600;
 }
 
 .ra-distribution-brush__stats i {
   color: #8c8174;
-  font-size: 8.5px;
+  font-size: calc(9.5px * var(--weibei-text-scale, 1));
   font-style: normal;
 }
 
@@ -274,12 +274,12 @@
 
 .ra-dependency-flow__inputs span {
   color: #5a5147;
-  font-size: 10px;
+  font-size: calc(9.5px * var(--weibei-text-scale, 1));
 }
 
 .ra-dependency-flow__inputs output {
   color: var(--cinnabar, #8f3f2f);
-  font: 10px "SFMono-Regular", Menlo, monospace;
+  font: calc(9.5px * var(--weibei-text-scale, 1)) "SFMono-Regular", Menlo, monospace;
 }
 
 .ra-dependency-flow__inputs input,
@@ -295,7 +295,7 @@
 
 .ra-dependency-flow__inputs small {
   color: #8a7f72;
-  font-size: 8.5px;
+  font-size: calc(9.5px * var(--weibei-text-scale, 1));
   line-height: 1.45;
 }
 
@@ -318,7 +318,7 @@
 
 .ra-dependency-flow__layer > span {
   color: #998d7f;
-  font: 8px "SFMono-Regular", Menlo, monospace;
+  font: calc(8px * var(--weibei-text-scale, 1)) "SFMono-Regular", Menlo, monospace;
 }
 
 .ra-dependency-flow__layer article {
@@ -352,14 +352,14 @@
 .ra-dependency-flow__layer article small {
   overflow: hidden;
   color: #9b9083;
-  font: 7.5px "SFMono-Regular", Menlo, monospace;
+  font: calc(7.5px * var(--weibei-text-scale, 1)) "SFMono-Regular", Menlo, monospace;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .ra-dependency-flow__layer article strong {
   color: #4a4239;
-  font-size: 10.5px;
+  font-size: calc(10.5px * var(--weibei-text-scale, 1));
   font-weight: 600;
 }
 
@@ -371,7 +371,7 @@
 .ra-dependency-flow__layer article p {
   margin: 2px 0 0;
   color: #807568;
-  font-size: 8.5px;
+  font-size: calc(9.5px * var(--weibei-text-scale, 1));
   line-height: 1.45;
 }
 
@@ -401,12 +401,12 @@
 
 .ra-dependency-flow__metrics span {
   color: #74695d;
-  font-size: 9px;
+  font-size: calc(9.5px * var(--weibei-text-scale, 1));
 }
 
 .ra-dependency-flow__metrics strong {
   color: #332d26;
-  font-size: 17px;
+  font-size: calc(18px * var(--weibei-text-scale, 1));
   font-weight: 600;
 }
 
@@ -420,13 +420,13 @@
 
 .ra-dependency-flow__metrics i {
   color: #8d8275;
-  font-size: 9px;
+  font-size: calc(9.5px * var(--weibei-text-scale, 1));
   font-style: normal;
 }
 
 .ra-dependency-flow__metrics small {
   color: #82776a;
-  font-size: 8.5px;
+  font-size: calc(9.5px * var(--weibei-text-scale, 1));
 }
 
 .ra-dependency-flow__metrics em {

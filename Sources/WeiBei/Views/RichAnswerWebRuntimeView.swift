@@ -310,6 +310,9 @@ final class ConversationWebClippingView: NSView {
 }
 
 private struct RichAnswerWebViewRepresentable: NSViewRepresentable {
+    /// App-wide text tier multiplier; the runtime's CSS consumes it through the
+    /// `--weibei-text-scale` variable and re-reports height via ResizeObserver.
+    @Environment(\.weiBeiTextScale) private var textScale
     let entries: [RichAnswerWebRuntimeEntry]
     let evidenceByID: [String: RichAnswerEvidence]
     let heightLimit: CGFloat
@@ -340,6 +343,13 @@ private struct RichAnswerWebViewRepresentable: NSViewRepresentable {
         controller.addUserScript(
             WKUserScript(
                 source: Self.bootstrapScript,
+                injectionTime: .atDocumentStart,
+                forMainFrameOnly: true
+            )
+        )
+        controller.addUserScript(
+            WKUserScript(
+                source: "document.documentElement.style.setProperty('--weibei-text-scale', '\(textScale)');",
                 injectionTime: .atDocumentStart,
                 forMainFrameOnly: true
             )
@@ -399,7 +409,8 @@ private struct RichAnswerWebViewRepresentable: NSViewRepresentable {
             runtimeError: $runtimeError,
             onOpenEvidence: onOpenEvidence,
             onAction: onAction,
-            assetPreview: assetPreview
+            assetPreview: assetPreview,
+            textScale: textScale
         )
         context.coordinator.sendEntriesIfReady()
     }
@@ -458,6 +469,7 @@ private struct RichAnswerWebViewRepresentable: NSViewRepresentable {
         private var payloadPreparationError: String?
         private var viewportSize: CGSize = .zero
         private var pendingViewportResizeNotification = false
+        private var textScale: CGFloat = 1
 
         init(
             entries: [RichAnswerWebRuntimeEntry],
@@ -490,7 +502,8 @@ private struct RichAnswerWebViewRepresentable: NSViewRepresentable {
             runtimeError: Binding<String?>,
             onOpenEvidence: @escaping (RichAnswerEvidence) -> Void,
             onAction: @escaping (String) -> Void,
-            assetPreview: @escaping (String) -> NSImage?
+            assetPreview: @escaping (String) -> NSImage?,
+            textScale: CGFloat
         ) {
             self.entries = entries
             self.evidenceByID = evidenceByID
@@ -501,6 +514,19 @@ private struct RichAnswerWebViewRepresentable: NSViewRepresentable {
             self.onOpenEvidence = onOpenEvidence
             self.onAction = onAction
             self.assetPreview = assetPreview
+            if self.textScale != textScale {
+                self.textScale = textScale
+                applyTextScale()
+            }
+        }
+
+        /// Live text-tier sync: the runtime's stylesheet multiplies every font
+        /// size by `--weibei-text-scale`; its ResizeObserver re-reports height.
+        private func applyTextScale() {
+            guard isReady, let webView, textScale > 0 else { return }
+            webView.evaluateJavaScript(
+                "document.documentElement.style.setProperty('--weibei-text-scale', '\(textScale)')"
+            )
         }
 
         func sendEntriesIfReady() {
@@ -552,6 +578,7 @@ private struct RichAnswerWebViewRepresentable: NSViewRepresentable {
                 isReady = true
                 readinessWorkItem?.cancel()
                 readinessWorkItem = nil
+                applyTextScale()
                 sendEntriesIfReady()
             case "weibei:height":
                 guard let height = (body["height"] as? NSNumber)?.doubleValue else { return }

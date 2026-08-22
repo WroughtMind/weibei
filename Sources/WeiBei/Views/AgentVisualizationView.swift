@@ -16,7 +16,7 @@ struct AgentVisualizationView: View {
         Group {
             if runtimeFailed {
                 Text(store.ui("互动界面暂时无法显示", "The interactive view could not be displayed"))
-                    .font(.caption)
+                    .weiBeiText(10.5)
                     .foregroundStyle(WeiBeiTheme.secondaryInk)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(12)
@@ -42,9 +42,9 @@ struct AgentVisualizationView: View {
                 Color.clear.frame(height: max(contentHeight, 120))
             }
         }
-        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         .overlay {
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .stroke(WeiBeiTheme.hairline.opacity(0.58), lineWidth: 1)
         }
         .onAppear { webViewAttached = true }
