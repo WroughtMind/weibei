@@ -20,6 +20,12 @@ extension WorkspaceStore {
         save()
     }
 
+    func setInspirationAsWatermark(_ enabled: Bool) {
+        guard inspirationAsWatermark != enabled else { return }
+        inspirationAsWatermark = enabled
+        save()
+    }
+
     func showTransientNoteStatus(_ message: String) {
         // S5: sole transient feedback channel (auto-expires). Identity is the
         // generation, not the text — the same sentence shown twice still gets its

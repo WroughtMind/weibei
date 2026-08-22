@@ -34,6 +34,7 @@ struct SettingsView: View {
     @State private var shortcutStatusMessage: String?
     // In-app feedback sheet.
     @State private var showFeedbackSheet = false
+    @State private var showInspirationSourcesSheet = false
     @State private var feedbackTitle = ""
     @State private var feedbackBody = ""
     @State private var feedbackBusy = false
@@ -285,7 +286,7 @@ struct SettingsView: View {
                 }
                 settingsRow(
                     title: store.ui("今日一句", "Today's line"),
-                    showsBottomDivider: false
+                    showsBottomDivider: store.showDailyInspiration
                 ) {
                     settingsSwitch(
                         isOn: Binding(
@@ -294,6 +295,25 @@ struct SettingsView: View {
                         ),
                         accessibilityLabel: store.ui("显示今日一句", "Show today's line")
                     )
+                }
+
+                if store.showDailyInspiration {
+                    settingsRow(
+                        title: store.ui("以底纹呈现", "As paper watermark"),
+                        detail: store.ui(
+                            "开:句子化作纸面淡墨,点击换句;关:句子成块展示,悬停看出处。",
+                            "On: the line becomes faint ink in the paper. Off: shown as a block with credit on hover."
+                        ),
+                        showsBottomDivider: false
+                    ) {
+                        settingsSwitch(
+                            isOn: Binding(
+                                get: { store.inspirationAsWatermark },
+                                set: { store.setInspirationAsWatermark($0) }
+                            ),
+                            accessibilityLabel: store.ui("今日一句以底纹呈现", "Show today's line as paper watermark")
+                        )
+                    }
                 }
             }
         }
@@ -544,6 +564,22 @@ struct SettingsView: View {
                 }
             }
 
+            settingsGroup(store.ui("灵感句", "Daily Line")) {
+                settingsRow(
+                    title: store.ui("来源与权利台账", "Sources & rights ledger"),
+                    detail: store.ui(
+                        "50 条灵感句的原文出处与版权依据。底纹模式不内联展示署名,以此台账为准。",
+                        "Source and rights basis for all 50 daily lines. The watermark mode shows no inline credit; this ledger is authoritative."
+                    ),
+                    showsBottomDivider: false
+                ) {
+                    Button(store.ui("查看台账…", "View…")) {
+                        showInspirationSourcesSheet = true
+                    }
+                    .buttonStyle(WeiBeiTextActionButtonStyle(active: true))
+                }
+            }
+
             if case let .failed(message) = updateService.status {
                 Text(store.ui("更新失败：\(message)", "Update failed: \(message)"))
                     .font(SettingsType.detail)
@@ -562,6 +598,49 @@ struct SettingsView: View {
         .sheet(isPresented: $showFeedbackSheet) {
             feedbackSheet
         }
+        .sheet(isPresented: $showInspirationSourcesSheet) {
+            inspirationSourcesSheet
+        }
+    }
+
+    /// Plain-text rendering of the bundled SOURCES.md ledger — the attribution
+    /// record for daily lines when the watermark mode shows no inline credit.
+    private var inspirationSourcesSheet: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text(store.ui("灵感句来源与权利", "Daily line sources & rights"))
+                .weiBeiText(15, weight: .semibold)
+                .foregroundStyle(WeiBeiTheme.ink)
+
+            ScrollView {
+                Text(inspirationSourcesLedgerText)
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundStyle(WeiBeiTheme.secondaryInk)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(12)
+            }
+            .frame(minHeight: 260, maxHeight: 420)
+            .background(WeiBeiTheme.paperRaised.opacity(0.52))
+
+            Button(store.ui("关闭", "Close")) {
+                showInspirationSourcesSheet = false
+            }
+            .buttonStyle(WeiBeiTextActionButtonStyle(active: true))
+            .frame(maxWidth: .infinity, alignment: .trailing)
+        }
+        .padding(20)
+        .frame(width: 620)
+    }
+
+    private var inspirationSourcesLedgerText: String {
+        let url = Bundle.module.url(forResource: "SOURCES", withExtension: "md", subdirectory: "Inspiration")
+            ?? Bundle.module.url(forResource: "SOURCES", withExtension: "md")
+        guard let url, let text = try? String(contentsOf: url, encoding: .utf8), !text.isEmpty else {
+            return store.ui(
+                "台账文件缺失。完整台账见仓库 Sources/WeiBei/Resources/Inspiration/SOURCES.md。",
+                "Ledger file missing. Full ledger: Sources/WeiBei/Resources/Inspiration/SOURCES.md in the repository."
+            )
+        }
+        return text
     }
 
     private var updateActionLabel: String {

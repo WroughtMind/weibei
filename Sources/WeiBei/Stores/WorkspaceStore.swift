@@ -442,6 +442,7 @@ final class WorkspaceStore: ObservableObject {
         }
     }
     @Published var showDailyInspiration = true
+    @Published var inspirationAsWatermark = false
     @Published var commandPalettePresented = false
     var librarySearch = ""
     @Published private(set) var readerSourceHighlight = ""
@@ -20294,6 +20295,7 @@ final class WorkspaceStore: ObservableObject {
         showAgent = snapshot.showAgent ?? legacyRightPane ?? true
         showNotes = snapshot.showNotes ?? legacyRightPane ?? true
         showDailyInspiration = snapshot.showDailyInspiration ?? true
+        inspirationAsWatermark = snapshot.inspirationAsWatermark ?? false
         if migratedRetiredSplitLayout {
             // Retired 阅读/笔记对半 → current workbench: reader + notes visible, chat hidden.
             // Keep the persisted free order when present; next save writes the new layout.
@@ -20424,6 +20426,7 @@ final class WorkspaceStore: ObservableObject {
                 showNotes: showNotes,
                 showRightPane: showRightPane,
                 showDailyInspiration: showDailyInspiration,
+                inspirationAsWatermark: inspirationAsWatermark,
                 appearanceModeRaw: appearanceMode.rawValue,
                 adaptImportedDocumentColors: adaptImportedDocumentColors,
                 interfaceLanguageRaw: interfaceLanguage.rawValue,
@@ -21173,6 +21176,7 @@ final class WorkspaceStore: ObservableObject {
                 showNotes: showNotes,
                 showRightPane: showRightPane,
                 showDailyInspiration: showDailyInspiration,
+                inspirationAsWatermark: inspirationAsWatermark,
                 appearanceModeRaw: appearanceMode.rawValue,
                 adaptImportedDocumentColors: adaptImportedDocumentColors,
                 interfaceLanguageRaw: interfaceLanguage.rawValue,

@@ -1935,6 +1935,7 @@ public struct PersistedWorkspace: Codable, Sendable {
     public var showNotes: Bool?
     public var showRightPane: Bool?
     public var showDailyInspiration: Bool?
+    public var inspirationAsWatermark: Bool?
     public var appearanceModeRaw: String?
     public var adaptImportedDocumentColors: Bool?
     public var interfaceLanguageRaw: String?
@@ -1984,6 +1985,7 @@ public struct PersistedWorkspace: Codable, Sendable {
         showNotes: Bool? = nil,
         showRightPane: Bool? = nil,
         showDailyInspiration: Bool? = nil,
+        inspirationAsWatermark: Bool? = nil,
         appearanceModeRaw: String? = nil,
         adaptImportedDocumentColors: Bool? = nil,
         interfaceLanguageRaw: String? = nil,
@@ -2032,6 +2034,7 @@ public struct PersistedWorkspace: Codable, Sendable {
         self.showNotes = showNotes
         self.showRightPane = showRightPane
         self.showDailyInspiration = showDailyInspiration
+        self.inspirationAsWatermark = inspirationAsWatermark
         self.appearanceModeRaw = appearanceModeRaw
         self.adaptImportedDocumentColors = adaptImportedDocumentColors
         self.interfaceLanguageRaw = interfaceLanguageRaw
