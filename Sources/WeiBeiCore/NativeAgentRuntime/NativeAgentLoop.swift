@@ -22,6 +22,7 @@ public actor NativeAgentLoop {
         model: String,
         hostToolHandler: StudyAgentHostToolHandler?,
         systemPrompt: String,
+        liveStores: NativeLiveStores = .empty,
         progress: StudyAgentProgressHandler?
     ) async throws -> NativeLoopResult {
         await progress?(.preparing)
@@ -44,7 +45,8 @@ public actor NativeAgentLoop {
             hostToolHandler: hostToolHandler,
             persistentAssetIDsByContextID: Dictionary(
                 uniqueKeysWithValues: request.courseContext.items.map { ($0.id, $0.id) }
-            )
+            ),
+            liveStores: liveStores
         )
         let scope = NativeToolScope.session(request.id.uuidString)
         var tools = await registry.resolved(scope: scope)

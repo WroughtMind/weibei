@@ -63,6 +63,7 @@ public struct NativeToolExecutionContext: Sendable {
     public var readSourceRevisions: [String: String]
     public var lastReadMemoryRevision: UInt64?
     public var courseProfileUpdated: Bool
+    public var liveStores: NativeLiveStores
 
     public init(
         request: StudyAgentRequest,
@@ -72,7 +73,8 @@ public struct NativeToolExecutionContext: Sendable {
         searchedItemIDs: Set<String> = [],
         readSourceRevisions: [String: String] = [:],
         lastReadMemoryRevision: UInt64? = nil,
-        courseProfileUpdated: Bool = false
+        courseProfileUpdated: Bool = false,
+        liveStores: NativeLiveStores = .empty
     ) {
         self.request = request
         self.mode = mode
@@ -82,6 +84,7 @@ public struct NativeToolExecutionContext: Sendable {
         self.readSourceRevisions = readSourceRevisions
         self.lastReadMemoryRevision = lastReadMemoryRevision
         self.courseProfileUpdated = courseProfileUpdated
+        self.liveStores = liveStores
     }
 }
 
@@ -157,6 +160,13 @@ public actor NativeToolRegistry {
         scope: NativeToolScope
     ) async throws -> NativeToolExecutionResult {
         try Task.checkCancellation()
+        var context = context
+        if let refresh = context.liveStores.learning {
+            context.request.learningContext = await refresh()
+        }
+        if let refresh = context.liveStores.profile {
+            context.request.courseProfile = await refresh()
+        }
         let tools = resolved(scope: scope)
         guard let tool = tools.first(where: { $0.name == request.name }) else {
             throw NativeLLMFailure(code: "unknown_tool", message: "tool \(request.name) is not registered")

@@ -4,6 +4,7 @@ public actor NativeStudyAgentRuntime: StudyAgentRuntime {
     public var model: String
     public var adapter: NativeLLMAdapter
     public var hostToolHandler: StudyAgentHostToolHandler?
+    public var liveStores: NativeLiveStores
     public var ledgerRoot: URL
     public var systemPromptText: String
 
@@ -16,13 +17,15 @@ public actor NativeStudyAgentRuntime: StudyAgentRuntime {
         adapter: NativeLLMAdapter,
         ledgerRoot: URL,
         systemPromptText: String,
-        hostToolHandler: StudyAgentHostToolHandler? = nil
+        hostToolHandler: StudyAgentHostToolHandler? = nil,
+        liveStores: NativeLiveStores = .empty
     ) {
         self.model = model
         self.adapter = adapter
         self.ledgerRoot = ledgerRoot
         self.systemPromptText = systemPromptText
         self.hostToolHandler = hostToolHandler
+        self.liveStores = liveStores
     }
 
     public func respond(
@@ -50,6 +53,7 @@ public actor NativeStudyAgentRuntime: StudyAgentRuntime {
                 model: model,
                 hostToolHandler: hostToolHandler,
                 systemPrompt: prompt,
+                liveStores: liveStores,
                 progress: progress
             )
             return StudyAgentReply(

@@ -105,6 +105,7 @@ private func checkCredentialFile() throws {
     }
     let store = NativeAgentCredentialStore(fileURL: url)
     try store.upsert(NativeAgentCredentialRecord(provider: "deepseek", apiKey: "sk-test"))
+    try store.upsert(NativeAgentCredentialRecord(provider: "deepseek", apiKey: "sk-test"))
     try nativeRequire(try store.posixPermissions() == 0o600, "credential file is 0600")
     try Data("{".utf8).write(to: url, options: .atomic)
     let restored = try store.load()

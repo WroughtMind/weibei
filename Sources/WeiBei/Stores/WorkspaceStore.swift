@@ -645,7 +645,7 @@ final class WorkspaceStore: ObservableObject {
     private var lastCourseHomeSearchRanOnMainThread: Bool?
     private var lastPortableAdoptionReadRanOnMainThread: Bool?
     private var lastCourseRebindRootSearchRanOnMainThread: Bool?
-    private let workspaceDirectory: URL
+    let workspaceDirectory: URL
     private let storageURL: URL
     let importedFileIdentityResolver: (URL) -> ImportedFileIdentity?
     let courseRootBookmarkMaker: (URL) -> Data?
@@ -669,7 +669,7 @@ final class WorkspaceStore: ObservableObject {
             () throws -> Void
         ) throws -> Void
     let selectionAskThreadDefaults: UserDefaults
-    private let piRuntime: PiAgentRuntime
+    let piRuntime: PiAgentRuntime
     let courseDocumentSearchIndex: CourseDocumentSearchIndex
     private var activeAgentRequestID: UUID?
     private var activeAgentReplyMessageID: UUID?
@@ -837,7 +837,7 @@ final class WorkspaceStore: ObservableObject {
         var sources: [AgentHostToolSource]
     }
 
-    private struct AgentConversationTarget: Sendable {
+    struct AgentConversationTarget: Sendable {
         var sessionID: UUID
         var workingDirectory: URL
         var courseID: UUID?
@@ -9661,7 +9661,7 @@ final class WorkspaceStore: ObservableObject {
         return true
     }
 
-    private func applySemanticSessionTitleAndSave(_ suggestion: String, to sessionID: UUID) async {
+    func applySemanticSessionTitleAndSave(_ suggestion: String, to sessionID: UUID) async {
         guard applySemanticSessionTitle(suggestion, to: sessionID) else { return }
         save()
         _ = await flushPendingWorkspaceSaveAsync()
@@ -15007,7 +15007,7 @@ final class WorkspaceStore: ObservableObject {
             )
     }
 
-    private func makeLearningContext(
+    func makeLearningContext(
         target: AgentConversationTarget
     ) -> StudyAgentLearningContext {
         let targetSession = studySessions.first { $0.id == target.sessionID }
@@ -16749,7 +16749,7 @@ final class WorkspaceStore: ObservableObject {
         agentStopTask?.cancel()
         agentStopTask = Task { @MainActor [weak self] in
             guard let self else { return }
-            await self.piRuntime.cancel()
+            await self.cancelStudyAgentRuntimes()
             await requestTask?.value
             self.isStoppingAgent = false
             self.agentStopTask = nil
@@ -16845,51 +16845,13 @@ final class WorkspaceStore: ObservableObject {
             )
         }
 #endif
-        let selectedModel = modelName.trimmingCharacters(in: .whitespacesAndNewlines)
-        let endpoint = try AgentProviderEndpoint(
+        return try await dispatchStudyAgentRequest(
+            request,
             provider: selectedProvider,
-            baseURL: agentBaseURL
+            target: target,
+            replyMessageID: replyMessageID,
+            hostToolHandler: hostToolHandler
         )
-        if selectedProvider == .azureOpenAI {
-            let credentialIsBound = try await piRuntime.managementCatalog()
-                .credentials
-                .contains {
-                    $0.providerId == endpoint.piProviderID
-                        && $0.type == .apiKey
-                        && $0.boundEndpoint == endpoint.baseURL
-                }
-            guard credentialIsBound else {
-                throw AgentProviderEndpointError.azureCredentialRequiresReentry
-            }
-        }
-        await piRuntime.configure(
-            PiAgentProviderConfiguration(
-                provider: endpoint.piProviderID,
-                model: selectedModel.isEmpty ? nil : selectedModel,
-                baseURL: endpoint.baseURL
-            )
-        )
-        try await piRuntime.writeCustomModelsJSONIfNeeded(
-            providerID: selectedProvider,
-            baseURL: endpoint.baseURL ?? "",
-            model: selectedModel
-        )
-        return try await piRuntime.respond(
-            to: request,
-            sessionID: target.sessionID,
-            workingDirectory: target.workingDirectory,
-            hostToolHandler: hostToolHandler,
-            sessionTitleHandler: { [weak self] title in
-                await self?.applySemanticSessionTitleAndSave(title, to: target.sessionID)
-            }
-        ) { [weak self] progress in
-            await self?.applyAgentProgress(
-                progress,
-                requestID: request.id,
-                replyMessageID: replyMessageID,
-                chatID: target.sessionID
-            )
-        }
     }
 
     func shutdownAgentRuntime() {
@@ -16911,7 +16873,7 @@ final class WorkspaceStore: ObservableObject {
         )
     }
 
-    private func applyAgentProgress(
+    func applyAgentProgress(
         _ progress: StudyAgentProgress,
         requestID: UUID,
         replyMessageID: UUID,

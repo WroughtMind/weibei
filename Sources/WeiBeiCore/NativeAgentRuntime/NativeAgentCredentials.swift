@@ -100,6 +100,20 @@ public struct NativeAgentCredentialStore: Sendable {
         try save(records)
     }
 
+    public static func apiKey(forProviderID id: String) throws -> String? {
+        if let owned = try defaultStore().load()[id]?.apiKey, !owned.isEmpty {
+            return owned
+        }
+        let url = WeiBeiAgentDataPaths.piAgentDirectory.appendingPathComponent("auth.json")
+        guard FileManager.default.fileExists(atPath: url.path) else { return nil }
+        let object = try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any]
+        let section = object?[id] as? [String: Any]
+        if let key = section?["key"] as? String, !key.isEmpty {
+            return key
+        }
+        return nil
+    }
+
     public func posixPermissions() throws -> Int {
         let attributes = try FileManager.default.attributesOfItem(atPath: fileURL.path)
         let raw = attributes[.posixPermissions] as? NSNumber

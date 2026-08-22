@@ -39,6 +39,7 @@ final class NativeAgentRuntimeTests: XCTestCase {
         }
         let store = NativeAgentCredentialStore(fileURL: url)
         try store.upsert(NativeAgentCredentialRecord(provider: "deepseek", apiKey: "sk-test"))
+        try store.upsert(NativeAgentCredentialRecord(provider: "deepseek", apiKey: "sk-test"))
         XCTAssertEqual(try store.posixPermissions(), 0o600)
         try Data("{".utf8).write(to: url, options: .atomic)
         XCTAssertEqual(try store.load()["deepseek"]?.apiKey, "sk-test")
