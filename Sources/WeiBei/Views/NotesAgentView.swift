@@ -902,6 +902,7 @@ struct MarkdownPreviewView: View {
     private static let compactPreviewMaximumHeight: CGFloat = 20_000
 
     var onMeasuredHeight: (CGFloat) -> Void = { _ in }
+    @Environment(\.weibeiReduceMotion) private var reduceMotion
     @State private var command: NoteEditorCommand?
     @State private var contentHeight: CGFloat = Self.compactPreviewLoadingHeight
     @State private var heightFrozen = false
@@ -909,6 +910,21 @@ struct MarkdownPreviewView: View {
     @State private var maxObservedMeasuredHeight: CGFloat = 0
     @State private var lastLayoutWidthKey = 0
     @State private var lastChatWideTypography = false
+
+    /// Post-streaming height corrections ease instead of snapping: the finalized
+    /// snapshot and the async re-measures that follow (KaTeX, fonts) can land
+    /// tens of points from the last streamed height, and an instant frame
+    /// change read as the row visibly jumping at completion. Streaming keeps
+    /// the instant gated cadence so growth still tracks the token flow.
+    private func applySettledHeight(_ next: CGFloat) {
+        if reduceMotion || streamsMarkdownUpdates {
+            contentHeight = next
+        } else {
+            withAnimation(WeiBeiMotion.micro) {
+                contentHeight = next
+            }
+        }
+    }
 
     var body: some View {
         RichMarkdownEditorView(
@@ -984,7 +1000,7 @@ struct MarkdownPreviewView: View {
                     )
                     return
                 }
-                contentHeight = nextFrameHeight
+                applySettledHeight(nextFrameHeight)
                 // Do NOT freeze on a fresh accept: KaTeX displayMode re-layout
                 // and font loading can still grow the content. Freeze happens
                 // in the jitter branch above once two consecutive measures
@@ -1020,7 +1036,7 @@ struct MarkdownPreviewView: View {
                 )
                 heightFrozen = false
                 acceptedMeasureCount = 0
-                contentHeight = nextFrameHeight
+                applySettledHeight(nextFrameHeight)
                 maxObservedMeasuredHeight = nextFrameHeight
                 onMeasuredHeight(measuredHeight)
                 onContentHeightChange()
@@ -5034,10 +5050,10 @@ private struct AgentThinkingIndicator: View {
     @EnvironmentObject private var store: WorkspaceStore
     var activityText: String?
     /// Match the answer text that follows this indicator in the same surface:
-    /// main conversation rows are chat-wide 16pt (17pt when narrow), the
-    /// selection float is compact 14pt — the same bases as the Milkdown
-    /// `.ProseMirror` CSS, so the status word never reads larger or smaller
-    /// than the reply it precedes.
+    /// every hosting surface renders the reply in a compact Milkdown preview
+    /// (14pt base), lifted to 16pt only by the chat-wide attribute — the
+    /// selection float and narrow conversation columns both stay at 14pt,
+    /// which is exactly what the `.ProseMirror` CSS shows next to this word.
     var chatWideTypography = false
     var compact = false
     @Environment(\.weibeiReduceMotion) private var reduceMotion
@@ -5050,15 +5066,17 @@ private struct AgentThinkingIndicator: View {
 
     private static let minimumStatusHold: TimeInterval = 0.6
 
-    /// Answer-text bases in pt, mirroring `.ProseMirror` in Editor/index.html
-    /// (17 base / 16 chat-wide / 14 compact preview). ⌘± changes the text tier,
-    /// so the status word must scale with it exactly like the reply text.
-    private static let answerBaseFontSize: CGFloat = 17
+    /// Answer-text bases in pt, mirroring `.ProseMirror` in Editor/index.html.
+    /// The reply WebView is always a compact preview (14), raised to 16 by
+    /// `data-weibei-chat-wide`; the 17 non-compact base never applies here —
+    /// using it made the word read 3pt larger than the reply in narrow
+    /// conversation columns once the 520pt window minimum made those common.
+    /// ⌘± changes the text tier, so the status word must scale with it
+    /// exactly like the reply text.
     private static let chatWideFontSize: CGFloat = 16
     private static let compactFontSize: CGFloat = 14
     private var baseFontSize: CGFloat {
-        compact ? Self.compactFontSize
-            : (chatWideTypography ? Self.chatWideFontSize : Self.answerBaseFontSize)
+        chatWideTypography && !compact ? Self.chatWideFontSize : Self.compactFontSize
     }
     /// Single source for measure + line box + AppKit painting. Drawing at a
     /// different size than the measured width is what made the orbit sit far
