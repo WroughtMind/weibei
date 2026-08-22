@@ -496,10 +496,10 @@ private struct ContentRailPreviewCard: View {
         .frame(width: width, alignment: .leading)
         .background(WeiBeiTheme.paperRaised)
         .overlay {
-            RoundedRectangle(cornerRadius: 6, style: .continuous)
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .stroke(WeiBeiTheme.hairline.opacity(0.82), lineWidth: 1)
         }
-        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         .shadow(color: WeiBeiTheme.ink.opacity(appearanceMode.isDark ? 0.22 : 0.08), radius: 8, y: 4)
         .accessibilityHidden(true)
     }

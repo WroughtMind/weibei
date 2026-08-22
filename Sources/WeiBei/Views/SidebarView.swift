@@ -697,7 +697,7 @@ private struct SidebarAddMenuButtonBody: View {
             .frame(width: 28, height: 28)
             .background {
                 WeiBeiEtchedBackdrop(
-                    shape: RoundedRectangle(cornerRadius: 7, style: .continuous),
+                    shape: RoundedRectangle(cornerRadius: 8, style: .continuous),
                     fill: WeiBeiTheme.paperInset.opacity(highlighted ? 0.42 : 0.18),
                     stroke: WeiBeiTheme.hairline.opacity(highlighted ? 0.62 : 0.42)
                 )
@@ -805,7 +805,7 @@ private struct NotebookRenameRow: View {
         .frame(height: compact ? 38 : 48)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(WeiBeiTheme.paperInset.opacity(selected ? 0.74 : 0.44))
-        .clipShape(RoundedRectangle(cornerRadius: compact ? 6 : 8, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         .onAppear { focused = true }
     }
 }
@@ -850,7 +850,7 @@ private struct LibraryRow: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background { rowBackdrop }
         .offset(x: selected || hovering ? (compact ? 1 : 2) : 0)
-        .clipShape(RoundedRectangle(cornerRadius: compact ? 6 : 8, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         .overlay(alignment: .leading) {
             if selected {
                 Capsule()
@@ -868,13 +868,13 @@ private struct LibraryRow: View {
     private var rowBackdrop: some View {
         if selected {
             WeiBeiEtchedBackdrop(
-                shape: RoundedRectangle(cornerRadius: compact ? 6 : 8, style: .continuous),
+                shape: RoundedRectangle(cornerRadius: 8, style: .continuous),
                 fill: WeiBeiTheme.paperInset.opacity(compact ? 0.54 : 0.70),
                 stroke: WeiBeiTheme.hairline.opacity(0.40)
             )
         } else if hovering {
             WeiBeiEtchedBackdrop(
-                shape: RoundedRectangle(cornerRadius: compact ? 6 : 8, style: .continuous),
+                shape: RoundedRectangle(cornerRadius: 8, style: .continuous),
                 fill: WeiBeiTheme.paperInset.opacity(compact ? 0.22 : 0.30),
                 stroke: WeiBeiTheme.hairline.opacity(0.30)
             )

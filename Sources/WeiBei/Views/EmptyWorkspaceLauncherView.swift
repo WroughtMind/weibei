@@ -650,12 +650,12 @@ private struct LibraryPlacementNoticeCard: View {
             .frame(maxWidth: .infinity)
             .background {
                 WeiBeiEtchedBackdrop(
-                    shape: RoundedRectangle(cornerRadius: 7, style: .continuous),
+                    shape: RoundedRectangle(cornerRadius: 8, style: .continuous),
                     fill: WeiBeiTheme.paperInset.opacity(0.32),
                     stroke: WeiBeiTheme.hairline.opacity(0.45)
                 )
             }
-            .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
 
             if let relocationErrorText {
                 Text(relocationErrorText)

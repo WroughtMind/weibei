@@ -424,7 +424,7 @@ private struct TextAlignmentSceneView: View {
                     .padding(.horizontal, 8)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .background(selectedObjectID == object.id ? WeiBeiTheme.cinnabarSoft.opacity(0.52) : Color.clear)
-                    .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                 }
                 .buttonStyle(.plain)
             }
@@ -853,7 +853,7 @@ private struct RelationEvidenceSceneView: View {
             .weibeiEtchedBackground(
                 fill: WeiBeiTheme.paperInset.opacity(0.22),
                 stroke: WeiBeiTheme.hairline.opacity(0.26),
-                cornerRadius: 7
+                cornerRadius: 8
             )
         }
     }
@@ -2160,12 +2160,12 @@ private extension View {
         self
             .background {
                 WeiBeiEtchedBackdrop(
-                    shape: RoundedRectangle(cornerRadius: 5, style: .continuous),
+                    shape: RoundedRectangle(cornerRadius: 4, style: .continuous),
                     fill: WeiBeiTheme.paperInset.opacity(0.11),
                     stroke: WeiBeiTheme.hairline.opacity(0.42)
                 )
             }
-            .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
     }
 
     func operationControlSurface() -> some View {
@@ -2175,7 +2175,7 @@ private extension View {
             .weibeiEtchedBackground(
                 fill: WeiBeiTheme.paperRaised.opacity(0.38),
                 stroke: WeiBeiTheme.hairline.opacity(0.32),
-                cornerRadius: 7,
+                cornerRadius: 8,
                 contactShadow: true
             )
     }

@@ -996,7 +996,7 @@ enum WeiBeiNativePalette {
 enum WeiBeiMetric {
     static let iconButton: CGFloat = 26
     static let inputHeight: CGFloat = 30
-    static let controlRadius: CGFloat = 7
+    static let controlRadius: CGFloat = 8
     static let topBarHeight: CGFloat = 36
 }
 
@@ -1105,10 +1105,10 @@ struct AppearanceThemePaletteButton: View {
         Button {
             isPresented.toggle()
         } label: {
-            RoundedRectangle(cornerRadius: 5, style: .continuous)
+            RoundedRectangle(cornerRadius: 4, style: .continuous)
                 .fill(Color(nsColor: WeiBeiNativePalette.paper(for: store.appearanceMode)))
                 .overlay {
-                    RoundedRectangle(cornerRadius: 5, style: .continuous)
+                    RoundedRectangle(cornerRadius: 4, style: .continuous)
                         .stroke(WeiBeiTheme.hairline.opacity(0.85), lineWidth: 1)
                 }
                 .frame(width: 18, height: 18)
@@ -1285,10 +1285,10 @@ struct WeiBeiThemeLayoutPreview: View {
             chatBubble(alignment: .leading, fill: inset.opacity(0.95), width: 0.88)
             chatBubble(alignment: .leading, fill: inset.opacity(0.80), width: 0.64)
             Spacer(minLength: 0)
-            RoundedRectangle(cornerRadius: 3, style: .continuous)
+            RoundedRectangle(cornerRadius: 4, style: .continuous)
                 .stroke(hairline.opacity(0.55), lineWidth: 1)
                 .background(
-                    RoundedRectangle(cornerRadius: 3, style: .continuous)
+                    RoundedRectangle(cornerRadius: 4, style: .continuous)
                         .fill(raised.opacity(0.55))
                 )
                 .frame(height: 8)
@@ -1348,7 +1348,7 @@ struct WeiBeiThemeLayoutPreview: View {
     private func chatBubble(alignment: HorizontalAlignment, fill: Color, width fraction: CGFloat) -> some View {
         HStack {
             if alignment == .trailing { Spacer(minLength: 0) }
-            RoundedRectangle(cornerRadius: 3, style: .continuous)
+            RoundedRectangle(cornerRadius: 4, style: .continuous)
                 .fill(fill)
                 .frame(height: 7)
                 .frame(maxWidth: .infinity)
@@ -1714,7 +1714,7 @@ struct WeiBeiTextActionButtonStyle: ButtonStyle {
             .padding(.horizontal, 8)
             .frame(height: 24)
             .background(background(isPressed: configuration.isPressed))
-            .clipShape(RoundedRectangle(cornerRadius: 6))
+            .clipShape(RoundedRectangle(cornerRadius: 8))
             .scaleEffect(configuration.isPressed ? 0.98 : 1)
             .animation(WeiBeiMotion.press, value: configuration.isPressed)
     }

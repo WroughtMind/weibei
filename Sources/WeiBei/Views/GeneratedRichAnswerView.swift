@@ -613,9 +613,9 @@ private struct GeneratedRichAnswerCanvas: View {
         }
         .frame(height: canvasHeight)
         .background(WeiBeiTheme.paperInset.opacity(0.10))
-        .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
         .overlay {
-            RoundedRectangle(cornerRadius: 5, style: .continuous)
+            RoundedRectangle(cornerRadius: 4, style: .continuous)
                 .stroke(WeiBeiTheme.hairline.opacity(0.42), lineWidth: 1)
         }
         .accessibilityLabel(canvasAccessibilityLabel)

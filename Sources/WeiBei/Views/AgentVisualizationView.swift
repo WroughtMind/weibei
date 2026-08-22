@@ -42,9 +42,9 @@ struct AgentVisualizationView: View {
                 Color.clear.frame(height: max(contentHeight, 120))
             }
         }
-        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         .overlay {
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .stroke(WeiBeiTheme.hairline.opacity(0.58), lineWidth: 1)
         }
         .onAppear { webViewAttached = true }

@@ -93,7 +93,7 @@ struct ImmersiveHoverTitleView<Actions: View>: View {
                 .frame(height: 34)
                 .background {
                     WeiBeiEtchedBackdrop(
-                        shape: RoundedRectangle(cornerRadius: 7, style: .continuous),
+                        shape: RoundedRectangle(cornerRadius: 8, style: .continuous),
                         fill: WeiBeiTheme.paperRaised.opacity(appearanceMode.isDark ? 0.88 : 0.92),
                         stroke: WeiBeiTheme.hairline.opacity(appearanceMode.isDark ? 0.42 : 0.48),
                         showsContactShadow: true
@@ -837,9 +837,9 @@ struct ReaderView: View {
         .weibeiEtchedBackground(
             fill: WeiBeiTheme.paperRaised.opacity(0.34),
             stroke: WeiBeiTheme.hairline.opacity(0.24),
-            cornerRadius: 7
+            cornerRadius: 8
         )
-        .clipShape(RoundedRectangle(cornerRadius: 7))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
         .allowsHitTesting(false)
     }
 
@@ -914,10 +914,10 @@ struct ReaderView: View {
             .weibeiEtchedBackground(
                 fill: WeiBeiTheme.paperInset.opacity(pdfControlsActive ? 0.16 : 0.08),
                 stroke: WeiBeiTheme.hairline.opacity(pdfControlsActive ? 0.58 : 0.18),
-                cornerRadius: 6
+                cornerRadius: 8
             )
-            .contentShape(RoundedRectangle(cornerRadius: 6))
-            .clipShape(RoundedRectangle(cornerRadius: 6))
+            .contentShape(RoundedRectangle(cornerRadius: 8))
+            .clipShape(RoundedRectangle(cornerRadius: 8))
             .animation(WeiBeiMotion.micro, value: showsPDFModeLabel)
         }
         .accessibilityLabel(Text(store.ui("切换 PDF 浏览方式，当前\(pdfBrowseMode.label(language: store.interfaceLanguage))", "Switch PDF browsing mode. Current: \(pdfBrowseMode.label(language: store.interfaceLanguage))")))
@@ -3585,9 +3585,9 @@ struct ContextualContentPicker: View {
             .weibeiEtchedBackground(
                 fill: WeiBeiTheme.paperRaised.opacity(0.58),
                 stroke: WeiBeiTheme.hairline.opacity(0.62),
-                cornerRadius: 14
+                cornerRadius: 16
             )
-            .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         }
         .buttonStyle(.plain)
         .contextMenu {

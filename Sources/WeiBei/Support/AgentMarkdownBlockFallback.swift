@@ -29,7 +29,7 @@ struct AgentMarkdownBlockFallback: View {
     @State private var parsedCache: (text: String, blocks: [Block])?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: compact ? 6 : 8) {
+        VStack(alignment: .leading, spacing: 8) {
             ForEach(blocks) { block in
                 view(for: block)
             }
@@ -103,7 +103,7 @@ struct AgentMarkdownBlockFallback: View {
             .padding(.horizontal, 9)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(WeiBeiTheme.paperInset.opacity(0.6))
-            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         case .quote:
             HStack(alignment: .top, spacing: 8) {
                 RoundedRectangle(cornerRadius: 1.2, style: .continuous)
