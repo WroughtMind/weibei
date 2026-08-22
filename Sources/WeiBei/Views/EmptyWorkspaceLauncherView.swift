@@ -23,6 +23,7 @@ struct EmptyWorkspaceLauncherView: View {
     @State private var selectedInspirationID: String?
     /// Bumped on theme change so a long-lived NSHostingView cannot keep a stale paper snapshot.
     @State private var appearanceEpoch = 0
+    @State private var showsLibraryPlacementGuide = false
 
     private var liveAppearanceMode: WeiBeiAppearanceMode { store.appearanceMode }
 
@@ -32,7 +33,7 @@ struct EmptyWorkspaceLauncherView: View {
                 let compact = geometry.size.width < EmptyWorkspaceLayoutMetrics.compactWidthThreshold
                     || geometry.size.height < EmptyWorkspaceLayoutMetrics.compactHeightThreshold
                 let horizontalPadding: CGFloat = compact ? 24 : 52
-                let entryWidth = min(116, max(76, (geometry.size.width - (horizontalPadding * 2) - 2) / 3))
+                let entryWidth = min(116, max(66, (geometry.size.width - (horizontalPadding * 2) - 3) / 4))
                 let inspirationSlotHeight = compact
                     ? EmptyWorkspaceLayoutMetrics.compactInspirationSlotHeight
                     : EmptyWorkspaceLayoutMetrics.inspirationSlotHeight
@@ -87,6 +88,9 @@ struct EmptyWorkspaceLauncherView: View {
         // twice per switch and made the empty board lag the rest of the chrome.
         .onChange(of: store.appearanceMode) { _, _ in
             appearanceEpoch &+= 1
+        }
+        .sheet(isPresented: $showsLibraryPlacementGuide) {
+            LibraryPlacementGuideSheet()
         }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("empty-workspace-launcher")
@@ -174,7 +178,10 @@ struct EmptyWorkspaceLauncherView: View {
     private func entryCluster(at date: Date, compact: Bool, spacing: CGFloat, entryWidth: CGFloat) -> some View {
         VStack(spacing: spacing) {
             greeting(at: date, compact: compact)
-            EmptyWorkspaceEntryRow(entryWidth: entryWidth)
+            EmptyWorkspaceEntryRow(
+                entryWidth: entryWidth,
+                onImport: { showsLibraryPlacementGuide = true }
+            )
         }
     }
 
@@ -274,6 +281,7 @@ private struct EmptyWorkspaceEntryRow: View {
     @EnvironmentObject private var store: WorkspaceStore
     @Environment(\.weiBeiTextScale) private var textScale
     let entryWidth: CGFloat
+    let onImport: () -> Void
 
     var body: some View {
         HStack(spacing: 0) {
@@ -303,6 +311,16 @@ private struct EmptyWorkspaceEntryRow: View {
                 identifier: "empty-workspace-entry-notes",
                 width: entryWidth,
                 action: store.toggleNotes
+            )
+
+            entryDivider
+
+            EmptyWorkspaceEntryButton(
+                title: "IMPORT",
+                accessibilityLabel: store.ui("导入资料", "Import materials"),
+                identifier: "empty-workspace-entry-import",
+                width: entryWidth,
+                action: onImport
             )
         }
         .fixedSize(horizontal: true, vertical: false)
@@ -340,6 +358,8 @@ private struct EmptyWorkspaceEntryButton: View {
                     .tracking((active ? 3.5 : 2.2) * textScale)
                     .foregroundStyle(active ? WeiBeiTheme.ink : WeiBeiTheme.secondaryInk.opacity(0.88))
                     .offset(y: active && !reduceMotion ? -2.5 * textScale : 0)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.62)
 
                 ZStack {
                     Rectangle()
@@ -601,5 +621,123 @@ enum EmptyWorkspaceCalligraphyResource {
             ?? bundle.url(forResource: name, withExtension: "png")
         guard let url else { return nil }
         return NSImage(contentsOf: url)
+    }
+}
+
+/// First import guide: before any material arrives there is no course space yet,
+/// so the entry explains where the library lives, offers the default path, and
+/// lets the user relocate it before the import panel opens.
+private struct LibraryPlacementGuideSheet: View {
+    @EnvironmentObject private var store: WorkspaceStore
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var isRelocating = false
+    @State private var relocationErrorText: String?
+
+    private var libraryPath: String {
+        store.courseLibraryRootPath ?? CourseLibraryLayout.defaultRootURL().path
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text(store.ui("安放课程资料库", "Place your course library"))
+                .weiBeiText(17, weight: .semibold, design: .serif)
+                .foregroundStyle(WeiBeiTheme.ink)
+
+            Text(store.ui(
+                "课程、资料与笔记都会保存在这个文件夹里。先确认它的位置，之后随时可以在设置中更改。",
+                "Courses, materials, and notes live in this folder. Confirm where it goes — you can move it later in Settings."
+            ))
+            .weiBeiText(12.5)
+            .foregroundStyle(WeiBeiTheme.secondaryInk)
+            .fixedSize(horizontal: false, vertical: true)
+
+            HStack(spacing: 8) {
+                Image(systemName: "folder")
+                    .weiBeiText(12, weight: .medium)
+                    .foregroundStyle(WeiBeiTheme.tertiaryInk)
+                Text(libraryPath)
+                    .weiBeiText(11.5, weight: .medium)
+                    .foregroundStyle(WeiBeiTheme.ink)
+                    .lineLimit(2)
+                    .truncationMode(.middle)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 9)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(WeiBeiTheme.paperRaised.opacity(0.6))
+            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+
+            if let relocationErrorText {
+                Text(relocationErrorText)
+                    .weiBeiText(11.5)
+                    .foregroundStyle(WeiBeiTheme.cinnabar)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            if isRelocating {
+                ProgressView()
+                    .progressViewStyle(.linear)
+            }
+
+            HStack(spacing: 10) {
+                Button {
+                    relocateLibrary()
+                } label: {
+                    Text(store.ui("换个位置…", "Choose Another Location…"))
+                        .weiBeiText(12, weight: .medium)
+                }
+                .buttonStyle(.bordered)
+                .disabled(isRelocating)
+
+                Spacer(minLength: 12)
+
+                Button {
+                    startImport()
+                } label: {
+                    Text(store.ui("就在这里，开始导入", "Import Here"))
+                        .weiBeiText(12.5, weight: .semibold)
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(isRelocating)
+            }
+        }
+        .frame(width: 430)
+        .padding(20)
+        .background(WeiBeiTheme.paper)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("library-placement-guide")
+    }
+
+    private func startImport() {
+        dismiss()
+        store.importCourseMaterialsFromPanel()
+    }
+
+    private func relocateLibrary() {
+        relocationErrorText = nil
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.canCreateDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.prompt = store.ui("选择", "Choose")
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        isRelocating = true
+        Task { @MainActor in
+            do {
+                _ = try await store.migrateLibrary(to: url.standardizedFileURL)
+                startImport()
+            } catch CourseProjectRootError.destinationIsLibrary {
+                relocationErrorText = store.ui(
+                    "所选位置已经是一个魏碑资料库，请选择其他空文件夹。",
+                    "That location is already a WeiBei library. Choose an empty folder instead."
+                )
+            } catch {
+                relocationErrorText = error.localizedDescription
+            }
+            isRelocating = false
+        }
     }
 }
