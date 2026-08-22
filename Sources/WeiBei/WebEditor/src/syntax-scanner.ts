@@ -43,6 +43,31 @@ const collectMarkerOccurrences = (text: string, marker: string) => {
   return occurrences;
 };
 
+/**
+ * Complete literal inline-math spans (`$x^2$` sitting in a textblock as plain
+ * text), paired by the same rules as the pending scanner. Used by the editor to
+ * convert pre-typed pairs once the caret leaves them — typing the closing `$`
+ * at line end is not the only way to finish a formula.
+ */
+export const findCompleteInlineMathSpans = (text: string): Array<{ from: number; to: number; source: string }> => {
+  const source = String(text || '');
+  const consumed = new Set<number>();
+  // `$$` runs stay out of inline pairing.
+  for (const index of collectMarkerOccurrences(source, '$$')) {
+    consumed.add(index);
+    consumed.add(index + 1);
+  }
+  const openers = collectSingleDollarOpeners(source, consumed);
+  const spans: Array<{ from: number; to: number; source: string }> = [];
+  for (let index = 0; index + 1 < openers.length; index += 2) {
+    const from = openers[index];
+    const to = openers[index + 1] + 1;
+    const payload = source.slice(from + 1, to - 1).trim();
+    if (payload) spans.push({ from, to, source: payload });
+  }
+  return spans;
+};
+
 const collectSingleDollarOpeners = (text: string, consumed: Set<number>) => {
   const occurrences: number[] = [];
   let index = text.indexOf('$');

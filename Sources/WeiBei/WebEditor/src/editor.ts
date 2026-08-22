@@ -3491,6 +3491,14 @@ if (WEIBEI_EDITOR_RUNTIME && window.weiBeiEditorCheckMode) {
   window.WeiBeiEditor.redoForCheck = () => editor.action((ctx) => redo(ctx.get(editorViewCtx).state, ctx.get(editorViewCtx).dispatch));
   window.WeiBeiEditor.selectFirstCodeBlockEndForCheck = () => editor.action((ctx) => { const view = ctx.get(editorViewCtx); let target: any = null; view.state.doc.descendants((node, pos) => { if (target !== null || node.type.name !== 'code_block') return true; target = pos + node.content.size + 1; return false; }); if (target === null) return false; view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, target))); view.focus(); return true; });
   window.WeiBeiEditor.selectDocumentEndForCheck = () => editor.action((ctx) => { const view = ctx.get(editorViewCtx); view.dispatch(view.state.tr.setSelection(Selection.atEnd(view.state.doc))); view.focus(); return true; });
+  window.WeiBeiEditor.setSelectionForCheck = (from: any, to: any) => editor.action((ctx) => {
+    const view = ctx.get(editorViewCtx);
+    const start = Math.max(0, Math.min(Number(from) || 0, view.state.doc.content.size));
+    const end = Math.min(Math.max(Number(to ?? start) || start, start), view.state.doc.content.size);
+    view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, start, end)));
+    view.focus();
+    return true;
+  });
   window.WeiBeiEditor.selectionForCheck = () => editor.action((ctx) => {
     const selection = ctx.get(editorViewCtx).state.selection;
     return { from: selection.from, to: selection.to, parent: selection.$from.parent.type.name, parentOffset: selection.$from.parentOffset };

@@ -1,8 +1,9 @@
 import { Plugin, PluginKey } from '@milkdown/kit/prose/state';
 import { Decoration, DecorationSet } from '@milkdown/kit/prose/view';
-import { findPendingSyntaxMarkers, PendingSyntaxKind } from './syntax-scanner';
+import { findCompleteInlineMathSpans, findPendingSyntaxMarkers, PendingSyntaxKind } from './syntax-scanner';
 
 const syntaxMarksKey = new PluginKey('weibeiSyntaxMarks');
+const mathCompletionKey = new PluginKey('weibeiInlineMathCompletion');
 
 const revealMarkCandidates: Array<{ typeNames: string[]; marker: string; kind: PendingSyntaxKind }> = [
   { typeNames: ['strong'], marker: '**', kind: 'bold' },
@@ -135,6 +136,34 @@ export const createSyntaxMarksPlugin = (deps: SyntaxMarksDeps): Plugin => {
 
   return new Plugin({
     key: syntaxMarksKey,
+    // Pre-typed `$…$` pairs stay literal while the caret edits inside them, then
+    // convert to a rendered atom once the caret leaves — the closing-`$`-at-line-end
+    // input rule is not the only way to finish a formula.
+    appendTransaction: (trs: readonly any[], _oldState: any, newState: any) => {
+      if (!deps.isEditable() || deps.isStreaming()) return null;
+      if (trs.some((tr: any) => tr.getMeta(mathCompletionKey))) return null;
+      const relevant = trs.some((tr: any) => tr.docChanged)
+        || trs.some((tr: any) => !tr.docChanged && !tr.getMeta(mathCompletionKey) && tr.selectionSet);
+      if (!relevant) return null;
+      const { $from } = newState.selection;
+      const block = $from.parent;
+      if (block.type.spec.code || !newState.schema.nodes.math_inline) return null;
+      const text = block.textBetween(0, block.content.size, '\n', '\n');
+      const blockStart = $from.start($from.depth);
+      const spans = findCompleteInlineMathSpans(text).filter((span) => {
+        const from = blockStart + span.from;
+        const to = blockStart + span.to;
+        return newState.selection.from < from || newState.selection.from >= to;
+      });
+      if (spans.length === 0) return null;
+      const tr = newState.tr;
+      for (const span of [...spans].reverse()) {
+        const node = newState.schema.nodes.math_inline.create(null, newState.schema.text(span.source));
+        tr.replaceWith(blockStart + span.from, blockStart + span.to, node);
+      }
+      tr.setMeta(mathCompletionKey, true);
+      return tr;
+    },
     view: () => ({
       update(view: any) {
         const landing = deps.mathLanding();
@@ -191,8 +220,10 @@ export const createSyntaxMarksPlugin = (deps: SyntaxMarksDeps): Plugin => {
           candidateTypes.push(mark.type);
         };
         for (const mark of selection.$from.marks() || []) collectType(mark);
-        for (const mark of selection.$from.nodeBefore?.marks || []) collectType(mark);
-        for (const mark of selection.$to.nodeAfter?.marks || []) collectType(mark);
+        for (const side of [selection.$from, selection.$to]) {
+          for (const mark of side.nodeBefore?.marks || []) collectType(mark);
+          for (const mark of side.nodeAfter?.marks || []) collectType(mark);
+        }
         for (const markType of candidateTypes) {
           const candidate = markCandidateFor(schemaMarks, markType, candidateCache);
           let run = markRunAround(doc, from, markType);
@@ -200,15 +231,17 @@ export const createSyntaxMarksPlugin = (deps: SyntaxMarksDeps): Plugin => {
             run = markRunAround(doc, selection.to, markType);
           }
           if (!run || run.to <= run.from) continue;
-          // Boundary positions show only the marker on the caret's side, so it
-          // reads as "at the edge" rather than "still trapped inside".
+          // Strictly inside, both markers show; at the LEFT edge only the opener
+          // (helps aiming on entry); at the RIGHT edge nothing — a close marker
+          // painting right of the caret read as "still trapped inside" and made
+          // exiting feel blocked.
           const rel = selection.$from.parentOffset;
           const relFrom = run.from - blockStart;
           const relTo = run.to - blockStart;
           if (rel < relTo) {
             decorations.push(markerDecoration(run.from, Math.min(run.from + 1, run.to), candidate.marker, candidate.kind, 'open'));
           }
-          if (rel > relFrom) {
+          if (relFrom < rel && rel < relTo) {
             decorations.push(markerDecoration(Math.max(run.to - 1, run.from), run.to, candidate.marker, candidate.kind, 'close'));
           }
         }

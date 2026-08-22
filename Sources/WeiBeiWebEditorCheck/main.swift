@@ -1801,14 +1801,21 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
           const convertedOnClose = editor.typeTextForCheck('**')
             && !document.querySelector('.weibei-syntax-pending')
             && !!document.querySelector('.ProseMirror strong');
-          const revealInsideStrong = !!document.querySelector('.weibei-syntax-mark[data-marker="**"]');
+          const cleanLandingAfterClose = !document.querySelector('.weibei-syntax-mark[data-marker="**"]');
+          const revealInsideStrong = (() => {
+            editor.setMarkdown('前**粗体**后');
+            editor.selectFirstTextForCheck('粗体');
+            return !!document.querySelector('.weibei-syntax-mark[data-marker="**"]');
+          })();
           const adjacentReveal = (() => {
             editor.setMarkdown('前**粗体**后');
             editor.selectFirstTextForCheck('前');
+            // Left edge shows the opener; the right edge shows nothing so the
+            // caret reads as cleanly outside (no "trapped" perception).
             const besideLeft = !!document.querySelector('.weibei-syntax-mark[data-marker="**"]');
             editor.selectFirstTextForCheck('后');
-            const besideRight = !!document.querySelector('.weibei-syntax-mark[data-marker="**"]');
-            return besideLeft && besideRight;
+            const rightEdgeClean = !document.querySelector('.weibei-syntax-mark-close[data-marker="**"]');
+            return besideLeft && rightEdgeClean;
           })();
           const arrowExitsRun = (() => {
             editor.setMarkdown('');
@@ -1819,6 +1826,19 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
             editor.typeTextForCheck('尾');
             return editor.getMarkdown().includes('**加粗**尾')
               && document.querySelector('.ProseMirror strong')?.textContent === '加粗';
+          })();
+          const prefilledMathRenders = (() => {
+            editor.setMarkdown('');
+            editor.insertMarkdown('\\n\\n{{WEIBEI_CURSOR}}');
+            if (!editor.typeTextForCheck('$$')) return false;
+            const caretAfterDollars = editor.selectionForCheck().from;
+            editor.setSelectionForCheck(caretAfterDollars - 1, caretAfterDollars - 1);
+            if (!editor.typeTextForCheck('a+b')) return false;
+            const literalWhileInside = !document.querySelector('.weibei-math-inline');
+            const beforeClosingDollar = editor.selectionForCheck().from;
+            editor.setSelectionForCheck(beforeClosingDollar + 1, beforeClosingDollar + 1);
+            const converted = !!document.querySelector('.weibei-math-inline[data-value="a+b"]');
+            return literalWhileInside && converted && editor.getMarkdown().includes('$a+b$');
           })();
           const mathTypingCursor = (() => {
             editor.setMarkdown('');
@@ -1851,7 +1871,7 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
           const mathAdjacent = !!document.querySelector('.weibei-math-adjacent');
           editor.selectFirstTextForCheck('结尾段落');
           const mathAdjacentCleared = !document.querySelector('.weibei-math-adjacent');
-          return { pendingWhileTyping, convertedOnClose, revealInsideStrong, adjacentReveal, arrowExitsRun, mathTypingCursor, emptyHeadingMarker, headingRevealed, quoteRevealed, mathAdjacent, mathAdjacentCleared };
+          return { pendingWhileTyping, convertedOnClose, cleanLandingAfterClose, revealInsideStrong, adjacentReveal, arrowExitsRun, prefilledMathRenders, mathTypingCursor, emptyHeadingMarker, headingRevealed, quoteRevealed, mathAdjacent, mathAdjacentCleared };
         })();
         """
         webView.evaluateJavaScript(script) { [weak self] value, error in
@@ -1864,8 +1884,10 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
                   result["pendingWhileTyping"] as? Bool == true,
                   result["convertedOnClose"] as? Bool == true,
                   result["revealInsideStrong"] as? Bool == true,
+                  result["cleanLandingAfterClose"] as? Bool == true,
                   result["adjacentReveal"] as? Bool == true,
                   result["arrowExitsRun"] as? Bool == true,
+                  result["prefilledMathRenders"] as? Bool == true,
                   result["mathTypingCursor"] as? Bool == true,
                   result["emptyHeadingMarker"] as? Bool == true,
                   result["headingRevealed"] as? Bool == true,
