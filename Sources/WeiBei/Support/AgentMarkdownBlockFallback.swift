@@ -56,12 +56,12 @@ struct AgentMarkdownBlockFallback: View {
         switch block.kind {
         case let .heading(level):
             Text(inline(AgentMarkdownBlockParser.headingBody(block.lines.first ?? "")))
-                .font(.system(size: headingFontSize(level), weight: .semibold))
+                .weiBeiText(headingFontSize(level), weight: .semibold)
                 .foregroundStyle(WeiBeiTheme.ink)
                 .fixedSize(horizontal: false, vertical: true)
         case .paragraph:
             Text(inline(block.lines.joined(separator: "\n")))
-                .font(.system(size: compact ? 13.2 : 15))
+                .weiBeiText(compact ? 13.2 : 15)
                 .lineSpacing(compact ? 4.2 : 5.2)
                 .foregroundStyle(WeiBeiTheme.ink)
                 .fixedSize(horizontal: false, vertical: true)
@@ -71,10 +71,10 @@ struct AgentMarkdownBlockFallback: View {
                 ForEach(Array(block.lines.enumerated()), id: \.offset) { index, rawLine in
                     HStack(alignment: .firstTextBaseline, spacing: 7) {
                         Text(ordered ? "\(index + 1)." : "•")
-                            .font(.system(size: compact ? 13.2 : 15))
+                            .weiBeiText(compact ? 13.2 : 15)
                             .foregroundStyle(WeiBeiTheme.ink.opacity(0.72))
                         Text(inline(AgentMarkdownBlockParser.listItemBody(rawLine)))
-                            .font(.system(size: compact ? 13.2 : 15))
+                            .weiBeiText(compact ? 13.2 : 15)
                             .lineSpacing(compact ? 3.6 : 4.4)
                             .foregroundStyle(WeiBeiTheme.ink)
                             .fixedSize(horizontal: false, vertical: true)
@@ -89,12 +89,12 @@ struct AgentMarkdownBlockFallback: View {
             VStack(alignment: .leading, spacing: 1.5) {
                 if let language, !language.isEmpty {
                     Text(language)
-                        .font(.system(size: 10.5, weight: .medium))
+                        .weiBeiText(10.5, weight: .medium)
                         .foregroundStyle(WeiBeiTheme.ink.opacity(0.55))
                 }
                 ForEach(Array(block.lines.enumerated()), id: \.offset) { _, line in
                     Text(line.isEmpty ? " " : line)
-                        .font(.system(size: compact ? 11.6 : 12.4, design: .monospaced))
+                        .weiBeiText(compact ? 11.6 : 12.4, design: .monospaced)
                         .foregroundStyle(WeiBeiTheme.ink.opacity(0.88))
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -110,7 +110,7 @@ struct AgentMarkdownBlockFallback: View {
                     .fill(WeiBeiTheme.cinnabar.opacity(0.6))
                     .frame(width: 2.5)
                 Text(inline(block.lines.map(AgentMarkdownBlockParser.quoteBody).joined(separator: "\n")))
-                    .font(.system(size: compact ? 13 : 14.6))
+                    .weiBeiText(compact ? 13 : 14.6)
                     .lineSpacing(compact ? 3.8 : 4.6)
                     .foregroundStyle(WeiBeiTheme.ink.opacity(0.86))
                     .fixedSize(horizontal: false, vertical: true)

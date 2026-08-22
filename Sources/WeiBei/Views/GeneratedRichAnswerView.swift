@@ -264,11 +264,11 @@ private struct GeneratedRichAnswerMetric: View {
         VStack(alignment: .leading, spacing: 2) {
             if let label = node.label {
                 Text(label)
-                    .font(.system(size: 10.5, weight: .medium))
+                    .weiBeiText(10.5, weight: .medium)
                     .foregroundStyle(WeiBeiTheme.secondaryInk)
             }
             Text(displayValue)
-                .font(.system(size: node.emphasis == .strong ? 22 : 18, weight: .semibold, design: .monospaced))
+                .weiBeiText(node.emphasis == .strong ? 22 : 18, weight: .semibold, design: .monospaced)
                 .foregroundStyle(generatedToneColor(node.tone))
             if let text = node.text, !text.isEmpty {
                 Text(text)
@@ -321,7 +321,7 @@ private struct GeneratedRichAnswerSequence: View {
             VStack(alignment: .leading, spacing: 8) {
                 if let label = node.label, !label.isEmpty {
                     Text(label)
-                        .font(.system(size: 10.5, weight: .semibold))
+                        .weiBeiText(10.5, weight: .semibold)
                         .foregroundStyle(generatedToneColor(node.tone))
                 }
                 ViewThatFits(in: .horizontal) {
@@ -356,7 +356,7 @@ private struct GeneratedRichAnswerSequence: View {
                         }
                         .frame(height: 18)
                         Text(row.label ?? "")
-                            .font(.system(size: 10.5, weight: isActive(row) ? .semibold : .regular))
+                            .weiBeiText(10.5, weight: isActive(row) ? .semibold : .regular)
                             .lineLimit(2)
                             .multilineTextAlignment(.center)
                             .foregroundStyle(isActive(row) ? WeiBeiTheme.cinnabar : WeiBeiTheme.ink)
@@ -384,7 +384,7 @@ private struct GeneratedRichAnswerSequence: View {
                         marker(index: index, row: row)
                             .padding(.top, 1)
                         Text(row.label ?? "")
-                            .font(.system(size: 11, weight: isActive(row) ? .semibold : .regular))
+                            .weiBeiText(11, weight: isActive(row) ? .semibold : .regular)
                             .foregroundStyle(isActive(row) ? WeiBeiTheme.cinnabar : WeiBeiTheme.ink)
                             .fixedSize(horizontal: false, vertical: true)
                     }
@@ -414,7 +414,7 @@ private struct GeneratedRichAnswerSequence: View {
                         .stroke(active ? WeiBeiTheme.cinnabar : WeiBeiTheme.hairline.opacity(0.74), lineWidth: 1)
                 }
             Text("\(index + 1)")
-                .font(.system(size: 8.5, weight: .semibold, design: .monospaced))
+                .weiBeiText(8.5, weight: .semibold, design: .monospaced)
                 .foregroundStyle(active ? WeiBeiTheme.onCinnabar : WeiBeiTheme.secondaryInk)
         }
         .frame(width: 18, height: 18)
@@ -455,11 +455,11 @@ private struct GeneratedRichAnswerControl: View {
                 VStack(alignment: .leading, spacing: 5) {
                     HStack(spacing: 8) {
                         Text(node.label ?? binding.label)
-                            .font(.system(size: 10.5, weight: .medium))
+                            .weiBeiText(10.5, weight: .medium)
                             .foregroundStyle(WeiBeiTheme.secondaryInk)
                         Spacer(minLength: 8)
                         Text(formattedValue(binding))
-                            .font(.system(size: 11.5, weight: .medium, design: .monospaced))
+                            .weiBeiText(11.5, weight: .medium, design: .monospaced)
                             .foregroundStyle(WeiBeiTheme.ink)
                     }
                     Slider(
@@ -484,15 +484,15 @@ private struct GeneratedRichAnswerControl: View {
                 )
                 .toggleStyle(.switch)
                 .controlSize(.small)
-                .font(.system(size: 11.5, weight: .medium))
+                .weiBeiText(11.5, weight: .medium)
                 .accessibilityIdentifier("rich-answer-control-\(node.id)-\(binding.id)")
             }
         case .select:
             HStack(spacing: 6) {
                 Image(systemName: "cursorarrow.click")
-                    .font(.system(size: 10, weight: .semibold))
+                    .weiBeiText(10, weight: .semibold)
                 Text(node.label ?? "点选图中元素")
-                    .font(.system(size: 10.5, weight: .medium))
+                    .weiBeiText(10.5, weight: .medium)
             }
             .foregroundStyle(WeiBeiTheme.secondaryInk)
             .accessibilityLabel(node.label ?? "点选图中元素")
@@ -560,9 +560,9 @@ private struct GeneratedRichAnswerEvidence: View {
             } label: {
                 HStack(spacing: 5) {
                     Image(systemName: "arrow.up.right")
-                        .font(.system(size: 8.5, weight: .semibold))
+                        .weiBeiText(8.5, weight: .semibold)
                     Text(item.sourceLabel)
-                        .font(.system(size: 10.5, weight: .medium))
+                        .weiBeiText(10.5, weight: .medium)
                         .lineLimit(1)
                 }
                 .foregroundStyle(WeiBeiTheme.secondaryInk)

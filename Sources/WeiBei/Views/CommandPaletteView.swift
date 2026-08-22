@@ -148,7 +148,7 @@ struct CommandPaletteView: View {
                         .textFieldStyle(.plain)
                         .foregroundColor(WeiBeiTheme.ink)
                         .focused($searchFocused)
-                        .font(WeiBeiTypography.brandFont(language: store.interfaceLanguage, size: 18, weight: .semibold))
+                        .weiBeiBrandFont(language: store.interfaceLanguage, size: 18, weight: .semibold)
                 }
                 .weibeiInputSurface(active: searchFocused, height: 36)
                 .padding(.horizontal, 12)
@@ -163,7 +163,7 @@ struct CommandPaletteView: View {
                         LazyVStack(spacing: 3) {
                             if filtered.isEmpty {
                                 Text(store.ui("没有匹配命令", "No matching commands"))
-                                    .font(.system(size: 13))
+                                    .weiBeiText(13)
                                     .foregroundStyle(WeiBeiTheme.tertiaryInk)
                                     .frame(maxWidth: .infinity, alignment: .leading)
                                     .padding(.horizontal, 14)
@@ -175,7 +175,7 @@ struct CommandPaletteView: View {
                                     } label: {
                                         HStack(spacing: 12) {
                                             Text(command.title)
-                                                .font(.system(size: 13, weight: .medium))
+                                                .weiBeiText(13, weight: .medium)
                                                 .lineLimit(1)
                                             Spacer()
                                             if !command.shortcut.isEmpty {
