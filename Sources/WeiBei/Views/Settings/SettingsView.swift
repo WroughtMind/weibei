@@ -767,8 +767,9 @@ struct SettingsView: View {
     }
 
     private var inspirationSourcesLedgerText: String {
-        let url = Bundle.module.url(forResource: "SOURCES", withExtension: "md", subdirectory: "Inspiration")
-            ?? Bundle.module.url(forResource: "SOURCES", withExtension: "md")
+        let bundle = WeiBeiResources.bundle
+        let url = bundle.url(forResource: "SOURCES", withExtension: "md", subdirectory: "Inspiration")
+            ?? bundle.url(forResource: "SOURCES", withExtension: "md")
         guard let url, let text = try? String(contentsOf: url, encoding: .utf8), !text.isEmpty else {
             return store.ui(
                 "台账文件缺失。完整台账见仓库 Sources/WeiBei/Resources/Inspiration/SOURCES.md。",
