@@ -902,7 +902,6 @@ struct MarkdownPreviewView: View {
     private static let compactPreviewMaximumHeight: CGFloat = 20_000
 
     var onMeasuredHeight: (CGFloat) -> Void = { _ in }
-    @Environment(\.weibeiReduceMotion) private var reduceMotion
     @State private var command: NoteEditorCommand?
     @State private var contentHeight: CGFloat = Self.compactPreviewLoadingHeight
     @State private var heightFrozen = false
@@ -914,21 +913,6 @@ struct MarkdownPreviewView: View {
     /// The web side de-duplicates identical height reports, so one swallowed
     /// during the gate would otherwise never arrive again.
     @State private var latestGatedHeight: CGFloat = 0
-
-    /// Post-streaming height corrections ease instead of snapping: the finalized
-    /// snapshot and the async re-measures that follow (KaTeX, fonts) can land
-    /// tens of points from the last streamed height, and an instant frame
-    /// change read as the row visibly jumping at completion. Streaming keeps
-    /// the instant gated cadence so growth still tracks the token flow.
-    private func applySettledHeight(_ next: CGFloat) {
-        if reduceMotion || streamsMarkdownUpdates {
-            contentHeight = next
-        } else {
-            withAnimation(WeiBeiMotion.micro) {
-                contentHeight = next
-            }
-        }
-    }
 
     var body: some View {
         RichMarkdownEditorView(
@@ -1010,7 +994,12 @@ struct MarkdownPreviewView: View {
                     )
                     return
                 }
-                applySettledHeight(nextFrameHeight)
+                // Instant apply: an eased frame lags the WebView content for the
+                // animation's duration and .clipped() cuts the last wrapped
+                // line mid-flight. Growth now arrives in streaming-sized steps
+                // (the web side types the completion tail out), so there is no
+                // large snap left to smooth.
+                contentHeight = nextFrameHeight
                 // Do NOT freeze on a fresh accept: KaTeX displayMode re-layout
                 // and font loading can still grow the content. Freeze happens
                 // in the jitter branch above once two consecutive measures
@@ -1051,7 +1040,7 @@ struct MarkdownPreviewView: View {
                 latestGatedHeight = 0
                 heightFrozen = false
                 acceptedMeasureCount = 0
-                applySettledHeight(settledHeight)
+                contentHeight = settledHeight
                 maxObservedMeasuredHeight = settledHeight
                 onMeasuredHeight(measuredHeight)
                 onContentHeightChange()
