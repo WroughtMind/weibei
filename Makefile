@@ -1,7 +1,7 @@
 # 魏碑开发入口（薄转发，只转发不复制逻辑；细节见各脚本与 README）
 # 用法：make <target>，或 make help 查看全部目标。
 
-.PHONY: help build run check package editor-build rich-answer-build genui-math-check perf-p95 pi-prepare release-community release-notarized clean
+.PHONY: help build run check package editor-build genui-math-check perf-p95 pi-prepare release-community release-notarized clean
 
 help: ## 列出全部目标与一句话说明（默认目标）
 	@echo "魏碑 Makefile 入口："
@@ -10,7 +10,6 @@ help: ## 列出全部目标与一句话说明（默认目标）
 	@echo "  make check               构建 + 全部自检（./script/build_and_run.sh check）"
 	@echo "  make package             生成 dist/魏碑.app 候选包（./script/build_and_run.sh package）"
 	@echo "  make editor-build        esbuild 构建 Web 编辑器（npm run build:editor）"
-	@echo "  make rich-answer-build   构建并嵌入富回答运行时（npm -w Prototypes/RichAnswerWebRuntime run build:embed）"
 	@echo "  make genui-math-check    校验 GenUI 安全数学表达式运行时（npx tsx script/check-genui-math.ts）"
 	@echo "  make perf-p95            p95 性能解析，用法：make perf-p95 LOG=<perf-log> METRIC=<metric-name>"
 	@echo "  make pi-prepare          准备 Pi 运行时（./script/prepare_pi_runtime.sh）"
@@ -32,10 +31,6 @@ package: ## 生成 dist/魏碑.app 候选包
 
 editor-build: ## esbuild 构建 Web 编辑器
 	npm run build:editor
-
-rich-answer-build: ## 构建并嵌入富回答运行时
-	npm -w Prototypes/RichAnswerWebRuntime run build:embed
-
 genui-math-check: ## 校验 GenUI 安全数学表达式运行时
 	npx tsx script/check-genui-math.ts
 

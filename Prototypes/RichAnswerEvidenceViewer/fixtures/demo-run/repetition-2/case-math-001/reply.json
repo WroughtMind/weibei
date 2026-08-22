@@ -1,5 +1,0 @@
-{
-  "backend": "mock-backend",
-  "text": "修正版答复，优化了滑杆灵敏度，交互体验更流畅。",
-  "richAnswer": { "canvas": "canvas-graph", "nodes": [1,2,3,4] }
-}

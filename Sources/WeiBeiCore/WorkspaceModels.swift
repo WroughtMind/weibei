@@ -1678,7 +1678,6 @@ public struct AgentMessage: Identifiable, Codable, Hashable, Sendable {
     public var contentBlocks: [AgentMessageContentBlock]
     public var source: String?
     public var backend: StudyAgentBackend?
-    public var richAnswer: RichAnswerPresentation?
     public var completionState: AgentReplyCompletionState
     public var sources: [AgentReplySource]
     public var actions: [AgentReplyAction]
@@ -1696,7 +1695,6 @@ public struct AgentMessage: Identifiable, Codable, Hashable, Sendable {
         contentBlocks: [AgentMessageContentBlock] = [],
         source: String?,
         backend: StudyAgentBackend? = nil,
-        richAnswer: RichAnswerPresentation? = nil,
         completionState: AgentReplyCompletionState = .completed,
         sources: [AgentReplySource] = [],
         actions: [AgentReplyAction] = [],
@@ -1713,9 +1711,6 @@ public struct AgentMessage: Identifiable, Codable, Hashable, Sendable {
         self.contentBlocks = contentBlocks
         self.source = source
         self.backend = backend
-        self.richAnswer = richAnswer.map {
-            RichAnswerEngine.admit(presentation: $0)
-        }
         self.completionState = completionState
         self.sources = sources
         self.actions = actions
@@ -1734,7 +1729,6 @@ public struct AgentMessage: Identifiable, Codable, Hashable, Sendable {
         case contentBlocks
         case source
         case backend
-        case richAnswer
         case completionState
         case sources
         case actions
@@ -1784,19 +1778,6 @@ public struct AgentMessage: Identifiable, Codable, Hashable, Sendable {
             forKey: .backend,
             marker: "reply-backend:decode-failed"
         )
-        let decodedRichAnswer: RichAnswerPresentation?
-        do {
-            decodedRichAnswer = try container.decodeIfPresent(
-                RichAnswerPresentation.self,
-                forKey: .richAnswer
-            )
-        } catch {
-            decodedRichAnswer = nil
-            decodedToolTrace.append("rich-answer:decode-failed")
-        }
-        richAnswer = decodedRichAnswer.map {
-            RichAnswerEngine.admit(presentation: $0)
-        }
         completionState = decodeLossy(
             AgentReplyCompletionState.self,
             forKey: .completionState,
@@ -1846,7 +1827,6 @@ public struct AgentMessage: Identifiable, Codable, Hashable, Sendable {
         }
         try container.encodeIfPresent(source, forKey: .source)
         try container.encodeIfPresent(backend, forKey: .backend)
-        try container.encodeIfPresent(richAnswer, forKey: .richAnswer)
         if completionState != .completed {
             try container.encode(completionState, forKey: .completionState)
         }

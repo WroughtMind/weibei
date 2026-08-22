@@ -1593,20 +1593,9 @@ struct AgentPaneView: View {
         wide: Bool
     ) -> some View {
         let isUser = message.role == .user
-        let wideFamilies: Set<RichAnswerCapabilityFamily> = [
-            .quantityAndCoordinates,
-            .processAndState,
-            .timeAndSpace,
-            .imageAndOverlay,
-            .comparisonAndEvaluation,
-        ]
-        let needsWideCanvas = message.richAnswer?.scenes.contains {
-            wideFamilies.contains($0.family)
-        } == true
 
         // Native text rows: no per-message WKWebView height callbacks that thrash scroll.
         return agentReadingColumn(
-            canvasWide: needsWideCanvas,
             alignment: isUser ? .trailing : .leading
         ) {
             // One view type owns the row across the generating → completed flip,
@@ -1631,11 +1620,10 @@ struct AgentPaneView: View {
     /// The parent proposal is the source of truth: it shrinks this flexible cap
     /// with the real pane instead of applying an offset derived from sampled width.
     private func agentReadingColumn<Content: View>(
-        canvasWide: Bool = false,
         alignment: HorizontalAlignment,
         @ViewBuilder content: () -> Content
     ) -> some View {
-        let readingWidth = AgentChatLayoutMetrics.wideMaxWidth + (canvasWide ? 40 : 0)
+        let readingWidth = AgentChatLayoutMetrics.wideMaxWidth
         return content()
             .frame(maxWidth: readingWidth, alignment: Alignment(horizontal: alignment, vertical: .center))
             .frame(maxWidth: .infinity, alignment: .center)
@@ -1924,15 +1912,7 @@ struct AgentPaneView: View {
         // re-entered sizeThatFits every scroll frame and froze the app.
         // Tray already sits outside the ScrollView (VStack), so keep this small;
         // large fixed insets stole message viewport height and made immersive feel tiny.
-        hasVisibleRichAnswer
-            ? (usesWideChatLayout ? 28 : 20)
-            : (usesWideChatLayout ? 16 : 12)
-    }
-
-    private var hasVisibleRichAnswer: Bool {
-        store.messages.contains { message in
-            message.richAnswer?.mode == .rich && message.richAnswer?.scenes.isEmpty == false
-        }
+        usesWideChatLayout ? 16 : 12
     }
 
     private var agentRailBottomInset: CGFloat {
@@ -3209,58 +3189,40 @@ private struct AgentBubble: View {
                 return true
             }
         }
-        let displayedStreamingText = store.agentReplyDisplayedStreamingText(message)
         let isAwaitingFirstToken = message.completionState == .generating
             && answerText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         return VStack(alignment: .leading, spacing: 8) {
-            if !isAwaitingFirstToken, let richAnswer = message.richAnswer,
-               richAnswer.mode == .rich,
-               !richAnswer.scenes.isEmpty,
-               !displayedStreamingText {
-                richAnswerFlow(richAnswer)
-                if !availableSources.isEmpty {
-                    AgentReplySourceTagRow(sources: availableSources) { source in
-                        activateSource(source)
-                    }
-                }
+            if message.contentBlocks.contains(where: {
+                if case .visualization = $0 { return true }
+                return false
+            }) {
+                visualizedMessageFlow(fallbackText: citationParse.displayText)
             } else {
-                if message.contentBlocks.contains(where: {
-                    if case .visualization = $0 { return true }
-                    return false
-                }) {
-                    visualizedMessageFlow(fallbackText: citationParse.displayText)
-                } else {
-                    // One surface owns the answer from question send through
-                    // completion. The WebView mounts while the thinking overlay
-                    // is still up, so its cold start runs in parallel with the
-                    // wait for the first token instead of after it.
-                    ZStack(alignment: .topLeading) {
-                        AgentMessageMarkdownText(
-                            text: citationParse.displayText,
-                            rendersRichMarkdown: true,
-                            isChatWideTypography: isChatWideTypography,
-                            usesFinalizedKaTeX: !isFailureMessage,
-                            messageID: message.id,
-                            keepsMarkdownSurfaceMounted: !isFailureMessage,
-                            isStreaming: message.completionState == .generating
+                // One surface owns the answer from question send through
+                // completion. The WebView mounts while the thinking overlay
+                // is still up, so its cold start runs in parallel with the
+                // wait for the first token instead of after it.
+                ZStack(alignment: .topLeading) {
+                    AgentMessageMarkdownText(
+                        text: citationParse.displayText,
+                        rendersRichMarkdown: true,
+                        isChatWideTypography: isChatWideTypography,
+                        usesFinalizedKaTeX: !isFailureMessage,
+                        messageID: message.id,
+                        keepsMarkdownSurfaceMounted: !isFailureMessage,
+                        isStreaming: message.completionState == .generating
+                    )
+                    if isAwaitingFirstToken {
+                        AgentThinkingIndicator(
+                            activityText: liveActivityText,
+                            chatWideTypography: isChatWideTypography
                         )
-                        if isAwaitingFirstToken {
-                            AgentThinkingIndicator(
-                                activityText: liveActivityText,
-                                chatWideTypography: isChatWideTypography
-                            )
-                        }
                     }
                 }
-                if let richAnswer = message.richAnswer,
-                   richAnswer.mode == .rich,
-                   !richAnswer.scenes.isEmpty {
-                    richAnswerSceneFlow(richAnswer)
-                }
-                if !availableSources.isEmpty {
-                    AgentReplySourceTagRow(sources: availableSources) { source in
-                        activateSource(source)
-                    }
+            }
+            if !availableSources.isEmpty {
+                AgentReplySourceTagRow(sources: availableSources) { source in
+                    activateSource(source)
                 }
             }
 
@@ -3364,6 +3326,35 @@ private struct AgentBubble: View {
         }
     }
 
+    private func activateCitation(_ citation: AgentCitation) {
+        switch citation.kind {
+        case .material:
+            withAnimation(WeiBeiMotion.panel) {
+                _ = store.openAgentCitation(kind: "material", value: citation.value)
+            }
+        case .note:
+            withAnimation(WeiBeiMotion.panel) {
+                _ = store.openAgentCitation(kind: "note", value: citation.value)
+            }
+        case .selection:
+            withAnimation(WeiBeiMotion.panel) {
+                _ = store.openAgentCitation(kind: "selection", value: citation.value)
+            }
+        case .learningRecord:
+            withAnimation(WeiBeiMotion.panel) {
+                store.resumePreviousStudy()
+            }
+        case .learningMemory:
+            if let courseID = message.origin?.courseID {
+                withAnimation(WeiBeiMotion.panel) {
+                    store.presentCourseWorkspace(.memory, courseID: courseID)
+                }
+            }
+        case .session:
+            break
+        }
+    }
+
     @ViewBuilder
     private func visualizedMessageFlow(fallbackText: String) -> some View {
         let hasTextBlock = message.contentBlocks.contains {
@@ -3405,127 +3396,6 @@ private struct AgentBubble: View {
         }
     }
 
-    @ViewBuilder
-    private func richAnswerFlow(_ presentation: RichAnswerPresentation) -> some View {
-        ForEach(Array(presentation.resolvedParts.enumerated()), id: \.offset) { index, part in
-            switch part.kind {
-            case .narrative:
-                if let text = part.text, !text.isEmpty {
-                    RichAnswerNarrativeText(
-                        text: AgentCitationParser.parse(text).displayText
-                    )
-                        .frame(
-                            // Same Codex-like column as chat text in every layout.
-                            maxWidth: AgentChatLayoutMetrics.wideMaxWidth,
-                            alignment: .leading
-                        )
-                }
-            case .scene:
-                if let sceneID = part.sceneID,
-                   let scopedPresentation = scopedRichAnswer(presentation, sceneID: sceneID) {
-                    RichAnswerHost(
-                        presentation: scopedPresentation,
-                        onOpenEvidence: openRichAnswerEvidence,
-                        onOpenAsset: openRichAnswerAsset,
-                        assetPreview: richAnswerAssetPreview,
-                        onAction: submitRichAnswerAction
-                    )
-                    .id("rich-answer-\(message.id.uuidString)-\(sceneID)-\(index)")
-                    .frame(
-                        // Same Codex-like column as chat text in every layout.
-                        maxWidth: AgentChatLayoutMetrics.wideMaxWidth,
-                        alignment: .leading
-                    )
-                }
-            }
-        }
-    }
-
-    private func richAnswerSceneFlow(_ presentation: RichAnswerPresentation) -> some View {
-        var scenesOnly = presentation
-        scenesOnly.parts = presentation.resolvedParts.filter { $0.kind == .scene }
-        return richAnswerFlow(scenesOnly)
-    }
-
-    private func scopedRichAnswer(
-        _ presentation: RichAnswerPresentation,
-        sceneID: String
-    ) -> RichAnswerPresentation? {
-        guard let scene = presentation.scenes.first(where: { $0.id == sceneID }) else { return nil }
-        var scoped = presentation
-        scoped.scenes = [scene]
-        scoped.parts = nil
-        let evidenceIDs = Set(scene.evidenceIDs)
-        let openableSourceLabels = Set(message.sources.compactMap { source in
-            store.canOpenAgentReplySource(source) ? source.label : nil
-        })
-        scoped.evidenceLedger = presentation.evidenceLedger.filter {
-            evidenceIDs.contains($0.id) && openableSourceLabels.contains($0.sourceLabel)
-        }
-        return scoped
-    }
-
-    private func submitRichAnswerAction(_ prompt: String) {
-        guard !store.isStoppingAgent else { return }
-        let trimmed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
-        store.agentDraft = trimmed
-        store.submitAgentDraft()
-    }
-
-    private func activateCitation(_ citation: AgentCitation) {
-        switch citation.kind {
-        case .material:
-            withAnimation(WeiBeiMotion.panel) {
-                _ = store.openAgentCitation(kind: "material", value: citation.value)
-            }
-        case .note:
-            withAnimation(WeiBeiMotion.panel) {
-                _ = store.openAgentCitation(kind: "note", value: citation.value)
-            }
-        case .selection:
-            withAnimation(WeiBeiMotion.panel) {
-                _ = store.openAgentCitation(kind: "selection", value: citation.value)
-            }
-        case .learningRecord:
-            withAnimation(WeiBeiMotion.panel) {
-                store.resumePreviousStudy()
-            }
-        case .learningMemory:
-            if let courseID = message.origin?.courseID {
-                withAnimation(WeiBeiMotion.panel) {
-                    store.presentCourseWorkspace(.memory, courseID: courseID)
-                }
-            }
-        case .session:
-            break
-        }
-    }
-
-    private func openRichAnswerEvidence(_ evidence: RichAnswerEvidence) {
-        if let source = message.sources.first(where: {
-            $0.label == evidence.sourceLabel
-                && store.canOpenAgentReplySource($0)
-        }) {
-            _ = store.openAgentReplySource(source)
-        }
-    }
-
-    private func openRichAnswerAsset(_ assetID: String) {
-        withAnimation(WeiBeiMotion.panel) {
-            store.select(itemID: assetID)
-        }
-    }
-
-    private func richAnswerAssetPreview(_ assetID: String) -> NSImage? {
-        guard let item = store.item(withID: assetID), let url = item.url else { return nil }
-        if item.kind == .pdf,
-           let page = PDFDocument(url: url)?.page(at: 0) {
-            return page.thumbnail(of: NSSize(width: 1200, height: 1500), for: .mediaBox)
-        }
-        return NSImage(contentsOf: url)
-    }
-
     private var isUser: Bool {
         message.role == .user
     }
@@ -3534,122 +3404,6 @@ private struct AgentBubble: View {
         message.role == .assistant && WorkspaceStore.isAgentFailureMessage(message.text)
     }
 
-}
-
-private struct RichAnswerNarrativeText: View {
-    let text: String
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 7) {
-            ForEach(Array(blocks.enumerated()), id: \.offset) { _, block in
-                switch block.kind {
-                case let .heading(level):
-                    Text(attributed(block.text))
-                        .weiBeiText(level <= 2 ? 21 : 17, weight: .semibold)
-                        .foregroundStyle(WeiBeiTheme.ink)
-                        .fixedSize(horizontal: false, vertical: true)
-                case .paragraph:
-                    Text(attributed(block.text))
-                        .weiBeiText(15)
-                        .lineSpacing(4)
-                        .foregroundStyle(WeiBeiTheme.ink)
-                        .fixedSize(horizontal: false, vertical: true)
-                case .bullet:
-                    HStack(alignment: .firstTextBaseline, spacing: 8) {
-                        Text("•")
-                            .foregroundStyle(WeiBeiTheme.cinnabar)
-                        Text(attributed(block.text))
-                            .weiBeiText(15)
-                            .lineSpacing(4)
-                            .foregroundStyle(WeiBeiTheme.ink)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                case .quote:
-                    Text(attributed(block.text))
-                        .weiBeiText(13)
-                        .lineSpacing(3)
-                        .foregroundStyle(WeiBeiTheme.secondaryInk)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .padding(.leading, 10)
-                        .overlay(alignment: .leading) {
-                            Rectangle()
-                                .fill(WeiBeiTheme.hairline.opacity(0.72))
-                                .frame(width: 1)
-                        }
-                }
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    private var blocks: [Block] {
-        var result: [Block] = []
-        var paragraphLines: [String] = []
-
-        func flushParagraph() {
-            guard !paragraphLines.isEmpty else { return }
-            result.append(Block(kind: .paragraph, text: paragraphLines.joined(separator: " ")))
-            paragraphLines.removeAll()
-        }
-
-        for rawLine in text.components(separatedBy: .newlines) {
-            let line = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
-            if line.isEmpty {
-                flushParagraph()
-                continue
-            }
-            if isStandaloneSourceReference(line) {
-                flushParagraph()
-                continue
-            }
-            let headingMarkers = line.prefix { $0 == "#" }.count
-            if headingMarkers > 0, headingMarkers <= 6, line.dropFirst(headingMarkers).first == " " {
-                flushParagraph()
-                result.append(
-                    Block(
-                        kind: .heading(level: headingMarkers),
-                        text: String(line.dropFirst(headingMarkers)).trimmingCharacters(in: .whitespaces)
-                    )
-                )
-                continue
-            }
-            if line.hasPrefix("- ") || line.hasPrefix("* ") || line.hasPrefix("+ ") {
-                flushParagraph()
-                result.append(Block(kind: .bullet, text: String(line.dropFirst(2))))
-                continue
-            }
-            if line.hasPrefix("> ") {
-                flushParagraph()
-                result.append(Block(kind: .quote, text: String(line.dropFirst(2))))
-                continue
-            }
-            paragraphLines.append(line)
-        }
-        flushParagraph()
-        return result
-    }
-
-    private func isStandaloneSourceReference(_ line: String) -> Bool {
-        guard line.hasPrefix("["), line.hasSuffix("]") else { return false }
-        return ["[材料：", "[笔记：", "[选区："].contains { line.hasPrefix($0) }
-    }
-
-    private func attributed(_ value: String) -> AttributedString {
-        let displayValue = RichAnswerDisplayText.normalizedInlineMath(value)
-        return (try? AttributedString(markdown: displayValue)) ?? AttributedString(displayValue)
-    }
-
-    private struct Block {
-        enum Kind {
-            case heading(level: Int)
-            case paragraph
-            case bullet
-            case quote
-        }
-
-        let kind: Kind
-        let text: String
-    }
 }
 
 private struct AgentReplyMemoryUpdateTag: View {
@@ -5164,7 +4918,7 @@ private struct AgentMessageMarkdownText: View {
 
     private var renderedText: AttributedString {
         // Streaming / no-math path: Unicode math readability without WKWebView.
-        let display = RichAnswerDisplayText.normalizedInlineMath(displayMarkdown)
+        let display = AgentDisplayText.normalizedInlineMath(displayMarkdown)
         var attributed = (try? AttributedString(markdown: display))
             ?? AttributedString(display)
         let sourceRanges = attributed.runs.compactMap { run -> Range<AttributedString.Index>? in

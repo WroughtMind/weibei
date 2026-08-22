@@ -1,7 +1,0 @@
-{
-  "status": "passed",
-  "validationKind": "text-only",
-  "passedChecks": ["schema", "protocol", "source-binding"],
-  "issues": [],
-  "protocolDiagnostics": ["text-only allowed"]
-}

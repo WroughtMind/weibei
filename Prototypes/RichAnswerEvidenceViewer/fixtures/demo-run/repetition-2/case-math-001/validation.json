@@ -1,7 +1,0 @@
-{
-  "status": "passed",
-  "validationKind": "protocol-valid",
-  "passedChecks": ["schema", "protocol", "protocol-version", "source-binding"],
-  "issues": [],
-  "protocolDiagnostics": ["protocol schema pass", "source binding pass"]
-}

@@ -13894,8 +13894,7 @@ final class WorkspaceStore: ObservableObject {
         sessionID: UUID,
         memoryID: UUID,
         draft: String,
-        firstMessageID: UUID,
-        firstRichNarrative: String
+        firstMessageID: UUID
     ) {
         precondition(WeiBeiSafetyTestMode.isEnabled)
         guard item(materialItemID, belongsTo: courseID),
@@ -13996,18 +13995,12 @@ final class WorkspaceStore: ObservableObject {
             targetItemID: noteItemID,
             sourceItemID: materialItemID
         )
-        let firstRichNarrative =
-            "最早一条课程回复的富回答附件必须长期保留。"
         let firstReply = AgentMessage(
             id: firstMessageID,
             role: .assistant,
             text: "最早一条课程回答。",
             source: "课程 Chat",
             backend: .pi,
-            richAnswer: RichAnswerPresentation(
-                mode: .narrativeOnly,
-                narrative: firstRichNarrative
-            ),
             actions: [
                 AgentReplyAction(
                     kind: .writeNote,
@@ -14128,8 +14121,7 @@ final class WorkspaceStore: ObservableObject {
             sessionID,
             memoryID,
             draft,
-            firstMessageID,
-            firstRichNarrative
+            firstMessageID
         )
     }
 
@@ -16380,7 +16372,6 @@ final class WorkspaceStore: ObservableObject {
                     $0.text = reply.text
                     $0.contentBlocks = visibleContentBlocks
                     $0.backend = reply.backend
-                    $0.richAnswer = reply.richAnswer
                     $0.completionState = .completed
                     $0.sources = sources
                     $0.actions = actions
@@ -16786,8 +16777,6 @@ final class WorkspaceStore: ObservableObject {
                 base = ui("正在整理学习进展", "Updating study progress")
             case "weibei_note_proposal":
                 base = ui("正在整理写入建议", "Preparing a note proposal")
-            case "weibei_rich_answer":
-                base = ui("正在组织富回答", "Building a rich answer")
             default:
                 base = ui("正在处理", "Working")
             }
