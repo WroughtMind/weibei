@@ -3,6 +3,7 @@ import test from 'node:test';
 import {
   joinFrontmatter,
   inlineMathInputPattern,
+  looksLikeMarkdownSyntax,
   normalizeHtmlBreaks,
   normalizeMarkdownSource,
   normalizeMarkdownOutput,
@@ -93,4 +94,56 @@ test('normalization preserves valid and incomplete formula source for lossless e
   assert.equal(normalizeMarkdownSource('$\\frac{a}{b}$', 'userDocument'), '$\\frac{a}{b}$');
   assert.equal(normalizeMarkdownSource('$\\frac{a}{$', 'userDocument'), '$\\frac{a}{$');
   assert.equal(normalizeMarkdownSource('$\\unknown{x}$', 'agentGenerated'), '$\\unknown{x}$');
+});
+
+test('paste probe flags Markdown clipboard text and leaves plain prose alone', () => {
+  const flagged = [
+    '# 标题',
+    '## 二级标题',
+    '> 引用一行',
+    '- 无序列表',
+    '* 星号列表',
+    '1. 有序列表',
+    '---',
+    '```js\nconst x = 1;\n```',
+    '| 列 | 表 |',
+    '**粗体**',
+    '__下划线粗体__',
+    '~~删除线~~',
+    '==高亮==',
+    '`行内代码`',
+    '$x^2$',
+    '$\\mathcal{F}(x)$',
+    '$$\\frac{a}{b}$$',
+    '[链接](https://example.com)',
+    '![图片](https://example.com/i.png)',
+    '[[双链]]',
+    '[[双链|别名]]',
+    '> [!note] 提示块',
+    '---\ntitle: x\n---',
+    '普通段落\n\n第二段 **粗体** 收尾',
+  ];
+  for (const value of flagged) {
+    assert.equal(looksLikeMarkdownSyntax(value), true, `expected flagged: ${value}`);
+  }
+  const plain = [
+    '',
+    '   ',
+    '普通中文段落,没有任何特殊符号。',
+    'Price is $100 and range $10–$20',
+    'a * b = c',
+    'snake_case_name',
+    'C:\\path\\to\\file',
+    '1 + 1 = 2',
+    '100% done',
+    '字里行间有 $ 美元符号也是单只',
+  ];
+  for (const value of plain) {
+    assert.equal(looksLikeMarkdownSyntax(value), false, `expected plain: ${value}`);
+  }
+  // The probe runs on normalized paste text, so currency protection applies first.
+  const normalizedPaste = normalizeMarkdownSource('报价 $100 起,**加粗** 提示', 'userPaste');
+  assert.equal(looksLikeMarkdownSyntax(normalizedPaste), true);
+  const normalizedPlainPaste = normalizeMarkdownSource('报价 $100 起,不加粗', 'userPaste');
+  assert.equal(looksLikeMarkdownSyntax(normalizedPlainPaste), false);
 });
