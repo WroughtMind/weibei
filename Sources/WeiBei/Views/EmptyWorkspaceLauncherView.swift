@@ -358,10 +358,15 @@ private struct EmptyWorkspaceEntryButton: View {
 
 private struct EmptyWorkspaceInspirationView: View {
     @EnvironmentObject private var store: WorkspaceStore
+    @Environment(\.weibeiReduceMotion) private var reduceMotion
 
     let inspiration: EmptyWorkspaceInspiration
     let compact: Bool
     let onAdvance: () -> Void
+
+    /// Source/rights stay mounted so the fixed slot layout never reflows and
+    /// VoiceOver can always reach the attribution; they only paint on hover.
+    @State private var revealsSources = false
 
     var body: some View {
         VStack(spacing: compact ? 7 : 9) {
@@ -385,8 +390,16 @@ private struct EmptyWorkspaceInspirationView: View {
             .accessibilityIdentifier("empty-workspace-inspiration-next")
 
             sourceAndRights
+                .opacity(revealsSources ? 1 : 0)
+                .allowsHitTesting(revealsSources)
         }
         .frame(maxWidth: compact ? 560 : 660)
+        .background {
+            HoverPassThroughRegion { isHovering in
+                revealsSources = isHovering
+            }
+        }
+        .animation(reduceMotion ? nil : .easeInOut(duration: 0.18), value: revealsSources)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("empty-workspace-inspiration-\(inspiration.id)")
     }
