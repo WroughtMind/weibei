@@ -82,6 +82,9 @@ struct SelectionRemarkField: View {
             focused: focused,
             showsChrome: false
         )
-        .onAppear { focused = true }
+        .onAppear {
+            // 浮层展开动画挂载后再抢焦点,同步设会丢
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { focused = true }
+        }
     }
 }

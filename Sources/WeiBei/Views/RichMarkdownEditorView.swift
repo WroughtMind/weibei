@@ -1018,10 +1018,11 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         }
         .weibei-remark-mark::after {
           content: "";
-          float: right;
-          width: 7px;
-          height: 7px;
-          margin-left: 4px;
+          display: inline-block;
+          width: 9px;
+          height: 9px;
+          margin-left: 5px;
+          vertical-align: -0.06em;
           border-radius: 50%;
           background-color: rgba(145, 38, 27, 1.0);
         }
