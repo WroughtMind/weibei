@@ -166,7 +166,15 @@ struct CourseSidebarList: View {
         List {
             Section {
                 if model.courses.isEmpty {
-                    SidebarEmptyRow(title: ui("还没有匹配课程", "No matching courses"))
+                    if store.courses.isEmpty {
+                        SidebarEmptyRow(
+                            title: ui("还没有课程", "No courses yet"),
+                            actionTitle: ui("新建课程…", "Create course…"),
+                            action: { store.presentCourseWorkspace(.hub) }
+                        )
+                    } else {
+                        SidebarEmptyRow(title: ui("还没有匹配课程", "No matching courses"))
+                    }
                 } else {
                     ForEach(model.courses) { row in
                         courseRow(row)
@@ -262,11 +270,15 @@ struct CourseSidebarList: View {
             .listRowSeparator(.hidden)
 
             if row.materials.isEmpty {
-                SidebarEmptyRow(title: ui("暂无资料", "No materials"))
-                    .id("\(course.id.uuidString)-materials-empty")
-                    .listRowInsets(EdgeInsets(top: 0, leading: 32, bottom: 2, trailing: 6))
-                    .listRowBackground(Color.clear)
-                    .listRowSeparator(.hidden)
+                SidebarEmptyRow(
+                    title: ui("暂无资料", "No materials"),
+                    actionTitle: ui("导入资料…", "Import…"),
+                    action: { store.importCourseMaterialsFromPanel(courseID: course.id) }
+                )
+                .id("\(course.id.uuidString)-materials-empty")
+                .listRowInsets(EdgeInsets(top: 0, leading: 32, bottom: 2, trailing: 6))
+                .listRowBackground(Color.clear)
+                .listRowSeparator(.hidden)
             } else {
                 ForEach(row.materials) { item in
                     itemRow(item, compact: true, accent: accent, opensNotebook: false)
@@ -289,11 +301,15 @@ struct CourseSidebarList: View {
             .listRowSeparator(.hidden)
 
             if row.notes.isEmpty {
-                SidebarEmptyRow(title: ui("暂无笔记", "No notes"))
-                    .id("\(course.id.uuidString)-notes-empty")
-                    .listRowInsets(EdgeInsets(top: 0, leading: 32, bottom: 4, trailing: 6))
-                    .listRowBackground(Color.clear)
-                    .listRowSeparator(.hidden)
+                SidebarEmptyRow(
+                    title: ui("暂无笔记", "No notes"),
+                    actionTitle: ui("导入笔记…", "Import…"),
+                    action: { store.importCourseNotesFromPanel(courseID: course.id) }
+                )
+                .id("\(course.id.uuidString)-notes-empty")
+                .listRowInsets(EdgeInsets(top: 0, leading: 32, bottom: 4, trailing: 6))
+                .listRowBackground(Color.clear)
+                .listRowSeparator(.hidden)
             } else {
                 ForEach(row.notes) { item in
                     itemRow(item, compact: true, accent: accent, opensNotebook: true)
@@ -468,12 +484,33 @@ private struct SidebarSectionHeader: View {
 
 private struct SidebarEmptyRow: View {
     let title: String
+    var actionTitle: String? = nil
+    var action: (() -> Void)? = nil
+
+    @State private var hovering = false
 
     var body: some View {
-        Text(title)
-            .weiBeiText(11)
-            .foregroundStyle(WeiBeiTheme.tertiaryInk.opacity(0.78))
-            .frame(height: 28, alignment: .leading)
+        HStack(spacing: 8) {
+            Text(title)
+                .weiBeiText(11)
+                .foregroundStyle(WeiBeiTheme.tertiaryInk.opacity(0.78))
+            Spacer(minLength: 8)
+            if let actionTitle, let action {
+                Button(actionTitle) {
+                    action()
+                }
+                .buttonStyle(.plain)
+                .weiBeiText(10.5, weight: .medium)
+                .foregroundStyle(
+                    hovering ? WeiBeiTheme.cinnabar : WeiBeiTheme.secondaryInk.opacity(0.85)
+                )
+                .contentShape(Rectangle())
+            }
+        }
+        .frame(minHeight: 28, alignment: .leading)
+        .onHover { isHovering in
+            hovering = isHovering
+        }
     }
 }
 
