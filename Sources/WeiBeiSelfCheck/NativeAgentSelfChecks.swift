@@ -23,6 +23,7 @@ func runNativeAgentSelfChecks() throws {
     try checkEvalSetLunaLow()
     try checkRetrievalPrompt()
     try checkBackendSelection()
+    try checkContextRevisionEcho()
 }
 
 private func nativeRequire(_ condition: @autoclosure () throws -> Bool, _ message: String) throws {
@@ -395,6 +396,73 @@ private func checkBackendSelection() throws {
     try nativeRequire(NativeAgentBackendSelection.current == .native, "debug override selects native")
     NativeAgentBackendSelection.persistedDebugBackend = nil
     try nativeRequire(NativeAgentBackendSelection.current == .pi, "clearing override returns to pi")
+}
+
+private func checkContextRevisionEcho() throws {
+    let revision = "12:aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+    let prompt = NativePromptAssembler.webiSystemPrompt(
+        bundledText: "you are webi",
+        tools: [],
+        contextRevision: revision
+    )
+    try nativeRequire(prompt.contains(revision), "system prompt includes this turn's contextRevision")
+    try nativeRequire(prompt.contains("必须原样回传"), "system prompt tells the model to echo contextRevision")
+
+    let registry = NativeToolRegistry()
+    _ = try waitFor { await NativeBuiltinTools.registerAll(into: registry, skillRoot: nil) }
+    let request = StudyAgentRequest(
+        purpose: .conversation,
+        question: "记下复利进度",
+        materialTitle: "",
+        materialText: "",
+        noteTitle: "",
+        noteText: "",
+        projectScope: StudyAgentProjectScope(
+            kind: .course,
+            chatID: UUID().uuidString.lowercased(),
+            courseID: UUID().uuidString.lowercased()
+        ),
+        contextRevision: revision
+    )
+    let context = NativeToolExecutionContext(request: request)
+    let memory = try waitFor {
+        try await registry.execute(
+            NativeToolCallRequest(name: "weibei_learning_memory", argumentsJSON: "{}", callID: "m1"),
+            context: context,
+            scope: .global
+        )
+    }
+    try nativeRequire(memory.text.contains(revision), "learning_memory returns the live contextRevision")
+    do {
+        _ = try waitFor {
+            try await registry.execute(
+                NativeToolCallRequest(
+                    name: "weibei_learning_update",
+                    argumentsJSON: "{\"contextRevision\":1,\"memoryRevision\":1}",
+                    callID: "u1"
+                ),
+                context: context,
+                scope: .global
+            )
+        }
+        throw NSError(domain: "WeiBei.NativeAgentSelfCheck", code: 9, userInfo: [
+            NSLocalizedDescriptionKey: "numeric contextRevision 1 should not match a namespaced revision",
+        ])
+    } catch let failure as NativeLLMFailure {
+        try nativeRequire(failure.code == "revision_mismatch", "numeric 1 is not accepted as the live revision")
+    }
+    let accepted = try waitFor {
+        try await registry.execute(
+            NativeToolCallRequest(
+                name: "weibei_note_proposal",
+                argumentsJSON: "{\"markdown\":\"利率是资金使用价格。\",\"evidence\":\"原文\",\"contextRevision\":\"\(revision)\"}",
+                callID: "n1"
+            ),
+            context: context,
+            scope: .global
+        )
+    }
+    try nativeRequire(accepted.text.contains("待确认"), "string evidence is accepted for a note proposal")
 }
 
 private func checkFailureMapping() throws {

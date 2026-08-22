@@ -131,6 +131,7 @@ native 明显更快、更省内存；无 Pi/Bun 常驻子进程。这是 CLI 路
 - 提案闭环：CLI live 没有真实笔记库 / WorkspaceStore，即便工具回执写「已提交」也不会落库。12 场景脚本只能验协议。**闭环方式 = 真实 App 冒烟**，四条提案清单见 `Docs/audit/2026-08-22-native-runtime-用户验收清单草稿.md`（开头已补 Native 切换步骤）。
 - W5 级联检索（只引导，不改引擎）：native 系统提示加检索策略段；`weibei_course_search` / `weibei_course_read` 描述要求先搜再读、不许反问。luna 重跑 16/05/37 均达预期。工作区文件检索本轮没有对应工具，已在提示里标明跳过，列为后续能力。
 - W6 调试开关：设置 → 对话 →「使用 Native 引擎」。UserDefaults 持久化，默认仍是 Pi；环境变量 `WEIBEI_AGENT_BACKEND` 仍可覆盖。此开关是临时设施，删 Pi 时一并去掉。未改 `WorkspaceStore.swift`。
+- 真实 App 提案四条首次冒烟未过：模型把 `contextRevision` 写成数字 `1`，对不上 App 的 `"工作区修订:请求ID"`，记忆更新和笔记提案都失败；空 `course_read` 也打到「不属于查询范围」。已让系统提示和 `learning_memory` 回传本轮修订号，并拒绝用 `1` 冒充。需重装后再验。
 - Azure / Vertex / Bedrock / Cloudflare 未覆盖。
 - Pi 课程宿主在 CLI 里仍会报响应目录变化。
 - 正式公证包未出；体积是临时目录按同一清单组装的测量值。

@@ -32,10 +32,22 @@ public struct NativePromptAssembler: Sendable {
     public static func webiSystemPrompt(
         bundledText: String,
         tools: [NativeToolDefinition],
-        skillCatalog: String = ""
+        skillCatalog: String = "",
+        contextRevision: String = ""
     ) -> String {
         var assembler = NativePromptAssembler()
         assembler.add(NativePromptSection(id: "persona", order: 10, text: bundledText))
+        if !contextRevision.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            assembler.add(
+                NativePromptSection(
+                    id: "revision",
+                    order: 16,
+                    text: """
+                    本轮 contextRevision 是 `\(contextRevision)`。weibei_learning_update、weibei_course_profile_update、weibei_note_proposal、weibei_relation_proposal 必须原样回传这个字符串，不要改成数字，也不要从 memoryRevision 或 profileRevision 推断。
+                    """
+                )
+            )
+        }
         assembler.add(NativePromptSection(id: "retrieval", order: 18, text: retrievalStrategy))
         let catalog = tools.map { "- \($0.name): \($0.description)" }.joined(separator: "\n")
         assembler.add(NativePromptSection(id: "tools", order: 20, text: "可用工具：\n\(catalog)"))

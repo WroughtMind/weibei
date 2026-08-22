@@ -525,7 +525,12 @@ public enum NativeBuiltinTools {
             description: "按临时资料 ID 渐进读取真实正文。课程搜索命中后应读取最相关的一条，不要停下来反问用户。",
             permission: .read,
             makeRequest: { arguments, context in
-                let itemID = string(arguments["itemID"]) ?? ""
+                let itemID = string(arguments["itemID"])
+                    ?? context.searchedItemIDs.sorted().first
+                    ?? ""
+                if itemID.isEmpty {
+                    throw NativeLLMFailure(code: "invalid_arguments", message: "weibei_course_read 需要搜索结果里的 itemID")
+                }
                 let persistent = context.persistentAssetIDsByContextID[itemID] ?? itemID
                 return .courseRead(
                     itemID: persistent,
@@ -561,12 +566,16 @@ public enum NativeBuiltinTools {
             execute: { _, context in
                 let learning = context.request.learningContext
                 let data = try JSONEncoder().encode(learning)
-                let text = String(data: data, encoding: .utf8) ?? "{}"
+                var object = (try JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
+                object["contextRevision"] = context.request.contextRevision
+                let payload = try JSONSerialization.data(withJSONObject: object)
+                let text = String(data: payload, encoding: .utf8) ?? "{}"
                 return NativeToolExecutionResult(
                     text: text,
                     details: [
                         "kind": "learning_memory",
                         "memoryRevision": learning.memoryRevision,
+                        "contextRevision": context.request.contextRevision,
                     ]
                 )
             }
@@ -576,14 +585,11 @@ public enum NativeBuiltinTools {
     private static var learningUpdate: NativeToolDefinition {
         NativeToolDefinition(
             name: "weibei_learning_update",
-            description: "在课程阶段节点提出学习状态更新建议，不自动落库。",
+            description: "在课程阶段节点提出学习状态更新建议，不自动落库。contextRevision 必须原样回传本轮字符串。",
             permission: .writeConfirm,
             schema: NativeJSONSchema(["type": "object", "required": ["contextRevision", "memoryRevision"]]),
             execute: { arguments, context in
-                let revision = arguments["contextRevision"] as? String ?? ""
-                guard revision == context.request.contextRevision else {
-                    throw NativeLLMFailure(code: "revision_mismatch", message: "学习状态建议的上下文或记忆修订号不匹配")
-                }
+                try requireMatchingRevision(arguments["contextRevision"], expected: context.request.contextRevision, message: "学习状态建议的上下文或记忆修订号不匹配")
                 return NativeToolExecutionResult(
                     text: "学习状态更新已校验并交给魏碑；魏碑只会保存当前作用域中的实际变化。",
                     details: ["kind": "learning_update", "entries": arguments["entries"] ?? []]
@@ -595,16 +601,14 @@ public enum NativeBuiltinTools {
     private static var courseProfileUpdate: NativeToolDefinition {
         NativeToolDefinition(
             name: "weibei_course_profile_update",
-            description: "把本轮真实读到的课程认识批量写入课程知识档案建议。",
+            description: "把本轮真实读到的课程认识批量写入课程知识档案建议。contextRevision 必须原样回传本轮字符串。",
             permission: .writeConfirm,
             schema: NativeJSONSchema(["type": "object", "required": ["contextRevision", "profileRevision", "checkpoint"]]),
             execute: { arguments, context in
                 if context.courseProfileUpdated {
                     throw NativeLLMFailure(code: "already_updated", message: "本轮已经整理过课程知识档案")
                 }
-                guard arguments["contextRevision"] as? String == context.request.contextRevision else {
-                    throw NativeLLMFailure(code: "revision_mismatch", message: "课程知识档案版本已变化，请按当前课程地图重新整理")
-                }
+                try requireMatchingRevision(arguments["contextRevision"], expected: context.request.contextRevision, message: "课程知识档案版本已变化，请按当前课程地图重新整理")
                 return NativeToolExecutionResult(
                     text: "本轮阶段性课程认识已提交保存。",
                     details: ["kind": "course_profile_update"]
@@ -616,15 +620,13 @@ public enum NativeBuiltinTools {
     private static var noteProposal: NativeToolDefinition {
         NativeToolDefinition(
             name: "weibei_note_proposal",
-            description: "返回一份待用户确认的 Markdown 笔记建议，不会写入笔记。",
+            description: "返回一份待用户确认的 Markdown 笔记建议，不会写入笔记。contextRevision 必须原样回传本轮字符串。",
             permission: .writeConfirm,
             schema: NativeJSONSchema(["type": "object", "required": ["markdown", "evidence", "contextRevision"]]),
             execute: { arguments, context in
-                guard arguments["contextRevision"] as? String == context.request.contextRevision else {
-                    throw NativeLLMFailure(code: "revision_mismatch", message: "笔记建议的 contextRevision 不匹配")
-                }
+                try requireMatchingRevision(arguments["contextRevision"], expected: context.request.contextRevision, message: "笔记建议的 contextRevision 不匹配")
                 let markdown = arguments["markdown"] as? String ?? ""
-                let evidence = arguments["evidence"] as? [String] ?? []
+                let evidence = stringList(arguments["evidence"])
                 guard !markdown.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, !evidence.isEmpty else {
                     throw NativeLLMFailure(code: "empty_proposal", message: "笔记建议必须包含非空 Markdown 和至少一条证据")
                 }
@@ -648,9 +650,7 @@ public enum NativeBuiltinTools {
             permission: .writeConfirm,
             schema: NativeJSONSchema(["type": "object", "required": ["noteItemID", "sourceItemID", "contextRevision"]]),
             execute: { arguments, context in
-                guard arguments["contextRevision"] as? String == context.request.contextRevision else {
-                    throw NativeLLMFailure(code: "revision_mismatch", message: "关系建议的 contextRevision 不匹配")
-                }
+                try requireMatchingRevision(arguments["contextRevision"], expected: context.request.contextRevision, message: "关系建议的 contextRevision 不匹配")
                 return NativeToolExecutionResult(
                     text: "关系建议已校验并交给魏碑；这仍是待确认建议，尚未建立关系。",
                     details: [
@@ -694,6 +694,33 @@ public enum NativeBuiltinTools {
         guard let value = raw as? String else { return nil }
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? nil : trimmed
+    }
+
+    private static func revisionValue(_ raw: Any?) -> String? {
+        if let text = string(raw) { return text }
+        if let number = raw as? NSNumber, !(raw is Bool) {
+            return number.stringValue
+        }
+        if let value = raw as? Int {
+            return String(value)
+        }
+        return nil
+    }
+
+    private static func stringList(_ raw: Any?) -> [String] {
+        if let values = raw as? [String] {
+            return values.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+        }
+        if let value = string(raw) {
+            return [value]
+        }
+        return []
+    }
+
+    fileprivate static func requireMatchingRevision(_ raw: Any?, expected: String, message: String) throws {
+        guard revisionValue(raw) == expected else {
+            throw NativeLLMFailure(code: "revision_mismatch", message: message)
+        }
     }
 
     private static func int(_ raw: Any?, default defaultValue: Int, range: ClosedRange<Int>? = nil) -> Int {
