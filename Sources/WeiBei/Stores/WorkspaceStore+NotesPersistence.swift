@@ -385,8 +385,6 @@ extension WorkspaceStore {
         importedItems[index].title = newStem
         importedItems[index].subtitle = newURL.lastPathComponent
         importedItems[index].urlPath = newURL.path
-        if let bookmark = Self.makeImportedFileBookmark(for: newURL) {
-        }
         if let refreshed = refreshImportedFileTracking(itemID: itemID, url: newURL) {
             courseDocumentSearchIndex.schedule([refreshed])
         }
