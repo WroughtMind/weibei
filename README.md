@@ -64,11 +64,11 @@ The community build is ad-hoc signed and not Apple-notarized, so Gatekeeper bloc
 
 **Five minutes to your first cited answer:**
 
-1. Launch WeiBei — it ships with a built-in sample course (a Money & Banking HTML lecture, a Mishkin textbook sample PDF, and sample notes), so you can try the flow before importing anything.
-2. Prefer your own material? Drag a folder of PDFs, HTML, Markdown, or text in and import it as a course.
-3. In Agent settings, connect a provider — an OpenAI-compatible endpoint or OpenAI Codex OAuth.
-4. Select a passage in the reader and ask a question from the selection.
-5. Click a citation label to jump back to the source — then accept the note proposal the Agent drafts for you.
+1. Launch WeiBei and import a folder of your own material as a course — PDF, HTML, Markdown, and plain text all work. (No sample data ships in the app; nothing is bundled that you didn't bring.)
+2. In Agent settings, connect a provider — an OpenAI-compatible endpoint or OpenAI Codex OAuth.
+3. Select a passage in the reader and ask a question from the selection.
+4. Click a citation label to jump back to the source.
+5. Accept the note proposal the Agent drafts for you.
 
 A Homebrew cask is planned; until the tap is published, use the DMG or build from source.
 
