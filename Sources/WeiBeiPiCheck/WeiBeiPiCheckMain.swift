@@ -7,6 +7,40 @@ struct WeiBeiPiCheckMain {
     static func main() async {
         let environment = ProcessInfo.processInfo.environment
 
+        if await NativeBaselineFixtures.runIfRequested(
+            arguments: CommandLine.arguments,
+            environment: environment
+        ) {
+            return
+        }
+
+        if await NativeEngineSmoke.runIfRequested(arguments: CommandLine.arguments) {
+            return
+        }
+
+        if await NativeCapabilityDemo.runIfRequested(arguments: CommandLine.arguments) {
+            return
+        }
+
+        if await NativeEvalCLI.runIfRequested(arguments: CommandLine.arguments) {
+            return
+        }
+
+        if await NativeScenarioPair.runIfRequested(arguments: CommandLine.arguments) {
+            return
+        }
+
+        if await NativeOAuthCLI.runIfRequested(arguments: CommandLine.arguments) {
+            return
+        }
+
+        if await NativePiSubscriptionProbe.runIfRequested(
+            arguments: CommandLine.arguments,
+            environment: environment
+        ) {
+            return
+        }
+
         if CommandLine.arguments.contains("--authentication-status") {
             var status = AgentAuthenticationStatus()
             status.recordFailure(

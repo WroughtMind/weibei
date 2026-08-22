@@ -44,6 +44,7 @@ struct SettingsView: View {
     @State private var migrationErrorText: String?
     @State private var migrationSuccessText: String?
     @State private var isMigratingLibrary = false
+    @AppStorage(NativeAgentBackendSelection.debugDefaultsKey) var debugStudyAgentBackendRaw = ""
 
     private var buildInfo: WeiBeiAppBuildInfo { .current() }
 
@@ -689,7 +690,7 @@ struct SettingsView: View {
             // Version number + check only. No copy control (build/version still go into feedback).
             settingsGroup(store.ui("版本", "Version")) {
                 settingsRow(
-                    title: buildInfo.version,
+                    title: buildInfo.displayLine,
                     showsBottomDivider: updateService.availableUpdate != nil
                 ) {
                     Button {

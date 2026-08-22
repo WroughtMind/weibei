@@ -17,8 +17,8 @@ const COURSE_SEARCH_TOOL = "weibei_course_search";
 const COURSE_READ_TOOL = "weibei_course_read";
 const WEB_OPEN_TOOL = "weibei_web_open";
 const VISUAL_ASSET_TOOL = "weibei_visual_asset";
-const LEARNING_MEMORY_TOOL = "weibei_learning_memory";
-const LEARNING_UPDATE_TOOL = "weibei_learning_update";
+const LEARNING_MEMORY_TOOL = "weibei_read_learning_memory";
+const LEARNING_UPDATE_TOOL = "weibei_update_learning_memory";
 const COURSE_PROFILE_UPDATE_TOOL = "weibei_course_profile_update";
 const NOTE_PROPOSAL_TOOL = "weibei_note_proposal";
 const RELATION_PROPOSAL_TOOL = "weibei_relation_proposal";
@@ -2101,8 +2101,8 @@ export default function weibeiExtension(pi: ExtensionAPI) {
     name: COURSE_PROFILE_UPDATE_TOOL,
     label: "整理课程知识档案",
     description:
-      "只在完成一节、完成一个主题、确认新的跨来源联系或准备切换上下文时，把本轮真实读到的课程认识批量写入课程知识档案。不要每轮调用。",
-    promptSnippet: "到达明确学习节点时，批量整理本轮已读内容；普通问答不更新",
+      "把课程认识或用户自述掌握状态写入课程知识档案。用户明确要求时必须提交。自述掌握用 kind=concept、text 以「用户自述：」开头、sources 可空，checkpoint 用 userRequested。不要把学习记忆的 origin userStatement 当成档案 kind。材料认识仍须带来源。",
+    promptSnippet: "用户明确要求时必须整理；自述用 kind=concept 且 text 以用户自述：开头",
     parameters: Type.Object(
       {
         contextRevision: Type.String({ minLength: 1, maxLength: LIMITS.identifier }),
@@ -2112,6 +2112,7 @@ export default function weibeiExtension(pi: ExtensionAPI) {
           Type.Literal("topicCompleted"),
           Type.Literal("crossSourceConnection"),
           Type.Literal("beforeContextSwitch"),
+          Type.Literal("userRequested"),
         ]),
         entries: Type.Optional(Type.Array(Type.Object(
           {
@@ -2133,7 +2134,7 @@ export default function weibeiExtension(pi: ExtensionAPI) {
                 sourceRevision: Type.String({ minLength: 1, maxLength: 500 }),
               },
               { additionalProperties: false },
-            ), { minItems: 1, maxItems: 8 }),
+            ), { minItems: 0, maxItems: 8 }),
           },
           { additionalProperties: false },
         ), { maxItems: 12 })),
@@ -2173,7 +2174,11 @@ export default function weibeiExtension(pi: ExtensionAPI) {
         throw new Error("课程知识档案条目已变化，请重新查看课程地图");
       }
       for (const entry of entries) {
-        for (const source of entry.sources) {
+        const sources = entry.sources ?? [];
+        if (sources.length === 0 && params.checkpoint !== "userRequested") {
+          throw new Error("材料认识必须带来源；自述掌握状态请用 checkpoint userRequested");
+        }
+        for (const source of sources) {
           if (
             catalogByID.get(source.itemID)?.role !== source.role ||
             readCourseSourceRevisions.get(source.itemID) !== source.sourceRevision
@@ -2203,8 +2208,8 @@ export default function weibeiExtension(pi: ExtensionAPI) {
     name: LEARNING_MEMORY_TOOL,
     label: "读取学习记忆",
     description:
-      "读取用户上次学到的位置、当前会话摘要、学习目标、理解、困惑和下一步。记忆不是课程事实证据。",
-    promptSnippet: "读取用户学习历史与当前会话状态",
+      "只读取本课程学习记忆和上次位置，不会写入或改变任何内容。用户要求记下、记住或更新进度时不要调用本工具，改用 weibei_update_learning_memory。",
+    promptSnippet: "只读取学习记忆；要记录请改用写入工具",
     parameters: Type.Object({}, { additionalProperties: false }),
     executionMode: "sequential",
     async execute() {
@@ -2246,8 +2251,8 @@ export default function weibeiExtension(pi: ExtensionAPI) {
     name: LEARNING_UPDATE_TOOL,
     label: "更新学习状态",
     description:
-      "仅在课程 Chat 的学习阶段节点，根据真实阅读位置、用户自述、回忆或应用表现，智能更新本课程的目标、进度、理解、困惑、下一步或稳定偏好。用户不必明确要求保存；普通问答、模型刚讲完内容、一次普通追问都不能单独证明学习状态。它不能修改材料或笔记。",
-    promptSnippet: "在课程阶段节点依据真实学习证据更新；用户无需使用固定说法，证据不足时不更新",
+      "记录或更新本课程学习记忆的唯一入口。读取请用 weibei_read_learning_memory。用户要求记下/记住/更新进度或掌握情况时必须调用；即使用户说先看看怎么写、不要直接改，也仍要调用，写入后在回答里逐条展示内容。userStatement 的 evidence 必须以「[用户：本轮]」开头并带上用户原话。",
+    promptSnippet: "写入学习记忆；『先看看/别直接改』也要调用，写入后展示内容",
     parameters: Type.Object(
       {
         contextRevision: Type.String({ minLength: 1, maxLength: LIMITS.identifier }),

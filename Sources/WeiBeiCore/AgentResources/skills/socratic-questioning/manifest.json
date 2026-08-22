@@ -1,0 +1,10 @@
+{
+  "id": "socratic-questioning",
+  "name": "苏格拉底追问",
+  "version": "1.0.0",
+  "description": "用简短追问逼学生自己说出定义、例子和反例，而不是直接给完整讲解。",
+  "modelInvocable": true,
+  "userInvocable": true,
+  "tools": [],
+  "jscHook": null
+}

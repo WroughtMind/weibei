@@ -1,0 +1,54 @@
+{
+  "backend" : "pi",
+  "contextRevision" : "native-baseline-a5a72016-aa8d-4fb0-b5c7-3ac958e0f54c",
+  "elapsedSeconds" : 2.5,
+  "hasCourseProfileUpdate" : false,
+  "hasLearningUpdate" : false,
+  "hasNoteProposal" : false,
+  "hasRelationProposal" : false,
+  "hasRichAnswer" : false,
+  "id" : "12-resume-b",
+  "progress" : [
+    "preparing",
+    "text",
+    "text",
+    "text",
+    "text",
+    "text",
+    "text",
+    "text",
+    "text",
+    "text",
+    "text",
+    "text",
+    "text",
+    "text",
+    "text",
+    "text",
+    "text",
+    "text",
+    "text",
+    "text",
+    "text",
+    "text",
+    "text",
+    "text",
+    "text",
+    "text",
+    "text",
+    "text",
+    "text"
+  ],
+  "question" : "我刚才让你记住的课程关键词是什么？不要重新搜索。",
+  "readItemIDs" : [
+
+  ],
+  "sources" : [
+
+  ],
+  "text" : "本轮课程关键词是 **「资金价格」**。\n\n正如[选区：利率定义]所说：利率是资金使用价格的表达。",
+  "toolTrace" : [
+    "provider=deepseek",
+    "model=deepseek-chat"
+  ]
+}

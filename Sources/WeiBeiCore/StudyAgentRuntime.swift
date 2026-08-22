@@ -517,6 +517,8 @@ public struct StudyAgentRequest: Sendable {
     public var language: WeiBeiInterfaceLanguage
     public var contextRevision: String
     public var interactiveVisualizationsEnabled: Bool
+    /// Notes the user already confirmed in this Chat. Native must treat these as persisted.
+    public var confirmedNotes: [StudyAgentPersistedNoteRef]
 
     public init(
         id: UUID = UUID(),
@@ -539,7 +541,8 @@ public struct StudyAgentRequest: Sendable {
         courseProfile: StudyAgentCourseProfileContext = .empty,
         language: WeiBeiInterfaceLanguage = .chinese,
         contextRevision: String,
-        interactiveVisualizationsEnabled: Bool = true
+        interactiveVisualizationsEnabled: Bool = true,
+        confirmedNotes: [StudyAgentPersistedNoteRef] = []
     ) {
         self.id = id
         self.purpose = purpose
@@ -562,8 +565,19 @@ public struct StudyAgentRequest: Sendable {
         self.language = language
         self.contextRevision = contextRevision
         self.interactiveVisualizationsEnabled = interactiveVisualizationsEnabled
+        self.confirmedNotes = confirmedNotes
     }
 
+}
+
+public struct StudyAgentPersistedNoteRef: Sendable, Equatable {
+    public var itemID: String
+    public var title: String
+
+    public init(itemID: String, title: String) {
+        self.itemID = itemID
+        self.title = title
+    }
 }
 
 public struct StudyAgentNoteProposal: Codable, Equatable, Sendable {
@@ -693,6 +707,10 @@ public struct StudyAgentCourseProfileUpdate: Codable, Equatable, Sendable {
         self.entries = entries
         self.removedEntryIDs = removedEntryIDs
     }
+
+    public var allowsEntriesWithoutSources: Bool {
+        checkpoint == "userRequested" || entries.contains { $0.text.hasPrefix("用户自述：") }
+    }
 }
 
 public struct StudyAgentLoadedSkill: Codable, Equatable, Sendable {
@@ -732,6 +750,8 @@ public struct StudyAgentReply: Equatable, Sendable {
     public var relationProposal: StudyAgentRelationProposal?
     public var learningUpdate: StudyAgentLearningUpdate?
     public var courseProfileUpdate: StudyAgentCourseProfileUpdate?
+    public var appliedMemoryUpdate: AgentReplyMemoryUpdate?
+    public var appliedProfileUpdate: AgentReplyProfileUpdate?
     public var loadedSkills: [StudyAgentLoadedSkill]
     public var readItemIDs: [String]
     public var toolTrace: [String]
@@ -745,6 +765,8 @@ public struct StudyAgentReply: Equatable, Sendable {
         relationProposal: StudyAgentRelationProposal? = nil,
         learningUpdate: StudyAgentLearningUpdate? = nil,
         courseProfileUpdate: StudyAgentCourseProfileUpdate? = nil,
+        appliedMemoryUpdate: AgentReplyMemoryUpdate? = nil,
+        appliedProfileUpdate: AgentReplyProfileUpdate? = nil,
         loadedSkills: [StudyAgentLoadedSkill] = [],
         readItemIDs: [String] = [],
         toolTrace: [String] = []
@@ -757,6 +779,8 @@ public struct StudyAgentReply: Equatable, Sendable {
         self.relationProposal = relationProposal
         self.learningUpdate = learningUpdate
         self.courseProfileUpdate = courseProfileUpdate
+        self.appliedMemoryUpdate = appliedMemoryUpdate
+        self.appliedProfileUpdate = appliedProfileUpdate
         self.loadedSkills = loadedSkills
         self.readItemIDs = readItemIDs
         self.toolTrace = toolTrace
@@ -863,7 +887,7 @@ public enum AgentFailureKind: String, Codable, Equatable, Sendable {
                 break
             }
         }
-        if ns.domain == "WeiBei.OpenAI" {
+        if ns.domain == "WeiBei.OpenAI" || ns.domain == "WeiBei.NativeAgent" {
             switch ns.code {
             case 401, 403:
                 return .unauthorized
@@ -888,7 +912,7 @@ public enum AgentFailureKind: String, Codable, Equatable, Sendable {
         if lower.contains("timeout") || lower.contains("timed out") || message.contains("超时") {
             return .timedOut
         }
-        if lower.contains("401") || lower.contains("403") || lower.contains("unauthorized") || lower.contains("invalid api key") || message.contains("未授权") || message.contains("密钥") {
+        if lower.contains("401") || lower.contains("403") || lower.contains("unauthorized") || lower.contains("invalid api key") || message.contains("未授权") || message.contains("密钥") || message.contains("认证已失效") || message.contains("重新登录") {
             return .unauthorized
         }
         if lower.contains("429") || lower.contains("rate limit") || message.contains("过于频繁") {

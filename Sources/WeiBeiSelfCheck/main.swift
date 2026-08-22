@@ -108,6 +108,7 @@ if ProcessInfo.processInfo.environment["WEIBEI_PI_TERMINAL_SELF_CHECK_ONLY"] == 
 }
 
 try runPiAgentSelfChecks()
+try runNativeAgentSelfChecks()
 checkCourseLibraryVolatility()
 checkUnavailableCourseUnregister()
 try checkNotePersistenceScenes()

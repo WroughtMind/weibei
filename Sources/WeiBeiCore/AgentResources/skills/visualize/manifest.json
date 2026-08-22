@@ -1,0 +1,10 @@
+{
+  "id": "visualize",
+  "name": "Visualize",
+  "version": "1.0.0",
+  "description": "Create visual explanations and interactive tools directly in conversation. Use when seeing, comparing, adjusting, rehearsing, or exploring would improve understanding.",
+  "modelInvocable": true,
+  "userInvocable": true,
+  "tools": ["weibei_visualize"],
+  "jscHook": null
+}

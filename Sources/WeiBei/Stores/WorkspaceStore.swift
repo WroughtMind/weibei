@@ -646,7 +646,7 @@ final class WorkspaceStore: ObservableObject {
     var lastCourseHomeSearchRanOnMainThread: Bool?
     private var lastPortableAdoptionReadRanOnMainThread: Bool?
     private var lastCourseRebindRootSearchRanOnMainThread: Bool?
-    private let workspaceDirectory: URL
+    let workspaceDirectory: URL
     private let storageURL: URL
     let importedFileIdentityResolver: (URL) -> ImportedFileIdentity?
     let courseRootBookmarkMaker: (URL) -> Data?
@@ -670,7 +670,7 @@ final class WorkspaceStore: ObservableObject {
             () throws -> Void
         ) throws -> Void
     let selectionAskThreadDefaults: UserDefaults
-    private let piRuntime: PiAgentRuntime
+    let piRuntime: PiAgentRuntime
     let courseDocumentSearchIndex: CourseDocumentSearchIndex
     private var activeAgentRequestID: UUID?
     private var activeAgentReplyMessageID: UUID?
@@ -838,7 +838,7 @@ final class WorkspaceStore: ObservableObject {
         var sources: [AgentHostToolSource]
     }
 
-    private struct AgentConversationTarget: Sendable {
+    struct AgentConversationTarget: Sendable {
         var sessionID: UUID
         var workingDirectory: URL
         var courseID: UUID?
@@ -8871,18 +8871,25 @@ final class WorkspaceStore: ObservableObject {
     }
 
     func agentReplyActionTargetTitle(_ action: AgentReplyAction) -> String? {
-        action.targetItemID
-            .flatMap { itemID in allItems.first(where: { $0.id == itemID }) }
-            .map(displayTitle)
+        if let itemID = action.targetItemID,
+           let item = allItems.first(where: { $0.id == itemID }) {
+            return displayTitle(for: item)
+        }
+        if action.kind == .writeNote, action.targetItemID == nil {
+            return ui("新建笔记", "New note")
+        }
+        return nil
     }
 
     func agentReplyActionSourceTitle(_ action: AgentReplyAction) -> String? {
-        action.sourceItemID
-            .flatMap { itemID in allItems.first(where: { $0.id == itemID }) }
-            .map(displayTitle)
+        guard let itemID = action.sourceItemID,
+              let item = allItems.first(where: { $0.id == itemID }) else {
+            return nil
+        }
+        return displayTitle(for: item)
     }
 
-    func cancelAgentReplyAction(messageID: UUID, actionID: UUID) {
+    func cancelAgentReplyAction(messageID: UUID, actionID: UUID) async {
         guard let snapshot = agentReplyAction(messageID: messageID, actionID: actionID),
               snapshot.action.state == .pending
                 || (snapshot.action.state == .failed
@@ -8897,8 +8904,10 @@ final class WorkspaceStore: ObservableObject {
             $0.state = .cancelled
             $0.failureMessage = nil
         }
-        guard flushPendingWorkspaceSave() else {
-            failAgentReplyAction(
+        // Never flushPendingWorkspaceSave() from this MainActor async path:
+        // RunLoop-spin waiting for another MainActor Task deadlocks the UI.
+        guard await flushPendingWorkspaceSaveAsync() else {
+            await failAgentReplyAction(
                 messageID: messageID,
                 actionID: actionID,
                 chatID: snapshot.chatID,
@@ -8933,7 +8942,7 @@ final class WorkspaceStore: ObservableObject {
                 proposedMarkdown: proposedMarkdown
             )
         case .createRelation:
-            confirmAgentRelationAction(messageID: messageID, snapshot: snapshot)
+            await confirmAgentRelationAction(messageID: messageID, snapshot: snapshot)
         }
     }
 
@@ -8954,7 +8963,7 @@ final class WorkspaceStore: ObservableObject {
         case .writeNote:
             await undoAgentNoteAction(messageID: messageID, snapshot: snapshot)
         case .createRelation:
-            undoAgentRelationAction(messageID: messageID, snapshot: snapshot)
+            await undoAgentRelationAction(messageID: messageID, snapshot: snapshot)
         }
     }
 
@@ -8966,13 +8975,32 @@ final class WorkspaceStore: ObservableObject {
         var action = snapshot.action
         let proposal = (proposedMarkdown ?? action.proposedMarkdown ?? "")
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !proposal.isEmpty,
-              let targetItemID = action.targetItemID,
+        guard !proposal.isEmpty else {
+            await failAgentReplyAction(
+                messageID: messageID,
+                actionID: action.id,
+                chatID: snapshot.chatID,
+                message: ui(
+                    "笔记建议是空的。",
+                    "The note proposal is empty."
+                )
+            )
+            return
+        }
+        if action.targetItemID == nil {
+            await confirmAgentNewCourseNoteAction(
+                messageID: messageID,
+                snapshot: snapshot,
+                proposal: proposal
+            )
+            return
+        }
+        guard let targetItemID = action.targetItemID,
               let target = allItems.first(where: {
                   $0.id == targetItemID && $0.isNotebookNote
               }),
               item(targetItemID, belongsTo: snapshot.courseID) else {
-            failAgentReplyAction(
+            await failAgentReplyAction(
                 messageID: messageID,
                 actionID: action.id,
                 chatID: snapshot.chatID,
@@ -8992,7 +9020,7 @@ final class WorkspaceStore: ObservableObject {
             } else {
                 if action.resultContentDigest != nil,
                    action.baselineContentDigest != currentDigest {
-                    failAgentReplyAction(
+                    await failAgentReplyAction(
                         messageID: messageID,
                         actionID: action.id,
                         chatID: snapshot.chatID,
@@ -9006,7 +9034,7 @@ final class WorkspaceStore: ObservableObject {
                 guard action.state == .failed
                     || action.baselineContentDigest == nil
                     || action.baselineContentDigest == currentDigest else {
-                    failAgentReplyAction(
+                    await failAgentReplyAction(
                         messageID: messageID,
                         actionID: action.id,
                         chatID: snapshot.chatID,
@@ -9036,7 +9064,7 @@ final class WorkspaceStore: ObservableObject {
                 target: target,
                 resultDigest: action.resultContentDigest
             ) else {
-                failAgentReplyAction(
+                await failAgentReplyAction(
                     messageID: messageID,
                     actionID: action.id,
                     chatID: snapshot.chatID,
@@ -9055,8 +9083,8 @@ final class WorkspaceStore: ObservableObject {
                 $0.state = .executed
                 $0.failureMessage = nil
             }
-            guard flushPendingWorkspaceSave() else {
-                failAgentReplyAction(
+            guard await flushPendingWorkspaceSaveAsync() else {
+                await failAgentReplyAction(
                     messageID: messageID,
                     actionID: action.id,
                     chatID: snapshot.chatID,
@@ -9068,7 +9096,7 @@ final class WorkspaceStore: ObservableObject {
                 return
             }
         } catch {
-            failAgentReplyAction(
+            await failAgentReplyAction(
                 messageID: messageID,
                 actionID: action.id,
                 chatID: snapshot.chatID,
@@ -9078,6 +9106,134 @@ final class WorkspaceStore: ObservableObject {
                 )
             )
         }
+    }
+
+    private func confirmAgentNewCourseNoteAction(
+        messageID: UUID,
+        snapshot: (chatID: UUID, courseID: UUID?, action: AgentReplyAction),
+        proposal: String
+    ) async {
+        guard let courseID = snapshot.courseID else {
+            await failAgentReplyAction(
+                messageID: messageID,
+                actionID: snapshot.action.id,
+                chatID: snapshot.chatID,
+                message: ui(
+                    "当前没有可归属的课程，不能新建笔记。",
+                    "This Chat has no course, so a new note cannot be created."
+                )
+            )
+            return
+        }
+        let title = notebookTitle(fromProposedMarkdown: proposal)
+        let fileStem = safeFileStem(title)
+        let proposalDigest = Self.noteContentDigest(Data(proposal.utf8))
+        if let existing = courseNoteMatchingFileStem(courseID: courseID, fileStem: fileStem),
+           let current = try? await agentActionNoteMarkdown(existing),
+           Self.noteContentDigest(Data(current.utf8)) == proposalDigest {
+            await markAgentNewCourseNoteExecuted(
+                messageID: messageID,
+                snapshot: snapshot,
+                proposal: proposal,
+                itemID: existing.id
+            )
+            return
+        }
+        guard let itemID = await createCourseNotebookNote(
+            courseID: courseID,
+            title: title,
+            markdown: proposal,
+            revealInWorkspace: false,
+            conflictResolution: .keepBoth(preferredFileName: nil),
+            presentsError: false
+        ) else {
+            await failAgentReplyAction(
+                messageID: messageID,
+                actionID: snapshot.action.id,
+                chatID: snapshot.chatID,
+                message: workspaceSaveError ?? ui(
+                    "笔记没有成功写入，建议内容已保留，可以重试。",
+                    "The note was not written. The proposal was kept for retry."
+                )
+            )
+            return
+        }
+        await markAgentNewCourseNoteExecuted(
+            messageID: messageID,
+            snapshot: snapshot,
+            proposal: proposal,
+            itemID: itemID
+        )
+    }
+
+    private func markAgentNewCourseNoteExecuted(
+        messageID: UUID,
+        snapshot: (chatID: UUID, courseID: UUID?, action: AgentReplyAction),
+        proposal: String,
+        itemID: String
+    ) async {
+        updateAgentReplyAction(
+            messageID: messageID,
+            actionID: snapshot.action.id,
+            chatID: snapshot.chatID
+        ) {
+            $0.proposedMarkdown = proposal
+            $0.targetItemID = itemID
+            $0.baselineContentDigest = Self.noteContentDigest(Data())
+            $0.resultContentDigest = Self.noteContentDigest(Data(proposal.utf8))
+            $0.state = .executed
+            $0.failureMessage = nil
+        }
+        guard await flushPendingWorkspaceSaveAsync() else {
+            await failAgentReplyAction(
+                messageID: messageID,
+                actionID: snapshot.action.id,
+                chatID: snapshot.chatID,
+                message: workspaceSaveError ?? ui(
+                    "笔记已写入，但动作状态没有成功保存；可以安全重试。",
+                    "The note was written, but the action status was not saved."
+                )
+            )
+            return
+        }
+    }
+
+    private func courseNoteMatchingFileStem(courseID: UUID, fileStem: String) -> StudyItem? {
+        let fileName = "\(fileStem).md"
+        let notes = courseNotes(in: courseID)
+        if let byFileName = notes.first(where: { item in
+            item.subtitle.compare(fileName, options: [.caseInsensitive, .diacriticInsensitive]) == .orderedSame
+                || (item.urlPath.map {
+                    URL(fileURLWithPath: $0).lastPathComponent
+                        .compare(fileName, options: [.caseInsensitive, .diacriticInsensitive])
+                } == .orderedSame)
+        }) {
+            return byFileName
+        }
+        return notes.first(where: {
+            $0.title.compare(fileStem, options: [.caseInsensitive, .diacriticInsensitive]) == .orderedSame
+        })
+    }
+
+    private func notebookTitle(fromProposedMarkdown markdown: String) -> String {
+        for line in markdown.split(whereSeparator: \.isNewline) {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if trimmed.hasPrefix("#") {
+                let title = trimmed.drop(while: { $0 == "#" || $0.isWhitespace })
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                if !title.isEmpty {
+                    return String(title.prefix(36))
+                }
+            }
+        }
+        let first = markdown
+            .split(whereSeparator: \.isNewline)
+            .first
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) } ?? ""
+        if !first.isEmpty {
+            return String(first.prefix(36))
+        }
+        return ui("整理建议", "Organization suggestion")
     }
 
     private func undoAgentNoteAction(
@@ -9106,8 +9262,8 @@ final class WorkspaceStore: ObservableObject {
                     $0.state = .cancelled
                     $0.failureMessage = nil
                 }
-                guard flushPendingWorkspaceSave() else {
-                    failAgentReplyAction(
+                guard await flushPendingWorkspaceSaveAsync() else {
+                    await failAgentReplyAction(
                         messageID: messageID,
                         actionID: action.id,
                         chatID: snapshot.chatID,
@@ -9131,7 +9287,7 @@ final class WorkspaceStore: ObservableObject {
                     target: target,
                     resultDigest: Self.noteContentDigest(Data(restored.utf8))
                   ) else {
-                failAgentReplyAction(
+                await failAgentReplyAction(
                     messageID: messageID,
                     actionID: action.id,
                     chatID: snapshot.chatID,
@@ -9150,8 +9306,8 @@ final class WorkspaceStore: ObservableObject {
                 $0.state = .cancelled
                 $0.failureMessage = nil
             }
-            guard flushPendingWorkspaceSave() else {
-                failAgentReplyAction(
+            guard await flushPendingWorkspaceSaveAsync() else {
+                await failAgentReplyAction(
                     messageID: messageID,
                     actionID: action.id,
                     chatID: snapshot.chatID,
@@ -9163,7 +9319,7 @@ final class WorkspaceStore: ObservableObject {
                 return
             }
         } catch {
-            failAgentReplyAction(
+            await failAgentReplyAction(
                 messageID: messageID,
                 actionID: action.id,
                 chatID: snapshot.chatID,
@@ -9178,7 +9334,7 @@ final class WorkspaceStore: ObservableObject {
     private func confirmAgentRelationAction(
         messageID: UUID,
         snapshot: (chatID: UUID, courseID: UUID?, action: AgentReplyAction)
-    ) {
+    ) async {
         let action = snapshot.action
         guard let noteItemID = action.targetItemID,
               let sourceItemID = action.sourceItemID,
@@ -9194,7 +9350,7 @@ final class WorkspaceStore: ObservableObject {
                   sourceItemID: source.id,
                   courseID: snapshot.courseID
               ) else {
-            failAgentReplyAction(
+            await failAgentReplyAction(
                 messageID: messageID,
                 actionID: action.id,
                 chatID: snapshot.chatID,
@@ -9209,7 +9365,7 @@ final class WorkspaceStore: ObservableObject {
             $0.noteItemID == note.id && $0.sourceItemID == source.id
         }) {
             guard existing.id == action.createdRelationID else {
-                failAgentReplyAction(
+                await failAgentReplyAction(
                     messageID: messageID,
                     actionID: action.id,
                     chatID: snapshot.chatID,
@@ -9229,8 +9385,8 @@ final class WorkspaceStore: ObservableObject {
                 $0.createdRelationID = existing.id
                 $0.failureMessage = nil
             }
-            guard flushPendingWorkspaceSave() else {
-                failAgentReplyAction(
+            guard await flushPendingWorkspaceSaveAsync() else {
+                await failAgentReplyAction(
                     messageID: messageID,
                     actionID: action.id,
                     chatID: snapshot.chatID,
@@ -9259,7 +9415,7 @@ final class WorkspaceStore: ObservableObject {
             $0.createdRelationID = relation.id
             $0.failureMessage = nil
         }
-        guard flushPendingWorkspaceSave() else {
+        guard await flushPendingWorkspaceSaveAsync() else {
             noteSourceLinks.removeAll { $0.id == relation.id }
             updateAgentReplyAction(
                 messageID: messageID,
@@ -9268,7 +9424,7 @@ final class WorkspaceStore: ObservableObject {
             ) {
                 $0.createdRelationID = nil
             }
-            failAgentReplyAction(
+            await failAgentReplyAction(
                 messageID: messageID,
                 actionID: action.id,
                 chatID: snapshot.chatID,
@@ -9285,7 +9441,7 @@ final class WorkspaceStore: ObservableObject {
     private func undoAgentRelationAction(
         messageID: UUID,
         snapshot: (chatID: UUID, courseID: UUID?, action: AgentReplyAction)
-    ) {
+    ) async {
         let action = snapshot.action
         guard let relationID = action.createdRelationID,
               let relation = noteSourceLinks.first(where: { $0.id == relationID }) else {
@@ -9300,9 +9456,9 @@ final class WorkspaceStore: ObservableObject {
             $0.state = .cancelled
             $0.failureMessage = nil
         }
-        guard flushPendingWorkspaceSave() else {
+        guard await flushPendingWorkspaceSaveAsync() else {
             noteSourceLinks.append(relation)
-            failAgentReplyAction(
+            await failAgentReplyAction(
                 messageID: messageID,
                 actionID: action.id,
                 chatID: snapshot.chatID,
@@ -9321,7 +9477,7 @@ final class WorkspaceStore: ObservableObject {
         actionID: UUID,
         chatID: UUID,
         message: String
-    ) {
+    ) async {
         updateAgentReplyAction(
             messageID: messageID,
             actionID: actionID,
@@ -9330,7 +9486,7 @@ final class WorkspaceStore: ObservableObject {
             $0.state = .failed
             $0.failureMessage = message
         }
-        _ = flushPendingWorkspaceSave()
+        _ = await flushPendingWorkspaceSaveAsync()
     }
 
     private func item(_ itemID: String, belongsTo courseID: UUID?) -> Bool {
@@ -9440,7 +9596,10 @@ final class WorkspaceStore: ObservableObject {
         resultDigest: String?
     ) async -> Bool {
         updateNote(markdown, for: target.id)
-        flushPendingNotePersistence()
+        // Never flushPendingNotePersistence() here: the default overload also
+        // calls flushPendingWorkspaceSave(), which RunLoop-spins on MainActor
+        // and surfaces the 60s "文件操作超过 60 秒未完成" banner.
+        flushPendingNotePersistence(flushWorkspace: false)
         if case .courseOwned = target.storage {
             while let task = courseNoteWriteTasksByItemID[target.id] {
                 await task.value
@@ -9454,7 +9613,8 @@ final class WorkspaceStore: ObservableObject {
         } else {
             notePersisted = notesByItemID[target.id] == markdown
         }
-        return notePersisted && flushPendingWorkspaceSave()
+        guard notePersisted else { return false }
+        return await flushPendingWorkspaceSaveAsync()
     }
 
     func syncActiveStudySession(titleSeed: String? = nil) {
@@ -9511,7 +9671,7 @@ final class WorkspaceStore: ObservableObject {
         return true
     }
 
-    private func applySemanticSessionTitleAndSave(_ suggestion: String, to sessionID: UUID) async {
+    func applySemanticSessionTitleAndSave(_ suggestion: String, to sessionID: UUID) async {
         guard applySemanticSessionTitle(suggestion, to: sessionID) else { return }
         save()
         _ = await flushPendingWorkspaceSaveAsync()
@@ -10801,7 +10961,10 @@ final class WorkspaceStore: ObservableObject {
     private func createCourseNotebookNote(
         courseID: UUID,
         title: String,
-        markdown: String
+        markdown: String,
+        revealInWorkspace: Bool = true,
+        conflictResolution: CourseFileConflictResolution = .cancel,
+        presentsError: Bool = true
     ) async -> String? {
         let data = Data(markdown.utf8)
         do {
@@ -10811,24 +10974,29 @@ final class WorkspaceStore: ObservableObject {
                 fileName: "\(safeFileStem(title)).md",
                 sourceURL: nil,
                 sourceIdentity: nil,
-                generatedData: data
+                generatedData: data,
+                conflictResolution: conflictResolution
             )
-            activeNotebookItemID = result.item.id
-            noteText = markdown
-            revealRichWritingSurface()
-            focus(.notes)
-            showTransientNoteStatus(
-                ui(
-                    "已在课程“笔记”目录新建：\(result.item.subtitle)",
-                    "Created in the course Notes folder: \(result.item.subtitle)"
+            if revealInWorkspace {
+                activeNotebookItemID = result.item.id
+                noteText = markdown
+                revealRichWritingSurface()
+                focus(.notes)
+                showTransientNoteStatus(
+                    ui(
+                        "已在课程“笔记”目录新建：\(result.item.subtitle)",
+                        "Created in the course Notes folder: \(result.item.subtitle)"
+                    )
                 )
-            )
+            }
             return result.item.id
         } catch {
-            showImportantOperationError(ui(
-                "无法创建课程笔记：\(error.localizedDescription)",
-                "Could not create the course note: \(error.localizedDescription)"
-            ))
+            if presentsError {
+                showImportantOperationError(ui(
+                    "无法创建课程笔记：\(error.localizedDescription)",
+                    "Could not create the course note: \(error.localizedDescription)"
+                ))
+            }
             return nil
         }
     }
@@ -13483,6 +13651,46 @@ final class WorkspaceStore: ObservableObject {
         activeNoteItem.flatMap { $0.isNotebookNote ? $0 : nil }
     }
 
+    private func confirmedAgentNotes(
+        in target: AgentConversationTarget
+    ) -> [StudyAgentPersistedNoteRef] {
+        let sessionMessages: [AgentMessage]
+        if activeStudySessionID == target.sessionID {
+            sessionMessages = messages
+        } else if let session = studySessions.first(where: { $0.id == target.sessionID }) {
+            sessionMessages = session.messages
+        } else {
+            return []
+        }
+        var seen = Set<String>()
+        var refs: [StudyAgentPersistedNoteRef] = []
+        for message in sessionMessages {
+            for action in message.actions where action.kind == .writeNote && action.state == .executed {
+                guard let itemID = action.targetItemID, seen.insert(itemID).inserted else { continue }
+                guard let noteItem = allItems.first(where: { $0.id == itemID && $0.isNotebookNote }) else {
+                    continue
+                }
+                if let courseID = target.courseID, !item(itemID, belongsTo: courseID) {
+                    continue
+                }
+                refs.append(
+                    StudyAgentPersistedNoteRef(
+                        itemID: itemID,
+                        title: displayTitle(for: noteItem)
+                    )
+                )
+            }
+        }
+        return refs
+    }
+
+    private func latestConfirmedAgentNoteItem(
+        in target: AgentConversationTarget
+    ) -> StudyItem? {
+        guard let itemID = confirmedAgentNotes(in: target).last?.itemID else { return nil }
+        return allItems.first { $0.id == itemID && $0.isNotebookNote }
+    }
+
     private func makeCourseContext(
         query: String,
         courseID: UUID?,
@@ -14843,7 +15051,7 @@ final class WorkspaceStore: ObservableObject {
             )
     }
 
-    private func makeLearningContext(
+    func makeLearningContext(
         target: AgentConversationTarget
     ) -> StudyAgentLearningContext {
         let targetSession = studySessions.first { $0.id == target.sessionID }
@@ -14924,6 +15132,15 @@ final class WorkspaceStore: ObservableObject {
         )
     }
 
+    func refreshCourseProfileContext(
+        target: AgentConversationTarget
+    ) -> StudyAgentCourseProfileContext {
+        makeCourseProfileContext(
+            courseID: target.courseID,
+            access: makeAgentProjectAccessSnapshot(target: target)
+        )
+    }
+
     private func lastStudyLocation(in courseID: UUID?) -> StudyLocation? {
         guard let courseID else { return lastStudyLocation }
         let itemIDs = Set(courseItems(in: courseID).map(\.id))
@@ -14990,9 +15207,17 @@ final class WorkspaceStore: ObservableObject {
             }
             let memoryID: UUID?
             let scope: LearningMemoryScope
-            if let rawMemoryID = proposal.memoryID {
-                guard let parsedMemoryID = UUID(uuidString: rawMemoryID),
-                      entryTargetIDs.insert(parsedMemoryID).inserted,
+            switch Self.parseOptionalRecordID(proposal.memoryID) {
+            case .omitted:
+                memoryID = nil
+                scope = learningMemoryScope(
+                    for: proposal.kind,
+                    courseID: target.courseID
+                )
+            case .invalid:
+                return nil
+            case .id(let parsedMemoryID):
+                guard entryTargetIDs.insert(parsedMemoryID).inserted,
                       let located = locatedMemory(parsedMemoryID),
                       located.2.status == .active,
                       located.0 == learningMemoryScope(
@@ -15008,12 +15233,6 @@ final class WorkspaceStore: ObservableObject {
                 }
                 memoryID = parsedMemoryID
                 scope = located.0
-            } else {
-                memoryID = nil
-                scope = learningMemoryScope(
-                    for: proposal.kind,
-                    courseID: target.courseID
-                )
             }
             validatedEntries.append(
                 (
@@ -15252,7 +15471,7 @@ final class WorkspaceStore: ObservableObject {
         expectedContextRevision: String,
         expectedProfileRevision: UInt64,
         target: AgentConversationTarget
-    ) {
+    ) -> AgentReplyProfileUpdate? {
         guard let courseID = target.courseID,
               activeCourseRemovalTokens[courseID] == nil,
               let update,
@@ -15260,12 +15479,12 @@ final class WorkspaceStore: ObservableObject {
               update.profileRevision == expectedProfileRevision,
               let profileIndex = courseKnowledgeProfiles.firstIndex(where: {
                   $0.courseID == courseID && $0.revision == expectedProfileRevision
-              }) else { return }
+              }) else { return nil }
         var profile = courseKnowledgeProfiles[profileIndex]
         let existingIDs = Set(profile.entries.map(\.id))
         let removedIDs = Set(update.removedEntryIDs.compactMap(UUID.init(uuidString:)))
         guard removedIDs.count == update.removedEntryIDs.count,
-              removedIDs.isSubset(of: existingIDs) else { return }
+              removedIDs.isSubset(of: existingIDs) else { return nil }
         let itemsByID = Dictionary(
             uniqueKeysWithValues: courseItems(in: courseID).map { ($0.id, $0) }
         )
@@ -15274,20 +15493,27 @@ final class WorkspaceStore: ObservableObject {
         var replacements: [(UUID?, CourseKnowledgeProfileEntry)] = []
         let now = Date()
         for proposal in update.entries {
-            let entryID = proposal.entryID.flatMap(UUID.init(uuidString:))
-            guard proposal.entryID == nil || entryID != nil,
-                  entryID.map(existingIDs.contains) ?? true,
-                  entryID.map({ targetIDs.insert($0).inserted }) ?? true else { return }
+            let entryID: UUID?
+            switch Self.parseOptionalRecordID(proposal.entryID) {
+            case .omitted:
+                entryID = nil
+            case .invalid:
+                return nil
+            case .id(let parsed):
+                entryID = parsed
+            }
+            guard entryID.map(existingIDs.contains) ?? true,
+                  entryID.map({ targetIDs.insert($0).inserted }) ?? true else { return nil }
             var sources: [CourseKnowledgeProfileSource] = []
             for source in proposal.sources {
                 guard let item = itemsByID[source.itemID],
-                (item.isNotebookNote ? "note" : "material") == source.role else { return }
+                (item.isNotebookNote ? "note" : "material") == source.role else { return nil }
                 let revision = item.isNotebookNote
                     ? loadedAgentNoteText(for: item).map(
                         CourseDocumentSearchIndex.sourceRevision(forMarkdown:)
                     )
                     : CourseDocumentSearchIndex.sourceRevision(for: item)
-                guard revision == source.sourceRevision else { return }
+                guard revision == source.sourceRevision else { return nil }
                 sources.append(
                     CourseKnowledgeProfileSource(
                         itemID: source.itemID,
@@ -15297,7 +15523,9 @@ final class WorkspaceStore: ObservableObject {
                     )
                 )
             }
-            guard !sources.isEmpty else { return }
+            let allowsEmptySources = update.checkpoint == "userRequested"
+                || proposal.text.hasPrefix("用户自述：")
+            guard !sources.isEmpty || allowsEmptySources else { return nil }
             let existing = entryID.flatMap { id in
                 profile.entries.first(where: { $0.id == id })
             }
@@ -15325,8 +15553,8 @@ final class WorkspaceStore: ObservableObject {
                 profile.entries.append(replacement)
             }
         }
-        guard profile.entries.count <= 200 else { return }
-        guard profile.entries != courseKnowledgeProfiles[profileIndex].entries else { return }
+        guard profile.entries.count <= 200 else { return nil }
+        guard profile.entries != courseKnowledgeProfiles[profileIndex].entries else { return nil }
         profile.overview = profile.entries
             .filter { $0.kind == .overview }
             .max(by: { $0.updatedAt < $1.updatedAt })?.text ?? ""
@@ -15334,7 +15562,83 @@ final class WorkspaceStore: ObservableObject {
         profile.updatedAt = now
         courseKnowledgeProfiles[profileIndex] = profile
         dirtyPortableCourseIDs.insert(courseID)
+        let texts = replacements.map { $0.1.text }
+        return AgentReplyProfileUpdate(
+            entryIDs: replacements.map { $0.1.id },
+            summary: texts.prefix(3).joined(separator: "；"),
+            texts: texts
+        )
     }
+
+    private enum OptionalRecordID {
+        case omitted
+        case invalid
+        case id(UUID)
+    }
+
+    private static func parseOptionalRecordID(_ raw: String?) -> OptionalRecordID {
+        let trimmed = raw?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if trimmed.isEmpty { return .omitted }
+        guard let id = UUID(uuidString: trimmed) else { return .invalid }
+        return .id(id)
+    }
+
+    func persistNativeLearningUpdate(
+        _ update: StudyAgentLearningUpdate,
+        expectedContextRevision: String,
+        expectedUserQuestion: String,
+        target: AgentConversationTarget,
+        messageID: UUID
+    ) -> NativeStorePersistReceipt {
+        if let applied = applyLearningUpdate(
+            update,
+            expectedContextRevision: expectedContextRevision,
+            expectedMemoryRevision: update.memoryRevision,
+            expectedUserQuestion: expectedUserQuestion,
+            target: target,
+            messageID: messageID
+        ) {
+            return NativeStorePersistReceipt(
+                accepted: true,
+                message: "已写入学习记忆",
+                memoryUpdate: applied
+            )
+        }
+        let hasClientID = update.entries.contains {
+            !($0.memoryID?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "").isEmpty
+        }
+        if hasClientID {
+            return .rejected("魏碑没有保存这次学习记忆。更新只能沿用 weibei_read_learning_memory 返回的 memoryID；新建请省略该字段，不要传空字符串，也不要自己编 UUID。")
+        }
+        return .rejected("魏碑没有保存这次学习记忆。用户自述请用 origin=userStatement，evidence 以「[用户：本轮]」开头并带上用户原话。")
+    }
+
+    func persistNativeCourseProfileUpdate(
+        _ update: StudyAgentCourseProfileUpdate,
+        expectedContextRevision: String,
+        target: AgentConversationTarget
+    ) -> NativeStorePersistReceipt {
+        if let applied = applyCourseProfileUpdate(
+            update,
+            expectedContextRevision: expectedContextRevision,
+            expectedProfileRevision: update.profileRevision,
+            target: target
+        ) {
+            return NativeStorePersistReceipt(
+                accepted: true,
+                message: "已写入课程知识档案",
+                profileUpdate: applied
+            )
+        }
+        let hasClientID = update.entries.contains {
+            !($0.entryID?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "").isEmpty
+        }
+        if hasClientID {
+            return .rejected("魏碑没有保存这次课程档案。更新只能沿用当前档案已有条目的 entryID；新建请省略该字段，不要传空字符串，也不要自己编 UUID。")
+        }
+        return .rejected("魏碑没有保存这次课程档案。自述掌握用 kind=concept、text 以「用户自述：」开头、checkpoint=userRequested。")
+    }
+
 
     func isLearningMemoryResolved(_ memoryID: String, in scope: LearningMemoryScope) -> Bool {
         guard let id = UUID(uuidString: memoryID) else { return false }
@@ -16059,6 +16363,7 @@ final class WorkspaceStore: ObservableObject {
         let sentNoteItem = replayNoteItemID
             .flatMap { itemID in allItems.first(where: { $0.id == itemID }) }
             ?? agentFocusNoteItem(for: target)
+            ?? latestConfirmedAgentNoteItem(in: target)
         let focusAllowedItemIDs = allowedItemIDs.union(
             [sentMaterialItem?.id, sentNoteItem?.id].compactMap { $0 }
         ).union(
@@ -16293,7 +16598,8 @@ final class WorkspaceStore: ObservableObject {
                 courseProfile: sentCourseProfile,
                 language: sentLanguage,
                 contextRevision: "\(requestWorkspaceRevision):\(requestID.uuidString.lowercased())",
-                interactiveVisualizationsEnabled: agentInteractiveVisualizationsEnabled
+                interactiveVisualizationsEnabled: agentInteractiveVisualizationsEnabled,
+                confirmedNotes: confirmedAgentNotes(in: target)
             )
             agentStreaming.activityText = ui("正在思考", "Thinking")
             didStartModelRequest = true
@@ -16313,7 +16619,7 @@ final class WorkspaceStore: ObservableObject {
             if activeStudySessionID == target.sessionID {
                 latestAgentNoteProposal = reply.noteProposal
             }
-            let memoryUpdate = applyLearningUpdate(
+            let memoryUpdate = reply.appliedMemoryUpdate ?? applyLearningUpdate(
                 reply.learningUpdate,
                 expectedContextRevision: request.contextRevision,
                 expectedMemoryRevision: requestMemoryRevision,
@@ -16321,7 +16627,7 @@ final class WorkspaceStore: ObservableObject {
                 target: target,
                 messageID: assistantMessage.id
             )
-            applyCourseProfileUpdate(
+            let profileUpdate = reply.appliedProfileUpdate ?? applyCourseProfileUpdate(
                 reply.courseProfileUpdate,
                 expectedContextRevision: request.contextRevision,
                 expectedProfileRevision: sentCourseProfile.revision,
@@ -16332,7 +16638,7 @@ final class WorkspaceStore: ObservableObject {
             }
             var actions: [AgentReplyAction] = []
             if let proposal = reply.noteProposal,
-               let sentNoteItemID {
+               sentNoteItemID != nil || target.courseID != nil {
                 actions.append(
                     AgentReplyAction(
                         kind: .writeNote,
@@ -16341,9 +16647,9 @@ final class WorkspaceStore: ObservableObject {
                         proposedMarkdown: proposal.markdown,
                         evidence: proposal.evidence,
                         contextRevision: proposal.contextRevision,
-                        baselineContentDigest: Self.noteContentDigest(
-                            Data(sentNoteText.utf8)
-                        )
+                        baselineContentDigest: sentNoteItemID == nil
+                            ? Self.noteContentDigest(Data())
+                            : Self.noteContentDigest(Data(sentNoteText.utf8))
                     )
                 )
             }
@@ -16370,6 +16676,7 @@ final class WorkspaceStore: ObservableObject {
                     $0.sources = sources
                     $0.actions = actions
                     $0.memoryUpdate = memoryUpdate
+                    $0.profileUpdate = profileUpdate
                     $0.failureKind = nil
                     $0.retryQuestion = nil
                     $0.toolTrace = reply.toolTrace
@@ -16578,7 +16885,7 @@ final class WorkspaceStore: ObservableObject {
         agentStopTask?.cancel()
         agentStopTask = Task { @MainActor [weak self] in
             guard let self else { return }
-            await self.piRuntime.cancel()
+            await self.cancelStudyAgentRuntimes()
             await requestTask?.value
             self.isStoppingAgent = false
             self.agentStopTask = nil
@@ -16674,51 +16981,13 @@ final class WorkspaceStore: ObservableObject {
             )
         }
 #endif
-        let selectedModel = modelName.trimmingCharacters(in: .whitespacesAndNewlines)
-        let endpoint = try AgentProviderEndpoint(
+        return try await dispatchStudyAgentRequest(
+            request,
             provider: selectedProvider,
-            baseURL: agentBaseURL
+            target: target,
+            replyMessageID: replyMessageID,
+            hostToolHandler: hostToolHandler
         )
-        if selectedProvider == .azureOpenAI {
-            let credentialIsBound = try await piRuntime.managementCatalog()
-                .credentials
-                .contains {
-                    $0.providerId == endpoint.piProviderID
-                        && $0.type == .apiKey
-                        && $0.boundEndpoint == endpoint.baseURL
-                }
-            guard credentialIsBound else {
-                throw AgentProviderEndpointError.azureCredentialRequiresReentry
-            }
-        }
-        await piRuntime.configure(
-            PiAgentProviderConfiguration(
-                provider: endpoint.piProviderID,
-                model: selectedModel.isEmpty ? nil : selectedModel,
-                baseURL: endpoint.baseURL
-            )
-        )
-        try await piRuntime.writeCustomModelsJSONIfNeeded(
-            providerID: selectedProvider,
-            baseURL: endpoint.baseURL ?? "",
-            model: selectedModel
-        )
-        return try await piRuntime.respond(
-            to: request,
-            sessionID: target.sessionID,
-            workingDirectory: target.workingDirectory,
-            hostToolHandler: hostToolHandler,
-            sessionTitleHandler: { [weak self] title in
-                await self?.applySemanticSessionTitleAndSave(title, to: target.sessionID)
-            }
-        ) { [weak self] progress in
-            await self?.applyAgentProgress(
-                progress,
-                requestID: request.id,
-                replyMessageID: replyMessageID,
-                chatID: target.sessionID
-            )
-        }
     }
 
     func shutdownAgentRuntime() {
@@ -16740,7 +17009,7 @@ final class WorkspaceStore: ObservableObject {
         )
     }
 
-    private func applyAgentProgress(
+    func applyAgentProgress(
         _ progress: StudyAgentProgress,
         requestID: UUID,
         replyMessageID: UUID,
@@ -16765,10 +17034,12 @@ final class WorkspaceStore: ObservableObject {
                 base = ui("正在读取", "Reading")
             case "weibei_course_map":
                 base = ui("正在查找课程关联", "Finding course connections")
-            case "weibei_learning_memory":
+            case "weibei_read_learning_memory":
                 base = ui("正在回顾学习记忆", "Reviewing learning memory")
-            case "weibei_learning_update":
+            case "weibei_update_learning_memory":
                 base = ui("正在整理学习进展", "Updating study progress")
+            case "weibei_course_profile_update":
+                base = ui("正在更新课程知识档案", "Updating course profile")
             case "weibei_note_proposal":
                 base = ui("正在整理写入建议", "Preparing a note proposal")
             default:

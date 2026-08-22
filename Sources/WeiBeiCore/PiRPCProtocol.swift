@@ -370,7 +370,7 @@ public enum PiRPCMessageDecoder {
                     byteCount: byteCount.intValue
                 )
             }
-            if name == "weibei_learning_memory",
+            if name == "weibei_read_learning_memory",
                let details = result?["details"] as? [String: Any],
                details["kind"] as? String == "learning_memory",
                let contextRevision = details["contextRevision"] as? String,
@@ -426,186 +426,34 @@ public enum PiRPCMessageDecoder {
             }
             if name == "weibei_note_proposal",
                let details = result?["details"] as? [String: Any],
-               details["kind"] as? String == "note_proposal",
-               let markdown = details["markdown"] as? String,
-               let revision = details["contextRevision"] as? String {
+               let proposal = StudyAgentProposalDecoding.noteProposal(from: details) {
                 return .noteProposal(
                     id: object["toolCallId"] as? String ?? "",
-                    StudyAgentNoteProposal(
-                        markdown: markdown,
-                        evidence: details["evidence"] as? [String] ?? [],
-                        contextRevision: revision
-                    )
+                    proposal
                 )
             }
             if name == "weibei_relation_proposal",
                let details = result?["details"] as? [String: Any],
-               details["kind"] as? String == "relation_proposal",
-               let noteItemID = details["noteItemID"] as? String,
-               let sourceItemID = details["sourceItemID"] as? String,
-               let revision = details["contextRevision"] as? String {
+               let proposal = StudyAgentProposalDecoding.relationProposal(from: details) {
                 return .relationProposal(
                     id: object["toolCallId"] as? String ?? "",
-                    StudyAgentRelationProposal(
-                        noteItemID: noteItemID,
-                        sourceItemID: sourceItemID,
-                        contextRevision: revision
-                    )
+                    proposal
                 )
             }
-            if name == "weibei_learning_update",
+            if name == "weibei_update_learning_memory",
                let details = result?["details"] as? [String: Any],
-               details["kind"] as? String == "learning_update",
-               let revision = details["contextRevision"] as? String,
-               let memoryRevision = details["memoryRevision"] as? NSNumber,
-               memoryRevision.int64Value >= 0,
-               let rawEntries = details["entries"] as? [Any],
-               let rawResolutions = details["resolutions"] as? [Any],
-               let suggestedNext = details["suggestedNext"] as? [String] {
-                let sessionSummary: String?
-                if let rawSessionSummary = details["sessionSummary"] {
-                    guard let value = rawSessionSummary as? String else {
-                        return .event(type)
-                    }
-                    sessionSummary = value
-                } else {
-                    sessionSummary = nil
-                }
-
-                let suggestedPhase: StudyPhase?
-                if let rawSuggestedPhase = details["suggestedPhase"] {
-                    guard let value = rawSuggestedPhase as? String,
-                          let phase = StudyPhase(rawValue: value) else {
-                        return .event(type)
-                    }
-                    suggestedPhase = phase
-                } else {
-                    suggestedPhase = nil
-                }
-
-                var entries: [StudyAgentMemoryUpdateEntry] = []
-                entries.reserveCapacity(rawEntries.count)
-                for rawEntry in rawEntries {
-                    guard let entry = rawEntry as? [String: Any],
-                          let kindRaw = entry["kind"] as? String,
-                          let kind = LearningMemoryKind(rawValue: kindRaw),
-                          let text = entry["text"] as? String,
-                          let evidence = entry["evidence"] as? String,
-                          let originRaw = entry["origin"] as? String,
-                          let origin = LearningMemoryOrigin(rawValue: originRaw) else {
-                        return .event(type)
-                    }
-                    let memoryID: String?
-                    if let rawMemoryID = entry["memoryID"] {
-                        guard let value = rawMemoryID as? String else {
-                            return .event(type)
-                        }
-                        memoryID = value
-                    } else {
-                        memoryID = nil
-                    }
-                    entries.append(
-                        StudyAgentMemoryUpdateEntry(
-                            memoryID: memoryID,
-                            kind: kind,
-                            text: text,
-                            evidence: evidence,
-                            origin: origin
-                        )
-                    )
-                }
-
-                var resolutions: [StudyAgentMemoryResolution] = []
-                resolutions.reserveCapacity(rawResolutions.count)
-                for rawResolution in rawResolutions {
-                    guard let resolution = rawResolution as? [String: Any],
-                          let memoryID = resolution["memoryID"] as? String,
-                          let text = resolution["text"] as? String,
-                          let evidence = resolution["evidence"] as? String else {
-                        return .event(type)
-                    }
-                    resolutions.append(
-                        StudyAgentMemoryResolution(
-                            memoryID: memoryID,
-                            text: text,
-                            evidence: evidence
-                        )
-                    )
-                }
-
+               let update = StudyAgentProposalDecoding.learningUpdate(from: details) {
                 return .learningUpdate(
                     id: object["toolCallId"] as? String ?? "",
-                    StudyAgentLearningUpdate(
-                        contextRevision: revision,
-                        memoryRevision: memoryRevision.uint64Value,
-                        sessionSummary: sessionSummary,
-                        suggestedPhase: suggestedPhase,
-                        suggestedNext: suggestedNext,
-                        entries: entries,
-                        resolutions: resolutions
-                    )
+                    update
                 )
             }
             if name == "weibei_course_profile_update",
                let details = result?["details"] as? [String: Any],
-               details["kind"] as? String == "course_profile_update",
-               let revision = details["contextRevision"] as? String,
-               let profileRevision = details["profileRevision"] as? NSNumber,
-               profileRevision.int64Value >= 0,
-               let checkpoint = details["checkpoint"] as? String,
-               let rawEntries = details["entries"] as? [[String: Any]],
-               let removedEntryIDs = details["removedEntryIDs"] as? [String] {
-                var entries: [StudyAgentCourseProfileUpdateEntry] = []
-                for rawEntry in rawEntries {
-                    guard let kindRaw = rawEntry["kind"] as? String,
-                          let kind = CourseKnowledgeProfileEntryKind(rawValue: kindRaw),
-                          let text = rawEntry["text"] as? String,
-                          let rawSources = rawEntry["sources"] as? [[String: Any]] else {
-                        return .event(type)
-                    }
-                    var sources: [StudyAgentCourseProfileSource] = []
-                    for rawSource in rawSources {
-                        guard let itemID = rawSource["itemID"] as? String,
-                              let role = rawSource["role"] as? String,
-                              let sourceRevision = rawSource["sourceRevision"] as? String else {
-                            return .event(type)
-                        }
-                        let location: String?
-                        if let rawLocation = rawSource["location"] {
-                            guard let value = rawLocation as? String else {
-                                return .event(type)
-                            }
-                            location = value
-                        } else {
-                            location = nil
-                        }
-                        sources.append(
-                            StudyAgentCourseProfileSource(
-                                itemID: itemID,
-                                role: role,
-                                location: location,
-                                sourceRevision: sourceRevision
-                            )
-                        )
-                    }
-                    entries.append(
-                        StudyAgentCourseProfileUpdateEntry(
-                            entryID: rawEntry["entryID"] as? String,
-                            kind: kind,
-                            text: text,
-                            sources: sources
-                        )
-                    )
-                }
+               let update = StudyAgentProposalDecoding.courseProfileUpdate(from: details) {
                 return .courseProfileUpdate(
                     id: object["toolCallId"] as? String ?? "",
-                    StudyAgentCourseProfileUpdate(
-                        contextRevision: revision,
-                        profileRevision: profileRevision.uint64Value,
-                        checkpoint: checkpoint,
-                        entries: entries,
-                        removedEntryIDs: removedEntryIDs
-                    )
+                    update
                 )
             }
             return .event(type)

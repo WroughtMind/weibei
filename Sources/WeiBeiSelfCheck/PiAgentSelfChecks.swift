@@ -286,7 +286,7 @@ private func checkRPCDecoding() throws {
         "PI course-map metadata does not unlock a material as content evidence"
     )
 
-    let memoryRead = try PiRPCMessageDecoder.decode(Data(#"{"type":"tool_execution_end","toolCallId":"tool-learning","toolName":"weibei_learning_memory","isError":false,"result":{"details":{"kind":"learning_memory","contextRevision":"revision-7","memoryRevision":4,"learning":{"memories":[]},"jumpEvidence":{}}}}"#.utf8))
+    let memoryRead = try PiRPCMessageDecoder.decode(Data(#"{"type":"tool_execution_end","toolCallId":"tool-learning","toolName":"weibei_read_learning_memory","isError":false,"result":{"details":{"kind":"learning_memory","contextRevision":"revision-7","memoryRevision":4,"learning":{"memories":[]},"jumpEvidence":{}}}}"#.utf8))
     try piRequire(
         memoryRead == .learningMemoryRead(
             id: "tool-learning",
@@ -356,7 +356,7 @@ private func checkRPCDecoding() throws {
     let learningData = try JSONSerialization.data(withJSONObject: [
         "type": "tool_execution_end",
         "toolCallId": "tool-memory",
-        "toolName": "weibei_learning_update",
+        "toolName": "weibei_update_learning_memory",
         "isError": false,
         "result": [
             "details": [
@@ -430,7 +430,7 @@ private func checkRPCDecoding() throws {
     let partiallyMalformedLearningData = try JSONSerialization.data(withJSONObject: [
         "type": "tool_execution_end",
         "toolCallId": "tool-memory-malformed",
-        "toolName": "weibei_learning_update",
+        "toolName": "weibei_update_learning_memory",
         "isError": false,
         "result": [
             "details": [
@@ -463,7 +463,7 @@ private func checkRPCDecoding() throws {
     let partiallyMalformedResolutionData = try JSONSerialization.data(withJSONObject: [
         "type": "tool_execution_end",
         "toolCallId": "tool-resolution-malformed",
-        "toolName": "weibei_learning_update",
+        "toolName": "weibei_update_learning_memory",
         "isError": false,
         "result": [
             "details": [

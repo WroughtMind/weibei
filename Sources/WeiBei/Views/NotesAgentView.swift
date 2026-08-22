@@ -3317,6 +3317,13 @@ private struct AgentBubble: View {
                 .transition(WeiBeiTransition.floating)
             }
 
+            if message.origin?.courseID != nil,
+               let profileUpdate = message.profileUpdate,
+               !profileUpdate.entryIDs.isEmpty {
+                AgentReplyProfileUpdateTag(update: profileUpdate)
+                    .transition(WeiBeiTransition.floating)
+            }
+
             if message.completionState == .interrupted && !isFailureMessage {
                 HStack(spacing: 6) {
                     Text(store.ui("回答已中断，已保留现有内容", "Response interrupted; existing content was kept"))
@@ -3384,6 +3391,7 @@ private struct AgentBubble: View {
             }
         }
         .animation(reduceMotion ? nil : WeiBeiMotion.reveal, value: message.memoryUpdate)
+        .animation(reduceMotion ? nil : WeiBeiMotion.reveal, value: message.profileUpdate)
     }
 
     private func activateSource(_ source: AgentReplySource) {
@@ -3578,6 +3586,7 @@ private struct AgentReplyMemoryUpdateTag: View {
     }
 }
 
+
 // MARK: - Agent citation tags (materials / learning / selection)
 
 /// Bracket citations Pi emits in answers, e.g. `[材料：…]`, `[学习记录：上次位置]`.
@@ -3688,6 +3697,7 @@ private struct AgentReplyActionCard: View {
             TextEditor(text: $bodyText)
                 .weiBeiText(12)
                 .scrollContentBackground(.hidden)
+                .scrollDisabled(true)
                 .weibeiInputSurface(height: 104, horizontalPadding: 6)
         } else {
             Text(store.ui("建议建立关系：", "Suggested relation:"))
@@ -3752,10 +3762,14 @@ private struct AgentReplyActionCard: View {
             .disabled(isWorking)
         } else {
             Button(store.ui("取消", "Cancel")) {
-                store.cancelAgentReplyAction(
-                    messageID: messageID,
-                    actionID: action.id
-                )
+                isWorking = true
+                Task {
+                    await store.cancelAgentReplyAction(
+                        messageID: messageID,
+                        actionID: action.id
+                    )
+                    isWorking = false
+                }
             }
             .buttonStyle(WeiBeiTextActionButtonStyle())
             .disabled(isWorking)
@@ -3829,7 +3843,7 @@ private struct AgentReplyActionCard: View {
     private var actionIdentityTitle: String {
         if action.kind == .writeNote {
             return store.agentReplyActionTargetTitle(action)
-                ?? store.ui("目标笔记", "target note")
+                ?? store.ui("新建笔记", "New note")
         }
         let note = store.agentReplyActionTargetTitle(action)
             ?? store.ui("笔记", "note")
