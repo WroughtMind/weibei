@@ -1669,6 +1669,79 @@ struct WeiBeiTextActionButtonStyle: ButtonStyle {
     }
 }
 
+/// Dialog / sheet action buttons in the paper language: the solid-cinnabar
+/// primary (same filled treatment as the send action) and the etched
+/// secondary, so sheets stop mixing system `.bordered` chrome in.
+struct WeiBeiDialogButtonStyle: ButtonStyle {
+    enum Prominence {
+        case primary
+        case secondary
+    }
+
+    @Environment(\.isEnabled) private var isEnabled
+    @Environment(\.colorScheme) private var colorScheme
+    var prominence: Prominence = .secondary
+    @State private var hovering = false
+
+    func makeBody(configuration: Configuration) -> some View {
+        let shape = RoundedRectangle(cornerRadius: WeiBeiMetric.controlRadius, style: .continuous)
+        return configuration.label
+            .weiBeiText(12, weight: prominence == .primary ? .semibold : .medium)
+            .foregroundStyle(foreground)
+            .padding(.horizontal, 14)
+            .frame(height: 28)
+            .background { background(isPressed: configuration.isPressed, shape: shape) }
+            .clipShape(shape)
+            .scaleEffect(configuration.isPressed ? 0.97 : 1)
+            .animation(WeiBeiMotion.press, value: configuration.isPressed)
+            .animation(WeiBeiMotion.hover, value: hovering)
+            .onHover { hovering = isEnabled && $0 }
+            .onChange(of: isEnabled) { _, enabled in
+                if !enabled { hovering = false }
+            }
+    }
+
+    private var foreground: Color {
+        guard isEnabled else {
+            return prominence == .primary
+                ? WeiBeiTheme.onCinnabar.opacity(0.66)
+                : WeiBeiTheme.tertiaryInk.opacity(0.60)
+        }
+        if prominence == .primary { return WeiBeiTheme.onCinnabar }
+        return hovering ? WeiBeiTheme.ink : WeiBeiTheme.secondaryInk
+    }
+
+    @ViewBuilder
+    private func background(isPressed: Bool, shape: RoundedRectangle) -> some View {
+        if !isEnabled {
+            if prominence == .primary {
+                shape.fill(WeiBeiTheme.cinnabar.opacity(0.38))
+            } else {
+                WeiBeiEtchedBackdrop(
+                    shape: shape,
+                    fill: WeiBeiTheme.paperInset.opacity(0.16),
+                    stroke: WeiBeiTheme.hairline.opacity(0.28)
+                )
+            }
+        } else if prominence == .primary {
+            if isPressed {
+                shape.fill(WeiBeiTheme.cinnabar.opacity(colorScheme == .dark ? 0.78 : 0.86))
+            } else if hovering {
+                shape.fill(WeiBeiTheme.cinnabar.opacity(colorScheme == .dark ? 0.86 : 0.92))
+            } else {
+                shape.fill(WeiBeiTheme.cinnabar)
+            }
+        } else {
+            WeiBeiEtchedBackdrop(
+                shape: shape,
+                fill: WeiBeiTheme.paperInset.opacity(isPressed ? 0.40 : hovering ? 0.34 : 0.22),
+                stroke: WeiBeiTheme.hairline.opacity(hovering || isPressed ? 0.55 : 0.40),
+                showsContactShadow: hovering && !isPressed
+            )
+        }
+    }
+}
+
 extension View {
     func weibeiPanel() -> some View {
         self

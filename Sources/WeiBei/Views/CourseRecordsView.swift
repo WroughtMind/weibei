@@ -434,12 +434,13 @@ private struct LearningMemoryEditSheet: View {
                 Button(store.ui("取消", "Cancel")) {
                     dismiss()
                 }
+                .buttonStyle(WeiBeiDialogButtonStyle(prominence: .secondary))
                 Button(store.ui("保存修改", "Save")) {
                     if store.updateLearningMemory(memory.id, in: scope, kind: kind, text: text) {
                         dismiss()
                     }
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(WeiBeiDialogButtonStyle(prominence: .primary))
                 .disabled(
                     text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                         || text.trimmingCharacters(in: .whitespacesAndNewlines).count > 500

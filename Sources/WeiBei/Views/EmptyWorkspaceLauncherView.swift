@@ -644,6 +644,17 @@ private struct LibraryPlacementNoticeCard: View {
                     .lineLimit(1)
                     .truncationMode(.middle)
             }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 7)
+            .frame(maxWidth: .infinity)
+            .background {
+                WeiBeiEtchedBackdrop(
+                    shape: RoundedRectangle(cornerRadius: 7, style: .continuous),
+                    fill: WeiBeiTheme.paperInset.opacity(0.32),
+                    stroke: WeiBeiTheme.hairline.opacity(0.45)
+                )
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
 
             if let relocationErrorText {
                 Text(relocationErrorText)
@@ -657,28 +668,32 @@ private struct LibraryPlacementNoticeCard: View {
                 ProgressView()
                     .progressViewStyle(.linear)
             } else {
-                HStack(spacing: 14) {
-                    Button(store.ui("就用这里", "Use This Folder")) {
-                        confirmed = true
-                    }
-                    .buttonStyle(WeiBeiTextActionButtonStyle(active: true))
-
+                HStack(spacing: 10) {
                     Button(store.ui("换个位置…", "Choose Another Location…")) {
                         relocateLibrary()
                     }
-                    .buttonStyle(WeiBeiTextActionButtonStyle())
+                    .buttonStyle(WeiBeiDialogButtonStyle(prominence: .secondary))
+
+                    Button(store.ui("就用这里", "Use This Folder")) {
+                        confirmed = true
+                    }
+                    .buttonStyle(WeiBeiDialogButtonStyle(prominence: .primary))
                 }
             }
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 13)
         .frame(maxWidth: 470)
-        .background(WeiBeiTheme.paperRaised.opacity(0.55))
-        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .stroke(WeiBeiTheme.hairline.opacity(0.5), lineWidth: 1)
+        .background {
+            WeiBeiEtchedBackdrop(
+                shape: RoundedRectangle(cornerRadius: 8, style: .continuous),
+                fill: WeiBeiTheme.paperRaised.opacity(0.55),
+                stroke: WeiBeiTheme.hairline.opacity(0.5)
+            )
         }
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .shadow(color: WeiBeiTheme.ink.opacity(0.06), radius: 2, y: 1)
+        .shadow(color: WeiBeiTheme.ink.opacity(0.05), radius: 10, y: 3)
         .padding(.top, 10)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("library-placement-notice")
