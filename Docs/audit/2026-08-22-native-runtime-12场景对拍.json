@@ -89,7 +89,7 @@
       ]
     },
     {
-      "failureKind" : "generic",
+      "failureKind" : "unauthorized",
       "id" : "10-unauthorized"
     },
     {

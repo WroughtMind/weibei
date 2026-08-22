@@ -309,6 +309,14 @@ private func checkFailureMapping() throws {
     try nativeRequire(NativeLLMFailure(code: "rate_limited", status: 429, message: "slow").asAgentFailureKind == .rateLimited, "429 maps rateLimited")
     try nativeRequire(NativeLLMFailure(code: "timeout", message: "idle").asAgentFailureKind == .timedOut, "timeout maps timedOut")
     try nativeRequire(NativeLLMFailure(code: "cancelled", message: "stop").asAgentFailureKind == .cancelled, "cancel maps cancelled")
+    let mapped = NSError(
+        domain: "WeiBei.NativeAgent",
+        code: 401,
+        userInfo: [NSLocalizedDescriptionKey: "请求失败：认证已失效"]
+    )
+    try nativeRequire(AgentFailureKind.classify(mapped) == .unauthorized, "NativeAgent 401 + 认证已失效 maps unauthorized")
+    let revision = NativeLLMFailure(code: "revision_mismatch", message: "课程知识档案版本已变化")
+    try nativeRequire(revision.localizedDescription.contains("课程知识档案"), "tool errors surface the real message, not a generic NSError")
 }
 
 private func waitFor<T>(_ body: @escaping () async throws -> T) throws -> T {

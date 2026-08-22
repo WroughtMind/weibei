@@ -1,8 +1,18 @@
+import Darwin
 import Foundation
 import WeiBeiCore
 
 enum NativeEngineSmoke {
     static func runIfRequested(arguments: [String]) async -> Bool {
+        if arguments.contains("--native-perf") {
+            do {
+                try await runDeepSeekPerf()
+            } catch {
+                fputs("native-perf failed: \(error.localizedDescription)\n", stderr)
+                exit(1)
+            }
+            return true
+        }
         if arguments.contains("--native-deepseek-smoke") {
             do {
                 try await runDeepSeekPlainQA()
@@ -308,7 +318,171 @@ enum NativeEngineSmoke {
         print("\(label) cancel classified=cancelled")
     }
 
-    private static func runDeepSeekPlainQA() async throws {
+    private static func runDeepSeekPerf() async throws {
+        let apiKey = try deepSeekKey()
+        let model = ProcessInfo.processInfo.environment["WEIBEI_NATIVE_BASELINE_MODEL"] ?? "deepseek-chat"
+        let adapter = OpenAIChatCompletionsProvider(apiKey: apiKey)
+        var walls: [Double] = []
+        var ttfts: [Double] = []
+        for index in 1...5 {
+            let sample = try await timedRespond(
+                question: "2+2 等于几？只回答一个数字。",
+                adapter: adapter,
+                model: model
+            )
+            walls.append(sample.wall)
+            if let ttft = sample.ttft { ttfts.append(ttft) }
+            print(
+                "native-perf native \(index) wall=\(fmt(sample.wall))s ttft=\(fmt(sample.ttft))s chars=\(sample.chars)"
+            )
+        }
+        print(
+            "native-perf native wall-median=\(fmt(median(walls)))s ttft-median=\(fmt(median(ttfts)))s n=5 model=\(model)"
+        )
+        try await runLiveCourseTool(adapter: adapter, model: model, label: "native-perf native")
+        print("native-perf native maxrss=\(maxRSSBytes())B after-tool-call")
+
+        try await runPiDeepSeekPerf(model: model)
+    }
+
+    private static func runPiDeepSeekPerf(model: String) async throws {
+        let executable: URL
+        let cached = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+            .appendingPathComponent(".build/pi-runtime/0.82.1/darwin-arm64/PiRuntime/bin/pi")
+        if FileManager.default.isExecutableFile(atPath: cached.path) {
+            executable = cached
+        } else if let located = PiExecutableLocator.locate() {
+            executable = located
+        } else {
+            print("native-perf pi skipped: embedded PI runtime not found")
+            return
+        }
+        let authSource = URL(fileURLWithPath: NSHomeDirectory())
+            .appendingPathComponent("Library/Application Support/com.changfenhuang.weibei/PiAgent/auth.json")
+        guard FileManager.default.fileExists(atPath: authSource.path) else {
+            print("native-perf pi skipped: missing Pi auth.json")
+            return
+        }
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("weibei-native-perf-\(UUID().uuidString)", isDirectory: true)
+        let piAgent = root.appendingPathComponent("PiAgent", isDirectory: true)
+        let runtimeDir = root.appendingPathComponent("Runtime", isDirectory: true)
+        try FileManager.default.createDirectory(at: piAgent, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: runtimeDir, withIntermediateDirectories: true)
+        let authDest = piAgent.appendingPathComponent("auth.json")
+        try FileManager.default.copyItem(at: authSource, to: authDest)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: NSNumber(value: Int16(0o600))],
+            ofItemAtPath: authDest.path
+        )
+        let runtime = PiAgentRuntime(
+            executableURL: executable,
+            runtimeDirectory: runtimeDir,
+            persistentPiConfigurationDirectory: piAgent
+        )
+        await runtime.configure(
+            PiAgentProviderConfiguration(provider: "deepseek", model: model, thinkingLevel: "low")
+        )
+        defer {
+            Task { await runtime.shutdown() }
+            try? FileManager.default.removeItem(at: root)
+        }
+        var walls: [Double] = []
+        var ttfts: [Double] = []
+        for index in 1...5 {
+            let first = FirstTokenBox()
+            let started = Date()
+            let reply = try await runtime.respond(
+                to: StudyAgentRequest(
+                    purpose: .conversation,
+                    question: "2+2 等于几？只回答一个数字。",
+                    materialTitle: "",
+                    materialText: "",
+                    noteTitle: "",
+                    noteText: "",
+                    contextRevision: "perf-pi-\(index)"
+                ),
+                progress: { progress in
+                    if case .text = progress { await first.mark(since: started) }
+                }
+            )
+            let wall = Date().timeIntervalSince(started)
+            let ttft = await first.seconds
+            walls.append(wall)
+            if let ttft { ttfts.append(ttft) }
+            print("native-perf pi \(index) wall=\(fmt(wall))s ttft=\(fmt(ttft))s chars=\(reply.text.count)")
+        }
+        print("native-perf pi children \(samplePiChildren())")
+        print(
+            "native-perf pi wall-median=\(fmt(median(walls)))s ttft-median=\(fmt(median(ttfts)))s n=5 model=\(model)"
+        )
+    }
+
+    private static func timedRespond(
+        question: String,
+        adapter: NativeLLMAdapter,
+        model: String
+    ) async throws -> (wall: Double, ttft: Double?, chars: Int) {
+        let first = FirstTokenBox()
+        let started = Date()
+        let reply = try await respond(
+            question: question,
+            adapter: adapter,
+            model: model,
+            progress: { progress in
+                if case .text = progress { await first.mark(since: started) }
+            }
+        )
+        return (
+            wall: Date().timeIntervalSince(started),
+            ttft: await first.seconds,
+            chars: reply.text.count
+        )
+    }
+
+    private static func median(_ samples: [Double]) -> Double {
+        let sorted = samples.sorted()
+        guard !sorted.isEmpty else { return 0 }
+        return sorted[sorted.count / 2]
+    }
+
+    private static func fmt(_ value: Double?) -> String {
+        guard let value else { return "-" }
+        return String(format: "%.3f", value)
+    }
+
+    private static func maxRSSBytes() -> Int {
+        var usage = rusage()
+        getrusage(RUSAGE_SELF, &usage)
+        return Int(usage.ru_maxrss)
+    }
+
+    private static func samplePiChildren() -> String {
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/bin/ps")
+        task.arguments = ["-axo", "rss=,comm="]
+        let pipe = Pipe()
+        task.standardOutput = pipe
+        do {
+            try task.run()
+            task.waitUntilExit()
+        } catch {
+            return "ps-failed"
+        }
+        let text = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+        var hits: [String] = []
+        for line in text.split(separator: "\n") {
+            let parts = line.split(whereSeparator: \.isWhitespace)
+            guard parts.count >= 2, let rss = Int(parts[0]) else { continue }
+            let comm = parts.dropFirst().joined(separator: " ")
+            if comm.hasSuffix("/pi") || comm.hasSuffix("/bun") || comm == "pi" || comm == "bun" {
+                hits.append("\(comm)=\(rss)KiB")
+            }
+        }
+        return hits.isEmpty ? "none" : hits.joined(separator: ",")
+    }
+
+    private static func deepSeekKey() throws -> String {
         let authURL = URL(fileURLWithPath: NSHomeDirectory())
             .appendingPathComponent("Library/Application Support/com.changfenhuang.weibei/PiAgent/auth.json")
         let data = try Data(contentsOf: authURL)
@@ -318,6 +492,11 @@ enum NativeEngineSmoke {
               !apiKey.isEmpty else {
             throw NSError(domain: "WeiBei.NativeSmoke", code: 5, userInfo: [NSLocalizedDescriptionKey: "DeepSeek key not found in Pi auth.json"])
         }
+        return apiKey
+    }
+
+    private static func runDeepSeekPlainQA() async throws {
+        let apiKey = try deepSeekKey()
         let model = ProcessInfo.processInfo.environment["WEIBEI_NATIVE_BASELINE_MODEL"] ?? "deepseek-chat"
         let adapter = OpenAIChatCompletionsProvider(apiKey: apiKey)
         let reply = try await respond(question: "2+2 等于几？只回答一个数字。", adapter: adapter, model: model)
@@ -331,7 +510,8 @@ enum NativeEngineSmoke {
         question: String,
         adapter: NativeLLMAdapter,
         host: StudyAgentHostToolHandler? = nil,
-        model: String = "mock"
+        model: String = "mock",
+        progress: StudyAgentProgressHandler? = nil
     ) async throws -> StudyAgentReply {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("native-smoke-\(UUID().uuidString)")
         let runtime = NativeStudyAgentRuntime(
@@ -369,7 +549,7 @@ enum NativeEngineSmoke {
                 ),
                 contextRevision: "smoke"
             ),
-            progress: nil
+            progress: progress
         )
     }
 }
@@ -377,6 +557,15 @@ enum NativeEngineSmoke {
 private actor CancelStartBox {
     var didStart = false
     func mark() { didStart = true }
+}
+
+private actor FirstTokenBox {
+    private(set) var seconds: Double?
+    func mark(since started: Date) {
+        if seconds == nil {
+            seconds = Date().timeIntervalSince(started)
+        }
+    }
 }
 
 private final class ScriptedLLMAdapter: NativeLLMAdapter, @unchecked Sendable {

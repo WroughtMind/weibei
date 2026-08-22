@@ -42,12 +42,14 @@ public enum NativeFinishReason: String, Codable, Sendable {
     case aborted
 }
 
-public struct NativeLLMFailure: Error, Codable, Equatable, Sendable {
+public struct NativeLLMFailure: Error, LocalizedError, Codable, Equatable, Sendable {
     public var code: String
     public var status: Int?
     public var retryAfterMs: Int?
     public var requestID: String?
     public var message: String
+
+    public var errorDescription: String? { message }
 
     public init(
         code: String,

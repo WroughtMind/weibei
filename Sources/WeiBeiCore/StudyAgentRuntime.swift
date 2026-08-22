@@ -866,7 +866,7 @@ public enum AgentFailureKind: String, Codable, Equatable, Sendable {
                 break
             }
         }
-        if ns.domain == "WeiBei.OpenAI" {
+        if ns.domain == "WeiBei.OpenAI" || ns.domain == "WeiBei.NativeAgent" {
             switch ns.code {
             case 401, 403:
                 return .unauthorized
@@ -891,7 +891,7 @@ public enum AgentFailureKind: String, Codable, Equatable, Sendable {
         if lower.contains("timeout") || lower.contains("timed out") || message.contains("超时") {
             return .timedOut
         }
-        if lower.contains("401") || lower.contains("403") || lower.contains("unauthorized") || lower.contains("invalid api key") || message.contains("未授权") || message.contains("密钥") {
+        if lower.contains("401") || lower.contains("403") || lower.contains("unauthorized") || lower.contains("invalid api key") || message.contains("未授权") || message.contains("密钥") || message.contains("认证已失效") || message.contains("重新登录") {
             return .unauthorized
         }
         if lower.contains("429") || lower.contains("rate limit") || message.contains("过于频繁") {

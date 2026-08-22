@@ -19,7 +19,9 @@ swift build
 .build/debug/WeiBeiPiCheck --native-engine-smoke
 .build/debug/WeiBeiPiCheck --native-capability-demo
 .build/debug/WeiBeiPiCheck --native-eval
+.build/debug/WeiBeiPiCheck --native-eval --backend pi
 .build/debug/WeiBeiPiCheck --native-live available
+.build/debug/WeiBeiPiCheck --native-perf
 ```
 
 本机无 Xcode，`swift test` 交 CI。`script/build_and_run.sh check` 因同一原因卡在 `swift test`，未伪造通过。
@@ -48,11 +50,11 @@ Native 确定性夹具：`WeiBeiPiCheck --native-scenario-pair` → `Docs/audit/
 | 7 可视化 | 有 | `weibei_visualize` 合法 spec | 不评生成质量 |
 | 8 图片输入 | 有 | `weibei_visual_asset` | 无 |
 | 9 中途取消 | 有 | `cancelled` | 无 |
-| 10 错误分类 | unauthorized | 401 映射为登录文案（classify 现为 generic，文案含「认证已失效」） | 文案对，枚举名未完全对齐 |
+| 10 错误分类 | Pi 夹具把坏 key 标 generic | `unauthorized`（`WeiBei.NativeAgent` 401 +「认证已失效」） | 无高危；native 已对齐枚举，Pi 夹具仍偏 generic |
 | 11–12 续聊 | 有 | 同账本 11 search → 12 纯文本 | 无 |
 | 13 多工具 | 有 | search + read 同轮 | 无 |
 
-luna+low live 评测里，课程搜索/正文/记忆/档案/笔记题也会调对应工具（见第 4 节日志）。未做 Pi 后端同一 `gpt-5.6-luna` 逐题对打。
+luna+low live 评测里，课程搜索/正文/记忆/档案/笔记题也会调对应工具。Pi 已用同一套 42 题、同一 `gpt-5.6-luna` + `low` 跑完对照。
 
 ## 4. 评测集质量
 
@@ -61,25 +63,40 @@ luna+low live 评测里，课程搜索/正文/记忆/档案/笔记题也会调�
 - Pi：`WeiBeiPiCheck --native-eval --backend pi` → live-ran=40。
 - **完整答卷**在 `Docs/audit/2026-08-22-eval-luna-low/{native,pi}/`（每题一份 `.md` + `answers.jsonl`）。早期 `*-eval-luna-low.log` 只有前 80 字，不能当全文。cancel/error 两题两边都跳过。
 - 闭式题两边 prefix 一致：`01→4`，`02→1/4`，`19→180`，`20→1191`，`23→10`，`33→1月1日`，`34→-3`，`35→利率升债券跌`，`39→12.68%`，`40→中位数是正中间`。
-- 课程工具：native 能 search/read 到夹具正文；Pi 多次报「宿主工具响应根目录发生了变化」（与第一棒 Pi 夹具同类），因此 04–07、10–12、36 的课程引用 Pi 更常拒答。这是 CLI 宿主差异，不是 luna 答错。
-- **没有编造 5 分制分数**。独立 judge（Kimi）仍未逐题打分。闭式题两边一致，开放题需人工/Kimi 再评。
+- 课程工具：native 能 search/read 到夹具正文；Pi 多次报「宿主工具响应根目录发生了变化」（与第一棒 Pi 夹具同类），因此 04–06 等题 Pi 更常拒答。这是 CLI 宿主差异，不是 luna 答错。
+- 独立 judge：`Docs/audit/2026-08-22-eval-luna-low/独立judge评分报告.md`（Kimi，未参与实现）。40 题双评：
+
+| 侧 | 正确性 | 流畅度 | 长度 | 折算 5 分制 |
+|---|---|---|---|---|
+| native | 4.95 | 5.00 | 4.98 | **4.98** |
+| pi | 4.88 | 5.00 | 5.00 | **4.96** |
+
+均分差 0.02，低于 0.3 门槛；无单题回退 ≥2。Judge 结论：内容质量无实质差别，Pi 少的 2 分来自 CLI 宿主拒答。Q10 native「内部错误」根因见第 9 节（未重跑 luna 答卷）。
 
 ## 5. 性能
 
-未做 5 次中位 TTFT/内存。`--native-eval` 40 题墙钟约 6.2 分钟（含工具题），不能当 TTFT 中位。
+luna 评测（40 题含工具）墙钟：native ≈ 6.3 min，Pi ≈ 6.4 min，模型占主导，不能当短问答 TTFT。未再拿 luna 做 5 次中位，以免抢订阅配额。
+
+短问答对拍（DeepSeek `deepseek-chat`，`2+2`，5 次中位，`WeiBeiPiCheck --native-perf`）：
+
+| 指标 | native | Pi |
+|---|---|---|
+| 整轮墙钟中位 | **0.678 s**（0.528–1.069） | **1.615 s**（1.356–1.833） |
+| 首字中位 | **0.526 s**（0.439–0.955） | **1.580 s**（1.322–1.800） |
+| 峰值内存 | CLI `getrusage` **22.3 MiB**（工具调用后） | 子进程 `pi` **171 MiB RSS** + 两个 `bun` 约 **39 MiB** |
+
+native 明显更快、更省内存；无 Pi/Bun 常驻子进程。这是 CLI 路径，不是完整 `.app` 冷启动。
 
 ## 6. 体积
 
-未改发布脚本，未组正式 `.app`。本机 `swift build -c release --product WeiBei`：
+未改发布脚本。用已有 Release 产物在临时目录按 `build_and_run.sh` 的打包清单组装测量用 `.app`（含 Sparkle、PDF helper、资源包、图标；一次含 Pi，一次不含）：
 
-| 件 | 大小 |
+| 组装 | 未压缩体积 |
 |---|---|
-| Release `WeiBei` 二进制 | 30 MB |
-| `WeiBei_WeiBei.bundle` | 7.8 MB |
-| `WeiBei_WeiBeiCore.bundle` | 0.2 MB |
-| Pi 0.82.1 运行时 | 72 MB |
+| 含 Pi 0.82.1 | **117.2 MiB**（`du` 116M） |
+| 不含 Pi | **44.9 MiB**（`du` 44M） |
 
-不含 Pi 的二进制+资源约 **38 MB**，有望低于 55 MB 门槛，但完整 `.app`（Sparkle、图标、Helpers）未组装，**不能宣称已过门槛**。含 Pi 仍约 +72 MB。
+不含 Pi 低于 55 MB 门槛。这不是公证过的正式安装包，只是同清单本地组装。含 Pi 仍约 117 MB。
 
 ## 7. ChatGPT OAuth 六步
 
@@ -100,16 +117,19 @@ luna+low live 评测里，课程搜索/正文/记忆/档案/笔记题也会调�
 
 ## 9. 已知差异与风险
 
-- 401 用户文案正确，但 `AgentFailureKind.classify` 对「认证已失效」仍可能落到 generic。
+- 401：`WeiBei.NativeAgent` 的 401/「认证已失效」归到 unauthorized（自测覆盖；场景 10 现为 `unauthorized`）。
+- Q10 live「内部错误」：`NativeLLMFailure` 原先不是 `LocalizedError`，工具失败喂给模型的是泛化 NSError 文案；模型写成「内部错误」。现已让 `errorDescription` 等于真实 `message`。确定性脚本里 `profile_update` 一直能过（会回传 `eval-<id>` 修订号）。未重跑 luna 答卷。
+- Q11「暂未成功提交」：CLI live 没有真实笔记库；成功路径文案也写「尚未写回」。与 12 场景脚本通过不矛盾。
 - Azure / Vertex / Bedrock / Cloudflare 未覆盖。
-- 无独立 judge 5 分制双评均分。Pi 课程宿主在 CLI 里仍会报响应目录变化。
-- 完整 `.app` 体积未组装测量。
+- Pi 课程宿主在 CLI 里仍会报响应目录变化。
+- 正式公证包未出；体积是临时目录按同一清单组装的测量值。
+- 上一轮 CI 在无关用例 `NoteEditingSessionTests.testDirtyInputSchedulesOneIdleSnapshot` 上失败（本分支前一 SHA 绿，属时序 flake）；本任务未改该文件。
 - 本分支不删 Pi、不改发布脚本、不打标签。
 
 ## 10. go / no-go
 
-**仍是条件 go。**
+**质量 + 体积 + DeepSeek 性能：通过。整体仍是条件 go**（公证包与删除 Pi 未授权）。
 
-已有：OAuth 六步、三件套、默认 pi、DeepSeek/ChatGPT 三闭环、12 场景 native 脚本、**luna+low 40 题 Pi 与 native 都 live 跑完**、闭式题两边一致、Release 二进制+资源约 38 MB（不含 Pi）。
+已有：OAuth 六步、三件套、默认 pi、DeepSeek/ChatGPT 三闭环、12 场景 native 脚本（401 已对齐）、luna+low 40 题两侧 live 全文、Kimi 双评 native 4.98 / pi 4.96、本地组装不含 Pi **44.9 MiB**、DeepSeek 短问答 native 墙钟 0.678 s / 首字 0.526 s、CLI 峰值 22.3 MiB、Pi 子进程约 171 MiB。
 
-仍缺：Kimi 5 分制双评、未压缩 `.app` 实装、性能中位。删除 Pi 需单独授权。保持草稿。
+仍缺：公证安装包、luna 首字中位（刻意未测）。删除 Pi 需单独授权。保持草稿。
