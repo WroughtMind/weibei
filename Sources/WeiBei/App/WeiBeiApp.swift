@@ -130,7 +130,12 @@ struct WeiBeiApp: App {
                 .onOpenURL { url in
                     store.importFiles([url])
                 }
-                .frame(minWidth: 1120, minHeight: 720)
+                // 自适应窗口：多窗格文档族 780 起（窗格可收成 28pt 细轨），
+                // 沉浸式单栏 520 起——塞得进分屏，也激活既有窄屏布局路径。
+                .frame(
+                    minWidth: store.layout.isImmersiveFamily ? 520 : 780,
+                    minHeight: 720
+                )
                 .ignoresSafeArea(.container, edges: .top)
         }
         .defaultSize(width: 1240, height: 760)
