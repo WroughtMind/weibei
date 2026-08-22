@@ -1,15 +1,15 @@
 import { Plugin, PluginKey } from '@milkdown/kit/prose/state';
 import { Decoration, DecorationSet } from '@milkdown/kit/prose/view';
-import { findPendingSyntaxMarkers } from './syntax-scanner';
+import { findPendingSyntaxMarkers, PendingSyntaxKind } from './syntax-scanner';
 
 const syntaxMarksKey = new PluginKey('weibeiSyntaxMarks');
 
-const revealMarkCandidates: Array<{ typeNames: string[]; marker: string }> = [
-  { typeNames: ['strong'], marker: '**' },
-  { typeNames: ['emphasis'], marker: '*' },
-  { typeNames: ['code'], marker: '`' },
-  { typeNames: ['highlight'], marker: '==' },
-  { typeNames: ['strike', 'strike_through', 'strikethrough', 'strikeThrough'], marker: '~~' },
+const revealMarkCandidates: Array<{ typeNames: string[]; marker: string; kind: PendingSyntaxKind }> = [
+  { typeNames: ['strong'], marker: '**', kind: 'bold' },
+  { typeNames: ['emphasis'], marker: '*', kind: 'italic' },
+  { typeNames: ['code'], marker: '`', kind: 'code' },
+  { typeNames: ['highlight'], marker: '==', kind: 'highlight' },
+  { typeNames: ['strike', 'strike_through', 'strikethrough', 'strikeThrough'], marker: '~~', kind: 'strike' },
 ];
 
 const isCodeContext = (state: any) => {
@@ -21,14 +21,13 @@ const isCodeContext = (state: any) => {
   return false;
 };
 
-const markMarkerFor = (schemaMarks: any, markType: any, cache: Map<string, string>) => {
+const markCandidateFor = (schemaMarks: any, markType: any, cache: Map<string, any>) => {
   const typeName = markType.name;
-  const cached = cache.get(typeName);
-  if (cached !== undefined) return cached;
-  const candidate = revealMarkCandidates.find((entry) => entry.typeNames.includes(typeName));
-  const marker = candidate && schemaMarks[typeName] ? candidate.marker : '';
-  cache.set(typeName, marker);
-  return marker;
+  if (!cache.has(typeName)) {
+    const candidate = revealMarkCandidates.find((entry) => entry.typeNames.includes(typeName));
+    cache.set(typeName, candidate && schemaMarks[typeName] ? candidate : null);
+  }
+  return cache.get(typeName);
 };
 
 /** Contiguous doc range of `markType` around the position, bounded by the textblock. */
@@ -66,10 +65,15 @@ const markRunAround = (doc: any, pos: number, markType: any) => {
 /**
  * Reveal markers ride on real text positions via CSS ::before/::after so no
  * synthetic cursor positions are introduced — widgets at run boundaries were
- * blocking arrow-key motion out of the run.
+ * blocking arrow-key motion out of the run. The per-kind color travels as a
+ * custom property so one CSS rule serves every syntax type.
  */
-const markerDecoration = (from: number, to: number, marker: string, edge: 'open' | 'close') =>
-  Decoration.inline(from, to, { class: `weibei-syntax-mark weibei-syntax-mark-${edge}`, 'data-marker': marker });
+const markerDecoration = (from: number, to: number, marker: string, kind: PendingSyntaxKind, edge: 'open' | 'close') =>
+  Decoration.inline(from, to, {
+    class: `weibei-syntax-mark weibei-syntax-mark-${edge}`,
+    'data-marker': marker,
+    style: `--weibei-marker-color: var(--weibei-syntax-${kind})`,
+  });
 
 const closestAncestorOfName = (resolved: any, typeName: string) => {
   for (let depth = resolved.depth; depth > 0; depth -= 1) {
@@ -96,6 +100,12 @@ const adjacentMathDom = (view: any): HTMLElement | null => {
 export interface SyntaxMarksDeps {
   isEditable: () => boolean;
   isStreaming: () => boolean;
+  /**
+   * Consumes the "caret just landed from typing a formula" position (if any) for
+   * this update. The adjacent-source peek must not fire on that landing — the
+   * user wants to see the freshly rendered formula, not its source.
+   */
+  consumeMathLanding: () => number | null;
 }
 
 interface SyntaxMarksCache {
@@ -112,7 +122,7 @@ interface SyntaxMarksCache {
  * inside. Purely decorative — widgets carry no document content.
  */
 export const createSyntaxMarksPlugin = (deps: SyntaxMarksDeps): Plugin => {
-  const markerCache = new Map<string, string>();
+  const candidateCache = new Map<string, any>();
   let cache: SyntaxMarksCache | null = null;
   let adjacentDom: HTMLElement | null = null;
 
@@ -125,7 +135,10 @@ export const createSyntaxMarksPlugin = (deps: SyntaxMarksDeps): Plugin => {
     key: syntaxMarksKey,
     view: () => ({
       update(view: any) {
-        const next = adjacentMathDom(view);
+        const landing = deps.consumeMathLanding();
+        const next = landing !== null && landing === view.state.selection.from
+          ? null
+          : adjacentMathDom(view);
         if (next === adjacentDom) return;
         clearAdjacent();
         adjacentDom = next;
@@ -155,7 +168,7 @@ export const createSyntaxMarksPlugin = (deps: SyntaxMarksDeps): Plugin => {
           decorations.push(Decoration.inline(
             blockStart + range.from,
             blockStart + range.to,
-            { class: 'weibei-syntax-pending' },
+            { class: `weibei-syntax-pending weibei-syntax-k-${range.kind}` },
           ));
         }
         const schemaMarks = doc.type.schema.marks;
@@ -166,7 +179,7 @@ export const createSyntaxMarksPlugin = (deps: SyntaxMarksDeps): Plugin => {
         const seenTypes = new Set<string>();
         const collectType = (mark: any) => {
           if (!mark || seenTypes.has(mark.type.name)) return;
-          if (!markMarkerFor(schemaMarks, mark.type, markerCache)) return;
+          if (!markCandidateFor(schemaMarks, mark.type, candidateCache)) return;
           seenTypes.add(mark.type.name);
           candidateTypes.push(mark.type);
         };
@@ -174,25 +187,25 @@ export const createSyntaxMarksPlugin = (deps: SyntaxMarksDeps): Plugin => {
         for (const mark of selection.$from.nodeBefore?.marks || []) collectType(mark);
         for (const mark of selection.$to.nodeAfter?.marks || []) collectType(mark);
         for (const markType of candidateTypes) {
-          const marker = markMarkerFor(schemaMarks, markType, markerCache);
+          const candidate = markCandidateFor(schemaMarks, markType, candidateCache);
           let run = markRunAround(doc, from, markType);
           if (!run && selection.$to.parent === selection.$from.parent) {
             run = markRunAround(doc, selection.to, markType);
           }
           if (!run || run.to <= run.from) continue;
-          decorations.push(markerDecoration(run.from, Math.min(run.from + 1, run.to), marker, 'open'));
-          decorations.push(markerDecoration(Math.max(run.to - 1, run.from), run.to, marker, 'close'));
+          decorations.push(markerDecoration(run.from, Math.min(run.from + 1, run.to), candidate.marker, candidate.kind, 'open'));
+          decorations.push(markerDecoration(Math.max(run.to - 1, run.from), run.to, candidate.marker, candidate.kind, 'close'));
         }
-        const blockLeadingMarker = (nodeStart: number, contentSize: number, marker: string) => {
+        const blockLeadingMarker = (nodeStart: number, contentSize: number, marker: string, kind: PendingSyntaxKind) => {
           if (contentSize <= 0) return;
-          decorations.push(markerDecoration(nodeStart, Math.min(nodeStart + 1, nodeStart + contentSize), marker, 'open'));
+          decorations.push(markerDecoration(nodeStart, Math.min(nodeStart + 1, nodeStart + contentSize), marker, kind, 'open'));
         };
         const heading = closestAncestorOfName(selection.$from, 'heading');
         if (heading) {
-          blockLeadingMarker(selection.$from.before(heading.depth) + 1, heading.node.content.size, '#'.repeat(heading.node.attrs.level || 1));
+          blockLeadingMarker(selection.$from.before(heading.depth) + 1, heading.node.content.size, '#'.repeat(heading.node.attrs.level || 1), 'heading');
         }
         if (closestAncestorOfName(selection.$from, 'blockquote')) {
-          blockLeadingMarker(selection.$from.before(selection.$from.depth) + 1, selection.$from.parent.content.size, '>');
+          blockLeadingMarker(selection.$from.before(selection.$from.depth) + 1, selection.$from.parent.content.size, '>', 'quote');
         }
         const set = DecorationSet.create(doc, decorations);
         cache = { doc, from, to, set };

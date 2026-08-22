@@ -1,6 +1,9 @@
+export type PendingSyntaxKind = 'math' | 'heading' | 'quote' | 'bold' | 'italic' | 'strike' | 'code' | 'highlight';
+
 export interface PendingSyntaxRange {
   from: number;
   to: number;
+  kind: PendingSyntaxKind;
 }
 
 const isEscapedPosition = (source: string, index: number) => {
@@ -10,16 +13,23 @@ const isEscapedPosition = (source: string, index: number) => {
 };
 
 /** Openers that read as half-typed syntax while the closer has not been typed yet. */
-const pairMarkers = ['$$', '**', '__', '~~', '==', '`', '$'] as const;
-
-const leadingMarkerPatterns: RegExp[] = [
-  /^(#{1,6})( |$)/,
-  /^(>)( |$)/,
+const pairMarkerKinds: Array<{ marker: string; kind: PendingSyntaxKind }> = [
+  { marker: '$$', kind: 'math' },
+  { marker: '**', kind: 'bold' },
+  { marker: '__', kind: 'bold' },
+  { marker: '~~', kind: 'strike' },
+  { marker: '==', kind: 'highlight' },
+  { marker: '`', kind: 'code' },
 ];
 
-const appendPendingRange = (ranges: PendingSyntaxRange[], from: number, to: number) => {
+const leadingMarkerPatterns: Array<{ pattern: RegExp; kind: PendingSyntaxKind }> = [
+  { pattern: /^(#{1,6})( |$)/, kind: 'heading' },
+  { pattern: /^(>)( |$)/, kind: 'quote' },
+];
+
+const appendPendingRange = (ranges: PendingSyntaxRange[], from: number, to: number, kind: PendingSyntaxKind) => {
   if (from < to && !ranges.some((range) => range.from === from && range.to === to)) {
-    ranges.push({ from, to });
+    ranges.push({ from, to, kind });
   }
 };
 
@@ -56,13 +66,12 @@ const collectSingleDollarOpeners = (text: string, consumed: Set<number>) => {
 export const findPendingSyntaxMarkers = (text: string): PendingSyntaxRange[] => {
   const source = String(text || '');
   const ranges: PendingSyntaxRange[] = [];
-  for (const pattern of leadingMarkerPatterns) {
+  for (const { pattern, kind } of leadingMarkerPatterns) {
     const match = source.match(pattern);
-    if (match && match[1]) appendPendingRange(ranges, 0, match[1].length);
+    if (match && match[1]) appendPendingRange(ranges, 0, match[1].length, kind);
   }
   const consumed = new Set<number>();
-  for (const marker of pairMarkers) {
-    if (marker === '$') continue;
+  for (const { marker, kind } of pairMarkerKinds) {
     const occurrences: number[] = [];
     for (const index of collectMarkerOccurrences(source, marker)) {
       const overlapped = Array.from({ length: marker.length }, (_, offset) => index + offset).some((position) => consumed.has(position));
@@ -73,14 +82,13 @@ export const findPendingSyntaxMarkers = (text: string): PendingSyntaxRange[] => 
     // Greedy pairing: the first occurrence closes with the next, an odd tail stays pending.
     if (occurrences.length % 2 === 1) {
       const opener = occurrences[occurrences.length - 1];
-      appendPendingRange(ranges, opener, opener + marker.length);
+      appendPendingRange(ranges, opener, opener + marker.length, kind);
     }
   }
   const dollars = collectSingleDollarOpeners(source, consumed);
   if (dollars.length % 2 === 1) {
     const opener = dollars[dollars.length - 1];
-    appendPendingRange(ranges, opener, opener + 1);
+    appendPendingRange(ranges, opener, opener + 1, 'math');
   }
   return ranges.sort((a, b) => a.from - b.from);
 };
-

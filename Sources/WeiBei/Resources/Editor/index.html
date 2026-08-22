@@ -100,9 +100,16 @@
       --floating-input-focus: var(--paper-raised);
       --floating-menu-shadow: 0 14px 34px rgba(35, 26, 19, .18), 0 2px 8px rgba(35, 26, 19, .10);
       --floating-toolbar-shadow: 0 6px 18px rgba(35, 26, 19, .12);
-      /* Single quiet-but-legible tint shared by half-typed and revealed Markdown markers. */
-      --weibei-syntax: var(--blue-ink);
-      --weibei-syntax-mark: var(--blue-ink);
+      /* One hue per syntax kind, drawn from each theme's own ink palette so
+         light and dark themes pick legible values automatically. */
+      --weibei-syntax-math: var(--cinnabar);
+      --weibei-syntax-heading: var(--blue-ink);
+      --weibei-syntax-quote: var(--moss);
+      --weibei-syntax-bold: var(--ochre);
+      --weibei-syntax-italic: var(--violet-ink);
+      --weibei-syntax-strike: var(--muted);
+      --weibei-syntax-code: var(--moss);
+      --weibei-syntax-highlight: var(--ochre);
     }
 
     :root[data-weibei-glass="glassLight"] {
@@ -1050,18 +1057,27 @@
       display: none;
     }
 
-    /* Half-typed Markdown markers (unclosed **, $, leading #…) tint while typing. */
+    /* Half-typed Markdown markers (unclosed **, $, leading #…) tint while typing,
+       one hue per syntax kind. */
     .weibei-syntax-pending {
-      color: var(--weibei-syntax);
       font-weight: 500;
     }
+
+    .weibei-syntax-k-math { color: var(--weibei-syntax-math); }
+    .weibei-syntax-k-heading { color: var(--weibei-syntax-heading); }
+    .weibei-syntax-k-quote { color: var(--weibei-syntax-quote); }
+    .weibei-syntax-k-bold { color: var(--weibei-syntax-bold); }
+    .weibei-syntax-k-italic { color: var(--weibei-syntax-italic); }
+    .weibei-syntax-k-strike { color: var(--weibei-syntax-strike); }
+    .weibei-syntax-k-code { color: var(--weibei-syntax-code); }
+    .weibei-syntax-k-highlight { color: var(--weibei-syntax-highlight); }
 
     /* Source markers ride on real characters via pseudo-elements — no synthetic
        cursor positions, so arrow keys pass through the run boundaries freely. */
     .weibei-syntax-mark-open::before,
     .weibei-syntax-mark-close::after {
       content: attr(data-marker);
-      color: var(--weibei-syntax-mark);
+      color: var(--weibei-marker-color, var(--muted));
       font-size: .82em;
       font-weight: 500;
       letter-spacing: 0;
@@ -1070,7 +1086,7 @@
     /* Quiet source peek when the caret is adjacent to a formula; click still enters editing. */
     .weibei-math-adjacent:not(.weibei-math-editing) .weibei-math-source {
       display: block;
-      color: var(--weibei-syntax);
+      color: var(--weibei-syntax-math);
       background: none;
       border-color: transparent;
     }

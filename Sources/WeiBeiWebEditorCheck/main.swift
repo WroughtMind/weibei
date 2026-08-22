@@ -1797,7 +1797,7 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
           editor.setMarkdown('# 语法标记验收\\n');
           editor.insertMarkdown('\\n\\n{{WEIBEI_CURSOR}}');
           const pendingWhileTyping = editor.typeTextForCheck('**未闭合')
-            && !!document.querySelector('.weibei-syntax-pending');
+            && !!document.querySelector('.weibei-syntax-pending.weibei-syntax-k-bold');
           const convertedOnClose = editor.typeTextForCheck('**')
             && !document.querySelector('.weibei-syntax-pending')
             && !!document.querySelector('.ProseMirror strong');
@@ -1825,8 +1825,12 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
             editor.insertMarkdown('\\n\\n{{WEIBEI_CURSOR}}');
             if (!editor.typeTextForCheck('$ ?$')) return false;
             const converted = editor.getMarkdown().includes('$?$');
+            // Landing from the input rule must keep the formula rendered — the
+            // adjacent-source peek stays off for that caret placement.
+            const renderedOnLanding = !document.querySelector('.weibei-math-adjacent')
+              && !!document.querySelector('.weibei-math-inline .weibei-math-preview');
             editor.typeTextForCheck('后');
-            return converted && editor.getMarkdown().includes('$?$后');
+            return converted && renderedOnLanding && editor.getMarkdown().includes('$?$后');
           })();
           editor.setMarkdown('## 标记显隐\\n\\n> 引用显隐\\n\\n正文');
           editor.selectFirstTextForCheck('标记显隐');

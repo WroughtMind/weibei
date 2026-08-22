@@ -49,3 +49,16 @@ test('display math markers coexist with inline dollars', () => {
   assert.deepEqual(rangesOf('$$x$$ 后面 $y'), ['$']);
   assert.deepEqual(rangesOf('前 $a$ 中 $$b 后 $c'), ['$$', '$']);
 });
+
+test('each pending marker carries its syntax kind for per-kind coloring', () => {
+  const kindOf = (text: string) => findPendingSyntaxMarkers(text).map((range) => range.kind).join(',');
+  assert.equal(kindOf('**粗体'), 'bold');
+  assert.equal(kindOf('__下划'), 'bold');
+  assert.equal(kindOf('~~删除'), 'strike');
+  assert.equal(kindOf('==高亮'), 'highlight');
+  assert.equal(kindOf('`行内代码'), 'code');
+  assert.equal(kindOf('$x^'), 'math');
+  assert.equal(kindOf('$$块'), 'math');
+  assert.equal(kindOf('##'), 'heading');
+  assert.equal(kindOf('>'), 'quote');
+});

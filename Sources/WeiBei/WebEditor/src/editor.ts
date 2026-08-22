@@ -108,6 +108,9 @@ let mermaidPreviewGeneration = 0;
 const pendingAttachments = new Map();
 const pendingImagePickers = new Map();
 const weiBeiSlash = WEIBEI_EDITOR_RUNTIME ? slashFactory('WEIBEI_BLOCK_COMMAND') : null as any;
+// Position where the inline-math input rule just landed the caret; consumed by
+// the syntax-marks plugin so the adjacent-source peek stays off for that update.
+let mathTypedLandingPosition: number | null = null;
 const weiBeiMathInlineInputRule = WEIBEI_EDITOR_RUNTIME ? $inputRule((ctx) => nodeRule(
   inlineMathInputPattern,
   mathInlineSchema.type(ctx),
@@ -122,7 +125,9 @@ const weiBeiMathInlineInputRule = WEIBEI_EDITOR_RUNTIME ? $inputRule((ctx) => no
       if (content) tr.insertText(content, start + 1);
       // The atom node is not cursor-enterable; leaving the selection inside its
       // content made the caret land mid-line after typing a formula.
-      tr.setSelection(TextSelection.create(tr.doc, start + content.length + 2));
+      const landing = start + content.length + 2;
+      tr.setSelection(TextSelection.create(tr.doc, landing));
+      mathTypedLandingPosition = landing;
     },
   },
 )) : null;
@@ -3636,6 +3641,11 @@ if (WEIBEI_EDITOR_RUNTIME) {
     .use($prose(() => createSyntaxMarksPlugin({
       isEditable: () => isEditable,
       isStreaming: () => streamingMarkdownBuffer !== null,
+      consumeMathLanding: () => {
+        const landing = mathTypedLandingPosition;
+        mathTypedLandingPosition = null;
+        return landing;
+      },
     })))
     .use(weiBeiSlash)
     .use(history)
