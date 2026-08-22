@@ -18,7 +18,7 @@ struct CourseHubView: View {
     let createNote: () -> Void
 
     @State private var showsAllContent = false
-    @State private var searchResults: [CourseHomeSearchResult] = []
+    @State private var searchResults: [GlobalSearchHit] = []
     @State private var isSearching = false
     @State private var searchAvailability: CourseDocumentIndexAvailability = .ready
     @State private var searchRetryToken = 0
@@ -556,25 +556,26 @@ struct CourseHubView: View {
                     }
                 } else if searchResults.isEmpty {
                     Text(store.ui(
-                        "没有找到与“\(cleanedSearch)”相关的课程内容。",
-                        "No course content matched “\(cleanedSearch)”."
+                        "没有找到与“\(cleanedSearch)”相关的内容，已搜索全部课程。",
+                        "Nothing matched “\(cleanedSearch)” — all courses were searched."
                     ))
                     .weiBeiText(12.5)
                     .foregroundStyle(WeiBeiTheme.secondaryInk)
                     .frame(maxWidth: .infinity, minHeight: 72, alignment: .leading)
                 }
 
-                ForEach(searchResults) { result in
+                ForEach(searchResults) { hit in
                     CourseHubContentRow(
-                        icon: searchResultIcon(result),
-                        title: result.title,
-                        detail: result.detail,
-                        snippet: result.matchedText,
-                        selected: searchResultIsSelected(result),
-                        action: { open(result) }
+                        icon: searchResultIcon(hit.result),
+                        title: hit.result.title,
+                        detail: hit.result.detail,
+                        snippet: hit.result.matchedText,
+                        courseBadge: hit.isCurrentCourse ? nil : hit.courseTitle,
+                        selected: searchResultIsSelected(hit.result),
+                        action: { open(hit) }
                     )
 
-                    if result.id != searchResults.last?.id {
+                    if hit.id != searchResults.last?.id {
                         CourseHairline().padding(.leading, 42)
                     }
                 }
@@ -688,17 +689,17 @@ struct CourseHubView: View {
 
         let span = WeiBeiPerf.begin("course.search_to_next_main_queue_proxy")
         isSearching = true
-        let outcome = await store.searchCourseHome(
-            courseID: courseID,
+        let outcome = await store.searchAllCourses(
+            currentCourseID: courseID,
             query: request.query
         )
         guard !Task.isCancelled,
               request == searchTaskID,
               store.courseWorkspaceCourseID == courseID else {
-            WeiBeiPerf.end(span, extra: "outcome=superseded")
+            WeiBeiPerf.end(span, extra: "outcome=superseded scope=global")
             return
         }
-        searchResults = outcome.results
+        searchResults = outcome.hits
         searchAvailability = outcome.availability
         isSearching = false
         guard let span else { return }
@@ -708,7 +709,7 @@ struct CourseHubView: View {
                 WeiBeiPerf.end(
                     span,
                     extra:
-                        "outcome=completed endpoint=next_main_queue_proxy input=manual_ui results=\(outcome.results.count)"
+                        "outcome=completed endpoint=next_main_queue_proxy input=manual_ui scope=global results=\(outcome.hits.count)"
                 )
                 continuation.resume()
             }
@@ -734,23 +735,22 @@ struct CourseHubView: View {
         }
     }
 
-    private func open(_ result: CourseHomeSearchResult) {
-        guard let courseID else { return }
-        switch result.kind {
+    private func open(_ hit: GlobalSearchHit) {
+        switch hit.result.kind {
         case .material:
-            guard let itemID = result.itemID else { return }
+            guard let itemID = hit.result.itemID, let courseID = hit.courseID else { return }
             selectedMaterialID = itemID
             _ = store.openCourseMaterial(itemID, in: courseID)
         case .note:
-            guard let itemID = result.itemID else { return }
+            guard let itemID = hit.result.itemID, let courseID = hit.courseID else { return }
             selectedNoteID = itemID
             store.openCourseNote(itemID, in: courseID)
         case .chat:
-            guard let sessionID = result.sessionID else { return }
+            guard let sessionID = hit.result.sessionID else { return }
             selectedSessionID = sessionID
             store.continueCourseSession(
                 sessionID,
-                expectedCourseID: courseID,
+                expectedCourseID: hit.courseID,
                 expectedScopeNeedsReview: false
             )
         }
@@ -1065,6 +1065,7 @@ private struct CourseHubContentRow: View {
     let title: String
     let detail: String
     var snippet: String? = nil
+    var courseBadge: String? = nil
     let selected: Bool
     let action: () -> Void
 
@@ -1101,6 +1102,19 @@ private struct CourseHubContentRow: View {
                 }
 
                 Spacer(minLength: 10)
+
+                if let courseBadge {
+                    Text(courseBadge)
+                        .weiBeiText(10)
+                        .foregroundStyle(WeiBeiTheme.tertiaryInk)
+                        .lineLimit(1)
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 3)
+                        .background(
+                            WeiBeiTheme.paperInset.opacity(0.4),
+                            in: RoundedRectangle(cornerRadius: 5, style: .continuous)
+                        )
+                }
 
                 Image(systemName: "chevron.right")
                     .weiBeiText(9.5, weight: .semibold)
