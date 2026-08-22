@@ -2,22 +2,6 @@ import Foundation
 import SwiftUI
 import WeiBeiCore
 
-enum CourseConversationSection: String, CaseIterable, Identifiable {
-    case chats
-    case memory
-
-    var id: String { rawValue }
-
-    func label(language: WeiBeiInterfaceLanguage, count: Int) -> String {
-        switch self {
-        case .chats:
-            return language.text("对话 \(count)", "Chats \(count)")
-        case .memory:
-            return language.text("课程记忆 \(count)", "Course Memory \(count)")
-        }
-    }
-}
-
 /// Course-associated Chats and course-scoped Memory are intentionally shown as
 /// two different sections. A Chat is global history that can touch more than
 /// one course; Memory is editable state scoped to this course.

@@ -263,6 +263,37 @@ expect(clearBreezeStats.width == 856 && clearBreezeStats.height == 132
     && clearBreezeStats.opaqueWhite == 0 && universeStats.opaqueWhite == 0
     && clearBreezeStats.outerInk == 0 && universeStats.outerInk == 0, "bundled Lanting calligraphy masks are transparent, uncropped, and free of hard white backgrounds")
 
+// SPM `.process` flattens Resources into the bundle root, so any subdirectory under
+// Editor/ silently breaks url("./...") references in editor.css (the 2026-08 KaTeX
+// font 404: fonts were emitted under fonts/ while the css resolved ./fonts/...).
+let editorResourcesURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+    .appendingPathComponent("Sources/WeiBei/Resources/Editor", isDirectory: true)
+let editorEntries = try FileManager.default.contentsOfDirectory(
+    at: editorResourcesURL,
+    includingPropertiesForKeys: [.isDirectoryKey]
+)
+let editorSubdirectories = editorEntries.filter {
+    (try? $0.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true
+}
+expect(editorSubdirectories.isEmpty, "editor assets stay flat: no subdirectories under Resources/Editor")
+let editorCSS = try String(contentsOf: editorResourcesURL.appendingPathComponent("editor.css"), encoding: .utf8)
+if let cssURLRegex = try? NSRegularExpression(pattern: #"url\(\"?\.\/([^)"]+)"?\)"#) {
+    let matches = cssURLRegex.matches(
+        in: editorCSS,
+        range: NSRange(editorCSS.startIndex..., in: editorCSS)
+    )
+    let referencedNames = matches.compactMap { match -> String? in
+        guard let range = Range(match.range(at: 1), in: editorCSS) else { return nil }
+        return String(editorCSS[range])
+    }
+    let missing = referencedNames.filter {
+        !FileManager.default.fileExists(atPath: editorResourcesURL.appendingPathComponent($0).path)
+    }
+    expect(!referencedNames.isEmpty && missing.isEmpty, "every relative url() in editor.css resolves next to the css file")
+} else {
+    expect(false, "editor css url regex compiles")
+}
+
 
 expect(StudyItemKind.detect(from: URL(fileURLWithPath: "/tmp/a.pdf")) == .pdf, "pdf detection")
 expect(StudyItemKind.detect(from: URL(fileURLWithPath: "/tmp/a.html")) == .html, "html detection")

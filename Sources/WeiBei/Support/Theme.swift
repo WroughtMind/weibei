@@ -346,31 +346,6 @@ extension View {
     }
 }
 
-private struct WeiBeiTone {
-    var red: CGFloat
-    var green: CGFloat
-    var blue: CGFloat
-    var alpha: CGFloat
-
-    init(red: CGFloat, green: CGFloat, blue: CGFloat, alpha: CGFloat = 1) {
-        self.red = red
-        self.green = green
-        self.blue = blue
-        self.alpha = alpha
-    }
-
-    init(hex: Int, alpha: CGFloat = 1) {
-        self.red = CGFloat((hex >> 16) & 0xFF) / 255
-        self.green = CGFloat((hex >> 8) & 0xFF) / 255
-        self.blue = CGFloat(hex & 0xFF) / 255
-        self.alpha = alpha
-    }
-
-    var nsColor: NSColor {
-        NSColor(calibratedRed: red, green: green, blue: blue, alpha: alpha)
-    }
-}
-
 enum WeiBeiTheme {
     // Computed colors — resolved from the current mode on every access.
     // Static `Color(nsColor:)` only re-queries on system appearance change, so
@@ -1000,21 +975,6 @@ enum WeiBeiMetric {
     static let topBarHeight: CGFloat = 36
 }
 
-/// Top-bar brand mark (DesignSystem logo exports bundled under Resources/Brand).
-enum WeiBeiBrandMark {
-    static func image(for mode: WeiBeiAppearanceMode) -> NSImage {
-        let name = mode.isDark ? "weibei-mark-reversed" : "weibei-mark"
-        if let url = WeiBeiResources.bundle.url(forResource: name, withExtension: "png", subdirectory: "Brand")
-            ?? WeiBeiResources.bundle.url(forResource: name, withExtension: "png"),
-           let image = NSImage(contentsOf: url) {
-            image.isTemplate = false
-            return image
-        }
-        // Fallback: empty 1×1 so layout never crashes if resources are missing.
-        return NSImage(size: NSSize(width: 1, height: 1))
-    }
-}
-
 enum WeiBeiMotion {
     static let press = Animation.interactiveSpring(response: 0.18, dampingFraction: 0.82)
     static let micro = Animation.easeOut(duration: 0.14)
@@ -1097,33 +1057,6 @@ extension View {
 }
 
 /// Top-bar / settings theme control: compact surface swatches instead of a menu.
-struct AppearanceThemePaletteButton: View {
-    @EnvironmentObject private var store: WorkspaceStore
-    @State private var isPresented = false
-
-    var body: some View {
-        Button {
-            isPresented.toggle()
-        } label: {
-            RoundedRectangle(cornerRadius: 4, style: .continuous)
-                .fill(Color(nsColor: WeiBeiNativePalette.paper(for: store.appearanceMode)))
-                .overlay {
-                    RoundedRectangle(cornerRadius: 4, style: .continuous)
-                        .stroke(WeiBeiTheme.hairline.opacity(0.85), lineWidth: 1)
-                }
-                .frame(width: 18, height: 18)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(WeiBeiIconButtonStyle(size: 24))
-        .accessibilityLabel(Text(store.appearanceMode.actionLabel(language: store.interfaceLanguage)))
-        .help(store.appearanceMode.actionLabel(language: store.interfaceLanguage))
-        .popover(isPresented: $isPresented, arrowEdge: .bottom) {
-            AppearanceThemePalettePopover(isPresented: $isPresented)
-                .environmentObject(store)
-        }
-    }
-}
-
 private struct AppearanceThemePalettePopover: View {
     @EnvironmentObject private var store: WorkspaceStore
     @Binding var isPresented: Bool

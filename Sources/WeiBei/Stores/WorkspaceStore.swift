@@ -9621,14 +9621,6 @@ final class WorkspaceStore: ObservableObject {
         return appOwnedFilesDirectory().appendingPathComponent("Attachments", isDirectory: true)
     }
 
-    var selectedContextText: String {
-        guard let item = selectedMaterialItem else { return "" }
-        if let text = DocumentTextExtractor.cachedText(for: item), !text.isEmpty {
-            return text
-        }
-        return ""
-    }
-
     var selectedMaterialTitle: String {
         selectedMaterialItem.map(displayTitle) ?? ui("未选择材料", "No material selected")
     }
@@ -12316,10 +12308,6 @@ final class WorkspaceStore: ObservableObject {
             assigningToCourseID: courseID,
             panelTitle: ui("选择 Markdown 笔记或文件夹", "Choose Markdown notes or a folder")
         )
-    }
-
-    func importAndLinkSourcesFromPanel() {
-        presentImportPanel(linkToActiveNote: true)
     }
 
     private func presentImportPanel(
