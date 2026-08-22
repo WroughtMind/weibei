@@ -13,6 +13,7 @@ import {
   streamingConfig,
 } from '@milkdown/plugin-streaming';
 import { streamingAppearancePlugin } from './streaming-appearance';
+import { createSyntaxMarksPlugin } from './syntax-marks';
 import { SlashProvider, slashFactory } from '@milkdown/kit/plugin/slash';
 import { readImageAsBase64, upload, uploadConfig } from '@milkdown/kit/plugin/upload';
 import { exitCode, lift, setBlockType, toggleMark, wrapIn } from '@milkdown/kit/prose/commands';
@@ -3619,6 +3620,10 @@ editorBuilder = editorBuilder
 
 if (WEIBEI_EDITOR_RUNTIME) {
   editorBuilder = editorBuilder
+    .use($prose(() => createSyntaxMarksPlugin({
+      isEditable: () => isEditable,
+      isStreaming: () => streamingMarkdownBuffer !== null,
+    })))
     .use(weiBeiSlash)
     .use(history)
     .use(clipboard)

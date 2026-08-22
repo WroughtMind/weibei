@@ -1397,7 +1397,7 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
           const editor = window.WeiBeiEditor;
           const fail = (message) => { throw new Error(message); };
           const key = (element, name, options = {}) => element.dispatchEvent(new KeyboardEvent('keydown', { key: name, bubbles: true, cancelable: true, ...options }));
-          const sourceHidden = (node) => getComputedStyle(node.querySelector('.weibei-math-source')).display === 'none';
+          const sourceHidden = (node) => node.classList.contains('weibei-math-adjacent') || getComputedStyle(node.querySelector('.weibei-math-source')).display === 'none';
           const visible = (node) => { const style = getComputedStyle(node); const rect = node.getBoundingClientRect(); return style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0' && rect.width > 0 && rect.height > 0; };
 
           editor.setDocumentID('math-node-interactions');
@@ -1780,6 +1780,56 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
             }
             guard let markdown = result["markdown"] as? String, markdown.contains("[[现场概念|显示名]]") else {
                 self.fail("typed Markdown shortcut check did not finish: \(result)")
+                return
+            }
+            self.validateSyntaxMarks()
+        }
+    }
+
+    /// Typora-style syntax affordances: half-typed markers tint while typing,
+    /// rendered runs reveal source markers while the cursor is inside, and the
+    /// caret adjacent to a formula peeks its LaTeX source.
+    private func validateSyntaxMarks() {
+        let script = """
+        (() => {
+          const editor = window.WeiBeiEditor;
+          editor.setMarkdown('# 语法标记验收\\n');
+          editor.insertMarkdown('\\n\\n{{WEIBEI_CURSOR}}');
+          const pendingWhileTyping = editor.typeTextForCheck('**未闭合')
+            && !!document.querySelector('.weibei-syntax-pending');
+          const convertedOnClose = editor.typeTextForCheck('**')
+            && !document.querySelector('.weibei-syntax-pending')
+            && !!document.querySelector('.ProseMirror strong');
+          const revealInsideStrong = !!document.querySelector('.weibei-syntax-mark');
+          editor.setMarkdown('## 标记显隐\\n\\n> 引用显隐\\n\\n正文');
+          editor.selectFirstTextForCheck('标记显隐');
+          const headingMarker = Array.from(document.querySelectorAll('.weibei-syntax-mark')).map((n) => n.textContent).join(',');
+          const headingRevealed = headingMarker.includes('##');
+          editor.selectFirstTextForCheck('引用显隐');
+          const quoteRevealed = Array.from(document.querySelectorAll('.weibei-syntax-mark')).some((n) => n.textContent === '>');
+          editor.setMarkdown('前文$x^2$后文\\n\\n结尾段落');
+          editor.selectFirstTextForCheck('后文');
+          const mathAdjacent = !!document.querySelector('.weibei-math-adjacent');
+          editor.selectFirstTextForCheck('结尾段落');
+          const mathAdjacentCleared = !document.querySelector('.weibei-math-adjacent');
+          return { pendingWhileTyping, convertedOnClose, revealInsideStrong, headingRevealed, quoteRevealed, mathAdjacent, mathAdjacentCleared };
+        })();
+        """
+        webView.evaluateJavaScript(script) { [weak self] value, error in
+            guard let self else { return }
+            if let error {
+                self.fail("syntax marks check threw \(error.localizedDescription)")
+                return
+            }
+            guard let result = value as? [String: Any],
+                  result["pendingWhileTyping"] as? Bool == true,
+                  result["convertedOnClose"] as? Bool == true,
+                  result["revealInsideStrong"] as? Bool == true,
+                  result["headingRevealed"] as? Bool == true,
+                  result["quoteRevealed"] as? Bool == true,
+                  result["mathAdjacent"] as? Bool == true,
+                  result["mathAdjacentCleared"] as? Bool == true else {
+                self.fail("syntax marks check failed: \(String(describing: value))")
                 return
             }
             self.validateBlockEnterExit()
