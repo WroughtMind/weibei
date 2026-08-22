@@ -397,10 +397,11 @@ struct SettingsView: View {
                 Button(store.ui("开始迁移", "Start Migration")) {
                     confirmMigration(to: destination)
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(WeiBeiDialogButtonStyle(prominence: .primary))
                 Button(store.ui("取消", "Cancel")) {
                     pendingMigrationDestination = nil
                 }
+                .buttonStyle(WeiBeiDialogButtonStyle(prominence: .secondary))
             }
         }
         .padding(.horizontal, 14)
