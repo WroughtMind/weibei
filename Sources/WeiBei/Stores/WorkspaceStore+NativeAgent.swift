@@ -99,8 +99,9 @@ extension WorkspaceStore {
             baseURL: agentBaseURL
         )
         let selectedModel = modelName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let routedModel = NativeProviderRouting.route(selectedProvider).defaultModel
         let model = selectedModel.isEmpty
-            ? (selectedProvider == .openaiCodex ? "gpt-5.6-luna" : "deepseek-chat")
+            ? (routedModel.isEmpty ? "deepseek-chat" : routedModel)
             : selectedModel
         let adapter = try await NativeLLMAdapterFactory.make(
             provider: selectedProvider,

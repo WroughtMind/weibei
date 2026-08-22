@@ -172,6 +172,7 @@ public enum NativeOpenAIOAuth {
             }
         }
         try store.remove(provider: provider)
+        try store.scrubBackup(provider: provider)
     }
 
     public static func parseCallbackCode(fromHTTP request: String, expectedState: String) -> String? {
@@ -189,7 +190,16 @@ public enum NativeOpenAIOAuth {
         in store: NativeAgentCredentialStore,
         provider: String = AgentProviderID.openaiCodex.rawValue
     ) throws -> Bool {
-        try store.load()[provider] != nil
+        if try store.load()[provider] != nil { return true }
+        let backup = store.fileURL.appendingPathExtension("bak")
+        guard FileManager.default.fileExists(atPath: backup.path) else { return false }
+        guard let records = try? JSONDecoder().decode(
+            [String: NativeAgentCredentialRecord].self,
+            from: Data(contentsOf: backup)
+        ) else {
+            return true
+        }
+        return records[provider] != nil
     }
 
     /// Browser login: local callback on 1455/1457, then token exchange. Does not log secrets.

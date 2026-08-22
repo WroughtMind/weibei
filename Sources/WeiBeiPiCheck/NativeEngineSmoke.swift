@@ -13,6 +13,48 @@ enum NativeEngineSmoke {
             }
             return true
         }
+        if arguments.contains("--native-provider-matrix") {
+            printMatrix()
+            return true
+        }
+        if arguments.contains("--native-codex-live") {
+            do {
+                try await runLive(provider: .openaiCodex)
+                print("native-codex-live passed: plain-qa, tool-call, cancel")
+            } catch {
+                fputs("native-codex-live failed: \(error.localizedDescription)\n", stderr)
+                exit(1)
+            }
+            return true
+        }
+        if let index = arguments.firstIndex(of: "--native-live") {
+            let token = arguments.dropFirst(index + 1).first ?? ""
+            do {
+                if token.isEmpty || token.hasPrefix("--") {
+                    print("usage: WeiBeiPiCheck --native-live <provider-id>|available")
+                    return true
+                }
+                if token == "available" {
+                    let providers = try availableLiveProviders()
+                    guard !providers.isEmpty else {
+                        throw NSError(domain: "WeiBei.NativeSmoke", code: 11, userInfo: [NSLocalizedDescriptionKey: "no API keys or ChatGPT subscription available for live three-loop"])
+                    }
+                    for provider in providers {
+                        try await runLive(provider: provider)
+                        print("native-live \(provider.rawValue) passed: plain-qa, tool-call, cancel")
+                    }
+                } else if let provider = AgentProviderID(rawValue: token) {
+                    try await runLive(provider: provider)
+                    print("native-live \(provider.rawValue) passed: plain-qa, tool-call, cancel")
+                } else {
+                    throw NSError(domain: "WeiBei.NativeSmoke", code: 12, userInfo: [NSLocalizedDescriptionKey: "unknown provider \(token)"])
+                }
+            } catch {
+                fputs("native-live failed: \(error.localizedDescription)\n", stderr)
+                exit(1)
+            }
+            return true
+        }
         guard arguments.contains("--native-engine-smoke") else { return false }
         do {
             try await run()
@@ -118,6 +160,154 @@ enum NativeEngineSmoke {
         }
     }
 
+    private static func printMatrix() {
+        for provider in AgentProviderID.allCases {
+            let route = NativeProviderRouting.route(provider)
+            let host = route.baseURL?.host ?? "-"
+            print(
+                "native-provider \(provider.rawValue) family=\(route.family.rawValue) auth=\(route.auth.rawValue) host=\(host) model=\(route.defaultModel.isEmpty ? "-" : route.defaultModel)"
+            )
+        }
+        let uncovered = NativeProviderRouting.uncoveredProviders.map(\.rawValue).joined(separator: ",")
+        print("native-provider uncovered=\(uncovered)")
+    }
+
+    private static func availableLiveProviders() throws -> [AgentProviderID] {
+        let store = try NativeAgentCredentialStore.defaultStore()
+        return AgentProviderID.allCases.filter { provider in
+            let route = NativeProviderRouting.route(provider)
+            if route.family == .unsupported { return false }
+            if provider == .openaiCodex {
+                return (try? NativeOpenAIOAuth.leftoverCredentialExists(in: store)) == true
+            }
+            if let key = try? NativeAgentCredentialStore.apiKey(forProviderID: provider.rawValue), !key.isEmpty {
+                return true
+            }
+            return false
+        }
+    }
+
+    private static func runLive(provider: AgentProviderID) async throws {
+        let route = NativeProviderRouting.route(provider)
+        guard route.family != .unsupported else {
+            throw NSError(domain: "WeiBei.NativeSmoke", code: 13, userInfo: [NSLocalizedDescriptionKey: route.note])
+        }
+        let endpoint = try AgentProviderEndpoint(provider: provider, baseURL: "")
+        let model = ProcessInfo.processInfo.environment["WEIBEI_NATIVE_LIVE_MODEL"]
+            ?? ProcessInfo.processInfo.environment["WEIBEI_NATIVE_CODEX_MODEL"]
+            ?? (route.defaultModel.isEmpty ? "default" : route.defaultModel)
+        let adapter = try await NativeLLMAdapterFactory.make(
+            provider: provider,
+            model: model,
+            endpoint: endpoint
+        )
+        let label = "native-live \(provider.rawValue)"
+        try await runLivePlainQA(adapter: adapter, model: model, label: label)
+        try await runLiveCourseTool(adapter: adapter, model: model, label: label)
+        try await runLiveCancel(adapter: adapter, model: model, label: label)
+    }
+
+    private static func runLivePlainQA(adapter: NativeLLMAdapter, model: String, label: String) async throws {
+        let reply = try await respond(
+            question: "2+2 等于几？只回答一个数字，不要解释。",
+            adapter: adapter,
+            model: model
+        )
+        let text = reply.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard reply.backend == .native, !text.isEmpty else {
+            throw NSError(domain: "WeiBei.NativeSmoke", code: 7, userInfo: [NSLocalizedDescriptionKey: "\(label) plain QA was empty"])
+        }
+        print("\(label) plain-qa prefix=\(text.prefix(40)) tools=\(reply.toolTrace.joined(separator: ","))")
+    }
+
+    private static func runLiveCourseTool(adapter: NativeLLMAdapter, model: String, label: String) async throws {
+        let reply = try await respond(
+            question: """
+            必须先调用 weibei_course_search，参数 query 设为「利率」。
+            禁止使用 web_search，禁止跳过工具直接回答。
+            拿到工具结果后只用一句话作答。
+            """,
+            adapter: adapter,
+            host: { request in
+                guard case let .courseSearch(query, _) = request else {
+                    throw NSError(domain: "WeiBei.NativeSmoke", code: 8, userInfo: [NSLocalizedDescriptionKey: "\(label) expected courseSearch"])
+                }
+                return StudyAgentHostToolResult(
+                    query: query,
+                    items: [
+                        StudyAgentHostToolItem(
+                            item: StudyAgentCourseItem(
+                                id: "material-rates",
+                                title: "利率课程",
+                                subtitle: "",
+                                kind: "html",
+                                role: "material",
+                                searchText: "利率是资金使用价格的表达。"
+                            ),
+                            sourceRevision: "rev-live-1"
+                        ),
+                    ]
+                )
+            },
+            model: model
+        )
+        guard reply.toolTrace.contains("weibei_course_search") else {
+            throw NSError(
+                domain: "WeiBei.NativeSmoke",
+                code: 9,
+                userInfo: [NSLocalizedDescriptionKey: "\(label) did not call weibei_course_search; trace=\(reply.toolTrace.joined(separator: ","))"]
+            )
+        }
+        print("\(label) tool-call prefix=\(reply.text.prefix(40)) tools=\(reply.toolTrace.joined(separator: ","))")
+    }
+
+    private static func runLiveCancel(adapter: NativeLLMAdapter, model: String, label: String) async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("native-live-\(UUID().uuidString)")
+        let runtime = NativeStudyAgentRuntime(
+            model: model,
+            adapter: adapter,
+            ledgerRoot: root,
+            systemPromptText: "you are webi",
+            hostToolHandler: nil
+        )
+        let request = StudyAgentRequest(
+            purpose: .conversation,
+            question: "请从1连续写到200，每个数字单独一行，不要省略。",
+            materialTitle: "",
+            materialText: "",
+            noteTitle: "",
+            noteText: "",
+            contextRevision: "native-live-cancel"
+        )
+        let started = CancelStartBox()
+        let task = Task {
+            try await runtime.respond(
+                to: request,
+                progress: { progress in
+                    if case .text = progress {
+                        await started.mark()
+                    }
+                }
+            )
+        }
+        for _ in 0..<80 {
+            if await started.didStart { break }
+            try await Task.sleep(nanoseconds: 250_000_000)
+        }
+        try await Task.sleep(nanoseconds: 200_000_000)
+        await runtime.cancel()
+        do {
+            _ = try await task.value
+            throw NSError(domain: "WeiBei.NativeSmoke", code: 10, userInfo: [NSLocalizedDescriptionKey: "\(label) cancel should throw"])
+        } catch let failure as NativeLLMFailure {
+            guard failure.code == "cancelled" else { throw failure }
+        } catch {
+            let kind = AgentFailureKind.classify(error)
+            guard kind == .cancelled else { throw error }
+        }
+        print("\(label) cancel classified=cancelled")
+    }
+
     private static func runDeepSeekPlainQA() async throws {
         let authURL = URL(fileURLWithPath: NSHomeDirectory())
             .appendingPathComponent("Library/Application Support/com.changfenhuang.weibei/PiAgent/auth.json")
@@ -182,6 +372,11 @@ enum NativeEngineSmoke {
             progress: nil
         )
     }
+}
+
+private actor CancelStartBox {
+    var didStart = false
+    func mark() { didStart = true }
 }
 
 private final class ScriptedLLMAdapter: NativeLLMAdapter, @unchecked Sendable {

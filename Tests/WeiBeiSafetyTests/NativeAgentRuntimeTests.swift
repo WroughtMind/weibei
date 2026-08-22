@@ -45,6 +45,22 @@ final class NativeAgentRuntimeTests: XCTestCase {
         XCTAssertEqual(try store.load()["deepseek"]?.apiKey, "sk-test")
     }
 
+    func testLogoutScrubsBackupLeftover() async throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("native-logout-\(UUID().uuidString).json")
+        let backup = url.appendingPathExtension("bak")
+        defer {
+            try? FileManager.default.removeItem(at: url)
+            try? FileManager.default.removeItem(at: backup)
+        }
+        let store = NativeAgentCredentialStore(fileURL: url)
+        try store.upsert(NativeAgentCredentialRecord(provider: "openai-codex", accessToken: "tok", refreshToken: "ref"))
+        try store.upsert(NativeAgentCredentialRecord(provider: "openai-codex", accessToken: "tok-2", refreshToken: "ref-2"))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: backup.path))
+        try await NativeOpenAIOAuth.logout(from: store)
+        XCTAssertFalse(try NativeOpenAIOAuth.leftoverCredentialExists(in: store))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: backup.path))
+    }
+
     func testGuardRejectsIncompleteJSONAndForeignRead() async throws {
         let registry = NativeToolRegistry()
         await NativeBuiltinTools.registerAll(into: registry, skillRoot: nil)
@@ -175,6 +191,18 @@ final class NativeAgentRuntimeTests: XCTestCase {
             #"{"candidates":[{"content":{"parts":[{"text":"4"}]},"finishReason":"STOP"}]}"#
         )
         XCTAssertTrue(gemini.contains(.textDelta(index: 0, text: "4")))
+    }
+
+    func testProviderRoutingCoversCatalog() {
+        XCTAssertEqual(AgentProviderID.allCases.count, 40)
+        XCTAssertEqual(NativeProviderRouting.route(.deepseek).family, .openaiChatCompletions)
+        XCTAssertEqual(NativeProviderRouting.route(.xai).family, .openaiResponses)
+        XCTAssertEqual(NativeProviderRouting.route(.google).family, .googleGenerativeAI)
+        XCTAssertEqual(NativeProviderRouting.route(.amazonBedrock).family, .unsupported)
+        XCTAssertEqual(
+            Set(NativeProviderRouting.uncoveredProviders),
+            [.azureOpenAI, .googleVertex, .amazonBedrock, .cloudflareAIGateway, .cloudflareWorkersAI]
+        )
     }
 }
 

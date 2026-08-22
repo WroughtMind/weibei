@@ -29,20 +29,8 @@ public enum NativeChatCompletionsRoute {
         provider: AgentProviderID,
         endpoint: AgentProviderEndpoint
     ) -> URL? {
-        if let raw = endpoint.baseURL, let url = URL(string: raw) {
-            return url
-        }
-        switch provider {
-        case .deepseek:
-            return URL(string: "https://api.deepseek.com/v1")
-        case .openai:
-            return URL(string: "https://api.openai.com/v1")
-        case .openrouter:
-            return URL(string: "https://openrouter.ai/api/v1")
-        case .moonshotai, .moonshotaiCN:
-            return URL(string: "https://api.moonshot.ai/v1")
-        default:
-            return nil
-        }
+        let routed = NativeProviderRouting.route(provider)
+        guard routed.family == .openaiChatCompletions else { return nil }
+        return NativeProviderRouting.resolvedBaseURL(provider: provider, endpoint: endpoint)
     }
 }

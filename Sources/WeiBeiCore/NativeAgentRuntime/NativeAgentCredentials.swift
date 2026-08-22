@@ -98,6 +98,36 @@ public struct NativeAgentCredentialStore: Sendable {
         var records = try load()
         records.removeValue(forKey: provider)
         try save(records)
+        try scrubBackup(provider: provider)
+    }
+
+    public func scrubBackup(provider: String) throws {
+        let backup = fileURL.appendingPathExtension("bak")
+        let manager = FileManager.default
+        guard manager.fileExists(atPath: backup.path) else { return }
+        let records: [String: NativeAgentCredentialRecord]
+        do {
+            records = try JSONDecoder().decode(
+                [String: NativeAgentCredentialRecord].self,
+                from: Data(contentsOf: backup)
+            )
+        } catch {
+            try manager.removeItem(at: backup)
+            return
+        }
+        var next = records
+        next.removeValue(forKey: provider)
+        if next.isEmpty {
+            try manager.removeItem(at: backup)
+            return
+        }
+        if next == records { return }
+        let data = try JSONEncoder().encode(next)
+        try data.write(to: backup, options: .atomic)
+        try manager.setAttributes(
+            [.posixPermissions: 0o600],
+            ofItemAtPath: backup.path
+        )
     }
 
     public static func apiKey(forProviderID id: String) throws -> String? {

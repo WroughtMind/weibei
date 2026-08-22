@@ -15,6 +15,7 @@ func runNativeAgentSelfChecks() throws {
     try checkAnthropicTranslation()
     try checkGeminiTranslation()
     try checkOAuthLogoutLeavesNoCredential()
+    try checkProviderRouting()
 }
 
 private func nativeRequire(_ condition: @autoclosure () throws -> Bool, _ message: String) throws {
@@ -202,13 +203,44 @@ private func checkGeminiTranslation() throws {
 
 private func checkOAuthLogoutLeavesNoCredential() throws {
     let url = FileManager.default.temporaryDirectory.appendingPathComponent("native-oauth-\(UUID().uuidString).json")
-    defer { try? FileManager.default.removeItem(at: url) }
+    let backup = url.appendingPathExtension("bak")
+    defer {
+        try? FileManager.default.removeItem(at: url)
+        try? FileManager.default.removeItem(at: backup)
+    }
     let store = NativeAgentCredentialStore(fileURL: url)
     try store.upsert(NativeAgentCredentialRecord(provider: "openai-codex", accessToken: "tok", refreshToken: "ref"))
+    try store.upsert(NativeAgentCredentialRecord(provider: "openai-codex", accessToken: "tok-2", refreshToken: "ref-2"))
+    try nativeRequire(FileManager.default.fileExists(atPath: backup.path), "second upsert keeps a bak")
     try waitFor {
         try await NativeOpenAIOAuth.logout(from: store)
     }
     try nativeRequire(try NativeOpenAIOAuth.leftoverCredentialExists(in: store) == false, "logout removes openai-codex")
+    try nativeRequire(!FileManager.default.fileExists(atPath: backup.path), "logout scrubs bak leftover")
+}
+
+private func checkProviderRouting() throws {
+    try nativeRequire(AgentProviderID.allCases.count == 40, "provider catalog stays at 40 unique cases")
+    try nativeRequire(NativeProviderRouting.route(.deepseek).family == .openaiChatCompletions, "deepseek is chat completions")
+    try nativeRequire(NativeProviderRouting.route(.openai).family == .openaiResponses, "openai API is Responses")
+    try nativeRequire(NativeProviderRouting.route(.xai).family == .openaiResponses, "xAI is Responses")
+    try nativeRequire(NativeProviderRouting.route(.anthropic).family == .anthropicMessages, "anthropic is Messages")
+    try nativeRequire(NativeProviderRouting.route(.google).family == .googleGenerativeAI, "google is Gemini")
+    try nativeRequire(NativeProviderRouting.route(.minimax).family == .anthropicMessages, "minimax follows Pi anthropic baseUrl")
+    try nativeRequire(NativeProviderRouting.route(.moonshotaiCN).baseURL?.host == "api.moonshot.cn", "moonshot CN host")
+    let uncovered = Set(NativeProviderRouting.uncoveredProviders)
+    try nativeRequire(
+        uncovered == [.azureOpenAI, .googleVertex, .amazonBedrock, .cloudflareAIGateway, .cloudflareWorkersAI],
+        "uncovered families stay Azure/Vertex/Bedrock/Cloudflare"
+    )
+    for provider in AgentProviderID.allCases {
+        let route = NativeProviderRouting.route(provider)
+        if route.family == .unsupported {
+            try nativeRequire(!route.note.isEmpty, "\(provider.rawValue) uncovered note")
+        } else if route.auth != .userBaseURL {
+            try nativeRequire(route.baseURL != nil, "\(provider.rawValue) has a base URL")
+        }
+    }
 }
 
 private func checkFailureMapping() throws {
