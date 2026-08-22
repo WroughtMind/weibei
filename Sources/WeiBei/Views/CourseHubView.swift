@@ -199,28 +199,24 @@ struct CourseHubView: View {
             VStack(alignment: .leading, spacing: 22) {
                 VStack(alignment: .leading, spacing: 6) {
                     Text(store.ui("选择一门课程", "Choose a course"))
-                        .font(WeiBeiTypography.brandFont(
-                            language: store.interfaceLanguage,
-                            size: 22,
-                            weight: .semibold
-                        ))
+                        .weiBeiBrandFont(language: store.interfaceLanguage, size: 22, weight: .semibold)
                     Text(store.ui(
                         "进入课程后，可以继续阅读并打开这门课里的文稿、笔记与对话。",
                         "Open a course to resume reading and browse its materials, notes, and chats."
                     ))
-                    .font(.system(size: 12.5))
+                    .weiBeiText(12.5)
                     .foregroundStyle(WeiBeiTheme.secondaryInk)
                 }
 
                 if store.courses.isEmpty {
                     VStack(alignment: .leading, spacing: 14) {
                         Text(store.ui("还没有课程", "No courses yet"))
-                            .font(.system(size: 14, weight: .semibold))
+                            .weiBeiText(14, weight: .semibold)
                         Text(store.ui(
                             "每门课程都有自己的本地项目文件夹，可以容纳多份文稿与笔记。",
                             "Each course has a local project folder for multiple materials and notes."
                         ))
-                        .font(.system(size: 12))
+                        .weiBeiText(12)
                         .foregroundStyle(WeiBeiTheme.secondaryInk)
 
                         courseCreationActions
@@ -239,7 +235,7 @@ struct CourseHubView: View {
                             } label: {
                                 HStack(spacing: 12) {
                                     Image(systemName: "book.closed")
-                                        .font(.system(size: 14, weight: .medium))
+                                        .weiBeiText(14, weight: .medium)
                                         .foregroundStyle(
                                             courseWorkspaceAccent(colorIndex: course.colorIndex)
                                         )
@@ -255,14 +251,14 @@ struct CourseHubView: View {
                                             .foregroundStyle(WeiBeiTheme.ink)
                                             .lineLimit(1)
                                         Text(courseContentCount(for: course.id))
-                                            .font(.system(size: 11))
+                                            .weiBeiText(11)
                                             .foregroundStyle(WeiBeiTheme.secondaryInk)
                                     }
 
                                     Spacer(minLength: 8)
 
                                     Image(systemName: "chevron.right")
-                                        .font(.system(size: 10, weight: .semibold))
+                                        .weiBeiText(10, weight: .semibold)
                                         .foregroundStyle(WeiBeiTheme.tertiaryInk)
                                 }
                                 .padding(.horizontal, 14)
@@ -336,11 +332,7 @@ struct CourseHubView: View {
     private var continueReadingSection: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text(store.ui("继续上次", "Continue where you left off"))
-                .font(WeiBeiTypography.brandFont(
-                    language: store.interfaceLanguage,
-                    size: 21,
-                    weight: .semibold
-                ))
+                .weiBeiBrandFont(language: store.interfaceLanguage, size: 21, weight: .semibold)
                 .foregroundStyle(WeiBeiTheme.ink)
 
             if let courseID, let reading = continueReading {
@@ -416,11 +408,7 @@ struct CourseHubView: View {
                 Text(cleanedSearch.isEmpty
                      ? store.ui("最近内容", "Recent content")
                      : store.ui("搜索结果", "Search results"))
-                    .font(WeiBeiTypography.brandFont(
-                        language: store.interfaceLanguage,
-                        size: 18,
-                        weight: .semibold
-                    ))
+                    .weiBeiBrandFont(language: store.interfaceLanguage, size: 18, weight: .semibold)
                     .foregroundStyle(WeiBeiTheme.ink)
 
                 if !cleanedSearch.isEmpty, !isSearching {
@@ -428,7 +416,7 @@ struct CourseHubView: View {
                         "\(searchResults.count) 项",
                         "\(searchResults.count) results"
                     ))
-                    .font(.system(size: 11))
+                    .weiBeiText(11)
                     .foregroundStyle(WeiBeiTheme.secondaryInk)
                 }
 
@@ -534,7 +522,7 @@ struct CourseHubView: View {
                 ProgressView()
                     .controlSize(.small)
                 Text(store.ui("正在搜索课程内容…", "Searching course content…"))
-                    .font(.system(size: 12))
+                    .weiBeiText(12)
                     .foregroundStyle(WeiBeiTheme.secondaryInk)
             }
             .frame(minHeight: 62)
@@ -551,7 +539,7 @@ struct CourseHubView: View {
                                 "部分课程资料无法读取或建立搜索索引，请检查课程文件夹后重试。",
                                 "Some course materials could not be read or indexed. Check the course folder and retry."
                              ))
-                            .font(.system(size: 12.5))
+                            .weiBeiText(12.5)
                             .foregroundStyle(WeiBeiTheme.secondaryInk)
 
                         Spacer(minLength: 8)
@@ -571,7 +559,7 @@ struct CourseHubView: View {
                         "没有找到与“\(cleanedSearch)”相关的课程内容。",
                         "No course content matched “\(cleanedSearch)”."
                     ))
-                    .font(.system(size: 12.5))
+                    .weiBeiText(12.5)
                     .foregroundStyle(WeiBeiTheme.secondaryInk)
                     .frame(maxWidth: .infinity, minHeight: 72, alignment: .leading)
                 }
@@ -600,7 +588,7 @@ struct CourseHubView: View {
                 "这门课还没有文稿、笔记或对话。",
                 "This course has no materials, notes, or chats yet."
             ))
-            .font(.system(size: 12.5))
+            .weiBeiText(12.5)
             .foregroundStyle(WeiBeiTheme.secondaryInk)
 
             importAndCreateActions
@@ -624,9 +612,9 @@ struct CourseHubView: View {
                             "View all materials, notes, and chats"
                          ))
                     Image(systemName: showsAllContent ? "chevron.up" : "chevron.down")
-                        .font(.system(size: 9, weight: .semibold))
+                        .weiBeiText(9, weight: .semibold)
                 }
-                .font(.system(size: 12.5, weight: .medium))
+                .weiBeiText(12.5, weight: .medium)
                 .foregroundStyle(WeiBeiTheme.cinnabar)
                 .frame(maxWidth: .infinity, minHeight: 52)
                 .contentShape(Rectangle())
@@ -659,7 +647,7 @@ struct CourseHubView: View {
     private func unavailableCourseRootBanner(reason: String) -> some View {
         HStack(alignment: .center, spacing: 12) {
             Image(systemName: "folder.badge.questionmark")
-                .font(.system(size: 15, weight: .medium))
+                .weiBeiText(15, weight: .medium)
                 .foregroundStyle(WeiBeiTheme.cinnabar)
 
             VStack(alignment: .leading, spacing: 3) {
@@ -667,9 +655,9 @@ struct CourseHubView: View {
                     "课程文件夹暂时不可用",
                     "Course folder unavailable"
                 ))
-                .font(.system(size: 12.5, weight: .semibold))
+                .weiBeiText(12.5, weight: .semibold)
                 Text(reason)
-                    .font(.system(size: 11))
+                    .weiBeiText(11)
                     .foregroundStyle(WeiBeiTheme.secondaryInk)
                     .lineLimit(2)
             }
@@ -957,17 +945,17 @@ private struct CourseHubContinueCard: View {
     var body: some View {
         HStack(spacing: 18) {
             Image(systemName: icon)
-                .font(.system(size: 24, weight: .regular))
+                .weiBeiText(24, weight: .regular)
                 .foregroundStyle(WeiBeiTheme.cinnabar)
                 .frame(width: 46)
 
             VStack(alignment: .leading, spacing: 6) {
                 Text(title)
-                    .font(.system(size: 17, weight: .semibold))
+                    .weiBeiText(17, weight: .semibold)
                     .foregroundStyle(WeiBeiTheme.ink)
                     .lineLimit(1)
                 Text(detail)
-                    .font(.system(size: 11.5))
+                    .weiBeiText(11.5)
                     .foregroundStyle(WeiBeiTheme.secondaryInk)
                     .lineLimit(2)
             }
@@ -1005,7 +993,7 @@ private struct CourseHubContinueActionButtonStyle: ButtonStyle {
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.system(size: 13, weight: .semibold))
+            .weiBeiText(13, weight: .semibold)
             .foregroundStyle(primary ? Color.white : WeiBeiTheme.cinnabar)
             .padding(.horizontal, 20)
             .frame(minWidth: 132, minHeight: 42)
@@ -1042,16 +1030,16 @@ private struct CourseHubStartReadingRow: View {
     var body: some View {
         HStack(spacing: 18) {
             Image(systemName: "doc.badge.plus")
-                .font(.system(size: 22, weight: .regular))
+                .weiBeiText(22, weight: .regular)
                 .foregroundStyle(WeiBeiTheme.cinnabar)
                 .frame(width: 46)
 
             VStack(alignment: .leading, spacing: 5) {
                 Text(title)
-                    .font(.system(size: 15, weight: .semibold))
+                    .weiBeiText(15, weight: .semibold)
                     .foregroundStyle(WeiBeiTheme.ink)
                 Text(detail)
-                    .font(.system(size: 11.5))
+                    .weiBeiText(11.5)
                     .foregroundStyle(WeiBeiTheme.secondaryInk)
             }
 
@@ -1086,7 +1074,7 @@ private struct CourseHubContentRow: View {
         Button(action: action) {
             HStack(spacing: 14) {
                 Image(systemName: icon)
-                    .font(.system(size: 14, weight: .medium))
+                    .weiBeiText(14, weight: .medium)
                     .foregroundStyle(selected
                                      ? WeiBeiTheme.cinnabar
                                      : WeiBeiTheme.secondaryInk)
@@ -1094,19 +1082,19 @@ private struct CourseHubContentRow: View {
 
                 VStack(alignment: .leading, spacing: 4) {
                     Text(title)
-                        .font(.system(size: 13.5, weight: selected ? .semibold : .medium))
+                        .weiBeiText(13.5, weight: selected ? .semibold : .medium)
                         .foregroundStyle(WeiBeiTheme.ink)
                         .lineLimit(1)
 
                     Text(detail)
-                        .font(.system(size: 10.5))
+                        .weiBeiText(10.5)
                         .foregroundStyle(WeiBeiTheme.secondaryInk)
                         .lineLimit(1)
 
                     if let snippet,
                        !snippet.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                         Text(snippet)
-                            .font(.system(size: 11))
+                            .weiBeiText(11)
                             .foregroundStyle(WeiBeiTheme.tertiaryInk)
                             .lineLimit(2)
                     }
@@ -1115,7 +1103,7 @@ private struct CourseHubContentRow: View {
                 Spacer(minLength: 10)
 
                 Image(systemName: "chevron.right")
-                    .font(.system(size: 9.5, weight: .semibold))
+                    .weiBeiText(9.5, weight: .semibold)
                     .foregroundStyle(WeiBeiTheme.tertiaryInk)
             }
             .padding(.horizontal, 12)
@@ -1164,17 +1152,17 @@ private struct CourseHubMemoryLine: View {
     private var content: some View {
         HStack(spacing: 14) {
             Image(systemName: icon)
-                .font(.system(size: 15, weight: .regular))
+                .weiBeiText(15, weight: .regular)
                 .foregroundStyle(WeiBeiTheme.cinnabar)
                 .frame(width: 24)
 
             Text(title)
-                .font(.system(size: 13.5, weight: .semibold))
+                .weiBeiText(13.5, weight: .semibold)
                 .foregroundStyle(WeiBeiTheme.ink)
                 .frame(width: 104, alignment: .leading)
 
             Text(text)
-                .font(.system(size: 11.5))
+                .weiBeiText(11.5)
                 .foregroundStyle(
                     isPlaceholder
                         ? WeiBeiTheme.tertiaryInk
@@ -1185,7 +1173,7 @@ private struct CourseHubMemoryLine: View {
 
             if action != nil {
                 Image(systemName: "chevron.right")
-                    .font(.system(size: 9.5, weight: .semibold))
+                    .weiBeiText(9.5, weight: .semibold)
                     .foregroundStyle(WeiBeiTheme.tertiaryInk)
             }
         }

@@ -6,6 +6,7 @@ struct ContentView: View {
     /// Intentionally does NOT observe `libraryDrawer` / `paneState` / `interaction` —
     /// those chrome surfaces rebuild dedicated child layers so reader/agent/notes stay put.
     @EnvironmentObject private var store: WorkspaceStore
+    @Environment(\.weiBeiTextScale) private var textScale
     @FocusState private var focusedPane: PaneFocus?
     @FocusState private var topSearchFocused: Bool
     @State private var floatingAgentExpanded = false
@@ -86,7 +87,7 @@ struct ContentView: View {
                 if store.importantOperationError != nil || store.transientNoteStatus != nil {
                     WorkspaceStatusBanner()
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-                        .padding(.top, WeiBeiMetric.topBarHeight + 10)
+                        .padding(.top, WeiBeiMetric.topBarHeight * textScale + 10)
                         .zIndex(120)
                         .transition(WeiBeiTransition.floating)
                 }
@@ -273,6 +274,7 @@ private struct PaneChromeFocusBridge: View {
 private struct GlobalFloatingSelectionLayer: View {
     @EnvironmentObject private var store: WorkspaceStore
     @EnvironmentObject private var interaction: WorkspaceInteractionState
+    @Environment(\.weiBeiTextScale) private var textScale
     @Binding var expanded: Bool
     let canvasSize: CGSize
 
@@ -325,7 +327,7 @@ private struct GlobalFloatingSelectionLayer: View {
         let point = SelectionFloatingAgentPlacement.position(
             anchor: interaction.selectionAnchor.map { FloatingAgentCoordinate(x: Double($0.x), y: Double($0.y)) },
             canvas: FloatingAgentCoordinate(x: Double(canvasSize.width), y: Double(canvasSize.height)),
-            topInset: Double(WeiBeiMetric.topBarHeight),
+            topInset: Double(WeiBeiMetric.topBarHeight * textScale),
             surfaceHalfWidth: expanded
                 ? SelectionFloatingAgentPlacement.expandedHalfWidth
                 : (store.selectionContext?.isReplaceableNoteSelection == true
@@ -351,7 +353,7 @@ private struct ImportProgressPill: View {
                 "正在导入 \(progress?.completed ?? 0)/\(progress?.total ?? 0)：\(progress?.currentFileName ?? "")",
                 "Importing \(progress?.completed ?? 0)/\(progress?.total ?? 0): \(progress?.currentFileName ?? "")"
             ))
-            .font(.system(size: 12, weight: .medium))
+            .weiBeiText(12, weight: .medium)
             .foregroundStyle(WeiBeiTheme.ink)
             .lineLimit(1)
             .truncationMode(.middle)
@@ -384,10 +386,10 @@ private struct WorkspaceStatusBanner: View {
     var body: some View {
         HStack(spacing: 8) {
             Image(systemName: isImportant ? "exclamationmark.triangle.fill" : "info.circle")
-                .font(.system(size: 12, weight: .medium))
+                .weiBeiText(12, weight: .medium)
                 .foregroundStyle(isImportant ? WeiBeiTheme.cinnabar : WeiBeiTheme.secondaryInk)
             Text(message)
-                .font(.system(size: 12, weight: .medium))
+                .weiBeiText(12, weight: .medium)
                 .foregroundStyle(WeiBeiTheme.ink)
                 .lineLimit(3)
                 .multilineTextAlignment(.leading)
@@ -397,7 +399,7 @@ private struct WorkspaceStatusBanner: View {
                     store.dismissImportantOperationError()
                 } label: {
                     Image(systemName: "xmark")
-                        .font(.system(size: 10, weight: .semibold))
+                        .weiBeiText(10, weight: .semibold)
                         .foregroundStyle(WeiBeiTheme.secondaryInk)
                         .contentShape(Rectangle())
                 }
@@ -493,6 +495,7 @@ private struct UnifiedTopBarView: View {
     @EnvironmentObject private var paneState: WorkspacePaneState
     @EnvironmentObject private var interaction: WorkspaceInteractionState
     @Environment(\.openSettings) private var openSettings
+    @Environment(\.weiBeiTextScale) private var textScale
     let isImmersiveLayout: Bool
     let isFullScreen: Bool
     var searchFocused: FocusState<Bool>.Binding
@@ -520,7 +523,7 @@ private struct UnifiedTopBarView: View {
                     .foregroundColor(WeiBeiTheme.ink)
                     .foregroundStyle(WeiBeiTheme.ink)
                     .tint(WeiBeiTheme.link)
-                    .font(.system(size: 12))
+                    .weiBeiText(12)
                     .weibeiInputSurface(active: searchFocused.wrappedValue, height: controlHeight)
                     .frame(width: 220)
                 .onExitCommand {
@@ -575,7 +578,7 @@ private struct UnifiedTopBarView: View {
     }
 
     private var barHeight: CGFloat {
-        WeiBeiMetric.topBarHeight
+        WeiBeiMetric.topBarHeight * textScale
     }
 
     private var leftInset: CGFloat {
@@ -587,7 +590,7 @@ private struct UnifiedTopBarView: View {
     }
 
     private var controlHeight: CGFloat {
-        28
+        28 * textScale
     }
 
     private var shouldShowSearchAction: Bool {
@@ -1192,9 +1195,9 @@ private struct PaneReorderPreviewView: View {
             WeiBeiTheme.paper
             HStack(spacing: 7) {
                 Image(systemName: role.systemImage)
-                    .font(.system(size: 12, weight: .semibold))
+                    .weiBeiText(12, weight: .semibold)
                 Text(role.label(language: store.interfaceLanguage))
-                    .font(.system(size: 12, weight: .semibold))
+                    .weiBeiText(12, weight: .semibold)
             }
             .foregroundStyle(WeiBeiTheme.secondaryInk)
             .padding(.horizontal, 12)
@@ -1211,10 +1214,10 @@ struct EmptyWorkspaceView: View {
             WeiBeiTheme.paper
             VStack(spacing: 14) {
                 Image(systemName: "seal")
-                    .font(.system(size: 34, weight: .regular))
+                    .weiBeiText(34, weight: .regular)
                     .foregroundStyle(WeiBeiTheme.cinnabar.opacity(store.appearanceMode.isDark ? 0.12 : 0.08))
                 Text(store.ui("在顶栏点亮一个板块开始", "Light up a pane above to begin"))
-                    .font(.system(size: 13, weight: .medium))
+                    .weiBeiText(13, weight: .medium)
                     .foregroundStyle(WeiBeiTheme.secondaryInk)
             }
             .padding(.bottom, 18)
@@ -1237,9 +1240,9 @@ private struct PaneDropTargetView: View {
             .overlay(alignment: .topLeading) {
                 HStack(spacing: 7) {
                     Image(systemName: role.systemImage)
-                        .font(.system(size: 12, weight: .semibold))
+                        .weiBeiText(12, weight: .semibold)
                     Text(role.label(language: store.interfaceLanguage))
-                        .font(.system(size: 12, weight: .semibold))
+                        .weiBeiText(12, weight: .semibold)
                 }
                 .foregroundStyle(WeiBeiTheme.cinnabar)
                 .padding(.horizontal, 10)

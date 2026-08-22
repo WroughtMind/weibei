@@ -16,6 +16,7 @@ private enum EmptyWorkspaceLayoutMetrics {
 struct EmptyWorkspaceLauncherView: View {
     @EnvironmentObject private var store: WorkspaceStore
     @Environment(\.weibeiReduceMotion) private var reduceMotion
+    @Environment(\.weiBeiTextScale) private var textScale
 
     @State private var selectedInspirationID: String?
     /// Bumped on theme change so a long-lived NSHostingView cannot keep a stale paper snapshot.
@@ -39,8 +40,8 @@ struct EmptyWorkspaceLauncherView: View {
                 ZStack {
                     if !mode.isGlass {
                         EmptyWorkspacePaperField(mode: mode, compact: compact)
-                            .frame(height: geometry.size.height + WeiBeiMetric.topBarHeight)
-                            .offset(y: -WeiBeiMetric.topBarHeight)
+                            .frame(height: geometry.size.height + WeiBeiMetric.topBarHeight * textScale)
+                            .offset(y: -WeiBeiMetric.topBarHeight * textScale)
                     }
 
                     workspaceContent(
@@ -86,7 +87,7 @@ struct EmptyWorkspaceLauncherView: View {
             1,
             min(EmptyWorkspaceLayoutMetrics.contentMaxWidth, availableSize.width - horizontalPadding * 2)
         )
-        let entryHeight: CGFloat = compact ? 84 : 98
+        let entryHeight: CGFloat = (compact ? 84 : 98) * textScale
         let entryCenterRatio: CGFloat = store.showDailyInspiration ? EmptyWorkspaceLayoutMetrics.entryCenterRatio : 0.5
         let entryCenterY = clampedCenterY(
             ratio: entryCenterRatio,
@@ -112,7 +113,7 @@ struct EmptyWorkspaceLauncherView: View {
             entryCluster(
                 at: date,
                 compact: compact,
-                spacing: store.showDailyInspiration ? (compact ? 18 : 26) : (compact ? 16 : 29),
+                spacing: (store.showDailyInspiration ? (compact ? 18 : 26) : (compact ? 16 : 29)) * textScale,
                 entryWidth: entryWidth
             )
             .frame(width: contentWidth)
@@ -160,8 +161,8 @@ struct EmptyWorkspaceLauncherView: View {
 
     private func greeting(at date: Date, compact: Bool) -> some View {
         Text(EmptyWorkspaceDayPeriod.current(at: date).greeting(language: store.interfaceLanguage))
-            .font(WeiBeiTypography.brandFont(language: store.interfaceLanguage, size: compact ? 14.5 : 16, weight: .regular))
-            .tracking(store.interfaceLanguage == .chinese ? 0.8 : 0.35)
+            .weiBeiBrandFont(language: store.interfaceLanguage, size: compact ? 23 : 25.5, weight: .regular)
+            .tracking(store.interfaceLanguage == .chinese ? 1.3 : 0.55)
             .foregroundStyle(EmptyWorkspaceResolvedColor.secondaryInk(liveAppearanceMode).opacity(0.92))
             .multilineTextAlignment(.center)
             .fixedSize(horizontal: false, vertical: true)
@@ -256,6 +257,7 @@ struct EmptyWorkspacePaperField: View {
 
 private struct EmptyWorkspaceEntryRow: View {
     @EnvironmentObject private var store: WorkspaceStore
+    @Environment(\.weiBeiTextScale) private var textScale
     let entryWidth: CGFloat
 
     var body: some View {
@@ -295,13 +297,14 @@ private struct EmptyWorkspaceEntryRow: View {
     private var entryDivider: some View {
         Rectangle()
             .fill(WeiBeiTheme.hairline.opacity(0.78))
-            .frame(width: 1, height: 18)
+            .frame(width: 1, height: 18 * textScale)
             .accessibilityHidden(true)
     }
 }
 
 private struct EmptyWorkspaceEntryButton: View {
     @Environment(\.weibeiReduceMotion) private var reduceMotion
+    @Environment(\.weiBeiTextScale) private var textScale
 
     let title: String
     let accessibilityLabel: String
@@ -316,26 +319,26 @@ private struct EmptyWorkspaceEntryButton: View {
         let active = focused || hovering
 
         Button(action: action) {
-            VStack(spacing: 2) {
+            VStack(spacing: 2 * textScale) {
                 Text(title)
-                    .font(WeiBeiTypography.englishBrandFont(size: 22, weight: .semibold))
-                    .tracking(active ? 3.5 : 2.2)
+                    .weiBeiEnglishBrandFont(size: 22, weight: .semibold)
+                    .tracking((active ? 3.5 : 2.2) * textScale)
                     .foregroundStyle(active ? WeiBeiTheme.ink : WeiBeiTheme.secondaryInk.opacity(0.88))
-                    .offset(y: active && !reduceMotion ? -2.5 : 0)
+                    .offset(y: active && !reduceMotion ? -2.5 * textScale : 0)
 
                 ZStack {
                     Rectangle()
                         .fill(WeiBeiTheme.hairline.opacity(0.52))
-                        .frame(width: active ? 42 : 14, height: 1)
+                        .frame(width: (active ? 42 : 14) * textScale, height: 1)
 
                     Rectangle()
                         .fill(WeiBeiTheme.ink.opacity(focused ? 0.64 : hovering ? 0.42 : 0))
-                        .frame(width: active ? 32 : 0, height: 1)
+                        .frame(width: (active ? 32 : 0) * textScale, height: 1)
                 }
-                .frame(height: 4)
+                .frame(height: 4 * textScale)
                 .opacity(active ? 1 : 0.72)
             }
-            .frame(width: width, height: 52)
+            .frame(width: width * textScale, height: 52 * textScale)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -367,7 +370,7 @@ private struct EmptyWorkspaceInspirationView: View {
                     inspirationContent
 
                     Text(inspiration.credit)
-                        .font(.system(size: compact ? 10.5 : 11.5, weight: .medium, design: .serif))
+                        .weiBeiText(compact ? 10.5 : 11.5, weight: .medium, design: .serif)
                         .foregroundStyle(WeiBeiTheme.secondaryInk)
                         .multilineTextAlignment(.center)
                         .lineLimit(2)
@@ -447,7 +450,7 @@ private struct EmptyWorkspaceInspirationView: View {
 
     private func inspirationText(size: CGFloat) -> some View {
         Text(inspiration.text)
-            .font(.system(size: size, weight: .regular, design: .serif))
+            .weiBeiText(size, weight: .regular, design: .serif)
             .foregroundStyle(WeiBeiTheme.ink.opacity(0.90))
             .multilineTextAlignment(.center)
             .lineLimit(compact ? 3 : 2)
@@ -469,7 +472,7 @@ private struct EmptyWorkspaceInspirationView: View {
                 rightsLink
             }
         }
-        .font(.system(size: compact ? 9 : 9.5, weight: .regular))
+        .weiBeiText(compact ? 9 : 9.5, weight: .regular)
         .foregroundStyle(WeiBeiTheme.tertiaryInk)
         .multilineTextAlignment(.center)
         .lineLimit(2)

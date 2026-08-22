@@ -51,14 +51,10 @@ struct CourseManagementSheet: View {
         VStack(alignment: .leading, spacing: 18) {
             VStack(alignment: .leading, spacing: 5) {
                 Text(store.ui("课程设置", "Course Settings"))
-                    .font(WeiBeiTypography.brandFont(
-                        language: store.interfaceLanguage,
-                        size: 21,
-                        weight: .semibold
-                    ))
+                    .weiBeiBrandFont(language: store.interfaceLanguage, size: 21, weight: .semibold)
                 if let course {
                     Text(course.title)
-                        .font(.system(size: 12.5, weight: .medium))
+                        .weiBeiText(12.5, weight: .medium)
                         .foregroundStyle(WeiBeiTheme.secondaryInk)
                 }
             }
@@ -66,10 +62,10 @@ struct CourseManagementSheet: View {
             if let rootURL {
                 VStack(alignment: .leading, spacing: 7) {
                     Text(store.ui("课程文件夹", "Course Folder"))
-                        .font(.system(size: 11, weight: .semibold))
+                        .weiBeiText(11, weight: .semibold)
                         .foregroundStyle(WeiBeiTheme.tertiaryInk)
                     Text(rootURL.path)
-                        .font(.system(size: 11.5, design: .monospaced))
+                        .weiBeiText(11.5, design: .monospaced)
                         .foregroundStyle(WeiBeiTheme.secondaryInk)
                         .textSelection(.enabled)
                         .lineLimit(3)
@@ -92,7 +88,7 @@ struct CourseManagementSheet: View {
                     rootUnavailableReason,
                     systemImage: "folder.badge.questionmark"
                 )
-                .font(.system(size: 11.5))
+                .weiBeiText(11.5)
                 .foregroundStyle(WeiBeiTheme.secondaryInk)
                 .fixedSize(horizontal: false, vertical: true)
             } else if rootURL == nil {
@@ -103,7 +99,7 @@ struct CourseManagementSheet: View {
                     ),
                     systemImage: "folder.badge.questionmark"
                 )
-                .font(.system(size: 11.5))
+                .weiBeiText(11.5)
                 .foregroundStyle(WeiBeiTheme.secondaryInk)
             }
 
@@ -111,7 +107,7 @@ struct CourseManagementSheet: View {
 
             VStack(alignment: .leading, spacing: 9) {
                 Text(store.ui("危险操作", "Danger Zone"))
-                    .font(.system(size: 11, weight: .semibold))
+                    .weiBeiText(11, weight: .semibold)
                     .foregroundStyle(WeiBeiTheme.cinnabar)
                 if UnavailableCourseUnregister.shouldOfferUnregister(
                     rootURL: rootURL,
@@ -121,7 +117,7 @@ struct CourseManagementSheet: View {
                         UnavailableCourseUnregister.confirmationMessage(chinese: true),
                         UnavailableCourseUnregister.confirmationMessage(chinese: false)
                     ))
-                    .font(.system(size: 11.5))
+                    .weiBeiText(11.5)
                     .foregroundStyle(WeiBeiTheme.secondaryInk)
                     .fixedSize(horizontal: false, vertical: true)
 
@@ -137,7 +133,7 @@ struct CourseManagementSheet: View {
                         "这会把整个真实课程文件夹及其中内容移到 macOS 废纸篓。只有移动成功后，课程才会从魏碑移除。",
                         "This moves the entire real course folder to the macOS Trash. WeiBei removes the course only after the move succeeds."
                     ))
-                    .font(.system(size: 11.5))
+                    .weiBeiText(11.5)
                     .foregroundStyle(WeiBeiTheme.secondaryInk)
                     .fixedSize(horizontal: false, vertical: true)
 
@@ -162,7 +158,7 @@ struct CourseManagementSheet: View {
                         "正在安全移动课程文件夹…",
                         "Moving the course folder safely…"
                     ))
-                    .font(.system(size: 11.5))
+                    .weiBeiText(11.5)
                     .foregroundStyle(WeiBeiTheme.secondaryInk)
                 }
                 .accessibilityElement(children: .combine)
@@ -173,7 +169,7 @@ struct CourseManagementSheet: View {
                     errorMessage,
                     systemImage: "exclamationmark.triangle"
                 )
-                .font(.system(size: 11.5))
+                .weiBeiText(11.5)
                 .foregroundStyle(WeiBeiTheme.cinnabar)
                 .fixedSize(horizontal: false, vertical: true)
             }
@@ -320,13 +316,9 @@ struct CourseProjectEntrySheet: View {
         VStack(alignment: .leading, spacing: 18) {
             VStack(alignment: .leading, spacing: 6) {
                 Text(heading)
-                    .font(WeiBeiTypography.brandFont(
-                        language: store.interfaceLanguage,
-                        size: 21,
-                        weight: .semibold
-                    ))
+                    .weiBeiBrandFont(language: store.interfaceLanguage, size: 21, weight: .semibold)
                 Text(detail)
-                    .font(.system(size: 12))
+                    .weiBeiText(12)
                     .foregroundStyle(WeiBeiTheme.secondaryInk)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -348,7 +340,7 @@ struct CourseProjectEntrySheet: View {
 
             if let errorMessage {
                 Label(errorMessage, systemImage: "exclamationmark.triangle")
-                    .font(.system(size: 11.5))
+                    .weiBeiText(11.5)
                     .foregroundStyle(WeiBeiTheme.cinnabar)
                     .fixedSize(horizontal: false, vertical: true)
                     .accessibilityLabel(Text(store.ui(
@@ -449,7 +441,7 @@ struct CourseProjectEntrySheet: View {
                         ?? store.ui("当前无法访问这个资料库。", "This library is currently unavailable."),
                     systemImage: "exclamationmark.triangle"
                 )
-                .font(.system(size: 12))
+                .weiBeiText(12)
                 .foregroundStyle(WeiBeiTheme.secondaryInk)
                 .fixedSize(horizontal: false, vertical: true)
             } else {
@@ -457,7 +449,7 @@ struct CourseProjectEntrySheet: View {
                     store.ui("建议选择或新建一个名为“魏碑”的总文件夹。", "Choose or create a top-level WeiBei folder."),
                     systemImage: "folder"
                 )
-                .font(.system(size: 12))
+                .weiBeiText(12)
                 .foregroundStyle(WeiBeiTheme.secondaryInk)
             }
 
@@ -493,7 +485,7 @@ struct CourseProjectEntrySheet: View {
                 ),
                 systemImage: "arrow.triangle.2.circlepath"
             )
-            .font(.system(size: 12))
+            .weiBeiText(12)
             .foregroundStyle(WeiBeiTheme.secondaryInk)
             .fixedSize(horizontal: false, vertical: true)
         } else if let selectedFolder {
@@ -514,7 +506,7 @@ struct CourseProjectEntrySheet: View {
         TextField(store.ui("课程名", "Course title"), text: $title)
             .textFieldStyle(.plain)
             .focused($titleFocused)
-            .font(.system(size: 13))
+            .weiBeiText(13)
             .foregroundColor(WeiBeiTheme.ink)
             .weibeiInputSurface(active: titleFocused, height: 32)
             .onSubmit(submitCurrentIntent)
@@ -538,7 +530,7 @@ struct CourseProjectEntrySheet: View {
                     "已选择 \(selectedImportURLs.count) 项；课程创建后会直接导入。Markdown 会同时出现在文稿与笔记中。",
                     "Selected \(selectedImportURLs.count) item(s). Markdown will appear in both Materials and Notes."
                 ))
-                .font(.system(size: 11.5))
+                .weiBeiText(11.5)
                 .foregroundStyle(WeiBeiTheme.secondaryInk)
                 .fixedSize(horizontal: false, vertical: true)
             }
@@ -551,10 +543,10 @@ struct CourseProjectEntrySheet: View {
     private func pathLine(label: String, path: String) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(label)
-                .font(.system(size: 10.5, weight: .semibold))
+                .weiBeiText(10.5, weight: .semibold)
                 .foregroundStyle(WeiBeiTheme.tertiaryInk)
             Text(path)
-                .font(.system(size: 11.5))
+                .weiBeiText(11.5)
                 .foregroundStyle(WeiBeiTheme.secondaryInk)
                 .lineLimit(2)
                 .truncationMode(.middle)
@@ -833,10 +825,10 @@ struct CourseRelationDetailHeader: View {
                     .tracking(0.8)
                     .foregroundStyle(WeiBeiTheme.cinnabar.opacity(0.76))
                 Text(title)
-                    .font(WeiBeiTypography.brandFont(language: store.interfaceLanguage, size: 20, weight: .semibold))
+                    .weiBeiBrandFont(language: store.interfaceLanguage, size: 20, weight: .semibold)
                     .lineLimit(2)
                 Text(detail)
-                    .font(.system(size: 11))
+                    .weiBeiText(11)
                     .foregroundStyle(WeiBeiTheme.secondaryInk)
             }
 
@@ -865,22 +857,22 @@ struct CourseLinkedItemRow: View {
     var body: some View {
         HStack(spacing: 11) {
             Image(systemName: item.kind.systemImage)
-                .font(.system(size: 13, weight: .medium))
+                .weiBeiText(13, weight: .medium)
                 .foregroundStyle(WeiBeiTheme.secondaryInk)
                 .frame(width: 20)
             VStack(alignment: .leading, spacing: 3) {
                 Text(store.displayTitle(for: item))
-                    .font(.system(size: 13, weight: .medium))
+                    .weiBeiText(13, weight: .medium)
                     .foregroundStyle(WeiBeiTheme.ink)
                     .lineLimit(1)
                 Text(detail)
-                    .font(.system(size: 10.5))
+                    .weiBeiText(10.5)
                     .foregroundStyle(WeiBeiTheme.secondaryInk)
                     .lineLimit(1)
             }
             Spacer()
             Text(store.ui("已关联", "Linked"))
-                .font(.system(size: 10.5, weight: .medium))
+                .weiBeiText(10.5, weight: .medium)
                 .foregroundStyle(WeiBeiTheme.cinnabar)
         }
         .padding(.horizontal, 10)
@@ -909,17 +901,17 @@ struct CourseWorkspaceRow: View {
         Button(action: action) {
             HStack(spacing: 11) {
                 Image(systemName: icon)
-                    .font(.system(size: 13, weight: .medium))
+                    .weiBeiText(13, weight: .medium)
                     .foregroundStyle(iconColor)
                     .frame(width: 20)
 
                 VStack(alignment: .leading, spacing: 3) {
                     Text(title)
-                        .font(.system(size: 13, weight: selected || prominence == .linked ? .semibold : .medium))
+                        .weiBeiText(13, weight: selected || prominence == .linked ? .semibold : .medium)
                         .foregroundStyle(WeiBeiTheme.ink.opacity(prominence == .dimmed ? 0.55 : 1))
                         .lineLimit(1)
                     Text(detail)
-                        .font(.system(size: 10.5))
+                        .weiBeiText(10.5)
                         .foregroundStyle(WeiBeiTheme.secondaryInk.opacity(prominence == .dimmed ? 0.7 : 1))
                         .lineLimit(1)
                 }
@@ -928,7 +920,7 @@ struct CourseWorkspaceRow: View {
 
                 if !status.isEmpty {
                     Text(status)
-                        .font(.system(size: 10.5, weight: .medium))
+                        .weiBeiText(10.5, weight: .medium)
                         .foregroundStyle(selected || prominence == .linked ? WeiBeiTheme.cinnabar : WeiBeiTheme.secondaryInk)
                         .multilineTextAlignment(.trailing)
                         .lineLimit(2)
@@ -982,7 +974,7 @@ struct RelationSelectionRow: View {
         Button(action: action) {
             HStack(spacing: 11) {
                 Image(systemName: checked ? "checkmark.square.fill" : "square")
-                    .font(.system(size: 14, weight: .medium))
+                    .weiBeiText(14, weight: .medium)
                     .foregroundStyle(checked ? WeiBeiTheme.cinnabar : WeiBeiTheme.tertiaryInk)
                     .frame(width: 20)
                 Image(systemName: item.kind.systemImage)
@@ -990,11 +982,11 @@ struct RelationSelectionRow: View {
                     .frame(width: 18)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(store.displayTitle(for: item))
-                        .font(.system(size: 13, weight: .medium))
+                        .weiBeiText(13, weight: .medium)
                         .foregroundStyle(WeiBeiTheme.ink)
                         .lineLimit(1)
                     Text(detail)
-                        .font(.system(size: 10.5))
+                        .weiBeiText(10.5)
                         .foregroundStyle(WeiBeiTheme.secondaryInk)
                         .lineLimit(1)
                 }
@@ -1002,7 +994,7 @@ struct RelationSelectionRow: View {
                 Text(item.isNotebookNote
                      ? store.ui("笔记", "Note")
                      : item.kind.label(language: store.interfaceLanguage))
-                    .font(.system(size: 10, weight: .medium))
+                    .weiBeiText(10, weight: .medium)
                     .foregroundStyle(WeiBeiTheme.tertiaryInk)
             }
             .padding(.horizontal, 10)
@@ -1028,7 +1020,7 @@ struct CourseDetailSection<Content: View>: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text(title)
-                .font(.system(size: 11, weight: .semibold))
+                .weiBeiText(11, weight: .semibold)
                 .foregroundStyle(WeiBeiTheme.secondaryInk)
             content
         }
@@ -1046,11 +1038,11 @@ struct CourseContextLine: View {
                 .foregroundStyle(WeiBeiTheme.secondaryInk)
                 .frame(width: 18)
             Text(label)
-                .font(.system(size: 11, weight: .medium))
+                .weiBeiText(11, weight: .medium)
                 .foregroundStyle(WeiBeiTheme.secondaryInk)
                 .frame(width: 76, alignment: .leading)
             Text(value)
-                .font(.system(size: 13, weight: .medium))
+                .weiBeiText(13, weight: .medium)
                 .foregroundStyle(WeiBeiTheme.ink)
                 .lineLimit(1)
             Spacer()
@@ -1075,11 +1067,11 @@ struct CourseActionRow: View {
                 .frame(width: 18)
             VStack(alignment: .leading, spacing: 3) {
                 Text(title)
-                    .font(.system(size: 13, weight: .medium))
+                    .weiBeiText(13, weight: .medium)
                     .foregroundStyle(WeiBeiTheme.ink)
                     .lineLimit(1)
                 Text(detail)
-                    .font(.system(size: 10.5))
+                    .weiBeiText(10.5)
                     .foregroundStyle(WeiBeiTheme.secondaryInk)
                     .lineLimit(2)
             }
@@ -1104,21 +1096,21 @@ struct CourseAttentionRow: View {
         Button(action: action) {
             HStack(spacing: 12) {
                 Text("\(count)")
-                    .font(.system(size: 15, weight: .semibold, design: .monospaced))
+                    .weiBeiText(15, weight: .semibold, design: .monospaced)
                     .foregroundStyle(count == 0 ? WeiBeiTheme.tertiaryInk : WeiBeiTheme.cinnabar)
                     .frame(width: 34, alignment: .leading)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(title)
-                        .font(.system(size: 13, weight: .medium))
+                        .weiBeiText(13, weight: .medium)
                         .foregroundStyle(WeiBeiTheme.ink)
                     Text(detail)
-                        .font(.system(size: 10.5))
+                        .weiBeiText(10.5)
                         .foregroundStyle(WeiBeiTheme.secondaryInk)
                         .lineLimit(2)
                 }
                 Spacer()
                 Image(systemName: "chevron.right")
-                    .font(.system(size: 10, weight: .semibold))
+                    .weiBeiText(10, weight: .semibold)
                     .foregroundStyle(WeiBeiTheme.tertiaryInk)
             }
             .padding(.horizontal, 12)
@@ -1140,15 +1132,15 @@ struct CourseEmptyState: View {
     var body: some View {
         VStack(alignment: alignment, spacing: 8) {
             Image(systemName: systemImage)
-                .font(.system(size: 19, weight: .regular))
+                .weiBeiText(19, weight: .regular)
                 .foregroundStyle(WeiBeiTheme.cinnabar.opacity(0.58))
                 .frame(width: 28, height: 28, alignment: .center)
             Text(title)
-                .font(.system(size: 13, weight: .semibold))
+                .weiBeiText(13, weight: .semibold)
                 .foregroundStyle(WeiBeiTheme.ink)
                 .lineLimit(1)
             Text(detail)
-                .font(.system(size: 11.5))
+                .weiBeiText(11.5)
                 .foregroundStyle(WeiBeiTheme.secondaryInk)
                 .lineLimit(2)
                 .frame(minHeight: 32, alignment: alignment == .leading ? .topLeading : .top)
@@ -1172,15 +1164,15 @@ struct CourseHubColumnEmptyState: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             Image(systemName: systemImage)
-                .font(.system(size: 20, weight: .regular))
+                .weiBeiText(20, weight: .regular)
                 .foregroundStyle(WeiBeiTheme.cinnabar.opacity(0.72))
                 .frame(width: 28, height: 28, alignment: .center)
             Text(title)
-                .font(.system(size: 13, weight: .semibold))
+                .weiBeiText(13, weight: .semibold)
                 .foregroundStyle(WeiBeiTheme.ink)
                 .lineLimit(1)
             Text(detail)
-                .font(.system(size: 11.5))
+                .weiBeiText(11.5)
                 .foregroundStyle(WeiBeiTheme.secondaryInk)
                 .lineLimit(2)
                 .frame(height: 34, alignment: .topLeading)
@@ -1243,19 +1235,19 @@ func relationFooter(
 ) -> some View {
     HStack {
         Text(countTitle)
-            .font(.system(size: 11.5, weight: .semibold))
+            .weiBeiText(11.5, weight: .semibold)
             .foregroundStyle(WeiBeiTheme.cinnabar)
         Spacer()
         if let errorTitle {
             Text(errorTitle)
-                .font(.system(size: 10.5))
+                .weiBeiText(10.5)
                 .foregroundStyle(WeiBeiTheme.cinnabar)
                 .lineLimit(1)
             Button(retryTitle, action: retry)
                 .buttonStyle(WeiBeiTextActionButtonStyle(active: true))
         } else {
             Text(statusTitle)
-                .font(.system(size: 10.5))
+                .weiBeiText(10.5)
                 .foregroundStyle(WeiBeiTheme.secondaryInk)
         }
     }

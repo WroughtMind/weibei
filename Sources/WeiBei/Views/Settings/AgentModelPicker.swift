@@ -20,7 +20,7 @@ extension SettingsView {
             HStack(spacing: 8) {
                 if oauthService.isRefreshingCatalog {
                     Image(systemName: "arrow.triangle.2.circlepath")
-                        .font(.system(size: 11, weight: .semibold))
+                        .weiBeiText(11, weight: .semibold)
                         .foregroundStyle(WeiBeiTheme.tertiaryInk)
                         // Continuous spin while loading: drive via a monotonically increasing
                         // angle that animates itself each cycle.
@@ -38,7 +38,7 @@ extension SettingsView {
                     requestModelListRefresh(force: true)
                 } label: {
                     Image(systemName: "arrow.clockwise")
-                        .font(.system(size: 11, weight: .semibold))
+                        .weiBeiText(11, weight: .semibold)
                 }
                 .buttonStyle(WeiBeiTextActionButtonStyle(active: !oauthService.isRefreshingCatalog))
                 .help(store.ui("重新获取模型列表", "Refresh model list"))
@@ -99,11 +99,11 @@ extension SettingsView {
     private var modelStatusLine: some View {
         if oauthService.isRefreshingCatalog {
             Text(store.ui("正在获取模型…", "Fetching models…"))
-                .font(.system(size: 11))
+                .weiBeiText(11)
                 .foregroundStyle(WeiBeiTheme.tertiaryInk)
         } else if let message = oauthService.catalogError {
             Text(message)
-                .font(.system(size: 11))
+                .weiBeiText(11)
                 .foregroundStyle(WeiBeiTheme.tertiaryInk)
                 .frame(maxWidth: 260, alignment: .trailing)
                 .lineLimit(2)

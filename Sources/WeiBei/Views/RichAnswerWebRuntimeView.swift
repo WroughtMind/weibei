@@ -144,9 +144,9 @@ struct RichAnswerWebRuntimeView: View {
             if runtimeError != nil {
                 VStack(alignment: .leading, spacing: 3) {
                     Label("这项富回答无法显示", systemImage: "exclamationmark.triangle")
-                        .font(.system(size: 11, weight: .semibold))
+                        .weiBeiText(11, weight: .semibold)
                     Text("请继续阅读正文，稍后可重试这项视觉。")
-                        .font(.system(size: 10))
+                        .weiBeiText(10)
                         .foregroundStyle(WeiBeiTheme.secondaryInk)
                 }
                 .accessibilityElement(children: .combine)
@@ -157,7 +157,7 @@ struct RichAnswerWebRuntimeView: View {
                     onRequestExpansion()
                 } label: {
                     Label("放大操作", systemImage: "arrow.up.left.and.arrow.down.right")
-                        .font(.system(size: 11, weight: .medium))
+                        .weiBeiText(11, weight: .medium)
                         .symbolRenderingMode(.hierarchical)
                 }
                 .buttonStyle(.plain)

@@ -452,20 +452,20 @@ private struct ContentRailPreviewCard: View {
 
             VStack(alignment: .leading, spacing: 7) {
                 Text(label)
-                    .font(.system(size: 9.5, weight: .semibold, design: .serif))
+                    .weiBeiText(9.5, weight: .semibold, design: .serif)
                     .tracking(0.7)
                     .foregroundStyle(WeiBeiTheme.cinnabar.opacity(0.78))
                     .lineLimit(1)
 
                 Text(item.title)
-                    .font(.system(size: 13.5, weight: .semibold))
+                    .weiBeiText(13.5, weight: .semibold)
                     .foregroundStyle(WeiBeiTheme.ink)
                     .lineLimit(2)
                     .frame(maxWidth: .infinity, alignment: .leading)
 
                 if !item.excerpt.isEmpty {
                     Text(item.excerpt)
-                        .font(.system(size: 12.5))
+                        .weiBeiText(12.5)
                         .lineSpacing(3)
                         .foregroundStyle(WeiBeiTheme.secondaryInk)
                         .lineLimit(showsPreviewImage ? 3 : 4)
@@ -474,7 +474,7 @@ private struct ContentRailPreviewCard: View {
 
                 if !item.metadata.isEmpty {
                     Text(item.metadata)
-                        .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                        .weiBeiText(10.5, weight: .medium, design: .monospaced)
                         .foregroundStyle(WeiBeiTheme.tertiaryInk)
                         .lineLimit(1)
                         .frame(maxWidth: .infinity, alignment: .leading)

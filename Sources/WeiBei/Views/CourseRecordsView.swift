@@ -250,10 +250,10 @@ struct LearningMemoryListSection: View {
                     Image(systemName: "brain.head.profile")
                         .foregroundStyle(WeiBeiTheme.cinnabar)
                     Text(title)
-                        .font(WeiBeiTypography.brandFont(language: store.interfaceLanguage, size: 14, weight: .semibold))
+                        .weiBeiBrandFont(language: store.interfaceLanguage, size: 14, weight: .semibold)
                     Spacer()
                     Text(store.ui("\(memories.count) 条", "\(memories.count)"))
-                        .font(.system(size: 11, weight: .medium))
+                        .weiBeiText(11, weight: .medium)
                         .foregroundStyle(WeiBeiTheme.secondaryInk)
                 }
                 .padding(.horizontal, 16)
@@ -264,7 +264,7 @@ struct LearningMemoryListSection: View {
                 Text(search.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                     ? store.ui("还没有形成学习记忆。", "No learning memory yet.")
                     : store.ui("没有匹配的学习记忆。", "No matching learning memory."))
-                    .font(.system(size: 12))
+                    .weiBeiText(12)
                     .foregroundStyle(WeiBeiTheme.secondaryInk)
                     .padding(.horizontal, 16)
                     .padding(.bottom, 14)
@@ -325,21 +325,21 @@ struct LearningMemoryListSection: View {
                 VStack(alignment: .leading, spacing: 5) {
                     HStack(spacing: 7) {
                         Text(store.learningMemoryKindLabel(memory.kind))
-                            .font(.system(size: 10.5, weight: .semibold))
+                            .weiBeiText(10.5, weight: .semibold)
                             .foregroundStyle(WeiBeiTheme.cinnabar)
                         if memory.status == .resolved {
                             Text(store.ui("已解决", "Resolved"))
-                                .font(.system(size: 10, weight: .medium))
+                                .weiBeiText(10, weight: .medium)
                                 .foregroundStyle(WeiBeiTheme.tertiaryInk)
                         }
                     }
                     Text(memory.text)
-                        .font(.system(size: 13))
+                        .weiBeiText(13)
                         .foregroundStyle(WeiBeiTheme.ink)
                         .multilineTextAlignment(.leading)
                         .fixedSize(horizontal: false, vertical: true)
                     Text(memorySource(memory))
-                        .font(.system(size: 10.5))
+                        .weiBeiText(10.5)
                         .foregroundStyle(WeiBeiTheme.tertiaryInk)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -403,7 +403,7 @@ private struct LearningMemoryEditSheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
             Text(store.ui("修改学习记忆", "Edit Learning Memory"))
-                .font(WeiBeiTypography.brandFont(language: store.interfaceLanguage, size: 19, weight: .semibold))
+                .weiBeiBrandFont(language: store.interfaceLanguage, size: 19, weight: .semibold)
 
             Picker(store.ui("类型", "Kind"), selection: $kind) {
                 ForEach(LearningMemoryKind.allCases, id: \.self) { kind in
@@ -412,7 +412,7 @@ private struct LearningMemoryEditSheet: View {
             }
 
             TextEditor(text: $text)
-                .font(.system(size: 13))
+                .weiBeiText(13)
                 .frame(minHeight: 110)
                 .padding(8)
                 .background(WeiBeiTheme.paperInset.opacity(0.45))
@@ -425,7 +425,7 @@ private struct LearningMemoryEditSheet: View {
                 "\(text.count) / 500 字",
                 "\(text.count) / 500 characters"
             ))
-            .font(.system(size: 10.5))
+            .weiBeiText(10.5)
             .foregroundStyle(text.count > 500 ? WeiBeiTheme.cinnabar : WeiBeiTheme.tertiaryInk)
             .frame(maxWidth: .infinity, alignment: .trailing)
 

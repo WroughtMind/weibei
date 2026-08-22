@@ -32,14 +32,14 @@ struct LinkedSourcesPopover: View {
                 HStack(alignment: .firstTextBaseline) {
                     VStack(alignment: .leading, spacing: 3) {
                         Text(store.ui("这份笔记的资料", "Sources for this note"))
-                            .font(WeiBeiTypography.brandFont(language: store.interfaceLanguage, size: 16, weight: .semibold))
+                            .weiBeiBrandFont(language: store.interfaceLanguage, size: 16, weight: .semibold)
                         Text(store.ui("选中的资料会一直跟随这份笔记", "Selected sources stay with this note"))
                             .font(.caption)
                             .foregroundStyle(WeiBeiTheme.secondaryInk)
                     }
                     Spacer()
                     Text("\(draftIDs.count)")
-                        .font(.system(size: 18, weight: .medium, design: .serif))
+                        .weiBeiText(18, weight: .medium, design: .serif)
                         .foregroundStyle(WeiBeiTheme.cinnabar)
                 }
 
@@ -49,7 +49,7 @@ struct LinkedSourcesPopover: View {
                     TextField(store.ui("搜索标题、文件名", "Search title or file name"), text: $query)
                         .textFieldStyle(.plain)
                 }
-                .font(.system(size: 13))
+                .weiBeiText(13)
                 .weibeiInputSurface(height: 32)
 
                 if let current = store.selectedMaterialItem {
@@ -65,7 +65,7 @@ struct LinkedSourcesPopover: View {
                     ForEach(groupedMaterials, id: \.0) { group in
                         VStack(alignment: .leading, spacing: 4) {
                             Text(group.0)
-                                .font(.system(size: 10, weight: .semibold))
+                                .weiBeiText(10, weight: .semibold)
                                 .foregroundStyle(WeiBeiTheme.tertiaryInk)
                                 .padding(.horizontal, 7)
                             ForEach(group.1) { item in

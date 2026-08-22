@@ -372,10 +372,14 @@
       border-left-color: var(--cinnabar-line);
     }
 
+    :root {
+      --weibei-text-scale: 1;
+    }
+
     .ProseMirror {
       outline: none;
       min-height: calc(100vh - 92px);
-      font-size: 17px;
+      font-size: calc(17px * var(--weibei-text-scale));
       line-height: 1.82;
       caret-color: var(--cinnabar);
       word-break: break-word;
@@ -390,12 +394,12 @@
 
     :root[data-weibei-compact-preview="true"] .ProseMirror {
       min-height: 0;
-      font-size: 14px;
+      font-size: calc(14px * var(--weibei-text-scale));
       line-height: 1.68;
     }
 
     :root[data-weibei-chat-wide="true"] .ProseMirror {
-      font-size: 16px;
+      font-size: calc(16px * var(--weibei-text-scale));
       line-height: 1.8;
     }
 

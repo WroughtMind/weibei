@@ -1939,6 +1939,7 @@ public struct PersistedWorkspace: Codable, Sendable {
     public var appearanceModeRaw: String?
     public var adaptImportedDocumentColors: Bool?
     public var interfaceLanguageRaw: String?
+    public var interfaceTextScaleRaw: String?
 
     public init(
         importedItems: [StudyItem] = [],
@@ -1986,7 +1987,8 @@ public struct PersistedWorkspace: Codable, Sendable {
         showDailyInspiration: Bool? = nil,
         appearanceModeRaw: String? = nil,
         adaptImportedDocumentColors: Bool? = nil,
-        interfaceLanguageRaw: String? = nil
+        interfaceLanguageRaw: String? = nil,
+        interfaceTextScaleRaw: String? = nil
     ) {
         self.importedItems = importedItems
         self.notesByItemID = notesByItemID
@@ -2034,6 +2036,7 @@ public struct PersistedWorkspace: Codable, Sendable {
         self.appearanceModeRaw = appearanceModeRaw
         self.adaptImportedDocumentColors = adaptImportedDocumentColors
         self.interfaceLanguageRaw = interfaceLanguageRaw
+        self.interfaceTextScaleRaw = interfaceTextScaleRaw
     }
 }
 

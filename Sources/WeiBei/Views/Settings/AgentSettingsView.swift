@@ -76,7 +76,7 @@ extension SettingsView {
                     )
                     .textFieldStyle(.plain)
                     .foregroundColor(WeiBeiTheme.ink)
-                    .font(.system(size: 13))
+                    .weiBeiText(13)
                     .weibeiInputSurface(active: false, height: 38)
                     .frame(width: SettingsView.controlWidth)
                 }
@@ -146,7 +146,7 @@ extension SettingsView {
             )
             .textFieldStyle(.plain)
             .foregroundColor(WeiBeiTheme.ink)
-            .font(.system(size: 13))
+            .weiBeiText(13)
             .weibeiInputSurface(active: true, height: 30)
             .frame(width: 140)
             .onSubmit { commitProfileRename() }
@@ -252,7 +252,7 @@ extension SettingsView {
                 .textFieldStyle(.plain)
                 .foregroundColor(WeiBeiTheme.ink)
                 .focused($focusedField, equals: .apiKey)
-                .font(.system(size: 13))
+                .weiBeiText(13)
                 .weibeiInputSurface(active: focusedField == .apiKey, height: 38)
                 .frame(width: SettingsView.controlWidth)
                 .onSubmit { saveActiveAPIKey() }
@@ -438,7 +438,7 @@ extension SettingsView {
         if let prompt = oauthService.pendingPrompt {
             VStack(alignment: .trailing, spacing: 8) {
                 Text(prompt.message)
-                    .font(.system(size: 12))
+                    .weiBeiText(12)
                     .foregroundStyle(WeiBeiTheme.secondaryInk)
                     .multilineTextAlignment(.trailing)
                     .fixedSize(horizontal: false, vertical: true)
@@ -459,7 +459,7 @@ extension SettingsView {
                         )
                         .textFieldStyle(.plain)
                         .foregroundColor(WeiBeiTheme.ink)
-                        .font(.system(size: 13))
+                        .weiBeiText(13)
                         .weibeiInputSurface(active: true, height: 38)
                         .frame(width: SettingsView.controlWidth)
                         .onSubmit { oauthService.submitPrompt() }
@@ -473,7 +473,7 @@ extension SettingsView {
                         )
                         .textFieldStyle(.plain)
                         .foregroundColor(WeiBeiTheme.ink)
-                        .font(.system(size: 13))
+                        .weiBeiText(13)
                         .weibeiInputSurface(active: true, height: 38)
                         .frame(width: SettingsView.controlWidth)
                         .onSubmit { oauthService.submitPrompt() }
@@ -610,7 +610,7 @@ extension SettingsView {
     private var agentManualModelSheet: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text(store.ui("手动输入模型 ID", "Enter model id"))
-                .font(.system(size: 15, weight: .semibold))
+                .weiBeiText(15, weight: .semibold)
                 .foregroundStyle(WeiBeiTheme.ink)
             TextField(
                 "",
@@ -624,7 +624,7 @@ extension SettingsView {
             )
             .textFieldStyle(.plain)
             .foregroundColor(WeiBeiTheme.ink)
-            .font(.system(size: 13))
+            .weiBeiText(13)
             .weibeiInputSurface(active: true, height: 38)
             HStack {
                 Spacer()

@@ -309,9 +309,8 @@ enum ContentSourceRemovalError: LocalizedError {
     }
 }
 
-/// Isolated chrome state for the course drawer.
-/// Kept off `WorkspaceStore`'s `@Published` surface so opening/closing the drawer
-/// does not invalidate reader/agent/notes bodies (that was the multi-second pre-slide lag).
+/// Isolated chrome state for the course drawer; kept off `WorkspaceStore`'s
+/// `@Published` surface so open/close does not invalidate reader/agent/notes bodies.
 @MainActor
 final class LibraryDrawerState: ObservableObject {
     @Published var isOpen = false
@@ -330,6 +329,8 @@ final class WorkspaceStore: ObservableObject {
     var courseLibraryUnavailableReason: String?
     /// 资料库迁移进行中：写回、3 秒对账、课程笔记加载全部挂起（计划 §4.2）。
     @Published var libraryMigrationInFlight = false
+    /// 外部文件缺席灰态（计划 §5 阶段2）：首缺席记时间，两个对账周期仍缺席才移除条目。
+    var fileMissingSinceByItemID: [String: Date] = [:]
     @Published private(set) var courseItemMemberships: [CourseItemMembership] = [] {
         didSet {
             courseMembershipIndex = CourseItemMemberships(values: courseItemMemberships)
@@ -456,9 +457,8 @@ final class WorkspaceStore: ObservableObject {
             readerSourceHighlightPageIndex = nil
         }
     }
-    /// Reader viewport (HTML section / PDF page). Scroll commits must not
-    /// auto-publish — every EnvironmentObject consumer (agent chat WKWebView
-    /// rows) would remasure and freeze the main thread (sample 2026-08-01).
+    /// Reader viewport (HTML section / PDF page). Scroll commits must not auto-publish:
+    /// every EnvironmentObject consumer would remasure and freeze main (sample 2026-08-01).
     private var suppressReaderViewportPublish = false
     private var readerLocationIDValue: String?
     private var readerLocationTitleValue: String?
@@ -610,6 +610,7 @@ final class WorkspaceStore: ObservableObject {
     @Published var motionPreference: WeiBeiMotionPreference = .system
     @Published var adaptImportedDocumentColors = true
     @Published var interfaceLanguage: WeiBeiInterfaceLanguage = .chinese
+    @Published var interfaceTextScale: WeiBeiTypography.TextScale = .standard
     @Published var courseWorkspacePresented = false
     @Published private(set) var courseWorkspaceCourseID: UUID?
     @Published private(set) var courseWorkspaceDestination: CourseWorkspaceDestination = .hub
@@ -6886,9 +6887,8 @@ final class WorkspaceStore: ObservableObject {
                     mustBeInsideLibrary:
                         expectedCourse.sourceRootRelativePath != nil
                 )
-                // Trash path still refuses when the live folder cannot accept
-                // the latest portable state. Unregister-only must not require
-                // that write: the folder is already gone or unwritable.
+                // Trash path still refuses when the live folder cannot accept the
+                // latest portable state; unregister-only never requires that write.
                 guard await persistWorkspaceNow(),
                       !dirtyPortableCourseIDs.contains(courseID),
                       !blockedPortableCourseIDs.contains(courseID),
@@ -7796,6 +7796,7 @@ final class WorkspaceStore: ObservableObject {
     }
 
     func removeItemRegistration(_ itemID: String) {
+        fileMissingSinceByItemID.removeValue(forKey: itemID)
         pendingNotePersistenceTasks.removeValue(forKey: itemID)?.cancel()
         courseNoteLoadTasksByItemID.removeValue(forKey: itemID)?.cancel()
         courseNoteWriteTasksByItemID.removeValue(forKey: itemID)?.cancel()
@@ -8399,10 +8400,8 @@ final class WorkspaceStore: ObservableObject {
         }
     }
 
-    /// One-pass course → visible-item counts for the contextual browser.
-    /// Replaces per-course full-library rescans (`contextualBrowserItems`
-    /// re-filtered + ICU-sorted once per course) that made opening the
-    /// browser stutter on large libraries.
+    /// One-pass course → visible-item counts for the contextual browser; replaces
+    /// per-course full-library rescans that made opening stutter on large libraries.
     func contextualBrowserItemCounts(
         _ kind: ContextualContentKind
     ) -> [UUID: Int] {
@@ -10076,7 +10075,10 @@ final class WorkspaceStore: ObservableObject {
     }
 
     func displaySubtitle(for item: StudyItem) -> String {
-        item.subtitle
+        if fileMissingSinceByItemID[item.id] != nil {
+            return ui("文件不存在", "File missing")
+        }
+        return item.subtitle
     }
 
     func displayTags(for item: StudyItem, limit: Int = 3) -> [String] {
@@ -12319,6 +12321,12 @@ final class WorkspaceStore: ObservableObject {
         save()
     }
 
+    func setInterfaceTextScale(_ scale: WeiBeiTypography.TextScale) {
+        guard interfaceTextScale != scale else { return }
+        interfaceTextScale = scale
+        save()
+    }
+
     func setAgentAuthMethod(_ method: AgentAuthMethod) {
         guard agentAuthMethod != method else { return }
         agentAuthMethod = method
@@ -12892,9 +12900,8 @@ final class WorkspaceStore: ObservableObject {
         let cleanedOwnerTitle = ownerTitle?.trimmingCharacters(in: .whitespacesAndNewlines)
         let resolvedOwnerTitle = (cleanedOwnerTitle?.isEmpty == false ? cleanedOwnerTitle : nil) ?? selectionOwnerTitle(for: source)
         let boundedText = Self.boundedSelectionText(cleaned)
-        // Multi-pane and immersive both get the selection capsule when there is an anchor.
-        // (Previously suppressed whenever the chat column was open — that made multi-pane
-        // look "broken" vs immersive reading.)
+        // Multi-pane and immersive both get the selection capsule when there is an anchor
+        // (previously suppressed whenever the chat column was open — looked "broken").
         let shouldRevealSelectionPrompt = anchor != nil || pinnedFloatingAgent
         let contentMatches = selectionContext.map {
             $0.text == boundedText
@@ -17865,6 +17872,10 @@ final class WorkspaceStore: ObservableObject {
             }
 
             var nextItem = importedItems[itemIndex]
+            if nextDigest != item.contentDigest {
+                backUpUnsavedNoteContentBeforeAdopting(itemID: itemID)
+            }
+            fileMissingSinceByItemID.removeValue(forKey: itemID)
             nextItem.title = observation.url.deletingPathExtension().lastPathComponent
             nextItem.subtitle = observation.url.lastPathComponent
             nextItem.kind = StudyItemKind.detect(from: observation.url)
@@ -18599,8 +18610,10 @@ final class WorkspaceStore: ObservableObject {
                 let markdown = cleanLegacyPlaceholder(result.markdown)
                 loadedCourseNoteTextByItemID[itemID] = markdown
                 let previousDigest = importedItems[currentIndex].contentDigest
+                fileMissingSinceByItemID.removeValue(forKey: itemID)
                 if let previousDigest,
                    previousDigest != result.snapshot.sha256 {
+                    backUpUnsavedNoteContentBeforeAdopting(itemID: itemID)
                     importedItems[currentIndex].contentRevision &+= 1
                 }
                 importedItems[currentIndex].contentDigest =
@@ -19264,10 +19277,8 @@ final class WorkspaceStore: ObservableObject {
                         changed = true
                         continue
                     }
-                    // Existing legacy workspaces are the local source of truth
-                    // on first upgrade. An equal payload can establish the
-                    // baseline without replaying the disk snapshot over local
-                    // chats, memories, drafts, or shared canonical items.
+                    // Legacy workspaces are the local source of truth on first upgrade;
+                    // an equal payload just baselines without replaying the disk snapshot.
                     coursePortableStateRevisions[courseID] = state.revision
                     coursePortableStateDigests[courseID] = diskDigest
                     changed = true
@@ -19640,11 +19651,9 @@ final class WorkspaceStore: ObservableObject {
                           existingSharedPath == sharedRelativePath else {
                         throw CoursePortableStateError.crossCourseReference
                     }
-                    // A shared item is one canonical workspace record used by
-                    // every course. A single course's older portable snapshot
-                    // may restore its membership, but it must not downgrade the
-                    // canonical file URL, identity, bookmark, digest, or file
-                    // metadata already verified by the workspace.
+                    // A shared item is one canonical workspace record used by every course;
+                    // a course's older portable snapshot may restore membership but must not
+                    // downgrade canonical URL/identity/bookmark/digest/metadata already verified.
                     preservedExistingShared = existing
                     itemURL = existing.url
                     itemIdentity = existing.importedFileIdentity
@@ -20280,8 +20289,7 @@ final class WorkspaceStore: ObservableObject {
             self.agentBaseURL = agentBaseURL
         }
         // Legacy field: still read so older workspaces restore immersion/multi-pane;
-        // free drag order lives in threePaneOrder and is the source of truth for columns.
-        // Unknown / retired strings only drop the layout field, never the workspace.
+        // threePaneOrder owns free drag order; retired strings only drop this field.
         var migratedRetiredSplitLayout = false
         if let persistedLayoutRaw = snapshot.workspaceLayout {
             if let workspaceLayout = WorkspaceLayout.resolve(persistedValue: persistedLayoutRaw) {
@@ -20321,6 +20329,10 @@ final class WorkspaceStore: ObservableObject {
         if let interfaceLanguageRaw = snapshot.interfaceLanguageRaw,
            let interfaceLanguage = WeiBeiInterfaceLanguage(rawValue: interfaceLanguageRaw) {
             self.interfaceLanguage = interfaceLanguage
+        }
+        if let interfaceTextScaleRaw = snapshot.interfaceTextScaleRaw,
+           let interfaceTextScale = WeiBeiTypography.TextScale(rawValue: interfaceTextScaleRaw) {
+            self.interfaceTextScale = interfaceTextScale
         }
         noteText = noteText(for: activeNoteItem)
     }
@@ -20432,7 +20444,8 @@ final class WorkspaceStore: ObservableObject {
                 showDailyInspiration: showDailyInspiration,
                 appearanceModeRaw: appearanceMode.rawValue,
                 adaptImportedDocumentColors: adaptImportedDocumentColors,
-                interfaceLanguageRaw: interfaceLanguage.rawValue
+                interfaceLanguageRaw: interfaceLanguage.rawValue,
+                interfaceTextScaleRaw: interfaceTextScale.rawValue
             ),
             resumePoints
         )
@@ -20925,10 +20938,8 @@ final class WorkspaceStore: ObservableObject {
             }
             return merged
         }
-        // A newer in-memory generation may arrive while this transaction is
-        // on disk. Keep the committed CAS baseline before building that next
-        // generation; otherwise it would compare against an obsolete revision
-        // and falsely report a conflict.
+        // A newer in-memory generation may arrive while this transaction is on disk;
+        // keep the committed CAS baseline or the next compare falsely reports conflict.
         if hasNewerGeneration {
             coursePortableStateRevisions = mergingDictionary(
                 result.portableStateRevisions,
@@ -21182,7 +21193,8 @@ final class WorkspaceStore: ObservableObject {
                 showDailyInspiration: showDailyInspiration,
                 appearanceModeRaw: appearanceMode.rawValue,
                 adaptImportedDocumentColors: adaptImportedDocumentColors,
-                interfaceLanguageRaw: interfaceLanguage.rawValue
+                interfaceLanguageRaw: interfaceLanguage.rawValue,
+                interfaceTextScaleRaw: interfaceTextScale.rawValue
             )
             let noteEditorSaveReceipt = makeNoteEditorWorkspaceSaveReceipt(snapshot)
             do {
