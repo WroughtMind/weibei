@@ -8,3 +8,5 @@ node_modules/
 .playwright-cli/
 /Notes/
 /Visualize验收课程/
+# pages.yml 部署时从 GitHub Releases 重新生成，CI 产物不回库
+website/release.json
