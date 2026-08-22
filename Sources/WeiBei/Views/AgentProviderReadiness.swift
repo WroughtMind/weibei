@@ -90,12 +90,21 @@ enum AgentProviderReadiness {
 
 /// 对话为空且模型服务未配置时的一行安静提示,带直达设置的入口。
 /// 放在消息列表顶部,不占常驻空间——配置完成后自动消失。
+/// 显隐条件必须由本视图自己判断:父视图不观察 PiOAuthService,
+/// 条件写在父级时,配置完成后的 catalog 更新不会触发父级重算,提示会残留。
 struct AgentUnconfiguredHint: View {
     @ObservedObject var store: WorkspaceStore
     @ObservedObject private var oauth = PiOAuthService.shared
     @Environment(\.openSettings) private var openSettings
 
     var body: some View {
+        if !AgentProviderReadiness.isConfigured(for: store) {
+            hintRow
+                .transition(.opacity)
+        }
+    }
+
+    private var hintRow: some View {
         HStack(spacing: 8) {
             Image(systemName: "key.horizontal")
                 .font(.caption)
