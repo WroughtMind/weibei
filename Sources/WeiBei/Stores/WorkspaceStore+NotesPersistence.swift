@@ -482,7 +482,23 @@ extension WorkspaceStore {
                 WeiBeiLog.noteRepair.error("note file error raised: \(message, privacy: .public)")
             }
             if !alreadyRecorded, activeNoteItemID == itemID {
-                showImportantOperationError(message)
+                // 阶段3 横幅降格（计划 §5 阶段3）：文件缺席/未物化等不可用场景
+                // 只保留条内状态，不再弹重要操作横幅；其余真实错误维持横幅。
+                let itemUnavailable: Bool = {
+                    guard let item = importedItems.first(where: { $0.id == itemID }),
+                          let url = resolvedLibraryURL(for: item) else {
+                        return true
+                    }
+                    switch CourseProjectFileWorker.entryPresence(at: url) {
+                    case .present:
+                        return false
+                    case .presentUnmaterialized, .absent, .inaccessible:
+                        return true
+                    }
+                }()
+                if !itemUnavailable {
+                    showImportantOperationError(message)
+                }
             }
         } else {
             let cleared = noteOperationErrorsByItemID.removeValue(forKey: itemID)
