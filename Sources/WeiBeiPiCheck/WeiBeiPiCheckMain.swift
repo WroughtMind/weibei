@@ -296,7 +296,7 @@ struct WeiBeiPiCheckMain {
             revision: "pi-check-note"
         )
         let reply = try await runtime.respond(to: liveRequest)
-        guard reply.backend == .pi,
+        guard reply.backend == .native,
               !reply.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               let proposal = reply.noteProposal,
               proposal.contextRevision == "pi-check-note",
@@ -315,7 +315,7 @@ struct WeiBeiPiCheckMain {
                 revision: "pi-check-reading"
             )
         )
-        guard reply.backend == .pi,
+        guard reply.backend == .native,
               reply.noteProposal == nil,
               reply.text.contains("资金"),
               containsSourceLabel(reply.text) else {
@@ -330,7 +330,7 @@ struct WeiBeiPiCheckMain {
                 revision: "pi-check-companion"
             )
         )
-        guard reply.backend == .pi,
+        guard reply.backend == .native,
               reply.text.contains("期限结构") || reply.text.contains("第 12 页") || reply.text.contains("第12页"),
               reply.text.contains("[学习记录：上次位置]") else {
             throw PiCheckError.invalidEvaluation("study-companion")
@@ -344,7 +344,7 @@ struct WeiBeiPiCheckMain {
                 revision: "pi-check-wayfinding"
             )
         )
-        guard reply.backend == .pi,
+        guard reply.backend == .native,
               reply.text.contains("通货膨胀补充材料"),
               reply.text.contains("来源：通货膨胀补充材料，第 4 页"),
               containsSourceLabel(reply.text) else {
@@ -359,7 +359,7 @@ struct WeiBeiPiCheckMain {
                 revision: "pi-check-recall"
             )
         )
-        guard reply.backend == .pi,
+        guard reply.backend == .native,
               reply.noteProposal == nil,
               reply.text.contains("？") || reply.text.contains("?"),
               containsSourceLabel(reply.text) else {

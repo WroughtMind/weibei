@@ -2557,7 +2557,7 @@ public actor PiAgentRuntime: StudyAgentRuntime {
             let replyCandidate = StudyAgentReply(
                 text: finalText,
                 contentBlocks: finalContentBlocks,
-                backend: .pi,
+                backend: .native,
                 sources: run.sources,
                 noteProposal: run.proposal,
                 relationProposal: run.relationProposal,

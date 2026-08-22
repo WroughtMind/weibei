@@ -419,24 +419,16 @@ private func checkRetrievalPrompt() throws {
 }
 
 private func checkBackendSelection() throws {
-    let key = NativeAgentBackendSelection.debugDefaultsKey
-    let previous = UserDefaults.standard.string(forKey: key)
-    defer {
-        if let previous {
-            UserDefaults.standard.set(previous, forKey: key)
-        } else {
-            UserDefaults.standard.removeObject(forKey: key)
-        }
-    }
-    let env = ProcessInfo.processInfo.environment["WEIBEI_AGENT_BACKEND"]?
-        .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-    guard env.isEmpty else { return }
-    NativeAgentBackendSelection.persistedDebugBackend = nil
-    try nativeRequire(NativeAgentBackendSelection.current == .pi, "default backend stays pi")
-    NativeAgentBackendSelection.persistedDebugBackend = .native
-    try nativeRequire(NativeAgentBackendSelection.current == .native, "debug override selects native")
-    NativeAgentBackendSelection.persistedDebugBackend = nil
-    try nativeRequire(NativeAgentBackendSelection.current == .pi, "clearing override returns to pi")
+    // Pi retired 2026-08: native is the only backend. "pi" must stay
+    // undecodable so legacy archives hit the lossy-decode marker instead.
+    try nativeRequire(
+        StudyAgentBackend(rawValue: "native") != nil,
+        "native backend stays decodable"
+    )
+    try nativeRequire(
+        StudyAgentBackend(rawValue: "pi") == nil,
+        "pi backend stays retired"
+    )
 }
 
 private func checkMemoryPreviewWriteContract() throws {
