@@ -1181,8 +1181,7 @@ actor CourseProjectFileWorker {
             return CoursePortableNoteDraft(
                 itemID: itemID,
                 markdown: markdown,
-                baselineContentDigest: workspace.pendingNoteWritesByItemID?[itemID]?
-                    .baselineContentDigest
+                baselineContentDigest: nil
             )
         }
         return try CoursePortableState(

@@ -628,7 +628,6 @@ final class WorkspaceStore: ObservableObject {
     /// 不持久化：重启后首次写回无基线会多备份一份，方向安全。
     var lastSelfWrittenNoteDigestsByItemID: [String: String] = [:]
     /// P0：启动修复例程每次启动只跑一轮（幂等，重复启动无副作用）。
-    var noteDivergenceRepairDidRun = false
     /// 文件名跟随抬头的基线：上次由抬头体系登记/同步的文件名（不含扩展名）。
     /// 只有基线==当前文件名时才跟随抬头改名；对不上说明文件名被外部动过，
     /// 先登记、不动文件。内存态即可：重启丢基线只少一次自动改名，方向安全。
@@ -14271,11 +14270,7 @@ final class WorkspaceStore: ObservableObject {
             )
         )
         setNoteDraft(draft, for: noteItemID)
-        pendingNoteWritesByItemID[noteItemID] = PendingNoteWriteState(
-            baselineContentDigest: importedItems.first {
-                $0.id == noteItemID
-            }?.contentDigest
-        )
+        pendingNoteWritesByItemID[noteItemID] = PendingNoteWriteState()
         return (
             sessionID,
             memoryID,
@@ -14388,11 +14383,7 @@ final class WorkspaceStore: ObservableObject {
         )
         setNoteDraft(noteText, for: noteItemID)
         loadedCourseNoteTextByItemID[noteItemID] = noteText
-        pendingNoteWritesByItemID[noteItemID] = PendingNoteWriteState(
-            baselineContentDigest: importedItems.first {
-                $0.id == noteItemID
-            }?.contentDigest
-        )
+        pendingNoteWritesByItemID[noteItemID] = PendingNoteWriteState()
         dirtyPortableCourseIDs.insert(courseID)
     }
 
@@ -17963,12 +17954,6 @@ final class WorkspaceStore: ObservableObject {
             guard !Task.isCancelled else { return }
             await self?.reconcileCourseFilesNow()
             guard !Task.isCancelled else { return }
-            // P0：先跑分叉修复（会丢弃/写回草稿），再跑 retry——顺序不能反，
-            // 否则 retry 会把「读盘失败回退的模板草稿」直接盖回磁盘。
-            // 约束出处：Docs/plans/2026-08-22-file-model-convergence-and-library-relocation.md §5 阶段4
-            // （阶段4 写闸门落地、repair 例程拆除后，此顺序锁随之删除）。
-            await self?.repairDivergedNotebookNotesIfNeeded()
-            guard !Task.isCancelled else { return }
             await self?.retryRestoredPendingNoteWrites()
             while !Task.isCancelled {
                 do {
@@ -19165,8 +19150,7 @@ final class WorkspaceStore: ObservableObject {
             return CoursePortableNoteDraft(
                 itemID: itemID,
                 markdown: markdown,
-                baselineContentDigest: pendingNoteWritesByItemID[itemID]?
-                    .baselineContentDigest
+                baselineContentDigest: nil
             )
         }
         return try CoursePortableState(
@@ -19867,9 +19851,7 @@ final class WorkspaceStore: ObservableObject {
             }
             setNoteDraft(draft.markdown, for: draft.itemID)
             pendingNoteWritesByItemID[draft.itemID] =
-                PendingNoteWriteState(
-                    baselineContentDigest: draft.baselineContentDigest
-                )
+                PendingNoteWriteState()
         }
         rebuildCourseMembershipsFromStorage()
         refreshRuntimeItemURLs()

@@ -167,23 +167,6 @@ final class WriteGateSafetyTests: XCTestCase {
         XCTAssertTrue(content.contains("正文"))
     }
 
-    func testRepairRestoreDraftRoutesThroughGate() throws {
-        let base = makeTempRoot("weibei-gate-repair")
-        defer { try? FileManager.default.removeItem(at: base) }
-        let backupRoot = base.appendingPathComponent("backups", isDirectory: true)
-        let library = base.appendingPathComponent("资料库", isDirectory: true)
-        let store = try makeStore(base: base, library: library, backupRoot: backupRoot)
-        let courseID = try store.createCourseInLibrary(title: "闸门课")
-        let (item, url) = try importNote(store, base: base, courseID: courseID, content: "# 标题\n真实草稿")
-
-        store.notesByItemID[item.id] = "磁盘上没有的草稿内容"
-
-        store.repairDivergedNotebookNotesIfNeeded()
-
-        XCTAssertEqual(try String(contentsOf: url, encoding: .utf8), "磁盘上没有的草稿内容")
-        XCTAssertEqual(store.notesByItemID[item.id], nil)
-    }
-
     func testRetryRestoredPendingWritesRoutesThroughGate() throws {
         let base = makeTempRoot("weibei-gate-retry")
         defer { try? FileManager.default.removeItem(at: base) }
@@ -194,7 +177,7 @@ final class WriteGateSafetyTests: XCTestCase {
         let (item, url) = try importNote(store, base: base, courseID: courseID, content: "磁盘现况")
 
         store.notesByItemID[item.id] = "重启前未写完的草稿"
-        store.pendingNoteWritesByItemID[item.id] = PendingNoteWriteState(baselineContentDigest: nil)
+        store.pendingNoteWritesByItemID[item.id] = PendingNoteWriteState()
         store.retryRestoredPendingNoteWrites()
 
         XCTAssertEqual(try String(contentsOf: url, encoding: .utf8), "重启前未写完的草稿")

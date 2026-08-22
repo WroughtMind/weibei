@@ -6,7 +6,7 @@ import WeiBeiCore
 /// Calls the same `PersistedWorkspace` / `StudyItem` production APIs.
 func checkNotePersistenceScenes() throws {
     let itemID = "imported:note-persist"
-    let pending = PendingNoteWriteState(baselineContentDigest: "sha256:baseline")
+    let pending = PendingNoteWriteState()
     let snapshot = PersistedWorkspace(
         importedItems: [
             StudyItem(
@@ -35,7 +35,7 @@ func checkNotePersistenceScenes() throws {
     )
     expect(
         restored.pendingNoteWritesByItemID?[itemID] == pending,
-        "pending note write errors stay attached to the affected note"
+        "pending note write markers stay attached to the affected note"
     )
     expect(
         restored.noteBackingContentDigestsByItemID?[itemID] == "sha256:disk",

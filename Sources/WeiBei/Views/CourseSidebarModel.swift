@@ -28,7 +28,6 @@ struct CourseSidebarTagRequest: Hashable, Sendable {
     let urlPath: String?
     let importedFileIdentity: ImportedFileIdentity?
     let contentRevision: UInt64
-    let contentDigest: String?
     let fileByteCount: UInt64?
     let fileModificationTimeNanoseconds: Int64?
     let memoryContentRevision: UInt64?
@@ -46,7 +45,6 @@ struct CourseSidebarTagRequest: Hashable, Sendable {
         urlPath = item.urlPath
         importedFileIdentity = item.importedFileIdentity
         contentRevision = item.contentRevision
-        contentDigest = item.contentDigest
         fileByteCount = item.fileByteCount
         fileModificationTimeNanoseconds = item.fileModificationTimeNanoseconds
         self.memoryContentRevision = memoryContentRevision
