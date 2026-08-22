@@ -52,7 +52,7 @@ body {
   border: 0;
   border-bottom: 1px solid transparent;
   background: transparent;
-  font-size: calc(11.5px * var(--weibei-text-scale, 1));
+  font-size: calc(12px * var(--weibei-text-scale, 1));
 }
 
 .group-tabs button.is-active {
@@ -91,7 +91,7 @@ body {
 
 .scene-tabs strong {
   overflow: hidden;
-  font-size: calc(11.5px * var(--weibei-text-scale, 1));
+  font-size: calc(12px * var(--weibei-text-scale, 1));
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -145,7 +145,7 @@ body {
 .runtime-error {
   margin: 8px 0 0;
   color: #9a3f35;
-  font-size: calc(11px * var(--weibei-text-scale, 1));
+  font-size: calc(12px * var(--weibei-text-scale, 1));
 }
 
 .prototype-footnote {
@@ -166,7 +166,7 @@ body {
   color: #f7f0e4;
   background: #3f372e;
   box-shadow: 0 10px 30px rgb(42 34 24 / 18%);
-  font-size: calc(11px * var(--weibei-text-scale, 1));
+  font-size: calc(12px * var(--weibei-text-scale, 1));
 }
 
 @media (max-width: 700px) {

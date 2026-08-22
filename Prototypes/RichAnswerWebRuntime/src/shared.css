@@ -33,7 +33,7 @@ button {
 
 .learning-surface__intro > span {
   color: var(--scene-accent);
-  font: calc(11px * var(--weibei-text-scale, 1)) ui-monospace, SFMono-Regular, Menlo, monospace;
+  font: calc(12px * var(--weibei-text-scale, 1)) ui-monospace, SFMono-Regular, Menlo, monospace;
   letter-spacing: 0.08em;
 }
 
@@ -51,7 +51,7 @@ button {
 .learning-surface__intro p {
   max-width: 62ch;
   color: #655c4f;
-  font-size: calc(13.5px * var(--weibei-text-scale, 1));
+  font-size: calc(13px * var(--weibei-text-scale, 1));
   line-height: 1.65;
 }
 
@@ -73,7 +73,7 @@ button {
   border: 0;
   border-bottom: 1px solid rgb(72 60 42 / 24%);
   background: transparent;
-  font-size: calc(11.5px * var(--weibei-text-scale, 1));
+  font-size: calc(12px * var(--weibei-text-scale, 1));
 }
 
 .evidence-button span {
@@ -89,12 +89,12 @@ button {
 .inline-readout > span,
 .inline-readout > small {
   color: #706657;
-  font-size: calc(11px * var(--weibei-text-scale, 1));
+  font-size: calc(12px * var(--weibei-text-scale, 1));
 }
 
 .inline-readout > strong {
   color: #28241d;
-  font-size: calc(17px * var(--weibei-text-scale, 1));
+  font-size: calc(18px * var(--weibei-text-scale, 1));
   line-height: 1.1;
 }
 

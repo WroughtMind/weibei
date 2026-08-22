@@ -132,7 +132,7 @@
   gap: 3px;
   min-width: 74px;
   color: #62594f;
-  font: calc(8.5px * var(--weibei-text-scale, 1)) "SFMono-Regular", Menlo, monospace;
+  font: calc(9.5px * var(--weibei-text-scale, 1)) "SFMono-Regular", Menlo, monospace;
   text-align: right;
 }
 
@@ -166,7 +166,7 @@
 .ra-dependency-flow > p {
   margin: 5px 0 0;
   color: #756b5e;
-  font-size: calc(10px * var(--weibei-text-scale, 1));
+  font-size: calc(9.5px * var(--weibei-text-scale, 1));
   line-height: 1.55;
 }
 
@@ -177,7 +177,7 @@
   border: 0;
   border-bottom: 1px solid rgb(87 69 50 / 24%);
   background: transparent;
-  font-size: calc(9px * var(--weibei-text-scale, 1));
+  font-size: calc(9.5px * var(--weibei-text-scale, 1));
 }
 
 .ra-distribution-brush canvas {
@@ -206,7 +206,7 @@
 
 .ra-distribution-brush__span output {
   color: var(--cinnabar, #8f3f2f);
-  font: calc(10px * var(--weibei-text-scale, 1)) "SFMono-Regular", Menlo, monospace;
+  font: calc(9.5px * var(--weibei-text-scale, 1)) "SFMono-Regular", Menlo, monospace;
 }
 
 .ra-distribution-brush__stats {
@@ -230,18 +230,18 @@
 .ra-distribution-brush__stats span {
   grid-column: 1 / -1;
   color: #82776a;
-  font-size: calc(8.5px * var(--weibei-text-scale, 1));
+  font-size: calc(9.5px * var(--weibei-text-scale, 1));
 }
 
 .ra-distribution-brush__stats strong {
   color: #342e27;
-  font-size: calc(14px * var(--weibei-text-scale, 1));
+  font-size: calc(15px * var(--weibei-text-scale, 1));
   font-weight: 600;
 }
 
 .ra-distribution-brush__stats i {
   color: #8c8174;
-  font-size: calc(8.5px * var(--weibei-text-scale, 1));
+  font-size: calc(9.5px * var(--weibei-text-scale, 1));
   font-style: normal;
 }
 
@@ -274,12 +274,12 @@
 
 .ra-dependency-flow__inputs span {
   color: #5a5147;
-  font-size: calc(10px * var(--weibei-text-scale, 1));
+  font-size: calc(9.5px * var(--weibei-text-scale, 1));
 }
 
 .ra-dependency-flow__inputs output {
   color: var(--cinnabar, #8f3f2f);
-  font: calc(10px * var(--weibei-text-scale, 1)) "SFMono-Regular", Menlo, monospace;
+  font: calc(9.5px * var(--weibei-text-scale, 1)) "SFMono-Regular", Menlo, monospace;
 }
 
 .ra-dependency-flow__inputs input,
@@ -295,7 +295,7 @@
 
 .ra-dependency-flow__inputs small {
   color: #8a7f72;
-  font-size: calc(8.5px * var(--weibei-text-scale, 1));
+  font-size: calc(9.5px * var(--weibei-text-scale, 1));
   line-height: 1.45;
 }
 
@@ -371,7 +371,7 @@
 .ra-dependency-flow__layer article p {
   margin: 2px 0 0;
   color: #807568;
-  font-size: calc(8.5px * var(--weibei-text-scale, 1));
+  font-size: calc(9.5px * var(--weibei-text-scale, 1));
   line-height: 1.45;
 }
 
@@ -401,12 +401,12 @@
 
 .ra-dependency-flow__metrics span {
   color: #74695d;
-  font-size: calc(9px * var(--weibei-text-scale, 1));
+  font-size: calc(9.5px * var(--weibei-text-scale, 1));
 }
 
 .ra-dependency-flow__metrics strong {
   color: #332d26;
-  font-size: calc(17px * var(--weibei-text-scale, 1));
+  font-size: calc(18px * var(--weibei-text-scale, 1));
   font-weight: 600;
 }
 
@@ -420,13 +420,13 @@
 
 .ra-dependency-flow__metrics i {
   color: #8d8275;
-  font-size: calc(9px * var(--weibei-text-scale, 1));
+  font-size: calc(9.5px * var(--weibei-text-scale, 1));
   font-style: normal;
 }
 
 .ra-dependency-flow__metrics small {
   color: #82776a;
-  font-size: calc(8.5px * var(--weibei-text-scale, 1));
+  font-size: calc(9.5px * var(--weibei-text-scale, 1));
 }
 
 .ra-dependency-flow__metrics em {

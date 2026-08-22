@@ -6,7 +6,7 @@
   padding: 8px 0 10px;
   color: #536267;
   border-top: 1px solid rgb(63 104 112 / 18%);
-  font-size: calc(12.5px * var(--weibei-text-scale, 1));
+  font-size: calc(12px * var(--weibei-text-scale, 1));
 }
 
 .stats-plot {
@@ -30,7 +30,7 @@
 
 .stats-tick {
   fill: #766e62;
-  font-size: calc(11px * var(--weibei-text-scale, 1));
+  font-size: calc(12px * var(--weibei-text-scale, 1));
 }
 
 .stats-brush {
@@ -73,7 +73,7 @@
 .stats-readout-line p {
   margin: 0;
   color: #4e5d61;
-  font-size: calc(12.5px * var(--weibei-text-scale, 1));
+  font-size: calc(12px * var(--weibei-text-scale, 1));
   line-height: 1.55;
 }
 
@@ -92,7 +92,7 @@
 .finance-assumptions > p {
   margin: 0 0 13px;
   color: #637052;
-  font-size: calc(11.5px * var(--weibei-text-scale, 1));
+  font-size: calc(12px * var(--weibei-text-scale, 1));
   line-height: 1.45;
 }
 
@@ -160,7 +160,7 @@
 
 .finance-flow__headline strong {
   color: #455535;
-  font-size: calc(17px * var(--weibei-text-scale, 1));
+  font-size: calc(18px * var(--weibei-text-scale, 1));
 }
 
 .finance-waterfall {
@@ -200,7 +200,7 @@
   position: absolute;
   inset: 5px 0 auto;
   color: #fbf8f0;
-  font: calc(10px * var(--weibei-text-scale, 1)) ui-monospace, SFMono-Regular, Menlo, monospace;
+  font: calc(9.5px * var(--weibei-text-scale, 1)) ui-monospace, SFMono-Regular, Menlo, monospace;
   text-align: center;
 }
 
@@ -279,18 +279,18 @@
 
 .policy-river button span {
   order: 1;
-  font: calc(10px * var(--weibei-text-scale, 1)) ui-monospace, SFMono-Regular, Menlo, monospace;
+  font: calc(9.5px * var(--weibei-text-scale, 1)) ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
 .policy-river button strong {
   order: 3;
   color: #443a2f;
-  font-size: calc(11.5px * var(--weibei-text-scale, 1));
+  font-size: calc(12px * var(--weibei-text-scale, 1));
 }
 
 .policy-river button small {
   order: 4;
-  font-size: calc(10px * var(--weibei-text-scale, 1));
+  font-size: calc(9.5px * var(--weibei-text-scale, 1));
 }
 
 .policy-analysis {
@@ -338,7 +338,7 @@
 }
 
 .policy-evidence-rail strong {
-  font-size: calc(17px * var(--weibei-text-scale, 1));
+  font-size: calc(18px * var(--weibei-text-scale, 1));
 }
 
 .policy-evidence-rail p,
@@ -354,7 +354,7 @@
   padding: 2px 0;
   color: #5d5144;
   border-bottom: 2px solid #9a5a36;
-  font-size: calc(11px * var(--weibei-text-scale, 1));
+  font-size: calc(12px * var(--weibei-text-scale, 1));
 }
 
 .policy-evidence-rail b[data-strength="因果不足"] {
@@ -426,7 +426,7 @@
   gap: 4px;
   justify-items: center;
   color: #756d79;
-  font-size: calc(10px * var(--weibei-text-scale, 1));
+  font-size: calc(9.5px * var(--weibei-text-scale, 1));
 }
 
 .array-track i {
@@ -479,7 +479,7 @@
   border: 0;
   border-bottom: 1px solid #8a739a;
   background: transparent;
-  font-size: calc(11.5px * var(--weibei-text-scale, 1));
+  font-size: calc(12px * var(--weibei-text-scale, 1));
 }
 
 .execution-controls button:disabled {
