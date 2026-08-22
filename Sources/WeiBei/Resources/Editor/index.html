@@ -100,9 +100,9 @@
       --floating-input-focus: var(--paper-raised);
       --floating-menu-shadow: 0 14px 34px rgba(35, 26, 19, .18), 0 2px 8px rgba(35, 26, 19, .10);
       --floating-toolbar-shadow: 0 6px 18px rgba(35, 26, 19, .12);
-      /* Typora-style single quiet tint shared by half-typed and revealed Markdown markers. */
-      --weibei-syntax: var(--faint);
-      --weibei-syntax-mark: color-mix(in srgb, var(--faint) 62%, transparent);
+      /* Single quiet-but-legible tint shared by half-typed and revealed Markdown markers. */
+      --weibei-syntax: var(--blue-ink);
+      --weibei-syntax-mark: var(--blue-ink);
     }
 
     :root[data-weibei-glass="glassLight"] {
@@ -1053,14 +1053,18 @@
     /* Half-typed Markdown markers (unclosed **, $, leading #…) tint while typing. */
     .weibei-syntax-pending {
       color: var(--weibei-syntax);
+      font-weight: 500;
     }
 
-    /* Source markers revealed faintly while the cursor sits inside a rendered run. */
-    .weibei-syntax-mark {
+    /* Source markers ride on real characters via pseudo-elements — no synthetic
+       cursor positions, so arrow keys pass through the run boundaries freely. */
+    .weibei-syntax-mark-open::before,
+    .weibei-syntax-mark-close::after {
+      content: attr(data-marker);
       color: var(--weibei-syntax-mark);
-      font-size: .85em;
+      font-size: .82em;
+      font-weight: 500;
       letter-spacing: 0;
-      user-select: none;
     }
 
     /* Quiet source peek when the caret is adjacent to a formula; click still enters editing. */

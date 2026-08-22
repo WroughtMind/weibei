@@ -63,13 +63,13 @@ const markRunAround = (doc: any, pos: number, markType: any) => {
   return { from: blockStart + from, to: blockStart + to };
 };
 
-const createMarkerWidget = (marker: string) => () => {
-  const element = document.createElement('span');
-  element.className = 'weibei-syntax-mark';
-  element.setAttribute('aria-hidden', 'true');
-  element.textContent = marker;
-  return element;
-};
+/**
+ * Reveal markers ride on real text positions via CSS ::before/::after so no
+ * synthetic cursor positions are introduced — widgets at run boundaries were
+ * blocking arrow-key motion out of the run.
+ */
+const markerDecoration = (from: number, to: number, marker: string, edge: 'open' | 'close') =>
+  Decoration.inline(from, to, { class: `weibei-syntax-mark weibei-syntax-mark-${edge}`, 'data-marker': marker });
 
 const closestAncestorOfName = (resolved: any, typeName: string) => {
   for (let depth = resolved.depth; depth > 0; depth -= 1) {
@@ -163,25 +163,20 @@ export const createSyntaxMarksPlugin = (deps: SyntaxMarksDeps): Plugin => {
           const marker = markMarkerFor(schemaMarks, mark.type, markerCache);
           if (!marker) continue;
           const run = markRunAround(doc, from, mark.type);
-          if (!run) continue;
-          decorations.push(Decoration.widget(run.from, createMarkerWidget(marker), { side: -1 }));
-          decorations.push(Decoration.widget(run.to, createMarkerWidget(marker), { side: 1 }));
+          if (!run || run.to <= run.from) continue;
+          decorations.push(markerDecoration(run.from, Math.min(run.from + 1, run.to), marker, 'open'));
+          decorations.push(markerDecoration(Math.max(run.to - 1, run.from), run.to, marker, 'close'));
         }
+        const blockLeadingMarker = (nodeStart: number, contentSize: number, marker: string) => {
+          if (contentSize <= 0) return;
+          decorations.push(markerDecoration(nodeStart, Math.min(nodeStart + 1, nodeStart + contentSize), marker, 'open'));
+        };
         const heading = closestAncestorOfName(selection.$from, 'heading');
         if (heading) {
-          decorations.push(Decoration.widget(
-            selection.$from.before(heading.depth) + 1,
-            createMarkerWidget('#'.repeat(heading.node.attrs.level || 1)),
-            { side: -1 },
-          ));
+          blockLeadingMarker(selection.$from.before(heading.depth) + 1, heading.node.content.size, '#'.repeat(heading.node.attrs.level || 1));
         }
-        const quote = closestAncestorOfName(selection.$from, 'blockquote');
-        if (quote) {
-          decorations.push(Decoration.widget(
-            selection.$from.before(selection.$from.depth) + 1,
-            createMarkerWidget('>'),
-            { side: -1 },
-          ));
+        if (closestAncestorOfName(selection.$from, 'blockquote')) {
+          blockLeadingMarker(selection.$from.before(selection.$from.depth) + 1, selection.$from.parent.content.size, '>');
         }
         const set = DecorationSet.create(doc, decorations);
         cache = { doc, from, to, set };

@@ -111,7 +111,20 @@ const weiBeiSlash = WEIBEI_EDITOR_RUNTIME ? slashFactory('WEIBEI_BLOCK_COMMAND')
 const weiBeiMathInlineInputRule = WEIBEI_EDITOR_RUNTIME ? $inputRule((ctx) => nodeRule(
   inlineMathInputPattern,
   mathInlineSchema.type(ctx),
-  { beforeDispatch: ({ tr, match, start }) => tr.insertText(match[1] || '', start + 1) },
+  {
+    updateCaptured: (captured: any) => {
+      // '$ x $' with padded content would not survive a reload (remark-math rejects
+      // space-padded inline math), so trim it to the real LaTeX payload.
+      return { group: String(captured.group || '').trim() };
+    },
+    beforeDispatch: ({ tr, match, start }: any) => {
+      const content = String(match[1] || '').trim();
+      if (content) tr.insertText(content, start + 1);
+      // The atom node is not cursor-enterable; leaving the selection inside its
+      // content made the caret land mid-line after typing a formula.
+      tr.setSelection(TextSelection.create(tr.doc, start + content.length + 2));
+    },
+  },
 )) : null;
 const weiBeiMath = [
   remarkMathPlugin,

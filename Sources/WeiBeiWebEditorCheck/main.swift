@@ -1787,8 +1787,9 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
     }
 
     /// Typora-style syntax affordances: half-typed markers tint while typing,
-    /// rendered runs reveal source markers while the cursor is inside, and the
-    /// caret adjacent to a formula peeks its LaTeX source.
+    /// rendered runs reveal source markers while the cursor is inside, the caret
+    /// adjacent to a formula peeks its LaTeX source, arrow keys exit runs freely,
+    /// and typing a formula leaves the caret to its right.
     private func validateSyntaxMarks() {
         let script = """
         (() => {
@@ -1800,19 +1801,32 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
           const convertedOnClose = editor.typeTextForCheck('**')
             && !document.querySelector('.weibei-syntax-pending')
             && !!document.querySelector('.ProseMirror strong');
-          const revealInsideStrong = !!document.querySelector('.weibei-syntax-mark');
+          const revealInsideStrong = !!document.querySelector('.weibei-syntax-mark[data-marker="**"]');
+          const arrowExitsRun = (() => {
+            editor.pressKeyForCheck('ArrowRight');
+            editor.typeTextForCheck('尾');
+            return editor.getMarkdown().includes('**未闭合**尾')
+              && document.querySelector('.ProseMirror strong')?.textContent === '未闭合';
+          })();
+          const mathTypingCursor = (() => {
+            editor.setMarkdown('');
+            editor.insertMarkdown('\\n\\n{{WEIBEI_CURSOR}}');
+            if (!editor.typeTextForCheck('$ ?$')) return false;
+            const converted = editor.getMarkdown().includes('$?$');
+            editor.typeTextForCheck('后');
+            return converted && editor.getMarkdown().includes('$?$后');
+          })();
           editor.setMarkdown('## 标记显隐\\n\\n> 引用显隐\\n\\n正文');
           editor.selectFirstTextForCheck('标记显隐');
-          const headingMarker = Array.from(document.querySelectorAll('.weibei-syntax-mark')).map((n) => n.textContent).join(',');
-          const headingRevealed = headingMarker.includes('##');
+          const headingRevealed = !!document.querySelector('.weibei-syntax-mark[data-marker="##"]');
           editor.selectFirstTextForCheck('引用显隐');
-          const quoteRevealed = Array.from(document.querySelectorAll('.weibei-syntax-mark')).some((n) => n.textContent === '>');
+          const quoteRevealed = !!document.querySelector('.weibei-syntax-mark[data-marker=">"]');
           editor.setMarkdown('前文$x^2$后文\\n\\n结尾段落');
           editor.selectFirstTextForCheck('后文');
           const mathAdjacent = !!document.querySelector('.weibei-math-adjacent');
           editor.selectFirstTextForCheck('结尾段落');
           const mathAdjacentCleared = !document.querySelector('.weibei-math-adjacent');
-          return { pendingWhileTyping, convertedOnClose, revealInsideStrong, headingRevealed, quoteRevealed, mathAdjacent, mathAdjacentCleared };
+          return { pendingWhileTyping, convertedOnClose, revealInsideStrong, arrowExitsRun, mathTypingCursor, headingRevealed, quoteRevealed, mathAdjacent, mathAdjacentCleared };
         })();
         """
         webView.evaluateJavaScript(script) { [weak self] value, error in
@@ -1825,6 +1839,8 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
                   result["pendingWhileTyping"] as? Bool == true,
                   result["convertedOnClose"] as? Bool == true,
                   result["revealInsideStrong"] as? Bool == true,
+                  result["arrowExitsRun"] as? Bool == true,
+                  result["mathTypingCursor"] as? Bool == true,
                   result["headingRevealed"] as? Bool == true,
                   result["quoteRevealed"] as? Bool == true,
                   result["mathAdjacent"] as? Bool == true,
