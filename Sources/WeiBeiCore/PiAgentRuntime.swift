@@ -25,7 +25,7 @@ public struct PiAgentProviderConfiguration: Equatable, Sendable {
 }
 
 public struct PiAgentResources: Sendable {
-    public static let allRequiredSkillNames = ["visualize"]
+    public static let allRequiredSkillNames = ["visualize", "socratic-questioning"]
 
     public var rootURL: URL
     public var extensionURL: URL
@@ -45,30 +45,38 @@ public struct PiAgentResources: Sendable {
         // Bare dev executables keep the accessor — its compiled-in .build
         // fallback path is valid there by construction.
         if packagedBundle == nil, legacyBundle == nil, Bundle.main.bundleURL.pathExtension == "app" {
-            throw PiAgentRuntimeError.resourcesMissing(bundleName)
+            throw incomplete(resource: "bundle", cause: "missing")
         }
         let resourceBundle = packagedBundle ?? legacyBundle ?? Bundle.module
         guard let rootURL = resourceBundle.url(forResource: "AgentResources", withExtension: nil) else {
-            throw PiAgentRuntimeError.resourcesMissing("AgentResources")
+            throw incomplete(resource: "agent_resources", cause: "missing")
         }
         let extensionURL = rootURL.appendingPathComponent("extension.ts")
         let managementExtensionURL = rootURL.appendingPathComponent("management-extension.ts")
         let skillsURL = rootURL.appendingPathComponent("skills", isDirectory: true)
         let systemURL = rootURL.appendingPathComponent("system.md")
-        let hasRequiredSkills = allRequiredSkillNames.allSatisfy { skillName in
-            FileManager.default.fileExists(
-                atPath: skillsURL
-                    .appendingPathComponent(skillName, isDirectory: true)
-                    .appendingPathComponent("SKILL.md")
-                    .path
-            )
+        guard FileManager.default.fileExists(atPath: extensionURL.path) else {
+            throw incomplete(resource: "agent_extension", cause: "missing")
         }
-        guard FileManager.default.fileExists(atPath: extensionURL.path),
-              FileManager.default.fileExists(atPath: managementExtensionURL.path),
-              hasRequiredSkills,
-              let systemPrompt = try? String(contentsOf: systemURL, encoding: .utf8),
-              !systemPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            throw PiAgentRuntimeError.resourcesMissing(rootURL.path)
+        guard FileManager.default.fileExists(atPath: managementExtensionURL.path) else {
+            throw incomplete(resource: "management_extension", cause: "missing")
+        }
+        for skillName in allRequiredSkillNames {
+            let skillURL = skillsURL
+                .appendingPathComponent(skillName, isDirectory: true)
+                .appendingPathComponent("SKILL.md")
+            guard FileManager.default.fileExists(atPath: skillURL.path) else {
+                throw incomplete(resource: "skill:\(skillName)", cause: "missing")
+            }
+        }
+        let systemPrompt: String
+        do {
+            systemPrompt = try String(contentsOf: systemURL, encoding: .utf8)
+        } catch {
+            throw incomplete(resource: "system_prompt", cause: WeiBeiLog.code(error))
+        }
+        guard !systemPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw incomplete(resource: "system_prompt", cause: "empty")
         }
         return PiAgentResources(
             rootURL: rootURL,
@@ -77,6 +85,13 @@ public struct PiAgentResources: Sendable {
             skillsURL: skillsURL,
             systemPrompt: systemPrompt
         )
+    }
+
+    private static func incomplete(resource: String, cause: String) -> PiAgentRuntimeError {
+        WeiBeiLog.workspace.error(
+            "agent_resource_load_failed code=agent_components_incomplete resource=\(resource, privacy: .public) cause=\(cause, privacy: .public)"
+        )
+        return .resourcesMissing(resource)
     }
 }
 
@@ -200,6 +215,8 @@ public enum PiExecutableLocator {
 }
 
 public enum PiAgentRuntimeError: LocalizedError, Equatable, Sendable {
+    public static let agentComponentsIncompleteMessage = "Agent 组件不完整，无法启动；请修复或重装魏碑"
+
     case unavailable
     case resourcesMissing(String)
     case busy
@@ -215,8 +232,8 @@ public enum PiAgentRuntimeError: LocalizedError, Equatable, Sendable {
         switch self {
         case .unavailable:
             return "魏碑内建的 PI 运行时缺失或损坏，请重新安装应用。"
-        case let .resourcesMissing(path):
-            return "魏碑的 PI 资源不完整：\(path)"
+        case .resourcesMissing:
+            return Self.agentComponentsIncompleteMessage
         case .busy:
             return "PI 正在处理另一项任务"
         case let .launchFailed(message):
