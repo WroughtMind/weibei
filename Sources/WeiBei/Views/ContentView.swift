@@ -85,7 +85,10 @@ struct ContentView: View {
                 // persistent save failures, otherwise the transient note status.
                 // Sits above the course space so it stays visible wherever the
                 // user is; the old notes-pane-local copy is gone.
-                if store.importantOperationError != nil || store.workspaceSaveError != nil || store.transientNoteStatus != nil {
+                if store.importantOperationError != nil
+                    || store.workspaceSaveError != nil
+                    || store.noteSelectionStatusMessage != nil
+                    || store.transientNoteStatus != nil {
                     WorkspaceStatusBanner()
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
                         .padding(.top, WeiBeiMetric.topBarHeight * textScale + 10)
@@ -104,6 +107,7 @@ struct ContentView: View {
             }
             .animation(WeiBeiMotion.panel, value: store.importantOperationError)
             .animation(WeiBeiMotion.panel, value: store.workspaceSaveError)
+            .animation(WeiBeiMotion.panel, value: store.noteSelectionStatusMessage)
             .animation(WeiBeiMotion.panel, value: store.transientNoteStatus)
             .background {
                 LibraryAwareEscapeBridge(
@@ -386,12 +390,20 @@ private struct WorkspaceStatusBanner: View {
         !isImportant && store.workspaceSaveError != nil
     }
 
+    private var isNoteSelectionFailure: Bool {
+        !isImportant && !isSaveFailure && store.canRetryPendingNoteSelection
+    }
+
     private var isAlert: Bool {
-        isImportant || isSaveFailure
+        isImportant || isSaveFailure || isNoteSelectionFailure
     }
 
     private var message: String {
-        store.importantOperationError ?? store.workspaceSaveError ?? store.transientNoteStatus ?? ""
+        store.importantOperationError
+            ?? store.workspaceSaveError
+            ?? store.noteSelectionStatusMessage
+            ?? store.transientNoteStatus
+            ?? ""
     }
 
     var body: some View {
@@ -416,6 +428,17 @@ private struct WorkspaceStatusBanner: View {
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel(Text(store.ui("重试保存", "Retry save")))
+            } else if isNoteSelectionFailure {
+                Button {
+                    store.retryPendingNoteSelection()
+                } label: {
+                    Text(store.ui("重试", "Retry"))
+                        .weiBeiText(12, weight: .semibold)
+                        .foregroundStyle(WeiBeiTheme.cinnabar)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(Text(store.ui("重试保存并切换笔记", "Retry saving and switching notes")))
             } else if isImportant {
                 Button {
                     store.dismissImportantOperationError()

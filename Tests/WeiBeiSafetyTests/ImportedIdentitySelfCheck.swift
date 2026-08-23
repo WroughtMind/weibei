@@ -18,6 +18,7 @@ enum ImportedIdentitySelfCheck {
     @MainActor
     static func run() throws {
         try launchAndPrimaryEntriesStartBlank()
+        try dirtyEditorSelectionWaitsForAcceptedSnapshot()
         try paneAndInteractionStateDoNotInvalidateWorkspaceStore()
         try agentFailureMessagesExposeOnlyUserFacingDetails()
         try storageModelsDecodeLegacySnapshotsAndRoundTrip()
@@ -30,6 +31,106 @@ enum ImportedIdentitySelfCheck {
         try failedLearningMemoryMigrationKeepsLegacySnapshotRecoverable()
         try learningMemoryEditsPreserveFullTextAndRetrySave()
         try courseResumePointRestoresOneAtomicLearningScene()
+    }
+
+    @MainActor
+    private static func dirtyEditorSelectionWaitsForAcceptedSnapshot() throws {
+        let fixture = try WorkspaceFixture(name: "dirty-editor-selection")
+        defer { fixture.remove() }
+
+        let noteAURL = fixture.importsDirectory.appendingPathComponent("A笔记.md")
+        let noteBURL = fixture.importsDirectory.appendingPathComponent("B笔记.md")
+        let noteCURL = fixture.importsDirectory.appendingPathComponent("C笔记.md")
+        try Data("# A笔记\n\n旧正文".utf8).write(to: noteAURL)
+        try Data("# B笔记\n\n正文".utf8).write(to: noteBURL)
+        try Data("# C笔记\n\n正文".utf8).write(to: noteCURL)
+
+        let store = WorkspaceStore(
+            workspaceDirectory: fixture.workspaceDirectory,
+            selectionAskThreadDefaults: fixture.selectionAskThreadDefaults
+        )
+        _ = importFilesAndWait(
+            store,
+            [noteAURL, noteBURL, noteCURL],
+            selectsFirstImportedItem: false,
+            markdownNotePaths: [noteAURL.path, noteBURL.path, noteCURL.path]
+        )
+        let noteA = try require(
+            store.courseNotebookItems.first { $0.urlPath == noteAURL.path },
+            "脏编辑器切换场景找不到 A 笔记"
+        )
+        let noteB = try require(
+            store.courseNotebookItems.first { $0.urlPath == noteBURL.path },
+            "脏编辑器切换场景找不到 B 笔记"
+        )
+        let noteC = try require(
+            store.courseNotebookItems.first { $0.urlPath == noteCURL.path },
+            "脏编辑器切换场景找不到 C 笔记"
+        )
+
+        store.select(itemID: noteA.id)
+        store.noteEditingSession.replaceDocument(with: noteA.id)
+        var requests = [NoteEditorSnapshotRequest]()
+        var bridgeToken = store.noteEditingSession.bindSnapshotRequestHandler {
+            requests.append($0)
+        }
+        try check(
+            store.noteEditingSession.receive(NoteEditorDirtyChangedEvent(
+                documentID: noteA.id,
+                documentGeneration: store.noteEditingSession.documentGeneration,
+                revision: 1,
+                dirty: true
+            )),
+            "脏编辑器切换场景没有接收正文变化"
+        )
+
+        store.select(itemID: noteC.id)
+        store.select(itemID: noteB.id)
+        try check(
+            store.activeNoteItemID == noteA.id
+                && store.noteSelectionStatusMessage?.contains("正在保存") == true
+                && requests.count == 1,
+            "脏编辑器切换没有保持 A，或没有合并为一次真实快照"
+        )
+
+        store.noteEditingSession.unbindSnapshotRequestHandler(bridgeToken)
+        try check(
+            store.activeNoteItemID == noteA.id
+                && store.canRetryPendingNoteSelection
+                && store.noteSelectionStatusMessage?.contains("持久恢复点") == true,
+            "快照失败后离开了 A，或没有提供带恢复来源说明的重试"
+        )
+
+        requests.removeAll()
+        bridgeToken = store.noteEditingSession.bindSnapshotRequestHandler {
+            requests.append($0)
+        }
+        store.retryPendingNoteSelection()
+        let retry = try require(requests.first, "重试没有重新请求真实快照")
+        try check(store.activeNoteItemID == noteA.id, "重试快照送达前离开了 A")
+        let latestA = "# A笔记\n\n最后一段编辑"
+        try check(
+            store.noteEditingSession.receive(NoteEditorSnapshotReadyEvent(
+                requestID: retry.requestID ?? "",
+                documentID: retry.documentID,
+                documentGeneration: retry.documentGeneration,
+                revision: 1,
+                markdown: latestA
+            )),
+            "重试快照没有被编辑会话接收"
+        )
+        try check(
+            store.activeNoteItemID == noteB.id,
+            "快照接收后没有只切到最后点击的 B"
+        )
+
+        store.select(itemID: noteA.id)
+        let reopenedDiskA = try String(contentsOf: noteAURL, encoding: .utf8)
+        try check(
+            store.noteText == latestA && reopenedDiskA == latestA,
+            "重开 A 后最新正文不完整"
+        )
+        store.noteEditingSession.unbindSnapshotRequestHandler(bridgeToken)
     }
 
     @MainActor
