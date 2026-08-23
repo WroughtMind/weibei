@@ -582,6 +582,12 @@ extension WorkspaceStore {
         itemID: String,
         url: URL
     ) -> Bool {
+        if noteEditorRecoveryConflictsByItemID[itemID] != nil {
+            setNoteDraft(markdown, for: itemID)
+            pendingNoteWritesByItemID.removeValue(forKey: itemID)
+            noteEditingSession.markExternallyModified(documentID: itemID)
+            return false
+        }
         // 备份判定只用「上次自写」基线，不受 reconcile/load 刷写的磁盘观察值影响。
         let lastSelfDigest = lastSelfWrittenNoteDigestsByItemID[itemID]
         let currentDigest = Self.noteContentDigest(at: url)
@@ -640,9 +646,13 @@ extension WorkspaceStore {
         url: URL
     ) {
         guard let diskMarkdown = try? String(contentsOf: url, encoding: .utf8) else { return }
-        let digest = Self.noteContentDigest(Data(diskMarkdown.utf8))
-        let baseDigest = noteBackingContentDigestsByItemID[itemID] ?? digest
-        noteBackingContentDigestsByItemID[itemID] = digest
+        let baseDigest = noteBackingContentDigestsByItemID[itemID]
+            ?? Self.noteContentDigest(Data(diskMarkdown.utf8))
+        let revision = latestNoteEditorSnapshot.flatMap {
+            $0.documentID == itemID ? $0.revision : nil
+        } ?? (noteEditingSession.documentID == itemID
+            ? noteEditingSession.currentRevision
+            : 0)
         pendingNoteWritesByItemID.removeValue(forKey: itemID)
         setNoteDraft(markdown, for: itemID)
         loadedCourseNoteTextByItemID[itemID] = diskMarkdown
@@ -654,7 +664,7 @@ extension WorkspaceStore {
                     documentID: itemID,
                     baseFileDigest: baseDigest,
                     checkpointDigest: Self.noteContentDigest(Data(markdown.utf8)),
-                    revision: noteEditingSession.currentRevision,
+                    revision: revision,
                     updatedAt: Date(),
                     dialectVersion: 1
                 ),
@@ -684,9 +694,15 @@ extension WorkspaceStore {
                 if FileManager.default.fileExists(atPath: coordinatedURL.path) {
                     guard let expectedBaseline,
                           let diskDigest = Self.noteContentDigest(at: coordinatedURL) else {
+                        WeiBeiLog.noteRepair.error(
+                            "code=note_write_baseline_unavailable path=\(coordinatedURL.path, privacy: .private) expected_digest=\(expectedBaseline ?? "nil", privacy: .private) actual_digest=unreadable"
+                        )
                         throw NoteWriteGateError.writeRefusedKeepContent
                     }
                     if diskDigest != expectedBaseline {
+                        WeiBeiLog.noteRepair.error(
+                            "code=note_write_external_conflict path=\(coordinatedURL.path, privacy: .private) expected_digest=\(expectedBaseline, privacy: .private) actual_digest=\(diskDigest, privacy: .private)"
+                        )
                         _ = try? NoteBackupRing.capture(
                             content: Data(markdown.utf8),
                             itemID: itemID,
@@ -706,7 +722,11 @@ extension WorkspaceStore {
             throw NoteWriteGateError.writeRefusedKeepContent
         }
         let writtenDigest = Self.noteContentDigest(Data(markdown.utf8))
-        guard Self.noteContentDigest(at: url) == writtenDigest else {
+        let verifiedDigest = Self.noteContentDigest(at: url)
+        guard verifiedDigest == writtenDigest else {
+            WeiBeiLog.noteRepair.error(
+                "code=note_write_verification_failed path=\(url.path, privacy: .private) expected_digest=\(writtenDigest, privacy: .private) actual_digest=\(verifiedDigest ?? "unreadable", privacy: .private)"
+            )
             throw NoteWriteGateError.writeVerificationFailed
         }
         noteBackingContentDigestsByItemID[itemID] = writtenDigest

@@ -124,7 +124,9 @@ final class NoteEditingSession: ObservableObject {
         currentRevision = event.revision
         dirty = event.dirty || currentRevision != savedRevision
         if dirty {
-            saveStatus = .saving
+            if saveStatus != .externallyModified {
+                saveStatus = .saving
+            }
             scheduleSnapshot()
         }
         return true

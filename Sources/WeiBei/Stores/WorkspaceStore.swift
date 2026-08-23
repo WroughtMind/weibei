@@ -338,7 +338,7 @@ final class WorkspaceStore: ObservableObject {
     }
     @Published private(set) var activeCourseID: UUID?
     @Published var noteText = ""
-    @Published var noteEditorRecoveryConflict: NoteEditorRecoveryConflict?
+    @Published var noteEditorRecoveryConflictsByItemID: [String: NoteEditorRecoveryConflict] = [:]
     var noteEditorConflictProbeDocumentID: String?
     var latestNoteEditorSnapshot: (documentID: String, digest: String, baseDigest: String, revision: UInt64)?
     let noteRecoveryStore = NoteRecoveryStore()
