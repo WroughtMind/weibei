@@ -70,7 +70,8 @@ extension WorkspaceStore {
                 digest: digest,
                 revision: revision ?? 0
             ),
-            marksSessionSaved: revision != nil
+            marksSessionSaved: revision != nil,
+            status: .writtenToFile
         )
     }
 
@@ -92,12 +93,17 @@ extension WorkspaceStore {
 
     func noteEditorDidPersistWorkspace(_ receipt: NoteEditorSaveReceipt?) {
         guard let receipt else { return }
-        completeNoteEditorSave(receipt, marksSessionSaved: true)
+        completeNoteEditorSave(
+            receipt,
+            marksSessionSaved: true,
+            status: .savedInWeiBei
+        )
     }
 
     private func completeNoteEditorSave(
         _ receipt: NoteEditorSaveReceipt,
-        marksSessionSaved: Bool
+        marksSessionSaved: Bool,
+        status: NoteSaveStatus
     ) {
         Task {
             _ = try? await noteRecoveryStore.removeIfCheckpointMatches(
@@ -107,7 +113,10 @@ extension WorkspaceStore {
         }
         guard marksSessionSaved,
               noteEditingSession.documentID == receipt.documentID else { return }
-        _ = noteEditingSession.markSaved(revision: receipt.revision)
+        _ = noteEditingSession.markSaved(
+            revision: receipt.revision,
+            as: status
+        )
         if let snapshot = latestNoteEditorSnapshot,
            snapshot.documentID == receipt.documentID,
            snapshot.digest == receipt.digest {
@@ -149,6 +158,7 @@ extension WorkspaceStore {
             case .restore:
                 _ = await freshActiveNoteEditorSnapshot()
             case .conflict(let checkpoint):
+                noteEditingSession.markExternallyModified(documentID: documentID)
                 cancelPendingNotePersistence(for: documentID)
                 pendingNotePersistenceByItemID.removeValue(forKey: documentID)
                 noteEditorRecoveryConflict = NoteEditorRecoveryConflict(
@@ -163,6 +173,7 @@ extension WorkspaceStore {
                 if baseDigest == diskDigest {
                     _ = await freshActiveNoteEditorSnapshot()
                 } else {
+                    noteEditingSession.markExternallyModified(documentID: documentID)
                     noteEditorConflictProbeDocumentID = documentID
                     defer { noteEditorConflictProbeDocumentID = nil }
                     guard let snapshot = try? await noteEditingSession.snapshot() else { return }
@@ -221,9 +232,15 @@ extension WorkspaceStore {
         }
 
         let previousDigest = Self.noteContentDigest(Data(noteText.utf8))
+        let diskChanged = previousDigest != Self.noteContentDigest(
+            Data(diskMarkdown.utf8)
+        )
         refreshActiveNoteFromBackingFile()
+        guard diskChanged else { return }
+        noteEditingSession.markExternallyModified(documentID: documentID)
         guard previousDigest != Self.noteContentDigest(Data(noteText.utf8)) else { return }
         noteEditingSession.replaceDocument(with: item.id)
+        noteEditingSession.markExternallyModified(documentID: documentID)
         noteEditorCommand = NoteEditorCommand(
             kind: .reloadDocument,
             markdown: noteText
@@ -255,6 +272,7 @@ extension WorkspaceStore {
                 ? documentID
                 : activeNoteEditorDocumentID
             noteEditingSession.replaceDocument(with: nextDocumentID)
+            noteEditingSession.markExternallyModified(documentID: documentID)
             noteEditorCommand = NoteEditorCommand(
                 kind: .reloadDocument,
                 markdown: remainsActive ? conflict.diskMarkdown : noteText

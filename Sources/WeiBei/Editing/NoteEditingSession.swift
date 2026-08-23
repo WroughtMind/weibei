@@ -1,4 +1,14 @@
+import Combine
 import Foundation
+
+enum NoteSaveStatus: Equatable {
+    case idle
+    case saving
+    case writtenToFile
+    case savedInWeiBei
+    case failed
+    case externallyModified
+}
 
 enum NoteEditingSessionError: Error, Equatable {
     case bridgeUnavailable
@@ -7,7 +17,7 @@ enum NoteEditingSessionError: Error, Equatable {
 }
 
 @MainActor
-final class NoteEditingSession {
+final class NoteEditingSession: ObservableObject {
     typealias SnapshotCompletion = (
         Result<NoteEditorSnapshotReadyEvent, NoteEditingSessionError>
     ) -> Void
@@ -34,6 +44,7 @@ final class NoteEditingSession {
     private(set) var currentRevision: UInt64
     private(set) var savedRevision: UInt64
     private(set) var dirty = false
+    @Published private(set) var saveStatus: NoteSaveStatus = .idle
 
     init(
         documentID: String,
@@ -88,6 +99,7 @@ final class NoteEditingSession {
         currentRevision = initialRevision
         savedRevision = initialRevision
         dirty = false
+        saveStatus = .idle
         return documentGeneration
     }
 
@@ -111,7 +123,10 @@ final class NoteEditingSession {
 
         currentRevision = event.revision
         dirty = event.dirty || currentRevision != savedRevision
-        if dirty { scheduleSnapshot() }
+        if dirty {
+            saveStatus = .saving
+            scheduleSnapshot()
+        }
         return true
     }
 
@@ -186,11 +201,22 @@ final class NoteEditingSession {
     }
 
     @discardableResult
-    func markSaved(revision: UInt64) -> Bool {
+    func markSaved(revision: UInt64, as status: NoteSaveStatus) -> Bool {
         guard revision <= currentRevision else { return false }
         savedRevision = max(savedRevision, revision)
         dirty = currentRevision != savedRevision
+        saveStatus = dirty ? .saving : status
         return true
+    }
+
+    func markSaveFailed(documentID: String) {
+        guard self.documentID == documentID else { return }
+        saveStatus = .failed
+    }
+
+    func markExternallyModified(documentID: String) {
+        guard self.documentID == documentID else { return }
+        saveStatus = .externallyModified
     }
 
     @discardableResult

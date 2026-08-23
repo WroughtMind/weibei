@@ -510,6 +510,7 @@ struct NotePaneView: View {
                 appearanceMode: store.appearanceMode,
                 reorderRole: reorderRole
             ) {
+                NoteSaveStatusLabel(session: store.noteEditingSession)
                 ContextualContentListButton(kind: .note)
                 newNoteControl
             }
@@ -530,6 +531,7 @@ struct NotePaneView: View {
                 reorderRole: reorderRole,
                 titleRename: noteTabRename
             ) {
+                NoteSaveStatusLabel(session: store.noteEditingSession)
                 ContextualContentListButton(kind: .note)
                 newNoteControl
             }
@@ -723,6 +725,42 @@ struct NotePaneView: View {
         .background(WeiBeiTheme.paper)
     }
 
+}
+
+private struct NoteSaveStatusLabel: View {
+    @EnvironmentObject private var store: WorkspaceStore
+    @ObservedObject var session: NoteEditingSession
+
+    var body: some View {
+        if let title {
+            Text(title)
+                .weiBeiText(10.5, weight: .medium)
+                .foregroundStyle(
+                    session.saveStatus == .failed || session.saveStatus == .externallyModified
+                        ? WeiBeiTheme.cinnabar
+                        : WeiBeiTheme.secondaryInk
+                )
+                .lineLimit(1)
+                .accessibilityLabel(Text(title))
+        }
+    }
+
+    private var title: String? {
+        switch session.saveStatus {
+        case .idle:
+            nil
+        case .saving:
+            store.ui("保存中", "Saving")
+        case .writtenToFile:
+            store.ui("已写入文件", "Written to File")
+        case .savedInWeiBei:
+            store.ui("仅保存在魏碑", "Saved in WeiBei Only")
+        case .failed:
+            store.ui("保存失败", "Save Failed")
+        case .externallyModified:
+            store.ui("外部修改", "Modified Externally")
+        }
+    }
 }
 
 private struct NotebookCreationPanel: View {
