@@ -58,6 +58,7 @@ if [[ ! "$APP_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
   echo "release failed: VERSION must use numeric major.minor.patch" >&2
   exit 4
 fi
+UPDATE_SUMMARY_SOURCE="${WEIBEI_UPDATE_SUMMARY_FILE:-$ROOT_DIR/Docs/update-summaries/v$APP_VERSION.md}"
 if [[ "$(uname -m)" != "arm64" ]]; then
   echo "release failed: the current package is intentionally Apple Silicon only" >&2
   exit 5
@@ -98,6 +99,27 @@ fi
 if [[ "$MODE" == "notarized" ]]; then
   SIGN_IDENTITY="${WEIBEI_CODESIGN_IDENTITY:-}"
   NOTARY_PROFILE="${WEIBEI_NOTARY_KEYCHAIN_PROFILE:-}"
+  if [[ "$(/usr/bin/printf '%s' "$SPARKLE_PUBLIC_KEY" | /usr/bin/base64 -D 2>/dev/null | /usr/bin/wc -c | /usr/bin/tr -d ' ')" != "32" ]]; then
+    echo "release failed: notarized publication requires a 32-byte base64 WEIBEI_SPARKLE_PUBLIC_KEY" >&2
+    exit 18
+  fi
+  if [[ ! -s "$SPARKLE_PRIVATE_KEY_FILE" ]]; then
+    echo "release failed: notarized publication requires WEIBEI_SPARKLE_PRIVATE_KEY_FILE" >&2
+    exit 21
+  fi
+  if [[ ! -x "$SPARKLE_GENERATE_APPCAST" || ! -x "$SPARKLE_SIGN_UPDATE" ]]; then
+    echo "release failed: Sparkle generate_appcast and sign_update tools are missing" >&2
+    exit 23
+  fi
+  SPARKLE_PREFLIGHT_SIGNATURE="$(
+    "$SPARKLE_SIGN_UPDATE" -p --ed-key-file "$SPARKLE_PRIVATE_KEY_FILE" "$VERSION_FILE"
+  )"
+  "$SPARKLE_SIGN_UPDATE" --verify --ed-key-file "$SPARKLE_PRIVATE_KEY_FILE" \
+    "$VERSION_FILE" "$SPARKLE_PREFLIGHT_SIGNATURE"
+  if [[ ! -s "$UPDATE_SUMMARY_SOURCE" ]]; then
+    echo "release failed: notarized publication requires an in-app update summary" >&2
+    exit 24
+  fi
   if [[ -z "$SIGN_IDENTITY" ]] \
     || ! /usr/bin/security find-identity -v -p codesigning | /usr/bin/grep -Fq "\"$SIGN_IDENTITY\""; then
     echo "release failed: WEIBEI_CODESIGN_IDENTITY must name an installed Developer ID Application identity" >&2
@@ -243,9 +265,8 @@ DMG_SHA256="$(/usr/bin/shasum -a 256 "$DMG_PATH" | /usr/bin/awk '{print $1}')"
 npx tsx "$ROOT_DIR/script/homebrew/generate_cask.ts" "$APP_VERSION" "$DMG_SHA256" "$CASK_PATH"
 /usr/bin/ruby -c "$CASK_PATH" >/dev/null
 
-UPDATE_SUMMARY_SOURCE="${WEIBEI_UPDATE_SUMMARY_FILE:-$ROOT_DIR/Docs/update-summaries/v$APP_VERSION.md}"
 APPCAST_RESULT="not-generated"
-if [[ -n "$SPARKLE_PRIVATE_KEY_FILE" ]]; then
+if [[ "$MODE" == "notarized" || -n "$SPARKLE_PRIVATE_KEY_FILE" ]]; then
   if [[ ! -f "$SPARKLE_PRIVATE_KEY_FILE" || ! -s "$UPDATE_SUMMARY_SOURCE" ]]; then
     echo "release failed: Sparkle private key or in-app update summary is missing" >&2
     exit 21
