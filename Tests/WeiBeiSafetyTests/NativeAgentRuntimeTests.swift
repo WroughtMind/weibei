@@ -178,16 +178,14 @@ final class NativeAgentRuntimeTests: XCTestCase {
     func testLoopSendsFullSelectionAndQuestionToModel() async throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("native-context-\(UUID().uuidString).jsonl")
         defer { try? FileManager.default.removeItem(at: url) }
-        let selection = """
-        学习一门新知识时，最难的往往不是记住结论，而是看清结论成立的条件。课堂上我们从一个熟悉的例子出发，先观察现象，再比较不同解释，最后回到原文核对每一步推理。这样做虽然慢一些，却能把零散的信息连成可以复用的理解，也能在遇到新问题时知道该从哪里继续追问。
-
-        如果只摘下最后一句，过程中的犹豫、修正和证据都会消失。保留完整段落，才能判断作者是在陈述事实、提出假设，还是回应前面的反例；也才能分清哪些词是核心概念，哪些只是为了衔接上下文。阅读的价值不只在答案，更在答案怎样从材料中长出来。
-        """
-        let question = """
-        请结合这段选中文字，说明作者为什么强调保留推理过程，并分别概括两段话承担的作用。回答时请先指出第一段如何从学习方法过渡到理解的形成，再解释第二段如何用“只摘下最后一句”的反面情况补强观点，最后用自己的话总结这套阅读方法适合解决什么问题。
-
-        不要只复述原句，也不要把两段拆成互不相关的要点；请明确它们之间的递进关系，并说明完整上下文为什么会影响我们对事实、假设和反例的判断。
-        """
+        let legacySelectionLimit = 2_000
+        let legacyQuestionLimit = 4_000
+        let selectionSentence = "保留完整段落，才能看清作者如何用事实、假设和反例推进论证。"
+        let questionSentence = "请结合选中文字说明上下文如何影响判断，并指出论证、转折与证据之间的关系。"
+        let selection = String(repeating: selectionSentence, count: legacySelectionLimit / selectionSentence.count + 1)
+        let question = String(repeating: questionSentence, count: legacyQuestionLimit / questionSentence.count + 1)
+        XCTAssertGreaterThan(selection.count, legacySelectionLimit)
+        XCTAssertGreaterThan(question.count, legacyQuestionLimit)
         let expectedUserMessage = """
         [选中文字：课堂阅读节选]
         \(selection)
