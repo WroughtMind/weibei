@@ -34,11 +34,11 @@ public enum WeiBeiWebResearchURLPolicy {
     public static func isAvailableInCurrentRun(
         _ url: String,
         in userQuestion: String,
-        webSearchURLs: [String]
+        currentRunSourceURLs: [String]
     ) -> Bool {
         guard let requested = canonicalSourceURL(url) else { return false }
         return isExplicitlyProvided(url, in: userQuestion)
-            || webSearchURLs.contains { canonicalSourceURL($0) == requested }
+            || currentRunSourceURLs.contains { canonicalSourceURL($0) == requested }
     }
 
     public static func isExplicitlyProvided(_ url: String, in userQuestion: String) -> Bool {
@@ -95,7 +95,7 @@ public enum WeiBeiWebResearchURLPolicy {
         return url
     }
 
-    private static func canonicalSourceURL(_ rawValue: String) -> String? {
+    fileprivate static func canonicalSourceURL(_ rawValue: String) -> String? {
         let trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
         guard trimmed.utf8.count <= 2_048,
               var components = URLComponents(string: trimmed),
@@ -114,6 +114,11 @@ public enum WeiBeiWebResearchURLPolicy {
         }
         if components.percentEncodedPath.isEmpty {
             components.percentEncodedPath = "/"
+        } else {
+            while components.percentEncodedPath.count > 1,
+                  components.percentEncodedPath.hasSuffix("/") {
+                components.percentEncodedPath.removeLast()
+            }
         }
         return components.url?.absoluteString
     }
@@ -296,8 +301,30 @@ public enum WeiBeiWebResearchClient {
             url: finalURL.absoluteString,
             title: String(title.prefix(300)),
             text: String(cleaned.prefix(boundedCharacters)),
-            isTruncated: isTruncated
+            isTruncated: isTruncated,
+            links: mimeType == "text/plain" ? [] : linkedHTTPSURLs(in: decoded, relativeTo: finalURL)
         )
+    }
+
+    static func linkedHTTPSURLs(in html: String, relativeTo pageURL: URL) -> [String] {
+        guard let regex = try? NSRegularExpression(
+            pattern: #"(?is)<a\b[^>]*\bhref\s*=\s*(?:\"([^\"]*)\"|'([^']*)'|([^\s\"'=<>`]+))"#
+        ) else { return [] }
+        var seen = Set<String>()
+        return regex.matches(in: html, range: NSRange(html.startIndex..., in: html)).compactMap { match in
+            let href = (1...3).compactMap { index -> String? in
+                guard let range = Range(match.range(at: index), in: html) else { return nil }
+                return String(html[range])
+            }.first
+            guard let href,
+                  let resolved = URL(
+                    string: decodeHTMLEntities(href),
+                    relativeTo: pageURL
+                  )?.absoluteURL,
+                  let source = WeiBeiWebResearchURLPolicy.canonicalSourceURL(resolved.absoluteString),
+                  seen.insert(source).inserted else { return nil }
+            return source
+        }.prefix(64).map(\.self)
     }
 
     private static func decodedString(_ data: Data, encodingName: String?) -> String? {

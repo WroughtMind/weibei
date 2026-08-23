@@ -337,12 +337,20 @@ public struct StudyAgentWebPage: Codable, Equatable, Sendable {
     public var title: String
     public var text: String
     public var isTruncated: Bool
+    public var links: [String]
 
-    public init(url: String, title: String, text: String, isTruncated: Bool) {
+    public init(
+        url: String,
+        title: String,
+        text: String,
+        isTruncated: Bool,
+        links: [String] = []
+    ) {
         self.url = url
         self.title = title
         self.text = text
         self.isTruncated = isTruncated
+        self.links = links
     }
 }
 

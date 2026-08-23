@@ -144,7 +144,7 @@ final class NativeAgentRuntimeTests: XCTestCase {
         let ledger = try NativeAgentLedger(fileURL: url)
         let registry = NativeToolRegistry()
         await NativeBuiltinTools.registerAll(into: registry, skillRoot: nil)
-        let opened = WebOpenCounter()
+        let opened = WebOpenRecorder()
         _ = try await NativeAgentLoop().run(
             request: StudyAgentRequest(
                 purpose: .conversation,
@@ -160,17 +160,73 @@ final class NativeAgentRuntimeTests: XCTestCase {
             adapter: SearchedWebURLAdapter(),
             model: "mock",
             hostToolHandler: { request in
-                guard case .webOpen = request else {
+                guard case let .webOpen(url, _) = request else {
                     return StudyAgentHostToolResult(query: "", items: [])
                 }
-                await opened.increment()
+                await opened.record(url)
                 return StudyAgentHostToolResult(query: "", items: [])
             },
             systemPrompt: "test",
             progress: nil
         )
-        let openCount = await opened.value
-        XCTAssertEqual(openCount, 2)
+        let openedURLs = await opened.urls
+        XCTAssertEqual(openedURLs, ["https://example.com/fresh", "https://example.com/fresh"])
+    }
+
+    func testOpenedPageHrefBecomesAvailableForCurrentRun() async throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("native-web-link-\(UUID().uuidString).jsonl")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let ledger = try NativeAgentLedger(fileURL: url)
+        let registry = NativeToolRegistry()
+        await NativeBuiltinTools.registerAll(into: registry, skillRoot: nil)
+        let opened = WebOpenRecorder()
+        _ = try await NativeAgentLoop().run(
+            request: StudyAgentRequest(
+                purpose: .conversation,
+                question: "搜索后沿页面链接核对",
+                materialTitle: "",
+                materialText: "",
+                noteTitle: "",
+                noteText: "",
+                contextRevision: "r1"
+            ),
+            ledger: ledger,
+            registry: registry,
+            adapter: LinkedWebURLAdapter(),
+            model: "mock",
+            hostToolHandler: { request in
+                guard case let .webOpen(url, _) = request else {
+                    return StudyAgentHostToolResult(query: "", items: [])
+                }
+                await opened.record(url)
+                let links = url == "https://example.com/source"
+                    ? WeiBeiWebResearchClient.linkedHTTPSURLs(
+                        in: #"<a href="/evidence?from=page">证据</a>"#,
+                        relativeTo: URL(string: url)!
+                    )
+                    : []
+                return StudyAgentHostToolResult(
+                    query: url,
+                    items: [],
+                    webPages: [
+                        StudyAgentWebPage(
+                            url: url,
+                            title: "页面",
+                            text: "正文",
+                            isTruncated: false,
+                            links: links
+                        ),
+                    ]
+                )
+            },
+            systemPrompt: "test",
+            progress: nil
+        )
+        let openedURLs = await opened.urls
+        XCTAssertEqual(openedURLs, [
+            "https://example.com/source",
+            "https://example.com/evidence?from=page",
+        ])
     }
 
     func testChatCompletionsTranslation() throws {
@@ -293,10 +349,41 @@ private final class SearchedWebURLAdapter: NativeLLMAdapter, @unchecked Sendable
     }
 }
 
-private actor WebOpenCounter {
-    private(set) var value = 0
+private final class LinkedWebURLAdapter: NativeLLMAdapter, @unchecked Sendable {
+    let family = "responses-mock"
+    private let lock = NSLock()
+    private var step = 0
 
-    func increment() {
-        value += 1
+    func stream(_ request: NativeLLMRequest) -> AsyncThrowingStream<NativeStreamChunk, Error> {
+        lock.lock()
+        step += 1
+        let currentStep = step
+        lock.unlock()
+        let url = currentStep == 1
+            ? "https://example.com/source"
+            : "https://example.com/evidence?from=page"
+        let call = NativeStreamChunk.toolCallDelta(
+            index: 0,
+            id: "linked-open-\(currentStep)",
+            name: "weibei_web_open",
+            argumentsDelta: #"{"url":"\#(url)"}"#
+        )
+        let chunks: [NativeStreamChunk] = currentStep == 1
+            ? [.webSearchSource(url: url), call, .finish(reason: .toolCalls, replayState: nil)]
+            : currentStep == 2
+                ? [call, .finish(reason: .toolCalls, replayState: nil)]
+                : [.textDelta(index: 0, text: "完成"), .finish(reason: .stop, replayState: nil)]
+        return AsyncThrowingStream { continuation in
+            chunks.forEach { continuation.yield($0) }
+            continuation.finish()
+        }
+    }
+}
+
+private actor WebOpenRecorder {
+    private(set) var urls: [String] = []
+
+    func record(_ url: String) {
+        urls.append(url)
     }
 }
