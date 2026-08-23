@@ -121,8 +121,8 @@
     const control = multiline ? document.createElement('textarea') : document.createElement('input');
     if (multiline) control.rows = clamp(node.rows || 4, 1, 16);
     else control.type = ['text', 'email', 'password'].includes(node.inputType) ? node.inputType : 'text';
-    control.placeholder = string(node.placeholder, 500);
-    control.value = string(read(key, node.value || ''), 4000);
+    control.placeholder = string(node.placeholder);
+    control.value = string(read(key, node.value || ''));
     control.addEventListener('input', () => write(key, control.value));
     label.append(control);
     return label;
@@ -130,7 +130,7 @@
 
   function chartNode(node) {
     const wrap = el('div', 'chart');
-    const data = limited(node.data, 60, wrap).map(item => ({ label: string(item?.label, 80), value: number(item?.value), color: item?.color }));
+    const data = limited(node.data, 60, wrap).map(item => ({ label: string(item?.label), value: number(item?.value), color: item?.color }));
     if (!data.length) return wrap;
     if (node.kind === 'donut') {
       const body = el('div', 'donut-wrap');
@@ -212,7 +212,7 @@
       return [{
         seriesIndex,
         name,
-        label: string(raw?.label, 80) || `${string(entry?.label, 80) || string(entry?.expr, 80)} · ${name}`,
+        label: string(raw?.label) || `${string(entry?.label) || string(entry?.expr, 500)} · ${name}`,
         min,
         max,
         step: Math.max(number(raw?.step, (max - min) / 100), Number.EPSILON),
@@ -233,7 +233,7 @@
           .filter(point => Array.isArray(point) && point.length >= 2 && Number.isFinite(Number(point[0])) && Number.isFinite(Number(point[1])))
           .map(point => [Number(point[0]), Number(point[1])]);
       return {
-        label: string(entry?.label, 80) || expr || `系列 ${seriesIndex + 1}`,
+        label: string(entry?.label) || expr || `系列 ${seriesIndex + 1}`,
         color: color(entry?.color, seriesIndex),
         points,
       };
@@ -266,8 +266,8 @@
       if (xMin <= 0 && xMax >= 0) figure.append(svg('line', { x1: x(0), x2: x(0), y1: top, y2: height - bottom, class: 'axis-line' }));
       if (yMin <= 0 && yMax >= 0) figure.append(svg('line', { x1: left, x2: width - right, y1: y(0), y2: y(0), class: 'axis-line' }));
       series.forEach(entry => figure.append(svg('polyline', { points: entry.points.map(point => `${x(point[0])},${y(point[1])}`).join(' '), fill: 'none', stroke: entry.color, 'stroke-width': 2.2, 'stroke-linecap': 'round', 'stroke-linejoin': 'round' })));
-      const xLabel = svg('text', { x: (left + width - right) / 2, y: height - 10, 'text-anchor': 'middle', class: 'axis-label' }); xLabel.textContent = string(node.xLabel, 80);
-      const yLabel = svg('text', { x: 13, y: (top + height - bottom) / 2, transform: `rotate(-90 13 ${(top + height - bottom) / 2})`, 'text-anchor': 'middle', class: 'axis-label' }); yLabel.textContent = string(node.yLabel, 80);
+      const xLabel = svg('text', { x: (left + width - right) / 2, y: height - 10, 'text-anchor': 'middle', class: 'axis-label' }); xLabel.textContent = string(node.xLabel);
+      const yLabel = svg('text', { x: 13, y: (top + height - bottom) / 2, transform: `rotate(-90 13 ${(top + height - bottom) / 2})`, 'text-anchor': 'middle', class: 'axis-label' }); yLabel.textContent = string(node.yLabel);
       figure.append(xLabel, yLabel);
       chart.replaceChildren(figure);
     };
@@ -330,7 +330,7 @@
 
   function sortNode(node, key) {
     const box = el('div', 'learning'); if (node.prompt) box.append(el('div', 'learning-title', node.prompt));
-    const fallback = limited(node.items, 24, box).map(item => string(item, 500));
+    const fallback = limited(node.items, 24, box).map(item => string(item));
     const items = limited(read(key, fallback), 24, box); const list = el('div', 'practice-list');
     const move = (from, to) => { if (to < 0 || to >= items.length || from === to) return; const next = [...items]; next.splice(to, 0, next.splice(from, 1)[0]); write(key, next, true); };
     items.forEach((item, index) => {
@@ -345,7 +345,7 @@
 
   function matchNode(node, key) {
     const box = el('div', 'learning'); if (node.prompt) box.append(el('div', 'learning-title', node.prompt));
-    const pairs = limited(node.pairs, 24, box).map(pair => ({ left: string(pair?.left, 500), right: string(pair?.right, 500) })).filter(pair => pair.left && pair.right);
+    const pairs = limited(node.pairs, 24, box).map(pair => ({ left: string(pair?.left), right: string(pair?.right) })).filter(pair => pair.left && pair.right);
     const value = read(key, { matches: {}, selected: null }); const grid = el('div', 'match-grid'), left = el('div', 'match-column'), right = el('div', 'match-column');
     const pair = target => { if (!value.selected) return; value.matches[value.selected] = target; value.selected = null; write(key, value, true); };
     pairs.forEach(item => { const button = el('button', `match-button ${value.selected === item.left ? 'selected' : ''}`, item.left); button.draggable = true; button.onclick = () => { value.selected = item.left; write(key, value, true); }; button.ondragstart = event => event.dataTransfer.setData('text/plain', item.left); left.append(button); });
@@ -355,7 +355,7 @@
 
   function classifyNode(node, key) {
     const box = el('div', 'learning'); if (node.prompt) box.append(el('div', 'learning-title', node.prompt));
-    const groups = limited(node.groups, 8, box).map(group => ({ label: string(group?.label, 200), items: limited(group?.items, 24, box).map(item => string(item, 500)) })).filter(group => group.label);
+    const groups = limited(node.groups, 8, box).map(group => ({ label: string(group?.label), items: limited(group?.items, 24, box).map(item => string(item)) })).filter(group => group.label);
     const all = groups.flatMap(group => group.items); const value = read(key, { placed: {}, selected: null }); const bank = el('div', 'bank');
     const select = item => { value.selected = item; write(key, value, true); }; const place = group => { if (!value.selected) return; value.placed[value.selected] = group; value.selected = null; write(key, value, true); };
     all.filter(item => !value.placed[item]).forEach(item => { const button = el('button', `bank-button ${value.selected === item ? 'selected' : ''}`, item); button.draggable = true; button.onclick = () => select(item); button.ondragstart = event => event.dataTransfer.setData('text/plain', item); bank.append(button); });
@@ -414,7 +414,7 @@
       case 'steps': { const box = el('div','steps'), steps=limited(node.steps,24,box), current=clamp(node.current ?? steps.length,0,steps.length); steps.forEach((step,index) => { const row = el('div',`step ${index < current ? 'done' : index === current ? 'active' : ''}`), body=el('div'); body.append(el('div','',step?.title)); if(step?.desc) body.append(el('div','step-desc',step.desc)); row.append(el('span','step-mark',index < current ? '✓' : index+1),body); box.append(row); }); return box; }
       case 'timeline': { const box=el('div','timeline'); limited(node.items,24,box).forEach(item=>{const row=el('div','timeline-item'),body=el('div'); body.append(el('div','',item?.title)); if(item?.time) body.append(el('div','timeline-time',item.time)); if(item?.desc) body.append(el('div','timeline-desc',item.desc)); row.append(el('span','timeline-mark','·'),body); box.append(row);}); return box; }
       case 'button': {
-        const box=el('div'), label=string(node.label,200), button=el('button',`button ${node.tone || ''}`,label);
+        const box=el('div'), label=string(node.label), button=el('button',`button ${node.tone || ''}`,label);
         const reason=!node.action?'此按钮没有配置继续回答操作。':actionUnavailableReason;
         const rejection=actionRejection?.key===key?actionRejection.reason:'';
         const status=reason?'':actionStatus==='processing'?'处理中':pendingAction?.key===key?'已按下':queuedActionKey===key?'已排队':'';
@@ -430,10 +430,10 @@
       case 'checkbox': { const label=el('label','choice'),input=document.createElement('input'); input.type='checkbox'; input.checked=Boolean(read(key,node.checked===true)); input.onchange=()=>write(key,input.checked); label.append(input,document.createTextNode(string(node.label))); return label; }
       case 'radio': { const box=el('div','field'); if(node.label) box.append(el('span','',node.label)); const options=limited(node.options,50,box),selected=read(key,clamp(node.selected||0,0,options.length-1)); options.forEach((option,index)=>{const label=el('label','choice'),input=document.createElement('input'); input.type='radio'; input.name=`radio-${key}`; input.checked=index===selected; input.onchange=()=>write(key,index,true); label.append(input,document.createTextNode(string(option))); box.append(label);}); return box; }
       case 'switch': { const button=el('button',`button ${read(key,node.checked===true) ? 'primary' : 'ghost'}`,`${node.label} · ${read(key,node.checked===true) ? '开' : '关'}`); button.setAttribute('role','switch'); button.setAttribute('aria-checked',String(Boolean(read(key,node.checked===true)))); button.onclick=()=>{const value=!read(key,node.checked===true); write(key,value,true);}; return button; }
-      case 'slider': { const label=el('label','field'),head=el('span','slider-head'),value=number(read(key,node.value),number(node.value)); head.append(el('span','',node.label),el('output','',`${value}${string(node.unit,30)}`)); const input=document.createElement('input'); input.type='range'; input.min=number(node.min); input.max=number(node.max,100); input.step=number(node.step,(input.max-input.min)/100); input.value=value; input.oninput=()=>{state[key]=Number(input.value); head.querySelector('output').textContent=`${input.value}${string(node.unit,30)}`; post({type:'state',state});}; label.append(head,input); return label; }
+      case 'slider': { const label=el('label','field'),head=el('span','slider-head'),value=number(read(key,node.value),number(node.value)); head.append(el('span','',node.label),el('output','',`${value}${string(node.unit)}`)); const input=document.createElement('input'); input.type='range'; input.min=number(node.min); input.max=number(node.max,100); input.step=number(node.step,(input.max-input.min)/100); input.value=value; input.oninput=()=>{state[key]=Number(input.value); head.querySelector('output').textContent=`${input.value}${string(node.unit)}`; post({type:'state',state});}; label.append(head,input); return label; }
       case 'tabs': { const box=el('div','tabs'),tabs=limited(node.tabs,12,box),active=clamp(read(key,0),0,tabs.length-1),bar=el('div','tabbar'); tabs.forEach((tab,index)=>{const button=el('button',`tab ${index===active?'active':''}`,tab?.label); button.onclick=()=>write(key,index,true); bar.append(button);}); box.append(bar); if(tabs[active]) box.append(renderItems(tabs[active].items,`${path}.tab${active}`,depth)); return box; }
       case 'accordion': { const box=el('div'),items=limited(node.items,24,box),open=read(key,0); items.forEach((item,index)=>{const head=el('button','accordion-head'); head.append(el('span','',item?.title),el('span','',open===index?'−':'+')); head.onclick=()=>write(key,open===index?null:index,true); box.append(head); if(open===index){const body=el('div','accordion-body'); body.append(renderItems(item.items,`${path}.acc${index}`,depth)); box.append(body);}}); return box; }
-      case 'copy': { const button=el('button','button',node.label||'复制'); button.onclick=()=>navigator.clipboard?.writeText(string(node.text,12000)).then(()=>{button.textContent='已复制'; setTimeout(()=>button.textContent=node.label||'复制',1200);}).catch(()=>{}); return button; }
+      case 'copy': { const button=el('button','button',node.label||'复制'); button.onclick=()=>navigator.clipboard?.writeText(string(node.text)).then(()=>{button.textContent='已复制'; setTimeout(()=>button.textContent=node.label||'复制',1200);}).catch(()=>{}); return button; }
       case 'chart': return chartNode(node); case 'plot': return plotNode(node,key); case 'scene3d': return sceneNode(node,key);
       case 'formula': return formulaNode(node,key); case 'quiz': return quizNode(node,key); case 'sort': return sortNode(node,key); case 'match': return matchNode(node,key); case 'classify': return classifyNode(node,key); case 'simulation': return simulationNode(node,key);
       default: return null;

@@ -77,6 +77,54 @@ final class AgentVisualizationSizingTests: XCTestCase {
     }
 
     @MainActor
+    func testGenUIKeepsFullFormInputAfterRedraw() async throws {
+        let (webView, navigationProbe) = try await loadGenUI()
+        let input = String(repeating: "这是需要完整保留的课堂问题，包括背景、推理和引用。", count: 300)
+            + "问题末尾"
+        let encodedInput = try XCTUnwrap(
+            String(data: JSONEncoder().encode(input), encoding: .utf8)
+        )
+        let result = try await webView.evaluateJavaScript("""
+        (() => {
+          const spec = {items:[{type:'textarea', id:'answer'}]};
+          window.WeiBeiGenUIHost.render({spec});
+          const control = document.querySelector('textarea');
+          control.value = \(encodedInput);
+          control.dispatchEvent(new Event('input'));
+          window.WeiBeiGenUIHost.render({spec, state: window.WeiBeiGenUIHost.snapshot()});
+          return document.querySelector('textarea').value;
+        })()
+        """) as? String
+
+        XCTAssertEqual(result, input)
+        withExtendedLifetime(navigationProbe) {}
+    }
+
+    @MainActor
+    func testGenUICopyWritesFullText() async throws {
+        let (webView, navigationProbe) = try await loadGenUI()
+        let text = String(repeating: "需要完整复制的学习内容。", count: 1_000) + "复制末尾"
+        let data = try JSONSerialization.data(withJSONObject: [
+            "spec": ["items": [["type": "copy", "text": text]]],
+        ])
+        let payload = try XCTUnwrap(String(data: data, encoding: .utf8))
+        let result = try await webView.evaluateJavaScript("""
+        (() => {
+          Object.defineProperty(navigator, 'clipboard', {
+            configurable: true,
+            value: {writeText: text => { window.copiedText = text; return Promise.resolve(); }}
+          });
+          window.WeiBeiGenUIHost.render(\(payload));
+          document.querySelector('.button').click();
+          return window.copiedText;
+        })()
+        """) as? String
+
+        XCTAssertEqual(result, text)
+        withExtendedLifetime(navigationProbe) {}
+    }
+
+    @MainActor
     func testGenUIKeepsFullTextAndRevealsWholeTable() async throws {
         let configuration = WKWebViewConfiguration()
         let webView = WKWebView(
@@ -239,6 +287,23 @@ final class AgentVisualizationSizingTests: XCTestCase {
             try await Task.sleep(nanoseconds: 20_000_000)
         }
         XCTFail("GenUI did not report a height in the expected range: \(probe.heights)")
+    }
+
+    @MainActor
+    private func loadGenUI() async throws -> (WKWebView, GenUINavigationProbe) {
+        let webView = WKWebView(
+            frame: NSRect(x: 0, y: 0, width: 640, height: 240),
+            configuration: WKWebViewConfiguration()
+        )
+        let loaded = expectation(description: "GenUI runtime loaded")
+        let navigationProbe = GenUINavigationProbe { loaded.fulfill() }
+        webView.navigationDelegate = navigationProbe
+        let entry = try XCTUnwrap(
+            WeiBeiResources.bundle.url(forResource: "genui", withExtension: "html")
+        )
+        webView.loadFileURL(entry, allowingReadAccessTo: entry.deletingLastPathComponent())
+        await fulfillment(of: [loaded], timeout: 3)
+        return (webView, navigationProbe)
     }
 }
 
