@@ -465,7 +465,7 @@ struct CourseProjectEntrySheet: View {
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .weibeiEtchedBackground(
+        .weibeiQuietCard(
             fill: WeiBeiTheme.paperRaised.opacity(0.34),
             stroke: WeiBeiTheme.hairline.opacity(0.3),
             cornerRadius: 12
@@ -541,7 +541,7 @@ struct CourseProjectEntrySheet: View {
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .weibeiEtchedBackground(
+        .weibeiQuietCard(
             fill: WeiBeiTheme.paperRaised.opacity(0.30),
             stroke: WeiBeiTheme.hairline.opacity(0.28),
             cornerRadius: 12
@@ -563,7 +563,7 @@ struct CourseProjectEntrySheet: View {
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .weibeiEtchedBackground(
+        .weibeiQuietCard(
             fill: WeiBeiTheme.paperRaised.opacity(0.30),
             stroke: WeiBeiTheme.hairline.opacity(0.28),
             cornerRadius: 12
@@ -1029,7 +1029,7 @@ func relationFooter(
     }
     .padding(.horizontal, 18)
     .frame(height: 46)
-    .weibeiEtchedBackground(
+    .weibeiQuietCard(
     fill: WeiBeiTheme.paperRaised.opacity(0.36),
     stroke: WeiBeiTheme.hairline.opacity(0.3),
     cornerRadius: 8

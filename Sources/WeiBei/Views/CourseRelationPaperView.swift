@@ -154,7 +154,7 @@ struct CourseRelationPaperView: View {
         }
         .padding(.horizontal, 16)
         .frame(height: 40)
-        .weibeiEtchedBackground(
+        .weibeiQuietCard(
             fill: WeiBeiTheme.paperRaised.opacity(0.22),
             stroke: WeiBeiTheme.hairline.opacity(0.24),
             cornerRadius: 8
@@ -231,7 +231,7 @@ struct CourseRelationPaperView: View {
         }
         .frame(width: 212)
         .frame(maxHeight: .infinity)
-        .weibeiEtchedBackground(
+        .weibeiQuietCard(
             fill: WeiBeiTheme.paperRaised.opacity(0.22),
             stroke: WeiBeiTheme.hairline.opacity(0.24),
             cornerRadius: 8
@@ -622,7 +622,7 @@ struct CourseRelationPaperView: View {
             }
             .padding(18)
         }
-        .weibeiEtchedBackground(
+        .weibeiQuietCard(
             fill: WeiBeiTheme.paperRaised.opacity(0.18),
             stroke: WeiBeiTheme.hairline.opacity(0.22),
             cornerRadius: 8

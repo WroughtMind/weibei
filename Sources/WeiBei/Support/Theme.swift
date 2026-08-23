@@ -1833,6 +1833,19 @@ extension View {
         }
     }
 
+    /// Quiet flat card: tinted fill + hairline frame only — the ambient
+    /// container language for content cards (no sheen, shade, or shadow).
+    func weibeiQuietCard(fill: Color, stroke: Color, cornerRadius: CGFloat) -> some View {
+        background {
+            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                .fill(fill)
+                .overlay {
+                    RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                        .stroke(stroke, lineWidth: 1)
+                }
+        }
+    }
+
     /// Raised bright-pill background — one-liner for action controls.
     func weibeiRaisedBackground(
         fill: Color,

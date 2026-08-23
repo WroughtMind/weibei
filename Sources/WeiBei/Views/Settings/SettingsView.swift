@@ -788,7 +788,7 @@ struct SettingsView: View {
                     .padding(12)
             }
             .frame(minHeight: 260, maxHeight: 420)
-            .weibeiEtchedBackground(
+            .weibeiQuietCard(
                 fill: WeiBeiTheme.paperRaised.opacity(0.52),
                 stroke: WeiBeiTheme.hairline.opacity(0.3),
                 cornerRadius: 8
@@ -874,7 +874,7 @@ struct SettingsView: View {
                     .frame(minHeight: 140, maxHeight: 200)
                     .padding(6)
             }
-            .weibeiEtchedBackground(
+            .weibeiQuietCard(
                 fill: WeiBeiTheme.paperRaised.opacity(0.52),
                 stroke: WeiBeiTheme.hairline.opacity(0.3),
                 cornerRadius: 8

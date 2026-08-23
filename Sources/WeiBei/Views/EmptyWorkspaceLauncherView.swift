@@ -685,13 +685,11 @@ private struct LibraryPlacementNoticeCard: View {
         .padding(.horizontal, 16)
         .padding(.vertical, 13)
         .frame(maxWidth: 470)
-        .background {
-            WeiBeiEtchedBackdrop(
-                shape: RoundedRectangle(cornerRadius: 8, style: .continuous),
-                fill: WeiBeiTheme.paperRaised.opacity(0.55),
-                stroke: WeiBeiTheme.hairline.opacity(0.5)
-            )
-        }
+        .weibeiQuietCard(
+            fill: WeiBeiTheme.paperRaised.opacity(0.55),
+            stroke: WeiBeiTheme.hairline.opacity(0.5),
+            cornerRadius: 8
+        )
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         .shadow(color: WeiBeiTheme.ink.opacity(0.06), radius: 2, y: 1)
         .shadow(color: WeiBeiTheme.ink.opacity(0.05), radius: 10, y: 3)
