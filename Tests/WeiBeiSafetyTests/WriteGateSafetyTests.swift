@@ -3,6 +3,24 @@ import Foundation
 import WeiBeiCore
 import XCTest
 
+private final class CompetingNoteFilePresenter: NSObject, NSFilePresenter {
+    let presentedItemURL: URL?
+    let presentedItemOperationQueue = OperationQueue()
+    private let markdown: String
+
+    init(url: URL, markdown: String) {
+        presentedItemURL = url
+        self.markdown = markdown
+    }
+
+    func relinquishPresentedItem(toWriter writer: @escaping ((() -> Void)?) -> Void) {
+        if let presentedItemURL {
+            try? markdown.write(to: presentedItemURL, atomically: true, encoding: .utf8)
+        }
+        writer(nil)
+    }
+}
+
 /// 阶段1 写闸门专项验证（计划 §5 阶段1 第4步）。
 @MainActor
 final class WriteGateSafetyTests: XCTestCase {
@@ -108,7 +126,9 @@ final class WriteGateSafetyTests: XCTestCase {
         let (item, url) = try importNote(store, base: base, courseID: courseID, content: "基线内容")
         store.noteBackingContentDigestsByItemID[item.id] = Self.digest(of: "基线内容")
 
-        try "外部修改".write(to: url, atomically: true, encoding: .utf8)
+        let presenter = CompetingNoteFilePresenter(url: url, markdown: "外部修改")
+        NSFileCoordinator.addFilePresenter(presenter)
+        defer { NSFileCoordinator.removeFilePresenter(presenter) }
 
         let pendingInput = "用户未落盘的编辑"
         store.scheduleNotePersistence(pendingInput, for: item)

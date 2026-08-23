@@ -2,6 +2,16 @@ import XCTest
 @testable import WeiBei
 
 final class NoteEditingSessionTests: XCTestCase {
+    func testEditorRecoveryLimitsTwoRetriesPerMinute() {
+        var failures: [Date] = []
+        let start = Date(timeIntervalSince1970: 0)
+
+        XCTAssertTrue(shouldAutomaticallyRecoverEditor(failureDates: &failures, now: start))
+        XCTAssertTrue(shouldAutomaticallyRecoverEditor(failureDates: &failures, now: start.addingTimeInterval(10)))
+        XCTAssertFalse(shouldAutomaticallyRecoverEditor(failureDates: &failures, now: start.addingTimeInterval(20)))
+        XCTAssertTrue(shouldAutomaticallyRecoverEditor(failureDates: &failures, now: start.addingTimeInterval(81)))
+    }
+
     @MainActor
     func testRejectsSnapshotFromStaleDocumentGeneration() throws {
         var commands: [NoteEditorSnapshotRequest] = []
