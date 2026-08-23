@@ -667,7 +667,13 @@ private func checkStudyAgentContext() throws {
             && retainsRecentResolvedMemory,
         "study-agent context carries a bounded memory revision and recent resolved history"
     )
-    try piRequire(envelope.learning.memories.allSatisfy { $0.text.count <= 500 && $0.evidence.count <= 400 }, "study-agent context bounds durable learning memory")
+    try piRequire(
+        envelope.learning.memories.allSatisfy { memory in
+            learningMemories.first(where: { $0.id == memory.id })?.text == memory.text
+                && memory.evidence.count <= 400
+        },
+        "study-agent context preserves full learning memory text"
+    )
     try piRequire(
         envelope.learning.lastLocation?.itemTitle.count == 300
             && envelope.learning.lastLocation?.itemID == "course-item-1"
