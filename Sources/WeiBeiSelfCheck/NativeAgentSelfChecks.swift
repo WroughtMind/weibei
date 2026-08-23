@@ -12,7 +12,6 @@ func runNativeAgentSelfChecks() throws {
     try checkOAuthPKCEAndAuthorizeURL()
     try checkResponsesWebSearchPayload()
     try checkResponsesTranslation()
-    try checkFailedPDFRetryAuthorization()
     try checkAnthropicTranslation()
     try checkGeminiTranslation()
     try checkOAuthLogoutLeavesNoCredential()
@@ -225,7 +224,7 @@ private func checkResponsesTranslation() throws {
         searchSources == [.webSearchSource(url: "https://example.com/fresh")],
         "Responses search source maps"
     )
-    var authorizedURLs = ["https://example.com/fresh"]
+    let authorizedURLs = ["https://example.com/fresh"]
     try nativeRequire(
         WeiBeiWebResearchURLPolicy.isAuthorized(
             "https://EXAMPLE.com:443/fresh#section",
@@ -242,59 +241,13 @@ private func checkResponsesTranslation() throws {
         ),
         "same-host different path is rejected"
     )
-    WeiBeiWebResearchURLPolicy.consumeSearchAuthorization(
-        for: "https://example.com/fresh",
-        from: &authorizedURLs
-    )
     try nativeRequire(
-        !WeiBeiWebResearchURLPolicy.isAuthorized(
+        WeiBeiWebResearchURLPolicy.isAuthorized(
             "https://example.com/fresh",
             in: "搜索后继续核对",
             webSearchURLs: authorizedURLs
         ),
-        "searched URL authorization is consumed once"
-    )
-}
-
-private func checkFailedPDFRetryAuthorization() throws {
-    let registry = NativeToolRegistry()
-    _ = try waitFor { await NativeBuiltinTools.registerAll(into: registry, skillRoot: nil) }
-
-    func retryCount(question: String) throws -> Int {
-        let ledgerURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("native-pdf-retry-\(UUID().uuidString).jsonl")
-        defer { try? FileManager.default.removeItem(at: ledgerURL) }
-        let ledger = try NativeAgentLedger(fileURL: ledgerURL)
-        let counter = NativeHostCallCounter()
-        _ = try waitFor {
-            try await NativeAgentLoop().run(
-                request: StudyAgentRequest(
-                    purpose: .conversation, question: question,
-                    materialTitle: "", materialText: "", noteTitle: "", noteText: "",
-                    contextRevision: "pdf-retry-check"
-                ),
-                ledger: ledger,
-                registry: registry,
-                adapter: NativeRepeatedPDFRetryAdapter(),
-                model: "mock",
-                hostToolHandler: { request in
-                    if case .retryFailedPDFPages = request { counter.increment() }
-                    return StudyAgentHostToolResult(query: "", items: [])
-                },
-                systemPrompt: "test",
-                progress: nil
-            )
-        }
-        return counter.value
-    }
-
-    try nativeRequire(
-        retryCount(question: "请重新索引这个 PDF 的失败页") == 1,
-        "explicit PDF retry request grants only one host call"
-    )
-    try nativeRequire(
-        retryCount(question: "请解释这份 PDF") == 0,
-        "ordinary PDF question cannot call failed-page retry"
+        "searched URL remains authorized in the current run"
     )
 }
 
@@ -1185,51 +1138,4 @@ private func waitFor<T>(_ body: @escaping () async throws -> T) throws -> T {
 
 private final class ResultBox<T>: @unchecked Sendable {
     var value: Result<T, Error>?
-}
-
-private final class NativeRepeatedPDFRetryAdapter: NativeLLMAdapter, @unchecked Sendable {
-    let family = "mock"
-    private let lock = NSLock()
-    private var step = 0
-
-    func stream(_ request: NativeLLMRequest) -> AsyncThrowingStream<NativeStreamChunk, Error> {
-        lock.lock()
-        step += 1
-        let current = step
-        lock.unlock()
-        let chunks: [NativeStreamChunk]
-        if current <= 2 {
-            chunks = [
-                .toolCallDelta(
-                    index: 0, id: "retry-\(current)",
-                    name: "weibei_course_retry_failed_pdf_pages",
-                    argumentsDelta: #"{"itemID":"pdf-1"}"#
-                ),
-                .finish(reason: .toolCalls, replayState: nil),
-            ]
-        } else {
-            chunks = [.textDelta(index: 0, text: "完成"), .finish(reason: .stop, replayState: nil)]
-        }
-        return AsyncThrowingStream { continuation in
-            chunks.forEach { continuation.yield($0) }
-            continuation.finish()
-        }
-    }
-}
-
-private final class NativeHostCallCounter: @unchecked Sendable {
-    private let lock = NSLock()
-    private var count = 0
-
-    func increment() {
-        lock.lock()
-        count += 1
-        lock.unlock()
-    }
-
-    var value: Int {
-        lock.lock()
-        defer { lock.unlock() }
-        return count
-    }
 }

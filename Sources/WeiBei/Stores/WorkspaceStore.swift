@@ -14959,7 +14959,7 @@ final class WorkspaceStore: ObservableObject {
                 throw AgentConversationTargetError(message: "这份 PDF 不属于当前 Chat 的查询范围")
             }
             guard searchIndex.retryFailedPDFPages(in: source.item) else {
-                throw AgentConversationTargetError(message: "这份 PDF 当前没有可重新索引的最终失败页")
+                throw AgentConversationTargetError(message: "这份 PDF 当前没有可重新索引的识别失败页")
             }
             return StudyAgentHostToolResult(
                 query: "已开始重新索引失败页",
