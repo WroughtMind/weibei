@@ -598,7 +598,6 @@ final class WorkspaceStore: ObservableObject {
     @Published var notebookRenameDraft: NotebookRenameDraft?
     var notebookRenameInFlight = false
     @Published var modelName: String = ""
-    @Published private(set) var agentInteractiveVisualizationsEnabled = true
     @Published var agentProviderID: AgentProviderID = .openai
     @Published var agentBaseURL: String = ""
     @Published var agentAuthMethod: AgentAuthMethod = .apiKey
@@ -894,7 +893,6 @@ final class WorkspaceStore: ObservableObject {
 
     private static let shortcutModifierMask: NSEvent.ModifierFlags = [.command, .option, .control, .shift]
     private static let legacySelectionAskThreadsDefaultsKey = "weibei.selectionAskThreads.v1"
-    private static let interactiveVisualizationsDefaultsKey = "weibei.agent.interactiveVisualizationsEnabled"
 
     convenience init() {
         let folder = Self.workspaceRootDirectory()
@@ -960,13 +958,6 @@ final class WorkspaceStore: ObservableObject {
         self.workspaceSnapshotWriter = workspaceSnapshotWriter
         self.coursePortableStateWriter = coursePortableStateWriter
         self.selectionAskThreadDefaults = selectionAskThreadDefaults
-        if selectionAskThreadDefaults.object(
-            forKey: Self.interactiveVisualizationsDefaultsKey
-        ) != nil {
-            agentInteractiveVisualizationsEnabled = selectionAskThreadDefaults.bool(
-                forKey: Self.interactiveVisualizationsDefaultsKey
-            )
-        }
         if let motionPreferenceRaw = selectionAskThreadDefaults.string(
             forKey: WeiBeiMotionPreference.persistedDefaultsKey
         ), let persistedMotionPreference = WeiBeiMotionPreference(rawValue: motionPreferenceRaw) {
@@ -1617,7 +1608,7 @@ final class WorkspaceStore: ObservableObject {
                        stopScope(previousScope)
                    }
                ) {
-                // The old scope stays valid until the running PI process has stopped.
+                // The old scope stays valid until the running Agent request has stopped.
             } else {
                 courseSecurityScopeStopper(previousScope)
             }
@@ -10664,7 +10655,7 @@ final class WorkspaceStore: ObservableObject {
         }
     }
 
-    /// Route one course-home question into the existing Chat/Pi pipeline.
+    /// Route one course-home question into the existing Chat/Agent pipeline.
     /// The home keeps its own draft until this method has validated the course root.
     @discardableResult
     func submitCourseHomeQuestion(
@@ -11731,7 +11722,7 @@ final class WorkspaceStore: ObservableObject {
         // Prefer the structured "来源：" parser (handles section markers).
         if openSourceReference("来源：\(trimmed)") { return true }
         if openSourceReference(trimmed) { return true }
-        // Fuzzy title match for Pi short labels like "货币金融学课程 HTML".
+        // Fuzzy title match for Agent short labels like "货币金融学课程 HTML".
         guard let item = resolveStudyItem(matchingCitationTitle: trimmed) else { return false }
         if item.isNotebookNote || kind == "note" {
             if layout == .immersiveConversation || layout == .immersiveReading {
@@ -12269,15 +12260,6 @@ final class WorkspaceStore: ObservableObject {
         modelName = value
         touchActiveAgentProfileMetadata()
         save()
-    }
-
-    func setAgentInteractiveVisualizationsEnabled(_ enabled: Bool) {
-        guard agentInteractiveVisualizationsEnabled != enabled else { return }
-        agentInteractiveVisualizationsEnabled = enabled
-        selectionAskThreadDefaults.set(
-            enabled,
-            forKey: Self.interactiveVisualizationsDefaultsKey
-        )
     }
 
     func toggleAppearanceMode() {
@@ -13921,7 +13903,7 @@ final class WorkspaceStore: ObservableObject {
             return nil
         }
         // identity 只用于找回、永不用于拒绝：条目/目标身份漂移时刷新继续，
-        // 授权以活体身份为准（Pi 扩展协议字段不变）。
+        // 授权以活体身份为准。
         if let entryIdentity = membership.entryIdentity, entryIdentity != liveEntryIdentity {
             WeiBeiLog.workspace.notice("agent_grant_entry_identity_refreshed")
         }
@@ -16585,7 +16567,6 @@ final class WorkspaceStore: ObservableObject {
                 courseProfile: sentCourseProfile,
                 language: sentLanguage,
                 contextRevision: "\(requestWorkspaceRevision):\(requestID.uuidString.lowercased())",
-                interactiveVisualizationsEnabled: agentInteractiveVisualizationsEnabled,
                 confirmedNotes: confirmedAgentNotes(in: target)
             )
             agentStreaming.activityText = ui("正在思考", "Thinking")

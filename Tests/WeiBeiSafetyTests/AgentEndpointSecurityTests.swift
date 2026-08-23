@@ -18,18 +18,18 @@ final class AgentEndpointSecurityTests: XCTestCase {
         )
 
         XCTAssertEqual(first.baseURL, "https://api.example.com/v1")
-        XCTAssertEqual(first.piProviderID, sameService.piProviderID)
-        XCTAssertNotEqual(first.piProviderID, otherService.piProviderID)
-        XCTAssertTrue(first.piProviderID.hasPrefix("weibei-custom-"))
+        XCTAssertEqual(first.credentialProviderID, sameService.credentialProviderID)
+        XCTAssertNotEqual(first.credentialProviderID, otherService.credentialProviderID)
+        XCTAssertTrue(first.credentialProviderID.hasPrefix("weibei-custom-"))
     }
 
-    func testAzureKeepsPiProviderIDWhileRequiringItsServiceAddress() throws {
+    func testAzureKeepsStableProviderIDWhileRequiringItsServiceAddress() throws {
         let endpoint = try AgentProviderEndpoint(
             provider: .azureOpenAI,
             baseURL: "HTTPS://Example.openai.azure.com:443/"
         )
 
-        XCTAssertEqual(endpoint.piProviderID, "azure-openai-responses")
+        XCTAssertEqual(endpoint.credentialProviderID, "azure-openai-responses")
         XCTAssertEqual(endpoint.baseURL, "https://example.openai.azure.com")
         XCTAssertThrowsError(
             try AgentProviderEndpoint(provider: .azureOpenAI, baseURL: "")
@@ -70,33 +70,25 @@ final class AgentEndpointSecurityTests: XCTestCase {
         }
     }
 
-    func testCustomModelsUseEndpointBoundProviderID() async throws {
+    func testCredentialStoreKeepsEndpointBinding() throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("WeiBeiEndpointTest-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root) }
-        let runtime = PiAgentRuntime(
-            executableURL: root.appendingPathComponent("unused-pi"),
-            runtimeDirectory: root.appendingPathComponent("runtime", isDirectory: true),
-            persistentPiConfigurationDirectory: root.appendingPathComponent("pi", isDirectory: true)
-        )
         let endpoint = try AgentProviderEndpoint(
             provider: .custom,
             baseURL: "https://api.example.com/v1"
         )
+        let store = NativeAgentCredentialStore(fileURL: root.appendingPathComponent("credentials.json"))
 
-        try await runtime.writeCustomModelsJSONIfNeeded(
-            providerID: .custom,
-            baseURL: "https://api.example.com/v1",
-            model: "test-model"
-        )
+        try store.upsert(NativeAgentCredentialRecord(
+            provider: endpoint.credentialProviderID,
+            apiKey: "secret",
+            boundEndpoint: endpoint.baseURL
+        ))
 
-        let modelsURL = root.appendingPathComponent("pi/models.json")
-        let object = try JSONSerialization.jsonObject(with: Data(contentsOf: modelsURL))
-        let providers = try XCTUnwrap(
-            (object as? [String: Any])?["providers"] as? [String: Any]
-        )
-        XCTAssertEqual(Set(providers.keys), [endpoint.piProviderID])
-        XCTAssertNil(providers["weibei-custom"])
+        let record = try XCTUnwrap(store.load()[endpoint.credentialProviderID])
+        XCTAssertEqual(record.boundEndpoint, endpoint.baseURL)
+        XCTAssertNil(store.load()[AgentProviderID.custom.credentialProviderID])
     }
 
     func testWebOpenRequiresAnExplicitPublicHTTPSURL() throws {

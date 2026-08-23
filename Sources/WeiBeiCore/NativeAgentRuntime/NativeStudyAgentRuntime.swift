@@ -130,7 +130,7 @@ public actor NativeStudyAgentRuntime: StudyAgentRuntime {
 
     private func ensureTools() async throws {
         guard !didRegisterTools else { return }
-        let skillRoot = try? PiAgentResources.bundled().skillsURL
+        let skillRoot = try? AgentResources.bundled().skillsURL
         var stores = liveStores
         if stores.skillRegistry.packs.isEmpty, let skillRoot {
             stores.skillRegistry = (try? NativeSkillRegistry.load(from: skillRoot)) ?? stores.skillRegistry

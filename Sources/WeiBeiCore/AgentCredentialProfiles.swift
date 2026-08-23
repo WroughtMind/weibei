@@ -2,11 +2,11 @@ import CryptoKit
 import Darwin
 import Foundation
 
-/// How the user wants to attach a model provider for Pi.
+/// How the user wants to authenticate with a model provider.
 public enum AgentAuthMethod: String, Codable, CaseIterable, Identifiable, Sendable {
-    /// Configure an API credential through embedded Pi.
+    /// Configure an API credential saved by WeiBei.
     case apiKey
-    /// Pi `/login` style OAuth subscription (tokens in auth.json).
+    /// Browser-based OAuth subscription.
     case subscription
 
     public var id: String { rawValue }
@@ -29,8 +29,8 @@ public enum AgentAuthMethod: String, Codable, CaseIterable, Identifiable, Sendab
             )
         case .subscription:
             return language.text(
-                "通过浏览器连接 ChatGPT Plus/Pro、Claude Pro/Max 等订阅；登录信息由魏碑保存。",
-                "Connect ChatGPT Plus/Pro, Claude Pro/Max, and other subscriptions in the browser. WeiBei saves the sign-in information."
+                "通过浏览器连接 ChatGPT Plus/Pro 订阅；登录信息由魏碑保存。",
+                "Connect a ChatGPT Plus/Pro subscription in the browser. WeiBei saves the sign-in information."
             )
         }
     }
@@ -64,7 +64,7 @@ public struct AgentAuthenticationStatus: Equatable, Sendable {
 }
 
 /// A named, switchable agent configuration (provider + model + optional base URL).
-/// Credentials are provider-owned entries in embedded Pi and never enter this payload.
+/// Credentials are stored separately and never enter this payload.
 public struct AgentCredentialProfile: Identifiable, Codable, Equatable, Sendable {
     public var id: UUID
     public var name: String
@@ -113,16 +113,16 @@ public enum AgentProviderEndpointError: LocalizedError, Equatable, Sendable {
     }
 }
 
-/// The normalized model endpoint and the Pi provider id that owns its credential.
+/// The normalized model endpoint and the provider id that owns its credential.
 /// Profiles may vary by model while credentials remain shared only by endpoint.
 public struct AgentProviderEndpoint: Equatable, Sendable {
-    public var piProviderID: String
+    public var credentialProviderID: String
     public var baseURL: String?
 
     public init(provider: AgentProviderID, baseURL rawBaseURL: String) throws {
         let trimmed = rawBaseURL.trimmingCharacters(in: .whitespacesAndNewlines)
         guard provider.showsBaseURLField else {
-            piProviderID = provider.piProviderName
+            credentialProviderID = provider.credentialProviderID
             baseURL = nil
             return
         }
@@ -130,7 +130,7 @@ public struct AgentProviderEndpoint: Equatable, Sendable {
             if provider == .custom || provider == .llamaCpp || provider == .azureOpenAI {
                 throw AgentProviderEndpointError.missing
             }
-            piProviderID = provider.piProviderName
+            credentialProviderID = provider.credentialProviderID
             baseURL = nil
             return
         }
@@ -172,9 +172,9 @@ public struct AgentProviderEndpoint: Equatable, Sendable {
                 .map { String(format: "%02x", $0) }
                 .joined()
             let prefix = provider == .custom ? "weibei-custom" : "weibei-llama"
-            piProviderID = "\(prefix)-\(digest)"
+            credentialProviderID = "\(prefix)-\(digest)"
         default:
-            piProviderID = provider.piProviderName
+            credentialProviderID = provider.credentialProviderID
         }
     }
 
@@ -320,7 +320,7 @@ public enum AgentProviderConsoleLinks {
     }
 }
 
-/// Persist named provider/model configurations. Embedded Pi owns credentials.
+/// Persist named provider/model configurations. Credentials stay in the native store.
 public enum AgentCredentialProfileStore {
     private static let profilesKey = "weibei.agentCredentialProfiles.v1"
     private static let activeProfileKey = "weibei.agentCredentialActiveProfileID.v1"

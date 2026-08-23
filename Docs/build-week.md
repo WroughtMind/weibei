@@ -29,7 +29,7 @@ GPT-5.6 was used inside Codex for selected architecture, implementation, debuggi
 
 The author remained responsible for the original problem, product architecture, UX direction, acceptance criteria, hands-on testing, and every final shipping decision, and rejected generated directions that added complexity without improving the study flow.
 
-This describes the development process. Inside the product, Pi is the Agent orchestration layer and the user chooses a configured model provider. GPT-5.6 is not hard-coded as WeiBei's runtime default.
+This describes the development process. At submission time, Pi was the Agent orchestration layer; WeiBei now uses its Swift-native Agent runtime. The user still chooses a configured model provider, and GPT-5.6 is not hard-coded as the runtime default.
 
 ## Judge walkthrough
 

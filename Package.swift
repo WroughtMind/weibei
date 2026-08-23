@@ -10,7 +10,7 @@ let package = Package(
         .executable(name: "WeiBei", targets: ["WeiBei"]),
         .executable(name: "WeiBeiSelfCheck", targets: ["WeiBeiSelfCheck"]),
         .executable(name: "WeiBeiWebEditorCheck", targets: ["WeiBeiWebEditorCheck"]),
-        .executable(name: "WeiBeiPiCheck", targets: ["WeiBeiPiCheck"]),
+        .executable(name: "WeiBeiNativeCheck", targets: ["WeiBeiNativeCheck"]),
         .executable(name: "WeiBeiPDFTextWorker", targets: ["WeiBeiPDFTextWorker"]),
         .executable(name: "WeiBeiDev", targets: ["WeiBeiDev"])
     ],
@@ -64,7 +64,7 @@ let package = Package(
             ]
         ),
         .executableTarget(
-            name: "WeiBeiPiCheck",
+            name: "WeiBeiNativeCheck",
             dependencies: ["WeiBeiCore"]
         ),
         .executableTarget(

@@ -1,5 +1,7 @@
 ![魏碑](DesignSystem/assets/github/readme-hero-1983x793.png)
 
+> 历史提案：本文保留当时的品牌文案，不再描述当前运行时、认证或构建方式；请以仓库根目录的 README 为准。
+
 # 魏碑
 
 本地学习用的 macOS 工作台。

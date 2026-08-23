@@ -3601,7 +3601,7 @@ private struct AgentReplyMemoryUpdateTag: View {
 
 // MARK: - Agent citation tags (materials / learning / selection)
 
-/// Bracket citations Pi emits in answers, e.g. `[材料：…]`, `[学习记录：上次位置]`.
+/// Bracket citations Agent emits in answers, e.g. `[材料：…]`, `[学习记录：上次位置]`.
 private enum AgentCitationKind: String, Equatable {
     case material
     case note
@@ -3967,7 +3967,7 @@ private final class AgentMessageMarkdownMemo {
 }
 
 private enum AgentCitationParser {
-    /// Matches `[材料：…]` / `[学习记录：上次位置]` style Pi citation labels.
+    /// Matches `[材料：…]` / `[学习记录：上次位置]` style Agent citation labels.
     private static let pattern = #"\[(材料|笔记|选区|学习记录|学习记忆|会话)[：:]\s*([^\]\n]{1,300})\]"#
     private static let regex = try? NSRegularExpression(pattern: pattern)
     private static let collapsedSpaces = try? NSRegularExpression(pattern: #"[ \t]{2,}"#)

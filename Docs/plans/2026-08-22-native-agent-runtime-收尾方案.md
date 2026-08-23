@@ -1,5 +1,7 @@
 # Native Agent Runtime 收尾方案（评测后工作包）
 
+> 历史工作包：本方案已完成，当前产品只使用 Swift 原生 Agent；下文的 Pi 对照与分支状态均为当时记录。
+
 日期：2026-08-22
 分支：`codex/native-agent-runtime`（草稿 MR #285，不滚动合并）
 执行：Grok；质量 judge：Kimi；最终拍板：用户

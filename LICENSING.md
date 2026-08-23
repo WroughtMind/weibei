@@ -58,8 +58,6 @@ rights. See [`TRADEMARKS.md`](TRADEMARKS.md) for the project identity policy.
 
 Third-party components keep their original licenses:
 
-- `Vendor/PiRuntime/` is licensed under the MIT License documented in that
-  directory.
 - JavaScript dependencies are recorded in the root and prototype
   `package-lock.json` files. Generated bundles retain embedded upstream notices.
 - Noto Sans CJK and Noto Serif CJK web fonts under `website/assets/fonts/` are
