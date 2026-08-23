@@ -4917,7 +4917,7 @@ private struct AgentMessageMarkdownText: View {
                 // renderers use it directly; held offscreen renderers are clipped.
                 .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
                 .allowsHitTesting(finalizedRendererReady && !isStreaming)
-                .accessibilityHidden(!finalizedRendererReady)
+                .accessibilityHidden(!(isStreaming || finalizedRendererReady || awaitsFinalizedRendererReady))
                 // Handoff (awaitsFinalizedRendererReady) keeps the live WebView
                 // fully visible: it already shows the streamed answer, and
                 // hiding it behind native text would flash at completion.
