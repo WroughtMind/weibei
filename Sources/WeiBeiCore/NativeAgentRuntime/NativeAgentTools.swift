@@ -60,7 +60,7 @@ public struct NativeToolExecutionContext: Sendable {
     public var hostToolHandler: StudyAgentHostToolHandler?
     public var persistentAssetIDsByContextID: [String: String]
     public var searchedItemIDs: [String]
-    public var webSearchURLs: [String]
+    public var currentRunSourceURLs: [String]
     public var readSourceRevisions: [String: String]
     public var lastReadMemoryRevision: UInt64?
     public var courseProfileUpdated: Bool
@@ -73,7 +73,7 @@ public struct NativeToolExecutionContext: Sendable {
         hostToolHandler: StudyAgentHostToolHandler? = nil,
         persistentAssetIDsByContextID: [String: String] = [:],
         searchedItemIDs: [String] = [],
-        webSearchURLs: [String] = [],
+        currentRunSourceURLs: [String] = [],
         readSourceRevisions: [String: String] = [:],
         lastReadMemoryRevision: UInt64? = nil,
         courseProfileUpdated: Bool = false,
@@ -85,7 +85,7 @@ public struct NativeToolExecutionContext: Sendable {
         self.hostToolHandler = hostToolHandler
         self.persistentAssetIDsByContextID = persistentAssetIDsByContextID
         self.searchedItemIDs = searchedItemIDs
-        self.webSearchURLs = webSearchURLs
+        self.currentRunSourceURLs = currentRunSourceURLs
         self.readSourceRevisions = readSourceRevisions
         self.lastReadMemoryRevision = lastReadMemoryRevision
         self.courseProfileUpdated = courseProfileUpdated
@@ -224,7 +224,7 @@ enum NativeToolGuard {
             guard WeiBeiWebResearchURLPolicy.isAvailableInCurrentRun(
                 url,
                 in: context.request.question,
-                webSearchURLs: context.webSearchURLs
+                currentRunSourceURLs: context.currentRunSourceURLs
             ) else {
                 throw NativeLLMFailure(code: "guard_denied", message: "该网页地址不在本轮可访问来源中")
             }
@@ -549,7 +549,7 @@ public enum NativeBuiltinTools {
     private static var webOpen: NativeToolDefinition {
         hostTool(
             name: "weibei_web_open",
-            description: "读取用户本轮明确贴出或本轮网页搜索刚返回的 HTTPS 网页。",
+            description: "读取用户本轮明确贴出、原生网页搜索返回，或已成功读取页面中真实链接指向的 HTTPS 网页。",
             permission: .read,
             schema: NativeJSONSchema([
                 "type": "object",

@@ -119,8 +119,8 @@ public actor NativeAgentLoop {
                         collectedText += text
                         await progress?(.text(collectedText, []))
                     case let .webSearchSource(url):
-                        if !context.webSearchURLs.contains(url) {
-                            context.webSearchURLs.append(url)
+                        if !context.currentRunSourceURLs.contains(url) {
+                            context.currentRunSourceURLs.append(url)
                         }
                     case let .toolCallDelta(_, _, name, _):
                         if let name {
@@ -331,6 +331,15 @@ public actor NativeAgentLoop {
                         )
                     }
                 }
+            }
+        }
+        if name == "weibei_web_open",
+           let pages = (try? JSONDecoder().decode(
+            StudyAgentHostToolResult.self,
+            from: Data(result.text.utf8)
+           ))?.webPages {
+            for link in pages.flatMap(\.links) where !context.currentRunSourceURLs.contains(link) {
+                context.currentRunSourceURLs.append(link)
             }
         }
         if name == "weibei_note_proposal" {

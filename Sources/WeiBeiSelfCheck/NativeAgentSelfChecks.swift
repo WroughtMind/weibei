@@ -224,12 +224,12 @@ private func checkResponsesTranslation() throws {
         searchSources == [.webSearchSource(url: "https://example.com/fresh")],
         "Responses search source maps"
     )
-    let currentRunSearchURLs = ["https://example.com/fresh"]
+    let currentRunSourceURLs = ["https://example.com/fresh"]
     try nativeRequire(
         WeiBeiWebResearchURLPolicy.isAvailableInCurrentRun(
             "https://EXAMPLE.com:443/fresh#section",
             in: "搜索后继续核对",
-            webSearchURLs: currentRunSearchURLs
+            currentRunSourceURLs: currentRunSourceURLs
         ),
         "exact searched HTTPS URL is available in the current run"
     )
@@ -237,7 +237,7 @@ private func checkResponsesTranslation() throws {
         !WeiBeiWebResearchURLPolicy.isAvailableInCurrentRun(
             "https://example.com/other",
             in: "搜索后继续核对",
-            webSearchURLs: currentRunSearchURLs
+            currentRunSourceURLs: currentRunSourceURLs
         ),
         "same-host different path is rejected"
     )
@@ -245,7 +245,7 @@ private func checkResponsesTranslation() throws {
         WeiBeiWebResearchURLPolicy.isAvailableInCurrentRun(
             "https://example.com/fresh",
             in: "搜索后继续核对",
-            webSearchURLs: currentRunSearchURLs
+            currentRunSourceURLs: currentRunSourceURLs
         ),
         "searched URL remains available in the current run"
     )
