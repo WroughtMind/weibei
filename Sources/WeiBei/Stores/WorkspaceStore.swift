@@ -595,13 +595,27 @@ final class WorkspaceStore: ObservableObject {
     }
     @Published var noteEditorCommand: NoteEditorCommand? {
         willSet {
+            if let current = noteEditorCommand,
+               current.id != newValue?.id,
+               current.kind.isContentCommand,
+               let tracked = unresolvedContentCommands[current.id],
+               !tracked.isCoordinatorOwned {
+                noteEditorCommandRejected(
+                    current,
+                    documentID: noteEditingSession.documentID
+                )
+            }
             guard let command = newValue,
-                  command.kind != .scrollToHeading else { return }
-            unresolvedContentCommandDocumentIDs[command.id] = noteEditingSession.documentID
+                  command.kind.isContentCommand,
+                  unresolvedContentCommands[command.id] == nil else { return }
+            unresolvedContentCommands[command.id] = TrackedNoteEditorCommand(
+                documentID: noteEditingSession.documentID,
+                command: command
+            )
         }
     }
     @Published private var rejectedNoteEditorCommands: [RejectedNoteEditorCommand] = []
-    private var unresolvedContentCommandDocumentIDs: [UUID: String] = [:]
+    private var unresolvedContentCommands: [UUID: TrackedNoteEditorCommand] = [:]
     /// Success / info banner for note create/switch — separate from errors so it auto-dismisses cleanly.
     @Published var transientNoteStatus: String?
     @Published private var noteSelectionTransitionState = NoteSelectionTransitionState.idle
@@ -814,10 +828,13 @@ final class WorkspaceStore: ObservableObject {
         let apply: () -> Void
     }
 
-    private struct RejectedNoteEditorCommand {
+    private struct TrackedNoteEditorCommand {
         let documentID: String
         let command: NoteEditorCommand
+        var isCoordinatorOwned = false
     }
+
+    private typealias RejectedNoteEditorCommand = TrackedNoteEditorCommand
 
     private enum NotebookNoteSeed {
         case blank
@@ -10345,7 +10362,10 @@ final class WorkspaceStore: ObservableObject {
     }
 
     func noteEditorContentCommandPending(_ command: NoteEditorCommand, documentID: String) {
-        guard unresolvedContentCommandDocumentIDs[command.id] == documentID else { return }
+        guard var tracked = unresolvedContentCommands[command.id],
+              tracked.documentID == documentID else { return }
+        tracked.isCoordinatorOwned = true
+        unresolvedContentCommands[command.id] = tracked
         if pendingNoteSelection != nil,
            noteEditingSession.documentID == documentID {
             noteSelectionTransitionState = .saving
@@ -10353,18 +10373,22 @@ final class WorkspaceStore: ObservableObject {
     }
 
     func noteEditorContentCommandApplied(_ command: NoteEditorCommand, documentID: String) {
-        guard unresolvedContentCommandDocumentIDs[command.id] == documentID else { return }
-        unresolvedContentCommandDocumentIDs.removeValue(forKey: command.id)
+        guard unresolvedContentCommands[command.id]?.documentID == documentID else { return }
+        unresolvedContentCommands.removeValue(forKey: command.id)
         rejectedNoteEditorCommands.removeAll { $0.command.id == command.id }
         resumePendingNoteSelection(afterResolvingCommandFor: documentID)
     }
 
     func noteEditorCommandRejected(_ command: NoteEditorCommand, documentID: String) {
-        guard !rejectedNoteEditorCommands.contains(where: { $0.command.id == command.id }) else { return }
-        rejectedNoteEditorCommands.append(RejectedNoteEditorCommand(
-            documentID: documentID,
-            command: command
-        ))
+        guard command.kind.isContentCommand else { return }
+        var tracked = unresolvedContentCommands[command.id]
+            ?? TrackedNoteEditorCommand(documentID: documentID, command: command)
+        tracked.isCoordinatorOwned = false
+        unresolvedContentCommands[command.id] = tracked
+        guard !rejectedNoteEditorCommands.contains(where: {
+            $0.command.id == command.id
+        }) else { return }
+        rejectedNoteEditorCommands.append(tracked)
     }
 
     func retryRejectedNoteEditorCommand() {
@@ -10413,7 +10437,9 @@ final class WorkspaceStore: ObservableObject {
     }
 
     private func hasUnresolvedContentCommand(for documentID: String) -> Bool {
-        unresolvedContentCommandDocumentIDs.values.contains(documentID)
+        unresolvedContentCommands.values.contains {
+            $0.documentID == documentID
+        }
     }
 
     private func resumePendingNoteSelection(afterResolvingCommandFor documentID: String) {
