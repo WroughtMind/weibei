@@ -3310,8 +3310,8 @@ private struct AgentBubble: View {
             && answerText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         return VStack(alignment: .leading, spacing: 8) {
             if message.contentBlocks.contains(where: {
-                if case .visualization = $0 { return true }
-                return false
+                if case .text = $0 { return false }
+                return true
             }) {
                 visualizedMessageFlow(fallbackText: citationParse.displayText)
             } else {
@@ -3520,6 +3520,9 @@ private struct AgentBubble: View {
                     visualization: fragment
                 )
                 .padding(.vertical, 4)
+            case let .unavailable(type, rawJSON):
+                UnavailableAgentContentBlockView(type: type, rawJSON: rawJSON)
+                    .padding(.vertical, 4)
             }
         }
     }

@@ -8,6 +8,12 @@
   let spec = { items: [] };
   let state = {};
   let nodeCount = 0;
+  let actionStatus = 'ready';
+  let actionUnavailableReason = '';
+  let queuedActionKey = null;
+  let pendingAction = null;
+  let actionRejection = null;
+  let nextActionRequestID = 0;
 
   const post = body => window.webkit?.messageHandlers?.weibeiGenUI?.postMessage(body);
   const clamp = (value, min, max) => Math.min(max, Math.max(min, Number(value) || 0));
@@ -23,8 +29,11 @@
     if (redraw) render();
   };
   const action = (node, key, payload = {}) => {
-    if (!node.action) return;
-    post({ type: 'action', action: string(node.action, 200), payload: { component: key, ...payload, state } });
+    if (!node.action || actionStatus !== 'ready' || actionUnavailableReason || pendingAction) return;
+    pendingAction = { requestID: ++nextActionRequestID, key };
+    actionRejection = null;
+    post({ type: 'action', requestID: pendingAction.requestID, action: string(node.action, 200), payload: { component: key, ...payload, state } });
+    render();
   };
   const el = (tag, className, content) => {
     const node = document.createElement(tag);
@@ -348,7 +357,18 @@
       case 'callout': { const box = el('aside', `callout ${node.tone || ''}`); if (node.title) box.append(el('div','callout-title',node.title)); box.append(el('div','',node.content)); return box; }
       case 'steps': { const box = el('div','steps'), current = clamp(node.current ?? array(node.steps).length,0,array(node.steps).length); array(node.steps,24).forEach((step,index) => { const row = el('div',`step ${index < current ? 'done' : index === current ? 'active' : ''}`), body=el('div'); body.append(el('div','',step?.title)); if(step?.desc) body.append(el('div','step-desc',step.desc)); row.append(el('span','step-mark',index < current ? '✓' : index+1),body); box.append(row); }); return box; }
       case 'timeline': { const box=el('div','timeline'); array(node.items,24).forEach(item=>{const row=el('div','timeline-item'),body=el('div'); body.append(el('div','',item?.title)); if(item?.time) body.append(el('div','timeline-time',item.time)); if(item?.desc) body.append(el('div','timeline-desc',item.desc)); row.append(el('span','timeline-mark','·'),body); box.append(row);}); return box; }
-      case 'button': { const button=el('button',`button ${node.tone || ''}`,node.label); button.onclick=()=>action(node,key,{type:'button',label:string(node.label,200)}); return button; }
+      case 'button': {
+        const box=el('div'), label=string(node.label,200), button=el('button',`button ${node.tone || ''}`,label);
+        const reason=!node.action?'此按钮没有配置继续回答操作。':actionUnavailableReason;
+        const rejection=actionRejection?.key===key?actionRejection.reason:'';
+        const status=reason?'':actionStatus==='processing'?'处理中':pendingAction?.key===key?'已按下':queuedActionKey===key?'已排队':'';
+        button.disabled=Boolean(reason||status);
+        if(status) button.textContent=`${label} · ${status}`;
+        button.onclick=()=>action(node,key,{type:'button',label});
+        box.append(button);
+        if(reason||rejection){button.title=reason||rejection; box.append(el('div','text caption',reason||rejection));}
+        return box;
+      }
       case 'input': return field(node,key,false); case 'textarea': return field(node,key,true);
       case 'select': { const label=el('label','field'); if(node.label) label.append(el('span','',node.label)); const select=el('select'), options=array(node.options,50); options.forEach((option,index)=>{const item=el('option','',option); item.value=String(index); select.append(item);}); select.value=String(read(key,clamp(node.selected||0,0,options.length-1))); select.onchange=()=>write(key,Number(select.value)); label.append(select); return label; }
       case 'checkbox': { const label=el('label','choice'),input=document.createElement('input'); input.type='checkbox'; input.checked=Boolean(read(key,node.checked===true)); input.onchange=()=>write(key,input.checked); label.append(input,document.createTextNode(string(node.label))); return label; }
@@ -378,6 +398,16 @@
       if (!payload || typeof payload.spec !== 'object' || !Array.isArray(payload.spec.items)) return;
       spec = { ...payload.spec, appearance: payload.appearance === 'dark' ? 'dark' : 'light' };
       state = payload.state && typeof payload.state === 'object' && !Array.isArray(payload.state) ? payload.state : {};
+      if (actionStatus === 'processing' && payload.actionStatus === 'ready') queuedActionKey = null;
+      actionStatus = payload.actionStatus === 'processing' ? 'processing' : 'ready';
+      actionUnavailableReason = string(payload.actionUnavailableReason, 500);
+      render();
+    },
+    actionResult(result) {
+      if (!pendingAction || Number(result?.requestID) !== pendingAction.requestID) return;
+      if (result.accepted === true) queuedActionKey = pendingAction.key;
+      else actionRejection = { key: pendingAction.key, reason: string(result?.reason, 500) || '互动操作未被受理。' };
+      pendingAction = null;
       render();
     },
     snapshot() { return state; },

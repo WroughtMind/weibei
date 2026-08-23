@@ -4,6 +4,57 @@ import XCTest
 @testable import WeiBei
 
 final class AgentVisualizationSizingTests: XCTestCase {
+    func testGenUILoadFailureRetriesOnlyTheFirstAttempt() {
+        var state = AgentVisualizationLoadState()
+        state.fail("第一次失败", from: 0)
+        XCTAssertEqual(state.attempt, 1)
+        XCTAssertNil(state.failure)
+
+        state.fail("第二次失败", from: 1)
+        XCTAssertEqual(state.failure, "第二次失败")
+
+        state.reload()
+        XCTAssertEqual(state.attempt, 2)
+        XCTAssertNil(state.failure)
+    }
+
+    @MainActor
+    func testGenUIAnswerButtonExplainsDisabledStateThenShowsQueuedAndProcessing() async throws {
+        let messages = WKUserContentController()
+        let actionProbe = GenUIActionProbe()
+        messages.add(actionProbe, name: "weibeiGenUI")
+        let configuration = WKWebViewConfiguration()
+        configuration.userContentController = messages
+        let webView = WKWebView(frame: NSRect(x: 0, y: 0, width: 640, height: 240), configuration: configuration)
+        let loaded = expectation(description: "GenUI runtime loaded")
+        let navigationProbe = GenUINavigationProbe { loaded.fulfill() }
+        webView.navigationDelegate = navigationProbe
+        let entry = try XCTUnwrap(WeiBeiResources.bundle.url(forResource: "genui", withExtension: "html"))
+        webView.loadFileURL(entry, allowingReadAccessTo: entry.deletingLastPathComponent())
+        await fulfillment(of: [loaded], timeout: 3)
+
+        let spec = #"{"items":[{"type":"button","label":"继续解释","action":"explain"}]}"#
+        _ = try await webView.evaluateJavaScript("window.WeiBeiGenUIHost.render({spec: \(spec), actionUnavailableReason: '另一条回答正在处理'})")
+        XCTAssertEqual(try await webView.evaluateJavaScript("document.querySelector('.button').disabled") as? Bool, true)
+        XCTAssertTrue((try await webView.evaluateJavaScript("document.querySelector('.genui').textContent") as? String)?.contains("另一条回答正在处理") == true)
+
+        _ = try await webView.evaluateJavaScript("window.WeiBeiGenUIHost.render({spec: \(spec), actionStatus: 'ready'}); document.querySelector('.button').click()")
+        XCTAssertTrue((try await webView.evaluateJavaScript("document.querySelector('.button').textContent") as? String)?.contains("已按下") == true)
+        let acceptedRequestID = try XCTUnwrap(actionProbe.requestIDs.last)
+        _ = try await webView.evaluateJavaScript("window.WeiBeiGenUIHost.actionResult({requestID: \(acceptedRequestID), accepted: true})")
+        XCTAssertTrue((try await webView.evaluateJavaScript("document.querySelector('.button').textContent") as? String)?.contains("已排队") == true)
+
+        _ = try await webView.evaluateJavaScript("window.WeiBeiGenUIHost.render({spec: \(spec), actionStatus: 'processing'})")
+        XCTAssertTrue((try await webView.evaluateJavaScript("document.querySelector('.button').textContent") as? String)?.contains("处理中") == true)
+
+        _ = try await webView.evaluateJavaScript("window.WeiBeiGenUIHost.render({spec: \(spec), actionStatus: 'ready'}); document.querySelector('.button').click()")
+        let rejectedRequestID = try XCTUnwrap(actionProbe.requestIDs.last)
+        _ = try await webView.evaluateJavaScript("window.WeiBeiGenUIHost.actionResult({requestID: \(rejectedRequestID), accepted: false, reason: '互动数据过大'})")
+        XCTAssertEqual(try await webView.evaluateJavaScript("document.querySelector('.button').disabled") as? Bool, false)
+        XCTAssertTrue((try await webView.evaluateJavaScript("document.querySelector('.genui').textContent") as? String)?.contains("互动数据过大") == true)
+        withExtendedLifetime(navigationProbe) {}
+    }
+
     @MainActor
     func testGenUIWheelInsideWebContentReachesConversationScroller() {
         let conversationScroller = ConversationScrollProbe()
@@ -115,6 +166,20 @@ final class AgentVisualizationSizingTests: XCTestCase {
             try await Task.sleep(nanoseconds: 20_000_000)
         }
         XCTFail("GenUI did not report a height in the expected range: \(probe.heights)")
+    }
+}
+
+private final class GenUIActionProbe: NSObject, WKScriptMessageHandler {
+    private(set) var requestIDs: [Int] = []
+
+    func userContentController(
+        _ userContentController: WKUserContentController,
+        didReceive message: WKScriptMessage
+    ) {
+        guard let body = message.body as? [String: Any],
+              body["type"] as? String == "action",
+              let requestID = body["requestID"] as? NSNumber else { return }
+        requestIDs.append(requestID.intValue)
     }
 }
 
