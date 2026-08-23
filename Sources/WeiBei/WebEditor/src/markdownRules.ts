@@ -91,6 +91,102 @@ const normalizeHtmlBreaksInLine = (line: string) => /^\s*(?:>\s*)*<br\s*\/?>\s*$
 
 export const normalizeHtmlBreaks = (markdown: string) => mapMarkdownOutsideCode(markdown, normalizeHtmlBreaksInLine);
 
+const incompleteStreamingMarkers = ['**', '__', '~~'];
+export const incompleteStreamingScanLimit = 160;
+
+export interface IncompleteStreamingMarkdownMarker {
+  marker: string;
+  index: number;
+  rankFromEnd: number;
+}
+
+/** Finds unfinished trailing emphasis markers without removing their body text. */
+export const incompleteStreamingMarkdownTailMarkers = (markdown: string): IncompleteStreamingMarkdownMarker[] => {
+  const source = String(markdown || '');
+  const lineStart = Math.max(source.lastIndexOf('\n'), source.lastIndexOf('\r')) + 1;
+  const fullLine = source.slice(lineStart);
+  const scanOffset = Math.max(0, fullLine.length - incompleteStreamingScanLimit);
+  const scanStart = lineStart + scanOffset;
+  const line = fullLine.slice(scanOffset);
+  if (!/[*_~]/.test(line)) return [];
+  let fenceMarker = '';
+  let fenceLength = 0;
+  for (const priorLine of source.slice(0, lineStart).split(/\r?\n/)) {
+    const fence = priorLine.match(/^\s*(?:>\s*)*(`{3,}|~{3,})/);
+    if (!fence) continue;
+    if (!fenceMarker) {
+      fenceMarker = fence[1][0];
+      fenceLength = fence[1].length;
+    } else if (fence[1][0] === fenceMarker && fence[1].length >= fenceLength) {
+      fenceMarker = '';
+      fenceLength = 0;
+    }
+  }
+  if (fenceMarker) return [];
+  let cursor = 0;
+  let codeMarker = '';
+  const openMarkers = new Map<string, number>();
+  const escapedMarkers: Array<{ marker: string; index: number }> = [];
+
+  while (cursor < line.length) {
+    if (line[cursor] === '`' && !isEscapedMarkdownPosition(source, scanStart + cursor)) {
+      const marker = line.slice(cursor).match(/^`+/)?.[0] || '`';
+      if (!codeMarker) codeMarker = marker;
+      else if (marker === codeMarker) codeMarker = '';
+      cursor += marker.length;
+      continue;
+    }
+    if (!codeMarker) {
+      const marker = incompleteStreamingMarkers.find((candidate) => line.startsWith(candidate, cursor));
+      if (marker) {
+        if (isEscapedMarkdownPosition(source, scanStart + cursor)) {
+          escapedMarkers.push({ marker, index: scanStart + cursor });
+        } else if (openMarkers.has(marker)) {
+          openMarkers.delete(marker);
+        } else {
+          openMarkers.set(marker, cursor);
+        }
+        cursor += marker.length;
+        continue;
+      }
+    }
+    cursor += 1;
+  }
+
+  const markers = Array.from(openMarkers, ([marker, index]) => ({
+    marker,
+    index: scanStart + index,
+    rankFromEnd: 1,
+  }));
+  const partialMarkerIndex = line.length - 1;
+  const partialMarker = line[partialMarkerIndex] || '';
+  const endsWithBalancedMarker = incompleteStreamingMarkers.some((marker) => (
+    marker[0] === partialMarker && line.endsWith(marker) && !openMarkers.has(marker)
+  ));
+  if (
+    !codeMarker
+    && partialMarkerIndex >= 0
+    && !endsWithBalancedMarker
+    && ['*', '_', '~'].includes(partialMarker)
+    && !isEscapedMarkdownPosition(source, scanStart + partialMarkerIndex)
+  ) {
+    const belongsToKnownMarker = [...markers, ...escapedMarkers].some(({ marker, index }) => (
+      index <= scanStart + partialMarkerIndex
+      && scanStart + partialMarkerIndex < index + marker.length
+    ));
+    if (!belongsToKnownMarker) {
+      markers.push({ marker: partialMarker, index: scanStart + partialMarkerIndex, rankFromEnd: 1 });
+    }
+  }
+  const visibleMarkers = [...escapedMarkers, ...markers];
+  for (const target of markers) {
+    target.rankFromEnd = visibleMarkers.filter(({ marker, index }) => (
+      marker === target.marker && index >= target.index
+    )).length;
+  }
+  return markers.sort((left, right) => left.index - right.index);
+};
+
 export type MarkdownSource = 'userDocument' | 'userPaste' | 'agentGenerated' | 'internalFragment';
 
 export const inlineMathInputPattern = /(?<!\\)\$((?!\d)[^$\n]+)\$$/;

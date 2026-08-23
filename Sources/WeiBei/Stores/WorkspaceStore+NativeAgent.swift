@@ -38,6 +38,86 @@ extension WorkspaceStore {
         )
     }
 
+    var canCopyReference: Bool {
+        hasSelectionAttachments || selectionContext != nil || hasSelectedMaterial || activeNoteItem?.isNotebookNote == true
+    }
+
+    var copyReferenceActionTitle: String {
+        if hasSelectionAttachments || selectionContext != nil { return ui("复制选区引用", "Copy selection reference") }
+        if hasSelectedMaterial { return ui("复制资料引用", "Copy material reference") }
+        return ui("复制笔记引用", "Copy note reference")
+    }
+
+    var sendAgentActionTitle: String {
+        isAgentRunningInActiveChat
+            ? ui("停止回答", "Stop response")
+            : ui("发送问题", "Send question")
+    }
+
+    var isAgentRunningInActiveChat: Bool {
+        isAskingAgent && activeAgentReplyChatID == activeStudySessionID
+    }
+
+    var runningAgentChatTitle: String {
+        guard let chatID = activeAgentReplyChatID,
+              let session = studySessions.first(where: { $0.id == chatID }) else {
+            return ui("另一条 Chat", "another Chat")
+        }
+        return session.title
+    }
+
+    var hasPersistedGeneratingAgentReply: Bool {
+        messages.contains { $0.role == .assistant && $0.origin?.requestID == activeAgentRequestID }
+    }
+
+    func agentDisplayText(for message: AgentMessage) -> String {
+        guard message.id == activeAgentReplyMessageID,
+              message.completionState == .generating else {
+            return message.text
+        }
+        return latestAgentStreamingText
+    }
+
+    func agentReplyDisplayedStreamingText(_ message: AgentMessage) -> Bool {
+        agentReplyIDsThatDisplayedStreamingText.contains(message.id)
+    }
+
+    var isAgentStreamingSurfaceVisible: Bool {
+        hasPrimaryConversationPaneVisible || agentSurface == .selectionFloat
+    }
+
+    func finishAgentStreamingDisplay() {
+        agentStreaming.finishDisplaying()
+        latestAgentStreamingText = ""
+    }
+
+    func settleAgentStreamingDisplayImmediately() {
+        guard agentStreaming.displayingMessageID != nil else { return }
+        agentStreamingDisplayPump.settleImmediately(
+            cumulativeText: latestAgentStreamingText
+        )
+    }
+
+    func landAgentStreamingDisplayImmediately() {
+        guard agentStreaming.displayingMessageID != nil else { return }
+        agentStreamingDisplayPump.replaceImmediately(
+            cumulativeText: latestAgentStreamingText
+        )
+    }
+
+    func setAgentStreamingReduceMotion(_ enabled: Bool) {
+        agentStreamingUsesReducedMotion = enabled
+        guard enabled, agentStreaming.displayingMessageID != nil else { return }
+        agentStreamingDisplayPump.replaceImmediately(
+            cumulativeText: latestAgentStreamingText
+        )
+    }
+
+    func landAgentStreamingDisplayIfHidden() {
+        guard !isAgentStreamingSurfaceVisible else { return }
+        landAgentStreamingDisplayImmediately()
+    }
+
     func cancelStudyAgentRuntimes() async {
         await NativeAgentRuntimeBox.runtime?.cancel()
     }

@@ -942,10 +942,6 @@ struct MarkdownPreviewView: View {
     var preservesHeightAcrossMarkdownChanges = false
     /// Pass-through to Milkdown's cumulative document-diff streaming session.
     var streamsMarkdownUpdates = false
-    /// Ignore ordinary ResizeObserver events while a streaming answer is being
-    /// finalized. The generation-tagged final callback supplies the authoritative
-    /// height for that handoff instead.
-    var acceptsHeightMeasurements = true
     var onWikiLink: (String) -> Void = { _ in }
     var onSourceReference: (String) -> Void = { _ in }
     var onAppShortcut: (String, NSEvent.ModifierFlags) -> Bool = { _, _ in false }
@@ -957,18 +953,25 @@ struct MarkdownPreviewView: View {
     private static let compactPreviewLoadingHeight: CGFloat = 44
     private static let compactPreviewMaximumHeight: CGFloat = 20_000
 
+    static func resolvedContentHeight(
+        current: CGFloat,
+        proposed: CGFloat,
+        preservesCurrentFloor: Bool
+    ) -> CGFloat {
+        preservesCurrentFloor ? max(current, proposed) : proposed
+    }
+
     var onMeasuredHeight: (CGFloat) -> Void = { _ in }
     @State private var command: NoteEditorCommand?
     @State private var contentHeight: CGFloat = Self.compactPreviewLoadingHeight
     @State private var heightFrozen = false
     @State private var acceptedMeasureCount = 0
     @State private var maxObservedMeasuredHeight: CGFloat = 0
+    @State private var hasAcceptedStreamingHeight = false
+    @State private var preservesFinalizedHeightFloor = false
+    @State private var finalizedStreamingMarkdown: String?
     @State private var lastLayoutWidthKey = 0
     @State private var lastChatWideTypography = false
-    /// Largest measurement rejected while the finalized-snapshot gate is closed.
-    /// The web side de-duplicates identical height reports, so one swallowed
-    /// during the gate would otherwise never arrive again.
-    @State private var latestGatedHeight: CGFloat = 0
 
     var body: some View {
         RichMarkdownEditorView(
@@ -1002,17 +1005,12 @@ struct MarkdownPreviewView: View {
                 }
                 let measuredHeight = ceil(height)
                 let nextFrameHeight = max(measuredHeight, Self.compactPreviewLoadingHeight)
-                guard acceptsHeightMeasurements else {
-                    // Gate window before the finalized snapshot lands. Keep the
-                    // freshest rejected height: the web side dedups repeated
-                    // reports, so one swallowed here never re-arrives, and the
-                    // row would stay at the stale pre-finish height — clipping
-                    // the last wrapped lines after completion.
-                    latestGatedHeight = max(latestGatedHeight, nextFrameHeight)
-                    WeiBeiPerf.event(
-                        "webview.markdown_height_ignored",
-                        extra: "reason=finalizing"
-                    )
+                if streamsMarkdownUpdates {
+                    hasAcceptedStreamingHeight = true
+                }
+                if preservesFinalizedHeightFloor,
+                   nextFrameHeight < contentHeight {
+                    onMeasuredHeight(contentHeight)
                     return
                 }
                 if freezeHeightAfterMeasure, heightFrozen {
@@ -1089,17 +1087,22 @@ struct MarkdownPreviewView: View {
                     measuredHeight,
                     Self.compactPreviewLoadingHeight
                 )
-                // Reconcile with measurements rejected during the gate: the
-                // snapshot may have been read before the finish re-layout, and
-                // a smaller height clips the answer's last wrapped lines.
-                let settledHeight = max(nextFrameHeight, latestGatedHeight)
-                latestGatedHeight = 0
+                preservesFinalizedHeightFloor = preservesHeightAcrossMarkdownChanges
+                    && hasAcceptedStreamingHeight
+                let settledHeight = Self.resolvedContentHeight(
+                    current: contentHeight,
+                    proposed: nextFrameHeight,
+                    preservesCurrentFloor: preservesFinalizedHeightFloor
+                )
+                let didChangeHeight = settledHeight != contentHeight
                 heightFrozen = false
                 acceptedMeasureCount = 0
                 contentHeight = settledHeight
                 maxObservedMeasuredHeight = settledHeight
                 onMeasuredHeight(measuredHeight)
-                onContentHeightChange()
+                if didChangeHeight {
+                    onContentHeightChange()
+                }
                 onFinalizedSnapshotReady(settledHeight)
             },
             onRenderFailure: onRenderFailure
@@ -1132,6 +1135,9 @@ struct MarkdownPreviewView: View {
             )
             lastLayoutWidthKey = widthKey
             guard previousBucket != nextBucket else { return }
+            hasAcceptedStreamingHeight = false
+            preservesFinalizedHeightFloor = false
+            finalizedStreamingMarkdown = nil
             heightFrozen = false
             acceptedMeasureCount = 0
             maxObservedMeasuredHeight = 0
@@ -1139,18 +1145,42 @@ struct MarkdownPreviewView: View {
         .onChange(of: isChatWideTypography) { _, wideTypography in
             guard wideTypography != lastChatWideTypography else { return }
             lastChatWideTypography = wideTypography
+            hasAcceptedStreamingHeight = false
+            preservesFinalizedHeightFloor = false
+            finalizedStreamingMarkdown = nil
             heightFrozen = false
             acceptedMeasureCount = 0
             maxObservedMeasuredHeight = 0
         }
-        .onChange(of: markdown) { _, _ in
+        .onChange(of: markdown) { _, nextMarkdown in
             guard compact && fitsContentHeight else { return }
+            if !streamsMarkdownUpdates {
+                if hasAcceptedStreamingHeight,
+                   finalizedStreamingMarkdown == nil {
+                    finalizedStreamingMarkdown = nextMarkdown
+                    preservesFinalizedHeightFloor = preservesHeightAcrossMarkdownChanges
+                } else if finalizedStreamingMarkdown != nextMarkdown {
+                    hasAcceptedStreamingHeight = false
+                    preservesFinalizedHeightFloor = false
+                    finalizedStreamingMarkdown = nil
+                }
+            }
             heightFrozen = false
             acceptedMeasureCount = 0
             maxObservedMeasuredHeight = 0
             if preservesHeightAcrossMarkdownChanges { return }
             contentHeight = Self.compactPreviewLoadingHeight
             onContentHeightChange()
+        }
+        .onChange(of: streamsMarkdownUpdates) { wasStreaming, isStreaming in
+            if isStreaming {
+                hasAcceptedStreamingHeight = false
+                preservesFinalizedHeightFloor = false
+                finalizedStreamingMarkdown = nil
+            } else if wasStreaming, hasAcceptedStreamingHeight {
+                finalizedStreamingMarkdown = markdown
+                preservesFinalizedHeightFloor = preservesHeightAcrossMarkdownChanges
+            }
         }
     }
 }
@@ -1681,6 +1711,7 @@ struct AgentPaneView: View {
             AgentMessageBubble(
                 message: message,
                 streaming: message.completionState == .generating
+                    || store.agentStreaming.isDisplaying(message.id)
                     ? store.agentStreaming
                     : inertAgentStreamingState,
                 // Typography follows the real column width, not the layout enum.
@@ -2670,6 +2701,7 @@ struct FloatingSelectionAgentView: View {
                             FloatingSelectionMessageRow(
                                 message: message,
                                 streaming: message.completionState == .generating
+                                    || store.agentStreaming.isDisplaying(message.id)
                                     ? store.agentStreaming
                                     : inertAgentStreamingState
                             )
@@ -3050,6 +3082,7 @@ private struct FloatingSelectionMessageBubble: View {
     var message: AgentMessage
     var text: String
     var isError = false
+    var isStreaming = false
 
     private var isUser: Bool {
         message.role == .user
@@ -3080,7 +3113,7 @@ private struct FloatingSelectionMessageBubble: View {
             usesFinalizedKaTeX: !isUser,
             messageID: message.id,
             keepsMarkdownSurfaceMounted: !isUser && !isError,
-            isStreaming: message.completionState == .generating
+            isStreaming: isStreaming
         )
     }
 }
@@ -3091,13 +3124,14 @@ private struct FloatingSelectionMessageBubble: View {
 /// completed rows receive `inertAgentStreamingState`, which never publishes.
 private struct FloatingSelectionMessageRow: View {
     @EnvironmentObject private var store: WorkspaceStore
+    @Environment(\.weibeiReduceMotion) private var reduceMotion
     var message: AgentMessage
     @ObservedObject var streaming: AgentStreamingState
 
     @ViewBuilder
     var body: some View {
-        let isGenerating = message.completionState == .generating
-        let text = isGenerating ? streaming.text : store.agentDisplayText(for: message)
+        let isStreaming = streaming.isDisplaying(message.id)
+        let text = isStreaming ? streaming.text : store.agentDisplayText(for: message)
         // Mount the bubble (and its markdown WebView) while the thinking
         // overlay is still up, so the renderer's cold start runs in parallel
         // with the wait for the first token.
@@ -3105,13 +3139,24 @@ private struct FloatingSelectionMessageRow: View {
             FloatingSelectionMessageBubble(
                 message: message,
                 text: text,
-                isError: WorkspaceStore.isAgentFailureMessage(message.text)
+                isError: WorkspaceStore.isAgentFailureMessage(message.text),
+                isStreaming: isStreaming
             )
-            if isGenerating && text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            if message.completionState == .generating
+                && text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 AgentThinkingIndicator(activityText: streaming.activityText, compact: true)
                     .id(message.id)
                     .padding(.vertical, 4)
             }
+        }
+        .onAppear { store.setAgentStreamingReduceMotion(reduceMotion) }
+        .onDisappear {
+            if streaming.isDisplaying(message.id) {
+                store.landAgentStreamingDisplayImmediately()
+            }
+        }
+        .onChange(of: reduceMotion) { _, enabled in
+            store.setAgentStreamingReduceMotion(enabled)
         }
     }
 }
@@ -3127,17 +3172,30 @@ private struct FloatingSelectionMessageRow: View {
 /// generating → completed flip keeps the view identity (and the mounted
 /// markdown WKWebView) alive at completion.
 private struct AgentMessageBubble: View {
+    @EnvironmentObject private var store: WorkspaceStore
+    @Environment(\.weibeiReduceMotion) private var reduceMotion
     var message: AgentMessage
     @ObservedObject var streaming: AgentStreamingState
     var isChatWideTypography = false
 
     var body: some View {
+        let isStreaming = streaming.isDisplaying(message.id)
         AgentBubble(
             message: message,
-            liveStreamingText: message.completionState == .generating ? streaming.text : nil,
+            liveStreamingText: isStreaming ? streaming.text : nil,
             liveActivityText: message.completionState == .generating ? streaming.activityText : nil,
+            isStreaming: isStreaming,
             isChatWideTypography: isChatWideTypography
         )
+        .onAppear { store.setAgentStreamingReduceMotion(reduceMotion) }
+        .onDisappear {
+            if streaming.isDisplaying(message.id) {
+                store.landAgentStreamingDisplayImmediately()
+            }
+        }
+        .onChange(of: reduceMotion) { _, enabled in
+            store.setAgentStreamingReduceMotion(enabled)
+        }
     }
 }
 
@@ -3148,6 +3206,7 @@ private struct AgentBubble: View {
     var message: AgentMessage
     var liveStreamingText: String? = nil
     var liveActivityText: String? = nil
+    var isStreaming = false
     var isChatWideTypography = false
     @State private var hovering = false
     @State private var copiedMessage = false
@@ -3327,7 +3386,10 @@ private struct AgentBubble: View {
                 if case .text = $0 { return false }
                 return true
             }) {
-                visualizedMessageFlow(fallbackText: citationParse.displayText)
+                visualizedMessageFlow(
+                    fallbackText: citationParse.displayText,
+                    visibleText: answerText
+                )
             } else {
                 // One surface owns the answer from question send through
                 // completion. The WebView mounts while the thinking overlay
@@ -3341,7 +3403,7 @@ private struct AgentBubble: View {
                         usesFinalizedKaTeX: !isFailureMessage,
                         messageID: message.id,
                         keepsMarkdownSurfaceMounted: !isFailureMessage,
-                        isStreaming: message.completionState == .generating
+                        isStreaming: isStreaming
                     )
                     if isAwaitingFirstToken {
                         AgentThinkingIndicator(
@@ -3350,7 +3412,7 @@ private struct AgentBubble: View {
                         )
                     }
                 }
-                .onAppear { WeiBeiPerf.event("agent.mdrow", extra: "where=bubblePlain msg=\(message.id.uuidString.prefix(8)) streaming=\(message.completionState == .generating ? 1 : 0) textlen=\(citationParse.displayText.count) blocks=\(message.contentBlocks.count)") }
+                .onAppear { WeiBeiPerf.event("agent.mdrow", extra: "where=bubblePlain msg=\(message.id.uuidString.prefix(8)) streaming=\(isStreaming ? 1 : 0) textlen=\(citationParse.displayText.count) blocks=\(message.contentBlocks.count)") }
             }
             if !availableSources.isEmpty {
                 AgentReplySourceTagRow(sources: availableSources) { source in
@@ -3496,8 +3558,12 @@ private struct AgentBubble: View {
     }
 
     @ViewBuilder
-    private func visualizedMessageFlow(fallbackText: String) -> some View {
-        let hasTextBlock = message.contentBlocks.contains {
+    private func visualizedMessageFlow(
+        fallbackText: String,
+        visibleText: String
+    ) -> some View {
+        let contentBlocks = visibleContentBlocks(visibleText: visibleText)
+        let hasTextBlock = contentBlocks.contains {
             if case let .text(text) = $0 {
                 return !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             }
@@ -3510,11 +3576,11 @@ private struct AgentBubble: View {
                 isChatWideTypography: isChatWideTypography,
                 usesFinalizedKaTeX: !isFailureMessage,
                 keepsMarkdownSurfaceMounted: !isFailureMessage,
-                isStreaming: message.completionState == .generating
+                isStreaming: isStreaming
             )
             .onAppear { WeiBeiPerf.event("agent.mdrow", extra: "where=vizFallback msg=\(message.id.uuidString.prefix(8)) textlen=\(fallbackText.count) blocks=\(message.contentBlocks.count)") }
         }
-        ForEach(Array(message.contentBlocks.enumerated()), id: \.offset) { _, block in
+        ForEach(Array(contentBlocks.enumerated()), id: \.offset) { _, block in
             switch block {
             case let .text(text):
                 if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -3524,7 +3590,7 @@ private struct AgentBubble: View {
                         isChatWideTypography: isChatWideTypography,
                         usesFinalizedKaTeX: !isFailureMessage,
                         keepsMarkdownSurfaceMounted: !isFailureMessage,
-                        isStreaming: message.completionState == .generating
+                        isStreaming: isStreaming
                     )
                     .onAppear { WeiBeiPerf.event("agent.mdrow", extra: "where=vizBlockText msg=\(message.id.uuidString.prefix(8)) textlen=\(text.count)") }
                 }
@@ -3538,6 +3604,19 @@ private struct AgentBubble: View {
                 UnavailableAgentContentBlockView(type: type, rawJSON: rawJSON)
                     .padding(.vertical, 4)
             }
+        }
+    }
+
+    private func visibleContentBlocks(
+        visibleText: String
+    ) -> [AgentMessageContentBlock] {
+        guard isStreaming else { return message.contentBlocks }
+        var remaining = visibleText.count
+        return message.contentBlocks.map { block in
+            guard case let .text(text) = block else { return block }
+            let visibleCount = min(remaining, text.count)
+            remaining -= visibleCount
+            return .text(String(text.prefix(visibleCount)))
         }
     }
 
@@ -4828,7 +4907,15 @@ private struct AgentMessageMarkdownText: View {
             .padding(.vertical, 6)
         }
         .help(sourceHelp)
-        .onAppear(perform: updateColdBootSlotRequest)
+        .onAppear {
+            if isStreaming {
+                // The streaming condition mounts this surface before onAppear;
+                // retain that same instance across the first completed body.
+                rendererSurfaceMounted = true
+            } else {
+                updateColdBootSlotRequest()
+            }
+        }
         .onChange(of: isInScrollViewport) { _, _ in
             updateColdBootSlotRequest()
         }
@@ -4925,7 +5012,6 @@ private struct AgentMessageMarkdownText: View {
                     isChatWideTypography: isChatWideTypography,
                     preservesHeightAcrossMarkdownChanges: keepsMarkdownSurfaceMounted,
                     streamsMarkdownUpdates: isStreaming,
-                    acceptsHeightMeasurements: !awaitsFinalizedRendererReady,
                     onWikiLink: { title in store.openOrCreateWikiNote(title: title) },
                     onSourceReference: { reference in
                         if let url = URL(string: reference),
@@ -4990,7 +5076,7 @@ private struct AgentMessageMarkdownText: View {
                 // renderers use it directly; held offscreen renderers are clipped.
                 .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
                 .allowsHitTesting(finalizedRendererReady && !isStreaming)
-                .accessibilityHidden(!finalizedRendererReady)
+                .accessibilityHidden(!(isStreaming || finalizedRendererReady || awaitsFinalizedRendererReady))
                 // Handoff (awaitsFinalizedRendererReady) keeps the live WebView
                 // fully visible: it already shows the streamed answer, and
                 // hiding it behind native text would flash at completion.

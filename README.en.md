@@ -72,7 +72,12 @@ Read and keep work fully offline, with no model required; ask is optional — wi
 4. Click a citation label to jump back to the source.
 5. Ask the Agent to save something to your notes, then review the proposal card before it is applied.
 
-The first launch is blocked by Gatekeeper (the community build is not Apple-notarized): right-click `魏碑.app` in Applications, choose **Open**, then confirm **Open**. Allow this one app only — don't disable Gatekeeper globally. WeiBei checks for new versions from Settings, so you don't need to watch the Releases page.
+The first launch is blocked by Gatekeeper (the community build is not Apple-notarized). Approve it once and later launches open normally; each newly downloaded version needs the same one-time approval:
+
+- macOS 15 or later: double-click to trigger the block once, then open **System Settings → Privacy & Security**, click **Open Anyway** at the bottom, and confirm. The old right-click "Open" shortcut was removed by Apple in macOS 15.
+- macOS 14: right-click `魏碑.app` in Applications, choose **Open**, then confirm **Open**.
+
+This allows WeiBei only — don't disable Gatekeeper globally. WeiBei checks for new versions from Settings, so you don't need to watch the Releases page.
 
 A Homebrew cask is planned; until the tap is published, use the DMG or build from source.
 
