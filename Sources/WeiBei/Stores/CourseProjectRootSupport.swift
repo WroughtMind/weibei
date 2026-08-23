@@ -277,8 +277,8 @@ enum CoursePortableExportError: LocalizedError {
         switch self {
         case .unstableCourseState:
             return "这门课程仍有回答、笔记或动作尚未保存。请先等待完成或中断，再继续。"
-        case let .invalidSourceEntry(path, reason):
-            return "课程内容“\(path)”无法安全导出：\(reason)"
+        case let .invalidSourceEntry(path, _):
+            return "课程内容“\(path)”无法导出，未生成导出文件。请确认该文件仍可在 Finder 中打开，然后重试。"
         }
     }
 }
