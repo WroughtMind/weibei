@@ -16759,17 +16759,7 @@ final class WorkspaceStore: ObservableObject {
                 lastAgentFailureKind = kind
                 lastFailedAgentQuestion = question
             }
-            let failureText: String
-            if let runtimeError = error as? PiAgentRuntimeError,
-               case .resourcesMissing = runtimeError {
-                failureText = PiAgentRuntimeError.agentComponentsIncompleteMessage
-            } else {
-                failureText = kind.userMessage(
-                    language: interfaceLanguage,
-                    userFacingDetail: Self.userFacingAgentFailureDetail(for: error),
-                    draftPreserved: true
-                )
-            }
+            let failureText = Self.agentFailureMessage(for: error, kind: kind, language: interfaceLanguage)
             if let replyMessageID {
                 interruptAgentReply(
                     requestID: requestID,

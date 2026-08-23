@@ -171,6 +171,22 @@ extension WorkspaceStore {
             }
         )
     }
+
+    static func agentFailureMessage(
+        for error: Error,
+        kind: AgentFailureKind,
+        language: WeiBeiInterfaceLanguage
+    ) -> String {
+        if let runtimeError = error as? PiAgentRuntimeError,
+           case .resourcesMissing = runtimeError {
+            return PiAgentRuntimeError.agentComponentsIncompleteMessage
+        }
+        return kind.userMessage(
+            language: language,
+            userFacingDetail: userFacingAgentFailureDetail(for: error),
+            draftPreserved: true
+        )
+    }
 }
 
 @MainActor
