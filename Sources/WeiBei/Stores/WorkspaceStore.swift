@@ -16707,11 +16707,16 @@ final class WorkspaceStore: ObservableObject {
                 lastAgentFailureKind = kind
                 lastFailedAgentQuestion = question
             }
-            let failureText = kind.userMessage(
-                language: interfaceLanguage,
-                userFacingDetail: Self.userFacingAgentFailureDetail(for: error),
-                draftPreserved: true
-            )
+            let failureText: String
+            if error is NativeAgentResourcesError {
+                failureText = NativeAgentResourcesError.agentComponentsIncompleteMessage
+            } else {
+                failureText = kind.userMessage(
+                    language: interfaceLanguage,
+                    userFacingDetail: Self.userFacingAgentFailureDetail(for: error),
+                    draftPreserved: true
+                )
+            }
             if let replyMessageID {
                 interruptAgentReply(
                     requestID: requestID,
