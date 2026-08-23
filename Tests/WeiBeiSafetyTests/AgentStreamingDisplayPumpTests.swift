@@ -55,6 +55,13 @@ final class AgentStreamingDisplayPumpTests: XCTestCase {
         }
     }
 
+    func testVeryLargeBacklogUsesRaisedButBoundedCatchUpRate() {
+        let rig = Rig()
+        rig.target = String(repeating: "字", count: 1_000)
+        rig.pump.stepOnce()
+        XCTAssertEqual(rig.published.first?.count, AgentStreamingDisplayPump.maximumCharsPerTick)
+    }
+
     func testEmptyTargetPublishesNothing() {
         let rig = Rig()
         for _ in 0..<5 { rig.pump.stepOnce() }

@@ -10,11 +10,12 @@ const FADE_SPEC = { class: 'wb-stream-in' };
 const CARET_SPEC = { side: 1 };
 
 /** Match the CSS animation duration of .wb-stream-in in index.html. */
-const FADE_MILLISECONDS = 260;
+const FADE_MILLISECONDS = 200;
 /** Retire the caret shortly after inserts stop flowing. */
 const CARET_IDLE_MILLISECONDS = 400;
-/** Only animate typing-like inserts; wholesale block rewrites skip the fade. */
-const MAXIMUM_FADE_CHARACTERS = 24;
+/** Only animate typing-like inserts; wholesale block rewrites skip the fade.
+ * Raised with the faster reveal cadence so pacing chunks still fade. */
+const MAXIMUM_FADE_CHARACTERS = 32;
 
 interface FadeEntry {
   from: number;
@@ -105,7 +106,7 @@ export function streamingAppearancePlugin(isStreamingActive: () => boolean): Plu
     props: {
       // Hidden entirely once the streaming session is over: re-serving the
       // remaining fades would RE-CREATE their span elements, and a fresh
-      // wb-stream-in span replays its 260ms fade from opacity 0 — the
+      // wb-stream-in span replays its 200ms fade from opacity 0 — the
       // just-typed text visibly vanished and faded back in at completion.
       // Unwrapping completed spans is visually silent; mid-flight ones pop
       // to full opacity, which reads as the line finishing.
