@@ -354,13 +354,11 @@ final class WorkspaceStore: ObservableObject {
     @Published private(set) var isStoppingAgent = false
     @Published private(set) var isAgentSwitchConfirmationPresented = false
     let agentStreaming = AgentStreamingState()
-    private lazy var agentStreamingDisplayPump = AgentStreamingDisplayPump(hooks: .init(
-        targetText: { [weak self] in self?.latestAgentStreamingText ?? "" },
-        publish: { [weak self] in self?.agentStreaming.text = $0 },
-        canPublish: { [weak self] in
-            guard let self, let chatID = self.activeAgentReplyChatID else { return false }
-            return self.activeStudySessionID == chatID
-        }
+    var agentStreamingUsesReducedMotion = false
+    lazy var agentStreamingDisplayPump = AgentStreamingDisplayPump(hooks: .init(
+        append: { [weak self] chunk in self?.agentStreaming.text.append(chunk) },
+        replace: { [weak self] text in self?.agentStreaming.text = text },
+        didDrain: { [weak self] in self?.finishAgentStreamingDisplay() }
     ))
     @Published var showLoadingIndicatorSamples = false
     /// Last failed user question for precise one-tap retry.
@@ -384,7 +382,14 @@ final class WorkspaceStore: ObservableObject {
     @Published private(set) var learningMemoryStates: [ScopedLearningMemoryState] = []
     private(set) var courseKnowledgeProfiles: [CourseKnowledgeProfile] = []
     @Published private(set) var studySessions: [StudySession] = []
-    @Published private(set) var activeStudySessionID: UUID?
+    @Published private(set) var activeStudySessionID: UUID? {
+        didSet {
+            if let chatID = agentStreaming.displayingChatID,
+               activeStudySessionID != chatID {
+                landAgentStreamingDisplayImmediately()
+            }
+        }
+    }
     /// Drawer open flag lives on `libraryDrawer` so toggles only refresh drawer chrome.
     let libraryDrawer = LibraryDrawerState()
     var showLibrary: Bool {
@@ -410,6 +415,7 @@ final class WorkspaceStore: ObservableObject {
         set {
             if paneState.showAgent != newValue {
                 paneState.showAgent = newValue
+                landAgentStreamingDisplayIfHidden()
             }
         }
     }
@@ -500,7 +506,9 @@ final class WorkspaceStore: ObservableObject {
     @Published var readerTargetLocationID: String?
     @Published var readerTargetLocationTitle: String?
     @Published private(set) var readerTargetLocationRequestID = UUID()
-    @Published var layout: WorkspaceLayout = .documentAgentNotes
+    @Published var layout: WorkspaceLayout = .documentAgentNotes {
+        didSet { landAgentStreamingDisplayIfHidden() }
+    }
     @Published var threePaneOrder: [WorkspacePaneRole] = WorkspacePaneRole.defaultThreePaneOrder
     /// Live drag chrome only — not `@Published` on the main store (avoids full-tree thrash).
     let threePaneReorder = ThreePaneReorderState()
@@ -520,6 +528,7 @@ final class WorkspaceStore: ObservableObject {
         set {
             if interaction.agentSurface != newValue {
                 interaction.agentSurface = newValue
+                landAgentStreamingDisplayIfHidden()
             }
         }
     }
@@ -672,13 +681,13 @@ final class WorkspaceStore: ObservableObject {
     let selectionAskThreadDefaults: UserDefaults
     let piRuntime: PiAgentRuntime
     let courseDocumentSearchIndex: CourseDocumentSearchIndex
-    private var activeAgentRequestID: UUID?
-    private var activeAgentReplyMessageID: UUID?
-    private var latestAgentStreamingText = ""
+    var activeAgentRequestID: UUID?
+    var activeAgentReplyMessageID: UUID?
+    var latestAgentStreamingText = ""
     private var lastAgentStreamingPublishNanoseconds: UInt64 = 0
-    private var agentReplyIDsThatDisplayedStreamingText: Set<UUID> = []
+    var agentReplyIDsThatDisplayedStreamingText: Set<UUID> = []
     private var agentVisualizationIDsUpdatingHistory: Set<String> = []
-    private var activeAgentReplyChatID: UUID?
+    var activeAgentReplyChatID: UUID?
     private var agentRequestTask: Task<Void, Never>?
 #if DEBUG
     private var capturesAgentRequestForSelfCheck = false
@@ -9924,50 +9933,6 @@ final class WorkspaceStore: ObservableObject {
         }
     }
 
-    var canCopyReference: Bool {
-        hasSelectionAttachments || selectionContext != nil || hasSelectedMaterial || activeNoteItem?.isNotebookNote == true
-    }
-
-    var copyReferenceActionTitle: String {
-        if hasSelectionAttachments || selectionContext != nil { return ui("复制选区引用", "Copy selection reference") }
-        if hasSelectedMaterial { return ui("复制资料引用", "Copy material reference") }
-        return ui("复制笔记引用", "Copy note reference")
-    }
-
-    var sendAgentActionTitle: String {
-        isAgentRunningInActiveChat
-            ? ui("停止回答", "Stop response")
-            : ui("发送问题", "Send question")
-    }
-
-    var isAgentRunningInActiveChat: Bool {
-        isAskingAgent && activeAgentReplyChatID == activeStudySessionID
-    }
-
-    var runningAgentChatTitle: String {
-        guard let chatID = activeAgentReplyChatID,
-              let session = studySessions.first(where: { $0.id == chatID }) else {
-            return ui("另一条 Chat", "another Chat")
-        }
-        return session.title
-    }
-
-    var hasPersistedGeneratingAgentReply: Bool {
-        messages.contains { $0.role == .assistant && $0.origin?.requestID == activeAgentRequestID }
-    }
-
-    func agentDisplayText(for message: AgentMessage) -> String {
-        guard message.id == activeAgentReplyMessageID,
-              message.completionState == .generating else {
-            return message.text
-        }
-        return latestAgentStreamingText
-    }
-
-    func agentReplyDisplayedStreamingText(_ message: AgentMessage) -> Bool {
-        agentReplyIDsThatDisplayedStreamingText.contains(message.id)
-    }
-
     /// The UI draft stays transient while tokens arrive. Durability boundaries
     /// checkpoint its latest cumulative snapshot once, before the workspace is written.
     private func checkpointActiveAgentStreamingText() {
@@ -16429,11 +16394,12 @@ final class WorkspaceStore: ObservableObject {
             .joined(separator: "\n\n")
         isAskingAgent = true
         activeAgentRequestID = requestID
+        settleAgentStreamingDisplayImmediately()
         latestAgentStreamingText = ""
         lastAgentStreamingPublishNanoseconds = 0
         agentStreamingDisplayPump.stopAndReset()
         agentVisualizationIDsUpdatingHistory = []
-        agentStreaming.text = ""
+        agentStreaming.reset()
         agentStreaming.activityText = ui("正在准备课程现场", "Preparing course context")
         defer {
             if activeAgentRequestID == requestID {
@@ -16441,13 +16407,14 @@ final class WorkspaceStore: ObservableObject {
                 activeAgentReplyMessageID = nil
                 activeAgentReplyChatID = nil
                 isAskingAgent = false
-                latestAgentStreamingText = ""
                 lastAgentStreamingPublishNanoseconds = 0
-                agentStreamingDisplayPump.stopAndReset()
                 agentVisualizationIDsUpdatingHistory = []
-                agentStreaming.text = ""
                 agentStreaming.activityText = nil
                 agentRequestTask = nil
+                if agentStreaming.displayingMessageID == nil {
+                    latestAgentStreamingText = ""
+                    agentStreamingDisplayPump.stopAndReset()
+                }
                 // Answer finished: keep float pinned so the user can scroll the reply.
                 if keepFloatingSelectionForAnswer, !isConversationSurfaceVisible {
                     pinnedFloatingAgent = true
@@ -16503,6 +16470,10 @@ final class WorkspaceStore: ObservableObject {
             replyMessageID = assistantMessage.id
             activeAgentReplyMessageID = assistantMessage.id
             activeAgentReplyChatID = target.sessionID
+            agentStreaming.begin(
+                messageID: assistantMessage.id,
+                chatID: target.sessionID
+            )
             appendAgentMessage(assistantMessage)
             appendMessageToActiveSelectionAskThread(assistantMessage.id)
             guard await flushPendingWorkspaceSaveAsync() else {
@@ -16666,8 +16637,7 @@ final class WorkspaceStore: ObservableObject {
             let sources = reply.sources
             if let messageID = replyMessageID {
                 let visibleContentBlocks = currentAgentVisualizationBlocks(reply.contentBlocks)
-                // Drain before the .completed flip or the tail visibly snaps.
-                agentStreamingDisplayPump.drainNow()
+                latestAgentStreamingText = reply.text
                 _ = updateAgentMessage(messageID, in: target.sessionID) {
                     $0.text = reply.text
                     $0.contentBlocks = visibleContentBlocks
@@ -16680,6 +16650,16 @@ final class WorkspaceStore: ObservableObject {
                     $0.failureKind = nil
                     $0.retryQuestion = nil
                     $0.toolTrace = reply.toolTrace
+                }
+                if agentStreaming.isDisplaying(messageID) {
+                    if agentStreamingUsesReducedMotion
+                        || !isAgentStreamingSurfaceVisible
+                        || agentStreaming.displayingChatID != activeStudySessionID {
+                        agentStreamingDisplayPump.replaceImmediately(
+                            cumulativeText: reply.text
+                        )
+                    }
+                    agentStreamingDisplayPump.finish(cumulativeText: reply.text)
                 }
                 if reply.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                    visibleContentBlocks.isEmpty,
@@ -16824,6 +16804,7 @@ final class WorkspaceStore: ObservableObject {
         if restoreDraft, let question = updated?.retryQuestion {
             agentDraftsBySessionID[chatID] = question
         }
+        settleAgentStreamingDisplayImmediately()
         guard activeStudySessionID == chatID else { return }
         lastAgentFailureKind = kind
         lastFailedAgentQuestion = updated?.retryQuestion
@@ -16880,7 +16861,6 @@ final class WorkspaceStore: ObservableObject {
         latestAgentStreamingText = ""
         lastAgentStreamingPublishNanoseconds = 0
         agentStreamingDisplayPump.stopAndReset()
-        agentStreaming.text = ""
         agentStreaming.activityText = nil
         agentStopTask?.cancel()
         agentStopTask = Task { @MainActor [weak self] in
@@ -17054,7 +17034,16 @@ final class WorkspaceStore: ObservableObject {
             }
         case let .text(text, blocks):
             latestAgentStreamingText = text
-            agentStreamingDisplayPump.start()
+            if agentStreaming.isDisplaying(replyMessageID) {
+                let canPaceVisibleReply = !agentStreamingUsesReducedMotion
+                    && isAgentStreamingSurfaceVisible
+                    && agentStreaming.displayingChatID == activeStudySessionID
+                if canPaceVisibleReply {
+                    agentStreamingDisplayPump.enqueue(cumulativeText: text)
+                } else {
+                    agentStreamingDisplayPump.replaceImmediately(cumulativeText: text)
+                }
+            }
             if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 agentReplyIDsThatDisplayedStreamingText.insert(replyMessageID)
             }
