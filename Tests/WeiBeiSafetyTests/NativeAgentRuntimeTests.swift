@@ -201,7 +201,12 @@ final class NativeAgentRuntimeTests: XCTestCase {
                 await opened.record(url)
                 let links = url == "https://example.com/source"
                     ? WeiBeiWebResearchClient.linkedHTTPSURLs(
-                        in: #"<a href="/evidence?from=page">证据</a>"#,
+                        in: #"""
+                        <!-- <a href="/fake-comment">伪链接</a> -->
+                        <script>const fake = '<a href="/fake-script">伪链接</a>';</script>
+                        <style>.fake { content: '<a href="/fake-style">伪链接</a>'; }</style>
+                        <a href="/evidence?from=page">证据</a>
+                        """#,
                         relativeTo: URL(string: url)!
                     )
                     : []
@@ -361,7 +366,9 @@ private final class LinkedWebURLAdapter: NativeLLMAdapter, @unchecked Sendable {
         lock.unlock()
         let url = currentStep == 1
             ? "https://example.com/source"
-            : "https://example.com/evidence?from=page"
+            : currentStep == 2
+                ? "https://example.com/fake-script"
+                : "https://example.com/evidence?from=page"
         let call = NativeStreamChunk.toolCallDelta(
             index: 0,
             id: "linked-open-\(currentStep)",
@@ -370,7 +377,7 @@ private final class LinkedWebURLAdapter: NativeLLMAdapter, @unchecked Sendable {
         )
         let chunks: [NativeStreamChunk] = currentStep == 1
             ? [.webSearchSource(url: url), call, .finish(reason: .toolCalls, replayState: nil)]
-            : currentStep == 2
+            : currentStep <= 3
                 ? [call, .finish(reason: .toolCalls, replayState: nil)]
                 : [.textDelta(index: 0, text: "完成"), .finish(reason: .stop, replayState: nil)]
         return AsyncThrowingStream { continuation in

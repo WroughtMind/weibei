@@ -105,6 +105,11 @@ final class AgentEndpointSecurityTests: XCTestCase {
             in: "",
             currentRunSourceURLs: ["HTTPS://EXAMPLE.COM:443/guide/#section"]
         ))
+        XCTAssertFalse(WeiBeiWebResearchURLPolicy.isAvailableInCurrentRun(
+            "https://example.com/guide//",
+            in: "",
+            currentRunSourceURLs: ["https://example.com/guide"]
+        ))
     }
 
     func testPrivateQueryAddedToCurrentRunSourceIsRejected() {

@@ -114,11 +114,10 @@ public enum WeiBeiWebResearchURLPolicy {
         }
         if components.percentEncodedPath.isEmpty {
             components.percentEncodedPath = "/"
-        } else {
-            while components.percentEncodedPath.count > 1,
-                  components.percentEncodedPath.hasSuffix("/") {
-                components.percentEncodedPath.removeLast()
-            }
+        } else if components.percentEncodedPath.count > 1,
+                  components.percentEncodedPath.hasSuffix("/"),
+                  !components.percentEncodedPath.dropLast().hasSuffix("/") {
+            components.percentEncodedPath.removeLast()
         }
         return components.url?.absoluteString
     }
@@ -307,18 +306,15 @@ public enum WeiBeiWebResearchClient {
     }
 
     static func linkedHTTPSURLs(in html: String, relativeTo pageURL: URL) -> [String] {
-        guard let regex = try? NSRegularExpression(
-            pattern: #"(?is)<a\b[^>]*\bhref\s*=\s*(?:\"([^\"]*)\"|'([^']*)'|([^\s\"'=<>`]+))"#
-        ) else { return [] }
+        guard let document = try? XMLDocument(
+            data: Data(html.utf8),
+            options: [.documentTidyHTML, .nodeLoadExternalEntitiesNever]
+        ), let anchors = try? document.nodes(forXPath: "//a[@href]") else { return [] }
         var seen = Set<String>()
-        return regex.matches(in: html, range: NSRange(html.startIndex..., in: html)).compactMap { match in
-            let href = (1...3).compactMap { index -> String? in
-                guard let range = Range(match.range(at: index), in: html) else { return nil }
-                return String(html[range])
-            }.first
-            guard let href,
+        return anchors.compactMap { node in
+            guard let href = (node as? XMLElement)?.attribute(forName: "href")?.stringValue,
                   let resolved = URL(
-                    string: decodeHTMLEntities(href),
+                    string: href,
                     relativeTo: pageURL
                   )?.absoluteURL,
                   let source = WeiBeiWebResearchURLPolicy.canonicalSourceURL(resolved.absoluteString),
