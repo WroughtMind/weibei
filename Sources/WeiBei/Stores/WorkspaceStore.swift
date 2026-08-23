@@ -595,6 +595,7 @@ final class WorkspaceStore: ObservableObject {
     }
     @Published var noteEditorCommand: NoteEditorCommand?
     @Published private var rejectedNoteEditorCommands: [RejectedNoteEditorCommand] = []
+    private var unresolvedContentCommandDocumentIDs: [UUID: String] = [:]
     /// Success / info banner for note create/switch — separate from errors so it auto-dismisses cleanly.
     @Published var transientNoteStatus: String?
     @Published private var noteSelectionTransitionState = NoteSelectionTransitionState.idle
@@ -10331,10 +10332,25 @@ final class WorkspaceStore: ObservableObject {
             && noteEditorCommand == nil
     }
 
-    func noteEditorCommandRejected(_ command: NoteEditorCommand) {
+    func noteEditorContentCommandPending(_ command: NoteEditorCommand, documentID: String) {
+        unresolvedContentCommandDocumentIDs[command.id] = documentID
+        if pendingNoteSelection != nil,
+           noteEditingSession.documentID == documentID {
+            noteSelectionTransitionState = .saving
+        }
+    }
+
+    func noteEditorContentCommandApplied(_ command: NoteEditorCommand, documentID: String) {
+        guard unresolvedContentCommandDocumentIDs[command.id] == documentID else { return }
+        unresolvedContentCommandDocumentIDs.removeValue(forKey: command.id)
+        rejectedNoteEditorCommands.removeAll { $0.command.id == command.id }
+        resumePendingNoteSelection(afterResolvingCommandFor: documentID)
+    }
+
+    func noteEditorCommandRejected(_ command: NoteEditorCommand, documentID: String) {
         guard !rejectedNoteEditorCommands.contains(where: { $0.command.id == command.id }) else { return }
         rejectedNoteEditorCommands.append(RejectedNoteEditorCommand(
-            documentID: activeNoteEditorDocumentID,
+            documentID: documentID,
             command: command
         ))
     }
@@ -10343,6 +10359,9 @@ final class WorkspaceStore: ObservableObject {
         guard noteEditorCommand == nil,
               rejectedNoteEditorCommands.first?.documentID == activeNoteEditorDocumentID else { return }
         noteEditorCommand = rejectedNoteEditorCommands.removeFirst().command
+        if pendingNoteSelection != nil {
+            noteSelectionTransitionState = .saving
+        }
     }
 
     var canRetryPendingNoteSelection: Bool {
@@ -10361,8 +10380,9 @@ final class WorkspaceStore: ObservableObject {
         to documentID: String?,
         apply: @escaping () -> Void
     ) {
-        guard noteEditingSession.dirty,
-              noteEditingSession.documentID != documentID else {
+        let sourceDocumentID = noteEditingSession.documentID
+        guard sourceDocumentID != documentID,
+              noteEditingSession.dirty || hasUnresolvedContentCommand(for: sourceDocumentID) else {
             pendingNoteSelection = nil
             noteSelectionTransitionState = .idle
             apply()
@@ -10370,7 +10390,25 @@ final class WorkspaceStore: ObservableObject {
         }
 
         pendingNoteSelection = PendingNoteSelection(apply: apply)
+        if hasUnresolvedContentCommand(for: sourceDocumentID) {
+            noteSelectionTransitionState = .saving
+            return
+        }
         guard noteSelectionTransitionState != .saving else { return }
+        requestPendingNoteSelectionSnapshot()
+    }
+
+    private func hasUnresolvedContentCommand(for documentID: String) -> Bool {
+        unresolvedContentCommandDocumentIDs.values.contains(documentID)
+    }
+
+    private func resumePendingNoteSelection(afterResolvingCommandFor documentID: String) {
+        guard pendingNoteSelection != nil,
+              noteEditingSession.documentID == documentID else { return }
+        guard !hasUnresolvedContentCommand(for: documentID) else {
+            noteSelectionTransitionState = .saving
+            return
+        }
         requestPendingNoteSelectionSnapshot()
     }
 

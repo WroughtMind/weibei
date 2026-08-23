@@ -38,6 +38,7 @@ final class RichMarkdownEditorBridgeTests: XCTestCase {
     func testContentCommandsBeyondOldLimitAwaitAcknowledgementAndRejectedContentRetries() async throws {
         var command: NoteEditorCommand? = nil
         var rejectedCommand: NoteEditorCommand? = nil
+        var rejectedDocumentID: String? = nil
         let rejected = expectation(description: "rejected content remained recoverable")
         let editor = RichMarkdownEditorView(
             documentID: "note-a",
@@ -46,7 +47,8 @@ final class RichMarkdownEditorBridgeTests: XCTestCase {
             editingSession: NoteEditingSession(documentID: "note-a"),
             onSelectionChange: { _, _ in },
             onAskAgentWithSelection: { _, _ in },
-            onCommandRejected: { failed in
+            onCommandRejected: { documentID, failed in
+                rejectedDocumentID = documentID
                 rejectedCommand = failed
                 rejected.fulfill()
             }
@@ -92,7 +94,6 @@ final class RichMarkdownEditorBridgeTests: XCTestCase {
             dispatchCommand(command) {
               const markdown = command.payload.markdown;
               if (markdown === rejectedMarkdown) {
-                reply("commandRejected", command, "fixture rejection");
                 return false;
               }
               if (!appliedIDs.has(command.commandID)) {
@@ -132,6 +133,7 @@ final class RichMarkdownEditorBridgeTests: XCTestCase {
         coordinator.runPendingCommandIfReady()
         await fulfillment(of: [rejected], timeout: 3)
         let recoverable = try XCTUnwrap(rejectedCommand)
+        XCTAssertEqual(rejectedDocumentID, "note-a")
         XCTAssertEqual(recoverable.markdown, "保留我")
 
         _ = try await webView.evaluateJavaScript("""
