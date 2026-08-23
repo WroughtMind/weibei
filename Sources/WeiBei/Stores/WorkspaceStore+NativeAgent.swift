@@ -122,30 +122,26 @@ extension WorkspaceStore {
                 }
             },
             persistLearningUpdate: { [weak self] update in
-                await MainActor.run {
-                    guard let self else {
-                        return NativeStorePersistReceipt.rejected("工作区已关闭")
-                    }
-                    return self.persistNativeLearningUpdate(
-                        update,
-                        expectedContextRevision: request.contextRevision,
-                        expectedUserQuestion: request.question,
-                        target: target,
-                        messageID: replyMessageID
-                    )
+                guard let self else {
+                    return NativeStorePersistReceipt.rejected("工作区已关闭")
                 }
+                return await self.persistNativeLearningUpdate(
+                    update,
+                    expectedContextRevision: request.contextRevision,
+                    expectedUserQuestion: request.question,
+                    target: target,
+                    messageID: replyMessageID
+                )
             },
             persistCourseProfileUpdate: { [weak self] update in
-                await MainActor.run {
-                    guard let self else {
-                        return NativeStorePersistReceipt.rejected("工作区已关闭")
-                    }
-                    return self.persistNativeCourseProfileUpdate(
-                        update,
-                        expectedContextRevision: request.contextRevision,
-                        target: target
-                    )
+                guard let self else {
+                    return NativeStorePersistReceipt.rejected("工作区已关闭")
                 }
+                return await self.persistNativeCourseProfileUpdate(
+                    update,
+                    expectedContextRevision: request.contextRevision,
+                    target: target
+                )
             },
             documentsRoot: workspaceDirectory.appendingPathComponent("NativeAgent/Documents", isDirectory: true),
             skillRegistry: skillRoot.flatMap { try? NativeSkillRegistry.load(from: $0) } ?? NativeSkillRegistry()

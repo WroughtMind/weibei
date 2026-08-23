@@ -752,19 +752,16 @@ private struct NoteSaveStatusLabel: View {
     }
 
     private var title: String? {
+        guard store.activeNoteSaveStatus.showsStatusLabel else { return nil }
         switch store.activeNoteSaveStatus {
-        case .idle:
-            nil
         case .saving:
-            store.ui("保存中", "Saving")
-        case .writtenToFile:
-            store.ui("已写入文件", "Written to File")
-        case .savedInWeiBei:
-            store.ui("仅保存在魏碑", "Saved in WeiBei Only")
+            return store.ui("保存中", "Saving")
         case .failed:
-            store.ui("保存失败", "Save Failed")
+            return store.ui("保存失败", "Save Failed")
         case .externallyModified:
-            store.ui("外部修改", "Modified Externally")
+            return store.ui("外部修改", "Modified Externally")
+        case .idle, .writtenToFile, .savedInWeiBei:
+            return nil
         }
     }
 }

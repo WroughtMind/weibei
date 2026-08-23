@@ -8,6 +8,10 @@ enum NoteSaveStatus: Equatable {
     case savedInWeiBei
     case failed
     case externallyModified
+
+    var showsStatusLabel: Bool {
+        self == .saving || self == .failed || self == .externallyModified
+    }
 }
 
 enum NoteEditingSessionError: Error, Equatable {

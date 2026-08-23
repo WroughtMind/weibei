@@ -6,6 +6,16 @@ import WeiBeiCore
 
 enum ImportedIdentitySelfCheck {
     @MainActor
+    private static func renameNotebookNoteAndWait(
+        _ store: WorkspaceStore,
+        itemID: String,
+        to title: String
+    ) throws {
+        let task = store.renameNotebookNote(itemID: itemID, to: title)
+        _ = try store.waitForCourseFileOperation { await task?.value }
+    }
+
+    @MainActor
     static func run() throws {
         try launchAndPrimaryEntriesStartBlank()
         try paneAndInteractionStateDoNotInvalidateWorkspaceStore()
@@ -341,10 +351,13 @@ enum ImportedIdentitySelfCheck {
                 fixture.selectionAskThreadDefaults
         )
 
-        store?.renameNotebookNote(
-            itemID: note.id,
-            to: "唯一完成的重命名"
-        )
+        if let store {
+            try renameNotebookNoteAndWait(
+                store,
+                itemID: note.id,
+                to: "唯一完成的重命名"
+            )
+        }
         try check(
             moveCount == 1,
             "连续确认启动了多个笔记重命名事务；移动次数=\(moveCount)，错误=\(store?.transientNoteStatus ?? "nil")"
@@ -1087,6 +1100,14 @@ enum ImportedIdentitySelfCheck {
         )
 
         let revisionBeforeDelete = store.learningMemoryRevision(in: scope)
+        shouldFail = true
+        try check(
+            !store.deleteLearningMemory(memory.id, in: scope)
+                && store.learningMemoryEntries(in: scope).first?.text == editedText
+                && store.learningMemoryRevision(in: scope) == revisionBeforeDelete,
+            "删除学习记忆写盘失败后没有恢复条目和修订号"
+        )
+        shouldFail = false
         try check(
             store.deleteLearningMemory(memory.id, in: scope),
             "用户无法删除单条学习记忆"
@@ -2427,7 +2448,13 @@ enum ImportedIdentitySelfCheck {
 
         let finderRenamedNoteURL = fixture.importsDirectory.appendingPathComponent("Finder刚移动的笔记.md")
         try FileManager.default.moveItem(at: movedNoteURL, to: finderRenamedNoteURL)
-        store?.renameNotebookNote(itemID: note.id, to: "第二讲最终笔记")
+        if let store {
+            try renameNotebookNoteAndWait(
+                store,
+                itemID: note.id,
+                to: "第二讲最终笔记"
+            )
+        }
         let appRenamedNote = try require(
             store?.courseNotebookItems.first { $0.id == note.id },
             "应用内重命名后找不到原笔记身份"
@@ -2768,7 +2795,11 @@ enum ImportedIdentitySelfCheck {
         try externalHandle.close()
 
         // S2：重命名前 flush 写回 → last writer wins，不再因冲突阻断重命名。
-        store.renameNotebookNote(itemID: noteA.id, to: "A笔记改名")
+        try renameNotebookNoteAndWait(
+            store,
+            itemID: noteA.id,
+            to: "A笔记改名"
+        )
         store.flushPendingNotePersistence()
         let renamedURL = fixture.importsDirectory.appendingPathComponent("A笔记改名.md")
         let diskAtOriginal = (try? String(contentsOf: noteAURL, encoding: .utf8)) ?? ""
@@ -2826,7 +2857,11 @@ enum ImportedIdentitySelfCheck {
             "身份偷换场景无法导入笔记"
         )
         store.select(itemID: note.id)
-        store.renameNotebookNote(itemID: note.id, to: "不应采用的新身份")
+        try renameNotebookNoteAndWait(
+            store,
+            itemID: note.id,
+            to: "不应采用的新身份"
+        )
 
         let retained = try require(
             store.courseNotebookItems.first { $0.id == note.id },
@@ -2892,7 +2927,11 @@ enum ImportedIdentitySelfCheck {
         )
         store.setLinkedSourceIDs([material.id], for: note.id)
         store.select(itemID: note.id)
-        store.renameNotebookNote(itemID: note.id, to: "不应成功的改名")
+        try renameNotebookNoteAndWait(
+            store,
+            itemID: note.id,
+            to: "不应成功的改名"
+        )
 
         let retained = try require(
             store.courseNotebookItems.first { $0.id == note.id },
@@ -2947,7 +2986,11 @@ enum ImportedIdentitySelfCheck {
         )
         store.setLinkedSourceIDs([material.id], for: note.id)
         store.select(itemID: material.id)
-        store.renameNotebookNote(itemID: note.id, to: "不应移动的笔记")
+        try renameNotebookNoteAndWait(
+            store,
+            itemID: note.id,
+            to: "不应移动的笔记"
+        )
 
         let retained = try require(
             store.courseNotebookItems.first { $0.id == note.id },
@@ -2991,7 +3034,11 @@ enum ImportedIdentitySelfCheck {
             "错误写入场景无法导入笔记"
         )
         store.select(itemID: note.id)
-        store.renameNotebookNote(itemID: note.id, to: "错误写入不应成功")
+        try renameNotebookNoteAndWait(
+            store,
+            itemID: note.id,
+            to: "错误写入不应成功"
+        )
 
         let retained = try require(
             store.courseNotebookItems.first { $0.id == note.id },
@@ -3042,7 +3089,11 @@ enum ImportedIdentitySelfCheck {
             "移动失败场景无法导入笔记"
         )
         store.select(itemID: note.id)
-        store.renameNotebookNote(itemID: note.id, to: "不应存在的新路径")
+        try renameNotebookNoteAndWait(
+            store,
+            itemID: note.id,
+            to: "不应存在的新路径"
+        )
 
         let retained = try require(
             store.courseNotebookItems.first { $0.id == note.id },
@@ -3087,12 +3138,12 @@ enum ImportedIdentitySelfCheck {
         store?.flushPendingNotePersistence()
 
         // S3：无 rename journal；重命名尽力完成，不写恢复记录。
-        store?.renameNotebookNote(itemID: note.id, to: "已恢复改名")
-        // 异步 rename：轮询直到文件出现或超时
-        let deadline = Date().addingTimeInterval(3)
-        while Date() < deadline,
-              !FileManager.default.fileExists(atPath: renamedURL.path) {
-            RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+        if let store {
+            try renameNotebookNoteAndWait(
+                store,
+                itemID: note.id,
+                to: "已恢复改名"
+            )
         }
         try check(
             FileManager.default.fileExists(atPath: renamedURL.path)

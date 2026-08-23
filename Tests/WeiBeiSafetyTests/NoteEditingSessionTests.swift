@@ -2,6 +2,11 @@ import XCTest
 @testable import WeiBei
 
 final class NoteEditingSessionTests: XCTestCase {
+    func testSuccessfulSaveStatusesStaySilent() {
+        XCTAssertFalse(NoteSaveStatus.writtenToFile.showsStatusLabel)
+        XCTAssertFalse(NoteSaveStatus.savedInWeiBei.showsStatusLabel)
+    }
+
     @MainActor
     func testRejectsSnapshotFromStaleDocumentGeneration() throws {
         var commands: [NoteEditorSnapshotRequest] = []
