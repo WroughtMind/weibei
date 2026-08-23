@@ -111,11 +111,24 @@ if [[ "$MODE" == "notarized" ]]; then
     echo "release failed: Sparkle generate_appcast and sign_update tools are missing" >&2
     exit 23
   fi
-  SPARKLE_PREFLIGHT_SIGNATURE="$(
-    "$SPARKLE_SIGN_UPDATE" -p --ed-key-file "$SPARKLE_PRIVATE_KEY_FILE" "$VERSION_FILE"
-  )"
-  "$SPARKLE_SIGN_UPDATE" --verify --ed-key-file "$SPARKLE_PRIVATE_KEY_FILE" \
-    "$VERSION_FILE" "$SPARKLE_PREFLIGHT_SIGNATURE"
+  SPARKLE_PUBLIC_VERIFIER="$(mktemp "${TMPDIR:-/tmp}/weibei-sparkle-public-key.XXXXXX")"
+  trap '/bin/rm -f "$SPARKLE_PUBLIC_VERIFIER"' EXIT
+  {
+    /usr/bin/dd if=/dev/zero bs=64 count=1 2>/dev/null
+    /usr/bin/printf '%s' "$SPARKLE_PUBLIC_KEY" | /usr/bin/base64 -D
+  } | /usr/bin/base64 -b 0 -o "$SPARKLE_PUBLIC_VERIFIER"
+  if ! SPARKLE_PREFLIGHT_SIGNATURE="$(
+    "$SPARKLE_SIGN_UPDATE" -p --ed-key-file "$SPARKLE_PRIVATE_KEY_FILE" \
+      "$VERSION_FILE" 2>/dev/null
+  )" || ! "$SPARKLE_SIGN_UPDATE" --verify --ed-key-file "$SPARKLE_PUBLIC_VERIFIER" \
+    "$VERSION_FILE" "$SPARKLE_PREFLIGHT_SIGNATURE" >/dev/null 2>&1; then
+    /bin/rm -f "$SPARKLE_PUBLIC_VERIFIER"
+    trap - EXIT
+    echo "release failed: WEIBEI_SPARKLE_PUBLIC_KEY does not match the Sparkle private key" >&2
+    exit 25
+  fi
+  /bin/rm -f "$SPARKLE_PUBLIC_VERIFIER"
+  trap - EXIT
   if [[ ! -s "$UPDATE_SUMMARY_SOURCE" ]]; then
     echo "release failed: notarized publication requires an in-app update summary" >&2
     exit 24
