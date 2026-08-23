@@ -39,7 +39,6 @@ import {
   looksLikeMarkdownSyntax,
   normalizeMarkdownSource,
   splitFrontmatter,
-  withholdIncompleteStreamingMarkdownTail,
 } from './markdownRules';
 import {
   addEditorMetric,
@@ -2969,7 +2968,6 @@ const publishCompletedCompositionMarkdown = () => {
 const streamingCommands = () => editor.action((ctx) => ctx.get(commandsCtx));
 
 const stopStreamingMarkdown = (keep = true) => {
-  cancelPacedStreamingTail();
   cancelFinalizeDelay();
   if (streamingMarkdownBuffer === null) return;
   streamingCommands().call(abortStreamingCmd.key, { keep });
@@ -2980,7 +2978,6 @@ const stopStreamingMarkdown = (keep = true) => {
 
 const updateStreamingMarkdownInternal = (markdown: any) => {
   ensureEditor();
-  cancelPacedStreamingTail();
   cancelFinalizeDelay();
   const fullText = String(markdown || '');
   streamingFullTextBase = fullText;
@@ -3005,12 +3002,6 @@ const updateStreamingMarkdownInternal = (markdown: any) => {
     streamingRawBody = body === rawBody ? rawBody : null;
     lastMarkdown = withFrontmatter(body);
   }
-  // Withhold the trailing unclosed inline segment: streaming `**小` would
-  // paint raw asterisks until the closing `**` lands; holding it back shows
-  // nothing until the pair closes, then the bold text appears already
-  // rendered (the standard "hold back unsafe trailing tokens" technique).
-  body = withholdIncompleteStreamingMarkdownTail(body);
-  if (streamingRawBody !== null) streamingRawBody = body;
   const commands = streamingCommands();
   if (streamingMarkdownBuffer === null) {
     commands.call(startStreamingCmd.key);
@@ -3021,8 +3012,10 @@ const updateStreamingMarkdownInternal = (markdown: any) => {
     streamingMarkdownBuffer = '';
   }
   const delta = body.slice(streamingMarkdownBuffer.length);
-  if (delta) commands.call(pushChunkCmd.key, delta);
+  // Let the appearance plugin inspect the same complete body during the
+  // transaction so it can hide unfinished syntax without withholding text.
   streamingMarkdownBuffer = body;
+  if (delta) commands.call(pushChunkCmd.key, delta);
   scheduleContentHeightReports();
 };
 
@@ -3035,23 +3028,6 @@ const appendStreamingMarkdownInternal = (suffix: any) => {
   const base = streamingFullTextBase;
   updateStreamingMarkdownInternal(base === null ? tail : base + tail);
 };
-
-/** Paced tail reveal. The completion payload often carries text that never
- * streamed (the model's closing segment arrives only in the end event, and
- * the native display pump drains whatever it had not revealed). Applying that
- * tail in one push made the finished answer dump a block of unfaded text and
- * jump its height. Instead the tail keeps typing out at the streaming
- * cadence — same fade, same caret — and the session finalizes when it lands. */
-let pacedTailTimer: number | null = null;
-/** Above the fade plugin's per-insert limit a chunk cannot fade, so pace it. */
-const PACED_TAIL_FADE_LIMIT_CHARACTERS = 4;
-const PACED_TAIL_CHUNK_CHARACTERS = 4;
-const PACED_TAIL_TICK_MILLISECONDS = 33;
-/** Wall-clock cap: throttled (hidden/occluded) WebViews slow timers to a crawl,
- * so past this the whole tail lands at once instead of stalling half-typed. */
-const PACED_TAIL_MAXIMUM_MILLISECONDS = 3_000;
-/** Hard stop so an abandoned tail can never pace forever. */
-const PACED_TAIL_MAXIMUM_TICKS = 240;
 
 /** Ending the session clears fade decorations instantly — for text still
  * mid-fade that is a whole-answer opacity snap ("everything flashes once").
@@ -3073,16 +3049,14 @@ const scheduleFinalizeAfterFades = () => {
     const view = ctx.get(editorViewCtx);
     view.dispatch(view.state.tr.setMeta(streamingPluginKey, { type: 'end' }));
   });
+  if (document.hidden || isEditorReduceMotion()) {
+    finalizeStreamingSession();
+    return;
+  }
   finalizeDelayTimer = window.setTimeout(() => {
     finalizeDelayTimer = null;
     finalizeStreamingSession();
   }, FINALIZE_FADE_SETTLE_MILLISECONDS);
-};
-
-const cancelPacedStreamingTail = () => {
-  if (pacedTailTimer == null) return;
-  window.clearTimeout(pacedTailTimer);
-  pacedTailTimer = null;
 };
 
 /** Push a caller-normalized body through the streaming session, mirroring
@@ -3098,8 +3072,8 @@ const pushStreamingBodyForFinish = (body: string) => {
     streamingMarkdownBuffer = '';
   }
   const delta = body.slice(streamingMarkdownBuffer.length);
-  if (delta) commands.call(pushChunkCmd.key, delta);
   streamingMarkdownBuffer = body;
+  if (delta) commands.call(pushChunkCmd.key, delta);
   scheduleContentHeightReports();
 };
 
@@ -3113,7 +3087,6 @@ const finalizeStreamingSession = () => {
   streamingRawBody = null;
   streamingMarkdownBuffer = null;
   streamingFullTextBase = null;
-  cancelPacedStreamingTail();
   // Do not force a same-state ProseMirror redraw here. The fully opaque fade
   // wrappers are visually inert and clear on the next real transaction; a
   // completion-only redraw was the visible whole-answer flash.
@@ -3124,8 +3097,7 @@ const finalizeStreamingSession = () => {
   scheduleContentHeightReports();
 };
 
-const finishStreamingMarkdownInternal = (markdown: any, options?: { paced?: boolean }) => {
-  cancelPacedStreamingTail();
+const finishStreamingMarkdownInternal = (markdown: any) => {
   streamingRawBody = null; // force the full normalize + serialization pass
   const fullText = String(markdown || '');
   const document = splitFrontmatter(fullText);
@@ -3134,55 +3106,8 @@ const finishStreamingMarkdownInternal = (markdown: any, options?: { paced?: bool
   const body = normalizeMarkdownSource(document.body, 'agentGenerated');
   lastMarkdown = withFrontmatter(body);
   streamingFullTextBase = fullText;
-  const currentBuffer = streamingMarkdownBuffer;
-  // Pace only a pure append; a divergent prefix needs the full replace now.
-  // Pacing is opt-in from native: hidden/windowless WebViews suspend timers
-  // entirely, and a paced reveal there would strand the answer half-typed.
-  const pacesAppendTail = options?.paced === true
-    && currentBuffer !== null
-    && body.startsWith(currentBuffer)
-    && body.length - currentBuffer.length > PACED_TAIL_FADE_LIMIT_CHARACTERS;
-  if (currentBuffer !== null && pacesAppendTail) {
-    let revealed = currentBuffer.length;
-    let ticks = 0;
-    const pacingStartedAt = Date.now();
-    const step = () => {
-      pacedTailTimer = null;
-      const now = Date.now();
-      ticks += 1;
-      revealed = Math.min(body.length, revealed + PACED_TAIL_CHUNK_CHARACTERS);
-      const done = revealed >= body.length
-        || now - pacingStartedAt >= PACED_TAIL_MAXIMUM_MILLISECONDS
-        || ticks >= PACED_TAIL_MAXIMUM_TICKS;
-      try {
-        pushStreamingBodyForFinish(done ? body : body.slice(0, revealed));
-        if (!done) {
-          pacedTailTimer = window.setTimeout(step, PACED_TAIL_TICK_MILLISECONDS);
-          return;
-        }
-        scheduleFinalizeAfterFades();
-      } catch {
-        // A paced push must never strand the answer half-typed (one throwing
-        // tick would silently end the timer chain): tear the session down and
-        // land the full document through the plain replace path instead.
-        pacedTailTimer = null;
-        streamingMarkdownBuffer = null;
-        streamingRawBody = null;
-        try { streamingCommands().call(abortStreamingCmd.key, { keep: false }); } catch { /* session already gone */ }
-        try {
-          setMarkdownInternal(fullText);
-          publishContentHeight();
-          post('finalizedStreaming', {
-            height: Number(window.WeiBeiCompactPreviewHeight || 1),
-          });
-          scheduleContentHeightReports();
-        } catch { /* nothing left to try */ }
-      }
-    };
-    pacedTailTimer = window.setTimeout(step, PACED_TAIL_TICK_MILLISECONDS);
-    scheduleContentHeightReports();
-    return;
-  }
+  // Native already owns the visible cadence. Synchronously catch up any bridge
+  // lag once, then keep the existing fade-settle and finalized-height receipt.
   pushStreamingBodyForFinish(body);
   scheduleFinalizeAfterFades();
 };
@@ -3590,9 +3515,9 @@ window.WeiBeiEditor = {
         showFailure(error);
       }
     },
-    finishStreamingMarkdown: (markdown: any, options?: { paced?: boolean }) => {
+    finishStreamingMarkdown: (markdown: any) => {
       try {
-        finishStreamingMarkdownInternal(markdown, options);
+        finishStreamingMarkdownInternal(markdown);
         return true;
       } catch (error) {
         showFailure(error);
@@ -3629,7 +3554,7 @@ if (WEIBEI_EDITOR_RUNTIME && window.weiBeiEditorCheckMode) {
     setMarkdown: setMarkdownInternal,
     updateStreamingMarkdown: updateStreamingMarkdownInternal,
     appendStreamingMarkdown: appendStreamingMarkdownInternal,
-    finishStreamingMarkdown: (markdown: any, options?: { paced?: boolean }) => { finishStreamingMarkdownInternal(markdown, options); return true; },
+    finishStreamingMarkdown: (markdown: any) => { finishStreamingMarkdownInternal(markdown); return true; },
     replaceSelection: replaceSelectionInternal,
     executeSelectionCommand: executeSelectionCommandInternal,
     applyAgentPatch: appendMarkdownInternal,
@@ -3813,7 +3738,7 @@ editorBuilder = editorBuilder
   .use(structuredMarkdown)
   .use(weiBeiMath)
   .use(streaming)
-  .use($prose(() => streamingAppearancePlugin(() => streamingMarkdownBuffer !== null)));
+  .use($prose(() => streamingAppearancePlugin(() => streamingMarkdownBuffer)));
 
 if (WEIBEI_EDITOR_RUNTIME) {
   editorBuilder = editorBuilder

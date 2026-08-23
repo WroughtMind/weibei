@@ -1600,6 +1600,7 @@ struct AgentPaneView: View {
             AgentMessageBubble(
                 message: message,
                 streaming: message.completionState == .generating
+                    || store.agentStreaming.isDisplaying(message.id)
                     ? store.agentStreaming
                     : inertAgentStreamingState,
                 // Typography follows the real column width, not the layout enum.
@@ -2589,6 +2590,7 @@ struct FloatingSelectionAgentView: View {
                             FloatingSelectionMessageRow(
                                 message: message,
                                 streaming: message.completionState == .generating
+                                    || store.agentStreaming.isDisplaying(message.id)
                                     ? store.agentStreaming
                                     : inertAgentStreamingState
                             )
@@ -2969,6 +2971,7 @@ private struct FloatingSelectionMessageBubble: View {
     var message: AgentMessage
     var text: String
     var isError = false
+    var isStreaming = false
 
     private var isUser: Bool {
         message.role == .user
@@ -2999,7 +3002,7 @@ private struct FloatingSelectionMessageBubble: View {
             usesFinalizedKaTeX: !isUser,
             messageID: message.id,
             keepsMarkdownSurfaceMounted: !isUser && !isError,
-            isStreaming: message.completionState == .generating
+            isStreaming: isStreaming
         )
     }
 }
@@ -3010,13 +3013,14 @@ private struct FloatingSelectionMessageBubble: View {
 /// completed rows receive `inertAgentStreamingState`, which never publishes.
 private struct FloatingSelectionMessageRow: View {
     @EnvironmentObject private var store: WorkspaceStore
+    @Environment(\.weibeiReduceMotion) private var reduceMotion
     var message: AgentMessage
     @ObservedObject var streaming: AgentStreamingState
 
     @ViewBuilder
     var body: some View {
-        let isGenerating = message.completionState == .generating
-        let text = isGenerating ? streaming.text : store.agentDisplayText(for: message)
+        let isStreaming = streaming.isDisplaying(message.id)
+        let text = isStreaming ? streaming.text : store.agentDisplayText(for: message)
         // Mount the bubble (and its markdown WebView) while the thinking
         // overlay is still up, so the renderer's cold start runs in parallel
         // with the wait for the first token.
@@ -3024,13 +3028,24 @@ private struct FloatingSelectionMessageRow: View {
             FloatingSelectionMessageBubble(
                 message: message,
                 text: text,
-                isError: WorkspaceStore.isAgentFailureMessage(message.text)
+                isError: WorkspaceStore.isAgentFailureMessage(message.text),
+                isStreaming: isStreaming
             )
-            if isGenerating && text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            if message.completionState == .generating
+                && text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 AgentThinkingIndicator(activityText: streaming.activityText, compact: true)
                     .id(message.id)
                     .padding(.vertical, 4)
             }
+        }
+        .onAppear { store.setAgentStreamingReduceMotion(reduceMotion) }
+        .onDisappear {
+            if streaming.isDisplaying(message.id) {
+                store.landAgentStreamingDisplayImmediately()
+            }
+        }
+        .onChange(of: reduceMotion) { _, enabled in
+            store.setAgentStreamingReduceMotion(enabled)
         }
     }
 }
@@ -3046,17 +3061,30 @@ private struct FloatingSelectionMessageRow: View {
 /// generating → completed flip keeps the view identity (and the mounted
 /// markdown WKWebView) alive at completion.
 private struct AgentMessageBubble: View {
+    @EnvironmentObject private var store: WorkspaceStore
+    @Environment(\.weibeiReduceMotion) private var reduceMotion
     var message: AgentMessage
     @ObservedObject var streaming: AgentStreamingState
     var isChatWideTypography = false
 
     var body: some View {
+        let isStreaming = streaming.isDisplaying(message.id)
         AgentBubble(
             message: message,
-            liveStreamingText: message.completionState == .generating ? streaming.text : nil,
+            liveStreamingText: isStreaming ? streaming.text : nil,
             liveActivityText: message.completionState == .generating ? streaming.activityText : nil,
+            isStreaming: isStreaming,
             isChatWideTypography: isChatWideTypography
         )
+        .onAppear { store.setAgentStreamingReduceMotion(reduceMotion) }
+        .onDisappear {
+            if streaming.isDisplaying(message.id) {
+                store.landAgentStreamingDisplayImmediately()
+            }
+        }
+        .onChange(of: reduceMotion) { _, enabled in
+            store.setAgentStreamingReduceMotion(enabled)
+        }
     }
 }
 
@@ -3067,6 +3095,7 @@ private struct AgentBubble: View {
     var message: AgentMessage
     var liveStreamingText: String? = nil
     var liveActivityText: String? = nil
+    var isStreaming = false
     var isChatWideTypography = false
     @State private var hovering = false
     @State private var copiedMessage = false
@@ -3246,7 +3275,10 @@ private struct AgentBubble: View {
                 if case .visualization = $0 { return true }
                 return false
             }) {
-                visualizedMessageFlow(fallbackText: citationParse.displayText)
+                visualizedMessageFlow(
+                    fallbackText: citationParse.displayText,
+                    visibleText: answerText
+                )
             } else {
                 // One surface owns the answer from question send through
                 // completion. The WebView mounts while the thinking overlay
@@ -3260,7 +3292,7 @@ private struct AgentBubble: View {
                         usesFinalizedKaTeX: !isFailureMessage,
                         messageID: message.id,
                         keepsMarkdownSurfaceMounted: !isFailureMessage,
-                        isStreaming: message.completionState == .generating
+                        isStreaming: isStreaming
                     )
                     if isAwaitingFirstToken {
                         AgentThinkingIndicator(
@@ -3269,7 +3301,7 @@ private struct AgentBubble: View {
                         )
                     }
                 }
-                .onAppear { WeiBeiPerf.event("agent.mdrow", extra: "where=bubblePlain msg=\(message.id.uuidString.prefix(8)) streaming=\(message.completionState == .generating ? 1 : 0) textlen=\(citationParse.displayText.count) blocks=\(message.contentBlocks.count)") }
+                .onAppear { WeiBeiPerf.event("agent.mdrow", extra: "where=bubblePlain msg=\(message.id.uuidString.prefix(8)) streaming=\(isStreaming ? 1 : 0) textlen=\(citationParse.displayText.count) blocks=\(message.contentBlocks.count)") }
             }
             if !availableSources.isEmpty {
                 AgentReplySourceTagRow(sources: availableSources) { source in
@@ -3415,8 +3447,12 @@ private struct AgentBubble: View {
     }
 
     @ViewBuilder
-    private func visualizedMessageFlow(fallbackText: String) -> some View {
-        let hasTextBlock = message.contentBlocks.contains {
+    private func visualizedMessageFlow(
+        fallbackText: String,
+        visibleText: String
+    ) -> some View {
+        let contentBlocks = visibleContentBlocks(visibleText: visibleText)
+        let hasTextBlock = contentBlocks.contains {
             if case let .text(text) = $0 {
                 return !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             }
@@ -3429,11 +3465,11 @@ private struct AgentBubble: View {
                 isChatWideTypography: isChatWideTypography,
                 usesFinalizedKaTeX: !isFailureMessage,
                 keepsMarkdownSurfaceMounted: !isFailureMessage,
-                isStreaming: message.completionState == .generating
+                isStreaming: isStreaming
             )
             .onAppear { WeiBeiPerf.event("agent.mdrow", extra: "where=vizFallback msg=\(message.id.uuidString.prefix(8)) textlen=\(fallbackText.count) blocks=\(message.contentBlocks.count)") }
         }
-        ForEach(Array(message.contentBlocks.enumerated()), id: \.offset) { _, block in
+        ForEach(Array(contentBlocks.enumerated()), id: \.offset) { _, block in
             switch block {
             case let .text(text):
                 if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -3443,7 +3479,7 @@ private struct AgentBubble: View {
                         isChatWideTypography: isChatWideTypography,
                         usesFinalizedKaTeX: !isFailureMessage,
                         keepsMarkdownSurfaceMounted: !isFailureMessage,
-                        isStreaming: message.completionState == .generating
+                        isStreaming: isStreaming
                     )
                     .onAppear { WeiBeiPerf.event("agent.mdrow", extra: "where=vizBlockText msg=\(message.id.uuidString.prefix(8)) textlen=\(text.count)") }
                 }
@@ -3454,6 +3490,19 @@ private struct AgentBubble: View {
                 )
                 .padding(.vertical, 4)
             }
+        }
+    }
+
+    private func visibleContentBlocks(
+        visibleText: String
+    ) -> [AgentMessageContentBlock] {
+        guard isStreaming else { return message.contentBlocks }
+        var remaining = visibleText.count
+        return message.contentBlocks.map { block in
+            guard case let .text(text) = block else { return block }
+            let visibleCount = min(remaining, text.count)
+            remaining -= visibleCount
+            return .text(String(text.prefix(visibleCount)))
         }
     }
 

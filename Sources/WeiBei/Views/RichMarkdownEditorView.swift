@@ -1540,7 +1540,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             webMarkdown = text
             webView?.evaluateJavaScript("""
             (() => {
-              const didFinish = window.WeiBeiEditor?.finishStreamingMarkdown(\(Self.json(text)), { paced: true });
+              const didFinish = window.WeiBeiEditor?.finishStreamingMarkdown(\(Self.json(text)));
               return didFinish === true;
             })();
             """) { [weak self] value, error in
@@ -1554,7 +1554,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
                     return
                 }
                 // Scheduling succeeded. `finalizedStreaming` is the only ready
-                // signal; it arrives after the paced tail, caret retirement,
+                // signal; it arrives after the final body push, caret retirement,
                 // session end, and authoritative height publication.
             }
         }

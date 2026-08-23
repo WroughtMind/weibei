@@ -3,13 +3,13 @@ import test from 'node:test';
 import {
   joinFrontmatter,
   inlineMathInputPattern,
+  incompleteStreamingMarkdownTailMarkers,
   looksLikeMarkdownSyntax,
   normalizeHtmlBreaks,
   normalizeMarkdownSource,
   normalizeMarkdownOutput,
   protectCurrencyDollars,
   splitFrontmatter,
-  withholdIncompleteStreamingMarkdownTail,
 } from '../src/markdownRules';
 
 test('document boundary rules preserve frontmatter and extended Markdown on round-trip', () => {
@@ -97,18 +97,30 @@ test('normalization preserves valid and incomplete formula source for lossless e
   assert.equal(normalizeMarkdownSource('$\\unknown{x}$', 'agentGenerated'), '$\\unknown{x}$');
 });
 
-test('chat streaming withholds only unfinished trailing emphasis syntax', () => {
-  assert.equal(withholdIncompleteStreamingMarkdownTail('前文 *'), '前文 ');
-  assert.equal(withholdIncompleteStreamingMarkdownTail('前文 **粗'), '前文 ');
-  assert.equal(withholdIncompleteStreamingMarkdownTail('前文 **粗体**'), '前文 **粗体**');
-  assert.equal(withholdIncompleteStreamingMarkdownTail('前文 ~~删除'), '前文 ');
-  assert.equal(withholdIncompleteStreamingMarkdownTail('链接 [材料：讲义] 与 $5'), '链接 [材料：讲义] 与 $5');
-  assert.equal(withholdIncompleteStreamingMarkdownTail('代码 `const value = "**"`'), '代码 `const value = "**"`');
-  assert.equal(withholdIncompleteStreamingMarkdownTail('转义 \\** 不隐藏'), '转义 \\** 不隐藏');
-  assert.equal(
-    withholdIncompleteStreamingMarkdownTail(`\`\`\`md\n**源码`),
-    `\`\`\`md\n**源码`,
+test('chat streaming identifies only unfinished trailing emphasis markers', () => {
+  assert.deepEqual(incompleteStreamingMarkdownTailMarkers('前文 *'), [{ marker: '*', index: 3, rankFromEnd: 1 }]);
+  assert.deepEqual(incompleteStreamingMarkdownTailMarkers('前文 **粗'), [{ marker: '**', index: 3, rankFromEnd: 1 }]);
+  assert.deepEqual(incompleteStreamingMarkdownTailMarkers('前文 **粗体**'), []);
+  assert.deepEqual(incompleteStreamingMarkdownTailMarkers('前文 ~~删除'), [{ marker: '~~', index: 3, rankFromEnd: 1 }]);
+  assert.deepEqual(incompleteStreamingMarkdownTailMarkers('前文 __强调'), [{ marker: '__', index: 3, rankFromEnd: 1 }]);
+  assert.deepEqual(incompleteStreamingMarkdownTailMarkers('链接 [材料：讲义] 与 $5'), []);
+  assert.deepEqual(incompleteStreamingMarkdownTailMarkers('代码 `const value = "**"`'), []);
+  assert.deepEqual(incompleteStreamingMarkdownTailMarkers('转义 \\** 不隐藏'), []);
+  assert.deepEqual(
+    incompleteStreamingMarkdownTailMarkers('**未闭合 与转义 \\**'),
+    [{ marker: '**', index: 0, rankFromEnd: 2 }],
   );
+  assert.deepEqual(
+    incompleteStreamingMarkdownTailMarkers(`**${'字'.repeat(158)}`),
+    [{ marker: '**', index: 0, rankFromEnd: 1 }],
+  );
+  assert.deepEqual(incompleteStreamingMarkdownTailMarkers(`**${'字'.repeat(159)}`), []);
+  assert.deepEqual(incompleteStreamingMarkdownTailMarkers(`**${'字'.repeat(161)}`), []);
+  assert.deepEqual(
+    incompleteStreamingMarkdownTailMarkers(`${'字'.repeat(161)}**尾`),
+    [{ marker: '**', index: 161, rankFromEnd: 1 }],
+  );
+  assert.deepEqual(incompleteStreamingMarkdownTailMarkers(`\`\`\`md\n**源码`), []);
 });
 
 test('paste probe flags Markdown clipboard text and leaves plain prose alone', () => {

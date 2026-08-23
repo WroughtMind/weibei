@@ -613,7 +613,14 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
           const firstBlock = root?.firstElementChild;
           window.__weiBeiStreamingFirstBlockForCheck = firstBlock;
           window.WeiBeiEditor.updateStreamingMarkdown("第一段落完整内容。\\n\\n第二段带 **加");
+          const unfinishedText = root?.textContent || '';
+          const hiddenUnfinishedSyntax = Array.from(
+            root?.querySelectorAll('[data-weibei-streaming-syntax-hidden="true"]') || []
+          ).map((node) => node.textContent || '').join('');
           window.WeiBeiEditor.updateStreamingMarkdown("第一段落完整内容。\\n\\n第二段带 **加粗** 与 $a+b$ 内容。");
+          const closedSyntaxStillHidden = Boolean(
+            root?.querySelector('[data-weibei-streaming-syntax-hidden="true"]')
+          );
           window.WeiBeiEditor.updateStreamingMarkdown("第一段落完整内容。\\n\\n第二段带 **加粗** 与 $a+b$ 内容。\\n\\n- 列表甲");
           window.WeiBeiEditor.updateStreamingMarkdown("第一段落完整内容。\\n\\n第二段带 **加粗** 与 $a+b$ 内容。\\n\\n- 列表甲\\n- 列表乙");
           const finalMarkdown = "第一段落完整内容。\\n\\n第二段带 **加粗** 与 $a+b$ 内容。\\n\\n- 列表甲\\n- 列表乙\\n\\n收尾一段。";
@@ -622,6 +629,9 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
           return JSON.stringify({
             blockCount: blocks.length,
             firstBlockPreserved: firstBlock === root?.firstElementChild,
+            unfinishedBodyVisible: unfinishedText.includes('加'),
+            hiddenUnfinishedSyntax,
+            closedSyntaxStillHidden,
             text: (root?.textContent || '').replace(/\\s+/g, ''),
             markdown: window.WeiBeiEditor.getMarkdown()
           });
@@ -648,6 +658,15 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
             }
             guard result["firstBlockPreserved"] as? Bool == true else {
                 self.fail("streaming snapshots replaced an unchanged leading DOM block")
+                return
+            }
+            guard result["unfinishedBodyVisible"] as? Bool == true,
+                  result["hiddenUnfinishedSyntax"] as? String == "**" else {
+                self.fail("streaming snapshots hid unfinished body text or exposed its marker: \(result)")
+                return
+            }
+            guard result["closedSyntaxStillHidden"] as? Bool == false else {
+                self.fail("streaming snapshots kept hiding a closed emphasis marker")
                 return
             }
             guard text.contains("第二段带") else {
@@ -2798,7 +2817,7 @@ private final class FinalizedAgentMarkdownHarness: NSObject, WKScriptMessageHand
                 self.fail("finalized Agent Markdown stream could not finish")
                 return
             }
-            // `finalizedStreaming` arrives only after the paced tail and the
+            // `finalizedStreaming` arrives only after the final body and the
             // authoritative final height have landed.
         }
     }
@@ -3043,9 +3062,13 @@ private func verifyAgentChatMarkdownSourceContract() {
     let richMarkdownPath = root.appendingPathComponent(
         "Sources/WeiBei/Views/RichMarkdownEditorView.swift"
     )
+    let webEditorPath = root.appendingPathComponent(
+        "Sources/WeiBei/WebEditor/src/editor.ts"
+    )
     guard let classifier = try? String(contentsOf: classifierPath, encoding: .utf8),
           let chat = try? String(contentsOf: chatPath, encoding: .utf8),
-          let richMarkdown = try? String(contentsOf: richMarkdownPath, encoding: .utf8) else {
+          let richMarkdown = try? String(contentsOf: richMarkdownPath, encoding: .utf8),
+          let webEditor = try? String(contentsOf: webEditorPath, encoding: .utf8) else {
         expect(false, "could not read finalized Agent Markdown source contract")
         return
     }
@@ -3087,6 +3110,14 @@ private func verifyAgentChatMarkdownSourceContract() {
             && richMarkdown.contains("NSWorkspace.shared.open(targetURL)")
             && richMarkdown.contains("decisionHandler(.cancel)"),
         "Markdown external links must open natively without replacing the current editor/answer"
+    )
+    expect(
+        !richMarkdown.contains("{ paced: true }")
+            && !webEditor.contains("pacedTailTimer")
+            && !webEditor.contains("PACED_TAIL_")
+            && !webEditor.contains("options?.paced")
+            && webEditor.contains("if (document.hidden || isEditorReduceMotion())"),
+        "Agent Markdown must not reintroduce a second web content pacer"
     )
 }
 
