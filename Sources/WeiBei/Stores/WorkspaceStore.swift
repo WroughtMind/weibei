@@ -18570,15 +18570,15 @@ final class WorkspaceStore: ObservableObject {
     }
 
     /// S5：连续 3 次写盘失败才写入 workspaceSaveError（可点重试）；此前静默。
-    /// 安全自检仍立即暴露，便于断言注入的单次失败。
-    private func reportWorkspaceSaveFailure(_ message: String) {
+    @discardableResult
+    private func reportWorkspaceSaveFailure(_ message: String) -> String {
         consecutiveWorkspaceSaveFailures += 1
-        // 连续 3 次失败才上横幅；每次都落日志（下游操作会被拒绝，事后定位全靠它）。
         appendWorkspaceSaveFailureLog(message)
         if WeiBeiSafetyTestMode.isEnabled
             || consecutiveWorkspaceSaveFailures >= 3 {
             workspaceSaveError = message
         }
+        return message
     }
 
     private func appendWorkspaceSaveFailureLog(_ message: String) {
@@ -20990,10 +20990,10 @@ final class WorkspaceStore: ObservableObject {
                 extra: "outcome=failed generation=\(generation)"
             )
             guard workspaceSaveGeneration == generation else { return true }
-            reportWorkspaceSaveFailure(ui(
+            noteEditorWorkspaceSaveFailed(reportWorkspaceSaveFailure(ui(
                 "课程可携带状态没有成功保存：\(error.localizedDescription)",
                 "Portable course state was not saved: \(error.localizedDescription)"
-            ))
+            )))
             return false
         }
         let noteEditorSaveReceipt = makeNoteEditorWorkspaceSaveReceipt(
@@ -21119,20 +21119,20 @@ final class WorkspaceStore: ObservableObject {
         if let failure = result.failure {
             switch failure {
             case .portableState(let detail):
-                reportWorkspaceSaveFailure(ui(
+                noteEditorWorkspaceSaveFailed(reportWorkspaceSaveFailure(ui(
                     "课程可携带状态没有成功保存：\(detail)",
                     "Portable course state was not saved: \(detail)"
-                ))
+                )))
             case .workspace(let detail):
-                reportWorkspaceSaveFailure(ui(
+                noteEditorWorkspaceSaveFailed(reportWorkspaceSaveFailure(ui(
                     "课程更改尚未写入磁盘：\(detail)",
                     "Course changes were not saved to disk: \(detail)"
-                ))
+                )))
             case .rollbackConflict:
-                reportWorkspaceSaveFailure(ui(
+                noteEditorWorkspaceSaveFailed(reportWorkspaceSaveFailure(ui(
                     "课程状态提交失败且检测到并发变更，魏碑已停止覆盖并保留现场。",
                     "The course state commit failed during a concurrent change. WeiBei stopped overwriting and preserved the files for recovery."
-                ))
+                )))
             case .stale:
                 publishOutcome = "superseded"
                 return true
@@ -21249,10 +21249,10 @@ final class WorkspaceStore: ObservableObject {
                         .intersection(requestedCourseIDs)
                 )
             } catch {
-                reportWorkspaceSaveFailure(ui(
+                noteEditorWorkspaceSaveFailed(reportWorkspaceSaveFailure(ui(
                     "课程可携带状态没有成功保存：\(error.localizedDescription)",
                     "Portable course state was not saved: \(error.localizedDescription)"
-                ))
+                )))
                 return false
             }
             let persistedCourseResumePoints = sanitizedCourseResumePoints()
@@ -21351,15 +21351,15 @@ final class WorkspaceStore: ObservableObject {
             } catch {
                 do {
                     try rollbackCoursePortableStateCommit(portableCommit)
-                    reportWorkspaceSaveFailure(ui(
+                    noteEditorWorkspaceSaveFailed(reportWorkspaceSaveFailure(ui(
                         "课程更改尚未写入磁盘：\(error.localizedDescription)",
                         "Course changes were not saved to disk: \(error.localizedDescription)"
-                    ))
+                    )))
                 } catch {
-                    reportWorkspaceSaveFailure(ui(
+                    noteEditorWorkspaceSaveFailed(reportWorkspaceSaveFailure(ui(
                         "课程状态提交失败且检测到并发变更，魏碑已停止覆盖并保留现场。",
                         "The course state commit failed during a concurrent change. WeiBei stopped overwriting and preserved the files for recovery."
-                    ))
+                    )))
                 }
                 return false
             }

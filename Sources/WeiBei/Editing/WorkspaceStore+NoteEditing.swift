@@ -100,6 +100,14 @@ extension WorkspaceStore {
         )
     }
 
+    func noteEditorWorkspaceSaveFailed(_ message: String) {
+        let documentID = noteEditingSession.documentID
+        guard noteEditingSession.dirty,
+              item(withID: documentID)?.editsBackingMarkdownFile == false else { return }
+        noteEditingSession.markSaveFailed(documentID: documentID)
+        showImportantOperationError(message)
+    }
+
     private func completeNoteEditorSave(
         _ receipt: NoteEditorSaveReceipt,
         marksSessionSaved: Bool,

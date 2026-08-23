@@ -13,7 +13,7 @@ enum NoteWriteGateError: LocalizedError {
         case .writeRefusedKeepContent:
             return "磁盘内容无法确认，写入已暂停以保护正文。"
         case .diskChangedAdoptDisk:
-            return "笔记文件已被外部修改，已采用磁盘内容。"
+            return "笔记文件已被外部修改，待写内容仍保留在魏碑中。"
         case .writeVerificationFailed:
             return "写入后重读内容不一致，未标记为已保存。"
         }
@@ -608,7 +608,11 @@ extension WorkspaceStore {
             retainUnreachableNoteDraft(markdown, itemID: itemID)
             return false
         } catch NoteWriteGateError.diskChangedAdoptDisk {
-            adoptExternalDiskNote(itemID: itemID, url: url)
+            retainExternalModificationConflict(
+                markdown,
+                itemID: itemID,
+                url: url
+            )
             return false
         } catch {
             setNoteDraft(markdown, for: itemID)
@@ -629,24 +633,34 @@ extension WorkspaceStore {
         return true
     }
 
-    /// 磁盘内容被外部修改时采用磁盘：待写内容已先入备份环，这里刷新编辑器状态。
-    func adoptExternalDiskNote(itemID: String, url: URL) {
+    /// 磁盘内容被外部修改时保留待写正文，并交给现有冲突条显式选择。
+    func retainExternalModificationConflict(
+        _ markdown: String,
+        itemID: String,
+        url: URL
+    ) {
         guard let diskMarkdown = try? String(contentsOf: url, encoding: .utf8) else { return }
         let digest = Self.noteContentDigest(Data(diskMarkdown.utf8))
+        let baseDigest = noteBackingContentDigestsByItemID[itemID] ?? digest
         noteBackingContentDigestsByItemID[itemID] = digest
-        lastSelfWrittenNoteDigestsByItemID[itemID] = digest
         pendingNoteWritesByItemID.removeValue(forKey: itemID)
-        setNoteDraft(nil, for: itemID)
+        setNoteDraft(markdown, for: itemID)
         loadedCourseNoteTextByItemID[itemID] = diskMarkdown
-        if activeNoteItemID == itemID {
-            noteText = diskMarkdown
-            noteEditingSession.replaceDocument(with: itemID)
-            noteEditingSession.markExternallyModified(documentID: itemID)
-            noteEditorCommand = NoteEditorCommand(
-                kind: .reloadDocument,
-                markdown: diskMarkdown
+        noteEditingSession.markExternallyModified(documentID: itemID)
+        noteEditorRecoveryConflict = NoteEditorRecoveryConflict(
+            diskMarkdown: diskMarkdown,
+            checkpoint: NoteRecoveryCheckpoint(
+                metadata: NoteRecoveryMetadata(
+                    documentID: itemID,
+                    baseFileDigest: baseDigest,
+                    checkpointDigest: Self.noteContentDigest(Data(markdown.utf8)),
+                    revision: noteEditingSession.currentRevision,
+                    updatedAt: Date(),
+                    dialectVersion: 1
+                ),
+                markdown: markdown
             )
-        }
+        )
     }
 
     /// 全仓唯一笔记写盘闸门（计划 §5 阶段1）：所有写路径必须经此函数。
