@@ -33,6 +33,7 @@ struct SettingsView: View {
     @State private var shortcutRecordMonitor: Any?
     @State private var shortcutStatusMessage: String?
     // In-app feedback sheet.
+    @State private var hoveringStyle: WeiBeiAppearanceStyle?
     @State private var showFeedbackSheet = false
     @State private var showInspirationSourcesSheet = false
     @State private var feedbackTitle = ""
@@ -496,6 +497,7 @@ struct SettingsView: View {
     /// 具体浅/深由上方“外观”偏好（跟随系统/浅色/深色）解析，卡上标注当前生效主题。
     private func stylePreviewCard(_ style: WeiBeiAppearanceStyle) -> some View {
         let selected = style == store.appearanceStyle
+        let hovering = hoveringStyle == style
         return Button {
             store.appearanceStyle = style
         } label: {
@@ -513,7 +515,7 @@ struct SettingsView: View {
                             .stroke(
                                 selected
                                     ? WeiBeiTheme.cinnabar.opacity(0.90)
-                                    : WeiBeiTheme.hairline.opacity(0.42),
+                                    : WeiBeiTheme.hairline.opacity(hovering ? 0.80 : 0.42),
                                 lineWidth: selected ? 2 : 1
                             )
                     }
@@ -543,6 +545,8 @@ struct SettingsView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .onHover { hovering in hoveringStyle = hovering ? style : nil }
+        .animation(WeiBeiMotion.hover, value: hoveringStyle)
         .accessibilityLabel(Text(style.label(ui: store.ui)))
         .accessibilityAddTraits(selected ? .isSelected : [])
     }

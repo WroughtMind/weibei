@@ -1989,28 +1989,19 @@ extension View {
             .foregroundColor(WeiBeiTheme.ink)
             .background {
                 ZStack {
-                    RoundedRectangle(cornerRadius: cornerRadius)
-                        .fill(WeiBeiTheme.paperRaised.opacity(isGlass ? 0.58 : 0.985))
+                    WeiBeiRaisedPillBackdrop(
+                        shape: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous),
+                        fill: WeiBeiTheme.paperRaised.opacity(isGlass ? 0.58 : 0.985),
+                        stroke: WeiBeiTheme.hairline.opacity(isGlass ? 0.22 : 0.9),
+                        showsContactShadow: true
+                    )
                     RoundedRectangle(cornerRadius: cornerRadius)
                         .fill(.ultraThinMaterial)
                         .opacity(isGlass ? 0.24 : 0.015)
                 }
             }
             .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
-            .overlay(alignment: .top) {
-                Rectangle()
-                    .fill(isGlass ? Color.clear : WeiBeiTheme.glassHighlight.opacity(0.24))
-                    .frame(height: 1)
-                    .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
-            }
-            .overlay {
-                RoundedRectangle(cornerRadius: cornerRadius)
-                    .stroke(
-                        WeiBeiTheme.hairline.opacity(isGlass ? 0.22 : 1),
-                        lineWidth: 1
-                    )
-            }
-            .shadow(color: WeiBeiTheme.ink.opacity(shadowOpacity * 0.50), radius: 7, y: 3)
+            .shadow(color: WeiBeiTheme.ink.opacity(shadowOpacity * 0.50), radius: 10, y: 3)
     }
 
     func weibeiAnnotationPanel(cornerRadius: CGFloat = 7) -> some View {
