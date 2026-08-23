@@ -91,6 +91,75 @@ const normalizeHtmlBreaksInLine = (line: string) => /^\s*(?:>\s*)*<br\s*\/?>\s*$
 
 export const normalizeHtmlBreaks = (markdown: string) => mapMarkdownOutsideCode(markdown, normalizeHtmlBreaksInLine);
 
+const incompleteStreamingMarkers = ['**', '__', '~~'];
+const incompleteStreamingTailLimit = 160;
+
+/** Keeps unfinished chat emphasis syntax out of sight until its closing marker arrives. */
+export const withholdIncompleteStreamingMarkdownTail = (markdown: string) => {
+  const source = String(markdown || '');
+  const lineStart = Math.max(source.lastIndexOf('\n'), source.lastIndexOf('\r')) + 1;
+  const line = source.slice(lineStart);
+  if (!/[*_~]/.test(line)) return source;
+  let fenceMarker = '';
+  let fenceLength = 0;
+  for (const priorLine of source.slice(0, lineStart).split(/\r?\n/)) {
+    const fence = priorLine.match(/^\s*(?:>\s*)*(`{3,}|~{3,})/);
+    if (!fence) continue;
+    if (!fenceMarker) {
+      fenceMarker = fence[1][0];
+      fenceLength = fence[1].length;
+    } else if (fence[1][0] === fenceMarker && fence[1].length >= fenceLength) {
+      fenceMarker = '';
+      fenceLength = 0;
+    }
+  }
+  if (fenceMarker) return source;
+  let cut = line.length;
+  let cursor = 0;
+  let codeMarker = '';
+  const openMarkers = new Map<string, number>();
+
+  while (cursor < line.length) {
+    if (line[cursor] === '`' && !isEscapedMarkdownPosition(line, cursor)) {
+      const marker = line.slice(cursor).match(/^`+/)?.[0] || '`';
+      if (!codeMarker) codeMarker = marker;
+      else if (marker === codeMarker) codeMarker = '';
+      cursor += marker.length;
+      continue;
+    }
+    if (!codeMarker) {
+      const marker = incompleteStreamingMarkers.find((candidate) => line.startsWith(candidate, cursor));
+      if (marker && !isEscapedMarkdownPosition(line, cursor)) {
+        if (openMarkers.has(marker)) openMarkers.delete(marker);
+        else openMarkers.set(marker, cursor);
+        cursor += marker.length;
+        continue;
+      }
+    }
+    cursor += 1;
+  }
+
+  for (const index of openMarkers.values()) cut = Math.min(cut, index);
+  const partialMarkerIndex = line.length - 1;
+  const partialMarker = line[partialMarkerIndex] || '';
+  const endsWithBalancedMarker = incompleteStreamingMarkers.some((marker) => (
+    marker[0] === partialMarker && line.endsWith(marker) && !openMarkers.has(marker)
+  ));
+  if (
+    !codeMarker
+    && partialMarkerIndex >= 0
+    && !endsWithBalancedMarker
+    && ['*', '_', '~'].includes(partialMarker)
+    && !isEscapedMarkdownPosition(line, partialMarkerIndex)
+  ) {
+    cut = Math.min(cut, partialMarkerIndex);
+  }
+  // ponytail: cover chat's visible emphasis markers only; use a full repair
+  // parser if links, math, or cross-line constructs also need withholding.
+  if (cut >= line.length || line.length - cut > incompleteStreamingTailLimit) return source;
+  return source.slice(0, lineStart + cut);
+};
+
 export type MarkdownSource = 'userDocument' | 'userPaste' | 'agentGenerated' | 'internalFragment';
 
 export const inlineMathInputPattern = /(?<!\\)\$((?!\d)[^$\n]+)\$$/;

@@ -38,6 +38,7 @@ import {
   looksLikeMarkdownSyntax,
   normalizeMarkdownSource,
   splitFrontmatter,
+  withholdIncompleteStreamingMarkdownTail,
 } from './markdownRules';
 import {
   addEditorMetric,
@@ -2968,6 +2969,7 @@ const streamingCommands = () => editor.action((ctx) => ctx.get(commandsCtx));
 
 const stopStreamingMarkdown = (keep = true) => {
   cancelPacedStreamingTail();
+  cancelFinalizeDelay();
   if (streamingMarkdownBuffer === null) return;
   streamingCommands().call(abortStreamingCmd.key, { keep });
   streamingMarkdownBuffer = null;
@@ -2978,6 +2980,7 @@ const stopStreamingMarkdown = (keep = true) => {
 const updateStreamingMarkdownInternal = (markdown: any) => {
   ensureEditor();
   cancelPacedStreamingTail();
+  cancelFinalizeDelay();
   const fullText = String(markdown || '');
   streamingFullTextBase = fullText;
   const document = splitFrontmatter(fullText);
@@ -3001,6 +3004,12 @@ const updateStreamingMarkdownInternal = (markdown: any) => {
     streamingRawBody = body === rawBody ? rawBody : null;
     lastMarkdown = withFrontmatter(body);
   }
+  // Withhold the trailing unclosed inline segment: streaming `**小` would
+  // paint raw asterisks until the closing `**` lands; holding it back shows
+  // nothing until the pair closes, then the bold text appears already
+  // rendered (the standard "hold back unsafe trailing tokens" technique).
+  body = withholdIncompleteStreamingMarkdownTail(body);
+  if (streamingRawBody !== null) streamingRawBody = body;
   const commands = streamingCommands();
   if (streamingMarkdownBuffer === null) {
     commands.call(startStreamingCmd.key);
@@ -3035,13 +3044,32 @@ const appendStreamingMarkdownInternal = (suffix: any) => {
 let pacedTailTimer: number | null = null;
 /** Above the fade plugin's per-insert limit a chunk cannot fade, so pace it. */
 const PACED_TAIL_FADE_LIMIT_CHARACTERS = 24;
-const PACED_TAIL_CHUNK_CHARACTERS = 12;
-const PACED_TAIL_TICK_MILLISECONDS = 33;
+const PACED_TAIL_CHUNK_CHARACTERS = 16;
+const PACED_TAIL_TICK_MILLISECONDS = 24;
 /** Wall-clock cap: throttled (hidden/occluded) WebViews slow timers to a crawl,
  * so past this the whole tail lands at once instead of stalling half-typed. */
 const PACED_TAIL_MAXIMUM_MILLISECONDS = 3_000;
-/** Hard stop so an abandoned tail can never pace forever (~8s at cadence). */
+/** Hard stop so an abandoned tail can never pace forever. */
 const PACED_TAIL_MAXIMUM_TICKS = 240;
+
+/** Ending the session clears fade decorations instantly — for text still
+ * mid-fade that is a whole-answer opacity snap ("everything flashes once").
+ * The final body is already in the document, so the session can outlive the
+ * last push by one fade window and end with every animation completed. */
+let finalizeDelayTimer: number | null = null;
+const FINALIZE_FADE_SETTLE_MILLISECONDS = 220;
+const cancelFinalizeDelay = () => {
+  if (finalizeDelayTimer == null) return;
+  window.clearTimeout(finalizeDelayTimer);
+  finalizeDelayTimer = null;
+};
+const scheduleFinalizeAfterFades = () => {
+  cancelFinalizeDelay();
+  finalizeDelayTimer = window.setTimeout(() => {
+    finalizeDelayTimer = null;
+    finalizeStreamingSession();
+  }, FINALIZE_FADE_SETTLE_MILLISECONDS);
+};
 
 const cancelPacedStreamingTail = () => {
   if (pacedTailTimer == null) return;
@@ -3068,6 +3096,7 @@ const pushStreamingBodyForFinish = (body: string) => {
 };
 
 const finalizeStreamingSession = () => {
+  cancelFinalizeDelay();
   streamingCommands().call(endStreamingCmd.key, { diffReview: false });
   streamingRawBody = null;
   streamingMarkdownBuffer = null;
@@ -3124,7 +3153,7 @@ const finishStreamingMarkdownInternal = (markdown: any, options?: { paced?: bool
           pacedTailTimer = window.setTimeout(step, PACED_TAIL_TICK_MILLISECONDS);
           return;
         }
-        finalizeStreamingSession();
+        scheduleFinalizeAfterFades();
       } catch {
         // A paced push must never strand the answer half-typed (one throwing
         // tick would silently end the timer chain): tear the session down and
@@ -3142,7 +3171,7 @@ const finishStreamingMarkdownInternal = (markdown: any, options?: { paced?: bool
     return;
   }
   pushStreamingBodyForFinish(body);
-  finalizeStreamingSession();
+  scheduleFinalizeAfterFades();
 };
 
 const setMarkdownInternal = (markdown: any) => {
