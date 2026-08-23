@@ -397,6 +397,8 @@ struct NotePaneView: View {
     @State private var noteTabTitleDraft = ""
     @State private var editingNoteTabTitle = false
     @State private var editorRecoveryGeneration = 0
+    @State private var editorRecoveryFailureDates: [Date] = []
+    @State private var editorRecoveryStopped = false
     @State private var noteOutline: [NoteEditorOutlineItem] = []
     @State private var activeNoteRailID: String?
     var showsPaneHeader = true
@@ -475,6 +477,8 @@ struct NotePaneView: View {
         }
         .onChange(of: store.activeNoteItemID) { _, _ in
             editingNoteTabTitle = false
+            editorRecoveryFailureDates = []
+            editorRecoveryStopped = false
             noteOutline = []
             activeNoteRailID = nil
         }
@@ -638,9 +642,32 @@ struct NotePaneView: View {
                     .accessibilityLabel(Text(store.ui("正在载入笔记", "Loading note")))
             } else {
                 // 笔记固定为所见即所得（rich）写作，源码 / 对照模式入口已全部移除。
-                richEditor
+                if editorRecoveryStopped {
+                    editorRecoveryFailure
+                } else {
+                    richEditor
+                }
             }
         }
+    }
+
+    private var editorRecoveryFailure: some View {
+        VStack(spacing: 12) {
+            Text(store.ui(
+                "编辑器连续恢复失败，已停止自动重建。恢复草稿仍保留，可手动重试。",
+                "The editor repeatedly failed to recover, so automatic rebuilding stopped. The recovery draft is preserved; retry manually."
+            ))
+                .weiBeiText(13, weight: .medium)
+                .foregroundStyle(WeiBeiTheme.ink)
+                .multilineTextAlignment(.center)
+            Button(store.ui("重试编辑器", "Retry Editor")) {
+                editorRecoveryStopped = false
+                editorRecoveryGeneration &+= 1
+            }
+            .buttonStyle(.bordered)
+        }
+        .padding(24)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private var noteRailItems: [ContentRailItem] {
@@ -716,13 +743,28 @@ struct NotePaneView: View {
             return store.handleAppShortcut(key: key, modifiers: modifiers)
         }, onRenderFailure: {
             store.noteEditingSession.invalidateBridgeGeneration()
-            editorRecoveryGeneration &+= 1
             Task { await store.reconcileActiveNoteEditorWithBackingFile() }
+            if shouldAutomaticallyRecoverEditor(
+                failureDates: &editorRecoveryFailureDates
+            ) {
+                editorRecoveryGeneration &+= 1
+            } else {
+                editorRecoveryStopped = true
+            }
         })
         .id("\(store.activeNoteEditorDocumentID):\(editorRecoveryGeneration)")
         .background(WeiBeiTheme.paper)
     }
 
+}
+
+func shouldAutomaticallyRecoverEditor(
+    failureDates: inout [Date],
+    now: Date = Date()
+) -> Bool {
+    failureDates.removeAll { now.timeIntervalSince($0) >= 60 }
+    failureDates.append(now)
+    return failureDates.count <= 2
 }
 
 private struct NotebookCreationPanel: View {

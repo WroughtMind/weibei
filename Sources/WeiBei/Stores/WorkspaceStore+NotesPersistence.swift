@@ -654,21 +654,38 @@ extension WorkspaceStore {
         url: URL,
         expectedBaseline: String?
     ) throws {
-        if FileManager.default.fileExists(atPath: url.path) {
-            guard let expectedBaseline,
-                  let diskDigest = Self.noteContentDigest(at: url) else {
-                throw NoteWriteGateError.writeRefusedKeepContent
-            }
-            if diskDigest != expectedBaseline {
-                _ = try? NoteBackupRing.capture(
-                    content: Data(markdown.utf8),
-                    itemID: itemID,
-                    rootURL: noteBackupRootURL
-                )
-                throw NoteWriteGateError.diskChangedAdoptDisk
+        var coordinationError: NSError?
+        var writeResult: Result<Void, Error>?
+        NSFileCoordinator(filePresenter: nil).coordinate(
+            writingItemAt: url,
+            options: .forReplacing,
+            error: &coordinationError
+        ) { coordinatedURL in
+            writeResult = Result {
+                if FileManager.default.fileExists(atPath: coordinatedURL.path) {
+                    guard let expectedBaseline,
+                          let diskDigest = Self.noteContentDigest(at: coordinatedURL) else {
+                        throw NoteWriteGateError.writeRefusedKeepContent
+                    }
+                    if diskDigest != expectedBaseline {
+                        _ = try? NoteBackupRing.capture(
+                            content: Data(markdown.utf8),
+                            itemID: itemID,
+                            rootURL: noteBackupRootURL
+                        )
+                        throw NoteWriteGateError.diskChangedAdoptDisk
+                    }
+                }
+                try notebookMarkdownWriter(markdown, coordinatedURL)
             }
         }
-        try notebookMarkdownWriter(markdown, url)
+        if let writeResult {
+            try writeResult.get()
+        } else if let coordinationError {
+            throw coordinationError
+        } else {
+            throw NoteWriteGateError.writeRefusedKeepContent
+        }
         let writtenDigest = Self.noteContentDigest(Data(markdown.utf8))
         noteBackingContentDigestsByItemID[itemID] = writtenDigest
         lastSelfWrittenNoteDigestsByItemID[itemID] = writtenDigest

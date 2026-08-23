@@ -1105,6 +1105,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         private var lastAppliedSelectionAskMarks = ""
         private var lastAppliedSelectionRemarkMarks = ""
         private var finalizedRenderGeneration = 0
+        private var hasReportedRenderFailure = false
 
         init(
             documentID: String,
@@ -1304,6 +1305,8 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         }
 
         fileprivate func reportRenderFailure() {
+            guard !hasReportedRenderFailure else { return }
+            hasReportedRenderFailure = true
             // A failure can race the finalized JavaScript evaluation. Invalidate
             // that completion before exposing the native fallback so a broken
             // WebView cannot become ready again.
@@ -1322,6 +1325,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             }
             switch message.name {
             case "editorReady":
+                hasReportedRenderFailure = false
                 isReady = true
                 bindEditingSession()
                 setMarkdownBaseURL(markdownBaseURLString)
