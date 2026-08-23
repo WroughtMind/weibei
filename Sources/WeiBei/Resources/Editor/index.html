@@ -1287,6 +1287,7 @@
     }
 
     .wb-stream-caret {
+      position: absolute;
       display: inline-block;
       width: 2px;
       height: 1.05em;
@@ -1296,6 +1297,12 @@
       background: currentColor;
       opacity: 0.7;
       animation: wb-stream-caret-blink 1.06s ease-in-out infinite;
+      pointer-events: none;
+    }
+
+    .wb-stream-caret.is-finalized {
+      animation: none;
+      opacity: 0;
     }
 
     @keyframes wb-stream-caret-blink {

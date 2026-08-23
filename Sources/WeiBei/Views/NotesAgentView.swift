@@ -886,10 +886,6 @@ struct MarkdownPreviewView: View {
     var preservesHeightAcrossMarkdownChanges = false
     /// Pass-through to Milkdown's cumulative document-diff streaming session.
     var streamsMarkdownUpdates = false
-    /// Ignore ordinary ResizeObserver events while a streaming answer is being
-    /// finalized. The generation-tagged final callback supplies the authoritative
-    /// height for that handoff instead.
-    var acceptsHeightMeasurements = true
     var onWikiLink: (String) -> Void = { _ in }
     var onSourceReference: (String) -> Void = { _ in }
     var onAppShortcut: (String, NSEvent.ModifierFlags) -> Bool = { _, _ in false }
@@ -909,10 +905,6 @@ struct MarkdownPreviewView: View {
     @State private var maxObservedMeasuredHeight: CGFloat = 0
     @State private var lastLayoutWidthKey = 0
     @State private var lastChatWideTypography = false
-    /// Largest measurement rejected while the finalized-snapshot gate is closed.
-    /// The web side de-duplicates identical height reports, so one swallowed
-    /// during the gate would otherwise never arrive again.
-    @State private var latestGatedHeight: CGFloat = 0
 
     var body: some View {
         RichMarkdownEditorView(
@@ -946,19 +938,6 @@ struct MarkdownPreviewView: View {
                 }
                 let measuredHeight = ceil(height)
                 let nextFrameHeight = max(measuredHeight, Self.compactPreviewLoadingHeight)
-                guard acceptsHeightMeasurements else {
-                    // Gate window before the finalized snapshot lands. Keep the
-                    // freshest rejected height: the web side dedups repeated
-                    // reports, so one swallowed here never re-arrives, and the
-                    // row would stay at the stale pre-finish height — clipping
-                    // the last wrapped lines after completion.
-                    latestGatedHeight = max(latestGatedHeight, nextFrameHeight)
-                    WeiBeiPerf.event(
-                        "webview.markdown_height_ignored",
-                        extra: "reason=finalizing"
-                    )
-                    return
-                }
                 if freezeHeightAfterMeasure, heightFrozen {
                     // Keep rejecting recycled-row shrink and jitter, but accept
                     // real late growth from Mermaid, formulas, fonts or images.
@@ -1033,11 +1012,7 @@ struct MarkdownPreviewView: View {
                     measuredHeight,
                     Self.compactPreviewLoadingHeight
                 )
-                // Reconcile with measurements rejected during the gate: the
-                // snapshot may have been read before the finish re-layout, and
-                // a smaller height clips the answer's last wrapped lines.
-                let settledHeight = max(nextFrameHeight, latestGatedHeight)
-                latestGatedHeight = 0
+                let settledHeight = nextFrameHeight
                 heightFrozen = false
                 acceptedMeasureCount = 0
                 contentHeight = settledHeight
@@ -4866,7 +4841,6 @@ private struct AgentMessageMarkdownText: View {
                     isChatWideTypography: isChatWideTypography,
                     preservesHeightAcrossMarkdownChanges: keepsMarkdownSurfaceMounted,
                     streamsMarkdownUpdates: isStreaming,
-                    acceptsHeightMeasurements: !awaitsFinalizedRendererReady,
                     onWikiLink: { title in store.openOrCreateWikiNote(title: title) },
                     onSourceReference: { reference in
                         if let url = URL(string: reference),

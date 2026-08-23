@@ -3065,6 +3065,10 @@ const cancelFinalizeDelay = () => {
 };
 const scheduleFinalizeAfterFades = () => {
   cancelFinalizeDelay();
+  // Flush and end the document session with the final chunk. The appearance
+  // callback still sees streamingMarkdownBuffer, so its fade/caret DOM stays
+  // mounted while the last insertion finishes animating.
+  streamingCommands().call(endStreamingCmd.key, { diffReview: false });
   finalizeDelayTimer = window.setTimeout(() => {
     finalizeDelayTimer = null;
     finalizeStreamingSession();
@@ -3097,23 +3101,22 @@ const pushStreamingBodyForFinish = (body: string) => {
 
 const finalizeStreamingSession = () => {
   cancelFinalizeDelay();
-  streamingCommands().call(endStreamingCmd.key, { diffReview: false });
+  // Hide the decorative caret before retiring the visual streaming state. It
+  // is absolutely positioned, so this changes neither wrapping nor row height.
+  document.querySelectorAll('.wb-stream-caret').forEach((caret) => {
+    caret.classList.add('is-finalized');
+  });
   streamingRawBody = null;
   streamingMarkdownBuffer = null;
   streamingFullTextBase = null;
   cancelPacedStreamingTail();
-  // Decorations gate on the live buffer; repaint once so the finished render
-  // drops the streaming caret without dispatching a transaction.
-  try {
-    editor?.action((ctx) => {
-      ctx.get(editorViewCtx).updateState(ctx.get(editorViewCtx).state);
-    });
-  } catch {
-    // View not ready yet; decorations clear on the next transaction anyway.
-  }
-  // Measure synchronously so the height returned to native reflects the
-  // finalized DOM, not the last streamed report.
+  // Do not force a same-state ProseMirror redraw here. The fully opaque fade
+  // wrappers are visually inert and clear on the next real transaction; a
+  // completion-only redraw was the visible whole-answer flash.
   publishContentHeight();
+  post('finalizedStreaming', {
+    height: Number(window.WeiBeiCompactPreviewHeight || 1),
+  });
   scheduleContentHeightReports();
 };
 
@@ -3162,8 +3165,14 @@ const finishStreamingMarkdownInternal = (markdown: any, options?: { paced?: bool
         streamingMarkdownBuffer = null;
         streamingRawBody = null;
         try { streamingCommands().call(abortStreamingCmd.key, { keep: false }); } catch { /* session already gone */ }
-        try { setMarkdownInternal(fullText); } catch { /* nothing left to try */ }
-        scheduleContentHeightReports();
+        try {
+          setMarkdownInternal(fullText);
+          publishContentHeight();
+          post('finalizedStreaming', {
+            height: Number(window.WeiBeiCompactPreviewHeight || 1),
+          });
+          scheduleContentHeightReports();
+        } catch { /* nothing left to try */ }
       }
     };
     pacedTailTimer = window.setTimeout(step, PACED_TAIL_TICK_MILLISECONDS);

@@ -2616,7 +2616,7 @@ private final class FinalizedAgentMarkdownHarness: NSObject, WKScriptMessageHand
         webView = WKWebView(frame: CGRect(x: 0, y: 0, width: 680, height: 720), configuration: configuration)
         super.init()
         webView.navigationDelegate = self
-        for name in ["editorReady", "contentHeightChanged", "editorFailure"] {
+        for name in ["editorReady", "contentHeightChanged", "finalizedStreaming", "editorFailure"] {
             controller.add(self, name: name)
         }
     }
@@ -2694,6 +2694,15 @@ private final class FinalizedAgentMarkdownHarness: NSObject, WKScriptMessageHand
                 finalizedStreamHeightReports += 1
             }
             handleMeasurement(height: height, width: Double(webView.frame.width))
+        case "finalizedStreaming":
+            guard didStartFinalizedStream,
+                  let height = (message.body as? [String: Any])?["height"] as? Double,
+                  height > 0 else {
+                fail("finalized Agent Markdown reported no finalized height")
+                return
+            }
+            finishReportedHeight = height
+            validateDOM(until: Date().addingTimeInterval(14))
         case "editorFailure":
             fail("finalized agent Markdown renderer failed: \(message.body)")
         default:
@@ -2780,20 +2789,17 @@ private final class FinalizedAgentMarkdownHarness: NSObject, WKScriptMessageHand
     private func finishFinalizedMarkdownStream() {
         webView.evaluateJavaScript("""
         (() => {
-          window.WeiBeiEditor.finishStreamingMarkdown(\(json(finalizedAgentMarkdown)));
-          return Number(window.WeiBeiCompactPreviewHeight || 1);
+          return window.WeiBeiEditor.finishStreamingMarkdown(\(json(finalizedAgentMarkdown))) === true;
         })();
         """) { [weak self] value, error in
             guard let self else { return }
             guard error == nil,
-                  let height = (value as? NSNumber)?.doubleValue,
-                  height > 0 else {
+                  value as? Bool == true else {
                 self.fail("finalized Agent Markdown stream could not finish")
                 return
             }
-            self.finishReportedHeight = height
-            // 收尾尾巴按流式节奏逐字补完(大尾巴可达十余秒),验证窗口须覆盖补完后的最终态
-            self.validateDOM(until: Date().addingTimeInterval(14))
+            // `finalizedStreaming` arrives only after the paced tail and the
+            // authoritative final height have landed.
         }
     }
 
@@ -2882,7 +2888,7 @@ private final class FinalizedAgentMarkdownHarness: NSObject, WKScriptMessageHand
             }
             guard let reportedHeight = (result["reportedHeight"] as? NSNumber)?.doubleValue,
                   let actualHeight = (result["height"] as? NSNumber)?.doubleValue,
-                  reportedHeight > self.finishReportedHeight,
+                  reportedHeight + 1 >= self.finishReportedHeight,
                   reportedHeight + 1 >= actualHeight else {
                 if Date() < deadline {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
@@ -2890,7 +2896,7 @@ private final class FinalizedAgentMarkdownHarness: NSObject, WKScriptMessageHand
                     }
                     return
                 }
-                self.fail("finalized Agent Mermaid growth was not reported: finish=\(self.finishReportedHeight), result=\(result)")
+                self.fail("finalized Agent Markdown height clipped content: finish=\(self.finishReportedHeight), result=\(result)")
                 return
             }
             guard self.finalizedStreamHeightReports <= 20 else {
