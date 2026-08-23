@@ -95,6 +95,7 @@ final class FileModelPhase0BaselineTests: XCTestCase {
         try "磁盘版本".write(to: source, atomically: true, encoding: .utf8)
         let imported = try store.importFileIntoCourseForSelfCheck(source, courseID: courseID, role: .material)
         let item = imported.item
+        let backingURL = try XCTUnwrap(store.resolvedLibraryURL(for: item))
 
         let userVersion = "用户的本地修改版本"
         let checkpoint = NoteRecoveryCheckpoint(
@@ -125,6 +126,11 @@ final class FileModelPhase0BaselineTests: XCTestCase {
         XCTAssertNil(store.noteEditorRecoveryConflict)
         XCTAssertEqual(store.noteText, "磁盘版本")
         XCTAssertNotNil(store.transientNoteStatus)
+
+        store.scheduleNotePersistence("采用磁盘后的新编辑", for: item)
+        store.flushPendingNotePersistence(for: item.id)
+        XCTAssertEqual(try String(contentsOf: backingURL, encoding: .utf8), "采用磁盘后的新编辑")
+        XCTAssertNil(store.noteEditorRecoveryConflict)
     }
 
     func testGoneItemGraysAndReclaims() throws {

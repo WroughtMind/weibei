@@ -415,12 +415,17 @@ struct NotePaneView: View {
                         noteHeader
                     }
 
-                    if store.noteEditorRecoveryConflict != nil {
+                    if let conflict = store.noteEditorRecoveryConflict {
                         HStack(spacing: 12) {
-                            Text(store.ui(
-                                "这份笔记在应用外也发生了修改，未写内容仍保存在魏碑中。请选择下一步。",
-                                "This note was also changed outside WeiBei. Unsaved content is still kept in WeiBei. Choose what to do next."
-                            ))
+                            Text(conflict.checkpointIsPersisted
+                                ? store.ui(
+                                    "这份笔记在应用外也发生了修改，未写内容已保存在魏碑中。请选择下一步。",
+                                    "This note was also changed outside WeiBei. Unsaved content is stored in WeiBei. Choose what to do next."
+                                )
+                                : store.ui(
+                                    "这份笔记在应用外也发生了修改。未写内容仍在当前编辑中，但尚未安全保存；请不要关闭并重试。",
+                                    "This note was also changed outside WeiBei. Unsaved content remains in the current editor but is not safely stored yet; do not close it, and retry."
+                                ))
                             Spacer(minLength: 8)
                             Button(store.ui("使用磁盘版本", "Use Disk Version")) {
                                 Task { await store.resolveNoteEditorRecoveryConflict(useDisk: true) }

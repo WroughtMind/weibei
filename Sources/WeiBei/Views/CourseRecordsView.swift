@@ -287,8 +287,9 @@ struct LearningMemoryListSection: View {
             presenting: memoryPendingDeletion
         ) { memory in
             Button(store.ui("删除记忆", "Delete Memory"), role: .destructive) {
-                _ = store.deleteLearningMemory(memory.id, in: scope)
-                memoryPendingDeletion = nil
+                if store.deleteLearningMemory(memory.id, in: scope) {
+                    memoryPendingDeletion = nil
+                }
             }
             Button(store.ui("取消", "Cancel"), role: .cancel) {
                 memoryPendingDeletion = nil
