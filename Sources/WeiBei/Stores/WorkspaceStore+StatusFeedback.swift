@@ -3,8 +3,8 @@ import WeiBeiCore
 
 private let inspirationAsWatermarkDefaultsKey = "weibei.dailyInspiration.watermark"
 
-/// Transient/important feedback and small settings setters — split out so
-/// WorkspaceStore.swift itself stays within its frozen size budget.
+/// Transient/important feedback and small settings setters, kept separate
+/// from workspace orchestration as their own responsibility.
 @MainActor
 extension WorkspaceStore {
     func setMotionPreference(_ preference: WeiBeiMotionPreference) {
@@ -23,7 +23,7 @@ extension WorkspaceStore {
     }
 
     /// Paper-watermark presentation for the daily line. Defaults-backed app
-    /// preference so the growth-frozen WorkspaceStore.swift stays untouched;
+    /// preference kept with the rest of the small settings responsibility;
     /// the manual objectWillChange keeps @EnvironmentObject views in sync.
     var inspirationAsWatermark: Bool {
         get { selectionAskThreadDefaults.bool(forKey: inspirationAsWatermarkDefaultsKey) }
@@ -48,10 +48,21 @@ extension WorkspaceStore {
         transientNoteStatus = message
         transientNoteStatusTask = Task { @MainActor [weak self] in
             try? await Task.sleep(nanoseconds: 2_400_000_000)
-            guard let self, !Task.isCancelled else { return }
-            guard self.transientNoteStatusGeneration == generation else { return }
+            guard let self, Self.shouldExpireTransientNoteStatus(
+                scheduledGeneration: generation,
+                currentGeneration: self.transientNoteStatusGeneration,
+                isCancelled: Task.isCancelled
+            ) else { return }
             self.transientNoteStatus = nil
         }
+    }
+
+    static func shouldExpireTransientNoteStatus(
+        scheduledGeneration: Int,
+        currentGeneration: Int,
+        isCancelled: Bool
+    ) -> Bool {
+        !isCancelled && scheduledGeneration == currentGeneration
     }
 
     func showImportantOperationError(_ message: String) {

@@ -153,8 +153,8 @@ final class PoetryIncidentRegressionTests: XCTestCase {
         )
         let after = try String(contentsOf: url, encoding: .utf8)
         XCTAssertTrue(
-            after == realBody || after == degradedDraft || store.notesByItemID[item.id] == degradedDraft,
-            "重启 retry 通道：磁盘要么仍是真实正文，要么是写回的草稿本体，草稿不得无痕迹消失"
+            after == degradedDraft || store.notesByItemID[item.id] == degradedDraft,
+            "重启 retry 通道：草稿必须写入磁盘或继续保留在内存"
         )
     }
 

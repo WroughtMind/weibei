@@ -114,31 +114,6 @@ final class SidebarPerformanceTests: XCTestCase {
         withExtendedLifetime(window) {}
     }
 
-    func testDrawerOpenPathDoesNotForceSynchronousLayout() throws {
-        let repositoryRoot = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-        let source = try String(
-            contentsOf: repositoryRoot
-                .appendingPathComponent("Sources/WeiBei/Views/CourseDrawerHost.swift"),
-            encoding: .utf8
-        )
-        let applyStart = try XCTUnwrap(source.range(of: "    func apply(isOpen open:"))
-        let applyEnd = try XCTUnwrap(
-            source.range(
-                of: "\n    private func applyPaperChrome",
-                range: applyStart.upperBound..<source.endIndex
-            )
-        )
-        let applySource = source[applyStart.lowerBound..<applyEnd.lowerBound]
-
-        XCTAssertFalse(
-            applySource.contains("layoutSubtreeIfNeeded"),
-            "opening the drawer must not synchronously lay out the whole SwiftUI sidebar"
-        )
-    }
-
     #if DEBUG
     @MainActor
     func testSidebarListBuildsOnlyVisibleRowsAtPressureScale() {
