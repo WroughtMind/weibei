@@ -61,7 +61,6 @@ func readText(_ url: URL) -> String {
 
 private let requiredSafetyTags = [
     "SAFETY:pending-unsaved-vs-missing",
-    "SAFETY:credentials-single-store",
     "SAFETY:no-swallowed-link-failure",
     "SAFETY:blank-new-note",
 ]

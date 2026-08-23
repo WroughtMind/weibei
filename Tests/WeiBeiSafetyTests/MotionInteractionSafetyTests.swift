@@ -3,7 +3,7 @@ import XCTest
 @testable import WeiBei
 
 /// Targeted guards for the interaction/motion rework: expansion-request acks,
-/// transient status generations, and the latest-first PDF render queue.
+/// visible status isolation, and the latest-first PDF render queue.
 final class MotionInteractionSafetyTests: XCTestCase {
     override class func setUp() {
         super.setUp()
@@ -46,29 +46,6 @@ final class MotionInteractionSafetyTests: XCTestCase {
         XCTAssertEqual(navigated, ["B"])
         XCTAssertEqual(secondRunCount, 1)
         XCTAssertNil(store.paneExpansionRequest)
-    }
-
-    @MainActor
-    func testTransientStatusLifecycleUsesLatestGeneration() {
-        let store = makeStore()
-        store.showTransientNoteStatus("A")
-        let staleGeneration = store.transientNoteStatusGeneration
-        let staleTask = store.transientNoteStatusTask
-
-        store.showTransientNoteStatus("B")
-        let currentGeneration = store.transientNoteStatusGeneration
-        XCTAssertEqual(currentGeneration, staleGeneration + 1)
-        XCTAssertTrue(staleTask?.isCancelled == true)
-        XCTAssertEqual(store.transientNoteStatus, "B")
-
-        store.expireTransientNoteStatus(scheduledGeneration: staleGeneration, isCancelled: false)
-        XCTAssertEqual(store.transientNoteStatus, "B")
-        store.expireTransientNoteStatus(scheduledGeneration: currentGeneration, isCancelled: true)
-        XCTAssertEqual(store.transientNoteStatus, "B")
-        store.showImportantOperationError("重要错误")
-        store.expireTransientNoteStatus(scheduledGeneration: currentGeneration, isCancelled: false)
-        XCTAssertNil(store.transientNoteStatus)
-        XCTAssertEqual(store.importantOperationError, "重要错误")
     }
 
     @MainActor

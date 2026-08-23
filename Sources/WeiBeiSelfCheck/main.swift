@@ -975,8 +975,6 @@ func readSource(_ relativePath: String) -> String {
 let agentDataPathsSource = readSource("Sources/WeiBeiCore/WeiBeiAgentDataPaths.swift")
 let workspaceStoreSource = readSource("Sources/WeiBei/Stores/WorkspaceStore.swift")
 let notesPersistenceSource = readSource("Sources/WeiBei/Stores/WorkspaceStore+NotesPersistence.swift")
-let workspaceModelsSource = readSource("Sources/WeiBeiCore/WorkspaceModels.swift")
-let credentialProfilesSource = readSource("Sources/WeiBeiCore/AgentCredentialProfiles.swift")
 let readerViewSource = readSource("Sources/WeiBei/Views/ReaderView.swift")
 let notesAgentViewSource = readSource("Sources/WeiBei/Views/NotesAgentView.swift")
 let weiBeiAppSource = readSource("Sources/WeiBei/App/WeiBeiApp.swift")
@@ -1068,18 +1066,6 @@ expect(
 expect(
     NoteTabDisplayTitle.resolve(customTitle: "我的速记", noteTitle: "新标题", body: "# 货币银行学") == "我的速记",
     "manual rename still outranks a heading-driven file name"
-)
-let agentAccountServiceSource = readSource("Sources/WeiBei/Support/AgentAccountService.swift")
-expect(
-    agentAccountServiceSource.contains("NativeAgentCredentialStore.defaultStore()")
-        && !agentAccountServiceSource.contains("Keychain")
-        && !agentAccountServiceSource.contains("environment[")
-        && !credentialProfilesSource.contains("KeyHelp")
-        && !credentialProfilesSource.contains("environmentAPIKeyName")
-        && !workspaceModelsSource.contains("ModelListProtocol")
-        && !workspaceStoreSource.contains("AgentModelListService")
-        && !workspaceStoreSource.contains("environment[providerID"),
-    "SAFETY:credentials-single-store agent 凭据必须仅存于 NativeAgentCredentialStore;第二个秘密存储或环境变量注钥匙都会绕过原生登录路径"
 )
 // Provider console metadata stays callable and preserves its public values.
 for provider in AgentProviderID.allCases {

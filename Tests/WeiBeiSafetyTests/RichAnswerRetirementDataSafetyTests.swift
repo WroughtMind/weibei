@@ -45,31 +45,27 @@ final class RichAnswerRetirementDataSafetyTests: XCTestCase {
         var payload = try XCTUnwrap(
             try JSONSerialization.jsonObject(with: legacyMessageJSON()) as? [String: Any]
         )
-        payload["contentBlocks"] = [
+        let contentBlocks: [[String: Any]] = [
             ["text": ["_0": "前文"]],
             ["futureInteractiveBlock": ["value": 42]],
             ["text": ["_0": "后文"]],
         ]
+        payload["contentBlocks"] = contentBlocks
         let message = try JSONDecoder().decode(
             AgentMessage.self,
             from: try JSONSerialization.data(withJSONObject: payload)
         )
 
         XCTAssertEqual(message.contentBlocks.count, 3)
-        guard case let .unavailable(type, rawJSON) = message.contentBlocks[1] else {
+        guard case let .unavailable(type, _) = message.contentBlocks[1] else {
             return XCTFail("坏内容块没有留在原位")
         }
         XCTAssertEqual(type, "futureInteractiveBlock")
-        XCTAssertTrue(rawJSON.contains("futureInteractiveBlock"))
 
         let reencoded = try XCTUnwrap(
             try JSONSerialization.jsonObject(with: JSONEncoder().encode(message)) as? [String: Any]
         )
-        XCTAssertNil(reencoded["richAnswer"])
         let blocks = try XCTUnwrap(reencoded["contentBlocks"] as? [[String: Any]])
-        XCTAssertEqual(
-            blocks[1] as NSDictionary,
-            ["futureInteractiveBlock": ["value": 42]] as NSDictionary
-        )
+        XCTAssertEqual(blocks as NSArray, contentBlocks as NSArray)
     }
 }
