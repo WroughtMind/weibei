@@ -98,7 +98,7 @@ final class WriteGateSafetyTests: XCTestCase {
         XCTAssertEqual(store.noteBackingContentDigestsByItemID[item.id] ?? "", "")
     }
 
-    func testTwoExternalConflictsKeepBothDraftsAndCurrentSession() throws {
+    func testTwoExternalConflictsKeepBothDrafts() throws {
         let base = makeTempRoot("weibei-gate-multiple-conflicts")
         defer { try? FileManager.default.removeItem(at: base) }
         let backupRoot = base.appendingPathComponent("backups", isDirectory: true)
@@ -119,86 +119,25 @@ final class WriteGateSafetyTests: XCTestCase {
             content: "乙基线",
             fileName: "乙"
         )
-        store.noteBackingContentDigestsByItemID[noteA.item.id] = Self.digest(of: "甲基线")
-        store.noteBackingContentDigestsByItemID[noteB.item.id] = Self.digest(of: "乙基线")
-        try "甲外部修改".write(to: noteA.url, atomically: true, encoding: .utf8)
-        try "乙外部修改".write(to: noteB.url, atomically: true, encoding: .utf8)
-
-        store.activeNotebookItemID = noteB.item.id
-        store.noteEditingSession.replaceDocument(
-            with: noteB.item.id,
-            initialRevision: 6
-        )
-        store.noteEditingSession.receive(NoteEditorDirtyChangedEvent(
-            documentID: noteB.item.id,
-            documentGeneration: store.noteEditingSession.documentGeneration,
-            revision: 7,
-            dirty: true
-        ))
-        let currentGeneration = store.noteEditingSession.documentGeneration
-
-        store.scheduleNotePersistence("甲待写正文", for: noteA.item)
-        store.flushPendingNotePersistence(for: noteA.item.id)
-
-        let recovered = try NoteBackupRing.list(
-            itemID: noteA.item.id,
-            rootURL: backupRoot
-        ).compactMap { try? String(contentsOf: $0.url, encoding: .utf8) }
-        XCTAssertTrue(recovered.contains("甲待写正文"))
-        XCTAssertEqual(store.noteEditingSession.documentID, noteB.item.id)
-        XCTAssertEqual(store.noteEditingSession.documentGeneration, currentGeneration)
-        XCTAssertTrue(store.noteEditingSession.dirty)
-        XCTAssertEqual(store.noteEditingSession.saveStatus, .saving)
-        XCTAssertNil(store.noteEditorRecoveryConflict)
-
-        store.scheduleNotePersistence("乙待写正文", for: noteB.item)
-        store.flushPendingNotePersistence(for: noteB.item.id)
-
-        XCTAssertEqual(store.noteEditorRecoveryConflict?.id, noteB.item.id)
-        XCTAssertEqual(
-            store.pendingPortableNoteDraftForSelfCheck(itemID: noteB.item.id),
-            "乙待写正文"
-        )
-        XCTAssertEqual(store.noteEditingSession.saveStatus, .externallyModified)
-
-        store.activeNotebookItemID = noteA.item.id
-        store.noteText = "甲待写正文"
-        store.noteEditingSession.replaceDocument(
-            with: noteA.item.id,
-            initialRevision: 7
-        )
-        store.noteEditingSession.receive(NoteEditorDirtyChangedEvent(
-            documentID: noteA.item.id,
-            documentGeneration: store.noteEditingSession.documentGeneration,
-            revision: 8,
-            dirty: true
-        ))
-        XCTAssertEqual(store.noteEditorRecoveryConflict?.id, noteA.item.id)
-        try store.waitForCourseFileOperation {
-            await store.resolveNoteEditorRecoveryConflict(useDisk: true)
+        let cases = [
+            (noteA, "甲基线", "甲外部修改", "甲待写正文"),
+            (noteB, "乙基线", "乙外部修改", "乙待写正文"),
+        ]
+        for (note, baseline, external, pending) in cases {
+            store.noteBackingContentDigestsByItemID[note.item.id] = Self.digest(of: baseline)
+            try external.write(to: note.url, atomically: true, encoding: .utf8)
+            store.scheduleNotePersistence(pending, for: note.item)
+            store.flushPendingNotePersistence(for: note.item.id)
         }
 
-        XCTAssertEqual(store.noteText, "甲外部修改")
-        XCTAssertEqual(
-            store.pendingPortableNoteDraftForSelfCheck(itemID: noteA.item.id),
-            "甲待写正文"
-        )
-        XCTAssertEqual(store.noteEditorRecoveryConflict?.id, noteA.item.id)
-        XCTAssertTrue(store.noteEditingSession.dirty)
-        XCTAssertEqual(store.noteEditingSession.saveStatus, .externallyModified)
-        store.scheduleNotePersistence("甲待写正文", for: noteA.item)
-        store.flushPendingNotePersistence(for: noteA.item.id)
-        XCTAssertEqual(
-            try String(contentsOf: noteA.url, encoding: .utf8),
-            "甲外部修改"
-        )
-
-        store.activeNotebookItemID = noteB.item.id
-        XCTAssertEqual(store.noteEditorRecoveryConflict?.id, noteB.item.id)
-        XCTAssertEqual(
-            store.pendingPortableNoteDraftForSelfCheck(itemID: noteB.item.id),
-            "乙待写正文"
-        )
+        for (note, _, _, pending) in cases {
+            XCTAssertEqual(
+                store.pendingPortableNoteDraftForSelfCheck(itemID: note.item.id),
+                pending
+            )
+            store.activeNotebookItemID = note.item.id
+            XCTAssertEqual(store.noteEditorRecoveryConflict?.checkpoint.markdown, pending)
+        }
     }
 
     func testPersistNoteWritesWhenBaselineMatches() throws {

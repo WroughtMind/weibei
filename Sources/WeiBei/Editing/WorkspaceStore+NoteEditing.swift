@@ -278,27 +278,49 @@ extension WorkspaceStore {
         guard let conflict = noteEditorRecoveryConflict else { return }
         if useDisk {
             let documentID = conflict.checkpoint.metadata.documentID
-            // 副本先行（计划 §5 阶段2）：选磁盘版本前，用户版本先入备份环。
-            _ = try? NoteBackupRing.capture(
-                content: Data(conflict.checkpoint.markdown.utf8),
-                itemID: documentID,
-                rootURL: noteBackupRootURL
-            )
+            let fileURL = item(withID: documentID)?.url
+            let fileName = fileURL?.lastPathComponent
+                ?? ui("这份笔记", "this note")
+            do {
+                _ = try NoteBackupRing.capture(
+                    content: Data(conflict.checkpoint.markdown.utf8),
+                    itemID: documentID,
+                    rootURL: noteBackupRootURL
+                )
+                try await noteRecoveryStore.remove(documentID: documentID)
+            } catch {
+                WeiBeiLog.noteRepair.error(
+                    "code=note_conflict_backup_failed path=\(fileURL?.path ?? documentID, privacy: .private) reason=\(error.localizedDescription, privacy: .private)"
+                )
+                showImportantOperationError(ui(
+                    "暂时无法采用“\(fileName)”的磁盘版本。未写内容仍保存在魏碑中，请重试。",
+                    "Could not use the disk version of \(fileName). Unsaved content is still kept in WeiBei; please retry."
+                ))
+                return
+            }
             cancelPendingNotePersistence(for: documentID)
             pendingNotePersistenceByItemID.removeValue(forKey: documentID)
-            setNoteDraft(conflict.checkpoint.markdown, for: documentID)
+            noteEditorRecoveryConflictsByItemID.removeValue(forKey: documentID)
+            setNoteDraft(nil, for: documentID)
+            setNoteFileError(nil, for: documentID)
+            dismissImportantOperationError()
             let remainsActive = documentID == activeNoteEditorDocumentID
             if remainsActive { noteText = conflict.diskMarkdown }
             let digest = Self.noteContentDigest(Data(conflict.diskMarkdown.utf8))
             noteBackingContentDigestsByItemID[documentID] = digest
             loadedCourseNoteTextByItemID[documentID] = conflict.diskMarkdown
-            noteEditingSession.markExternallyModified(documentID: documentID)
             if remainsActive {
+                latestNoteEditorSnapshot = nil
+                noteEditingSession.replaceDocument(with: documentID)
                 noteEditorCommand = NoteEditorCommand(
                     kind: .reloadDocument,
                     markdown: conflict.diskMarkdown
                 )
             }
+            showTransientNoteStatus(ui(
+                "已采用“\(fileName)”的磁盘版本；未写内容已保存在魏碑备份中。",
+                "Used the disk version of \(fileName); unsaved content was kept in a WeiBei backup."
+            ))
         } else {
             noteEditorRecoveryConflictsByItemID.removeValue(forKey: conflict.id)
             if noteEditingSession.dirty,

@@ -624,10 +624,13 @@ extension WorkspaceStore {
             setNoteDraft(markdown, for: itemID)
             pendingNoteWritesByItemID.removeValue(forKey: itemID)
             noteEditingSession.markSaveFailed(documentID: itemID)
+            WeiBeiLog.noteRepair.error(
+                "code=note_write_failed path=\(url.path, privacy: .private) reason=\(error.localizedDescription, privacy: .private)"
+            )
             showImportantOperationError(
                 ui(
-                    "无法写回原 Markdown：\(url.lastPathComponent)。\(error.localizedDescription)",
-                    "Could not write original Markdown: \(url.lastPathComponent). \(error.localizedDescription)"
+                    "无法写入“\(url.lastPathComponent)”。待写内容已保存在魏碑中，请重试。",
+                    "Could not write \(url.lastPathComponent). Unsaved content is kept in WeiBei; please retry."
                 )
             )
             return false
