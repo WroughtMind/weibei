@@ -3368,6 +3368,9 @@ final class WorkspaceStore: ObservableObject {
                 sourceInfo = try await courseProjectFileWorker
                     .validatedRegularSource(sharedURL)
             } catch {
+                WeiBeiLog.workspace.error(
+                    "code=course_export_source_unavailable stage=validate underlying=\(WeiBeiLog.code(error), privacy: .public) path=\(sharedURL.path, privacy: .private) reason=\(WeiBeiLog.truncated(error.localizedDescription), privacy: .private)"
+                )
                 throw CoursePortableExportError.invalidSourceEntry(
                     path: state.items[index].courseRelativePath,
                     reason: error.localizedDescription
@@ -3381,6 +3384,9 @@ final class WorkspaceStore: ObservableObject {
                         expectedIdentity: sourceInfo.identity
                     )
             } catch {
+                WeiBeiLog.workspace.error(
+                    "code=course_export_source_unavailable stage=snapshot underlying=\(WeiBeiLog.code(error), privacy: .public) path=\(sourceInfo.url.path, privacy: .private) reason=\(WeiBeiLog.truncated(error.localizedDescription), privacy: .private)"
+                )
                 throw CoursePortableExportError.invalidSourceEntry(
                     path: state.items[index].courseRelativePath,
                     reason: error.localizedDescription

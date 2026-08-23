@@ -4983,8 +4983,13 @@ enum CourseProjectRootSelfCheck {
             }
             try check(
                 path == sharedPortableItem.courseRelativePath
-                    && !reason.isEmpty,
-                "共享原件缺失错误没有指明课程相对路径和原因"
+                    && !reason.isEmpty
+                    && error.localizedDescription.contains(path)
+                    && !error.localizedDescription.contains(reason)
+                    && !error.localizedDescription.contains(
+                        sharedSourceURL.path
+                    ),
+                "共享原件缺失错误没有安全指向课程相对文件"
             )
         }
         try check(
