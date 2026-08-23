@@ -565,8 +565,8 @@ struct SettingsView: View {
             .foregroundStyle(WeiBeiTheme.tertiaryInk)
             .padding(.horizontal, 2)
 
-            if let shortcutStatusMessage, !shortcutStatusMessage.isEmpty {
-                Text(shortcutStatusMessage)
+            if let message = shortcutStatusMessage ?? storedShortcutWarning, !message.isEmpty {
+                Text(message)
                     .font(SettingsType.detail)
                     .foregroundStyle(WeiBeiTheme.cinnabar.opacity(0.90))
                     .padding(.horizontal, 2)
@@ -595,6 +595,29 @@ struct SettingsView: View {
             .padding(.top, 2)
         }
         .onDisappear { stopShortcutRecording() }
+    }
+
+    private var storedShortcutWarning: String? {
+        for id in AppShortcutID.allCases {
+            guard let chord = store.customShortcutOverrides[id] else { continue }
+            if AppShortcutCatalog.isReservedTextEditingChord(chord) {
+                return store.ui(
+                    "已保留「\(id.title(language: store.interfaceLanguage))」的旧设置，但 \(chord.display) 保留给文本编辑，原组合不执行。",
+                    "The saved setting for “\(id.title(language: store.interfaceLanguage))” is preserved, but \(chord.display) is reserved for text editing and will not run."
+                )
+            }
+            if let conflict = AppShortcutCatalog.conflict(
+                for: chord,
+                excluding: id,
+                overrides: store.customShortcutOverrides
+            ) {
+                return store.ui(
+                    "已保留原设置；「\(id.title(language: store.interfaceLanguage))」与「\(conflict.title(language: store.interfaceLanguage))」冲突，请改其中一项。",
+                    "Saved settings are preserved; “\(id.title(language: store.interfaceLanguage))” conflicts with “\(conflict.title(language: store.interfaceLanguage))”. Rebind one of them."
+                )
+            }
+        }
+        return nil
     }
 
     private func shortcutKeyChip(_ id: AppShortcutID) -> some View {

@@ -124,7 +124,7 @@ final class WorkspaceSafetyTests: XCTestCase {
         XCTAssertFalse(reopened.applySemanticSessionTitle("利率变化机制", to: session.id))
     }
 
-    func testShortcutCatalogOwnsAppChordsWithoutClaimingStandardEditorChords() throws {
+    func testShortcutCatalogOwnsAppChordsWithoutClaimingStandardEditorChords() {
         let retiredOverrides: [AppShortcutID: AppShortcutChord] = [
             .courseIndex: AppShortcutChord(key: "b", modifiers: .command),
             .searchInMaterial: AppShortcutChord(key: "f", modifiers: .command),
@@ -165,7 +165,9 @@ final class WorkspaceSafetyTests: XCTestCase {
             ),
             .threePaneWorkspace
         )
+    }
 
+    func testConflictingStoredShortcutIsPreservedAndReported() throws {
         let defaults = UserDefaults.standard
         let original = defaults.data(forKey: AppShortcutCatalog.defaultsKey)
         defer {
@@ -182,7 +184,20 @@ final class WorkspaceSafetyTests: XCTestCase {
             try JSONEncoder().encode(conflictingStoredOverrides),
             forKey: AppShortcutCatalog.defaultsKey
         )
-        XCTAssertTrue(AppShortcutCatalog.loadOverrides().isEmpty)
+        let loaded = AppShortcutCatalog.loadOverrides()
+        XCTAssertEqual(loaded[.courseIndex], AppShortcutID.threePaneWorkspace.defaultChord)
+        XCTAssertEqual(
+            AppShortcutCatalog.conflict(
+                for: AppShortcutID.threePaneWorkspace.defaultChord,
+                excluding: .courseIndex,
+                overrides: loaded
+            ),
+            .threePaneWorkspace
+        )
+        XCTAssertNil(AppShortcutCatalog.action(
+            matching: AppShortcutID.threePaneWorkspace.defaultChord,
+            overrides: loaded
+        ))
     }
 
     @MainActor

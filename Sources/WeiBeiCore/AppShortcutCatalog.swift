@@ -240,39 +240,13 @@ public enum AppShortcutCatalog {
         var result: [AppShortcutID: AppShortcutChord] = [:]
         for (raw, chord) in decoded {
             guard let id = AppShortcutID(rawValue: raw) else { continue }
-            guard !isReservedTextEditingChord(chord), chord != id.defaultChord else { continue }
             result[id] = chord
-        }
-        var changed = result.count != decoded.count
-        while true {
-            var owners: [AppShortcutChord: AppShortcutID] = [:]
-            var conflictingOverride: AppShortcutID?
-            for id in AppShortcutID.allCases {
-                let chord = self.chord(for: id, overrides: result)
-                if let owner = owners[chord] {
-                    if result[id] != nil {
-                        conflictingOverride = id
-                    } else if result[owner] != nil {
-                        conflictingOverride = owner
-                    }
-                    break
-                }
-                owners[chord] = id
-            }
-            guard let conflictingOverride else { break }
-            result.removeValue(forKey: conflictingOverride)
-            changed = true
-        }
-        if changed {
-            saveOverrides(result)
         }
         return result
     }
 
     public static func saveOverrides(_ map: [AppShortcutID: AppShortcutChord]) {
-        let payload = Dictionary(uniqueKeysWithValues: map.compactMap { id, chord in
-            isReservedTextEditingChord(chord) ? nil : (id.rawValue, chord)
-        })
+        let payload = Dictionary(uniqueKeysWithValues: map.map { ($0.key.rawValue, $0.value) })
         if let data = try? JSONEncoder().encode(payload) {
             UserDefaults.standard.set(data, forKey: defaultsKey)
         }
@@ -291,12 +265,10 @@ public enum AppShortcutCatalog {
         overrides: [AppShortcutID: AppShortcutChord]
     ) -> AppShortcutID? {
         guard !isReservedTextEditingChord(chord) else { return nil }
-        for id in AppShortcutID.allCases {
-            if self.chord(for: id, overrides: overrides) == chord {
-                return id
-            }
+        let matches = AppShortcutID.allCases.filter {
+            self.chord(for: $0, overrides: overrides) == chord
         }
-        return nil
+        return matches.count == 1 ? matches[0] : nil
     }
 
     public static func isReservedTextEditingChord(_ chord: AppShortcutChord) -> Bool {

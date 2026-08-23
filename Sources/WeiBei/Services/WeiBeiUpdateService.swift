@@ -13,7 +13,7 @@ struct WeiBeiAvailableUpdate: Equatable {
     }
 
     var helpText: String {
-        (["魏碑 \(version)"] + summaryLines.prefix(5)).joined(separator: "\n")
+        (["魏碑 \(version)"] + summaryLines).joined(separator: "\n")
     }
 
     static func summaryLines(from rawNotes: String?) -> [String] {
@@ -47,13 +47,13 @@ struct WeiBeiAvailableUpdate: Equatable {
     }
 
     private static func summaryLines(from lines: [String]) -> [String] {
-        let highlights = Array(priorityHighlights(in: lines).prefix(5))
+        let highlights = priorityHighlights(in: lines)
         let excludedIndexes = Set(highlights.flatMap { [$0.headingIndex, $0.detailIndex] })
         let fillers = lines.enumerated()
             .filter { !excludedIndexes.contains($0.offset) }
             .prefix(max(0, 5 - highlights.count))
             .map { (index: $0.offset, text: $0.element) }
-        return (fillers + highlights.map { (index: $0.headingIndex, text: $0.text) })
+        return (fillers + highlights.map { (index: $0.detailIndex, text: $0.text) })
             .sorted { $0.index < $1.index }
             .map { $0.text }
     }
@@ -65,13 +65,17 @@ struct WeiBeiAvailableUpdate: Equatable {
             "破坏性变化", "破坏性变更", "迁移", "迁移说明", "已知问题",
             "Breaking Changes", "Migration", "Known Issues",
         ]
-        return lines.indices.compactMap { index in
+        let headings = lines.indices.compactMap { index -> (index: Int, title: String)? in
             let title = lines[index]
                 .trimmingCharacters(in: CharacterSet(charactersIn: "# "))
                 .trimmingCharacters(in: CharacterSet(charactersIn: "：:"))
-            let detailIndex = index + 1
-            guard titles.contains(title), lines.indices.contains(detailIndex) else { return nil }
-            return (index, detailIndex, "\(title)：\(lines[detailIndex])")
+            return titles.contains(title) ? (index, title) : nil
+        }
+        return headings.enumerated().flatMap { offset, heading in
+            let endIndex = offset + 1 < headings.count ? headings[offset + 1].index : lines.endIndex
+            return ((heading.index + 1)..<endIndex).map { detailIndex in
+                (heading.index, detailIndex, "\(heading.title)：\(lines[detailIndex])")
+            }
         }
     }
 }
