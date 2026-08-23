@@ -3,11 +3,8 @@ import Foundation
 import WeiBeiCore
 
 @main
-struct WeiBeiPiCheckMain {
+struct WeiBeiNativeCheckMain {
     static func main() async {
-        let environment = ProcessInfo.processInfo.environment
-
-        
         if await NativeEngineSmoke.runIfRequested(arguments: CommandLine.arguments) {
             return
         }
@@ -28,7 +25,6 @@ struct WeiBeiPiCheckMain {
             return
         }
 
-        
         if CommandLine.arguments.contains("--authentication-status") {
             var status = AgentAuthenticationStatus()
             status.recordFailure(
@@ -66,6 +62,7 @@ struct WeiBeiPiCheckMain {
             print("authentication-status-check passed")
             return
         }
-        fputs("pi-check: no subcommand matched; pi runtime was retired 2026-08\n", stderr)
+        fputs("native-check: no subcommand matched\n", stderr)
+        exit(2)
     }
 }

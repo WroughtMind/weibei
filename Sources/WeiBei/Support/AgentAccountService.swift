@@ -1,20 +1,12 @@
 import SwiftUI
 import WeiBeiCore
 
-/// Agent 账号与模型目录服务(2026-08 Pi 退役后的 native 实现)。
-/// 接管原 PiOAuthService 的全部 UI 职责,方法签名保持同形以最小化视图改动:
+/// Agent 账号与模型目录服务。
 /// 目录为内置静态表(模型选择器永远允许手输任意 ID);凭据走 NativeAgentCredentialStore;
-/// OpenAI 订阅登录走 NativeOpenAIOAuth 浏览器流程。首次启动会把旧的 Pi 凭据
-/// 一次性迁移到 native 存储,已登录账号无需重新登录。
+/// OpenAI 订阅登录走 NativeOpenAIOAuth 浏览器流程。
 @MainActor
 final class AgentAccountService: ObservableObject {
     static let shared = AgentAccountService()
-
-    struct ProviderInfo: Equatable, Sendable {
-        var id: String
-        var name: String
-        var authTypes: [AgentCredentialType] = []
-    }
 
     struct CredentialInfo: Equatable, Sendable {
         var providerId: String
@@ -23,36 +15,38 @@ final class AgentAccountService: ObservableObject {
     }
 
     struct CatalogInfo: Equatable, Sendable {
-        var providers: [ProviderInfo] = []
         var credentials: [CredentialInfo] = []
     }
 
     @Published private(set) var catalog: CatalogInfo?
-    @Published private(set) var isRefreshingCatalog = false
-    @Published private(set) var catalogError: String?
     @Published private(set) var isLoggingIn = false
     @Published private(set) var statusMessage: String?
     @Published private(set) var lastError: String?
-    /// native 登录流程没有中途交互提示;保留属性以兼容原 UI 的动画条件。
-    @Published private(set) var pendingPrompt: String?
-
     private var loginTask: Task<Void, Never>?
 
     private init() {
-        migratePiCredentialsIfNeeded()
         reloadCredentialSnapshot()
     }
 
-    /// 静态目录无需刷新;保留方法以兼容原 UI 调用点。
-    func refreshCatalog(force: Bool = false) {
+    func refreshCatalog() {
         reloadCredentialSnapshot()
     }
 
     /// 模型建议列表来自 native 路由表的默认模型;完整列表靠选择器的手动输入。
-    func models(providerID: String) -> [String] {
-        guard let provider = AgentProviderID(rawValue: providerID) else { return [] }
+    func models(provider: AgentProviderID) -> [String] {
         let model = NativeProviderRouting.route(provider).defaultModel
         return model.isEmpty ? [] : [model]
+    }
+
+    func isAvailable(_ provider: AgentProviderID) -> Bool {
+        let route = NativeProviderRouting.route(provider)
+        guard route.family != .unsupported else { return false }
+        return route.auth != .oauth || provider == .openaiCodex
+    }
+
+    func authTypes(for provider: AgentProviderID) -> [AgentCredentialType] {
+        guard isAvailable(provider) else { return [] }
+        return provider == .openaiCodex ? [.oauth] : [.apiKey]
     }
 
     func isConfigured(providerID: String, type: AgentCredentialType? = nil) -> Bool {
@@ -69,7 +63,7 @@ final class AgentAccountService: ObservableObject {
     }
 
     func isLinked(_ provider: AgentProviderID) -> Bool {
-        isConfigured(providerID: provider.piProviderName, type: .oauth)
+        isConfigured(providerID: provider.credentialProviderID, type: .oauth)
     }
 
     func startLogin(_ provider: AgentProviderID) {
@@ -92,7 +86,7 @@ final class AgentAccountService: ObservableObject {
                 self.isLoggingIn = false
                 self.statusMessage = nil
                 self.reloadCredentialSnapshot()
-                NotificationCenter.default.post(name: .weiBeiPiOAuthDidSucceed, object: nil, userInfo: ["provider": record.provider])
+                NotificationCenter.default.post(name: .weiBeiAgentOAuthDidSucceed, object: nil, userInfo: ["provider": record.provider])
             } catch is CancellationError {
                 self.isLoggingIn = false
                 self.statusMessage = nil
@@ -105,10 +99,9 @@ final class AgentAccountService: ObservableObject {
     }
 
     func startAPIKeyLogin(
-        _ key: String = "",
+        _ key: String,
         provider: AgentProviderID,
-        baseURL: String = "",
-        model: String = ""
+        baseURL: String = ""
     ) {
         let cleaned = key.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !isLoggingIn else { return }
@@ -123,30 +116,42 @@ final class AgentAccountService: ObservableObject {
         do {
             let store = try NativeAgentCredentialStore.defaultStore()
             try store.upsert(NativeAgentCredentialRecord(
-                provider: endpoint.piProviderID,
+                provider: endpoint.credentialProviderID,
                 apiKey: cleaned,
                 accessToken: nil,
                 refreshToken: nil,
                 expiresAt: nil,
-                accountID: nil
+                accountID: nil,
+                boundEndpoint: endpoint.baseURL
             ))
             lastError = nil
             reloadCredentialSnapshot()
-            NotificationCenter.default.post(name: .weiBeiPiCredentialsDidChange, object: nil, userInfo: ["type": AgentCredentialType.apiKey.rawValue])
+            NotificationCenter.default.post(
+                name: .weiBeiAgentCredentialsDidChange,
+                object: nil,
+                userInfo: [
+                    "provider": endpoint.credentialProviderID,
+                    "type": AgentCredentialType.apiKey.rawValue,
+                ]
+            )
         } catch {
             lastError = error.localizedDescription
         }
     }
 
     func logout(_ provider: AgentProviderID) {
-        logoutCredential(providerID: provider.piProviderName)
+        logoutCredential(providerID: provider.credentialProviderID)
     }
 
-    func logoutCredential(providerID: String, displayName: String? = nil) {
+    func logoutCredential(providerID: String) {
         do {
             try NativeAgentCredentialStore.defaultStore().remove(provider: providerID)
             reloadCredentialSnapshot()
-            NotificationCenter.default.post(name: .weiBeiPiCredentialsDidChange, object: nil)
+            NotificationCenter.default.post(
+                name: .weiBeiAgentCredentialsDidChange,
+                object: nil,
+                userInfo: ["provider": providerID]
+            )
         } catch {
             lastError = error.localizedDescription
         }
@@ -164,53 +169,21 @@ final class AgentAccountService: ObservableObject {
             CredentialInfo(
                 providerId: record.provider,
                 type: record.apiKey?.isEmpty == false ? .apiKey : .oauth,
-                boundEndpoint: nil
+                boundEndpoint: record.boundEndpoint
             )
         }
         .sorted { $0.providerId < $1.providerId })
     }
 
-    /// 旧 Pi 凭据(PiAgent/auth.json)一次性迁移到 native 存储;原文件保留不动。
-    private func migratePiCredentialsIfNeeded() {
-        guard let source = try? WeiBeiAgentDataPaths.ensurePiAgentDirectory() else { return }
-        let authURL = source.appendingPathComponent("auth.json")
-        guard let data = try? Data(contentsOf: source),
-              let object = try? JSONSerialization.jsonObject(with: data) as? [String: [String: Any]] else { return }
-        guard let store = try? NativeAgentCredentialStore.defaultStore() else { return }
-        guard var records = try? store.load() else { return }
-        for (provider, entry) in object where records[provider] == nil {
-            if let access = entry["access"] as? String, !access.isEmpty {
-                let expires = entry["expires"] as? TimeInterval
-                records[provider] = NativeAgentCredentialRecord(
-                    provider: provider,
-                    apiKey: entry["key"] as? String,
-                    accessToken: access,
-                    refreshToken: entry["refresh"] as? String,
-                    expiresAt: expires.map { Date(timeIntervalSince1970: $0) },
-                    accountID: entry["accountId"] as? String
-                )
-            } else if let key = entry["key"] as? String, !key.isEmpty {
-                records[provider] = NativeAgentCredentialRecord(
-                    provider: provider,
-                    apiKey: key,
-                    accessToken: nil,
-                    refreshToken: nil,
-                    expiresAt: nil,
-                    accountID: nil
-                )
-            }
-        }
-        try? store.save(records)
-    }
 }
 
-/// native 时代的凭据类型;rawValue 与旧 pi 通知的 userInfo 值保持一致。
+/// Native Agent 凭据类型。
 enum AgentCredentialType: String, Codable, Sendable {
     case apiKey = "api_key"
     case oauth
 }
 
 extension Notification.Name {
-    static let weiBeiPiOAuthDidSucceed = Notification.Name("weiBeiPiOAuthDidSucceed")
-    static let weiBeiPiCredentialsDidChange = Notification.Name("weiBeiPiCredentialsDidChange")
+    static let weiBeiAgentOAuthDidSucceed = Notification.Name("weiBeiAgentOAuthDidSucceed")
+    static let weiBeiAgentCredentialsDidChange = Notification.Name("weiBeiAgentCredentialsDidChange")
 }

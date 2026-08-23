@@ -266,7 +266,7 @@ private func checkProviderRouting() throws {
     try nativeRequire(NativeProviderRouting.route(.xai).family == .openaiResponses, "xAI is Responses")
     try nativeRequire(NativeProviderRouting.route(.anthropic).family == .anthropicMessages, "anthropic is Messages")
     try nativeRequire(NativeProviderRouting.route(.google).family == .googleGenerativeAI, "google is Gemini")
-    try nativeRequire(NativeProviderRouting.route(.minimax).family == .anthropicMessages, "minimax follows Pi anthropic baseUrl")
+    try nativeRequire(NativeProviderRouting.route(.minimax).family == .anthropicMessages, "minimax uses the Anthropic-compatible route")
     try nativeRequire(NativeProviderRouting.route(.moonshotaiCN).baseURL?.host == "api.moonshot.cn", "moonshot CN host")
     let uncovered = Set(NativeProviderRouting.uncoveredProviders)
     try nativeRequire(
@@ -284,7 +284,7 @@ private func checkProviderRouting() throws {
 }
 
 private func checkSkillCatalogAndLoad() throws {
-    let root = try PiAgentResources.bundled().skillsURL
+    let root = try AgentResources.bundled().skillsURL
     let registry = try NativeSkillRegistry.load(from: root)
     try nativeRequire(registry.pack(named: "visualize") != nil, "visualize skill pack exists")
     try nativeRequire(registry.pack(named: "socratic-questioning") != nil, "socratic skill pack exists")
@@ -307,7 +307,7 @@ private func checkSkillCatalogAndLoad() throws {
 }
 
 private func checkLoadSkillIdempotent() throws {
-    let root = try PiAgentResources.bundled().skillsURL
+    let root = try AgentResources.bundled().skillsURL
     let packs = try NativeSkillRegistry.load(from: root)
     let registry = NativeToolRegistry()
     _ = try waitFor { await NativeBuiltinTools.registerAll(into: registry, skillRoot: root) }

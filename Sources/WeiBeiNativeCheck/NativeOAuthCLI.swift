@@ -33,7 +33,7 @@ enum NativeOAuthCLI {
                 }
                 print("native-oauth logout passed: no leftover credential")
             default:
-                print("usage: WeiBeiPiCheck --native-oauth login|status|refresh|logout")
+                print("usage: WeiBeiNativeCheck --native-oauth login|status|refresh|logout")
             }
         } catch {
             fputs("native-oauth failed: \(error.localizedDescription)\n", stderr)

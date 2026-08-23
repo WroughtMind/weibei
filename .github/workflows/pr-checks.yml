@@ -81,24 +81,13 @@ jobs:
           swift run WeiBeiDev selfcheck-assertions
           swift run WeiBeiDev nslog-scan
 
-      - name: 运行 Pi 终止语义自检
-        if: (github.event_name == 'pull_request' && steps.scope.outputs.pi == 'true') || (github.event_name == 'workflow_dispatch' && inputs.full_suite)
-        run: WEIBEI_PI_TERMINAL_SELF_CHECK_ONLY=1 swift run WeiBeiSelfCheck
-
       - name: 安装 Node 依赖
-        if: (github.event_name == 'pull_request' && (steps.scope.outputs.pi == 'true' || steps.scope.outputs.editor == 'true' || steps.scope.outputs.tools == 'true')) || (github.event_name == 'workflow_dispatch' && inputs.full_suite)
+        if: (github.event_name == 'pull_request' && (steps.scope.outputs.agent == 'true' || steps.scope.outputs.editor == 'true' || steps.scope.outputs.tools == 'true')) || (github.event_name == 'workflow_dispatch' && inputs.full_suite)
         run: npm ci
 
       - name: 运行 Node 工具脚本类型检查
         if: (github.event_name == 'pull_request' && steps.scope.outputs.tools == 'true') || (github.event_name == 'workflow_dispatch' && inputs.full_suite)
         run: npm run typecheck:tools
-
-      - name: 运行 Agent 扩展自检
-        if: (github.event_name == 'pull_request' && steps.scope.outputs.pi == 'true') || (github.event_name == 'workflow_dispatch' && inputs.full_suite)
-        run: |
-          npm run typecheck:agent
-          npx tsx script/check-agent-project-tools.ts
-          node --import tsx script/check_pi_runtime_license_report.ts
 
       - name: 运行编辑器自检
         if: (github.event_name == 'pull_request' && steps.scope.outputs.editor == 'true') || (github.event_name == 'workflow_dispatch' && inputs.full_suite)

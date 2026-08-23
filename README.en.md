@@ -94,7 +94,7 @@ Everything below is for people building WeiBei itself. WeiBei was born in the Ed
 
 ### Build from source
 
-Requirements: macOS 14+, Xcode Command Line Tools with Swift 5.9, internet on first build to download and verify the pinned Pi runtime, a configured model provider for live Agent responses, and Node.js only when rebuilding the Milkdown web editor.
+Requirements: macOS 14+, Xcode Command Line Tools with Swift 5.9, a configured model provider for live Agent responses, and Node.js only when rebuilding the Milkdown web editor.
 
 ```bash
 git clone https://github.com/weibei-app/weibei.git
@@ -106,7 +106,7 @@ The script builds and opens `dist/魏碑.app`.
 
 ### How it is built
 
-WeiBei is a native Swift 5.9 application: SwiftUI for the interface, AppKit hosting the long-lived reader, Agent, and note panes. PDFKit reads PDFs, WebKit renders HTML and the Milkdown editor, Vision handles OCR for scanned pages, and SQLite FTS5 stores the local course index. A pinned Pi 0.82.1 runtime provides the Agent loop; WeiBei itself owns the material context, citations, learning memory, note write-back, and interface rendering.
+WeiBei is a native Swift 5.9 application: SwiftUI for the interface, AppKit hosting the long-lived reader, Agent, and note panes. PDFKit reads PDFs, WebKit renders HTML and the Milkdown editor, Vision handles OCR for scanned pages, and SQLite FTS5 stores the local course index. A Swift-native runtime owns the Agent loop, provider adapters, credentials, and session ledger; WeiBei itself owns the material context, citations, learning memory, note write-back, and interface rendering.
 
 Each Agent request receives a bounded snapshot of the working context — no open file system, no shell, and web reading limited to HTTPS URLs the user explicitly provided in that same turn. The host validates citations, source jumps, learning-memory updates, note proposals, and rich-answer payloads before display or application; `visualize` fragments execute in a sandboxed runtime with no network or local file access. For long or scanned PDFs, text extraction runs in a resource-bounded helper process, with Vision OCR only where a page has no native text; partial indexing is reported honestly rather than passed off as complete.
 
@@ -121,13 +121,11 @@ The root `Makefile` is a thin entry point that forwards to the underlying build 
 | `make check` | `./script/build_and_run.sh check` |
 | `make package` | `./script/build_and_run.sh package` |
 | `make editor-build` | `npm run build:editor` |
-| `make rich-answer-build` | `npm -w Prototypes/RichAnswerWebRuntime run build:embed` |
 | `make genui-math-check` | `npx tsx script/check-genui-math.ts` |
 | `make perf-p95` | `./script/perf_p95.sh $(LOG) $(METRIC)` (usage: `make perf-p95 LOG=<perf-log> METRIC=<metric-name>`) |
-| `make pi-prepare` | `./script/prepare_pi_runtime.sh` |
 | `make release-community` | `./script/build_release_dmg.sh --community` |
 | `make release-notarized` | `./script/build_release_dmg.sh --notarized` |
-| `make clean` | `swift package clean && rm -rf dist` (keeps `node_modules` and `.build/pi-runtime` — the clean target moves `pi-runtime` aside and back around `swift package clean`, which would otherwise delete it — and user data) |
+| `make clean` | `swift package clean && rm -rf dist` (keeps `node_modules` and user data) |
 
 Node tooling: the repository has a single root lockfile (`package-lock.json`) covering the `Prototypes/RichAnswerWebRuntime` workspace; one `npm ci` installs everything. Tool scripts under `script/`, `DesignSystem/scripts/`, and the prototype `scripts/` are TypeScript run with `tsx` (e.g. `npx tsx script/check-genui-math.ts`); `npm run typecheck:tools` type-checks them.
 
@@ -143,8 +141,7 @@ Individual checks are also available:
 swift build
 swift run WeiBeiSelfCheck
 swift run WeiBeiWebEditorCheck
-PI_RUNTIME="$(./script/prepare_pi_runtime.sh)"
-WEIBEI_PI_EXECUTABLE="$PI_RUNTIME/bin/pi" swift run WeiBeiPiCheck
+swift run WeiBeiNativeCheck --authentication-status
 ```
 
 Live-provider checks require valid local credentials and are never silently replaced with mock answers.
@@ -154,7 +151,7 @@ Live-provider checks require valid local credentials and are never silently repl
 - [Docs/build-week.md](Docs/build-week.md) — OpenAI Build Week 2026 submission record and judge walkthrough
 - [Docs/note-slash-commands.md](Docs/note-slash-commands.md) — note editor slash commands, image insertion, and code block behavior
 - [Docs/course-library-architecture.md](Docs/course-library-architecture.md) — course library and storage architecture
-- [Docs/pi-unified-runtime.md](Docs/pi-unified-runtime.md) — the pinned Pi agent runtime
+- [Docs/plans/2026-08-22-native-agent-runtime-实验计划.md](Docs/plans/2026-08-22-native-agent-runtime-实验计划.md) — validation and rollout notes for the Swift-native Agent runtime
 - [Docs/生成式界面基础与Visualize借鉴.md](Docs/生成式界面基础与Visualize借鉴.md) — generative UI foundations and the `visualize` decision
 - [Docs/releases/v1.0.0.md](Docs/releases/v1.0.0.md) — v1.0.0 release notes and evidence
 
@@ -167,4 +164,4 @@ Live-provider checks require valid local credentials and are never silently repl
 
 ## Technology
 
-Swift · SwiftUI · AppKit · PDFKit · WebKit · Vision OCR · SQLite FTS5 · Milkdown · KaTeX · Mermaid · Pi · OpenAI Codex OAuth
+Swift · SwiftUI · AppKit · PDFKit · WebKit · Vision OCR · SQLite FTS5 · Milkdown · KaTeX · Mermaid · OpenAI Codex OAuth

@@ -22,7 +22,6 @@ public struct NativeStorePersistReceipt: Sendable {
         NativeStorePersistReceipt(accepted: false, message: message)
     }
 }
-
 public struct NativeLiveStores: Sendable {
     public var learning: (@Sendable () async -> StudyAgentLearningContext)?
     public var profile: (@Sendable () async -> StudyAgentCourseProfileContext)?
@@ -52,4 +51,3 @@ public struct NativeLiveStores: Sendable {
 
     public static let empty = NativeLiveStores()
 }
-

@@ -19,8 +19,6 @@ struct SettingsView: View {
     @StateObject var oauthService = AgentAccountService.shared
     @State private var selectedSection: SettingsSection = .agent
     @FocusState var focusedField: Field?
-    // Model picker state (AgentModelPicker extension).
-    @State var spinAngle: Double = 0
     @State var showManualModelEntry = false
     // Profile inline-rename state (AgentSettingsView extension).
     @State var isRenamingActiveProfile = false
@@ -47,12 +45,12 @@ struct SettingsView: View {
 
     private var buildInfo: WeiBeiAppBuildInfo { .current() }
 
-    var activePiProviderID: String {
-        AgentProviderReadiness.activePiProviderID(for: store)
+    var activeCredentialProviderID: String {
+        AgentProviderReadiness.activeCredentialProviderID(for: store)
     }
 
-    func piProviderID(for provider: AgentProviderID) -> String {
-        AgentProviderReadiness.piProviderID(for: provider, store: store)
+    func credentialProviderID(for provider: AgentProviderID) -> String {
+        AgentProviderReadiness.credentialProviderID(for: provider, store: store)
     }
 
     /// Max width for long text fields (Base URL, API key) — not for every control.
@@ -79,7 +77,7 @@ struct SettingsView: View {
             selectedSection = .agent
             oauthService.refreshCatalog()
         }
-        .onReceive(NotificationCenter.default.publisher(for: .weiBeiPiOAuthDidSucceed)) { note in
+        .onReceive(NotificationCenter.default.publisher(for: .weiBeiAgentOAuthDidSucceed)) { note in
             guard let raw = note.userInfo?["provider"] as? String,
                   let provider = AgentProviderID(rawValue: raw) else { return }
             store.shutdownAgentRuntime()
@@ -89,23 +87,23 @@ struct SettingsView: View {
                 provider: provider,
                 authMethod: .subscription
             )
-            if let firstModel = oauthService.models(providerID: provider.piProviderName).first {
+            if let firstModel = oauthService.models(provider: provider).first {
                 store.updateModelName(firstModel)
             }
-            oauthService.refreshCatalog(force: true)
+            oauthService.refreshCatalog()
         }
-        .onReceive(NotificationCenter.default.publisher(for: .weiBeiPiCredentialsDidChange)) { note in
+        .onReceive(NotificationCenter.default.publisher(for: .weiBeiAgentCredentialsDidChange)) { note in
             store.shutdownAgentRuntime()
-            guard note.userInfo?["provider"] as? String == activePiProviderID else {
+            guard note.userInfo?["provider"] as? String == activeCredentialProviderID else {
                 return
             }
             if note.userInfo?["type"] as? String == AgentCredentialType.apiKey.rawValue {
                 apiKeyDraft = ""
             }
-            oauthService.refreshCatalog(force: true)
+            oauthService.refreshCatalog()
         }
         .onChange(of: oauthService.catalog) { _, _ in
-            let models = oauthService.models(providerID: activePiProviderID)
+            let models = oauthService.models(provider: store.agentProviderID)
             let current = store.modelName.trimmingCharacters(in: .whitespacesAndNewlines)
             if let firstModel = models.first,
                !models.contains(current),

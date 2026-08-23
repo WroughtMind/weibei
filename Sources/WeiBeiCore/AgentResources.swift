@@ -1,16 +1,14 @@
 import Foundation
 
-/// Bundled agent resources shared by the native runtime.
-/// The name predates the Pi retirement (2026-08) and is kept so existing
-/// call sites stay untouched; it loads resources, never a Pi process.
-public struct PiAgentResources: Sendable {
+/// Bundled system prompt and skills shared by the native runtime.
+public struct AgentResources: Sendable {
     public static let allRequiredSkillNames = ["visualize"]
 
     public var rootURL: URL
     public var skillsURL: URL
     public var systemPrompt: String
 
-    public static func bundled() throws -> PiAgentResources {
+    public static func bundled() throws -> AgentResources {
         let bundleName = "WeiBei_WeiBeiCore.bundle"
         let packagedBundle = Bundle.main.resourceURL
             .map { $0.appendingPathComponent(bundleName) }
@@ -43,7 +41,7 @@ public struct PiAgentResources: Sendable {
               !systemPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw NativeAgentResourcesError.missing(rootURL.path)
         }
-        return PiAgentResources(
+        return AgentResources(
             rootURL: rootURL,
             skillsURL: skillsURL,
             systemPrompt: systemPrompt
