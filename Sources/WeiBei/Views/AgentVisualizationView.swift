@@ -30,7 +30,6 @@ struct AgentVisualizationView: View {
 
     @State private var contentHeight: CGFloat = 180
     @State private var loadState = AgentVisualizationLoadState()
-    @State private var showsRawData = false
     /// Phase 4：离开可视区域时卸下 WebView，回到时再创建。
     @State private var webViewAttached = true
 
@@ -38,34 +37,18 @@ struct AgentVisualizationView: View {
         Group {
             if let runtimeFailure = loadState.failure {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text(store.ui("互动界面暂时无法显示", "The interactive view could not be displayed"))
+                    Text(store.ui("互动内容加载失败，内容仍保留", "Interactive content failed to load, but it is still preserved"))
                         .weiBeiText(11, weight: .semibold)
-                    Text(runtimeFailure)
-                        .weiBeiText(10.5)
-                        .foregroundStyle(WeiBeiTheme.secondaryInk)
-                        .textSelection(.enabled)
                     HStack(spacing: 8) {
                         Button(store.ui("重新加载", "Reload")) {
                             loadState.reload()
-                            showsRawData = false
                         }
-                        Button(store.ui(showsRawData ? "收起原始数据" : "查看原始数据", showsRawData ? "Hide raw data" : "View raw data")) {
-                            showsRawData.toggle()
-                        }
-                        Button(store.ui("复制错误", "Copy error")) {
+                        Button(store.ui("复制诊断", "Copy diagnostics")) {
                             NSPasteboard.general.clearContents()
                             NSPasteboard.general.setString(runtimeFailure, forType: .string)
                         }
                     }
                     .buttonStyle(WeiBeiTextActionButtonStyle())
-                    if showsRawData {
-                        ScrollView(.horizontal) {
-                            Text(visualization.specJSON)
-                                .font(.system(size: 10.5, design: .monospaced))
-                                .textSelection(.enabled)
-                        }
-                        .frame(maxHeight: 160)
-                    }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(12)
@@ -117,6 +100,7 @@ struct AgentVisualizationView: View {
     }
 
     private func handleFailure(_ failedAttempt: Int, _ message: String) {
+        NSLog("[WeiBei][GenUI] %@", message)
         Task { @MainActor in
             loadState.fail(message, from: failedAttempt)
         }

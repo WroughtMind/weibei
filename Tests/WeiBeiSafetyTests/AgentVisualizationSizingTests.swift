@@ -19,22 +19,13 @@ final class AgentVisualizationSizingTests: XCTestCase {
     }
 
     @MainActor
-    func testGenUIActionRejectsWhenChatWorkspaceCannotBePrepared() throws {
+    func testGenUIActionShowsImmediateChatSetupRejection() async throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("WeiBeiGenUIAction-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
         try Data().write(to: root.appendingPathComponent("AgentRuntime"))
         let store = WorkspaceStore(workspaceDirectory: root, startsAtBlankEntries: true)
-
-        let rejection = store.submitAgentVisualizationAction("继续解释", payloadJSON: "{}")
-
-        XCTAssertTrue(rejection?.contains("Chat") == true)
-        XCTAssertNil(store.agentRequestTask)
-    }
-
-    @MainActor
-    func testGenUIAnswerButtonExplainsDisabledStateThenShowsQueuedAndProcessing() async throws {
         let messages = WKUserContentController()
         let actionProbe = GenUIActionProbe()
         messages.add(actionProbe, name: "weibeiGenUI")
@@ -49,31 +40,65 @@ final class AgentVisualizationSizingTests: XCTestCase {
         await fulfillment(of: [loaded], timeout: 3)
 
         let spec = #"{"items":[{"type":"button","label":"继续解释","action":"explain"}]}"#
-        _ = try await webView.evaluateJavaScript("window.WeiBeiGenUIHost.render({spec: \(spec), actionUnavailableReason: '另一条回答正在处理'})")
-        let disabled = try await webView.evaluateJavaScript("document.querySelector('.button').disabled") as? Bool
-        let unavailableText = try await webView.evaluateJavaScript("document.querySelector('.genui').textContent") as? String
-        XCTAssertEqual(disabled, true)
-        XCTAssertTrue(unavailableText?.contains("另一条回答正在处理") == true)
-
         _ = try await webView.evaluateJavaScript("window.WeiBeiGenUIHost.render({spec: \(spec), actionStatus: 'ready'}); document.querySelector('.button').click()")
-        let pressedText = try await webView.evaluateJavaScript("document.querySelector('.button').textContent") as? String
-        XCTAssertTrue(pressedText?.contains("已按下") == true)
-        let acceptedRequestID = try XCTUnwrap(actionProbe.requestIDs.last)
-        _ = try await webView.evaluateJavaScript("window.WeiBeiGenUIHost.actionResult({requestID: \(acceptedRequestID), accepted: true})")
-        let queuedText = try await webView.evaluateJavaScript("document.querySelector('.button').textContent") as? String
-        XCTAssertTrue(queuedText?.contains("已排队") == true)
-
-        _ = try await webView.evaluateJavaScript("window.WeiBeiGenUIHost.render({spec: \(spec), actionStatus: 'processing'})")
-        let processingText = try await webView.evaluateJavaScript("document.querySelector('.button').textContent") as? String
-        XCTAssertTrue(processingText?.contains("处理中") == true)
-
-        _ = try await webView.evaluateJavaScript("window.WeiBeiGenUIHost.render({spec: \(spec), actionStatus: 'ready'}); document.querySelector('.button').click()")
-        let rejectedRequestID = try XCTUnwrap(actionProbe.requestIDs.last)
-        _ = try await webView.evaluateJavaScript("window.WeiBeiGenUIHost.actionResult({requestID: \(rejectedRequestID), accepted: false, reason: '互动数据过大'})")
+        let requestID = try XCTUnwrap(actionProbe.requestID)
+        let action = try XCTUnwrap(actionProbe.action)
+        let payload = try XCTUnwrap(actionProbe.payload)
+        let payloadData = try JSONSerialization.data(withJSONObject: payload)
+        let payloadJSON = try XCTUnwrap(String(data: payloadData, encoding: .utf8))
+        let rejection = try XCTUnwrap(
+            store.submitAgentVisualizationAction(action, payloadJSON: payloadJSON)
+        )
+        let resultData = try JSONSerialization.data(withJSONObject: [
+            "requestID": requestID,
+            "accepted": false,
+            "reason": rejection,
+        ])
+        let resultJSON = try XCTUnwrap(String(data: resultData, encoding: .utf8))
+        _ = try await webView.evaluateJavaScript("window.WeiBeiGenUIHost.actionResult(\(resultJSON))")
         let rejectedDisabled = try await webView.evaluateJavaScript("document.querySelector('.button').disabled") as? Bool
         let rejectedText = try await webView.evaluateJavaScript("document.querySelector('.genui').textContent") as? String
         XCTAssertEqual(rejectedDisabled, false)
-        XCTAssertTrue(rejectedText?.contains("互动数据过大") == true)
+        XCTAssertTrue(rejectedText?.contains(rejection) == true)
+        withExtendedLifetime(navigationProbe) {}
+    }
+
+    @MainActor
+    func testGenUIShowsTruncationAndKeepsRawData() async throws {
+        let configuration = WKWebViewConfiguration()
+        let webView = WKWebView(
+            frame: NSRect(x: 0, y: 0, width: 640, height: 240),
+            configuration: configuration
+        )
+        let loaded = expectation(description: "GenUI runtime loaded")
+        let navigationProbe = GenUINavigationProbe { loaded.fulfill() }
+        webView.navigationDelegate = navigationProbe
+        let entry = try XCTUnwrap(
+            WeiBeiResources.bundle.url(forResource: "genui", withExtension: "html")
+        )
+        webView.loadFileURL(entry, allowingReadAccessTo: entry.deletingLastPathComponent())
+        await fulfillment(of: [loaded], timeout: 3)
+
+        let hiddenMarker = "末尾原始数据仍在"
+        var rows = (0..<64).map { ["第\($0)行"] }
+        rows.append([hiddenMarker])
+        let data = try JSONSerialization.data(withJSONObject: [
+            "spec": [
+                "items": [[
+                    "type": "table",
+                    "columns": ["内容"],
+                    "rows": rows,
+                ]],
+            ],
+        ])
+        let payload = try XCTUnwrap(String(data: data, encoding: .utf8))
+        _ = try await webView.evaluateJavaScript("window.WeiBeiGenUIHost.render(\(payload))")
+        let warning = try await webView.evaluateJavaScript("document.querySelector('.genui').textContent") as? String
+        _ = try await webView.evaluateJavaScript("Array.from(document.querySelectorAll('button')).find(button => button.textContent === '查看原始数据').click()")
+        let rawData = try await webView.evaluateJavaScript("document.querySelector('.raw-data').textContent") as? String
+
+        XCTAssertTrue(warning?.contains("内容未全部展示") == true)
+        XCTAssertTrue(rawData?.contains(hiddenMarker) == true)
         withExtendedLifetime(navigationProbe) {}
     }
 
@@ -192,7 +217,9 @@ final class AgentVisualizationSizingTests: XCTestCase {
 }
 
 private final class GenUIActionProbe: NSObject, WKScriptMessageHandler {
-    private(set) var requestIDs: [Int] = []
+    private(set) var requestID: Int?
+    private(set) var action: String?
+    private(set) var payload: Any?
 
     func userContentController(
         _ userContentController: WKUserContentController,
@@ -200,8 +227,12 @@ private final class GenUIActionProbe: NSObject, WKScriptMessageHandler {
     ) {
         guard let body = message.body as? [String: Any],
               body["type"] as? String == "action",
-              let requestID = body["requestID"] as? NSNumber else { return }
-        requestIDs.append(requestID.intValue)
+              let requestID = body["requestID"] as? NSNumber,
+              let action = body["action"] as? String,
+              let payload = body["payload"] else { return }
+        self.requestID = requestID.intValue
+        self.action = action
+        self.payload = payload
     }
 }
 
