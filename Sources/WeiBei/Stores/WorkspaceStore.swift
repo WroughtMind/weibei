@@ -584,6 +584,8 @@ final class WorkspaceStore: ObservableObject {
     @Published var noteEditorCommand: NoteEditorCommand?
     /// Success / info banner for note create/switch — separate from errors so it auto-dismisses cleanly.
     @Published var transientNoteStatus: String?
+    @Published private var noteSelectionTransitionState = NoteSelectionTransitionState.idle
+    private var pendingNoteSelection: PendingNoteSelection?
     /// Serious data-operation failures (note read/write/rename/restore/identity,
     /// security scope, course file move & rollback). Never auto-dismisses — only a
     /// user close or a newer important error replaces it.
@@ -782,6 +784,16 @@ final class WorkspaceStore: ObservableObject {
         var readerPageIndex: Int
         var focusedPane: PaneFocus
         var threePaneOrder: [WorkspacePaneRole]
+    }
+
+    private enum NoteSelectionTransitionState: Equatable {
+        case idle
+        case saving
+        case failed(NoteEditingSessionError)
+    }
+
+    private struct PendingNoteSelection {
+        let apply: () -> Void
     }
 
     private enum NotebookNoteSeed {
@@ -8401,9 +8413,11 @@ final class WorkspaceStore: ObservableObject {
         } else if linked.isEmpty {
             beginBlankNoteDraft(for: material.id)
         } else {
-            blankNoteDraftMaterialID = nil
-            activeNotebookItemID = nil
-            noteText = ""
+            requestNoteSelectionTransition(to: nil) { [weak self] in
+                self?.blankNoteDraftMaterialID = nil
+                self?.activeNotebookItemID = nil
+                self?.noteText = ""
+            }
         }
     }
 
@@ -8432,14 +8446,16 @@ final class WorkspaceStore: ObservableObject {
 
     private func beginBlankNoteDraft(for materialID: String) {
         guard item(withID: materialID)?.isNotebookNote == false else { return }
-        persistCurrentNote()
-        blankNoteMaterializationTask?.cancel()
-        blankNoteMaterializationTask = nil
-        blankNoteDraftMaterialID = materialID
-        pendingBlankNoteText = ""
-        activeNotebookItemID = nil
-        noteText = ""
-        focus(.notes)
+        requestNoteSelectionTransition(to: "draft:\(materialID)") { [weak self] in
+            guard let self else { return }
+            blankNoteMaterializationTask?.cancel()
+            blankNoteMaterializationTask = nil
+            blankNoteDraftMaterialID = materialID
+            pendingBlankNoteText = ""
+            activeNotebookItemID = nil
+            noteText = ""
+            focus(.notes)
+        }
     }
 
     var filteredItems: [StudyItem] {
@@ -9753,17 +9769,21 @@ final class WorkspaceStore: ObservableObject {
     }
 
     func navigateBackInWorkspace() {
-        guard let previous = backNavigationStack.popLast() else { return }
-        persistCurrentNote()
-        forwardNavigationStack.append(navigationSnapshot())
-        applyNavigationSnapshot(previous)
+        guard let target = backNavigationStack.last else { return }
+        requestNoteSelectionTransition(to: target.activeNotebookItemID) { [weak self] in
+            guard let self, let previous = backNavigationStack.popLast() else { return }
+            forwardNavigationStack.append(navigationSnapshot())
+            applyNavigationSnapshot(previous)
+        }
     }
 
     func navigateForwardInWorkspace() {
-        guard let next = forwardNavigationStack.popLast() else { return }
-        persistCurrentNote()
-        backNavigationStack.append(navigationSnapshot())
-        applyNavigationSnapshot(next)
+        guard let target = forwardNavigationStack.last else { return }
+        requestNoteSelectionTransition(to: target.activeNotebookItemID) { [weak self] in
+            guard let self, let next = forwardNavigationStack.popLast() else { return }
+            backNavigationStack.append(navigationSnapshot())
+            applyNavigationSnapshot(next)
+        }
     }
 
     var canUseSelectedMarkdownAsNotebookNote: Bool {
@@ -10158,8 +10178,124 @@ final class WorkspaceStore: ObservableObject {
 
     func select(itemID: String?) {
         WeiBeiPerf.measure("workspace.select") {
-            selectMeasured(itemID: itemID, opensNotebook: nil)
+            guard let itemID,
+                  allItems.contains(where: { $0.id == itemID && $0.isNotebookNote }) else {
+                selectMeasured(itemID: itemID, opensNotebook: nil)
+                return
+            }
+            requestNoteSelectionTransition(to: itemID) { [weak self] in
+                self?.selectMeasured(itemID: itemID, opensNotebook: nil)
+            }
         }
+    }
+
+    var noteSelectionStatusMessage: String? {
+        switch noteSelectionTransitionState {
+        case .idle:
+            nil
+        case .saving:
+            ui("正在保存当前笔记…", "Saving the current note…")
+        case .failed(.snapshotTimedOut):
+            ui(
+                "当前正文仍在当前页面，尚未确认保存。请重试后再切换。",
+                "The current text remains on this page, but its save is not confirmed. Retry before switching."
+            )
+        case .failed(.bridgeUnavailable):
+            ui(
+                "最近的持久恢复点仍在，但最后一段编辑无法确认。请重试编辑器连接后再切换。",
+                "The latest durable recovery point remains, but the final edits could not be confirmed. Retry the editor connection before switching."
+            )
+        case .failed(.documentChanged):
+            ui(
+                "保存过程中当前笔记发生了变化，魏碑没有切换。请重试。",
+                "The current note changed while saving, so WeiBei did not switch. Please retry."
+            )
+        }
+    }
+
+    var canRetryPendingNoteSelection: Bool {
+        if case .failed = noteSelectionTransitionState {
+            return pendingNoteSelection != nil
+        }
+        return false
+    }
+
+    func retryPendingNoteSelection() {
+        guard pendingNoteSelection != nil else { return }
+        requestPendingNoteSelectionSnapshot()
+    }
+
+    private func requestNoteSelectionTransition(
+        to documentID: String?,
+        apply: @escaping () -> Void
+    ) {
+        guard noteEditingSession.dirty,
+              noteEditingSession.documentID != documentID else {
+            pendingNoteSelection = nil
+            noteSelectionTransitionState = .idle
+            apply()
+            return
+        }
+
+        pendingNoteSelection = PendingNoteSelection(apply: apply)
+        guard noteSelectionTransitionState != .saving else { return }
+        requestPendingNoteSelectionSnapshot()
+    }
+
+    private func requestPendingNoteSelectionSnapshot() {
+        guard pendingNoteSelection != nil else { return }
+        noteSelectionTransitionState = .saving
+        let sourceDocumentID = noteEditingSession.documentID
+        _ = noteEditingSession.requestSnapshot { [weak self] result in
+            self?.finishPendingNoteSelectionSnapshot(
+                result,
+                sourceDocumentID: sourceDocumentID
+            )
+        }
+    }
+
+    private func finishPendingNoteSelectionSnapshot(
+        _ result: Result<NoteEditorSnapshotReadyEvent, NoteEditingSessionError>,
+        sourceDocumentID: String
+    ) {
+        guard pendingNoteSelection != nil else {
+            noteSelectionTransitionState = .idle
+            return
+        }
+        switch result {
+        case .success(let snapshot):
+            guard snapshot.documentID == sourceDocumentID,
+                  noteEditingSession.documentID == sourceDocumentID else {
+                failPendingNoteSelection(.documentChanged)
+                return
+            }
+            if snapshot.revision < noteEditingSession.currentRevision {
+                requestPendingNoteSelectionSnapshot()
+                return
+            }
+            let digest = Self.noteContentDigest(Data(snapshot.markdown.utf8))
+            guard let accepted = latestNoteEditorSnapshot,
+                  accepted.documentID == snapshot.documentID,
+                  accepted.revision == snapshot.revision,
+                  accepted.digest == digest else {
+                failPendingNoteSelection(.documentChanged)
+                return
+            }
+            let apply = pendingNoteSelection?.apply
+            pendingNoteSelection = nil
+            noteSelectionTransitionState = .idle
+            persistCurrentNote()
+            apply?()
+        case .failure(let error):
+            failPendingNoteSelection(error)
+        }
+    }
+
+    private func failPendingNoteSelection(_ error: NoteEditingSessionError) {
+        WeiBeiLog.noteRepair.error(
+            "note selection snapshot failed: \(String(describing: error), privacy: .private)"
+        )
+        noteSelectionTransitionState = .failed(error)
     }
 
     func selectMeasured(itemID: String?, opensNotebook: Bool?) {
@@ -10978,16 +11114,19 @@ final class WorkspaceStore: ObservableObject {
                 conflictResolution: conflictResolution
             )
             if revealInWorkspace {
-                activeNotebookItemID = result.item.id
-                noteText = markdown
-                revealRichWritingSurface()
-                focus(.notes)
-                showTransientNoteStatus(
-                    ui(
-                        "已在课程“笔记”目录新建：\(result.item.subtitle)",
-                        "Created in the course Notes folder: \(result.item.subtitle)"
+                requestNoteSelectionTransition(to: result.item.id) { [weak self] in
+                    guard let self else { return }
+                    activeNotebookItemID = result.item.id
+                    noteText = markdown
+                    revealRichWritingSurface()
+                    focus(.notes)
+                    showTransientNoteStatus(
+                        ui(
+                            "已在课程“笔记”目录新建：\(result.item.subtitle)",
+                            "Created in the course Notes folder: \(result.item.subtitle)"
+                        )
                     )
-                )
+                }
             }
             return result.item.id
         } catch {
@@ -11212,21 +11351,23 @@ final class WorkspaceStore: ObservableObject {
                 openDocumentPane(.notes)
                 return
             }
-            persistCurrentNote()
-            blankNoteMaterializationTask?.cancel()
-            blankNoteMaterializationTask = nil
-            pendingBlankNoteText = ""
-            blankNoteDraftMaterialID = nil
-            activeNotebookItemID = nil
-            noteText = ""
-            notebookCreationDraft = nil
-            notebookRenameDraft = nil
-            linkedSourcesPresented = false
-            latestAgentNoteProposal = nil
-            latestAgentLearningUpdate = nil
-            syncActiveStudySession()
-            openDocumentPane(.notes)
-            save()
+            requestNoteSelectionTransition(to: nil) { [weak self] in
+                guard let self else { return }
+                blankNoteMaterializationTask?.cancel()
+                blankNoteMaterializationTask = nil
+                pendingBlankNoteText = ""
+                blankNoteDraftMaterialID = nil
+                activeNotebookItemID = nil
+                noteText = ""
+                notebookCreationDraft = nil
+                notebookRenameDraft = nil
+                linkedSourcesPresented = false
+                latestAgentNoteProposal = nil
+                latestAgentLearningUpdate = nil
+                syncActiveStudySession()
+                openDocumentPane(.notes)
+                save()
+            }
         }
     }
 
@@ -12769,7 +12910,6 @@ final class WorkspaceStore: ObservableObject {
             return nil
         }
 
-        persistCurrentNote()
         guard courseLibraryRootURL != nil else {
             showTransientNoteStatus(ui("请先选择魏碑资料库。", "Choose a WeiBei library first."))
             return nil
@@ -12833,15 +12973,18 @@ final class WorkspaceStore: ObservableObject {
                 addNoteSourceLink(noteItemID: item.id, sourceItemID: sourceItem.id)
             }
             invalidateAgentContext()
-            activeNotebookItemID = item.id
-            noteText = markdown
-            revealRichWritingSurface()
-            focus(.notes)
             save()
             let status = sourceItem == nil
                 ? ui("已新建空白笔记：\(url.lastPathComponent)", "Created blank note: \(url.lastPathComponent)")
                 : ui("已为当前资料新建笔记：\(url.lastPathComponent)", "Created note from current material: \(url.lastPathComponent)")
-            showTransientNoteStatus(status)
+            requestNoteSelectionTransition(to: item.id) { [weak self] in
+                guard let self else { return }
+                activeNotebookItemID = item.id
+                noteText = markdown
+                revealRichWritingSurface()
+                focus(.notes)
+                showTransientNoteStatus(status)
+            }
             return item
         } catch {
             showImportantOperationError(ui("无法创建笔记：\(error.localizedDescription)", "Could not create note: \(error.localizedDescription)"))
@@ -12861,19 +13004,23 @@ final class WorkspaceStore: ObservableObject {
     func useSelectedMarkdownAsNotebookNote() {
         guard let selectedItemID,
               let index = importedItems.firstIndex(where: { $0.id == selectedItemID && $0.canBecomeNotebookNote }) else { return }
-        invalidateAgentContext()
-        persistCurrentNote()
-        importedItems[index].isNotebookNote = true
-        removeLinksWhereSourceItemID(importedItems[index].id)
-        activeNotebookItemID = importedItems[index].id
-        if selectedItemID == importedItems[index].id {
-            self.selectedItemID = nil
-            readerLocationTitle = selectedMaterialItem.map(displayTitle)
+        let itemID = importedItems[index].id
+        requestNoteSelectionTransition(to: itemID) { [weak self] in
+            guard let self,
+                  let index = importedItems.firstIndex(where: { $0.id == itemID }) else { return }
+            invalidateAgentContext()
+            importedItems[index].isNotebookNote = true
+            removeLinksWhereSourceItemID(itemID)
+            activeNotebookItemID = itemID
+            if selectedItemID == itemID {
+                self.selectedItemID = nil
+                readerLocationTitle = selectedMaterialItem.map(displayTitle)
+            }
+            noteText = noteText(for: importedItems[index])
+            revealRichWritingSurface()
+            focus(.notes)
+            save()
         }
-        noteText = noteText(for: importedItems[index])
-        revealRichWritingSurface()
-        focus(.notes)
-        save()
     }
 
     func copyCurrentReference() {

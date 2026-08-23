@@ -730,10 +730,8 @@ struct NotePaneView: View {
         }, onOutlineChange: { items in
             noteOutline = items
         }, onWikiLink: { title in
-            store.noteEditingSession.requestSnapshot()
             store.openOrCreateWikiNote(title: title)
         }, onSourceReference: { reference in
-            store.noteEditingSession.requestSnapshot()
             store.openSourceReference(reference)
         }, onAppShortcut: { key, modifiers in
             if modifiers.contains(.command) {
