@@ -14859,7 +14859,7 @@ final class WorkspaceStore: ObservableObject {
         return StudyAgentLearningContext(
             memoryRevision: learningMemoryContextRevision(courseID: target.courseID),
             lastLocation: target.courseID.flatMap { lastStudyLocation(in: $0) },
-            memories: Array(memories.prefix(200)),
+            memories: memories,
             session: session
         )
     }
@@ -14875,7 +14875,8 @@ final class WorkspaceStore: ObservableObject {
         let sourcesByID = Dictionary(
             uniqueKeysWithValues: access.sources.map { ($0.item.id, $0) }
         )
-        let retained = courseKnowledgeProfiles[profileIndex].entries.filter { entry in
+        let profile = courseKnowledgeProfiles[profileIndex]
+        let retained = profile.entries.filter { entry in
             entry.sources.allSatisfy { reference in
                 guard let source = sourcesByID[reference.itemID],
                       (source.item.isNotebookNote ? "note" : "material")
@@ -14886,21 +14887,12 @@ final class WorkspaceStore: ObservableObject {
                 return revision == reference.sourceRevision
             }
         }
-        if retained != courseKnowledgeProfiles[profileIndex].entries {
-            courseKnowledgeProfiles[profileIndex].entries = retained
-            courseKnowledgeProfiles[profileIndex].overview = retained
-                .filter { $0.kind == .overview }
-                .max(by: { $0.updatedAt < $1.updatedAt })?.text ?? ""
-            courseKnowledgeProfiles[profileIndex].revision &+= 1
-            courseKnowledgeProfiles[profileIndex].updatedAt = Date()
-            dirtyPortableCourseIDs.insert(courseID)
-            save()
-        }
-        let profile = courseKnowledgeProfiles[profileIndex]
         return StudyAgentCourseProfileContext(
             revision: profile.revision,
-            overview: profile.overview,
-            entries: profile.entries.map { entry in
+            overview: retained
+                .filter { $0.kind == .overview }
+                .max(by: { $0.updatedAt < $1.updatedAt })?.text ?? "",
+            entries: retained.map { entry in
                 StudyAgentCourseProfileEntry(
                     id: entry.id.uuidString.lowercased(),
                     kind: entry.kind.rawValue,
@@ -15180,8 +15172,8 @@ final class WorkspaceStore: ObservableObject {
         if let index = studySessions.firstIndex(where: { $0.id == target.sessionID }) {
             if let summary = update.sessionSummary?.trimmingCharacters(in: .whitespacesAndNewlines),
                !summary.isEmpty,
-               studySessions[index].summary != String(summary.prefix(2_000)) {
-                studySessions[index].summary = String(summary.prefix(2_000))
+               studySessions[index].summary != summary {
+                studySessions[index].summary = summary
                 sessionChanged = true
             }
             if !studySessions[index].flow.pinnedByUser,
@@ -15193,8 +15185,6 @@ final class WorkspaceStore: ObservableObject {
             let next = update.suggestedNext
                 .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
                 .filter { !$0.isEmpty }
-                .prefix(3)
-                .map { String($0.prefix(300)) }
             if !next.isEmpty, studySessions[index].flow.suggestedNext != next {
                 studySessions[index].flow.suggestedNext = next
                 sessionChanged = true
@@ -15321,7 +15311,7 @@ final class WorkspaceStore: ObservableObject {
                     CourseKnowledgeProfileEntry(
                         id: entryID ?? UUID(),
                         kind: proposal.kind,
-                        text: String(proposal.text.prefix(1_200)),
+                        text: proposal.text,
                         sources: sources,
                         createdAt: existing?.createdAt ?? now,
                         updatedAt: now
@@ -15339,7 +15329,6 @@ final class WorkspaceStore: ObservableObject {
                 profile.entries.append(replacement)
             }
         }
-        guard profile.entries.count <= 200 else { return nil }
         guard profile.entries != courseKnowledgeProfiles[profileIndex].entries else { return nil }
         profile.overview = profile.entries
             .filter { $0.kind == .overview }
@@ -15698,9 +15687,6 @@ final class WorkspaceStore: ObservableObject {
             documentAnchor: selection.documentAnchor
         )
         selectionAskThreads.insert(thread, at: 0)
-        if selectionAskThreads.count > 80 {
-            selectionAskThreads = Array(selectionAskThreads.prefix(80))
-        }
         save()
         return thread
     }

@@ -24,7 +24,6 @@ func runNativeAgentSelfChecks() throws {
     try checkRetrievalPrompt()
     try checkBackendSelection()
     try checkContextRevisionEcho()
-    try checkLearningMemoryContextPreservesFullText()
     try checkNativeProductContract()
 }
 
@@ -475,35 +474,6 @@ private func checkBackendSelection() throws {
     try nativeRequire(
         StudyAgentBackend(rawValue: "pi") == nil,
         "pi backend stays retired"
-    )
-}
-
-private func checkLearningMemoryContextPreservesFullText() throws {
-    let fullText = String(repeating: "这段学习记忆需要完整进入 Agent 上下文。", count: 80)
-    let envelope = StudyAgentContextEnvelope(
-        request: StudyAgentRequest(
-            purpose: .conversation,
-            question: "继续学习",
-            materialTitle: "",
-            materialText: "",
-            noteTitle: "",
-            noteText: "",
-            learningContext: StudyAgentLearningContext(
-                memories: [
-                    LearningMemoryEntry(
-                        kind: .summary,
-                        text: fullText,
-                        evidence: "[用户：本轮] 保留全文",
-                        origin: .userStatement
-                    ),
-                ]
-            ),
-            contextRevision: "full-memory"
-        )
-    )
-    try nativeRequire(
-        envelope.learning.memories.first?.text == fullText,
-        "Agent context preserves the full learning memory"
     )
 }
 

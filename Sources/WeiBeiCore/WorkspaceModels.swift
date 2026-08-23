@@ -2138,6 +2138,7 @@ public struct PersistedWorkspace: Codable, Sendable {
         self.studySessionScopeMigrationVersion = studySessionScopeMigrationVersion
         self.activeStudySessionID = activeStudySessionID
         self.selectionAskThreads = selectionAskThreads
+        self.selectionRemarkRecords = selectionRemarkRecords
         self.modelName = modelName
         self.agentProviderID = agentProviderID
         self.agentBaseURL = agentBaseURL

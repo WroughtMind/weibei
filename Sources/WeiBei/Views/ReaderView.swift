@@ -406,7 +406,6 @@ struct ReaderView: View {
 
     private func selectionAskMarksJSON(for itemID: String) -> String {
         let marks = store.selectionAskThreads(forItemID: itemID)
-            .prefix(40)
             .map { thread -> [String: String] in
                 [
                     "id": thread.id.uuidString,
@@ -707,7 +706,7 @@ struct ReaderView: View {
         let threads = store.selectionAskThreads(forItemID: store.selectedMaterialItem?.id)
         if !threads.isEmpty {
             Menu {
-                ForEach(threads.prefix(12)) { thread in
+                ForEach(threads) { thread in
                     Button {
                         store.openSelectionAskThread(thread.id, jumpToConversation: false)
                     } label: {

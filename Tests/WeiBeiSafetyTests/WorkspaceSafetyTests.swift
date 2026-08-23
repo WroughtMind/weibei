@@ -108,6 +108,203 @@ final class WorkspaceSafetyTests: XCTestCase {
     }
 
     @MainActor
+    func testSelectionRemarkHistoryKeepsOlderRecordsAndPersistsThem() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("WeiBeiSelectionRemarks-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = WorkspaceStore(workspaceDirectory: root, startsAtBlankEntries: true)
+        let existing = (0..<200).map { index in
+            SelectionRemarkRecord(
+                selectionText: "旧札记原文 \(index)",
+                remarkText: "旧札记 \(index)",
+                source: .document,
+                ownerTitle: "课堂资料"
+            )
+        }
+        store.selectionRemarkRecords = existing
+        store.selectionContext = SelectionContext(
+            text: "新札记原文",
+            source: .document,
+            ownerTitle: "课堂资料"
+        )
+
+        store.saveSelectionRemark("新札记")
+
+        XCTAssertEqual(store.selectionRemarkRecords.count, 201)
+        XCTAssertEqual(store.selectionRemarkRecords.last?.id, existing.last?.id)
+        XCTAssertTrue(selectionRemarkMarksJSON(store.selectionRemarkRecords).contains(existing.last!.id.uuidString))
+        XCTAssertTrue(store.flushPendingWorkspaceSave())
+        let reopened = WorkspaceStore(workspaceDirectory: root, startsCourseFileMaintenance: false)
+        XCTAssertEqual(reopened.selectionRemarkRecords.map(\.id), store.selectionRemarkRecords.map(\.id))
+    }
+
+    @MainActor
+    func testSelectionAskHistoryKeepsOlderThreads() {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("WeiBeiSelectionAsks-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = WorkspaceStore(workspaceDirectory: root, startsAtBlankEntries: true)
+        let existing = (0..<80).map { index in
+            SelectionAskThread(
+                selectionText: "旧问题选区 \(index)",
+                source: .document,
+                ownerTitle: "课堂资料"
+            )
+        }
+        store.selectionAskThreads = existing
+
+        _ = store.beginOrReuseSelectionAskThread(for: SelectionContext(
+            text: "新问题选区",
+            source: .document,
+            ownerTitle: "课堂资料"
+        ))
+
+        XCTAssertEqual(store.selectionAskThreads.count, 81)
+        XCTAssertEqual(store.selectionAskThreads.last?.id, existing.last?.id)
+    }
+
+    @MainActor
+    func testLearningContextIncludesEverySavedMemory() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("WeiBeiLearningContext-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let courseID = UUID()
+        let memories = (0...200).map { index in
+            LearningMemoryEntry(
+                kind: .summary,
+                text: "学习记忆 \(index)",
+                evidence: "[用户：历史] 学习记忆 \(index)",
+                origin: .userStatement
+            )
+        }
+        let snapshot = PersistedWorkspace(
+            courses: [Course(id: courseID, title: "课程")],
+            learningMemoryStates: [
+                ScopedLearningMemoryState(scope: .course(courseID), revision: 1, entries: memories),
+            ],
+            learningMemoryScopeMigrationVersion: 1
+        )
+        try JSONEncoder().encode(snapshot).write(
+            to: root.appendingPathComponent("workspace.json"),
+            options: .atomic
+        )
+        let store = WorkspaceStore(workspaceDirectory: root, startsCourseFileMaintenance: false)
+        let context = store.makeLearningContext(target: WorkspaceStore.AgentConversationTarget(
+            sessionID: UUID(),
+            workingDirectory: root,
+            courseID: courseID
+        ))
+
+        XCTAssertEqual(context.memories.map(\.id), memories.map(\.id))
+    }
+
+    @MainActor
+    func testCourseProfileKeepsFullTextBeyondPreviousEntryBoundary() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("WeiBeiCourseProfile-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let courseID = UUID()
+        let existing = (0..<200).map { index in
+            CourseKnowledgeProfileEntry(
+                kind: .concept,
+                text: "用户自述：已有认识 \(index)",
+                sources: []
+            )
+        }
+        let snapshot = PersistedWorkspace(
+            courses: [Course(id: courseID, title: "课程")],
+            courseKnowledgeProfiles: [
+                CourseKnowledgeProfile(courseID: courseID, revision: 4, entries: existing),
+            ]
+        )
+        try JSONEncoder().encode(snapshot).write(
+            to: root.appendingPathComponent("workspace.json"),
+            options: .atomic
+        )
+        let store = WorkspaceStore(workspaceDirectory: root, startsCourseFileMaintenance: false)
+        let fullText = "用户自述：" + String(repeating: "这段课程认识需要完整保存。", count: 100)
+        let receipt = store.persistNativeCourseProfileUpdate(
+            StudyAgentCourseProfileUpdate(
+                contextRevision: "course-profile-full-text",
+                profileRevision: 4,
+                checkpoint: "userRequested",
+                entries: [
+                    StudyAgentCourseProfileUpdateEntry(
+                        kind: .concept,
+                        text: fullText,
+                        sources: []
+                    ),
+                ]
+            ),
+            expectedContextRevision: "course-profile-full-text",
+            target: WorkspaceStore.AgentConversationTarget(
+                sessionID: UUID(),
+                workingDirectory: root,
+                courseID: courseID
+            )
+        )
+
+        XCTAssertTrue(receipt.accepted)
+        XCTAssertEqual(store.courseKnowledgeProfiles.first?.entries.count, 201)
+        XCTAssertEqual(store.courseKnowledgeProfiles.first?.entries.last?.text, fullText)
+    }
+
+    @MainActor
+    func testLearningUpdateKeepsFullSessionSummaryAndNextSteps() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("WeiBeiSessionSummary-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let sessionID = UUID()
+        let courseID = UUID()
+        let snapshot = PersistedWorkspace(
+            courses: [Course(id: courseID, title: "课程")],
+            learningMemoryStates: [ScopedLearningMemoryState(scope: .course(courseID))],
+            learningMemoryScopeMigrationVersion: 1,
+            studySessions: [StudySession(id: sessionID, title: "学习会话", courseID: courseID)],
+            studySessionScopeMigrationVersion: 1,
+            activeStudySessionID: sessionID
+        )
+        try JSONEncoder().encode(snapshot).write(
+            to: root.appendingPathComponent("workspace.json"),
+            options: .atomic
+        )
+        let store = WorkspaceStore(workspaceDirectory: root, startsCourseFileMaintenance: false)
+        let summary = String(repeating: "完整会话摘要。", count: 400)
+        let next = (1...5).map { "完整下一步 \($0) " + String(repeating: "内容", count: 180) }
+        let receipt = store.persistNativeLearningUpdate(
+            StudyAgentLearningUpdate(
+                contextRevision: "session-summary-full-text",
+                memoryRevision: 1,
+                sessionSummary: summary,
+                suggestedNext: next,
+                entries: [
+                    StudyAgentMemoryUpdateEntry(
+                        kind: .progress,
+                        text: "用户要求记录当前进度",
+                        evidence: "[用户：本轮] 请记录当前进度",
+                        origin: .userStatement
+                    ),
+                ]
+            ),
+            expectedContextRevision: "session-summary-full-text",
+            expectedUserQuestion: "请记录当前进度",
+            target: WorkspaceStore.AgentConversationTarget(
+                sessionID: sessionID,
+                workingDirectory: root,
+                courseID: courseID
+            ),
+            messageID: UUID()
+        )
+
+        XCTAssertTrue(receipt.accepted)
+        XCTAssertEqual(store.studySessions.first?.summary, summary)
+        XCTAssertEqual(store.studySessions.first?.flow.suggestedNext, next)
+    }
+
+    @MainActor
     func testAgentStreamingStateDoesNotInvalidateWorkspaceStore() {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("WeiBeiStreamingState-\(UUID().uuidString)", isDirectory: true)
