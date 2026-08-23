@@ -16666,8 +16666,7 @@ final class WorkspaceStore: ObservableObject {
             let sources = reply.sources
             if let messageID = replyMessageID {
                 let visibleContentBlocks = currentAgentVisualizationBlocks(reply.contentBlocks)
-                // Keep completion on the same fixed cadence; a synchronous
-                // drain turns accumulated network text into one visible dump.
+                // Keep completion paced; never dump the remaining backlog at once.
                 await agentStreamingDisplayPump.waitUntilCaughtUp()
                 _ = updateAgentMessage(messageID, in: target.sessionID) {
                     $0.text = reply.text
