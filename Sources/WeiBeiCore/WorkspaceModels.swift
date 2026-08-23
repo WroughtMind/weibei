@@ -1687,9 +1687,99 @@ public struct AgentVisualization: Identifiable, Codable, Hashable, Sendable {
     }
 }
 
+private enum AgentMessageRawJSON: Codable {
+    case object([String: AgentMessageRawJSON])
+    case array([AgentMessageRawJSON])
+    case string(String)
+    case number(Decimal)
+    case bool(Bool)
+    case null
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        if container.decodeNil() {
+            self = .null
+        } else if let value = try? container.decode(Bool.self) {
+            self = .bool(value)
+        } else if let value = try? container.decode(Decimal.self) {
+            self = .number(value)
+        } else if let value = try? container.decode(String.self) {
+            self = .string(value)
+        } else if let value = try? container.decode([AgentMessageRawJSON].self) {
+            self = .array(value)
+        } else {
+            self = .object(try container.decode([String: AgentMessageRawJSON].self))
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        switch self {
+        case let .object(value): try container.encode(value)
+        case let .array(value): try container.encode(value)
+        case let .string(value): try container.encode(value)
+        case let .number(value): try container.encode(value)
+        case let .bool(value): try container.encode(value)
+        case .null: try container.encodeNil()
+        }
+    }
+
+    var rawJSONString: String {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+        return String(data: try! encoder.encode(self), encoding: .utf8)!
+    }
+
+    var blockType: String {
+        guard case let .object(value) = self, value.count == 1 else { return "未知类型" }
+        return value.keys.first ?? "未知类型"
+    }
+}
+
 public enum AgentMessageContentBlock: Codable, Hashable, Sendable {
     case text(String)
     case visualization(AgentVisualization)
+    case unavailable(type: String, rawJSON: String)
+
+    private enum CodingKeys: String, CodingKey {
+        case text
+        case visualization
+    }
+
+    private enum ValueKeys: String, CodingKey {
+        case value = "_0"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        if container.contains(.text) {
+            let value = try container.nestedContainer(keyedBy: ValueKeys.self, forKey: .text)
+            self = .text(try value.decode(String.self, forKey: .value))
+        } else if container.contains(.visualization) {
+            let value = try container.nestedContainer(keyedBy: ValueKeys.self, forKey: .visualization)
+            self = .visualization(try value.decode(AgentVisualization.self, forKey: .value))
+        } else {
+            throw DecodingError.dataCorrupted(
+                .init(codingPath: decoder.codingPath, debugDescription: "Unknown agent content block")
+            )
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        switch self {
+        case let .text(text):
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            var value = container.nestedContainer(keyedBy: ValueKeys.self, forKey: .text)
+            try value.encode(text, forKey: .value)
+        case let .visualization(visualization):
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            var value = container.nestedContainer(keyedBy: ValueKeys.self, forKey: .visualization)
+            try value.encode(visualization, forKey: .value)
+        case let .unavailable(_, rawJSON):
+            let raw = try JSONDecoder().decode(AgentMessageRawJSON.self, from: Data(rawJSON.utf8))
+            try raw.encode(to: encoder)
+        }
+    }
 }
 
 public struct AgentMessage: Identifiable, Codable, Hashable, Sendable {
@@ -1788,11 +1878,32 @@ public struct AgentMessage: Identifiable, Codable, Hashable, Sendable {
                 return nil
             }
         }
-        contentBlocks = decodeLossy(
-            [AgentMessageContentBlock].self,
+        if let rawContentBlocks = decodeLossy(
+            AgentMessageRawJSON.self,
             forKey: .contentBlocks,
             marker: "reply-content:decode-failed"
-        ) ?? []
+        ) {
+            let rawBlocks: [AgentMessageRawJSON]
+            if case let .array(blocks) = rawContentBlocks {
+                rawBlocks = blocks
+            } else {
+                rawBlocks = [rawContentBlocks]
+            }
+            var keptUnavailableBlock = false
+            contentBlocks = rawBlocks.map { rawBlock in
+                let data = try! JSONEncoder().encode(rawBlock)
+                if let block = try? JSONDecoder().decode(AgentMessageContentBlock.self, from: data) {
+                    return block
+                }
+                keptUnavailableBlock = true
+                return .unavailable(type: rawBlock.blockType, rawJSON: rawBlock.rawJSONString)
+            }
+            if keptUnavailableBlock {
+                decodedToolTrace.append("reply-content-block:decode-failed")
+            }
+        } else {
+            contentBlocks = []
+        }
         source = decodeLossy(
             String.self,
             forKey: .source,

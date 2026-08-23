@@ -8774,17 +8774,26 @@ final class WorkspaceStore: ObservableObject {
         }
     }
 
-    func submitAgentVisualizationAction(_ action: String, payloadJSON: String) {
+    func submitAgentVisualizationAction(_ action: String, payloadJSON: String) -> String? {
         let action = String(action.prefix(200))
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !action.isEmpty,
-              payloadJSON.utf8.count <= 65_536,
-              (try? JSONSerialization.jsonObject(
-                  with: Data(payloadJSON.utf8),
-                  options: .fragmentsAllowed
-              )) != nil,
-              !isAgentRunningInActiveChat,
-              !isStoppingAgent else { return }
+        guard !action.isEmpty else {
+            return ui("这个按钮没有可执行的回答操作。", "This button has no executable response action.")
+        }
+        guard payloadJSON.utf8.count <= 65_536 else {
+            return ui("互动数据过大，无法提交回答。", "The interactive data is too large to submit.")
+        }
+        guard (try? JSONSerialization.jsonObject(
+            with: Data(payloadJSON.utf8),
+            options: .fragmentsAllowed
+        )) != nil else {
+            return ui("互动数据无法读取，未提交回答。", "The interactive data could not be read, so nothing was submitted.")
+        }
+        guard agentRequestTask == nil, !isAskingAgent, !isStoppingAgent else {
+            return isAgentRunningInActiveChat
+                ? ui("这个互动操作正在处理中。", "This interactive action is being processed.")
+                : ui("另一条回答正在处理，请稍候。", "Another response is being processed. Please wait.")
+        }
         askAgent(
             replayingSelections: [],
             visibleQuestionOverride: ui(
@@ -8796,6 +8805,7 @@ final class WorkspaceStore: ObservableObject {
                 "I used “\(action)” in the interactive view. Current view data: \(payloadJSON)"
             )
         )
+        return nil
     }
 
     private func restoreAgentReplyState(from session: StudySession) {
