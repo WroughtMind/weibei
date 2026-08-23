@@ -23,7 +23,7 @@ extension WorkspaceStore {
                 ? ui("这个互动操作正在处理中。", "This interactive action is being processed.")
                 : ui("另一条回答正在处理，请稍候。", "Another response is being processed. Please wait.")
         }
-        askAgent(
+        return askAgent(
             replayingSelections: [],
             visibleQuestionOverride: ui(
                 "互动操作：\(action)",
@@ -34,7 +34,6 @@ extension WorkspaceStore {
                 "I used “\(action)” in the interactive view. Current view data: \(payloadJSON)"
             )
         )
-        return nil
     }
 
     func cancelStudyAgentRuntimes() async {

@@ -19,6 +19,21 @@ final class AgentVisualizationSizingTests: XCTestCase {
     }
 
     @MainActor
+    func testGenUIActionRejectsWhenChatWorkspaceCannotBePrepared() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("WeiBeiGenUIAction-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try Data().write(to: root.appendingPathComponent("AgentRuntime"))
+        let store = WorkspaceStore(workspaceDirectory: root, startsAtBlankEntries: true)
+
+        let rejection = store.submitAgentVisualizationAction("继续解释", payloadJSON: "{}")
+
+        XCTAssertTrue(rejection?.contains("Chat") == true)
+        XCTAssertNil(store.agentRequestTask)
+    }
+
+    @MainActor
     func testGenUIAnswerButtonExplainsDisabledStateThenShowsQueuedAndProcessing() async throws {
         let messages = WKUserContentController()
         let actionProbe = GenUIActionProbe()

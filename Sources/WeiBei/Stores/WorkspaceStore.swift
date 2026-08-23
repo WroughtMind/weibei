@@ -16006,19 +16006,22 @@ final class WorkspaceStore: ObservableObject {
         }
     }
 
+    @discardableResult
     func askAgent(
         reusingLastUserMessage: Bool = false,
         replayingSelections: [SelectionContext]? = nil,
         targetCourseID: UUID? = nil,
         visibleQuestionOverride: String? = nil,
         questionOverride: String? = nil
-    ) {
+    ) -> String? {
         let question = (questionOverride ?? agentDraft)
             .trimmingCharacters(in: .whitespacesAndNewlines)
         guard agentRequestTask == nil,
               !isStoppingAgent,
               !isAskingAgent,
-              !question.isEmpty else { return }
+              !question.isEmpty else {
+            return ui("当前无法提交这条回答。", "This response cannot be submitted right now.")
+        }
         let target: AgentConversationTarget
         do {
             if (reusingLastUserMessage || targetCourseID != nil),
@@ -16031,6 +16034,8 @@ final class WorkspaceStore: ObservableObject {
                 target = try agentConversationTarget()
             }
         } catch {
+            let reason = Self.userFacingAgentFailureDetail(for: error)
+                ?? ui("魏碑无法准备这次回答。", "WeiBei could not prepare this response.")
             recordAgentTargetFailure(
                 question: question,
                 error: error,
@@ -16039,7 +16044,7 @@ final class WorkspaceStore: ObservableObject {
                 visibleQuestion: visibleQuestionOverride,
                 preserveComposerDraft: questionOverride != nil
             )
-            return
+            return reason
         }
         agentRequestTask = Task { @MainActor [weak self] in
             await self?.performAgentRequest(
@@ -16050,6 +16055,7 @@ final class WorkspaceStore: ObservableObject {
                 questionOverride: questionOverride
             )
         }
+        return nil
     }
 
     private func agentConversationTarget() throws -> AgentConversationTarget {
