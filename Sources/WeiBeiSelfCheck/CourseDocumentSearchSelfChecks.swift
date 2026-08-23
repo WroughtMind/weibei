@@ -140,63 +140,38 @@ func checkCourseDocumentSearchReadiness() throws {
         urlPath: retryPDFURL.path,
         isSample: false
     )
-    let attempts = SearchPDFRetryAttempts()
+    let retryProbe = SearchPDFRetryProbe()
     let retryIndex = CourseDocumentSearchIndex(
         databaseURL: root.appendingPathComponent("CourseIndex/retry.sqlite3"),
         nativePDFTextLoader: { _, pageIndexes, _, _ in
-            var result: [Int: BoundedPDFTextPage] = [:]
-            for pageIndex in pageIndexes {
-                if pageIndex == 0, attempts.record(pageIndex) == 2 {
-                    result[pageIndex] = BoundedPDFTextPage(
-                        text: "RETRY RECOVERED " + String(repeating: "有效正文", count: 8),
-                        isPartial: false
-                    )
-                } else if pageIndex != 0 {
-                    _ = attempts.record(pageIndex)
-                }
-            }
-            return result
+            retryProbe.nativeExtractions(for: pageIndexes)
         },
         pdfOCRPageLoader: { _, pageIndex in
             .failed(pageIndex: pageIndex, reason: .recognition)
         }
     )
     retryIndex.schedule([retryPDF])
-    let retryDeadline = Date().addingTimeInterval(8)
-    var retryResult: CourseDocumentIndexResult?
-    repeat {
-        retryResult = retryIndex.lookup(items: [retryPDF], query: "RETRY RECOVERED")[retryPDF.id]
-        if retryResult?.indexedPageCount == 1,
-           retryResult?.failedPageIndexes == [1] {
-            break
-        }
-        Thread.sleep(forTimeInterval: 0.02)
-    } while Date() < retryDeadline
-    let finalAttempts = attempts.snapshot()
+    let retryResult = waitForSearchResult(until: Date().addingTimeInterval(8)) {
+        retryIndex.lookup(items: [retryPDF], query: "已覆盖正文")[retryPDF.id]
+    } where: {
+        $0.indexedPageCount == 1 && $0.failedPageIndexes == [1]
+    }
     try requireSearchCheck(
-        finalAttempts == [0: 2, 1: 2]
-            && retryResult?.totalPageCount == 2
+        retryResult?.totalPageCount == 2
             && retryResult?.indexedPageCount == 1
             && retryResult?.uncoveredPageIndexes == [1]
             && retryResult?.failedPageIndexes == [1]
             && retryResult?.failedPageReasons == [1: PDFOCRFailureReason.recognition.rawValue]
             && retryResult?.isTruncated == true,
-        "PDF 有限重试或覆盖状态不符：attempts=\(finalAttempts), result=\(String(describing: retryResult))"
+        "PDF 普通索引没有有限停止，或最终覆盖状态不真实：\(String(describing: retryResult))"
     )
+    retryProbe.watchForUnexpectedAttempt()
     retryIndex.schedule([retryPDF])
-    Thread.sleep(forTimeInterval: 0.2)
-    let rescheduledAttempts = attempts.snapshot()
     try requireSearchCheck(
-        rescheduledAttempts == finalAttempts,
+        retryProbe.unexpectedAttempt.wait(timeout: .now() + 0.3) == .timedOut,
         "PDF 最终失败页在普通调度中仍被反复重试"
     )
-    let zeroHitResult = retryIndex.lookup(items: [retryPDF], query: "不会命中的查询")[retryPDF.id]
-    try requireSearchCheck(
-        zeroHitResult?.text == nil
-            && zeroHitResult?.uncoveredPageIndexes == [1]
-            && zeroHitResult?.failedPageIndexes == [1],
-        "PDF 零命中时没有保留未覆盖页和失败页状态"
-    )
+    retryProbe.stopWatchingForUnexpectedAttempt()
     let retryContext = CourseKnowledgeIndex.build(
         title: "重试课程",
         sources: [
@@ -218,7 +193,7 @@ func checkCourseDocumentSearchReadiness() throws {
             ),
         ],
         links: [],
-        query: "RETRY RECOVERED",
+        query: "已覆盖正文",
         currentMaterialID: nil,
         currentNoteID: nil
     )
@@ -227,29 +202,38 @@ func checkCourseDocumentSearchReadiness() throws {
             && retryContext.items.first?.totalPageCount == 2
             && retryContext.items.first?.uncoveredPageNumbers == [2]
             && retryContext.items.first?.failedPageNumbers == [2]
-            && retryContext.items.first?.failedPageReasons == [2: PDFOCRFailureReason.recognition.rawValue],
-        "PDF 覆盖率与失败页没有沿 Agent 搜索结果字段送出"
+            && retryContext.items.first?.failedPageReasons == [2: "文字识别失败，可重试"],
+        "PDF 覆盖率、失败页或人话失败原因没有沿 Agent 搜索结果字段送出"
     )
+    retryProbe.allowFailedPageRecovery()
     try requireSearchCheck(
         retryIndex.retryFailedPDFPages(in: retryPDF),
         "用户专项重新索引失败页没有重置有限重试状态"
     )
-    let resetDeadline = Date().addingTimeInterval(8)
-    repeat {
-        let pageOneAttempts = attempts.count(for: 1)
-        if pageOneAttempts == 4 { break }
-        Thread.sleep(forTimeInterval: 0.02)
-    } while Date() < resetDeadline
-    let resetAttempts = attempts.snapshot()
+    let completeMiss = waitForSearchResult(until: Date().addingTimeInterval(8)) {
+        retryIndex.lookup(items: [retryPDF], query: "绝不命中")[retryPDF.id]
+    } where: {
+        $0.indexedPageCount == 2 && $0.uncoveredPageIndexes.isEmpty
+    }
     try requireSearchCheck(
-        resetAttempts == [0: 2, 1: 4],
-        "用户专项重新索引失败页没有只重置失败页的一轮有限重试"
+        completeMiss?.text == nil
+            && completeMiss?.indexedPageCount == 2
+            && completeMiss?.totalPageCount == 2
+            && completeMiss?.uncoveredPageIndexes.isEmpty == true
+            && completeMiss?.failedPageIndexes.isEmpty == true,
+        "用户明确重试后没有恢复失败页，或完全覆盖 PDF 零命中未报告 100% 覆盖"
     )
+    let currentRevision = completeMiss?.sourceRevision
     try makeSearchRetryPDF(at: retryPDFURL, pageCount: 1)
-    let changedResult = retryIndex.lookup(items: [retryPDF], query: "不会命中的查询")[retryPDF.id]
+    let changedResult = waitForSearchResult(until: Date().addingTimeInterval(8)) {
+        retryIndex.lookup(items: [retryPDF], query: "绝不命中")[retryPDF.id]
+    } where: {
+        $0.sourceRevision != nil && $0.sourceRevision != currentRevision && $0.totalPageCount != 2
+    }
     try requireSearchCheck(
-        changedResult?.sourceRevision != retryResult?.sourceRevision
-            && changedResult?.totalPageCount != 2,
+        changedResult?.sourceRevision != currentRevision
+            && changedResult?.totalPageCount == 1
+            && changedResult?.failedPageIndexes.isEmpty == true,
         "PDF 文件变化后仍把旧版本覆盖率挂到新版本"
     )
 
@@ -392,28 +376,58 @@ private final class CourseSearchIndexGate: @unchecked Sendable {
     }
 }
 
-private final class SearchPDFRetryAttempts: @unchecked Sendable {
+private func waitForSearchResult(
+    until deadline: Date,
+    lookup: () -> CourseDocumentIndexResult?,
+    where matches: (CourseDocumentIndexResult) -> Bool
+) -> CourseDocumentIndexResult? {
+    repeat {
+        if let result = lookup(), matches(result) { return result }
+        Thread.sleep(forTimeInterval: 0.02)
+    } while Date() < deadline
+    return lookup()
+}
+
+private final class SearchPDFRetryProbe: @unchecked Sendable {
+    let unexpectedAttempt = DispatchSemaphore(value: 0)
     private let lock = NSLock()
-    private var attempts: [Int: Int] = [:]
+    private var recoversFailedPage = false
+    private var watchesForUnexpectedAttempt = false
 
-    func record(_ pageIndex: Int) -> Int {
+    func nativeExtractions(for pageIndexes: [Int]) -> [Int: BoundedPDFTextPage] {
         lock.lock()
-        attempts[pageIndex, default: 0] += 1
-        let count = attempts[pageIndex] ?? 0
+        let shouldRecover = recoversFailedPage
+        let shouldSignal = watchesForUnexpectedAttempt && pageIndexes.contains(1)
         lock.unlock()
-        return count
+        if shouldSignal { unexpectedAttempt.signal() }
+        return Dictionary(uniqueKeysWithValues: pageIndexes.compactMap { pageIndex in
+            guard pageIndex == 0 || shouldRecover else { return nil }
+            return (
+                pageIndex,
+                BoundedPDFTextPage(
+                    text: "第 \(pageIndex + 1) 页已覆盖正文 " + String(repeating: "有效", count: 20),
+                    isPartial: false
+                )
+            )
+        })
     }
 
-    func count(for pageIndex: Int) -> Int? {
+    func watchForUnexpectedAttempt() {
         lock.lock()
-        defer { lock.unlock() }
-        return attempts[pageIndex]
+        watchesForUnexpectedAttempt = true
+        lock.unlock()
     }
 
-    func snapshot() -> [Int: Int] {
+    func stopWatchingForUnexpectedAttempt() {
         lock.lock()
-        defer { lock.unlock() }
-        return attempts
+        watchesForUnexpectedAttempt = false
+        lock.unlock()
+    }
+
+    func allowFailedPageRecovery() {
+        lock.lock()
+        recoversFailedPage = true
+        lock.unlock()
     }
 }
 

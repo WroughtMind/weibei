@@ -14830,7 +14830,7 @@ final class WorkspaceStore: ObservableObject {
                 let text = result.text ?? ""
                 guard agentHostToolSourceIsValid(source),
                       (!text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                        || !result.uncoveredPageIndexes.isEmpty) else {
+                        || result.totalPageCount != nil) else {
                     return nil
                 }
                 return (

@@ -48,6 +48,8 @@ public actor NativeAgentLoop {
             persistentAssetIDsByContextID: Dictionary(
                 uniqueKeysWithValues: request.courseContext.items.map { ($0.id, $0.id) }
             ),
+            failedPDFRetryAuthorizationAvailable: NativeToolGuard
+                .explicitlyRequestsFailedPDFRetry(request.question),
             liveStores: liveStores
         )
         let scope = NativeToolScope.session(request.id.uuidString)
@@ -166,6 +168,9 @@ public actor NativeAgentLoop {
                 for call in calls {
                     try checkCancelled()
                     pendingUnstarted.removeAll { $0.id == call.id }
+                    let consumesFailedPDFRetryAuthorization = call.name
+                        == "weibei_course_retry_failed_pdf_pages"
+                        && context.failedPDFRetryAuthorizationAvailable
                     let result: NativeToolExecutionResult
                     do {
                         result = try await registry.execute(
@@ -175,6 +180,9 @@ public actor NativeAgentLoop {
                         )
                     } catch {
                         result = NativeToolExecutionResult(text: error.localizedDescription, isError: true)
+                    }
+                    if consumesFailedPDFRetryAuthorization {
+                        context.failedPDFRetryAuthorizationAvailable = false
                     }
                     applySideEffects(
                         name: call.name,
