@@ -103,22 +103,15 @@ export function streamingAppearancePlugin(isStreamingActive: () => boolean): Plu
       },
     },
     props: {
-      // Once the streaming session is over the caret is gone, but in-flight
-      // fades keep their spans until they expire so the last streamed
-      // characters finish their 260ms fade instead of popping to full
-      // opacity when the finish repaint unwraps the decoration spans.
+      // Hidden entirely once the streaming session is over: re-serving the
+      // remaining fades would RE-CREATE their span elements, and a fresh
+      // wb-stream-in span replays its 260ms fade from opacity 0 — the
+      // just-typed text visibly vanished and faded back in at completion.
+      // Unwrapping completed spans is visually silent; mid-flight ones pop
+      // to full opacity, which reads as the line finishing.
       decorations(state) {
         const appearance = appearanceKey.getState(state) as AppearanceState | undefined;
-        if (!appearance) return DecorationSet.empty;
-        if (!isStreamingActive()) {
-          const now = Date.now();
-          const remaining = appearance.fades.filter((entry) => now < entry.expiresAt);
-          if (remaining.length === 0) return DecorationSet.empty;
-          return DecorationSet.create(
-            state.doc,
-            remaining.map((entry) => Decoration.inline(entry.from, entry.to, FADE_SPEC)),
-          );
-        }
+        if (!appearance || !isStreamingActive()) return DecorationSet.empty;
         return appearance.set;
       },
     },
