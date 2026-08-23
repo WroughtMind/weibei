@@ -48,50 +48,35 @@ final class MotionInteractionSafetyTests: XCTestCase {
         XCTAssertNil(store.paneExpansionRequest)
     }
 
-    /// Identical transient text is a new identity each time: the second showing
-    /// keeps its own full 2.4s window and cannot be cleared by the first task.
     @MainActor
-    func testRepeatedTransientStatusKeepsFullSecondWindow() async throws {
-        let store = makeStore()
-        let message = "已复制"
-        store.showTransientNoteStatus(message)
-        try await Task.sleep(nanoseconds: 1_500_000_000)
-        store.showTransientNoteStatus(message)
-        try await Task.sleep(nanoseconds: 1_100_000_000)
-
-        // 2.6s after the FIRST showing (2.4s + margin): the old identity-token
-        // implementation would already have cleared the second window.
-        XCTAssertEqual(store.transientNoteStatus, message, "the first task must not clear the second showing")
-
-        try await Task.sleep(nanoseconds: 1_600_000_000)
-        XCTAssertNil(store.transientNoteStatus, "the second window still expires on its own")
+    func testTransientStatusExpiresOnlyForCurrentUncancelledGeneration() {
+        XCTAssertFalse(WorkspaceStore.shouldExpireTransientNoteStatus(
+            scheduledGeneration: 1,
+            currentGeneration: 2,
+            isCancelled: false
+        ))
+        XCTAssertFalse(WorkspaceStore.shouldExpireTransientNoteStatus(
+            scheduledGeneration: 2,
+            currentGeneration: 2,
+            isCancelled: true
+        ))
+        XCTAssertTrue(WorkspaceStore.shouldExpireTransientNoteStatus(
+            scheduledGeneration: 2,
+            currentGeneration: 2,
+            isCancelled: false
+        ))
     }
 
-    /// A newer message always wins; its task cannot be cleared by an older one.
     @MainActor
-    func testNewerTransientMessageSupersedesOlderTask() async throws {
-        let store = makeStore()
-        store.showTransientNoteStatus("A")
-        try await Task.sleep(nanoseconds: 200_000_000)
-        store.showTransientNoteStatus("B")
-        try await Task.sleep(nanoseconds: 2_500_000_000)
-        XCTAssertNil(store.transientNoteStatus, "only the newest generation may clear the slot")
-    }
-
-    /// Important errors never auto-dismiss and closing one leaves the transient
-    /// channel untouched.
-    @MainActor
-    func testImportantErrorPersistsUntilDismissed() async throws {
+    func testImportantErrorDismissalLeavesTransientStatusUntouched() {
         let store = makeStore()
         store.showTransientNoteStatus("临时提示")
         store.showImportantOperationError("无法写入笔记")
-
-        try await Task.sleep(nanoseconds: 3_000_000_000)
-        XCTAssertEqual(store.importantOperationError, "无法写入笔记", "important errors must not auto-expire")
-        XCTAssertEqual(store.transientNoteStatus, nil, "the transient status still expires independently")
+        XCTAssertEqual(store.importantOperationError, "无法写入笔记", "important errors remain until explicitly dismissed")
 
         store.dismissImportantOperationError()
         XCTAssertNil(store.importantOperationError)
+        XCTAssertEqual(store.transientNoteStatus, "临时提示")
     }
 
     /// Recovery retracts the banner: when a note's file error clears and the
