@@ -138,6 +138,51 @@ final class NativeAgentRuntimeTests: XCTestCase {
         }
     }
 
+    func testLoopStepLimitIsNotCompletedAndKeepsLedger() async throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("native-step-limit-\(UUID().uuidString).jsonl")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let ledger = try NativeAgentLedger(fileURL: url)
+        let registry = NativeToolRegistry()
+        await NativeBuiltinTools.registerAll(into: registry, skillRoot: nil)
+        let adapter = MockLLMAdapter(chunks: [
+            .toolCallDelta(index: 0, id: "t1", name: "weibei_course_search", argumentsDelta: "{\"query\":\"利率\"}"),
+            .finish(reason: .toolCalls, replayState: nil),
+        ])
+        let loop = NativeAgentLoop()
+        let request = StudyAgentRequest(
+            purpose: .conversation,
+            question: "继续查利率",
+            materialTitle: "",
+            materialText: "",
+            noteTitle: "",
+            noteText: "",
+            contextRevision: "r1"
+        )
+
+        do {
+            _ = try await loop.run(
+                request: request,
+                ledger: ledger,
+                registry: registry,
+                adapter: adapter,
+                model: "mock",
+                hostToolHandler: nil,
+                systemPrompt: "test",
+                progress: nil
+            )
+            XCTFail("step limit must not complete")
+        } catch let failure as NativeLLMFailure {
+            XCTAssertEqual(failure.code, "step_limit")
+            XCTAssertEqual(failure.message, "已达到 12 步上限，现场已保留，请继续。")
+        }
+
+        let events = await ledger.allEvents()
+        XCTAssertEqual(events.filter { $0.type == .stepStart }.count, 12)
+        XCTAssertEqual(events.filter { $0.type == .toolResult }.count, 12)
+        XCTAssertEqual(events.last?.type, .turnEnd)
+        XCTAssertEqual(events.last?.finishReason, .error)
+    }
+
     func testChatCompletionsTranslation() throws {
         var index = 0
         let chunks = try OpenAIChatCompletionsProvider.translate(
