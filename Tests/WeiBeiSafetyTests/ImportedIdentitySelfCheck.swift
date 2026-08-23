@@ -8,7 +8,7 @@ enum ImportedIdentitySelfCheck {
     @MainActor
     static func run() throws {
         try launchAndPrimaryEntriesStartBlank()
-        try dirtyEditorSelectionWaitsForAcceptedSnapshot()
+        try editorSelectionWaitsForCommandAndAcceptedSnapshot()
         try paneAndInteractionStateDoNotInvalidateWorkspaceStore()
         try agentFailureMessagesExposeOnlyUserFacingDetails()
         try storageModelsDecodeLegacySnapshotsAndRoundTrip()
@@ -24,7 +24,7 @@ enum ImportedIdentitySelfCheck {
     }
 
     @MainActor
-    private static func dirtyEditorSelectionWaitsForAcceptedSnapshot() throws {
+    private static func editorSelectionWaitsForCommandAndAcceptedSnapshot() throws {
         let fixture = try WorkspaceFixture(name: "dirty-editor-selection")
         defer { fixture.remove() }
 
@@ -64,24 +64,28 @@ enum ImportedIdentitySelfCheck {
         var bridgeToken = store.noteEditingSession.bindSnapshotRequestHandler {
             requests.append($0)
         }
-        try check(
-            store.noteEditingSession.receive(NoteEditorDirtyChangedEvent(
-                documentID: noteA.id,
-                documentGeneration: store.noteEditingSession.documentGeneration,
-                revision: 1,
-                dirty: true
-            )),
-            "脏编辑器切换场景没有接收正文变化"
-        )
+        let pendingCommand = NoteEditorCommand(kind: .insertMarkdown, markdown: "最后一段编辑")
+        store.noteEditorContentCommandPending(pendingCommand, documentID: noteA.id)
 
         store.select(itemID: noteC.id)
         store.select(itemID: noteB.id)
         try check(
             store.activeNoteItemID == noteA.id
                 && store.noteSelectionStatusMessage?.contains("正在保存") == true
-                && requests.count == 1,
-            "脏编辑器切换没有保持 A，或没有合并为一次真实快照"
+                && requests.isEmpty,
+            "内容命令回执前切换没有保持 A，或提前销毁了来源编辑器"
         )
+        store.noteEditorCommandRejected(pendingCommand, documentID: noteA.id)
+        try check(
+            store.activeNoteItemID == noteA.id
+                && store.canRetryRejectedNoteEditorCommand,
+            "内容命令被拒绝后没有留在来源笔记并允许重试"
+        )
+        store.retryRejectedNoteEditorCommand()
+        try check(store.noteEditorCommand?.id == pendingCommand.id, "重试没有保留原命令编号和内容")
+        store.noteEditorCommand = nil
+        store.noteEditorContentCommandApplied(pendingCommand, documentID: noteA.id)
+        try check(requests.count == 1, "内容命令应用后没有进入现有真实快照保存链")
 
         store.noteEditingSession.unbindSnapshotRequestHandler(bridgeToken)
         try check(

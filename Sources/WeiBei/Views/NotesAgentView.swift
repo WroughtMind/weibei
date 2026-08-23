@@ -748,8 +748,12 @@ struct NotePaneView: View {
             if editorRecoveryState.renderFailed() {
                 editorRecoveryGeneration &+= 1
             }
-        }, onCommandRejected: { command in
-            store.noteEditorCommandRejected(command)
+        }, onContentCommandPending: { documentID, command in
+            store.noteEditorContentCommandPending(command, documentID: documentID)
+        }, onContentCommandApplied: { documentID, command in
+            store.noteEditorContentCommandApplied(command, documentID: documentID)
+        }, onCommandRejected: { documentID, command in
+            store.noteEditorCommandRejected(command, documentID: documentID)
         })
         .id("\(store.activeNoteEditorDocumentID):\(editorRecoveryGeneration)")
         .background(WeiBeiTheme.paper)

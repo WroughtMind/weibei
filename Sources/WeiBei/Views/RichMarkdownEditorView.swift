@@ -630,7 +630,9 @@ struct RichMarkdownEditorView: NSViewRepresentable {
     var onRenderReady: () -> Void = {}
     var onFinalizedRenderReady: (CGFloat) -> Void = { _ in }
     var onRenderFailure: () -> Void = {}
-    var onCommandRejected: (NoteEditorCommand) -> Void = { _ in }
+    var onContentCommandPending: (String, NoteEditorCommand) -> Void = { _, _ in }
+    var onContentCommandApplied: (String, NoteEditorCommand) -> Void = { _, _ in }
+    var onCommandRejected: (String, NoteEditorCommand) -> Void = { _, _ in }
     var onSearchResult: (String, Bool) -> Void = { _, _ in }
     /// JSON array of `{id,text}` for selection-ask underline marks (read-only surfaces).
     var selectionAskMarks: String = "[]"
@@ -669,6 +671,8 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             onRenderReady: onRenderReady,
             onFinalizedRenderReady: onFinalizedRenderReady,
             onRenderFailure: onRenderFailure,
+            onContentCommandPending: onContentCommandPending,
+            onContentCommandApplied: onContentCommandApplied,
             onCommandRejected: onCommandRejected,
             onSearchResult: onSearchResult,
             onSelectionAskMark: onSelectionAskMark,
@@ -891,6 +895,8 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         context.coordinator.onRenderReady = onRenderReady
         context.coordinator.onFinalizedRenderReady = onFinalizedRenderReady
         context.coordinator.onRenderFailure = onRenderFailure
+        context.coordinator.onContentCommandPending = onContentCommandPending
+        context.coordinator.onContentCommandApplied = onContentCommandApplied
         context.coordinator.onCommandRejected = onCommandRejected
         context.coordinator.onSearchResult = onSearchResult
         let nextBaseURL = markdownBaseURL?.absoluteString ?? ""
@@ -1077,7 +1083,9 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         var onRenderReady: () -> Void
         var onFinalizedRenderReady: (CGFloat) -> Void
         var onRenderFailure: () -> Void
-        var onCommandRejected: (NoteEditorCommand) -> Void
+        var onContentCommandPending: (String, NoteEditorCommand) -> Void
+        var onContentCommandApplied: (String, NoteEditorCommand) -> Void
+        var onCommandRejected: (String, NoteEditorCommand) -> Void
         var onSearchResult: (String, Bool) -> Void
         var onSelectionAskMark: (String) -> Void
         var selectionAskMarks: String
@@ -1101,7 +1109,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         var pendingStreamingCompletion = false
         var lastCommandID: UUID?
         private var queuedCommands: [NoteEditorCommand] = []
-        private var inFlightCommandID: UUID?
+        private var inFlightCommand: InFlightCommand?
         private var editingSessionBindingToken: UUID?
         private var pendingV2DocumentID: String?
         let performanceInstanceID = UUID()
@@ -1112,6 +1120,13 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         private var lastAppliedSelectionRemarkMarks = ""
         private var finalizedRenderGeneration = 0
         private var hasReportedRenderFailure = false
+
+        private struct InFlightCommand {
+            let command: NoteEditorCommand
+            let documentID: String
+            let documentGeneration: UInt64
+            let minimumRevision: UInt64
+        }
 
         init(
             documentID: String,
@@ -1141,7 +1156,9 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             onRenderReady: @escaping () -> Void,
             onFinalizedRenderReady: @escaping (CGFloat) -> Void,
             onRenderFailure: @escaping () -> Void,
-            onCommandRejected: @escaping (NoteEditorCommand) -> Void,
+            onContentCommandPending: @escaping (String, NoteEditorCommand) -> Void,
+            onContentCommandApplied: @escaping (String, NoteEditorCommand) -> Void,
+            onCommandRejected: @escaping (String, NoteEditorCommand) -> Void,
             onSearchResult: @escaping (String, Bool) -> Void,
             onSelectionAskMark: @escaping (String) -> Void,
             onSelectionRemarkMark: @escaping (String) -> Void
@@ -1173,6 +1190,8 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             self.onRenderReady = onRenderReady
             self.onFinalizedRenderReady = onFinalizedRenderReady
             self.onRenderFailure = onRenderFailure
+            self.onContentCommandPending = onContentCommandPending
+            self.onContentCommandApplied = onContentCommandApplied
             self.onCommandRejected = onCommandRejected
             self.onSearchResult = onSearchResult
             self.onSelectionAskMark = onSelectionAskMark
@@ -1394,10 +1413,20 @@ struct RichMarkdownEditorView: NSViewRepresentable {
                 }
             case "commandApplied":
                 guard let event = decodeV2Event(NoteEditorCommandResultEvent.self, from: message.body) else { return }
-                finishCommand(event.commandID, rejectionReason: nil)
+                finishCommand(
+                    event.commandID,
+                    documentID: event.documentID,
+                    documentGeneration: event.documentGeneration,
+                    rejectionReason: nil
+                )
             case "commandRejected":
                 guard let event = decodeV2Event(NoteEditorCommandResultEvent.self, from: message.body) else { return }
-                finishCommand(event.commandID, rejectionReason: event.reason ?? "rejected")
+                finishCommand(
+                    event.commandID,
+                    documentID: event.documentID,
+                    documentGeneration: event.documentGeneration,
+                    rejectionReason: event.reason ?? "rejected"
+                )
             case "outlineChanged":
                 guard let event = decodeV2Event(
                     NoteEditorOutlineChangedEvent.self,
@@ -1632,20 +1661,20 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             """)
         }
 
-        private func run(_ command: NoteEditorCommand) {
-            guard let editingSession else { return }
+        private func run(_ inFlight: InFlightCommand) {
+            let command = inFlight.command
             let type: NoteEditorCommandType
             switch command.kind {
             case .replaceSelection: type = .replaceSelection
             case .selectionCommand:
                 dispatchQueued(NoteEditorCommandEnvelope(
                     commandID: command.id.uuidString,
-                    documentID: editingSession.documentID,
-                    documentGeneration: editingSession.documentGeneration,
-                    minimumRevision: editingSession.currentRevision,
+                    documentID: inFlight.documentID,
+                    documentGeneration: inFlight.documentGeneration,
+                    minimumRevision: inFlight.minimumRevision,
                     type: .executeSelectionCommand,
                     payload: NoteEditorSelectionCommandPayload(action: command.markdown, value: command.value)
-                ), source: command)
+                ), source: inFlight)
                 return
             case .applyAgentPatch: type = .applyMarkdownFragment
             case .insertMarkdown: type = .insertStructuredBlock
@@ -1653,48 +1682,58 @@ struct RichMarkdownEditorView: NSViewRepresentable {
                 webMarkdown = command.markdown
                 dispatchQueued(NoteEditorCommandEnvelope(
                     commandID: command.id.uuidString,
-                    documentID: editingSession.documentID,
-                    documentGeneration: editingSession.documentGeneration,
+                    documentID: inFlight.documentID,
+                    documentGeneration: inFlight.documentGeneration,
                     type: .loadDocument,
                     payload: NoteEditorLoadDocumentPayload(
                         markdown: command.markdown,
-                        initialRevision: editingSession.currentRevision
+                        initialRevision: inFlight.minimumRevision
                     )
-                ), source: command)
+                ), source: inFlight)
                 return
             case .scrollToHeading:
                 guard let index = Int(command.markdown) else {
-                    rejectCommand(command, reason: "invalid heading index")
+                    rejectCommand(inFlight, reason: "invalid heading index")
                     return
                 }
                 dispatchQueued(NoteEditorCommandEnvelope(
                     commandID: command.id.uuidString,
-                    documentID: editingSession.documentID,
-                    documentGeneration: editingSession.documentGeneration,
-                    minimumRevision: editingSession.currentRevision,
+                    documentID: inFlight.documentID,
+                    documentGeneration: inFlight.documentGeneration,
+                    minimumRevision: inFlight.minimumRevision,
                     type: .scrollToHeading,
                     payload: NoteEditorScrollPayload(index: index)
-                ), source: command)
+                ), source: inFlight)
                 return
             }
             dispatchQueued(NoteEditorCommandEnvelope(
                 commandID: command.id.uuidString,
-                documentID: editingSession.documentID,
-                documentGeneration: editingSession.documentGeneration,
-                minimumRevision: editingSession.currentRevision,
+                documentID: inFlight.documentID,
+                documentGeneration: inFlight.documentGeneration,
+                minimumRevision: inFlight.minimumRevision,
                 type: type,
                 payload: NoteEditorMarkdownPayload(markdown: command.markdown)
-            ), source: command)
+            ), source: inFlight)
         }
 
         func runPendingCommandIfReady() {
             ingestCommandBinding()
             guard isReady,
                   pendingV2DocumentID == nil,
-                  inFlightCommandID == nil,
-                  let next = queuedCommands.first else { return }
-            inFlightCommandID = next.id
-            run(next)
+                  inFlightCommand == nil,
+                  let next = queuedCommands.first,
+                  let editingSession else { return }
+            let inFlight = InFlightCommand(
+                command: next,
+                documentID: editingSession.documentID,
+                documentGeneration: editingSession.documentGeneration,
+                minimumRevision: editingSession.currentRevision
+            )
+            inFlightCommand = inFlight
+            if next.kind != .scrollToHeading {
+                onContentCommandPending(inFlight.documentID, next)
+            }
+            run(inFlight)
         }
 
         /// 内容命令保序且不设数量上限；只有最终状态可替代前态的命令合并。
@@ -1703,7 +1742,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
                   pending.id != lastCommandID,
                   !queuedCommands.contains(where: { $0.id == pending.id }) else { return }
             if let tail = queuedCommands.last,
-               tail.id != inFlightCommandID,
+               tail.id != inFlightCommand?.command.id,
                tail.kind == pending.kind,
                pending.kind == .reloadDocument || pending.kind == .scrollToHeading {
                 queuedCommands[queuedCommands.count - 1] = pending
@@ -1720,7 +1759,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
 
         private func dispatchQueued<Payload>(
             _ envelope: NoteEditorCommandEnvelope<Payload>,
-            source: NoteEditorCommand
+            source: InFlightCommand
         ) {
             guard let data = try? JSONEncoder().encode(envelope),
                   let json = String(data: data, encoding: .utf8),
@@ -1728,21 +1767,35 @@ struct RichMarkdownEditorView: NSViewRepresentable {
                 rejectCommand(source, reason: "bridge unavailable")
                 return
             }
-            webView.evaluateJavaScript("window.WeiBeiEditor?.dispatchCommand(\(json))") { [weak self] _, error in
-                guard let self, self.inFlightCommandID == source.id, let error else { return }
-                Self.bridgeLogger.error(
-                    "editor command evaluation failed: \(error.localizedDescription, privacy: .private)"
-                )
-                self.rejectCommand(source, reason: "javascript evaluation failed")
+            webView.evaluateJavaScript("window.WeiBeiEditor?.dispatchCommand(\(json))") { [weak self] result, error in
+                guard let self,
+                      self.inFlightCommand?.command.id == source.command.id else { return }
+                if let error {
+                    Self.bridgeLogger.error(
+                        "editor command evaluation failed: \(error.localizedDescription, privacy: .private)"
+                    )
+                    self.rejectCommand(source, reason: "javascript evaluation failed")
+                } else if result as? Bool != true {
+                    Self.bridgeLogger.error("editor command was not accepted by the web bridge")
+                    self.rejectCommand(source, reason: "command was not accepted")
+                }
             }
         }
 
-        private func finishCommand(_ commandID: String, rejectionReason: String?) {
+        private func finishCommand(
+            _ commandID: String,
+            documentID: String,
+            documentGeneration: UInt64,
+            rejectionReason: String?
+        ) {
             guard let id = UUID(uuidString: commandID),
-                  id == inFlightCommandID,
+                  let inFlight = inFlightCommand,
+                  id == inFlight.command.id,
+                  documentID == inFlight.documentID,
+                  documentGeneration == inFlight.documentGeneration,
                   queuedCommands.first?.id == id else { return }
             let source = queuedCommands.removeFirst()
-            inFlightCommandID = nil
+            inFlightCommand = nil
             if let rejectionReason {
                 Self.bridgeLogger.error(
                     "editor command rejected: \(rejectionReason, privacy: .private)"
@@ -1750,16 +1803,24 @@ struct RichMarkdownEditorView: NSViewRepresentable {
                 if command.wrappedValue?.id == source.id {
                     command.wrappedValue = nil
                 }
-                onCommandRejected(source)
+                onCommandRejected(inFlight.documentID, source)
             } else {
                 lastCommandID = source.id
+                if source.kind != .scrollToHeading {
+                    onContentCommandApplied(inFlight.documentID, source)
+                }
             }
             runPendingCommandIfReady()
         }
 
-        private func rejectCommand(_ source: NoteEditorCommand, reason: String) {
-            guard inFlightCommandID == source.id else { return }
-            finishCommand(source.id.uuidString, rejectionReason: reason)
+        private func rejectCommand(_ source: InFlightCommand, reason: String) {
+            guard inFlightCommand?.command.id == source.command.id else { return }
+            finishCommand(
+                source.command.id.uuidString,
+                documentID: source.documentID,
+                documentGeneration: source.documentGeneration,
+                rejectionReason: reason
+            )
         }
 
         private static let bridgeLogger = Logger(
