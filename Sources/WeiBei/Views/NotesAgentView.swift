@@ -1294,7 +1294,7 @@ struct AgentPaneView: View {
                             // Long histories fold behind a reveal button instead — unrendered
                             // rows cost nothing; keep full Markdown rendering for visible ones.
                             VStack(alignment: .leading, spacing: comfy ? 22 : 12) {
-                                // 显隐条件在 AgentUnconfiguredHint 自身判断——它观察 PiOAuthService,
+                                // 显隐条件在 AgentUnconfiguredHint 自身判断——它观察 AgentAccountService,
                                 // 配置完成后能即时消失;这里只看消息是否为空。
                                 if store.messages.isEmpty {
                                     AgentUnconfiguredHint(store: store)
