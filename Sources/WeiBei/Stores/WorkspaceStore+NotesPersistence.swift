@@ -6,6 +6,7 @@ import WeiBeiCore
 enum NoteWriteGateError: LocalizedError {
     case writeRefusedKeepContent
     case diskChangedAdoptDisk
+    case writeVerificationFailed
 
     var errorDescription: String? {
         switch self {
@@ -13,6 +14,8 @@ enum NoteWriteGateError: LocalizedError {
             return "磁盘内容无法确认，写入已暂停以保护正文。"
         case .diskChangedAdoptDisk:
             return "笔记文件已被外部修改，已采用磁盘内容。"
+        case .writeVerificationFailed:
+            return "写入后重读内容不一致，未标记为已保存。"
         }
     }
 }
@@ -610,10 +613,11 @@ extension WorkspaceStore {
         } catch {
             setNoteDraft(markdown, for: itemID)
             pendingNoteWritesByItemID.removeValue(forKey: itemID)
+            noteEditingSession.markSaveFailed(documentID: itemID)
             showImportantOperationError(
                 ui(
-                    "无法写回原 Markdown：\(url.lastPathComponent)",
-                    "Could not write original Markdown: \(url.lastPathComponent)"
+                    "无法写回原 Markdown：\(url.lastPathComponent)。\(error.localizedDescription)",
+                    "Could not write original Markdown: \(url.lastPathComponent). \(error.localizedDescription)"
                 )
             )
             return false
@@ -637,6 +641,7 @@ extension WorkspaceStore {
         if activeNoteItemID == itemID {
             noteText = diskMarkdown
             noteEditingSession.replaceDocument(with: itemID)
+            noteEditingSession.markExternallyModified(documentID: itemID)
             noteEditorCommand = NoteEditorCommand(
                 kind: .reloadDocument,
                 markdown: diskMarkdown
@@ -687,6 +692,9 @@ extension WorkspaceStore {
             throw NoteWriteGateError.writeRefusedKeepContent
         }
         let writtenDigest = Self.noteContentDigest(Data(markdown.utf8))
+        guard Self.noteContentDigest(at: url) == writtenDigest else {
+            throw NoteWriteGateError.writeVerificationFailed
+        }
         noteBackingContentDigestsByItemID[itemID] = writtenDigest
         lastSelfWrittenNoteDigestsByItemID[itemID] = writtenDigest
     }
@@ -698,6 +706,7 @@ extension WorkspaceStore {
     ) {
         setNoteDraft(markdown, for: itemID)
         pendingNoteWritesByItemID.removeValue(forKey: itemID)
+        noteEditingSession.markSaveFailed(documentID: itemID)
     }
 
     func persistNote(_ markdown: String, for item: StudyItem) {

@@ -90,7 +90,7 @@ final class NoteEditingSessionTests: XCTestCase {
         )
 
         session.receive(dirtyEvent(for: session, revision: 2))
-        XCTAssertTrue(session.markSaved(revision: 1))
+        XCTAssertTrue(session.markSaved(revision: 1, as: .writtenToFile))
 
         XCTAssertEqual(session.savedRevision, 1)
         XCTAssertEqual(session.currentRevision, 2)

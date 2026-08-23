@@ -203,18 +203,16 @@ final class WriteGateSafetyTests: XCTestCase {
         XCTAssertEqual(try String(contentsOf: url, encoding: .utf8), "重启前未写完的草稿")
     }
 
-    func testWriterFailureKeepsDraftAndSkipsDigestRefresh() throws {
+    func testWriteVerificationFailureKeepsDraftDirtyAndVisible() throws {
         let base = makeTempRoot("weibei-gate-writer-failure")
         defer { try? FileManager.default.removeItem(at: base) }
         let backupRoot = base.appendingPathComponent("backups", isDirectory: true)
         let library = base.appendingPathComponent("资料库", isDirectory: true)
         try FileManager.default.createDirectory(at: library, withIntermediateDirectories: true)
-        struct ExplodingWriterError: Error {}
         let store = WorkspaceStore(
             workspaceDirectory: base.appendingPathComponent("workspace", isDirectory: true),
-            notebookMarkdownWriter: { markdown, url in
+            notebookMarkdownWriter: { _, url in
                 try "半截".write(to: url, atomically: true, encoding: .utf8)
-                throw ExplodingWriterError()
             },
             noteBackupRootURL: backupRoot,
             startsAtBlankEntries: true,
@@ -226,11 +224,23 @@ final class WriteGateSafetyTests: XCTestCase {
         try "第一版".write(to: source, atomically: true, encoding: .utf8)
         let imported = try store.importFileIntoCourseForSelfCheck(source, courseID: courseID, role: .material)
         let item = imported.item
+        let url = try XCTUnwrap(store.resolvedLibraryURL(for: item))
+        store.noteEditingSession.replaceDocument(with: item.id)
+        store.noteEditingSession.receive(NoteEditorDirtyChangedEvent(
+            documentID: item.id,
+            documentGeneration: store.noteEditingSession.documentGeneration,
+            revision: 1,
+            dirty: true
+        ))
 
         store.scheduleNotePersistence("第二版", for: item)
         store.flushPendingNotePersistence(for: item.id)
 
+        XCTAssertEqual(try String(contentsOf: url, encoding: .utf8), "半截")
         XCTAssertEqual(store.notesByItemID[item.id], "第二版")
         XCTAssertNil(store.lastSelfWrittenNoteDigestsByItemID[item.id])
+        XCTAssertTrue(store.noteEditingSession.dirty)
+        XCTAssertEqual(store.noteEditingSession.saveStatus, .failed)
+        XCTAssertNotNil(store.importantOperationError)
     }
 }
