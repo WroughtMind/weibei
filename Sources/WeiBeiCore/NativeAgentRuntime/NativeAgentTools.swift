@@ -811,11 +811,17 @@ public enum NativeBuiltinTools {
                     expected: context.request.courseProfile.revision,
                     message: "课程知识档案版本已变化；当前 profileRevision 为 \(context.request.courseProfile.revision)，请原样回传"
                 )
+                guard let checkpoint = arguments["checkpoint"] as? String else {
+                    throw NativeLLMFailure(
+                        code: "invalid_arguments",
+                        message: "缺少参数 checkpoint"
+                    )
+                }
                 var details: [String: Any] = [
                     "kind": "course_profile_update",
                     "contextRevision": context.request.contextRevision,
                     "profileRevision": NSNumber(value: context.request.courseProfile.revision),
-                    "checkpoint": arguments["checkpoint"] as? String ?? "userRequested",
+                    "checkpoint": checkpoint,
                     "entries": omittingBlankIDs(in: arguments["entries"] as? [Any] ?? [], key: "entryID"),
                     "removedEntryIDs": arguments["removedEntryIDs"] as? [String]
                         ?? (arguments["removedEntryIDs"] as? [Any])?.compactMap { $0 as? String }

@@ -669,7 +669,8 @@ final class WorkspaceStore: ObservableObject {
     let notebookFileMover: (URL, URL) throws -> Void
     private let courseFileSourceRemover: @Sendable (URL) throws -> Void
     private let contentSourceTrashMover: @Sendable (URL) throws -> URL
-    private let workspaceSnapshotWriter: (Data, URL) throws -> Void
+    private let workspaceSnapshotWriter:
+        @Sendable (Data, URL) throws -> Void
     private let coursePortableStateWriter:
         (
             Data,
@@ -939,7 +940,9 @@ final class WorkspaceStore: ObservableObject {
             }
             return trashedURL as URL
         },
-        workspaceSnapshotWriter: @escaping (Data, URL) throws -> Void = WorkspaceStore.writeWorkspaceSnapshot,
+        workspaceSnapshotWriter: @escaping @Sendable (Data, URL) throws -> Void = {
+            try WorkspaceStore.writeWorkspaceSnapshot($0, to: $1)
+        },
         coursePortableStateWriter: @escaping (
             Data,
             URL,
@@ -15718,11 +15721,14 @@ final class WorkspaceStore: ObservableObject {
         if let courseID = target.courseID {
             dirtyPortableCourseIDs.insert(courseID)
         }
-        _ = await persistWorkspaceNow()
+        let rollbackPersisted = await persistWorkspaceNow()
         WeiBeiLog.workspace.error(
-            "code=native_learning_persist_failed course=\(target.courseID?.uuidString ?? "none", privacy: .private)"
+            "code=native_learning_persist_failed course=\(target.courseID?.uuidString ?? "none", privacy: .private) rollback_persisted=\(rollbackPersisted, privacy: .public)"
         )
-        return .rejected("魏碑没有确认写入这次学习记忆，已撤回本次更新并保留同时发生的修改。请重试。")
+        if rollbackPersisted {
+            return .rejected("魏碑没有写入这次学习记忆，已恢复更新前的内容，同时发生的修改不受影响。请重试。")
+        }
+        return .rejected("魏碑无法确认这次学习记忆的最终磁盘状态。当前会话仍保留更新前的内容，请不要关闭并重试。")
     }
 
     func persistNativeCourseProfileUpdate(
@@ -15816,11 +15822,14 @@ final class WorkspaceStore: ObservableObject {
             }
             dirtyPortableCourseIDs.insert(courseID)
         }
-        _ = await persistWorkspaceNow()
+        let rollbackPersisted = await persistWorkspaceNow()
         WeiBeiLog.workspace.error(
-            "code=native_course_profile_persist_failed course=\(target.courseID?.uuidString ?? "none", privacy: .private)"
+            "code=native_course_profile_persist_failed course=\(target.courseID?.uuidString ?? "none", privacy: .private) rollback_persisted=\(rollbackPersisted, privacy: .public)"
         )
-        return .rejected("魏碑没有确认写入这次课程档案，已撤回本次更新并保留同时发生的修改。请重试。")
+        if rollbackPersisted {
+            return .rejected("魏碑没有写入这次课程档案，已恢复更新前的内容，同时发生的修改不受影响。请重试。")
+        }
+        return .rejected("魏碑无法确认这次课程档案的最终磁盘状态。当前会话仍保留更新前的内容，请不要关闭并重试。")
     }
 
 
@@ -15917,11 +15926,20 @@ final class WorkspaceStore: ObservableObject {
         let deletedState = learningMemoryStates[stateIndex]
         invalidateAgentContext()
         guard flushPendingWorkspaceSave() else {
+            var rollbackApplied = false
             if learningMemoryStates[stateIndex] == deletedState {
                 learningMemoryStates[stateIndex] = previousState
                 if agentContextRevision == previousContextRevision &+ 1 {
                     agentContextRevision = previousContextRevision
                 }
+                rollbackApplied = true
+            }
+            let rollbackPersisted = rollbackApplied
+                && flushPendingWorkspaceSave()
+            if !rollbackPersisted {
+                WeiBeiLog.workspace.error(
+                    "code=learning_memory_delete_rollback_unverified scope=\(String(describing: scope), privacy: .private) memory=\(memoryID.uuidString, privacy: .private) rollback_applied=\(rollbackApplied, privacy: .public)"
+                )
             }
             return false
         }
@@ -21164,7 +21182,8 @@ final class WorkspaceStore: ObservableObject {
             prepared.request.workspace
         )
         let result = await courseProjectFileWorker.persistWorkspace(
-            prepared.request
+            prepared.request,
+            workspaceSnapshotWriter: workspaceSnapshotWriter
         )
         if result.failure == nil,
            let removingCourseID =

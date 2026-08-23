@@ -1041,6 +1041,27 @@ enum ImportedIdentitySelfCheck {
 
     @MainActor
     private static func learningMemoryEditsPreserveFullTextAndRetrySave() throws {
+        final class SaveSwitch: @unchecked Sendable {
+            private let lock = NSLock()
+            private var failsAfterNextWrite = false
+
+            func arm() {
+                lock.withLock { failsAfterNextWrite = true }
+            }
+
+            func write(_ data: Data, to url: URL) throws {
+                WorkspaceSnapshotRecovery.rotateBackups(primary: url)
+                try data.write(to: url, options: [.atomic])
+                let shouldFail = lock.withLock {
+                    defer { failsAfterNextWrite = false }
+                    return failsAfterNextWrite
+                }
+                if shouldFail {
+                    throw CheckError.failed("预期中的学习记忆保存失败")
+                }
+            }
+        }
+
         let fixture = try WorkspaceFixture(name: "learning-memory-edit-save")
         defer { fixture.remove() }
 
@@ -1064,14 +1085,11 @@ enum ImportedIdentitySelfCheck {
             )
         )
 
-        var shouldFail = false
+        let saveSwitch = SaveSwitch()
         let store = WorkspaceStore(
             workspaceDirectory: fixture.workspaceDirectory,
             workspaceSnapshotWriter: { data, url in
-                if shouldFail {
-                    throw CheckError.failed("预期中的学习记忆保存失败")
-                }
-                try data.write(to: url, options: [.atomic])
+                try saveSwitch.write(data, to: url)
             },
             selectionAskThreadDefaults: fixture.selectionAskThreadDefaults
         )
@@ -1090,7 +1108,7 @@ enum ImportedIdentitySelfCheck {
             "用户学习记忆没有完整保存全文"
         )
 
-        shouldFail = true
+        saveSwitch.arm()
         let editedText = "已完成第一轮复习"
         try check(
             !store.updateLearningMemory(
@@ -1108,7 +1126,6 @@ enum ImportedIdentitySelfCheck {
             "学习记忆保存失败破坏了旧快照"
         )
 
-        shouldFail = false
         try check(
             store.updateLearningMemory(
                 memory.id,
@@ -1116,7 +1133,7 @@ enum ImportedIdentitySelfCheck {
                 kind: .progress,
                 text: editedText
             ),
-            "同内容重试没有重新写入学习记忆"
+            "学习记忆修改没有写入正式工作区快照"
         )
         let snapshotAfterRetry = try fixture.readSnapshot()
         try check(
@@ -1125,14 +1142,25 @@ enum ImportedIdentitySelfCheck {
         )
 
         let revisionBeforeDelete = store.learningMemoryRevision(in: scope)
-        shouldFail = true
+        saveSwitch.arm()
         try check(
             !store.deleteLearningMemory(memory.id, in: scope)
                 && store.learningMemoryEntries(in: scope).first?.text == editedText
                 && store.learningMemoryRevision(in: scope) == revisionBeforeDelete,
             "删除学习记忆写盘失败后没有恢复条目和修订号"
         )
-        shouldFail = false
+        let reopenedAfterFailure = WorkspaceStore(
+            workspaceDirectory: fixture.workspaceDirectory,
+            selectionAskThreadDefaults: fixture.selectionAskThreadDefaults,
+            startsCourseFileMaintenance: false
+        )
+        try check(
+            reopenedAfterFailure.learningMemoryEntries(in: scope).first?.text
+                == editedText
+                && reopenedAfterFailure.learningMemoryRevision(in: scope)
+                    == revisionBeforeDelete,
+            "删除失败后的回滚没有经过正式异步写盘，重开后条目或修订丢失"
+        )
         try check(
             store.deleteLearningMemory(memory.id, in: scope),
             "用户无法删除单条学习记忆"

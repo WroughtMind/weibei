@@ -407,7 +407,8 @@ actor CourseProjectFileWorker {
     }
 
     func persistWorkspace(
-        _ request: WorkspacePersistenceRequest
+        _ request: WorkspacePersistenceRequest,
+        workspaceSnapshotWriter: @escaping @Sendable (Data, URL) throws -> Void
     ) async -> WorkspacePersistenceResult {
         let ranOnMainThread = pthread_main_np() != 0
         guard request.generation > highestWorkspaceSaveGeneration else {
@@ -712,10 +713,7 @@ actor CourseProjectFileWorker {
             do {
                 if pthread_main_np() != 0 {
                     try await Task.detached(priority: .utility) {
-                        try data.write(
-                            to: request.storageURL,
-                            options: [.atomic]
-                        )
+                        try workspaceSnapshotWriter(data, request.storageURL)
                         let verified = try Data(
                             contentsOf: request.storageURL
                         )
@@ -725,10 +723,7 @@ actor CourseProjectFileWorker {
                         }
                     }.value
                 } else {
-                    try data.write(
-                        to: request.storageURL,
-                        options: [.atomic]
-                    )
+                    try workspaceSnapshotWriter(data, request.storageURL)
                     let verified = try Data(contentsOf: request.storageURL)
                     guard verified == data else {
                         throw CourseProjectFileWorkerError.verificationFailed
