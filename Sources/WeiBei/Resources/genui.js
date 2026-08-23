@@ -82,14 +82,18 @@
     const reveal = () => {
       const end = Math.min(values.length, shown + 100);
       const children = document.createDocumentFragment();
-      values.slice(shown, end).forEach((item, offset) => {
-        const child = renderNode(item, `${path}.${shown + offset}`, depth + 1);
+      let next = shown;
+      for (; next < end; next += 1) {
+        const child = renderNode(values[next], `${path}.${next}`, depth + 1);
         if (child) children.append(child);
-      });
-      shown = end;
+        if (nodeLimitNoticeShown) break;
+      }
+      shown = next;
       if (controls.parentNode) controls.before(children); else fragment.append(children);
-      status.textContent = `已显示 ${shown}/${values.length}`;
-      more.hidden = shown >= values.length;
+      status.textContent = nodeLimitNoticeShown
+        ? `已显示 ${shown}/${values.length}；剩余内容因本地资源限制未显示`
+        : `已显示 ${shown}/${values.length}`;
+      more.hidden = nodeLimitNoticeShown || shown >= values.length;
       reportHeight();
     };
     more.onclick = reveal;
