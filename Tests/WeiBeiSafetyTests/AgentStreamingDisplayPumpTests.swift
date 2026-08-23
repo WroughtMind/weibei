@@ -76,16 +76,19 @@ final class AgentStreamingDisplayPumpTests: XCTestCase {
 
     func testStopAndResetDropsLoopAndForgetsPrefix() {
         let rig = Rig()
-        rig.target = "内容"
+        rig.target = "内容继续输出"
+        let expectedPrefix = String(
+            rig.target.prefix(AgentStreamingDisplayPump.charactersPerTick)
+        )
         rig.pump.start()
         XCTAssertTrue(rig.pump.isRunning)
         // start() steps once so the first batch keeps its arrival latency.
-        XCTAssertEqual(rig.published, ["内容"])
+        XCTAssertEqual(rig.published, [expectedPrefix])
         rig.pump.stopAndReset()
         XCTAssertFalse(rig.pump.isRunning)
         rig.pump.stepOnce()
         // The prefix was forgotten: publication restarts from scratch.
-        XCTAssertEqual(rig.published.last, "内容")
+        XCTAssertEqual(rig.published.last, expectedPrefix)
         XCTAssertEqual(rig.published.count, 2)
     }
 
