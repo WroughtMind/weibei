@@ -54,8 +54,25 @@ final class WorkspaceSafetyTests: XCTestCase {
 
     @MainActor
     func testNativeAgentRejectsAndRollsBackWhenWorkspaceWriteFails() async throws {
-        final class SaveSwitch { var fails = false }
         struct InjectedFailure: Error {}
+        final class SaveSwitch: @unchecked Sendable {
+            private let lock = NSLock()
+            private var failsAfterNextWrite = false
+
+            func arm() {
+                lock.withLock { failsAfterNextWrite = true }
+            }
+
+            func write(_ data: Data, to url: URL) throws {
+                WorkspaceSnapshotRecovery.rotateBackups(primary: url)
+                try data.write(to: url, options: .atomic)
+                let shouldFail = lock.withLock {
+                    defer { failsAfterNextWrite = false }
+                    return failsAfterNextWrite
+                }
+                if shouldFail { throw InjectedFailure() }
+            }
+        }
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("WeiBeiNativePersist-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: root) }
@@ -63,8 +80,7 @@ final class WorkspaceSafetyTests: XCTestCase {
         let store = WorkspaceStore(
             workspaceDirectory: root.appendingPathComponent("workspace"),
             workspaceSnapshotWriter: { data, url in
-                if saveSwitch.fails { throw InjectedFailure() }
-                try data.write(to: url, options: .atomic)
+                try saveSwitch.write(data, to: url)
             },
             startsAtBlankEntries: true,
             startsCourseFileMaintenance: false
@@ -82,7 +98,7 @@ final class WorkspaceSafetyTests: XCTestCase {
         )
         let learningBefore = store.makeLearningContext(target: target)
         let profileBefore = store.refreshCourseProfileContext(target: target)
-        saveSwitch.fails = true
+        saveSwitch.arm()
 
         let learningReceipt = await store.persistNativeLearningUpdate(
             StudyAgentLearningUpdate(
@@ -100,6 +116,7 @@ final class WorkspaceSafetyTests: XCTestCase {
             target: target,
             messageID: UUID()
         )
+        saveSwitch.arm()
         let profileReceipt = await store.persistNativeCourseProfileUpdate(
             StudyAgentCourseProfileUpdate(
                 contextRevision: "test-context",
@@ -119,6 +136,12 @@ final class WorkspaceSafetyTests: XCTestCase {
         XCTAssertFalse(profileReceipt.accepted)
         XCTAssertEqual(store.makeLearningContext(target: target), learningBefore)
         XCTAssertEqual(store.refreshCourseProfileContext(target: target), profileBefore)
+        let reopened = WorkspaceStore(
+            workspaceDirectory: root.appendingPathComponent("workspace"),
+            startsCourseFileMaintenance: false
+        )
+        XCTAssertEqual(reopened.makeLearningContext(target: target), learningBefore)
+        XCTAssertEqual(reopened.refreshCourseProfileContext(target: target), profileBefore)
     }
 
     @MainActor
