@@ -63,16 +63,13 @@ final class WorkspaceSafetyTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: root) }
         let store = WorkspaceStore(workspaceDirectory: root, startsAtBlankEntries: true)
         let session = store.createStudySession(courseID: nil)!
+        store.messages = [firstQuestion]
+        store.syncActiveStudySession(titleSeed: firstQuestion.text)
         XCTAssertTrue(store.renameStudySession(session.id, title: "我的利率课"))
         XCTAssertTrue(store.flushPendingWorkspaceSave())
 
         let reopened = WorkspaceStore(workspaceDirectory: root)
-        XCTAssertTrue(reopened.activateStudySession(
-            session.id,
-            expectedCourseID: nil,
-            expectedScopeNeedsReview: false
-        ))
-        reopened.messages = [firstQuestion]
+        XCTAssertEqual(reopened.activeStudySession?.id, session.id)
         reopened.syncActiveStudySession(titleSeed: firstQuestion.text)
         let reopenedSession = try XCTUnwrap(reopened.activeStudySession)
         XCTAssertEqual(reopenedSession.title, "我的利率课")
