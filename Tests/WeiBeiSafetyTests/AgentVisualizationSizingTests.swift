@@ -93,7 +93,8 @@ final class AgentVisualizationSizingTests: XCTestCase {
 
         let tailMarker = "正文末尾仍然可见"
         let content = String(repeating: "正文", count: 10_000) + tailMarker
-        let rows = (0..<120).map { ["第 \($0) 行"] }
+        let columns = (0..<13).map { "第 \($0) 列" }
+        let rows = (0..<120).map { row in columns.map { "第 \(row) 行 · \($0)" } }
         let data = try JSONSerialization.data(withJSONObject: [
             "spec": [
                 "items": [[
@@ -101,7 +102,7 @@ final class AgentVisualizationSizingTests: XCTestCase {
                     "content": content,
                 ], [
                     "type": "table",
-                    "columns": ["内容"],
+                    "columns": columns,
                     "rows": rows,
                 ]],
             ],
@@ -112,14 +113,31 @@ final class AgentVisualizationSizingTests: XCTestCase {
         let totalRows = rows.count
         let initialRows = try await webView.evaluateJavaScript("document.querySelectorAll('tbody tr').length") as? Int
         let progress = try await webView.evaluateJavaScript("document.querySelector('.data-progress').textContent") as? String
-        _ = try await webView.evaluateJavaScript("document.querySelector('.data-progress button').click()")
+        _ = try await webView.evaluateJavaScript("while (!document.querySelector('.table-wrap > .data-progress button').hidden) document.querySelector('.table-wrap > .data-progress button').click()")
         let revealedRows = try await webView.evaluateJavaScript("document.querySelectorAll('tbody tr').length") as? Int
+        let revealedColumns = try await webView.evaluateJavaScript("document.querySelectorAll('thead th').length") as? Int
 
         XCTAssertTrue(visibleText?.contains(tailMarker) == true)
         XCTAssertNotNil(initialRows)
         XCTAssertLessThan(initialRows ?? totalRows, totalRows)
         XCTAssertTrue(progress?.range(of: #"\d+/\d+"#, options: .regularExpression) != nil)
-        XCTAssertGreaterThan(revealedRows ?? 0, initialRows ?? totalRows)
+        XCTAssertEqual(revealedRows, totalRows)
+        XCTAssertEqual(revealedColumns, columns.count)
+
+        let components = Array(repeating: ["type": "divider"], count: 120)
+        let componentsData = try JSONSerialization.data(withJSONObject: ["spec": ["items": components]])
+        let componentsPayload = try XCTUnwrap(String(data: componentsData, encoding: .utf8))
+        _ = try await webView.evaluateJavaScript("window.WeiBeiGenUIHost.render(\(componentsPayload)); while (!document.querySelector('.data-progress button').hidden) document.querySelector('.data-progress button').click()")
+        let revealedComponents = try await webView.evaluateJavaScript("document.querySelectorAll('.divider').length") as? Int
+        XCTAssertEqual(revealedComponents, components.count)
+
+        var deepComponent: [String: Any] = ["type": "text", "content": "末端"]
+        for _ in 0..<10 { deepComponent = ["type": "card", "items": [deepComponent]] }
+        let deepData = try JSONSerialization.data(withJSONObject: ["spec": ["items": [deepComponent]]])
+        let deepPayload = try XCTUnwrap(String(data: deepData, encoding: .utf8))
+        _ = try await webView.evaluateJavaScript("window.WeiBeiGenUIHost.render(\(deepPayload))")
+        let hasLocalLimit = try await webView.evaluateJavaScript("document.querySelector('.content-limit')?.getClientRects().length > 0") as? Bool
+        XCTAssertEqual(hasLocalLimit, true)
         withExtendedLifetime(navigationProbe) {}
     }
 

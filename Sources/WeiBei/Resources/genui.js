@@ -14,6 +14,7 @@
   let pendingAction = null;
   let actionRejection = null;
   let nextActionRequestID = 0;
+  let nodeLimitNoticeShown = false;
 
   const post = body => window.webkit?.messageHandlers?.weibeiGenUI?.postMessage(body);
   const clamp = (value, min, max) => Math.min(max, Math.max(min, Number(value) || 0));
@@ -73,10 +74,27 @@
 
   function renderItems(items, path, depth) {
     const fragment = document.createDocumentFragment();
-    array(items, 100).forEach((item, index) => {
-      const child = renderNode(item, `${path}.${index}`, depth + 1);
-      if (child) fragment.append(child);
-    });
+    const values = Array.isArray(items) ? items : [];
+    let shown = 0;
+    const controls = el('div', 'data-progress');
+    const status = el('span');
+    const more = el('button', 'control-button', '继续显示');
+    const reveal = () => {
+      const end = Math.min(values.length, shown + 100);
+      const children = document.createDocumentFragment();
+      values.slice(shown, end).forEach((item, offset) => {
+        const child = renderNode(item, `${path}.${shown + offset}`, depth + 1);
+        if (child) children.append(child);
+      });
+      shown = end;
+      if (controls.parentNode) controls.before(children); else fragment.append(children);
+      status.textContent = `已显示 ${shown}/${values.length}`;
+      more.hidden = shown >= values.length;
+      reportHeight();
+    };
+    more.onclick = reveal;
+    reveal();
+    if (shown < values.length) { controls.append(status, more); fragment.append(controls); }
     return fragment;
   }
 
@@ -366,7 +384,12 @@
 
   function renderNode(node, path, depth) {
     if (!node || typeof node !== 'object') return null;
-    if (depth > 8 || nodeCount++ > 200) return null;
+    if (depth > 8) return el('div', 'error content-limit', '这一部分过大，未显示。');
+    if (nodeCount++ > 200) {
+      if (nodeLimitNoticeShown) return null;
+      nodeLimitNoticeShown = true;
+      return el('div', 'error content-limit', '这一部分过大，未显示。');
+    }
     const key = keyFor(node, path);
     switch (node.type) {
       case 'text': { const item = el('div', `text ${['h1','h2','h3','body','muted','caption'].includes(node.size) ? node.size : 'body'}${node.center ? ' center' : ''}`, node.content); return item; }
@@ -376,7 +399,7 @@
       case 'badge': return el('span', `badge ${['success','warn','danger','accent'].includes(node.tone) ? node.tone : ''}`, node.label);
       case 'progress': { const box = el('div'); const head = el('div', 'progress-head'); head.append(el('span', '', node.label), el('span', '', node.valueLabel || `${clamp(node.value,0,100)}%`)); const track = el('div', 'progress-track'), fill = el('div', 'progress-fill'); fill.style.width = `${clamp(node.value,0,100)}%`; track.append(fill); box.append(head, track); return box; }
       case 'list': { const wrap = el('div'), box = el('div', 'list'), items = Array.isArray(node.items) ? node.items : []; wrap.append(box); revealInBatches(wrap, items, item => { const row = el('div', 'list-item', typeof item === 'string' ? item : item?.title); if (typeof item === 'object' && item?.desc) row.append(el('span', 'list-desc', item.desc)); box.append(row); }); return wrap; }
-      case 'table': { const wrap = el('div', 'table-wrap'), table = el('table'), thead = el('thead'), header = el('tr'); array(node.columns,12).forEach(column => header.append(el('th','',column))); thead.append(header); const tbody = el('tbody'), rows = Array.isArray(node.rows) ? node.rows : []; table.append(thead,tbody); wrap.append(table); revealInBatches(wrap, rows, row => { const tr = el('tr'); array(row,12).forEach(cell => tr.append(el('td','',String(cell)))); tbody.append(tr); }); return wrap; }
+      case 'table': { const wrap = el('div', 'table-wrap'), table = el('table'), thead = el('thead'), header = el('tr'), columns = Array.isArray(node.columns) ? node.columns : []; columns.forEach(column => header.append(el('th','',column))); thead.append(header); const tbody = el('tbody'), rows = Array.isArray(node.rows) ? node.rows : []; table.append(thead,tbody); wrap.append(table); revealInBatches(wrap, rows, row => { const tr = el('tr'), cells = Array.isArray(row) ? row : []; cells.forEach(cell => tr.append(el('td','',String(cell)))); tbody.append(tr); }); return wrap; }
       case 'keyvalue': { const box = el('dl', 'kv'); array(node.pairs,24).forEach(pair => box.append(el('dt','kv-key',pair?.key), el('dd','kv-value',pair?.value))); return box; }
       case 'callout': { const box = el('aside', `callout ${node.tone || ''}`); if (node.title) box.append(el('div','callout-title',node.title)); box.append(el('div','',node.content)); return box; }
       case 'steps': { const box = el('div','steps'), current = clamp(node.current ?? array(node.steps).length,0,array(node.steps).length); array(node.steps,24).forEach((step,index) => { const row = el('div',`step ${index < current ? 'done' : index === current ? 'active' : ''}`), body=el('div'); body.append(el('div','',step?.title)); if(step?.desc) body.append(el('div','step-desc',step.desc)); row.append(el('span','step-mark',index < current ? '✓' : index+1),body); box.append(row); }); return box; }
@@ -409,7 +432,7 @@
   }
 
   function render() {
-    timers.forEach(timer => clearTimeout(timer)); timers.clear(); nodeCount = 0; root.replaceChildren();
+    timers.forEach(timer => clearTimeout(timer)); timers.clear(); nodeCount = 0; nodeLimitNoticeShown = false; root.replaceChildren();
     document.body.classList.toggle('dark', spec.appearance === 'dark');
     const block = el('section','genui'); block.style.gap=`${clamp(spec.gap ?? 12,0,64)}px`; if(spec.title) block.append(el('div','banner',spec.title)); block.append(renderItems(spec.items,'root',0));
     if (!block.children.length) block.append(el('div','error','这个互动界面没有可显示的组件。')); root.append(block); reportHeight();
