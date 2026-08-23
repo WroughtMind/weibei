@@ -19,6 +19,25 @@ extension WorkspaceStore {
         activeNoteItemID ?? blankNoteDraftMaterialID.map { "draft:\($0)" } ?? ""
     }
 
+    var noteEditorRecoveryConflict: NoteEditorRecoveryConflict? {
+        get { noteEditorRecoveryConflictsByItemID[activeNoteEditorDocumentID] }
+        set {
+            if let newValue {
+                noteEditorRecoveryConflictsByItemID[newValue.id] = newValue
+            } else {
+                noteEditorRecoveryConflictsByItemID.removeValue(
+                    forKey: activeNoteEditorDocumentID
+                )
+            }
+        }
+    }
+
+    var activeNoteSaveStatus: NoteSaveStatus {
+        noteEditorRecoveryConflict == nil
+            ? noteEditingSession.saveStatus
+            : .externallyModified
+    }
+
     func acceptNoteEditorSnapshot(_ snapshot: NoteEditorSnapshotReadyEvent) {
         let digest = Self.noteContentDigest(Data(snapshot.markdown.utf8))
         let baseDigest = latestNoteEditorSnapshot.flatMap {
@@ -38,7 +57,7 @@ extension WorkspaceStore {
                 markdown: snapshot.markdown
             )
         }
-        if noteEditorRecoveryConflict?.id == snapshot.documentID
+        if noteEditorRecoveryConflictsByItemID[snapshot.documentID] != nil
             || noteEditorConflictProbeDocumentID == snapshot.documentID { return }
         if snapshot.documentID.hasPrefix("draft:") {
             updateNote(snapshot.markdown)
@@ -257,7 +276,6 @@ extension WorkspaceStore {
 
     func resolveNoteEditorRecoveryConflict(useDisk: Bool) async {
         guard let conflict = noteEditorRecoveryConflict else { return }
-        noteEditorRecoveryConflict = nil
         if useDisk {
             let documentID = conflict.checkpoint.metadata.documentID
             // 副本先行（计划 §5 阶段2）：选磁盘版本前，用户版本先入备份环。
@@ -266,26 +284,23 @@ extension WorkspaceStore {
                 itemID: documentID,
                 rootURL: noteBackupRootURL
             )
-            try? await noteRecoveryStore.remove(documentID: documentID)
             cancelPendingNotePersistence(for: documentID)
             pendingNotePersistenceByItemID.removeValue(forKey: documentID)
+            setNoteDraft(conflict.checkpoint.markdown, for: documentID)
             let remainsActive = documentID == activeNoteEditorDocumentID
             if remainsActive { noteText = conflict.diskMarkdown }
             let digest = Self.noteContentDigest(Data(conflict.diskMarkdown.utf8))
             noteBackingContentDigestsByItemID[documentID] = digest
-            lastSelfWrittenNoteDigestsByItemID[documentID] = digest
-            latestNoteEditorSnapshot = nil
-            setNoteDraft(nil, for: documentID)
-            let nextDocumentID = remainsActive
-                ? documentID
-                : activeNoteEditorDocumentID
-            noteEditingSession.replaceDocument(with: nextDocumentID)
+            loadedCourseNoteTextByItemID[documentID] = conflict.diskMarkdown
             noteEditingSession.markExternallyModified(documentID: documentID)
-            noteEditorCommand = NoteEditorCommand(
-                kind: .reloadDocument,
-                markdown: remainsActive ? conflict.diskMarkdown : noteText
-            )
+            if remainsActive {
+                noteEditorCommand = NoteEditorCommand(
+                    kind: .reloadDocument,
+                    markdown: conflict.diskMarkdown
+                )
+            }
         } else {
+            noteEditorRecoveryConflictsByItemID.removeValue(forKey: conflict.id)
             if noteEditingSession.dirty,
                await freshActiveNoteEditorSnapshot() { return }
             latestNoteEditorSnapshot = (

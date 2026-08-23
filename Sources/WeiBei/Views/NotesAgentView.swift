@@ -418,8 +418,8 @@ struct NotePaneView: View {
                     if store.noteEditorRecoveryConflict != nil {
                         HStack(spacing: 12) {
                             Text(store.ui(
-                                "这份笔记在应用外也发生了修改。",
-                                "This note was also changed outside WeiBei."
+                                "这份笔记在应用外也发生了修改，未写内容仍保存在魏碑中。请选择下一步。",
+                                "This note was also changed outside WeiBei. Unsaved content is still kept in WeiBei. Choose what to do next."
                             ))
                             Spacer(minLength: 8)
                             Button(store.ui("使用磁盘版本", "Use Disk Version")) {
@@ -736,7 +736,8 @@ private struct NoteSaveStatusLabel: View {
             Text(title)
                 .weiBeiText(10.5, weight: .medium)
                 .foregroundStyle(
-                    session.saveStatus == .failed || session.saveStatus == .externallyModified
+                    store.activeNoteSaveStatus == .failed
+                        || store.activeNoteSaveStatus == .externallyModified
                         ? WeiBeiTheme.cinnabar
                         : WeiBeiTheme.secondaryInk
                 )
@@ -746,7 +747,7 @@ private struct NoteSaveStatusLabel: View {
     }
 
     private var title: String? {
-        switch session.saveStatus {
+        switch store.activeNoteSaveStatus {
         case .idle:
             nil
         case .saving:
