@@ -31,18 +31,18 @@ public enum WeiBeiWebResearchError: LocalizedError, Equatable, Sendable {
 }
 
 public enum WeiBeiWebResearchURLPolicy {
-    public static func isAuthorized(
+    public static func isAvailableInCurrentRun(
         _ url: String,
         in userQuestion: String,
         webSearchURLs: [String]
     ) -> Bool {
-        guard let requested = canonicalAuthorizationURL(url) else { return false }
+        guard let requested = canonicalSourceURL(url) else { return false }
         return isExplicitlyProvided(url, in: userQuestion)
-            || webSearchURLs.contains { canonicalAuthorizationURL($0) == requested }
+            || webSearchURLs.contains { canonicalSourceURL($0) == requested }
     }
 
     public static func isExplicitlyProvided(_ url: String, in userQuestion: String) -> Bool {
-        guard let requested = canonicalAuthorizationURL(url),
+        guard let requested = canonicalSourceURL(url),
               let detector = try? NSDataDetector(
                 types: NSTextCheckingResult.CheckingType.link.rawValue
               ) else {
@@ -64,7 +64,7 @@ public enum WeiBeiWebResearchURLPolicy {
                     candidates.append(String(detected[..<boundary]))
                 }
             }
-            return candidates.contains { canonicalAuthorizationURL($0) == requested }
+            return candidates.contains { canonicalSourceURL($0) == requested }
         }
     }
 
@@ -95,7 +95,7 @@ public enum WeiBeiWebResearchURLPolicy {
         return url
     }
 
-    private static func canonicalAuthorizationURL(_ rawValue: String) -> String? {
+    private static func canonicalSourceURL(_ rawValue: String) -> String? {
         let trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
         guard trimmed.utf8.count <= 2_048,
               var components = URLComponents(string: trimmed),

@@ -224,30 +224,30 @@ private func checkResponsesTranslation() throws {
         searchSources == [.webSearchSource(url: "https://example.com/fresh")],
         "Responses search source maps"
     )
-    let authorizedURLs = ["https://example.com/fresh"]
+    let currentRunSearchURLs = ["https://example.com/fresh"]
     try nativeRequire(
-        WeiBeiWebResearchURLPolicy.isAuthorized(
+        WeiBeiWebResearchURLPolicy.isAvailableInCurrentRun(
             "https://EXAMPLE.com:443/fresh#section",
             in: "搜索后继续核对",
-            webSearchURLs: authorizedURLs
+            webSearchURLs: currentRunSearchURLs
         ),
-        "exact searched HTTPS URL is authorized"
+        "exact searched HTTPS URL is available in the current run"
     )
     try nativeRequire(
-        !WeiBeiWebResearchURLPolicy.isAuthorized(
+        !WeiBeiWebResearchURLPolicy.isAvailableInCurrentRun(
             "https://example.com/other",
             in: "搜索后继续核对",
-            webSearchURLs: authorizedURLs
+            webSearchURLs: currentRunSearchURLs
         ),
         "same-host different path is rejected"
     )
     try nativeRequire(
-        WeiBeiWebResearchURLPolicy.isAuthorized(
+        WeiBeiWebResearchURLPolicy.isAvailableInCurrentRun(
             "https://example.com/fresh",
             in: "搜索后继续核对",
-            webSearchURLs: authorizedURLs
+            webSearchURLs: currentRunSearchURLs
         ),
-        "searched URL remains authorized in the current run"
+        "searched URL remains available in the current run"
     )
 }
 
