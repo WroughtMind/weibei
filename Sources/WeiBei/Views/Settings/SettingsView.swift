@@ -609,19 +609,16 @@ struct SettingsView: View {
                 .foregroundStyle(recording ? WeiBeiTheme.cinnabar : WeiBeiTheme.secondaryInk)
                 .padding(.horizontal, 7)
                 .frame(height: 22)
-                .background(
-                    recording
+                .weibeiRaisedBackground(
+                    fill: recording
                         ? WeiBeiTheme.cinnabar.opacity(0.10)
-                        : WeiBeiTheme.paperInset.opacity(0.45)
+                        : WeiBeiTheme.paperRaised.opacity(WeiBeiThemeRuntime.mode.isDark ? 0.18 : 0.38),
+                    stroke: recording
+                        ? WeiBeiTheme.cinnabar.opacity(0.55)
+                        : WeiBeiTheme.hairline.opacity(0.36),
+                    cornerRadius: 4
                 )
                 .clipShape(RoundedRectangle(cornerRadius: 4))
-                .overlay {
-                    RoundedRectangle(cornerRadius: 4)
-                        .stroke(
-                            recording ? WeiBeiTheme.cinnabar.opacity(0.55) : WeiBeiTheme.hairline.opacity(0.36),
-                            lineWidth: 1
-                        )
-                }
         }
         .buttonStyle(.plain)
         .help(store.ui("点按后按下新组合；右键恢复默认", "Click then press a new chord; right-click to reset"))
@@ -1136,12 +1133,14 @@ struct SettingsView: View {
         .foregroundStyle(active ? WeiBeiTheme.ink : WeiBeiTheme.tertiaryInk)
         .padding(.horizontal, 9)
         .frame(height: 28)
-        .background(active ? WeiBeiTheme.paperRaised.opacity(0.54) : WeiBeiTheme.paperInset.opacity(0.38))
+        .weibeiRaisedBackground(
+            fill: WeiBeiTheme.paperRaised.opacity(
+                active ? (WeiBeiThemeRuntime.mode.isDark ? 0.46 : 0.90) : (WeiBeiThemeRuntime.mode.isDark ? 0.16 : 0.34)
+            ),
+            stroke: WeiBeiTheme.hairline.opacity(active ? 0.46 : 0.24),
+            cornerRadius: 8
+        )
         .clipShape(RoundedRectangle(cornerRadius: 8))
-        .overlay {
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(WeiBeiTheme.hairline.opacity(active ? 0.46 : 0.24), lineWidth: 1)
-        }
     }
 
     /// Shared compact dropdown — hugs label width, no forced wide track.
@@ -1159,16 +1158,12 @@ struct SettingsView: View {
             .foregroundStyle(WeiBeiTheme.ink)
             .padding(.horizontal, 9)
             .frame(height: 26)
-            .weibeiEtchedBackground(
-                fill: WeiBeiTheme.paperRaised.opacity(0.52),
-                stroke: WeiBeiTheme.hairline.opacity(0.3),
+            .weibeiRaisedBackground(
+                fill: WeiBeiTheme.paperRaised.opacity(WeiBeiThemeRuntime.mode.isDark ? 0.34 : 0.60),
+                stroke: WeiBeiTheme.hairline.opacity(0.48),
                 cornerRadius: 8
             )
             .clipShape(RoundedRectangle(cornerRadius: 8))
-            .overlay {
-                RoundedRectangle(cornerRadius: 8)
-                    .stroke(WeiBeiTheme.hairline.opacity(0.48), lineWidth: 1)
-            }
         }
         .buttonStyle(.plain)
         .fixedSize(horizontal: true, vertical: true)
