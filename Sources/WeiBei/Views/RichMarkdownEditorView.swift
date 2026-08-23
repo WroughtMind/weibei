@@ -616,7 +616,8 @@ struct RichMarkdownEditorView: NSViewRepresentable {
     var isCompactPreview = false
     var isChatWideTypography = false
     /// A live read-only answer uses Milkdown's cumulative streaming document
-    /// diff. Completion ends that same session with a final synchronous flush.
+    /// diff. Completion ends that same session and reports its finalized height
+    /// back through the existing WebKit message bridge.
     var streamsMarkdownUpdates = false
     var onSelectionChange: (String, CGPoint?) -> Void
     var onSelectionFormattingChange: (NoteSelectionFormatting?) -> Void = { _ in }
@@ -965,6 +966,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         "imageAttachmentRequested",
         "imagePickerRequested",
         "contentHeightChanged",
+        "finalizedStreaming",
         "activeHeadingChanged",
         "compactPreviewWheel",
         "appShortcut",
@@ -1105,6 +1107,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         private var lastAppliedSelectionAskMarks = ""
         private var lastAppliedSelectionRemarkMarks = ""
         private var finalizedRenderGeneration = 0
+        private var pendingFinalizedRenderGeneration: Int?
 
         init(
             documentID: String,
@@ -1308,6 +1311,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             // that completion before exposing the native fallback so a broken
             // WebView cannot become ready again.
             finalizedRenderGeneration &+= 1
+            pendingFinalizedRenderGeneration = nil
             isReady = false
             onRenderFailure()
         }
@@ -1456,6 +1460,14 @@ struct RichMarkdownEditorView: NSViewRepresentable {
                         "instance=\(performanceInstanceID.uuidString.lowercased())"
                 )
                 onContentHeightChange(CGFloat(height))
+            case "finalizedStreaming":
+                guard let body = message.body as? [String: Any],
+                      let height = body["height"] as? Double,
+                      height.isFinite,
+                      height > 0,
+                      pendingFinalizedRenderGeneration == finalizedRenderGeneration else { return }
+                pendingFinalizedRenderGeneration = nil
+                onFinalizedRenderReady(CGFloat(height))
             case "editorFailure":
                 reportRenderFailure()
             case "activeHeadingChanged":
@@ -1497,12 +1509,14 @@ struct RichMarkdownEditorView: NSViewRepresentable {
 
         func setMarkdown(_ text: String) {
             finalizedRenderGeneration &+= 1
+            pendingFinalizedRenderGeneration = nil
             webMarkdown = text
             evaluate("window.WeiBeiEditor?.setMarkdown(\(Self.json(text)))")
         }
 
         func updateStreamingMarkdown(_ text: String) {
             finalizedRenderGeneration &+= 1
+            pendingFinalizedRenderGeneration = nil
             let previous = webMarkdown
             webMarkdown = text
             // The WebView already holds `previous`, so a pure extension only
@@ -1522,32 +1536,26 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             finalizedRenderGeneration &+= 1
             let generation = finalizedRenderGeneration
             let finalizedDocumentID = documentID
+            pendingFinalizedRenderGeneration = generation
             webMarkdown = text
             webView?.evaluateJavaScript("""
             (() => {
               const didFinish = window.WeiBeiEditor?.finishStreamingMarkdown(\(Self.json(text)), { paced: true });
-              return {
-                didFinish: didFinish === true,
-                height: Number(window.WeiBeiCompactPreviewHeight || 1)
-              };
+              return didFinish === true;
             })();
             """) { [weak self] value, error in
                 guard let self,
                       generation == self.finalizedRenderGeneration,
                       finalizedDocumentID == self.documentID else { return }
                 guard error == nil,
-                      let result = value as? [String: Any],
-                      result["didFinish"] as? Bool == true,
-                      let height = (result["height"] as? NSNumber)?.doubleValue,
-                      height.isFinite,
-                      height > 0 else {
+                      value as? Bool == true else {
+                    self.pendingFinalizedRenderGeneration = nil
                     self.reportRenderFailure()
                     return
                 }
-                // The finalized DOM is now installed. Async widgets such as
-                // Mermaid can render once the WebView is visible; their later
-                // ResizeObserver reports keep the row height authoritative.
-                self.onFinalizedRenderReady(CGFloat(height))
+                // Scheduling succeeded. `finalizedStreaming` is the only ready
+                // signal; it arrives after the paced tail, caret retirement,
+                // session end, and authoritative height publication.
             }
         }
 
