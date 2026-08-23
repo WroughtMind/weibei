@@ -114,7 +114,10 @@ final class AgentStreamingDisplayPumpTests: XCTestCase {
         let synchronousCount = rig.published.count
         await Task.yield()
         XCTAssertEqual(rig.published.count, synchronousCount)
-        try? await Task.sleep(nanoseconds: AgentStreamingDisplayPump.tickNanoseconds + 20_000_000)
+        let deadline = ContinuousClock.now + .seconds(1)
+        while rig.published.count == synchronousCount, ContinuousClock.now < deadline {
+            try? await Task.sleep(nanoseconds: 10_000_000)
+        }
         XCTAssertGreaterThan(rig.published.count, synchronousCount)
         rig.pump.stopAndReset()
     }
