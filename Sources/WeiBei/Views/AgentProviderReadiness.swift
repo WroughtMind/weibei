@@ -9,7 +9,7 @@ import WeiBeiCore
 
 @MainActor
 enum AgentProviderReadiness {
-    private static var oauth: PiOAuthService { PiOAuthService.shared }
+    private static var oauth: AgentAccountService { AgentAccountService.shared }
 
     /// 与 SettingsView.activePiProviderID 相同的映射:custom/llamaCpp 的
     /// provider id 由当前 Base URL 派生,其余直接用 piProviderName。
@@ -33,7 +33,7 @@ enum AgentProviderReadiness {
         ).piProviderID) ?? "weibei-invalid-endpoint"
     }
 
-    static func piAuthTypes(for provider: AgentProviderID, store: WorkspaceStore) -> [PiCredentialType] {
+    static func piAuthTypes(for provider: AgentProviderID, store: WorkspaceStore) -> [AgentCredentialType] {
         if let types = oauth.catalog?.providers.first(where: {
             $0.id == piProviderID(for: provider, store: store)
         })?.authTypes, !types.isEmpty {
@@ -90,11 +90,11 @@ enum AgentProviderReadiness {
 
 /// 对话为空且模型服务未配置时的一行安静提示,带直达设置的入口。
 /// 放在消息列表顶部,不占常驻空间——配置完成后自动消失。
-/// 显隐条件必须由本视图自己判断:父视图不观察 PiOAuthService,
+/// 显隐条件必须由本视图自己判断:父视图不观察 AgentAccountService,
 /// 条件写在父级时,配置完成后的 catalog 更新不会触发父级重算,提示会残留。
 struct AgentUnconfiguredHint: View {
     @ObservedObject var store: WorkspaceStore
-    @ObservedObject private var oauth = PiOAuthService.shared
+    @ObservedObject private var oauth = AgentAccountService.shared
     @Environment(\.openSettings) private var openSettings
 
     var body: some View {

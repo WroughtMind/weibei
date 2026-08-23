@@ -16,7 +16,7 @@ struct SettingsView: View {
     // (same-target extensions) can bind to them.
     @EnvironmentObject var store: WorkspaceStore
     @EnvironmentObject private var updateService: WeiBeiUpdateService
-    @StateObject var oauthService = PiOAuthService.shared
+    @StateObject var oauthService = AgentAccountService.shared
     @State private var selectedSection: SettingsSection = .agent
     @FocusState var focusedField: Field?
     // Model picker state (AgentModelPicker extension).
@@ -99,7 +99,7 @@ struct SettingsView: View {
             guard note.userInfo?["provider"] as? String == activePiProviderID else {
                 return
             }
-            if note.userInfo?["type"] as? String == PiCredentialType.apiKey.rawValue {
+            if note.userInfo?["type"] as? String == AgentCredentialType.apiKey.rawValue {
                 apiKeyDraft = ""
             }
             oauthService.refreshCatalog(force: true)

@@ -9,7 +9,7 @@ import WeiBeiCore
 
 struct AgentSetupPromptCard: View {
     @EnvironmentObject private var store: WorkspaceStore
-    @ObservedObject private var oauth = PiOAuthService.shared
+    @ObservedObject private var oauth = AgentAccountService.shared
     @Environment(\.openSettings) private var openSettings
 
     /// 叉掉过一次就不再出现;偏好走 UserDefaults,不进冻结的 WorkspaceStore。
