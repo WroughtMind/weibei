@@ -64,7 +64,7 @@ final class AgentVisualizationSizingTests: XCTestCase {
     }
 
     @MainActor
-    func testGenUIShowsTruncationAndKeepsRawData() async throws {
+    func testGenUIShowsTruncationAndOpensRawTextOnDemand() async throws {
         let configuration = WKWebViewConfiguration()
         let webView = WKWebView(
             frame: NSRect(x: 0, y: 0, width: 640, height: 240),
@@ -80,20 +80,18 @@ final class AgentVisualizationSizingTests: XCTestCase {
         await fulfillment(of: [loaded], timeout: 3)
 
         let hiddenMarker = "末尾原始数据仍在"
-        var rows = (0..<64).map { ["第\($0)行"] }
-        rows.append([hiddenMarker])
+        let content = String(repeating: "正文", count: 10_000) + hiddenMarker
         let data = try JSONSerialization.data(withJSONObject: [
             "spec": [
                 "items": [[
-                    "type": "table",
-                    "columns": ["内容"],
-                    "rows": rows,
+                    "type": "text",
+                    "content": content,
                 ]],
             ],
         ])
         let payload = try XCTUnwrap(String(data: data, encoding: .utf8))
         _ = try await webView.evaluateJavaScript("window.WeiBeiGenUIHost.render(\(payload))")
-        let hasWarning = try await webView.evaluateJavaScript("document.querySelector('.truncation-notice') !== null") as? Bool
+        let hasWarning = try await webView.evaluateJavaScript("document.querySelector('.truncation-notice')?.getClientRects().length > 0") as? Bool
         _ = try await webView.evaluateJavaScript("document.querySelector('.truncation-notice button').click()")
         let rawData = try await webView.evaluateJavaScript("document.querySelector('.raw-data').textContent") as? String
 
