@@ -1834,8 +1834,12 @@ struct AgentPaneView: View {
                 .foregroundStyle(isAgentHistoryRevealButtonHovered ? WeiBeiTheme.link : WeiBeiTheme.secondaryInk)
                 .padding(.vertical, 6)
                 .padding(.horizontal, 12)
-                .weibeiEtchedCapsuleBackground(
-                    fill: WeiBeiTheme.paperInset.opacity(isAgentHistoryRevealButtonHovered ? 0.42 : 0.24),
+                .weibeiRaisedCapsuleBackground(
+                    fill: WeiBeiTheme.paperRaised.opacity(
+                        isAgentHistoryRevealButtonHovered
+                            ? (WeiBeiThemeRuntime.mode.isDark ? 0.42 : 0.86)
+                            : (WeiBeiThemeRuntime.mode.isDark ? 0.20 : 0.42)
+                    ),
                     stroke: WeiBeiTheme.hairline.opacity(isAgentHistoryRevealButtonHovered ? 0.72 : 0.44),
                     contactShadow: isAgentHistoryRevealButtonHovered
                 )
@@ -2103,8 +2107,8 @@ private struct AgentSelectionAttachmentPill: View {
             .padding(.leading, 10)
             .padding(.trailing, 6)
             .frame(height: 28)
-            .weibeiEtchedBackground(
-                fill: WeiBeiTheme.paperRaised.opacity(pillHovering ? 0.72 : 0.54),
+            .weibeiRaisedBackground(
+                fill: WeiBeiTheme.paperRaised.opacity(pillHovering ? 0.90 : 0.60),
                 stroke: WeiBeiTheme.hairline.opacity(pillHovering ? 0.68 : 0.38),
                 cornerRadius: 8,
                 contactShadow: pillHovering
@@ -3871,8 +3875,8 @@ private struct AgentReplyActionCard: View {
             .lineLimit(1)
             .padding(.horizontal, 8)
             .frame(height: 28)
-            .weibeiEtchedBackground(
-                fill: WeiBeiTheme.paperInset.opacity(0.34),
+            .weibeiRaisedBackground(
+                fill: WeiBeiTheme.paperRaised.opacity(0.55),
                 stroke: WeiBeiTheme.hairline.opacity(0.3),
                 cornerRadius: 8
             )

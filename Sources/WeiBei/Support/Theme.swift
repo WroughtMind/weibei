@@ -1449,6 +1449,45 @@ private struct WeiBeiRevealModifier: ViewModifier {
     }
 }
 
+/// The #306 segmented-control hover language, promoted to the shared
+/// action-control surface: a bright near-paper fill + hairline + contact
+/// shadow, reading as RAISED (vs the inset etched well). Use for button
+/// hover/selected states; keep wells (inputs, paths) on the etched side.
+struct WeiBeiRaisedPillBackdrop<Shape: InsettableShape>: View {
+    @Environment(\.colorScheme) private var colorScheme
+
+    let shape: Shape
+    var fill: Color
+    var stroke: Color = .clear
+    var showsContactShadow = false
+
+    init(
+        shape: Shape,
+        fill: Color,
+        stroke: Color = .clear,
+        showsContactShadow: Bool = false
+    ) {
+        self.shape = shape
+        self.fill = fill
+        self.stroke = stroke
+        self.showsContactShadow = showsContactShadow
+    }
+
+    var body: some View {
+        let dark = colorScheme == .dark
+        return shape
+            .fill(fill)
+            .overlay {
+                shape.stroke(stroke, lineWidth: 1)
+            }
+            .shadow(
+                color: WeiBeiTheme.ink.opacity(showsContactShadow ? (dark ? 0.24 : 0.10) : 0),
+                radius: 1.5,
+                y: 1
+            )
+    }
+}
+
 /// The single texture primitive behind hover pills, selected rows, and small
 /// control chrome: base fill + top inner sheen + bottom inner shade + hairline
 /// frame, over any insettable shape. Render nothing when invisible so idle
@@ -1569,9 +1608,9 @@ private struct WeiBeiIconButtonBody: View {
             }
     }
 
-    /// Neutral hover/active states go through the etched backdrop (top sheen +
-    /// bottom shade + hairline + contact shadow); the filled `.primary` keeps
-    /// its solid cinnabar fill untouched.
+    /// Neutral hover/active states use the raised bright-pill language (same
+    /// family as the top-bar segmented control): near-paper fill + hairline +
+    /// contact shadow. The filled `.primary` keeps its solid cinnabar fill.
     @ViewBuilder
     private var chromeBackground: some View {
         let chromeShape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
@@ -1579,13 +1618,25 @@ private struct WeiBeiIconButtonBody: View {
             chromeShape
                 .fill(background(isPressed: configuration.isPressed))
         } else if active || hovering || configuration.isPressed {
-            WeiBeiEtchedBackdrop(
+            WeiBeiRaisedPillBackdrop(
                 shape: chromeShape,
-                fill: background(isPressed: configuration.isPressed),
+                fill: raisedFill,
                 stroke: border,
                 showsContactShadow: !configuration.isPressed
             )
         }
+    }
+
+    /// Bright hover/active fills matching the segmented control's pills.
+    private var raisedFill: Color {
+        let dark = colorScheme == .dark
+        if active {
+            return WeiBeiTheme.cinnabarSoft.opacity(dark ? 0.42 : 0.78)
+        }
+        if configuration.isPressed {
+            return WeiBeiTheme.paperRaised.opacity(dark ? 0.34 : 0.68)
+        }
+        return WeiBeiTheme.paperRaised.opacity(dark ? 0.42 : 0.86)
     }
 
     private func foreground(isPressed: Bool) -> Color {
@@ -1726,9 +1777,15 @@ struct WeiBeiDialogButtonStyle: ButtonStyle {
                 shape.fill(WeiBeiTheme.cinnabar)
             }
         } else {
-            WeiBeiEtchedBackdrop(
+            WeiBeiRaisedPillBackdrop(
                 shape: shape,
-                fill: WeiBeiTheme.paperInset.opacity(isPressed ? 0.40 : hovering ? 0.34 : 0.22),
+                fill: WeiBeiTheme.paperRaised.opacity(
+                    isPressed
+                        ? (colorScheme == .dark ? 0.34 : 0.68)
+                        : hovering
+                            ? (colorScheme == .dark ? 0.42 : 0.86)
+                            : (colorScheme == .dark ? 0.16 : 0.34)
+                ),
                 stroke: WeiBeiTheme.hairline.opacity(hovering || isPressed ? 0.55 : 0.40),
                 showsContactShadow: hovering && !isPressed
             )
@@ -1748,6 +1805,39 @@ extension View {
         background {
             WeiBeiEtchedBackdrop(
                 shape: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous),
+                fill: fill,
+                stroke: stroke,
+                showsContactShadow: contactShadow
+            )
+        }
+    }
+
+    /// Raised bright-pill background — one-liner for action controls.
+    func weibeiRaisedBackground(
+        fill: Color,
+        stroke: Color,
+        cornerRadius: CGFloat,
+        contactShadow: Bool = false
+    ) -> some View {
+        background {
+            WeiBeiRaisedPillBackdrop(
+                shape: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous),
+                fill: fill,
+                stroke: stroke,
+                showsContactShadow: contactShadow
+            )
+        }
+    }
+
+    /// Capsule variant of `weibeiRaisedBackground`.
+    func weibeiRaisedCapsuleBackground(
+        fill: Color,
+        stroke: Color,
+        contactShadow: Bool = false
+    ) -> some View {
+        background {
+            WeiBeiRaisedPillBackdrop(
+                shape: Capsule(),
                 fill: fill,
                 stroke: stroke,
                 showsContactShadow: contactShadow

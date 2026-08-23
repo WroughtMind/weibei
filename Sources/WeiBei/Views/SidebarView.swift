@@ -542,9 +542,9 @@ private struct SidebarCourseGroupHeader: View {
                         .frame(width: 18, height: 18)
                         .background {
                             if hoveringAdd {
-                                WeiBeiEtchedBackdrop(
+                                WeiBeiRaisedPillBackdrop(
                                     shape: Circle(),
-                                    fill: WeiBeiTheme.paperInset.opacity(0.34),
+                                    fill: WeiBeiTheme.paperRaised.opacity(WeiBeiThemeRuntime.mode.isDark ? 0.40 : 0.78),
                                     stroke: WeiBeiTheme.hairline.opacity(0.30)
                                 )
                             }
@@ -619,9 +619,13 @@ private struct SidebarCourseRow: View {
                     .frame(width: 22, height: 22)
                     .background {
                         if enterBackdropOpacity > 0 {
-                            WeiBeiEtchedBackdrop(
+                            WeiBeiRaisedPillBackdrop(
                                 shape: Circle(),
-                                fill: WeiBeiTheme.paperInset.opacity(enterBackdropOpacity),
+                                fill: WeiBeiTheme.paperRaised.opacity(
+                                    enterBackdropOpacity > 0.4
+                                        ? (WeiBeiThemeRuntime.mode.isDark ? 0.55 : 0.88)
+                                        : (WeiBeiThemeRuntime.mode.isDark ? 0.36 : 0.68)
+                                ),
                                 stroke: WeiBeiTheme.hairline.opacity(0.30)
                             )
                         }
@@ -647,15 +651,15 @@ private struct SidebarCourseRow: View {
     @ViewBuilder
     private var rowBackdrop: some View {
         if expanded {
-            WeiBeiEtchedBackdrop(
+            WeiBeiRaisedPillBackdrop(
                 shape: RoundedRectangle(cornerRadius: 8, style: .continuous),
-                fill: WeiBeiTheme.paperInset.opacity(0.70),
+                fill: WeiBeiTheme.paperRaised.opacity(WeiBeiThemeRuntime.mode.isDark ? 0.55 : 0.92),
                 stroke: WeiBeiTheme.hairline.opacity(0.40)
             )
         } else if hovering {
-            WeiBeiEtchedBackdrop(
+            WeiBeiRaisedPillBackdrop(
                 shape: RoundedRectangle(cornerRadius: 8, style: .continuous),
-                fill: WeiBeiTheme.paperInset.opacity(0.30),
+                fill: WeiBeiTheme.paperRaised.opacity(WeiBeiThemeRuntime.mode.isDark ? 0.40 : 0.72),
                 stroke: WeiBeiTheme.hairline.opacity(0.30)
             )
         }
@@ -695,10 +699,15 @@ private struct SidebarAddMenuButtonBody: View {
             .foregroundStyle(hovering ? WeiBeiTheme.ink : WeiBeiTheme.secondaryInk)
             .frame(width: 28, height: 28)
             .background {
-                WeiBeiEtchedBackdrop(
+                WeiBeiRaisedPillBackdrop(
                     shape: RoundedRectangle(cornerRadius: 8, style: .continuous),
-                    fill: WeiBeiTheme.paperInset.opacity(highlighted ? 0.42 : 0.18),
-                    stroke: WeiBeiTheme.hairline.opacity(highlighted ? 0.62 : 0.42)
+                    fill: WeiBeiTheme.paperRaised.opacity(
+                        highlighted
+                            ? (WeiBeiThemeRuntime.mode.isDark ? 0.42 : 0.86)
+                            : (WeiBeiThemeRuntime.mode.isDark ? 0.14 : 0.30)
+                    ),
+                    stroke: WeiBeiTheme.hairline.opacity(highlighted ? 0.62 : 0.42),
+                    showsContactShadow: highlighted
                 )
             }
             .scaleEffect(configuration.isPressed ? 0.95 : 1)
@@ -866,15 +875,15 @@ private struct LibraryRow: View {
     @ViewBuilder
     private var rowBackdrop: some View {
         if selected {
-            WeiBeiEtchedBackdrop(
+            WeiBeiRaisedPillBackdrop(
                 shape: RoundedRectangle(cornerRadius: 8, style: .continuous),
-                fill: WeiBeiTheme.paperInset.opacity(compact ? 0.54 : 0.70),
+                fill: WeiBeiTheme.paperRaised.opacity(WeiBeiThemeRuntime.mode.isDark ? 0.46 : 0.92),
                 stroke: WeiBeiTheme.hairline.opacity(0.40)
             )
         } else if hovering {
-            WeiBeiEtchedBackdrop(
+            WeiBeiRaisedPillBackdrop(
                 shape: RoundedRectangle(cornerRadius: 8, style: .continuous),
-                fill: WeiBeiTheme.paperInset.opacity(compact ? 0.22 : 0.30),
+                fill: WeiBeiTheme.paperRaised.opacity(WeiBeiThemeRuntime.mode.isDark ? 0.34 : 0.72),
                 stroke: WeiBeiTheme.hairline.opacity(0.30)
             )
         }
