@@ -26,7 +26,7 @@ public actor NativeAgentLoop {
         progress: StudyAgentProgressHandler?
     ) async throws -> NativeLoopResult {
         await progress?(.preparing)
-        let turn = 1
+        let turn = ((await ledger.allEvents()).compactMap(\.turn).max() ?? 0) + 1
         _ = try await ledger.append { seq, time in
             NativeSessionEvent(type: .turnStart, seq: seq, timeMS: time, turn: turn)
         }
