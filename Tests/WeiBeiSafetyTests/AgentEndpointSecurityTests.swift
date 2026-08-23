@@ -88,7 +88,7 @@ final class AgentEndpointSecurityTests: XCTestCase {
 
         let record = try XCTUnwrap(store.load()[endpoint.credentialProviderID])
         XCTAssertEqual(record.boundEndpoint, endpoint.baseURL)
-        XCTAssertNil(store.load()[AgentProviderID.custom.credentialProviderID])
+        XCTAssertNil(try store.load()[AgentProviderID.custom.credentialProviderID])
     }
 
     func testWebOpenRequiresAnExplicitPublicHTTPSURL() throws {
