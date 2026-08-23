@@ -460,7 +460,15 @@ struct SettingsView: View {
                     "That location is already a WeiBei library. Open it instead, or choose an empty folder."
                 )
             } catch {
-                migrationErrorText = error.localizedDescription
+                store.recordCourseLibraryUIFailure(
+                    error,
+                    operation: "settings_library_migration",
+                    path: destination
+                )
+                migrationErrorText = store.ui(
+                    "迁移没有确认完成；魏碑仍保留原资料库记录，尚未启用目标位置。请先确认原位置内容完整、目标文件夹可写，再重试。",
+                    "The move was not confirmed. WeiBei still keeps the original library record and has not activated the destination. Check the original contents and make sure the destination is writable before trying again."
+                )
             }
             isMigratingLibrary = false
         }

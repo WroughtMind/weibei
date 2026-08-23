@@ -59,11 +59,29 @@ extension WorkspaceStore {
     }
 
     private func presentCourseLibraryConfigurationError(_ error: Error) {
+        recordCourseLibraryUIFailure(
+            error,
+            operation: "configure_library"
+        )
         let alert = NSAlert()
         alert.alertStyle = .warning
         alert.messageText = ui("无法更换魏碑资料库", "Could not change the WeiBei Library")
-        alert.informativeText = error.localizedDescription
+        alert.informativeText = ui(
+            "资料库没有更换，原课程记录和文件保持不变。请选择可访问的本地文件夹后重试。",
+            "The library was not changed. Existing course records and files remain in place. Choose an accessible local folder and try again."
+        )
         alert.addButton(withTitle: ui("好", "OK"))
         alert.runModal()
+    }
+
+    func recordCourseLibraryUIFailure(
+        _ error: Error,
+        operation: String,
+        path: URL? = nil
+    ) {
+        let diagnosticPath = path?.path ?? ""
+        WeiBeiLog.workspace.error(
+            "code=course_library_ui_failure operation=\(operation, privacy: .public) underlying=\(WeiBeiLog.code(error), privacy: .public) path=\(diagnosticPath, privacy: .private) detail=\(WeiBeiLog.truncated(error.localizedDescription), privacy: .private)"
+        )
     }
 }
