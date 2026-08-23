@@ -1,7 +1,6 @@
 import Foundation
 
 public actor NativeAgentLoop {
-    public var maximumSteps = 12
     private var cancelled = false
 
     public init() {}
@@ -79,10 +78,11 @@ public actor NativeAgentLoop {
         var sources: [AgentReplySource] = []
         var contentBlocks: [AgentMessageContentBlock] = []
         var pendingUnstarted: [NativeToolCall] = []
-        var completed = false
 
         do {
-            for step in 1...maximumSteps {
+            var step = 0
+            while true {
+                step += 1
                 try checkCancelled()
                 _ = try await ledger.append { seq, time in
                     NativeSessionEvent(type: .stepStart, seq: seq, timeMS: time, turn: turn, step: step)
@@ -158,7 +158,6 @@ public actor NativeAgentLoop {
                             message: "模型回答未正常结束，请继续。"
                         )
                     }
-                    completed = true
                     break
                 }
                 pendingUnstarted = calls
@@ -223,18 +222,6 @@ public actor NativeAgentLoop {
                 _ = try await ledger.append { seq, time in
                     NativeSessionEvent(type: .stepEnd, seq: seq, timeMS: time, turn: turn, step: step)
                 }
-            }
-            guard completed else {
-                let message = "已达到 \(maximumSteps) 步上限，现场已保留，请继续。"
-                await progress?(.text(
-                    collectedText + (collectedText.isEmpty ? "" : "\n\n") + message,
-                    contentBlocks
-                ))
-                try await ledger.closeTurn(turn: turn, reason: .error)
-                throw NativeLLMFailure(
-                    code: "step_limit",
-                    message: message
-                )
             }
             try await ledger.closeTurn(turn: turn, reason: .completed)
             return NativeLoopResult(
