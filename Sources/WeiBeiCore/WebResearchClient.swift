@@ -68,14 +68,6 @@ public enum WeiBeiWebResearchURLPolicy {
         }
     }
 
-    public static func consumeSearchAuthorization(
-        for url: String,
-        from webSearchURLs: inout [String]
-    ) {
-        guard let requested = canonicalAuthorizationURL(url) else { return }
-        webSearchURLs.removeAll { canonicalAuthorizationURL($0) == requested }
-    }
-
     public static func validatedPublicHTTPSURL(_ rawValue: String) throws -> URL {
         let trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty,

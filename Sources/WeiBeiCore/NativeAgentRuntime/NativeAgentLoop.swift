@@ -48,8 +48,6 @@ public actor NativeAgentLoop {
             persistentAssetIDsByContextID: Dictionary(
                 uniqueKeysWithValues: request.courseContext.items.map { ($0.id, $0.id) }
             ),
-            failedPDFRetryAuthorizationAvailable: NativeToolGuard
-                .explicitlyRequestsFailedPDFRetry(request.question),
             liveStores: liveStores
         )
         let scope = NativeToolScope.session(request.id.uuidString)
@@ -168,9 +166,6 @@ public actor NativeAgentLoop {
                 for call in calls {
                     try checkCancelled()
                     pendingUnstarted.removeAll { $0.id == call.id }
-                    let consumesFailedPDFRetryAuthorization = call.name
-                        == "weibei_course_retry_failed_pdf_pages"
-                        && context.failedPDFRetryAuthorizationAvailable
                     let result: NativeToolExecutionResult
                     do {
                         result = try await registry.execute(
@@ -180,9 +175,6 @@ public actor NativeAgentLoop {
                         )
                     } catch {
                         result = NativeToolExecutionResult(text: error.localizedDescription, isError: true)
-                    }
-                    if consumesFailedPDFRetryAuthorization {
-                        context.failedPDFRetryAuthorizationAvailable = false
                     }
                     applySideEffects(
                         name: call.name,
@@ -296,12 +288,6 @@ public actor NativeAgentLoop {
     ) {
         if result.isError { return }
         let details = result.details
-        if name == "weibei_web_open", let url = details["requestedURL"] as? String {
-            WeiBeiWebResearchURLPolicy.consumeSearchAuthorization(
-                for: url,
-                from: &context.webSearchURLs
-            )
-        }
         if name == "weibei_course_search" || name == "weibei_course_read" {
             if let items = (try? JSONDecoder().decode(StudyAgentHostToolResult.self, from: Data(result.text.utf8)))?.items {
                 for item in items {

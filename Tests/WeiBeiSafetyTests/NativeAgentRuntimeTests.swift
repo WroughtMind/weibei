@@ -138,7 +138,7 @@ final class NativeAgentRuntimeTests: XCTestCase {
         }
     }
 
-    func testSearchedURLCanOpenOnlyOnce() async throws {
+    func testSearchedURLRemainsAuthorizedForCurrentRun() async throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("native-web-once-\(UUID().uuidString).jsonl")
         defer { try? FileManager.default.removeItem(at: url) }
         let ledger = try NativeAgentLedger(fileURL: url)
@@ -157,7 +157,7 @@ final class NativeAgentRuntimeTests: XCTestCase {
             ),
             ledger: ledger,
             registry: registry,
-            adapter: OneTimeWebAdapter(),
+            adapter: SearchedWebURLAdapter(),
             model: "mock",
             hostToolHandler: { request in
                 guard case .webOpen = request else {
@@ -170,7 +170,7 @@ final class NativeAgentRuntimeTests: XCTestCase {
             progress: nil
         )
         let openCount = await opened.value
-        XCTAssertEqual(openCount, 1)
+        XCTAssertEqual(openCount, 2)
     }
 
     func testChatCompletionsTranslation() throws {
@@ -294,7 +294,7 @@ private struct MockLLMAdapter: NativeLLMAdapter {
     }
 }
 
-private final class OneTimeWebAdapter: NativeLLMAdapter, @unchecked Sendable {
+private final class SearchedWebURLAdapter: NativeLLMAdapter, @unchecked Sendable {
     let family = "responses-mock"
     private let lock = NSLock()
     private var step = 0
