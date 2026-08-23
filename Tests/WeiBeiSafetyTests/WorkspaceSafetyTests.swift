@@ -58,6 +58,11 @@ final class WorkspaceSafetyTests: XCTestCase {
     }
 
     @MainActor
+    func testSharedRemovalCleanupFailureIsTruthful() throws {
+        try CourseProjectRootSelfCheck.runSharedRemovalCleanupFailureOnly()
+    }
+
+    @MainActor
     func testAgentSelectionPreservesFullText() {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("WeiBeiFullSelection-\(UUID().uuidString)", isDirectory: true)

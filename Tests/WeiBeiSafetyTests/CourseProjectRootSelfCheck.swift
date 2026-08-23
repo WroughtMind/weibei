@@ -25,6 +25,11 @@ enum CourseProjectRootSelfCheck {
     }
 
     @MainActor
+    static func runSharedRemovalCleanupFailureOnly() throws {
+        try sharedRemovalCleanupFailureIsTruthful()
+    }
+
+    @MainActor
     static func run() throws {
         func step(
             _ name: String,
@@ -9054,36 +9059,16 @@ enum CourseProjectRootSelfCheck {
                 )
             )
             injectedStage = crashStage
+            try expectFailure("共享入口隔离事务崩溃") {
+                try store?.removeSharedItemForSelfCheck(
+                    itemID: item.id,
+                    fromCourseID: courseB
+                )
+            }
             // S3：提交前崩溃即时回滚入口；提交后崩溃保留删除结果。
             let expectsRemoval =
                 crashStage
                 == .afterSharedLinkRemovalWorkspaceSaveBeforeJournal
-            if expectsRemoval {
-                store?.setCourseIDs([courseA], for: item.id)
-                let feedbackDeadline = Date(timeIntervalSinceNow: 10)
-                while store?.importantOperationError == nil,
-                      Date() < feedbackDeadline {
-                    RunLoop.current.run(
-                        mode: .default,
-                        before: Date(timeIntervalSinceNow: 0.01)
-                    )
-                }
-                let itemTitle = store.map { $0.displayTitle(for: item) } ?? ""
-                try check(
-                    store?.importantOperationError == store?.ui(
-                        "“\(itemTitle)”已从课程移除，共享原件仍安全保留；旧课程入口未清理完成。请恢复课程文件夹访问后重试清理。",
-                        "“\(itemTitle)” was removed from the course and the shared original is still safe, but the old course entry was not fully cleaned up. Restore access to the course folder, then retry the cleanup."
-                    ),
-                    "提交后清理失败没有准确说明关系已移除且原件保留"
-                )
-            } else {
-                try expectFailure("共享入口隔离事务崩溃") {
-                    try store?.removeSharedItemForSelfCheck(
-                        itemID: item.id,
-                        fromCourseID: courseB
-                    )
-                }
-            }
             if expectsRemoval {
                 try check(
                     !entryB.exists,
@@ -9488,6 +9473,82 @@ enum CourseProjectRootSelfCheck {
             case .injectedFailure: "测试注入失败"
             }
         }
+    }
+
+    @MainActor
+    private static func sharedRemovalCleanupFailureIsTruthful() throws {
+        let fixture = try Fixture(name: "shared-removal-cleanup-feedback")
+        defer { fixture.remove() }
+        let library = try fixture.makeDirectory("课程资料库")
+        let incoming = try fixture.makeDirectory("待共享")
+        let source = incoming.appendingPathComponent("清理失败.txt")
+        let original = Data("共享原件仍保留".utf8)
+        try original.write(to: source)
+        var injectCleanupFailure = false
+        let store = makeStore(
+            fixture: fixture,
+            mutationHook: { stage in
+                guard injectCleanupFailure,
+                      stage == .afterSharedLinkRemovalWorkspaceSaveBeforeJournal else {
+                    return
+                }
+                throw NSError(
+                    domain: "底层清理错误",
+                    code: 1,
+                    userInfo: [NSLocalizedDescriptionKey: "/private/secret 底层清理失败"]
+                )
+            }
+        )
+        try store.configureCourseLibrary(at: library)
+        let courseA = try store.createCourseInLibrary(title: "甲课程")
+        let courseB = try store.createCourseInLibrary(title: "乙课程")
+        let item = try store.importFileIntoCourseForSelfCheck(
+            source,
+            courseID: courseA,
+            role: .material
+        ).item
+        try store.shareCourseOwnedItemForSelfCheck(
+            itemID: item.id,
+            withCourseID: courseB
+        )
+        let sharedURL = try require(
+            store.importedItems.first { $0.id == item.id }?.url,
+            "没有共享原件"
+        )
+        store.interfaceLanguage = .chinese
+        injectCleanupFailure = true
+
+        store.setCourseIDs([courseA], for: item.id)
+
+        let deadline = Date(timeIntervalSinceNow: 10)
+        while store.importantOperationError == nil, Date() < deadline {
+            RunLoop.current.run(
+                mode: .default,
+                before: Date(timeIntervalSinceNow: 0.01)
+            )
+        }
+        let message = try require(
+            store.importantOperationError,
+            "提交后清理失败没有告知用户"
+        )
+        try check(
+            Set(store.courseIDs(for: item.id)) == [courseA],
+            "提交后清理失败又恢复了已移除的课程关系"
+        )
+        try check(
+            try Data(contentsOf: sharedURL) == original,
+            "提交后清理失败丢失了共享原件"
+        )
+        try check(
+            ["已从课程移除", "共享原件仍安全保留", "重试清理"]
+                .allSatisfy(message.contains),
+            "提交后清理失败没有说清结果和下一步"
+        )
+        try check(
+            !message.contains("/private/secret")
+                && !message.contains("底层清理失败"),
+            "提交后清理失败向用户暴露了内部诊断"
+        )
     }
 
     private struct Fixture {
