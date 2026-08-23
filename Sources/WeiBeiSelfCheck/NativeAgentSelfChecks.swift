@@ -461,9 +461,9 @@ private func checkMemoryPreviewWriteContract() throws {
     try nativeRequire(readTool != nil, "read learning memory tool is registered under the verb-first name")
     try nativeRequire(writeTool != nil, "write learning memory tool is registered under the verb-first name")
     try nativeRequire(
-        readTool?.description.contains("不要调用本工具") == true
+        readTool?.description.contains("不得调用写入工具") == true
             && readTool?.description.contains("weibei_update_learning_memory") == true,
-        "read tool tells the model not to use it for recording"
+        "read tool respects explicit preview-before-write"
     )
     try nativeRequire(
         system.contains("不要传空字符串") && system.contains("不要自己编 UUID"),
