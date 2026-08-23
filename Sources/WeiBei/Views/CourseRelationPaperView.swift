@@ -306,9 +306,9 @@ struct CourseRelationPaperView: View {
             .foregroundStyle(WeiBeiTheme.ink)
             .padding(.horizontal, 10)
             .frame(height: 28)
-            .weibeiEtchedCapsuleBackground(
-                fill: WeiBeiTheme.paperInset.opacity(0.34),
-                stroke: WeiBeiTheme.hairline.opacity(0.3)
+            .weibeiRaisedCapsuleBackground(
+                fill: WeiBeiTheme.paperRaised.opacity(WeiBeiThemeRuntime.mode.isDark ? 0.34 : 0.60),
+                stroke: WeiBeiTheme.hairline.opacity(0.48)
             )
         }
         .menuStyle(.borderlessButton)
@@ -765,11 +765,11 @@ struct CourseRelationPaperView: View {
             .foregroundStyle(WeiBeiTheme.secondaryInk)
             .padding(.horizontal, 12)
             .frame(height: 30)
-            .background(WeiBeiTheme.paper.opacity(0.82), in: Capsule())
-            .overlay(
-                Capsule()
-                    .stroke(WeiBeiTheme.hairline.opacity(0.72), lineWidth: 1)
+            .weibeiRaisedCapsuleBackground(
+                fill: WeiBeiTheme.paperRaised.opacity(WeiBeiThemeRuntime.mode.isDark ? 0.46 : 0.80),
+                stroke: WeiBeiTheme.hairline.opacity(0.5)
             )
+            .clipShape(Capsule())
     }
 
     private func graphItem(for item: StudyItem, kind: CourseRelationGraphItem.Kind) -> CourseRelationGraphItem {

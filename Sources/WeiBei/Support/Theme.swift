@@ -1689,28 +1689,49 @@ private struct WeiBeiIconButtonBody: View {
 
 struct WeiBeiTextActionButtonStyle: ButtonStyle {
     @Environment(\.isEnabled) private var isEnabled
+    @Environment(\.colorScheme) private var colorScheme
     var active = false
+    @State private var hovering = false
 
     func makeBody(configuration: Configuration) -> some View {
-        configuration.label
+        let shape = RoundedRectangle(cornerRadius: 8, style: .continuous)
+        return configuration.label
             .weiBeiText(11, weight: .medium)
             .foregroundStyle(foreground)
             .padding(.horizontal, 8)
             .frame(height: 24)
-            .background(background(isPressed: configuration.isPressed))
-            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .background {
+                if isEnabled, active || hovering || configuration.isPressed {
+                    WeiBeiRaisedPillBackdrop(
+                        shape: shape,
+                        fill: active
+                            ? WeiBeiTheme.cinnabarSoft.opacity(colorScheme == .dark ? 0.44 : 0.80)
+                            : WeiBeiTheme.paperRaised.opacity(
+                                configuration.isPressed
+                                    ? (colorScheme == .dark ? 0.34 : 0.68)
+                                    : (colorScheme == .dark ? 0.42 : 0.86)
+                            ),
+                        stroke: active
+                            ? WeiBeiTheme.cinnabar.opacity(colorScheme == .dark ? 0.36 : 0.28)
+                            : WeiBeiTheme.hairline.opacity(0.42),
+                        showsContactShadow: !configuration.isPressed
+                    )
+                }
+            }
+            .clipShape(shape)
             .scaleEffect(configuration.isPressed ? 0.98 : 1)
             .animation(WeiBeiMotion.press, value: configuration.isPressed)
+            .animation(WeiBeiMotion.hover, value: hovering)
+            .onHover { hovering = isEnabled && $0 }
+            .onChange(of: isEnabled) { _, enabled in
+                if !enabled { hovering = false }
+            }
     }
 
     private var foreground: Color {
         guard isEnabled else { return WeiBeiTheme.tertiaryInk.opacity(0.60) }
-        return active ? WeiBeiTheme.cinnabar : WeiBeiTheme.secondaryInk
-    }
-
-    private func background(isPressed: Bool) -> Color {
-        if active { return WeiBeiTheme.cinnabarSoft }
-        return isPressed ? WeiBeiTheme.paperInset.opacity(0.40) : WeiBeiTheme.paperInset.opacity(0.20)
+        if active { return WeiBeiTheme.cinnabar }
+        return hovering ? WeiBeiTheme.ink : WeiBeiTheme.secondaryInk
     }
 }
 

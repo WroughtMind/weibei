@@ -2982,7 +2982,7 @@ private struct SelectionFloatChrome: ViewModifier {
         content
             .foregroundColor(WeiBeiTheme.ink)
             .background {
-                WeiBeiEtchedBackdrop(
+                WeiBeiRaisedPillBackdrop(
                     shape: RoundedRectangle(cornerRadius: expanded ? 12 : 8, style: .continuous),
                     fill: WeiBeiTheme.paperRaised.opacity(0.98),
                     stroke: WeiBeiTheme.hairline.opacity(0.65),
@@ -3684,7 +3684,7 @@ private struct AgentReplyActionCard: View {
             alignment: .leading
         )
         .background {
-            WeiBeiEtchedBackdrop(
+            WeiBeiRaisedPillBackdrop(
                 shape: RoundedRectangle(cornerRadius: 12, style: .continuous),
                 fill: WeiBeiTheme.paperRaised.opacity(0.82),
                 stroke: WeiBeiTheme.hairline.opacity(0.58),

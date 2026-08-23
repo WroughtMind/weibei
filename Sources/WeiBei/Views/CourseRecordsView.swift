@@ -399,11 +399,12 @@ private struct LearningMemoryEditSheet: View {
                 .weiBeiText(13)
                 .frame(minHeight: 110)
                 .padding(8)
-                .background(WeiBeiTheme.paperInset.opacity(0.45))
-                .overlay {
-                    RoundedRectangle(cornerRadius: 8)
-                        .stroke(WeiBeiTheme.hairline, lineWidth: 1)
-                }
+                .weibeiEtchedBackground(
+                    fill: WeiBeiTheme.paperInset.opacity(0.45),
+                    stroke: WeiBeiTheme.hairline.opacity(0.34),
+                    cornerRadius: 8
+                )
+                .clipShape(RoundedRectangle(cornerRadius: 8))
 
             Text(store.ui(
                 "\(text.count) / 500 字",

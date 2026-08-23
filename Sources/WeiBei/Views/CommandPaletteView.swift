@@ -188,7 +188,15 @@ struct CommandPaletteView: View {
                                         .padding(.horizontal, 13)
                                         .frame(height: 34)
                                         .contentShape(Rectangle())
-                                        .background(index == selectedIndex ? WeiBeiTheme.cinnabarSoft : Color.clear)
+                                        .weibeiRaisedBackground(
+                                            fill: selectedIndex == index
+                                                ? WeiBeiTheme.paperRaised.opacity(WeiBeiThemeRuntime.mode.isDark ? 0.55 : 0.88)
+                                                : Color.clear,
+                                            stroke: selectedIndex == index
+                                                ? WeiBeiTheme.hairline.opacity(0.40)
+                                                : Color.clear,
+                                            cornerRadius: 8
+                                        )
                                         .clipShape(RoundedRectangle(cornerRadius: 8))
                                         .scaleEffect(index == selectedIndex ? 1.006 : 1, anchor: .center)
                                         .animation(WeiBeiMotion.micro, value: selectedIndex)
