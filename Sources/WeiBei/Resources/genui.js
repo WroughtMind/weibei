@@ -14,11 +14,20 @@
   let pendingAction = null;
   let actionRejection = null;
   let nextActionRequestID = 0;
+  let contentWasTruncated = false;
 
   const post = body => window.webkit?.messageHandlers?.weibeiGenUI?.postMessage(body);
   const clamp = (value, min, max) => Math.min(max, Math.max(min, Number(value) || 0));
-  const array = (value, cap = 50) => Array.isArray(value) ? value.slice(0, cap) : [];
-  const string = (value, cap = 2000) => typeof value === 'string' ? value.slice(0, cap) : '';
+  const array = (value, cap = 50) => {
+    if (!Array.isArray(value)) return [];
+    if (value.length > cap) contentWasTruncated = true;
+    return value.slice(0, cap);
+  };
+  const string = (value, cap = 2000) => {
+    if (typeof value !== 'string') return '';
+    if (value.length > cap) contentWasTruncated = true;
+    return value.slice(0, cap);
+  };
   const number = (value, fallback = 0) => Number.isFinite(Number(value)) ? Number(value) : fallback;
   const color = (value, index = 0) => /^#[0-9a-f]{3,8}$/i.test(value || '') ? value : palette[index % palette.length];
   const keyFor = (node, path) => string(node?.id, 128) || path;
@@ -153,7 +162,7 @@
     if (xMax < xMin) { xMin = -5; xMax = 5; }
     else if (xMax === xMin) { xMin -= 1; xMax += 1; }
 
-    const parameters = definitions.flatMap((entry, seriesIndex) => array(entry?.params, 8).flatMap(raw => {
+    const parameters = array(definitions.flatMap((entry, seriesIndex) => array(entry?.params, 8).flatMap(raw => {
       const name = string(raw?.name, 24);
       if (!/^[a-z]$/.test(name)) return [];
       const min = number(raw?.min, 0);
@@ -169,7 +178,7 @@
         value: clamp(number(raw?.value, 1), min, max),
         stateKey: `${key}:plot:${seriesIndex}:${name}`,
       }];
-    })).slice(0, 16);
+    })), 16);
 
     const resolveSeries = useDefaults => definitions.map((entry, seriesIndex) => {
       const expr = string(entry?.expr, 500);
@@ -342,7 +351,8 @@
   }
 
   function renderNode(node, path, depth) {
-    if (!node || typeof node !== 'object' || depth > 8 || nodeCount++ > 200) return null;
+    if (!node || typeof node !== 'object') return null;
+    if (depth > 8 || nodeCount++ > 200) { contentWasTruncated = true; return null; }
     const key = keyFor(node, path);
     switch (node.type) {
       case 'text': { const item = el('div', `text ${['h1','h2','h3','body','muted','caption'].includes(node.size) ? node.size : 'body'}${node.center ? ' center' : ''}`, node.content); return item; }
@@ -385,9 +395,20 @@
   }
 
   function render() {
-    timers.forEach(timer => clearTimeout(timer)); timers.clear(); nodeCount = 0; root.replaceChildren();
+    timers.forEach(timer => clearTimeout(timer)); timers.clear(); nodeCount = 0; contentWasTruncated = false; root.replaceChildren();
     document.body.classList.toggle('dark', spec.appearance === 'dark');
     const block = el('section','genui'); block.style.gap=`${clamp(spec.gap ?? 12,0,64)}px`; if(spec.title) block.append(el('div','banner',spec.title)); block.append(renderItems(spec.items,'root',0));
+    if (contentWasTruncated) {
+      const notice = el('div','error','内容未全部展示。');
+      const controls = el('div','learning-controls');
+      const view = el('button','control-button','查看原始数据');
+      const copy = el('button','control-button','复制原始数据');
+      const raw = JSON.stringify(spec, null, 2);
+      const rawView = document.createElement('pre'); rawView.className = 'raw-data'; rawView.hidden = true; rawView.textContent = raw;
+      view.onclick = () => { rawView.hidden = !rawView.hidden; view.textContent = rawView.hidden ? '查看原始数据' : '收起原始数据'; reportHeight(); };
+      copy.onclick = () => navigator.clipboard?.writeText(raw).then(() => { copy.textContent = '已复制'; }).catch(() => { copy.textContent = '复制失败'; });
+      controls.append(view, copy); notice.append(controls, rawView); block.append(notice);
+    }
     if (!block.children.length) block.append(el('div','error','这个互动界面没有可显示的组件。')); root.append(block); reportHeight();
   }
   function reportHeight() { requestAnimationFrame(() => post({ type: 'height', height: Math.ceil(Math.max(root.scrollHeight, root.getBoundingClientRect().height)) })); }
