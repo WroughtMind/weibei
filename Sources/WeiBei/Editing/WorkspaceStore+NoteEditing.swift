@@ -364,6 +364,13 @@ extension WorkspaceStore {
                 WeiBeiLog.noteRepair.error(
                     "code=note_recovery_cleanup_failed document=\(documentID, privacy: .private) reason=\(error.localizedDescription, privacy: .private)"
                 )
+                let message = ui(
+                    "已采用“\(fileName)”的磁盘正文，但旧恢复点清理未完成。未写内容已有备份；请重试保存。",
+                    "The disk text for \(fileName) is in use, but the old recovery point was not removed. The unsaved content has a backup; retry saving."
+                )
+                setNoteFileError(message, for: documentID)
+                showImportantOperationError(message)
+                return
             }
             showTransientNoteStatus(ui(
                 "已采用“\(fileName)”的磁盘版本；未写内容已保存在魏碑备份中。",
