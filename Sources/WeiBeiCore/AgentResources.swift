@@ -2,7 +2,7 @@ import Foundation
 
 /// Bundled system prompt and skills shared by the native runtime.
 public struct AgentResources: Sendable {
-    public static let allRequiredSkillNames = ["visualize", "socratic-questioning"]
+    public static let requiredSkillIDs = ["visualize", "socratic-questioning"]
 
     public var rootURL: URL
     public var skillsURL: URL
@@ -28,7 +28,7 @@ public struct AgentResources: Sendable {
         }
         let skillsURL = rootURL.appendingPathComponent("skills", isDirectory: true)
         let systemURL = rootURL.appendingPathComponent("system.md")
-        for skillName in allRequiredSkillNames {
+        for skillName in requiredSkillIDs {
             let skillURL = skillsURL
                 .appendingPathComponent(skillName, isDirectory: true)
                 .appendingPathComponent("SKILL.md")

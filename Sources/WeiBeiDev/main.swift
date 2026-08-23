@@ -291,21 +291,17 @@ private let forbiddenResourceMarkers = [
     "self-check-spec",
     "RichAnswerVerification",
     "verification-only",
+    "Vendor/PiRuntime/",
+    "prepare_pi_runtime.sh",
+    "PiRuntime/bin/pi",
 ]
+
+private let retiredRuntimeResourceDirectories = ["PiRuntime", "BunRuntime"]
 
 private let forbiddenTestResourceNames = [
     "rich_answer_worker_self_test.py",
     "weibei-single-pendulum-color-contrast-original.png",
 ]
-
-private func resourceBundles(in appBundle: URL) -> [URL] {
-    let resources = appBundle.appendingPathComponent("Contents/Resources")
-    let contents = (try? FileManager.default.contentsOfDirectory(
-        at: resources,
-        includingPropertiesForKeys: nil
-    )) ?? []
-    return contents.filter { $0.lastPathComponent.hasPrefix("WeiBei_") && $0.pathExtension == "bundle" }
-}
 
 private func filesRecursively(in directory: URL) -> [URL] {
     guard let enumerator = FileManager.default.enumerator(
@@ -388,26 +384,21 @@ func runVerifyProductionHygiene(arguments: [String]) {
         }
     }
 
-    let bundles = resourceBundles(in: appBundle)
-    for marker in forbiddenResourceMarkers {
-        for bundle in bundles {
-            for file in filesRecursively(in: bundle) {
-                guard let data = try? Data(contentsOf: file) else { continue }
-                if dataContains(data, marker) {
-                    fail("resources contain '\(marker)'", exitCode: 6)
-                }
-            }
+    let resources = appBundle.appendingPathComponent("Contents/Resources")
+    let resourceFiles = filesRecursively(in: resources)
+    for file in resourceFiles {
+        if file.pathComponents.contains(where: { retiredRuntimeResourceDirectories.contains($0) }) {
+            fail("packaged retired runtime resource \(file.path)", exitCode: 7)
         }
-    }
-
-    for bundle in bundles {
-        for file in filesRecursively(in: bundle) {
-            let name = file.lastPathComponent.lowercased()
-            let baseName = file.lastPathComponent
-            if name.contains("verification")
-                || forbiddenTestResourceNames.contains(baseName) {
-                fail("packaged test resource \(file.path)", exitCode: 5)
-            }
+        if let data = try? Data(contentsOf: file),
+           let marker = forbiddenResourceMarkers.first(where: { dataContains(data, $0) }) {
+            fail("resources contain '\(marker)'", exitCode: 6)
+        }
+        let name = file.lastPathComponent.lowercased()
+        let baseName = file.lastPathComponent
+        if name.contains("verification")
+            || forbiddenTestResourceNames.contains(baseName) {
+            fail("packaged test resource \(file.path)", exitCode: 5)
         }
     }
 

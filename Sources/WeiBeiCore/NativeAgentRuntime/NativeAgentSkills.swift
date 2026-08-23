@@ -95,7 +95,11 @@ public struct NativeSkillRegistry: Sendable {
                 )
             }
         }
-        return NativeSkillRegistry(packs: packs)
+        let loadedIDs = Set(packs.map(\.id))
+        guard let missingID = AgentResources.requiredSkillIDs.first(where: { !loadedIDs.contains($0) }) else {
+            return NativeSkillRegistry(packs: packs)
+        }
+        throw NativeAgentResourcesError.incomplete(resource: "skill:\(missingID)", cause: "missing")
     }
 
     public func catalogSummary() -> String {
@@ -122,7 +126,7 @@ public struct NativeSkillRegistry: Sendable {
     }
 
     public static func isSignedBuiltin(_ id: String) -> Bool {
-        ["visualize", "socratic-questioning"].contains(id)
+        AgentResources.requiredSkillIDs.contains(id)
     }
 
     private static func loadPack(at directory: URL, root: URL) throws -> NativeSkillPack {

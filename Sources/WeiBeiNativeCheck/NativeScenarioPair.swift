@@ -141,8 +141,6 @@ enum NativeScenarioPair {
             .appendingPathComponent("Docs/audit/2026-08-22-native-runtime-12场景对拍.json")
         let payload: [String: Any] = [
             "native": rows,
-            "piFixture": "Docs/audit/2026-08-22-native-agent-runtime-Pi行为夹具/summary.json",
-            "note": "Native 侧为确定性脚本夹具，核对工具序列与提案结构；Pi 夹具是 DeepSeek live 基线。",
         ]
         try JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted, .sortedKeys]).write(to: out)
         print("native-scenario-pair wrote \(rows.count) rows to \(out.path)")
