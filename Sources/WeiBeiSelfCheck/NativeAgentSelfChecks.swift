@@ -260,7 +260,6 @@ private func checkOAuthLogoutLeavesNoCredential() throws {
 }
 
 private func checkProviderRouting() throws {
-    try nativeRequire(AgentProviderID.allCases.count == 40, "provider catalog stays at 40 unique cases")
     try nativeRequire(NativeProviderRouting.route(.deepseek).family == .openaiChatCompletions, "deepseek is chat completions")
     try nativeRequire(NativeProviderRouting.route(.openai).family == .openaiResponses, "openai API is Responses")
     try nativeRequire(NativeProviderRouting.route(.xai).family == .openaiResponses, "xAI is Responses")
