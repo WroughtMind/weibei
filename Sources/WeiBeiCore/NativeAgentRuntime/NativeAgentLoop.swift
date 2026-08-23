@@ -31,13 +31,26 @@ public actor NativeAgentLoop {
         _ = try await ledger.append { seq, time in
             NativeSessionEvent(type: .turnStart, seq: seq, timeMS: time, turn: turn)
         }
+        let userMessage: String
+        if let selection = request.selectionText,
+           !selection.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            let title = request.selectionTitle?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let selectionTitle = title.flatMap { $0.isEmpty ? nil : $0 }
+                ?? request.language.text("当前选区", "Current selection")
+            userMessage = request.language.text(
+                "[选中文字：\(selectionTitle)]\n\(selection)\n\n[问题]\n\(request.question)",
+                "[Selected text: \(selectionTitle)]\n\(selection)\n\n[Question]\n\(request.question)"
+            )
+        } else {
+            userMessage = request.question
+        }
         _ = try await ledger.append { seq, time in
             NativeSessionEvent(
                 type: .userMessage,
                 seq: seq,
                 timeMS: time,
                 turn: turn,
-                text: request.question
+                text: userMessage
             )
         }
 

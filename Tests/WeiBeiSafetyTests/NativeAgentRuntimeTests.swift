@@ -183,6 +183,41 @@ final class NativeAgentRuntimeTests: XCTestCase {
         XCTAssertEqual(events.last?.finishReason, .error)
     }
 
+    func testLoopSendsFullSelectionAndQuestionToModel() async throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("native-context-\(UUID().uuidString).jsonl")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let selectionSentinel = "SELECTION_AFTER_2000"
+        let questionSentinel = "QUESTION_AFTER_4000"
+        let adapter = MockLLMAdapter(
+            chunks: [.finish(reason: .stop, replayState: nil)],
+            inspect: { request in
+                let firstUserMessage = request.messages.first { $0.role == .user }?.content
+                XCTAssertTrue(firstUserMessage?.contains(selectionSentinel) == true)
+                XCTAssertTrue(firstUserMessage?.contains(questionSentinel) == true)
+            }
+        )
+        let request = StudyAgentRequest(
+            purpose: .conversation,
+            question: String(repeating: "问", count: 4_100) + questionSentinel,
+            materialTitle: "",
+            materialText: "",
+            noteTitle: "",
+            noteText: "",
+            selectionText: String(repeating: "选", count: 2_100) + selectionSentinel,
+            contextRevision: "r1"
+        )
+        _ = try await NativeAgentLoop().run(
+            request: request,
+            ledger: NativeAgentLedger(fileURL: url),
+            registry: NativeToolRegistry(),
+            adapter: adapter,
+            model: "mock",
+            hostToolHandler: nil,
+            systemPrompt: "test",
+            progress: nil
+        )
+    }
+
     func testChatCompletionsTranslation() throws {
         var index = 0
         let chunks = try OpenAIChatCompletionsProvider.translate(
@@ -263,8 +298,10 @@ final class NativeAgentRuntimeTests: XCTestCase {
 private struct MockLLMAdapter: NativeLLMAdapter {
     var family: String { "mock" }
     var chunks: [NativeStreamChunk]
+    var inspect: @Sendable (NativeLLMRequest) -> Void = { _ in }
 
     func stream(_ request: NativeLLMRequest) -> AsyncThrowingStream<NativeStreamChunk, Error> {
+        inspect(request)
         AsyncThrowingStream { continuation in
             for chunk in chunks {
                 continuation.yield(chunk)
