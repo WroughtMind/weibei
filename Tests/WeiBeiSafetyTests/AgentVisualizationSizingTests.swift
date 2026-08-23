@@ -35,23 +35,30 @@ final class AgentVisualizationSizingTests: XCTestCase {
 
         let spec = #"{"items":[{"type":"button","label":"继续解释","action":"explain"}]}"#
         _ = try await webView.evaluateJavaScript("window.WeiBeiGenUIHost.render({spec: \(spec), actionUnavailableReason: '另一条回答正在处理'})")
-        XCTAssertEqual(try await webView.evaluateJavaScript("document.querySelector('.button').disabled") as? Bool, true)
-        XCTAssertTrue((try await webView.evaluateJavaScript("document.querySelector('.genui').textContent") as? String)?.contains("另一条回答正在处理") == true)
+        let disabled = try await webView.evaluateJavaScript("document.querySelector('.button').disabled") as? Bool
+        let unavailableText = try await webView.evaluateJavaScript("document.querySelector('.genui').textContent") as? String
+        XCTAssertEqual(disabled, true)
+        XCTAssertTrue(unavailableText?.contains("另一条回答正在处理") == true)
 
         _ = try await webView.evaluateJavaScript("window.WeiBeiGenUIHost.render({spec: \(spec), actionStatus: 'ready'}); document.querySelector('.button').click()")
-        XCTAssertTrue((try await webView.evaluateJavaScript("document.querySelector('.button').textContent") as? String)?.contains("已按下") == true)
+        let pressedText = try await webView.evaluateJavaScript("document.querySelector('.button').textContent") as? String
+        XCTAssertTrue(pressedText?.contains("已按下") == true)
         let acceptedRequestID = try XCTUnwrap(actionProbe.requestIDs.last)
         _ = try await webView.evaluateJavaScript("window.WeiBeiGenUIHost.actionResult({requestID: \(acceptedRequestID), accepted: true})")
-        XCTAssertTrue((try await webView.evaluateJavaScript("document.querySelector('.button').textContent") as? String)?.contains("已排队") == true)
+        let queuedText = try await webView.evaluateJavaScript("document.querySelector('.button').textContent") as? String
+        XCTAssertTrue(queuedText?.contains("已排队") == true)
 
         _ = try await webView.evaluateJavaScript("window.WeiBeiGenUIHost.render({spec: \(spec), actionStatus: 'processing'})")
-        XCTAssertTrue((try await webView.evaluateJavaScript("document.querySelector('.button').textContent") as? String)?.contains("处理中") == true)
+        let processingText = try await webView.evaluateJavaScript("document.querySelector('.button').textContent") as? String
+        XCTAssertTrue(processingText?.contains("处理中") == true)
 
         _ = try await webView.evaluateJavaScript("window.WeiBeiGenUIHost.render({spec: \(spec), actionStatus: 'ready'}); document.querySelector('.button').click()")
         let rejectedRequestID = try XCTUnwrap(actionProbe.requestIDs.last)
         _ = try await webView.evaluateJavaScript("window.WeiBeiGenUIHost.actionResult({requestID: \(rejectedRequestID), accepted: false, reason: '互动数据过大'})")
-        XCTAssertEqual(try await webView.evaluateJavaScript("document.querySelector('.button').disabled") as? Bool, false)
-        XCTAssertTrue((try await webView.evaluateJavaScript("document.querySelector('.genui').textContent") as? String)?.contains("互动数据过大") == true)
+        let rejectedDisabled = try await webView.evaluateJavaScript("document.querySelector('.button').disabled") as? Bool
+        let rejectedText = try await webView.evaluateJavaScript("document.querySelector('.genui').textContent") as? String
+        XCTAssertEqual(rejectedDisabled, false)
+        XCTAssertTrue(rejectedText?.contains("互动数据过大") == true)
         withExtendedLifetime(navigationProbe) {}
     }
 
