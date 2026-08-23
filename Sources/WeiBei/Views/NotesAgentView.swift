@@ -897,12 +897,23 @@ struct MarkdownPreviewView: View {
     private static let compactPreviewLoadingHeight: CGFloat = 44
     private static let compactPreviewMaximumHeight: CGFloat = 20_000
 
+    static func resolvedContentHeight(
+        current: CGFloat,
+        proposed: CGFloat,
+        preservesCurrentFloor: Bool
+    ) -> CGFloat {
+        preservesCurrentFloor ? max(current, proposed) : proposed
+    }
+
     var onMeasuredHeight: (CGFloat) -> Void = { _ in }
     @State private var command: NoteEditorCommand?
     @State private var contentHeight: CGFloat = Self.compactPreviewLoadingHeight
     @State private var heightFrozen = false
     @State private var acceptedMeasureCount = 0
     @State private var maxObservedMeasuredHeight: CGFloat = 0
+    @State private var hasAcceptedStreamingHeight = false
+    @State private var preservesFinalizedHeightFloor = false
+    @State private var finalizedStreamingMarkdown: String?
     @State private var lastLayoutWidthKey = 0
     @State private var lastChatWideTypography = false
 
@@ -938,6 +949,14 @@ struct MarkdownPreviewView: View {
                 }
                 let measuredHeight = ceil(height)
                 let nextFrameHeight = max(measuredHeight, Self.compactPreviewLoadingHeight)
+                if streamsMarkdownUpdates {
+                    hasAcceptedStreamingHeight = true
+                }
+                if preservesFinalizedHeightFloor,
+                   nextFrameHeight < contentHeight {
+                    onMeasuredHeight(contentHeight)
+                    return
+                }
                 if freezeHeightAfterMeasure, heightFrozen {
                     // Keep rejecting recycled-row shrink and jitter, but accept
                     // real late growth from Mermaid, formulas, fonts or images.
@@ -1012,13 +1031,22 @@ struct MarkdownPreviewView: View {
                     measuredHeight,
                     Self.compactPreviewLoadingHeight
                 )
-                let settledHeight = nextFrameHeight
+                preservesFinalizedHeightFloor = preservesHeightAcrossMarkdownChanges
+                    && hasAcceptedStreamingHeight
+                let settledHeight = Self.resolvedContentHeight(
+                    current: contentHeight,
+                    proposed: nextFrameHeight,
+                    preservesCurrentFloor: preservesFinalizedHeightFloor
+                )
+                let didChangeHeight = settledHeight != contentHeight
                 heightFrozen = false
                 acceptedMeasureCount = 0
                 contentHeight = settledHeight
                 maxObservedMeasuredHeight = settledHeight
                 onMeasuredHeight(measuredHeight)
-                onContentHeightChange()
+                if didChangeHeight {
+                    onContentHeightChange()
+                }
                 onFinalizedSnapshotReady(settledHeight)
             },
             onRenderFailure: onRenderFailure
@@ -1051,6 +1079,9 @@ struct MarkdownPreviewView: View {
             )
             lastLayoutWidthKey = widthKey
             guard previousBucket != nextBucket else { return }
+            hasAcceptedStreamingHeight = false
+            preservesFinalizedHeightFloor = false
+            finalizedStreamingMarkdown = nil
             heightFrozen = false
             acceptedMeasureCount = 0
             maxObservedMeasuredHeight = 0
@@ -1058,18 +1089,42 @@ struct MarkdownPreviewView: View {
         .onChange(of: isChatWideTypography) { _, wideTypography in
             guard wideTypography != lastChatWideTypography else { return }
             lastChatWideTypography = wideTypography
+            hasAcceptedStreamingHeight = false
+            preservesFinalizedHeightFloor = false
+            finalizedStreamingMarkdown = nil
             heightFrozen = false
             acceptedMeasureCount = 0
             maxObservedMeasuredHeight = 0
         }
-        .onChange(of: markdown) { _, _ in
+        .onChange(of: markdown) { _, nextMarkdown in
             guard compact && fitsContentHeight else { return }
+            if !streamsMarkdownUpdates {
+                if hasAcceptedStreamingHeight,
+                   finalizedStreamingMarkdown == nil {
+                    finalizedStreamingMarkdown = nextMarkdown
+                    preservesFinalizedHeightFloor = preservesHeightAcrossMarkdownChanges
+                } else if finalizedStreamingMarkdown != nextMarkdown {
+                    hasAcceptedStreamingHeight = false
+                    preservesFinalizedHeightFloor = false
+                    finalizedStreamingMarkdown = nil
+                }
+            }
             heightFrozen = false
             acceptedMeasureCount = 0
             maxObservedMeasuredHeight = 0
             if preservesHeightAcrossMarkdownChanges { return }
             contentHeight = Self.compactPreviewLoadingHeight
             onContentHeightChange()
+        }
+        .onChange(of: streamsMarkdownUpdates) { wasStreaming, isStreaming in
+            if isStreaming {
+                hasAcceptedStreamingHeight = false
+                preservesFinalizedHeightFloor = false
+                finalizedStreamingMarkdown = nil
+            } else if wasStreaming, hasAcceptedStreamingHeight {
+                finalizedStreamingMarkdown = markdown
+                preservesFinalizedHeightFloor = preservesHeightAcrossMarkdownChanges
+            }
         }
     }
 }

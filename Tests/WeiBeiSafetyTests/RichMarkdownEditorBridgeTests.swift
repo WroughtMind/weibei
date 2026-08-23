@@ -7,6 +7,34 @@ import WeiBeiCore
 
 final class RichMarkdownEditorBridgeTests: XCTestCase {
     @MainActor
+    func testFinalizedStreamingHeightNeverShrinksTheLiveAnswer() {
+        XCTAssertEqual(
+            MarkdownPreviewView.resolvedContentHeight(
+                current: 4_601,
+                proposed: 4_600,
+                preservesCurrentFloor: true
+            ),
+            4_601
+        )
+        XCTAssertEqual(
+            MarkdownPreviewView.resolvedContentHeight(
+                current: 4_601,
+                proposed: 4_610,
+                preservesCurrentFloor: true
+            ),
+            4_610
+        )
+        XCTAssertEqual(
+            MarkdownPreviewView.resolvedContentHeight(
+                current: 4_601,
+                proposed: 4_600,
+                preservesCurrentFloor: false
+            ),
+            4_600
+        )
+    }
+
+    @MainActor
     func testExecutedCommandDoesNotClearNewerCommand() async {
         var command: NoteEditorCommand? = NoteEditorCommand(kind: .selectionCommand, markdown: "bold")
         let editor = RichMarkdownEditorView(
