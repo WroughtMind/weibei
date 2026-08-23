@@ -16073,19 +16073,27 @@ final class WorkspaceStore: ObservableObject {
                 )
             }
         }
-        let runtimeDirectory = workspaceDirectory
+        let chatsRoot = workspaceDirectory
             .appendingPathComponent("AgentRuntime/Chats", isDirectory: true)
+        let runtimeDirectory = chatsRoot
             .appendingPathComponent(sessionID.uuidString.lowercased(), isDirectory: true)
         do {
-            try FileManager.default.createDirectory(
-                at: runtimeDirectory,
-                withIntermediateDirectories: true
+            try WeiBeiAgentDataPaths.ensureOwnedDirectory(
+                chatsRoot,
+                inside: workspaceDirectory
+            )
+            try WeiBeiAgentDataPaths.ensureOwnedDirectory(
+                runtimeDirectory,
+                inside: workspaceDirectory
             )
             try FileManager.default.setAttributes(
                 [.posixPermissions: 0o700],
                 ofItemAtPath: runtimeDirectory.path
             )
         } catch {
+            WeiBeiLog.workspace.error(
+                "code=agent_chat_directory_unavailable underlying=\(WeiBeiLog.code(error), privacy: .public)"
+            )
             throw AgentConversationTargetError(
                 message: ui(
                     "魏碑无法准备 Chat 的本地工作目录，请检查本机存储空间和文件权限。",

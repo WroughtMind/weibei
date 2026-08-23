@@ -1,5 +1,6 @@
 import Foundation
 import XCTest
+@testable import WeiBei
 import WeiBeiCore
 
 final class AgentEndpointSecurityTests: XCTestCase {
@@ -89,6 +90,69 @@ final class AgentEndpointSecurityTests: XCTestCase {
         let record = try XCTUnwrap(store.load()[endpoint.credentialProviderID])
         XCTAssertEqual(record.boundEndpoint, endpoint.baseURL)
         XCTAssertNil(try store.load()[AgentProviderID.custom.credentialProviderID])
+    }
+
+    @MainActor
+    func testAgentOwnedRootsRejectSymlinksOutsideWorkspace() throws {
+        enum OwnedRoot: String {
+            case chats = "AgentRuntime/Chats"
+            case ledgers = "NativeAgent/Ledgers"
+            case documents = "NativeAgent/Documents"
+        }
+
+        let fixture = FileManager.default.temporaryDirectory
+            .appendingPathComponent("WeiBeiAgentRoot-\(UUID().uuidString)", isDirectory: true)
+        let workspace = fixture.appendingPathComponent("workspace", isDirectory: true)
+        let outside = fixture.appendingPathComponent("outside", isDirectory: true)
+        let sentinel = outside.appendingPathComponent("sentinel.txt")
+        defer { try? FileManager.default.removeItem(at: fixture) }
+
+        try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: outside, withIntermediateDirectories: true)
+        try Data("保留".utf8).write(to: sentinel)
+
+        for ownedRoot in [OwnedRoot.chats, .ledgers, .documents] {
+            let linkedRoot = workspace.appendingPathComponent(ownedRoot.rawValue, isDirectory: true)
+            try FileManager.default.createDirectory(
+                at: linkedRoot.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            try FileManager.default.createSymbolicLink(at: linkedRoot, withDestinationURL: outside)
+
+            switch ownedRoot {
+            case .chats:
+                let store = WorkspaceStore(
+                    workspaceDirectory: workspace,
+                    startsAtBlankEntries: true,
+                    startsCourseFileMaintenance: false
+                )
+                XCTAssertNotNil(store.createStudySession(courseID: nil))
+                let rejection = store.askAgent(questionOverride: "解释这段材料")
+                store.cancelAgentRequest()
+                XCTAssertNotNil(rejection, "聊天目录指向资料库外时必须拒绝发送")
+            case .ledgers:
+                let ledgerURL = linkedRoot
+                    .appendingPathComponent(UUID().uuidString, isDirectory: true)
+                    .appendingPathComponent("ledger.jsonl")
+                XCTAssertThrowsError(try NativeAgentLedger(fileURL: ledgerURL))
+            case .documents:
+                XCTAssertThrowsError(
+                    try NativeDocumentSandbox.write(
+                        title: "说明",
+                        format: .markdown,
+                        content: "正文",
+                        documentsRoot: linkedRoot
+                    )
+                )
+            }
+        }
+
+        XCTAssertEqual(try Data(contentsOf: sentinel), Data("保留".utf8))
+        XCTAssertEqual(
+            try FileManager.default.contentsOfDirectory(atPath: outside.path).sorted(),
+            [sentinel.lastPathComponent],
+            "Agent 本地目录异常时不得改动资料库外内容"
+        )
     }
 
     func testWebOpenRequiresAnExplicitPublicHTTPSURL() throws {
