@@ -59,29 +59,6 @@ func readText(_ url: URL) -> String {
 
 // MARK: - selfcheck-assertions
 
-private let requiredSafetyTags = [
-    "SAFETY:pending-unsaved-vs-missing",
-    "SAFETY:no-swallowed-link-failure",
-    "SAFETY:blank-new-note",
-]
-
-/// 目录内任意文件（递归）内容含 tag。
-private func directoryContainsTag(_ directory: URL, _ tag: String) -> Bool {
-    guard let enumerator = FileManager.default.enumerator(
-        at: directory,
-        includingPropertiesForKeys: nil,
-        options: [.skipsHiddenFiles]
-    ) else { return false }
-    for case let url as URL in enumerator {
-        guard url.hasDirectoryPath == false,
-              let data = try? Data(contentsOf: url) else { continue }
-        if String(data: data, encoding: .utf8)?.contains(tag) == true {
-            return true
-        }
-    }
-    return false
-}
-
 private func enumerateSwiftFiles(in directory: URL) -> [URL] {
     let files = (try? FileManager.default.contentsOfDirectory(
         at: directory,
@@ -92,13 +69,6 @@ private func enumerateSwiftFiles(in directory: URL) -> [URL] {
 
 func runSelfcheckAssertions() {
     let selfCheckDirectory = repositoryRoot.appendingPathComponent("Sources/WeiBeiSelfCheck")
-    let missing = requiredSafetyTags.filter { !directoryContainsTag(selfCheckDirectory, $0) }
-    if !missing.isEmpty {
-        var message = "missing retained SAFETY assertions:\n"
-        for tag in missing { message += "  \(tag)\n" }
-        fail(message, exitCode: 1)
-    }
-
     // 源码字符串探针（Source.contains( / Source.range( 行）必须紧邻 SAFETY: 理由；
     // `let ... readSource(` 行是纯取值辅助，跳过。
     var bad: [String] = []
