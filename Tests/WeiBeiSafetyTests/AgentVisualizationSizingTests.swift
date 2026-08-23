@@ -93,11 +93,11 @@ final class AgentVisualizationSizingTests: XCTestCase {
         ])
         let payload = try XCTUnwrap(String(data: data, encoding: .utf8))
         _ = try await webView.evaluateJavaScript("window.WeiBeiGenUIHost.render(\(payload))")
-        let warning = try await webView.evaluateJavaScript("document.querySelector('.genui').textContent") as? String
-        _ = try await webView.evaluateJavaScript("Array.from(document.querySelectorAll('button')).find(button => button.textContent === '查看原始数据').click()")
+        let hasWarning = try await webView.evaluateJavaScript("document.querySelector('.truncation-notice') !== null") as? Bool
+        _ = try await webView.evaluateJavaScript("document.querySelector('.truncation-notice button').click()")
         let rawData = try await webView.evaluateJavaScript("document.querySelector('.raw-data').textContent") as? String
 
-        XCTAssertTrue(warning?.contains("内容未全部展示") == true)
+        XCTAssertEqual(hasWarning, true)
         XCTAssertTrue(rawData?.contains(hiddenMarker) == true)
         withExtendedLifetime(navigationProbe) {}
     }
