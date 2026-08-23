@@ -976,9 +976,6 @@ let agentDataPathsSource = readSource("Sources/WeiBeiCore/WeiBeiAgentDataPaths.s
 let workspaceStoreSource = readSource("Sources/WeiBei/Stores/WorkspaceStore.swift")
 let notesPersistenceSource = readSource("Sources/WeiBei/Stores/WorkspaceStore+NotesPersistence.swift")
 let workspaceModelsSource = readSource("Sources/WeiBeiCore/WorkspaceModels.swift")
-let piAgentRuntimeSource = readSource("Sources/WeiBeiCore/PiAgentRuntime.swift")
-let piManagementSource = readSource("Sources/WeiBeiCore/AgentResources/management-extension.ts")
-let piOAuthSource = readSource("Sources/WeiBei/Support/PiOAuthService.swift")
 let credentialProfilesSource = readSource("Sources/WeiBeiCore/AgentCredentialProfiles.swift")
 let readerViewSource = readSource("Sources/WeiBei/Views/ReaderView.swift")
 let notesAgentViewSource = readSource("Sources/WeiBei/Views/NotesAgentView.swift")
@@ -1072,32 +1069,17 @@ expect(
     NoteTabDisplayTitle.resolve(customTitle: "我的速记", noteTitle: "新标题", body: "# 货币银行学") == "我的速记",
     "manual rename still outranks a heading-driven file name"
 )
+let agentAccountServiceSource = readSource("Sources/WeiBei/Support/AgentAccountService.swift")
 expect(
-    piManagementSource.contains(
-        "const { ModelRuntime, readStoredCredential } = await import(PI_PACKAGE)"
-    )
-        && piManagementSource.contains("ModelRuntime.create")
-        && piManagementSource.contains("runtime.registerNativeProvider")
-        && piManagementSource.contains("AZURE_OPENAI_BASE_URL")
-        && piManagementSource.contains("runtime.getProviders()")
-        && piManagementSource.contains("runtime.getModels()")
-        && piManagementSource.contains("runtime.listCredentials()")
-        && piManagementSource.contains("runtime.login(request.providerId, request.authType")
-        && piManagementSource.contains("runtime.logout(request.providerId)")
-        && piOAuthSource.contains("runtime.managementCatalog")
-        && piOAuthSource.contains("runtime.login(")
-        && piOAuthSource.contains("runtime.logout(")
-        && agentDataPathsSource.contains("piAgentDirectory")
-        && !agentDataPathsSource.contains("secretsDirectory")
-        && !agentDataPathsSource.contains("piAuthJSON")
-        && !agentDataPathsSource.contains("migrateHomePiAuthIfNeeded")
-        && piAgentRuntimeSource.contains("WeiBeiAgentDataPaths.piAgentDirectory")
-        && !piAgentRuntimeSource.contains("environment[providerID.environmentAPIKeyName]")
+    agentAccountServiceSource.contains("NativeAgentCredentialStore.defaultStore()")
+        && !agentAccountServiceSource.contains("Keychain")
+        && !agentAccountServiceSource.contains("environment[")
+        && !credentialProfilesSource.contains("KeyHelp")
+        && !credentialProfilesSource.contains("environmentAPIKeyName")
         && !workspaceModelsSource.contains("ModelListProtocol")
         && !workspaceStoreSource.contains("AgentModelListService")
-        && !credentialProfilesSource.contains("KeyHelp")
-        && !credentialProfilesSource.contains("environmentAPIKeyName"),
-    "SAFETY:pi-owns-credentials embedded Pi must exclusively own credentials; a second secret store or env-key injection would bypass the native login path"
+        && !workspaceStoreSource.contains("environment[providerID"),
+    "SAFETY:credentials-single-store agent 凭据必须仅存于 NativeAgentCredentialStore;第二个秘密存储或环境变量注钥匙都会绕过原生登录路径"
 )
 // Provider console metadata stays callable and preserves its public values.
 for provider in AgentProviderID.allCases {
