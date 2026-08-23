@@ -16634,8 +16634,9 @@ final class WorkspaceStore: ObservableObject {
             let sources = reply.sources
             if let messageID = replyMessageID {
                 let visibleContentBlocks = currentAgentVisualizationBlocks(reply.contentBlocks)
-                // Drain before the .completed flip or the tail visibly snaps.
-                agentStreamingDisplayPump.drainNow()
+                // Keep completion on the same fixed cadence; a synchronous
+                // drain turns accumulated network text into one visible dump.
+                await agentStreamingDisplayPump.waitUntilCaughtUp()
                 _ = updateAgentMessage(messageID, in: target.sessionID) {
                     $0.text = reply.text
                     $0.contentBlocks = visibleContentBlocks

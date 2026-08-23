@@ -25,41 +25,25 @@ final class AgentStreamingDisplayPumpTests: XCTestCase {
         XCTAssertEqual(rig.published, ["你", "你好"])
     }
 
-    func testBacklogDecaysSmoothlyToTypingPace() {
+    func testBacklogUsesOneFixedReadableStep() {
         let rig = Rig()
-        rig.target = String(repeating: "字", count: 10)
+        rig.target = String(repeating: "字", count: 18)
         for _ in 0..<10 { rig.pump.stepOnce() }
         XCTAssertEqual(rig.published.last, rig.target)
-        // Rate derives from the live deficit: a 10-character backlog starts at
-        // 2/tick and decays toward single characters without step-size jumps.
         var previous = 0
         for prefix in rig.published {
             let step = prefix.count - previous
-            XCTAssertTrue(step == 1 || step == 2, "unexpected step \(step)")
+            XCTAssertEqual(step, min(AgentStreamingDisplayPump.charactersPerTick, rig.target.count - previous))
             XCTAssertTrue(rig.target.hasPrefix(prefix))
             previous = prefix.count
         }
     }
 
-    func testLargerBacklogKeepsBoundedEvenSteps() {
-        let rig = Rig()
-        rig.target = String(repeating: "字", count: 15)
-        for _ in 0..<15 { rig.pump.stepOnce() }
-        XCTAssertEqual(rig.published.last, rig.target)
-        // Deficit 15 paces at ≤2.5 characters per tick: steps stay within 1…3.
-        var previous = 0
-        for prefix in rig.published {
-            let step = prefix.count - previous
-            XCTAssertTrue((1...3).contains(step), "unexpected step \(step)")
-            previous = prefix.count
-        }
-    }
-
-    func testVeryLargeBacklogUsesRaisedButBoundedCatchUpRate() {
+    func testBacklogSizeDoesNotChangeTheStep() {
         let rig = Rig()
         rig.target = String(repeating: "字", count: 1_000)
         rig.pump.stepOnce()
-        XCTAssertEqual(rig.published.first?.count, AgentStreamingDisplayPump.maximumCharsPerTick)
+        XCTAssertEqual(rig.published.first?.count, AgentStreamingDisplayPump.charactersPerTick)
     }
 
     func testEmptyTargetPublishesNothing() {
@@ -77,8 +61,7 @@ final class AgentStreamingDisplayPumpTests: XCTestCase {
         rig.canPublish = true
         rig.pump.stepOnce()
         XCTAssertEqual(rig.published.count, 1)
-        // Deficit 30 paces at 1 + 30/10 = 4 characters per tick: a bulk step.
-        XCTAssertEqual(rig.published[0].count, 4)
+        XCTAssertEqual(rig.published[0].count, AgentStreamingDisplayPump.charactersPerTick)
         XCTAssertTrue(rig.target.hasPrefix(rig.published[0]))
     }
 
@@ -119,5 +102,27 @@ final class AgentStreamingDisplayPumpTests: XCTestCase {
             XCTAssertLessThanOrEqual(longest, prefix.count)
             longest = prefix.count
         }
+    }
+
+    func testStartWaitsOneTickBeforeItsSecondPublish() async {
+        let rig = Rig()
+        rig.target = String(repeating: "字", count: 20)
+        rig.pump.start()
+        let synchronousCount = rig.published.count
+        await Task.yield()
+        XCTAssertEqual(rig.published.count, synchronousCount)
+        try? await Task.sleep(nanoseconds: AgentStreamingDisplayPump.tickNanoseconds + 20_000_000)
+        XCTAssertGreaterThan(rig.published.count, synchronousCount)
+        rig.pump.stopAndReset()
+    }
+
+    func testWaitUntilCaughtUpKeepsThePacedPublishes() async {
+        let rig = Rig()
+        rig.target = String(repeating: "字", count: 10)
+        rig.pump.start()
+        await rig.pump.waitUntilCaughtUp()
+        XCTAssertEqual(rig.published.last, rig.target)
+        XCTAssertGreaterThan(rig.published.count, 1)
+        rig.pump.stopAndReset()
     }
 }
