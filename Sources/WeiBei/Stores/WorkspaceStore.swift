@@ -1018,7 +1018,7 @@ final class WorkspaceStore: ObservableObject {
         if noteSourceLinksMigrationVersion < 1 {
             migrateNoteSourceLinksFromMarkdown()
             noteSourceLinksMigrationVersion = 1
-            _ = save()
+            save()
         } else if resolvedImportedFileBookmarks
                     || migratedImportedItemIdentities
                     || migratedStudyLocationTitles
@@ -1034,7 +1034,7 @@ final class WorkspaceStore: ObservableObject {
                     || needsPortableCourseStateBootstrap
                     || recoveredInterruptedAgentReply
                     || needsSelectionAskThreadsWorkspaceMigration {
-            _ = save()
+            save()
         }
         floatingSelectionPrompt = ui("当前选区", "Current selection")
         if selectedItemID != nil {
@@ -1359,8 +1359,8 @@ final class WorkspaceStore: ObservableObject {
             // Only then may the next generation include its portable state.
             if !(await persistWorkspaceNow()) {
                 reportWorkspaceSaveFailure(ui(
-                    "课程已创建，但可携带状态尚未写入。",
-                    "The course was created, but its portable state has not been written yet."
+                    "课程已创建，但可携带状态尚未写入；本机内容已保留。请重试。",
+                    "The course was created, but its portable state was not written. Local content is preserved; please retry."
                 ))
             }
             return course.id
@@ -2272,8 +2272,8 @@ final class WorkspaceStore: ObservableObject {
         }
         if !(await persistWorkspaceNow()) {
             reportWorkspaceSaveFailure(ui(
-                "课程已登记，但可携带状态尚未写入。",
-                "The course was registered, but its portable state has not been written yet."
+                "课程已登记，但可携带状态尚未写入；本机内容已保留。请重试。",
+                "The course was registered, but its portable state was not written. Local content is preserved; please retry."
             ))
         }
         if !WeiBeiSafetyTestMode.isEnabled {
@@ -4231,7 +4231,7 @@ final class WorkspaceStore: ObservableObject {
             courseIDs: courseIDs,
             requiring: courseIDs
         )
-        _ = save()
+        save()
     }
 
     /// 从磁盘再读 course-state 并 apply（验 C2：本地草稿不被清空）。
@@ -6500,7 +6500,7 @@ final class WorkspaceStore: ObservableObject {
                         receiptCleanup
                     )
                 }
-                _ = save()
+                save()
                 if shouldDismissCourseWorkspace {
                     courseWorkspacePresented = false
                 }
@@ -12222,7 +12222,7 @@ final class WorkspaceStore: ObservableObject {
 
     @discardableResult
     func retryWorkspaceSave() -> Bool {
-        save()
+        flushPendingWorkspaceSave()
     }
 
     func importCourseMaterialsFromPanel() {
@@ -14910,7 +14910,7 @@ final class WorkspaceStore: ObservableObject {
             courseKnowledgeProfiles[profileIndex].revision &+= 1
             courseKnowledgeProfiles[profileIndex].updatedAt = Date()
             dirtyPortableCourseIDs.insert(courseID)
-            _ = save()
+            save()
         }
         let profile = courseKnowledgeProfiles[profileIndex]
         return StudyAgentCourseProfileContext(
@@ -15504,7 +15504,7 @@ final class WorkspaceStore: ObservableObject {
         learningMemoryStates[stateIndex].entries[entryIndex] = entry
         learningMemoryStates[stateIndex].revision = revision
         invalidateAgentContext()
-        return save()
+        return flushPendingWorkspaceSave()
     }
 
     func resolveLearningMemory(_ memoryID: UUID, in scope: LearningMemoryScope) {
@@ -15531,7 +15531,7 @@ final class WorkspaceStore: ObservableObject {
         learningMemoryStates[stateIndex].entries.remove(at: entryIndex)
         learningMemoryStates[stateIndex].revision &+= 1
         invalidateAgentContext()
-        return save()
+        return flushPendingWorkspaceSave()
     }
 
     private func setLearningMemoryStatus(
@@ -18395,13 +18395,12 @@ final class WorkspaceStore: ObservableObject {
     }
 
     @discardableResult
-    private func reportWorkspaceSaveFailure(_ message: String) -> String {
+    private func reportWorkspaceSaveFailure(
+        _ userMessage: String,
+        reason: String? = nil
+    ) -> String {
         WeiBeiLog.workspace.error(
-            "code=workspace_save_failed path=\(self.storageURL.path, privacy: .private) reason=\(message, privacy: .private)"
-        )
-        let userMessage = ui(
-            "当前工作区有更改未能写入磁盘。未写内容已保存在魏碑中，请重试。",
-            "Some workspace changes were not written to disk. Unsaved content is kept in WeiBei; please retry."
+            "code=workspace_save_failed path=\(self.storageURL.path, privacy: .private) reason=\(reason ?? userMessage, privacy: .private)"
         )
         appendWorkspaceSaveFailureLog(userMessage)
         workspaceSaveError = userMessage
@@ -19217,8 +19216,8 @@ final class WorkspaceStore: ObservableObject {
                         blockedPortableCourseIDs.insert(courseID)
                         needsPortableCourseStateBootstrap = true
                         reportWorkspaceSaveFailure(ui(
-                            "“\(course(withID: courseID)?.title ?? "课程")”的本机内容与课程文件夹首次建立可携带基线时不一致，魏碑已保留两边并停止自动覆盖。",
-                            "The local course content did not match the course folder while establishing its first portable baseline. WeiBei preserved both sides and stopped automatic overwrites."
+                            "“\(course(withID: courseID)?.title ?? "课程")”的本机内容与课程文件夹首次建立可携带基线时不一致，两边均已保留。请先选择要保留的版本，再重试。",
+                            "Local content did not match the course folder while establishing the first portable baseline. Both versions are preserved. Choose which version to keep, then retry."
                         ))
                         changed = true
                         continue
@@ -20581,14 +20580,9 @@ final class WorkspaceStore: ObservableObject {
         try data.write(to: url, options: [.atomic])
     }
 
-    /// Coalesced snapshot write; verification keeps the legacy synchronous path.
-    @discardableResult
-    func save() -> Bool {
-        if Self.mustSaveImmediately {
-            return performSaveNow()
-        }
+    /// Queue a coalesced snapshot write. Call a flush API when the caller needs a disk receipt.
+    func save() {
         scheduleDebouncedWorkspaceSave()
-        return true
     }
 
     /// Flush any coalesced save (quit / resign active / note flush / agent send).
@@ -20599,15 +20593,6 @@ final class WorkspaceStore: ObservableObject {
         pendingWorkspaceSaveTask = nil
         workspaceSaveGeneration &+= 1
         workspacePersistenceSkippingCourseIDs = []
-#if DEBUG
-        let shouldSaveImmediately = Self.mustSaveImmediately
-            && !usesBackgroundWorkspacePersistenceForSelfCheck
-#else
-        let shouldSaveImmediately = Self.mustSaveImmediately
-#endif
-        if shouldSaveImmediately {
-            return performSaveNow()
-        }
         return (try? waitForCourseFileOperation {
             await self.startWorkspacePersistenceLoop().value
         }) ?? false
@@ -20628,15 +20613,6 @@ final class WorkspaceStore: ObservableObject {
         workspaceSaveGeneration &+= 1
         workspacePersistenceSkippingCourseIDs =
             skippingPortableCourseIDs
-#if DEBUG
-        if Self.mustSaveImmediately
-            && !usesBackgroundWorkspacePersistenceForSelfCheck {
-            return performSaveNow(
-                skippingPortableCourseIDs:
-                    skippingPortableCourseIDs
-            )
-        }
-#endif
         return await startWorkspacePersistenceLoop().value
     }
 
@@ -20646,43 +20622,6 @@ final class WorkspaceStore: ObservableObject {
         guard workspacePersistenceRemovingCourseID == nil else {
             return false
         }
-#if DEBUG
-        if Self.mustSaveImmediately
-            && !usesBackgroundWorkspacePersistenceForSelfCheck {
-            do {
-                let persisted = removingCourse(
-                    courseID,
-                    from: makePersistedWorkspaceSnapshot().snapshot
-                )
-                try workspaceSnapshotWriter(
-                    JSONEncoder().encode(persisted),
-                    storageURL
-                )
-                coursePortableStateRevisions.removeValue(
-                    forKey: courseID
-                )
-                coursePortableStateDigests.removeValue(
-                    forKey: courseID
-                )
-                dirtyPortableCourseIDs.remove(courseID)
-                blockedPortableCourseIDs.remove(courseID)
-                oversizedPortableCourseIDs.remove(courseID)
-                persistedWorkspaceCourseIDs = Set(
-                    persisted.courses?.map(\.id) ?? []
-                )
-                courseResumePoints =
-                    persisted.courseResumePoints ?? []
-                clearWorkspaceSaveError()
-                return true
-            } catch {
-                reportWorkspaceSaveFailure(ui(
-                    "课程更改尚未写入磁盘：\(error.localizedDescription)",
-                    "Course changes were not saved to disk: \(error.localizedDescription)"
-                ))
-                return false
-            }
-        }
-#endif
         let previousRevision =
             coursePortableStateRevisions[courseID]
         let previousDigest =
@@ -20818,9 +20757,9 @@ final class WorkspaceStore: ObservableObject {
             )
             guard workspaceSaveGeneration == generation else { return true }
             noteEditorWorkspaceSaveFailed(reportWorkspaceSaveFailure(ui(
-                "课程可携带状态没有成功保存：\(error.localizedDescription)",
-                "Portable course state was not saved: \(error.localizedDescription)"
-            )))
+                "课程可携带状态没有成功保存，本机内容已保留。请重试。",
+                "Portable course state was not saved. Local content is preserved; please retry."
+            ), reason: error.localizedDescription))
             return false
         }
         let noteEditorSaveReceipt = makeNoteEditorWorkspaceSaveReceipt(
@@ -20947,18 +20886,18 @@ final class WorkspaceStore: ObservableObject {
             switch failure {
             case .portableState(let detail):
                 noteEditorWorkspaceSaveFailed(reportWorkspaceSaveFailure(ui(
-                    "课程可携带状态没有成功保存：\(detail)",
-                    "Portable course state was not saved: \(detail)"
-                )))
+                    "课程可携带状态没有成功保存，本机内容已保留。请重试。",
+                    "Portable course state was not saved. Local content is preserved; please retry."
+                ), reason: detail))
             case .workspace(let detail):
                 noteEditorWorkspaceSaveFailed(reportWorkspaceSaveFailure(ui(
-                    "课程更改尚未写入磁盘：\(detail)",
-                    "Course changes were not saved to disk: \(detail)"
-                )))
+                    "课程更改尚未写入磁盘，未写内容已保存在魏碑中。请重试。",
+                    "Course changes were not saved to disk. Unsaved content is kept in WeiBei; please retry."
+                ), reason: detail))
             case .rollbackConflict:
                 noteEditorWorkspaceSaveFailed(reportWorkspaceSaveFailure(ui(
-                    "课程状态提交失败且检测到并发变更，魏碑已停止覆盖并保留现场。",
-                    "The course state commit failed during a concurrent change. WeiBei stopped overwriting and preserved the files for recovery."
+                    "课程状态提交时检测到并发变更，魏碑已停止覆盖并保留两边。请先处理冲突，再重试。",
+                    "A concurrent change was detected while committing course state. WeiBei stopped overwriting and preserved both versions. Resolve the conflict, then retry."
                 )))
             case .stale:
                 publishOutcome = "superseded"
@@ -21077,9 +21016,9 @@ final class WorkspaceStore: ObservableObject {
                 )
             } catch {
                 noteEditorWorkspaceSaveFailed(reportWorkspaceSaveFailure(ui(
-                    "课程可携带状态没有成功保存：\(error.localizedDescription)",
-                    "Portable course state was not saved: \(error.localizedDescription)"
-                )))
+                    "课程可携带状态没有成功保存，本机内容已保留。请重试。",
+                    "Portable course state was not saved. Local content is preserved; please retry."
+                ), reason: error.localizedDescription))
                 return false
             }
             let persistedCourseResumePoints = sanitizedCourseResumePoints()
@@ -21161,8 +21100,8 @@ final class WorkspaceStore: ObservableObject {
                     clearWorkspaceSaveError()
                 } else {
                     reportWorkspaceSaveFailure(ui(
-                        "有课程状态存在冲突或损坏，原文件与本机缓存均已保留；魏碑不会自动覆盖。",
-                        "A course state is conflicted or damaged. Both the original file and local cache were preserved, and WeiBei will not overwrite either automatically."
+                        "有课程状态存在冲突或损坏，原文件与本机缓存均已保留。请先处理课程文件夹中的冲突或损坏，再重试。",
+                        "A course state is conflicted or damaged. Both the original file and local cache are preserved. Resolve the course-folder conflict or damage, then retry."
                     ))
                 }
                 needsSelectionAskThreadsWorkspaceMigration = false
@@ -21179,13 +21118,13 @@ final class WorkspaceStore: ObservableObject {
                 do {
                     try rollbackCoursePortableStateCommit(portableCommit)
                     noteEditorWorkspaceSaveFailed(reportWorkspaceSaveFailure(ui(
-                        "课程更改尚未写入磁盘：\(error.localizedDescription)",
-                        "Course changes were not saved to disk: \(error.localizedDescription)"
-                    )))
+                        "课程更改尚未写入磁盘，未写内容已保存在魏碑中。请重试。",
+                        "Course changes were not saved to disk. Unsaved content is kept in WeiBei; please retry."
+                    ), reason: error.localizedDescription))
                 } catch {
                     noteEditorWorkspaceSaveFailed(reportWorkspaceSaveFailure(ui(
-                        "课程状态提交失败且检测到并发变更，魏碑已停止覆盖并保留现场。",
-                        "The course state commit failed during a concurrent change. WeiBei stopped overwriting and preserved the files for recovery."
+                        "课程状态提交时检测到并发变更，魏碑已停止覆盖并保留两边。请先处理冲突，再重试。",
+                        "A concurrent change was detected while committing course state. WeiBei stopped overwriting and preserved both versions. Resolve the conflict, then retry."
                     )))
                 }
                 return false

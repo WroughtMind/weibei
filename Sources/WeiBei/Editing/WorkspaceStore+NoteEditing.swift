@@ -10,6 +10,7 @@ struct NoteEditorSaveReceipt: Sendable {
 struct NoteEditorRecoveryConflict: Identifiable, Equatable, Sendable {
     let diskMarkdown: String
     let checkpoint: NoteRecoveryCheckpoint
+    var checkpointIsPersisted = true
     var id: String { checkpoint.metadata.documentID }
 }
 
@@ -49,13 +50,31 @@ extension WorkspaceStore {
             baseDigest,
             snapshot.revision
         )
-        Task {
-            _ = try? await noteRecoveryStore.store(
-                documentID: snapshot.documentID,
-                baseFileDigest: baseDigest,
-                revision: snapshot.revision,
-                markdown: snapshot.markdown
-            )
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                _ = try await noteRecoveryStore.store(
+                    documentID: snapshot.documentID,
+                    baseFileDigest: baseDigest,
+                    revision: snapshot.revision,
+                    markdown: snapshot.markdown
+                )
+            } catch {
+                if let url = item(withID: snapshot.documentID)?.url,
+                   Self.noteContentDigest(at: url) == digest { return }
+                noteEditingSession.markSaveFailed(documentID: snapshot.documentID)
+                WeiBeiLog.noteRepair.error(
+                    "code=note_recovery_store_failed document=\(snapshot.documentID, privacy: .private) reason=\(error.localizedDescription, privacy: .private)"
+                )
+                let fileName = item(withID: snapshot.documentID)?
+                    .url?.lastPathComponent ?? ui("这份笔记", "this note")
+                let message = ui(
+                    "“\(fileName)”的恢复点尚未安全保存。内容仍在本次会话中，请不要关闭并重试。",
+                    "The recovery point for \(fileName) is not safely stored yet. The content remains in this session; do not close it, and retry."
+                )
+                setNoteFileError(message, for: snapshot.documentID)
+                showImportantOperationError(message)
+            }
         }
         if noteEditorRecoveryConflictsByItemID[snapshot.documentID] != nil
             || noteEditorConflictProbeDocumentID == snapshot.documentID { return }
@@ -322,35 +341,77 @@ extension WorkspaceStore {
                 "Used the disk version of \(fileName); unsaved content was kept in a WeiBei backup."
             ))
         } else {
-            noteEditorRecoveryConflictsByItemID.removeValue(forKey: conflict.id)
-            if noteEditingSession.dirty,
-               await freshActiveNoteEditorSnapshot() { return }
-            latestNoteEditorSnapshot = (
-                conflict.id,
-                conflict.checkpoint.metadata.checkpointDigest,
-                conflict.checkpoint.metadata.baseFileDigest,
-                conflict.checkpoint.metadata.revision
-            )
-            restoreNoteEditorCheckpoint(conflict.checkpoint)
-            if !conflict.checkpoint.metadata.documentID.hasPrefix("draft:") {
-                flushPendingNotePersistence(
-                    for: conflict.checkpoint.metadata.documentID
+            let documentID = conflict.checkpoint.metadata.documentID
+            guard let fileURL = item(withID: documentID)?.url else { return }
+            let fileName = fileURL.lastPathComponent
+            setNoteDraft(conflict.checkpoint.markdown, for: documentID)
+            let draftPersisted = flushPendingWorkspaceSave()
+            var recoveryPersisted = false
+            do {
+                let diskData = try Data(contentsOf: fileURL)
+                _ = try NoteBackupRing.capture(
+                    content: diskData,
+                    itemID: documentID,
+                    rootURL: noteBackupRootURL
+                )
+                let diskDigest = Self.noteContentDigest(diskData)
+                _ = try await noteRecoveryStore.store(
+                    documentID: documentID,
+                    baseFileDigest: diskDigest,
+                    revision: conflict.checkpoint.metadata.revision,
+                    markdown: conflict.checkpoint.markdown
+                )
+                recoveryPersisted = true
+                try writeNotebookMarkdownThroughGate(
+                    conflict.checkpoint.markdown,
+                    itemID: documentID,
+                    url: fileURL,
+                    expectedBaseline: diskDigest
+                )
+                try await noteRecoveryStore.remove(documentID: documentID)
+            } catch {
+                noteEditingSession.markExternallyModified(documentID: documentID)
+                WeiBeiLog.noteRepair.error(
+                    "code=note_conflict_restore_failed path=\(fileURL.path, privacy: .private) reason=\(error.localizedDescription, privacy: .private)"
+                )
+                showImportantOperationError(draftPersisted || recoveryPersisted
+                    ? ui(
+                        "暂时无法恢复“\(fileName)”中的魏碑内容。待写内容和冲突已保存在魏碑中，请重试。",
+                        "Could not restore WeiBei content to \(fileName). The unsaved content and conflict are stored in WeiBei; please retry."
+                    )
+                    : ui(
+                        "暂时无法恢复“\(fileName)”中的魏碑内容。待写内容仍在当前编辑中，但尚未安全保存；请不要关闭并重试。",
+                        "Could not restore WeiBei content to \(fileName). The unsaved content remains in the current editor but is not safely stored yet; do not close it, and retry."
+                    ))
+                return
+            }
+            noteEditorRecoveryConflictsByItemID.removeValue(forKey: documentID)
+            setNoteDraft(nil, for: documentID)
+            setNoteFileError(nil, for: documentID)
+            dismissImportantOperationError()
+            loadedCourseNoteTextByItemID[documentID] = conflict.checkpoint.markdown
+            let remainsActive = documentID == activeNoteEditorDocumentID
+            if remainsActive {
+                noteText = conflict.checkpoint.markdown
+                noteEditingSession.replaceDocument(
+                    with: documentID,
+                    initialRevision: conflict.checkpoint.metadata.revision
+                )
+                latestNoteEditorSnapshot = (
+                    documentID,
+                    conflict.checkpoint.metadata.checkpointDigest,
+                    conflict.checkpoint.metadata.checkpointDigest,
+                    conflict.checkpoint.metadata.revision
+                )
+                noteEditorDidPersist(
+                    conflict.checkpoint.markdown,
+                    documentID: documentID
+                )
+                noteEditorCommand = NoteEditorCommand(
+                    kind: .reloadDocument,
+                    markdown: conflict.checkpoint.markdown
                 )
             }
-            let remainsActive = conflict.checkpoint.metadata.documentID
-                == activeNoteEditorDocumentID
-            noteEditingSession.replaceDocument(
-                with: remainsActive
-                    ? conflict.checkpoint.metadata.documentID
-                    : activeNoteEditorDocumentID,
-                initialRevision: remainsActive
-                    ? conflict.checkpoint.metadata.revision
-                    : 0
-            )
-            noteEditorCommand = NoteEditorCommand(
-                kind: .reloadDocument,
-                markdown: remainsActive ? conflict.checkpoint.markdown : noteText
-            )
         }
     }
 

@@ -624,15 +624,19 @@ extension WorkspaceStore {
             setNoteDraft(markdown, for: itemID)
             pendingNoteWritesByItemID.removeValue(forKey: itemID)
             noteEditingSession.markSaveFailed(documentID: itemID)
+            let draftPersisted = flushPendingWorkspaceSave()
             WeiBeiLog.noteRepair.error(
                 "code=note_write_failed path=\(url.path, privacy: .private) reason=\(error.localizedDescription, privacy: .private)"
             )
-            showImportantOperationError(
-                ui(
+            showImportantOperationError(draftPersisted
+                ? ui(
                     "无法写入“\(url.lastPathComponent)”。待写内容已保存在魏碑中，请重试。",
                     "Could not write \(url.lastPathComponent). Unsaved content is kept in WeiBei; please retry."
                 )
-            )
+                : ui(
+                    "无法写入“\(url.lastPathComponent)”。待写内容仍在本次会话中，但尚未安全保存；请不要关闭并重试。",
+                    "Could not write \(url.lastPathComponent). Unsaved content remains in this session but is not safely stored yet; do not close it, and retry."
+                ))
             return false
         }
         setNoteDraft(nil, for: itemID)
@@ -648,7 +652,30 @@ extension WorkspaceStore {
         itemID: String,
         url: URL
     ) {
-        guard let diskMarkdown = try? String(contentsOf: url, encoding: .utf8) else { return }
+        pendingNoteWritesByItemID.removeValue(forKey: itemID)
+        setNoteDraft(markdown, for: itemID)
+        let draftPersisted = flushPendingWorkspaceSave()
+        let diskMarkdown: String
+        do {
+            diskMarkdown = try String(contentsOf: url, encoding: .utf8)
+        } catch {
+            noteEditingSession.markSaveFailed(documentID: itemID)
+            WeiBeiLog.noteRepair.error(
+                "code=note_conflict_reread_failed path=\(url.path, privacy: .private) reason=\(error.localizedDescription, privacy: .private)"
+            )
+            let message = draftPersisted
+                ? ui(
+                    "无法重读“\(url.lastPathComponent)”。待写内容已保存在魏碑中，请重试。",
+                    "Could not reread \(url.lastPathComponent). Unsaved content is kept in WeiBei; please retry."
+                )
+                : ui(
+                    "无法重读“\(url.lastPathComponent)”。待写内容仍在本次会话中，但尚未安全保存；请不要关闭并重试。",
+                    "Could not reread \(url.lastPathComponent). Unsaved content remains in this session but is not safely stored yet; do not close it, and retry."
+                )
+            setNoteFileError(message, for: itemID)
+            showImportantOperationError(message)
+            return
+        }
         let baseDigest = noteBackingContentDigestsByItemID[itemID]
             ?? Self.noteContentDigest(Data(diskMarkdown.utf8))
         let revision = latestNoteEditorSnapshot.flatMap {
@@ -656,8 +683,6 @@ extension WorkspaceStore {
         } ?? (noteEditingSession.documentID == itemID
             ? noteEditingSession.currentRevision
             : 0)
-        pendingNoteWritesByItemID.removeValue(forKey: itemID)
-        setNoteDraft(markdown, for: itemID)
         loadedCourseNoteTextByItemID[itemID] = diskMarkdown
         noteEditingSession.markExternallyModified(documentID: itemID)
         noteEditorRecoveryConflict = NoteEditorRecoveryConflict(
@@ -672,7 +697,8 @@ extension WorkspaceStore {
                     dialectVersion: 1
                 ),
                 markdown: markdown
-            )
+            ),
+            checkpointIsPersisted: draftPersisted
         )
     }
 
@@ -686,14 +712,14 @@ extension WorkspaceStore {
         url: URL,
         expectedBaseline: String?
     ) throws {
+        var operationError: Error?
         var coordinationError: NSError?
-        var writeResult: Result<Void, Error>?
-        NSFileCoordinator(filePresenter: nil).coordinate(
+        NSFileCoordinator().coordinate(
             writingItemAt: url,
             options: .forReplacing,
             error: &coordinationError
         ) { coordinatedURL in
-            writeResult = Result {
+            do {
                 if FileManager.default.fileExists(atPath: coordinatedURL.path) {
                     guard let expectedBaseline,
                           let diskDigest = Self.noteContentDigest(at: coordinatedURL) else {
@@ -706,34 +732,31 @@ extension WorkspaceStore {
                         WeiBeiLog.noteRepair.error(
                             "code=note_write_external_conflict path=\(coordinatedURL.path, privacy: .private) expected_digest=\(expectedBaseline, privacy: .private) actual_digest=\(diskDigest, privacy: .private)"
                         )
-                        _ = try? NoteBackupRing.capture(
-                            content: Data(markdown.utf8),
-                            itemID: itemID,
-                            rootURL: noteBackupRootURL
-                        )
                         throw NoteWriteGateError.diskChangedAdoptDisk
                     }
                 }
                 try notebookMarkdownWriter(markdown, coordinatedURL)
+                let writtenDigest = Self.noteContentDigest(Data(markdown.utf8))
+                let verifiedDigest = Self.noteContentDigest(at: coordinatedURL)
+                guard verifiedDigest == writtenDigest else {
+                    WeiBeiLog.noteRepair.error(
+                        "code=note_write_verification_failed path=\(coordinatedURL.path, privacy: .private) expected_digest=\(writtenDigest, privacy: .private) actual_digest=\(verifiedDigest ?? "unreadable", privacy: .private)"
+                    )
+                    throw NoteWriteGateError.writeVerificationFailed
+                }
+                noteBackingContentDigestsByItemID[itemID] = writtenDigest
+                lastSelfWrittenNoteDigestsByItemID[itemID] = writtenDigest
+            } catch {
+                operationError = error
             }
         }
-        if let writeResult {
-            try writeResult.get()
-        } else if let coordinationError {
-            throw coordinationError
-        } else {
-            throw NoteWriteGateError.writeRefusedKeepContent
-        }
-        let writtenDigest = Self.noteContentDigest(Data(markdown.utf8))
-        let verifiedDigest = Self.noteContentDigest(at: url)
-        guard verifiedDigest == writtenDigest else {
+        if let operationError { throw operationError }
+        if let coordinationError {
             WeiBeiLog.noteRepair.error(
-                "code=note_write_verification_failed path=\(url.path, privacy: .private) expected_digest=\(writtenDigest, privacy: .private) actual_digest=\(verifiedDigest ?? "unreadable", privacy: .private)"
+                "code=note_write_coordination_failed path=\(url.path, privacy: .private) reason=\(coordinationError.localizedDescription, privacy: .private)"
             )
-            throw NoteWriteGateError.writeVerificationFailed
+            throw coordinationError
         }
-        noteBackingContentDigestsByItemID[itemID] = writtenDigest
-        lastSelfWrittenNoteDigestsByItemID[itemID] = writtenDigest
     }
 
     /// 文件不可达时静默保留草稿（无冲突横幅）。
@@ -744,6 +767,20 @@ extension WorkspaceStore {
         setNoteDraft(markdown, for: itemID)
         pendingNoteWritesByItemID.removeValue(forKey: itemID)
         noteEditingSession.markSaveFailed(documentID: itemID)
+        let fileName = item(withID: itemID)?.url?.lastPathComponent
+            ?? ui("这份笔记", "this note")
+        let draftPersisted = flushPendingWorkspaceSave()
+        let message = draftPersisted
+            ? ui(
+                "无法确认“\(fileName)”的磁盘内容，已暂停写入。待写内容已保存在魏碑中，请重试。",
+                "Could not verify the disk content of \(fileName), so writing was paused. Unsaved content is stored in WeiBei; please retry."
+            )
+            : ui(
+                "无法确认“\(fileName)”的磁盘内容，已暂停写入。待写内容仍在本次会话中，但尚未安全保存；请不要关闭并重试。",
+                "Could not verify the disk content of \(fileName), so writing was paused. Unsaved content remains in this session but is not safely stored yet; do not close it, and retry."
+            )
+        setNoteFileError(message, for: itemID)
+        showImportantOperationError(message)
     }
 
     func persistNote(_ markdown: String, for item: StudyItem) {

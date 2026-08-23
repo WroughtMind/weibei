@@ -1064,6 +1064,12 @@ expect(
     "SAFETY:pending-unsaved-vs-missing deletion must refuse unsaved changes and persist every workspace save failure to a log"
 )
 expect(
+    workspaceStoreSource.contains("func save() {")
+        && !workspaceStoreSource.contains("func save() -> Bool")
+        && workspaceStoreSource.contains("return flushPendingWorkspaceSave()"),
+    "SAFETY:workspace-save-receipt queued saves must not claim disk success, and user-confirmed saves must wait for the real persistence receipt"
+)
+expect(
     NoteTabDisplayTitle.resolve(customTitle: "我的速记", noteTitle: "新标题", body: "# 货币银行学") == "我的速记",
     "manual rename still outranks a heading-driven file name"
 )
@@ -2102,9 +2108,11 @@ do {
     expect(
         notesPersistenceSource.contains("writeRefusedKeepContent")
             && notesPersistenceSource.contains("diskChangedAdoptDisk")
-            && notesPersistenceSource.contains("content: Data(markdown.utf8)")
+            && notesPersistenceSource.contains("NSFileCoordinator().coordinate(")
+            && notesPersistenceSource.contains("note_write_verification_failed")
+            && notesPersistenceSource.contains("setNoteDraft(markdown, for: itemID)")
             && notesPersistenceSource.contains("expectedBaseline"),
-        "SAFETY:write-gate-compare the gate must refuse writes without a trusted baseline or an unreadable disk, back up pending content before adopting external changes, and pass an explicit baseline at every write path"
+        "SAFETY:write-gate-compare the coordinated gate must compare a trusted baseline, verify the post-write bytes, and keep refused content in the workspace draft path"
     )
 }
 
