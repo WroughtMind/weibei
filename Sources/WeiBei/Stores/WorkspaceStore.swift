@@ -7427,8 +7427,8 @@ final class WorkspaceStore: ObservableObject {
             )
         case (true, false):
             message = ui(
-                "“\(title)”没有加入目标课程；原文件和课程关系保持不变。请恢复课程文件夹访问后重试。",
-                "“\(title)” was not added to the target course. The original file and course relations are unchanged. Restore access to the course folder, then try again."
+                "“\(title)”加入课程的操作未完整完成；磁盘文件和课程入口状态无法确认。请检查原位置、通用目录和课程目录后再试。",
+                "The operation to add “\(title)” to the course did not fully complete. The disk file and course entry state could not be confirmed. Check the original location, common content, and course folder before trying again."
             )
         case (false, true):
             message = ui(
@@ -7437,8 +7437,8 @@ final class WorkspaceStore: ObservableObject {
             )
         case (false, false):
             message = ui(
-                "“\(title)”没有从课程移除；共享原件和课程关系保持不变。请恢复课程文件夹访问后重试。",
-                "“\(title)” was not removed from the course. The shared original and course relation are unchanged. Restore access to the course folder, then try again."
+                "“\(title)”移出课程的操作未完整完成；磁盘文件和课程入口状态无法确认。请检查原位置、通用目录和课程目录后再试。",
+                "The operation to remove “\(title)” from the course did not fully complete. The disk file and course entry state could not be confirmed. Check the original location, common content, and course folder before trying again."
             )
         }
         showImportantOperationError(message)
@@ -7793,13 +7793,13 @@ final class WorkspaceStore: ObservableObject {
                     )
                 case .trashMoveFailed:
                     message = self.ui(
-                        "原文件没有成功移到废纸篓；魏碑已保留或恢复原文件，课程关系保持不变。请确认磁盘和废纸篓可用后重试。",
-                        "The original file was not moved to Trash. WeiBei kept or restored it, and course relations are unchanged. Make sure the disk and Trash are available, then try again."
+                        "删除未完整完成，魏碑无法确认原文件当前位置；课程记录变更未完成提交。请检查原位置和废纸篓后再操作。",
+                        "Deletion did not fully complete, and WeiBei could not confirm the original file's current location. The course record change was not committed. Check the original location and Trash before continuing."
                     )
                 case .workspaceSaveFailed:
                     message = self.ui(
-                        "删除结果没有保存；魏碑已把原文件恢复到原位置，课程记录保持不变。请确认资料库可写后重试。",
-                        "The deletion result was not saved. WeiBei restored the original file to its previous location, and the course record is unchanged. Make sure the library is writable, then try again."
+                        "删除未完整完成，魏碑无法确认原文件当前位置；课程记录变更未完成提交。请检查原位置和废纸篓后再操作。",
+                        "Deletion did not fully complete, and WeiBei could not confirm the original file's current location. The course record change was not committed. Check the original location and Trash before continuing."
                     )
                 case .pendingChangesUnsaved:
                     message = self.ui(
@@ -10482,8 +10482,8 @@ final class WorkspaceStore: ObservableObject {
                         path: sourceURL
                     )
                     showImportantOperationError(ui(
-                        "“\(sourceURL.lastPathComponent)”未能加入课程；原文件和课程现有内容保持不变。请确认文件可访问，若有同名文件请改名后重试。",
-                        "“\(sourceURL.lastPathComponent)” could not be added to the course. The original file and existing course content are unchanged. Make sure the file is accessible; if a same-named file exists, rename it and try again."
+                        "“\(sourceURL.lastPathComponent)”未完成课程登记；原文件没有被移动或覆盖，但课程目录可能留有已写入副本。请检查课程目录后再重试。",
+                        "“\(sourceURL.lastPathComponent)” was not fully registered in the course. The original file was not moved or overwritten, but a written copy may remain in the course folder. Check the course folder before trying again."
                     ))
                 }
             }
@@ -11067,8 +11067,8 @@ final class WorkspaceStore: ObservableObject {
                     path: courseRootURL(for: courseID)
                 )
                 showImportantOperationError(ui(
-                    "课程笔记没有创建，现有笔记未被覆盖。请确认课程文件夹可写，或换一个笔记名后重试。",
-                    "The course note was not created, and existing notes were not overwritten. Make sure the course folder is writable, or choose another note name and try again."
+                    "课程笔记未完成登记；现有笔记未被覆盖，但课程“笔记”目录可能留有已写入副本。请检查后再重试。",
+                    "The course note was not fully registered. Existing notes were not overwritten, but a written copy may remain in the course Notes folder. Check the folder before trying again."
                 ))
             }
             return nil
