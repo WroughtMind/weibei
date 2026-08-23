@@ -7,8 +7,6 @@ import WebKit
 
 private final class RecordingURLSchemeTask: NSObject, WKURLSchemeTask {
     let request: URLRequest
-    private let lock = NSLock()
-    private var completions = 0
 
     init(request: URLRequest) {
         self.request = request
@@ -16,20 +14,8 @@ private final class RecordingURLSchemeTask: NSObject, WKURLSchemeTask {
 
     func didReceive(_ response: URLResponse) {}
     func didReceive(_ data: Data) {}
-    func didFinish() { recordCompletion() }
-    func didFailWithError(_ error: Error) { recordCompletion() }
-
-    var completionCount: Int {
-        lock.lock()
-        defer { lock.unlock() }
-        return completions
-    }
-
-    private func recordCompletion() {
-        lock.lock()
-        completions += 1
-        lock.unlock()
-    }
+    func didFinish() {}
+    func didFailWithError(_ error: Error) {}
 }
 
 final class MarkdownResourceSafetyTests: XCTestCase {
@@ -141,7 +127,7 @@ final class MarkdownResourceSafetyTests: XCTestCase {
     }
 
     @MainActor
-    func testRemoteImageInvalidationDropsQueuedLoadWithoutCallback() throws {
+    func testRemoteImageSessionInvalidationBreaksDelegateRetention() async throws {
         var components = URLComponents()
         components.scheme = "weibeiimage"
         components.host = "resource"
@@ -151,20 +137,23 @@ final class MarkdownResourceSafetyTests: XCTestCase {
         let task = RecordingURLSchemeTask(
             request: URLRequest(url: try XCTUnwrap(components.url))
         )
-        let validationQueue = DispatchQueue(label: "WeiBei.MarkdownRemoteImage.Test")
-        validationQueue.suspend()
-        var handler: MarkdownImageSchemeHandler? = MarkdownImageSchemeHandler(
-            remoteValidationQueue: validationQueue
-        )
+        var handler: MarkdownImageSchemeHandler? = MarkdownImageSchemeHandler()
         weak var weakHandler = handler
         handler?.webView(WKWebView(), start: task)
-        handler?.invalidate()
-        handler?.invalidate()
-        validationQueue.resume()
-        validationQueue.sync {}
 
-        XCTAssertEqual(task.completionCount, 0)
+        for _ in 0..<100 {
+            if handler?.hasActiveRemoteSession == true { break }
+            try await Task.sleep(nanoseconds: 20_000_000)
+        }
+        XCTAssertTrue(handler?.hasActiveRemoteSession == true)
+
+        handler?.invalidate()
+        handler?.invalidate()
         handler = nil
+        for _ in 0..<100 {
+            if weakHandler == nil { break }
+            try await Task.sleep(nanoseconds: 20_000_000)
+        }
         XCTAssertNil(weakHandler)
     }
 

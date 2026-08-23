@@ -299,7 +299,7 @@ v1 不做 Step JSONL：正常切换、失焦与退出目标零损失；WebConten
 
 ### 工作包 B · Bridge V2 与 NoteEditingSession（手感首验）
 
-**推荐分支**：`codex/editor-bridge-v2`；占用：`WorkspaceStore.swift`（净增 ≤0）；`NotesAgentView.swift` 目标净删除
+**推荐分支**：`codex/editor-bridge-v2`；占用：`WorkspaceStore.swift`、`NotesAgentView.swift`，均按职责与完整调用链正常评审
 
 **必做**：
 
@@ -489,7 +489,7 @@ v1 不做 Step JSONL：正常切换、失焦与退出目标零损失；WebConten
 - 不绕过自动检查，不用回退实现伪造通过；
 - 旧分支只用于取证，不整体 merge 或批量 cherry-pick。
 
-这些仓库规则是执行环境约束，不应反过来驱动产品设计；合理改动确实需要豁免时按流程说明真实理由，而不是扭曲实现讨好行数。
+这些仓库规则是执行环境约束，不应反过来驱动产品设计；合理改动按正常代码审查说明真实理由，而不是扭曲实现讨好行数。
 
 ---
 
