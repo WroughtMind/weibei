@@ -357,7 +357,13 @@ struct UnavailableAgentContentBlockView: View {
             try Data(rawJSON.utf8).write(to: url, options: .atomic)
             exportError = nil
         } catch {
-            exportError = error.localizedDescription
+            WeiBeiLog.web.error(
+                "code=genui_raw_export_failed underlying=\(WeiBeiLog.code(error), privacy: .public)"
+            )
+            exportError = store.ui(
+                "原始数据未能导出，请换一个位置后重试。",
+                "The raw data could not be exported. Choose another location and try again."
+            )
         }
     }
 }

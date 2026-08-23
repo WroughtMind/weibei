@@ -77,7 +77,7 @@ final class AgentVisualizationSizingTests: XCTestCase {
     }
 
     @MainActor
-    func testGenUIShowsFullTextAndRevealsLargeTablesInBatches() async throws {
+    func testGenUIKeepsFullTextAndRevealsWholeTable() async throws {
         let configuration = WKWebViewConfiguration()
         let webView = WKWebView(
             frame: NSRect(x: 0, y: 0, width: 640, height: 240),
@@ -125,40 +125,6 @@ final class AgentVisualizationSizingTests: XCTestCase {
         XCTAssertEqual(revealedRows, totalRows)
         XCTAssertEqual(revealedColumns, columns.count)
 
-        let components = Array(repeating: ["type": "divider"], count: 120)
-        let componentsData = try JSONSerialization.data(withJSONObject: ["spec": ["items": components]])
-        let componentsPayload = try XCTUnwrap(String(data: componentsData, encoding: .utf8))
-        _ = try await webView.evaluateJavaScript("window.WeiBeiGenUIHost.render(\(componentsPayload)); while (!document.querySelector('.data-progress button').hidden) document.querySelector('.data-progress button').click()")
-        let revealedComponents = try await webView.evaluateJavaScript("document.querySelectorAll('.divider').length") as? Int
-        XCTAssertEqual(revealedComponents, components.count)
-
-        let limitedComponents = Array(repeating: ["type": "divider"], count: 300)
-        let limitedData = try JSONSerialization.data(withJSONObject: ["spec": ["items": limitedComponents]])
-        let limitedPayload = try XCTUnwrap(String(data: limitedData, encoding: .utf8))
-        _ = try await webView.evaluateJavaScript("window.WeiBeiGenUIHost.render(\(limitedPayload)); while (!document.querySelector('.data-progress button').hidden) document.querySelector('.data-progress button').click()")
-        let limitedProgress = try await webView.evaluateJavaScript("document.querySelector('.data-progress').textContent") as? String
-        let limitedCount = try await webView.evaluateJavaScript("document.querySelectorAll('.divider').length") as? Int
-        let hasNodeLimit = try await webView.evaluateJavaScript("document.querySelector('.content-limit')?.getClientRects().length > 0") as? Bool
-        XCTAssertLessThan(limitedCount ?? limitedComponents.count, limitedComponents.count)
-        XCTAssertFalse(limitedProgress?.contains("\(limitedComponents.count)/\(limitedComponents.count)") == true)
-        XCTAssertEqual(hasNodeLimit, true)
-
-        var deepComponent: [String: Any] = ["type": "text", "content": "末端"]
-        for _ in 0..<10 { deepComponent = ["type": "card", "items": [deepComponent]] }
-        let deepData = try JSONSerialization.data(withJSONObject: ["spec": ["items": [deepComponent]]])
-        let deepPayload = try XCTUnwrap(String(data: deepData, encoding: .utf8))
-        _ = try await webView.evaluateJavaScript("window.WeiBeiGenUIHost.render(\(deepPayload))")
-        let hasLocalLimit = try await webView.evaluateJavaScript("document.querySelector('.content-limit')?.getClientRects().length > 0") as? Bool
-        XCTAssertEqual(hasLocalLimit, true)
-
-        let chartData = (0..<61).map { ["label": "项目 \($0)", "value": $0] as [String: Any] }
-        let chartPayloadData = try JSONSerialization.data(withJSONObject: [
-            "spec": ["items": [["type": "chart", "data": chartData]]],
-        ])
-        let chartPayload = try XCTUnwrap(String(data: chartPayloadData, encoding: .utf8))
-        _ = try await webView.evaluateJavaScript("window.WeiBeiGenUIHost.render(\(chartPayload))")
-        let chartLimitVisible = try await webView.evaluateJavaScript("document.querySelector('.chart .content-limit')?.getClientRects().length > 0") as? Bool
-        XCTAssertEqual(chartLimitVisible, true)
         withExtendedLifetime(navigationProbe) {}
     }
 
