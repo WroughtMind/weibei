@@ -65,8 +65,10 @@ final class MotionInteractionSafetyTests: XCTestCase {
         XCTAssertEqual(store.transientNoteStatus, "B")
         store.expireTransientNoteStatus(scheduledGeneration: currentGeneration, isCancelled: true)
         XCTAssertEqual(store.transientNoteStatus, "B")
+        store.showImportantOperationError("重要错误")
         store.expireTransientNoteStatus(scheduledGeneration: currentGeneration, isCancelled: false)
         XCTAssertNil(store.transientNoteStatus)
+        XCTAssertEqual(store.importantOperationError, "重要错误")
     }
 
     @MainActor
