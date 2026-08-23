@@ -138,7 +138,7 @@ final class NativeAgentRuntimeTests: XCTestCase {
         }
     }
 
-    func testSearchedURLRemainsAuthorizedForCurrentRun() async throws {
+    func testSearchedURLRemainsAvailableForCurrentRun() async throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("native-web-once-\(UUID().uuidString).jsonl")
         defer { try? FileManager.default.removeItem(at: url) }
         let ledger = try NativeAgentLedger(fileURL: url)

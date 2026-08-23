@@ -228,12 +228,12 @@ enum NativeToolGuard {
         }
         if name == "weibei_web_open" {
             let url = arguments["url"] as? String ?? ""
-            guard WeiBeiWebResearchURLPolicy.isAuthorized(
+            guard WeiBeiWebResearchURLPolicy.isAvailableInCurrentRun(
                 url,
                 in: context.request.question,
                 webSearchURLs: context.webSearchURLs
             ) else {
-                throw NativeLLMFailure(code: "guard_denied", message: "网页工具只能读取用户本轮明确提供或刚搜索到的地址")
+                throw NativeLLMFailure(code: "guard_denied", message: "该网页地址不在本轮可访问来源中")
             }
         }
         if ["weibei_read_learning_memory", "weibei_update_learning_memory", "weibei_course_profile_update", "weibei_relation_proposal"].contains(name) {
