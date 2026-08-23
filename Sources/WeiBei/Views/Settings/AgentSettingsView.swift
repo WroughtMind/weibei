@@ -274,7 +274,10 @@ extension SettingsView {
                 }
                 if let progress = oauthService.statusMessage,
                     oauthService.isLoggingIn {
-                    settingsNote(progress, icon: "arrow.triangle.2.circlepath")
+                    settingsNote(
+                        store.ui(progress.chinese, progress.english),
+                        icon: "arrow.triangle.2.circlepath"
+                    )
                 }
                 if let error = oauthService.lastError {
                     settingsNote(
@@ -335,7 +338,10 @@ extension SettingsView {
                 }
                 if let progress = oauthService.statusMessage,
                     oauthService.isLoggingIn {
-                    settingsNote(progress, icon: "arrow.triangle.2.circlepath")
+                    settingsNote(
+                        store.ui(progress.chinese, progress.english),
+                        icon: "arrow.triangle.2.circlepath"
+                    )
                 }
                 if let error = oauthService.lastError {
                     settingsNote(

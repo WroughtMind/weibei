@@ -27,7 +27,7 @@ final class AgentAccountService: ObservableObject {
 
     @Published private(set) var catalog: CatalogInfo?
     @Published private(set) var isLoggingIn = false
-    @Published private(set) var statusMessage: String?
+    @Published private(set) var statusMessage: LocalizedMessage?
     @Published private(set) var lastError: LocalizedMessage?
     private var loginTask: Task<Void, Never>?
 
@@ -83,7 +83,10 @@ final class AgentAccountService: ObservableObject {
         }
         guard !isLoggingIn else { return }
         isLoggingIn = true
-        statusMessage = "正在打开浏览器完成登录…"
+        statusMessage = LocalizedMessage(
+            chinese: "正在打开浏览器完成登录…",
+            english: "Opening your browser to finish signing in…"
+        )
         lastError = nil
         loginTask = Task { [weak self] in
             guard let self else { return }
