@@ -114,9 +114,15 @@ if [[ "$MODE" == "notarized" ]]; then
   SPARKLE_PUBLIC_VERIFIER="$(mktemp "${TMPDIR:-/tmp}/weibei-sparkle-public-key.XXXXXX")"
   trap '/bin/rm -f "$SPARKLE_PUBLIC_VERIFIER"' EXIT
   {
-    /usr/bin/dd if=/dev/zero bs=64 count=1 2>/dev/null
+    /bin/dd if=/dev/zero bs=64 count=1 2>/dev/null
     /usr/bin/printf '%s' "$SPARKLE_PUBLIC_KEY" | /usr/bin/base64 -D
   } | /usr/bin/base64 -b 0 -o "$SPARKLE_PUBLIC_VERIFIER"
+  if [[ "$(/usr/bin/base64 -D -i "$SPARKLE_PUBLIC_VERIFIER" | /usr/bin/wc -c | /usr/bin/tr -d ' ')" != "96" ]]; then
+    /bin/rm -f "$SPARKLE_PUBLIC_VERIFIER"
+    trap - EXIT
+    echo "release failed: could not prepare the Sparkle public-key verifier" >&2
+    exit 25
+  fi
   if ! SPARKLE_PREFLIGHT_SIGNATURE="$(
     "$SPARKLE_SIGN_UPDATE" -p --ed-key-file "$SPARKLE_PRIVATE_KEY_FILE" \
       "$VERSION_FILE" 2>/dev/null
