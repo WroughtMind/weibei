@@ -79,13 +79,13 @@ final class AgentStreamingDisplayPumpTests: XCTestCase {
         rig.target = "内容"
         rig.pump.start()
         XCTAssertTrue(rig.pump.isRunning)
-        // start() steps once so the first character keeps its arrival latency.
-        XCTAssertEqual(rig.published, ["内"])
+        // start() steps once so the first batch keeps its arrival latency.
+        XCTAssertEqual(rig.published, ["内容"])
         rig.pump.stopAndReset()
         XCTAssertFalse(rig.pump.isRunning)
         rig.pump.stepOnce()
         // The prefix was forgotten: publication restarts from scratch.
-        XCTAssertEqual(rig.published.last, "内")
+        XCTAssertEqual(rig.published.last, "内容")
         XCTAssertEqual(rig.published.count, 2)
     }
 
