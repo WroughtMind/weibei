@@ -9,6 +9,7 @@ import {
   normalizeMarkdownOutput,
   protectCurrencyDollars,
   splitFrontmatter,
+  withholdIncompleteStreamingMarkdownTail,
 } from '../src/markdownRules';
 
 test('document boundary rules preserve frontmatter and extended Markdown on round-trip', () => {
@@ -94,6 +95,20 @@ test('normalization preserves valid and incomplete formula source for lossless e
   assert.equal(normalizeMarkdownSource('$\\frac{a}{b}$', 'userDocument'), '$\\frac{a}{b}$');
   assert.equal(normalizeMarkdownSource('$\\frac{a}{$', 'userDocument'), '$\\frac{a}{$');
   assert.equal(normalizeMarkdownSource('$\\unknown{x}$', 'agentGenerated'), '$\\unknown{x}$');
+});
+
+test('chat streaming withholds only unfinished trailing emphasis syntax', () => {
+  assert.equal(withholdIncompleteStreamingMarkdownTail('前文 *'), '前文 ');
+  assert.equal(withholdIncompleteStreamingMarkdownTail('前文 **粗'), '前文 ');
+  assert.equal(withholdIncompleteStreamingMarkdownTail('前文 **粗体**'), '前文 **粗体**');
+  assert.equal(withholdIncompleteStreamingMarkdownTail('前文 ~~删除'), '前文 ');
+  assert.equal(withholdIncompleteStreamingMarkdownTail('链接 [材料：讲义] 与 $5'), '链接 [材料：讲义] 与 $5');
+  assert.equal(withholdIncompleteStreamingMarkdownTail('代码 `const value = "**"`'), '代码 `const value = "**"`');
+  assert.equal(withholdIncompleteStreamingMarkdownTail('转义 \\** 不隐藏'), '转义 \\** 不隐藏');
+  assert.equal(
+    withholdIncompleteStreamingMarkdownTail(`\`\`\`md\n**源码`),
+    `\`\`\`md\n**源码`,
+  );
 });
 
 test('paste probe flags Markdown clipboard text and leaves plain prose alone', () => {

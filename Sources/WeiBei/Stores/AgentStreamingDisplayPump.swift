@@ -14,10 +14,12 @@ final class AgentStreamingDisplayPump {
     /// Lag (in characters) that adds one extra character per tick of pace, so
     /// the rate ramps continuously with backlog instead of jumping between
     /// integer step sizes.
-    static let rampLagCharacters: Double = 10.0
+    static let rampLagCharacters: Double = 8.0
     /// Hard ceiling on characters per tick so huge backlogs drain as a fast
-    /// but readable rush instead of an instant dump.
-    static let maximumCharsPerTick = 12
+    /// but readable rush instead of an instant dump. Raised with the reveal
+    /// cadence rework: 24/tick ≈ 730 chars/s keeps up with bursty native
+    /// streaming without reading as an instant dump.
+    static let maximumCharsPerTick = 24
 
     struct Hooks {
         let targetText: @MainActor () -> String
