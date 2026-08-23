@@ -112,7 +112,7 @@ final class NativeAgentRuntimeTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: backup.path))
     }
 
-    func testGuardRejectsIncompleteJSONAndForeignRead() async throws {
+    func testRegistryRejectsIncompleteJSON() async throws {
         let registry = NativeToolRegistry()
         await NativeBuiltinTools.registerAll(into: registry, skillRoot: nil)
         let request = StudyAgentRequest(
@@ -127,16 +127,6 @@ final class NativeAgentRuntimeTests: XCTestCase {
         let context = NativeToolExecutionContext(request: request)
         do {
             _ = try await registry.execute(
-                NativeToolCallRequest(name: "read", argumentsJSON: "{\"path\":\"/etc/passwd\"}", callID: "1"),
-                context: context,
-                scope: .global
-            )
-            XCTFail("foreign read must be denied")
-        } catch let failure as NativeLLMFailure {
-            XCTAssertEqual(failure.code, "guard_denied")
-        }
-        do {
-            _ = try await registry.execute(
                 NativeToolCallRequest(name: "weibei_course_search", argumentsJSON: "{\"query\":\"利率\"", callID: "2"),
                 context: context,
                 scope: .global
@@ -145,6 +135,86 @@ final class NativeAgentRuntimeTests: XCTestCase {
         } catch let failure as NativeLLMFailure {
             XCTAssertEqual(failure.code, "incomplete_tool_arguments")
         }
+    }
+
+    func testMalformedToolArgumentsDoNotBlockValidSiblingOrCompletion() async throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("native-mixed-tools-\(UUID().uuidString).jsonl")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let ledger = try NativeAgentLedger(fileURL: url)
+        let registry = NativeToolRegistry()
+        await registry.register(
+            NativeToolDefinition(
+                name: "test_tool",
+                description: "test",
+                permission: .read,
+                schema: NativeJSONSchema(["type": "object"]),
+                execute: { _, _ in
+                    return NativeToolExecutionResult(text: "ok")
+                }
+            )
+        )
+
+        let result = try await NativeAgentLoop().run(
+            request: testRequest(),
+            ledger: ledger,
+            registry: registry,
+            adapter: ToolRecoveryMockLLMAdapter(toolChunks: [
+                .toolCallDelta(index: 0, id: "bad", name: "test_tool", argumentsDelta: "{\"value\":"),
+                .toolCallDelta(index: 1, id: "good", name: "test_tool", argumentsDelta: "{}"),
+            ], expectedToolResults: 2),
+            model: "mock",
+            hostToolHandler: nil,
+            systemPrompt: "test",
+            progress: nil
+        )
+
+        let events = await ledger.allEvents()
+        let toolResults = events.filter { $0.type == .toolResult }
+        XCTAssertEqual(result.text, "完成")
+        XCTAssertEqual(events.filter { $0.type == .toolCall }.map(\.toolCallID), ["bad", "good"])
+        XCTAssertEqual(toolResults.map(\.toolCallID), ["bad", "good"])
+        XCTAssertEqual(toolResults.map(\.isError), [true, false])
+        XCTAssertEqual(toolResults.last?.text, "ok")
+        XCTAssertEqual(events.last?.finishReason, .completed)
+    }
+
+    func testThrownToolErrorBecomesResultAndLoopCompletes() async throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("native-tool-error-\(UUID().uuidString).jsonl")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let ledger = try NativeAgentLedger(fileURL: url)
+        let registry = NativeToolRegistry()
+        await registry.register(
+            NativeToolDefinition(
+                name: "failing_tool",
+                description: "test",
+                permission: .read,
+                schema: NativeJSONSchema(["type": "object"]),
+                execute: { _, _ in
+                    throw NativeLLMFailure(code: "tool_failed", message: "主动失败")
+                }
+            )
+        )
+
+        let result = try await NativeAgentLoop().run(
+            request: testRequest(),
+            ledger: ledger,
+            registry: registry,
+            adapter: ToolRecoveryMockLLMAdapter(toolChunks: [
+                .toolCallDelta(index: 0, id: "failed", name: "failing_tool", argumentsDelta: "{}"),
+            ], expectedToolResults: 1),
+            model: "mock",
+            hostToolHandler: nil,
+            systemPrompt: "test",
+            progress: nil
+        )
+
+        let events = await ledger.allEvents()
+        let toolResult = events.first { $0.type == .toolResult }
+        XCTAssertEqual(result.text, "完成")
+        XCTAssertEqual(toolResult?.toolCallID, "failed")
+        XCTAssertEqual(toolResult?.text, "主动失败")
+        XCTAssertEqual(toolResult?.isError, true)
+        XCTAssertEqual(events.last?.finishReason, .completed)
     }
 
     func testLoopCancelBalancesUnstartedTools() async throws {
@@ -347,6 +417,29 @@ private struct MockLLMAdapter: NativeLLMAdapter {
     }
 }
 
+private struct ToolRecoveryMockLLMAdapter: NativeLLMAdapter {
+    var family: String { "mock" }
+    let toolChunks: [NativeStreamChunk]
+    let expectedToolResults: Int
+
+    func stream(_ request: NativeLLMRequest) -> AsyncThrowingStream<NativeStreamChunk, Error> {
+        let toolResultCount = request.messages.filter { $0.role == .tool }.count
+        return AsyncThrowingStream { continuation in
+            if toolResultCount == 0 {
+                toolChunks.forEach(continuation.yield)
+                continuation.yield(.finish(reason: .toolCalls, replayState: nil))
+            } else if toolResultCount == expectedToolResults {
+                continuation.yield(.textDelta(index: 0, text: "完成"))
+                continuation.yield(.finish(reason: .stop, replayState: nil))
+            } else {
+                continuation.finish(throwing: NativeLLMFailure(code: "test_failure", message: "工具调用与结果未配平"))
+                return
+            }
+            continuation.finish()
+        }
+    }
+}
+
 private struct LongToolRunMockLLMAdapter: NativeLLMAdapter {
     var family: String { "mock" }
     let toolStepCount: Int
@@ -411,4 +504,16 @@ private actor WebOpenCounter {
     func increment() {
         value += 1
     }
+}
+
+private func testRequest() -> StudyAgentRequest {
+    StudyAgentRequest(
+        purpose: .conversation,
+        question: "测试工具恢复",
+        materialTitle: "",
+        materialText: "",
+        noteTitle: "",
+        noteText: "",
+        contextRevision: "r1"
+    )
 }

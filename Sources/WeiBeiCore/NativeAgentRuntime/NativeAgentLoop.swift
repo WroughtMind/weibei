@@ -145,12 +145,8 @@ public actor NativeAgentLoop {
                     }
                 }
 
-                let calls: [NativeToolCall]
-                do {
-                    calls = (finish == .toolCalls || finish == .stop) ? (try assembler.completedCalls()) : []
-                } catch {
-                    throw error
-                }
+                let callResults = (finish == .toolCalls || finish == .stop) ? assembler.callResults() : []
+                let calls = callResults.map { $0.call }
                 if calls.isEmpty {
                     _ = try await ledger.append { seq, time in
                         NativeSessionEvent(type: .stepEnd, seq: seq, timeMS: time, turn: turn, step: step)
@@ -180,18 +176,23 @@ public actor NativeAgentLoop {
                         )
                     }
                 }
-                for call in calls {
+                for callResult in callResults {
+                    let call = callResult.call
                     try checkCancelled()
                     pendingUnstarted.removeAll { $0.id == call.id }
                     let result: NativeToolExecutionResult
-                    do {
-                        result = try await registry.execute(
-                            NativeToolCallRequest(name: call.name, argumentsJSON: call.arguments, callID: call.id),
-                            context: context,
-                            scope: scope
-                        )
-                    } catch {
-                        result = NativeToolExecutionResult(text: error.localizedDescription, isError: true)
+                    if let failure = callResult.failure {
+                        result = NativeToolExecutionResult(text: failure.localizedDescription, isError: true)
+                    } else {
+                        do {
+                            result = try await registry.execute(
+                                NativeToolCallRequest(name: call.name, argumentsJSON: call.arguments, callID: call.id),
+                                context: context,
+                                scope: scope
+                            )
+                        } catch {
+                            result = NativeToolExecutionResult(text: error.localizedDescription, isError: true)
+                        }
                     }
                     applySideEffects(
                         name: call.name,
