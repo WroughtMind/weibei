@@ -594,6 +594,7 @@ final class WorkspaceStore: ObservableObject {
         }
     }
     @Published var noteEditorCommand: NoteEditorCommand?
+    @Published private var rejectedNoteEditorCommands: [RejectedNoteEditorCommand] = []
     /// Success / info banner for note create/switch — separate from errors so it auto-dismisses cleanly.
     @Published var transientNoteStatus: String?
     @Published private var noteSelectionTransitionState = NoteSelectionTransitionState.idle
@@ -803,6 +804,11 @@ final class WorkspaceStore: ObservableObject {
 
     private struct PendingNoteSelection {
         let apply: () -> Void
+    }
+
+    private struct RejectedNoteEditorCommand {
+        let documentID: String
+        let command: NoteEditorCommand
     }
 
     private enum NotebookNoteSeed {
@@ -10304,6 +10310,39 @@ final class WorkspaceStore: ObservableObject {
                 "The current note changed while saving, so WeiBei did not switch. Please retry."
             )
         }
+    }
+
+    var noteEditorCommandFailureMessage: String? {
+        guard let rejected = rejectedNoteEditorCommands.first else { return nil }
+        if rejected.documentID != activeNoteEditorDocumentID {
+            return ui(
+                "未应用的内容已保留。返回原笔记后可重试。",
+                "The unapplied content is preserved. Return to its original note to retry."
+            )
+        }
+        return ui(
+            "编辑器未完成这次操作；涉及的内容已保留。请重试。",
+            "The editor did not complete this operation. Its content is preserved; please retry."
+        )
+    }
+
+    var canRetryRejectedNoteEditorCommand: Bool {
+        rejectedNoteEditorCommands.first?.documentID == activeNoteEditorDocumentID
+            && noteEditorCommand == nil
+    }
+
+    func noteEditorCommandRejected(_ command: NoteEditorCommand) {
+        guard !rejectedNoteEditorCommands.contains(where: { $0.command.id == command.id }) else { return }
+        rejectedNoteEditorCommands.append(RejectedNoteEditorCommand(
+            documentID: activeNoteEditorDocumentID,
+            command: command
+        ))
+    }
+
+    func retryRejectedNoteEditorCommand() {
+        guard noteEditorCommand == nil,
+              rejectedNoteEditorCommands.first?.documentID == activeNoteEditorDocumentID else { return }
+        noteEditorCommand = rejectedNoteEditorCommands.removeFirst().command
     }
 
     var canRetryPendingNoteSelection: Bool {

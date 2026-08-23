@@ -35,6 +35,123 @@ final class RichMarkdownEditorBridgeTests: XCTestCase {
     }
 
     @MainActor
+    func testContentCommandsBeyondOldLimitAwaitAcknowledgementAndRejectedContentRetries() async throws {
+        var command: NoteEditorCommand? = nil
+        var rejectedCommand: NoteEditorCommand? = nil
+        let rejected = expectation(description: "rejected content remained recoverable")
+        let editor = RichMarkdownEditorView(
+            documentID: "note-a",
+            markdown: "",
+            command: Binding(get: { command }, set: { command = $0 }),
+            editingSession: NoteEditingSession(documentID: "note-a"),
+            onSelectionChange: { _, _ in },
+            onAskAgentWithSelection: { _, _ in },
+            onCommandRejected: { failed in
+                rejectedCommand = failed
+                rejected.fulfill()
+            }
+        )
+        let coordinator = editor.makeCoordinator()
+        let allApplied = expectation(description: "all content commands applied")
+        let retried = expectation(description: "rejected content applied after retry")
+        let completionProbe = EditorCommandQueueProbe { name in
+            if name == "allApplied" {
+                allApplied.fulfill()
+            } else if name == "retried" {
+                retried.fulfill()
+            }
+        }
+        let controller = WKUserContentController()
+        controller.add(coordinator, name: "commandApplied")
+        controller.add(coordinator, name: "commandRejected")
+        controller.add(completionProbe, name: "queueProbe")
+        let configuration = WKWebViewConfiguration()
+        configuration.userContentController = controller
+        let loaded = expectation(description: "command bridge loaded")
+        let navigationProbe = FinalizedMarkdownNavigationProbe { loaded.fulfill() }
+        let webView = WKWebView(frame: .zero, configuration: configuration)
+        webView.navigationDelegate = navigationProbe
+        webView.loadHTMLString("""
+        <!doctype html>
+        <body></body>
+        <script>
+          const appliedIDs = new Set();
+          const appliedMarkdown = [];
+          let rejectedMarkdown = "保留我";
+          const reply = (name, command, reason) => {
+            window.webkit.messageHandlers[name].postMessage({
+              protocolVersion: 2,
+              commandID: command.commandID,
+              documentID: "note-a",
+              documentGeneration: 1,
+              revision: 0,
+              ...(reason ? { reason } : {})
+            });
+          };
+          window.WeiBeiEditor = {
+            dispatchCommand(command) {
+              const markdown = command.payload.markdown;
+              if (markdown === rejectedMarkdown) {
+                reply("commandRejected", command, "fixture rejection");
+                return false;
+              }
+              if (!appliedIDs.has(command.commandID)) {
+                appliedIDs.add(command.commandID);
+                appliedMarkdown.push(markdown);
+              }
+              reply("commandApplied", command);
+              if (appliedMarkdown.length === 18) {
+                window.webkit.messageHandlers.queueProbe.postMessage("allApplied");
+              } else if (markdown === "保留我") {
+                window.webkit.messageHandlers.queueProbe.postMessage("retried");
+              }
+              return true;
+            },
+            allowRejectedContent() { rejectedMarkdown = null; },
+            appliedMarkdown() { return appliedMarkdown; }
+          };
+        </script>
+        """, baseURL: nil)
+        await fulfillment(of: [loaded], timeout: 3)
+
+        coordinator.webView = webView
+        for index in 0..<18 {
+            command = NoteEditorCommand(kind: .insertMarkdown, markdown: "内容\(index)")
+            coordinator.runPendingCommandIfReady()
+        }
+        coordinator.isReady = true
+        coordinator.runPendingCommandIfReady()
+        await fulfillment(of: [allApplied], timeout: 3)
+        let appliedValue = try await webView.evaluateJavaScript(
+            "window.WeiBeiEditor.appliedMarkdown()"
+        )
+        let applied = try XCTUnwrap(appliedValue as? [String])
+        XCTAssertEqual(applied, (0..<18).map { "内容\($0)" })
+
+        command = NoteEditorCommand(kind: .replaceSelection, markdown: "保留我")
+        coordinator.runPendingCommandIfReady()
+        await fulfillment(of: [rejected], timeout: 3)
+        let recoverable = try XCTUnwrap(rejectedCommand)
+        XCTAssertEqual(recoverable.markdown, "保留我")
+
+        _ = try await webView.evaluateJavaScript("""
+        (() => {
+          window.WeiBeiEditor.allowRejectedContent();
+          return true;
+        })()
+        """)
+        command = recoverable
+        coordinator.runPendingCommandIfReady()
+        await fulfillment(of: [retried], timeout: 3)
+        let afterRetryValue = try await webView.evaluateJavaScript(
+            "window.WeiBeiEditor.appliedMarkdown()"
+        )
+        let afterRetry = try XCTUnwrap(afterRetryValue as? [String])
+        XCTAssertEqual(afterRetry.filter { $0 == "保留我" }.count, 1)
+        withExtendedLifetime((navigationProbe, completionProbe)) {}
+    }
+
+    @MainActor
     func testExecutedCommandDoesNotClearNewerCommand() async {
         var command: NoteEditorCommand? = NoteEditorCommand(kind: .selectionCommand, markdown: "bold")
         let editor = RichMarkdownEditorView(
@@ -204,6 +321,23 @@ final class RichMarkdownEditorBridgeTests: XCTestCase {
         XCTAssertFalse(staleDocumentBecameReady)
         configuration.userContentController.removeScriptMessageHandler(forName: "finalizedStreaming")
         withExtendedLifetime(navigationProbe) {}
+    }
+}
+
+private final class EditorCommandQueueProbe: NSObject, WKScriptMessageHandler {
+    private let receive: (String) -> Void
+
+    init(receive: @escaping (String) -> Void) {
+        self.receive = receive
+    }
+
+    func userContentController(
+        _ userContentController: WKUserContentController,
+        didReceive message: WKScriptMessage
+    ) {
+        if let name = message.body as? String {
+            receive(name)
+        }
     }
 }
 

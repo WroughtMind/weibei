@@ -87,6 +87,7 @@ struct ContentView: View {
                 // user is; the old notes-pane-local copy is gone.
                 if store.importantOperationError != nil
                     || store.workspaceSaveError != nil
+                    || store.noteEditorCommandFailureMessage != nil
                     || store.noteSelectionStatusMessage != nil
                     || store.transientNoteStatus != nil {
                     WorkspaceStatusBanner()
@@ -107,6 +108,7 @@ struct ContentView: View {
             }
             .animation(WeiBeiMotion.panel, value: store.importantOperationError)
             .animation(WeiBeiMotion.panel, value: store.workspaceSaveError)
+            .animation(WeiBeiMotion.panel, value: store.noteEditorCommandFailureMessage)
             .animation(WeiBeiMotion.panel, value: store.noteSelectionStatusMessage)
             .animation(WeiBeiMotion.panel, value: store.transientNoteStatus)
             .background {
@@ -391,16 +393,22 @@ private struct WorkspaceStatusBanner: View {
     }
 
     private var isNoteSelectionFailure: Bool {
-        !isImportant && !isSaveFailure && store.canRetryPendingNoteSelection
+        !isImportant && !isSaveFailure && !isEditorCommandFailure
+            && store.canRetryPendingNoteSelection
+    }
+
+    private var isEditorCommandFailure: Bool {
+        !isImportant && !isSaveFailure && store.noteEditorCommandFailureMessage != nil
     }
 
     private var isAlert: Bool {
-        isImportant || isSaveFailure || isNoteSelectionFailure
+        isImportant || isSaveFailure || isEditorCommandFailure || isNoteSelectionFailure
     }
 
     private var message: String {
         store.importantOperationError
             ?? store.workspaceSaveError
+            ?? store.noteEditorCommandFailureMessage
             ?? store.noteSelectionStatusMessage
             ?? store.transientNoteStatus
             ?? ""
@@ -428,6 +436,17 @@ private struct WorkspaceStatusBanner: View {
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel(Text(store.ui("重试保存", "Retry save")))
+            } else if isEditorCommandFailure && store.canRetryRejectedNoteEditorCommand {
+                Button {
+                    store.retryRejectedNoteEditorCommand()
+                } label: {
+                    Text(store.ui("重试", "Retry"))
+                        .weiBeiText(12, weight: .semibold)
+                        .foregroundStyle(WeiBeiTheme.cinnabar)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(Text(store.ui("重试应用编辑内容", "Retry applying editor content")))
             } else if isNoteSelectionFailure {
                 Button {
                     store.retryPendingNoteSelection()
