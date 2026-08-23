@@ -179,7 +179,10 @@ extension WorkspaceStore {
     ) -> String {
         if let runtimeError = error as? PiAgentRuntimeError,
            case .resourcesMissing = runtimeError {
-            return PiAgentRuntimeError.agentComponentsIncompleteMessage
+            return language.text(
+                PiAgentRuntimeError.agentComponentsIncompleteMessage,
+                "Agent components are incomplete, so the Agent cannot start. Repair or reinstall WeiBei."
+            )
         }
         return kind.userMessage(
             language: language,

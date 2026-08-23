@@ -1213,7 +1213,7 @@ public struct StudyAgentContextEnvelope: Codable, Equatable, Sendable {
                 LearningMemoryEntry(
                     id: memory.id,
                     kind: memory.kind,
-                    text: String(memory.text.prefix(500)),
+                    text: memory.text,
                     evidence: String(memory.evidence.prefix(400)),
                     origin: memory.origin,
                     status: memory.status,

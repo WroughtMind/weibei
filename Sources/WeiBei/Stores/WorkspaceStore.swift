@@ -15239,7 +15239,7 @@ final class WorkspaceStore: ObservableObject {
                     proposal,
                     memoryID,
                     scope,
-                    String(text.prefix(500)),
+                    text,
                     String(evidence.prefix(400)),
                     proposal.origin == .observed ? .agentInference : proposal.origin
                 )
@@ -15674,7 +15674,6 @@ final class WorkspaceStore: ObservableObject {
             activeCourseRemovalTokens[$0] == nil
         }) ?? true,
         !text.isEmpty,
-              text.count <= 500,
               let stateIndex = learningMemoryStateIndex(for: scope, createIfMissing: false),
               let entryIndex = learningMemoryStates[stateIndex].entries.firstIndex(where: {
                   $0.id == memoryID
