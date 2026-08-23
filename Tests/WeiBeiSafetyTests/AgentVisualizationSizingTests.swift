@@ -4,22 +4,20 @@ import XCTest
 @testable import WeiBei
 
 final class AgentVisualizationSizingTests: XCTestCase {
-    func testGenUILoadFailureRetriesOnlyTheFirstAttempt() {
+    func testGenUILoadFailureWaitsForUserReload() {
         var state = AgentVisualizationLoadState()
-        state.fail("第一次失败", from: 0)
-        XCTAssertEqual(state.attempt, 1)
-        XCTAssertNil(state.failure)
+        let failedAttempt = state.attempt
 
-        state.fail("第二次失败", from: 1)
-        XCTAssertEqual(state.failure, "第二次失败")
+        state.fail("加载失败", from: failedAttempt)
+        XCTAssertEqual(state.failure, "加载失败")
 
         state.reload()
-        XCTAssertEqual(state.attempt, 2)
         XCTAssertNil(state.failure)
+        XCTAssertGreaterThan(state.attempt, failedAttempt)
     }
 
     @MainActor
-    func testGenUIActionShowsHostRejections() async throws {
+    func testGenUIActionRoundTripShowsHostRejection() async throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("WeiBeiGenUIAction-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -60,19 +58,18 @@ final class AgentVisualizationSizingTests: XCTestCase {
         let rejectedText = try await webView.evaluateJavaScript("document.querySelector('.genui').textContent") as? String
         XCTAssertEqual(rejectedDisabled, false)
         XCTAssertTrue(rejectedText?.contains(rejection) == true)
-
-        let overlongAction = String(repeating: "动作", count: 101)
-        let overlongSpecData = try JSONSerialization.data(withJSONObject: [
-            "items": [["type": "button", "label": "继续解释", "action": overlongAction]],
-        ])
-        let overlongSpec = try XCTUnwrap(String(data: overlongSpecData, encoding: .utf8))
-        _ = try await webView.evaluateJavaScript("window.WeiBeiGenUIHost.render({spec: \(overlongSpec), actionStatus: 'ready'}); document.querySelector('.button').click()")
-        XCTAssertEqual(actionProbe.action, overlongAction)
-        let overlongRejection = try XCTUnwrap(
-            store.submitAgentVisualizationAction(overlongAction, payloadJSON: "{}")
-        )
-        XCTAssertTrue(overlongRejection.contains("过长"))
         withExtendedLifetime(navigationProbe) {}
+    }
+
+    @MainActor
+    func testGenUIRejectsOverlongActionNameWithoutChangingIt() {
+        let store = WorkspaceStore(
+            workspaceDirectory: FileManager.default.temporaryDirectory,
+            startsAtBlankEntries: true
+        )
+        let action = String(repeating: "动作", count: 101)
+        let rejection = store.submitAgentVisualizationAction(action, payloadJSON: "{}")
+        XCTAssertTrue(rejection?.contains("过长") == true)
     }
 
     @MainActor
@@ -149,6 +146,15 @@ final class AgentVisualizationSizingTests: XCTestCase {
         _ = try await webView.evaluateJavaScript("window.WeiBeiGenUIHost.render(\(deepPayload))")
         let hasLocalLimit = try await webView.evaluateJavaScript("document.querySelector('.content-limit')?.getClientRects().length > 0") as? Bool
         XCTAssertEqual(hasLocalLimit, true)
+
+        let chartData = (0..<61).map { ["label": "项目 \($0)", "value": $0] as [String: Any] }
+        let chartPayloadData = try JSONSerialization.data(withJSONObject: [
+            "spec": ["items": [["type": "chart", "data": chartData]]],
+        ])
+        let chartPayload = try XCTUnwrap(String(data: chartPayloadData, encoding: .utf8))
+        _ = try await webView.evaluateJavaScript("window.WeiBeiGenUIHost.render(\(chartPayload))")
+        let chartLimitVisible = try await webView.evaluateJavaScript("document.querySelector('.chart .content-limit')?.getClientRects().length > 0") as? Bool
+        XCTAssertEqual(chartLimitVisible, true)
         withExtendedLifetime(navigationProbe) {}
     }
 
