@@ -131,6 +131,17 @@ final class AgentVisualizationSizingTests: XCTestCase {
         let revealedComponents = try await webView.evaluateJavaScript("document.querySelectorAll('.divider').length") as? Int
         XCTAssertEqual(revealedComponents, components.count)
 
+        let limitedComponents = Array(repeating: ["type": "divider"], count: 300)
+        let limitedData = try JSONSerialization.data(withJSONObject: ["spec": ["items": limitedComponents]])
+        let limitedPayload = try XCTUnwrap(String(data: limitedData, encoding: .utf8))
+        _ = try await webView.evaluateJavaScript("window.WeiBeiGenUIHost.render(\(limitedPayload)); while (!document.querySelector('.data-progress button').hidden) document.querySelector('.data-progress button').click()")
+        let limitedProgress = try await webView.evaluateJavaScript("document.querySelector('.data-progress').textContent") as? String
+        let limitedCount = try await webView.evaluateJavaScript("document.querySelectorAll('.divider').length") as? Int
+        let hasNodeLimit = try await webView.evaluateJavaScript("document.querySelector('.content-limit')?.getClientRects().length > 0") as? Bool
+        XCTAssertLessThan(limitedCount ?? limitedComponents.count, limitedComponents.count)
+        XCTAssertFalse(limitedProgress?.contains("\(limitedComponents.count)/\(limitedComponents.count)") == true)
+        XCTAssertEqual(hasNodeLimit, true)
+
         var deepComponent: [String: Any] = ["type": "text", "content": "末端"]
         for _ in 0..<10 { deepComponent = ["type": "card", "items": [deepComponent]] }
         let deepData = try JSONSerialization.data(withJSONObject: ["spec": ["items": [deepComponent]]])
