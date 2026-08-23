@@ -94,9 +94,9 @@ enum NativeEvalCLI {
             model: model,
             endpoint: endpoint
         )
-        let skillRoot = try? PiAgentResources.bundled().skillsURL
+        let resources = try PiAgentResources.bundled()
         let liveStores = NativeLiveStores(
-            skillRegistry: skillRoot.flatMap { try? NativeSkillRegistry.load(from: $0) } ?? NativeSkillRegistry()
+            skillRegistry: try NativeSkillRegistry.load(from: resources.skillsURL)
         )
         var ran = 0
         for item in items {
@@ -113,7 +113,7 @@ enum NativeEvalCLI {
                 model: model,
                 adapter: adapter,
                 ledgerRoot: root,
-                systemPromptText: (try? PiAgentResources.bundled().systemPrompt) ?? "you are webi",
+                systemPromptText: resources.systemPrompt,
                 hostToolHandler: { request in
                     let item = StudyAgentCourseItem(
                         id: "material-rates",

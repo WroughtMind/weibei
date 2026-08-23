@@ -108,8 +108,7 @@ extension WorkspaceStore {
             model: model,
             endpoint: endpoint
         )
-        let systemPrompt = (try? PiAgentResources.bundled().systemPrompt) ?? "you are webi"
-        let skillRoot = try? PiAgentResources.bundled().skillsURL
+        let resources = try PiAgentResources.bundled()
         let liveStores = NativeLiveStores(
             learning: { [weak self] in
                 await MainActor.run {
@@ -148,13 +147,13 @@ extension WorkspaceStore {
                 }
             },
             documentsRoot: workspaceDirectory.appendingPathComponent("NativeAgent/Documents", isDirectory: true),
-            skillRegistry: skillRoot.flatMap { try? NativeSkillRegistry.load(from: $0) } ?? NativeSkillRegistry()
+            skillRegistry: try NativeSkillRegistry.load(from: resources.skillsURL)
         )
         let runtime = NativeStudyAgentRuntime(
             model: model,
             adapter: adapter,
             ledgerRoot: workspaceDirectory.appendingPathComponent("NativeAgent/Ledgers", isDirectory: true),
-            systemPromptText: systemPrompt,
+            systemPromptText: resources.systemPrompt,
             hostToolHandler: hostToolHandler,
             liveStores: liveStores
         )
