@@ -175,6 +175,47 @@ final class NativeAgentRuntimeTests: XCTestCase {
         XCTAssertEqual(events.last?.finishReason, .completed)
     }
 
+    func testOversizedToolArgumentsStayLocalToToolAndTurnCompletes() async throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("native-oversized-tool-\(UUID().uuidString).jsonl")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let ledger = try NativeAgentLedger(fileURL: url)
+        let registry = NativeToolRegistry()
+        await NativeBuiltinTools.registerAll(into: registry, skillRoot: nil)
+        let oversizedQuery = String(repeating: "x", count: 16 * 1_024 + 1)
+        let adapter = LongToolRunMockLLMAdapter(
+            toolStepCount: 1,
+            argumentsJSON: "{\"query\":\"\(oversizedQuery)\"}"
+        )
+
+        let result = try await NativeAgentLoop().run(
+            request: StudyAgentRequest(
+                purpose: .conversation,
+                question: "继续",
+                materialTitle: "",
+                materialText: "",
+                noteTitle: "",
+                noteText: "",
+                contextRevision: "r1"
+            ),
+            ledger: ledger,
+            registry: registry,
+            adapter: adapter,
+            model: "mock",
+            hostToolHandler: nil,
+            systemPrompt: "test",
+            progress: nil
+        )
+
+        let events = await ledger.allEvents()
+        let toolCall = events.first { $0.type == .toolCall }
+        let toolResult = events.first { $0.type == .toolResult }
+        XCTAssertGreaterThan(toolCall?.argumentsJSON?.utf8.count ?? 0, 16 * 1_024)
+        XCTAssertEqual(events.filter { $0.type == .toolResult }.count, 1)
+        XCTAssertEqual(toolResult?.isError, true)
+        XCTAssertEqual(result.text, "完成")
+        XCTAssertEqual(events.last?.finishReason, .completed)
+    }
+
     func testChatCompletionsTranslation() throws {
         var index = 0
         let chunks = try OpenAIChatCompletionsProvider.translate(
@@ -269,6 +310,12 @@ private struct MockLLMAdapter: NativeLLMAdapter {
 private struct LongToolRunMockLLMAdapter: NativeLLMAdapter {
     var family: String { "mock" }
     let toolStepCount: Int
+    let argumentsJSON: String
+
+    init(toolStepCount: Int, argumentsJSON: String = "{\"query\":\"利率\"}") {
+        self.toolStepCount = toolStepCount
+        self.argumentsJSON = argumentsJSON
+    }
 
     func stream(_ request: NativeLLMRequest) -> AsyncThrowingStream<NativeStreamChunk, Error> {
         let completedToolSteps = request.messages.filter { $0.role == .tool }.count
@@ -278,7 +325,7 @@ private struct LongToolRunMockLLMAdapter: NativeLLMAdapter {
                     index: 0,
                     id: "t\(completedToolSteps + 1)",
                     name: "weibei_course_search",
-                    argumentsDelta: "{\"query\":\"利率\"}"
+                    argumentsDelta: argumentsJSON
                 ),
                 .finish(reason: .toolCalls, replayState: nil),
             ]
