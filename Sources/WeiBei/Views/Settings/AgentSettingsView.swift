@@ -277,7 +277,10 @@ extension SettingsView {
                     settingsNote(progress, icon: "arrow.triangle.2.circlepath")
                 }
                 if let error = oauthService.lastError {
-                    settingsNote(error, icon: "exclamationmark.triangle")
+                    settingsNote(
+                        store.ui(error.chinese, error.english),
+                        icon: "exclamationmark.triangle"
+                    )
                 }
             }
             .animation(WeiBeiMotion.reveal, value: oauthService.isLoggingIn)
@@ -335,7 +338,10 @@ extension SettingsView {
                     settingsNote(progress, icon: "arrow.triangle.2.circlepath")
                 }
                 if let error = oauthService.lastError {
-                    settingsNote(error, icon: "exclamationmark.triangle")
+                    settingsNote(
+                        store.ui(error.chinese, error.english),
+                        icon: "exclamationmark.triangle"
+                    )
                 }
             }
             .animation(WeiBeiMotion.reveal, value: oauthService.isLoggingIn)
