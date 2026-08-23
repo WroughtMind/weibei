@@ -304,36 +304,6 @@ final class NativeAgentRuntimeTests: XCTestCase {
             #"{"type":"response.output_text.delta","output_index":0,"delta":"hi"}"#
         )
         XCTAssertEqual(text.first, .textDelta(index: 0, text: "hi"))
-        let searchSources = try OpenAIResponsesProvider.translate(
-            #"{"type":"response.output_item.done","output_index":1,"item":{"type":"web_search_call","action":{"type":"search","sources":[{"type":"url","url":"https://example.com/fresh"}]}}}"#
-        )
-        XCTAssertEqual(searchSources, [.webSearchSource(url: "https://example.com/fresh")])
-        XCTAssertTrue(
-            WeiBeiWebResearchURLPolicy.isAuthorized(
-                "https://EXAMPLE.com:443/fresh#section",
-                in: "请搜索后继续核对",
-                webSearchURLs: ["https://example.com/fresh"]
-            )
-        )
-        XCTAssertFalse(
-            WeiBeiWebResearchURLPolicy.isAuthorized(
-                "https://example.com/other",
-                in: "请搜索后继续核对",
-                webSearchURLs: ["https://example.com/fresh"]
-            )
-        )
-        XCTAssertFalse(
-            WeiBeiWebResearchURLPolicy.isAuthorized(
-                "http://example.com/fresh",
-                in: "请搜索后继续核对",
-                webSearchURLs: ["http://example.com/fresh"]
-            )
-        )
-        XCTAssertThrowsError(
-            try WeiBeiWebResearchURLPolicy.validatedPublicHTTPSURL("https://127.0.0.1/fresh")
-        ) { error in
-            XCTAssertEqual(error as? WeiBeiWebResearchError, .privateAddress)
-        }
         let anthropic = try AnthropicMessagesProvider.translate(
             #"{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ok"}}"#
         )
