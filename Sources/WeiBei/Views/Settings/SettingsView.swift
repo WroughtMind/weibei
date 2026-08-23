@@ -37,6 +37,7 @@ struct SettingsView: View {
     @State private var feedbackBody = ""
     @State private var feedbackBusy = false
     @State private var feedbackStatus: String?
+    @State private var showsFullUpdateNotes = false
     // 资料库位置迁移（计划 §4.1）。
     @State private var pendingMigrationDestination: URL?
     @State private var migrationErrorText: String?
@@ -709,7 +710,18 @@ struct SettingsView: View {
                         detail: userFacingUpdateDetail(availableUpdate),
                         showsBottomDivider: false
                     ) {
-                        EmptyView()
+                        if availableUpdate.releaseNotesLines.count > availableUpdate.summaryLines.count {
+                            Button {
+                                withAnimation(WeiBeiMotion.panel) {
+                                    showsFullUpdateNotes.toggle()
+                                }
+                            } label: {
+                                Text(showsFullUpdateNotes
+                                     ? store.ui("收起", "Collapse")
+                                     : store.ui("展开全文", "Show All"))
+                            }
+                            .buttonStyle(WeiBeiTextActionButtonStyle(active: true))
+                        }
                     }
                 }
             }
@@ -1018,9 +1030,10 @@ struct SettingsView: View {
     }
 
     private func userFacingUpdateDetail(_ update: WeiBeiAvailableUpdate) -> String {
-        update.summaryLines.isEmpty
+        let lines = showsFullUpdateNotes ? update.releaseNotesLines : update.summaryLines
+        return lines.isEmpty
             ? store.ui("包含最新改进和修复。", "Includes the latest improvements and fixes.")
-            : update.summaryLines.joined(separator: "\n")
+            : lines.joined(separator: "\n")
     }
 
     private func settingsSidebarButton(_ section: SettingsSection) -> some View {

@@ -4,15 +4,23 @@ import Sparkle
 
 struct WeiBeiAvailableUpdate: Equatable {
     let version: String
-    let summaryLines: [String]
+    let releaseNotesLines: [String]
     let informationOnly: Bool
     let informationURL: URL?
+
+    var summaryLines: [String] {
+        Array(releaseNotesLines.prefix(5))
+    }
 
     var helpText: String {
         (["魏碑 \(version)"] + summaryLines.prefix(5)).joined(separator: "\n")
     }
 
     static func summaryLines(from rawNotes: String?) -> [String] {
+        Array(releaseNotesLines(from: rawNotes).prefix(5))
+    }
+
+    static func releaseNotesLines(from rawNotes: String?) -> [String] {
         guard var text = rawNotes?.trimmingCharacters(in: .whitespacesAndNewlines),
               !text.isEmpty else {
             return []
@@ -35,7 +43,7 @@ struct WeiBeiAvailableUpdate: Equatable {
                     .trimmingCharacters(in: CharacterSet(charactersIn: "-*• "))
             }
             .filter { !$0.isEmpty }
-        return Array(lines.prefix(5))
+        return lines
     }
 }
 
@@ -141,7 +149,7 @@ extension WeiBeiUpdateService: SPUUserDriver {
     ) {
         let update = WeiBeiAvailableUpdate(
             version: appcastItem.displayVersionString,
-            summaryLines: Self.summaryLines(for: appcastItem),
+            releaseNotesLines: Self.releaseNotesLines(for: appcastItem),
             informationOnly: appcastItem.isInformationOnlyUpdate,
             informationURL: appcastItem.infoURL
         )
@@ -167,11 +175,11 @@ extension WeiBeiUpdateService: SPUUserDriver {
     func showUpdateReleaseNotes(with downloadData: SPUDownloadData) {
         guard let text = String(data: downloadData.data, encoding: .utf8),
               let update = availableUpdate else { return }
-        let lines = WeiBeiAvailableUpdate.summaryLines(from: text)
+        let lines = WeiBeiAvailableUpdate.releaseNotesLines(from: text)
         guard !lines.isEmpty else { return }
         availableUpdate = WeiBeiAvailableUpdate(
             version: update.version,
-            summaryLines: lines,
+            releaseNotesLines: lines,
             informationOnly: update.informationOnly,
             informationURL: update.informationURL
         )
@@ -234,8 +242,8 @@ extension WeiBeiUpdateService: SPUUserDriver {
         status = availableUpdate == nil ? .idle : .available
     }
 
-    private static func summaryLines(for item: SUAppcastItem) -> [String] {
-        let lines = WeiBeiAvailableUpdate.summaryLines(from: item.itemDescription)
+    private static func releaseNotesLines(for item: SUAppcastItem) -> [String] {
+        let lines = WeiBeiAvailableUpdate.releaseNotesLines(from: item.itemDescription)
         if !lines.isEmpty { return lines }
         if let title = item.title?.trimmingCharacters(in: .whitespacesAndNewlines),
            !title.isEmpty,

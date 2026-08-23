@@ -329,6 +329,31 @@ private func checkSkillCatalogAndLoad() throws {
     let toolRegistry = NativeToolRegistry()
     _ = try waitFor { await NativeBuiltinTools.registerAll(into: toolRegistry, skillRoot: root) }
     let tools = try waitFor { await toolRegistry.resolved(scope: .global) }
+    try nativeRequire(tools.contains { $0.name == "load_skill" }, "load_skill is the only registered skill loader")
+    try nativeRequire(!tools.contains { $0.name == "read" }, "retired read alias is not registered")
+    do {
+        _ = try waitFor {
+            try await toolRegistry.execute(
+                NativeToolCallRequest(name: "read", argumentsJSON: "{\"path\":\"skill://visualize\"}", callID: "retired-read"),
+                context: NativeToolExecutionContext(
+                    request: StudyAgentRequest(
+                        purpose: .conversation,
+                        question: "加载技能",
+                        materialTitle: "",
+                        materialText: "",
+                        noteTitle: "",
+                        noteText: "",
+                        contextRevision: "retired-read"
+                    ),
+                    liveStores: NativeLiveStores(skillRegistry: registry)
+                ),
+                scope: .global
+            )
+        }
+        try nativeRequire(false, "retired read alias must be unknown")
+    } catch let failure as NativeLLMFailure {
+        try nativeRequire(failure.code == "unknown_tool", "retired read alias fails as unknown_tool")
+    }
     let search = tools.first { $0.name == "weibei_course_search" }
     try nativeRequire(search?.description.contains("不要先反问") == true, "course_search description forbids clarifying questions")
     try nativeRequire(search?.description.contains("weibei_course_read") == true, "course_search description continues into course_read")

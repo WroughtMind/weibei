@@ -20,7 +20,7 @@ struct CommandPaletteView: View {
             PaletteCommand(title: store.ui("聚焦对话", "Focus Chat"), shortcut: "⌘4", animation: WeiBeiMotion.layout) { store.focus(.agent) },
             PaletteCommand(title: store.ui("上一份资料", "Previous Material"), shortcut: "⌥⌘↑", animation: WeiBeiMotion.layout) { store.selectAdjacentItem(step: -1) },
             PaletteCommand(title: store.ui("下一份资料", "Next Material"), shortcut: "⌥⌘↓", animation: WeiBeiMotion.layout) { store.selectAdjacentItem(step: 1) },
-            PaletteCommand(title: store.showLibrary ? store.ui("收起课程目录", "Hide Course Index") : store.ui("打开课程目录", "Show Course Index"), shortcut: "⌘B") { store.toggleLibrary() },
+            PaletteCommand(title: store.showLibrary ? store.ui("收起课程目录", "Hide Course Index") : store.ui("打开课程目录", "Show Course Index"), shortcut: store.chord(for: .courseIndex).display) { store.toggleLibrary() },
             PaletteCommand(title: store.ui("三栏工作台", "Three-Pane Workspace"), shortcut: "⌥⌘1", animation: WeiBeiMotion.layout) { store.setLayout(.documentAgentNotes) },
             PaletteCommand(title: WorkspaceLayout.immersiveReading.label(language: store.interfaceLanguage), shortcut: "⌥⌘R", animation: WeiBeiMotion.layout) { store.setLayout(.immersiveReading) },
             PaletteCommand(title: WorkspaceLayout.immersiveConversation.label(language: store.interfaceLanguage), shortcut: "⌥⌘A", animation: WeiBeiMotion.layout) { store.setLayout(.immersiveConversation) },
@@ -61,7 +61,7 @@ struct CommandPaletteView: View {
             items.append(PaletteCommand(title: store.copyReferenceActionTitle, shortcut: "⌘⇧C") { store.copyCurrentReference() })
         }
         if store.hasSelectedMaterial {
-            items.append(PaletteCommand(title: store.ui("打开资料内搜索", "Search in Material"), shortcut: "⌘F") { store.revealReaderSearch() })
+            items.append(PaletteCommand(title: store.ui("打开资料内搜索", "Search in Material"), shortcut: store.chord(for: .searchInMaterial).display) { store.revealReaderSearch() })
         }
         if store.selectionContext != nil {
             items.append(PaletteCommand(title: store.ui("问当前选区", "Ask Current Selection"), shortcut: "") {
