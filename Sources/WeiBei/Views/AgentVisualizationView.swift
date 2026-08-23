@@ -94,7 +94,9 @@ struct AgentVisualizationView: View {
     }
 
     private func handleFailure(_ failedAttempt: Int, _ message: String) {
-        NSLog("[WeiBei][GenUI] %@", message)
+        WeiBeiLog.web.error(
+            "genui_runtime_failure attempt=\(failedAttempt, privacy: .public) detail=\(WeiBeiLog.truncated(message), privacy: .public)"
+        )
         Task { @MainActor in
             loadState.fail(message, from: failedAttempt)
         }

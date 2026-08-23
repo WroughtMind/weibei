@@ -4,10 +4,12 @@ import WeiBeiCore
 @MainActor
 extension WorkspaceStore {
     func submitAgentVisualizationAction(_ action: String, payloadJSON: String) -> String? {
-        let action = String(action.prefix(200))
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let action = action.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !action.isEmpty else {
             return ui("这个按钮没有可执行的回答操作。", "This button has no executable response action.")
+        }
+        guard action.count <= 200 else {
+            return ui("这个互动操作名称过长，未提交回答。", "This interactive action name is too long, so nothing was submitted.")
         }
         guard payloadJSON.utf8.count <= 65_536 else {
             return ui("互动数据过大，无法提交回答。", "The interactive data is too large to submit.")

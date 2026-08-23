@@ -14,18 +14,15 @@
   let pendingAction = null;
   let actionRejection = null;
   let nextActionRequestID = 0;
-  let contentWasTruncated = false;
 
   const post = body => window.webkit?.messageHandlers?.weibeiGenUI?.postMessage(body);
   const clamp = (value, min, max) => Math.min(max, Math.max(min, Number(value) || 0));
   const array = (value, cap = 50) => {
     if (!Array.isArray(value)) return [];
-    if (value.length > cap) contentWasTruncated = true;
     return value.slice(0, cap);
   };
-  const string = (value, cap = 2000) => {
+  const string = (value, cap = Infinity) => {
     if (typeof value !== 'string') return '';
-    if (value.length > cap) contentWasTruncated = true;
     return value.slice(0, cap);
   };
   const number = (value, fallback = 0) => Number.isFinite(Number(value)) ? Number(value) : fallback;
@@ -41,7 +38,7 @@
     if (!node.action || actionStatus !== 'ready' || actionUnavailableReason || pendingAction) return;
     pendingAction = { requestID: ++nextActionRequestID, key };
     actionRejection = null;
-    post({ type: 'action', requestID: pendingAction.requestID, action: string(node.action, 200), payload: { component: key, ...payload, state } });
+    post({ type: 'action', requestID: pendingAction.requestID, action: typeof node.action === 'string' ? node.action : '', payload: { component: key, ...payload, state } });
     render();
   };
   const el = (tag, className, content) => {
@@ -56,6 +53,23 @@
     return node;
   };
   const append = (parent, children) => children.forEach(child => child && parent.append(child));
+  const revealInBatches = (parent, items, appendItem, batchSize = 50) => {
+    let shown = 0;
+    const controls = el('div', 'data-progress');
+    const status = el('span');
+    const more = el('button', 'control-button', '继续显示');
+    const reveal = () => {
+      const end = Math.min(items.length, shown + batchSize);
+      items.slice(shown, end).forEach(appendItem);
+      shown = end;
+      status.textContent = `已显示 ${shown}/${items.length}`;
+      more.hidden = shown >= items.length;
+      reportHeight();
+    };
+    more.onclick = reveal;
+    reveal();
+    if (shown < items.length) { controls.append(status, more); parent.append(controls); }
+  };
 
   function renderItems(items, path, depth) {
     const fragment = document.createDocumentFragment();
@@ -352,7 +366,7 @@
 
   function renderNode(node, path, depth) {
     if (!node || typeof node !== 'object') return null;
-    if (depth > 8 || nodeCount++ > 200) { contentWasTruncated = true; return null; }
+    if (depth > 8 || nodeCount++ > 200) return null;
     const key = keyFor(node, path);
     switch (node.type) {
       case 'text': { const item = el('div', `text ${['h1','h2','h3','body','muted','caption'].includes(node.size) ? node.size : 'body'}${node.center ? ' center' : ''}`, node.content); return item; }
@@ -361,8 +375,8 @@
       case 'divider': return el('hr', 'divider'); case 'spacer': return el('div', 'spacer');
       case 'badge': return el('span', `badge ${['success','warn','danger','accent'].includes(node.tone) ? node.tone : ''}`, node.label);
       case 'progress': { const box = el('div'); const head = el('div', 'progress-head'); head.append(el('span', '', node.label), el('span', '', node.valueLabel || `${clamp(node.value,0,100)}%`)); const track = el('div', 'progress-track'), fill = el('div', 'progress-fill'); fill.style.width = `${clamp(node.value,0,100)}%`; track.append(fill); box.append(head, track); return box; }
-      case 'list': { const box = el('div', 'list'); array(node.items).forEach(item => { const row = el('div', 'list-item', typeof item === 'string' ? item : item?.title); if (typeof item === 'object' && item?.desc) row.append(el('span', 'list-desc', item.desc)); box.append(row); }); return box; }
-      case 'table': { const wrap = el('div', 'table-wrap'), table = el('table'), thead = el('thead'), header = el('tr'); array(node.columns,12).forEach(column => header.append(el('th','',column))); thead.append(header); const tbody = el('tbody'); array(node.rows,50).forEach(row => { const tr = el('tr'); array(row,12).forEach(cell => tr.append(el('td','',String(cell)))); tbody.append(tr); }); table.append(thead,tbody); wrap.append(table); return wrap; }
+      case 'list': { const wrap = el('div'), box = el('div', 'list'), items = Array.isArray(node.items) ? node.items : []; wrap.append(box); revealInBatches(wrap, items, item => { const row = el('div', 'list-item', typeof item === 'string' ? item : item?.title); if (typeof item === 'object' && item?.desc) row.append(el('span', 'list-desc', item.desc)); box.append(row); }); return wrap; }
+      case 'table': { const wrap = el('div', 'table-wrap'), table = el('table'), thead = el('thead'), header = el('tr'); array(node.columns,12).forEach(column => header.append(el('th','',column))); thead.append(header); const tbody = el('tbody'), rows = Array.isArray(node.rows) ? node.rows : []; table.append(thead,tbody); wrap.append(table); revealInBatches(wrap, rows, row => { const tr = el('tr'); array(row,12).forEach(cell => tr.append(el('td','',String(cell)))); tbody.append(tr); }); return wrap; }
       case 'keyvalue': { const box = el('dl', 'kv'); array(node.pairs,24).forEach(pair => box.append(el('dt','kv-key',pair?.key), el('dd','kv-value',pair?.value))); return box; }
       case 'callout': { const box = el('aside', `callout ${node.tone || ''}`); if (node.title) box.append(el('div','callout-title',node.title)); box.append(el('div','',node.content)); return box; }
       case 'steps': { const box = el('div','steps'), current = clamp(node.current ?? array(node.steps).length,0,array(node.steps).length); array(node.steps,24).forEach((step,index) => { const row = el('div',`step ${index < current ? 'done' : index === current ? 'active' : ''}`), body=el('div'); body.append(el('div','',step?.title)); if(step?.desc) body.append(el('div','step-desc',step.desc)); row.append(el('span','step-mark',index < current ? '✓' : index+1),body); box.append(row); }); return box; }
@@ -395,24 +409,9 @@
   }
 
   function render() {
-    timers.forEach(timer => clearTimeout(timer)); timers.clear(); nodeCount = 0; contentWasTruncated = false; root.replaceChildren();
+    timers.forEach(timer => clearTimeout(timer)); timers.clear(); nodeCount = 0; root.replaceChildren();
     document.body.classList.toggle('dark', spec.appearance === 'dark');
     const block = el('section','genui'); block.style.gap=`${clamp(spec.gap ?? 12,0,64)}px`; if(spec.title) block.append(el('div','banner',spec.title)); block.append(renderItems(spec.items,'root',0));
-    if (contentWasTruncated) {
-      const notice = el('div','error truncation-notice','内容未全部展示。');
-      const controls = el('div','learning-controls');
-      const view = el('button','control-button','查看原始数据');
-      const copy = el('button','control-button','复制原始数据');
-      let rawView = null;
-      view.onclick = () => {
-        if (!rawView) {
-          rawView = document.createElement('pre'); rawView.className = 'raw-data'; rawView.textContent = JSON.stringify(spec, null, 2); notice.append(rawView);
-        } else rawView.hidden = !rawView.hidden;
-        view.textContent = rawView.hidden ? '查看原始数据' : '收起原始数据'; reportHeight();
-      };
-      copy.onclick = () => navigator.clipboard?.writeText(JSON.stringify(spec, null, 2)).then(() => { copy.textContent = '已复制'; }).catch(() => { copy.textContent = '复制失败'; });
-      controls.append(view, copy); notice.append(controls); block.append(notice);
-    }
     if (!block.children.length) block.append(el('div','error','这个互动界面没有可显示的组件。')); root.append(block); reportHeight();
   }
   function reportHeight() { requestAnimationFrame(() => post({ type: 'height', height: Math.ceil(Math.max(root.scrollHeight, root.getBoundingClientRect().height)) })); }
