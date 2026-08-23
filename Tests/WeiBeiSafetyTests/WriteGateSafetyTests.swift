@@ -355,6 +355,11 @@ final class WriteGateSafetyTests: XCTestCase {
 
         XCTAssertEqual(try String(contentsOf: note.url, encoding: .utf8), "魏碑待写正文")
         XCTAssertNil(store.noteEditorRecoveryConflict)
+        let reopened = WorkspaceStore(
+            workspaceDirectory: base.appendingPathComponent("workspace"),
+            startsCourseFileMaintenance: false
+        )
+        XCTAssertNil(reopened.notesByItemID[note.item.id])
     }
 
     func testRestoreWeiBeiContentFailureKeepsDraftAndConflict() async throws {

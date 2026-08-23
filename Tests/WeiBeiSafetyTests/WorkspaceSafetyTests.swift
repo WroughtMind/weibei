@@ -47,9 +47,78 @@ final class WorkspaceSafetyTests: XCTestCase {
         XCTAssertFalse(store.flushPendingWorkspaceSave())
         XCTAssertEqual(store.noteText, "尚未写入的正文")
         let message = try XCTUnwrap(store.workspaceSaveError)
-        XCTAssertTrue(message.contains("未写内容已保存在魏碑中"))
+        XCTAssertTrue(message.contains("尚未安全保存"))
         XCTAssertTrue(message.contains("重试"))
         XCTAssertFalse(message.contains("/private/secret"))
+    }
+
+    @MainActor
+    func testNativeAgentRejectsAndRollsBackWhenWorkspaceWriteFails() async throws {
+        final class SaveSwitch { var fails = false }
+        struct InjectedFailure: Error {}
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("WeiBeiNativePersist-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let saveSwitch = SaveSwitch()
+        let store = WorkspaceStore(
+            workspaceDirectory: root.appendingPathComponent("workspace"),
+            workspaceSnapshotWriter: { data, url in
+                if saveSwitch.fails { throw InjectedFailure() }
+                try data.write(to: url, options: .atomic)
+            },
+            startsAtBlankEntries: true,
+            startsCourseFileMaintenance: false
+        )
+        let library = root.appendingPathComponent("资料库")
+        try FileManager.default.createDirectory(at: library, withIntermediateDirectories: true)
+        try store.configureCourseLibrary(at: library)
+        let courseID = try store.createCourseInLibrary(title: "真实回执课")
+        let session = try XCTUnwrap(store.createStudySession(courseID: courseID))
+        XCTAssertTrue(store.flushPendingWorkspaceSave())
+        let target = WorkspaceStore.AgentConversationTarget(
+            sessionID: session.id,
+            workingDirectory: root,
+            courseID: courseID
+        )
+        let learningBefore = store.makeLearningContext(target: target)
+        let profileBefore = store.refreshCourseProfileContext(target: target)
+        saveSwitch.fails = true
+
+        let learningReceipt = await store.persistNativeLearningUpdate(
+            StudyAgentLearningUpdate(
+                contextRevision: "test-context",
+                memoryRevision: learningBefore.memoryRevision,
+                entries: [StudyAgentMemoryUpdateEntry(
+                    kind: .confusion,
+                    text: "还不理解费雪方程",
+                    evidence: "[用户：本轮] 我还不理解费雪方程",
+                    origin: .userStatement
+                )]
+            ),
+            expectedContextRevision: "test-context",
+            expectedUserQuestion: "我还不理解费雪方程",
+            target: target,
+            messageID: UUID()
+        )
+        let profileReceipt = await store.persistNativeCourseProfileUpdate(
+            StudyAgentCourseProfileUpdate(
+                contextRevision: "test-context",
+                profileRevision: profileBefore.revision,
+                checkpoint: "userRequested",
+                entries: [StudyAgentCourseProfileUpdateEntry(
+                    kind: .concept,
+                    text: "用户自述：还没有掌握费雪方程",
+                    sources: []
+                )]
+            ),
+            expectedContextRevision: "test-context",
+            target: target
+        )
+
+        XCTAssertFalse(learningReceipt.accepted)
+        XCTAssertFalse(profileReceipt.accepted)
+        XCTAssertEqual(store.makeLearningContext(target: target), learningBefore)
+        XCTAssertEqual(store.refreshCourseProfileContext(target: target), profileBefore)
     }
 
     @MainActor

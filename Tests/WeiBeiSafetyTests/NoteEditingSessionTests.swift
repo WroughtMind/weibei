@@ -21,6 +21,11 @@ final class NoteEditingSessionTests: XCTestCase {
         XCTAssertEqual(state, .rebuilding)
     }
 
+    func testSuccessfulSaveStatusesStaySilent() {
+        XCTAssertFalse(NoteSaveStatus.writtenToFile.showsStatusLabel)
+        XCTAssertFalse(NoteSaveStatus.savedInWeiBei.showsStatusLabel)
+    }
+
     @MainActor
     func testRejectsSnapshotFromStaleDocumentGeneration() throws {
         var commands: [NoteEditorSnapshotRequest] = []

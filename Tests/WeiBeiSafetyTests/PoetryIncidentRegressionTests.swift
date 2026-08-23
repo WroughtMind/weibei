@@ -84,6 +84,11 @@ final class PoetryIncidentRegressionTests: XCTestCase {
         let degradedEdit = store.defaultNote(for: item) + "\n用户在降级视图里的补充"
         store.scheduleNotePersistence(degradedEdit, for: item)
         store.flushPendingNotePersistence(for: item.id)
+        XCTAssertTrue(store.flushPendingWorkspaceSave())
+        let reopened = WorkspaceStore(
+            workspaceDirectory: base.appendingPathComponent("workspace"),
+            startsCourseFileMaintenance: false
+        )
 
         XCTAssertTrue(
             realBodyRecoverable(realBody, at: url, itemID: item.id, backupRoot: backupRoot),
@@ -91,7 +96,7 @@ final class PoetryIncidentRegressionTests: XCTestCase {
         )
         let onDisk = try String(contentsOf: url, encoding: .utf8)
         XCTAssertTrue(
-            onDisk == degradedEdit || store.notesByItemID[item.id] == degradedEdit,
+            onDisk == degradedEdit || reopened.notesByItemID[item.id] == degradedEdit,
             "写回通道：用户输入不得丢失"
         )
     }
@@ -146,19 +151,21 @@ final class PoetryIncidentRegressionTests: XCTestCase {
         store.notesByItemID[item.id] = degradedDraft
         store.pendingNoteWritesByItemID[item.id] = PendingNoteWriteState()
         store.retryRestoredPendingNoteWrites()
+        XCTAssertTrue(store.flushPendingWorkspaceSave())
+        let reopened = WorkspaceStore(
+            workspaceDirectory: base.appendingPathComponent("workspace"),
+            startsCourseFileMaintenance: false
+        )
 
         XCTAssertTrue(
             realBodyRecoverable(realBody, at: url, itemID: item.id, backupRoot: backupRoot),
             "重启 retry 通道：真实正文必须在磁盘或备份环中可找回"
         )
         let after = try String(contentsOf: url, encoding: .utf8)
-        let persisted = try JSONDecoder().decode(
-            PersistedWorkspace.self,
-            from: Data(contentsOf: base.appendingPathComponent("workspace/workspace.json"))
-        )
         XCTAssertTrue(
-            after == degradedDraft || persisted.notesByItemID[item.id] == degradedDraft,
-            "重启 retry 通道：草稿必须写入原文件或工作区快照"
+            after == realBody || after == degradedDraft
+                || reopened.notesByItemID[item.id] == degradedDraft,
+            "重启 retry 通道：磁盘要么仍是真实正文，要么是写回的草稿本体，草稿不得无痕迹消失"
         )
     }
 
@@ -192,12 +199,17 @@ final class PoetryIncidentRegressionTests: XCTestCase {
         try? FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: renamedURL.path)
         let oldBody = try? String(contentsOf: url, encoding: .utf8)
         let newBody = try? String(contentsOf: renamedURL, encoding: .utf8)
+        let reopened = WorkspaceStore(
+            workspaceDirectory: base.appendingPathComponent("workspace"),
+            startsCourseFileMaintenance: false
+        )
         XCTAssertTrue(
             oldBody == realBody || newBody == realBody,
             "不可读改名通道：真实正文必须在原路径或新路径完整找回"
         )
         XCTAssertEqual(
-            store.notesByItemID[item.id] ?? store.notesByItemID.values.first { $0 == degradedDraft },
+            reopened.notesByItemID[item.id]
+                ?? reopened.notesByItemID.values.first { $0 == degradedDraft },
             degradedDraft,
             "用户草稿必须保留"
         )

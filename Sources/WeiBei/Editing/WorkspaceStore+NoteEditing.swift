@@ -10,7 +10,7 @@ struct NoteEditorSaveReceipt: Sendable {
 struct NoteEditorRecoveryConflict: Identifiable, Equatable, Sendable {
     let diskMarkdown: String
     let checkpoint: NoteRecoveryCheckpoint
-    var checkpointIsPersisted = true
+    var checkpointIsPersisted = false
     var id: String { checkpoint.metadata.documentID }
 }
 
@@ -152,10 +152,16 @@ extension WorkspaceStore {
         status: NoteSaveStatus
     ) {
         Task {
-            _ = try? await noteRecoveryStore.removeIfCheckpointMatches(
-                documentID: receipt.documentID,
-                checkpointDigest: receipt.digest
-            )
+            do {
+                _ = try await noteRecoveryStore.removeIfCheckpointMatches(
+                    documentID: receipt.documentID,
+                    checkpointDigest: receipt.digest
+                )
+            } catch {
+                WeiBeiLog.noteRepair.error(
+                    "code=note_recovery_cleanup_failed document=\(receipt.documentID, privacy: .private) reason=\(error.localizedDescription, privacy: .private)"
+                )
+            }
         }
         guard marksSessionSaved,
               noteEditingSession.documentID == receipt.documentID else { return }
@@ -209,7 +215,8 @@ extension WorkspaceStore {
                 pendingNotePersistenceByItemID.removeValue(forKey: documentID)
                 noteEditorRecoveryConflict = NoteEditorRecoveryConflict(
                     diskMarkdown: diskMarkdown,
-                    checkpoint: checkpoint
+                    checkpoint: checkpoint,
+                    checkpointIsPersisted: true
                 )
             case .none:
                 let diskDigest = Self.noteContentDigest(data)
@@ -270,7 +277,8 @@ extension WorkspaceStore {
         case .conflict(let checkpoint):
             noteEditorRecoveryConflict = NoteEditorRecoveryConflict(
                 diskMarkdown: diskMarkdown,
-                checkpoint: checkpoint
+                checkpoint: checkpoint,
+                checkpointIsPersisted: true
             )
             return
         case .none, .stale, .damaged:
@@ -306,15 +314,19 @@ extension WorkspaceStore {
                     itemID: documentID,
                     rootURL: noteBackupRootURL
                 )
-                try await noteRecoveryStore.remove(documentID: documentID)
             } catch {
                 WeiBeiLog.noteRepair.error(
                     "code=note_conflict_backup_failed path=\(fileURL?.path ?? documentID, privacy: .private) reason=\(error.localizedDescription, privacy: .private)"
                 )
-                showImportantOperationError(ui(
-                    "暂时无法采用“\(fileName)”的磁盘版本。未写内容仍保存在魏碑中，请重试。",
-                    "Could not use the disk version of \(fileName). Unsaved content is still kept in WeiBei; please retry."
-                ))
+                showImportantOperationError(conflict.checkpointIsPersisted
+                    ? ui(
+                        "暂时无法采用“\(fileName)”的磁盘版本。未写内容已保存在魏碑中，请重试。",
+                        "Could not use the disk version of \(fileName). Unsaved content is stored in WeiBei; please retry."
+                    )
+                    : ui(
+                        "暂时无法采用“\(fileName)”的磁盘版本。未写内容仍在本次会话中，但尚未安全保存；请不要关闭并重试。",
+                        "Could not use the disk version of \(fileName). Unsaved content remains in this session but is not safely stored yet; do not close it, and retry."
+                    ))
                 return
             }
             cancelPendingNotePersistence(for: documentID)
@@ -336,6 +348,23 @@ extension WorkspaceStore {
                     markdown: conflict.diskMarkdown
                 )
             }
+            guard await persistWorkspaceNow() else {
+                noteEditingSession.markSaveFailed(documentID: documentID)
+                let message = ui(
+                    "已采用“\(fileName)”的磁盘版本，但魏碑尚未确认清理旧草稿。未写内容已有备份，请重试保存后再关闭。",
+                    "The disk version of \(fileName) is in use, but WeiBei has not confirmed removal of the old draft. The unsaved content has a backup; retry saving before closing."
+                )
+                setNoteFileError(message, for: documentID)
+                showImportantOperationError(message)
+                return
+            }
+            do {
+                try await noteRecoveryStore.remove(documentID: documentID)
+            } catch {
+                WeiBeiLog.noteRepair.error(
+                    "code=note_recovery_cleanup_failed document=\(documentID, privacy: .private) reason=\(error.localizedDescription, privacy: .private)"
+                )
+            }
             showTransientNoteStatus(ui(
                 "已采用“\(fileName)”的磁盘版本；未写内容已保存在魏碑备份中。",
                 "Used the disk version of \(fileName); unsaved content was kept in a WeiBei backup."
@@ -346,7 +375,7 @@ extension WorkspaceStore {
             let fileName = fileURL.lastPathComponent
             setNoteDraft(conflict.checkpoint.markdown, for: documentID)
             let draftPersisted = flushPendingWorkspaceSave()
-            var recoveryPersisted = false
+            var recoveryPersisted = conflict.checkpointIsPersisted
             do {
                 let diskData = try Data(contentsOf: fileURL)
                 _ = try NoteBackupRing.capture(
@@ -368,7 +397,6 @@ extension WorkspaceStore {
                     url: fileURL,
                     expectedBaseline: diskDigest
                 )
-                try await noteRecoveryStore.remove(documentID: documentID)
             } catch {
                 noteEditingSession.markExternallyModified(documentID: documentID)
                 WeiBeiLog.noteRepair.error(
@@ -411,6 +439,16 @@ extension WorkspaceStore {
                     kind: .reloadDocument,
                     markdown: conflict.checkpoint.markdown
                 )
+            }
+            guard await persistWorkspaceNow() else {
+                noteEditingSession.markSaveFailed(documentID: documentID)
+                let message = ui(
+                    "“\(fileName)”的正文已写入文件，但魏碑尚未确认清理旧草稿。请重试保存后再关闭。",
+                    "The text was written to \(fileName), but WeiBei has not confirmed removal of the old draft. Retry saving before closing."
+                )
+                setNoteFileError(message, for: documentID)
+                showImportantOperationError(message)
+                return
             }
         }
     }

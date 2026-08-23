@@ -226,6 +226,7 @@ enum CourseOwnedFileError: LocalizedError {
     case unsafeCoursePath
     case targetConflict(URL)
     case replacementTargetIsShared
+    case backupFailed
     case itemBusy
     case verificationFailed
     case workspaceSaveFailed
@@ -250,6 +251,8 @@ enum CourseOwnedFileError: LocalizedError {
             "课程中已经存在“\(url.lastPathComponent)”。魏碑没有覆盖它。"
         case .replacementTargetIsShared:
             "这份共享原件正被其他课程使用，不能替换；可以取消或改名保留两份。"
+        case .backupFailed:
+            "无法安全备份现有笔记，魏碑没有覆盖文件。待写内容仍在当前会话中，请重试。"
         case .itemBusy:
             "这份文件正在进行另一项操作，请稍后重试。"
         case .verificationFailed:
@@ -4566,11 +4569,18 @@ final class WorkspaceStore: ObservableObject {
             if replacesExistingTarget {
                 // 覆盖前：笔记入备份环；目标隔离进废纸篓。
                 if role == .note {
-                    _ = try? NoteBackupRing.capture(
-                        sourceURL: targetURL,
-                        itemID: itemID,
-                        rootURL: noteBackupRootURL
-                    )
+                    do {
+                        _ = try NoteBackupRing.capture(
+                            sourceURL: targetURL,
+                            itemID: itemID,
+                            rootURL: noteBackupRootURL
+                        )
+                    } catch {
+                        WeiBeiLog.noteRepair.error(
+                            "code=note_backup_failed path=\(targetURL.path, privacy: .private) reason=\(error.localizedDescription, privacy: .private)"
+                        )
+                        throw CourseOwnedFileError.backupFailed
+                    }
                 }
                 guard let replacementIdentity = importedFileIdentityResolver(targetURL) else {
                     throw CourseOwnedFileError.targetConflict(targetURL)
@@ -15575,54 +15585,242 @@ final class WorkspaceStore: ObservableObject {
         expectedUserQuestion: String,
         target: AgentConversationTarget,
         messageID: UUID
-    ) -> NativeStorePersistReceipt {
-        if let applied = applyLearningUpdate(
+    ) async -> NativeStorePersistReceipt {
+        let previousLearningStates = learningMemoryStates
+        let previousStudySessions = studySessions
+        let previousLatestUpdate = latestAgentLearningUpdate
+        let previousLatestQuestion = latestAgentLearningUpdateQuestion
+        guard let applied = applyLearningUpdate(
             update,
             expectedContextRevision: expectedContextRevision,
             expectedMemoryRevision: update.memoryRevision,
             expectedUserQuestion: expectedUserQuestion,
             target: target,
             messageID: messageID
-        ) {
+        ) else {
+            learningMemoryStates = previousLearningStates
+            studySessions = previousStudySessions
+            latestAgentLearningUpdate = previousLatestUpdate
+            latestAgentLearningUpdateQuestion = previousLatestQuestion
+            let hasClientID = update.entries.contains {
+                !($0.memoryID?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "").isEmpty
+            }
+            if hasClientID {
+                return .rejected("魏碑没有保存这次学习记忆。更新只能沿用 weibei_read_learning_memory 返回的 memoryID；新建请省略该字段，不要传空字符串，也不要自己编 UUID。")
+            }
+            return .rejected("魏碑没有保存这次学习记忆。用户自述请用 origin=userStatement，evidence 以「[用户：本轮]」开头并带上用户原话。")
+        }
+        let appliedLearningStates = learningMemoryStates
+        let appliedStudySession = studySessions.first {
+            $0.id == target.sessionID
+        }
+        let appliedLatestUpdate = latestAgentLearningUpdate
+        let appliedLatestQuestion = latestAgentLearningUpdateQuestion
+        if let courseID = target.courseID {
+            dirtyPortableCourseIDs.insert(courseID)
+        }
+        let persisted = await persistWorkspaceNow()
+        let coursePersisted = target.courseID.map {
+            persistedWorkspaceCourseIDs.contains($0)
+                && !dirtyPortableCourseIDs.contains($0)
+                && !blockedPortableCourseIDs.contains($0)
+                && !oversizedPortableCourseIDs.contains($0)
+        } ?? true
+        if persisted && coursePersisted {
             return NativeStorePersistReceipt(
                 accepted: true,
                 message: "已写入学习记忆",
                 memoryUpdate: applied
             )
         }
-        let hasClientID = update.entries.contains {
-            !($0.memoryID?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "").isEmpty
+
+        for memoryID in applied.memoryIDs {
+            guard let appliedState = appliedLearningStates.first(where: {
+                $0.entries.contains { $0.id == memoryID }
+            }),
+            let appliedEntry = appliedState.entries.first(where: {
+                $0.id == memoryID
+            }),
+            let currentStateIndex = learningMemoryStates.firstIndex(where: {
+                $0.scope == appliedState.scope
+            }),
+            let currentEntryIndex = learningMemoryStates[currentStateIndex]
+                .entries.firstIndex(where: { $0.id == memoryID }),
+            learningMemoryStates[currentStateIndex].entries[currentEntryIndex]
+                == appliedEntry else { continue }
+            if let previousEntry = previousLearningStates
+                .first(where: { $0.scope == appliedState.scope })?
+                .entries.first(where: { $0.id == memoryID }) {
+                learningMemoryStates[currentStateIndex].entries[currentEntryIndex] =
+                    previousEntry
+            } else {
+                learningMemoryStates[currentStateIndex].entries.remove(
+                    at: currentEntryIndex
+                )
+            }
         }
-        if hasClientID {
-            return .rejected("魏碑没有保存这次学习记忆。更新只能沿用 weibei_read_learning_memory 返回的 memoryID；新建请省略该字段，不要传空字符串，也不要自己编 UUID。")
+        let changedScopes = Set(applied.memoryIDs.compactMap { memoryID in
+            appliedLearningStates.first {
+                $0.entries.contains { $0.id == memoryID }
+            }?.scope
+        })
+        for scope in changedScopes {
+            guard let currentIndex = learningMemoryStates.firstIndex(where: {
+                $0.scope == scope
+            }),
+            let appliedState = appliedLearningStates.first(where: {
+                $0.scope == scope
+            }),
+            learningMemoryStates[currentIndex].revision == appliedState.revision else {
+                continue
+            }
+            if let previousState = previousLearningStates.first(where: {
+                $0.scope == scope
+            }) {
+                learningMemoryStates[currentIndex].revision = previousState.revision
+            } else if learningMemoryStates[currentIndex].entries.isEmpty {
+                learningMemoryStates.remove(at: currentIndex)
+            }
         }
-        return .rejected("魏碑没有保存这次学习记忆。用户自述请用 origin=userStatement，evidence 以「[用户：本轮]」开头并带上用户原话。")
+        if let appliedStudySession,
+           let currentIndex = studySessions.firstIndex(where: {
+               $0.id == target.sessionID
+           }),
+           let previous = previousStudySessions.first(where: {
+               $0.id == target.sessionID
+           }) {
+            if appliedStudySession.summary != previous.summary,
+               studySessions[currentIndex].summary == appliedStudySession.summary {
+                studySessions[currentIndex].summary = previous.summary
+            }
+            if appliedStudySession.flow.phase != previous.flow.phase,
+               studySessions[currentIndex].flow.phase == appliedStudySession.flow.phase {
+                studySessions[currentIndex].flow.phase = previous.flow.phase
+            }
+            if appliedStudySession.flow.suggestedNext
+                != previous.flow.suggestedNext,
+               studySessions[currentIndex].flow.suggestedNext
+                == appliedStudySession.flow.suggestedNext {
+                studySessions[currentIndex].flow.suggestedNext =
+                    previous.flow.suggestedNext
+            }
+            if appliedStudySession.updatedAt != previous.updatedAt,
+               studySessions[currentIndex].updatedAt == appliedStudySession.updatedAt {
+                studySessions[currentIndex].updatedAt = previous.updatedAt
+            }
+        }
+        if latestAgentLearningUpdate == appliedLatestUpdate {
+            latestAgentLearningUpdate = previousLatestUpdate
+        }
+        if latestAgentLearningUpdateQuestion == appliedLatestQuestion {
+            latestAgentLearningUpdateQuestion = previousLatestQuestion
+        }
+        if let courseID = target.courseID {
+            dirtyPortableCourseIDs.insert(courseID)
+        }
+        _ = await persistWorkspaceNow()
+        WeiBeiLog.workspace.error(
+            "code=native_learning_persist_failed course=\(target.courseID?.uuidString ?? "none", privacy: .private)"
+        )
+        return .rejected("魏碑没有确认写入这次学习记忆，已撤回本次更新并保留同时发生的修改。请重试。")
     }
 
     func persistNativeCourseProfileUpdate(
         _ update: StudyAgentCourseProfileUpdate,
         expectedContextRevision: String,
         target: AgentConversationTarget
-    ) -> NativeStorePersistReceipt {
-        if let applied = applyCourseProfileUpdate(
+    ) async -> NativeStorePersistReceipt {
+        let previousProfiles = courseKnowledgeProfiles
+        guard let applied = applyCourseProfileUpdate(
             update,
             expectedContextRevision: expectedContextRevision,
             expectedProfileRevision: update.profileRevision,
             target: target
-        ) {
+        ) else {
+            let hasClientID = update.entries.contains {
+                !($0.entryID?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "").isEmpty
+            }
+            if hasClientID {
+                return .rejected("魏碑没有保存这次课程档案。更新只能沿用当前档案已有条目的 entryID；新建请省略该字段，不要传空字符串，也不要自己编 UUID。")
+            }
+            return .rejected("魏碑没有保存这次课程档案。自述掌握用 kind=concept、text 以「用户自述：」开头、checkpoint=userRequested。")
+        }
+        let appliedProfiles = courseKnowledgeProfiles
+        let persisted = await persistWorkspaceNow()
+        let coursePersisted = target.courseID.map {
+            persistedWorkspaceCourseIDs.contains($0)
+                && !dirtyPortableCourseIDs.contains($0)
+                && !blockedPortableCourseIDs.contains($0)
+                && !oversizedPortableCourseIDs.contains($0)
+        } ?? false
+        if persisted && coursePersisted {
             return NativeStorePersistReceipt(
                 accepted: true,
                 message: "已写入课程知识档案",
                 profileUpdate: applied
             )
         }
-        let hasClientID = update.entries.contains {
-            !($0.entryID?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "").isEmpty
+
+        if let courseID = target.courseID,
+           let appliedProfile = appliedProfiles.first(where: {
+               $0.courseID == courseID
+           }),
+           let currentIndex = courseKnowledgeProfiles.firstIndex(where: {
+               $0.courseID == courseID
+           }),
+           let previousProfile = previousProfiles.first(where: {
+               $0.courseID == courseID
+           }) {
+            if courseKnowledgeProfiles[currentIndex] == appliedProfile {
+                courseKnowledgeProfiles[currentIndex] = previousProfile
+            } else {
+                let changedIDs = Set(applied.entryIDs).union(
+                    update.removedEntryIDs.compactMap(UUID.init(uuidString:))
+                )
+                for entryID in changedIDs {
+                    let appliedEntry = appliedProfile.entries.first {
+                        $0.id == entryID
+                    }
+                    let currentEntryIndex = courseKnowledgeProfiles[currentIndex]
+                        .entries.firstIndex { $0.id == entryID }
+                    if let currentEntryIndex {
+                        guard let appliedEntry,
+                              courseKnowledgeProfiles[currentIndex].entries[
+                                currentEntryIndex
+                              ] == appliedEntry else { continue }
+                    } else {
+                        guard appliedEntry == nil else { continue }
+                    }
+                    if let previousEntry = previousProfile.entries.first(where: {
+                        $0.id == entryID
+                    }) {
+                        if let currentEntryIndex {
+                            courseKnowledgeProfiles[currentIndex].entries[
+                                currentEntryIndex
+                            ] = previousEntry
+                        } else {
+                            courseKnowledgeProfiles[currentIndex].entries.append(
+                                previousEntry
+                            )
+                        }
+                    } else if let currentEntryIndex {
+                        courseKnowledgeProfiles[currentIndex].entries.remove(
+                            at: currentEntryIndex
+                        )
+                    }
+                }
+                courseKnowledgeProfiles[currentIndex].overview =
+                    courseKnowledgeProfiles[currentIndex].entries
+                    .filter { $0.kind == .overview }
+                    .max(by: { $0.updatedAt < $1.updatedAt })?.text ?? ""
+            }
+            dirtyPortableCourseIDs.insert(courseID)
         }
-        if hasClientID {
-            return .rejected("魏碑没有保存这次课程档案。更新只能沿用当前档案已有条目的 entryID；新建请省略该字段，不要传空字符串，也不要自己编 UUID。")
-        }
-        return .rejected("魏碑没有保存这次课程档案。自述掌握用 kind=concept、text 以「用户自述：」开头、checkpoint=userRequested。")
+        _ = await persistWorkspaceNow()
+        WeiBeiLog.workspace.error(
+            "code=native_course_profile_persist_failed course=\(target.courseID?.uuidString ?? "none", privacy: .private)"
+        )
+        return .rejected("魏碑没有确认写入这次课程档案，已撤回本次更新并保留同时发生的修改。请重试。")
     }
 
 
@@ -15712,10 +15910,22 @@ final class WorkspaceStore: ObservableObject {
         let entryIndex = learningMemoryStates[stateIndex].entries.firstIndex(where: { $0.id == memoryID }) else {
             return false
         }
+        let previousState = learningMemoryStates[stateIndex]
+        let previousContextRevision = agentContextRevision
         learningMemoryStates[stateIndex].entries.remove(at: entryIndex)
         learningMemoryStates[stateIndex].revision &+= 1
+        let deletedState = learningMemoryStates[stateIndex]
         invalidateAgentContext()
-        return flushPendingWorkspaceSave()
+        guard flushPendingWorkspaceSave() else {
+            if learningMemoryStates[stateIndex] == deletedState {
+                learningMemoryStates[stateIndex] = previousState
+                if agentContextRevision == previousContextRevision &+ 1 {
+                    agentContextRevision = previousContextRevision
+                }
+            }
+            return false
+        }
+        return true
     }
 
     private func setLearningMemoryStatus(
@@ -20944,10 +21154,9 @@ final class WorkspaceStore: ObservableObject {
                 snapshotSpan,
                 extra: "outcome=failed generation=\(generation)"
             )
-            guard workspaceSaveGeneration == generation else { return true }
             noteEditorWorkspaceSaveFailed(reportWorkspaceSaveFailure(ui(
-                "课程可携带状态没有成功保存，本机内容已保留。请重试。",
-                "Portable course state was not saved. Local content is preserved; please retry."
+                "课程可携带状态没有成功保存。本次修改仍在当前会话中，但尚未安全保存；请不要关闭并重试。",
+                "Portable course state was not saved. This change remains in the current session but is not safely stored yet; do not close it, and retry."
             ), reason: error.localizedDescription))
             return false
         }
@@ -21067,32 +21276,32 @@ final class WorkspaceStore: ObservableObject {
             persistedWorkspaceCourseIDs = result.persistedCourseIDs
             cleanupPersistedCourseTrashReceipts()
         }
-        guard workspaceSaveGeneration == generation else {
-            publishOutcome = "superseded"
-            return true
-        }
         if let failure = result.failure {
             switch failure {
             case .portableState(let detail):
                 noteEditorWorkspaceSaveFailed(reportWorkspaceSaveFailure(ui(
-                    "课程可携带状态没有成功保存，本机内容已保留。请重试。",
-                    "Portable course state was not saved. Local content is preserved; please retry."
+                    "课程可携带状态没有成功保存。本次修改仍在当前会话中，但尚未安全保存；请不要关闭并重试。",
+                    "Portable course state was not saved. This change remains in the current session but is not safely stored yet; do not close it, and retry."
                 ), reason: detail))
             case .workspace(let detail):
                 noteEditorWorkspaceSaveFailed(reportWorkspaceSaveFailure(ui(
-                    "课程更改尚未写入磁盘，未写内容已保存在魏碑中。请重试。",
-                    "Course changes were not saved to disk. Unsaved content is kept in WeiBei; please retry."
+                    "课程更改尚未写入磁盘。本次修改仍在当前会话中，但尚未安全保存；请不要关闭并重试。",
+                    "Course changes were not saved to disk. This change remains in the current session but is not safely stored yet; do not close it, and retry."
                 ), reason: detail))
             case .rollbackConflict:
                 noteEditorWorkspaceSaveFailed(reportWorkspaceSaveFailure(ui(
-                    "课程状态提交时检测到并发变更，魏碑已停止覆盖并保留两边。请先处理冲突，再重试。",
-                    "A concurrent change was detected while committing course state. WeiBei stopped overwriting and preserved both versions. Resolve the conflict, then retry."
+                    "课程状态提交时检测到并发变更，魏碑已停止覆盖。本次修改仍在当前会话中；请先处理冲突，再重试。",
+                    "A concurrent change was detected while committing course state, so WeiBei stopped overwriting. This change remains in the current session; resolve the conflict, then retry."
                 )))
             case .stale:
                 publishOutcome = "superseded"
                 return true
             }
             return false
+        }
+        guard workspaceSaveGeneration == generation else {
+            publishOutcome = "superseded"
+            return true
         }
         courseResumePoints = prepared.resumePoints
         if !oversizedPortableCourseIDs.isEmpty {
@@ -21125,6 +21334,11 @@ final class WorkspaceStore: ObservableObject {
                 || WeiBeiSafetyTestMode.isEnabled
         )
         return try waitForCourseFileOperation {
+            var observedRealFailure = false
+            let failureObservation = self.$workspaceSaveError.sink {
+                if $0 != nil { observedRealFailure = true }
+            }
+            defer { withExtendedLifetime(failureObservation) {} }
             let initialRevision =
                 self.coursePortableStateRevisions[courseID]
             guard let courseIndex = self.courses.firstIndex(where: {
@@ -21143,6 +21357,10 @@ final class WorkspaceStore: ObservableObject {
             let firstGeneration = self.workspaceSaveGeneration
             await self.courseProjectFileWorker
                 .prepareWorkspacePersistenceGateForSelfCheck(
+                    generation: firstGeneration
+                )
+            await self.courseProjectFileWorker
+                .failWorkspacePersistenceForSelfCheck(
                     generation: firstGeneration
                 )
             let persistenceLoop = self.startWorkspacePersistenceLoop()
@@ -21178,7 +21396,8 @@ final class WorkspaceStore: ObservableObject {
                     $0.id == courseID
                 })?.title == "后台保存课程（第二代）"
                 && self.coursePortableStateRevisions[courseID]
-                    == (initialRevision ?? 0) + 2
+                    == (initialRevision ?? 0) + 1
+                && observedRealFailure
                 && self.blockedPortableCourseIDs
                     .contains(untouchedCourseID)
                 && self.oversizedPortableCourseIDs
@@ -21186,140 +21405,6 @@ final class WorkspaceStore: ObservableObject {
         }
     }
 #endif
-
-    @discardableResult
-    private func performSaveNow(
-        skippingPortableCourseIDs: Set<UUID> = []
-    ) -> Bool {
-        WeiBeiPerf.measure("workspace.save") {
-            let requestedCourseIDs =
-                persistedWorkspaceCourseIDs.intersection(
-                    Set(courses.map(\.id))
-                ).subtracting(skippingPortableCourseIDs)
-            let portableCommit: CoursePortableStateCommit
-            do {
-                portableCommit = try persistCoursePortableStates(
-                    courseIDs: requestedCourseIDs,
-                    requiring: Set(activeCourseFileMutationCounts.keys)
-                        .intersection(requestedCourseIDs)
-                )
-            } catch {
-                noteEditorWorkspaceSaveFailed(reportWorkspaceSaveFailure(ui(
-                    "课程可携带状态没有成功保存，本机内容已保留。请重试。",
-                    "Portable course state was not saved. Local content is preserved; please retry."
-                ), reason: error.localizedDescription))
-                return false
-            }
-            let persistedCourseResumePoints = sanitizedCourseResumePoints()
-            let snapshot = PersistedWorkspace(
-                importedItems: importedItems,
-                notesByItemID: notesByItemID,
-                pendingNoteWritesByItemID: pendingNoteWritesByItemID.isEmpty
-                    ? nil
-                    : pendingNoteWritesByItemID,
-                noteBackingContentDigestsByItemID: noteBackingContentDigestsByItemID.isEmpty
-                    ? nil
-                    : noteBackingContentDigestsByItemID,
-                selectedItemID: selectedItemID,
-                activeNotebookItemID: activeNotebookItemID,
-                courses: persistableCourses,
-                courseItemMemberships: nil,
-                activeCourseID: activeCourseID,
-                courseLibraryRootPath: courseLibraryRootPath,
-                courseLibraryRootIdentity: courseLibraryRootIdentity,
-                courseLibraryRootBookmarkData: courseLibraryRootBookmarkData,
-                noteSourceLinks: noteSourceLinks,
-                noteSourceLinksMigrationVersion: noteSourceLinksMigrationVersion,
-                materialNotePairings: materialNotePairings,
-                noteMaterialPairings: noteMaterialPairings,
-                studyLocationsByItemID: studyLocationsByItemID,
-                studyLocationsByCourseID: studyLocationsByCourseID,
-                courseResumePoints: persistedCourseResumePoints,
-                coursePortableStateRevisions: Dictionary(
-                    uniqueKeysWithValues: coursePortableStateRevisions.map {
-                        ($0.key.uuidString.lowercased(), $0.value)
-                    }
-                ),
-                coursePortableStateDigests: Dictionary(
-                    uniqueKeysWithValues: coursePortableStateDigests.map {
-                        ($0.key.uuidString.lowercased(), $0.value)
-                    }
-                ),
-                dirtyPortableCourseIDs: dirtyPortableCourseIDs.sorted {
-                    $0.uuidString < $1.uuidString
-                },
-                learningMemoryStates: learningMemoryStates,
-                courseKnowledgeProfiles: sanitizedCourseKnowledgeProfiles(),
-                learningMemoryScopeMigrationVersion: learningMemoryScopeMigrationVersion,
-                studySessions: persistedStudySessions,
-                studySessionScopeMigrationVersion: studySessionScopeMigrationVersion,
-                activeStudySessionID: persistedActiveStudySessionID,
-                selectionAskThreads: selectionAskThreads,
-                selectionRemarkRecords: selectionRemarkRecords,
-                modelName: modelName,
-                agentProviderID: agentProviderID.rawValue,
-                agentBaseURL: agentBaseURL.isEmpty ? nil : agentBaseURL,
-                workspaceLayout: layout.rawValue,
-                threePaneOrder: normalizedThreePaneOrder,
-                agentSurface: agentSurface == .selectionFloat ? .hidden : agentSurface,
-                showLibrary: nil,
-                showReader: showReader,
-                showAgent: showAgent,
-                showNotes: showNotes,
-                showRightPane: showRightPane,
-                showDailyInspiration: showDailyInspiration,
-                appearanceModeRaw: appearanceMode.rawValue,
-                adaptImportedDocumentColors: adaptImportedDocumentColors,
-                interfaceLanguageRaw: interfaceLanguage.rawValue,
-                interfaceTextScaleRaw: interfaceTextScale.rawValue
-            )
-            let noteEditorSaveReceipt = makeNoteEditorWorkspaceSaveReceipt(snapshot)
-            do {
-                let data = try JSONEncoder().encode(snapshot)
-                try workspaceSnapshotWriter(data, storageURL)
-                persistedWorkspaceCourseIDs = Set(courses.map(\.id))
-                cleanupPersistedCourseTrashReceipts()
-                courseResumePoints = persistedCourseResumePoints
-                if !oversizedPortableCourseIDs.isEmpty {
-                    reportWorkspaceSaveFailure(ui(
-                        "工作区内容已保存，但有课程的可携带状态超过 32 MB；课程文件夹中的原状态保持不变。请精简课程 Chat 或未写入草稿后重试。",
-                        "The workspace was saved, but a portable course state exceeds 32 MB. The state in the course folder was left unchanged. Reduce course chats or pending drafts, then retry."
-                    ))
-                } else if blockedPortableCourseIDs.isEmpty {
-                    clearWorkspaceSaveError()
-                } else {
-                    reportWorkspaceSaveFailure(ui(
-                        "有课程状态存在冲突或损坏，原文件与本机缓存均已保留。请先处理课程文件夹中的冲突或损坏，再重试。",
-                        "A course state is conflicted or damaged. Both the original file and local cache are preserved. Resolve the course-folder conflict or damage, then retry."
-                    ))
-                }
-                needsSelectionAskThreadsWorkspaceMigration = false
-                loadedSelectionAskThreadsFromWorkspaceSnapshot = true
-                if shouldRemoveLegacySelectionAskThreadsAfterSave {
-                    selectionAskThreadDefaults.removeObject(
-                        forKey: Self.legacySelectionAskThreadsDefaultsKey
-                    )
-                    shouldRemoveLegacySelectionAskThreadsAfterSave = false
-                }
-                noteEditorDidPersistWorkspace(noteEditorSaveReceipt)
-                return true
-            } catch {
-                do {
-                    try rollbackCoursePortableStateCommit(portableCommit)
-                    noteEditorWorkspaceSaveFailed(reportWorkspaceSaveFailure(ui(
-                        "课程更改尚未写入磁盘，未写内容已保存在魏碑中。请重试。",
-                        "Course changes were not saved to disk. Unsaved content is kept in WeiBei; please retry."
-                    ), reason: error.localizedDescription))
-                } catch {
-                    noteEditorWorkspaceSaveFailed(reportWorkspaceSaveFailure(ui(
-                        "课程状态提交时检测到并发变更，魏碑已停止覆盖并保留两边。请先处理冲突，再重试。",
-                        "A concurrent change was detected while committing course state. WeiBei stopped overwriting and preserved both versions. Resolve the conflict, then retry."
-                    )))
-                }
-                return false
-            }
-        }
-    }
 
     private static func environmentValue(_ name: String) -> String {
         (ProcessInfo.processInfo.environment[name] ?? "")
