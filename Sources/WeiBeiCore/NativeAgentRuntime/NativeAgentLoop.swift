@@ -108,6 +108,10 @@ public actor NativeAgentLoop {
                         stepText += text
                         collectedText += text
                         await progress?(.text(collectedText, []))
+                    case let .webSearchSource(url):
+                        if !context.webSearchURLs.contains(url) {
+                            context.webSearchURLs.append(url)
+                        }
                     case let .toolCallDelta(_, _, name, _):
                         if let name {
                             await progress?(.usingTool(name, nil))
@@ -284,6 +288,12 @@ public actor NativeAgentLoop {
     ) {
         if result.isError { return }
         let details = result.details
+        if name == "weibei_web_open", let url = details["requestedURL"] as? String {
+            WeiBeiWebResearchURLPolicy.consumeSearchAuthorization(
+                for: url,
+                from: &context.webSearchURLs
+            )
+        }
         if name == "weibei_course_search" || name == "weibei_course_read" {
             if let items = (try? JSONDecoder().decode(StudyAgentHostToolResult.self, from: Data(result.text.utf8)))?.items {
                 for item in items {

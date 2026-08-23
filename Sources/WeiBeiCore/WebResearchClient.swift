@@ -31,6 +31,16 @@ public enum WeiBeiWebResearchError: LocalizedError, Equatable, Sendable {
 }
 
 public enum WeiBeiWebResearchURLPolicy {
+    public static func isAuthorized(
+        _ url: String,
+        in userQuestion: String,
+        webSearchURLs: [String]
+    ) -> Bool {
+        guard let requested = canonicalAuthorizationURL(url) else { return false }
+        return isExplicitlyProvided(url, in: userQuestion)
+            || webSearchURLs.contains { canonicalAuthorizationURL($0) == requested }
+    }
+
     public static func isExplicitlyProvided(_ url: String, in userQuestion: String) -> Bool {
         guard let requested = canonicalAuthorizationURL(url),
               let detector = try? NSDataDetector(
@@ -56,6 +66,14 @@ public enum WeiBeiWebResearchURLPolicy {
             }
             return candidates.contains { canonicalAuthorizationURL($0) == requested }
         }
+    }
+
+    public static func consumeSearchAuthorization(
+        for url: String,
+        from webSearchURLs: inout [String]
+    ) {
+        guard let requested = canonicalAuthorizationURL(url) else { return }
+        webSearchURLs.removeAll { canonicalAuthorizationURL($0) == requested }
     }
 
     public static func validatedPublicHTTPSURL(_ rawValue: String) throws -> URL {

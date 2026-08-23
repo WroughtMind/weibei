@@ -420,6 +420,8 @@ enum NativeBaselineFixtures {
                     nextCursor: cursor == nil && clipped.count >= maximumCharacters ? "cursor-2" : nil,
                     sourceRevision: "rev-1"
                 )
+            case .retryFailedPDFPages:
+                return StudyAgentHostToolResult(query: "已开始重新索引失败页", items: [])
             case let .webOpen(url, maximumCharacters):
                 return StudyAgentHostToolResult(
                     query: url,

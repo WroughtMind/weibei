@@ -1,4 +1,5 @@
 import Foundation
+import CoreGraphics
 import WeiBeiCore
 
 func checkCourseDocumentSearchReadiness() throws {
@@ -129,6 +130,129 @@ func checkCourseDocumentSearchReadiness() throws {
         "正文变化后仍接受旧的渐进读取游标"
     )
 
+    let retryPDFURL = root.appendingPathComponent("retry.pdf")
+    try makeSearchRetryPDF(at: retryPDFURL, pageCount: 2)
+    let retryPDF = StudyItem(
+        id: "retry-pdf",
+        title: "retry-pdf",
+        subtitle: retryPDFURL.lastPathComponent,
+        kind: .pdf,
+        urlPath: retryPDFURL.path,
+        isSample: false
+    )
+    let attempts = SearchPDFRetryAttempts()
+    let retryIndex = CourseDocumentSearchIndex(
+        databaseURL: root.appendingPathComponent("CourseIndex/retry.sqlite3"),
+        nativePDFTextLoader: { _, pageIndexes, _, _ in
+            var result: [Int: BoundedPDFTextPage] = [:]
+            for pageIndex in pageIndexes {
+                if pageIndex == 0, attempts.record(pageIndex) == 2 {
+                    result[pageIndex] = BoundedPDFTextPage(
+                        text: "RETRY RECOVERED " + String(repeating: "有效正文", count: 8),
+                        isPartial: false
+                    )
+                } else if pageIndex != 0 {
+                    _ = attempts.record(pageIndex)
+                }
+            }
+            return result
+        },
+        pdfOCRPageLoader: { _, pageIndex in
+            .failed(pageIndex: pageIndex, reason: .recognition)
+        }
+    )
+    retryIndex.schedule([retryPDF])
+    let retryDeadline = Date().addingTimeInterval(8)
+    var retryResult: CourseDocumentIndexResult?
+    repeat {
+        retryResult = retryIndex.lookup(items: [retryPDF], query: "RETRY RECOVERED")[retryPDF.id]
+        if retryResult?.indexedPageCount == 1,
+           retryResult?.failedPageIndexes == [1] {
+            break
+        }
+        Thread.sleep(forTimeInterval: 0.02)
+    } while Date() < retryDeadline
+    let finalAttempts = attempts.snapshot()
+    try requireSearchCheck(
+        finalAttempts == [0: 2, 1: 2]
+            && retryResult?.totalPageCount == 2
+            && retryResult?.indexedPageCount == 1
+            && retryResult?.uncoveredPageIndexes == [1]
+            && retryResult?.failedPageIndexes == [1]
+            && retryResult?.failedPageReasons == [1: PDFOCRFailureReason.recognition.rawValue]
+            && retryResult?.isTruncated == true,
+        "PDF 有限重试或覆盖状态不符：attempts=\(finalAttempts), result=\(String(describing: retryResult))"
+    )
+    retryIndex.schedule([retryPDF])
+    Thread.sleep(forTimeInterval: 0.2)
+    let rescheduledAttempts = attempts.snapshot()
+    try requireSearchCheck(
+        rescheduledAttempts == finalAttempts,
+        "PDF 最终失败页在普通调度中仍被反复重试"
+    )
+    let zeroHitResult = retryIndex.lookup(items: [retryPDF], query: "不会命中的查询")[retryPDF.id]
+    try requireSearchCheck(
+        zeroHitResult?.text == nil
+            && zeroHitResult?.uncoveredPageIndexes == [1]
+            && zeroHitResult?.failedPageIndexes == [1],
+        "PDF 零命中时没有保留未覆盖页和失败页状态"
+    )
+    let retryContext = CourseKnowledgeIndex.build(
+        title: "重试课程",
+        sources: [
+            CourseKnowledgeSource(
+                id: retryPDF.id,
+                title: retryPDF.title,
+                subtitle: retryPDF.subtitle,
+                kind: retryPDF.kind.rawValue,
+                role: "material",
+                text: retryResult?.text ?? "",
+                isTruncated: retryResult?.isTruncated ?? true,
+                indexedPageCount: retryResult?.indexedPageCount,
+                totalPageCount: retryResult?.totalPageCount,
+                uncoveredPageNumbers: retryResult?.uncoveredPageIndexes.map { $0 + 1 },
+                failedPageNumbers: retryResult?.failedPageIndexes.map { $0 + 1 },
+                failedPageReasons: retryResult.map { result in
+                    Dictionary(uniqueKeysWithValues: result.failedPageReasons.map { ($0.key + 1, $0.value) })
+                }
+            ),
+        ],
+        links: [],
+        query: "RETRY RECOVERED",
+        currentMaterialID: nil,
+        currentNoteID: nil
+    )
+    try requireSearchCheck(
+        retryContext.items.first?.indexedPageCount == 1
+            && retryContext.items.first?.totalPageCount == 2
+            && retryContext.items.first?.uncoveredPageNumbers == [2]
+            && retryContext.items.first?.failedPageNumbers == [2]
+            && retryContext.items.first?.failedPageReasons == [2: PDFOCRFailureReason.recognition.rawValue],
+        "PDF 覆盖率与失败页没有沿 Agent 搜索结果字段送出"
+    )
+    try requireSearchCheck(
+        retryIndex.retryFailedPDFPages(in: retryPDF),
+        "用户专项重新索引失败页没有重置有限重试状态"
+    )
+    let resetDeadline = Date().addingTimeInterval(8)
+    repeat {
+        let pageOneAttempts = attempts.count(for: 1)
+        if pageOneAttempts == 4 { break }
+        Thread.sleep(forTimeInterval: 0.02)
+    } while Date() < resetDeadline
+    let resetAttempts = attempts.snapshot()
+    try requireSearchCheck(
+        resetAttempts == [0: 2, 1: 4],
+        "用户专项重新索引失败页没有只重置失败页的一轮有限重试"
+    )
+    try makeSearchRetryPDF(at: retryPDFURL, pageCount: 1)
+    let changedResult = retryIndex.lookup(items: [retryPDF], query: "不会命中的查询")[retryPDF.id]
+    try requireSearchCheck(
+        changedResult?.sourceRevision != retryResult?.sourceRevision
+            && changedResult?.totalPageCount != 2,
+        "PDF 文件变化后仍把旧版本覆盖率挂到新版本"
+    )
+
     let courseID = UUID()
     let now = Date(timeIntervalSince1970: 1_700_000_000)
     let profile = CourseKnowledgeProfile(
@@ -204,6 +328,21 @@ func checkCourseDocumentSearchReadiness() throws {
     )
 }
 
+private func makeSearchRetryPDF(at url: URL, pageCount: Int) throws {
+    guard let consumer = CGDataConsumer(url: url as CFURL) else {
+        throw NSError(domain: "WeiBeiSearchCheck", code: 1)
+    }
+    var mediaBox = CGRect(x: 0, y: 0, width: 320, height: 480)
+    guard let context = CGContext(consumer: consumer, mediaBox: &mediaBox, nil) else {
+        throw NSError(domain: "WeiBeiSearchCheck", code: 2)
+    }
+    for _ in 0..<pageCount {
+        context.beginPDFPage(nil)
+        context.endPDFPage()
+    }
+    context.closePDF()
+}
+
 private func makeSearchItem(
     _ id: String,
     body: String,
@@ -250,6 +389,31 @@ private final class CourseSearchIndexGate: @unchecked Sendable {
         } else if currentOpen == 25 {
             foregroundLimitReached.signal()
         }
+    }
+}
+
+private final class SearchPDFRetryAttempts: @unchecked Sendable {
+    private let lock = NSLock()
+    private var attempts: [Int: Int] = [:]
+
+    func record(_ pageIndex: Int) -> Int {
+        lock.lock()
+        attempts[pageIndex, default: 0] += 1
+        let count = attempts[pageIndex] ?? 0
+        lock.unlock()
+        return count
+    }
+
+    func count(for pageIndex: Int) -> Int? {
+        lock.lock()
+        defer { lock.unlock() }
+        return attempts[pageIndex]
+    }
+
+    func snapshot() -> [Int: Int] {
+        lock.lock()
+        defer { lock.unlock() }
+        return attempts
     }
 }
 

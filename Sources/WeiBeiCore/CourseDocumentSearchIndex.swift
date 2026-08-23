@@ -22,6 +22,11 @@ public struct CourseDocumentIndexResult: Sendable {
     public var availability: CourseDocumentIndexAvailability
     public var nextCursor: String?
     public var sourceRevision: String?
+    public var indexedPageCount: Int?
+    public var totalPageCount: Int?
+    public var uncoveredPageIndexes: [Int]
+    public var failedPageIndexes: [Int]
+    public var failedPageReasons: [Int: String]
 
     public init(
         text: String?,
@@ -29,7 +34,12 @@ public struct CourseDocumentIndexResult: Sendable {
         rank: Double? = nil,
         availability: CourseDocumentIndexAvailability = .ready,
         nextCursor: String? = nil,
-        sourceRevision: String? = nil
+        sourceRevision: String? = nil,
+        indexedPageCount: Int? = nil,
+        totalPageCount: Int? = nil,
+        uncoveredPageIndexes: [Int] = [],
+        failedPageIndexes: [Int] = [],
+        failedPageReasons: [Int: String] = [:]
     ) {
         self.text = text
         self.isTruncated = isTruncated
@@ -37,6 +47,11 @@ public struct CourseDocumentIndexResult: Sendable {
         self.availability = availability
         self.nextCursor = nextCursor
         self.sourceRevision = sourceRevision
+        self.indexedPageCount = indexedPageCount
+        self.totalPageCount = totalPageCount
+        self.uncoveredPageIndexes = uncoveredPageIndexes
+        self.failedPageIndexes = failedPageIndexes
+        self.failedPageReasons = failedPageReasons
     }
 }
 
@@ -52,6 +67,11 @@ public typealias CourseNativePDFTextLoader = @Sendable (
     _ maximumCharactersPerPage: Int,
     _ timeout: TimeInterval
 ) -> [Int: BoundedPDFTextPage]?
+
+public typealias CoursePDFOCRPageLoader = (
+    _ document: PDFDocument,
+    _ pageIndex: Int
+) -> PDFOCRPageOutcome
 
 public final class CourseDocumentSearchIndex: @unchecked Sendable {
     private struct ReadCursor: Codable {
@@ -81,6 +101,18 @@ public final class CourseDocumentSearchIndex: @unchecked Sendable {
         var isComplete: Bool
         var chunkCount: Int
         var hasPartialExtraction: Bool
+    }
+
+    private struct PDFIndexStatus {
+        var pageCount: Int
+        var indexedPageIndexes: Set<Int> = []
+        var failedPageIndexes: Set<Int> = []
+        var failedPageReasons: [Int: String] = [:]
+
+        var uncoveredPageIndexes: [Int] {
+            guard pageCount > 0 else { return [] }
+            return Set(0..<pageCount).subtracting(indexedPageIndexes).sorted()
+        }
     }
 
     private struct RankedChunk {
@@ -157,6 +189,7 @@ public final class CourseDocumentSearchIndex: @unchecked Sendable {
 
     private let databaseURL: URL
     private let nativePDFTextLoader: CourseNativePDFTextLoader
+    private let pdfOCRPageLoader: CoursePDFOCRPageLoader
     private let verifiedFileDidOpen: (@Sendable () -> Void)?
     private let indexingQueue = DispatchQueue(
         label: "com.changfenhuang.weibei.course-index",
@@ -189,11 +222,15 @@ public final class CourseDocumentSearchIndex: @unchecked Sendable {
                 maximumCharactersPerPage: maximumCharacters,
                 timeout: timeout
             )
+        },
+        pdfOCRPageLoader: @escaping CoursePDFOCRPageLoader = { document, pageIndex in
+            PDFOCRTextExtractor.pageOutcome(from: document, pageIndex: pageIndex)
         }
     ) {
         self.databaseURL = databaseURL
         self.verifiedFileDidOpen = verifiedFileDidOpen
         self.nativePDFTextLoader = nativePDFTextLoader
+        self.pdfOCRPageLoader = pdfOCRPageLoader
         try? FileManager.default.createDirectory(
             at: databaseURL.deletingLastPathComponent(),
             withIntermediateDirectories: true
@@ -241,6 +278,10 @@ public final class CourseDocumentSearchIndex: @unchecked Sendable {
                 PRIMARY KEY (item_id, page_index)
             )
             """,
+            in: database
+        )
+        _ = execute(
+            "UPDATE processed_pages SET extraction_kind = 'ocr-failed-unknown-attempt-1' WHERE extraction_kind = 'failed'",
             in: database
         )
         _ = execute(
@@ -293,6 +334,27 @@ public final class CourseDocumentSearchIndex: @unchecked Sendable {
             self.schedulingLock.unlock()
             scheduledItems.forEach(self.schedule)
         }
+    }
+
+    @discardableResult
+    public func retryFailedPDFPages(in item: StudyItem) -> Bool {
+        guard item.kind == .pdf,
+              let scheduled = Self.scheduledItem(item),
+              let itemLock = acquireItemIndexLock(for: scheduled.storageID) else { return false }
+        defer { itemLock.unlock() }
+        guard isExpected(signature: scheduled.signature, for: scheduled.storageID),
+              Self.fileSignature(for: item) == scheduled.signature,
+              let database = openDatabase() else { return false }
+        defer { sqlite3_close(database) }
+        let reset = withWriteTransaction(in: database) {
+            resetFinalFailedPDFPages(
+                itemID: scheduled.storageID,
+                expectedSignature: scheduled.signature,
+                in: database
+            )
+        }
+        if reset { schedule(scheduled) }
+        return reset
     }
 
     public func synchronize(_ items: [StudyItem]) {
@@ -368,6 +430,7 @@ public final class CourseDocumentSearchIndex: @unchecked Sendable {
         let activeScheduleKeys = scheduledSignatures
         schedulingLock.unlock()
         let states = fileStates(in: database)
+        let pdfStatuses = pdfIndexStatuses(in: database)
         let validStates = itemMappings.reduce(into: [String: FileState]()) { result, mapping in
             guard let signature = expectedSignatures[mapping.storageID],
                   let state = states[mapping.storageID],
@@ -457,6 +520,7 @@ public final class CourseDocumentSearchIndex: @unchecked Sendable {
             } else {
                 availability = .unavailable
             }
+            let pdfStatus = state == nil ? nil : pdfStatuses[mapping.storageID]
             result[mapping.itemID] = CourseDocumentIndexResult(
                 text: joined.isEmpty ? nil : String(joined.prefix(characterLimit)),
                 isTruncated: state?.isComplete != true
@@ -465,7 +529,12 @@ public final class CourseDocumentSearchIndex: @unchecked Sendable {
                     || joined.count > characterLimit,
                 rank: chunks.map(\.rank).min(),
                 availability: availability,
-                sourceRevision: expectedSignature
+                sourceRevision: expectedSignature,
+                indexedPageCount: pdfStatus?.indexedPageIndexes.count,
+                totalPageCount: pdfStatus?.pageCount,
+                uncoveredPageIndexes: pdfStatus?.uncoveredPageIndexes ?? [],
+                failedPageIndexes: pdfStatus?.failedPageIndexes.sorted() ?? [],
+                failedPageReasons: pdfStatus?.failedPageReasons ?? [:]
             )
         }
     }
@@ -640,6 +709,7 @@ public final class CourseDocumentSearchIndex: @unchecked Sendable {
                 break
             }
         }
+        let pdfStatus = pdfIndexStatus(for: scheduled.storageID, in: database)
         return CourseDocumentIndexResult(
             text: output.isEmpty ? nil : output,
             isTruncated: state.isComplete != true
@@ -649,7 +719,12 @@ public final class CourseDocumentSearchIndex: @unchecked Sendable {
                 ? .ready
                 : (isScheduled ? .indexing : .unavailable),
             nextCursor: nextCursor,
-            sourceRevision: scheduled.signature
+            sourceRevision: scheduled.signature,
+            indexedPageCount: pdfStatus?.indexedPageIndexes.count,
+            totalPageCount: pdfStatus?.pageCount,
+            uncoveredPageIndexes: pdfStatus?.uncoveredPageIndexes ?? [],
+            failedPageIndexes: pdfStatus?.failedPageIndexes.sorted() ?? [],
+            failedPageReasons: pdfStatus?.failedPageReasons ?? [:]
         )
     }
 
@@ -887,7 +962,9 @@ public final class CourseDocumentSearchIndex: @unchecked Sendable {
         defer { sqlite3_close(database) }
         if let state = fileState(for: storageID, in: database),
            state.signature == signature,
-           state.isComplete {
+           state.isComplete,
+           (item.kind != .pdf
+                || retryableFailedPageIndexes(for: storageID, in: database).isEmpty) {
             return false
         }
         if let state = fileState(for: storageID, in: database),
@@ -1016,12 +1093,15 @@ public final class CourseDocumentSearchIndex: @unchecked Sendable {
 
         var processedPages = processedPageIndexes(for: storageID, in: database)
         var nativeAttemptedPages = nativeAttemptedPageIndexes(for: storageID, in: database)
+        let retryableFailedPages = retryableFailedPageIndexes(for: storageID, in: database)
         let nativePageLimit = min(pageCount, maximumPages.map { max($0, 0) } ?? pageCount)
         let extractionDeadline = Date().addingTimeInterval(
             maximumSeconds
                 ?? (maximumPages == nil ? Self.backgroundPDFTextBudget : Self.foregroundPDFTextBudget)
         )
-        let pendingPageIndexes = (0..<nativePageLimit).filter { !nativeAttemptedPages.contains($0) }
+        let pendingPageIndexes = (0..<nativePageLimit).filter {
+            !nativeAttemptedPages.contains($0) || retryableFailedPages.contains($0)
+        }
         var pendingBatches: [[Int]] = []
         var pendingOffset = 0
         while pendingOffset < pendingPageIndexes.count {
@@ -1098,7 +1178,7 @@ public final class CourseDocumentSearchIndex: @unchecked Sendable {
             isComplete: processedPages.count == pageCount,
             in: database
         )
-        return processedPages.count < pageCount
+        return processedPages.count < pageCount || !retryableFailedPages.isEmpty
     }
 
     private func finishPDFOCR(item: StudyItem, storageID: String, signature: String) {
@@ -1118,7 +1198,11 @@ public final class CourseDocumentSearchIndex: @unchecked Sendable {
         let pageCount = max(document.pageCount, 0)
         var processedPages = processedPageIndexes(for: storageID, in: database)
         let nativeAttemptedPages = nativeAttemptedPageIndexes(for: storageID, in: database)
-        let pagesToOCR = nativeAttemptedPages.subtracting(processedPages).sorted()
+        let retryableFailedPages = retryableFailedPageIndexes(for: storageID, in: database)
+        let pagesToOCR = nativeAttemptedPages
+            .subtracting(processedPages)
+            .union(retryableFailedPages)
+            .sorted()
         for pageIndex in pagesToOCR {
             guard hasDatabaseCapacity() else { return }
             guard isExpected(signature: signature, for: storageID),
@@ -1126,7 +1210,7 @@ public final class CourseDocumentSearchIndex: @unchecked Sendable {
                   fileState(for: storageID, in: database)?.signature == signature else { return }
             let pageText: String
             let extractionKind: String
-            switch PDFOCRTextExtractor.pageOutcome(from: document, pageIndex: pageIndex) {
+            switch pdfOCRPageLoader(document, pageIndex) {
             case let .text(page):
                 let rawText = page.text
                 pageText = String(rawText.prefix(Self.maximumPDFPageCharacters))
@@ -1134,9 +1218,11 @@ public final class CourseDocumentSearchIndex: @unchecked Sendable {
             case .empty:
                 pageText = ""
                 extractionKind = "empty"
-            case .failed:
+            case let .failed(_, reason):
                 pageText = ""
-                extractionKind = "failed"
+                extractionKind = retryableFailedPages.contains(pageIndex)
+                    ? "ocr-failed-\(reason.rawValue)-final"
+                    : "ocr-failed-\(reason.rawValue)-attempt-1"
             }
             guard replacePDFPage(
                 itemID: storageID,
@@ -1168,8 +1254,10 @@ public final class CourseDocumentSearchIndex: @unchecked Sendable {
               let database = openDatabase() else { return false }
         defer { sqlite3_close(database) }
         guard let state = fileState(for: storageID, in: database),
-              state.signature == signature,
-              !state.isComplete,
+              state.signature == signature else { return false }
+        let retryableFailedPages = retryableFailedPageIndexes(for: storageID, in: database)
+        if !retryableFailedPages.isEmpty { return true }
+        guard !state.isComplete,
               let pageCount = storedPageCount(for: storageID, in: database),
               pageCount > 0 else { return false }
         let resolvedPages = nativeAttemptedPageIndexes(for: storageID, in: database)
@@ -1399,6 +1487,44 @@ public final class CourseDocumentSearchIndex: @unchecked Sendable {
         return expectedSignaturesByStorageID[storageID] == signature
     }
 
+    private func pdfIndexStatus(for itemID: String, in database: OpaquePointer) -> PDFIndexStatus? {
+        pdfIndexStatuses(in: database)[itemID]
+    }
+
+    private func pdfIndexStatuses(in database: OpaquePointer) -> [String: PDFIndexStatus] {
+        guard let statement = prepare(
+            """
+            SELECT files.item_id, files.page_count,
+                processed_pages.page_index, processed_pages.extraction_kind
+            FROM files
+            LEFT JOIN processed_pages ON processed_pages.item_id = files.item_id
+            WHERE files.kind = 'pdf'
+            """,
+            in: database
+        ) else { return [:] }
+        defer { sqlite3_finalize(statement) }
+        var statuses: [String: PDFIndexStatus] = [:]
+        while sqlite3_step(statement) == SQLITE_ROW {
+            guard let itemID = columnText(statement, at: 0) else { continue }
+            var status = statuses[itemID]
+                ?? PDFIndexStatus(pageCount: Int(sqlite3_column_int64(statement, 1)))
+            if sqlite3_column_type(statement, 2) != SQLITE_NULL,
+               let extractionKind = columnText(statement, at: 3) {
+                let pageIndex = Int(sqlite3_column_int64(statement, 2))
+                if extractionKind.contains("failed") {
+                    status.failedPageIndexes.insert(pageIndex)
+                    status.failedPageReasons[pageIndex] = Self.pdfFailureReason(
+                        in: extractionKind
+                    ) ?? "unknown"
+                } else if !extractionKind.hasSuffix("-partial") {
+                    status.indexedPageIndexes.insert(pageIndex)
+                }
+            }
+            statuses[itemID] = status
+        }
+        return statuses
+    }
+
     private func processedPageIndexes(for itemID: String, in database: OpaquePointer) -> Set<Int> {
         guard let statement = prepare(
             "SELECT page_index FROM processed_pages WHERE item_id = ?",
@@ -1411,6 +1537,71 @@ public final class CourseDocumentSearchIndex: @unchecked Sendable {
             indexes.insert(Int(sqlite3_column_int64(statement, 0)))
         }
         return indexes
+    }
+
+    private func retryableFailedPageIndexes(for itemID: String, in database: OpaquePointer) -> Set<Int> {
+        guard let statement = prepare(
+            "SELECT page_index FROM processed_pages WHERE item_id = ? AND extraction_kind LIKE 'ocr-failed-%-attempt-1'",
+            in: database
+        ) else { return [] }
+        defer { sqlite3_finalize(statement) }
+        bind(itemID, at: 1, in: statement)
+        var indexes: Set<Int> = []
+        while sqlite3_step(statement) == SQLITE_ROW {
+            indexes.insert(Int(sqlite3_column_int64(statement, 0)))
+        }
+        return indexes
+    }
+
+    private func resetFinalFailedPDFPages(
+        itemID: String,
+        expectedSignature: String,
+        in database: OpaquePointer
+    ) -> Bool {
+        guard isExpected(signature: expectedSignature, for: itemID),
+              fileState(for: itemID, in: database)?.signature == expectedSignature,
+              let count = prepare(
+                  "SELECT COUNT(*) FROM processed_pages WHERE item_id = ? AND extraction_kind LIKE 'ocr-failed-%-final'",
+                  in: database
+              ) else { return false }
+        bind(itemID, at: 1, in: count)
+        let hasFinalFailures = sqlite3_step(count) == SQLITE_ROW
+            && sqlite3_column_int64(count, 0) > 0
+        sqlite3_finalize(count)
+        guard hasFinalFailures else { return false }
+        for sql in [
+            """
+            DELETE FROM native_attempted_pages
+            WHERE item_id = ? AND page_index IN (
+                SELECT page_index FROM processed_pages
+                WHERE item_id = ? AND extraction_kind LIKE 'ocr-failed-%-final'
+            )
+            """,
+            "DELETE FROM processed_pages WHERE item_id = ? AND extraction_kind LIKE 'ocr-failed-%-final'",
+        ] {
+            guard let statement = prepare(sql, in: database) else { return false }
+            bind(itemID, at: 1, in: statement)
+            if sql.contains("SELECT page_index") { bind(itemID, at: 2, in: statement) }
+            let result = sqlite3_step(statement)
+            sqlite3_finalize(statement)
+            guard result == SQLITE_DONE else { return false }
+        }
+        guard let progress = prepare(
+            """
+            UPDATE files
+            SET processed_count = (
+                    SELECT COUNT(*) FROM processed_pages WHERE item_id = ?
+                ),
+                is_complete = 0
+            WHERE item_id = ? AND signature = ?
+            """,
+            in: database
+        ) else { return false }
+        defer { sqlite3_finalize(progress) }
+        bind(itemID, at: 1, in: progress)
+        bind(itemID, at: 2, in: progress)
+        bind(expectedSignature, at: 3, in: progress)
+        return sqlite3_step(progress) == SQLITE_DONE
     }
 
     private func nativeAttemptedPageIndexes(for itemID: String, in database: OpaquePointer) -> Set<Int> {
@@ -1465,7 +1656,7 @@ public final class CourseDocumentSearchIndex: @unchecked Sendable {
                 EXISTS(
                     SELECT 1 FROM processed_pages
                     WHERE processed_pages.item_id = files.item_id
-                        AND (extraction_kind LIKE '%-partial' OR extraction_kind = 'failed')
+                        AND (extraction_kind LIKE '%-partial' OR extraction_kind LIKE '%failed%')
                 )
             FROM files
             WHERE item_id = ?
@@ -1491,7 +1682,7 @@ public final class CourseDocumentSearchIndex: @unchecked Sendable {
                 EXISTS(
                     SELECT 1 FROM processed_pages
                     WHERE processed_pages.item_id = files.item_id
-                        AND (extraction_kind LIKE '%-partial' OR extraction_kind = 'failed')
+                        AND (extraction_kind LIKE '%-partial' OR extraction_kind LIKE '%failed%')
                 )
             FROM files
             """,
@@ -1850,6 +2041,16 @@ public final class CourseDocumentSearchIndex: @unchecked Sendable {
             !CharacterSet.whitespacesAndNewlines.contains($0)
                 && !CharacterSet.punctuationCharacters.contains($0)
         }.count >= 20
+    }
+
+    private static func pdfFailureReason(in extractionKind: String) -> String? {
+        let prefix = "ocr-failed-"
+        guard extractionKind.hasPrefix(prefix) else { return nil }
+        let value = extractionKind.dropFirst(prefix.count)
+        for suffix in ["-attempt-1", "-final"] where value.hasSuffix(suffix) {
+            return String(value.dropLast(suffix.count))
+        }
+        return nil
     }
 
     private static func chunked(_ text: String, maximumCharacters: Int) -> [String] {
