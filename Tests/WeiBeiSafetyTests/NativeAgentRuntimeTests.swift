@@ -138,16 +138,13 @@ final class NativeAgentRuntimeTests: XCTestCase {
         }
     }
 
-    func testLoopStepLimitIsNotCompletedAndKeepsLedger() async throws {
-        let url = FileManager.default.temporaryDirectory.appendingPathComponent("native-step-limit-\(UUID().uuidString).jsonl")
+    func testLoopContinuesPastTwelveToolSteps() async throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("native-long-tool-run-\(UUID().uuidString).jsonl")
         defer { try? FileManager.default.removeItem(at: url) }
         let ledger = try NativeAgentLedger(fileURL: url)
         let registry = NativeToolRegistry()
         await NativeBuiltinTools.registerAll(into: registry, skillRoot: nil)
-        let adapter = MockLLMAdapter(chunks: [
-            .toolCallDelta(index: 0, id: "t1", name: "weibei_course_search", argumentsDelta: "{\"query\":\"利率\"}"),
-            .finish(reason: .toolCalls, replayState: nil),
-        ])
+        let adapter = LongToolRunMockLLMAdapter(toolStepCount: 13)
         let loop = NativeAgentLoop()
         let request = StudyAgentRequest(
             purpose: .conversation,
@@ -159,28 +156,23 @@ final class NativeAgentRuntimeTests: XCTestCase {
             contextRevision: "r1"
         )
 
-        do {
-            _ = try await loop.run(
-                request: request,
-                ledger: ledger,
-                registry: registry,
-                adapter: adapter,
-                model: "mock",
-                hostToolHandler: nil,
-                systemPrompt: "test",
-                progress: nil
-            )
-            XCTFail("step limit must not complete")
-        } catch let failure as NativeLLMFailure {
-            XCTAssertEqual(failure.code, "step_limit")
-            XCTAssertEqual(failure.message, "已达到 12 步上限，现场已保留，请继续。")
-        }
+        let result = try await loop.run(
+            request: request,
+            ledger: ledger,
+            registry: registry,
+            adapter: adapter,
+            model: "mock",
+            hostToolHandler: nil,
+            systemPrompt: "test",
+            progress: nil
+        )
 
         let events = await ledger.allEvents()
-        XCTAssertEqual(events.filter { $0.type == .stepStart }.count, 12)
-        XCTAssertEqual(events.filter { $0.type == .toolResult }.count, 12)
+        XCTAssertEqual(result.text, "完成")
+        XCTAssertEqual(events.filter { $0.type == .stepStart }.count, 14)
+        XCTAssertEqual(events.filter { $0.type == .toolResult }.count, 13)
         XCTAssertEqual(events.last?.type, .turnEnd)
-        XCTAssertEqual(events.last?.finishReason, .error)
+        XCTAssertEqual(events.last?.finishReason, .completed)
     }
 
     func testChatCompletionsTranslation() throws {
@@ -269,6 +261,35 @@ private struct MockLLMAdapter: NativeLLMAdapter {
             for chunk in chunks {
                 continuation.yield(chunk)
             }
+            continuation.finish()
+        }
+    }
+}
+
+private struct LongToolRunMockLLMAdapter: NativeLLMAdapter {
+    var family: String { "mock" }
+    let toolStepCount: Int
+
+    func stream(_ request: NativeLLMRequest) -> AsyncThrowingStream<NativeStreamChunk, Error> {
+        let completedToolSteps = request.messages.filter { $0.role == .tool }.count
+        let chunks: [NativeStreamChunk] = if completedToolSteps < toolStepCount {
+            [
+                .toolCallDelta(
+                    index: 0,
+                    id: "t\(completedToolSteps + 1)",
+                    name: "weibei_course_search",
+                    argumentsDelta: "{\"query\":\"利率\"}"
+                ),
+                .finish(reason: .toolCalls, replayState: nil),
+            ]
+        } else {
+            [
+                .textDelta(index: 0, text: "完成"),
+                .finish(reason: .stop, replayState: nil),
+            ]
+        }
+        return AsyncThrowingStream { continuation in
+            chunks.forEach(continuation.yield)
             continuation.finish()
         }
     }
