@@ -4964,6 +4964,37 @@ enum CourseProjectRootSelfCheck {
                 )
             )
         }
+
+        let missingSharedTarget = exportParent.appendingPathComponent(
+            "共享原件缺失",
+            isDirectory: true
+        )
+        let missingSharedStagingBefore = try stagingNames()
+        try FileManager.default.removeItem(at: sharedSourceURL)
+        do {
+            _ = try store.exportPortableCourseCopyForSelfCheck(
+                courseID: courseA,
+                to: missingSharedTarget
+            )
+            throw CheckError.failed("共享原件缺失仍完成导出")
+        } catch let error as CoursePortableExportError {
+            guard case let .invalidSourceEntry(path, reason) = error else {
+                throw CheckError.failed("共享原件缺失返回了错误的导出错误")
+            }
+            try check(
+                path == sharedPortableItem.courseRelativePath
+                    && !reason.isEmpty,
+                "共享原件缺失错误没有指明课程相对路径和原因"
+            )
+        }
+        try check(
+            !missingSharedTarget.exists
+                && !missingSharedTarget.appendingPathComponent(
+                    ".weibei/\(CourseProjectManifest.portableExportCompletionFileName)"
+                ).exists
+                && (try stagingNames()) == missingSharedStagingBefore,
+            "共享原件缺失仍留下了目标、成功标记或暂存"
+        )
     }
 
     @MainActor

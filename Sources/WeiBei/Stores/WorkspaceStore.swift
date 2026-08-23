@@ -3357,15 +3357,10 @@ final class WorkspaceStore: ObservableObject {
                 sourceInfo = try await courseProjectFileWorker
                     .validatedRegularSource(sharedURL)
             } catch {
-                // 源文件真没了：跳过该项，不中止整次导出。
-                continue
-            }
-            // S3：身份漂移可容忍则静默继续。
-            let identityOK = item.importedFileIdentity.map {
-                $0.matchesAcrossVolumeDrift(sourceInfo.identity)
-            } ?? true
-            if !identityOK {
-                continue
+                throw CoursePortableExportError.invalidSourceEntry(
+                    path: state.items[index].courseRelativePath,
+                    reason: error.localizedDescription
+                )
             }
             let sourceSnapshot: CourseFileSnapshot
             do {
@@ -3375,7 +3370,10 @@ final class WorkspaceStore: ObservableObject {
                         expectedIdentity: sourceInfo.identity
                     )
             } catch {
-                continue
+                throw CoursePortableExportError.invalidSourceEntry(
+                    path: state.items[index].courseRelativePath,
+                    reason: error.localizedDescription
+                )
             }
             // digest 不一致时仍以磁盘现状导出（S3 静默降级；S6-9 可再收紧日志）。
             _ = expectedContentDigest
