@@ -302,7 +302,7 @@ private struct MockLLMAdapter: NativeLLMAdapter {
 
     func stream(_ request: NativeLLMRequest) -> AsyncThrowingStream<NativeStreamChunk, Error> {
         inspect(request)
-        AsyncThrowingStream { continuation in
+        return AsyncThrowingStream { continuation in
             for chunk in chunks {
                 continuation.yield(chunk)
             }
