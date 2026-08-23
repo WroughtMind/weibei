@@ -84,7 +84,7 @@
 
 ## 4.2 实现步骤（按提交顺序）
 
-**第 1 步：`migrateLibrary(to:)` 核心方法**（新代码全部落在 `WorkspaceStore+LibraryRoot.swift`，不碰冻结文件）：
+**第 1 步：`migrateLibrary(to:)` 核心方法**（迁移职责集中在 `WorkspaceStore+LibraryRoot.swift`，相关调用者按完整链路评审）：
 
 ```
 func migrateLibrary(to destination: URL) async throws -> LibraryMigrationResult
@@ -120,7 +120,7 @@ func migrateLibrary(to destination: URL) async throws -> LibraryMigrationResult
 swift build
 swift run WeiBeiSelfCheck
 swift test --filter LibraryMigrationSafetyTests（CI 执行，本机无 Xcode）
-./script/check_file_growth.sh <base> <head>（确认冻结文件零增长）
+git diff --check（确认差异格式无误，并正常评审核心文件职责）
 ```
 
 CI 绿后打候选包，用户真实冒烟：设置里把库迁到 `~/魏碑资料库-迁移测试`，确认笔记全部可开后迁回。

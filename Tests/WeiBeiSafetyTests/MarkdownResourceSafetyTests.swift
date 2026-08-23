@@ -141,7 +141,7 @@ final class MarkdownResourceSafetyTests: XCTestCase {
     }
 
     @MainActor
-    func testRemoteImageSessionInvalidationBreaksDelegateRetention() async throws {
+    func testRemoteImageInvalidationDropsQueuedLoadWithoutCallback() throws {
         var components = URLComponents()
         components.scheme = "weibeiimage"
         components.host = "resource"
@@ -151,23 +151,20 @@ final class MarkdownResourceSafetyTests: XCTestCase {
         let task = RecordingURLSchemeTask(
             request: URLRequest(url: try XCTUnwrap(components.url))
         )
-        var handler: MarkdownImageSchemeHandler? = MarkdownImageSchemeHandler()
+        let validationQueue = DispatchQueue(label: "WeiBei.MarkdownRemoteImage.Test")
+        validationQueue.suspend()
+        var handler: MarkdownImageSchemeHandler? = MarkdownImageSchemeHandler(
+            remoteValidationQueue: validationQueue
+        )
         weak var weakHandler = handler
         handler?.webView(WKWebView(), start: task)
-
-        for _ in 0..<100 {
-            if handler?.hasActiveRemoteSession == true { break }
-            try await Task.sleep(nanoseconds: 20_000_000)
-        }
-        XCTAssertTrue(handler?.hasActiveRemoteSession == true)
-
         handler?.invalidate()
         handler?.invalidate()
+        validationQueue.resume()
+        validationQueue.sync {}
+
+        XCTAssertEqual(task.completionCount, 0)
         handler = nil
-        for _ in 0..<100 {
-            if weakHandler == nil { break }
-            try await Task.sleep(nanoseconds: 20_000_000)
-        }
         XCTAssertNil(weakHandler)
     }
 

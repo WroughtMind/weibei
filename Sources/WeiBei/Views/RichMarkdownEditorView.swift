@@ -46,10 +46,7 @@ final class MarkdownImageSchemeHandler: NSObject, WKURLSchemeHandler, URLSession
     private var pendingRemoteSchemeTaskIDs: Set<ObjectIdentifier> = []
     private var stoppedSchemeTaskIDs: Set<ObjectIdentifier> = []
     private var isInvalidated = false
-    private let remoteValidationQueue = DispatchQueue(
-        label: "WeiBei.MarkdownRemoteImage.Validation",
-        qos: .utility
-    )
+    private let remoteValidationQueue: DispatchQueue
     private let remoteDelegateQueue: OperationQueue = {
         let queue = OperationQueue()
         queue.name = "WeiBei.MarkdownRemoteImage"
@@ -57,6 +54,14 @@ final class MarkdownImageSchemeHandler: NSObject, WKURLSchemeHandler, URLSession
         return queue
     }()
     private var remoteSession: URLSession?
+
+    init(remoteValidationQueue: DispatchQueue = DispatchQueue(
+        label: "WeiBei.MarkdownRemoteImage.Validation",
+        qos: .utility
+    )) {
+        self.remoteValidationQueue = remoteValidationQueue
+        super.init()
+    }
 
     private func makeRemoteSession() -> URLSession {
         let configuration = URLSessionConfiguration.ephemeral
@@ -90,12 +95,6 @@ final class MarkdownImageSchemeHandler: NSObject, WKURLSchemeHandler, URLSession
         stoppedSchemeTaskIDs.removeAll()
         loadLock.unlock()
         session?.invalidateAndCancel()
-    }
-
-    var hasActiveRemoteSession: Bool {
-        loadLock.lock()
-        defer { loadLock.unlock() }
-        return remoteSession != nil
     }
 
     func update(markdownBaseURLString: String, attachmentDirectory: URL?, appearanceMode: WeiBeiAppearanceMode, interfaceLanguage: WeiBeiInterfaceLanguage) {

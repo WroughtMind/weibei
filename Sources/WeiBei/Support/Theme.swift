@@ -1738,7 +1738,7 @@ struct WeiBeiDialogButtonStyle: ButtonStyle {
 
 extension View {
     /// One-line etched backdrop for upgrading existing flat-fill surfaces;
-    /// keeps call sites compact inside frozen files.
+    /// keeps repeated call sites compact.
     func weibeiEtchedBackground(
         fill: Color,
         stroke: Color,

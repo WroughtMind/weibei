@@ -49,22 +49,24 @@ final class MotionInteractionSafetyTests: XCTestCase {
     }
 
     @MainActor
-    func testTransientStatusExpiresOnlyForCurrentUncancelledGeneration() {
-        XCTAssertFalse(WorkspaceStore.shouldExpireTransientNoteStatus(
-            scheduledGeneration: 1,
-            currentGeneration: 2,
-            isCancelled: false
-        ))
-        XCTAssertFalse(WorkspaceStore.shouldExpireTransientNoteStatus(
-            scheduledGeneration: 2,
-            currentGeneration: 2,
-            isCancelled: true
-        ))
-        XCTAssertTrue(WorkspaceStore.shouldExpireTransientNoteStatus(
-            scheduledGeneration: 2,
-            currentGeneration: 2,
-            isCancelled: false
-        ))
+    func testTransientStatusLifecycleUsesLatestGeneration() {
+        let store = makeStore()
+        store.showTransientNoteStatus("A")
+        let staleGeneration = store.transientNoteStatusGeneration
+        let staleTask = store.transientNoteStatusTask
+
+        store.showTransientNoteStatus("B")
+        let currentGeneration = store.transientNoteStatusGeneration
+        XCTAssertEqual(currentGeneration, staleGeneration + 1)
+        XCTAssertTrue(staleTask?.isCancelled == true)
+        XCTAssertEqual(store.transientNoteStatus, "B")
+
+        store.expireTransientNoteStatus(scheduledGeneration: staleGeneration, isCancelled: false)
+        XCTAssertEqual(store.transientNoteStatus, "B")
+        store.expireTransientNoteStatus(scheduledGeneration: currentGeneration, isCancelled: true)
+        XCTAssertEqual(store.transientNoteStatus, "B")
+        store.expireTransientNoteStatus(scheduledGeneration: currentGeneration, isCancelled: false)
+        XCTAssertNil(store.transientNoteStatus)
     }
 
     @MainActor
