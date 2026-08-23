@@ -19,7 +19,7 @@ final class AgentVisualizationSizingTests: XCTestCase {
     }
 
     @MainActor
-    func testGenUIActionShowsImmediateChatSetupRejection() async throws {
+    func testGenUIActionShowsHostRejections() async throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("WeiBeiGenUIAction-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -60,11 +60,23 @@ final class AgentVisualizationSizingTests: XCTestCase {
         let rejectedText = try await webView.evaluateJavaScript("document.querySelector('.genui').textContent") as? String
         XCTAssertEqual(rejectedDisabled, false)
         XCTAssertTrue(rejectedText?.contains(rejection) == true)
+
+        let overlongAction = String(repeating: "动作", count: 101)
+        let overlongSpecData = try JSONSerialization.data(withJSONObject: [
+            "items": [["type": "button", "label": "继续解释", "action": overlongAction]],
+        ])
+        let overlongSpec = try XCTUnwrap(String(data: overlongSpecData, encoding: .utf8))
+        _ = try await webView.evaluateJavaScript("window.WeiBeiGenUIHost.render({spec: \(overlongSpec), actionStatus: 'ready'}); document.querySelector('.button').click()")
+        XCTAssertEqual(actionProbe.action, overlongAction)
+        let overlongRejection = try XCTUnwrap(
+            store.submitAgentVisualizationAction(overlongAction, payloadJSON: "{}")
+        )
+        XCTAssertTrue(overlongRejection.contains("过长"))
         withExtendedLifetime(navigationProbe) {}
     }
 
     @MainActor
-    func testGenUIShowsTruncationAndOpensRawTextOnDemand() async throws {
+    func testGenUIShowsFullTextAndRevealsLargeTablesInBatches() async throws {
         let configuration = WKWebViewConfiguration()
         let webView = WKWebView(
             frame: NSRect(x: 0, y: 0, width: 640, height: 240),
@@ -79,24 +91,35 @@ final class AgentVisualizationSizingTests: XCTestCase {
         webView.loadFileURL(entry, allowingReadAccessTo: entry.deletingLastPathComponent())
         await fulfillment(of: [loaded], timeout: 3)
 
-        let hiddenMarker = "末尾原始数据仍在"
-        let content = String(repeating: "正文", count: 10_000) + hiddenMarker
+        let tailMarker = "正文末尾仍然可见"
+        let content = String(repeating: "正文", count: 10_000) + tailMarker
+        let rows = (0..<120).map { ["第 \($0) 行"] }
         let data = try JSONSerialization.data(withJSONObject: [
             "spec": [
                 "items": [[
                     "type": "text",
                     "content": content,
+                ], [
+                    "type": "table",
+                    "columns": ["内容"],
+                    "rows": rows,
                 ]],
             ],
         ])
         let payload = try XCTUnwrap(String(data: data, encoding: .utf8))
         _ = try await webView.evaluateJavaScript("window.WeiBeiGenUIHost.render(\(payload))")
-        let hasWarning = try await webView.evaluateJavaScript("document.querySelector('.truncation-notice')?.getClientRects().length > 0") as? Bool
-        _ = try await webView.evaluateJavaScript("document.querySelector('.truncation-notice button').click()")
-        let rawData = try await webView.evaluateJavaScript("document.querySelector('.raw-data').textContent") as? String
+        let visibleText = try await webView.evaluateJavaScript("document.querySelector('.text').textContent") as? String
+        let totalRows = rows.count
+        let initialRows = try await webView.evaluateJavaScript("document.querySelectorAll('tbody tr').length") as? Int
+        let progress = try await webView.evaluateJavaScript("document.querySelector('.data-progress').textContent") as? String
+        _ = try await webView.evaluateJavaScript("document.querySelector('.data-progress button').click()")
+        let revealedRows = try await webView.evaluateJavaScript("document.querySelectorAll('tbody tr').length") as? Int
 
-        XCTAssertEqual(hasWarning, true)
-        XCTAssertTrue(rawData?.contains(hiddenMarker) == true)
+        XCTAssertTrue(visibleText?.contains(tailMarker) == true)
+        XCTAssertNotNil(initialRows)
+        XCTAssertLessThan(initialRows ?? totalRows, totalRows)
+        XCTAssertTrue(progress?.range(of: #"\d+/\d+"#, options: .regularExpression) != nil)
+        XCTAssertGreaterThan(revealedRows ?? 0, initialRows ?? totalRows)
         withExtendedLifetime(navigationProbe) {}
     }
 
