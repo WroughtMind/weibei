@@ -399,15 +399,19 @@
     document.body.classList.toggle('dark', spec.appearance === 'dark');
     const block = el('section','genui'); block.style.gap=`${clamp(spec.gap ?? 12,0,64)}px`; if(spec.title) block.append(el('div','banner',spec.title)); block.append(renderItems(spec.items,'root',0));
     if (contentWasTruncated) {
-      const notice = el('div','error','内容未全部展示。');
+      const notice = el('div','error truncation-notice','内容未全部展示。');
       const controls = el('div','learning-controls');
       const view = el('button','control-button','查看原始数据');
       const copy = el('button','control-button','复制原始数据');
-      const raw = JSON.stringify(spec, null, 2);
-      const rawView = document.createElement('pre'); rawView.className = 'raw-data'; rawView.hidden = true; rawView.textContent = raw;
-      view.onclick = () => { rawView.hidden = !rawView.hidden; view.textContent = rawView.hidden ? '查看原始数据' : '收起原始数据'; reportHeight(); };
-      copy.onclick = () => navigator.clipboard?.writeText(raw).then(() => { copy.textContent = '已复制'; }).catch(() => { copy.textContent = '复制失败'; });
-      controls.append(view, copy); notice.append(controls, rawView); block.append(notice);
+      let rawView = null;
+      view.onclick = () => {
+        if (!rawView) {
+          rawView = document.createElement('pre'); rawView.className = 'raw-data'; rawView.textContent = JSON.stringify(spec, null, 2); notice.append(rawView);
+        } else rawView.hidden = !rawView.hidden;
+        view.textContent = rawView.hidden ? '查看原始数据' : '收起原始数据'; reportHeight();
+      };
+      copy.onclick = () => navigator.clipboard?.writeText(JSON.stringify(spec, null, 2)).then(() => { copy.textContent = '已复制'; }).catch(() => { copy.textContent = '复制失败'; });
+      controls.append(view, copy); notice.append(controls); block.append(notice);
     }
     if (!block.children.length) block.append(el('div','error','这个互动界面没有可显示的组件。')); root.append(block); reportHeight();
   }
