@@ -35,18 +35,12 @@ struct AgentVisualizationView: View {
 
     var body: some View {
         Group {
-            if let runtimeFailure = loadState.failure {
+            if loadState.failure != nil {
                 VStack(alignment: .leading, spacing: 8) {
                     Text(store.ui("互动内容加载失败，内容仍保留", "Interactive content failed to load, but it is still preserved"))
                         .weiBeiText(11, weight: .semibold)
-                    HStack(spacing: 8) {
-                        Button(store.ui("重新加载", "Reload")) {
-                            loadState.reload()
-                        }
-                        Button(store.ui("复制诊断", "Copy diagnostics")) {
-                            NSPasteboard.general.clearContents()
-                            NSPasteboard.general.setString(runtimeFailure, forType: .string)
-                        }
+                    Button(store.ui("重新加载", "Reload")) {
+                        loadState.reload()
                     }
                     .buttonStyle(WeiBeiTextActionButtonStyle())
                 }
