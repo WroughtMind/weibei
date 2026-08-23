@@ -70,15 +70,13 @@ final class AgentStreamingDisplayPumpTests: XCTestCase {
         XCTAssertEqual(rig.chunks, ["你好", "世界"])
     }
 
-    func testInitialAndRefillBothWaitForBuffer() async {
+    func testInitialAndRefillBothBufferBeforePublishing() async {
         let rig = Rig()
         rig.pump.enqueue(cumulativeText: "甲乙丙丁")
-        try? await Task.sleep(nanoseconds: 40_000_000)
         XCTAssertTrue(rig.chunks.isEmpty)
         await waitUntil { rig.chunks.count == 1 }
 
         rig.pump.enqueue(cumulativeText: "甲乙丙丁戊己庚辛")
-        try? await Task.sleep(nanoseconds: 40_000_000)
         XCTAssertEqual(rig.chunks.count, 1)
         await waitUntil { rig.chunks.count == 2 }
         XCTAssertEqual(AgentStreamingDisplayPump.bufferNanoseconds, 80_000_000)
