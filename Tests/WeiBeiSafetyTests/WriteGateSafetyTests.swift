@@ -116,7 +116,7 @@ final class WriteGateSafetyTests: XCTestCase {
         XCTAssertEqual(store.noteBackingContentDigestsByItemID[item.id] ?? "", "")
     }
 
-    func testGateBacksUpPendingContentAndAdoptsDiskOnMismatch() throws {
+    func testGatePreservesPendingContentAndDirtySessionOnMismatch() throws {
         let base = makeTempRoot("weibei-gate-mismatch")
         defer { try? FileManager.default.removeItem(at: base) }
         let backupRoot = base.appendingPathComponent("backups", isDirectory: true)
@@ -131,11 +131,23 @@ final class WriteGateSafetyTests: XCTestCase {
         defer { NSFileCoordinator.removeFilePresenter(presenter) }
 
         let pendingInput = "用户未落盘的编辑"
+        store.noteEditingSession.replaceDocument(with: item.id)
+        store.noteEditingSession.receive(NoteEditorDirtyChangedEvent(
+            documentID: item.id,
+            documentGeneration: store.noteEditingSession.documentGeneration,
+            revision: 1,
+            dirty: true
+        ))
         store.scheduleNotePersistence(pendingInput, for: item)
         store.flushPendingNotePersistence(for: item.id)
 
         XCTAssertEqual(try String(contentsOf: url, encoding: .utf8), "外部修改")
         XCTAssertEqual(store.loadedCourseNoteTextByItemID[item.id], "外部修改")
+        XCTAssertEqual(store.notesByItemID[item.id], pendingInput)
+        XCTAssertTrue(store.noteEditingSession.dirty)
+        XCTAssertEqual(store.noteEditingSession.saveStatus, .externallyModified)
+        XCTAssertEqual(store.noteEditorRecoveryConflict?.diskMarkdown, "外部修改")
+        XCTAssertEqual(store.noteEditorRecoveryConflict?.checkpoint.markdown, pendingInput)
         let backups = try NoteBackupRing.list(itemID: item.id, rootURL: backupRoot)
         let recovered = backups.compactMap { entry in
             try? String(contentsOf: entry.url, encoding: .utf8)
@@ -242,5 +254,54 @@ final class WriteGateSafetyTests: XCTestCase {
         XCTAssertTrue(store.noteEditingSession.dirty)
         XCTAssertEqual(store.noteEditingSession.saveStatus, .failed)
         XCTAssertNotNil(store.importantOperationError)
+    }
+
+    func testWorkspaceOnlyNoteFailureIsVisibleUntilSaveSucceeds() throws {
+        let base = makeTempRoot("weibei-workspace-note-failure")
+        defer { try? FileManager.default.removeItem(at: base) }
+        var shouldFail = false
+        let store = WorkspaceStore(
+            workspaceDirectory: base.appendingPathComponent("workspace", isDirectory: true),
+            workspaceSnapshotWriter: { data, url in
+                if shouldFail { throw CocoaError(.fileWriteUnknown) }
+                try data.write(to: url, options: [.atomic])
+            },
+            startsAtBlankEntries: true,
+            startsCourseFileMaintenance: false
+        )
+        let item = StudyItem(
+            id: "workspace-only-note",
+            title: "魏碑内笔记",
+            subtitle: "",
+            kind: .markdown,
+            urlPath: nil,
+            isSample: true,
+            isNotebookNote: true
+        )
+        let markdown = "只保存在工作区的正文"
+        store.importedItems.append(item)
+        store.activeNotebookItemID = item.id
+        store.noteText = markdown
+        store.setNoteDraft(markdown, for: item.id)
+        store.noteEditingSession.replaceDocument(with: item.id)
+        store.noteEditingSession.receive(NoteEditorDirtyChangedEvent(
+            documentID: item.id,
+            documentGeneration: store.noteEditingSession.documentGeneration,
+            revision: 1,
+            dirty: true
+        ))
+        let digest = Self.digest(of: markdown)
+        store.latestNoteEditorSnapshot = (item.id, digest, digest, 1)
+
+        shouldFail = true
+        XCTAssertFalse(store.flushPendingWorkspaceSave())
+        XCTAssertTrue(store.noteEditingSession.dirty)
+        XCTAssertEqual(store.noteEditingSession.saveStatus, .failed)
+        XCTAssertNotNil(store.importantOperationError)
+
+        shouldFail = false
+        XCTAssertTrue(store.flushPendingWorkspaceSave())
+        XCTAssertFalse(store.noteEditingSession.dirty)
+        XCTAssertEqual(store.noteEditingSession.saveStatus, .savedInWeiBei)
     }
 }
