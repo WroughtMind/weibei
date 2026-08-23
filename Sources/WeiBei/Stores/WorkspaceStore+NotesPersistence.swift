@@ -89,16 +89,6 @@ extension WorkspaceStore {
     func renameNotebookNote(itemID: String, to rawTitle: String) {
         guard !notebookRenameInFlight else { return }
         notebookRenameInFlight = true
-        if Self.mustSaveImmediately {
-            defer { notebookRenameInFlight = false }
-            _ = try? waitForCourseFileOperation {
-                await self.renameNotebookNoteInTransaction(
-                    itemID: itemID,
-                    to: rawTitle
-                )
-            }
-            return
-        }
         Task { @MainActor [weak self] in
             guard let self else { return }
             defer { self.notebookRenameInFlight = false }

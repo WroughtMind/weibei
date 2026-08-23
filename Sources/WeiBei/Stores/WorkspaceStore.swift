@@ -20672,13 +20672,6 @@ final class WorkspaceStore: ObservableObject {
         return true
     }
 
-    static var mustSaveImmediately: Bool {
-#if DEBUG
-        if WeiBeiSafetyTestMode.isEnabled { return true }
-#endif
-        return false
-    }
-
     private func scheduleDebouncedWorkspaceSave() {
         workspaceSaveGeneration &+= 1
         workspacePersistenceSkippingCourseIDs = []

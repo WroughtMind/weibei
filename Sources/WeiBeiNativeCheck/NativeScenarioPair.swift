@@ -38,7 +38,7 @@ enum NativeScenarioPair {
             [.textDelta(index: 0, text: "学习记忆已读取，上次停在利率定义。"), .finish(reason: .stop, replayState: nil)],
         ]))
         rows.append(try await row(
-            id: "14-memory-preview-write",
+            id: "14-memory-write",
             tools: ["weibei_update_learning_memory"],
             textMustContain: "复利",
             expectLearning: true,
@@ -48,7 +48,7 @@ enum NativeScenarioPair {
                         index: 0,
                         id: "u1",
                         name: "weibei_update_learning_memory",
-                        argumentsDelta: "{\"contextRevision\":\"pair\",\"memoryRevision\":0,\"suggestedNext\":[],\"entries\":[{\"kind\":\"progress\",\"text\":\"记下复利进度\",\"evidence\":\"[用户：本轮] 记下进度，但先给我看怎么写、不要直接改记忆\",\"origin\":\"userStatement\"}],\"resolutions\":[]}"
+                        argumentsDelta: "{\"contextRevision\":\"pair\",\"memoryRevision\":0,\"suggestedNext\":[],\"entries\":[{\"kind\":\"progress\",\"text\":\"记下复利进度\",\"evidence\":\"[用户：本轮] 请把这条学习进度写入学习记忆：我已经理解复利。\",\"origin\":\"userStatement\"}],\"resolutions\":[]}"
                     ),
                     .finish(reason: .toolCalls, replayState: nil),
                 ],

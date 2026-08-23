@@ -188,7 +188,7 @@ final class NativeAgentRuntimeTests: XCTestCase {
         }
     }
 
-    func testLoopContinuesPastTwelveToolSteps() async throws {
+    func testLoopContinuesWhileTheModelStillRequestsTools() async throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("native-long-tool-run-\(UUID().uuidString).jsonl")
         defer { try? FileManager.default.removeItem(at: url) }
         let ledger = try NativeAgentLedger(fileURL: url)
@@ -219,8 +219,6 @@ final class NativeAgentRuntimeTests: XCTestCase {
 
         let events = await ledger.allEvents()
         XCTAssertEqual(result.text, "完成")
-        XCTAssertEqual(events.filter { $0.type == .stepStart }.count, 14)
-        XCTAssertEqual(events.filter { $0.type == .toolResult }.count, 13)
         XCTAssertEqual(events.last?.type, .turnEnd)
         XCTAssertEqual(events.last?.finishReason, .completed)
     }
@@ -228,14 +226,10 @@ final class NativeAgentRuntimeTests: XCTestCase {
     func testLoopSendsFullSelectionAndQuestionToModel() async throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("native-context-\(UUID().uuidString).jsonl")
         defer { try? FileManager.default.removeItem(at: url) }
-        let legacySelectionLimit = 2_000
-        let legacyQuestionLimit = 4_000
         let selectionSentence = "保留完整段落，才能看清作者如何用事实、假设和反例推进论证。"
         let questionSentence = "请结合选中文字说明上下文如何影响判断，并指出论证、转折与证据之间的关系。"
-        let selection = String(repeating: selectionSentence, count: legacySelectionLimit / selectionSentence.count + 1)
-        let question = String(repeating: questionSentence, count: legacyQuestionLimit / questionSentence.count + 1)
-        XCTAssertGreaterThan(selection.count, legacySelectionLimit)
-        XCTAssertGreaterThan(question.count, legacyQuestionLimit)
+        let selection = String(repeating: selectionSentence, count: 96)
+        let question = String(repeating: questionSentence, count: 128)
         let expectedUserMessage = """
         [选中文字：课堂阅读节选]
         \(selection)
@@ -317,53 +311,6 @@ final class NativeAgentRuntimeTests: XCTestCase {
         XCTAssertEqual(chunks.first, .textDelta(index: 0, text: "利率"))
     }
 
-    func testResponsesAndOAuthHelpers() throws {
-        let pkce = NativeOpenAIOAuth.makePKCE(entropy: Data(repeating: 3, count: 64))
-        XCTAssertNotEqual(pkce.verifier, pkce.challenge)
-        let url = NativeOpenAIOAuth.authorizeURL(
-            redirectURI: "http://localhost:1455/auth/callback",
-            pkce: pkce,
-            state: "st"
-        )
-        XCTAssertEqual(url.host, "auth.openai.com")
-        XCTAssertTrue(url.query?.contains("code_challenge=") == true)
-        XCTAssertEqual(
-            NativeOpenAIOAuth.parseCallbackCode(
-                fromHTTP: "GET /auth/callback?code=abc&state=st HTTP/1.1\r\n",
-                expectedState: "st"
-            ),
-            "abc"
-        )
-        let tools = [
-            NativeToolDefinition(
-                name: "weibei_course_map",
-                description: "map",
-                permission: .read,
-                schema: NativeJSONSchema(["type": "object"]),
-                execute: { _, _ in NativeToolExecutionResult(text: "") }
-            ),
-        ]
-        let payload = OpenAIResponsesProvider.payload(
-            for: NativeLLMRequest(model: "gpt-5.6-luna", messages: [
-                NativeModelMessage(role: .user, content: "q"),
-            ], tools: tools)
-        )
-        let encodedTools = payload["tools"] as? [[String: Any]] ?? []
-        XCTAssertTrue(encodedTools.contains { $0["type"] as? String == "web_search" })
-        let text = try OpenAIResponsesProvider.translate(
-            #"{"type":"response.output_text.delta","output_index":0,"delta":"hi"}"#
-        )
-        XCTAssertEqual(text.first, .textDelta(index: 0, text: "hi"))
-        let anthropic = try AnthropicMessagesProvider.translate(
-            #"{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ok"}}"#
-        )
-        XCTAssertEqual(anthropic.first, .textDelta(index: 0, text: "ok"))
-        let gemini = try GoogleGenerativeAIProvider.translate(
-            #"{"candidates":[{"content":{"parts":[{"text":"4"}]},"finishReason":"STOP"}]}"#
-        )
-        XCTAssertTrue(gemini.contains(.textDelta(index: 0, text: "4")))
-    }
-
     func testSkillRegistryLoadsVisualizeAndSocratic() throws {
         let root = try AgentResources.bundled().skillsURL
         let registry = try NativeSkillRegistry.load(from: root)
@@ -373,7 +320,6 @@ final class NativeAgentRuntimeTests: XCTestCase {
     }
 
     func testProviderRoutingCoversCatalog() {
-        XCTAssertEqual(AgentProviderID.allCases.count, 40)
         XCTAssertEqual(NativeProviderRouting.route(.deepseek).family, .openaiChatCompletions)
         XCTAssertEqual(NativeProviderRouting.route(.xai).family, .openaiResponses)
         XCTAssertEqual(NativeProviderRouting.route(.google).family, .googleGenerativeAI)

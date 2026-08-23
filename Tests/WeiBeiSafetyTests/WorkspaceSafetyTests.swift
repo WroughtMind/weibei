@@ -77,60 +77,66 @@ final class WorkspaceSafetyTests: XCTestCase {
     }
 
     @MainActor
-    func testSemanticSessionTitleOnlyReplacesFirstTurnFallback() {
+    func testManualSessionTitlePersistsAndSurvivesFirstQuestionNaming() async throws {
         let firstQuestion = AgentMessage(
             role: .user,
             text: "请帮我解释利率为什么变化",
             source: nil
         )
-        let secondQuestion = AgentMessage(role: .user, text: "再举个例子", source: nil)
-
-        XCTAssertEqual(
-            WorkspaceStore.semanticSessionTitle(
-                from: "利率变化机制",
-                replacing: firstQuestion.text,
-                messages: [firstQuestion]
-            ),
-            "利率变化机制"
-        )
-        XCTAssertNil(
-            WorkspaceStore.semanticSessionTitle(
-                from: "利率变化机制",
-                replacing: "用户手动命名",
-                messages: [firstQuestion]
-            )
-        )
-        XCTAssertEqual(
-            WorkspaceStore.semanticSessionTitle(
-                from: "利率变化机制",
-                replacing: firstQuestion.text,
-                messages: [firstQuestion, secondQuestion]
-            ),
-            "利率变化机制"
-        )
-        XCTAssertNil(
-            WorkspaceStore.semanticSessionTitle(
-                from: "WeiBei",
-                replacing: firstQuestion.text,
-                messages: [firstQuestion]
-            )
-        )
-
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("WeiBeiSessionTitle-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root) }
         let store = WorkspaceStore(workspaceDirectory: root, startsAtBlankEntries: true)
-        let session = store.createStudySession(courseID: nil)!
+        let session = try XCTUnwrap(store.createStudySession(courseID: nil))
         store.messages = [firstQuestion]
         store.syncActiveStudySession(titleSeed: firstQuestion.text)
-        store.applySemanticSessionTitle("利率变化机制", to: session.id)
-        XCTAssertTrue(store.flushPendingWorkspaceSave())
+        XCTAssertTrue(store.renameStudySession(session.id, title: "我的利率课"))
+        let saved = await store.flushPendingWorkspaceSaveAsync()
+        XCTAssertTrue(saved)
 
         let reopened = WorkspaceStore(workspaceDirectory: root)
-        XCTAssertEqual(
-            reopened.studySessions.first(where: { $0.id == session.id })?.title,
-            "利率变化机制"
+        XCTAssertTrue(reopened.activateStudySession(
+            session.id,
+            expectedCourseID: nil,
+            expectedScopeNeedsReview: false
+        ))
+        reopened.messages = [firstQuestion]
+        reopened.syncActiveStudySession(titleSeed: firstQuestion.text)
+        let reopenedSession = try XCTUnwrap(reopened.activeStudySession)
+        XCTAssertEqual(reopenedSession.title, "我的利率课")
+        XCTAssertTrue(reopenedSession.titleSetByUser)
+    }
+
+    func testStandardTextEditingShortcutsAreNotAppActions() {
+        for key in ["b", "f"] {
+            XCTAssertNil(AppShortcutCatalog.action(
+                matching: AppShortcutChord(key: key, modifiers: .command),
+                overrides: [:]
+            ))
+        }
+    }
+
+    func testStoredShortcutConflictIsPreservedAndNotExecutable() throws {
+        let defaults = UserDefaults.standard
+        let original = defaults.data(forKey: AppShortcutCatalog.defaultsKey)
+        defer {
+            if let original {
+                defaults.set(original, forKey: AppShortcutCatalog.defaultsKey)
+            } else {
+                defaults.removeObject(forKey: AppShortcutCatalog.defaultsKey)
+            }
+        }
+        let conflict = AppShortcutID.threePaneWorkspace.defaultChord
+        defaults.set(
+            try JSONEncoder().encode([AppShortcutID.courseIndex.rawValue: conflict]),
+            forKey: AppShortcutCatalog.defaultsKey
         )
+
+        let loaded = AppShortcutCatalog.loadOverrides()
+        XCTAssertEqual(loaded[.courseIndex], conflict)
+        XCTAssertNil(AppShortcutCatalog.action(matching: conflict, overrides: loaded))
+        XCTAssertNil(AppShortcutCatalog.executableChord(for: .courseIndex, overrides: loaded))
+        XCTAssertNil(AppShortcutCatalog.executableChord(for: .threePaneWorkspace, overrides: loaded))
     }
 
     @MainActor
