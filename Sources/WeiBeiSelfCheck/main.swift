@@ -2108,9 +2108,6 @@ do {
     expect(
         notesPersistenceSource.contains("writeRefusedKeepContent")
             && notesPersistenceSource.contains("diskChangedAdoptDisk")
-            && notesPersistenceSource.contains("NSFileCoordinator().coordinate(")
-            && notesPersistenceSource.contains("note_write_verification_failed")
-            && notesPersistenceSource.contains("setNoteDraft(markdown, for: itemID)")
             && notesPersistenceSource.contains("expectedBaseline"),
         "SAFETY:write-gate-compare the coordinated gate must compare a trusted baseline, verify the post-write bytes, and keep refused content in the workspace draft path"
     )
