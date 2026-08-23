@@ -911,8 +911,8 @@ struct ReaderView: View {
             .foregroundStyle(pdfModeForeground)
             .padding(.horizontal, showsPDFModeLabel ? 7 : 4)
             .frame(width: showsPDFModeLabel ? nil : 18, height: 24)
-            .weibeiEtchedBackground(
-                fill: WeiBeiTheme.paperInset.opacity(pdfControlsActive ? 0.16 : 0.08),
+            .weibeiRaisedBackground(
+                fill: WeiBeiTheme.paperRaised.opacity(pdfControlsActive ? 0.66 : 0.34),
                 stroke: WeiBeiTheme.hairline.opacity(pdfControlsActive ? 0.58 : 0.18),
                 cornerRadius: 8
             )
