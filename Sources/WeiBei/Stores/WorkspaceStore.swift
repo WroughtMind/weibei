@@ -14760,8 +14760,10 @@ final class WorkspaceStore: ObservableObject {
     }
 
     nonisolated private static func executeAgentHostTool(
-        _ request: StudyAgentHostToolRequest, title: String,
-        sources: [AgentHostToolSource], links: [NoteSourceLink],
+        _ request: StudyAgentHostToolRequest,
+        title: String,
+        sources: [AgentHostToolSource],
+        links: [NoteSourceLink],
         searchIndex: CourseDocumentSearchIndex
     ) async throws -> StudyAgentHostToolResult {
         try Task.checkCancellation()
@@ -14786,46 +14788,73 @@ final class WorkspaceStore: ObservableObject {
                 }
                 return StudyAgentHostToolItem(
                     item: StudyAgentCourseItem(
-                        id: source.item.id, title: source.title,
-                        subtitle: source.subtitle, kind: source.kind, role: source.role,
+                        id: source.item.id,
+                        title: source.title,
+                        subtitle: source.subtitle,
+                        kind: source.kind,
+                        role: source.role,
                         linkedItemIDs: linkedItemIDs,
                         headings: itemID == nil
                             ? []
                             : searchIndex.outline(item: source.item),
-                        tags: source.courseTitles, searchText: "", isTruncated: false
+                        tags: source.courseTitles,
+                        searchText: "",
+                        isTruncated: false
                     ),
-                    relativePath: source.relativePath, courseIDs: source.courseIDs,
+                    relativePath: source.relativePath,
+                    courseIDs: source.courseIDs,
                     courseTitles: source.courseTitles,
                     sourceRevision: source.projectItem.sourceRevision
                 )
             }
             return StudyAgentHostToolResult(
-                query: "", items: items, total: total,
-                nextCursor: offset + items.count < total ? String(offset + items.count) : nil
+                query: "",
+                items: items,
+                total: total,
+                nextCursor: offset + items.count < total
+                    ? String(offset + items.count)
+                    : nil
             )
 
         case let .courseSearch(query, limit):
             let approvedSources = sources.filter(agentHostToolSourceIsValid)
             let indexed = searchIndex.lookup(
-                items: approvedSources.compactMap { $0.memoryText == nil ? $0.item : nil },
+                items: approvedSources.compactMap {
+                    $0.memoryText == nil ? $0.item : nil
+                },
                 query: query
             )
-            let matched = approvedSources.compactMap { source
-                -> (source: AgentHostToolSource, result: CourseDocumentIndexResult, titleMatched: Bool)? in
+            let matched = approvedSources.compactMap { source -> (
+                source: AgentHostToolSource,
+                result: CourseDocumentIndexResult,
+                titleMatched: Bool
+            )? in
                 let titleMatched = source.title.localizedCaseInsensitiveContains(query)
                     || source.subtitle.localizedCaseInsensitiveContains(query)
-                    || (source.title.count >= 2
-                        && query.localizedCaseInsensitiveContains(source.title))
+                    || (
+                        source.title.count >= 2
+                            && query.localizedCaseInsensitiveContains(source.title)
+                    )
                 let indexedResult = indexed[source.item.id]
                 let result: CourseDocumentIndexResult
                 if let memoryText = source.memoryText {
                     result = CourseDocumentSearchIndex.readMarkdown(
-                        memoryText, query: titleMatched ? "" : query, location: nil
+                        memoryText,
+                        query: titleMatched ? "" : query,
+                        location: nil
                     )
                 } else if titleMatched {
-                    result = searchIndex.read(item: source.item, query: "", location: nil)
+                    result = searchIndex.read(
+                        item: source.item,
+                        query: "",
+                        location: nil
+                    )
                 } else {
-                    result = indexedResult ?? CourseDocumentIndexResult(text: nil, isTruncated: false)
+                    result = indexedResult ?? CourseDocumentIndexResult(
+                        text: nil,
+                        isTruncated: false,
+                        rank: nil
+                    )
                 }
                 let text = result.text ?? ""
                 guard agentHostToolSourceIsValid(source),
@@ -14836,7 +14865,9 @@ final class WorkspaceStore: ObservableObject {
                 return (
                     source,
                     CourseDocumentIndexResult(
-                        text: text, isTruncated: result.isTruncated, rank: result.rank,
+                        text: text,
+                        isTruncated: result.isTruncated,
+                        rank: result.rank,
                         sourceRevision: result.sourceRevision,
                         indexedPageCount: result.indexedPageCount,
                         totalPageCount: result.totalPageCount,
@@ -14933,8 +14964,12 @@ final class WorkspaceStore: ObservableObject {
                 title: title,
                 sources: [
                     CourseKnowledgeSource(
-                        id: source.item.id, title: source.title, subtitle: source.subtitle,
-                        kind: source.kind, role: source.role, text: text,
+                        id: source.item.id,
+                        title: source.title,
+                        subtitle: source.subtitle,
+                        kind: source.kind,
+                        role: source.role,
+                        text: text,
                         isTruncated: indexed.isTruncated,
                         indexedPageCount: indexed.indexedPageCount,
                         totalPageCount: indexed.totalPageCount,
@@ -14978,14 +15013,19 @@ final class WorkspaceStore: ObservableObject {
                 throw AgentConversationTargetError(message: "这份 PDF 当前没有可重新索引的最终失败页")
             }
             return StudyAgentHostToolResult(
-                query: "已开始重新索引失败页", items: []
+                query: "已开始重新索引失败页",
+                items: []
             )
 
         case let .webOpen(url, maximumCharacters):
             return StudyAgentHostToolResult(
-                query: url, items: [],
+                query: url,
+                items: [],
                 webPages: [
-                    try await WeiBeiWebResearchClient.open(url, maximumCharacters: maximumCharacters),
+                    try await WeiBeiWebResearchClient.open(
+                        url,
+                        maximumCharacters: maximumCharacters
+                    ),
                 ]
             )
         }
