@@ -58,6 +58,56 @@ final class WorkspaceSafetyTests: XCTestCase {
     }
 
     @MainActor
+    func testAgentSelectionPreservesFullText() {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("WeiBeiFullSelection-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = WorkspaceStore(workspaceDirectory: root, startsAtBlankEntries: true)
+        store.interfaceLanguage = .chinese
+        let selection = String(
+            repeating: "作者先交代事实，再比较两种解释，并用反例说明结论成立的边界。",
+            count: 120
+        )
+
+        store.updateSelection(selection, source: .document, ownerTitle: "课堂原文")
+
+        XCTAssertEqual(store.selectionContext?.text, selection)
+        XCTAssertEqual(
+            store.agentSelectionText,
+            """
+            片段 1（来源：课堂原文）：
+            \(selection)
+            """
+        )
+    }
+
+    @MainActor
+    func testAgentSelectionKeepsIndependentFragments() {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("WeiBeiSelectionFragments-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = WorkspaceStore(workspaceDirectory: root, startsAtBlankEntries: true)
+        store.interfaceLanguage = .chinese
+        let selections = (1...12).map { index in
+            SelectionContext(
+                text: "课堂摘录 \(index)",
+                source: .document,
+                ownerTitle: "资料 \(index)"
+            )
+        }
+
+        selections.forEach { store.addSelectionAttachment($0) }
+
+        let expected = selections.enumerated().map { index, selection in
+            """
+            片段 \(index + 1)（来源：\(selection.ownerTitle)）：
+            \(selection.text)
+            """
+        }.joined(separator: "\n\n")
+        XCTAssertEqual(store.agentSelectionText, expected)
+    }
+
+    @MainActor
     func testAgentStreamingStateDoesNotInvalidateWorkspaceStore() {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("WeiBeiStreamingState-\(UUID().uuidString)", isDirectory: true)

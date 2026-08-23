@@ -9778,7 +9778,7 @@ final class WorkspaceStore: ObservableObject {
 
     private func sourceReferenceBaseTitle(for item: StudyItem) -> String {
         let title = displayTitle(for: item)
-        let catalog = Array(allItems.prefix(500))
+        let catalog = allItems
         let matchingIndexes = catalog.indices.filter {
             displayTitle(for: catalog[$0]) == title
         }
@@ -12675,12 +12675,11 @@ final class WorkspaceStore: ObservableObject {
         lastSelectionUpdateDate = Date()
         let cleanedOwnerTitle = ownerTitle?.trimmingCharacters(in: .whitespacesAndNewlines)
         let resolvedOwnerTitle = (cleanedOwnerTitle?.isEmpty == false ? cleanedOwnerTitle : nil) ?? selectionOwnerTitle(for: source)
-        let boundedText = Self.boundedSelectionText(cleaned)
         // Multi-pane and immersive both get the selection capsule when there is an anchor
         // (previously suppressed whenever the chat column was open — looked "broken").
         let shouldRevealSelectionPrompt = anchor != nil || pinnedFloatingAgent
         let contentMatches = selectionContext.map {
-            $0.text == boundedText
+            $0.text == cleaned
                 && $0.source == source
                 && $0.ownerTitle == resolvedOwnerTitle
                 && $0.isEditable == isEditable
@@ -12729,7 +12728,7 @@ final class WorkspaceStore: ObservableObject {
 
         invalidateAgentContext()
         let nextSelection = SelectionContext(
-            text: boundedText,
+            text: cleaned,
             source: source,
             ownerTitle: resolvedOwnerTitle,
             itemID: source == .note ? activeNotebookItemID : selectedItemID,
@@ -12839,10 +12838,6 @@ final class WorkspaceStore: ObservableObject {
             selectionAttachments.remove(at: mergeIndex)
         }
         selectionAttachments.append(nextSelection)
-        let maxAttachments = 8
-        if selectionAttachments.count > maxAttachments {
-            selectionAttachments.removeFirst(selectionAttachments.count - maxAttachments)
-        }
     }
 
     private func shouldMergeSelectionAttachment(_ existing: SelectionContext, with incoming: SelectionContext, at now: Date, withinSelectionGestureHint: Bool) -> Bool {
@@ -12869,7 +12864,7 @@ final class WorkspaceStore: ObservableObject {
         ) ?? incoming.text
         return SelectionContext(
             id: existing.id,
-            text: Self.boundedSelectionText(mergedText),
+            text: mergedText,
             source: existing.source,
             ownerTitle: existing.ownerTitle,
             itemID: existing.itemID ?? incoming.itemID,
@@ -12892,22 +12887,11 @@ final class WorkspaceStore: ObservableObject {
         return currentSourceReferenceTitle
     }
 
-    private static func boundedSelectionText(_ text: String) -> String {
-        let limit = 2_000
-        guard text.count > limit else { return text }
-        let prefix = text.prefix(limit)
-        if let boundary = prefix.lastIndex(where: { String($0).rangeOfCharacter(from: .whitespacesAndNewlines) != nil }),
-           boundary > prefix.startIndex {
-            return String(prefix[..<boundary]).trimmingCharacters(in: .whitespacesAndNewlines)
-        }
-        return String(prefix)
-    }
-
     private func sourceReferenceItem(from rawReference: String?) -> StudyItem? {
         let reference = SourceReferenceTitle.parse(rawReference ?? "")
         guard !reference.title.isEmpty else { return nil }
         if let ordinal = reference.courseItemOrdinal {
-            let catalog = Array(allItems.prefix(500))
+            let catalog = allItems
             let index = ordinal - 1
             guard catalog.indices.contains(index) else { return nil }
             let item = catalog[index]
