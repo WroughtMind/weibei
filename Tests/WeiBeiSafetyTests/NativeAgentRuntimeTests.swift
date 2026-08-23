@@ -223,6 +223,41 @@ final class NativeAgentRuntimeTests: XCTestCase {
         )
     }
 
+    func testSearchedURLCanOpenOnlyOnce() async throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("native-web-once-\(UUID().uuidString).jsonl")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let ledger = try NativeAgentLedger(fileURL: url)
+        let registry = NativeToolRegistry()
+        await NativeBuiltinTools.registerAll(into: registry, skillRoot: nil)
+        let opened = WebOpenCounter()
+        _ = try await NativeAgentLoop().run(
+            request: StudyAgentRequest(
+                purpose: .conversation,
+                question: "搜索后打开结果",
+                materialTitle: "",
+                materialText: "",
+                noteTitle: "",
+                noteText: "",
+                contextRevision: "r1"
+            ),
+            ledger: ledger,
+            registry: registry,
+            adapter: OneTimeWebAdapter(),
+            model: "mock",
+            hostToolHandler: { request in
+                guard case .webOpen = request else {
+                    return StudyAgentHostToolResult(query: "", items: [])
+                }
+                await opened.increment()
+                return StudyAgentHostToolResult(query: "", items: [])
+            },
+            systemPrompt: "test",
+            progress: nil
+        )
+        let openCount = await opened.value
+        XCTAssertEqual(openCount, 1)
+    }
+
     func testChatCompletionsTranslation() throws {
         var index = 0
         let chunks = try OpenAIChatCompletionsProvider.translate(
@@ -269,6 +304,36 @@ final class NativeAgentRuntimeTests: XCTestCase {
             #"{"type":"response.output_text.delta","output_index":0,"delta":"hi"}"#
         )
         XCTAssertEqual(text.first, .textDelta(index: 0, text: "hi"))
+        let searchSources = try OpenAIResponsesProvider.translate(
+            #"{"type":"response.output_item.done","output_index":1,"item":{"type":"web_search_call","action":{"type":"search","sources":[{"type":"url","url":"https://example.com/fresh"}]}}}"#
+        )
+        XCTAssertEqual(searchSources, [.webSearchSource(url: "https://example.com/fresh")])
+        XCTAssertTrue(
+            WeiBeiWebResearchURLPolicy.isAuthorized(
+                "https://EXAMPLE.com:443/fresh#section",
+                in: "请搜索后继续核对",
+                webSearchURLs: ["https://example.com/fresh"]
+            )
+        )
+        XCTAssertFalse(
+            WeiBeiWebResearchURLPolicy.isAuthorized(
+                "https://example.com/other",
+                in: "请搜索后继续核对",
+                webSearchURLs: ["https://example.com/fresh"]
+            )
+        )
+        XCTAssertFalse(
+            WeiBeiWebResearchURLPolicy.isAuthorized(
+                "http://example.com/fresh",
+                in: "请搜索后继续核对",
+                webSearchURLs: ["http://example.com/fresh"]
+            )
+        )
+        XCTAssertThrowsError(
+            try WeiBeiWebResearchURLPolicy.validatedPublicHTTPSURL("https://127.0.0.1/fresh")
+        ) { error in
+            XCTAssertEqual(error as? WeiBeiWebResearchError, .privateAddress)
+        }
         let anthropic = try AnthropicMessagesProvider.translate(
             #"{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ok"}}"#
         )
@@ -342,5 +407,42 @@ private struct LongToolRunMockLLMAdapter: NativeLLMAdapter {
             chunks.forEach(continuation.yield)
             continuation.finish()
         }
+    }
+}
+
+private final class OneTimeWebAdapter: NativeLLMAdapter, @unchecked Sendable {
+    let family = "responses-mock"
+    private let lock = NSLock()
+    private var step = 0
+
+    func stream(_ request: NativeLLMRequest) -> AsyncThrowingStream<NativeStreamChunk, Error> {
+        lock.lock()
+        step += 1
+        let currentStep = step
+        lock.unlock()
+        let url = "https://example.com/fresh"
+        let call = NativeStreamChunk.toolCallDelta(
+            index: 0,
+            id: "open-\(currentStep)",
+            name: "weibei_web_open",
+            argumentsDelta: #"{"url":"https://example.com/fresh"}"#
+        )
+        let chunks: [NativeStreamChunk] = currentStep == 1
+            ? [.webSearchSource(url: url), call, .finish(reason: .toolCalls, replayState: nil)]
+            : currentStep == 2
+                ? [call, .finish(reason: .toolCalls, replayState: nil)]
+                : [.textDelta(index: 0, text: "完成"), .finish(reason: .stop, replayState: nil)]
+        return AsyncThrowingStream { continuation in
+            chunks.forEach { continuation.yield($0) }
+            continuation.finish()
+        }
+    }
+}
+
+private actor WebOpenCounter {
+    private(set) var value = 0
+
+    func increment() {
+        value += 1
     }
 }

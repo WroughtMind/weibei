@@ -14805,9 +14805,10 @@ final class WorkspaceStore: ObservableObject {
                         rank: nil
                     )
                 }
-                guard let text = result.text,
-                      !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-                      agentHostToolSourceIsValid(source) else {
+                let text = result.text ?? ""
+                guard agentHostToolSourceIsValid(source),
+                      (!text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                        || !result.uncoveredPageIndexes.isEmpty) else {
                     return nil
                 }
                 return (
@@ -14816,7 +14817,12 @@ final class WorkspaceStore: ObservableObject {
                         text: text,
                         isTruncated: result.isTruncated,
                         rank: result.rank,
-                        sourceRevision: result.sourceRevision
+                        sourceRevision: result.sourceRevision,
+                        indexedPageCount: result.indexedPageCount,
+                        totalPageCount: result.totalPageCount,
+                        uncoveredPageIndexes: result.uncoveredPageIndexes,
+                        failedPageIndexes: result.failedPageIndexes,
+                        failedPageReasons: result.failedPageReasons
                     ),
                     titleMatched
                 )
@@ -14835,7 +14841,14 @@ final class WorkspaceStore: ObservableObject {
                     kind: match.source.kind,
                     role: match.source.role,
                     text: match.result.text ?? "",
-                    isTruncated: match.result.isTruncated
+                    isTruncated: match.result.isTruncated,
+                    indexedPageCount: match.result.indexedPageCount,
+                    totalPageCount: match.result.totalPageCount,
+                    uncoveredPageNumbers: match.result.uncoveredPageIndexes.map { $0 + 1 },
+                    failedPageNumbers: match.result.failedPageIndexes.map { $0 + 1 },
+                    failedPageReasons: Dictionary(
+                        uniqueKeysWithValues: match.result.failedPageReasons.map { ($0.key + 1, $0.value) }
+                    )
                 )
             }
             let context = CourseKnowledgeIndex.build(
@@ -14906,7 +14919,14 @@ final class WorkspaceStore: ObservableObject {
                         kind: source.kind,
                         role: source.role,
                         text: text,
-                        isTruncated: indexed.isTruncated
+                        isTruncated: indexed.isTruncated,
+                        indexedPageCount: indexed.indexedPageCount,
+                        totalPageCount: indexed.totalPageCount,
+                        uncoveredPageNumbers: indexed.uncoveredPageIndexes.map { $0 + 1 },
+                        failedPageNumbers: indexed.failedPageIndexes.map { $0 + 1 },
+                        failedPageReasons: Dictionary(
+                            uniqueKeysWithValues: indexed.failedPageReasons.map { ($0.key + 1, $0.value) }
+                        )
                     ),
                 ],
                 links: links,
@@ -14930,6 +14950,20 @@ final class WorkspaceStore: ObservableObject {
                 },
                 nextCursor: indexed.nextCursor,
                 sourceRevision: indexed.sourceRevision
+            )
+
+        case let .retryFailedPDFPages(itemID):
+            guard let source = sources.first(where: { $0.item.id == itemID }),
+                  source.item.kind == .pdf,
+                  agentHostToolSourceIsValid(source) else {
+                throw AgentConversationTargetError(message: "这份 PDF 不属于当前 Chat 的查询范围")
+            }
+            guard searchIndex.retryFailedPDFPages(in: source.item) else {
+                throw AgentConversationTargetError(message: "这份 PDF 当前没有可重新索引的最终失败页")
+            }
+            return StudyAgentHostToolResult(
+                query: "已开始重新索引失败页",
+                items: []
             )
 
         case let .webOpen(url, maximumCharacters):

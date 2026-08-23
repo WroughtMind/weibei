@@ -60,6 +60,7 @@ public struct NativeToolExecutionContext: Sendable {
     public var hostToolHandler: StudyAgentHostToolHandler?
     public var persistentAssetIDsByContextID: [String: String]
     public var searchedItemIDs: [String]
+    public var webSearchURLs: [String]
     public var readSourceRevisions: [String: String]
     public var lastReadMemoryRevision: UInt64?
     public var courseProfileUpdated: Bool
@@ -72,6 +73,7 @@ public struct NativeToolExecutionContext: Sendable {
         hostToolHandler: StudyAgentHostToolHandler? = nil,
         persistentAssetIDsByContextID: [String: String] = [:],
         searchedItemIDs: [String] = [],
+        webSearchURLs: [String] = [],
         readSourceRevisions: [String: String] = [:],
         lastReadMemoryRevision: UInt64? = nil,
         courseProfileUpdated: Bool = false,
@@ -83,6 +85,7 @@ public struct NativeToolExecutionContext: Sendable {
         self.hostToolHandler = hostToolHandler
         self.persistentAssetIDsByContextID = persistentAssetIDsByContextID
         self.searchedItemIDs = searchedItemIDs
+        self.webSearchURLs = webSearchURLs
         self.readSourceRevisions = readSourceRevisions
         self.lastReadMemoryRevision = lastReadMemoryRevision
         self.courseProfileUpdated = courseProfileUpdated
@@ -225,8 +228,12 @@ enum NativeToolGuard {
         }
         if name == "weibei_web_open" {
             let url = arguments["url"] as? String ?? ""
-            guard WeiBeiWebResearchURLPolicy.isExplicitlyProvided(url, in: context.request.question) else {
-                throw NativeLLMFailure(code: "guard_denied", message: "网页工具只能读取用户本轮明确提供的地址")
+            guard WeiBeiWebResearchURLPolicy.isAuthorized(
+                url,
+                in: context.request.question,
+                webSearchURLs: context.webSearchURLs
+            ) else {
+                throw NativeLLMFailure(code: "guard_denied", message: "网页工具只能读取用户本轮明确提供或刚搜索到的地址")
             }
         }
         if ["weibei_read_learning_memory", "weibei_update_learning_memory", "weibei_course_profile_update", "weibei_relation_proposal"].contains(name) {
@@ -252,6 +259,7 @@ public enum NativeBuiltinTools {
         await registry.register(courseMap)
         await registry.register(courseSearch)
         await registry.register(courseRead)
+        await registry.register(retryFailedPDFPages)
         await registry.register(webOpen)
         await registry.register(learningMemory)
         await registry.register(learningUpdate)
@@ -533,7 +541,7 @@ public enum NativeBuiltinTools {
     private static var courseSearch: NativeToolDefinition {
         hostTool(
             name: "weibei_course_search",
-            description: "在课程索引中搜索材料与笔记。用户点名课程、教材、章节，或问题可能落在当前课程里时，先用本工具再读正文，不要先反问要查哪一种。搜到命中后应接着 weibei_course_read，itemID 用搜索结果里的 id。确认课程里没有后，可以网页搜索并说明「课程里没有，我上网查了」。闲聊、冷知识、与课程无关的问题不要调用本工具。",
+            description: "在课程索引中搜索材料与笔记。用户点名课程、教材、章节，或问题可能落在当前课程里时，先用本工具再读正文，不要先反问要查哪一种。搜到命中后应接着 weibei_course_read，itemID 用搜索结果里的 id。PDF 结果的 indexedPageCount/totalPageCount 是当前文件版本的索引覆盖率，uncoveredPageNumbers 是未覆盖页，failedPageNumbers/failedPageReasons 是最终失败页及原因；即使没有正文命中也要报告这些状态，存在未覆盖页时不得声称搜遍全文。确认课程里没有后，可以网页搜索并说明「课程里没有，我上网查了」。闲聊、冷知识、与课程无关的问题不要调用本工具。",
             permission: .read,
             schema: NativeJSONSchema([
                 "type": "object",
@@ -555,7 +563,7 @@ public enum NativeBuiltinTools {
     private static var courseRead: NativeToolDefinition {
         hostTool(
             name: "weibei_course_read",
-            description: "按搜索结果里的 itemID 渐进读取真实正文。课程搜索命中后应读取最相关的一条，不要停下来反问用户。itemID 必须是搜索返回的 id。",
+            description: "按搜索结果里的 itemID 渐进读取真实正文。课程搜索命中后应读取最相关的一条，不要停下来反问用户。itemID 必须是搜索返回的 id。PDF 的 uncoveredPageNumbers 与 failedPageNumbers 不在已读正文覆盖范围内；failedPageReasons 是失败原因。",
             permission: .read,
             schema: NativeJSONSchema([
                 "type": "object",
@@ -589,7 +597,7 @@ public enum NativeBuiltinTools {
     private static var webOpen: NativeToolDefinition {
         hostTool(
             name: "weibei_web_open",
-            description: "读取用户本轮明确贴出的 HTTPS 网页。",
+            description: "读取用户本轮明确贴出或本轮网页搜索刚返回的 HTTPS 网页。",
             permission: .read,
             schema: NativeJSONSchema([
                 "type": "object",
@@ -603,6 +611,30 @@ public enum NativeBuiltinTools {
                 .webOpen(
                     url: string(arguments["url"]) ?? "",
                     maximumCharacters: int(arguments["maximumCharacters"], default: 12_000, range: 1_000...20_000)
+                )
+            }
+        )
+    }
+
+    private static var retryFailedPDFPages: NativeToolDefinition {
+        hostTool(
+            name: "weibei_course_retry_failed_pdf_pages",
+            description: "用户明确要求重试或重新索引 PDF 失败页时使用。itemID 必须来自课程搜索结果。它只重建失败页索引，不改原文件；普通搜索不得调用。",
+            permission: .read,
+            schema: NativeJSONSchema([
+                "type": "object",
+                "properties": ["itemID": ["type": "string"]],
+                "required": ["itemID"],
+            ]),
+            makeRequest: { arguments, context in
+                let itemID = string(arguments["itemID"])
+                    ?? context.searchedItemIDs.last
+                    ?? ""
+                guard !itemID.isEmpty else {
+                    throw NativeLLMFailure(code: "invalid_arguments", message: "重新索引失败页需要搜索结果里的 itemID")
+                }
+                return .retryFailedPDFPages(
+                    itemID: context.persistentAssetIDsByContextID[itemID] ?? itemID
                 )
             }
         )
@@ -954,12 +986,16 @@ public enum NativeBuiltinTools {
                 let result = try await handler(request)
                 let data = try JSONEncoder().encode(result)
                 let text = String(data: data, encoding: .utf8) ?? "{}"
+                var details: [String: Any] = [
+                    "kind": name.replacingOccurrences(of: "weibei_", with: ""),
+                    "contextRevision": context.request.contextRevision,
+                ]
+                if name == "weibei_web_open", let url = string(arguments["url"]) {
+                    details["requestedURL"] = url
+                }
                 return NativeToolExecutionResult(
                     text: text,
-                    details: [
-                        "kind": name.replacingOccurrences(of: "weibei_", with: ""),
-                        "contextRevision": context.request.contextRevision,
-                    ]
+                    details: details
                 )
             }
         )

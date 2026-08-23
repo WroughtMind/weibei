@@ -106,6 +106,11 @@ public struct StudyAgentCourseItem: Codable, Equatable, Sendable {
     public var tags: [String]
     public var searchText: String
     public var isTruncated: Bool
+    public var indexedPageCount: Int?
+    public var totalPageCount: Int?
+    public var uncoveredPageNumbers: [Int]?
+    public var failedPageNumbers: [Int]?
+    public var failedPageReasons: [Int: String]?
 
     public init(
         id: String,
@@ -119,7 +124,12 @@ public struct StudyAgentCourseItem: Codable, Equatable, Sendable {
         headings: [String] = [],
         tags: [String] = [],
         searchText: String = "",
-        isTruncated: Bool = false
+        isTruncated: Bool = false,
+        indexedPageCount: Int? = nil,
+        totalPageCount: Int? = nil,
+        uncoveredPageNumbers: [Int]? = nil,
+        failedPageNumbers: [Int]? = nil,
+        failedPageReasons: [Int: String]? = nil
     ) {
         self.id = id
         self.title = title
@@ -133,6 +143,11 @@ public struct StudyAgentCourseItem: Codable, Equatable, Sendable {
         self.tags = tags
         self.searchText = searchText
         self.isTruncated = isTruncated
+        self.indexedPageCount = indexedPageCount
+        self.totalPageCount = totalPageCount
+        self.uncoveredPageNumbers = uncoveredPageNumbers
+        self.failedPageNumbers = failedPageNumbers
+        self.failedPageReasons = failedPageReasons
     }
 }
 
@@ -313,6 +328,7 @@ public enum StudyAgentHostToolRequest: Equatable, Sendable {
         cursor: String?,
         maximumCharacters: Int
     )
+    case retryFailedPDFPages(itemID: String)
     case webOpen(url: String, maximumCharacters: Int)
 }
 
@@ -1145,7 +1161,12 @@ public struct StudyAgentContextEnvelope: Codable, Equatable, Sendable {
                 headings: item.headings.prefix(12).map { String($0.prefix(200)) },
                 tags: item.tags.prefix(16).map { String($0.prefix(64)) },
                 searchText: searchText,
-                isTruncated: item.isTruncated || item.searchText.count > searchText.count
+                isTruncated: item.isTruncated || item.searchText.count > searchText.count,
+                indexedPageCount: item.indexedPageCount,
+                totalPageCount: item.totalPageCount,
+                uncoveredPageNumbers: item.uncoveredPageNumbers,
+                failedPageNumbers: item.failedPageNumbers,
+                failedPageReasons: item.failedPageReasons
             )
         }
         let relations = context.relations

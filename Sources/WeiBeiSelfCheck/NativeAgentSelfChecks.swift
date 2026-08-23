@@ -217,6 +217,42 @@ private func checkResponsesTranslation() throws {
         #"{"type":"response.output_item.added","output_index":1,"item":{"type":"function_call","call_id":"c1","name":"weibei_course_search"}}"#
     )
     try nativeRequire(tool.first == .toolCallDelta(index: 1, id: "c1", name: "weibei_course_search", argumentsDelta: ""), "Responses tool start maps")
+    let searchSources = try OpenAIResponsesProvider.translate(
+        #"{"type":"response.output_item.done","output_index":2,"item":{"type":"web_search_call","action":{"type":"search","sources":[{"type":"url","url":"https://example.com/fresh"}]}}}"#
+    )
+    try nativeRequire(
+        searchSources == [.webSearchSource(url: "https://example.com/fresh")],
+        "Responses search source maps"
+    )
+    var authorizedURLs = ["https://example.com/fresh"]
+    try nativeRequire(
+        WeiBeiWebResearchURLPolicy.isAuthorized(
+            "https://EXAMPLE.com:443/fresh#section",
+            in: "搜索后继续核对",
+            webSearchURLs: authorizedURLs
+        ),
+        "exact searched HTTPS URL is authorized"
+    )
+    try nativeRequire(
+        !WeiBeiWebResearchURLPolicy.isAuthorized(
+            "https://example.com/other",
+            in: "搜索后继续核对",
+            webSearchURLs: authorizedURLs
+        ),
+        "same-host different path is rejected"
+    )
+    WeiBeiWebResearchURLPolicy.consumeSearchAuthorization(
+        for: "https://example.com/fresh",
+        from: &authorizedURLs
+    )
+    try nativeRequire(
+        !WeiBeiWebResearchURLPolicy.isAuthorized(
+            "https://example.com/fresh",
+            in: "搜索后继续核对",
+            webSearchURLs: authorizedURLs
+        ),
+        "searched URL authorization is consumed once"
+    )
 }
 
 private func checkAnthropicTranslation() throws {
