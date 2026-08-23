@@ -27,6 +27,32 @@ final class WorkspaceSafetyTests: XCTestCase {
     }
 
     @MainActor
+    func testFirstWorkspaceSaveFailureIsVisible() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("WeiBeiWorkspaceFailure-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = WorkspaceStore(
+            workspaceDirectory: root,
+            workspaceSnapshotWriter: { _, _ in
+                throw NSError(
+                    domain: "底层写盘原因",
+                    code: 1,
+                    userInfo: [NSLocalizedDescriptionKey: "/private/secret 写失败"]
+                )
+            },
+            startsAtBlankEntries: true
+        )
+        store.noteText = "尚未写入的正文"
+
+        XCTAssertFalse(store.flushPendingWorkspaceSave())
+        XCTAssertEqual(store.noteText, "尚未写入的正文")
+        let message = try XCTUnwrap(store.workspaceSaveError)
+        XCTAssertTrue(message.contains("未写内容已保存在魏碑中"))
+        XCTAssertTrue(message.contains("重试"))
+        XCTAssertFalse(message.contains("/private/secret"))
+    }
+
+    @MainActor
     func testSharedConversionRejectsConcurrentPortableState() throws {
         try CourseProjectRootSelfCheck.runSharedConversionConflictOnly()
     }

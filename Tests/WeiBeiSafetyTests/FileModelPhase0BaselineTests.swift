@@ -122,6 +122,9 @@ final class FileModelPhase0BaselineTests: XCTestCase {
             recovered.contains(userVersion),
             "冲突选「使用磁盘版本」后用户版本应已存入备份环；实际备份内容：\(recovered)"
         )
+        XCTAssertNil(store.noteEditorRecoveryConflict)
+        XCTAssertEqual(store.noteText, "磁盘版本")
+        XCTAssertNotNil(store.transientNoteStatus)
     }
 
     func testGoneItemGraysAndReclaims() throws {

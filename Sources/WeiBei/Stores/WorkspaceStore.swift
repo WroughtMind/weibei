@@ -600,8 +600,6 @@ final class WorkspaceStore: ObservableObject {
     var transientNoteStatusGeneration = 0
     var transientNoteStatusTask: Task<Void, Never>?
     @Published private(set) var workspaceSaveError: String?
-    /// S5：真磁盘写失败计数；满 3 次才露出可点重试的轻提示。
-    private var consecutiveWorkspaceSaveFailures = 0
     @Published private(set) var courseFileOperationProgress: CourseFileOperationProgress?
     @Published var notebookCreationDraft: NotebookCreationDraft?
     @Published var notebookRenameDraft: NotebookRenameDraft?
@@ -18391,22 +18389,23 @@ final class WorkspaceStore: ObservableObject {
     }
 
     private func clearWorkspaceSaveError() {
-        consecutiveWorkspaceSaveFailures = 0
         if workspaceSaveError != nil {
             workspaceSaveError = nil
         }
     }
 
-    /// S5：连续 3 次写盘失败才写入 workspaceSaveError（可点重试）；此前静默。
     @discardableResult
     private func reportWorkspaceSaveFailure(_ message: String) -> String {
-        consecutiveWorkspaceSaveFailures += 1
-        appendWorkspaceSaveFailureLog(message)
-        if WeiBeiSafetyTestMode.isEnabled
-            || consecutiveWorkspaceSaveFailures >= 3 {
-            workspaceSaveError = message
-        }
-        return message
+        WeiBeiLog.workspace.error(
+            "code=workspace_save_failed path=\(self.storageURL.path, privacy: .private) reason=\(message, privacy: .private)"
+        )
+        let userMessage = ui(
+            "当前工作区有更改未能写入磁盘。未写内容已保存在魏碑中，请重试。",
+            "Some workspace changes were not written to disk. Unsaved content is kept in WeiBei; please retry."
+        )
+        appendWorkspaceSaveFailureLog(userMessage)
+        workspaceSaveError = userMessage
+        return userMessage
     }
 
     private func appendWorkspaceSaveFailureLog(_ message: String) {
