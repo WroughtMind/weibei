@@ -52,76 +52,31 @@ final class WorkspaceSafetyTests: XCTestCase {
     }
 
     @MainActor
-    func testSemanticSessionTitleOnlyReplacesFirstTurnFallback() throws {
-        let legacyData = try JSONSerialization.data(withJSONObject: [
-            "id": UUID().uuidString,
-            "title": "旧会话",
-        ])
-        XCTAssertFalse(try JSONDecoder().decode(StudySession.self, from: legacyData).titleSetByUser)
-
+    func testManualSessionTitlePersistsAndSurvivesFirstQuestionNaming() throws {
         let firstQuestion = AgentMessage(
             role: .user,
             text: "请帮我解释利率为什么变化",
             source: nil
         )
-        let secondQuestion = AgentMessage(role: .user, text: "再举个例子", source: nil)
-
-        XCTAssertEqual(
-            WorkspaceStore.semanticSessionTitle(
-                from: "利率变化机制",
-                replacing: firstQuestion.text,
-                titleSetByUser: false,
-                messages: [firstQuestion]
-            ),
-            "利率变化机制"
-        )
-        XCTAssertNil(
-            WorkspaceStore.semanticSessionTitle(
-                from: "利率变化机制",
-                replacing: "用户手动命名",
-                titleSetByUser: true,
-                messages: [firstQuestion]
-            )
-        )
-        XCTAssertEqual(
-            WorkspaceStore.semanticSessionTitle(
-                from: "利率变化机制",
-                replacing: firstQuestion.text,
-                titleSetByUser: false,
-                messages: [firstQuestion, secondQuestion]
-            ),
-            "利率变化机制"
-        )
-        XCTAssertNil(
-            WorkspaceStore.semanticSessionTitle(
-                from: "WeiBei",
-                replacing: firstQuestion.text,
-                titleSetByUser: false,
-                messages: [firstQuestion]
-            )
-        )
-
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("WeiBeiSessionTitle-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root) }
         let store = WorkspaceStore(workspaceDirectory: root, startsAtBlankEntries: true)
         let session = store.createStudySession(courseID: nil)!
-        store.messages = [firstQuestion]
-        store.syncActiveStudySession(titleSeed: firstQuestion.text)
-        let automaticTitle = try XCTUnwrap(
-            store.studySessions.first(where: { $0.id == session.id })?.title
-        )
-        XCTAssertTrue(store.renameStudySession(session.id, title: automaticTitle))
-        XCTAssertFalse(store.applySemanticSessionTitle("利率变化机制", to: session.id))
+        XCTAssertTrue(store.renameStudySession(session.id, title: "我的利率课"))
         XCTAssertTrue(store.flushPendingWorkspaceSave())
 
         let reopened = WorkspaceStore(workspaceDirectory: root)
-        let reopenedSession = try XCTUnwrap(
-            reopened.studySessions.first(where: { $0.id == session.id })
-        )
-        XCTAssertEqual(reopenedSession.title, automaticTitle)
+        XCTAssertTrue(reopened.activateStudySession(
+            session.id,
+            expectedCourseID: nil,
+            expectedScopeNeedsReview: false
+        ))
+        reopened.messages = [firstQuestion]
+        reopened.syncActiveStudySession(titleSeed: firstQuestion.text)
+        let reopenedSession = try XCTUnwrap(reopened.activeStudySession)
+        XCTAssertEqual(reopenedSession.title, "我的利率课")
         XCTAssertTrue(reopenedSession.titleSetByUser)
-        XCTAssertFalse(reopened.applySemanticSessionTitle("利率变化机制", to: session.id))
     }
 
     func testShortcutCatalogOwnsAppChordsWithoutClaimingStandardEditorChords() {

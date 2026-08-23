@@ -709,11 +709,6 @@ struct NotePaneView: View {
         }, onSourceReference: { reference in
             store.noteEditingSession.requestSnapshot()
             store.openSourceReference(reference)
-        }, onAppShortcut: { key, modifiers in
-            if modifiers.contains(.command) {
-                store.noteEditingSession.requestSnapshot()
-            }
-            return store.handleAppShortcut(key: key, modifiers: modifiers)
         }, onRenderFailure: {
             store.noteEditingSession.invalidateBridgeGeneration()
             editorRecoveryGeneration &+= 1
@@ -892,7 +887,6 @@ struct MarkdownPreviewView: View {
     var acceptsHeightMeasurements = true
     var onWikiLink: (String) -> Void = { _ in }
     var onSourceReference: (String) -> Void = { _ in }
-    var onAppShortcut: (String, NSEvent.ModifierFlags) -> Bool = { _, _ in false }
     var onRenderReady: () -> Void = {}
     var onFinalizedSnapshotReady: (CGFloat) -> Void = { _ in }
     var onRenderFailure: () -> Void = {}
@@ -1021,7 +1015,6 @@ struct MarkdownPreviewView: View {
             },
             onWikiLink: onWikiLink,
             onSourceReference: onSourceReference,
-            onAppShortcut: onAppShortcut,
             onRenderReady: onRenderReady,
             onFinalizedRenderReady: { height in
                 guard compact && fitsContentHeight,
@@ -4896,7 +4889,6 @@ private struct AgentMessageMarkdownText: View {
                         }
                         store.openSourceReference(reference)
                     },
-                    onAppShortcut: { key, modifiers in store.handleAppShortcut(key: key, modifiers: modifiers) },
                     onRenderReady: {
                         finalizedRendererFailed = false
                     },

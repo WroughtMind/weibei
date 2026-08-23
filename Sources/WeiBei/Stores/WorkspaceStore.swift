@@ -9653,46 +9653,6 @@ final class WorkspaceStore: ObservableObject {
         return title.isEmpty ? "Study Session" : String(title.prefix(36))
     }
 
-    static func semanticSessionTitle(
-        from suggestion: String?,
-        replacing currentTitle: String,
-        titleSetByUser: Bool,
-        messages: [AgentMessage]
-    ) -> String? {
-        guard !titleSetByUser,
-              messages.contains(where: { $0.role == .user }),
-              let suggestion,
-              !suggestion.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            return nil
-        }
-        let title = sessionTitle(from: suggestion)
-        let genericTitles = ["WeiBei", "Study Session", "New Chat", "New Conversation", "新对话", "新会话"]
-        guard title != currentTitle,
-              !genericTitles.contains(where: { $0.caseInsensitiveCompare(title) == .orderedSame }) else { return nil }
-        return title
-    }
-
-    @discardableResult
-    func applySemanticSessionTitle(_ suggestion: String?, to sessionID: UUID) -> Bool {
-        guard let index = studySessions.firstIndex(where: { $0.id == sessionID }),
-              !studySessions[index].titleSetByUser,
-              let title = Self.semanticSessionTitle(
-                  from: suggestion,
-                  replacing: studySessions[index].title,
-                  titleSetByUser: studySessions[index].titleSetByUser,
-                  messages: studySessions[index].messages
-              ) else { return false }
-        studySessions[index].title = title
-        studySessions[index].updatedAt = Date()
-        return true
-    }
-
-    func applySemanticSessionTitleAndSave(_ suggestion: String, to sessionID: UUID) async {
-        guard applySemanticSessionTitle(suggestion, to: sessionID) else { return }
-        save()
-        _ = await flushPendingWorkspaceSaveAsync()
-    }
-
     private static func interruptedAgentReplyText(streamed: String, persisted: String) -> String {
         streamed.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             ? persisted
@@ -10375,14 +10335,10 @@ final class WorkspaceStore: ObservableObject {
         }
         Task { @MainActor [weak self] in
             guard let self else { return }
-            guard let expanded = CourseProjectFileWorker.expandedSupportedFiles(
+            let expanded = CourseProjectFileWorker.expandedSupportedFiles(
                 from: urls,
                 markdownOnly: asNotes
-            ) else {
-                showImportLimitExceededAlert()
-                completion([])
-                return
-            }
+            )
             guard !expanded.isEmpty,
                   confirmCourseImportPlan(
                     expanded,
@@ -10453,18 +10409,6 @@ final class WorkspaceStore: ObservableObject {
         alert.addButton(withTitle: ui("取消", "Cancel"))
         alert.addButton(withTitle: ui("移入课程", "Move into Course"))
         return alert.runModal() == .alertSecondButtonReturn
-    }
-
-    private func showImportLimitExceededAlert() {
-        guard !WeiBeiSafetyTestMode.isEnabled else { return }
-        let alert = NSAlert()
-        alert.messageText = ui("没有导入", "Nothing Imported")
-        alert.informativeText = ui(
-            "所选内容包含超过500个可导入文件。为避免只导入其中一部分，魏碑没有写入任何资料。请选择更小的文件夹，或直接选择需要的文件。",
-            "The selection contains more than 500 importable files. To avoid a partial import, WeiBei did not add anything. Choose a smaller folder or select the files you need directly."
-        )
-        alert.addButton(withTitle: ui("知道了", "OK"))
-        alert.runModal()
     }
 
     private func courseImportConflictResolution(
@@ -12497,16 +12441,10 @@ final class WorkspaceStore: ObservableObject {
             persistCurrentNote()
         }
         Task.detached(priority: .userInitiated) { [weak self] in
-            guard let expandedURLs = CourseProjectFileWorker.expandedSupportedFiles(
+            let expandedURLs = CourseProjectFileWorker.expandedSupportedFiles(
                 from: urls,
                 markdownOnly: markdownOnly
-            ) else {
-                await MainActor.run { [weak self] in
-                    self?.showImportLimitExceededAlert()
-                    completion([])
-                }
-                return
-            }
+            )
             var copied: [(url: URL, isNote: Bool)] = []
             var failures: [String] = []
             for (offset, rawURL) in expandedURLs.enumerated() {

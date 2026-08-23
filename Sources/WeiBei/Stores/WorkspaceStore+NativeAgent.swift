@@ -73,10 +73,7 @@ extension WorkspaceStore {
             to: request,
             sessionID: target.sessionID,
             workingDirectory: target.workingDirectory,
-            hostToolHandler: hostToolHandler,
-            sessionTitleHandler: { [weak self] title in
-                await self?.applySemanticSessionTitleAndSave(title, to: target.sessionID)
-            }
+            hostToolHandler: hostToolHandler
         ) { [weak self] progress in
             await self?.applyAgentProgress(
                 progress,
