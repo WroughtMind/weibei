@@ -235,9 +235,6 @@ enum NativeToolGuard {
                 throw NativeLLMFailure(code: "guard_denied", message: "该工具只在课程 Chat 中使用")
             }
         }
-        if name == "weibei_visualize", context.request.interactiveVisualizationsEnabled == false {
-            throw NativeLLMFailure(code: "guard_denied", message: "用户已关闭新互动界面")
-        }
     }
 }
 

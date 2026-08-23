@@ -70,4 +70,4 @@ DesignSystem/scripts/verify-assets.sh
 
 ## 当前接入状态
 
-本文件夹是独立交付，没有直接修改 GitHub `main`。仓库的 `script/build_and_run.sh` 仍需按 `08-implementation/build_and_run.icon.patch` 接入 `AppIcon.icns`。这是有意保留的最后一步，便于你先确认图标，再把资产正式并入发布流程。
+`AppIcon.icns` 已接入仓库的手工打包脚本；构建时会检查并复制图标，同时写入 `CFBundleIconFile`。

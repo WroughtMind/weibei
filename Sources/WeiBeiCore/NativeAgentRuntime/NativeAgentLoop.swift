@@ -51,11 +51,7 @@ public actor NativeAgentLoop {
             liveStores: liveStores
         )
         let scope = NativeToolScope.session(request.id.uuidString)
-        var tools = await registry.resolved(scope: scope)
-        if !request.interactiveVisualizationsEnabled {
-            await registry.hide("weibei_visualize", scope: scope)
-            tools = await registry.resolved(scope: scope)
-        }
+        let tools = await registry.resolved(scope: scope)
 
         var collectedText = ""
         var toolTrace: [String] = []

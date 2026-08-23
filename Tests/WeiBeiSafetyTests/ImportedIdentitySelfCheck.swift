@@ -24,8 +24,9 @@ enum ImportedIdentitySelfCheck {
 
     @MainActor
     private static func agentFailureMessagesExposeOnlyUserFacingDetails() throws {
-        let internalFailure = PiAgentRuntimeError.protocolFailure(
-            "before_agent_start failed in /private/tmp/AgentResources/extension.ts while running get_state"
+        let internalFailure = NativeLLMFailure(
+            code: "protocol_failure",
+            message: "before_agent_start failed in /private/tmp/AgentResources/extension.ts while running get_state"
         )
         let internalKind = AgentFailureKind.classify(internalFailure)
         let internalMessage = internalKind.userMessage(
@@ -51,8 +52,10 @@ enum ImportedIdentitySelfCheck {
             )
         }
 
-        let authenticationFailure = PiAgentRuntimeError.agentFailed(
-            "HTTP 401 refresh_token_reused provider response"
+        let authenticationFailure = NativeLLMFailure(
+            code: "unauthorized",
+            status: 401,
+            message: "HTTP 401 refresh_token_reused provider response"
         )
         let authenticationKind = AgentFailureKind.classify(
             authenticationFailure

@@ -1083,7 +1083,7 @@ enum CourseProjectRootSelfCheck {
                 && visualAsset.map {
                     !FileManager.default.fileExists(atPath: $0.filePath)
                 } == true,
-            "最终发给 Pi 的视觉附件没有使用已核验的本轮临时快照"
+            "最终发给 Agent 的视觉附件没有使用已核验的本轮临时快照"
         )
 
         let replacedOwnedSearch = try store.agentHostSearchForSelfCheck(

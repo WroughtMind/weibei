@@ -195,7 +195,7 @@ final class NativeAgentRuntimeTests: XCTestCase {
     }
 
     func testSkillRegistryLoadsVisualizeAndSocratic() throws {
-        let root = try PiAgentResources.bundled().skillsURL
+        let root = try AgentResources.bundled().skillsURL
         let registry = try NativeSkillRegistry.load(from: root)
         XCTAssertNotNil(registry.pack(named: "visualize"))
         XCTAssertNotNil(registry.pack(named: "socratic-questioning"))

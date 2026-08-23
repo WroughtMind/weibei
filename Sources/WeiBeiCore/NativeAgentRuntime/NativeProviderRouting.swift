@@ -1,7 +1,6 @@
 import Foundation
 
-/// Four protocol families plus explicit uncovered tails.
-/// URLs follow Pi 0.82.1 known-provider `baseUrl` strings.
+/// Native protocol families plus explicit unsupported providers.
 public enum NativeProtocolFamily: String, Sendable {
     case openaiChatCompletions
     case openaiResponses
@@ -14,7 +13,6 @@ public enum NativeProtocolFamily: String, Sendable {
 public enum NativeProviderAuth: String, Sendable {
     case apiKey
     case oauth
-    case apiKeyOrOAuth
     case userBaseURL
     case unsupported
 }
@@ -61,10 +59,10 @@ public enum NativeProviderRouting {
         case .anthropic:
             return NativeProviderRoute(
                 family: .anthropicMessages,
-                auth: .apiKeyOrOAuth,
+                auth: .apiKey,
                 baseURL: URL(string: "https://api.anthropic.com"),
                 defaultModel: "claude-sonnet-4-5",
-                note: "API key 本棒接入；订阅 OAuth 跟 ChatGPT 同模式，按用户指示本棒不真验"
+                note: "原生 Messages 协议 + API Key"
             )
         case .githubCopilot:
             return NativeProviderRoute(
@@ -72,14 +70,14 @@ public enum NativeProviderRouting {
                 auth: .oauth,
                 baseURL: URL(string: "https://api.individual.githubcopilot.com"),
                 defaultModel: "gpt-4.1",
-                note: "Pi 走 Copilot OAuth；原生跟同一模式，本棒不真验"
+                note: "Copilot OAuth 尚未接入"
             )
         case .radius:
             return NativeProviderRoute(
                 family: .openaiChatCompletions,
                 auth: .oauth,
                 baseURL: URL(string: "https://radius.pi.dev"),
-                note: "Pi Radius 网关 OAuth；原生跟同一模式，本棒不真验"
+                note: "Radius 网关 OAuth 尚未接入"
             )
         case .openai:
             return NativeProviderRoute(
@@ -135,7 +133,7 @@ public enum NativeProviderRouting {
                 auth: .apiKey,
                 baseURL: URL(string: "https://api.mistral.ai/v1"),
                 defaultModel: "mistral-large-latest",
-                note: "Pi 用 Mistral Conversations；原生走官方 OpenAI 兼容 /v1"
+                note: "原生走官方 OpenAI 兼容 /v1"
             )
         case .groq:
             return completions("https://api.groq.com/openai/v1")
@@ -185,31 +183,31 @@ public enum NativeProviderRouting {
             return NativeProviderRoute(
                 family: .unsupported,
                 auth: .unsupported,
-                note: "Pi 为 azure-openai-responses 独立族；本棒未覆盖"
+                note: "Azure OpenAI Responses 协议尚未接入"
             )
         case .googleVertex:
             return NativeProviderRoute(
                 family: .unsupported,
                 auth: .unsupported,
-                note: "Pi 为 google-vertex 独立族；本棒未覆盖"
+                note: "Google Vertex 协议尚未接入"
             )
         case .amazonBedrock:
             return NativeProviderRoute(
                 family: .unsupported,
                 auth: .unsupported,
-                note: "Pi 为 bedrock-converse-stream 独立族；本棒未覆盖"
+                note: "Bedrock Converse Stream 协议尚未接入"
             )
         case .cloudflareAIGateway:
             return NativeProviderRoute(
                 family: .unsupported,
                 auth: .unsupported,
-                note: "URL 含账号/网关占位，本棒未覆盖"
+                note: "URL 需要账号和网关参数，尚未接入"
             )
         case .cloudflareWorkersAI:
             return NativeProviderRoute(
                 family: .unsupported,
                 auth: .unsupported,
-                note: "URL 含账号占位，本棒未覆盖"
+                note: "URL 需要账号参数，尚未接入"
             )
         }
     }

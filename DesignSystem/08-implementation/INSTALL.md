@@ -5,7 +5,7 @@
 仓库没有 Xcode project，也没有已接入的 Asset Catalog。`script/build_and_run.sh` 自己创建 `魏碑.app`、Info.plist 和签名，因此最稳妥的第一步是使用 `AppIcon.icns`。
 
 1. 把整个 `DesignSystem/` 放在仓库根目录。
-2. 应用 `build_and_run.icon.patch`，或手工完成同样三件事：检查 ICNS、复制到 `Contents/Resources`、写入 `CFBundleIconFile`。
+2. `script/build_and_run.sh` 已负责检查 ICNS、复制到 `Contents/Resources` 并写入 `CFBundleIconFile`。
 3. 在 `swift run WeiBeiDev verify-release-metadata`（原 `script/verify_release_metadata.sh`，已迁移为 Swift 工具子命令）增加图标文件与 plist 引用校验。
 4. 运行：
 
@@ -23,4 +23,4 @@ ls -lh 'dist/魏碑.app/Contents/Resources/AppIcon.icns'
 
 ## 尚未自动完成的事
 
-这里没有直接改 GitHub `main`，也没有在 macOS 14 实机运行 `iconutil`、签名和 Dock / Finder 验收。资产结构与 ICNS 头已校验；正式发布前仍需完成 `09-qa/release-checklist.md`。
+正式发布前仍需按 `09-qa/release-checklist.md` 完成签名和 Dock / Finder 验收。

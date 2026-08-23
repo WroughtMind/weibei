@@ -892,7 +892,7 @@ expect(
 let emphasizedSourceReference = SourceReferenceTitle.parse("来源：**Mishkin 教材样例**")
 expect(emphasizedSourceReference.title == "Mishkin 教材样例", "source reference ignores whole-title Markdown emphasis")
 let inlineCodeSourceReference = SourceReferenceTitle.parse("- 相关资料：`来源：Mishkin 教材样例`")
-expect(inlineCodeSourceReference.title == "Mishkin 教材样例", "source reference remains actionable when PI wraps the jump in inline code")
+expect(inlineCodeSourceReference.title == "Mishkin 教材样例", "source reference remains actionable when the Agent wraps the jump in inline code")
 let calloutSourceReference = SourceReferenceTitle.parse("""
 > [!quote] 选区摘录
 > 实际利率

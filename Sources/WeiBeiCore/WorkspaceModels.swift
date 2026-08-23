@@ -550,7 +550,7 @@ public enum WeiBeiMotionPreference: String, CaseIterable, Identifiable, Sendable
 /// Conversation presentation overlays retained for 1.0.
 /// Primary chat lives in the immersive conversation layout / agent pane;
 /// only selection-float and hidden remain as `AgentSurface` cases.
-/// How a provider is typically configured in Pi (subscription OAuth vs API key vs local/custom).
+/// How a provider is configured (subscription OAuth vs API key vs local/custom).
 public enum AgentProviderKind: String, Codable, CaseIterable, Sendable {
     case subscription
     case apiKey
@@ -568,15 +568,14 @@ public enum AgentProviderKind: String, Codable, CaseIterable, Sendable {
     }
 }
 
-/// Full set of Pi `KnownProvider` ids + local/custom (aligned with Pi `docs/providers.md` + `env-api-keys`).
-/// Raw values match Pi provider ids so auth.json / --provider stay compatible.
+/// Model providers understood by WeiBei's native routing table.
 public enum AgentProviderID: String, Codable, CaseIterable, Identifiable, Sendable {
-    // MARK: Subscription / OAuth (Pi `/login`)
+    // MARK: Subscription / OAuth
     case openaiCodex = "openai-codex"
     case anthropic
     case githubCopilot = "github-copilot"
 
-    // MARK: API-key providers (Pi KnownProvider)
+    // MARK: API-key providers
     case openai
     case antLing = "ant-ling"
     case azureOpenAI = "azure-openai-responses"
@@ -619,12 +618,12 @@ public enum AgentProviderID: String, Codable, CaseIterable, Identifiable, Sendab
 
     public var id: String { rawValue }
 
-    /// Pi `--provider` / auth.json key.
-    public var piProviderName: String { rawValue == "custom" ? "weibei-custom" : rawValue }
+    /// Stable credential-owner key.
+    public var credentialProviderID: String { rawValue == "custom" ? "weibei-custom" : rawValue }
 
     public var kind: AgentProviderKind {
         switch self {
-        case .openaiCodex, .anthropic, .githubCopilot, .radius:
+        case .openaiCodex, .githubCopilot, .radius:
             return .subscription
         case .llamaCpp, .custom:
             return .localOrCustom

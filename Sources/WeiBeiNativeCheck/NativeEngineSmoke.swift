@@ -41,7 +41,7 @@ enum NativeEngineSmoke {
             let token = arguments.dropFirst(index + 1).first ?? ""
             do {
                 if token.isEmpty || token.hasPrefix("--") {
-                    print("usage: WeiBeiPiCheck --native-live <provider-id>|available")
+                    print("usage: WeiBeiNativeCheck --native-live <provider-id>|available")
                     return true
                 }
                 if token == "available" {
@@ -383,40 +383,9 @@ enum NativeEngineSmoke {
         return Int(usage.ru_maxrss)
     }
 
-    private static func samplePiChildren() -> String {
-        let task = Process()
-        task.executableURL = URL(fileURLWithPath: "/bin/ps")
-        task.arguments = ["-axo", "rss=,comm="]
-        let pipe = Pipe()
-        task.standardOutput = pipe
-        do {
-            try task.run()
-            task.waitUntilExit()
-        } catch {
-            return "ps-failed"
-        }
-        let text = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
-        var hits: [String] = []
-        for line in text.split(separator: "\n") {
-            let parts = line.split(whereSeparator: \.isWhitespace)
-            guard parts.count >= 2, let rss = Int(parts[0]) else { continue }
-            let comm = parts.dropFirst().joined(separator: " ")
-            if comm.hasSuffix("/pi") || comm.hasSuffix("/bun") || comm == "pi" || comm == "bun" {
-                hits.append("\(comm)=\(rss)KiB")
-            }
-        }
-        return hits.isEmpty ? "none" : hits.joined(separator: ",")
-    }
-
     private static func deepSeekKey() throws -> String {
-        let authURL = URL(fileURLWithPath: NSHomeDirectory())
-            .appendingPathComponent("Library/Application Support/com.changfenhuang.weibei/PiAgent/auth.json")
-        let data = try Data(contentsOf: authURL)
-        guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let deepseek = object["deepseek"] as? [String: Any],
-              let apiKey = deepseek["key"] as? String,
-              !apiKey.isEmpty else {
-            throw NSError(domain: "WeiBei.NativeSmoke", code: 5, userInfo: [NSLocalizedDescriptionKey: "DeepSeek key not found in Pi auth.json"])
+        guard let apiKey = try NativeAgentCredentialStore.apiKey(forProviderID: AgentProviderID.deepseek.credentialProviderID) else {
+            throw NSError(domain: "WeiBei.NativeSmoke", code: 5, userInfo: [NSLocalizedDescriptionKey: "DeepSeek key not found in native credential store"])
         }
         return apiKey
     }

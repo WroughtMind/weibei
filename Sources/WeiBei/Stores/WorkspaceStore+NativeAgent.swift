@@ -44,8 +44,8 @@ extension WorkspaceStore {
             model: model,
             endpoint: endpoint
         )
-        let systemPrompt = (try? PiAgentResources.bundled().systemPrompt) ?? "you are webi"
-        let skillRoot = try? PiAgentResources.bundled().skillsURL
+        let systemPrompt = (try? AgentResources.bundled().systemPrompt) ?? "you are webi"
+        let skillRoot = try? AgentResources.bundled().skillsURL
         let liveStores = NativeLiveStores(
             learning: { [weak self] in
                 await MainActor.run {

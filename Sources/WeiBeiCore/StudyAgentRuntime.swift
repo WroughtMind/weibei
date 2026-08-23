@@ -516,7 +516,6 @@ public struct StudyAgentRequest: Sendable {
     public var courseProfile: StudyAgentCourseProfileContext
     public var language: WeiBeiInterfaceLanguage
     public var contextRevision: String
-    public var interactiveVisualizationsEnabled: Bool
     /// Notes the user already confirmed in this Chat. Native must treat these as persisted.
     public var confirmedNotes: [StudyAgentPersistedNoteRef]
 
@@ -541,7 +540,6 @@ public struct StudyAgentRequest: Sendable {
         courseProfile: StudyAgentCourseProfileContext = .empty,
         language: WeiBeiInterfaceLanguage = .chinese,
         contextRevision: String,
-        interactiveVisualizationsEnabled: Bool = true,
         confirmedNotes: [StudyAgentPersistedNoteRef] = []
     ) {
         self.id = id
@@ -564,7 +562,6 @@ public struct StudyAgentRequest: Sendable {
         self.courseProfile = courseProfile
         self.language = language
         self.contextRevision = contextRevision
-        self.interactiveVisualizationsEnabled = interactiveVisualizationsEnabled
         self.confirmedNotes = confirmedNotes
     }
 
@@ -605,7 +602,7 @@ public struct StudyAgentRelationProposal: Codable, Equatable, Sendable {
 }
 
 public struct StudyAgentMemoryUpdateEntry: Codable, Equatable, Sendable {
-    /// Missing only when PI is proposing a new memory. Existing memories must
+    /// Missing only when Agent is proposing a new memory. Existing memories must
     /// be updated through the stable id returned by the current scope read.
     public var memoryID: String?
     public var kind: LearningMemoryKind
@@ -799,7 +796,7 @@ public enum StudyAgentProgress: Equatable, Sendable {
 public typealias StudyAgentProgressHandler = @Sendable (StudyAgentProgress) async -> Void
 public typealias StudyAgentSessionTitleHandler = @Sendable (String) async -> Void
 
-/// User-facing classification for Pi request failures.
+/// User-facing classification for Agent request failures.
 public enum AgentFailureKind: String, Codable, Equatable, Sendable {
     case offline
     case unauthorized
@@ -855,6 +852,9 @@ public enum AgentFailureKind: String, Codable, Equatable, Sendable {
     }
 
     public static func classify(_ error: Error) -> AgentFailureKind {
+        if let failure = error as? NativeLLMFailure {
+            return failure.asAgentFailureKind
+        }
         if error is CancellationError {
             return .cancelled
         }
@@ -980,7 +980,6 @@ public struct StudyAgentContextEnvelope: Codable, Equatable, Sendable {
     public var visualAssets: [StudyAgentVisualAsset]
     public var learning: StudyAgentLearningContext
     public var courseProfile: StudyAgentCourseProfileContext
-    public var interactiveVisualizationsEnabled: Bool
 
     public init(request: StudyAgentRequest) {
         schemaVersion = 2
@@ -1058,7 +1057,6 @@ public struct StudyAgentContextEnvelope: Codable, Equatable, Sendable {
             request.courseProfile,
             itemIDMap: boundedCourse.itemIDMap
         )
-        interactiveVisualizationsEnabled = request.interactiveVisualizationsEnabled
     }
 
     private static func boundedProjectScope(

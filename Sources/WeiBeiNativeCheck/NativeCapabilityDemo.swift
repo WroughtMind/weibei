@@ -15,7 +15,7 @@ enum NativeCapabilityDemo {
     }
 
     static func run() async throws {
-        let skillRoot = try PiAgentResources.bundled().skillsURL
+        let skillRoot = try AgentResources.bundled().skillsURL
         let registry = try NativeSkillRegistry.load(from: skillRoot)
         let before = registry.catalogSummary()
         guard registry.pack(named: "visualize") != nil, registry.pack(named: "socratic-questioning") != nil else {
