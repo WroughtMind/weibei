@@ -4,16 +4,20 @@ import XCTest
 @testable import WeiBei
 
 final class AgentVisualizationSizingTests: XCTestCase {
-    func testGenUILoadFailureWaitsForUserReload() {
+    func testGenUILoadFailureRetriesOnceThenWaitsForUserReload() {
         var state = AgentVisualizationLoadState()
-        let failedAttempt = state.attempt
+        let firstAttempt = state.attempt
 
-        state.fail("加载失败", from: failedAttempt)
-        XCTAssertEqual(state.failure, "加载失败")
+        state.fail("首次失败", from: firstAttempt)
+        XCTAssertNil(state.failure)
+
+        let retriedAttempt = state.attempt
+        state.fail("再次失败", from: retriedAttempt)
+        XCTAssertEqual(state.failure, "再次失败")
 
         state.reload()
         XCTAssertNil(state.failure)
-        XCTAssertGreaterThan(state.attempt, failedAttempt)
+        XCTAssertGreaterThan(state.attempt, retriedAttempt)
     }
 
     @MainActor

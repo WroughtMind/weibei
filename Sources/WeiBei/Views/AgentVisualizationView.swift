@@ -10,7 +10,11 @@ struct AgentVisualizationLoadState: Equatable {
 
     mutating func fail(_ message: String, from failedAttempt: Int) {
         guard failedAttempt == attempt else { return }
-        failure = message
+        if attempt == 0 {
+            attempt = 1
+        } else {
+            failure = message
+        }
     }
 
     mutating func reload() {
