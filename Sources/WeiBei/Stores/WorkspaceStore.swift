@@ -12084,7 +12084,12 @@ final class WorkspaceStore: ObservableObject {
 
     @discardableResult
     func setShortcut(_ id: AppShortcutID, chord: AppShortcutChord) -> Bool {
-        guard !AppShortcutCatalog.isReservedTextEditingChord(chord) else { return false }
+        guard !AppShortcutCatalog.isReservedTextEditingChord(chord),
+              AppShortcutCatalog.conflict(
+                  for: chord,
+                  excluding: id,
+                  overrides: customShortcutOverrides
+              ) == nil else { return false }
         if chord == id.defaultChord {
             customShortcutOverrides.removeValue(forKey: id)
         } else {
@@ -12095,10 +12100,9 @@ final class WorkspaceStore: ObservableObject {
         return true
     }
 
-    func resetShortcut(_ id: AppShortcutID) {
-        customShortcutOverrides.removeValue(forKey: id)
-        AppShortcutCatalog.saveOverrides(customShortcutOverrides)
-        objectWillChange.send()
+    @discardableResult
+    func resetShortcut(_ id: AppShortcutID) -> Bool {
+        setShortcut(id, chord: id.defaultChord)
     }
 
     func resetAllShortcuts() {
@@ -12117,62 +12121,6 @@ final class WorkspaceStore: ObservableObject {
         if let action = AppShortcutCatalog.action(matching: pressed, overrides: customShortcutOverrides) {
             return performCustomizableShortcut(action)
         }
-
-        // Non-user-facing chords stay hard-coded (layout / note mode / agent write).
-        if modifiers == [.command, .option] {
-            switch key {
-            case "1":
-                animateLayoutChange { setLayout(.documentAgentNotes) }
-            case "s":
-                guard layout.isDocumentThreePane else { return false }
-                animateLayoutChange { swapThreePaneSecondaryPanes() }
-            case "up":
-                animateLayoutChange { selectAdjacentItem(step: -1) }
-            case "down":
-                animateLayoutChange { selectAdjacentItem(step: 1) }
-            default:
-                return false
-            }
-            return true
-        }
-
-        if modifiers == [.command, .shift] {
-            switch key {
-            case "a":
-                guard canApplyAgentAnswer else { return false }
-                animatePanelChange { applyLastAgentAnswerToNote() }
-            case "r":
-                guard canReplaceNoteSelection else { return false }
-                animatePanelChange { replaceSelectionWithLastAgentAnswer() }
-            case "e":
-                guard canApplyAgentAnswer else { return false }
-                animatePanelChange { applyAgentPatchToEditor() }
-            case "c":
-                guard canCopyReference else { return false }
-                copyCurrentReference()
-            default:
-                return false
-            }
-            return true
-        }
-
-        if modifiers == [.command] {
-            switch key {
-            case "j":
-                guard layout.hasCollapsibleRightPane else { return false }
-                animateLayoutChange { toggleRightPane() }
-            case "return":
-                guard isAgentRunningInActiveChat
-                    || !agentDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-                    return false
-                }
-                submitAgentDraft()
-            default:
-                return false
-            }
-            return true
-        }
-
         return false
     }
 
@@ -12202,6 +12150,18 @@ final class WorkspaceStore: ObservableObject {
             animateLayoutChange { focus(.notes) }
         case .focusChat:
             animateLayoutChange { focus(.agent) }
+        case .previousMaterial:
+            animateLayoutChange { selectAdjacentItem(step: -1) }
+        case .nextMaterial:
+            animateLayoutChange { selectAdjacentItem(step: 1) }
+        case .toggleRightPane:
+            guard layout.hasCollapsibleRightPane else { return false }
+            animateLayoutChange { toggleRightPane() }
+        case .threePaneWorkspace:
+            animateLayoutChange { setLayout(.documentAgentNotes) }
+        case .swapThreePaneSecondaryPanes:
+            guard layout.isDocumentThreePane else { return false }
+            animateLayoutChange { swapThreePaneSecondaryPanes() }
         case .immersiveReading:
             animateLayoutChange { setLayout(.immersiveReading) }
         case .immersiveChat:
@@ -12213,6 +12173,24 @@ final class WorkspaceStore: ObservableObject {
             animatePanelChange { setAgentSurface(.selectionFloat) }
         case .hideChatOverlay:
             animatePanelChange { setAgentSurface(.hidden) }
+        case .applyAgentAnswerToNote:
+            guard canApplyAgentAnswer else { return false }
+            animatePanelChange { applyLastAgentAnswerToNote() }
+        case .replaceNoteSelection:
+            guard canReplaceNoteSelection else { return false }
+            animatePanelChange { replaceSelectionWithLastAgentAnswer() }
+        case .applyAgentPatchToEditor:
+            guard canApplyAgentAnswer else { return false }
+            animatePanelChange { applyAgentPatchToEditor() }
+        case .copyCurrentReference:
+            guard canCopyReference else { return false }
+            copyCurrentReference()
+        case .submitAgentDraft:
+            guard isAgentRunningInActiveChat
+                || !agentDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                return false
+            }
+            submitAgentDraft()
         }
         return true
     }

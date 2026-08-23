@@ -124,7 +124,7 @@ final class WorkspaceSafetyTests: XCTestCase {
         XCTAssertFalse(reopened.applySemanticSessionTitle("利率变化机制", to: session.id))
     }
 
-    func testStandardEditorShortcutsAreNotClaimedByAppDefaults() {
+    func testShortcutCatalogOwnsAppChordsWithoutClaimingStandardEditorChords() throws {
         let retiredOverrides: [AppShortcutID: AppShortcutChord] = [
             .courseIndex: AppShortcutChord(key: "b", modifiers: .command),
             .searchInMaterial: AppShortcutChord(key: "f", modifiers: .command),
@@ -145,6 +145,44 @@ final class WorkspaceSafetyTests: XCTestCase {
             matching: AppShortcutChord(key: "f", modifiers: [.command, .option]),
             overrides: retiredOverrides
         ), .searchInMaterial)
+
+        let centralizedDefaults: [AppShortcutID] = [
+            .previousMaterial, .nextMaterial, .toggleRightPane, .threePaneWorkspace,
+            .swapThreePaneSecondaryPanes, .applyAgentAnswerToNote, .replaceNoteSelection,
+            .applyAgentPatchToEditor, .copyCurrentReference, .submitAgentDraft,
+        ]
+        for id in centralizedDefaults {
+            XCTAssertEqual(
+                AppShortcutCatalog.action(matching: id.defaultChord, overrides: [:]),
+                id
+            )
+        }
+        XCTAssertEqual(
+            AppShortcutCatalog.conflict(
+                for: AppShortcutID.threePaneWorkspace.defaultChord,
+                excluding: .courseIndex,
+                overrides: [:]
+            ),
+            .threePaneWorkspace
+        )
+
+        let defaults = UserDefaults.standard
+        let original = defaults.data(forKey: AppShortcutCatalog.defaultsKey)
+        defer {
+            if let original {
+                defaults.set(original, forKey: AppShortcutCatalog.defaultsKey)
+            } else {
+                defaults.removeObject(forKey: AppShortcutCatalog.defaultsKey)
+            }
+        }
+        let conflictingStoredOverrides = [
+            AppShortcutID.courseIndex.rawValue: AppShortcutID.threePaneWorkspace.defaultChord,
+        ]
+        defaults.set(
+            try JSONEncoder().encode(conflictingStoredOverrides),
+            forKey: AppShortcutCatalog.defaultsKey
+        )
+        XCTAssertTrue(AppShortcutCatalog.loadOverrides().isEmpty)
     }
 
     @MainActor

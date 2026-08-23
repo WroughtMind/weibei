@@ -629,8 +629,10 @@ struct SettingsView: View {
         .contextMenu {
             Button(store.ui("恢复默认", "Reset to Default")) {
                 stopShortcutRecording()
-                store.resetShortcut(id)
-                shortcutStatusMessage = nil
+                shortcutStatusMessage = store.resetShortcut(id) ? nil : store.ui(
+                    "默认组合正被其他动作使用，请先改掉冲突项。",
+                    "The default chord is used by another action. Rebind that action first."
+                )
             }
         }
     }
@@ -671,11 +673,9 @@ struct SettingsView: View {
             excluding: id,
             overrides: store.customShortcutOverrides
         ) {
-            // Still apply, but surface the conflict so the user can fix the other binding.
-            store.setShortcut(id, chord: chord)
             shortcutStatusMessage = store.ui(
-                "已改绑；与「\(conflict.title(language: store.interfaceLanguage))」冲突，请再改其中一项。",
-                "Saved; conflicts with “\(conflict.title(language: store.interfaceLanguage))”. Rebind one of them."
+                "未改绑；与「\(conflict.title(language: store.interfaceLanguage))」冲突。",
+                "Not saved; conflicts with “\(conflict.title(language: store.interfaceLanguage))”."
             )
             return
         }

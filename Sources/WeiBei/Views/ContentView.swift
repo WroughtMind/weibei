@@ -561,7 +561,7 @@ private struct UnifiedTopBarView: View {
                 searchButton
             }
 
-            // Copy-reference is not top-bar chrome: use ⌘⇧C, menu, or command palette when needed.
+            // Copy-reference is not top-bar chrome: use its configured shortcut, menu, or command palette when needed.
 
             topIconButton("command", help: store.ui("命令面板", "Command palette")) {
                 store.commandPalettePresented.toggle()

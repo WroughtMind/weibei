@@ -170,9 +170,9 @@ struct WeiBeiApp: App {
                 Divider()
 
                 Button(store.ui("上一份资料", "Previous Material")) { animateLayout { store.selectAdjacentItem(step: -1) } }
-                    .keyboardShortcut(.upArrow, modifiers: [.command, .option])
+                    .weiBeiKeyboardShortcut(store.chord(for: .previousMaterial))
                 Button(store.ui("下一份资料", "Next Material")) { animateLayout { store.selectAdjacentItem(step: 1) } }
-                    .keyboardShortcut(.downArrow, modifiers: [.command, .option])
+                    .weiBeiKeyboardShortcut(store.chord(for: .nextMaterial))
 
                 Divider()
 
@@ -186,20 +186,20 @@ struct WeiBeiApp: App {
                             store.toggleRightPane()
                         }
                     }
-                    .keyboardShortcut("j")
+                    .weiBeiKeyboardShortcut(store.chord(for: .toggleRightPane))
                 }
 
                 Divider()
 
                 Button(store.ui("三栏工作台", "Three-Pane Workspace")) { setLayout(.documentAgentNotes) }
-                    .keyboardShortcut("1", modifiers: [.command, .option])
+                    .weiBeiKeyboardShortcut(store.chord(for: .threePaneWorkspace))
                 if store.layout.isDocumentThreePane {
                     Button(store.ui("交换笔记与对话", "Swap Notes and Chat")) {
                         animateLayout {
                             store.swapThreePaneSecondaryPanes()
                         }
                     }
-                    .keyboardShortcut("s", modifiers: [.command, .option])
+                    .weiBeiKeyboardShortcut(store.chord(for: .swapThreePaneSecondaryPanes))
                 }
                 Button(WorkspaceLayout.immersiveReading.label(language: store.interfaceLanguage)) { setLayout(.immersiveReading) }
                     .weiBeiKeyboardShortcut(store.chord(for: .immersiveReading))
@@ -250,13 +250,13 @@ struct WeiBeiApp: App {
                     Divider()
 
                     Button(store.ui("写入回答到笔记", "Write Answer to Note")) { animatePanel { store.applyLastAgentAnswerToNote() } }
-                        .keyboardShortcut("a", modifiers: [.command, .shift])
+                        .weiBeiKeyboardShortcut(store.chord(for: .applyAgentAnswerToNote))
                     if store.canReplaceNoteSelection {
                         Button(store.ui("替换笔记选区", "Replace Note Selection")) { animatePanel { store.replaceSelectionWithLastAgentAnswer() } }
-                            .keyboardShortcut("r", modifiers: [.command, .shift])
+                            .weiBeiKeyboardShortcut(store.chord(for: .replaceNoteSelection))
                     }
                     Button(store.ui("追加整理建议", "Append Organization Suggestion")) { animatePanel { store.applyAgentPatchToEditor() } }
-                        .keyboardShortcut("e", modifiers: [.command, .shift])
+                        .weiBeiKeyboardShortcut(store.chord(for: .applyAgentPatchToEditor))
                 }
 
                 Divider()
@@ -270,7 +270,7 @@ struct WeiBeiApp: App {
 
                 if store.canCopyReference {
                     Button(store.copyReferenceActionTitle) { store.copyCurrentReference() }
-                        .keyboardShortcut("c", modifiers: [.command, .shift])
+                        .weiBeiKeyboardShortcut(store.chord(for: .copyCurrentReference))
                 }
                 if store.hasSelectedMaterial {
                     Button(store.ui("打开资料内搜索", "Search in Material")) {
@@ -284,7 +284,7 @@ struct WeiBeiApp: App {
                     Button(store.sendAgentActionTitle) {
                         store.submitAgentDraft()
                     }
-                        .keyboardShortcut(.return, modifiers: [.command])
+                        .weiBeiKeyboardShortcut(store.chord(for: .submitAgentDraft))
                 }
             }
         }

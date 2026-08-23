@@ -998,6 +998,8 @@ expect(
         && !richMarkdownEditorSource.contains("isWeiBeiShortcut")
         && weiBeiAppSource.contains(".weiBeiKeyboardShortcut(store.chord(for: .courseIndex))")
         && weiBeiAppSource.contains(".weiBeiKeyboardShortcut(store.chord(for: .searchInMaterial))")
+        && weiBeiAppSource.contains(".weiBeiKeyboardShortcut(store.chord(for: .threePaneWorkspace))")
+        && commandPaletteViewSource.contains("store.chord(for: .threePaneWorkspace).display")
         && contentViewSource.contains(".weiBeiKeyboardShortcut(store.chord(for: .navigateBack))"),
     "custom shortcuts have one catalog-backed execution and display path; Web editors must leave standard text shortcuts to the responder chain"
 )
