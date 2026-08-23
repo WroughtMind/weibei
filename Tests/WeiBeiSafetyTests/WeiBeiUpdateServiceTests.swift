@@ -21,5 +21,9 @@ final class WeiBeiUpdateServiceTests: XCTestCase {
                 "失败后可以重试",
             ]
         )
+        XCTAssertEqual(
+            WeiBeiAvailableUpdate.releaseNotesLines(from: notes).last,
+            "第六条不会进入悬停摘要"
+        )
     }
 }

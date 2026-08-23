@@ -339,7 +339,7 @@ public actor NativeAgentLoop {
            let specJSON = String(data: specData, encoding: .utf8) {
             contentBlocks.append(.visualization(AgentVisualization(id: id, specJSON: specJSON)))
         }
-        if name == "load_skill" || name == "read" {
+        if name == "load_skill" {
             if let loaded = details["loaded"] as? [String: Any],
                let id = loaded["id"] as? String,
                let skillName = loaded["name"] as? String,

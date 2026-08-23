@@ -216,13 +216,6 @@ enum NativeToolGuard {
         arguments: [String: Any],
         context: NativeToolExecutionContext
     ) throws {
-        if name == "read" {
-            let path = (arguments["path"] as? String ?? "")
-            let allowed = path == "skill://visualize" || path.contains("/skills/visualize/SKILL.md")
-            if !allowed {
-                throw NativeLLMFailure(code: "guard_denied", message: "read 只接受魏碑已登记的 skill:// 路径")
-            }
-        }
         if name == "weibei_web_open" {
             let url = arguments["url"] as? String ?? ""
             guard WeiBeiWebResearchURLPolicy.isExplicitlyProvided(url, in: context.request.question) else {
@@ -246,7 +239,6 @@ public enum NativeBuiltinTools {
         into registry: NativeToolRegistry,
         skillRoot: URL?
     ) async {
-        await registry.register(readSkill(skillRoot: skillRoot))
         await registry.register(loadSkill)
         await registry.register(createDocument)
         await registry.register(delegate)
@@ -261,46 +253,6 @@ public enum NativeBuiltinTools {
         await registry.register(courseProfileUpdate)
         await registry.register(noteProposal)
         await registry.register(relationProposal)
-    }
-
-    private static func readSkill(skillRoot: URL?) -> NativeToolDefinition {
-        NativeToolDefinition(
-            name: "read",
-            description: "视觉表达可能明显改善理解、比较或探索时，读取魏碑随 App 打包的 visualize Skill。",
-            permission: .read,
-            schema: NativeJSONSchema([
-                "type": "object",
-                "properties": ["path": ["type": "string"]],
-                "required": ["path"],
-            ]),
-            execute: { arguments, _ in
-                let path = arguments["path"] as? String ?? ""
-                let file: URL
-                if let skillRoot {
-                    file = skillRoot.appendingPathComponent("visualize/SKILL.md")
-                } else if path.hasPrefix("/") {
-                    file = URL(fileURLWithPath: path)
-                } else {
-                    throw NativeLLMFailure(code: "skill_missing", message: "visualize Skill 未打包")
-                }
-                let content = try String(contentsOf: file, encoding: .utf8)
-                let digest = SHA256.hash(data: Data(content.utf8))
-                let sha = digest.map { String(format: "%02x", $0) }.joined()
-                return NativeToolExecutionResult(
-                    text: content,
-                    details: [
-                        "kind": "weibei_skill_read",
-                        "loaded": [
-                            "id": "visualize",
-                            "name": "Visualize",
-                            "relativePath": "skills/visualize/SKILL.md",
-                            "sha256": sha,
-                            "byteCount": content.utf8.count,
-                        ],
-                    ]
-                )
-            }
-        )
     }
 
     private static var loadSkill: NativeToolDefinition {
