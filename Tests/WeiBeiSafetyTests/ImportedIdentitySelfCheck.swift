@@ -35,43 +35,51 @@ enum ImportedIdentitySelfCheck {
 
     @MainActor
     private static func editorSelectionWaitsForCommandAndAcceptedSnapshot() throws {
-        let fixture = try WorkspaceFixture(name: "dirty-editor-selection")
+        let fixture = try WorkspaceFixture(name: "durable-editor-selection")
         defer { fixture.remove() }
 
-        let noteAURL = fixture.importsDirectory.appendingPathComponent("A笔记.md")
-        let noteBURL = fixture.importsDirectory.appendingPathComponent("B笔记.md")
-        let noteCURL = fixture.importsDirectory.appendingPathComponent("C笔记.md")
-        try Data("# A笔记\n\n旧正文".utf8).write(to: noteAURL)
-        try Data("# B笔记\n\n正文".utf8).write(to: noteBURL)
-        try Data("# C笔记\n\n正文".utf8).write(to: noteCURL)
+        let notes = ["A", "B", "C"].map { name in
+            StudyItem(
+                id: "internal-note-\(name.lowercased())",
+                title: "\(name) 笔记",
+                subtitle: "\(name) 笔记",
+                kind: .text,
+                urlPath: nil,
+                isSample: false,
+                isNotebookNote: true,
+                storage: .common(relativePath: "")
+            )
+        }
+        let noteA = notes[0]
+        let noteB = notes[1]
+        let noteC = notes[2]
+        try fixture.write(PersistedWorkspace(
+            importedItems: notes,
+            notesByItemID: [
+                noteA.id: "# A笔记\n\n旧正文",
+                noteB.id: "# B笔记\n\n正文",
+                noteC.id: "# C笔记\n\n正文",
+            ],
+            activeNotebookItemID: noteA.id,
+            noteSourceLinksMigrationVersion: 1
+        ))
 
+        var rejectsWorkspaceWrite = false
         let store = WorkspaceStore(
             workspaceDirectory: fixture.workspaceDirectory,
+            workspaceSnapshotWriter: { data, url in
+                if rejectsWorkspaceWrite {
+                    throw CocoaError(.fileWriteUnknown)
+                }
+                try data.write(to: url, options: [.atomic])
+            },
             selectionAskThreadDefaults: fixture.selectionAskThreadDefaults
-        )
-        _ = importFilesAndWait(
-            store,
-            [noteAURL, noteBURL, noteCURL],
-            selectsFirstImportedItem: false,
-            markdownNotePaths: [noteAURL.path, noteBURL.path, noteCURL.path]
-        )
-        let noteA = try require(
-            store.courseNotebookItems.first { $0.urlPath == noteAURL.path },
-            "脏编辑器切换场景找不到 A 笔记"
-        )
-        let noteB = try require(
-            store.courseNotebookItems.first { $0.urlPath == noteBURL.path },
-            "脏编辑器切换场景找不到 B 笔记"
-        )
-        let noteC = try require(
-            store.courseNotebookItems.first { $0.urlPath == noteCURL.path },
-            "脏编辑器切换场景找不到 C 笔记"
         )
 
         store.select(itemID: noteA.id)
         store.noteEditingSession.replaceDocument(with: noteA.id)
         var requests = [NoteEditorSnapshotRequest]()
-        var bridgeToken = store.noteEditingSession.bindSnapshotRequestHandler {
+        let bridgeToken = store.noteEditingSession.bindSnapshotRequestHandler {
             requests.append($0)
         }
         let pendingCommand = NoteEditorCommand(kind: .insertMarkdown, markdown: "最后一段编辑")
@@ -98,22 +106,41 @@ enum ImportedIdentitySelfCheck {
         store.noteEditorContentCommandApplied(pendingCommand, documentID: noteA.id)
         try check(requests.count == 1, "内容命令应用后没有进入现有真实快照保存链")
 
-        store.noteEditingSession.unbindSnapshotRequestHandler(bridgeToken)
+        rejectsWorkspaceWrite = true
+        let request = try require(requests.first, "内容命令应用后没有请求真实快照")
+        let latestA = "# A笔记\n\n最后一段编辑"
+        try check(
+            store.noteEditingSession.receive(NoteEditorSnapshotReadyEvent(
+                requestID: request.requestID ?? "",
+                documentID: request.documentID,
+                documentGeneration: request.documentGeneration,
+                revision: 1,
+                markdown: latestA
+            )),
+            "真实快照没有被编辑会话接收"
+        )
+        let failureDeadline = Date().addingTimeInterval(5)
+        while !store.canRetryPendingNoteSelection,
+              Date() < failureDeadline {
+            RunLoop.main.run(
+                mode: .default,
+                before: Date(timeIntervalSinceNow: 0.01)
+            )
+        }
+        let snapshotAfterFailure = try fixture.readSnapshot()
         try check(
             store.activeNoteItemID == noteA.id
                 && store.canRetryPendingNoteSelection
-                && store.noteSelectionStatusMessage?.contains("持久恢复点") == true,
-            "快照失败后离开了 A，或没有提供带恢复来源说明的重试"
+                && store.noteSelectionStatusMessage?.contains("尚未安全保存") == true
+                && snapshotAfterFailure.notesByItemID[noteA.id] != latestA,
+            "工作区写入失败后离开了 A，或把内存快照误当成安全保存"
         )
 
+        rejectsWorkspaceWrite = false
         requests.removeAll()
-        bridgeToken = store.noteEditingSession.bindSnapshotRequestHandler {
-            requests.append($0)
-        }
         store.retryPendingNoteSelection()
         let retry = try require(requests.first, "重试没有重新请求真实快照")
         try check(store.activeNoteItemID == noteA.id, "重试快照送达前离开了 A")
-        let latestA = "# A笔记\n\n最后一段编辑"
         try check(
             store.noteEditingSession.receive(NoteEditorSnapshotReadyEvent(
                 requestID: retry.requestID ?? "",
@@ -124,15 +151,24 @@ enum ImportedIdentitySelfCheck {
             )),
             "重试快照没有被编辑会话接收"
         )
+        let successDeadline = Date().addingTimeInterval(5)
+        while store.activeNoteItemID != noteB.id,
+              Date() < successDeadline {
+            RunLoop.main.run(
+                mode: .default,
+                before: Date(timeIntervalSinceNow: 0.01)
+            )
+        }
         try check(
             store.activeNoteItemID == noteB.id,
-            "快照接收后没有只切到最后点击的 B"
+            "工作区恢复写入后没有只切到最后点击的 B"
         )
 
         store.select(itemID: noteA.id)
-        let reopenedDiskA = try String(contentsOf: noteAURL, encoding: .utf8)
+        let snapshotAfterRetry = try fixture.readSnapshot()
         try check(
-            store.noteText == latestA && reopenedDiskA == latestA,
+            store.noteText == latestA
+                && snapshotAfterRetry.notesByItemID[noteA.id] == latestA,
             "重开 A 后最新正文不完整"
         )
         store.noteEditingSession.unbindSnapshotRequestHandler(bridgeToken)

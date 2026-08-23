@@ -807,6 +807,7 @@ final class WorkspaceStore: ObservableObject {
         case idle
         case saving
         case failed(NoteEditingSessionError)
+        case persistenceFailed
     }
 
     private struct PendingNoteSelection {
@@ -10316,6 +10317,11 @@ final class WorkspaceStore: ObservableObject {
                 "保存过程中当前笔记发生了变化，魏碑没有切换。请重试。",
                 "The current note changed while saving, so WeiBei did not switch. Please retry."
             )
+        case .persistenceFailed:
+            ui(
+                "当前笔记尚未安全保存，魏碑没有切换。请重试。",
+                "The current note was not safely saved, so WeiBei did not switch. Please retry."
+            )
         }
     }
 
@@ -10371,10 +10377,12 @@ final class WorkspaceStore: ObservableObject {
     }
 
     var canRetryPendingNoteSelection: Bool {
-        if case .failed = noteSelectionTransitionState {
+        switch noteSelectionTransitionState {
+        case .failed, .persistenceFailed:
             return pendingNoteSelection != nil
+        case .idle, .saving:
+            return false
         }
-        return false
     }
 
     func retryPendingNoteSelection() {
@@ -10457,14 +10465,78 @@ final class WorkspaceStore: ObservableObject {
                 failPendingNoteSelection(.documentChanged)
                 return
             }
-            let apply = pendingNoteSelection?.apply
-            pendingNoteSelection = nil
-            noteSelectionTransitionState = .idle
-            persistCurrentNote()
-            apply?()
+            if noteEditorSnapshotIsDurable(snapshot, digest: digest) {
+                applyPendingNoteSelection()
+                return
+            }
+            guard item(withID: snapshot.documentID)?
+                .editsBackingMarkdownFile == false else {
+                failPendingNoteSelectionPersistence()
+                return
+            }
+            Task { @MainActor [weak self] in
+                await self?.persistPendingNoteSelectionSnapshot(
+                    snapshot,
+                    digest: digest
+                )
+            }
         case .failure(let error):
             failPendingNoteSelection(error)
         }
+    }
+
+    private func persistPendingNoteSelectionSnapshot(
+        _ snapshot: NoteEditorSnapshotReadyEvent,
+        digest: String
+    ) async {
+        let persisted = await persistWorkspaceNow()
+        guard pendingNoteSelection != nil else {
+            noteSelectionTransitionState = .idle
+            return
+        }
+        guard noteEditingSession.documentID == snapshot.documentID else {
+            failPendingNoteSelection(.documentChanged)
+            return
+        }
+        guard !hasUnresolvedContentCommand(for: snapshot.documentID) else {
+            noteSelectionTransitionState = .saving
+            return
+        }
+        guard noteEditingSession.currentRevision == snapshot.revision,
+              let accepted = latestNoteEditorSnapshot,
+              accepted.documentID == snapshot.documentID,
+              accepted.revision == snapshot.revision,
+              accepted.digest == digest else {
+            requestPendingNoteSelectionSnapshot()
+            return
+        }
+        guard persisted,
+              noteEditorSnapshotIsDurable(snapshot, digest: digest) else {
+            failPendingNoteSelectionPersistence()
+            return
+        }
+        applyPendingNoteSelection()
+    }
+
+    private func noteEditorSnapshotIsDurable(
+        _ snapshot: NoteEditorSnapshotReadyEvent,
+        digest: String
+    ) -> Bool {
+        guard noteEditingSession.documentID == snapshot.documentID,
+              noteEditingSession.currentRevision == snapshot.revision,
+              !noteEditingSession.dirty,
+              let accepted = latestNoteEditorSnapshot else { return false }
+        return accepted.documentID == snapshot.documentID
+            && accepted.revision == snapshot.revision
+            && accepted.digest == digest
+            && accepted.baseDigest == digest
+    }
+
+    private func applyPendingNoteSelection() {
+        let apply = pendingNoteSelection?.apply
+        pendingNoteSelection = nil
+        noteSelectionTransitionState = .idle
+        apply?()
     }
 
     private func failPendingNoteSelection(_ error: NoteEditingSessionError) {
@@ -10472,6 +10544,13 @@ final class WorkspaceStore: ObservableObject {
             "note selection snapshot failed: \(String(describing: error), privacy: .private)"
         )
         noteSelectionTransitionState = .failed(error)
+    }
+
+    private func failPendingNoteSelectionPersistence() {
+        WeiBeiLog.noteRepair.error(
+            "note selection stopped because the accepted snapshot was not durably persisted"
+        )
+        noteSelectionTransitionState = .persistenceFailed
     }
 
     func selectMeasured(itemID: String?, opensNotebook: Bool?) {
