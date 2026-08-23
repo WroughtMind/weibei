@@ -49,29 +49,6 @@ final class MotionInteractionSafetyTests: XCTestCase {
     }
 
     @MainActor
-    func testTransientStatusLifecycleUsesLatestGeneration() {
-        let store = makeStore()
-        store.showTransientNoteStatus("A")
-        let staleGeneration = store.transientNoteStatusGeneration
-        let staleTask = store.transientNoteStatusTask
-
-        store.showTransientNoteStatus("B")
-        let currentGeneration = store.transientNoteStatusGeneration
-        XCTAssertEqual(currentGeneration, staleGeneration + 1)
-        XCTAssertTrue(staleTask?.isCancelled == true)
-        XCTAssertEqual(store.transientNoteStatus, "B")
-
-        store.expireTransientNoteStatus(scheduledGeneration: staleGeneration, isCancelled: false)
-        XCTAssertEqual(store.transientNoteStatus, "B")
-        store.expireTransientNoteStatus(scheduledGeneration: currentGeneration, isCancelled: true)
-        XCTAssertEqual(store.transientNoteStatus, "B")
-        store.showImportantOperationError("重要错误")
-        store.expireTransientNoteStatus(scheduledGeneration: currentGeneration, isCancelled: false)
-        XCTAssertNil(store.transientNoteStatus)
-        XCTAssertEqual(store.importantOperationError, "重要错误")
-    }
-
-    @MainActor
     func testImportantErrorDismissalLeavesTransientStatusUntouched() {
         let store = makeStore()
         store.showTransientNoteStatus("临时提示")

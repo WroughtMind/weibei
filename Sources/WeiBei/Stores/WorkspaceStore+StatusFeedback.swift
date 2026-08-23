@@ -48,19 +48,10 @@ extension WorkspaceStore {
         transientNoteStatus = message
         transientNoteStatusTask = Task { @MainActor [weak self] in
             try? await Task.sleep(nanoseconds: 2_400_000_000)
-            self?.expireTransientNoteStatus(
-                scheduledGeneration: generation,
-                isCancelled: Task.isCancelled
-            )
+            guard let self, !Task.isCancelled else { return }
+            guard self.transientNoteStatusGeneration == generation else { return }
+            self.transientNoteStatus = nil
         }
-    }
-
-    func expireTransientNoteStatus(
-        scheduledGeneration: Int,
-        isCancelled: Bool
-    ) {
-        guard !isCancelled, scheduledGeneration == transientNoteStatusGeneration else { return }
-        transientNoteStatus = nil
     }
 
     func showImportantOperationError(_ message: String) {

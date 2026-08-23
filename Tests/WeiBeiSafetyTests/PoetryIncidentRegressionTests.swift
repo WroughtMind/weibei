@@ -152,9 +152,13 @@ final class PoetryIncidentRegressionTests: XCTestCase {
             "重启 retry 通道：真实正文必须在磁盘或备份环中可找回"
         )
         let after = try String(contentsOf: url, encoding: .utf8)
+        let persisted = try JSONDecoder().decode(
+            PersistedWorkspace.self,
+            from: Data(contentsOf: base.appendingPathComponent("workspace/workspace.json"))
+        )
         XCTAssertTrue(
-            after == degradedDraft || store.notesByItemID[item.id] == degradedDraft,
-            "重启 retry 通道：草稿必须写入磁盘或继续保留在内存"
+            after == degradedDraft || persisted.notesByItemID[item.id] == degradedDraft,
+            "重启 retry 通道：草稿必须写入原文件或工作区快照"
         )
     }
 
