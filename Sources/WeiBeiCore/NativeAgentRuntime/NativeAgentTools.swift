@@ -284,7 +284,7 @@ public enum NativeBuiltinTools {
                     return NativeToolExecutionResult(
                         text: "技能 \(pack.manifest.id) 已加载。",
                         details: [
-                            "kind": "weibei_skill_read",
+                            "kind": "weibei_skill_load",
                             "alreadyLoaded": true,
                             "loaded": loaded,
                             "declaredTools": pack.manifest.tools,
@@ -295,7 +295,7 @@ public enum NativeBuiltinTools {
                 return NativeToolExecutionResult(
                     text: pack.body,
                     details: [
-                        "kind": "weibei_skill_read",
+                        "kind": "weibei_skill_load",
                         "loaded": loaded,
                         "declaredTools": pack.manifest.tools,
                         "jscHookPresent": pack.manifest.jscHook != nil,

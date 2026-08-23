@@ -159,13 +159,13 @@ struct WeiBeiApp: App {
                 Divider()
 
                 Button(store.ui("聚焦课程目录", "Focus Course Index")) { animateLayout { store.focus(.library) } }
-                    .keyboardShortcut("1")
+                    .weiBeiKeyboardShortcut(store.chord(for: .focusLibrary))
                 Button(store.ui("聚焦阅读", "Focus Reader")) { animateLayout { store.focus(.reader) } }
-                    .keyboardShortcut("2")
+                    .weiBeiKeyboardShortcut(store.chord(for: .focusReader))
                 Button(store.ui("聚焦笔记", "Focus Notes")) { animateLayout { store.focus(.notes) } }
-                    .keyboardShortcut("3")
+                    .weiBeiKeyboardShortcut(store.chord(for: .focusNotes))
                 Button(store.ui("聚焦对话", "Focus Chat")) { animateLayout { store.focus(.agent) } }
-                    .keyboardShortcut("4")
+                    .weiBeiKeyboardShortcut(store.chord(for: .focusChat))
 
                 Divider()
 
@@ -179,7 +179,7 @@ struct WeiBeiApp: App {
                 Button(store.showLibrary ? store.ui("收起课程目录", "Hide Course Index") : store.ui("打开课程目录", "Show Course Index")) {
                     store.toggleLibrary()
                 }
-                    .keyboardShortcut("b")
+                    .weiBeiKeyboardShortcut(store.chord(for: .courseIndex))
                 if store.layout.hasCollapsibleRightPane {
                     Button(store.showRightPane ? store.ui("收起辅助栏", "Hide Assistant Pane") : store.ui("展开辅助栏", "Show Assistant Pane")) {
                         animateLayout {
@@ -202,11 +202,11 @@ struct WeiBeiApp: App {
                     .keyboardShortcut("s", modifiers: [.command, .option])
                 }
                 Button(WorkspaceLayout.immersiveReading.label(language: store.interfaceLanguage)) { setLayout(.immersiveReading) }
-                    .keyboardShortcut("r", modifiers: [.command, .option])
+                    .weiBeiKeyboardShortcut(store.chord(for: .immersiveReading))
                 Button(WorkspaceLayout.immersiveConversation.label(language: store.interfaceLanguage)) { setLayout(.immersiveConversation) }
-                    .keyboardShortcut("a", modifiers: [.command, .option])
+                    .weiBeiKeyboardShortcut(store.chord(for: .immersiveChat))
                 Button(WorkspaceLayout.immersiveWriting.label(language: store.interfaceLanguage)) { setLayout(.immersiveWriting) }
-                    .keyboardShortcut("n", modifiers: [.command, .option])
+                    .weiBeiKeyboardShortcut(store.chord(for: .immersiveWriting))
 
                 Divider()
 
@@ -215,7 +215,7 @@ struct WeiBeiApp: App {
                         store.toggleAppearanceMode()
                     }
                 }
-                    .keyboardShortcut("t", modifiers: [.command, .option])
+                    .weiBeiKeyboardShortcut(store.chord(for: .toggleAppearance))
 
                 Button(store.ui("放大文字", "Zoom Text In")) {
                     if let larger = store.interfaceTextScale.nextLarger {
@@ -241,10 +241,10 @@ struct WeiBeiApp: App {
 
                 if store.canUseSelectionAgentSurface {
                     Button(AgentSurface.selectionFloat.actionLabel(language: store.interfaceLanguage)) { setAgentSurface(.selectionFloat) }
-                        .keyboardShortcut("3", modifiers: [.control, .option])
+                        .weiBeiKeyboardShortcut(store.chord(for: .selectionPrompt))
                 }
                 Button(AgentSurface.hidden.actionLabel(language: store.interfaceLanguage)) { setAgentSurface(.hidden) }
-                    .keyboardShortcut("0", modifiers: [.control, .option])
+                    .weiBeiKeyboardShortcut(store.chord(for: .hideChatOverlay))
 
                 if store.canApplyAgentAnswer {
                     Divider()
@@ -264,7 +264,7 @@ struct WeiBeiApp: App {
                 Button(store.ui("命令面板", "Command Palette")) {
                     store.commandPalettePresented.toggle()
                 }
-                    .keyboardShortcut("k")
+                    .weiBeiKeyboardShortcut(store.chord(for: .commandPalette))
 
                 Divider()
 
@@ -278,7 +278,7 @@ struct WeiBeiApp: App {
                             store.revealReaderSearch()
                         }
                     }
-                    .keyboardShortcut("f")
+                    .weiBeiKeyboardShortcut(store.chord(for: .searchInMaterial))
                 }
                 if store.isAgentRunningInActiveChat || !store.agentDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     Button(store.sendAgentActionTitle) {
@@ -445,5 +445,33 @@ private struct SystemAppearanceObserver: ViewModifier {
                 }
             }
         }
+    }
+}
+
+extension View {
+    func weiBeiKeyboardShortcut(_ chord: AppShortcutChord) -> some View {
+        keyboardShortcut(chord.swiftUIKeyEquivalent, modifiers: chord.swiftUIModifiers)
+    }
+}
+
+private extension AppShortcutChord {
+    var swiftUIKeyEquivalent: KeyEquivalent {
+        switch key {
+        case "return": .return
+        case "up": .upArrow
+        case "down": .downArrow
+        case "left": .leftArrow
+        case "right": .rightArrow
+        default: KeyEquivalent(Character(key))
+        }
+    }
+
+    var swiftUIModifiers: EventModifiers {
+        var result: EventModifiers = []
+        if modifiers.contains(.command) { result.insert(.command) }
+        if modifiers.contains(.option) { result.insert(.option) }
+        if modifiers.contains(.control) { result.insert(.control) }
+        if modifiers.contains(.shift) { result.insert(.shift) }
+        return result
     }
 }

@@ -1,3 +1,4 @@
+import AppKit
 import Combine
 import Darwin
 import Foundation
@@ -51,7 +52,13 @@ final class WorkspaceSafetyTests: XCTestCase {
     }
 
     @MainActor
-    func testSemanticSessionTitleOnlyReplacesFirstTurnFallback() {
+    func testSemanticSessionTitleOnlyReplacesFirstTurnFallback() throws {
+        let legacyData = try JSONSerialization.data(withJSONObject: [
+            "id": UUID().uuidString,
+            "title": "旧会话",
+        ])
+        XCTAssertFalse(try JSONDecoder().decode(StudySession.self, from: legacyData).titleSetByUser)
+
         let firstQuestion = AgentMessage(
             role: .user,
             text: "请帮我解释利率为什么变化",
@@ -63,6 +70,7 @@ final class WorkspaceSafetyTests: XCTestCase {
             WorkspaceStore.semanticSessionTitle(
                 from: "利率变化机制",
                 replacing: firstQuestion.text,
+                titleSetByUser: false,
                 messages: [firstQuestion]
             ),
             "利率变化机制"
@@ -71,6 +79,7 @@ final class WorkspaceSafetyTests: XCTestCase {
             WorkspaceStore.semanticSessionTitle(
                 from: "利率变化机制",
                 replacing: "用户手动命名",
+                titleSetByUser: true,
                 messages: [firstQuestion]
             )
         )
@@ -78,6 +87,7 @@ final class WorkspaceSafetyTests: XCTestCase {
             WorkspaceStore.semanticSessionTitle(
                 from: "利率变化机制",
                 replacing: firstQuestion.text,
+                titleSetByUser: false,
                 messages: [firstQuestion, secondQuestion]
             ),
             "利率变化机制"
@@ -86,6 +96,7 @@ final class WorkspaceSafetyTests: XCTestCase {
             WorkspaceStore.semanticSessionTitle(
                 from: "WeiBei",
                 replacing: firstQuestion.text,
+                titleSetByUser: false,
                 messages: [firstQuestion]
             )
         )
@@ -97,14 +108,43 @@ final class WorkspaceSafetyTests: XCTestCase {
         let session = store.createStudySession(courseID: nil)!
         store.messages = [firstQuestion]
         store.syncActiveStudySession(titleSeed: firstQuestion.text)
-        store.applySemanticSessionTitle("利率变化机制", to: session.id)
+        let automaticTitle = try XCTUnwrap(
+            store.studySessions.first(where: { $0.id == session.id })?.title
+        )
+        XCTAssertTrue(store.renameStudySession(session.id, title: automaticTitle))
+        XCTAssertFalse(store.applySemanticSessionTitle("利率变化机制", to: session.id))
         XCTAssertTrue(store.flushPendingWorkspaceSave())
 
         let reopened = WorkspaceStore(workspaceDirectory: root)
-        XCTAssertEqual(
-            reopened.studySessions.first(where: { $0.id == session.id })?.title,
-            "利率变化机制"
+        let reopenedSession = try XCTUnwrap(
+            reopened.studySessions.first(where: { $0.id == session.id })
         )
+        XCTAssertEqual(reopenedSession.title, automaticTitle)
+        XCTAssertTrue(reopenedSession.titleSetByUser)
+        XCTAssertFalse(reopened.applySemanticSessionTitle("利率变化机制", to: session.id))
+    }
+
+    func testStandardEditorShortcutsAreNotClaimedByAppDefaults() {
+        let retiredOverrides: [AppShortcutID: AppShortcutChord] = [
+            .courseIndex: AppShortcutChord(key: "b", modifiers: .command),
+            .searchInMaterial: AppShortcutChord(key: "f", modifiers: .command),
+        ]
+        XCTAssertNil(AppShortcutCatalog.action(
+            matching: AppShortcutChord(key: "b", modifiers: .command),
+            overrides: retiredOverrides
+        ))
+        XCTAssertNil(AppShortcutCatalog.action(
+            matching: AppShortcutChord(key: "f", modifiers: .command),
+            overrides: retiredOverrides
+        ))
+        XCTAssertEqual(AppShortcutCatalog.action(
+            matching: AppShortcutChord(key: "b", modifiers: [.command, .option]),
+            overrides: retiredOverrides
+        ), .courseIndex)
+        XCTAssertEqual(AppShortcutCatalog.action(
+            matching: AppShortcutChord(key: "f", modifiers: [.command, .option]),
+            overrides: retiredOverrides
+        ), .searchInMaterial)
     }
 
     @MainActor

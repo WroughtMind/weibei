@@ -670,7 +670,7 @@ private struct UnifiedTopBarView: View {
                     store.navigateBackInWorkspace()
                 }
             }
-            .keyboardShortcut("[", modifiers: [.command])
+            .weiBeiKeyboardShortcut(store.chord(for: .navigateBack))
             .disabled(!store.canNavigateBack)
 
             topIconButton("arrow.right", help: store.ui("前进", "Forward")) {
@@ -678,7 +678,7 @@ private struct UnifiedTopBarView: View {
                     store.navigateForwardInWorkspace()
                 }
             }
-            .keyboardShortcut("]", modifiers: [.command])
+            .weiBeiKeyboardShortcut(store.chord(for: .navigateForward))
             .disabled(!store.canNavigateForward)
 
             if updateService.showsToolbarControl, let update = updateService.availableUpdate {

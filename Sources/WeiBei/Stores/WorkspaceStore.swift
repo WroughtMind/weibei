@@ -893,7 +893,6 @@ final class WorkspaceStore: ObservableObject {
         return messages.last { $0.isUsableAgentAnswer }
     }
 
-    private static let shortcutModifierMask: NSEvent.ModifierFlags = [.command, .option, .control, .shift]
     private static let legacySelectionAskThreadsDefaultsKey = "weibei.selectionAskThreads.v1"
     private static let interactiveVisualizationsDefaultsKey = "weibei.agent.interactiveVisualizationsEnabled"
 
@@ -8495,6 +8494,19 @@ final class WorkspaceStore: ObservableObject {
         activeStudySession?.title ?? ui("新对话", "New Chat")
     }
 
+    @discardableResult
+    func renameStudySession(_ id: UUID, title rawTitle: String) -> Bool {
+        let title = rawTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !title.isEmpty,
+              let index = studySessions.firstIndex(where: { $0.id == id }),
+              studySessions[index].title != title || !studySessions[index].titleSetByUser else { return false }
+        studySessions[index].title = title
+        studySessions[index].titleSetByUser = true
+        studySessions[index].updatedAt = Date()
+        save()
+        return true
+    }
+
     var lastStudyLocation: StudyLocation? {
         studyLocationsByItemID.values.max { $0.lastStudiedAt < $1.lastStudiedAt }
     }
@@ -9623,6 +9635,7 @@ final class WorkspaceStore: ObservableObject {
         studySessions[index].messages = messages
         studySessions[index].updatedAt = Date()
         if let titleSeed,
+           !studySessions[index].titleSetByUser,
            studySessions[index].messages.filter({ $0.role == .user }).count == 1 {
             studySessions[index].title = Self.sessionTitle(from: titleSeed)
         }
@@ -9643,10 +9656,11 @@ final class WorkspaceStore: ObservableObject {
     static func semanticSessionTitle(
         from suggestion: String?,
         replacing currentTitle: String,
+        titleSetByUser: Bool,
         messages: [AgentMessage]
     ) -> String? {
-        guard let firstQuestion = messages.first(where: { $0.role == .user }),
-              currentTitle == sessionTitle(from: firstQuestion.text),
+        guard !titleSetByUser,
+              messages.contains(where: { $0.role == .user }),
               let suggestion,
               !suggestion.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             return nil
@@ -9661,9 +9675,11 @@ final class WorkspaceStore: ObservableObject {
     @discardableResult
     func applySemanticSessionTitle(_ suggestion: String?, to sessionID: UUID) -> Bool {
         guard let index = studySessions.firstIndex(where: { $0.id == sessionID }),
+              !studySessions[index].titleSetByUser,
               let title = Self.semanticSessionTitle(
                   from: suggestion,
                   replacing: studySessions[index].title,
+                  titleSetByUser: studySessions[index].titleSetByUser,
                   messages: studySessions[index].messages
               ) else { return false }
         studySessions[index].title = title
@@ -12066,7 +12082,9 @@ final class WorkspaceStore: ObservableObject {
         AppShortcutCatalog.chord(for: shortcut, overrides: customShortcutOverrides)
     }
 
-    func setShortcut(_ id: AppShortcutID, chord: AppShortcutChord) {
+    @discardableResult
+    func setShortcut(_ id: AppShortcutID, chord: AppShortcutChord) -> Bool {
+        guard !AppShortcutCatalog.isReservedTextEditingChord(chord) else { return false }
         if chord == id.defaultChord {
             customShortcutOverrides.removeValue(forKey: id)
         } else {
@@ -12074,6 +12092,7 @@ final class WorkspaceStore: ObservableObject {
         }
         AppShortcutCatalog.saveOverrides(customShortcutOverrides)
         objectWillChange.send()
+        return true
     }
 
     func resetShortcut(_ id: AppShortcutID) {
@@ -12089,8 +12108,8 @@ final class WorkspaceStore: ObservableObject {
     }
 
     func handleAppShortcut(_ event: NSEvent) -> Bool {
-        guard let key = Self.shortcutKey(from: event) else { return false }
-        return handleAppShortcut(key: key, modifiers: event.modifierFlags.intersection(Self.shortcutModifierMask))
+        guard let chord = AppShortcutChord.from(event: event) else { return false }
+        return handleAppShortcut(key: chord.key, modifiers: chord.modifiers)
     }
 
     func handleAppShortcut(key: String, modifiers: NSEvent.ModifierFlags) -> Bool {
@@ -12214,54 +12233,6 @@ final class WorkspaceStore: ObservableObject {
         guard !hasSelectedMaterial else { return }
         showReaderSearch = false
         readerSearch = ""
-    }
-
-    private static func shortcutKey(from event: NSEvent) -> String? {
-        switch event.keyCode {
-        case 0: return "a"
-        case 1: return "s"
-        case 2: return "d"
-        case 3: return "f"
-        case 4: return "h"
-        case 5: return "g"
-        case 6: return "z"
-        case 7: return "x"
-        case 8: return "c"
-        case 9: return "v"
-        case 11: return "b"
-        case 12: return "q"
-        case 13: return "w"
-        case 14: return "e"
-        case 15: return "r"
-        case 16: return "y"
-        case 17: return "t"
-        case 18: return "1"
-        case 19: return "2"
-        case 20: return "3"
-        case 21: return "4"
-        case 22: return "6"
-        case 23: return "5"
-        case 25: return "9"
-        case 26: return "7"
-        case 28: return "8"
-        case 29: return "0"
-        case 30: return "]"
-        case 31: return "o"
-        case 32: return "u"
-        case 33: return "["
-        case 34: return "i"
-        case 35: return "p"
-        case 37: return "l"
-        case 38: return "j"
-        case 40: return "k"
-        case 45: return "n"
-        case 46: return "m"
-        case 36, 76: return "return"
-        case 125: return "down"
-        case 126: return "up"
-        default:
-            return event.charactersIgnoringModifiers?.lowercased()
-        }
     }
 
     func setAgentProviderID(_ provider: AgentProviderID) {
@@ -17030,7 +17001,7 @@ final class WorkspaceStore: ObservableObject {
             switch name {
             case "weibei_course_search":
                 base = ui("正在搜索", "Searching")
-            case "weibei_course_read", "read":
+            case "weibei_course_read":
                 base = ui("正在读取", "Reading")
             case "weibei_course_map":
                 base = ui("正在查找课程关联", "Finding course connections")

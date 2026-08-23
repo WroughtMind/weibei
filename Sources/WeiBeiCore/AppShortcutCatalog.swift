@@ -204,22 +204,35 @@ public enum AppShortcutCatalog {
               let decoded = try? JSONDecoder().decode([String: AppShortcutChord].self, from: data)
         else { return [:] }
         var result: [AppShortcutID: AppShortcutChord] = [:]
+        var droppedReservedChord = false
         for (raw, chord) in decoded {
             guard let id = AppShortcutID(rawValue: raw) else { continue }
+            guard !isReservedTextEditingChord(chord) else {
+                droppedReservedChord = true
+                continue
+            }
             result[id] = chord
+        }
+        if droppedReservedChord {
+            saveOverrides(result)
         }
         return result
     }
 
     public static func saveOverrides(_ map: [AppShortcutID: AppShortcutChord]) {
-        let payload = Dictionary(uniqueKeysWithValues: map.map { ($0.key.rawValue, $0.value) })
+        let payload = Dictionary(uniqueKeysWithValues: map.compactMap { id, chord in
+            isReservedTextEditingChord(chord) ? nil : (id.rawValue, chord)
+        })
         if let data = try? JSONEncoder().encode(payload) {
             UserDefaults.standard.set(data, forKey: defaultsKey)
         }
     }
 
     public static func chord(for id: AppShortcutID, overrides: [AppShortcutID: AppShortcutChord]) -> AppShortcutChord {
-        overrides[id] ?? id.defaultChord
+        guard let chord = overrides[id], !isReservedTextEditingChord(chord) else {
+            return id.defaultChord
+        }
+        return chord
     }
 
     /// Resolve which action (if any) matches a pressed chord.
@@ -227,12 +240,17 @@ public enum AppShortcutCatalog {
         matching chord: AppShortcutChord,
         overrides: [AppShortcutID: AppShortcutChord]
     ) -> AppShortcutID? {
+        guard !isReservedTextEditingChord(chord) else { return nil }
         for id in AppShortcutID.allCases {
             if self.chord(for: id, overrides: overrides) == chord {
                 return id
             }
         }
         return nil
+    }
+
+    public static func isReservedTextEditingChord(_ chord: AppShortcutChord) -> Bool {
+        chord.modifiers == .command && (chord.key == "b" || chord.key == "f")
     }
 
     /// Another action already using this chord (excluding `excluding`).

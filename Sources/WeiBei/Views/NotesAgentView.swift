@@ -1182,6 +1182,8 @@ struct AgentPaneView: View {
     @State private var activeAgentRailID: String?
     @State private var agentFollowsLatest = true
     @State private var sessionPendingDeletion: StudySession?
+    @State private var sessionRenameDraft = ""
+    @State private var isRenamingSession = false
     /// Settled pane width for renderer caches. 0 until first real measurement.
     @State private var measuredPaneWidth: CGFloat = 0
     @State private var paneWidthRelay = AgentPaneWidthRelay()
@@ -1496,6 +1498,19 @@ struct AgentPaneView: View {
         }
         .task(id: replySources) {
             await store.validateAgentReplySources(replySources)
+        }
+        .alert(
+            store.ui("重命名会话", "Rename Chat"),
+            isPresented: $isRenamingSession
+        ) {
+            TextField(store.ui("会话名称", "Chat name"), text: $sessionRenameDraft)
+            Button(store.ui("取消", "Cancel"), role: .cancel) {}
+            Button(store.ui("保存", "Save")) {
+                if let sessionID = store.activeStudySessionID {
+                    store.renameStudySession(sessionID, title: sessionRenameDraft)
+                }
+            }
+            .disabled(sessionRenameDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
         }
         .confirmationDialog(
             store.ui("删除这条对话？", "Delete this Chat?"),
@@ -1999,6 +2014,12 @@ struct AgentPaneView: View {
         if let active = store.activeStudySession,
            !active.messages.isEmpty {
             Divider()
+            Button {
+                sessionRenameDraft = active.title
+                isRenamingSession = true
+            } label: {
+                Label(store.ui("重命名当前会话", "Rename Current Chat"), systemImage: "pencil")
+            }
             Button(role: .destructive) {
                 sessionPendingDeletion = active
             } label: {

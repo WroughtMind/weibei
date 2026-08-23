@@ -2464,11 +2464,6 @@ struct WebReaderRepresentable: NSViewRepresentable {
             controller.add(context.coordinator, name: name)
         }
         controller.addUserScript(WKUserScript(
-            source: Self.appShortcutScript,
-            injectionTime: .atDocumentStart,
-            forMainFrameOnly: true
-        ))
-        controller.addUserScript(WKUserScript(
             source: Self.selectionScript + Self.readerRemarkMarksScript,
             injectionTime: .atDocumentEnd,
             forMainFrameOnly: false
@@ -2560,39 +2555,6 @@ struct WebReaderRepresentable: NSViewRepresentable {
             controller.removeScriptMessageHandler(forName: name)
         }
     }
-
-    static let appShortcutScript = """
-    (() => {
-      const keyName = (event) => {
-        if (/^Digit[0-9]$/.test(event.code)) return event.code.slice(5);
-        if (/^Key[A-Z]$/.test(event.code)) return event.code.slice(3).toLowerCase();
-        return String(event.key || "").toLowerCase();
-      };
-      const isWeiBeiShortcut = (key, event) => {
-        const command = event.metaKey;
-        const option = event.altKey;
-        const control = event.ctrlKey;
-        const shift = event.shiftKey;
-        if (command && option && !control && !shift) return ["1", "2", "3", "a", "n", "r", "t"].includes(key);
-        if (command && !option && !control && !shift) return ["1", "2", "3", "4", "[", "]", "b", "j", "k", "f"].includes(key);
-        if (control && option && !command && !shift) return ["0", "1", "2", "3", "4"].includes(key);
-        return false;
-      };
-      window.addEventListener("keydown", (event) => {
-        const key = keyName(event);
-        if (!isWeiBeiShortcut(key, event)) return;
-        event.preventDefault();
-        event.stopPropagation();
-        window.webkit.messageHandlers.appShortcut.postMessage({
-          key,
-          command: event.metaKey,
-          option: event.altKey,
-          control: event.ctrlKey,
-          shift: event.shiftKey
-        });
-      }, true);
-    })();
-    """
 
     static let selectionScript = """
     (() => {

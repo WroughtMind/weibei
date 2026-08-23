@@ -713,46 +713,6 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             document.documentElement.dataset.weibeiCompactPreview = window.weiBeiMarkdownCompactPreview ? "true" : "false";
             document.documentElement.dataset.weibeiChatWide = window.weiBeiChatWideTypography ? "true" : "false";
             (() => {
-              const appShortcutKey = (event) => {
-                if (/^Digit[0-9]$/.test(event.code)) return event.code.slice(5);
-                if (/^Key[A-Z]$/.test(event.code)) return event.code.slice(3).toLowerCase();
-                return String(event.key || "").toLowerCase();
-              };
-              const isWeiBeiShortcut = (key, event) => {
-                const command = event.metaKey;
-                const option = event.altKey;
-                const control = event.ctrlKey;
-                const shift = event.shiftKey;
-                if (control && option && !command && !shift) {
-                  return ["0", "1", "2", "3", "4"].includes(key);
-                }
-                if (command && option && !control && !shift) {
-                  return ["1", "2", "3", "a", "n", "r", "t"].includes(key);
-                }
-                if (control && command && !option && !shift) {
-                  return ["1", "2", "3", "4"].includes(key);
-                }
-                if (command && shift && !option && !control) {
-                  return ["a", "r", "e", "c"].includes(key);
-                }
-                if (command && !option && !control && !shift) {
-                  return ["1", "2", "3", "4", "[", "]", "b", "j", "k", "f"].includes(key);
-                }
-                return false;
-              };
-              window.addEventListener("keydown", (event) => {
-                const key = appShortcutKey(event);
-                if (!isWeiBeiShortcut(key, event)) return;
-                event.preventDefault();
-                event.stopPropagation();
-                window.webkit?.messageHandlers?.appShortcut?.postMessage({
-                  key,
-                  command: event.metaKey,
-                  option: event.altKey,
-                  control: event.ctrlKey,
-                  shift: event.shiftKey
-                });
-              }, true);
               if (window.weiBeiMarkdownCompactPreview) {
                 window.addEventListener("wheel", (event) => {
                   if (Math.abs(event.deltaY) < Math.abs(event.deltaX)) return;

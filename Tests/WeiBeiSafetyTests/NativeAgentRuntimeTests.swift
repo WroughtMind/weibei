@@ -62,7 +62,7 @@ final class NativeAgentRuntimeTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: backup.path))
     }
 
-    func testGuardRejectsIncompleteJSONAndForeignRead() async throws {
+    func testGuardRejectsIncompleteJSONAndRetiredReadTool() async throws {
         let registry = NativeToolRegistry()
         await NativeBuiltinTools.registerAll(into: registry, skillRoot: nil)
         let request = StudyAgentRequest(
@@ -81,9 +81,9 @@ final class NativeAgentRuntimeTests: XCTestCase {
                 context: context,
                 scope: .global
             )
-            XCTFail("foreign read must be denied")
+            XCTFail("retired read tool must be unknown")
         } catch let failure as NativeLLMFailure {
-            XCTAssertEqual(failure.code, "guard_denied")
+            XCTAssertEqual(failure.code, "unknown_tool")
         }
         do {
             _ = try await registry.execute(

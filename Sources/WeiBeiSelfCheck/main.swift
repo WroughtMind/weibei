@@ -988,10 +988,19 @@ let piManagementSource = readSource("Sources/WeiBeiCore/AgentResources/managemen
 let piOAuthSource = readSource("Sources/WeiBei/Support/PiOAuthService.swift")
 let credentialProfilesSource = readSource("Sources/WeiBeiCore/AgentCredentialProfiles.swift")
 let readerViewSource = readSource("Sources/WeiBei/Views/ReaderView.swift")
+let richMarkdownEditorSource = readSource("Sources/WeiBei/Views/RichMarkdownEditorView.swift")
 let notesAgentViewSource = readSource("Sources/WeiBei/Views/NotesAgentView.swift")
 let weiBeiAppSource = readSource("Sources/WeiBei/App/WeiBeiApp.swift")
 let commandPaletteViewSource = readSource("Sources/WeiBei/Views/CommandPaletteView.swift")
 let contentViewSource = readSource("Sources/WeiBei/Views/ContentView.swift")
+expect(
+    !readerViewSource.contains("appShortcutScript")
+        && !richMarkdownEditorSource.contains("isWeiBeiShortcut")
+        && weiBeiAppSource.contains(".weiBeiKeyboardShortcut(store.chord(for: .courseIndex))")
+        && weiBeiAppSource.contains(".weiBeiKeyboardShortcut(store.chord(for: .searchInMaterial))")
+        && contentViewSource.contains(".weiBeiKeyboardShortcut(store.chord(for: .navigateBack))"),
+    "custom shortcuts have one catalog-backed execution and display path; Web editors must leave standard text shortcuts to the responder chain"
+)
 expect(
     !contentViewSource.contains("environmentObject(store).weiBeiMotionScoped()")
         && !weiBeiAppSource.contains(".environmentObject(updateService)\n                .weiBeiMotionScoped()"),

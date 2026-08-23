@@ -9,7 +9,7 @@ struct WeiBeiAvailableUpdate: Equatable {
     let informationURL: URL?
 
     var summaryLines: [String] {
-        Array(releaseNotesLines.prefix(5))
+        Self.summaryLines(from: releaseNotesLines)
     }
 
     var helpText: String {
@@ -17,7 +17,7 @@ struct WeiBeiAvailableUpdate: Equatable {
     }
 
     static func summaryLines(from rawNotes: String?) -> [String] {
-        Array(releaseNotesLines(from: rawNotes).prefix(5))
+        summaryLines(from: releaseNotesLines(from: rawNotes))
     }
 
     static func releaseNotesLines(from rawNotes: String?) -> [String] {
@@ -25,7 +25,7 @@ struct WeiBeiAvailableUpdate: Equatable {
               !text.isEmpty else {
             return []
         }
-        for marker in ["</li>", "</p>", "<br>", "<br/>", "<br />"] {
+        for marker in ["</li>", "</p>", "</h1>", "</h2>", "</h3>", "<br>", "<br/>", "<br />"] {
             text = text.replacingOccurrences(of: marker, with: "\n", options: .caseInsensitive)
         }
         text = text
@@ -44,6 +44,35 @@ struct WeiBeiAvailableUpdate: Equatable {
             }
             .filter { !$0.isEmpty }
         return lines
+    }
+
+    private static func summaryLines(from lines: [String]) -> [String] {
+        let highlights = Array(priorityHighlights(in: lines).prefix(5))
+        let excludedIndexes = Set(highlights.flatMap { [$0.headingIndex, $0.detailIndex] })
+        let fillers = lines.enumerated()
+            .filter { !excludedIndexes.contains($0.offset) }
+            .prefix(max(0, 5 - highlights.count))
+            .map { (index: $0.offset, text: $0.element) }
+        return (fillers + highlights.map { (index: $0.headingIndex, text: $0.text) })
+            .sorted { $0.index < $1.index }
+            .map { $0.text }
+    }
+
+    private static func priorityHighlights(
+        in lines: [String]
+    ) -> [(headingIndex: Int, detailIndex: Int, text: String)] {
+        let titles: Set<String> = [
+            "破坏性变化", "破坏性变更", "迁移", "迁移说明", "已知问题",
+            "Breaking Changes", "Migration", "Known Issues",
+        ]
+        return lines.indices.compactMap { index in
+            let title = lines[index]
+                .trimmingCharacters(in: CharacterSet(charactersIn: "# "))
+                .trimmingCharacters(in: CharacterSet(charactersIn: "：:"))
+            let detailIndex = index + 1
+            guard titles.contains(title), lines.indices.contains(detailIndex) else { return nil }
+            return (index, detailIndex, "\(title)：\(lines[detailIndex])")
+        }
     }
 }
 
