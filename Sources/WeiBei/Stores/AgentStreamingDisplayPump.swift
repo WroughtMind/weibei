@@ -11,15 +11,9 @@ import Foundation
 final class AgentStreamingDisplayPump {
     /// Tick interval; matches the historical 33 ms streaming publish gate (~30 Hz).
     static let tickNanoseconds: UInt64 = 33_000_000
-    /// Lag (in characters) that adds one extra character per tick of pace, so
-    /// the rate ramps continuously with backlog instead of jumping between
-    /// integer step sizes.
-    static let rampLagCharacters: Double = 8.0
-    /// Hard ceiling on characters per tick so huge backlogs drain as a fast
-    /// but readable rush instead of an instant dump. Raised with the reveal
-    /// cadence rework: 24/tick ≈ 730 chars/s keeps up with bursty native
-    /// streaming without reading as an instant dump.
-    static let maximumCharsPerTick = 24
+    /// One fixed amount per tick keeps network backlog from changing the
+    /// visible typing speed. 4/tick ≈ 120 chars/s keeps up with normal replies.
+    static let charactersPerTick = 4
 
     struct Hooks {
         let targetText: @MainActor () -> String
@@ -32,10 +26,6 @@ final class AgentStreamingDisplayPump {
     /// Prefix of the target published so far in this run. Only advances while
     /// the target keeps it as a prefix; anomalies snap straight to full text.
     private var displayedPrefix = ""
-    /// Fractional pacing credit carried between ticks so non-integer rates
-    /// (e.g. 1.5 characters per tick) render as an even character flow.
-    /// Clamped to ≤1 after each emit so stale credit cannot burst later.
-    private var pacingCredit = 0.0
 
     init(hooks: Hooks) {
         self.hooks = hooks
@@ -44,8 +34,8 @@ final class AgentStreamingDisplayPump {
     var isRunning: Bool { task != nil }
 
     /// Idempotent. Steps once immediately so the first character keeps its
-    /// historical published-on-arrival latency, then keeps ticking on
-    /// absolute deadlines so MainActor congestion cannot accumulate drift.
+    /// historical published-on-arrival latency, then waits one full tick before
+    /// the next publish so startup cannot emit two batches in the same frame.
     func start() {
         guard task == nil else { return }
         stepOnce()
@@ -53,14 +43,17 @@ final class AgentStreamingDisplayPump {
             var nextTick = DispatchTime.now().uptimeNanoseconds &+ Self.tickNanoseconds
             while !Task.isCancelled {
                 guard let self else { return }
-                self.stepOnce()
                 let now = DispatchTime.now().uptimeNanoseconds
-                if nextTick <= now {
-                    nextTick = now &+ Self.tickNanoseconds
-                } else {
+                if nextTick > now {
                     try? await Task.sleep(nanoseconds: nextTick - now)
                 }
+                guard !Task.isCancelled else { return }
+                self.stepOnce()
                 nextTick &+= Self.tickNanoseconds
+                let afterStep = DispatchTime.now().uptimeNanoseconds
+                if nextTick <= afterStep {
+                    nextTick = afterStep &+ Self.tickNanoseconds
+                }
             }
         }
     }
@@ -71,26 +64,16 @@ final class AgentStreamingDisplayPump {
         task?.cancel()
         task = nil
         displayedPrefix = ""
-        pacingCredit = 0
     }
 
-    /// Publishes straight to the current target so a completion flip never
-    /// swaps "half-typed prefix" for the full text mid-surface. Call this on
-    /// the completion path right before the message leaves `.generating`.
-    func drainNow() {
-        guard hooks.canPublish() else { return }
-        let target = hooks.targetText()
-        guard target.hasPrefix(displayedPrefix) else {
-            // Non-append anomaly (rewrite or stale run): snap like stepOnce.
-            displayedPrefix = target
-            pacingCredit = 0
-            hooks.publish(target)
-            return
+    /// Keeps the message in its generating state until the already-running
+    /// fixed-rate loop has displayed every streamed character.
+    func waitUntilCaughtUp() async {
+        while !Task.isCancelled,
+              hooks.canPublish(),
+              displayedPrefix != hooks.targetText() {
+            try? await Task.sleep(nanoseconds: Self.tickNanoseconds)
         }
-        guard target != displayedPrefix else { return }
-        displayedPrefix = target
-        pacingCredit = 0
-        hooks.publish(target)
     }
 
     /// Advances the display prefix by one tick. Exposed for deterministic tests.
@@ -102,23 +85,12 @@ final class AgentStreamingDisplayPump {
         guard target.hasPrefix(displayedPrefix) else {
             // Non-append anomaly (rewrite or stale run): never stall on it.
             displayedPrefix = target
-            pacingCredit = 0
             hooks.publish(target)
             return
         }
         let deficit = target.count - displayedPrefix.count
         guard deficit > 0 else { return }
-        // One character per tick plus a continuous ramp with lag: near target
-        // this is plain single-character typing; sustained backlog settles at
-        // a constant fractional rate that the credit renders evenly.
-        let charsPerTick = min(
-            Double(Self.maximumCharsPerTick),
-            1.0 + Double(deficit) / Self.rampLagCharacters
-        )
-        pacingCredit += charsPerTick
-        let step = min(deficit, Int(pacingCredit.rounded(.down)))
-        pacingCredit -= Double(step)
-        if pacingCredit > 1 { pacingCredit = 1 }
+        let step = min(deficit, Self.charactersPerTick)
         let newIndex = target.index(
             target.startIndex,
             offsetBy: displayedPrefix.count + step,

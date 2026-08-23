@@ -11,6 +11,7 @@ import {
   startStreamingCmd,
   streaming,
   streamingConfig,
+  streamingPluginKey,
 } from '@milkdown/plugin-streaming';
 import { streamingAppearancePlugin } from './streaming-appearance';
 import { SlashProvider, slashFactory } from '@milkdown/kit/plugin/slash';
@@ -3043,9 +3044,9 @@ const appendStreamingMarkdownInternal = (suffix: any) => {
  * cadence — same fade, same caret — and the session finalizes when it lands. */
 let pacedTailTimer: number | null = null;
 /** Above the fade plugin's per-insert limit a chunk cannot fade, so pace it. */
-const PACED_TAIL_FADE_LIMIT_CHARACTERS = 24;
-const PACED_TAIL_CHUNK_CHARACTERS = 16;
-const PACED_TAIL_TICK_MILLISECONDS = 24;
+const PACED_TAIL_FADE_LIMIT_CHARACTERS = 4;
+const PACED_TAIL_CHUNK_CHARACTERS = 4;
+const PACED_TAIL_TICK_MILLISECONDS = 33;
 /** Wall-clock cap: throttled (hidden/occluded) WebViews slow timers to a crawl,
  * so past this the whole tail lands at once instead of stalling half-typed. */
 const PACED_TAIL_MAXIMUM_MILLISECONDS = 3_000;
@@ -3065,10 +3066,13 @@ const cancelFinalizeDelay = () => {
 };
 const scheduleFinalizeAfterFades = () => {
   cancelFinalizeDelay();
-  // Flush and end the document session with the final chunk. The appearance
-  // callback still sees streamingMarkdownBuffer, so its fade/caret DOM stays
-  // mounted while the last insertion finishes animating.
-  streamingCommands().call(endStreamingCmd.key, { diffReview: false });
+  // throttleMs=0 already flushed the final push synchronously. Retire only the
+  // plugin state: endStreamingCmd reparses the same Markdown and rewrites text
+  // nodes, which looks like a second final answer even when the text is equal.
+  editor.action((ctx) => {
+    const view = ctx.get(editorViewCtx);
+    view.dispatch(view.state.tr.setMeta(streamingPluginKey, { type: 'end' }));
+  });
   finalizeDelayTimer = window.setTimeout(() => {
     finalizeDelayTimer = null;
     finalizeStreamingSession();

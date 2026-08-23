@@ -4744,7 +4744,15 @@ private struct AgentMessageMarkdownText: View {
             .padding(.vertical, 6)
         }
         .help(sourceHelp)
-        .onAppear(perform: updateColdBootSlotRequest)
+        .onAppear {
+            if isStreaming {
+                // The streaming condition mounts this surface before onAppear;
+                // retain that same instance across the first completed body.
+                rendererSurfaceMounted = true
+            } else {
+                updateColdBootSlotRequest()
+            }
+        }
         .onChange(of: isInScrollViewport) { _, _ in
             updateColdBootSlotRequest()
         }
