@@ -8497,6 +8497,19 @@ final class WorkspaceStore: ObservableObject {
         activeStudySession?.title ?? ui("新对话", "New Chat")
     }
 
+    @discardableResult
+    func renameStudySession(_ id: UUID, title rawTitle: String) -> Bool {
+        let title = rawTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !title.isEmpty,
+              let index = studySessions.firstIndex(where: { $0.id == id }),
+              studySessions[index].title != title || !studySessions[index].titleSetByUser else { return false }
+        studySessions[index].title = title
+        studySessions[index].titleSetByUser = true
+        studySessions[index].updatedAt = Date()
+        save()
+        return true
+    }
+
     var lastStudyLocation: StudyLocation? {
         studyLocationsByItemID.values.max { $0.lastStudiedAt < $1.lastStudiedAt }
     }
@@ -9590,6 +9603,7 @@ final class WorkspaceStore: ObservableObject {
         studySessions[index].messages = messages
         studySessions[index].updatedAt = Date()
         if let titleSeed,
+           !studySessions[index].titleSetByUser,
            studySessions[index].messages.filter({ $0.role == .user }).count == 1 {
             studySessions[index].title = Self.sessionTitle(from: titleSeed)
         }
@@ -9605,43 +9619,6 @@ final class WorkspaceStore: ObservableObject {
             .split(whereSeparator: { $0.isWhitespace })
             .joined(separator: " ")
         return title.isEmpty ? "Study Session" : String(title.prefix(36))
-    }
-
-    static func semanticSessionTitle(
-        from suggestion: String?,
-        replacing currentTitle: String,
-        messages: [AgentMessage]
-    ) -> String? {
-        guard let firstQuestion = messages.first(where: { $0.role == .user }),
-              currentTitle == sessionTitle(from: firstQuestion.text),
-              let suggestion,
-              !suggestion.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            return nil
-        }
-        let title = sessionTitle(from: suggestion)
-        let genericTitles = ["WeiBei", "Study Session", "New Chat", "New Conversation", "新对话", "新会话"]
-        guard title != currentTitle,
-              !genericTitles.contains(where: { $0.caseInsensitiveCompare(title) == .orderedSame }) else { return nil }
-        return title
-    }
-
-    @discardableResult
-    func applySemanticSessionTitle(_ suggestion: String?, to sessionID: UUID) -> Bool {
-        guard let index = studySessions.firstIndex(where: { $0.id == sessionID }),
-              let title = Self.semanticSessionTitle(
-                  from: suggestion,
-                  replacing: studySessions[index].title,
-                  messages: studySessions[index].messages
-              ) else { return false }
-        studySessions[index].title = title
-        studySessions[index].updatedAt = Date()
-        return true
-    }
-
-    func applySemanticSessionTitleAndSave(_ suggestion: String, to sessionID: UUID) async {
-        guard applySemanticSessionTitle(suggestion, to: sessionID) else { return }
-        save()
-        _ = await flushPendingWorkspaceSaveAsync()
     }
 
     private static func interruptedAgentReplyText(streamed: String, persisted: String) -> String {
@@ -10282,14 +10259,10 @@ final class WorkspaceStore: ObservableObject {
         }
         Task { @MainActor [weak self] in
             guard let self else { return }
-            guard let expanded = CourseProjectFileWorker.expandedSupportedFiles(
+            let expanded = CourseProjectFileWorker.expandedSupportedFiles(
                 from: urls,
                 markdownOnly: asNotes
-            ) else {
-                showImportLimitExceededAlert()
-                completion([])
-                return
-            }
+            )
             guard !expanded.isEmpty,
                   confirmCourseImportPlan(
                     expanded,
@@ -10360,18 +10333,6 @@ final class WorkspaceStore: ObservableObject {
         alert.addButton(withTitle: ui("取消", "Cancel"))
         alert.addButton(withTitle: ui("移入课程", "Move into Course"))
         return alert.runModal() == .alertSecondButtonReturn
-    }
-
-    private func showImportLimitExceededAlert() {
-        guard !WeiBeiSafetyTestMode.isEnabled else { return }
-        let alert = NSAlert()
-        alert.messageText = ui("没有导入", "Nothing Imported")
-        alert.informativeText = ui(
-            "所选内容包含超过500个可导入文件。为避免只导入其中一部分，魏碑没有写入任何资料。请选择更小的文件夹，或直接选择需要的文件。",
-            "The selection contains more than 500 importable files. To avoid a partial import, WeiBei did not add anything. Choose a smaller folder or select the files you need directly."
-        )
-        alert.addButton(withTitle: ui("知道了", "OK"))
-        alert.runModal()
     }
 
     private func courseImportConflictResolution(
@@ -11989,7 +11950,18 @@ final class WorkspaceStore: ObservableObject {
         AppShortcutCatalog.chord(for: shortcut, overrides: customShortcutOverrides)
     }
 
-    func setShortcut(_ id: AppShortcutID, chord: AppShortcutChord) {
+    func executableChord(for shortcut: AppShortcutID) -> AppShortcutChord? {
+        AppShortcutCatalog.executableChord(for: shortcut, overrides: customShortcutOverrides)
+    }
+
+    @discardableResult
+    func setShortcut(_ id: AppShortcutID, chord: AppShortcutChord) -> Bool {
+        guard !AppShortcutCatalog.isReservedTextEditingChord(chord),
+              AppShortcutCatalog.conflict(
+                  for: chord,
+                  excluding: id,
+                  overrides: customShortcutOverrides
+              ) == nil else { return false }
         if chord == id.defaultChord {
             customShortcutOverrides.removeValue(forKey: id)
         } else {
@@ -11997,128 +11969,18 @@ final class WorkspaceStore: ObservableObject {
         }
         AppShortcutCatalog.saveOverrides(customShortcutOverrides)
         objectWillChange.send()
+        return true
     }
 
-    func resetShortcut(_ id: AppShortcutID) {
-        customShortcutOverrides.removeValue(forKey: id)
-        AppShortcutCatalog.saveOverrides(customShortcutOverrides)
-        objectWillChange.send()
+    @discardableResult
+    func resetShortcut(_ id: AppShortcutID) -> Bool {
+        setShortcut(id, chord: id.defaultChord)
     }
 
     func resetAllShortcuts() {
         customShortcutOverrides = [:]
         AppShortcutCatalog.saveOverrides([:])
         objectWillChange.send()
-    }
-
-    func handleAppShortcut(_ event: NSEvent) -> Bool {
-        guard let key = Self.shortcutKey(from: event) else { return false }
-        return handleAppShortcut(key: key, modifiers: event.modifierFlags.intersection(Self.shortcutModifierMask))
-    }
-
-    func handleAppShortcut(key: String, modifiers: NSEvent.ModifierFlags) -> Bool {
-        let pressed = AppShortcutChord(key: key, modifiers: modifiers)
-        if let action = AppShortcutCatalog.action(matching: pressed, overrides: customShortcutOverrides) {
-            return performCustomizableShortcut(action)
-        }
-
-        // Non-user-facing chords stay hard-coded (layout / note mode / agent write).
-        if modifiers == [.command, .option] {
-            switch key {
-            case "1":
-                animateLayoutChange { setLayout(.documentAgentNotes) }
-            case "s":
-                guard layout.isDocumentThreePane else { return false }
-                animateLayoutChange { swapThreePaneSecondaryPanes() }
-            case "up":
-                animateLayoutChange { selectAdjacentItem(step: -1) }
-            case "down":
-                animateLayoutChange { selectAdjacentItem(step: 1) }
-            default:
-                return false
-            }
-            return true
-        }
-
-        if modifiers == [.command, .shift] {
-            switch key {
-            case "a":
-                guard canApplyAgentAnswer else { return false }
-                animatePanelChange { applyLastAgentAnswerToNote() }
-            case "r":
-                guard canReplaceNoteSelection else { return false }
-                animatePanelChange { replaceSelectionWithLastAgentAnswer() }
-            case "e":
-                guard canApplyAgentAnswer else { return false }
-                animatePanelChange { applyAgentPatchToEditor() }
-            case "c":
-                guard canCopyReference else { return false }
-                copyCurrentReference()
-            default:
-                return false
-            }
-            return true
-        }
-
-        if modifiers == [.command] {
-            switch key {
-            case "j":
-                guard layout.hasCollapsibleRightPane else { return false }
-                animateLayoutChange { toggleRightPane() }
-            case "return":
-                guard isAgentRunningInActiveChat
-                    || !agentDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-                    return false
-                }
-                submitAgentDraft()
-            default:
-                return false
-            }
-            return true
-        }
-
-        return false
-    }
-
-    @discardableResult
-    private func performCustomizableShortcut(_ id: AppShortcutID) -> Bool {
-        switch id {
-        case .commandPalette:
-            commandPalettePresented.toggle()
-        case .toggleAppearance:
-            animatePanelChange { toggleAppearanceMode() }
-        case .navigateBack:
-            guard canNavigateBack else { return false }
-            animateLayoutChange { navigateBackInWorkspace() }
-        case .navigateForward:
-            guard canNavigateForward else { return false }
-            animateLayoutChange { navigateForwardInWorkspace() }
-        case .courseIndex:
-            animateLayoutChange { toggleLibrary() }
-        case .searchInMaterial:
-            guard hasSelectedMaterial else { return false }
-            animatePanelChange { revealReaderSearch() }
-        case .focusLibrary:
-            animateLayoutChange { focus(.library) }
-        case .focusReader:
-            animateLayoutChange { focus(.reader) }
-        case .focusNotes:
-            animateLayoutChange { focus(.notes) }
-        case .focusChat:
-            animateLayoutChange { focus(.agent) }
-        case .immersiveReading:
-            animateLayoutChange { setLayout(.immersiveReading) }
-        case .immersiveChat:
-            animateLayoutChange { setLayout(.immersiveConversation) }
-        case .immersiveWriting:
-            animateLayoutChange { setLayout(.immersiveWriting) }
-        case .selectionPrompt:
-            guard canUseSelectionAgentSurface else { return false }
-            animatePanelChange { setAgentSurface(.selectionFloat) }
-        case .hideChatOverlay:
-            animatePanelChange { setAgentSurface(.hidden) }
-        }
-        return true
     }
 
     private func animateLayoutChange(_ action: () -> Void) {
@@ -12462,16 +12324,10 @@ final class WorkspaceStore: ObservableObject {
             persistCurrentNote()
         }
         Task.detached(priority: .userInitiated) { [weak self] in
-            guard let expandedURLs = CourseProjectFileWorker.expandedSupportedFiles(
+            let expandedURLs = CourseProjectFileWorker.expandedSupportedFiles(
                 from: urls,
                 markdownOnly: markdownOnly
-            ) else {
-                await MainActor.run { [weak self] in
-                    self?.showImportLimitExceededAlert()
-                    completion([])
-                }
-                return
-            }
+            )
             var copied: [(url: URL, isNote: Bool)] = []
             var failures: [String] = []
             for (offset, rawURL) in expandedURLs.enumerated() {
@@ -16993,7 +16849,7 @@ final class WorkspaceStore: ObservableObject {
             switch name {
             case "weibei_course_search":
                 base = ui("正在搜索", "Searching")
-            case "weibei_course_read", "read":
+            case "weibei_course_read":
                 base = ui("正在读取", "Reading")
             case "weibei_course_map":
                 base = ui("正在查找课程关联", "Finding course connections")

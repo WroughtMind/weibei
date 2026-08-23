@@ -561,7 +561,7 @@ private struct UnifiedTopBarView: View {
                 searchButton
             }
 
-            // Copy-reference is not top-bar chrome: use ⌘⇧C, menu, or command palette when needed.
+            // Copy-reference is not top-bar chrome: use its configured shortcut, menu, or command palette when needed.
 
             topIconButton("command", help: store.ui("命令面板", "Command palette")) {
                 store.commandPalettePresented.toggle()
@@ -670,7 +670,7 @@ private struct UnifiedTopBarView: View {
                     store.navigateBackInWorkspace()
                 }
             }
-            .keyboardShortcut("[", modifiers: [.command])
+            .weiBeiKeyboardShortcut(store.executableChord(for: .navigateBack))
             .disabled(!store.canNavigateBack)
 
             topIconButton("arrow.right", help: store.ui("前进", "Forward")) {
@@ -678,7 +678,7 @@ private struct UnifiedTopBarView: View {
                     store.navigateForwardInWorkspace()
                 }
             }
-            .keyboardShortcut("]", modifiers: [.command])
+            .weiBeiKeyboardShortcut(store.executableChord(for: .navigateForward))
             .disabled(!store.canNavigateForward)
 
             if updateService.showsToolbarControl, let update = updateService.availableUpdate {
@@ -704,10 +704,17 @@ private struct UnifiedTopBarView: View {
     }
 
     private func updateHelpText(_ update: WeiBeiAvailableUpdate) -> String {
-        guard case let .failed(message) = updateService.status else {
-            return update.helpText
+        var text = update.helpText
+        if update.releaseNotesLines.count > update.summaryLines.count {
+            text += "\n" + store.ui(
+                "完整更新说明可在“设置 > 关于”中展开。",
+                "Expand the full release notes in Settings > About."
+            )
         }
-        return update.helpText + "\n" + store.ui("更新失败，点击重试：\(message)", "Update failed. Click to retry: \(message)")
+        if case .failed = updateService.status {
+            text += "\n" + store.ui("更新失败，点击重试。", "Update failed. Click to retry.")
+        }
+        return text
     }
 
     private var paneToggleCluster: some View {

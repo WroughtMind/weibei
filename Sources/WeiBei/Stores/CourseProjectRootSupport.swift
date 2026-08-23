@@ -3046,9 +3046,8 @@ actor CourseProjectFileWorker {
 
     nonisolated static func expandedSupportedFiles(
         from urls: [URL],
-        markdownOnly: Bool,
-        maximumCount: Int = 500
-    ) -> [URL]? {
+        markdownOnly: Bool
+    ) -> [URL] {
         let fileManager = FileManager.default
         var seen = Set<String>()
         var result: [URL] = []
@@ -3059,9 +3058,6 @@ actor CourseProjectFileWorker {
             }
             if !isDirectory.boolValue {
                 appendSupported(rawURL, markdownOnly: markdownOnly, seen: &seen, result: &result)
-                if result.count > maximumCount {
-                    return nil
-                }
                 continue
             }
             guard !Self.ignoresImportDirectory(rawURL) else { continue }
@@ -3084,9 +3080,6 @@ actor CourseProjectFileWorker {
                     continue
                 }
                 appendSupported(fileURL, markdownOnly: markdownOnly, seen: &seen, result: &result)
-                if result.count > maximumCount {
-                    return nil
-                }
             }
         }
         return result.sorted { $0.path.localizedStandardCompare($1.path) == .orderedAscending }

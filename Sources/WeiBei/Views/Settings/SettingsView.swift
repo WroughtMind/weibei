@@ -562,8 +562,8 @@ struct SettingsView: View {
             .foregroundStyle(WeiBeiTheme.tertiaryInk)
             .padding(.horizontal, 2)
 
-            if let shortcutStatusMessage, !shortcutStatusMessage.isEmpty {
-                Text(shortcutStatusMessage)
+            if let message = shortcutStatusMessage ?? storedShortcutWarning, !message.isEmpty {
+                Text(message)
                     .font(SettingsType.detail)
                     .foregroundStyle(WeiBeiTheme.cinnabar.opacity(0.90))
                     .padding(.horizontal, 2)
@@ -592,6 +592,29 @@ struct SettingsView: View {
             .padding(.top, 2)
         }
         .onDisappear { stopShortcutRecording() }
+    }
+
+    private var storedShortcutWarning: String? {
+        for id in AppShortcutID.allCases {
+            guard let chord = store.customShortcutOverrides[id] else { continue }
+            if AppShortcutCatalog.isReservedTextEditingChord(chord) {
+                return store.ui(
+                    "已保留「\(id.title(language: store.interfaceLanguage))」的旧设置，但 \(chord.display) 保留给文本编辑，原组合不执行。",
+                    "The saved setting for “\(id.title(language: store.interfaceLanguage))” is preserved, but \(chord.display) is reserved for text editing and will not run."
+                )
+            }
+            if let conflict = AppShortcutCatalog.conflict(
+                for: chord,
+                excluding: id,
+                overrides: store.customShortcutOverrides
+            ) {
+                return store.ui(
+                    "已保留原设置；「\(id.title(language: store.interfaceLanguage))」与「\(conflict.title(language: store.interfaceLanguage))」冲突，请改其中一项。",
+                    "Saved settings are preserved; “\(id.title(language: store.interfaceLanguage))” conflicts with “\(conflict.title(language: store.interfaceLanguage))”. Rebind one of them."
+                )
+            }
+        }
+        return nil
     }
 
     private func shortcutKeyChip(_ id: AppShortcutID) -> some View {
@@ -626,8 +649,10 @@ struct SettingsView: View {
         .contextMenu {
             Button(store.ui("恢复默认", "Reset to Default")) {
                 stopShortcutRecording()
-                store.resetShortcut(id)
-                shortcutStatusMessage = nil
+                shortcutStatusMessage = store.resetShortcut(id) ? nil : store.ui(
+                    "默认组合正被其他动作使用，请先改掉冲突项。",
+                    "The default chord is used by another action. Rebind that action first."
+                )
             }
         }
     }
@@ -656,16 +681,21 @@ struct SettingsView: View {
 
     private func applyRecordedShortcut(_ id: AppShortcutID, chord: AppShortcutChord) {
         defer { stopShortcutRecording() }
+        guard !AppShortcutCatalog.isReservedTextEditingChord(chord) else {
+            shortcutStatusMessage = store.ui(
+                "⌘B 和 ⌘F 保留给文本编辑，请使用其他组合。",
+                "⌘B and ⌘F are reserved for text editing. Choose another shortcut."
+            )
+            return
+        }
         if let conflict = AppShortcutCatalog.conflict(
             for: chord,
             excluding: id,
             overrides: store.customShortcutOverrides
         ) {
-            // Still apply, but surface the conflict so the user can fix the other binding.
-            store.setShortcut(id, chord: chord)
             shortcutStatusMessage = store.ui(
-                "已改绑；与「\(conflict.title(language: store.interfaceLanguage))」冲突，请再改其中一项。",
-                "Saved; conflicts with “\(conflict.title(language: store.interfaceLanguage))”. Rebind one of them."
+                "未改绑；与「\(conflict.title(language: store.interfaceLanguage))」冲突。",
+                "Not saved; conflicts with “\(conflict.title(language: store.interfaceLanguage))”."
             )
             return
         }
@@ -757,8 +787,8 @@ struct SettingsView: View {
                 }
             }
 
-            if case let .failed(message) = updateService.status {
-                Text(store.ui("更新失败：\(message)", "Update failed: \(message)"))
+            if case .failed = updateService.status {
+                Text(store.ui("更新失败，请重试。", "Update failed. Please try again."))
                     .font(SettingsType.detail)
                     .foregroundStyle(WeiBeiTheme.tertiaryInk)
                     .padding(.horizontal, 4)

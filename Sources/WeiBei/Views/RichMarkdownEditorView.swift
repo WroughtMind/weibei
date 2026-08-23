@@ -461,7 +461,6 @@ private enum MarkdownWebNetworkGuard {
 
 final class MarkdownWebView: WKWebView {
     var pasteImageFromClipboard: (() -> Bool)?
-    var handleAppShortcut: ((String, NSEvent.ModifierFlags) -> Bool)?
     var passesVerticalScrollToSuperview = false {
         didSet { updateScrollWheelMonitor() }
     }
@@ -499,10 +498,6 @@ final class MarkdownWebView: WKWebView {
         if event.modifierFlags.contains(.command),
            event.charactersIgnoringModifiers?.lowercased() == "v",
            pasteImageFromClipboard?() == true {
-            return
-        }
-        if let key = event.charactersIgnoringModifiers?.lowercased(),
-           handleAppShortcut?(key, event.modifierFlags.intersection(Self.shortcutModifierMask)) == true {
             return
         }
         super.keyDown(with: event)
@@ -591,7 +586,6 @@ final class MarkdownWebView: WKWebView {
         return true
     }
 
-    private static let shortcutModifierMask: NSEvent.ModifierFlags = [.command, .option, .control, .shift]
 }
 
 struct RichMarkdownEditorView: NSViewRepresentable {
@@ -627,7 +621,6 @@ struct RichMarkdownEditorView: NSViewRepresentable {
     var onOutlineChange: ([NoteEditorOutlineItem]) -> Void = { _ in }
     var onWikiLink: (String) -> Void = { _ in }
     var onSourceReference: (String) -> Void = { _ in }
-    var onAppShortcut: (String, NSEvent.ModifierFlags) -> Bool = { _, _ in false }
     var onRenderReady: () -> Void = {}
     var onFinalizedRenderReady: (CGFloat) -> Void = { _ in }
     var onRenderFailure: () -> Void = {}
@@ -665,7 +658,6 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             onAskAgentWithSelection: onAskAgentWithSelection,
             onWikiLink: onWikiLink,
             onSourceReference: onSourceReference,
-            onAppShortcut: onAppShortcut,
             onRenderReady: onRenderReady,
             onFinalizedRenderReady: onFinalizedRenderReady,
             onRenderFailure: onRenderFailure,
@@ -714,46 +706,6 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             document.documentElement.dataset.weibeiCompactPreview = window.weiBeiMarkdownCompactPreview ? "true" : "false";
             document.documentElement.dataset.weibeiChatWide = window.weiBeiChatWideTypography ? "true" : "false";
             (() => {
-              const appShortcutKey = (event) => {
-                if (/^Digit[0-9]$/.test(event.code)) return event.code.slice(5);
-                if (/^Key[A-Z]$/.test(event.code)) return event.code.slice(3).toLowerCase();
-                return String(event.key || "").toLowerCase();
-              };
-              const isWeiBeiShortcut = (key, event) => {
-                const command = event.metaKey;
-                const option = event.altKey;
-                const control = event.ctrlKey;
-                const shift = event.shiftKey;
-                if (control && option && !command && !shift) {
-                  return ["0", "1", "2", "3", "4"].includes(key);
-                }
-                if (command && option && !control && !shift) {
-                  return ["1", "2", "3", "a", "n", "r", "t"].includes(key);
-                }
-                if (control && command && !option && !shift) {
-                  return ["1", "2", "3", "4"].includes(key);
-                }
-                if (command && shift && !option && !control) {
-                  return ["a", "r", "e", "c"].includes(key);
-                }
-                if (command && !option && !control && !shift) {
-                  return ["1", "2", "3", "4", "[", "]", "b", "j", "k", "f"].includes(key);
-                }
-                return false;
-              };
-              window.addEventListener("keydown", (event) => {
-                const key = appShortcutKey(event);
-                if (!isWeiBeiShortcut(key, event)) return;
-                event.preventDefault();
-                event.stopPropagation();
-                window.webkit?.messageHandlers?.appShortcut?.postMessage({
-                  key,
-                  command: event.metaKey,
-                  option: event.altKey,
-                  control: event.ctrlKey,
-                  shift: event.shiftKey
-                });
-              }, true);
               if (window.weiBeiMarkdownCompactPreview) {
                 window.addEventListener("wheel", (event) => {
                   if (Math.abs(event.deltaY) < Math.abs(event.deltaX)) return;
@@ -778,9 +730,6 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         Self.applyWebAppearance(to: view, appearanceMode: appearanceMode)
         view.pasteImageFromClipboard = { [weak coordinator = context.coordinator] in
             coordinator?.pasteImageFromClipboard() ?? false
-        }
-        view.handleAppShortcut = { [weak coordinator = context.coordinator] key, modifiers in
-            coordinator?.handleAppShortcut(key: key, modifiers: modifiers) ?? false
         }
         view.navigationDelegate = context.coordinator
         context.coordinator.webView = view
@@ -886,7 +835,6 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         context.coordinator.focusRequest = focusRequest
         context.coordinator.onWikiLink = onWikiLink
         context.coordinator.onSourceReference = onSourceReference
-        context.coordinator.onAppShortcut = onAppShortcut
         context.coordinator.onRenderReady = onRenderReady
         context.coordinator.onFinalizedRenderReady = onFinalizedRenderReady
         context.coordinator.onRenderFailure = onRenderFailure
@@ -969,7 +917,6 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         "finalizedStreaming",
         "activeHeadingChanged",
         "compactPreviewWheel",
-        "appShortcut",
         "selectionAskMark",
         "remarkMark"
     ]
@@ -1070,7 +1017,6 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         var onOutlineChange: ([NoteEditorOutlineItem]) -> Void
         var onWikiLink: (String) -> Void
         var onSourceReference: (String) -> Void
-        var onAppShortcut: (String, NSEvent.ModifierFlags) -> Bool
         var onRenderReady: () -> Void
         var onFinalizedRenderReady: (CGFloat) -> Void
         var onRenderFailure: () -> Void
@@ -1134,7 +1080,6 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             onAskAgentWithSelection: @escaping (String, CGPoint?) -> Void,
             onWikiLink: @escaping (String) -> Void,
             onSourceReference: @escaping (String) -> Void,
-            onAppShortcut: @escaping (String, NSEvent.ModifierFlags) -> Bool,
             onRenderReady: @escaping () -> Void,
             onFinalizedRenderReady: @escaping (CGFloat) -> Void,
             onRenderFailure: @escaping () -> Void,
@@ -1165,7 +1110,6 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             self.onAskAgentWithSelection = onAskAgentWithSelection
             self.onWikiLink = onWikiLink
             self.onSourceReference = onSourceReference
-            self.onAppShortcut = onAppShortcut
             self.onRenderReady = onRenderReady
             self.onFinalizedRenderReady = onFinalizedRenderReady
             self.onRenderFailure = onRenderFailure
@@ -1248,10 +1192,6 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             guard JSONSerialization.isValidJSONObject(body),
                   let data = try? JSONSerialization.data(withJSONObject: body) else { return nil }
             return try? JSONDecoder().decode(type, from: data)
-        }
-
-        func handleAppShortcut(key: String, modifiers: NSEvent.ModifierFlags) -> Bool {
-            onAppShortcut(key, modifiers)
         }
 
         func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
@@ -1451,10 +1391,6 @@ struct RichMarkdownEditorView: NSViewRepresentable {
                       let body = message.body as? [String: Any],
                       let id = body["id"] as? String else { return }
                 presentImagePicker(requestID: id, documentID: documentID)
-            case "appShortcut":
-                guard let body = message.body as? [String: Any],
-                      let key = body["key"] as? String else { return }
-                _ = handleAppShortcut(key: key, modifiers: modifiers(from: body))
             case "contentHeightChanged":
                 guard let body = message.body as? [String: Any],
                       let height = body["height"] as? Double else { return }
@@ -1492,23 +1428,6 @@ struct RichMarkdownEditorView: NSViewRepresentable {
                 return documentID.isEmpty
             }
             return messageDocumentID == documentID
-        }
-
-        private func modifiers(from body: [String: Any]) -> NSEvent.ModifierFlags {
-            var modifiers: NSEvent.ModifierFlags = []
-            if body["command"] as? Bool == true {
-                modifiers.insert(.command)
-            }
-            if body["option"] as? Bool == true {
-                modifiers.insert(.option)
-            }
-            if body["control"] as? Bool == true {
-                modifiers.insert(.control)
-            }
-            if body["shift"] as? Bool == true {
-                modifiers.insert(.shift)
-            }
-            return modifiers
         }
 
         func setMarkdown(_ text: String) {

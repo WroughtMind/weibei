@@ -14,18 +14,18 @@ struct CommandPaletteView: View {
             PaletteCommand(title: store.ui("搜索全部课程", "Search All Courses"), shortcut: "", animation: WeiBeiMotion.panel) { store.presentCourseWorkspace(.hub) },
             PaletteCommand(title: store.ui("打开资料", "Open Material"), shortcut: "⌘O") { store.importFilesFromPanel() },
             PaletteCommand(title: store.ui("新建空白笔记", "New Blank Note"), shortcut: "⌘N") { store.promptCreateBlankNotebookNote() },
-            PaletteCommand(title: store.ui("聚焦课程目录", "Focus Course Index"), shortcut: "⌘1", animation: WeiBeiMotion.layout) { store.focus(.library) },
-            PaletteCommand(title: store.ui("聚焦阅读", "Focus Reader"), shortcut: "⌘2", animation: WeiBeiMotion.layout) { store.focus(.reader) },
-            PaletteCommand(title: store.ui("聚焦笔记", "Focus Notes"), shortcut: "⌘3", animation: WeiBeiMotion.layout) { store.focus(.notes) },
-            PaletteCommand(title: store.ui("聚焦对话", "Focus Chat"), shortcut: "⌘4", animation: WeiBeiMotion.layout) { store.focus(.agent) },
-            PaletteCommand(title: store.ui("上一份资料", "Previous Material"), shortcut: "⌥⌘↑", animation: WeiBeiMotion.layout) { store.selectAdjacentItem(step: -1) },
-            PaletteCommand(title: store.ui("下一份资料", "Next Material"), shortcut: "⌥⌘↓", animation: WeiBeiMotion.layout) { store.selectAdjacentItem(step: 1) },
+            PaletteCommand(title: store.ui("聚焦课程目录", "Focus Course Index"), shortcut: store.chord(for: .focusLibrary).display, animation: WeiBeiMotion.layout) { store.focus(.library) },
+            PaletteCommand(title: store.ui("聚焦阅读", "Focus Reader"), shortcut: store.chord(for: .focusReader).display, animation: WeiBeiMotion.layout) { store.focus(.reader) },
+            PaletteCommand(title: store.ui("聚焦笔记", "Focus Notes"), shortcut: store.chord(for: .focusNotes).display, animation: WeiBeiMotion.layout) { store.focus(.notes) },
+            PaletteCommand(title: store.ui("聚焦对话", "Focus Chat"), shortcut: store.chord(for: .focusChat).display, animation: WeiBeiMotion.layout) { store.focus(.agent) },
+            PaletteCommand(title: store.ui("上一份资料", "Previous Material"), shortcut: store.chord(for: .previousMaterial).display, animation: WeiBeiMotion.layout) { store.selectAdjacentItem(step: -1) },
+            PaletteCommand(title: store.ui("下一份资料", "Next Material"), shortcut: store.chord(for: .nextMaterial).display, animation: WeiBeiMotion.layout) { store.selectAdjacentItem(step: 1) },
             PaletteCommand(title: store.showLibrary ? store.ui("收起课程目录", "Hide Course Index") : store.ui("打开课程目录", "Show Course Index"), shortcut: store.chord(for: .courseIndex).display) { store.toggleLibrary() },
-            PaletteCommand(title: store.ui("三栏工作台", "Three-Pane Workspace"), shortcut: "⌥⌘1", animation: WeiBeiMotion.layout) { store.setLayout(.documentAgentNotes) },
-            PaletteCommand(title: WorkspaceLayout.immersiveReading.label(language: store.interfaceLanguage), shortcut: "⌥⌘R", animation: WeiBeiMotion.layout) { store.setLayout(.immersiveReading) },
-            PaletteCommand(title: WorkspaceLayout.immersiveConversation.label(language: store.interfaceLanguage), shortcut: "⌥⌘A", animation: WeiBeiMotion.layout) { store.setLayout(.immersiveConversation) },
-            PaletteCommand(title: WorkspaceLayout.immersiveWriting.label(language: store.interfaceLanguage), shortcut: "⌥⌘N", animation: WeiBeiMotion.layout) { store.setLayout(.immersiveWriting) },
-            agentSurfaceCommand(.hidden, shortcut: "⌃⌥0"),
+            PaletteCommand(title: store.ui("三栏工作台", "Three-Pane Workspace"), shortcut: store.chord(for: .threePaneWorkspace).display, animation: WeiBeiMotion.layout) { store.setLayout(.documentAgentNotes) },
+            PaletteCommand(title: WorkspaceLayout.immersiveReading.label(language: store.interfaceLanguage), shortcut: store.chord(for: .immersiveReading).display, animation: WeiBeiMotion.layout) { store.setLayout(.immersiveReading) },
+            PaletteCommand(title: WorkspaceLayout.immersiveConversation.label(language: store.interfaceLanguage), shortcut: store.chord(for: .immersiveChat).display, animation: WeiBeiMotion.layout) { store.setLayout(.immersiveConversation) },
+            PaletteCommand(title: WorkspaceLayout.immersiveWriting.label(language: store.interfaceLanguage), shortcut: store.chord(for: .immersiveWriting).display, animation: WeiBeiMotion.layout) { store.setLayout(.immersiveWriting) },
+            agentSurfaceCommand(.hidden),
             markdownInsertCommand(title: store.ui("插入行内公式", "Insert inline formula"), markdown: "${{WEIBEI_SELECT_START}}x_i = \\frac{a}{b}{{WEIBEI_SELECT_END}}$"),
             markdownInsertCommand(title: store.ui("插入块级公式", "Insert block formula"), markdown: "\n$$\n{{WEIBEI_SELECT_START}}E = mc^2{{WEIBEI_SELECT_END}}\n$$\n"),
             markdownInsertCommand(title: store.ui("插入矩阵公式", "Insert matrix formula"), markdown: "\n$$\n\\begin{bmatrix}\n{{WEIBEI_SELECT_START}}a{{WEIBEI_SELECT_END}} & b \\\\\nc & d\n\\end{bmatrix}\n$$\n"),
@@ -34,7 +34,7 @@ struct CommandPaletteView: View {
             markdownInsertCommand(title: store.ui("插入 Mermaid", "Insert Mermaid"), markdown: store.ui("\n```mermaid\ngraph TD\n  {{WEIBEI_SELECT_START}}A[开始] --> B[整理]{{WEIBEI_SELECT_END}}\n```\n", "\n```mermaid\ngraph TD\n  {{WEIBEI_SELECT_START}}A[Start] --> B[Organize]{{WEIBEI_SELECT_END}}\n```\n"))
         ]
         if store.canUseSelectionAgentSurface {
-            items.insert(agentSurfaceCommand(.selectionFloat, shortcut: "⌃⌥3"), at: min(17, items.count))
+            items.insert(agentSurfaceCommand(.selectionFloat), at: min(17, items.count))
         }
         if store.hasSelectedMaterial {
             items.insert(
@@ -53,12 +53,12 @@ struct CommandPaletteView: View {
         }
         if store.layout.isDocumentThreePane {
             items.insert(
-                PaletteCommand(title: store.ui("交换笔记与对话", "Swap Notes and Chat"), shortcut: "⌥⌘S", animation: WeiBeiMotion.layout) { store.swapThreePaneSecondaryPanes() },
+                PaletteCommand(title: store.ui("交换笔记与对话", "Swap Notes and Chat"), shortcut: store.chord(for: .swapThreePaneSecondaryPanes).display, animation: WeiBeiMotion.layout) { store.swapThreePaneSecondaryPanes() },
                 at: 11
             )
         }
         if store.canCopyReference {
-            items.append(PaletteCommand(title: store.copyReferenceActionTitle, shortcut: "⌘⇧C") { store.copyCurrentReference() })
+            items.append(PaletteCommand(title: store.copyReferenceActionTitle, shortcut: store.chord(for: .copyCurrentReference).display) { store.copyCurrentReference() })
         }
         if store.hasSelectedMaterial {
             items.append(PaletteCommand(title: store.ui("打开资料内搜索", "Search in Material"), shortcut: store.chord(for: .searchInMaterial).display) { store.revealReaderSearch() })
@@ -72,17 +72,17 @@ struct CommandPaletteView: View {
             items.append(PaletteCommand(title: store.ui("打开选区来源", "Open Selection Source"), shortcut: "") { store.openSelectedSourceReference() })
         }
         if store.agentSurface != .hidden {
-            items.append(agentSurfaceCommand(.hidden, shortcut: "⌃⌥0"))
+            items.append(agentSurfaceCommand(.hidden))
         }
         if store.canApplyAgentAnswer {
-            items.append(PaletteCommand(title: store.ui("写入回答到笔记", "Write Answer to Note"), shortcut: "⌘⇧A") { store.applyLastAgentAnswerToNote() })
-            items.append(PaletteCommand(title: store.ui("追加整理建议", "Append Organization Suggestion"), shortcut: "⌘⇧E") { store.applyAgentPatchToEditor() })
+            items.append(PaletteCommand(title: store.ui("写入回答到笔记", "Write Answer to Note"), shortcut: store.chord(for: .applyAgentAnswerToNote).display) { store.applyLastAgentAnswerToNote() })
+            items.append(PaletteCommand(title: store.ui("追加整理建议", "Append Organization Suggestion"), shortcut: store.chord(for: .applyAgentPatchToEditor).display) { store.applyAgentPatchToEditor() })
         }
         if store.canReplaceNoteSelection {
-            items.append(PaletteCommand(title: store.ui("替换笔记选区", "Replace Note Selection"), shortcut: "⌘⇧R") { store.replaceSelectionWithLastAgentAnswer() })
+            items.append(PaletteCommand(title: store.ui("替换笔记选区", "Replace Note Selection"), shortcut: store.chord(for: .replaceNoteSelection).display) { store.replaceSelectionWithLastAgentAnswer() })
         }
         if canControlAgent {
-            items.append(PaletteCommand(title: store.sendAgentActionTitle, shortcut: "⌘↩") {
+            items.append(PaletteCommand(title: store.sendAgentActionTitle, shortcut: store.chord(for: .submitAgentDraft).display) {
                 store.submitAgentDraft()
             })
         }
@@ -99,8 +99,9 @@ struct CommandPaletteView: View {
         }
     }
 
-    private func agentSurfaceCommand(_ surface: AgentSurface, shortcut: String) -> PaletteCommand {
-        PaletteCommand(title: surface.actionLabel(language: store.interfaceLanguage), shortcut: shortcut) {
+    private func agentSurfaceCommand(_ surface: AgentSurface) -> PaletteCommand {
+        let shortcut = surface == .hidden ? AppShortcutID.hideChatOverlay : .selectionPrompt
+        return PaletteCommand(title: surface.actionLabel(language: store.interfaceLanguage), shortcut: store.chord(for: shortcut).display) {
             store.setAgentSurface(surface)
         }
     }
@@ -109,7 +110,7 @@ struct CommandPaletteView: View {
         guard store.layout.hasCollapsibleRightPane else { return nil }
         return PaletteCommand(
             title: store.showRightPane ? store.ui("收起辅助栏", "Hide Assistant Pane") : store.ui("展开辅助栏", "Show Assistant Pane"),
-            shortcut: "⌘J",
+            shortcut: store.chord(for: .toggleRightPane).display,
             animation: WeiBeiMotion.layout
         ) {
             store.toggleRightPane()

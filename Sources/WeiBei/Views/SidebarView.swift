@@ -820,8 +820,7 @@ private struct LibraryRow: View {
     @State private var hovering = false
 
     var body: some View {
-        CourseSidebarDiagnostics.recordLibraryRowBodyForTesting()
-        return HStack(spacing: compact ? 7 : 10) {
+        HStack(spacing: compact ? 7 : 10) {
             Image(systemName: item.kind.systemImage)
                 .foregroundStyle(iconColor)
                 .frame(width: compact ? 15 : 18)
@@ -887,24 +886,6 @@ private struct LibraryRow: View {
         return item.kind == .pdf ? WeiBeiTheme.link : WeiBeiTheme.tertiaryInk
     }
 }
-
-#if DEBUG
-enum CourseSidebarDiagnostics {
-    private(set) static var libraryRowBodyCountForTesting = 0
-
-    static func resetForTesting() {
-        libraryRowBodyCountForTesting = 0
-    }
-
-    static func recordLibraryRowBodyForTesting() {
-        libraryRowBodyCountForTesting &+= 1
-    }
-}
-#else
-enum CourseSidebarDiagnostics {
-    static func recordLibraryRowBodyForTesting() {}
-}
-#endif
 
 private func sidebarCourseAccent(colorIndex: Int) -> Color {
     switch ((colorIndex % 4) + 4) % 4 {

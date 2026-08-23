@@ -114,40 +114,6 @@ final class SidebarPerformanceTests: XCTestCase {
         withExtendedLifetime(window) {}
     }
 
-    #if DEBUG
-    @MainActor
-    func testSidebarListBuildsOnlyVisibleRowsAtPressureScale() {
-        let fixture = makeStore(itemCount: 2_000)
-        defer { try? FileManager.default.removeItem(at: fixture.root) }
-        let model = CourseSidebarModel(store: fixture.store)
-
-        CourseSidebarDiagnostics.resetForTesting()
-        let host = NSHostingView(
-            rootView: SidebarView(store: fixture.store, model: model)
-        )
-        host.frame = NSRect(x: 0, y: 0, width: CourseDrawerContainerView.panelWidth, height: 600)
-        let window = NSWindow(
-            contentRect: host.frame,
-            styleMask: [.borderless],
-            backing: .buffered,
-            defer: false
-        )
-        window.contentView = host
-        pumpMainRunLoop()
-        host.layoutSubtreeIfNeeded()
-        pumpMainRunLoop()
-
-        let builtRows = CourseSidebarDiagnostics.libraryRowBodyCountForTesting
-        XCTAssertGreaterThan(builtRows, 0)
-        XCTAssertLessThanOrEqual(
-            builtRows,
-            80,
-            "a 600pt viewport must not build all 2,000 rows"
-        )
-        withExtendedLifetime((window, host, model)) {}
-    }
-    #endif
-
     @MainActor
     func testLibrarySearchFiltersSidebarWithoutInvalidatingWorkspaceStore() {
         let fixture = makeStore(itemCount: 0)

@@ -25,7 +25,7 @@ struct WeiBeiAvailableUpdate: Equatable {
               !text.isEmpty else {
             return []
         }
-        for marker in ["</li>", "</p>", "<br>", "<br/>", "<br />"] {
+        for marker in ["</li>", "</p>", "</h1>", "</h2>", "</h3>", "<br>", "<br/>", "<br />"] {
             text = text.replacingOccurrences(of: marker, with: "\n", options: .caseInsensitive)
         }
         text = text
@@ -57,7 +57,7 @@ final class WeiBeiUpdateService: NSObject, ObservableObject {
         case extracting
         case installing
         case upToDate
-        case failed(String)
+        case failed
     }
 
     @Published private(set) var status: Status = .idle
@@ -96,7 +96,10 @@ final class WeiBeiUpdateService: NSObject, ObservableObject {
         do {
             try updater.start()
         } catch {
-            status = .failed(error.localizedDescription)
+            WeiBeiLog.workspace.error(
+                "code=updater_start_failed underlying=\(WeiBeiLog.code(error), privacy: .public)"
+            )
+            status = .failed
         }
     }
 
@@ -197,7 +200,10 @@ extension WeiBeiUpdateService: SPUUserDriver {
     func showUpdaterError(_ error: Error) async {
         retryInstallWhenFound = false
         updateChoiceReply = nil
-        status = .failed(error.localizedDescription)
+        WeiBeiLog.workspace.error(
+            "code=updater_failed underlying=\(WeiBeiLog.code(error), privacy: .public)"
+        )
+        status = .failed
     }
 
     func showDownloadInitiated(cancellation: @escaping () -> Void) {
