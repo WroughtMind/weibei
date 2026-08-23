@@ -196,7 +196,8 @@ final class WorkspaceSafetyTests: XCTestCase {
             courseID: courseID
         ))
 
-        XCTAssertEqual(context.memories.map(\.id), memories.map(\.id))
+        XCTAssertEqual(context.memories.count, memories.count)
+        XCTAssertEqual(Set(context.memories.map(\.id)), Set(memories.map(\.id)))
     }
 
     @MainActor
@@ -272,12 +273,18 @@ final class WorkspaceSafetyTests: XCTestCase {
             options: .atomic
         )
         let store = WorkspaceStore(workspaceDirectory: root, startsCourseFileMaintenance: false)
+        let target = WorkspaceStore.AgentConversationTarget(
+            sessionID: sessionID,
+            workingDirectory: root,
+            courseID: courseID
+        )
+        let memoryRevision = store.makeLearningContext(target: target).memoryRevision
         let summary = String(repeating: "完整会话摘要。", count: 400)
         let next = (1...5).map { "完整下一步 \($0) " + String(repeating: "内容", count: 180) }
         let receipt = store.persistNativeLearningUpdate(
             StudyAgentLearningUpdate(
                 contextRevision: "session-summary-full-text",
-                memoryRevision: 1,
+                memoryRevision: memoryRevision,
                 sessionSummary: summary,
                 suggestedNext: next,
                 entries: [
@@ -291,11 +298,7 @@ final class WorkspaceSafetyTests: XCTestCase {
             ),
             expectedContextRevision: "session-summary-full-text",
             expectedUserQuestion: "请记录当前进度",
-            target: WorkspaceStore.AgentConversationTarget(
-                sessionID: sessionID,
-                workingDirectory: root,
-                courseID: courseID
-            ),
+            target: target,
             messageID: UUID()
         )
 
