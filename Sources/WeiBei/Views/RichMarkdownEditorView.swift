@@ -948,6 +948,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
     }
 
     static func dismantleNSView(_ view: WKWebView, coordinator: Coordinator) {
+        coordinator.rejectUnconfirmedContentCommands()
         coordinator.unbindEditingSession()
         coordinator.imageSchemeHandler.invalidate()
         WeiBeiPerf.event(
@@ -1108,7 +1109,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         var webMarkdown = ""
         var pendingStreamingCompletion = false
         var lastCommandID: UUID?
-        private var queuedCommands: [NoteEditorCommand] = []
+        private var queuedCommands: [InFlightCommand] = []
         private var inFlightCommand: InFlightCommand?
         private var editingSessionBindingToken: UUID?
         private var pendingV2DocumentID: String?
@@ -1339,6 +1340,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             // WebView cannot become ready again.
             finalizedRenderGeneration &+= 1
             isReady = false
+            rejectUnconfirmedContentCommands()
             onRenderFailure()
         }
 
@@ -1721,33 +1723,35 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             guard isReady,
                   pendingV2DocumentID == nil,
                   inFlightCommand == nil,
-                  let next = queuedCommands.first,
-                  let editingSession else { return }
-            let inFlight = InFlightCommand(
-                command: next,
-                documentID: editingSession.documentID,
-                documentGeneration: editingSession.documentGeneration,
-                minimumRevision: editingSession.currentRevision
-            )
-            inFlightCommand = inFlight
-            if next.kind != .scrollToHeading {
-                onContentCommandPending(inFlight.documentID, next)
-            }
-            run(inFlight)
+                  let next = queuedCommands.first else { return }
+            inFlightCommand = next
+            run(next)
         }
 
         /// 内容命令保序且不设数量上限；只有最终状态可替代前态的命令合并。
         private func ingestCommandBinding() {
             guard let pending = command.wrappedValue,
                   pending.id != lastCommandID,
-                  !queuedCommands.contains(where: { $0.id == pending.id }) else { return }
+                  !queuedCommands.contains(where: {
+                      $0.command.id == pending.id
+                  }),
+                  let editingSession else { return }
+            let source = InFlightCommand(
+                command: pending,
+                documentID: editingSession.documentID,
+                documentGeneration: editingSession.documentGeneration,
+                minimumRevision: editingSession.currentRevision
+            )
             if let tail = queuedCommands.last,
-               tail.id != inFlightCommand?.command.id,
-               tail.kind == pending.kind,
+               tail.command.id != inFlightCommand?.command.id,
+               tail.command.kind == pending.kind,
                pending.kind == .reloadDocument || pending.kind == .scrollToHeading {
-                queuedCommands[queuedCommands.count - 1] = pending
+                queuedCommands[queuedCommands.count - 1] = source
             } else {
-                queuedCommands.append(pending)
+                queuedCommands.append(source)
+            }
+            if pending.kind.isContentCommand {
+                onContentCommandPending(source.documentID, pending)
             }
             let ingestedID = pending.id
             DispatchQueue.main.async {
@@ -1793,24 +1797,44 @@ struct RichMarkdownEditorView: NSViewRepresentable {
                   id == inFlight.command.id,
                   documentID == inFlight.documentID,
                   documentGeneration == inFlight.documentGeneration,
-                  queuedCommands.first?.id == id else { return }
+                  queuedCommands.first?.command.id == id else { return }
             let source = queuedCommands.removeFirst()
             inFlightCommand = nil
             if let rejectionReason {
                 Self.bridgeLogger.error(
                     "editor command rejected: \(rejectionReason, privacy: .private)"
                 )
-                if command.wrappedValue?.id == source.id {
+                if command.wrappedValue?.id == source.command.id {
                     command.wrappedValue = nil
                 }
-                onCommandRejected(inFlight.documentID, source)
+                onCommandRejected(source.documentID, source.command)
             } else {
-                lastCommandID = source.id
-                if source.kind != .scrollToHeading {
-                    onContentCommandApplied(inFlight.documentID, source)
+                lastCommandID = source.command.id
+                if source.command.kind.isContentCommand {
+                    onContentCommandApplied(
+                        source.documentID,
+                        source.command
+                    )
                 }
             }
             runPendingCommandIfReady()
+        }
+
+        func rejectUnconfirmedContentCommands() {
+            ingestCommandBinding()
+            let abandoned = queuedCommands
+            queuedCommands.removeAll()
+            inFlightCommand = nil
+            if let bound = command.wrappedValue,
+               bound.id == lastCommandID || abandoned.contains(where: {
+                   $0.command.id == bound.id
+               }) {
+                command.wrappedValue = nil
+            }
+            for source in abandoned
+            where source.command.kind.isContentCommand {
+                onCommandRejected(source.documentID, source.command)
+            }
         }
 
         private func rejectCommand(_ source: InFlightCommand, reason: String) {

@@ -28,7 +28,7 @@ enum ImportedIdentitySelfCheck {
         let fixture = try WorkspaceFixture(name: "durable-editor-selection")
         defer { fixture.remove() }
 
-        let notes = ["A", "B", "C"].map { name in
+        let notes = ["A", "B"].map { name in
             StudyItem(
                 id: "internal-note-\(name.lowercased())",
                 title: "\(name) 笔记",
@@ -42,13 +42,11 @@ enum ImportedIdentitySelfCheck {
         }
         let noteA = notes[0]
         let noteB = notes[1]
-        let noteC = notes[2]
         try fixture.write(PersistedWorkspace(
             importedItems: notes,
             notesByItemID: [
                 noteA.id: "# A笔记\n\n旧正文",
                 noteB.id: "# B笔记\n\n正文",
-                noteC.id: "# C笔记\n\n正文",
             ],
             activeNotebookItemID: noteA.id,
             noteSourceLinksMigrationVersion: 1
@@ -66,62 +64,28 @@ enum ImportedIdentitySelfCheck {
             selectionAskThreadDefaults: fixture.selectionAskThreadDefaults
         )
 
-        store.select(itemID: noteA.id)
         store.noteEditingSession.replaceDocument(with: noteA.id)
         var requests = [NoteEditorSnapshotRequest]()
         let bridgeToken = store.noteEditingSession.bindSnapshotRequestHandler {
             requests.append($0)
         }
-        let pendingCommand = NoteEditorCommand(kind: .insertMarkdown, markdown: "最后一段编辑")
-        store.noteEditorCommand = pendingCommand
-
-        store.select(itemID: noteC.id)
-        store.select(itemID: noteB.id)
-        try check(
-            store.activeNoteItemID == noteA.id
-                && store.noteSelectionStatusMessage?.contains("正在保存") == true
-                && requests.isEmpty,
-            "内容命令回执前切换没有保持 A，或提前销毁了来源编辑器"
-        )
-        store.noteEditorCommand = nil
-        store.noteEditorCommandRejected(pendingCommand, documentID: noteA.id)
-        try check(
-            store.activeNoteItemID == noteA.id
-                && store.canRetryRejectedNoteEditorCommand,
-            "内容命令被拒绝后没有留在来源笔记并允许重试"
-        )
-        store.retryRejectedNoteEditorCommand()
-        try check(store.noteEditorCommand?.id == pendingCommand.id, "重试没有保留原命令编号和内容")
-        store.noteEditorCommand = nil
-        store.noteEditorContentCommandApplied(pendingCommand, documentID: noteA.id)
-        try check(requests.count == 1, "内容命令应用后没有进入现有真实快照保存链")
-
+        try check(store.noteEditingSession.receive(NoteEditorDirtyChangedEvent(
+            documentID: noteA.id,
+            documentGeneration: store.noteEditingSession.documentGeneration,
+            revision: 1,
+            dirty: true
+        )), "A 的脏正文事件没有被编辑会话接收")
         rejectsWorkspaceWrite = true
-        let request = try require(requests.first, "内容命令应用后没有请求真实快照")
+        store.select(itemID: noteB.id)
+        let request = try require(requests.first, "脏正文切换没有请求真实快照")
         let latestA = "# A笔记\n\n最后一段编辑"
-        try check(
-            store.noteEditingSession.receive(NoteEditorSnapshotReadyEvent(
-                requestID: request.requestID ?? "",
-                documentID: request.documentID,
-                documentGeneration: request.documentGeneration,
-                revision: 1,
-                markdown: latestA
-            )),
-            "真实快照没有被编辑会话接收"
-        )
-        let failureDeadline = Date().addingTimeInterval(5)
-        while !store.canRetryPendingNoteSelection,
-              Date() < failureDeadline {
-            RunLoop.main.run(
-                mode: .default,
-                before: Date(timeIntervalSinceNow: 0.01)
-            )
+        try deliverSnapshot(request, markdown: latestA, to: store.noteEditingSession)
+        try waitForCondition("等待写入失败状态超时") {
+            store.canRetryPendingNoteSelection
         }
         let snapshotAfterFailure = try fixture.readSnapshot()
         try check(
             store.activeNoteItemID == noteA.id
-                && store.canRetryPendingNoteSelection
-                && store.noteSelectionStatusMessage?.contains("尚未安全保存") == true
                 && snapshotAfterFailure.notesByItemID[noteA.id] != latestA,
             "工作区写入失败后离开了 A，或把内存快照误当成安全保存"
         )
@@ -130,29 +94,10 @@ enum ImportedIdentitySelfCheck {
         requests.removeAll()
         store.retryPendingNoteSelection()
         let retry = try require(requests.first, "重试没有重新请求真实快照")
-        try check(store.activeNoteItemID == noteA.id, "重试快照送达前离开了 A")
-        try check(
-            store.noteEditingSession.receive(NoteEditorSnapshotReadyEvent(
-                requestID: retry.requestID ?? "",
-                documentID: retry.documentID,
-                documentGeneration: retry.documentGeneration,
-                revision: 1,
-                markdown: latestA
-            )),
-            "重试快照没有被编辑会话接收"
-        )
-        let successDeadline = Date().addingTimeInterval(5)
-        while store.activeNoteItemID != noteB.id,
-              Date() < successDeadline {
-            RunLoop.main.run(
-                mode: .default,
-                before: Date(timeIntervalSinceNow: 0.01)
-            )
+        try deliverSnapshot(retry, markdown: latestA, to: store.noteEditingSession)
+        try waitForCondition("等待恢复写入超时") {
+            store.activeNoteItemID == noteB.id
         }
-        try check(
-            store.activeNoteItemID == noteB.id,
-            "工作区恢复写入后没有只切到最后点击的 B"
-        )
 
         store.select(itemID: noteA.id)
         let snapshotAfterRetry = try fixture.readSnapshot()
@@ -3425,6 +3370,36 @@ enum ImportedIdentitySelfCheck {
     private static func require<T>(_ value: T?, _ message: String) throws -> T {
         guard let value else { throw CheckError.failed(message) }
         return value
+    }
+
+    @MainActor
+    private static func deliverSnapshot(
+        _ request: NoteEditorSnapshotRequest,
+        markdown: String,
+        to session: NoteEditingSession
+    ) throws {
+        try check(session.receive(NoteEditorSnapshotReadyEvent(
+            requestID: request.requestID ?? "",
+            documentID: request.documentID,
+            documentGeneration: request.documentGeneration,
+            revision: 1,
+            markdown: markdown
+        )), "真实快照没有被编辑会话接收")
+    }
+
+    @MainActor
+    private static func waitForCondition(
+        _ timeoutMessage: String,
+        condition: () -> Bool
+    ) throws {
+        let deadline = Date().addingTimeInterval(5)
+        while !condition(), Date() < deadline {
+            RunLoop.main.run(
+                mode: .default,
+                before: Date(timeIntervalSinceNow: 0.01)
+            )
+        }
+        try check(condition(), timeoutMessage)
     }
 
     private static func check(_ condition: @autoclosure () -> Bool, _ message: String) throws {

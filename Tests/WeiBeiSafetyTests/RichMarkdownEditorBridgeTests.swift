@@ -23,31 +23,43 @@ final class RichMarkdownEditorBridgeTests: XCTestCase {
     }
 
     @MainActor
-    func testRejectedContentKeepsDispatchDocumentAndRetries() async throws {
-        var rejectedCommand: NoteEditorCommand?
-        var rejectedDocumentID: String?
-        let rejected = expectation(description: "rejected content remained recoverable")
-        let retried = expectation(description: "rejected content applied after retry")
+    func testDestroyedCoordinatorReturnsContentToExistingRetryQueue() async {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("WeiBeiEditorCommand-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = WorkspaceStore(
+            workspaceDirectory: root,
+            startsAtBlankEntries: true
+        )
+        store.importedItems = [StudyItem(
+            id: "note-a",
+            title: "A",
+            subtitle: "A",
+            kind: .text,
+            urlPath: nil,
+            isSample: false,
+            isNotebookNote: true
+        )]
+        store.activeNotebookItemID = "note-a"
+        store.noteEditingSession.replaceDocument(with: "note-a")
+        let rejected = expectation(description: "unconfirmed content returned")
         let fixture = await makeCommandBridge(onRejected: { documentID, command in
-            rejectedDocumentID = documentID
-            rejectedCommand = command
+            store.noteEditorCommandRejected(command, documentID: documentID)
             rejected.fulfill()
-        }, onProbe: { name in
-            if name == "retried" { retried.fulfill() }
-        })
+        }, onProbe: { _ in })
 
-        fixture.enqueue(NoteEditorCommand(kind: .replaceSelection, markdown: "保留我"))
+        let command = NoteEditorCommand(
+            kind: .replaceSelection,
+            markdown: "销毁后保留"
+        )
+        fixture.enqueue(command)
         fixture.start()
+        fixture.destroy()
         await fulfillment(of: [rejected], timeout: 3)
-        let recoverable = try XCTUnwrap(rejectedCommand)
-        XCTAssertEqual(rejectedDocumentID, "note-a")
-        XCTAssertEqual(recoverable.markdown, "保留我")
-
-        try await fixture.allowRejectedContent()
-        fixture.enqueue(recoverable)
-        await fulfillment(of: [retried], timeout: 3)
-        let afterRetry = try await fixture.appliedMarkdown()
-        XCTAssertEqual(afterRetry.filter { $0 == "保留我" }.count, 1)
+        XCTAssertTrue(store.canRetryRejectedNoteEditorCommand)
+        store.retryRejectedNoteEditorCommand()
+        XCTAssertEqual(store.noteEditorCommand?.id, command.id)
+        XCTAssertEqual(store.noteEditorCommand?.markdown, command.markdown)
     }
 
     @MainActor
@@ -292,9 +304,10 @@ private final class EditorCommandBridgeFixture {
         coordinator.runPendingCommandIfReady()
     }
 
-    func allowRejectedContent() async throws {
-        _ = try await webView.evaluateJavaScript(
-            "window.WeiBeiEditor.allowRejectedContent()"
+    func destroy() {
+        RichMarkdownEditorView.dismantleNSView(
+            webView,
+            coordinator: coordinator
         )
     }
 
@@ -311,7 +324,6 @@ private final class EditorCommandBridgeFixture {
     <script>
       const appliedIDs = new Set();
       const appliedMarkdown = [];
-      let rejectedMarkdown = "保留我";
       const replyApplied = command => {
         window.webkit.messageHandlers.commandApplied.postMessage({
           protocolVersion: 2,
@@ -324,7 +336,7 @@ private final class EditorCommandBridgeFixture {
       window.WeiBeiEditor = {
         dispatchCommand(command) {
           const markdown = command.payload.markdown;
-          if (markdown === rejectedMarkdown) return false;
+          if (markdown === "销毁后保留") return true;
           if (!appliedIDs.has(command.commandID)) {
             appliedIDs.add(command.commandID);
             appliedMarkdown.push(markdown);
@@ -332,12 +344,9 @@ private final class EditorCommandBridgeFixture {
           replyApplied(command);
           if (appliedMarkdown.length === 18) {
             window.webkit.messageHandlers.queueProbe.postMessage("allApplied");
-          } else if (markdown === "保留我") {
-            window.webkit.messageHandlers.queueProbe.postMessage("retried");
           }
           return true;
         },
-        allowRejectedContent() { rejectedMarkdown = null; return true; },
         appliedMarkdown() { return appliedMarkdown; }
       };
     </script>

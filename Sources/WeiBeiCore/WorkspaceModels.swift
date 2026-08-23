@@ -746,6 +746,10 @@ public struct NoteEditorCommand: Identifiable, Hashable {
         case insertMarkdown
         case scrollToHeading
         case reloadDocument
+
+        public var isContentCommand: Bool {
+            self != .scrollToHeading && self != .reloadDocument
+        }
     }
 
     public var id: UUID
