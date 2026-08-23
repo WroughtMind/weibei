@@ -581,7 +581,13 @@ final class WorkspaceStore: ObservableObject {
             }
         }
     }
-    @Published var noteEditorCommand: NoteEditorCommand?
+    @Published var noteEditorCommand: NoteEditorCommand? {
+        willSet {
+            guard let command = newValue,
+                  command.kind != .scrollToHeading else { return }
+            unresolvedContentCommandDocumentIDs[command.id] = noteEditingSession.documentID
+        }
+    }
     @Published private var rejectedNoteEditorCommands: [RejectedNoteEditorCommand] = []
     private var unresolvedContentCommandDocumentIDs: [UUID: String] = [:]
     /// Success / info banner for note create/switch — separate from errors so it auto-dismisses cleanly.
@@ -10240,7 +10246,7 @@ final class WorkspaceStore: ObservableObject {
     }
 
     func noteEditorContentCommandPending(_ command: NoteEditorCommand, documentID: String) {
-        unresolvedContentCommandDocumentIDs[command.id] = documentID
+        guard unresolvedContentCommandDocumentIDs[command.id] == documentID else { return }
         if pendingNoteSelection != nil,
            noteEditingSession.documentID == documentID {
             noteSelectionTransitionState = .saving

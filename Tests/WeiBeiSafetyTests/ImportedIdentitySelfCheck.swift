@@ -65,7 +65,7 @@ enum ImportedIdentitySelfCheck {
             requests.append($0)
         }
         let pendingCommand = NoteEditorCommand(kind: .insertMarkdown, markdown: "最后一段编辑")
-        store.noteEditorContentCommandPending(pendingCommand, documentID: noteA.id)
+        store.noteEditorCommand = pendingCommand
 
         store.select(itemID: noteC.id)
         store.select(itemID: noteB.id)
@@ -75,6 +75,7 @@ enum ImportedIdentitySelfCheck {
                 && requests.isEmpty,
             "内容命令回执前切换没有保持 A，或提前销毁了来源编辑器"
         )
+        store.noteEditorCommand = nil
         store.noteEditorCommandRejected(pendingCommand, documentID: noteA.id)
         try check(
             store.activeNoteItemID == noteA.id
