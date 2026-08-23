@@ -15187,7 +15187,7 @@ final class WorkspaceStore: ObservableObject {
                     proposal,
                     memoryID,
                     scope,
-                    String(text.prefix(500)),
+                    text,
                     String(evidence.prefix(400)),
                     proposal.origin == .observed ? .agentInference : proposal.origin
                 )
@@ -15622,7 +15622,6 @@ final class WorkspaceStore: ObservableObject {
             activeCourseRemovalTokens[$0] == nil
         }) ?? true,
         !text.isEmpty,
-              text.count <= 500,
               let stateIndex = learningMemoryStateIndex(for: scope, createIfMissing: false),
               let entryIndex = learningMemoryStates[stateIndex].entries.firstIndex(where: {
                   $0.id == memoryID
@@ -16735,16 +16734,11 @@ final class WorkspaceStore: ObservableObject {
                 lastAgentFailureKind = kind
                 lastFailedAgentQuestion = question
             }
-            let failureText: String
-            if error is NativeAgentResourcesError {
-                failureText = NativeAgentResourcesError.agentComponentsIncompleteMessage
-            } else {
-                failureText = kind.userMessage(
-                    language: interfaceLanguage,
-                    userFacingDetail: Self.userFacingAgentFailureDetail(for: error),
-                    draftPreserved: true
-                )
-            }
+            let failureText = Self.agentFailureMessage(
+                for: error,
+                kind: kind,
+                language: interfaceLanguage
+            )
             if let replyMessageID {
                 interruptAgentReply(
                     requestID: requestID,

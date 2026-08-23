@@ -222,6 +222,23 @@ extension WorkspaceStore {
             }
         )
     }
+    static func agentFailureMessage(
+        for error: Error,
+        kind: AgentFailureKind,
+        language: WeiBeiInterfaceLanguage
+    ) -> String {
+        if error is NativeAgentResourcesError {
+            return language.text(
+                NativeAgentResourcesError.agentComponentsIncompleteMessage,
+                "Agent components are incomplete, so the Agent cannot start. Repair or reinstall WeiBei."
+            )
+        }
+        return kind.userMessage(
+            language: language,
+            userFacingDetail: userFacingAgentFailureDetail(for: error),
+            draftPreserved: true
+        )
+    }
 }
 
 @MainActor

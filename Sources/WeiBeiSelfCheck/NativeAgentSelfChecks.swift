@@ -433,8 +433,8 @@ private func checkEvalSetLunaLow() throws {
         "eval item 09 locks the preview-write phrasing"
     )
     try nativeRequire(
-        (item09?["expect"] as? String)?.contains("weibei_update_learning_memory") == true,
-        "eval item 09 requires calling the write tool"
+        (item09?["expect"] as? String)?.contains("不得调用 weibei_update_learning_memory") == true,
+        "eval item 09 respects preview-before-write"
     )
 }
 
@@ -468,12 +468,9 @@ private func checkMemoryPreviewWriteContract() throws {
         .appendingPathComponent("Sources/WeiBeiCore/AgentResources/system.md")
     let system = try String(contentsOf: url, encoding: .utf8)
     try nativeRequire(
-        system.contains("记下进度，但先给我看怎么写、不要直接改记忆"),
-        "system.md keeps the acceptance sentence as a demonstration"
-    )
-    try nativeRequire(
-        system.contains("weibei_update_learning_memory"),
-        "system.md demonstration calls the write tool"
+        system.contains("记下进度，但先给我看怎么写、不要直接改记忆")
+            && system.contains("不得调用写入工具"),
+        "system.md respects explicit preview-before-write"
     )
     try nativeRequire(
         !system.contains("`weibei_learning_memory`") && !system.contains("`weibei_learning_update`"),
@@ -497,10 +494,38 @@ private func checkMemoryPreviewWriteContract() throws {
         "system.md forbids empty and invented memory IDs"
     )
     try nativeRequire(
-        writeTool?.description.contains("不要直接改") == true
+        writeTool?.description.contains("不要直接修改") == true
+            && writeTool?.description.contains("不得调用") == true
             && writeTool?.description.contains("weibei_read_learning_memory") == true
             && writeTool?.description.contains("不要传空字符串") == true,
-        "write tool says preview-write phrasing still requires calling it and forbids empty IDs"
+        "write tool respects preview-before-write and forbids empty IDs"
+    )
+
+    let fullText = String(repeating: "这段学习记忆需要完整进入 Agent 上下文。", count: 80)
+    let envelope = StudyAgentContextEnvelope(
+        request: StudyAgentRequest(
+            purpose: .conversation,
+            question: "继续学习",
+            materialTitle: "",
+            materialText: "",
+            noteTitle: "",
+            noteText: "",
+            learningContext: StudyAgentLearningContext(
+                memories: [
+                    LearningMemoryEntry(
+                        kind: .summary,
+                        text: fullText,
+                        evidence: "[用户：本轮] 保留全文",
+                        origin: .userStatement
+                    ),
+                ]
+            ),
+            contextRevision: "full-memory"
+        )
+    )
+    try nativeRequire(
+        envelope.learning.memories.first?.text == fullText,
+        "Agent context preserves the full learning memory"
     )
 }
 

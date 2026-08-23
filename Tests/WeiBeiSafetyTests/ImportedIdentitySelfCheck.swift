@@ -18,7 +18,7 @@ enum ImportedIdentitySelfCheck {
         try offlineLegacyPathMigratesWhenItReturns()
         try legacyChatScopesMigrateOnceAndPersist()
         try failedLearningMemoryMigrationKeepsLegacySnapshotRecoverable()
-        try learningMemoryEditsRejectTruncationAndRetrySave()
+        try learningMemoryEditsPreserveFullTextAndRetrySave()
         try courseResumePointRestoresOneAtomicLearningScene()
     }
 
@@ -88,6 +88,24 @@ enum ImportedIdentitySelfCheck {
             throw CheckError.failed(
                 "魏碑生成的可操作 Chat 状态没有进入安全失败气泡"
             )
+        }
+
+        let resourceFailure = NativeAgentResourcesError.missing("system_prompt")
+        let chineseResourceMessage = WorkspaceStore.agentFailureMessage(
+            for: resourceFailure,
+            kind: .generic,
+            language: .chinese
+        )
+        let englishResourceMessage = WorkspaceStore.agentFailureMessage(
+            for: resourceFailure,
+            kind: .generic,
+            language: .english
+        )
+        guard chineseResourceMessage == "Agent 组件不完整，无法启动；请修复或重装魏碑",
+              englishResourceMessage == "Agent components are incomplete, so the Agent cannot start. Repair or reinstall WeiBei.",
+              !englishResourceMessage.contains("组件"),
+              !englishResourceMessage.contains("system.md") else {
+            throw CheckError.failed("Agent 组件错误没有遵循当前界面语言或泄露了资源细节")
         }
     }
 
@@ -1009,7 +1027,7 @@ enum ImportedIdentitySelfCheck {
     }
 
     @MainActor
-    private static func learningMemoryEditsRejectTruncationAndRetrySave() throws {
+    private static func learningMemoryEditsPreserveFullTextAndRetrySave() throws {
         let fixture = try WorkspaceFixture(name: "learning-memory-edit-save")
         defer { fixture.remove() }
 
@@ -1033,7 +1051,7 @@ enum ImportedIdentitySelfCheck {
             )
         )
 
-        var shouldFail = true
+        var shouldFail = false
         let store = WorkspaceStore(
             workspaceDirectory: fixture.workspaceDirectory,
             workspaceSnapshotWriter: { data, url in
@@ -1044,18 +1062,22 @@ enum ImportedIdentitySelfCheck {
             },
             selectionAskThreadDefaults: fixture.selectionAskThreadDefaults
         )
-        let overlong = String(repeating: "字", count: 501)
+        let fullText = String(repeating: "这段学习记忆需要完整保留。", count: 80)
+        let savedFullText = store.updateLearningMemory(
+            memory.id,
+            in: scope,
+            kind: .progress,
+            text: fullText
+        )
+        let fullTextSnapshot = try fixture.readSnapshot()
         try check(
-            !store.updateLearningMemory(
-                memory.id,
-                in: scope,
-                kind: .progress,
-                text: overlong
-            )
-                && store.learningMemoryEntries(in: scope).first?.text == memory.text,
-            "用户学习记忆超过 500 字时被静默截断"
+            savedFullText
+                && store.learningMemoryEntries(in: scope).first?.text == fullText
+                && fullTextSnapshot.learningMemoryStates?.first?.entries.first?.text == fullText,
+            "用户学习记忆没有完整保存全文"
         )
 
+        shouldFail = true
         let editedText = "已完成第一轮复习"
         try check(
             !store.updateLearningMemory(
@@ -1069,7 +1091,7 @@ enum ImportedIdentitySelfCheck {
         )
         let snapshotAfterFailure = try fixture.readSnapshot()
         try check(
-            snapshotAfterFailure.learningMemoryStates?.first?.entries.first?.text == memory.text,
+            snapshotAfterFailure.learningMemoryStates?.first?.entries.first?.text == fullText,
             "学习记忆保存失败破坏了旧快照"
         )
 

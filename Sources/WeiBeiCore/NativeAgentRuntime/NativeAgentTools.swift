@@ -643,7 +643,7 @@ public enum NativeBuiltinTools {
     private static var learningMemory: NativeToolDefinition {
         NativeToolDefinition(
             name: "weibei_read_learning_memory",
-            description: "只读取本课程学习记忆和上次位置，不会写入或改变任何内容。每条记忆都带 memoryID。更新已有记忆时把这个 memoryID 原样抄到 weibei_update_learning_memory；新建不要自己编 ID。用户要求记下、记住或更新进度时不要调用本工具，改用 weibei_update_learning_memory。返回里的 contextRevision 必须原样回传给写入类工具。",
+            description: "只读取本课程学习记忆和上次位置，不会写入或改变任何内容。每条记忆都带 memoryID。更新已有记忆时把这个 memoryID 原样抄到 weibei_update_learning_memory；新建不要自己编 ID。用户明确要求先看拟写内容或不要修改记忆时，不得调用写入工具；其余明确要求记下、记住或更新进度时改用 weibei_update_learning_memory。返回里的 contextRevision 必须原样回传给写入类工具。",
             permission: .read,
             schema: NativeJSONSchema(["type": "object", "properties": [:]]),
             execute: { _, context in
@@ -677,7 +677,7 @@ public enum NativeBuiltinTools {
     private static var learningUpdate: NativeToolDefinition {
         NativeToolDefinition(
             name: "weibei_update_learning_memory",
-            description: "记录或更新本课程学习记忆的唯一入口。读取请用 weibei_read_learning_memory。memoryID 只从读取结果或上次写成功回执抄写，不要自己编，不要传空字符串；新建省略该字段，魏碑会分配 id 并在回执里返回。用户要求记下/记住/更新进度或掌握情况时必须调用；即使用户说先看看怎么写、不要直接改，也仍要调用，写入后在回答里逐条展示内容。contextRevision 必须原样回传。userStatement 的 evidence 必须以「[用户：本轮]」开头并带上用户原话。",
+            description: "记录或更新本课程学习记忆的唯一入口。读取请用 weibei_read_learning_memory。memoryID 只从读取结果或上次写成功回执抄写，不要自己编，不要传空字符串；新建省略该字段，魏碑会分配 id 并在回执里返回。用户明确要求先看拟写内容、不要直接修改或等待确认时不得调用；只展示建议，确认后再写入。其余明确要求记下/记住/更新进度或掌握情况时调用。contextRevision 必须原样回传。userStatement 的 evidence 必须以「[用户：本轮]」开头并带上用户原话。",
             permission: .writeConfirm,
             schema: NativeJSONSchema([
                 "type": "object",
