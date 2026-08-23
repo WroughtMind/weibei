@@ -989,16 +989,12 @@ public enum NativeBuiltinTools {
                 let result = try await handler(request)
                 let data = try JSONEncoder().encode(result)
                 let text = String(data: data, encoding: .utf8) ?? "{}"
-                var details: [String: Any] = [
-                    "kind": name.replacingOccurrences(of: "weibei_", with: ""),
-                    "contextRevision": context.request.contextRevision,
-                ]
-                if name == "weibei_web_open", let url = string(arguments["url"]) {
-                    details["requestedURL"] = url
-                }
                 return NativeToolExecutionResult(
                     text: text,
-                    details: details
+                    details: [
+                        "kind": name.replacingOccurrences(of: "weibei_", with: ""),
+                        "contextRevision": context.request.contextRevision,
+                    ]
                 )
             }
         )
