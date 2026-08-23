@@ -101,13 +101,6 @@ final class OneShotFileReplacement: @unchecked Sendable {
 }
 
 
-if ProcessInfo.processInfo.environment["WEIBEI_PI_TERMINAL_SELF_CHECK_ONLY"] == "1" {
-    try await runPiTerminalRuntimeSelfChecks()
-    print("WeiBei PI terminal runtime self-check passed")
-    exit(0)
-}
-
-try runPiAgentSelfChecks()
 try runNativeAgentSelfChecks()
 checkCourseLibraryVolatility()
 checkUnavailableCourseUnregister()

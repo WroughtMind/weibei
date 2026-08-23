@@ -670,7 +670,6 @@ final class WorkspaceStore: ObservableObject {
             () throws -> Void
         ) throws -> Void
     let selectionAskThreadDefaults: UserDefaults
-    let piRuntime: PiAgentRuntime
     let courseDocumentSearchIndex: CourseDocumentSearchIndex
     private var activeAgentRequestID: UUID?
     private var activeAgentReplyMessageID: UUID?
@@ -973,7 +972,6 @@ final class WorkspaceStore: ObservableObject {
         ), let persistedMotionPreference = WeiBeiMotionPreference(rawValue: motionPreferenceRaw) {
             motionPreference = persistedMotionPreference
         }
-        piRuntime = PiAgentRuntime(runtimeDirectory: folder.appendingPathComponent("AgentRuntime", isDirectory: true))
         let courseIndexDirectory = folder.appendingPathComponent("CourseIndex", isDirectory: true)
         Self.removeLegacyCourseIndex(in: courseIndexDirectory)
         courseDocumentSearchIndex = CourseDocumentSearchIndex(
@@ -8631,17 +8629,6 @@ final class WorkspaceStore: ObservableObject {
         }
         agentDraftsBySessionID.removeValue(forKey: id)
         studySessions.remove(at: index)
-        let runtime = piRuntime
-        Task { @MainActor [weak self] in
-            do {
-                try await runtime.deleteSession(id)
-            } catch {
-                if let __wsErr = self?.ui(
-                    "Chat 已删除，但对应的 Pi 运行状态清理失败：\(error.localizedDescription)",
-                    "The Chat was deleted, but its Pi runtime state could not be removed: \(error.localizedDescription)"
-                ) { self?.reportWorkspaceSaveFailure(__wsErr) }
-            }
-        }
         if deletingActiveSession {
             activeStudySessionID = nil
             messages = []
@@ -16707,7 +16694,7 @@ final class WorkspaceStore: ObservableObject {
             )
             // Durable reply before request finish; save errors must not hide it.
             _ = await flushPendingWorkspaceSaveAsync()
-        } catch PiAgentRuntimeError.cancelled, is CancellationError {
+        } catch is CancellationError {
             guard activeAgentRequestID == requestID else { return }
             if let replyMessageID {
                 interruptAgentReply(
@@ -16991,22 +16978,10 @@ final class WorkspaceStore: ObservableObject {
     }
 
     func shutdownAgentRuntime() {
-        let span = WeiBeiPerf.begin("pi.shutdown")
+        let span = WeiBeiPerf.begin("agent.shutdown")
         agentRequestTask?.cancel()
         agentStopTask?.cancel()
-        let runtime = piRuntime
-        let completion = DispatchSemaphore(value: 0)
-        Task.detached {
-            await runtime.shutdown()
-            completion.signal()
-        }
-        let result = completion.wait(timeout: .now() + 1)
-        WeiBeiPerf.end(
-            span,
-            extra: result == .success
-                ? "outcome=completed"
-                : "outcome=timeout"
-        )
+        WeiBeiPerf.end(span, extra: "outcome=completed")
     }
 
     func applyAgentProgress(

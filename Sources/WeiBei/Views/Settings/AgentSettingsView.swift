@@ -281,7 +281,6 @@ extension SettingsView {
                         .buttonStyle(WeiBeiTextActionButtonStyle())
                     }
                 }
-                piManagementPrompt
                 if let progress = oauthService.statusMessage,
                     oauthService.isLoggingIn,
                     oauthService.pendingPrompt == nil {
@@ -305,7 +304,6 @@ extension SettingsView {
                 type: .apiKey
             )
             VStack(alignment: .trailing, spacing: 8) {
-                piManagementPrompt
                 HStack(spacing: 8) {
                     if activeAPICredentialIsConfigured {
                         settingsPill(
@@ -392,7 +390,6 @@ extension SettingsView {
                             .buttonStyle(WeiBeiTextActionButtonStyle())
                     }
                 }
-                piManagementPrompt
                 if let progress = oauthService.statusMessage,
                     oauthService.isLoggingIn,
                     oauthService.pendingPrompt == nil {
@@ -411,7 +408,7 @@ extension SettingsView {
         activePiAuthTypes.contains(.oauth) ? store.agentProviderID : nil
     }
 
-    private var activePiAuthTypes: [PiCredentialType] {
+    private var activePiAuthTypes: [AgentCredentialType] {
         piAuthTypes(for: store.agentProviderID)
     }
 
@@ -419,73 +416,12 @@ extension SettingsView {
         AgentProviderReadiness.effectiveAuthMethod(for: store)
     }
 
-    private func piAuthTypes(for provider: AgentProviderID) -> [PiCredentialType] {
+    private func piAuthTypes(for provider: AgentProviderID) -> [AgentCredentialType] {
         AgentProviderReadiness.piAuthTypes(for: provider, store: store)
     }
 
     /// The runtime's step question, styled like a quiet right-aligned field label —
     /// not a warning note — above a control that matches the rest of the card.
-    @ViewBuilder
-    private var piManagementPrompt: some View {
-        if let prompt = oauthService.pendingPrompt {
-            VStack(alignment: .trailing, spacing: 8) {
-                Text(prompt.message)
-                    .weiBeiText(12)
-                    .foregroundStyle(WeiBeiTheme.secondaryInk)
-                    .multilineTextAlignment(.trailing)
-                    .fixedSize(horizontal: false, vertical: true)
-                HStack(spacing: 8) {
-                    if prompt.type == .select {
-                        compactMenu(promptSelectionLabel(prompt)) {
-                            ForEach(prompt.options ?? [], id: \.id) { option in
-                                Button(option.label) { oauthService.promptValue = option.id }
-                            }
-                        }
-                    } else if prompt.type == .secret {
-                        SecureField(
-                            "",
-                            text: $oauthService.promptValue,
-                            prompt: Text(prompt.placeholder ?? "")
-                                                                .foregroundStyle(WeiBeiTheme.placeholderInk)
-                        )
-                        .textFieldStyle(.plain)
-                        .weiBeiText(13)
-                        .foregroundColor(WeiBeiTheme.ink)
-                        .weiBeiText(13)
-                        .weibeiInputSurface(active: true, height: 38)
-                        .frame(width: SettingsView.controlWidth)
-                        .onSubmit { oauthService.submitPrompt() }
-                    } else {
-                        TextField(
-                            "",
-                            text: $oauthService.promptValue,
-                            prompt: Text(prompt.placeholder ?? "")
-                                                                .foregroundStyle(WeiBeiTheme.placeholderInk)
-                        )
-                        .textFieldStyle(.plain)
-                        .weiBeiText(13)
-                        .foregroundColor(WeiBeiTheme.ink)
-                        .weiBeiText(13)
-                        .weibeiInputSurface(active: true, height: 38)
-                        .frame(width: SettingsView.controlWidth)
-                        .onSubmit { oauthService.submitPrompt() }
-                    }
-                    Button(store.ui("继续", "Continue")) { oauthService.submitPrompt() }
-                        .buttonStyle(WeiBeiTextActionButtonStyle(active: !oauthService.promptValue.isEmpty))
-                }
-            }
-            .transition(.opacity)
-        }
-    }
-
-    private func promptSelectionLabel(_ prompt: PiManagementPrompt) -> String {
-        let options = prompt.options ?? []
-        if let selected = options.first(where: { $0.id == oauthService.promptValue }) {
-            return selected.label
-        }
-        return options.first?.label ?? prompt.message
-    }
-
     private func saveActiveAPIKey() {
         let key = apiKeyDraft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !key.isEmpty, !oauthService.isLoggingIn else { return }

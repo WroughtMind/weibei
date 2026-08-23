@@ -858,22 +858,6 @@ public enum AgentFailureKind: String, Codable, Equatable, Sendable {
         if error is CancellationError {
             return .cancelled
         }
-        if let pi = error as? PiAgentRuntimeError {
-            switch pi {
-            case .cancelled:
-                return .cancelled
-            case .commandTimedOut:
-                return .timedOut
-            case let .agentFailed(message):
-                return classifyMessage(message)
-            case let .inFlightFailed(message):
-                return classifyMessage(message)
-            case let .protocolFailure(message):
-                return classifyMessage(message)
-            case .unavailable, .resourcesMissing, .busy, .launchFailed, .commandRejected:
-                return .generic
-            }
-        }
         let ns = error as NSError
         if ns.domain == NSURLErrorDomain {
             switch ns.code {
