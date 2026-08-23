@@ -2,14 +2,23 @@ import XCTest
 @testable import WeiBei
 
 final class NoteEditingSessionTests: XCTestCase {
-    func testEditorRecoveryLimitsTwoRetriesPerMinute() {
-        var failures: [Date] = []
-        let start = Date(timeIntervalSince1970: 0)
+    func testEditorRecoveryStopsUntilManualRetryStartsANewRound() {
+        var state = EditorRecoveryState.idle
 
-        XCTAssertTrue(shouldAutomaticallyRecoverEditor(failureDates: &failures, now: start))
-        XCTAssertTrue(shouldAutomaticallyRecoverEditor(failureDates: &failures, now: start.addingTimeInterval(10)))
-        XCTAssertFalse(shouldAutomaticallyRecoverEditor(failureDates: &failures, now: start.addingTimeInterval(20)))
-        XCTAssertTrue(shouldAutomaticallyRecoverEditor(failureDates: &failures, now: start.addingTimeInterval(81)))
+        XCTAssertTrue(state.renderFailed())
+        XCTAssertEqual(state, .rebuilding)
+        XCTAssertFalse(state.renderFailed())
+        XCTAssertEqual(state, .stopped)
+
+        state.renderBecameReady()
+        XCTAssertEqual(state, .stopped)
+
+        state.retryManually()
+        XCTAssertEqual(state, .idle)
+        state.renderBecameReady()
+        XCTAssertEqual(state, .idle)
+        XCTAssertTrue(state.renderFailed())
+        XCTAssertEqual(state, .rebuilding)
     }
 
     @MainActor

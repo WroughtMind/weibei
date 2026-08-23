@@ -397,8 +397,7 @@ struct NotePaneView: View {
     @State private var noteTabTitleDraft = ""
     @State private var editingNoteTabTitle = false
     @State private var editorRecoveryGeneration = 0
-    @State private var editorRecoveryFailureDates: [Date] = []
-    @State private var editorRecoveryStopped = false
+    @State private var editorRecoveryState = EditorRecoveryState.idle
     @State private var noteOutline: [NoteEditorOutlineItem] = []
     @State private var activeNoteRailID: String?
     var showsPaneHeader = true
@@ -477,8 +476,7 @@ struct NotePaneView: View {
         }
         .onChange(of: store.activeNoteItemID) { _, _ in
             editingNoteTabTitle = false
-            editorRecoveryFailureDates = []
-            editorRecoveryStopped = false
+            editorRecoveryState = .idle
             noteOutline = []
             activeNoteRailID = nil
         }
@@ -642,7 +640,7 @@ struct NotePaneView: View {
                     .accessibilityLabel(Text(store.ui("正在载入笔记", "Loading note")))
             } else {
                 // 笔记固定为所见即所得（rich）写作，源码 / 对照模式入口已全部移除。
-                if editorRecoveryStopped {
+                if editorRecoveryState == .stopped {
                     editorRecoveryFailure
                 } else {
                     richEditor
@@ -661,7 +659,7 @@ struct NotePaneView: View {
                 .foregroundStyle(WeiBeiTheme.ink)
                 .multilineTextAlignment(.center)
             Button(store.ui("重试编辑器", "Retry Editor")) {
-                editorRecoveryStopped = false
+                editorRecoveryState.retryManually()
                 editorRecoveryGeneration &+= 1
             }
             .buttonStyle(.bordered)
@@ -705,7 +703,8 @@ struct NotePaneView: View {
     }
 
     private var richEditor: some View {
-        RichMarkdownEditorView(documentID: store.activeNoteEditorDocumentID, markdown: store.noteText, command: Binding(get: {
+        let recoveryGeneration = editorRecoveryGeneration
+        return RichMarkdownEditorView(documentID: store.activeNoteEditorDocumentID, markdown: store.noteText, command: Binding(get: {
             store.noteEditorCommand
         }, set: { value in
             store.noteEditorCommand = value
@@ -741,15 +740,15 @@ struct NotePaneView: View {
                 store.noteEditingSession.requestSnapshot()
             }
             return store.handleAppShortcut(key: key, modifiers: modifiers)
+        }, onRenderReady: {
+            guard recoveryGeneration == editorRecoveryGeneration else { return }
+            editorRecoveryState.renderBecameReady()
         }, onRenderFailure: {
+            guard recoveryGeneration == editorRecoveryGeneration else { return }
             store.noteEditingSession.invalidateBridgeGeneration()
             Task { await store.reconcileActiveNoteEditorWithBackingFile() }
-            if shouldAutomaticallyRecoverEditor(
-                failureDates: &editorRecoveryFailureDates
-            ) {
+            if editorRecoveryState.renderFailed() {
                 editorRecoveryGeneration &+= 1
-            } else {
-                editorRecoveryStopped = true
             }
         })
         .id("\(store.activeNoteEditorDocumentID):\(editorRecoveryGeneration)")
@@ -758,13 +757,28 @@ struct NotePaneView: View {
 
 }
 
-func shouldAutomaticallyRecoverEditor(
-    failureDates: inout [Date],
-    now: Date = Date()
-) -> Bool {
-    failureDates.removeAll { now.timeIntervalSince($0) >= 60 }
-    failureDates.append(now)
-    return failureDates.count <= 2
+enum EditorRecoveryState: Equatable {
+    case idle
+    case rebuilding
+    case stopped
+
+    mutating func renderFailed() -> Bool {
+        guard self == .idle else {
+            self = .stopped
+            return false
+        }
+        self = .rebuilding
+        return true
+    }
+
+    mutating func renderBecameReady() {
+        guard self != .stopped else { return }
+        self = .idle
+    }
+
+    mutating func retryManually() {
+        self = .idle
+    }
 }
 
 private struct NotebookCreationPanel: View {
