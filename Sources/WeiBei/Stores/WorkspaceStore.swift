@@ -354,8 +354,8 @@ final class WorkspaceStore: ObservableObject {
     @Published private(set) var isStoppingAgent = false
     @Published private(set) var isAgentSwitchConfirmationPresented = false
     let agentStreaming = AgentStreamingState()
-    private var agentStreamingUsesReducedMotion = false
-    private lazy var agentStreamingDisplayPump = AgentStreamingDisplayPump(hooks: .init(
+    var agentStreamingUsesReducedMotion = false
+    lazy var agentStreamingDisplayPump = AgentStreamingDisplayPump(hooks: .init(
         append: { [weak self] chunk in self?.agentStreaming.text.append(chunk) },
         replace: { [weak self] text in self?.agentStreaming.text = text },
         didDrain: { [weak self] in self?.finishAgentStreamingDisplay() }
@@ -681,13 +681,13 @@ final class WorkspaceStore: ObservableObject {
     let selectionAskThreadDefaults: UserDefaults
     let piRuntime: PiAgentRuntime
     let courseDocumentSearchIndex: CourseDocumentSearchIndex
-    private var activeAgentRequestID: UUID?
-    private var activeAgentReplyMessageID: UUID?
-    private var latestAgentStreamingText = ""
+    var activeAgentRequestID: UUID?
+    var activeAgentReplyMessageID: UUID?
+    var latestAgentStreamingText = ""
     private var lastAgentStreamingPublishNanoseconds: UInt64 = 0
-    private var agentReplyIDsThatDisplayedStreamingText: Set<UUID> = []
+    var agentReplyIDsThatDisplayedStreamingText: Set<UUID> = []
     private var agentVisualizationIDsUpdatingHistory: Set<String> = []
-    private var activeAgentReplyChatID: UUID?
+    var activeAgentReplyChatID: UUID?
     private var agentRequestTask: Task<Void, Never>?
 #if DEBUG
     private var capturesAgentRequestForSelfCheck = false
@@ -9933,50 +9933,6 @@ final class WorkspaceStore: ObservableObject {
         }
     }
 
-    var canCopyReference: Bool {
-        hasSelectionAttachments || selectionContext != nil || hasSelectedMaterial || activeNoteItem?.isNotebookNote == true
-    }
-
-    var copyReferenceActionTitle: String {
-        if hasSelectionAttachments || selectionContext != nil { return ui("复制选区引用", "Copy selection reference") }
-        if hasSelectedMaterial { return ui("复制资料引用", "Copy material reference") }
-        return ui("复制笔记引用", "Copy note reference")
-    }
-
-    var sendAgentActionTitle: String {
-        isAgentRunningInActiveChat
-            ? ui("停止回答", "Stop response")
-            : ui("发送问题", "Send question")
-    }
-
-    var isAgentRunningInActiveChat: Bool {
-        isAskingAgent && activeAgentReplyChatID == activeStudySessionID
-    }
-
-    var runningAgentChatTitle: String {
-        guard let chatID = activeAgentReplyChatID,
-              let session = studySessions.first(where: { $0.id == chatID }) else {
-            return ui("另一条 Chat", "another Chat")
-        }
-        return session.title
-    }
-
-    var hasPersistedGeneratingAgentReply: Bool {
-        messages.contains { $0.role == .assistant && $0.origin?.requestID == activeAgentRequestID }
-    }
-
-    func agentDisplayText(for message: AgentMessage) -> String {
-        guard message.id == activeAgentReplyMessageID,
-              message.completionState == .generating else {
-            return message.text
-        }
-        return latestAgentStreamingText
-    }
-
-    func agentReplyDisplayedStreamingText(_ message: AgentMessage) -> Bool {
-        agentReplyIDsThatDisplayedStreamingText.contains(message.id)
-    }
-
     /// The UI draft stays transient while tokens arrive. Durability boundaries
     /// checkpoint its latest cumulative snapshot once, before the workspace is written.
     private func checkpointActiveAgentStreamingText() {
@@ -11951,42 +11907,6 @@ final class WorkspaceStore: ObservableObject {
             // primary agent pane / immersive conversation counts as formal chat.
             return false
         }
-    }
-
-    private var isAgentStreamingSurfaceVisible: Bool {
-        hasPrimaryConversationPaneVisible || agentSurface == .selectionFloat
-    }
-
-    private func finishAgentStreamingDisplay() {
-        agentStreaming.finishDisplaying()
-        latestAgentStreamingText = ""
-    }
-
-    func settleAgentStreamingDisplayImmediately() {
-        guard agentStreaming.displayingMessageID != nil else { return }
-        agentStreamingDisplayPump.settleImmediately(
-            cumulativeText: latestAgentStreamingText
-        )
-    }
-
-    func landAgentStreamingDisplayImmediately() {
-        guard agentStreaming.displayingMessageID != nil else { return }
-        agentStreamingDisplayPump.replaceImmediately(
-            cumulativeText: latestAgentStreamingText
-        )
-    }
-
-    func setAgentStreamingReduceMotion(_ enabled: Bool) {
-        agentStreamingUsesReducedMotion = enabled
-        guard enabled, agentStreaming.displayingMessageID != nil else { return }
-        agentStreamingDisplayPump.replaceImmediately(
-            cumulativeText: latestAgentStreamingText
-        )
-    }
-
-    private func landAgentStreamingDisplayIfHidden() {
-        guard !isAgentStreamingSurfaceVisible else { return }
-        landAgentStreamingDisplayImmediately()
     }
 
     var canShowSelectionPromptSurface: Bool {
