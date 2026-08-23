@@ -1591,8 +1591,8 @@ final class WorkspaceStore: ObservableObject {
         )
         if !legacyOrganization.errors.isEmpty {
             showImportantOperationError(ui(
-                "已有 \(legacyOrganization.migrated) 份旧资料完成整理；另有 \(legacyOrganization.errors.count) 份未完成：\(legacyOrganization.errors.first ?? "")",
-                "Organized \(legacyOrganization.migrated) legacy item(s); \(legacyOrganization.errors.count) remain: \(legacyOrganization.errors.first ?? "")"
+                "已有 \(legacyOrganization.migrated) 份旧资料完成整理；另有 \(legacyOrganization.errors.count) 份未完成，原内容仍保留。请确认资料库可写后重试。",
+                "Organized \(legacyOrganization.migrated) legacy item(s). \(legacyOrganization.errors.count) remain, and their original content is preserved. Make sure the library is writable, then try again."
             ))
         }
         courseDocumentSearchIndex.synchronize(allItems)
@@ -1662,9 +1662,12 @@ final class WorkspaceStore: ObservableObject {
                 resolvedCourseRootURLs[courseID] = created.root
                 courseRootUnavailableReasons.removeValue(forKey: courseID)
             } catch {
-                errors.append(
-                    "\(courses[index].title)：\(error.localizedDescription)"
+                recordCourseLibraryUIFailure(
+                    error,
+                    operation: "organize_legacy_course",
+                    path: libraryRoot
                 )
+                errors.append(courses[index].title)
             }
         }
         if !createdRoots.isEmpty,
@@ -1708,9 +1711,12 @@ final class WorkspaceStore: ObservableObject {
                 )
                 migrated += 1
             } catch {
-                errors.append(
-                    "\(displayTitle(for: item))：\(error.localizedDescription)"
+                recordCourseLibraryUIFailure(
+                    error,
+                    operation: "organize_legacy_item",
+                    path: item.url
                 )
+                errors.append(displayTitle(for: item))
             }
         }
         return (migrated, errors)
@@ -2246,8 +2252,15 @@ final class WorkspaceStore: ObservableObject {
                 resolvedCourseRootURLs.removeValue(
                     forKey: course.id
                 )
-                courseRootUnavailableReasons[course.id] =
-                    error.localizedDescription
+                recordCourseLibraryUIFailure(
+                    error,
+                    operation: "adopt_course_manifest",
+                    path: canonicalRoot
+                )
+                courseRootUnavailableReasons[course.id] = ui(
+                    "课程文件夹已保留，但当前无法安全接入；魏碑没有覆盖其中内容。请修复或重新选择该课程文件夹。",
+                    "The course folder is preserved but cannot be connected safely. WeiBei did not overwrite its contents. Repair or re-select the course folder."
+                )
                 let scopeKey =
                     "course:\(course.id.uuidString)"
                 if let scopedURL =
@@ -3149,7 +3162,10 @@ final class WorkspaceStore: ObservableObject {
                             forKey: proposal.courseID
                         )
                         courseRootUnavailableReasons[proposal.courseID] =
-                            error.localizedDescription
+                            ui(
+                                "课程文件夹仍在原位置，但重新连接未完成。请重新选择该文件夹后再试。",
+                                "The course folder remains in its original location, but reconnection did not finish. Re-select the folder and try again."
+                            )
                     }
                     if activeCourseSecurityScopeOwnerTokens[scopeKey]
                             == rebindToken,
@@ -3197,8 +3213,15 @@ final class WorkspaceStore: ObservableObject {
                 resolvedCourseRootURLs.removeValue(
                     forKey: proposal.courseID
                 )
-                courseRootUnavailableReasons[proposal.courseID] =
-                    error.localizedDescription
+                recordCourseLibraryUIFailure(
+                    error,
+                    operation: "confirm_course_rebind",
+                    path: resolvedRoot
+                )
+                courseRootUnavailableReasons[proposal.courseID] = ui(
+                    "课程文件夹仍在原位置，但重新连接未完成。请重新选择该文件夹后再试。",
+                    "The course folder remains in its original location, but reconnection did not finish. Re-select the folder and try again."
+                )
             }
             if activeCourseSecurityScopeOwnerTokens[scopeKey]
                     == rebindToken,
@@ -6096,7 +6119,10 @@ final class WorkspaceStore: ObservableObject {
                     || courseLibraryRootIdentity != nil
                     || courseLibraryRootBookmarkData != nil {
             courseLibraryUnavailableReason = courseLibraryUnavailableReason
-                ?? CourseProjectRootError.bookmarkResolutionFailed.localizedDescription
+                ?? ui(
+                    "原资料库暂时无法连接；课程记录和文件仍在原位置。请重新选择原来的资料库。",
+                    "The original library could not be reconnected. Course records and files remain in their original location. Re-select the original library."
+                )
         }
 
         changed = restoreCourseReferencesInsideLibrary() || changed
@@ -6108,7 +6134,10 @@ final class WorkspaceStore: ObservableObject {
         guard let libraryRoot = courseLibraryRootURL else {
             for course in courses where course.sourceRootRelativePath != nil {
                 courseRootUnavailableReasons[course.id] = courseLibraryUnavailableReason
-                    ?? CourseProjectRootError.unavailableLibrary.localizedDescription
+                    ?? ui(
+                        "课程文件夹暂时不可用；文件仍在原位置。请重新选择原来的资料库。",
+                        "The course folder is temporarily unavailable. Files remain in their original location. Re-select the original library."
+                    )
             }
             return false
         }
@@ -6128,7 +6157,10 @@ final class WorkspaceStore: ObservableObject {
                     of: resolvedURL,
                     inside: libraryRoot
                   ) else {
-                courseRootUnavailableReasons[courses[index].id] = "课程文件夹当前不可用。"
+                courseRootUnavailableReasons[courses[index].id] = ui(
+                    "课程文件夹当前不可用；文件仍在原位置。请重新选择原来的资料库。",
+                    "The course folder is unavailable. Files remain in their original location. Re-select the original library."
+                )
                 continue
             }
             let courseID = courses[index].id
@@ -6139,7 +6171,15 @@ final class WorkspaceStore: ObservableObject {
                     mustBeInsideLibrary: true
                 )
             } catch {
-                courseRootUnavailableReasons[courseID] = error.localizedDescription
+                recordCourseLibraryUIFailure(
+                    error,
+                    operation: "validate_restored_course_root",
+                    path: resolvedURL
+                )
+                courseRootUnavailableReasons[courseID] = ui(
+                    "课程文件夹当前无法安全读取；魏碑没有修改其中内容。请重新选择原来的资料库。",
+                    "The course folder cannot be read safely. WeiBei did not modify its contents. Re-select the original library."
+                )
                 continue
             }
             resolvedCourseRootURLs[courseID] = resolvedURL
@@ -7362,6 +7402,48 @@ final class WorkspaceStore: ObservableObject {
         setCourseIDs(memberships, for: itemID)
     }
 
+    private func reportCourseRelationOperationFailure(
+        _ error: Error,
+        operation: String,
+        path: URL?,
+        item: StudyItem,
+        courseID: UUID,
+        shouldContainRelation: Bool
+    ) {
+        recordCourseLibraryUIFailure(
+            error,
+            operation: operation,
+            path: path
+        )
+        let relationMatches = courseIDs(for: item.id).contains(courseID)
+            == shouldContainRelation
+        let title = displayTitle(for: item)
+        let message: String
+        switch (shouldContainRelation, relationMatches) {
+        case (true, true):
+            message = ui(
+                "“\(title)”已加入目标课程，内容已保住；旧位置未清理完成。请恢复课程文件夹访问后重试清理。",
+                "“\(title)” was added to the target course and its content is safe, but the old location was not fully cleaned up. Restore access to the course folder, then retry the cleanup."
+            )
+        case (true, false):
+            message = ui(
+                "“\(title)”没有加入目标课程；原文件和课程关系保持不变。请恢复课程文件夹访问后重试。",
+                "“\(title)” was not added to the target course. The original file and course relations are unchanged. Restore access to the course folder, then try again."
+            )
+        case (false, true):
+            message = ui(
+                "“\(title)”已从课程移除，共享原件仍安全保留；旧课程入口未清理完成。请恢复课程文件夹访问后重试清理。",
+                "“\(title)” was removed from the course and the shared original is still safe, but the old course entry was not fully cleaned up. Restore access to the course folder, then retry the cleanup."
+            )
+        case (false, false):
+            message = ui(
+                "“\(title)”没有从课程移除；共享原件和课程关系保持不变。请恢复课程文件夹访问后重试。",
+                "“\(title)” was not removed from the course. The shared original and course relation are unchanged. Restore access to the course folder, then try again."
+            )
+        }
+        showImportantOperationError(message)
+    }
+
     func setCourseIDs(_ courseIDs: Set<UUID>, for itemID: String) {
         guard !activeItemFileMutationIDs.contains(itemID),
               let item = importedItems.first(where: { $0.id == itemID }) else {
@@ -7403,7 +7485,15 @@ final class WorkspaceStore: ObservableObject {
                         conflictResolution: resolution
                     )
                 } catch {
-                    self?.showImportantOperationError(error.localizedDescription)
+                    guard let self else { return }
+                    self.reportCourseRelationOperationFailure(
+                        error,
+                        operation: "move_common_item_into_course",
+                        path: sourceURL,
+                        item: item,
+                        courseID: courseID,
+                        shouldContainRelation: true
+                    )
                 }
             }
             return
@@ -7460,7 +7550,17 @@ final class WorkspaceStore: ObservableObject {
                         )
                     }
                 } catch {
-                    self?.showImportantOperationError(error.localizedDescription)
+                    guard let self else { return }
+                    self.reportCourseRelationOperationFailure(
+                        error,
+                        operation: movesOwnership
+                            ? "move_course_owned_item"
+                            : "share_course_owned_item",
+                        path: sourceURL,
+                        item: item,
+                        courseID: courseID,
+                        shouldContainRelation: true
+                    )
                 }
             }
             return
@@ -7494,7 +7594,27 @@ final class WorkspaceStore: ObservableObject {
                         conflictResolution: resolution
                     )
                 } catch {
-                    self?.showImportantOperationError(error.localizedDescription)
+                    guard let self else { return }
+                    self.recordCourseLibraryUIFailure(
+                        error,
+                        operation: "promote_course_item_to_common",
+                        path: sourceURL
+                    )
+                    let becameCommon = self.importedItems.first {
+                        $0.id == itemID
+                    }.map {
+                        if case .common = $0.storage { return true }
+                        return false
+                    } ?? false
+                    self.showImportantOperationError(becameCommon
+                        ? self.ui(
+                            "“\(self.displayTitle(for: item))”已移出本课程，通用原件安全保留；课程文件夹中的旧副本未清理完成。请确认资料库可访问后重试清理。",
+                            "“\(self.displayTitle(for: item))” was removed from this course and the common original is safe, but the old course copy was not fully cleaned up. Make sure the library is accessible, then retry the cleanup."
+                        )
+                        : self.ui(
+                            "“\(self.displayTitle(for: item))”没有移出本课程；原文件和课程关系保持不变。请确认资料库可访问后重试。",
+                            "“\(self.displayTitle(for: item))” was not removed from this course. The original file and course relation are unchanged. Make sure the library is accessible, then try again."
+                        ))
                 }
             }
             return
@@ -7523,7 +7643,15 @@ final class WorkspaceStore: ObservableObject {
                             conflictResolution: resolution
                         )
                     } catch {
-                        self?.showImportantOperationError(error.localizedDescription)
+                        guard let self else { return }
+                        self.reportCourseRelationOperationFailure(
+                            error,
+                            operation: "link_common_item_to_course",
+                            path: sourceURL,
+                            item: item,
+                            courseID: courseID,
+                            shouldContainRelation: true
+                        )
                     }
                 }
                 return
@@ -7536,7 +7664,15 @@ final class WorkspaceStore: ObservableObject {
                             fromCourseID: courseID
                         )
                     } catch {
-                        self?.showImportantOperationError(error.localizedDescription)
+                        guard let self else { return }
+                        self.reportCourseRelationOperationFailure(
+                            error,
+                            operation: "remove_shared_item_from_course",
+                            path: item.url,
+                            item: item,
+                            courseID: courseID,
+                            shouldContainRelation: false
+                        )
                     }
                 }
                 return
@@ -7609,9 +7745,10 @@ final class WorkspaceStore: ObservableObject {
         guard let item = importedItems.first(where: { $0.id == itemID }),
               !item.isSample,
               let sourceURL = item.url else {
-            showImportantOperationError(
-                ContentSourceRemovalError.itemUnavailable.localizedDescription
-            )
+            showImportantOperationError(ui(
+                "找不到这份内容的真实原文件；魏碑没有删除课程记录。请先重新连接资料库或在 Finder 中确认文件位置。",
+                "The original file could not be found. WeiBei did not delete the course record. Reconnect the library or confirm the file location in Finder."
+            ))
             return
         }
         let affectedCourses = courseIDs(for: itemID).compactMap {
@@ -7636,7 +7773,46 @@ final class WorkspaceStore: ObservableObject {
             do {
                 try await self?.moveItemSourceToTrash(itemID)
             } catch {
-                self?.showImportantOperationError(error.localizedDescription)
+                guard let self else { return }
+                self.recordCourseLibraryUIFailure(
+                    error,
+                    operation: "move_content_source_to_trash",
+                    path: sourceURL
+                )
+                let message: String
+                switch error as? ContentSourceRemovalError {
+                case .itemUnavailable:
+                    message = self.ui(
+                        "找不到这份内容的真实原文件；课程记录没有删除。请重新连接资料库或在 Finder 中确认文件位置。",
+                        "The original file could not be found, and the course record was not deleted. Reconnect the library or confirm the file location in Finder."
+                    )
+                case .sourceChanged:
+                    message = self.ui(
+                        "原文件在操作期间发生了变化；魏碑没有移动或覆盖它，课程关系保持不变。请核对文件后重试。",
+                        "The original file changed during the operation. WeiBei did not move or overwrite it, and course relations are unchanged. Check the file, then try again."
+                    )
+                case .trashMoveFailed:
+                    message = self.ui(
+                        "原文件没有成功移到废纸篓；魏碑已保留或恢复原文件，课程关系保持不变。请确认磁盘和废纸篓可用后重试。",
+                        "The original file was not moved to Trash. WeiBei kept or restored it, and course relations are unchanged. Make sure the disk and Trash are available, then try again."
+                    )
+                case .workspaceSaveFailed:
+                    message = self.ui(
+                        "删除结果没有保存；魏碑已把原文件恢复到原位置，课程记录保持不变。请确认资料库可写后重试。",
+                        "The deletion result was not saved. WeiBei restored the original file to its previous location, and the course record is unchanged. Make sure the library is writable, then try again."
+                    )
+                case .pendingChangesUnsaved:
+                    message = self.ui(
+                        "还有更改尚未写入磁盘；魏碑没有移动原文件。请先处理保存提示，再重试删除。",
+                        "Some changes have not been written to disk. WeiBei did not move the original file. Resolve the save warning, then try deleting again."
+                    )
+                case nil:
+                    message = self.ui(
+                        "原文件没有移到废纸篓，课程记录保持不变。请确认资料库和废纸篓可用后重试。",
+                        "The original file was not moved to Trash, and the course record is unchanged. Make sure the library and Trash are available, then try again."
+                    )
+                }
+                self.showImportantOperationError(message)
             }
         }
     }
@@ -9074,13 +9250,16 @@ final class WorkspaceStore: ObservableObject {
                 return
             }
         } catch {
+            WeiBeiLog.workspace.error(
+                "code=agent_note_action_read_failed action=write item=\(target.id, privacy: .private) underlying=\(WeiBeiLog.code(error), privacy: .public) detail=\(WeiBeiLog.truncated(error.localizedDescription), privacy: .private)"
+            )
             await failAgentReplyAction(
                 messageID: messageID,
                 actionID: action.id,
                 chatID: snapshot.chatID,
                 message: ui(
-                    "无法读取目标笔记：\(error.localizedDescription)",
-                    "Could not read the target note: \(error.localizedDescription)"
+                    "没有读取到目标笔记，因此没有写入；原笔记和这条建议都已保留。请确认笔记文件可访问后重试。",
+                    "The target note could not be read, so nothing was written. The original note and this proposal are both preserved. Make sure the note file is accessible, then try again."
                 )
             )
         }
@@ -9297,13 +9476,16 @@ final class WorkspaceStore: ObservableObject {
                 return
             }
         } catch {
+            WeiBeiLog.workspace.error(
+                "code=agent_note_action_read_failed action=undo item=\(target.id, privacy: .private) underlying=\(WeiBeiLog.code(error), privacy: .public) detail=\(WeiBeiLog.truncated(error.localizedDescription), privacy: .private)"
+            )
             await failAgentReplyAction(
                 messageID: messageID,
                 actionID: action.id,
                 chatID: snapshot.chatID,
                 message: ui(
-                    "撤销时无法读取目标笔记：\(error.localizedDescription)",
-                    "Could not read the note while undoing: \(error.localizedDescription)"
+                    "没有读取到目标笔记，因此没有执行撤销；当前笔记内容保持不变。请确认笔记文件可访问后重试。",
+                    "The target note could not be read, so the undo was not performed. The current note content is unchanged. Make sure the note file is accessible, then try again."
                 )
             )
         }
@@ -10294,9 +10476,14 @@ final class WorkspaceStore: ObservableObject {
                     )
                     imported.append(result.item)
                 } catch {
+                    recordCourseLibraryUIFailure(
+                        error,
+                        operation: "import_file_into_course",
+                        path: sourceURL
+                    )
                     showImportantOperationError(ui(
-                        "“\(sourceURL.lastPathComponent)”未能加入课程：\(error.localizedDescription)",
-                        "Could not add “\(sourceURL.lastPathComponent)” to the course: \(error.localizedDescription)"
+                        "“\(sourceURL.lastPathComponent)”未能加入课程；原文件和课程现有内容保持不变。请确认文件可访问，若有同名文件请改名后重试。",
+                        "“\(sourceURL.lastPathComponent)” could not be added to the course. The original file and existing course content are unchanged. Make sure the file is accessible; if a same-named file exists, rename it and try again."
                     ))
                 }
             }
@@ -10874,9 +11061,14 @@ final class WorkspaceStore: ObservableObject {
             return result.item.id
         } catch {
             if presentsError {
+                recordCourseLibraryUIFailure(
+                    error,
+                    operation: "create_course_note",
+                    path: courseRootURL(for: courseID)
+                )
                 showImportantOperationError(ui(
-                    "无法创建课程笔记：\(error.localizedDescription)",
-                    "Could not create the course note: \(error.localizedDescription)"
+                    "课程笔记没有创建，现有笔记未被覆盖。请确认课程文件夹可写，或换一个笔记名后重试。",
+                    "The course note was not created, and existing notes were not overwritten. Make sure the course folder is writable, or choose another note name and try again."
                 ))
             }
             return nil
@@ -12339,7 +12531,10 @@ final class WorkspaceStore: ObservableObject {
                     )
                     copied.append((url, importsIntoNotes))
                 } catch {
-                    failures.append("“\(rawURL.lastPathComponent)”：\(error.localizedDescription)")
+                    WeiBeiLog.workspace.error(
+                        "code=common_import_failed underlying=\(WeiBeiLog.code(error), privacy: .public) path=\(rawURL.path, privacy: .private) detail=\(WeiBeiLog.truncated(error.localizedDescription), privacy: .private)"
+                    )
+                    failures.append("“\(rawURL.lastPathComponent)”")
                 }
                 let progress = CourseFileOperationProgress(
                     completed: offset + 1,
@@ -12362,9 +12557,9 @@ final class WorkspaceStore: ObservableObject {
                     let listed = failures.prefix(3).joined(separator: "\n")
                     let remaining = failures.count - min(3, failures.count)
                     self.showImportantOperationError(ui(
-                        "导入完成：成功 \(copied.count) 个，失败 \(failures.count) 个。\n\(listed)"
+                        "导入完成：成功 \(copied.count) 个，失败 \(failures.count) 个。原文件均未移动；请确认这些文件可访问后重试：\n\(listed)"
                             + (remaining > 0 ? ui("\n\n另有 \(remaining) 个失败未列出。", "\n\nPlus \(remaining) more failure(s).") : ""),
-                        "Import finished: \(copied.count) succeeded, \(failures.count) failed.\n\(listed)"
+                        "Import finished: \(copied.count) succeeded and \(failures.count) failed. Original files were not moved. Make sure these files are accessible, then try again:\n\(listed)"
                             + (remaining > 0 ? "\n\nPlus \(remaining) more failure(s)." : "")
                     ))
                 }
@@ -12513,7 +12708,15 @@ final class WorkspaceStore: ObservableObject {
             select(itemID: item.id)
             showTransientNoteStatus(ui("已创建双链笔记：\(url.lastPathComponent)", "Created wiki note: \(url.lastPathComponent)"))
         } catch {
-            showImportantOperationError(ui("无法创建双链笔记：\(error.localizedDescription)", "Could not create wiki note: \(error.localizedDescription)"))
+            recordCourseLibraryUIFailure(
+                error,
+                operation: "create_wiki_note",
+                path: url
+            )
+            showImportantOperationError(ui(
+                "双链笔记没有创建或登记，现有文件未被覆盖。请确认资料库可写，或换一个标题后重试。",
+                "The wiki note was not created or registered, and existing files were not overwritten. Make sure the library is writable, or choose another title and try again."
+            ))
         }
     }
 
@@ -12612,7 +12815,15 @@ final class WorkspaceStore: ObservableObject {
             showTransientNoteStatus(status)
             return item
         } catch {
-            showImportantOperationError(ui("无法创建笔记：\(error.localizedDescription)", "Could not create note: \(error.localizedDescription)"))
+            recordCourseLibraryUIFailure(
+                error,
+                operation: "create_notebook_note",
+                path: notesDirectory
+            )
+            showImportantOperationError(ui(
+                "笔记没有创建或加入列表，现有笔记未被覆盖。请确认笔记目录可写后重试。",
+                "The note was not created or added to the list, and existing notes were not overwritten. Make sure the Notes folder is writable, then try again."
+            ))
             return nil
         }
     }
@@ -17141,9 +17352,14 @@ final class WorkspaceStore: ObservableObject {
                     invalidateAgentContext()
                 }
             } catch {
+                recordCourseLibraryUIFailure(
+                    error,
+                    operation: "reconcile_course_folder",
+                    path: root
+                )
                 courseRootUnavailableReasons[courseID] = ui(
-                    "课程文件夹暂时无法对账：\(error.localizedDescription)",
-                    "The course folder could not be reconciled: \(error.localizedDescription)"
+                    "课程文件夹暂时无法对账；磁盘内容没有被覆盖。请确认文件夹可访问后重试。",
+                    "The course folder could not be reconciled. Disk content was not overwritten. Make sure the folder is accessible, then try again."
                 )
                 if let expectedIdentity = course(withID: courseID)?.sourceRootIdentity,
                    importedFileIdentityResolver(root) != expectedIdentity {
@@ -17258,9 +17474,14 @@ final class WorkspaceStore: ObservableObject {
                         expectedLinkIdentity: linkIdentity
                     )
                 } catch {
+                    recordCourseLibraryUIFailure(
+                        error,
+                        operation: "repair_migrated_shared_link",
+                        path: linkURL
+                    )
                     courseRootUnavailableReasons[membership.courseID] = ui(
-                        "通用资料已迁移，但课程入口暂时无法修复：\(error.localizedDescription)",
-                        "The common material moved, but a course entry could not be repaired."
+                        "通用资料已迁移并保留，但这门课程的入口暂时无法修复。请确认课程文件夹可访问后重试。",
+                        "The common material was moved and preserved, but this course entry could not be repaired. Make sure the course folder is accessible, then try again."
                     )
                 }
             }
@@ -17398,11 +17619,16 @@ final class WorkspaceStore: ObservableObject {
                             expectedLinkIdentity: linkIdentity
                         )
                     } catch {
+                        recordCourseLibraryUIFailure(
+                            error,
+                            operation: "repair_renamed_shared_link",
+                            path: linkURL
+                        )
                         courseRootUnavailableReasons[
                             membership.courseID
                         ] = ui(
-                            "共享原件已改名，但课程入口暂时无法修复：\(error.localizedDescription)",
-                            "The shared original was renamed, but its course entry could not be repaired: \(error.localizedDescription)"
+                            "共享原件已改名并保留，但这门课程的入口暂时无法修复。请确认课程文件夹可访问后重试。",
+                            "The shared original was renamed and preserved, but this course entry could not be repaired. Make sure the course folder is accessible, then try again."
                         )
                     }
                 }

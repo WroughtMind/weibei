@@ -23,7 +23,15 @@ extension WorkspaceStore {
             )
             try configureCourseLibrary(at: root)
         } catch {
-            showImportantOperationError(error.localizedDescription)
+            recordCourseLibraryUIFailure(
+                error,
+                operation: "bootstrap_default_library",
+                path: root
+            )
+            showImportantOperationError(ui(
+                "魏碑资料库未能建立；没有移动或覆盖现有内容。请确认文稿目录可写后重试。",
+                "The WeiBei Library could not be created. Existing content was not moved or overwritten. Make sure the Documents folder is writable, then try again."
+            ))
         }
     }
 
@@ -228,7 +236,15 @@ extension WorkspaceStore {
             do {
                 try validateLibraryRoot(resolvedRoot)
             } catch {
-                markLibraryUnavailable(error.localizedDescription)
+                recordCourseLibraryUIFailure(
+                    error,
+                    operation: "restore_library_root",
+                    path: resolvedRoot
+                )
+                markLibraryUnavailable(ui(
+                    "原资料库暂时无法连接；课程记录和文件仍在原位置。请重新选择原来的资料库。",
+                    "The original library could not be reconnected. Course records and files remain in their original location. Re-select the original library."
+                ))
                 continue
             }
             applyBoundLibraryRoot(

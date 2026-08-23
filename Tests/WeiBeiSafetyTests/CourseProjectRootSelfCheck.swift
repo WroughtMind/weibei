@@ -9054,16 +9054,36 @@ enum CourseProjectRootSelfCheck {
                 )
             )
             injectedStage = crashStage
-            try expectFailure("共享入口隔离事务崩溃") {
-                try store?.removeSharedItemForSelfCheck(
-                    itemID: item.id,
-                    fromCourseID: courseB
-                )
-            }
             // S3：提交前崩溃即时回滚入口；提交后崩溃保留删除结果。
             let expectsRemoval =
                 crashStage
                 == .afterSharedLinkRemovalWorkspaceSaveBeforeJournal
+            if expectsRemoval {
+                store?.setCourseIDs([courseA], for: item.id)
+                let feedbackDeadline = Date(timeIntervalSinceNow: 10)
+                while store?.importantOperationError == nil,
+                      Date() < feedbackDeadline {
+                    RunLoop.current.run(
+                        mode: .default,
+                        before: Date(timeIntervalSinceNow: 0.01)
+                    )
+                }
+                let itemTitle = store.map { $0.displayTitle(for: item) } ?? ""
+                try check(
+                    store?.importantOperationError == store?.ui(
+                        "“\(itemTitle)”已从课程移除，共享原件仍安全保留；旧课程入口未清理完成。请恢复课程文件夹访问后重试清理。",
+                        "“\(itemTitle)” was removed from the course and the shared original is still safe, but the old course entry was not fully cleaned up. Restore access to the course folder, then retry the cleanup."
+                    ),
+                    "提交后清理失败没有准确说明关系已移除且原件保留"
+                )
+            } else {
+                try expectFailure("共享入口隔离事务崩溃") {
+                    try store?.removeSharedItemForSelfCheck(
+                        itemID: item.id,
+                        fromCourseID: courseB
+                    )
+                }
+            }
             if expectsRemoval {
                 try check(
                     !entryB.exists,
