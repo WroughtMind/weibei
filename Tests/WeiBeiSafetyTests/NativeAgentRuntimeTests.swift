@@ -32,6 +32,56 @@ final class NativeAgentRuntimeTests: XCTestCase {
         XCTAssertEqual(messages.first?.content, "hi")
     }
 
+    func testLoopContinuesLedgerWithNextTurn() async throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("native-multi-turn-\(UUID().uuidString).jsonl")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let ledger = try NativeAgentLedger(fileURL: url)
+        _ = try await ledger.append { seq, time in
+            NativeSessionEvent(type: .turnStart, seq: seq, timeMS: time, turn: 1)
+        }
+        _ = try await ledger.append { seq, time in
+            NativeSessionEvent(type: .userMessage, seq: seq, timeMS: time, turn: 1, text: "第一问")
+        }
+        _ = try await ledger.append { seq, time in
+            NativeSessionEvent(type: .assistantMessage, seq: seq, timeMS: time, turn: 1, text: "第一答")
+        }
+        try await ledger.closeTurn(turn: 1, reason: .completed)
+        let previousSeq = (await ledger.allEvents()).last!.seq
+
+        _ = try await NativeAgentLoop().run(
+            request: StudyAgentRequest(
+                purpose: .conversation,
+                question: "第二问",
+                materialTitle: "",
+                materialText: "",
+                noteTitle: "",
+                noteText: "",
+                contextRevision: "r2"
+            ),
+            ledger: ledger,
+            registry: NativeToolRegistry(),
+            adapter: MockLLMAdapter(chunks: [
+                .textDelta(index: 0, text: "第二答"),
+                .finish(reason: .stop, replayState: nil),
+            ]),
+            model: "mock",
+            hostToolHandler: nil,
+            systemPrompt: "test",
+            progress: nil
+        )
+
+        let reloaded = try NativeAgentLedger(fileURL: url)
+        let events = await reloaded.allEvents()
+        let messages = await reloaded.deriveMessages()
+        XCTAssertTrue(events.filter { $0.seq > previousSeq }.allSatisfy { $0.turn == 2 })
+        XCTAssertEqual(messages, [
+            NativeModelMessage(role: .user, content: "第一问"),
+            NativeModelMessage(role: .assistant, content: "第一答"),
+            NativeModelMessage(role: .user, content: "第二问"),
+            NativeModelMessage(role: .assistant, content: "第二答"),
+        ])
+    }
+
     func testCredentialPermissionsAndBackup() throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("native-cred-test-\(UUID().uuidString).json")
         defer {
