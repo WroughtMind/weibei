@@ -106,6 +106,7 @@ public final class CourseDocumentSearchIndex: @unchecked Sendable {
     private struct PDFIndexStatus {
         var pageCount: Int
         var indexedPageIndexes: Set<Int> = []
+        var retryingPageIndexes: Set<Int> = []
         var failedPageIndexes: Set<Int> = []
         var failedPageReasons: [Int: String] = [:]
 
@@ -495,6 +496,16 @@ public final class CourseDocumentSearchIndex: @unchecked Sendable {
                 rankedByStorageID[storageID] = chunks
             }
         }
+        for mapping in itemMappings {
+            guard validStates[mapping.storageID] != nil else { continue }
+            if Self.fileSignature(for: mapping.item) == expectedSignatures[mapping.storageID] {
+                liveValidStorageIDs.insert(mapping.storageID)
+                staleItemsByStorageID.removeValue(forKey: mapping.storageID)
+            } else {
+                liveValidStorageIDs.remove(mapping.storageID)
+                staleItemsByStorageID[mapping.storageID] = mapping.item
+            }
+        }
         for (storageID, item) in staleItemsByStorageID {
             if Self.fileSignature(for: item) != nil {
                 schedule([item])
@@ -505,22 +516,28 @@ public final class CourseDocumentSearchIndex: @unchecked Sendable {
 
         let characterLimit = max(maximumCharactersPerItem, 1)
         return itemMappings.reduce(into: [String: CourseDocumentIndexResult]()) { result, mapping in
-            let state = validStates[mapping.storageID]
-            let chunks = (rankedByStorageID[mapping.storageID] ?? []).sorted { $0.sortOrder < $1.sortOrder }
+            let state = liveValidStorageIDs.contains(mapping.storageID)
+                ? validStates[mapping.storageID]
+                : nil
+            let chunks = state == nil
+                ? []
+                : (rankedByStorageID[mapping.storageID] ?? []).sorted { $0.sortOrder < $1.sortOrder }
             let joined = chunks.map(\.text).joined(separator: "\n\n")
             let expectedSignature = expectedSignatures[mapping.storageID]
             let scheduleKey = expectedSignature.map {
                 "\(mapping.storageID)#\($0)"
             }
+            let pdfStatus = state == nil ? nil : pdfStatuses[mapping.storageID]
             let availability: CourseDocumentIndexAvailability
-            if state?.isComplete == true {
+            if pdfStatus?.retryingPageIndexes.isEmpty == false {
+                availability = .indexing
+            } else if state?.isComplete == true {
                 availability = .ready
             } else if scheduleKey.map(activeScheduleKeys.contains) == true {
                 availability = .indexing
             } else {
                 availability = .unavailable
             }
-            let pdfStatus = state == nil ? nil : pdfStatuses[mapping.storageID]
             result[mapping.itemID] = CourseDocumentIndexResult(
                 text: joined.isEmpty ? nil : String(joined.prefix(characterLimit)),
                 isTruncated: state?.isComplete != true
@@ -529,7 +546,7 @@ public final class CourseDocumentSearchIndex: @unchecked Sendable {
                     || joined.count > characterLimit,
                 rank: chunks.map(\.rank).min(),
                 availability: availability,
-                sourceRevision: expectedSignature,
+                sourceRevision: state == nil ? nil : expectedSignature,
                 indexedPageCount: pdfStatus?.indexedPageIndexes.count,
                 totalPageCount: pdfStatus?.pageCount,
                 uncoveredPageIndexes: pdfStatus?.uncoveredPageIndexes ?? [],
@@ -715,9 +732,11 @@ public final class CourseDocumentSearchIndex: @unchecked Sendable {
             isTruncated: state.isComplete != true
                 || state.hasPartialExtraction
                 || nextCursor != nil,
-            availability: state.isComplete
-                ? .ready
-                : (isScheduled ? .indexing : .unavailable),
+            availability: pdfStatus?.retryingPageIndexes.isEmpty == false
+                ? .indexing
+                : state.isComplete
+                    ? .ready
+                    : (isScheduled ? .indexing : .unavailable),
             nextCursor: nextCursor,
             sourceRevision: scheduled.signature,
             indexedPageCount: pdfStatus?.indexedPageIndexes.count,
@@ -1511,11 +1530,13 @@ public final class CourseDocumentSearchIndex: @unchecked Sendable {
             if sqlite3_column_type(statement, 2) != SQLITE_NULL,
                let extractionKind = columnText(statement, at: 3) {
                 let pageIndex = Int(sqlite3_column_int64(statement, 2))
-                if extractionKind.contains("failed") {
+                if extractionKind.hasSuffix("-final") {
                     status.failedPageIndexes.insert(pageIndex)
                     status.failedPageReasons[pageIndex] = Self.pdfFailureReason(
                         in: extractionKind
                     ) ?? "unknown"
+                } else if extractionKind.hasSuffix("-attempt-1") {
+                    status.retryingPageIndexes.insert(pageIndex)
                 } else if !extractionKind.hasSuffix("-partial") {
                     status.indexedPageIndexes.insert(pageIndex)
                 }

@@ -123,7 +123,7 @@ public enum CourseKnowledgeIndex {
                 totalPageCount: source.totalPageCount,
                 uncoveredPageNumbers: source.uncoveredPageNumbers,
                 failedPageNumbers: source.failedPageNumbers,
-                failedPageReasons: source.failedPageReasons
+                failedPageReasons: source.failedPageReasons?.mapValues(userFacingPDFReason)
             )
         }
         let relations = validLinks.prefix(maximumRelations).map {
@@ -138,6 +138,15 @@ public enum CourseKnowledgeIndex {
                 || validLinks.count > relations.count
                 || includedSources.contains { $0.isTruncated }
         )
+    }
+
+    private static func userFacingPDFReason(_ reason: String) -> String {
+        switch PDFOCRFailureReason(rawValue: reason) {
+        case .invalidPage: "页面无效，可重试"
+        case .rendering: "页面无法显示，可重试"
+        case .recognition: "文字识别失败，可重试"
+        case nil: "页面处理失败，可重试"
+        }
     }
 
     private static func relevanceScore(

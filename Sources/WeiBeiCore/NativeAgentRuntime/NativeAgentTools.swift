@@ -61,6 +61,7 @@ public struct NativeToolExecutionContext: Sendable {
     public var persistentAssetIDsByContextID: [String: String]
     public var searchedItemIDs: [String]
     public var webSearchURLs: [String]
+    public var failedPDFRetryAuthorizationAvailable: Bool
     public var readSourceRevisions: [String: String]
     public var lastReadMemoryRevision: UInt64?
     public var courseProfileUpdated: Bool
@@ -74,6 +75,7 @@ public struct NativeToolExecutionContext: Sendable {
         persistentAssetIDsByContextID: [String: String] = [:],
         searchedItemIDs: [String] = [],
         webSearchURLs: [String] = [],
+        failedPDFRetryAuthorizationAvailable: Bool = false,
         readSourceRevisions: [String: String] = [:],
         lastReadMemoryRevision: UInt64? = nil,
         courseProfileUpdated: Bool = false,
@@ -86,6 +88,7 @@ public struct NativeToolExecutionContext: Sendable {
         self.persistentAssetIDsByContextID = persistentAssetIDsByContextID
         self.searchedItemIDs = searchedItemIDs
         self.webSearchURLs = webSearchURLs
+        self.failedPDFRetryAuthorizationAvailable = failedPDFRetryAuthorizationAvailable
         self.readSourceRevisions = readSourceRevisions
         self.lastReadMemoryRevision = lastReadMemoryRevision
         self.courseProfileUpdated = courseProfileUpdated
@@ -236,12 +239,29 @@ enum NativeToolGuard {
                 throw NativeLLMFailure(code: "guard_denied", message: "网页工具只能读取用户本轮明确提供或刚搜索到的地址")
             }
         }
+        if name == "weibei_course_retry_failed_pdf_pages",
+           !context.failedPDFRetryAuthorizationAvailable {
+            throw NativeLLMFailure(
+                code: "guard_denied",
+                message: "只有用户本轮明确要求重试或重新索引 PDF 失败页时才能调用本工具"
+            )
+        }
         if ["weibei_read_learning_memory", "weibei_update_learning_memory", "weibei_course_profile_update", "weibei_relation_proposal"].contains(name) {
             let courseID = context.request.projectScope.courseID?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             if courseID.isEmpty {
                 throw NativeLLMFailure(code: "guard_denied", message: "该工具只在课程 Chat 中使用")
             }
         }
+    }
+
+    static func explicitlyRequestsFailedPDFRetry(_ question: String) -> Bool {
+        let normalized = question.lowercased()
+        let requestsRetry = ["重试", "重新索引", "重建索引", "重新处理", "retry", "reindex"]
+            .contains { normalized.contains($0) }
+        let namesFailedPDFPages = ["失败页", "失败页面", "失败的页"]
+            .contains { normalized.contains($0) }
+            || (normalized.contains("pdf") && normalized.contains("失败"))
+        return requestsRetry && namesFailedPDFPages
     }
 }
 
@@ -541,7 +561,7 @@ public enum NativeBuiltinTools {
     private static var courseSearch: NativeToolDefinition {
         hostTool(
             name: "weibei_course_search",
-            description: "在课程索引中搜索材料与笔记。用户点名课程、教材、章节，或问题可能落在当前课程里时，先用本工具再读正文，不要先反问要查哪一种。搜到命中后应接着 weibei_course_read，itemID 用搜索结果里的 id。PDF 结果的 indexedPageCount/totalPageCount 是当前文件版本的索引覆盖率，uncoveredPageNumbers 是未覆盖页，failedPageNumbers/failedPageReasons 是最终失败页及原因；即使没有正文命中也要报告这些状态，存在未覆盖页时不得声称搜遍全文。确认课程里没有后，可以网页搜索并说明「课程里没有，我上网查了」。闲聊、冷知识、与课程无关的问题不要调用本工具。",
+            description: "在课程索引中搜索材料与笔记。用户点名课程、教材、章节，或问题可能落在当前课程里时，先用本工具再读正文，不要先反问要查哪一种。搜到命中后应接着 weibei_course_read，itemID 用搜索结果里的 id。PDF 结果的 indexedPageCount/totalPageCount 是当前文件版本的索引覆盖率，uncoveredPageNumbers 是未覆盖页，failedPageNumbers/failedPageReasons 是最终失败页及人话原因，失败页可由用户明确要求重试；即使没有正文命中也要报告这些状态，存在未覆盖页时不得声称搜遍全文。确认课程里没有后，可以网页搜索并说明「课程里没有，我上网查了」。闲聊、冷知识、与课程无关的问题不要调用本工具。",
             permission: .read,
             schema: NativeJSONSchema([
                 "type": "object",
@@ -563,7 +583,7 @@ public enum NativeBuiltinTools {
     private static var courseRead: NativeToolDefinition {
         hostTool(
             name: "weibei_course_read",
-            description: "按搜索结果里的 itemID 渐进读取真实正文。课程搜索命中后应读取最相关的一条，不要停下来反问用户。itemID 必须是搜索返回的 id。PDF 的 uncoveredPageNumbers 与 failedPageNumbers 不在已读正文覆盖范围内；failedPageReasons 是失败原因。",
+            description: "按搜索结果里的 itemID 渐进读取真实正文。课程搜索命中后应读取最相关的一条，不要停下来反问用户。itemID 必须是搜索返回的 id。PDF 的 uncoveredPageNumbers 与 failedPageNumbers 不在已读正文覆盖范围内；failedPageReasons 是人话失败原因，失败页可由用户明确要求重试。",
             permission: .read,
             schema: NativeJSONSchema([
                 "type": "object",
@@ -619,7 +639,7 @@ public enum NativeBuiltinTools {
     private static var retryFailedPDFPages: NativeToolDefinition {
         hostTool(
             name: "weibei_course_retry_failed_pdf_pages",
-            description: "用户明确要求重试或重新索引 PDF 失败页时使用。itemID 必须来自课程搜索结果。它只重建失败页索引，不改原文件；普通搜索不得调用。",
+            description: "用户本轮明确要求重试或重新索引 PDF 失败页时最多调用一次。itemID 必须来自课程搜索结果。它只重建失败页索引，不改原文件；普通搜索和普通问答不得调用。",
             permission: .read,
             schema: NativeJSONSchema([
                 "type": "object",
