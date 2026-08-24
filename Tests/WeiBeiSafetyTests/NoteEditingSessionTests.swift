@@ -2,6 +2,30 @@ import XCTest
 @testable import WeiBei
 
 final class NoteEditingSessionTests: XCTestCase {
+    func testEditorRecoveryStopsUntilManualRetryStartsANewRound() {
+        var state = EditorRecoveryState.idle
+
+        XCTAssertTrue(state.renderFailed())
+        XCTAssertEqual(state, .rebuilding)
+        XCTAssertFalse(state.renderFailed())
+        XCTAssertEqual(state, .stopped)
+
+        state.renderBecameReady()
+        XCTAssertEqual(state, .stopped)
+
+        state.retryManually()
+        XCTAssertEqual(state, .idle)
+        state.renderBecameReady()
+        XCTAssertEqual(state, .idle)
+        XCTAssertTrue(state.renderFailed())
+        XCTAssertEqual(state, .rebuilding)
+    }
+
+    func testSuccessfulSaveStatusesStaySilent() {
+        XCTAssertFalse(NoteSaveStatus.writtenToFile.showsStatusLabel)
+        XCTAssertFalse(NoteSaveStatus.savedInWeiBei.showsStatusLabel)
+    }
+
     @MainActor
     func testRejectsSnapshotFromStaleDocumentGeneration() throws {
         var commands: [NoteEditorSnapshotRequest] = []
@@ -71,7 +95,7 @@ final class NoteEditingSessionTests: XCTestCase {
         )
 
         session.receive(dirtyEvent(for: session, revision: 2))
-        XCTAssertTrue(session.markSaved(revision: 1))
+        XCTAssertTrue(session.markSaved(revision: 1, as: .writtenToFile))
 
         XCTAssertEqual(session.savedRevision, 1)
         XCTAssertEqual(session.currentRevision, 2)

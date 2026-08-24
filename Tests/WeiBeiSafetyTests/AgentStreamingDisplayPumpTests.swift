@@ -5,112 +5,121 @@ import XCTest
 final class AgentStreamingDisplayPumpTests: XCTestCase {
     @MainActor
     private final class Rig {
-        var target = ""
-        var canPublish = true
-        private(set) var published: [String] = []
+        private(set) var displayed = ""
+        private(set) var chunks: [String] = []
+        private(set) var replacements: [String] = []
+        private(set) var drainCount = 0
+
         lazy var pump = AgentStreamingDisplayPump(hooks: .init(
-            targetText: { [weak self] in self?.target ?? "" },
-            publish: { [weak self] in self?.published.append($0) },
-            canPublish: { [weak self] in self?.canPublish ?? false }
+            append: { [weak self] chunk in
+                self?.displayed.append(chunk)
+                self?.chunks.append(chunk)
+            },
+            replace: { [weak self] text in
+                self?.displayed = text
+                self?.replacements.append(text)
+            },
+            didDrain: { [weak self] in self?.drainCount += 1 }
         ))
     }
 
-    func testSteadyStateAdvancesOneCharacterPerTick() {
+    func testFixedQueueConsumesAtMostFourCharactersPerTick() {
         let rig = Rig()
-        rig.target = "你"
-        rig.pump.stepOnce()
-        rig.target = "你好"
-        rig.pump.stepOnce()
-        rig.pump.stepOnce()
-        XCTAssertEqual(rig.published, ["你", "你好"])
+        let target = String(repeating: "字", count: 18)
+        rig.pump.enqueue(cumulativeText: target)
+        while rig.pump.pendingCharacterCount > 0 { rig.pump.stepOnce() }
+
+        XCTAssertEqual(rig.displayed, target)
+        XCTAssertEqual(rig.chunks.map(\.count), [4, 4, 4, 4, 2])
+        XCTAssertEqual(AgentStreamingDisplayPump.tickNanoseconds, 33_000_000)
     }
 
-    func testBacklogDecaysSmoothlyToTypingPace() {
+    func testTenThousandCharacterBacklogUsesOnlyTwoGentleSpeeds() {
         let rig = Rig()
-        rig.target = String(repeating: "字", count: 10)
-        for _ in 0..<10 { rig.pump.stepOnce() }
-        XCTAssertEqual(rig.published.last, rig.target)
-        // Rate derives from the live deficit: a 10-character backlog starts at
-        // 2/tick and decays toward single characters without step-size jumps.
-        var previous = 0
-        for prefix in rig.published {
-            let step = prefix.count - previous
-            XCTAssertTrue(step == 1 || step == 2, "unexpected step \(step)")
-            XCTAssertTrue(rig.target.hasPrefix(prefix))
-            previous = prefix.count
+        let target = String(repeating: "长", count: 10_000)
+        rig.pump.enqueue(cumulativeText: target)
+        while rig.pump.pendingCharacterCount > 0 { rig.pump.stepOnce() }
+
+        XCTAssertEqual(rig.displayed, target)
+        XCTAssertEqual(rig.chunks.first?.count, AgentStreamingDisplayPump.catchUpCharactersPerTick)
+        guard let firstNormalIndex = rig.chunks.firstIndex(where: {
+            $0.count == AgentStreamingDisplayPump.charactersPerTick
+        }) else {
+            XCTFail("catch-up mode never returned to the normal speed")
+            return
         }
+        XCTAssertFalse(rig.chunks.dropFirst(firstNormalIndex).contains {
+            $0.count == AgentStreamingDisplayPump.catchUpCharactersPerTick
+        })
+        XCTAssertTrue(rig.chunks.dropLast().allSatisfy {
+            $0.count == AgentStreamingDisplayPump.charactersPerTick
+                || $0.count == AgentStreamingDisplayPump.catchUpCharactersPerTick
+        })
+        XCTAssertEqual(AgentStreamingDisplayPump.catchUpBacklogThreshold, 120)
+        XCTAssertEqual(AgentStreamingDisplayPump.normalBacklogThreshold, 40)
     }
 
-    func testLargerBacklogKeepsBoundedEvenSteps() {
+    func testCumulativeSnapshotsEnqueueOnlyTheirNewSuffix() {
         let rig = Rig()
-        rig.target = String(repeating: "字", count: 15)
-        for _ in 0..<15 { rig.pump.stepOnce() }
-        XCTAssertEqual(rig.published.last, rig.target)
-        // Deficit 15 paces at ≤2.5 characters per tick: steps stay within 1…3.
-        var previous = 0
-        for prefix in rig.published {
-            let step = prefix.count - previous
-            XCTAssertTrue((1...3).contains(step), "unexpected step \(step)")
-            previous = prefix.count
+        rig.pump.enqueue(cumulativeText: "你好")
+        rig.pump.stepOnce()
+        rig.pump.enqueue(cumulativeText: "你好世界")
+        rig.pump.stepOnce()
+
+        XCTAssertEqual(rig.displayed, "你好世界")
+        XCTAssertEqual(rig.chunks, ["你好", "世界"])
+    }
+
+    func testInitialAndRefillBothBufferBeforePublishing() async {
+        let rig = Rig()
+        rig.pump.enqueue(cumulativeText: "甲乙丙丁")
+        XCTAssertTrue(rig.chunks.isEmpty)
+        await waitUntil { rig.chunks.count == 1 }
+
+        rig.pump.enqueue(cumulativeText: "甲乙丙丁戊己庚辛")
+        XCTAssertEqual(rig.chunks.count, 1)
+        await waitUntil { rig.chunks.count == 2 }
+        XCTAssertEqual(AgentStreamingDisplayPump.bufferNanoseconds, 80_000_000)
+    }
+
+    func testSwiftCharactersAreNeverSplit() {
+        let rig = Rig()
+        let text = "👨‍👩‍👧‍👦e\u{301}中文"
+        rig.pump.enqueue(cumulativeText: text)
+        rig.pump.stepOnce()
+
+        XCTAssertEqual(text.count, 4)
+        XCTAssertEqual(rig.chunks, [text])
+    }
+
+    func testDataCompletionReturnsBeforeVisualQueueDrains() {
+        let rig = Rig()
+        let text = String(repeating: "尾", count: 12)
+        rig.pump.finish(cumulativeText: text)
+
+        XCTAssertEqual(rig.drainCount, 0)
+        XCTAssertEqual(rig.pump.pendingCharacterCount, 12)
+        while rig.pump.pendingCharacterCount > 0 { rig.pump.stepOnce() }
+        XCTAssertEqual(rig.displayed, text)
+        XCTAssertEqual(rig.drainCount, 1)
+    }
+
+    func testProviderRewriteLandsOneAuthoritativeSnapshot() {
+        let rig = Rig()
+        rig.pump.enqueue(cumulativeText: "旧内容")
+        rig.pump.stepOnce()
+        rig.pump.enqueue(cumulativeText: "新内容")
+
+        XCTAssertEqual(rig.displayed, "新内容")
+        XCTAssertEqual(rig.replacements, ["新内容"])
+        XCTAssertEqual(rig.pump.pendingCharacterCount, 0)
+    }
+
+    private func waitUntil(_ condition: @escaping @MainActor () -> Bool) async {
+        let deadline = ContinuousClock.now + .seconds(1)
+        while !condition(), ContinuousClock.now < deadline {
+            try? await Task.sleep(nanoseconds: 5_000_000)
         }
-    }
-
-    func testEmptyTargetPublishesNothing() {
-        let rig = Rig()
-        for _ in 0..<5 { rig.pump.stepOnce() }
-        XCTAssertTrue(rig.published.isEmpty)
-    }
-
-    func testHiddenChatPausesAndCatchesUpWhenShown() {
-        let rig = Rig()
-        rig.canPublish = false
-        rig.target = String(repeating: "字", count: 30)
-        for _ in 0..<3 { rig.pump.stepOnce() }
-        XCTAssertTrue(rig.published.isEmpty)
-        rig.canPublish = true
-        rig.pump.stepOnce()
-        XCTAssertEqual(rig.published.count, 1)
-        // Deficit 30 paces at 1 + 30/10 = 4 characters per tick: a bulk step.
-        XCTAssertEqual(rig.published[0].count, 4)
-        XCTAssertTrue(rig.target.hasPrefix(rig.published[0]))
-    }
-
-    func testNonPrefixTargetSnapsToFullText() {
-        let rig = Rig()
-        rig.target = "AAAAAAAAAA"
-        rig.pump.stepOnce()
-        rig.target = "BBBB"
-        rig.pump.stepOnce()
-        XCTAssertEqual(rig.published.last, "BBBB")
-    }
-
-    func testStopAndResetDropsLoopAndForgetsPrefix() {
-        let rig = Rig()
-        rig.target = "内容"
-        rig.pump.start()
-        XCTAssertTrue(rig.pump.isRunning)
-        // start() steps once so the first character keeps its arrival latency.
-        XCTAssertEqual(rig.published, ["内"])
-        rig.pump.stopAndReset()
-        XCTAssertFalse(rig.pump.isRunning)
-        rig.pump.stepOnce()
-        // The prefix was forgotten: publication restarts from scratch.
-        XCTAssertEqual(rig.published.last, "内")
-        XCTAssertEqual(rig.published.count, 2)
-    }
-
-    func testRunLoopPublishesMonotonicPrefixesOverTime() async {
-        let rig = Rig()
-        rig.target = "逐字流式输出测试"
-        rig.pump.start()
-        try? await Task.sleep(nanoseconds: 500_000_000)
-        rig.pump.stopAndReset()
-        XCTAssertFalse(rig.published.isEmpty)
-        XCTAssertEqual(rig.published.last, rig.target)
-        var longest = 0
-        for prefix in rig.published {
-            XCTAssertLessThanOrEqual(longest, prefix.count)
-            longest = prefix.count
-        }
+        XCTAssertTrue(condition())
     }
 }

@@ -11,6 +11,7 @@ import {
   startStreamingCmd,
   streaming,
   streamingConfig,
+  streamingPluginKey,
 } from '@milkdown/plugin-streaming';
 import { streamingAppearancePlugin } from './streaming-appearance';
 import { SlashProvider, slashFactory } from '@milkdown/kit/plugin/slash';
@@ -95,6 +96,7 @@ const isCompactPreview = window.weiBeiMarkdownCompactPreview === true;
 let currentDocumentID = window.weiBeiDocumentID || '';
 let currentDocumentGeneration = window.weiBeiDocumentGeneration || 0;
 let revisionState = { revision: 0, dirty: false };
+const appliedCommandIDs = new Set<string>();
 let suppressDirtyTransactions = false;
 let editorReadyPosted = false;
 let fullMarkdownBridgeMessages = 0;
@@ -2967,7 +2969,7 @@ const publishCompletedCompositionMarkdown = () => {
 const streamingCommands = () => editor.action((ctx) => ctx.get(commandsCtx));
 
 const stopStreamingMarkdown = (keep = true) => {
-  cancelPacedStreamingTail();
+  cancelFinalizeDelay();
   if (streamingMarkdownBuffer === null) return;
   streamingCommands().call(abortStreamingCmd.key, { keep });
   streamingMarkdownBuffer = null;
@@ -2977,7 +2979,7 @@ const stopStreamingMarkdown = (keep = true) => {
 
 const updateStreamingMarkdownInternal = (markdown: any) => {
   ensureEditor();
-  cancelPacedStreamingTail();
+  cancelFinalizeDelay();
   const fullText = String(markdown || '');
   streamingFullTextBase = fullText;
   const document = splitFrontmatter(fullText);
@@ -3011,8 +3013,10 @@ const updateStreamingMarkdownInternal = (markdown: any) => {
     streamingMarkdownBuffer = '';
   }
   const delta = body.slice(streamingMarkdownBuffer.length);
-  if (delta) commands.call(pushChunkCmd.key, delta);
+  // Let the appearance plugin inspect the same complete body during the
+  // transaction so it can hide unfinished syntax without withholding text.
   streamingMarkdownBuffer = body;
+  if (delta) commands.call(pushChunkCmd.key, delta);
   scheduleContentHeightReports();
 };
 
@@ -3026,27 +3030,34 @@ const appendStreamingMarkdownInternal = (suffix: any) => {
   updateStreamingMarkdownInternal(base === null ? tail : base + tail);
 };
 
-/** Paced tail reveal. The completion payload often carries text that never
- * streamed (the model's closing segment arrives only in the end event, and
- * the native display pump drains whatever it had not revealed). Applying that
- * tail in one push made the finished answer dump a block of unfaded text and
- * jump its height. Instead the tail keeps typing out at the streaming
- * cadence — same fade, same caret — and the session finalizes when it lands. */
-let pacedTailTimer: number | null = null;
-/** Above the fade plugin's per-insert limit a chunk cannot fade, so pace it. */
-const PACED_TAIL_FADE_LIMIT_CHARACTERS = 24;
-const PACED_TAIL_CHUNK_CHARACTERS = 12;
-const PACED_TAIL_TICK_MILLISECONDS = 33;
-/** Wall-clock cap: throttled (hidden/occluded) WebViews slow timers to a crawl,
- * so past this the whole tail lands at once instead of stalling half-typed. */
-const PACED_TAIL_MAXIMUM_MILLISECONDS = 3_000;
-/** Hard stop so an abandoned tail can never pace forever (~8s at cadence). */
-const PACED_TAIL_MAXIMUM_TICKS = 240;
-
-const cancelPacedStreamingTail = () => {
-  if (pacedTailTimer == null) return;
-  window.clearTimeout(pacedTailTimer);
-  pacedTailTimer = null;
+/** Ending the session clears fade decorations instantly — for text still
+ * mid-fade that is a whole-answer opacity snap ("everything flashes once").
+ * The final body is already in the document, so the session can outlive the
+ * last push by one fade window and end with every animation completed. */
+let finalizeDelayTimer: number | null = null;
+const FINALIZE_FADE_SETTLE_MILLISECONDS = 220;
+const cancelFinalizeDelay = () => {
+  if (finalizeDelayTimer == null) return;
+  window.clearTimeout(finalizeDelayTimer);
+  finalizeDelayTimer = null;
+};
+const scheduleFinalizeAfterFades = () => {
+  cancelFinalizeDelay();
+  // throttleMs=0 already flushed the final push synchronously. Retire only the
+  // plugin state: endStreamingCmd reparses the same Markdown and rewrites text
+  // nodes, which looks like a second final answer even when the text is equal.
+  editor.action((ctx) => {
+    const view = ctx.get(editorViewCtx);
+    view.dispatch(view.state.tr.setMeta(streamingPluginKey, { type: 'end' }));
+  });
+  if (document.hidden || isEditorReduceMotion()) {
+    finalizeStreamingSession();
+    return;
+  }
+  finalizeDelayTimer = window.setTimeout(() => {
+    finalizeDelayTimer = null;
+    finalizeStreamingSession();
+  }, FINALIZE_FADE_SETTLE_MILLISECONDS);
 };
 
 /** Push a caller-normalized body through the streaming session, mirroring
@@ -3062,34 +3073,32 @@ const pushStreamingBodyForFinish = (body: string) => {
     streamingMarkdownBuffer = '';
   }
   const delta = body.slice(streamingMarkdownBuffer.length);
-  if (delta) commands.call(pushChunkCmd.key, delta);
   streamingMarkdownBuffer = body;
+  if (delta) commands.call(pushChunkCmd.key, delta);
   scheduleContentHeightReports();
 };
 
 const finalizeStreamingSession = () => {
-  streamingCommands().call(endStreamingCmd.key, { diffReview: false });
+  cancelFinalizeDelay();
+  // Hide the decorative caret before retiring the visual streaming state. It
+  // is absolutely positioned, so this changes neither wrapping nor row height.
+  document.querySelectorAll('.wb-stream-caret').forEach((caret) => {
+    caret.classList.add('is-finalized');
+  });
   streamingRawBody = null;
   streamingMarkdownBuffer = null;
   streamingFullTextBase = null;
-  cancelPacedStreamingTail();
-  // Decorations gate on the live buffer; repaint once so the finished render
-  // drops the streaming caret without dispatching a transaction.
-  try {
-    editor?.action((ctx) => {
-      ctx.get(editorViewCtx).updateState(ctx.get(editorViewCtx).state);
-    });
-  } catch {
-    // View not ready yet; decorations clear on the next transaction anyway.
-  }
-  // Measure synchronously so the height returned to native reflects the
-  // finalized DOM, not the last streamed report.
+  // Do not force a same-state ProseMirror redraw here. The fully opaque fade
+  // wrappers are visually inert and clear on the next real transaction; a
+  // completion-only redraw was the visible whole-answer flash.
   publishContentHeight();
+  post('finalizedStreaming', {
+    height: Number(window.WeiBeiCompactPreviewHeight || 1),
+  });
   scheduleContentHeightReports();
 };
 
-const finishStreamingMarkdownInternal = (markdown: any, options?: { paced?: boolean }) => {
-  cancelPacedStreamingTail();
+const finishStreamingMarkdownInternal = (markdown: any) => {
   streamingRawBody = null; // force the full normalize + serialization pass
   const fullText = String(markdown || '');
   const document = splitFrontmatter(fullText);
@@ -3098,51 +3107,10 @@ const finishStreamingMarkdownInternal = (markdown: any, options?: { paced?: bool
   const body = normalizeMarkdownSource(document.body, 'agentGenerated');
   lastMarkdown = withFrontmatter(body);
   streamingFullTextBase = fullText;
-  const currentBuffer = streamingMarkdownBuffer;
-  // Pace only a pure append; a divergent prefix needs the full replace now.
-  // Pacing is opt-in from native: hidden/windowless WebViews suspend timers
-  // entirely, and a paced reveal there would strand the answer half-typed.
-  const pacesAppendTail = options?.paced === true
-    && currentBuffer !== null
-    && body.startsWith(currentBuffer)
-    && body.length - currentBuffer.length > PACED_TAIL_FADE_LIMIT_CHARACTERS;
-  if (currentBuffer !== null && pacesAppendTail) {
-    let revealed = currentBuffer.length;
-    let ticks = 0;
-    const pacingStartedAt = Date.now();
-    const step = () => {
-      pacedTailTimer = null;
-      const now = Date.now();
-      ticks += 1;
-      revealed = Math.min(body.length, revealed + PACED_TAIL_CHUNK_CHARACTERS);
-      const done = revealed >= body.length
-        || now - pacingStartedAt >= PACED_TAIL_MAXIMUM_MILLISECONDS
-        || ticks >= PACED_TAIL_MAXIMUM_TICKS;
-      try {
-        pushStreamingBodyForFinish(done ? body : body.slice(0, revealed));
-        if (!done) {
-          pacedTailTimer = window.setTimeout(step, PACED_TAIL_TICK_MILLISECONDS);
-          return;
-        }
-        finalizeStreamingSession();
-      } catch {
-        // A paced push must never strand the answer half-typed (one throwing
-        // tick would silently end the timer chain): tear the session down and
-        // land the full document through the plain replace path instead.
-        pacedTailTimer = null;
-        streamingMarkdownBuffer = null;
-        streamingRawBody = null;
-        try { streamingCommands().call(abortStreamingCmd.key, { keep: false }); } catch { /* session already gone */ }
-        try { setMarkdownInternal(fullText); } catch { /* nothing left to try */ }
-        scheduleContentHeightReports();
-      }
-    };
-    pacedTailTimer = window.setTimeout(step, PACED_TAIL_TICK_MILLISECONDS);
-    scheduleContentHeightReports();
-    return;
-  }
+  // Native already owns the visible cadence. Synchronously catch up any bridge
+  // lag once, then keep the existing fade-settle and finalized-height receipt.
   pushStreamingBodyForFinish(body);
-  finalizeStreamingSession();
+  scheduleFinalizeAfterFades();
 };
 
 const setMarkdownInternal = (markdown: any) => {
@@ -3359,6 +3327,7 @@ const setDocumentIdentityInternal = (documentID: string, documentGeneration: num
   currentDocumentID = documentID;
   currentDocumentGeneration = documentGeneration;
   if (!changed) return;
+  appliedCommandIDs.clear();
   lastOutlineChangeKey = null;
   currentContentGeneration += 1;
   pendingImagePickers.clear();
@@ -3413,69 +3382,102 @@ const commandPayloadValue = (command: EditorCommand, name: string) => command.pa
 
 const dispatchEditorCommand = (value: unknown) => {
   const command = parseEditorCommand(value);
-  if (!command || !acceptsEditorCommand(command, {
+  if (!command) return false;
+  if (appliedCommandIDs.has(command.commandID)) {
+    post('commandApplied', { commandID: command.commandID });
+    return true;
+  }
+  if (!acceptsEditorCommand(command, {
     documentID: currentDocumentID,
     documentGeneration: currentDocumentGeneration,
     revision: revisionState.revision,
-  })) return false;
+  })) {
+    post('commandRejected', { commandID: command.commandID, reason: 'document or revision mismatch' });
+    return false;
+  }
 
-  switch (command.type) {
+  let applied = false;
+  try {
+    switch (command.type) {
     case 'loadDocument': {
       const markdown = commandPayloadValue(command, 'markdown');
       const initialRevision = commandPayloadValue(command, 'initialRevision');
       if (typeof markdown !== 'string'
-          || (initialRevision !== undefined && !Number.isInteger(initialRevision))) return false;
+          || (initialRevision !== undefined && !Number.isInteger(initialRevision))) break;
       setDocumentIdentityInternal(command.documentID, command.documentGeneration);
       loadMarkdownInternal(markdown, Number(initialRevision ?? 0));
-      return true;
+      applied = true;
+      break;
     }
     case 'requestSnapshot': {
       const markdown = getMarkdownInternal();
       lastMarkdown = markdown;
       post('snapshotReady', { requestID: command.requestID!, markdown });
-      return true;
+      applied = true;
+      break;
     }
     case 'setTheme':
       setThemeInternal(commandPayloadValue(command, 'theme'));
-      return true;
+      applied = true;
+      break;
     case 'setLanguage':
       setLanguageInternal(commandPayloadValue(command, 'language'));
-      return true;
+      applied = true;
+      break;
     case 'setEditable':
       setEditableInternal(commandPayloadValue(command, 'editable'));
-      return true;
+      applied = true;
+      break;
     case 'focus':
-      return focusInternal();
+      applied = focusInternal();
+      break;
     case 'scrollToHeading':
-      return scrollToHeadingInternal(commandPayloadValue(command, 'index'));
+      applied = scrollToHeadingInternal(commandPayloadValue(command, 'index'));
+      break;
     case 'applyMarkdownFragment': {
       const markdown = commandPayloadValue(command, 'markdown');
-      if (typeof markdown !== 'string') return false;
+      if (typeof markdown !== 'string') break;
       appendMarkdownInternal(markdown);
-      return true;
+      applied = true;
+      break;
     }
     case 'replaceSelection': {
       const markdown = commandPayloadValue(command, 'markdown');
-      if (typeof markdown !== 'string') return false;
+      if (typeof markdown !== 'string') break;
       replaceSelectionInternal(markdown);
-      return true;
+      applied = true;
+      break;
     }
     case 'executeSelectionCommand':
-      return executeSelectionCommandInternal(commandPayloadValue(command, 'action'), commandPayloadValue(command, 'value'));
+      applied = executeSelectionCommandInternal(commandPayloadValue(command, 'action'), commandPayloadValue(command, 'value'));
+      break;
     case 'insertStructuredBlock': {
       const markdown = commandPayloadValue(command, 'markdown');
-      if (typeof markdown !== 'string') return false;
+      if (typeof markdown !== 'string') break;
       insertMarkdownInternal(markdown);
-      return true;
+      applied = true;
+      break;
     }
     case 'restoreCheckpoint': {
       const markdown = commandPayloadValue(command, 'markdown');
       const revision = commandPayloadValue(command, 'revision');
-      if (typeof markdown !== 'string' || (revision !== undefined && (!Number.isInteger(revision) || Number(revision) < 0))) return false;
+      if (typeof markdown !== 'string' || (revision !== undefined && (!Number.isInteger(revision) || Number(revision) < 0))) break;
       loadMarkdownInternal(markdown, revision === undefined ? revisionState.revision : Number(revision), true);
-      return true;
+      applied = true;
+      break;
     }
+    }
+  } catch (error) {
+    post('commandRejected', { commandID: command.commandID, reason: String((error as any)?.message || error) });
+    return false;
   }
+  if (!applied) {
+    post('commandRejected', { commandID: command.commandID, reason: 'command could not be applied' });
+    return false;
+  }
+  appliedCommandIDs.add(command.commandID);
+  post('commandApplied', { commandID: command.commandID });
+  return true;
 };
 
 window.WeiBeiEditor = {
@@ -3548,9 +3550,9 @@ window.WeiBeiEditor = {
         showFailure(error);
       }
     },
-    finishStreamingMarkdown: (markdown: any, options?: { paced?: boolean }) => {
+    finishStreamingMarkdown: (markdown: any) => {
       try {
-        finishStreamingMarkdownInternal(markdown, options);
+        finishStreamingMarkdownInternal(markdown);
         return true;
       } catch (error) {
         showFailure(error);
@@ -3587,7 +3589,7 @@ if (WEIBEI_EDITOR_RUNTIME && window.weiBeiEditorCheckMode) {
     setMarkdown: setMarkdownInternal,
     updateStreamingMarkdown: updateStreamingMarkdownInternal,
     appendStreamingMarkdown: appendStreamingMarkdownInternal,
-    finishStreamingMarkdown: (markdown: any, options?: { paced?: boolean }) => { finishStreamingMarkdownInternal(markdown, options); return true; },
+    finishStreamingMarkdown: (markdown: any) => { finishStreamingMarkdownInternal(markdown); return true; },
     replaceSelection: replaceSelectionInternal,
     executeSelectionCommand: executeSelectionCommandInternal,
     applyAgentPatch: appendMarkdownInternal,
@@ -3771,7 +3773,7 @@ editorBuilder = editorBuilder
   .use(structuredMarkdown)
   .use(weiBeiMath)
   .use(streaming)
-  .use($prose(() => streamingAppearancePlugin(() => streamingMarkdownBuffer !== null)));
+  .use($prose(() => streamingAppearancePlugin(() => streamingMarkdownBuffer)));
 
 if (WEIBEI_EDITOR_RUNTIME) {
   editorBuilder = editorBuilder

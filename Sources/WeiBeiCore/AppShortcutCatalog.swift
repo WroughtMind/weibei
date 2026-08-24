@@ -17,11 +17,21 @@ public enum AppShortcutID: String, CaseIterable, Identifiable, Codable, Sendable
     case focusReader
     case focusNotes
     case focusChat
+    case previousMaterial
+    case nextMaterial
+    case toggleRightPane
+    case threePaneWorkspace
+    case swapThreePaneSecondaryPanes
     case immersiveReading
     case immersiveChat
     case immersiveWriting
     case selectionPrompt
     case hideChatOverlay
+    case applyAgentAnswerToNote
+    case replaceNoteSelection
+    case applyAgentPatchToEditor
+    case copyCurrentReference
+    case submitAgentDraft
 
     public var id: String { rawValue }
 
@@ -37,19 +47,33 @@ public enum AppShortcutID: String, CaseIterable, Identifiable, Codable, Sendable
         case .focusReader: return language.text("聚焦阅读", "Focus Reader")
         case .focusNotes: return language.text("聚焦笔记", "Focus Notes")
         case .focusChat: return language.text("聚焦对话", "Focus Chat")
+        case .previousMaterial: return language.text("上一份资料", "Previous Material")
+        case .nextMaterial: return language.text("下一份资料", "Next Material")
+        case .toggleRightPane: return language.text("开关辅助栏", "Toggle Assistant Pane")
+        case .threePaneWorkspace: return language.text("三栏工作台", "Three-Pane Workspace")
+        case .swapThreePaneSecondaryPanes: return language.text("交换笔记与对话", "Swap Notes and Chat")
         case .immersiveReading: return language.text("沉浸阅读", "Immersive Reading")
         case .immersiveChat: return language.text("沉浸对话", "Immersive Chat")
         case .immersiveWriting: return language.text("沉浸写作", "Immersive Writing")
         case .selectionPrompt: return language.text("选区轻提示", "Selection Prompt")
         case .hideChatOverlay: return language.text("隐藏对话浮层", "Hide Chat Overlay")
+        case .applyAgentAnswerToNote: return language.text("写入回答到笔记", "Write Answer to Note")
+        case .replaceNoteSelection: return language.text("替换笔记选区", "Replace Note Selection")
+        case .applyAgentPatchToEditor: return language.text("追加整理建议", "Append Organization Suggestion")
+        case .copyCurrentReference: return language.text("复制当前引用", "Copy Current Reference")
+        case .submitAgentDraft: return language.text("发送对话", "Send Chat")
         }
     }
 
     public var group: AppShortcutGroup {
         switch self {
-        case .commandPalette, .toggleAppearance, .navigateBack, .navigateForward:
+        case .commandPalette, .toggleAppearance, .navigateBack, .navigateForward,
+             .applyAgentAnswerToNote, .replaceNoteSelection, .applyAgentPatchToEditor,
+             .copyCurrentReference, .submitAgentDraft:
             return .global
-        case .courseIndex, .searchInMaterial, .focusLibrary, .focusReader, .focusNotes, .focusChat:
+        case .courseIndex, .searchInMaterial, .focusLibrary, .focusReader, .focusNotes, .focusChat,
+             .previousMaterial, .nextMaterial, .toggleRightPane, .threePaneWorkspace,
+             .swapThreePaneSecondaryPanes:
             return .navigation
         case .immersiveReading, .immersiveChat, .immersiveWriting, .selectionPrompt, .hideChatOverlay:
             return .immersive
@@ -62,17 +86,27 @@ public enum AppShortcutID: String, CaseIterable, Identifiable, Codable, Sendable
         case .toggleAppearance: return AppShortcutChord(key: "t", modifiers: [.command, .option])
         case .navigateBack: return AppShortcutChord(key: "[", modifiers: .command)
         case .navigateForward: return AppShortcutChord(key: "]", modifiers: .command)
-        case .courseIndex: return AppShortcutChord(key: "b", modifiers: .command)
-        case .searchInMaterial: return AppShortcutChord(key: "f", modifiers: .command)
+        case .courseIndex: return AppShortcutChord(key: "b", modifiers: [.command, .option])
+        case .searchInMaterial: return AppShortcutChord(key: "f", modifiers: [.command, .option])
         case .focusLibrary: return AppShortcutChord(key: "1", modifiers: .command)
         case .focusReader: return AppShortcutChord(key: "2", modifiers: .command)
         case .focusNotes: return AppShortcutChord(key: "3", modifiers: .command)
         case .focusChat: return AppShortcutChord(key: "4", modifiers: .command)
+        case .previousMaterial: return AppShortcutChord(key: "up", modifiers: [.command, .option])
+        case .nextMaterial: return AppShortcutChord(key: "down", modifiers: [.command, .option])
+        case .toggleRightPane: return AppShortcutChord(key: "j", modifiers: .command)
+        case .threePaneWorkspace: return AppShortcutChord(key: "1", modifiers: [.command, .option])
+        case .swapThreePaneSecondaryPanes: return AppShortcutChord(key: "s", modifiers: [.command, .option])
         case .immersiveReading: return AppShortcutChord(key: "r", modifiers: [.command, .option])
         case .immersiveChat: return AppShortcutChord(key: "a", modifiers: [.command, .option])
         case .immersiveWriting: return AppShortcutChord(key: "n", modifiers: [.command, .option])
         case .selectionPrompt: return AppShortcutChord(key: "3", modifiers: [.control, .option])
         case .hideChatOverlay: return AppShortcutChord(key: "0", modifiers: [.control, .option])
+        case .applyAgentAnswerToNote: return AppShortcutChord(key: "a", modifiers: [.command, .shift])
+        case .replaceNoteSelection: return AppShortcutChord(key: "r", modifiers: [.command, .shift])
+        case .applyAgentPatchToEditor: return AppShortcutChord(key: "e", modifiers: [.command, .shift])
+        case .copyCurrentReference: return AppShortcutChord(key: "c", modifiers: [.command, .shift])
+        case .submitAgentDraft: return AppShortcutChord(key: "return", modifiers: .command)
         }
     }
 }
@@ -219,7 +253,18 @@ public enum AppShortcutCatalog {
     }
 
     public static func chord(for id: AppShortcutID, overrides: [AppShortcutID: AppShortcutChord]) -> AppShortcutChord {
-        overrides[id] ?? id.defaultChord
+        guard let chord = overrides[id], !isReservedTextEditingChord(chord) else {
+            return id.defaultChord
+        }
+        return chord
+    }
+
+    public static func executableChord(
+        for id: AppShortcutID,
+        overrides: [AppShortcutID: AppShortcutChord]
+    ) -> AppShortcutChord? {
+        let chord = chord(for: id, overrides: overrides)
+        return action(matching: chord, overrides: overrides) == id ? chord : nil
     }
 
     /// Resolve which action (if any) matches a pressed chord.
@@ -227,12 +272,15 @@ public enum AppShortcutCatalog {
         matching chord: AppShortcutChord,
         overrides: [AppShortcutID: AppShortcutChord]
     ) -> AppShortcutID? {
-        for id in AppShortcutID.allCases {
-            if self.chord(for: id, overrides: overrides) == chord {
-                return id
-            }
+        guard !isReservedTextEditingChord(chord) else { return nil }
+        let matches = AppShortcutID.allCases.filter {
+            self.chord(for: $0, overrides: overrides) == chord
         }
-        return nil
+        return matches.count == 1 ? matches[0] : nil
+    }
+
+    public static func isReservedTextEditingChord(_ chord: AppShortcutChord) -> Bool {
+        chord.modifiers == .command && (chord.key == "b" || chord.key == "f")
     }
 
     /// Another action already using this chord (excluding `excluding`).

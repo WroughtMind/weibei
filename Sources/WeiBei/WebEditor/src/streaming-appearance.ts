@@ -1,5 +1,11 @@
 import { Plugin, PluginKey } from '@milkdown/kit/prose/state';
+import type { Node as ProseMirrorNode } from '@milkdown/kit/prose/model';
 import { Decoration, DecorationSet } from '@milkdown/kit/prose/view';
+import {
+  incompleteStreamingScanLimit,
+  incompleteStreamingMarkdownTailMarkers,
+  type IncompleteStreamingMarkdownMarker,
+} from './markdownRules';
 
 const appearanceKey = new PluginKey('weibeiStreamingAppearance');
 
@@ -8,13 +14,19 @@ const appearanceKey = new PluginKey('weibeiStreamingAppearance');
 // caret blink stays continuous.
 const FADE_SPEC = { class: 'wb-stream-in' };
 const CARET_SPEC = { side: 1 };
+const HIDDEN_SYNTAX_SPEC = {
+  style: 'opacity: 0',
+  'aria-hidden': 'true',
+  'data-weibei-streaming-syntax-hidden': 'true',
+};
 
 /** Match the CSS animation duration of .wb-stream-in in index.html. */
-const FADE_MILLISECONDS = 260;
+const FADE_MILLISECONDS = 200;
 /** Retire the caret shortly after inserts stop flowing. */
 const CARET_IDLE_MILLISECONDS = 400;
-/** Only animate typing-like inserts; wholesale block rewrites skip the fade. */
-const MAXIMUM_FADE_CHARACTERS = 24;
+/** Only animate typing-like inserts; wholesale block rewrites skip the fade.
+ * Raised with the faster reveal cadence so pacing chunks still fade. */
+const MAXIMUM_FADE_CHARACTERS = 32;
 
 interface FadeEntry {
   from: number;
@@ -35,13 +47,66 @@ function createCaretElement(): HTMLElement {
   return element;
 }
 
+const hiddenSyntaxDecorations = (
+  doc: ProseMirrorNode,
+  markers: IncompleteStreamingMarkdownMarker[],
+) => {
+  const candidates = new Map<string, Array<{ from: number; to: number }>>();
+  const markerValues = Array.from(new Set(markers.map(({ marker }) => marker)));
+  if (markerValues.length === 0) return [];
+
+  let scannedCharacters = 0;
+  const scanTail = (node: ProseMirrorNode, contentStart: number, insideCode: boolean): boolean => {
+    let offset = node.content.size;
+    for (let childIndex = node.childCount - 1; childIndex >= 0; childIndex -= 1) {
+      const child = node.child(childIndex);
+      offset -= child.nodeSize;
+      const childStart = contentStart + offset;
+      const childIsCode = insideCode || child.type.spec.code === true;
+      if (!child.isText) {
+        if (scanTail(child, childStart + 1, childIsCode)) return true;
+        continue;
+      }
+
+      const text = child.text || '';
+      const remaining = incompleteStreamingScanLimit - scannedCharacters;
+      const sliceStart = Math.max(0, text.length - remaining);
+      if (!childIsCode && !child.marks.some((mark) => mark.type.name.includes('code'))) {
+        for (const marker of markerValues) {
+          const localRanges: Array<{ from: number; to: number }> = [];
+          let index = text.indexOf(marker, sliceStart);
+          while (index >= 0) {
+            localRanges.push({ from: childStart + index, to: childStart + index + marker.length });
+            index = text.indexOf(marker, index + marker.length);
+          }
+          if (localRanges.length > 0) {
+            candidates.set(marker, [...localRanges, ...(candidates.get(marker) || [])]);
+          }
+        }
+      }
+      scannedCharacters += text.length - sliceStart;
+      if (scannedCharacters >= incompleteStreamingScanLimit) return true;
+    }
+    return false;
+  };
+  scanTail(doc, 0, false);
+
+  return [...markers]
+    .sort((left, right) => right.index - left.index)
+    .flatMap(({ marker, rankFromEnd }) => {
+      const ranges = candidates.get(marker) || [];
+      const range = ranges[ranges.length - rankFromEnd];
+      return range ? [Decoration.inline(range.from, range.to, HIDDEN_SYNTAX_SPEC)] : [];
+    });
+};
+
 /**
  * Softens the streaming cadence visually: newly inserted characters fade in
  * and a quiet caret follows the flow, so evenly paced 30 Hz inserts read as a
  * continuous stream instead of discrete character pops. Purely decorative —
  * it adds no transactions and touches no document content.
  */
-export function streamingAppearancePlugin(isStreamingActive: () => boolean): Plugin {
+export function streamingAppearancePlugin(streamingMarkdown: () => string | null): Plugin {
   return new Plugin({
     key: appearanceKey,
     state: {
@@ -69,7 +134,8 @@ export function streamingAppearancePlugin(isStreamingActive: () => boolean): Plu
           : Math.min(tr.mapping.map(previous.caretPosition), docSize);
         let caretExpiresAt = previous.caretExpiresAt;
 
-        if (tr.docChanged && isStreamingActive()) {
+        const activeMarkdown = streamingMarkdown();
+        if (tr.docChanged && activeMarkdown !== null) {
           tr.steps.forEach((step, index) => {
             const laterMaps = tr.mapping.slice(index + 1);
             tr.mapping.maps[index].forEach((_fromA, _toA, fromB, toB) => {
@@ -94,6 +160,12 @@ export function streamingAppearancePlugin(isStreamingActive: () => boolean): Plu
         if (caretPosition !== null) {
           decorations.push(Decoration.widget(caretPosition, createCaretElement, CARET_SPEC));
         }
+        if (activeMarkdown !== null) {
+          decorations.push(...hiddenSyntaxDecorations(
+            tr.doc,
+            incompleteStreamingMarkdownTailMarkers(activeMarkdown),
+          ));
+        }
         return {
           fades,
           caretPosition,
@@ -103,22 +175,15 @@ export function streamingAppearancePlugin(isStreamingActive: () => boolean): Plu
       },
     },
     props: {
-      // Once the streaming session is over the caret is gone, but in-flight
-      // fades keep their spans until they expire so the last streamed
-      // characters finish their 260ms fade instead of popping to full
-      // opacity when the finish repaint unwraps the decoration spans.
+      // Hidden entirely once the streaming session is over: re-serving the
+      // remaining fades would RE-CREATE their span elements, and a fresh
+      // wb-stream-in span replays its 200ms fade from opacity 0 — the
+      // just-typed text visibly vanished and faded back in at completion.
+      // Unwrapping completed spans is visually silent; mid-flight ones pop
+      // to full opacity, which reads as the line finishing.
       decorations(state) {
         const appearance = appearanceKey.getState(state) as AppearanceState | undefined;
-        if (!appearance) return DecorationSet.empty;
-        if (!isStreamingActive()) {
-          const now = Date.now();
-          const remaining = appearance.fades.filter((entry) => now < entry.expiresAt);
-          if (remaining.length === 0) return DecorationSet.empty;
-          return DecorationSet.create(
-            state.doc,
-            remaining.map((entry) => Decoration.inline(entry.from, entry.to, FADE_SPEC)),
-          );
-        }
+        if (!appearance || streamingMarkdown() === null) return DecorationSet.empty;
         return appearance.set;
       },
     },

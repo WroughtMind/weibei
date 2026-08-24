@@ -68,24 +68,15 @@ struct CourseHomeSearchOutcome: Sendable {
     let availability: CourseDocumentIndexAvailability
 }
 
-enum CourseProjectRebindImpact: Equatable {
-    /// 候选与本机 digest 相等，无歧义。
-    case unchanged
-    /// 候选更新且本机干净，可采用候选状态。
-    case useNewerCandidate
-    /// 候选与本机不同且本机 dirty / 不可比：保留本机进度，需用户确认一次。
-    case keepsLocalState
-}
-
 struct CourseProjectRebindProposal {
     let courseID: UUID
     let courseTitle: String
     let candidateRoot: URL
     let candidateRootIdentity: ImportedFileIdentity
     let expectedCourse: Course
+    /// 只阻止确认期间的本机修改，不参与课程状态选边。
     let expectedLocalPayloadDigest: String
     let snapshot: CoursePortableAdoptionSnapshot
-    let impact: CourseProjectRebindImpact
 }
 
 enum CourseFolderAdoptionOutcome {
@@ -226,6 +217,7 @@ enum CourseOwnedFileError: LocalizedError {
     case unsafeCoursePath
     case targetConflict(URL)
     case replacementTargetIsShared
+    case backupFailed
     case itemBusy
     case verificationFailed
     case workspaceSaveFailed
@@ -250,6 +242,8 @@ enum CourseOwnedFileError: LocalizedError {
             "课程中已经存在“\(url.lastPathComponent)”。魏碑没有覆盖它。"
         case .replacementTargetIsShared:
             "这份共享原件正被其他课程使用，不能替换；可以取消或改名保留两份。"
+        case .backupFailed:
+            "无法安全备份现有笔记，魏碑没有覆盖文件。待写内容仍在当前会话中，请重试。"
         case .itemBusy:
             "这份文件正在进行另一项操作，请稍后重试。"
         case .verificationFailed:
@@ -338,7 +332,7 @@ final class WorkspaceStore: ObservableObject {
     }
     @Published private(set) var activeCourseID: UUID?
     @Published var noteText = ""
-    @Published var noteEditorRecoveryConflict: NoteEditorRecoveryConflict?
+    @Published var noteEditorRecoveryConflictsByItemID: [String: NoteEditorRecoveryConflict] = [:]
     var noteEditorConflictProbeDocumentID: String?
     var latestNoteEditorSnapshot: (documentID: String, digest: String, baseDigest: String, revision: UInt64)?
     let noteRecoveryStore = NoteRecoveryStore()
@@ -354,13 +348,11 @@ final class WorkspaceStore: ObservableObject {
     @Published private(set) var isStoppingAgent = false
     @Published private(set) var isAgentSwitchConfirmationPresented = false
     let agentStreaming = AgentStreamingState()
-    private lazy var agentStreamingDisplayPump = AgentStreamingDisplayPump(hooks: .init(
-        targetText: { [weak self] in self?.latestAgentStreamingText ?? "" },
-        publish: { [weak self] in self?.agentStreaming.text = $0 },
-        canPublish: { [weak self] in
-            guard let self, let chatID = self.activeAgentReplyChatID else { return false }
-            return self.activeStudySessionID == chatID
-        }
+    var agentStreamingUsesReducedMotion = false
+    lazy var agentStreamingDisplayPump = AgentStreamingDisplayPump(hooks: .init(
+        append: { [weak self] chunk in self?.agentStreaming.text.append(chunk) },
+        replace: { [weak self] text in self?.agentStreaming.text = text },
+        didDrain: { [weak self] in self?.finishAgentStreamingDisplay() }
     ))
     @Published var showLoadingIndicatorSamples = false
     /// Last failed user question for precise one-tap retry.
@@ -384,7 +376,14 @@ final class WorkspaceStore: ObservableObject {
     @Published private(set) var learningMemoryStates: [ScopedLearningMemoryState] = []
     private(set) var courseKnowledgeProfiles: [CourseKnowledgeProfile] = []
     @Published private(set) var studySessions: [StudySession] = []
-    @Published private(set) var activeStudySessionID: UUID?
+    @Published private(set) var activeStudySessionID: UUID? {
+        didSet {
+            if let chatID = agentStreaming.displayingChatID,
+               activeStudySessionID != chatID {
+                landAgentStreamingDisplayImmediately()
+            }
+        }
+    }
     /// Drawer open flag lives on `libraryDrawer` so toggles only refresh drawer chrome.
     let libraryDrawer = LibraryDrawerState()
     var showLibrary: Bool {
@@ -410,6 +409,7 @@ final class WorkspaceStore: ObservableObject {
         set {
             if paneState.showAgent != newValue {
                 paneState.showAgent = newValue
+                landAgentStreamingDisplayIfHidden()
             }
         }
     }
@@ -500,7 +500,9 @@ final class WorkspaceStore: ObservableObject {
     @Published var readerTargetLocationID: String?
     @Published var readerTargetLocationTitle: String?
     @Published private(set) var readerTargetLocationRequestID = UUID()
-    @Published var layout: WorkspaceLayout = .documentAgentNotes
+    @Published var layout: WorkspaceLayout = .documentAgentNotes {
+        didSet { landAgentStreamingDisplayIfHidden() }
+    }
     @Published var threePaneOrder: [WorkspacePaneRole] = WorkspacePaneRole.defaultThreePaneOrder
     /// Live drag chrome only — not `@Published` on the main store (avoids full-tree thrash).
     let threePaneReorder = ThreePaneReorderState()
@@ -520,6 +522,7 @@ final class WorkspaceStore: ObservableObject {
         set {
             if interaction.agentSurface != newValue {
                 interaction.agentSurface = newValue
+                landAgentStreamingDisplayIfHidden()
             }
         }
     }
@@ -581,9 +584,34 @@ final class WorkspaceStore: ObservableObject {
             }
         }
     }
-    @Published var noteEditorCommand: NoteEditorCommand?
+    @Published var noteEditorCommand: NoteEditorCommand? {
+        willSet {
+            if let current = noteEditorCommand,
+               current.id != newValue?.id,
+               current.kind.isContentCommand,
+               let tracked = trackedContentCommand(id: current.id),
+               !tracked.isCoordinatorOwned {
+                noteEditorCommandRejected(
+                    current,
+                    documentID: noteEditingSession.documentID
+                )
+            }
+            guard let command = newValue,
+                  command.kind.isContentCommand,
+                  trackedContentCommand(id: command.id) == nil else { return }
+            unresolvedContentCommands.append(
+                TrackedNoteEditorCommand(
+                    documentID: noteEditingSession.documentID,
+                    command: command
+                )
+            )
+        }
+    }
+    @Published private var unresolvedContentCommands: [TrackedNoteEditorCommand] = []
     /// Success / info banner for note create/switch — separate from errors so it auto-dismisses cleanly.
     @Published var transientNoteStatus: String?
+    @Published private var noteSelectionTransitionState = NoteSelectionTransitionState.idle
+    private var pendingNoteSelection: PendingNoteSelection?
     /// Serious data-operation failures (note read/write/rename/restore/identity,
     /// security scope, course file move & rollback). Never auto-dismisses — only a
     /// user close or a newer important error replaces it.
@@ -591,14 +619,11 @@ final class WorkspaceStore: ObservableObject {
     var transientNoteStatusGeneration = 0
     var transientNoteStatusTask: Task<Void, Never>?
     @Published private(set) var workspaceSaveError: String?
-    /// S5：真磁盘写失败计数；满 3 次才露出可点重试的轻提示。
-    private var consecutiveWorkspaceSaveFailures = 0
     @Published private(set) var courseFileOperationProgress: CourseFileOperationProgress?
     @Published var notebookCreationDraft: NotebookCreationDraft?
     @Published var notebookRenameDraft: NotebookRenameDraft?
     var notebookRenameInFlight = false
     @Published var modelName: String = ""
-    @Published private(set) var agentInteractiveVisualizationsEnabled = true
     @Published var agentProviderID: AgentProviderID = .openai
     @Published var agentBaseURL: String = ""
     @Published var agentAuthMethod: AgentAuthMethod = .apiKey
@@ -660,7 +685,8 @@ final class WorkspaceStore: ObservableObject {
     let notebookFileMover: (URL, URL) throws -> Void
     private let courseFileSourceRemover: @Sendable (URL) throws -> Void
     private let contentSourceTrashMover: @Sendable (URL) throws -> URL
-    private let workspaceSnapshotWriter: (Data, URL) throws -> Void
+    private let workspaceSnapshotWriter:
+        @Sendable (Data, URL) throws -> Void
     private let coursePortableStateWriter:
         (
             Data,
@@ -670,16 +696,15 @@ final class WorkspaceStore: ObservableObject {
             () throws -> Void
         ) throws -> Void
     let selectionAskThreadDefaults: UserDefaults
-    let piRuntime: PiAgentRuntime
     let courseDocumentSearchIndex: CourseDocumentSearchIndex
-    private var activeAgentRequestID: UUID?
-    private var activeAgentReplyMessageID: UUID?
-    private var latestAgentStreamingText = ""
+    var activeAgentRequestID: UUID?
+    var activeAgentReplyMessageID: UUID?
+    var latestAgentStreamingText = ""
     private var lastAgentStreamingPublishNanoseconds: UInt64 = 0
-    private var agentReplyIDsThatDisplayedStreamingText: Set<UUID> = []
+    var agentReplyIDsThatDisplayedStreamingText: Set<UUID> = []
     private var agentVisualizationIDsUpdatingHistory: Set<String> = []
-    private var activeAgentReplyChatID: UUID?
-    private var agentRequestTask: Task<Void, Never>?
+    var activeAgentReplyChatID: UUID?
+    var agentRequestTask: Task<Void, Never>?
 #if DEBUG
     private var capturesAgentRequestForSelfCheck = false
     private var selfCheckCapturedAgentRequest: StudyAgentRequest?
@@ -782,6 +807,23 @@ final class WorkspaceStore: ObservableObject {
         var readerPageIndex: Int
         var focusedPane: PaneFocus
         var threePaneOrder: [WorkspacePaneRole]
+    }
+
+    private enum NoteSelectionTransitionState: Equatable {
+        case idle
+        case saving
+        case failed(NoteEditingSessionError)
+        case persistenceFailed
+    }
+
+    private struct PendingNoteSelection {
+        let apply: () -> Void
+    }
+
+    private struct TrackedNoteEditorCommand {
+        let documentID: String
+        let command: NoteEditorCommand
+        var isCoordinatorOwned = false
     }
 
     private enum NotebookNoteSeed {
@@ -895,7 +937,6 @@ final class WorkspaceStore: ObservableObject {
 
     private static let shortcutModifierMask: NSEvent.ModifierFlags = [.command, .option, .control, .shift]
     private static let legacySelectionAskThreadsDefaultsKey = "weibei.selectionAskThreads.v1"
-    private static let interactiveVisualizationsDefaultsKey = "weibei.agent.interactiveVisualizationsEnabled"
 
     convenience init() {
         let folder = Self.workspaceRootDirectory()
@@ -932,7 +973,9 @@ final class WorkspaceStore: ObservableObject {
             }
             return trashedURL as URL
         },
-        workspaceSnapshotWriter: @escaping (Data, URL) throws -> Void = WorkspaceStore.writeWorkspaceSnapshot,
+        workspaceSnapshotWriter: @escaping @Sendable (Data, URL) throws -> Void = {
+            try WorkspaceStore.writeWorkspaceSnapshot($0, to: $1)
+        },
         coursePortableStateWriter: @escaping (
             Data,
             URL,
@@ -961,19 +1004,11 @@ final class WorkspaceStore: ObservableObject {
         self.workspaceSnapshotWriter = workspaceSnapshotWriter
         self.coursePortableStateWriter = coursePortableStateWriter
         self.selectionAskThreadDefaults = selectionAskThreadDefaults
-        if selectionAskThreadDefaults.object(
-            forKey: Self.interactiveVisualizationsDefaultsKey
-        ) != nil {
-            agentInteractiveVisualizationsEnabled = selectionAskThreadDefaults.bool(
-                forKey: Self.interactiveVisualizationsDefaultsKey
-            )
-        }
         if let motionPreferenceRaw = selectionAskThreadDefaults.string(
             forKey: WeiBeiMotionPreference.persistedDefaultsKey
         ), let persistedMotionPreference = WeiBeiMotionPreference(rawValue: motionPreferenceRaw) {
             motionPreference = persistedMotionPreference
         }
-        piRuntime = PiAgentRuntime(runtimeDirectory: folder.appendingPathComponent("AgentRuntime", isDirectory: true))
         let courseIndexDirectory = folder.appendingPathComponent("CourseIndex", isDirectory: true)
         Self.removeLegacyCourseIndex(in: courseIndexDirectory)
         courseDocumentSearchIndex = CourseDocumentSearchIndex(
@@ -1022,7 +1057,7 @@ final class WorkspaceStore: ObservableObject {
         if noteSourceLinksMigrationVersion < 1 {
             migrateNoteSourceLinksFromMarkdown()
             noteSourceLinksMigrationVersion = 1
-            _ = save()
+            save()
         } else if resolvedImportedFileBookmarks
                     || migratedImportedItemIdentities
                     || migratedStudyLocationTitles
@@ -1038,7 +1073,7 @@ final class WorkspaceStore: ObservableObject {
                     || needsPortableCourseStateBootstrap
                     || recoveredInterruptedAgentReply
                     || needsSelectionAskThreadsWorkspaceMigration {
-            _ = save()
+            save()
         }
         floatingSelectionPrompt = ui("当前选区", "Current selection")
         if selectedItemID != nil {
@@ -1363,8 +1398,8 @@ final class WorkspaceStore: ObservableObject {
             // Only then may the next generation include its portable state.
             if !(await persistWorkspaceNow()) {
                 reportWorkspaceSaveFailure(ui(
-                    "课程已创建，但可携带状态尚未写入。",
-                    "The course was created, but its portable state has not been written yet."
+                    "课程已创建，但可携带状态尚未写入；本机内容已保留。请重试。",
+                    "The course was created, but its portable state was not written. Local content is preserved; please retry."
                 ))
             }
             return course.id
@@ -1565,12 +1600,15 @@ final class WorkspaceStore: ObservableObject {
         courseLibraryRootBookmarkData = bookmark
         courseLibraryRootURL = resolvedRoot
         courseLibraryUnavailableReason = nil
-        _ = restoreCourseReferencesInsideLibrary()
+        _ = await restoreCourseReferencesInsideLibraryAsync()
         _ = await migrateLegacySharedMaterials(in: resolvedRoot)
         for course in courses where resolvedCourseRootURLs[course.id] != nil {
             _ = resolveCourseOwnedItems(for: course.id)
         }
-        guard await persistWorkspaceNow() else {
+        // 这里只登记资料库绑定；课程状态要在读完文件夹后再按真实内容写回。
+        guard await persistWorkspaceNow(
+            skippingPortableCourseIDs: Set(courses.map(\.id))
+        ) else {
             courseSecurityScopeStopper(scopedURL)
             if let previousScope {
                 activeCourseSecurityScopes[ownerKey] = previousScope
@@ -1595,10 +1633,12 @@ final class WorkspaceStore: ObservableObject {
         )
         if !legacyOrganization.errors.isEmpty {
             showImportantOperationError(ui(
-                "已有 \(legacyOrganization.migrated) 份旧资料完成整理；另有 \(legacyOrganization.errors.count) 份未完成：\(legacyOrganization.errors.first ?? "")",
-                "Organized \(legacyOrganization.migrated) legacy item(s); \(legacyOrganization.errors.count) remain: \(legacyOrganization.errors.first ?? "")"
+                "已有 \(legacyOrganization.migrated) 份旧资料完成整理；另有 \(legacyOrganization.errors.count) 份未完成，原内容仍保留。请确认资料库可写后重试。",
+                "Organized \(legacyOrganization.migrated) legacy item(s). \(legacyOrganization.errors.count) remain, and their original content is preserved. Make sure the library is writable, then try again."
             ))
         }
+        _ = restorePortableCourseStates()
+        await reconcileCourseFilesNow()
         courseDocumentSearchIndex.synchronize(allItems)
         invalidateAgentContext()
         if let previousScope {
@@ -1619,7 +1659,7 @@ final class WorkspaceStore: ObservableObject {
                        stopScope(previousScope)
                    }
                ) {
-                // The old scope stays valid until the running PI process has stopped.
+                // The old scope stays valid until the running Agent request has stopped.
             } else {
                 courseSecurityScopeStopper(previousScope)
             }
@@ -1666,9 +1706,12 @@ final class WorkspaceStore: ObservableObject {
                 resolvedCourseRootURLs[courseID] = created.root
                 courseRootUnavailableReasons.removeValue(forKey: courseID)
             } catch {
-                errors.append(
-                    "\(courses[index].title)：\(error.localizedDescription)"
+                recordCourseLibraryUIFailure(
+                    error,
+                    operation: "organize_legacy_course",
+                    path: libraryRoot
                 )
+                errors.append(courses[index].title)
             }
         }
         if !createdRoots.isEmpty,
@@ -1712,9 +1755,12 @@ final class WorkspaceStore: ObservableObject {
                 )
                 migrated += 1
             } catch {
-                errors.append(
-                    "\(displayTitle(for: item))：\(error.localizedDescription)"
+                recordCourseLibraryUIFailure(
+                    error,
+                    operation: "organize_legacy_item",
+                    path: item.url
                 )
+                errors.append(displayTitle(for: item))
             }
         }
         return (migrated, errors)
@@ -2250,8 +2296,15 @@ final class WorkspaceStore: ObservableObject {
                 resolvedCourseRootURLs.removeValue(
                     forKey: course.id
                 )
-                courseRootUnavailableReasons[course.id] =
-                    error.localizedDescription
+                recordCourseLibraryUIFailure(
+                    error,
+                    operation: "adopt_course_manifest",
+                    path: canonicalRoot
+                )
+                courseRootUnavailableReasons[course.id] = ui(
+                    "课程文件夹已保留，但当前无法安全接入；魏碑没有覆盖其中内容。请修复或重新选择该课程文件夹。",
+                    "The course folder is preserved but cannot be connected safely. WeiBei did not overwrite its contents. Repair or re-select the course folder."
+                )
                 let scopeKey =
                     "course:\(course.id.uuidString)"
                 if let scopedURL =
@@ -2276,8 +2329,8 @@ final class WorkspaceStore: ObservableObject {
         }
         if !(await persistWorkspaceNow()) {
             reportWorkspaceSaveFailure(ui(
-                "课程已登记，但可携带状态尚未写入。",
-                "The course was registered, but its portable state has not been written yet."
+                "课程已登记，但可携带状态尚未写入；本机内容已保留。请重试。",
+                "The course was registered, but its portable state was not written. Local content is preserved; please retry."
             ))
         }
         if !WeiBeiSafetyTestMode.isEnabled {
@@ -2373,7 +2426,10 @@ final class WorkspaceStore: ObservableObject {
         }
         _ = resolveCourseOwnedItems(for: existing.id)
 
-        guard await persistWorkspaceNow() else {
+        // 先保存重新连接信息；课程状态要在读盘和扫描完成后再写回。
+        guard await persistWorkspaceNow(
+            skippingPortableCourseIDs: Set(courses.map(\.id))
+        ) else {
             courses[courseIndex] = previousCourse
             if let previousResolvedRoot {
                 resolvedCourseRootURLs[existing.id] = previousResolvedRoot
@@ -2397,6 +2453,15 @@ final class WorkspaceStore: ObservableObject {
             throw CourseProjectRootError.workspaceSaveFailed
         }
 
+        _ = restorePortableCourseStates()
+        guard !blockedPortableCourseIDs.contains(existing.id) else {
+            throw CourseProjectRootError.metadataConflict
+        }
+        await reconcileCourseFilesNow(courseID: existing.id)
+        guard await persistWorkspaceNow() else {
+            throw CourseProjectRootError.workspaceSaveFailed
+        }
+
         if let previousScope {
             let stopScope = courseSecurityScopeStopper
             if !cancelAgentRequestIfRunning(
@@ -2410,11 +2475,6 @@ final class WorkspaceStore: ObservableObject {
         }
         courseDocumentSearchIndex.synchronize(allItems)
         invalidateAgentContext()
-        if !WeiBeiSafetyTestMode.isEnabled {
-            Task { @MainActor [weak self] in
-                await self?.reconcileCourseFilesNow(courseID: existing.id)
-            }
-        }
         return existing.id
     }
 
@@ -2435,9 +2495,14 @@ final class WorkspaceStore: ObservableObject {
               !courseHasUnstableState(existing.id) else {
             throw CourseProjectRebindError.proposalChanged
         }
-        let evaluation = try evaluatedCourseRebindState(
+        _ = try evaluatedCourseRebindState(
             existing: existing,
             snapshot: snapshot
+        )
+        let localState = try makeCoursePortableState(
+            courseID: existing.id,
+            revision: coursePortableStateRevisions[existing.id] ?? 0,
+            savedAt: Date(timeIntervalSince1970: 0)
         )
         return CourseProjectRebindProposal(
             courseID: existing.id,
@@ -2445,9 +2510,9 @@ final class WorkspaceStore: ObservableObject {
             candidateRoot: candidateRoot,
             candidateRootIdentity: candidateRootIdentity,
             expectedCourse: existing,
-            expectedLocalPayloadDigest: evaluation.localPayloadDigest,
-            snapshot: snapshot,
-            impact: evaluation.impact
+            expectedLocalPayloadDigest:
+                try coursePortableStatePayloadDigest(localState),
+            snapshot: snapshot
         )
     }
 
@@ -2519,9 +2584,7 @@ final class WorkspaceStore: ObservableObject {
         snapshot: CoursePortableAdoptionSnapshot
     ) throws -> (
         state: CoursePortableState,
-        statePayloadDigest: String,
-        localPayloadDigest: String,
-        impact: CourseProjectRebindImpact
+        statePayloadDigest: String
     ) {
         guard snapshot.manifest.courseID == existing.id,
               let portableStateData = snapshot.portableStateData else {
@@ -2534,56 +2597,8 @@ final class WorkspaceStore: ObservableObject {
             state,
             courseID: existing.id
         )
-        let localState = try makeCoursePortableState(
-            courseID: existing.id,
-            revision: coursePortableStateRevisions[existing.id] ?? 0,
-            savedAt: Date(timeIntervalSince1970: 0)
-        )
-        let localPayloadDigest = try coursePortableStatePayloadDigest(
-            localState
-        )
-        let comparableLocalState = try localStateByMaterializingSharedItems(
-            localState,
-            using: snapshot.manifest
-        )
-        let comparableLocalDigest = try coursePortableStatePayloadDigest(
-            comparableLocalState
-        )
         let statePayloadDigest = try coursePortableStatePayloadDigest(state)
-        // 真正 digest 相等：无歧义，S6-5 可自动确认。
-        if statePayloadDigest == comparableLocalDigest {
-            return (
-                state,
-                statePayloadDigest,
-                localPayloadDigest,
-                .unchanged
-            )
-        }
-
-        let knownRevision = coursePortableStateRevisions[existing.id]
-        let knownDigest = coursePortableStateDigests[existing.id]
-        let localIsClean = knownDigest == localPayloadDigest
-            && !dirtyPortableCourseIDs.contains(existing.id)
-            && !blockedPortableCourseIDs.contains(existing.id)
-            && !oversizedPortableCourseIDs.contains(existing.id)
-        // H2：分叉 / 本机 dirty / revision 不可比 → keepsLocalState（需确认一次）；
-        // 仅当本机干净且候选 revision 更新时才 useNewerCandidate。
-        guard localIsClean,
-              let knownRevision,
-              state.revision > knownRevision else {
-            return (
-                state,
-                statePayloadDigest,
-                localPayloadDigest,
-                .keepsLocalState
-            )
-        }
-        return (
-            state,
-            statePayloadDigest,
-            localPayloadDigest,
-            .useNewerCandidate
-        )
+        return (state, statePayloadDigest)
     }
 
     private func validateCourseRebindStorage(
@@ -2627,38 +2642,6 @@ final class WorkspaceStore: ObservableObject {
             WeiBeiSafetyTestMode.isEnabled
         )
         try validateCourseRebindStorage(state, courseID: courseID)
-    }
-
-    private func localStateByMaterializingSharedItems(
-        _ rawState: CoursePortableState,
-        using manifest: CourseProjectManifest
-    ) throws -> CoursePortableState {
-        guard let portableExport = manifest.portableExport else {
-            return rawState
-        }
-        var state = rawState
-        for provenance in portableExport.materializedSharedItems {
-            guard let index = state.items.firstIndex(where: {
-                $0.itemID == provenance.itemID
-                    && $0.courseRelativePath
-                        == provenance.courseRelativePath
-            }) else {
-                // S3：无法物化的共享项静默跳过。
-                continue
-            }
-            guard case let .sharedReference(
-                sharedRelativePath,
-                expectedContentDigest
-            ) = state.items[index].storage,
-            sharedRelativePath == provenance.sharedRelativePath,
-            expectedContentDigest == provenance.sourceContentDigest,
-            state.items[index].contentDigest
-                == provenance.sourceContentDigest else {
-                continue
-            }
-            state.items[index].storage = .courseOwned
-        }
-        return try state.validated(expectedCourseID: rawState.courseID)
     }
 
     private func registeredCourseRootIsAvailable(
@@ -2862,9 +2845,14 @@ final class WorkspaceStore: ObservableObject {
                 existing: currentCourse,
                 snapshot: confirmedSnapshot
             )
-            guard evaluation.localPayloadDigest
-                    == proposal.expectedLocalPayloadDigest,
-                  evaluation.impact == proposal.impact else {
+            let currentLocalState = try makeCoursePortableState(
+                courseID: currentCourse.id,
+                revision:
+                    coursePortableStateRevisions[currentCourse.id] ?? 0,
+                savedAt: Date(timeIntervalSince1970: 0)
+            )
+            guard try coursePortableStatePayloadDigest(currentLocalState)
+                    == proposal.expectedLocalPayloadDigest else {
                 throw CourseProjectRebindError.proposalChanged
             }
             guard let courseIndex = courses.firstIndex(where: {
@@ -2976,51 +2964,23 @@ final class WorkspaceStore: ObservableObject {
                         forKey: itemID
                     )
                 }
-                switch evaluation.impact {
-                case .keepsLocalState:
-                    // H2：以本机进度为准，不覆盖；候选 portable 状态 best-effort 冲突备份。
-                    if let candidateData = proposal.snapshot.portableStateData {
-                        let weibei = resolvedRoot.appendingPathComponent(
-                            ".weibei",
-                            isDirectory: true
-                        )
-                        try? FileManager.default.createDirectory(
-                            at: weibei,
-                            withIntermediateDirectories: true
-                        )
-                        let stamp = ISO8601DateFormatter().string(from: Date())
-                            .replacingOccurrences(of: ":", with: "-")
-                        let backupURL = weibei.appendingPathComponent(
-                            "rebind-candidate-conflict-\(stamp).json",
-                            isDirectory: false
-                        )
-                        try? candidateData.write(
-                            to: backupURL,
-                            options: [.atomic]
-                        )
-                    }
-                    dirtyPortableCourseIDs.insert(proposal.courseID)
-                    needsPortableCourseStateBootstrap = true
-                case .unchanged, .useNewerCandidate:
-                    try applyCoursePortableState(
-                        evaluation.state,
-                        courseID: proposal.courseID
-                    )
-                    if let activeNotebookItemID,
-                       reboundNoteItemIDs.contains(activeNotebookItemID) {
-                        noteText =
-                            notesByItemID[activeNotebookItemID] ?? ""
-                    }
-                    coursePortableStateRevisions[proposal.courseID] =
-                        evaluation.state.revision
-                    coursePortableStateDigests[proposal.courseID] =
-                        evaluation.statePayloadDigest
-                    dirtyPortableCourseIDs.remove(proposal.courseID)
-                    blockedPortableCourseIDs.remove(proposal.courseID)
-                    oversizedPortableCourseIDs.remove(proposal.courseID)
-                    needsPortableCourseStateBootstrap =
-                        !dirtyPortableCourseIDs.isEmpty
+                try applyCoursePortableState(
+                    evaluation.state,
+                    courseID: proposal.courseID
+                )
+                if let activeNotebookItemID,
+                   reboundNoteItemIDs.contains(activeNotebookItemID) {
+                    noteText = notesByItemID[activeNotebookItemID] ?? ""
                 }
+                coursePortableStateRevisions[proposal.courseID] =
+                    evaluation.state.revision
+                coursePortableStateDigests[proposal.courseID] =
+                    evaluation.statePayloadDigest
+                dirtyPortableCourseIDs.remove(proposal.courseID)
+                blockedPortableCourseIDs.remove(proposal.courseID)
+                oversizedPortableCourseIDs.remove(proposal.courseID)
+                needsPortableCourseStateBootstrap =
+                    !dirtyPortableCourseIDs.isEmpty
                 guard await persistWorkspaceNow(
                     skippingPortableCourseIDs: [proposal.courseID]
                 ) else {
@@ -3153,7 +3113,10 @@ final class WorkspaceStore: ObservableObject {
                             forKey: proposal.courseID
                         )
                         courseRootUnavailableReasons[proposal.courseID] =
-                            error.localizedDescription
+                            ui(
+                                "课程文件夹仍在原位置，但重新连接未完成。请重新选择该文件夹后再试。",
+                                "The course folder remains in its original location, but reconnection did not finish. Re-select the folder and try again."
+                            )
                     }
                     if activeCourseSecurityScopeOwnerTokens[scopeKey]
                             == rebindToken,
@@ -3173,6 +3136,12 @@ final class WorkspaceStore: ObservableObject {
                 }
             }
 
+            guard await reconcileCourseFilesNow(
+                courseID: proposal.courseID
+            ) else {
+                throw CourseProjectRootError.workspaceSaveFailed
+            }
+
             stopPreviousScopeIfNeeded()
             if activeCourseSecurityScopeOwnerTokens[scopeKey]
                     == rebindToken {
@@ -3182,13 +3151,6 @@ final class WorkspaceStore: ObservableObject {
             }
             courseDocumentSearchIndex.synchronize(allItems)
             invalidateAgentContext()
-            if !WeiBeiSafetyTestMode.isEnabled {
-                Task { @MainActor [weak self] in
-                    await self?.reconcileCourseFilesNow(
-                        courseID: proposal.courseID
-                    )
-                }
-            }
             shouldStopNewScopeOnFailure = false
             return proposal.courseID
         } catch {
@@ -3201,8 +3163,15 @@ final class WorkspaceStore: ObservableObject {
                 resolvedCourseRootURLs.removeValue(
                     forKey: proposal.courseID
                 )
-                courseRootUnavailableReasons[proposal.courseID] =
-                    error.localizedDescription
+                recordCourseLibraryUIFailure(
+                    error,
+                    operation: "confirm_course_rebind",
+                    path: resolvedRoot
+                )
+                courseRootUnavailableReasons[proposal.courseID] = ui(
+                    "课程文件夹仍在原位置，但重新连接未完成。请重新选择该文件夹后再试。",
+                    "The course folder remains in its original location, but reconnection did not finish. Re-select the folder and try again."
+                )
             }
             if activeCourseSecurityScopeOwnerTokens[scopeKey]
                     == rebindToken,
@@ -3368,15 +3337,13 @@ final class WorkspaceStore: ObservableObject {
                 sourceInfo = try await courseProjectFileWorker
                     .validatedRegularSource(sharedURL)
             } catch {
-                // 源文件真没了：跳过该项，不中止整次导出。
-                continue
-            }
-            // S3：身份漂移可容忍则静默继续。
-            let identityOK = item.importedFileIdentity.map {
-                $0.matchesAcrossVolumeDrift(sourceInfo.identity)
-            } ?? true
-            if !identityOK {
-                continue
+                WeiBeiLog.workspace.error(
+                    "code=course_export_source_unavailable stage=validate underlying=\(WeiBeiLog.code(error), privacy: .public) path=\(sharedURL.path, privacy: .private) reason=\(WeiBeiLog.truncated(error.localizedDescription), privacy: .private)"
+                )
+                throw CoursePortableExportError.invalidSourceEntry(
+                    path: state.items[index].courseRelativePath,
+                    reason: error.localizedDescription
+                )
             }
             let sourceSnapshot: CourseFileSnapshot
             do {
@@ -3386,7 +3353,13 @@ final class WorkspaceStore: ObservableObject {
                         expectedIdentity: sourceInfo.identity
                     )
             } catch {
-                continue
+                WeiBeiLog.workspace.error(
+                    "code=course_export_source_unavailable stage=snapshot underlying=\(WeiBeiLog.code(error), privacy: .public) path=\(sourceInfo.url.path, privacy: .private) reason=\(WeiBeiLog.truncated(error.localizedDescription), privacy: .private)"
+                )
+                throw CoursePortableExportError.invalidSourceEntry(
+                    path: state.items[index].courseRelativePath,
+                    reason: error.localizedDescription
+                )
             }
             // digest 不一致时仍以磁盘现状导出（S3 静默降级；S6-9 可再收紧日志）。
             _ = expectedContentDigest
@@ -4231,7 +4204,7 @@ final class WorkspaceStore: ObservableObject {
             courseIDs: courseIDs,
             requiring: courseIDs
         )
-        _ = save()
+        save()
     }
 
     /// 从磁盘再读 course-state 并 apply（验 C2：本地草稿不被清空）。
@@ -4543,11 +4516,18 @@ final class WorkspaceStore: ObservableObject {
             if replacesExistingTarget {
                 // 覆盖前：笔记入备份环；目标隔离进废纸篓。
                 if role == .note {
-                    _ = try? NoteBackupRing.capture(
-                        sourceURL: targetURL,
-                        itemID: itemID,
-                        rootURL: noteBackupRootURL
-                    )
+                    do {
+                        _ = try NoteBackupRing.capture(
+                            sourceURL: targetURL,
+                            itemID: itemID,
+                            rootURL: noteBackupRootURL
+                        )
+                    } catch {
+                        WeiBeiLog.noteRepair.error(
+                            "code=note_backup_failed path=\(targetURL.path, privacy: .private) reason=\(error.localizedDescription, privacy: .private)"
+                        )
+                        throw CourseOwnedFileError.backupFailed
+                    }
                 }
                 guard let replacementIdentity = importedFileIdentityResolver(targetURL) else {
                     throw CourseOwnedFileError.targetConflict(targetURL)
@@ -6096,7 +6076,10 @@ final class WorkspaceStore: ObservableObject {
                     || courseLibraryRootIdentity != nil
                     || courseLibraryRootBookmarkData != nil {
             courseLibraryUnavailableReason = courseLibraryUnavailableReason
-                ?? CourseProjectRootError.bookmarkResolutionFailed.localizedDescription
+                ?? ui(
+                    "原资料库暂时无法连接；课程记录和文件仍在原位置。请重新选择原来的资料库。",
+                    "The original library could not be reconnected. Course records and files remain in their original location. Re-select the original library."
+                )
         }
 
         changed = restoreCourseReferencesInsideLibrary() || changed
@@ -6105,10 +6088,19 @@ final class WorkspaceStore: ObservableObject {
 
     @discardableResult
     private func restoreCourseReferencesInsideLibrary() -> Bool {
+        (try? waitForCourseFileOperation {
+            await self.restoreCourseReferencesInsideLibraryAsync()
+        }) ?? false
+    }
+
+    private func restoreCourseReferencesInsideLibraryAsync() async -> Bool {
         guard let libraryRoot = courseLibraryRootURL else {
             for course in courses where course.sourceRootRelativePath != nil {
                 courseRootUnavailableReasons[course.id] = courseLibraryUnavailableReason
-                    ?? CourseProjectRootError.unavailableLibrary.localizedDescription
+                    ?? ui(
+                        "课程文件夹暂时不可用；文件仍在原位置。请重新选择原来的资料库。",
+                        "The course folder is temporarily unavailable. Files remain in their original location. Re-select the original library."
+                    )
             }
             return false
         }
@@ -6128,18 +6120,29 @@ final class WorkspaceStore: ObservableObject {
                     of: resolvedURL,
                     inside: libraryRoot
                   ) else {
-                courseRootUnavailableReasons[courses[index].id] = "课程文件夹当前不可用。"
+                courseRootUnavailableReasons[courses[index].id] = ui(
+                    "课程文件夹当前不可用；文件仍在原位置。请重新选择原来的资料库。",
+                    "The course folder is unavailable. Files remain in their original location. Re-select the original library."
+                )
                 continue
             }
             let courseID = courses[index].id
             do {
-                try validateRestoredCourseRoot(
+                try await validateRestoredCourseRootAsync(
                     resolvedURL,
                     course: courses[index],
                     mustBeInsideLibrary: true
                 )
             } catch {
-                courseRootUnavailableReasons[courseID] = error.localizedDescription
+                recordCourseLibraryUIFailure(
+                    error,
+                    operation: "validate_restored_course_root",
+                    path: resolvedURL
+                )
+                courseRootUnavailableReasons[courseID] = ui(
+                    "课程文件夹当前无法安全读取；魏碑没有修改其中内容。请重新选择原来的资料库。",
+                    "The course folder cannot be read safely. WeiBei did not modify its contents. Re-select the original library."
+                )
                 continue
             }
             resolvedCourseRootURLs[courseID] = resolvedURL
@@ -6169,6 +6172,7 @@ final class WorkspaceStore: ObservableObject {
         let reserved: Set<String> = [
             CourseLibraryLayout.commonMaterialsDirectoryName,
             CourseLibraryLayout.commonNotesDirectoryName,
+            "共享文稿",
         ]
         let children = (try? FileManager.default.contentsOfDirectory(
             at: libraryRoot,
@@ -6186,16 +6190,44 @@ final class WorkspaceStore: ObservableObject {
                 ensureCourseScaffold(at: child)
                 continue
             }
-            let manifestURL = child
-                .appendingPathComponent(".weibei", isDirectory: true)
-                .appendingPathComponent("course.json")
-            let existingID: UUID?
-            if let data = try? Data(contentsOf: manifestURL),
-               let manifest = try? JSONDecoder().decode(CourseProjectManifest.self, from: data) {
-                existingID = manifest.courseID
+            let metadataURL = child.appendingPathComponent(
+                ".weibei",
+                isDirectory: true
+            )
+            let manifestURL = metadataURL.appendingPathComponent(
+                "course.json"
+            )
+            let existingManifest: CourseProjectManifest?
+            if FileManager.default.fileExists(atPath: metadataURL.path) {
+                let values = try? metadataURL.resourceValues(forKeys: [
+                    .isDirectoryKey,
+                    .isSymbolicLinkKey,
+                    .isAliasFileKey,
+                ])
+                guard values?.isDirectory == true,
+                      values?.isSymbolicLink != true,
+                      values?.isAliasFile != true,
+                      !CourseProjectFileWorker.isSymbolicLink(
+                          at: metadataURL
+                      ),
+                      CourseProjectPathPolicy.isSame(
+                          metadataURL,
+                          metadataURL.resolvingSymlinksInPath()
+                      ),
+                      let data = try? Data(contentsOf: manifestURL),
+                      let manifest = try? JSONDecoder().decode(
+                          CourseProjectManifest.self,
+                          from: data
+                      ) else {
+                    continue
+                }
+                existingManifest = manifest
             } else {
-                existingID = nil
+                existingManifest = nil
             }
+            // 可携带副本必须走完整接管事务，不能被普通目录扫描提前消费封印。
+            guard existingManifest?.portableExport == nil else { continue }
+            let existingID = existingManifest?.courseID
             if let existingID, let index = courses.firstIndex(where: { $0.id == existingID }) {
                 courses[index].title = name
                 courses[index].sourceRootRelativePath = name
@@ -6236,20 +6268,6 @@ final class WorkspaceStore: ObservableObject {
             try? FileManager.default.createDirectory(
                 at: root.appendingPathComponent(name, isDirectory: true),
                 withIntermediateDirectories: true
-            )
-        }
-    }
-
-    private func validateRestoredCourseRoot(
-        _ root: URL,
-        course: Course,
-        mustBeInsideLibrary: Bool
-    ) throws {
-        try waitForCourseFileOperation {
-            try await self.validateRestoredCourseRootAsync(
-                root,
-                course: course,
-                mustBeInsideLibrary: mustBeInsideLibrary
             )
         }
     }
@@ -6500,7 +6518,7 @@ final class WorkspaceStore: ObservableObject {
                         receiptCleanup
                     )
                 }
-                _ = save()
+                save()
                 if shouldDismissCourseWorkspace {
                     courseWorkspacePresented = false
                 }
@@ -6660,7 +6678,9 @@ final class WorkspaceStore: ObservableObject {
             self.removeCourseLocalRegistration(courseID)
             removalSucceeded = true
             self.usesBackgroundWorkspacePersistenceForSelfCheck = false
-            guard self.flushPendingWorkspaceSave() else { return false }
+            guard await self.flushPendingWorkspaceSaveAsync() else {
+                return false
+            }
 
             let compensated = try JSONDecoder().decode(
                 PersistedWorkspace.self,
@@ -7362,6 +7382,48 @@ final class WorkspaceStore: ObservableObject {
         setCourseIDs(memberships, for: itemID)
     }
 
+    private func reportCourseRelationOperationFailure(
+        _ error: Error,
+        operation: String,
+        path: URL?,
+        item: StudyItem,
+        courseID: UUID,
+        shouldContainRelation: Bool
+    ) {
+        recordCourseLibraryUIFailure(
+            error,
+            operation: operation,
+            path: path
+        )
+        let relationMatches = courseIDs(for: item.id).contains(courseID)
+            == shouldContainRelation
+        let title = displayTitle(for: item)
+        let message: String
+        switch (shouldContainRelation, relationMatches) {
+        case (true, true):
+            message = ui(
+                "“\(title)”已加入目标课程，内容已保住；旧位置未清理完成。请恢复课程文件夹访问后重试清理。",
+                "“\(title)” was added to the target course and its content is safe, but the old location was not fully cleaned up. Restore access to the course folder, then retry the cleanup."
+            )
+        case (true, false):
+            message = ui(
+                "“\(title)”加入课程的操作未完整完成；磁盘文件和课程入口状态无法确认。请检查原位置、通用目录和课程目录后再试。",
+                "The operation to add “\(title)” to the course did not fully complete. The disk file and course entry state could not be confirmed. Check the original location, common content, and course folder before trying again."
+            )
+        case (false, true):
+            message = ui(
+                "“\(title)”已从课程移除，共享原件仍安全保留；旧课程入口未清理完成。请恢复课程文件夹访问后重试清理。",
+                "“\(title)” was removed from the course and the shared original is still safe, but the old course entry was not fully cleaned up. Restore access to the course folder, then retry the cleanup."
+            )
+        case (false, false):
+            message = ui(
+                "“\(title)”移出课程的操作未完整完成；磁盘文件和课程入口状态无法确认。请检查原位置、通用目录和课程目录后再试。",
+                "The operation to remove “\(title)” from the course did not fully complete. The disk file and course entry state could not be confirmed. Check the original location, common content, and course folder before trying again."
+            )
+        }
+        showImportantOperationError(message)
+    }
+
     func setCourseIDs(_ courseIDs: Set<UUID>, for itemID: String) {
         guard !activeItemFileMutationIDs.contains(itemID),
               let item = importedItems.first(where: { $0.id == itemID }) else {
@@ -7403,7 +7465,15 @@ final class WorkspaceStore: ObservableObject {
                         conflictResolution: resolution
                     )
                 } catch {
-                    self?.showImportantOperationError(error.localizedDescription)
+                    guard let self else { return }
+                    self.reportCourseRelationOperationFailure(
+                        error,
+                        operation: "move_common_item_into_course",
+                        path: sourceURL,
+                        item: item,
+                        courseID: courseID,
+                        shouldContainRelation: true
+                    )
                 }
             }
             return
@@ -7460,7 +7530,17 @@ final class WorkspaceStore: ObservableObject {
                         )
                     }
                 } catch {
-                    self?.showImportantOperationError(error.localizedDescription)
+                    guard let self else { return }
+                    self.reportCourseRelationOperationFailure(
+                        error,
+                        operation: movesOwnership
+                            ? "move_course_owned_item"
+                            : "share_course_owned_item",
+                        path: sourceURL,
+                        item: item,
+                        courseID: courseID,
+                        shouldContainRelation: true
+                    )
                 }
             }
             return
@@ -7494,7 +7574,27 @@ final class WorkspaceStore: ObservableObject {
                         conflictResolution: resolution
                     )
                 } catch {
-                    self?.showImportantOperationError(error.localizedDescription)
+                    guard let self else { return }
+                    self.recordCourseLibraryUIFailure(
+                        error,
+                        operation: "promote_course_item_to_common",
+                        path: sourceURL
+                    )
+                    let becameCommon = self.importedItems.first {
+                        $0.id == itemID
+                    }.map {
+                        if case .common = $0.storage { return true }
+                        return false
+                    } ?? false
+                    self.showImportantOperationError(becameCommon
+                        ? self.ui(
+                            "“\(self.displayTitle(for: item))”已移出本课程，通用原件安全保留；课程文件夹中的旧副本未清理完成。请确认资料库可访问后重试清理。",
+                            "“\(self.displayTitle(for: item))” was removed from this course and the common original is safe, but the old course copy was not fully cleaned up. Make sure the library is accessible, then retry the cleanup."
+                        )
+                        : self.ui(
+                            "“\(self.displayTitle(for: item))”没有移出本课程；原文件和课程关系保持不变。请确认资料库可访问后重试。",
+                            "“\(self.displayTitle(for: item))” was not removed from this course. The original file and course relation are unchanged. Make sure the library is accessible, then try again."
+                        ))
                 }
             }
             return
@@ -7523,7 +7623,15 @@ final class WorkspaceStore: ObservableObject {
                             conflictResolution: resolution
                         )
                     } catch {
-                        self?.showImportantOperationError(error.localizedDescription)
+                        guard let self else { return }
+                        self.reportCourseRelationOperationFailure(
+                            error,
+                            operation: "link_common_item_to_course",
+                            path: sourceURL,
+                            item: item,
+                            courseID: courseID,
+                            shouldContainRelation: true
+                        )
                     }
                 }
                 return
@@ -7536,7 +7644,15 @@ final class WorkspaceStore: ObservableObject {
                             fromCourseID: courseID
                         )
                     } catch {
-                        self?.showImportantOperationError(error.localizedDescription)
+                        guard let self else { return }
+                        self.reportCourseRelationOperationFailure(
+                            error,
+                            operation: "remove_shared_item_from_course",
+                            path: item.url,
+                            item: item,
+                            courseID: courseID,
+                            shouldContainRelation: false
+                        )
                     }
                 }
                 return
@@ -7609,9 +7725,10 @@ final class WorkspaceStore: ObservableObject {
         guard let item = importedItems.first(where: { $0.id == itemID }),
               !item.isSample,
               let sourceURL = item.url else {
-            showImportantOperationError(
-                ContentSourceRemovalError.itemUnavailable.localizedDescription
-            )
+            showImportantOperationError(ui(
+                "找不到这份内容的真实原文件；魏碑没有删除课程记录。请先重新连接资料库或在 Finder 中确认文件位置。",
+                "The original file could not be found. WeiBei did not delete the course record. Reconnect the library or confirm the file location in Finder."
+            ))
             return
         }
         let affectedCourses = courseIDs(for: itemID).compactMap {
@@ -7636,7 +7753,46 @@ final class WorkspaceStore: ObservableObject {
             do {
                 try await self?.moveItemSourceToTrash(itemID)
             } catch {
-                self?.showImportantOperationError(error.localizedDescription)
+                guard let self else { return }
+                self.recordCourseLibraryUIFailure(
+                    error,
+                    operation: "move_content_source_to_trash",
+                    path: sourceURL
+                )
+                let message: String
+                switch error as? ContentSourceRemovalError {
+                case .itemUnavailable:
+                    message = self.ui(
+                        "找不到这份内容的真实原文件；课程记录没有删除。请重新连接资料库或在 Finder 中确认文件位置。",
+                        "The original file could not be found, and the course record was not deleted. Reconnect the library or confirm the file location in Finder."
+                    )
+                case .sourceChanged:
+                    message = self.ui(
+                        "原文件在操作期间发生了变化；魏碑没有移动或覆盖它，课程关系保持不变。请核对文件后重试。",
+                        "The original file changed during the operation. WeiBei did not move or overwrite it, and course relations are unchanged. Check the file, then try again."
+                    )
+                case .trashMoveFailed:
+                    message = self.ui(
+                        "删除未完整完成，魏碑无法确认原文件当前位置；课程记录变更未完成提交。请检查原位置和废纸篓后再操作。",
+                        "Deletion did not fully complete, and WeiBei could not confirm the original file's current location. The course record change was not committed. Check the original location and Trash before continuing."
+                    )
+                case .workspaceSaveFailed:
+                    message = self.ui(
+                        "删除未完整完成，魏碑无法确认原文件当前位置；课程记录变更未完成提交。请检查原位置和废纸篓后再操作。",
+                        "Deletion did not fully complete, and WeiBei could not confirm the original file's current location. The course record change was not committed. Check the original location and Trash before continuing."
+                    )
+                case .pendingChangesUnsaved:
+                    message = self.ui(
+                        "还有更改尚未写入磁盘；魏碑没有移动原文件。请先处理保存提示，再重试删除。",
+                        "Some changes have not been written to disk. WeiBei did not move the original file. Resolve the save warning, then try deleting again."
+                    )
+                case nil:
+                    message = self.ui(
+                        "原文件没有移到废纸篓，课程记录保持不变。请确认资料库和废纸篓可用后重试。",
+                        "The original file was not moved to Trash, and the course record is unchanged. Make sure the library and Trash are available, then try again."
+                    )
+                }
+                self.showImportantOperationError(message)
             }
         }
     }
@@ -8401,9 +8557,11 @@ final class WorkspaceStore: ObservableObject {
         } else if linked.isEmpty {
             beginBlankNoteDraft(for: material.id)
         } else {
-            blankNoteDraftMaterialID = nil
-            activeNotebookItemID = nil
-            noteText = ""
+            requestNoteSelectionTransition(to: nil) { [weak self] in
+                self?.blankNoteDraftMaterialID = nil
+                self?.activeNotebookItemID = nil
+                self?.noteText = ""
+            }
         }
     }
 
@@ -8432,14 +8590,16 @@ final class WorkspaceStore: ObservableObject {
 
     private func beginBlankNoteDraft(for materialID: String) {
         guard item(withID: materialID)?.isNotebookNote == false else { return }
-        persistCurrentNote()
-        blankNoteMaterializationTask?.cancel()
-        blankNoteMaterializationTask = nil
-        blankNoteDraftMaterialID = materialID
-        pendingBlankNoteText = ""
-        activeNotebookItemID = nil
-        noteText = ""
-        focus(.notes)
+        requestNoteSelectionTransition(to: "draft:\(materialID)") { [weak self] in
+            guard let self else { return }
+            blankNoteMaterializationTask?.cancel()
+            blankNoteMaterializationTask = nil
+            blankNoteDraftMaterialID = materialID
+            pendingBlankNoteText = ""
+            activeNotebookItemID = nil
+            noteText = ""
+            focus(.notes)
+        }
     }
 
     var filteredItems: [StudyItem] {
@@ -8493,6 +8653,19 @@ final class WorkspaceStore: ObservableObject {
 
     var activeStudySessionScopeTitle: String {
         activeStudySession?.title ?? ui("新对话", "New Chat")
+    }
+
+    @discardableResult
+    func renameStudySession(_ id: UUID, title rawTitle: String) -> Bool {
+        let title = rawTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !title.isEmpty,
+              let index = studySessions.firstIndex(where: { $0.id == id }),
+              studySessions[index].title != title || !studySessions[index].titleSetByUser else { return false }
+        studySessions[index].title = title
+        studySessions[index].titleSetByUser = true
+        studySessions[index].updatedAt = Date()
+        save()
+        return true
     }
 
     var lastStudyLocation: StudyLocation? {
@@ -8631,17 +8804,6 @@ final class WorkspaceStore: ObservableObject {
         }
         agentDraftsBySessionID.removeValue(forKey: id)
         studySessions.remove(at: index)
-        let runtime = piRuntime
-        Task { @MainActor [weak self] in
-            do {
-                try await runtime.deleteSession(id)
-            } catch {
-                if let __wsErr = self?.ui(
-                    "Chat 已删除，但对应的 Pi 运行状态清理失败：\(error.localizedDescription)",
-                    "The Chat was deleted, but its Pi runtime state could not be removed: \(error.localizedDescription)"
-                ) { self?.reportWorkspaceSaveFailure(__wsErr) }
-            }
-        }
         if deletingActiveSession {
             activeStudySessionID = nil
             messages = []
@@ -8772,30 +8934,6 @@ final class WorkspaceStore: ObservableObject {
                 return .visualization(fragment)
             }
         }
-    }
-
-    func submitAgentVisualizationAction(_ action: String, payloadJSON: String) {
-        let action = String(action.prefix(200))
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !action.isEmpty,
-              payloadJSON.utf8.count <= 65_536,
-              (try? JSONSerialization.jsonObject(
-                  with: Data(payloadJSON.utf8),
-                  options: .fragmentsAllowed
-              )) != nil,
-              !isAgentRunningInActiveChat,
-              !isStoppingAgent else { return }
-        askAgent(
-            replayingSelections: [],
-            visibleQuestionOverride: ui(
-                "互动操作：\(action)",
-                "Interactive action: \(action)"
-            ),
-            questionOverride: ui(
-                "我在互动界面中执行了「\(action)」。当前界面数据：\(payloadJSON)",
-                "I used “\(action)” in the interactive view. Current view data: \(payloadJSON)"
-            )
-        )
     }
 
     private func restoreAgentReplyState(from session: StudySession) {
@@ -9096,13 +9234,16 @@ final class WorkspaceStore: ObservableObject {
                 return
             }
         } catch {
+            WeiBeiLog.workspace.error(
+                "code=agent_note_action_read_failed action=write item=\(target.id, privacy: .private) underlying=\(WeiBeiLog.code(error), privacy: .public) detail=\(WeiBeiLog.truncated(error.localizedDescription), privacy: .private)"
+            )
             await failAgentReplyAction(
                 messageID: messageID,
                 actionID: action.id,
                 chatID: snapshot.chatID,
                 message: ui(
-                    "无法读取目标笔记：\(error.localizedDescription)",
-                    "Could not read the target note: \(error.localizedDescription)"
+                    "没有读取到目标笔记，因此没有写入；原笔记和这条建议都已保留。请确认笔记文件可访问后重试。",
+                    "The target note could not be read, so nothing was written. The original note and this proposal are both preserved. Make sure the note file is accessible, then try again."
                 )
             )
         }
@@ -9319,13 +9460,16 @@ final class WorkspaceStore: ObservableObject {
                 return
             }
         } catch {
+            WeiBeiLog.workspace.error(
+                "code=agent_note_action_read_failed action=undo item=\(target.id, privacy: .private) underlying=\(WeiBeiLog.code(error), privacy: .public) detail=\(WeiBeiLog.truncated(error.localizedDescription), privacy: .private)"
+            )
             await failAgentReplyAction(
                 messageID: messageID,
                 actionID: action.id,
                 chatID: snapshot.chatID,
                 message: ui(
-                    "撤销时无法读取目标笔记：\(error.localizedDescription)",
-                    "Could not read the note while undoing: \(error.localizedDescription)"
+                    "没有读取到目标笔记，因此没有执行撤销；当前笔记内容保持不变。请确认笔记文件可访问后重试。",
+                    "The target note could not be read, so the undo was not performed. The current note content is unchanged. Make sure the note file is accessible, then try again."
                 )
             )
         }
@@ -9623,6 +9767,7 @@ final class WorkspaceStore: ObservableObject {
         studySessions[index].messages = messages
         studySessions[index].updatedAt = Date()
         if let titleSeed,
+           !studySessions[index].titleSetByUser,
            studySessions[index].messages.filter({ $0.role == .user }).count == 1 {
             studySessions[index].title = Self.sessionTitle(from: titleSeed)
         }
@@ -9638,43 +9783,6 @@ final class WorkspaceStore: ObservableObject {
             .split(whereSeparator: { $0.isWhitespace })
             .joined(separator: " ")
         return title.isEmpty ? "Study Session" : String(title.prefix(36))
-    }
-
-    static func semanticSessionTitle(
-        from suggestion: String?,
-        replacing currentTitle: String,
-        messages: [AgentMessage]
-    ) -> String? {
-        guard let firstQuestion = messages.first(where: { $0.role == .user }),
-              currentTitle == sessionTitle(from: firstQuestion.text),
-              let suggestion,
-              !suggestion.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            return nil
-        }
-        let title = sessionTitle(from: suggestion)
-        let genericTitles = ["WeiBei", "Study Session", "New Chat", "New Conversation", "新对话", "新会话"]
-        guard title != currentTitle,
-              !genericTitles.contains(where: { $0.caseInsensitiveCompare(title) == .orderedSame }) else { return nil }
-        return title
-    }
-
-    @discardableResult
-    func applySemanticSessionTitle(_ suggestion: String?, to sessionID: UUID) -> Bool {
-        guard let index = studySessions.firstIndex(where: { $0.id == sessionID }),
-              let title = Self.semanticSessionTitle(
-                  from: suggestion,
-                  replacing: studySessions[index].title,
-                  messages: studySessions[index].messages
-              ) else { return false }
-        studySessions[index].title = title
-        studySessions[index].updatedAt = Date()
-        return true
-    }
-
-    func applySemanticSessionTitleAndSave(_ suggestion: String, to sessionID: UUID) async {
-        guard applySemanticSessionTitle(suggestion, to: sessionID) else { return }
-        save()
-        _ = await flushPendingWorkspaceSaveAsync()
     }
 
     private static func interruptedAgentReplyText(streamed: String, persisted: String) -> String {
@@ -9753,17 +9861,21 @@ final class WorkspaceStore: ObservableObject {
     }
 
     func navigateBackInWorkspace() {
-        guard let previous = backNavigationStack.popLast() else { return }
-        persistCurrentNote()
-        forwardNavigationStack.append(navigationSnapshot())
-        applyNavigationSnapshot(previous)
+        guard let target = backNavigationStack.last else { return }
+        requestNoteSelectionTransition(to: target.activeNotebookItemID) { [weak self] in
+            guard let self, let previous = backNavigationStack.popLast() else { return }
+            forwardNavigationStack.append(navigationSnapshot())
+            applyNavigationSnapshot(previous)
+        }
     }
 
     func navigateForwardInWorkspace() {
-        guard let next = forwardNavigationStack.popLast() else { return }
-        persistCurrentNote()
-        backNavigationStack.append(navigationSnapshot())
-        applyNavigationSnapshot(next)
+        guard let target = forwardNavigationStack.last else { return }
+        requestNoteSelectionTransition(to: target.activeNotebookItemID) { [weak self] in
+            guard let self, let next = forwardNavigationStack.popLast() else { return }
+            backNavigationStack.append(navigationSnapshot())
+            applyNavigationSnapshot(next)
+        }
     }
 
     var canUseSelectedMarkdownAsNotebookNote: Bool {
@@ -9836,7 +9948,7 @@ final class WorkspaceStore: ObservableObject {
 
     private func sourceReferenceBaseTitle(for item: StudyItem) -> String {
         let title = displayTitle(for: item)
-        let catalog = Array(allItems.prefix(500))
+        let catalog = allItems
         let matchingIndexes = catalog.indices.filter {
             displayTitle(for: catalog[$0]) == title
         }
@@ -9924,50 +10036,6 @@ final class WorkspaceStore: ObservableObject {
         }
     }
 
-    var canCopyReference: Bool {
-        hasSelectionAttachments || selectionContext != nil || hasSelectedMaterial || activeNoteItem?.isNotebookNote == true
-    }
-
-    var copyReferenceActionTitle: String {
-        if hasSelectionAttachments || selectionContext != nil { return ui("复制选区引用", "Copy selection reference") }
-        if hasSelectedMaterial { return ui("复制资料引用", "Copy material reference") }
-        return ui("复制笔记引用", "Copy note reference")
-    }
-
-    var sendAgentActionTitle: String {
-        isAgentRunningInActiveChat
-            ? ui("停止回答", "Stop response")
-            : ui("发送问题", "Send question")
-    }
-
-    var isAgentRunningInActiveChat: Bool {
-        isAskingAgent && activeAgentReplyChatID == activeStudySessionID
-    }
-
-    var runningAgentChatTitle: String {
-        guard let chatID = activeAgentReplyChatID,
-              let session = studySessions.first(where: { $0.id == chatID }) else {
-            return ui("另一条 Chat", "another Chat")
-        }
-        return session.title
-    }
-
-    var hasPersistedGeneratingAgentReply: Bool {
-        messages.contains { $0.role == .assistant && $0.origin?.requestID == activeAgentRequestID }
-    }
-
-    func agentDisplayText(for message: AgentMessage) -> String {
-        guard message.id == activeAgentReplyMessageID,
-              message.completionState == .generating else {
-            return message.text
-        }
-        return latestAgentStreamingText
-    }
-
-    func agentReplyDisplayedStreamingText(_ message: AgentMessage) -> Bool {
-        agentReplyIDsThatDisplayedStreamingText.contains(message.id)
-    }
-
     /// The UI draft stays transient while tokens arrive. Durability boundaries
     /// checkpoint its latest cumulative snapshot once, before the workspace is written.
     private func checkpointActiveAgentStreamingText() {
@@ -9981,7 +10049,7 @@ final class WorkspaceStore: ObservableObject {
         else { return }
         _ = updateAgentMessage(messageID, in: chatID) {
             $0.text = latestAgentStreamingText
-            $0.backend = .pi
+            $0.backend = .native
         }
     }
 
@@ -10158,8 +10226,299 @@ final class WorkspaceStore: ObservableObject {
 
     func select(itemID: String?) {
         WeiBeiPerf.measure("workspace.select") {
-            selectMeasured(itemID: itemID, opensNotebook: nil)
+            guard let itemID,
+                  allItems.contains(where: { $0.id == itemID && $0.isNotebookNote }) else {
+                selectMeasured(itemID: itemID, opensNotebook: nil)
+                return
+            }
+            requestNoteSelectionTransition(to: itemID) { [weak self] in
+                self?.selectMeasured(itemID: itemID, opensNotebook: nil)
+            }
         }
+    }
+
+    var noteSelectionStatusMessage: String? {
+        switch noteSelectionTransitionState {
+        case .idle:
+            nil
+        case .saving:
+            ui("正在保存当前笔记…", "Saving the current note…")
+        case .failed(.snapshotTimedOut):
+            ui(
+                "当前正文仍在当前页面，尚未确认保存。请重试后再切换。",
+                "The current text remains on this page, but its save is not confirmed. Retry before switching."
+            )
+        case .failed(.bridgeUnavailable):
+            ui(
+                "最近的持久恢复点仍在，但最后一段编辑无法确认。请重试编辑器连接后再切换。",
+                "The latest durable recovery point remains, but the final edits could not be confirmed. Retry the editor connection before switching."
+            )
+        case .failed(.documentChanged):
+            ui(
+                "保存过程中当前笔记发生了变化，魏碑没有切换。请重试。",
+                "The current note changed while saving, so WeiBei did not switch. Please retry."
+            )
+        case .persistenceFailed:
+            ui(
+                "当前笔记尚未安全保存，魏碑没有切换。请重试。",
+                "The current note was not safely saved, so WeiBei did not switch. Please retry."
+            )
+        }
+    }
+
+    var noteEditorCommandFailureMessage: String? {
+        guard let rejected = firstRetryableContentCommand else { return nil }
+        if rejected.documentID != activeNoteEditorDocumentID {
+            return ui(
+                "未应用的内容已保留。返回原笔记后可重试。",
+                "The unapplied content is preserved. Return to its original note to retry."
+            )
+        }
+        return ui(
+            "编辑器未完成这次操作；涉及的内容已保留。请重试。",
+            "The editor did not complete this operation. Its content is preserved; please retry."
+        )
+    }
+
+    var canRetryRejectedNoteEditorCommand: Bool {
+        firstRetryableContentCommand?.documentID == activeNoteEditorDocumentID
+            && noteEditorCommand == nil
+    }
+
+    func noteEditorContentCommandPending(_ command: NoteEditorCommand, documentID: String) {
+        guard var tracked = trackedContentCommand(id: command.id),
+              tracked.documentID == documentID else { return }
+        tracked.isCoordinatorOwned = true
+        upsertTrackedContentCommand(tracked)
+        if pendingNoteSelection != nil,
+           noteEditingSession.documentID == documentID {
+            noteSelectionTransitionState = .saving
+        }
+    }
+
+    func noteEditorContentCommandApplied(_ command: NoteEditorCommand, documentID: String) {
+        guard trackedContentCommand(id: command.id)?.documentID == documentID else { return }
+        removeTrackedContentCommand(id: command.id)
+        resumePendingNoteSelection(afterResolvingCommandFor: documentID)
+    }
+
+    func noteEditorCommandRejected(_ command: NoteEditorCommand, documentID: String) {
+        guard command.kind.isContentCommand else { return }
+        var tracked = trackedContentCommand(id: command.id)
+            ?? TrackedNoteEditorCommand(documentID: documentID, command: command)
+        tracked.isCoordinatorOwned = false
+        upsertTrackedContentCommand(tracked)
+    }
+
+    func retryRejectedNoteEditorCommand() {
+        guard noteEditorCommand == nil,
+              let index = unresolvedContentCommands.firstIndex(where: {
+                  !$0.isCoordinatorOwned && $0.documentID == activeNoteEditorDocumentID
+              }) else { return }
+        let command = unresolvedContentCommands.remove(at: index).command
+        noteEditorCommand = command
+        if pendingNoteSelection != nil {
+            noteSelectionTransitionState = .saving
+        }
+    }
+
+    var canRetryPendingNoteSelection: Bool {
+        switch noteSelectionTransitionState {
+        case .failed, .persistenceFailed:
+            return pendingNoteSelection != nil
+        case .idle, .saving:
+            return false
+        }
+    }
+
+    func retryPendingNoteSelection() {
+        guard pendingNoteSelection != nil else { return }
+        requestPendingNoteSelectionSnapshot()
+    }
+
+    private func requestNoteSelectionTransition(
+        to documentID: String?,
+        apply: @escaping () -> Void
+    ) {
+        let sourceDocumentID = noteEditingSession.documentID
+        guard sourceDocumentID != documentID,
+              noteEditingSession.dirty || hasUnresolvedContentCommand(for: sourceDocumentID) else {
+            pendingNoteSelection = nil
+            noteSelectionTransitionState = .idle
+            apply()
+            return
+        }
+
+        pendingNoteSelection = PendingNoteSelection(apply: apply)
+        if hasUnresolvedContentCommand(for: sourceDocumentID) {
+            noteSelectionTransitionState = .saving
+            return
+        }
+        guard noteSelectionTransitionState != .saving else { return }
+        requestPendingNoteSelectionSnapshot()
+    }
+
+    private func trackedContentCommand(id: UUID) -> TrackedNoteEditorCommand? {
+        unresolvedContentCommands.first { $0.command.id == id }
+    }
+
+    private var firstRetryableContentCommand: TrackedNoteEditorCommand? {
+        unresolvedContentCommands.first { !$0.isCoordinatorOwned }
+    }
+
+    private func upsertTrackedContentCommand(_ tracked: TrackedNoteEditorCommand) {
+        if let index = unresolvedContentCommands.firstIndex(where: {
+            $0.command.id == tracked.command.id
+        }) {
+            unresolvedContentCommands[index] = tracked
+        } else {
+            unresolvedContentCommands.append(tracked)
+        }
+    }
+
+    private func removeTrackedContentCommand(id: UUID) {
+        unresolvedContentCommands.removeAll { $0.command.id == id }
+    }
+
+    private func hasUnresolvedContentCommand(for documentID: String) -> Bool {
+        unresolvedContentCommands.contains { $0.documentID == documentID }
+    }
+
+    private func resumePendingNoteSelection(afterResolvingCommandFor documentID: String) {
+        guard pendingNoteSelection != nil,
+              noteEditingSession.documentID == documentID else { return }
+        guard !hasUnresolvedContentCommand(for: documentID) else {
+            noteSelectionTransitionState = .saving
+            return
+        }
+        requestPendingNoteSelectionSnapshot()
+    }
+
+    private func requestPendingNoteSelectionSnapshot() {
+        guard pendingNoteSelection != nil else { return }
+        noteSelectionTransitionState = .saving
+        let sourceDocumentID = noteEditingSession.documentID
+        _ = noteEditingSession.requestSnapshot { [weak self] result in
+            self?.finishPendingNoteSelectionSnapshot(
+                result,
+                sourceDocumentID: sourceDocumentID
+            )
+        }
+    }
+
+    private func finishPendingNoteSelectionSnapshot(
+        _ result: Result<NoteEditorSnapshotReadyEvent, NoteEditingSessionError>,
+        sourceDocumentID: String
+    ) {
+        guard pendingNoteSelection != nil else {
+            noteSelectionTransitionState = .idle
+            return
+        }
+        switch result {
+        case .success(let snapshot):
+            guard snapshot.documentID == sourceDocumentID,
+                  noteEditingSession.documentID == sourceDocumentID else {
+                failPendingNoteSelection(.documentChanged)
+                return
+            }
+            if snapshot.revision < noteEditingSession.currentRevision {
+                requestPendingNoteSelectionSnapshot()
+                return
+            }
+            let digest = Self.noteContentDigest(Data(snapshot.markdown.utf8))
+            guard let accepted = latestNoteEditorSnapshot,
+                  accepted.documentID == snapshot.documentID,
+                  accepted.revision == snapshot.revision,
+                  accepted.digest == digest else {
+                failPendingNoteSelection(.documentChanged)
+                return
+            }
+            if noteEditorSnapshotIsDurable(snapshot, digest: digest) {
+                applyPendingNoteSelection()
+                return
+            }
+            guard item(withID: snapshot.documentID)?
+                .editsBackingMarkdownFile == false else {
+                failPendingNoteSelectionPersistence()
+                return
+            }
+            Task { @MainActor [weak self] in
+                await self?.persistPendingNoteSelectionSnapshot(
+                    snapshot,
+                    digest: digest
+                )
+            }
+        case .failure(let error):
+            failPendingNoteSelection(error)
+        }
+    }
+
+    private func persistPendingNoteSelectionSnapshot(
+        _ snapshot: NoteEditorSnapshotReadyEvent,
+        digest: String
+    ) async {
+        let persisted = await persistWorkspaceNow()
+        guard pendingNoteSelection != nil else {
+            noteSelectionTransitionState = .idle
+            return
+        }
+        guard noteEditingSession.documentID == snapshot.documentID else {
+            failPendingNoteSelection(.documentChanged)
+            return
+        }
+        guard !hasUnresolvedContentCommand(for: snapshot.documentID) else {
+            noteSelectionTransitionState = .saving
+            return
+        }
+        guard noteEditingSession.currentRevision == snapshot.revision,
+              let accepted = latestNoteEditorSnapshot,
+              accepted.documentID == snapshot.documentID,
+              accepted.revision == snapshot.revision,
+              accepted.digest == digest else {
+            requestPendingNoteSelectionSnapshot()
+            return
+        }
+        guard persisted,
+              noteEditorSnapshotIsDurable(snapshot, digest: digest) else {
+            failPendingNoteSelectionPersistence()
+            return
+        }
+        applyPendingNoteSelection()
+    }
+
+    private func noteEditorSnapshotIsDurable(
+        _ snapshot: NoteEditorSnapshotReadyEvent,
+        digest: String
+    ) -> Bool {
+        guard noteEditingSession.documentID == snapshot.documentID,
+              noteEditingSession.currentRevision == snapshot.revision,
+              !noteEditingSession.dirty,
+              let accepted = latestNoteEditorSnapshot else { return false }
+        return accepted.documentID == snapshot.documentID
+            && accepted.revision == snapshot.revision
+            && accepted.digest == digest
+            && accepted.baseDigest == digest
+    }
+
+    private func applyPendingNoteSelection() {
+        let apply = pendingNoteSelection?.apply
+        pendingNoteSelection = nil
+        noteSelectionTransitionState = .idle
+        apply?()
+    }
+
+    private func failPendingNoteSelection(_ error: NoteEditingSessionError) {
+        WeiBeiLog.noteRepair.error(
+            "note selection snapshot failed: \(String(describing: error), privacy: .private)"
+        )
+        noteSelectionTransitionState = .failed(error)
+    }
+
+    private func failPendingNoteSelectionPersistence() {
+        WeiBeiLog.noteRepair.error(
+            "note selection stopped because the accepted snapshot was not durably persisted"
+        )
+        noteSelectionTransitionState = .persistenceFailed
     }
 
     func selectMeasured(itemID: String?, opensNotebook: Bool?) {
@@ -10359,14 +10718,10 @@ final class WorkspaceStore: ObservableObject {
         }
         Task { @MainActor [weak self] in
             guard let self else { return }
-            guard let expanded = CourseProjectFileWorker.expandedSupportedFiles(
+            let expanded = CourseProjectFileWorker.expandedSupportedFiles(
                 from: urls,
                 markdownOnly: asNotes
-            ) else {
-                showImportLimitExceededAlert()
-                completion([])
-                return
-            }
+            )
             guard !expanded.isEmpty,
                   confirmCourseImportPlan(
                     expanded,
@@ -10400,9 +10755,14 @@ final class WorkspaceStore: ObservableObject {
                     )
                     imported.append(result.item)
                 } catch {
+                    recordCourseLibraryUIFailure(
+                        error,
+                        operation: "import_file_into_course",
+                        path: sourceURL
+                    )
                     showImportantOperationError(ui(
-                        "“\(sourceURL.lastPathComponent)”未能加入课程：\(error.localizedDescription)",
-                        "Could not add “\(sourceURL.lastPathComponent)” to the course: \(error.localizedDescription)"
+                        "“\(sourceURL.lastPathComponent)”未完成课程登记；原文件没有被移动或覆盖，但课程目录可能留有已写入副本。请检查课程目录后再重试。",
+                        "“\(sourceURL.lastPathComponent)” was not fully registered in the course. The original file was not moved or overwritten, but a written copy may remain in the course folder. Check the course folder before trying again."
                     ))
                 }
             }
@@ -10437,18 +10797,6 @@ final class WorkspaceStore: ObservableObject {
         alert.addButton(withTitle: ui("取消", "Cancel"))
         alert.addButton(withTitle: ui("移入课程", "Move into Course"))
         return alert.runModal() == .alertSecondButtonReturn
-    }
-
-    private func showImportLimitExceededAlert() {
-        guard !WeiBeiSafetyTestMode.isEnabled else { return }
-        let alert = NSAlert()
-        alert.messageText = ui("没有导入", "Nothing Imported")
-        alert.informativeText = ui(
-            "所选内容包含超过500个可导入文件。为避免只导入其中一部分，魏碑没有写入任何资料。请选择更小的文件夹，或直接选择需要的文件。",
-            "The selection contains more than 500 importable files. To avoid a partial import, WeiBei did not add anything. Choose a smaller folder or select the files you need directly."
-        )
-        alert.addButton(withTitle: ui("知道了", "OK"))
-        alert.runModal()
     }
 
     private func courseImportConflictResolution(
@@ -10677,7 +11025,7 @@ final class WorkspaceStore: ObservableObject {
         }
     }
 
-    /// Route one course-home question into the existing Chat/Pi pipeline.
+    /// Route one course-home question into the existing Chat/Agent pipeline.
     /// The home keeps its own draft until this method has validated the course root.
     @discardableResult
     func submitCourseHomeQuestion(
@@ -10978,23 +11326,31 @@ final class WorkspaceStore: ObservableObject {
                 conflictResolution: conflictResolution
             )
             if revealInWorkspace {
-                activeNotebookItemID = result.item.id
-                noteText = markdown
-                revealRichWritingSurface()
-                focus(.notes)
-                showTransientNoteStatus(
-                    ui(
-                        "已在课程“笔记”目录新建：\(result.item.subtitle)",
-                        "Created in the course Notes folder: \(result.item.subtitle)"
+                requestNoteSelectionTransition(to: result.item.id) { [weak self] in
+                    guard let self else { return }
+                    activeNotebookItemID = result.item.id
+                    noteText = markdown
+                    revealRichWritingSurface()
+                    focus(.notes)
+                    showTransientNoteStatus(
+                        ui(
+                            "已在课程“笔记”目录新建：\(result.item.subtitle)",
+                            "Created in the course Notes folder: \(result.item.subtitle)"
+                        )
                     )
-                )
+                }
             }
             return result.item.id
         } catch {
             if presentsError {
+                recordCourseLibraryUIFailure(
+                    error,
+                    operation: "create_course_note",
+                    path: courseRootURL(for: courseID)
+                )
                 showImportantOperationError(ui(
-                    "无法创建课程笔记：\(error.localizedDescription)",
-                    "Could not create the course note: \(error.localizedDescription)"
+                    "课程笔记未完成登记；现有笔记未被覆盖，但课程“笔记”目录可能留有已写入副本。请检查后再重试。",
+                    "The course note was not fully registered. Existing notes were not overwritten, but a written copy may remain in the course Notes folder. Check the folder before trying again."
                 ))
             }
             return nil
@@ -11212,21 +11568,23 @@ final class WorkspaceStore: ObservableObject {
                 openDocumentPane(.notes)
                 return
             }
-            persistCurrentNote()
-            blankNoteMaterializationTask?.cancel()
-            blankNoteMaterializationTask = nil
-            pendingBlankNoteText = ""
-            blankNoteDraftMaterialID = nil
-            activeNotebookItemID = nil
-            noteText = ""
-            notebookCreationDraft = nil
-            notebookRenameDraft = nil
-            linkedSourcesPresented = false
-            latestAgentNoteProposal = nil
-            latestAgentLearningUpdate = nil
-            syncActiveStudySession()
-            openDocumentPane(.notes)
-            save()
+            requestNoteSelectionTransition(to: nil) { [weak self] in
+                guard let self else { return }
+                blankNoteMaterializationTask?.cancel()
+                blankNoteMaterializationTask = nil
+                pendingBlankNoteText = ""
+                blankNoteDraftMaterialID = nil
+                activeNotebookItemID = nil
+                noteText = ""
+                notebookCreationDraft = nil
+                notebookRenameDraft = nil
+                linkedSourcesPresented = false
+                latestAgentNoteProposal = nil
+                latestAgentLearningUpdate = nil
+                syncActiveStudySession()
+                openDocumentPane(.notes)
+                save()
+            }
         }
     }
 
@@ -11744,7 +12102,7 @@ final class WorkspaceStore: ObservableObject {
         // Prefer the structured "来源：" parser (handles section markers).
         if openSourceReference("来源：\(trimmed)") { return true }
         if openSourceReference(trimmed) { return true }
-        // Fuzzy title match for Pi short labels like "货币金融学课程 HTML".
+        // Fuzzy title match for Agent short labels like "货币金融学课程 HTML".
         guard let item = resolveStudyItem(matchingCitationTitle: trimmed) else { return false }
         if item.isNotebookNote || kind == "note" {
             if layout == .immersiveConversation || layout == .immersiveReading {
@@ -12066,7 +12424,18 @@ final class WorkspaceStore: ObservableObject {
         AppShortcutCatalog.chord(for: shortcut, overrides: customShortcutOverrides)
     }
 
-    func setShortcut(_ id: AppShortcutID, chord: AppShortcutChord) {
+    func executableChord(for shortcut: AppShortcutID) -> AppShortcutChord? {
+        AppShortcutCatalog.executableChord(for: shortcut, overrides: customShortcutOverrides)
+    }
+
+    @discardableResult
+    func setShortcut(_ id: AppShortcutID, chord: AppShortcutChord) -> Bool {
+        guard !AppShortcutCatalog.isReservedTextEditingChord(chord),
+              AppShortcutCatalog.conflict(
+                  for: chord,
+                  excluding: id,
+                  overrides: customShortcutOverrides
+              ) == nil else { return false }
         if chord == id.defaultChord {
             customShortcutOverrides.removeValue(forKey: id)
         } else {
@@ -12074,128 +12443,18 @@ final class WorkspaceStore: ObservableObject {
         }
         AppShortcutCatalog.saveOverrides(customShortcutOverrides)
         objectWillChange.send()
+        return true
     }
 
-    func resetShortcut(_ id: AppShortcutID) {
-        customShortcutOverrides.removeValue(forKey: id)
-        AppShortcutCatalog.saveOverrides(customShortcutOverrides)
-        objectWillChange.send()
+    @discardableResult
+    func resetShortcut(_ id: AppShortcutID) -> Bool {
+        setShortcut(id, chord: id.defaultChord)
     }
 
     func resetAllShortcuts() {
         customShortcutOverrides = [:]
         AppShortcutCatalog.saveOverrides([:])
         objectWillChange.send()
-    }
-
-    func handleAppShortcut(_ event: NSEvent) -> Bool {
-        guard let key = Self.shortcutKey(from: event) else { return false }
-        return handleAppShortcut(key: key, modifiers: event.modifierFlags.intersection(Self.shortcutModifierMask))
-    }
-
-    func handleAppShortcut(key: String, modifiers: NSEvent.ModifierFlags) -> Bool {
-        let pressed = AppShortcutChord(key: key, modifiers: modifiers)
-        if let action = AppShortcutCatalog.action(matching: pressed, overrides: customShortcutOverrides) {
-            return performCustomizableShortcut(action)
-        }
-
-        // Non-user-facing chords stay hard-coded (layout / note mode / agent write).
-        if modifiers == [.command, .option] {
-            switch key {
-            case "1":
-                animateLayoutChange { setLayout(.documentAgentNotes) }
-            case "s":
-                guard layout.isDocumentThreePane else { return false }
-                animateLayoutChange { swapThreePaneSecondaryPanes() }
-            case "up":
-                animateLayoutChange { selectAdjacentItem(step: -1) }
-            case "down":
-                animateLayoutChange { selectAdjacentItem(step: 1) }
-            default:
-                return false
-            }
-            return true
-        }
-
-        if modifiers == [.command, .shift] {
-            switch key {
-            case "a":
-                guard canApplyAgentAnswer else { return false }
-                animatePanelChange { applyLastAgentAnswerToNote() }
-            case "r":
-                guard canReplaceNoteSelection else { return false }
-                animatePanelChange { replaceSelectionWithLastAgentAnswer() }
-            case "e":
-                guard canApplyAgentAnswer else { return false }
-                animatePanelChange { applyAgentPatchToEditor() }
-            case "c":
-                guard canCopyReference else { return false }
-                copyCurrentReference()
-            default:
-                return false
-            }
-            return true
-        }
-
-        if modifiers == [.command] {
-            switch key {
-            case "j":
-                guard layout.hasCollapsibleRightPane else { return false }
-                animateLayoutChange { toggleRightPane() }
-            case "return":
-                guard isAgentRunningInActiveChat
-                    || !agentDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-                    return false
-                }
-                submitAgentDraft()
-            default:
-                return false
-            }
-            return true
-        }
-
-        return false
-    }
-
-    @discardableResult
-    private func performCustomizableShortcut(_ id: AppShortcutID) -> Bool {
-        switch id {
-        case .commandPalette:
-            commandPalettePresented.toggle()
-        case .toggleAppearance:
-            animatePanelChange { toggleAppearanceMode() }
-        case .navigateBack:
-            guard canNavigateBack else { return false }
-            animateLayoutChange { navigateBackInWorkspace() }
-        case .navigateForward:
-            guard canNavigateForward else { return false }
-            animateLayoutChange { navigateForwardInWorkspace() }
-        case .courseIndex:
-            animateLayoutChange { toggleLibrary() }
-        case .searchInMaterial:
-            guard hasSelectedMaterial else { return false }
-            animatePanelChange { revealReaderSearch() }
-        case .focusLibrary:
-            animateLayoutChange { focus(.library) }
-        case .focusReader:
-            animateLayoutChange { focus(.reader) }
-        case .focusNotes:
-            animateLayoutChange { focus(.notes) }
-        case .focusChat:
-            animateLayoutChange { focus(.agent) }
-        case .immersiveReading:
-            animateLayoutChange { setLayout(.immersiveReading) }
-        case .immersiveChat:
-            animateLayoutChange { setLayout(.immersiveConversation) }
-        case .immersiveWriting:
-            animateLayoutChange { setLayout(.immersiveWriting) }
-        case .selectionPrompt:
-            guard canUseSelectionAgentSurface else { return false }
-            animatePanelChange { setAgentSurface(.selectionFloat) }
-        case .hideChatOverlay:
-            animatePanelChange { setAgentSurface(.hidden) }
-        }
-        return true
     }
 
     private func animateLayoutChange(_ action: () -> Void) {
@@ -12282,15 +12541,6 @@ final class WorkspaceStore: ObservableObject {
         modelName = value
         touchActiveAgentProfileMetadata()
         save()
-    }
-
-    func setAgentInteractiveVisualizationsEnabled(_ enabled: Bool) {
-        guard agentInteractiveVisualizationsEnabled != enabled else { return }
-        agentInteractiveVisualizationsEnabled = enabled
-        selectionAskThreadDefaults.set(
-            enabled,
-            forKey: Self.interactiveVisualizationsDefaultsKey
-        )
     }
 
     func toggleAppearanceMode() {
@@ -12448,7 +12698,18 @@ final class WorkspaceStore: ObservableObject {
 
     @discardableResult
     func retryWorkspaceSave() -> Bool {
-        save()
+        (try? waitForCourseFileOperation {
+            _ = self.restorePortableCourseStates()
+            guard self.blockedPortableCourseIDs.isEmpty else {
+                return false
+            }
+            guard await self.reconcileCourseFilesNow(
+                persistsChanges: false
+            ) else {
+                return false
+            }
+            return await self.persistWorkspaceNow()
+        }) ?? false
     }
 
     func importCourseMaterialsFromPanel() {
@@ -12548,16 +12809,10 @@ final class WorkspaceStore: ObservableObject {
             persistCurrentNote()
         }
         Task.detached(priority: .userInitiated) { [weak self] in
-            guard let expandedURLs = CourseProjectFileWorker.expandedSupportedFiles(
+            let expandedURLs = CourseProjectFileWorker.expandedSupportedFiles(
                 from: urls,
                 markdownOnly: markdownOnly
-            ) else {
-                await MainActor.run { [weak self] in
-                    self?.showImportLimitExceededAlert()
-                    completion([])
-                }
-                return
-            }
+            )
             var copied: [(url: URL, isNote: Bool)] = []
             var failures: [String] = []
             for (offset, rawURL) in expandedURLs.enumerated() {
@@ -12571,7 +12826,10 @@ final class WorkspaceStore: ObservableObject {
                     )
                     copied.append((url, importsIntoNotes))
                 } catch {
-                    failures.append("“\(rawURL.lastPathComponent)”：\(error.localizedDescription)")
+                    WeiBeiLog.workspace.error(
+                        "code=common_import_failed underlying=\(WeiBeiLog.code(error), privacy: .public) path=\(rawURL.path, privacy: .private) detail=\(WeiBeiLog.truncated(error.localizedDescription), privacy: .private)"
+                    )
+                    failures.append("“\(rawURL.lastPathComponent)”")
                 }
                 let progress = CourseFileOperationProgress(
                     completed: offset + 1,
@@ -12594,9 +12852,9 @@ final class WorkspaceStore: ObservableObject {
                     let listed = failures.prefix(3).joined(separator: "\n")
                     let remaining = failures.count - min(3, failures.count)
                     self.showImportantOperationError(ui(
-                        "导入完成：成功 \(copied.count) 个，失败 \(failures.count) 个。\n\(listed)"
+                        "导入完成：成功 \(copied.count) 个，失败 \(failures.count) 个。原文件均未移动；请确认这些文件可访问后重试：\n\(listed)"
                             + (remaining > 0 ? ui("\n\n另有 \(remaining) 个失败未列出。", "\n\nPlus \(remaining) more failure(s).") : ""),
-                        "Import finished: \(copied.count) succeeded, \(failures.count) failed.\n\(listed)"
+                        "Import finished: \(copied.count) succeeded and \(failures.count) failed. Original files were not moved. Make sure these files are accessible, then try again:\n\(listed)"
                             + (remaining > 0 ? "\n\nPlus \(remaining) more failure(s)." : "")
                     ))
                 }
@@ -12745,7 +13003,15 @@ final class WorkspaceStore: ObservableObject {
             select(itemID: item.id)
             showTransientNoteStatus(ui("已创建双链笔记：\(url.lastPathComponent)", "Created wiki note: \(url.lastPathComponent)"))
         } catch {
-            showImportantOperationError(ui("无法创建双链笔记：\(error.localizedDescription)", "Could not create wiki note: \(error.localizedDescription)"))
+            recordCourseLibraryUIFailure(
+                error,
+                operation: "create_wiki_note",
+                path: url
+            )
+            showImportantOperationError(ui(
+                "双链笔记没有创建或登记，现有文件未被覆盖。请确认资料库可写，或换一个标题后重试。",
+                "The wiki note was not created or registered, and existing files were not overwritten. Make sure the library is writable, or choose another title and try again."
+            ))
         }
     }
 
@@ -12769,7 +13035,6 @@ final class WorkspaceStore: ObservableObject {
             return nil
         }
 
-        persistCurrentNote()
         guard courseLibraryRootURL != nil else {
             showTransientNoteStatus(ui("请先选择魏碑资料库。", "Choose a WeiBei library first."))
             return nil
@@ -12833,18 +13098,29 @@ final class WorkspaceStore: ObservableObject {
                 addNoteSourceLink(noteItemID: item.id, sourceItemID: sourceItem.id)
             }
             invalidateAgentContext()
-            activeNotebookItemID = item.id
-            noteText = markdown
-            revealRichWritingSurface()
-            focus(.notes)
             save()
             let status = sourceItem == nil
                 ? ui("已新建空白笔记：\(url.lastPathComponent)", "Created blank note: \(url.lastPathComponent)")
                 : ui("已为当前资料新建笔记：\(url.lastPathComponent)", "Created note from current material: \(url.lastPathComponent)")
-            showTransientNoteStatus(status)
+            requestNoteSelectionTransition(to: item.id) { [weak self] in
+                guard let self else { return }
+                activeNotebookItemID = item.id
+                noteText = markdown
+                revealRichWritingSurface()
+                focus(.notes)
+                showTransientNoteStatus(status)
+            }
             return item
         } catch {
-            showImportantOperationError(ui("无法创建笔记：\(error.localizedDescription)", "Could not create note: \(error.localizedDescription)"))
+            recordCourseLibraryUIFailure(
+                error,
+                operation: "create_notebook_note",
+                path: notesDirectory
+            )
+            showImportantOperationError(ui(
+                "笔记没有创建或加入列表，现有笔记未被覆盖。请确认笔记目录可写后重试。",
+                "The note was not created or added to the list, and existing notes were not overwritten. Make sure the Notes folder is writable, then try again."
+            ))
             return nil
         }
     }
@@ -12861,19 +13137,23 @@ final class WorkspaceStore: ObservableObject {
     func useSelectedMarkdownAsNotebookNote() {
         guard let selectedItemID,
               let index = importedItems.firstIndex(where: { $0.id == selectedItemID && $0.canBecomeNotebookNote }) else { return }
-        invalidateAgentContext()
-        persistCurrentNote()
-        importedItems[index].isNotebookNote = true
-        removeLinksWhereSourceItemID(importedItems[index].id)
-        activeNotebookItemID = importedItems[index].id
-        if selectedItemID == importedItems[index].id {
-            self.selectedItemID = nil
-            readerLocationTitle = selectedMaterialItem.map(displayTitle)
+        let itemID = importedItems[index].id
+        requestNoteSelectionTransition(to: itemID) { [weak self] in
+            guard let self,
+                  let index = importedItems.firstIndex(where: { $0.id == itemID }) else { return }
+            invalidateAgentContext()
+            importedItems[index].isNotebookNote = true
+            removeLinksWhereSourceItemID(itemID)
+            activeNotebookItemID = itemID
+            if selectedItemID == itemID {
+                self.selectedItemID = nil
+                readerLocationTitle = selectedMaterialItem.map(displayTitle)
+            }
+            noteText = noteText(for: importedItems[index])
+            revealRichWritingSurface()
+            focus(.notes)
+            save()
         }
-        noteText = noteText(for: importedItems[index])
-        revealRichWritingSurface()
-        focus(.notes)
-        save()
     }
 
     func copyCurrentReference() {
@@ -12907,12 +13187,11 @@ final class WorkspaceStore: ObservableObject {
         lastSelectionUpdateDate = Date()
         let cleanedOwnerTitle = ownerTitle?.trimmingCharacters(in: .whitespacesAndNewlines)
         let resolvedOwnerTitle = (cleanedOwnerTitle?.isEmpty == false ? cleanedOwnerTitle : nil) ?? selectionOwnerTitle(for: source)
-        let boundedText = Self.boundedSelectionText(cleaned)
         // Multi-pane and immersive both get the selection capsule when there is an anchor
         // (previously suppressed whenever the chat column was open — looked "broken").
         let shouldRevealSelectionPrompt = anchor != nil || pinnedFloatingAgent
         let contentMatches = selectionContext.map {
-            $0.text == boundedText
+            $0.text == cleaned
                 && $0.source == source
                 && $0.ownerTitle == resolvedOwnerTitle
                 && $0.isEditable == isEditable
@@ -12961,7 +13240,7 @@ final class WorkspaceStore: ObservableObject {
 
         invalidateAgentContext()
         let nextSelection = SelectionContext(
-            text: boundedText,
+            text: cleaned,
             source: source,
             ownerTitle: resolvedOwnerTitle,
             itemID: source == .note ? activeNotebookItemID : selectedItemID,
@@ -13071,10 +13350,6 @@ final class WorkspaceStore: ObservableObject {
             selectionAttachments.remove(at: mergeIndex)
         }
         selectionAttachments.append(nextSelection)
-        let maxAttachments = 8
-        if selectionAttachments.count > maxAttachments {
-            selectionAttachments.removeFirst(selectionAttachments.count - maxAttachments)
-        }
     }
 
     private func shouldMergeSelectionAttachment(_ existing: SelectionContext, with incoming: SelectionContext, at now: Date, withinSelectionGestureHint: Bool) -> Bool {
@@ -13101,7 +13376,7 @@ final class WorkspaceStore: ObservableObject {
         ) ?? incoming.text
         return SelectionContext(
             id: existing.id,
-            text: Self.boundedSelectionText(mergedText),
+            text: mergedText,
             source: existing.source,
             ownerTitle: existing.ownerTitle,
             itemID: existing.itemID ?? incoming.itemID,
@@ -13124,22 +13399,11 @@ final class WorkspaceStore: ObservableObject {
         return currentSourceReferenceTitle
     }
 
-    private static func boundedSelectionText(_ text: String) -> String {
-        let limit = 2_000
-        guard text.count > limit else { return text }
-        let prefix = text.prefix(limit)
-        if let boundary = prefix.lastIndex(where: { String($0).rangeOfCharacter(from: .whitespacesAndNewlines) != nil }),
-           boundary > prefix.startIndex {
-            return String(prefix[..<boundary]).trimmingCharacters(in: .whitespacesAndNewlines)
-        }
-        return String(prefix)
-    }
-
     private func sourceReferenceItem(from rawReference: String?) -> StudyItem? {
         let reference = SourceReferenceTitle.parse(rawReference ?? "")
         guard !reference.title.isEmpty else { return nil }
         if let ordinal = reference.courseItemOrdinal {
-            let catalog = Array(allItems.prefix(500))
+            let catalog = allItems
             let index = ordinal - 1
             guard catalog.indices.contains(index) else { return nil }
             let item = catalog[index]
@@ -13934,7 +14198,7 @@ final class WorkspaceStore: ObservableObject {
             return nil
         }
         // identity 只用于找回、永不用于拒绝：条目/目标身份漂移时刷新继续，
-        // 授权以活体身份为准（Pi 扩展协议字段不变）。
+        // 授权以活体身份为准。
         if let entryIdentity = membership.entryIdentity, entryIdentity != liveEntryIdentity {
             WeiBeiLog.workspace.notice("agent_grant_entry_identity_refreshed")
         }
@@ -14208,7 +14472,7 @@ final class WorkspaceStore: ObservableObject {
             role: .assistant,
             text: "最早一条课程回答。",
             source: "课程 Chat",
-            backend: .pi,
+            backend: .native,
             actions: [
                 AgentReplyAction(
                     kind: .writeNote,
@@ -14232,7 +14496,7 @@ final class WorkspaceStore: ObservableObject {
             role: .assistant,
             text: "课程回答正文必须保留。",
             source: "课程 Chat",
-            backend: .pi,
+            backend: .native,
             sources: [validSource, foreignSourceWithoutCourseID],
             actions: [validAction, foreignActionWithoutCourseID],
             memoryUpdate: AgentReplyMemoryUpdate(
@@ -14856,9 +15120,10 @@ final class WorkspaceStore: ObservableObject {
                         rank: nil
                     )
                 }
-                guard let text = result.text,
-                      !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-                      agentHostToolSourceIsValid(source) else {
+                let text = result.text ?? ""
+                guard agentHostToolSourceIsValid(source),
+                      (!text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                        || result.totalPageCount != nil) else {
                     return nil
                 }
                 return (
@@ -14867,7 +15132,12 @@ final class WorkspaceStore: ObservableObject {
                         text: text,
                         isTruncated: result.isTruncated,
                         rank: result.rank,
-                        sourceRevision: result.sourceRevision
+                        sourceRevision: result.sourceRevision,
+                        indexedPageCount: result.indexedPageCount,
+                        totalPageCount: result.totalPageCount,
+                        uncoveredPageIndexes: result.uncoveredPageIndexes,
+                        failedPageIndexes: result.failedPageIndexes,
+                        failedPageReasons: result.failedPageReasons
                     ),
                     titleMatched
                 )
@@ -14886,7 +15156,14 @@ final class WorkspaceStore: ObservableObject {
                     kind: match.source.kind,
                     role: match.source.role,
                     text: match.result.text ?? "",
-                    isTruncated: match.result.isTruncated
+                    isTruncated: match.result.isTruncated,
+                    indexedPageCount: match.result.indexedPageCount,
+                    totalPageCount: match.result.totalPageCount,
+                    uncoveredPageNumbers: match.result.uncoveredPageIndexes.map { $0 + 1 },
+                    failedPageNumbers: match.result.failedPageIndexes.map { $0 + 1 },
+                    failedPageReasons: Dictionary(
+                        uniqueKeysWithValues: match.result.failedPageReasons.map { ($0.key + 1, $0.value) }
+                    )
                 )
             }
             let context = CourseKnowledgeIndex.build(
@@ -14957,7 +15234,14 @@ final class WorkspaceStore: ObservableObject {
                         kind: source.kind,
                         role: source.role,
                         text: text,
-                        isTruncated: indexed.isTruncated
+                        isTruncated: indexed.isTruncated,
+                        indexedPageCount: indexed.indexedPageCount,
+                        totalPageCount: indexed.totalPageCount,
+                        uncoveredPageNumbers: indexed.uncoveredPageIndexes.map { $0 + 1 },
+                        failedPageNumbers: indexed.failedPageIndexes.map { $0 + 1 },
+                        failedPageReasons: Dictionary(
+                            uniqueKeysWithValues: indexed.failedPageReasons.map { ($0.key + 1, $0.value) }
+                        )
                     ),
                 ],
                 links: links,
@@ -14981,6 +15265,20 @@ final class WorkspaceStore: ObservableObject {
                 },
                 nextCursor: indexed.nextCursor,
                 sourceRevision: indexed.sourceRevision
+            )
+
+        case let .retryFailedPDFPages(itemID):
+            guard let source = sources.first(where: { $0.item.id == itemID }),
+                  source.item.kind == .pdf,
+                  agentHostToolSourceIsValid(source) else {
+                throw AgentConversationTargetError(message: "这份 PDF 不属于当前 Chat 的查询范围")
+            }
+            guard searchIndex.retryFailedPDFPages(in: source.item) else {
+                throw AgentConversationTargetError(message: "这份 PDF 当前没有可重新索引的识别失败页")
+            }
+            return StudyAgentHostToolResult(
+                query: "已开始重新索引失败页",
+                items: []
             )
 
         case let .webOpen(url, maximumCharacters):
@@ -15073,7 +15371,7 @@ final class WorkspaceStore: ObservableObject {
         return StudyAgentLearningContext(
             memoryRevision: learningMemoryContextRevision(courseID: target.courseID),
             lastLocation: target.courseID.flatMap { lastStudyLocation(in: $0) },
-            memories: Array(memories.prefix(200)),
+            memories: memories,
             session: session
         )
     }
@@ -15089,7 +15387,8 @@ final class WorkspaceStore: ObservableObject {
         let sourcesByID = Dictionary(
             uniqueKeysWithValues: access.sources.map { ($0.item.id, $0) }
         )
-        let retained = courseKnowledgeProfiles[profileIndex].entries.filter { entry in
+        let profile = courseKnowledgeProfiles[profileIndex]
+        let retained = profile.entries.filter { entry in
             entry.sources.allSatisfy { reference in
                 guard let source = sourcesByID[reference.itemID],
                       (source.item.isNotebookNote ? "note" : "material")
@@ -15100,21 +15399,12 @@ final class WorkspaceStore: ObservableObject {
                 return revision == reference.sourceRevision
             }
         }
-        if retained != courseKnowledgeProfiles[profileIndex].entries {
-            courseKnowledgeProfiles[profileIndex].entries = retained
-            courseKnowledgeProfiles[profileIndex].overview = retained
-                .filter { $0.kind == .overview }
-                .max(by: { $0.updatedAt < $1.updatedAt })?.text ?? ""
-            courseKnowledgeProfiles[profileIndex].revision &+= 1
-            courseKnowledgeProfiles[profileIndex].updatedAt = Date()
-            dirtyPortableCourseIDs.insert(courseID)
-            _ = save()
-        }
-        let profile = courseKnowledgeProfiles[profileIndex]
         return StudyAgentCourseProfileContext(
             revision: profile.revision,
-            overview: profile.overview,
-            entries: profile.entries.map { entry in
+            overview: retained
+                .filter { $0.kind == .overview }
+                .max(by: { $0.updatedAt < $1.updatedAt })?.text ?? "",
+            entries: retained.map { entry in
                 StudyAgentCourseProfileEntry(
                     id: entry.id.uuidString.lowercased(),
                     kind: entry.kind.rawValue,
@@ -15239,7 +15529,7 @@ final class WorkspaceStore: ObservableObject {
                     proposal,
                     memoryID,
                     scope,
-                    String(text.prefix(500)),
+                    text,
                     String(evidence.prefix(400)),
                     proposal.origin == .observed ? .agentInference : proposal.origin
                 )
@@ -15394,8 +15684,8 @@ final class WorkspaceStore: ObservableObject {
         if let index = studySessions.firstIndex(where: { $0.id == target.sessionID }) {
             if let summary = update.sessionSummary?.trimmingCharacters(in: .whitespacesAndNewlines),
                !summary.isEmpty,
-               studySessions[index].summary != String(summary.prefix(2_000)) {
-                studySessions[index].summary = String(summary.prefix(2_000))
+               studySessions[index].summary != summary {
+                studySessions[index].summary = summary
                 sessionChanged = true
             }
             if !studySessions[index].flow.pinnedByUser,
@@ -15407,8 +15697,6 @@ final class WorkspaceStore: ObservableObject {
             let next = update.suggestedNext
                 .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
                 .filter { !$0.isEmpty }
-                .prefix(3)
-                .map { String($0.prefix(300)) }
             if !next.isEmpty, studySessions[index].flow.suggestedNext != next {
                 studySessions[index].flow.suggestedNext = next
                 sessionChanged = true
@@ -15535,7 +15823,7 @@ final class WorkspaceStore: ObservableObject {
                     CourseKnowledgeProfileEntry(
                         id: entryID ?? UUID(),
                         kind: proposal.kind,
-                        text: String(proposal.text.prefix(1_200)),
+                        text: proposal.text,
                         sources: sources,
                         createdAt: existing?.createdAt ?? now,
                         updatedAt: now
@@ -15553,7 +15841,6 @@ final class WorkspaceStore: ObservableObject {
                 profile.entries.append(replacement)
             }
         }
-        guard profile.entries.count <= 200 else { return nil }
         guard profile.entries != courseKnowledgeProfiles[profileIndex].entries else { return nil }
         profile.overview = profile.entries
             .filter { $0.kind == .overview }
@@ -15589,54 +15876,248 @@ final class WorkspaceStore: ObservableObject {
         expectedUserQuestion: String,
         target: AgentConversationTarget,
         messageID: UUID
-    ) -> NativeStorePersistReceipt {
-        if let applied = applyLearningUpdate(
+    ) async -> NativeStorePersistReceipt {
+        let previousLearningStates = learningMemoryStates
+        let previousStudySessions = studySessions
+        let previousLatestUpdate = latestAgentLearningUpdate
+        let previousLatestQuestion = latestAgentLearningUpdateQuestion
+        guard let applied = applyLearningUpdate(
             update,
             expectedContextRevision: expectedContextRevision,
             expectedMemoryRevision: update.memoryRevision,
             expectedUserQuestion: expectedUserQuestion,
             target: target,
             messageID: messageID
-        ) {
+        ) else {
+            learningMemoryStates = previousLearningStates
+            studySessions = previousStudySessions
+            latestAgentLearningUpdate = previousLatestUpdate
+            latestAgentLearningUpdateQuestion = previousLatestQuestion
+            let hasClientID = update.entries.contains {
+                !($0.memoryID?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "").isEmpty
+            }
+            if hasClientID {
+                return .rejected("魏碑没有保存这次学习记忆。更新只能沿用 weibei_read_learning_memory 返回的 memoryID；新建请省略该字段，不要传空字符串，也不要自己编 UUID。")
+            }
+            return .rejected("魏碑没有保存这次学习记忆。用户自述请用 origin=userStatement，evidence 以「[用户：本轮]」开头并带上用户原话。")
+        }
+        let appliedLearningStates = learningMemoryStates
+        let appliedStudySession = studySessions.first {
+            $0.id == target.sessionID
+        }
+        let appliedLatestUpdate = latestAgentLearningUpdate
+        let appliedLatestQuestion = latestAgentLearningUpdateQuestion
+        if let courseID = target.courseID {
+            dirtyPortableCourseIDs.insert(courseID)
+        }
+        let persisted = await persistWorkspaceNow()
+        let coursePersisted = target.courseID.map {
+            persistedWorkspaceCourseIDs.contains($0)
+                && !dirtyPortableCourseIDs.contains($0)
+                && !blockedPortableCourseIDs.contains($0)
+                && !oversizedPortableCourseIDs.contains($0)
+        } ?? true
+        if persisted && coursePersisted {
             return NativeStorePersistReceipt(
                 accepted: true,
                 message: "已写入学习记忆",
                 memoryUpdate: applied
             )
         }
-        let hasClientID = update.entries.contains {
-            !($0.memoryID?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "").isEmpty
+
+        for memoryID in applied.memoryIDs {
+            guard let appliedState = appliedLearningStates.first(where: {
+                $0.entries.contains { $0.id == memoryID }
+            }),
+            let appliedEntry = appliedState.entries.first(where: {
+                $0.id == memoryID
+            }),
+            let currentStateIndex = learningMemoryStates.firstIndex(where: {
+                $0.scope == appliedState.scope
+            }),
+            let currentEntryIndex = learningMemoryStates[currentStateIndex]
+                .entries.firstIndex(where: { $0.id == memoryID }),
+            learningMemoryStates[currentStateIndex].entries[currentEntryIndex]
+                == appliedEntry else { continue }
+            if let previousEntry = previousLearningStates
+                .first(where: { $0.scope == appliedState.scope })?
+                .entries.first(where: { $0.id == memoryID }) {
+                learningMemoryStates[currentStateIndex].entries[currentEntryIndex] =
+                    previousEntry
+            } else {
+                learningMemoryStates[currentStateIndex].entries.remove(
+                    at: currentEntryIndex
+                )
+            }
         }
-        if hasClientID {
-            return .rejected("魏碑没有保存这次学习记忆。更新只能沿用 weibei_read_learning_memory 返回的 memoryID；新建请省略该字段，不要传空字符串，也不要自己编 UUID。")
+        let changedScopes = Set(applied.memoryIDs.compactMap { memoryID in
+            appliedLearningStates.first {
+                $0.entries.contains { $0.id == memoryID }
+            }?.scope
+        })
+        for scope in changedScopes {
+            guard let currentIndex = learningMemoryStates.firstIndex(where: {
+                $0.scope == scope
+            }),
+            let appliedState = appliedLearningStates.first(where: {
+                $0.scope == scope
+            }),
+            learningMemoryStates[currentIndex].revision == appliedState.revision else {
+                continue
+            }
+            if let previousState = previousLearningStates.first(where: {
+                $0.scope == scope
+            }) {
+                learningMemoryStates[currentIndex].revision = previousState.revision
+            } else if learningMemoryStates[currentIndex].entries.isEmpty {
+                learningMemoryStates.remove(at: currentIndex)
+            }
         }
-        return .rejected("魏碑没有保存这次学习记忆。用户自述请用 origin=userStatement，evidence 以「[用户：本轮]」开头并带上用户原话。")
+        if let appliedStudySession,
+           let currentIndex = studySessions.firstIndex(where: {
+               $0.id == target.sessionID
+           }),
+           let previous = previousStudySessions.first(where: {
+               $0.id == target.sessionID
+           }) {
+            if appliedStudySession.summary != previous.summary,
+               studySessions[currentIndex].summary == appliedStudySession.summary {
+                studySessions[currentIndex].summary = previous.summary
+            }
+            if appliedStudySession.flow.phase != previous.flow.phase,
+               studySessions[currentIndex].flow.phase == appliedStudySession.flow.phase {
+                studySessions[currentIndex].flow.phase = previous.flow.phase
+            }
+            if appliedStudySession.flow.suggestedNext
+                != previous.flow.suggestedNext,
+               studySessions[currentIndex].flow.suggestedNext
+                == appliedStudySession.flow.suggestedNext {
+                studySessions[currentIndex].flow.suggestedNext =
+                    previous.flow.suggestedNext
+            }
+            if appliedStudySession.updatedAt != previous.updatedAt,
+               studySessions[currentIndex].updatedAt == appliedStudySession.updatedAt {
+                studySessions[currentIndex].updatedAt = previous.updatedAt
+            }
+        }
+        if latestAgentLearningUpdate == appliedLatestUpdate {
+            latestAgentLearningUpdate = previousLatestUpdate
+        }
+        if latestAgentLearningUpdateQuestion == appliedLatestQuestion {
+            latestAgentLearningUpdateQuestion = previousLatestQuestion
+        }
+        if let courseID = target.courseID {
+            dirtyPortableCourseIDs.insert(courseID)
+        }
+        let rollbackPersisted = await persistWorkspaceNow()
+        WeiBeiLog.workspace.error(
+            "code=native_learning_persist_failed course=\(target.courseID?.uuidString ?? "none", privacy: .private) rollback_persisted=\(rollbackPersisted, privacy: .public)"
+        )
+        if rollbackPersisted {
+            return .rejected("魏碑没有写入这次学习记忆，已恢复更新前的内容，同时发生的修改不受影响。请重试。")
+        }
+        return .rejected("魏碑无法确认这次学习记忆的最终磁盘状态。当前会话仍保留更新前的内容，请不要关闭并重试。")
     }
 
     func persistNativeCourseProfileUpdate(
         _ update: StudyAgentCourseProfileUpdate,
         expectedContextRevision: String,
         target: AgentConversationTarget
-    ) -> NativeStorePersistReceipt {
-        if let applied = applyCourseProfileUpdate(
+    ) async -> NativeStorePersistReceipt {
+        let previousProfiles = courseKnowledgeProfiles
+        guard let applied = applyCourseProfileUpdate(
             update,
             expectedContextRevision: expectedContextRevision,
             expectedProfileRevision: update.profileRevision,
             target: target
-        ) {
+        ) else {
+            let hasClientID = update.entries.contains {
+                !($0.entryID?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "").isEmpty
+            }
+            if hasClientID {
+                return .rejected("魏碑没有保存这次课程档案。更新只能沿用当前档案已有条目的 entryID；新建请省略该字段，不要传空字符串，也不要自己编 UUID。")
+            }
+            return .rejected("魏碑没有保存这次课程档案。自述掌握用 kind=concept、text 以「用户自述：」开头、checkpoint=userRequested。")
+        }
+        let appliedProfiles = courseKnowledgeProfiles
+        let persisted = await persistWorkspaceNow()
+        let coursePersisted = target.courseID.map {
+            persistedWorkspaceCourseIDs.contains($0)
+                && !dirtyPortableCourseIDs.contains($0)
+                && !blockedPortableCourseIDs.contains($0)
+                && !oversizedPortableCourseIDs.contains($0)
+        } ?? false
+        if persisted && coursePersisted {
             return NativeStorePersistReceipt(
                 accepted: true,
                 message: "已写入课程知识档案",
                 profileUpdate: applied
             )
         }
-        let hasClientID = update.entries.contains {
-            !($0.entryID?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "").isEmpty
+
+        if let courseID = target.courseID,
+           let appliedProfile = appliedProfiles.first(where: {
+               $0.courseID == courseID
+           }),
+           let currentIndex = courseKnowledgeProfiles.firstIndex(where: {
+               $0.courseID == courseID
+           }),
+           let previousProfile = previousProfiles.first(where: {
+               $0.courseID == courseID
+           }) {
+            if courseKnowledgeProfiles[currentIndex] == appliedProfile {
+                courseKnowledgeProfiles[currentIndex] = previousProfile
+            } else {
+                let changedIDs = Set(applied.entryIDs).union(
+                    update.removedEntryIDs.compactMap(UUID.init(uuidString:))
+                )
+                for entryID in changedIDs {
+                    let appliedEntry = appliedProfile.entries.first {
+                        $0.id == entryID
+                    }
+                    let currentEntryIndex = courseKnowledgeProfiles[currentIndex]
+                        .entries.firstIndex { $0.id == entryID }
+                    if let currentEntryIndex {
+                        guard let appliedEntry,
+                              courseKnowledgeProfiles[currentIndex].entries[
+                                currentEntryIndex
+                              ] == appliedEntry else { continue }
+                    } else {
+                        guard appliedEntry == nil else { continue }
+                    }
+                    if let previousEntry = previousProfile.entries.first(where: {
+                        $0.id == entryID
+                    }) {
+                        if let currentEntryIndex {
+                            courseKnowledgeProfiles[currentIndex].entries[
+                                currentEntryIndex
+                            ] = previousEntry
+                        } else {
+                            courseKnowledgeProfiles[currentIndex].entries.append(
+                                previousEntry
+                            )
+                        }
+                    } else if let currentEntryIndex {
+                        courseKnowledgeProfiles[currentIndex].entries.remove(
+                            at: currentEntryIndex
+                        )
+                    }
+                }
+                courseKnowledgeProfiles[currentIndex].overview =
+                    courseKnowledgeProfiles[currentIndex].entries
+                    .filter { $0.kind == .overview }
+                    .max(by: { $0.updatedAt < $1.updatedAt })?.text ?? ""
+            }
+            dirtyPortableCourseIDs.insert(courseID)
         }
-        if hasClientID {
-            return .rejected("魏碑没有保存这次课程档案。更新只能沿用当前档案已有条目的 entryID；新建请省略该字段，不要传空字符串，也不要自己编 UUID。")
+        let rollbackPersisted = await persistWorkspaceNow()
+        WeiBeiLog.workspace.error(
+            "code=native_course_profile_persist_failed course=\(target.courseID?.uuidString ?? "none", privacy: .private) rollback_persisted=\(rollbackPersisted, privacy: .public)"
+        )
+        if rollbackPersisted {
+            return .rejected("魏碑没有写入这次课程档案，已恢复更新前的内容，同时发生的修改不受影响。请重试。")
         }
-        return .rejected("魏碑没有保存这次课程档案。自述掌握用 kind=concept、text 以「用户自述：」开头、checkpoint=userRequested。")
+        return .rejected("魏碑无法确认这次课程档案的最终磁盘状态。当前会话仍保留更新前的内容，请不要关闭并重试。")
     }
 
 
@@ -15674,7 +16155,6 @@ final class WorkspaceStore: ObservableObject {
             activeCourseRemovalTokens[$0] == nil
         }) ?? true,
         !text.isEmpty,
-              text.count <= 500,
               let stateIndex = learningMemoryStateIndex(for: scope, createIfMissing: false),
               let entryIndex = learningMemoryStates[stateIndex].entries.firstIndex(where: {
                   $0.id == memoryID
@@ -15703,7 +16183,7 @@ final class WorkspaceStore: ObservableObject {
         learningMemoryStates[stateIndex].entries[entryIndex] = entry
         learningMemoryStates[stateIndex].revision = revision
         invalidateAgentContext()
-        return save()
+        return flushPendingWorkspaceSave()
     }
 
     func resolveLearningMemory(_ memoryID: UUID, in scope: LearningMemoryScope) {
@@ -15727,10 +16207,31 @@ final class WorkspaceStore: ObservableObject {
         let entryIndex = learningMemoryStates[stateIndex].entries.firstIndex(where: { $0.id == memoryID }) else {
             return false
         }
+        let previousState = learningMemoryStates[stateIndex]
+        let previousContextRevision = agentContextRevision
         learningMemoryStates[stateIndex].entries.remove(at: entryIndex)
         learningMemoryStates[stateIndex].revision &+= 1
+        let deletedState = learningMemoryStates[stateIndex]
         invalidateAgentContext()
-        return save()
+        guard flushPendingWorkspaceSave() else {
+            var rollbackApplied = false
+            if learningMemoryStates[stateIndex] == deletedState {
+                learningMemoryStates[stateIndex] = previousState
+                if agentContextRevision == previousContextRevision &+ 1 {
+                    agentContextRevision = previousContextRevision
+                }
+                rollbackApplied = true
+            }
+            let rollbackPersisted = rollbackApplied
+                && flushPendingWorkspaceSave()
+            if !rollbackPersisted {
+                WeiBeiLog.workspace.error(
+                    "code=learning_memory_delete_rollback_unverified scope=\(String(describing: scope), privacy: .private) memory=\(memoryID.uuidString, privacy: .private) rollback_applied=\(rollbackApplied, privacy: .public)"
+                )
+            }
+            return false
+        }
+        return true
     }
 
     private func setLearningMemoryStatus(
@@ -15913,9 +16414,6 @@ final class WorkspaceStore: ObservableObject {
             documentAnchor: selection.documentAnchor
         )
         selectionAskThreads.insert(thread, at: 0)
-        if selectionAskThreads.count > 80 {
-            selectionAskThreads = Array(selectionAskThreads.prefix(80))
-        }
         save()
         return thread
     }
@@ -16030,19 +16528,22 @@ final class WorkspaceStore: ObservableObject {
         }
     }
 
+    @discardableResult
     func askAgent(
         reusingLastUserMessage: Bool = false,
         replayingSelections: [SelectionContext]? = nil,
         targetCourseID: UUID? = nil,
         visibleQuestionOverride: String? = nil,
         questionOverride: String? = nil
-    ) {
+    ) -> String? {
         let question = (questionOverride ?? agentDraft)
             .trimmingCharacters(in: .whitespacesAndNewlines)
         guard agentRequestTask == nil,
               !isStoppingAgent,
               !isAskingAgent,
-              !question.isEmpty else { return }
+              !question.isEmpty else {
+            return ui("当前无法提交这条回答。", "This response cannot be submitted right now.")
+        }
         let target: AgentConversationTarget
         do {
             if (reusingLastUserMessage || targetCourseID != nil),
@@ -16055,6 +16556,8 @@ final class WorkspaceStore: ObservableObject {
                 target = try agentConversationTarget()
             }
         } catch {
+            let reason = Self.userFacingAgentFailureDetail(for: error)
+                ?? ui("魏碑无法准备这次回答。", "WeiBei could not prepare this response.")
             recordAgentTargetFailure(
                 question: question,
                 error: error,
@@ -16063,7 +16566,7 @@ final class WorkspaceStore: ObservableObject {
                 visibleQuestion: visibleQuestionOverride,
                 preserveComposerDraft: questionOverride != nil
             )
-            return
+            return reason
         }
         agentRequestTask = Task { @MainActor [weak self] in
             await self?.performAgentRequest(
@@ -16074,6 +16577,7 @@ final class WorkspaceStore: ObservableObject {
                 questionOverride: questionOverride
             )
         }
+        return nil
     }
 
     private func agentConversationTarget() throws -> AgentConversationTarget {
@@ -16124,19 +16628,27 @@ final class WorkspaceStore: ObservableObject {
                 )
             }
         }
-        let runtimeDirectory = workspaceDirectory
+        let chatsRoot = workspaceDirectory
             .appendingPathComponent("AgentRuntime/Chats", isDirectory: true)
+        let runtimeDirectory = chatsRoot
             .appendingPathComponent(sessionID.uuidString.lowercased(), isDirectory: true)
         do {
-            try FileManager.default.createDirectory(
-                at: runtimeDirectory,
-                withIntermediateDirectories: true
+            try WeiBeiAgentDataPaths.ensureOwnedDirectory(
+                chatsRoot,
+                inside: workspaceDirectory
+            )
+            try WeiBeiAgentDataPaths.ensureOwnedDirectory(
+                runtimeDirectory,
+                inside: workspaceDirectory
             )
             try FileManager.default.setAttributes(
                 [.posixPermissions: 0o700],
                 ofItemAtPath: runtimeDirectory.path
             )
         } catch {
+            WeiBeiLog.workspace.error(
+                "code=agent_chat_directory_unavailable underlying=\(WeiBeiLog.code(error), privacy: .public)"
+            )
             throw AgentConversationTargetError(
                 message: ui(
                     "魏碑无法准备 Chat 的本地工作目录，请检查本机存储空间和文件权限。",
@@ -16429,11 +16941,12 @@ final class WorkspaceStore: ObservableObject {
             .joined(separator: "\n\n")
         isAskingAgent = true
         activeAgentRequestID = requestID
+        settleAgentStreamingDisplayImmediately()
         latestAgentStreamingText = ""
         lastAgentStreamingPublishNanoseconds = 0
         agentStreamingDisplayPump.stopAndReset()
         agentVisualizationIDsUpdatingHistory = []
-        agentStreaming.text = ""
+        agentStreaming.reset()
         agentStreaming.activityText = ui("正在准备课程现场", "Preparing course context")
         defer {
             if activeAgentRequestID == requestID {
@@ -16441,13 +16954,14 @@ final class WorkspaceStore: ObservableObject {
                 activeAgentReplyMessageID = nil
                 activeAgentReplyChatID = nil
                 isAskingAgent = false
-                latestAgentStreamingText = ""
                 lastAgentStreamingPublishNanoseconds = 0
-                agentStreamingDisplayPump.stopAndReset()
                 agentVisualizationIDsUpdatingHistory = []
-                agentStreaming.text = ""
                 agentStreaming.activityText = nil
                 agentRequestTask = nil
+                if agentStreaming.displayingMessageID == nil {
+                    latestAgentStreamingText = ""
+                    agentStreamingDisplayPump.stopAndReset()
+                }
                 // Answer finished: keep float pinned so the user can scroll the reply.
                 if keepFloatingSelectionForAnswer, !isConversationSurfaceVisible {
                     pinnedFloatingAgent = true
@@ -16491,7 +17005,7 @@ final class WorkspaceStore: ObservableObject {
                 role: .assistant,
                 text: "",
                 source: sourceTitle,
-                backend: .pi,
+                backend: .native,
                 completionState: .generating,
                 origin: AgentReplyOrigin(
                     requestID: requestID,
@@ -16503,6 +17017,10 @@ final class WorkspaceStore: ObservableObject {
             replyMessageID = assistantMessage.id
             activeAgentReplyMessageID = assistantMessage.id
             activeAgentReplyChatID = target.sessionID
+            agentStreaming.begin(
+                messageID: assistantMessage.id,
+                chatID: target.sessionID
+            )
             appendAgentMessage(assistantMessage)
             appendMessageToActiveSelectionAskThread(assistantMessage.id)
             guard await flushPendingWorkspaceSaveAsync() else {
@@ -16598,7 +17116,6 @@ final class WorkspaceStore: ObservableObject {
                 courseProfile: sentCourseProfile,
                 language: sentLanguage,
                 contextRevision: "\(requestWorkspaceRevision):\(requestID.uuidString.lowercased())",
-                interactiveVisualizationsEnabled: agentInteractiveVisualizationsEnabled,
                 confirmedNotes: confirmedAgentNotes(in: target)
             )
             agentStreaming.activityText = ui("正在思考", "Thinking")
@@ -16666,8 +17183,7 @@ final class WorkspaceStore: ObservableObject {
             let sources = reply.sources
             if let messageID = replyMessageID {
                 let visibleContentBlocks = currentAgentVisualizationBlocks(reply.contentBlocks)
-                // Drain before the .completed flip or the tail visibly snaps.
-                agentStreamingDisplayPump.drainNow()
+                latestAgentStreamingText = reply.text
                 _ = updateAgentMessage(messageID, in: target.sessionID) {
                     $0.text = reply.text
                     $0.contentBlocks = visibleContentBlocks
@@ -16680,6 +17196,16 @@ final class WorkspaceStore: ObservableObject {
                     $0.failureKind = nil
                     $0.retryQuestion = nil
                     $0.toolTrace = reply.toolTrace
+                }
+                if agentStreaming.isDisplaying(messageID) {
+                    if agentStreamingUsesReducedMotion
+                        || !isAgentStreamingSurfaceVisible
+                        || agentStreaming.displayingChatID != activeStudySessionID {
+                        agentStreamingDisplayPump.replaceImmediately(
+                            cumulativeText: reply.text
+                        )
+                    }
+                    agentStreamingDisplayPump.finish(cumulativeText: reply.text)
                 }
                 if reply.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                    visibleContentBlocks.isEmpty,
@@ -16707,7 +17233,7 @@ final class WorkspaceStore: ObservableObject {
             )
             // Durable reply before request finish; save errors must not hide it.
             _ = await flushPendingWorkspaceSaveAsync()
-        } catch PiAgentRuntimeError.cancelled, is CancellationError {
+        } catch is CancellationError {
             guard activeAgentRequestID == requestID else { return }
             if let replyMessageID {
                 interruptAgentReply(
@@ -16759,10 +17285,10 @@ final class WorkspaceStore: ObservableObject {
                 lastAgentFailureKind = kind
                 lastFailedAgentQuestion = question
             }
-            let failureText = kind.userMessage(
-                language: interfaceLanguage,
-                userFacingDetail: Self.userFacingAgentFailureDetail(for: error),
-                draftPreserved: true
+            let failureText = Self.agentFailureMessage(
+                for: error,
+                kind: kind,
+                language: interfaceLanguage
             )
             if let replyMessageID {
                 interruptAgentReply(
@@ -16824,6 +17350,7 @@ final class WorkspaceStore: ObservableObject {
         if restoreDraft, let question = updated?.retryQuestion {
             agentDraftsBySessionID[chatID] = question
         }
+        settleAgentStreamingDisplayImmediately()
         guard activeStudySessionID == chatID else { return }
         lastAgentFailureKind = kind
         lastFailedAgentQuestion = updated?.retryQuestion
@@ -16880,7 +17407,6 @@ final class WorkspaceStore: ObservableObject {
         latestAgentStreamingText = ""
         lastAgentStreamingPublishNanoseconds = 0
         agentStreamingDisplayPump.stopAndReset()
-        agentStreaming.text = ""
         agentStreaming.activityText = nil
         agentStopTask?.cancel()
         agentStopTask = Task { @MainActor [weak self] in
@@ -16977,7 +17503,7 @@ final class WorkspaceStore: ObservableObject {
             selfCheckCapturedAgentRequest = request
             return StudyAgentReply(
                 text: "课程请求授权自检完成",
-                backend: .pi
+                backend: .native
             )
         }
 #endif
@@ -16991,22 +17517,10 @@ final class WorkspaceStore: ObservableObject {
     }
 
     func shutdownAgentRuntime() {
-        let span = WeiBeiPerf.begin("pi.shutdown")
+        let span = WeiBeiPerf.begin("agent.shutdown")
         agentRequestTask?.cancel()
         agentStopTask?.cancel()
-        let runtime = piRuntime
-        let completion = DispatchSemaphore(value: 0)
-        Task.detached {
-            await runtime.shutdown()
-            completion.signal()
-        }
-        let result = completion.wait(timeout: .now() + 1)
-        WeiBeiPerf.end(
-            span,
-            extra: result == .success
-                ? "outcome=completed"
-                : "outcome=timeout"
-        )
+        WeiBeiPerf.end(span, extra: "outcome=completed")
     }
 
     func applyAgentProgress(
@@ -17030,7 +17544,7 @@ final class WorkspaceStore: ObservableObject {
             switch name {
             case "weibei_course_search":
                 base = ui("正在搜索", "Searching")
-            case "weibei_course_read", "read":
+            case "weibei_course_read":
                 base = ui("正在读取", "Reading")
             case "weibei_course_map":
                 base = ui("正在查找课程关联", "Finding course connections")
@@ -17054,7 +17568,16 @@ final class WorkspaceStore: ObservableObject {
             }
         case let .text(text, blocks):
             latestAgentStreamingText = text
-            agentStreamingDisplayPump.start()
+            if agentStreaming.isDisplaying(replyMessageID) {
+                let canPaceVisibleReply = !agentStreamingUsesReducedMotion
+                    && isAgentStreamingSurfaceVisible
+                    && agentStreaming.displayingChatID == activeStudySessionID
+                if canPaceVisibleReply {
+                    agentStreamingDisplayPump.enqueue(cumulativeText: text)
+                } else {
+                    agentStreamingDisplayPump.replaceImmediately(cumulativeText: text)
+                }
+            }
             if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 agentReplyIDsThatDisplayedStreamingText.insert(replyMessageID)
             }
@@ -17280,24 +17803,33 @@ final class WorkspaceStore: ObservableObject {
         return changed
     }
 
-    func reconcileCourseFilesNow(courseID requestedCourseID: UUID? = nil) async {
-        guard !courseReconciliationInFlight else { return }
-        guard !libraryMigrationInFlight else { return }
+    @discardableResult
+    func reconcileCourseFilesNow(
+        courseID requestedCourseID: UUID? = nil,
+        persistsChanges: Bool = true
+    ) async -> Bool {
+        guard !courseReconciliationInFlight else { return false }
+        guard !libraryMigrationInFlight else { return false }
         courseReconciliationInFlight = true
         defer { courseReconciliationInFlight = false }
+        var succeeded = true
         if let libraryRoot = courseLibraryRootURL {
             try? await ensureCommonContentDirectories(at: libraryRoot)
             discoverTopLevelCourseFolders()
         }
         if await reconcileSharedFilesNow() {
-            _ = await persistWorkspaceNow()
+            if persistsChanges, !(await persistWorkspaceNow()) {
+                succeeded = false
+            }
             courseDocumentSearchIndex.synchronize(allItems)
             invalidateAgentContext()
         }
         let courseIDs = requestedCourseID.map { [$0] } ?? courses.map(\.id)
         for courseID in courseIDs {
             guard activeCourseRemovalTokens[courseID] == nil,
+                  courses.contains(where: { $0.id == courseID }),
                   let root = courseRootURL(for: courseID) else {
+                succeeded = false
                 continue
             }
             do {
@@ -17305,6 +17837,7 @@ final class WorkspaceStore: ObservableObject {
                 guard activeCourseRemovalTokens[courseID] == nil,
                       courses.contains(where: { $0.id == courseID }),
                       courseRootURL(for: courseID) == root else {
+                    succeeded = false
                     continue
                 }
                 var changed = await applyCourseFileObservations(
@@ -17340,14 +17873,22 @@ final class WorkspaceStore: ObservableObject {
                     }
                 }
                 if changed {
-                    _ = await persistWorkspaceNow()
+                    if persistsChanges, !(await persistWorkspaceNow()) {
+                        succeeded = false
+                    }
                     courseDocumentSearchIndex.synchronize(allItems)
                     invalidateAgentContext()
                 }
             } catch {
+                succeeded = false
+                recordCourseLibraryUIFailure(
+                    error,
+                    operation: "reconcile_course_folder",
+                    path: root
+                )
                 courseRootUnavailableReasons[courseID] = ui(
-                    "课程文件夹暂时无法对账：\(error.localizedDescription)",
-                    "The course folder could not be reconciled: \(error.localizedDescription)"
+                    "课程文件夹暂时无法对账；磁盘内容没有被覆盖。请确认文件夹可访问后重试。",
+                    "The course folder could not be reconciled. Disk content was not overwritten. Make sure the folder is accessible, then try again."
                 )
                 if let expectedIdentity = course(withID: courseID)?.sourceRootIdentity,
                    importedFileIdentityResolver(root) != expectedIdentity {
@@ -17355,12 +17896,13 @@ final class WorkspaceStore: ObservableObject {
                 }
             }
         }
+        return succeeded
     }
 
     func reconcileCourseFilesForSelfCheck(courseID: UUID? = nil) throws {
         precondition(WeiBeiSafetyTestMode.isEnabled)
         try waitForCourseFileOperation {
-            await self.reconcileCourseFilesNow(courseID: courseID)
+            _ = await self.reconcileCourseFilesNow(courseID: courseID)
         }
     }
 
@@ -17462,9 +18004,14 @@ final class WorkspaceStore: ObservableObject {
                         expectedLinkIdentity: linkIdentity
                     )
                 } catch {
+                    recordCourseLibraryUIFailure(
+                        error,
+                        operation: "repair_migrated_shared_link",
+                        path: linkURL
+                    )
                     courseRootUnavailableReasons[membership.courseID] = ui(
-                        "通用资料已迁移，但课程入口暂时无法修复：\(error.localizedDescription)",
-                        "The common material moved, but a course entry could not be repaired."
+                        "通用资料已迁移并保留，但这门课程的入口暂时无法修复。请确认课程文件夹可访问后重试。",
+                        "The common material was moved and preserved, but this course entry could not be repaired. Make sure the course folder is accessible, then try again."
                     )
                 }
             }
@@ -17602,11 +18149,16 @@ final class WorkspaceStore: ObservableObject {
                             expectedLinkIdentity: linkIdentity
                         )
                     } catch {
+                        recordCourseLibraryUIFailure(
+                            error,
+                            operation: "repair_renamed_shared_link",
+                            path: linkURL
+                        )
                         courseRootUnavailableReasons[
                             membership.courseID
                         ] = ui(
-                            "共享原件已改名，但课程入口暂时无法修复：\(error.localizedDescription)",
-                            "The shared original was renamed, but its course entry could not be repaired: \(error.localizedDescription)"
+                            "共享原件已改名并保留，但这门课程的入口暂时无法修复。请确认课程文件夹可访问后重试。",
+                            "The shared original was renamed and preserved, but this course entry could not be repaired. Make sure the course folder is accessible, then try again."
                         )
                     }
                 }
@@ -18563,22 +19115,22 @@ final class WorkspaceStore: ObservableObject {
     }
 
     private func clearWorkspaceSaveError() {
-        consecutiveWorkspaceSaveFailures = 0
         if workspaceSaveError != nil {
             workspaceSaveError = nil
         }
     }
 
-    /// S5：连续 3 次写盘失败才写入 workspaceSaveError（可点重试）；此前静默。
-    /// 安全自检仍立即暴露，便于断言注入的单次失败。
-    private func reportWorkspaceSaveFailure(_ message: String) {
-        consecutiveWorkspaceSaveFailures += 1
-        // 连续 3 次失败才上横幅；每次都落日志（下游操作会被拒绝，事后定位全靠它）。
-        appendWorkspaceSaveFailureLog(message)
-        if WeiBeiSafetyTestMode.isEnabled
-            || consecutiveWorkspaceSaveFailures >= 3 {
-            workspaceSaveError = message
-        }
+    @discardableResult
+    private func reportWorkspaceSaveFailure(
+        _ userMessage: String,
+        reason: String? = nil
+    ) -> String {
+        WeiBeiLog.workspace.error(
+            "code=workspace_save_failed path=\(self.storageURL.path, privacy: .private) reason=\(reason ?? userMessage, privacy: .private)"
+        )
+        appendWorkspaceSaveFailureLog(userMessage)
+        workspaceSaveError = userMessage
+        return userMessage
     }
 
     private func appendWorkspaceSaveFailureLog(_ message: String) {
@@ -19339,18 +19891,7 @@ final class WorkspaceStore: ObservableObject {
     private func restorePortableCourseStates() -> Bool {
         var changed = false
         for courseID in courses.map(\.id) {
-            let cachedState = try? makeCoursePortableState(
-                courseID: courseID,
-                revision: coursePortableStateRevisions[courseID] ?? 0,
-                savedAt: Date(timeIntervalSince1970: 0)
-            )
-            let cachedDigest = cachedState.flatMap {
-                try? coursePortableStatePayloadDigest($0)
-            }
             guard let stateURL = coursePortableStateURL(for: courseID) else {
-                if cachedDigest != coursePortableStateDigests[courseID] {
-                    dirtyPortableCourseIDs.insert(courseID)
-                }
                 continue
             }
             guard FileManager.default.fileExists(atPath: stateURL.path) else {
@@ -19366,85 +19907,24 @@ final class WorkspaceStore: ObservableObject {
                     expectedCourseID: courseID
                 )
                 let diskDigest = try coursePortableStatePayloadDigest(state)
-                let knownRevision = coursePortableStateRevisions[courseID]
-                let localItemIDs = portableItemIDs(
-                    for: courseID, memberships: courseItemMemberships, items: importedItems
-                )
-                if knownRevision != nil,
-                   !localItemIDs.isEmpty,
-                   !localItemIDs.isSubset(of: Set(state.items.map(\.itemID))) {
-                    dirtyPortableCourseIDs.insert(courseID)
-                    blockedPortableCourseIDs.remove(courseID)
-                    changed = true
-                    continue
-                }
-                let knownDigest = coursePortableStateDigests[courseID]
-                if knownRevision == nil || knownDigest == nil {
-                    let canEstablishLegacyBaseline =
-                        knownRevision == nil
-                        && knownDigest == nil
-                        && !dirtyPortableCourseIDs.contains(courseID)
-                        && cachedDigest == diskDigest
-                    guard canEstablishLegacyBaseline else {
-                        dirtyPortableCourseIDs.insert(courseID)
-                        blockedPortableCourseIDs.insert(courseID)
-                        needsPortableCourseStateBootstrap = true
-                        reportWorkspaceSaveFailure(ui(
-                            "“\(course(withID: courseID)?.title ?? "课程")”的本机内容与课程文件夹首次建立可携带基线时不一致，魏碑已保留两边并停止自动覆盖。",
-                            "The local course content did not match the course folder while establishing its first portable baseline. WeiBei preserved both sides and stopped automatic overwrites."
-                        ))
-                        changed = true
-                        continue
-                    }
-                    // Legacy workspaces are the local source of truth on first upgrade;
-                    // an equal payload just baselines without replaying the disk snapshot.
-                    coursePortableStateRevisions[courseID] = state.revision
-                    coursePortableStateDigests[courseID] = diskDigest
-                    changed = true
-                    continue
-                }
-                guard let knownRevision, let knownDigest else {
-                    // S3：无基线时静默标记脏，不抛冲突。
-                    dirtyPortableCourseIDs.insert(courseID)
-                    blockedPortableCourseIDs.insert(courseID)
-                    needsPortableCourseStateBootstrap = true
-                    changed = true
-                    continue
-                }
-                if dirtyPortableCourseIDs.contains(courseID) {
-                    guard state.revision == knownRevision,
-                          knownDigest == diskDigest else {
-                        blockedPortableCourseIDs.insert(courseID)
-                        // S3：不写常驻 workspaceSaveError 横幅。
-                        continue
-                    }
-                    coursePortableStateRevisions[courseID] =
-                        max(knownRevision, state.revision)
-                    needsPortableCourseStateBootstrap = true
-                    continue
-                }
-                guard state.revision >= knownRevision else {
-                    // 磁盘更旧：保留本机，静默。
-                    continue
-                }
-                if state.revision == knownRevision,
-                   knownDigest != diskDigest {
-                    // 同 revision 不同 digest：标记阻塞，不自动覆盖。
-                    blockedPortableCourseIDs.insert(courseID)
-                    dirtyPortableCourseIDs.insert(courseID)
-                    needsPortableCourseStateBootstrap = true
-                    changed = true
-                    continue
-                }
                 try applyCoursePortableState(state, courseID: courseID)
                 coursePortableStateRevisions[courseID] = state.revision
                 coursePortableStateDigests[courseID] = diskDigest
+                dirtyPortableCourseIDs.remove(courseID)
+                blockedPortableCourseIDs.remove(courseID)
+                oversizedPortableCourseIDs.remove(courseID)
                 changed = true
             } catch {
-                // S3：读取失败静默阻塞，不写常驻错误横幅。
                 blockedPortableCourseIDs.insert(courseID)
                 dirtyPortableCourseIDs.insert(courseID)
                 needsPortableCourseStateBootstrap = true
+                reportWorkspaceSaveFailure(
+                    ui(
+                        "“\(course(withID: courseID)?.title ?? "课程")”的课程状态无法读取；课程文件没有被覆盖。请恢复该课程的状态文件或重新连接原课程文件夹后重试。",
+                        "The course state for “\(course(withID: courseID)?.title ?? "Course")” could not be read. Course files were not overwritten. Restore that course's state file or reconnect its original folder, then retry."
+                    ),
+                    reason: error.localizedDescription
+                )
                 changed = true
             }
         }
@@ -19641,13 +20121,6 @@ final class WorkspaceStore: ObservableObject {
         courseID: UUID
     ) throws {
         let state = try rawState.validated(expectedCourseID: courseID)
-        let localItemIDs = portableItemIDs(
-            for: courseID, memberships: courseItemMemberships, items: importedItems
-        )
-        if !localItemIDs.isEmpty, !localItemIDs.isSubset(of: Set(state.items.map(\.itemID))) {
-            dirtyPortableCourseIDs.insert(courseID)
-            return
-        }
         guard let courseIndex = courses.firstIndex(where: {
             $0.id == courseID
         }),
@@ -19665,10 +20138,47 @@ final class WorkspaceStore: ObservableObject {
             $0.courseRelativePath == nil
         }
         let pathlessItemIDs = Set(pathlessMemberships.map(\.itemID))
+        let stateItemIDs = Set(state.items.map(\.itemID))
+        let stateRelativePaths = Set(state.items.map(\.courseRelativePath))
+        let unlistedOwnedMemberships = previousMemberships.filter {
+            membership in
+            guard let relativePath = membership.courseRelativePath,
+                  !stateItemIDs.contains(membership.itemID),
+                  !stateRelativePaths.contains(relativePath),
+                  let item = importedItems.first(where: {
+                      $0.id == membership.itemID
+                  }),
+                  case .courseOwned(let ownerCourseID, _) = item.storage else {
+                return false
+            }
+            guard ownerCourseID == courseID else { return false }
+            if notesByItemID[membership.itemID] != nil
+                || pendingNoteWritesByItemID[membership.itemID] != nil {
+                return true
+            }
+            guard let url = rawCourseItemURL(
+                relativePath: relativePath,
+                inside: root
+            ) else {
+                return false
+            }
+            switch CourseProjectFileWorker.entryPresence(at: url) {
+            case .present, .presentUnmaterialized, .inaccessible:
+                return true
+            case .absent:
+                return false
+            }
+        }
+        let retainedLocalItemIDs = pathlessItemIDs.union(
+            unlistedOwnedMemberships.map(\.itemID)
+        )
         let previousNoteIDs = Set(
             importedItems.lazy.filter {
                 previousItemIDs.contains($0.id) && $0.isNotebookNote
             }.map(\.id)
+        )
+        let retainedLocalNoteIDs = previousNoteIDs.intersection(
+            retainedLocalItemIDs
         )
         let otherCourseItemIDs = Set(
             courseItemMemberships.lazy.filter {
@@ -19677,7 +20187,8 @@ final class WorkspaceStore: ObservableObject {
         )
         let previousRelationIDs = Set(
             noteSourceLinks.lazy.filter {
-                previousNoteIDs.contains($0.noteItemID)
+                previousItemIDs.contains($0.noteItemID)
+                    && previousItemIDs.contains($0.sourceItemID)
             }.map(\.id)
         )
         let retainedRelationIDs = Set(
@@ -19853,7 +20364,7 @@ final class WorkspaceStore: ObservableObject {
         importedItems.removeAll { item in
             previousItemIDs.contains(item.id)
                 && !otherCourseItemIDs.contains(item.id)
-                && !pathlessItemIDs.contains(item.id)
+                && !retainedLocalItemIDs.contains(item.id)
         }
         for item in restoredItemsByID.values.sorted(by: {
             $0.id < $1.id
@@ -19868,7 +20379,7 @@ final class WorkspaceStore: ObservableObject {
         }
         courseItemMemberships.removeAll { $0.courseID == courseID }
         courseItemMemberships.append(contentsOf: restoredMemberships)
-        for membership in pathlessMemberships
+        for membership in pathlessMemberships + unlistedOwnedMemberships
         where !restoredMemberships.contains(where: {
             $0.itemID == membership.itemID
         }) {
@@ -19928,14 +20439,13 @@ final class WorkspaceStore: ObservableObject {
         )
 
         noteSourceLinks.removeAll {
-            previousNoteIDs.contains($0.noteItemID)
-                && !pathlessItemIDs.contains($0.noteItemID)
+            previousRelationIDs.contains($0.id)
         }
         noteSourceLinks.append(contentsOf: state.noteSourceLinks)
         studyLocationsByCourseID[courseID.uuidString] =
             state.studyLocationsByItemID
-        courseResumePoints.removeAll { $0.courseID == courseID }
-        if let resumePoint = state.resumePoint {
+        if !courseResumePoints.contains(where: { $0.courseID == courseID }),
+           let resumePoint = state.resumePoint {
             courseResumePoints.append(resumePoint)
         }
 
@@ -19944,7 +20454,8 @@ final class WorkspaceStore: ObservableObject {
         )
         // C2：本地有草稿的条目一律保留——未落盘输入永远优先于快照重放。
         for itemID in previousNoteIDs.union(restoredNoteIDs) {
-            if notesByItemID[itemID] != nil {
+            if notesByItemID[itemID] != nil
+                || retainedLocalNoteIDs.contains(itemID) {
                 continue
             }
             setNoteDraft(nil, for: itemID)
@@ -20217,7 +20728,7 @@ final class WorkspaceStore: ObservableObject {
                 blockedPortableCourseIDs.formUnion(conflictedCourseIDs)
                 needsPortableCourseStateBootstrap = true
             }
-            // S3：可携带写回失败静默降级，不抛 stateConflict 拒绝整次保存。
+            // 写回失败时保留磁盘状态与本机候选，不覆盖任一边。
             if !conflictedCourseIDs.isEmpty {
                 needsPortableCourseStateBootstrap = true
             }
@@ -20730,6 +21241,7 @@ final class WorkspaceStore: ObservableObject {
             WorkspacePersistenceRequest(
                 generation: generation,
                 workspace: persisted.snapshot,
+                courseItemMemberships: courseItemMemberships,
                 storageURL: storageURL,
                 portableInputs: inputs,
                 requiredPortableCourseIDs:
@@ -20754,14 +21266,9 @@ final class WorkspaceStore: ObservableObject {
         try data.write(to: url, options: [.atomic])
     }
 
-    /// Coalesced snapshot write; verification keeps the legacy synchronous path.
-    @discardableResult
-    func save() -> Bool {
-        if Self.mustSaveImmediately {
-            return performSaveNow()
-        }
+    /// Queue a coalesced snapshot write. Call a flush API when the caller needs a disk receipt.
+    func save() {
         scheduleDebouncedWorkspaceSave()
-        return true
     }
 
     /// Flush any coalesced save (quit / resign active / note flush / agent send).
@@ -20772,15 +21279,6 @@ final class WorkspaceStore: ObservableObject {
         pendingWorkspaceSaveTask = nil
         workspaceSaveGeneration &+= 1
         workspacePersistenceSkippingCourseIDs = []
-#if DEBUG
-        let shouldSaveImmediately = Self.mustSaveImmediately
-            && !usesBackgroundWorkspacePersistenceForSelfCheck
-#else
-        let shouldSaveImmediately = Self.mustSaveImmediately
-#endif
-        if shouldSaveImmediately {
-            return performSaveNow()
-        }
         return (try? waitForCourseFileOperation {
             await self.startWorkspacePersistenceLoop().value
         }) ?? false
@@ -20801,15 +21299,6 @@ final class WorkspaceStore: ObservableObject {
         workspaceSaveGeneration &+= 1
         workspacePersistenceSkippingCourseIDs =
             skippingPortableCourseIDs
-#if DEBUG
-        if Self.mustSaveImmediately
-            && !usesBackgroundWorkspacePersistenceForSelfCheck {
-            return performSaveNow(
-                skippingPortableCourseIDs:
-                    skippingPortableCourseIDs
-            )
-        }
-#endif
         return await startWorkspacePersistenceLoop().value
     }
 
@@ -20819,43 +21308,6 @@ final class WorkspaceStore: ObservableObject {
         guard workspacePersistenceRemovingCourseID == nil else {
             return false
         }
-#if DEBUG
-        if Self.mustSaveImmediately
-            && !usesBackgroundWorkspacePersistenceForSelfCheck {
-            do {
-                let persisted = removingCourse(
-                    courseID,
-                    from: makePersistedWorkspaceSnapshot().snapshot
-                )
-                try workspaceSnapshotWriter(
-                    JSONEncoder().encode(persisted),
-                    storageURL
-                )
-                coursePortableStateRevisions.removeValue(
-                    forKey: courseID
-                )
-                coursePortableStateDigests.removeValue(
-                    forKey: courseID
-                )
-                dirtyPortableCourseIDs.remove(courseID)
-                blockedPortableCourseIDs.remove(courseID)
-                oversizedPortableCourseIDs.remove(courseID)
-                persistedWorkspaceCourseIDs = Set(
-                    persisted.courses?.map(\.id) ?? []
-                )
-                courseResumePoints =
-                    persisted.courseResumePoints ?? []
-                clearWorkspaceSaveError()
-                return true
-            } catch {
-                reportWorkspaceSaveFailure(ui(
-                    "课程更改尚未写入磁盘：\(error.localizedDescription)",
-                    "Course changes were not saved to disk: \(error.localizedDescription)"
-                ))
-                return false
-            }
-        }
-#endif
         let previousRevision =
             coursePortableStateRevisions[courseID]
         let previousDigest =
@@ -20904,13 +21356,6 @@ final class WorkspaceStore: ObservableObject {
             return false
         }
         return true
-    }
-
-    static var mustSaveImmediately: Bool {
-#if DEBUG
-        if WeiBeiSafetyTestMode.isEnabled { return true }
-#endif
-        return false
     }
 
     private func scheduleDebouncedWorkspaceSave() {
@@ -20989,18 +21434,32 @@ final class WorkspaceStore: ObservableObject {
                 snapshotSpan,
                 extra: "outcome=failed generation=\(generation)"
             )
-            guard workspaceSaveGeneration == generation else { return true }
-            reportWorkspaceSaveFailure(ui(
-                "课程可携带状态没有成功保存：\(error.localizedDescription)",
-                "Portable course state was not saved: \(error.localizedDescription)"
-            ))
+            noteEditorWorkspaceSaveFailed(reportWorkspaceSaveFailure(ui(
+                "课程可携带状态没有成功保存。本次修改仍在当前会话中，但尚未安全保存；请不要关闭并重试。",
+                "Portable course state was not saved. This change remains in the current session but is not safely stored yet; do not close it, and retry."
+            ), reason: error.localizedDescription))
             return false
         }
         let noteEditorSaveReceipt = makeNoteEditorWorkspaceSaveReceipt(
             prepared.request.workspace
         )
         let result = await courseProjectFileWorker.persistWorkspace(
-            prepared.request
+            prepared.request,
+            portableStateWriter: {
+                [coursePortableStateWriter, courseProjectMutationHook]
+                data, url, directoryIdentity, previousData in
+                try coursePortableStateWriter(
+                    data,
+                    url,
+                    directoryIdentity,
+                    previousData
+                ) {
+                    try courseProjectMutationHook(
+                        .beforeCoursePortableStateCASPlacement
+                    )
+                }
+            },
+            workspaceSnapshotWriter: workspaceSnapshotWriter
         )
         if result.failure == nil,
            let removingCourseID =
@@ -21112,38 +21571,43 @@ final class WorkspaceStore: ObservableObject {
             persistedWorkspaceCourseIDs = result.persistedCourseIDs
             cleanupPersistedCourseTrashReceipts()
         }
-        guard workspaceSaveGeneration == generation else {
-            publishOutcome = "superseded"
-            return true
-        }
         if let failure = result.failure {
             switch failure {
             case .portableState(let detail):
-                reportWorkspaceSaveFailure(ui(
-                    "课程可携带状态没有成功保存：\(detail)",
-                    "Portable course state was not saved: \(detail)"
-                ))
+                noteEditorWorkspaceSaveFailed(reportWorkspaceSaveFailure(ui(
+                    "课程可携带状态没有成功保存。本次修改仍在当前会话中，但尚未安全保存；请不要关闭并重试。",
+                    "Portable course state was not saved. This change remains in the current session but is not safely stored yet; do not close it, and retry."
+                ), reason: detail))
             case .workspace(let detail):
-                reportWorkspaceSaveFailure(ui(
-                    "课程更改尚未写入磁盘：\(detail)",
-                    "Course changes were not saved to disk: \(detail)"
-                ))
+                noteEditorWorkspaceSaveFailed(reportWorkspaceSaveFailure(ui(
+                    "课程更改尚未写入磁盘。本次修改仍在当前会话中，但尚未安全保存；请不要关闭并重试。",
+                    "Course changes were not saved to disk. This change remains in the current session but is not safely stored yet; do not close it, and retry."
+                ), reason: detail))
             case .rollbackConflict:
-                reportWorkspaceSaveFailure(ui(
-                    "课程状态提交失败且检测到并发变更，魏碑已停止覆盖并保留现场。",
-                    "The course state commit failed during a concurrent change. WeiBei stopped overwriting and preserved the files for recovery."
-                ))
+                noteEditorWorkspaceSaveFailed(reportWorkspaceSaveFailure(ui(
+                    "课程状态提交时检测到并发变更，魏碑已停止覆盖。本次修改仍在当前会话中；请先处理冲突，再重试。",
+                    "A concurrent change was detected while committing course state, so WeiBei stopped overwriting. This change remains in the current session; resolve the conflict, then retry."
+                )))
             case .stale:
                 publishOutcome = "superseded"
                 return true
             }
             return false
         }
+        guard workspaceSaveGeneration == generation else {
+            publishOutcome = "superseded"
+            return true
+        }
         courseResumePoints = prepared.resumePoints
         if !oversizedPortableCourseIDs.isEmpty {
             reportWorkspaceSaveFailure(ui(
                 "工作区内容已保存，但有课程的可携带状态超过 32 MB；课程文件夹中的原状态保持不变。请精简课程 Chat 或未写入草稿后重试。",
                 "The workspace was saved, but a portable course state exceeds 32 MB. The state in the course folder was left unchanged. Reduce course chats or pending drafts, then retry."
+            ))
+        } else if !blockedPortableCourseIDs.isEmpty {
+            reportWorkspaceSaveFailure(ui(
+                "工作区内容已保存，但课程文件夹中的课程状态无法安全更新；原状态已保留。请处理冲突或损坏后重试。",
+                "The workspace was saved, but the course state in the course folder could not be updated safely. The original state was preserved. Resolve the conflict or damage, then retry."
             ))
         } else {
             clearWorkspaceSaveError()
@@ -21170,6 +21634,11 @@ final class WorkspaceStore: ObservableObject {
                 || WeiBeiSafetyTestMode.isEnabled
         )
         return try waitForCourseFileOperation {
+            var observedRealFailure = false
+            let failureObservation = self.$workspaceSaveError.sink {
+                if $0 != nil { observedRealFailure = true }
+            }
+            defer { withExtendedLifetime(failureObservation) {} }
             let initialRevision =
                 self.coursePortableStateRevisions[courseID]
             guard let courseIndex = self.courses.firstIndex(where: {
@@ -21188,6 +21657,10 @@ final class WorkspaceStore: ObservableObject {
             let firstGeneration = self.workspaceSaveGeneration
             await self.courseProjectFileWorker
                 .prepareWorkspacePersistenceGateForSelfCheck(
+                    generation: firstGeneration
+                )
+            await self.courseProjectFileWorker
+                .failWorkspacePersistenceForSelfCheck(
                     generation: firstGeneration
                 )
             let persistenceLoop = self.startWorkspacePersistenceLoop()
@@ -21223,7 +21696,8 @@ final class WorkspaceStore: ObservableObject {
                     $0.id == courseID
                 })?.title == "后台保存课程（第二代）"
                 && self.coursePortableStateRevisions[courseID]
-                    == (initialRevision ?? 0) + 2
+                    == (initialRevision ?? 0) + 1
+                && observedRealFailure
                 && self.blockedPortableCourseIDs
                     .contains(untouchedCourseID)
                 && self.oversizedPortableCourseIDs
@@ -21231,140 +21705,6 @@ final class WorkspaceStore: ObservableObject {
         }
     }
 #endif
-
-    @discardableResult
-    private func performSaveNow(
-        skippingPortableCourseIDs: Set<UUID> = []
-    ) -> Bool {
-        WeiBeiPerf.measure("workspace.save") {
-            let requestedCourseIDs =
-                persistedWorkspaceCourseIDs.intersection(
-                    Set(courses.map(\.id))
-                ).subtracting(skippingPortableCourseIDs)
-            let portableCommit: CoursePortableStateCommit
-            do {
-                portableCommit = try persistCoursePortableStates(
-                    courseIDs: requestedCourseIDs,
-                    requiring: Set(activeCourseFileMutationCounts.keys)
-                        .intersection(requestedCourseIDs)
-                )
-            } catch {
-                reportWorkspaceSaveFailure(ui(
-                    "课程可携带状态没有成功保存：\(error.localizedDescription)",
-                    "Portable course state was not saved: \(error.localizedDescription)"
-                ))
-                return false
-            }
-            let persistedCourseResumePoints = sanitizedCourseResumePoints()
-            let snapshot = PersistedWorkspace(
-                importedItems: importedItems,
-                notesByItemID: notesByItemID,
-                pendingNoteWritesByItemID: pendingNoteWritesByItemID.isEmpty
-                    ? nil
-                    : pendingNoteWritesByItemID,
-                noteBackingContentDigestsByItemID: noteBackingContentDigestsByItemID.isEmpty
-                    ? nil
-                    : noteBackingContentDigestsByItemID,
-                selectedItemID: selectedItemID,
-                activeNotebookItemID: activeNotebookItemID,
-                courses: persistableCourses,
-                courseItemMemberships: nil,
-                activeCourseID: activeCourseID,
-                courseLibraryRootPath: courseLibraryRootPath,
-                courseLibraryRootIdentity: courseLibraryRootIdentity,
-                courseLibraryRootBookmarkData: courseLibraryRootBookmarkData,
-                noteSourceLinks: noteSourceLinks,
-                noteSourceLinksMigrationVersion: noteSourceLinksMigrationVersion,
-                materialNotePairings: materialNotePairings,
-                noteMaterialPairings: noteMaterialPairings,
-                studyLocationsByItemID: studyLocationsByItemID,
-                studyLocationsByCourseID: studyLocationsByCourseID,
-                courseResumePoints: persistedCourseResumePoints,
-                coursePortableStateRevisions: Dictionary(
-                    uniqueKeysWithValues: coursePortableStateRevisions.map {
-                        ($0.key.uuidString.lowercased(), $0.value)
-                    }
-                ),
-                coursePortableStateDigests: Dictionary(
-                    uniqueKeysWithValues: coursePortableStateDigests.map {
-                        ($0.key.uuidString.lowercased(), $0.value)
-                    }
-                ),
-                dirtyPortableCourseIDs: dirtyPortableCourseIDs.sorted {
-                    $0.uuidString < $1.uuidString
-                },
-                learningMemoryStates: learningMemoryStates,
-                courseKnowledgeProfiles: sanitizedCourseKnowledgeProfiles(),
-                learningMemoryScopeMigrationVersion: learningMemoryScopeMigrationVersion,
-                studySessions: persistedStudySessions,
-                studySessionScopeMigrationVersion: studySessionScopeMigrationVersion,
-                activeStudySessionID: persistedActiveStudySessionID,
-                selectionAskThreads: selectionAskThreads,
-                selectionRemarkRecords: selectionRemarkRecords,
-                modelName: modelName,
-                agentProviderID: agentProviderID.rawValue,
-                agentBaseURL: agentBaseURL.isEmpty ? nil : agentBaseURL,
-                workspaceLayout: layout.rawValue,
-                threePaneOrder: normalizedThreePaneOrder,
-                agentSurface: agentSurface == .selectionFloat ? .hidden : agentSurface,
-                showLibrary: nil,
-                showReader: showReader,
-                showAgent: showAgent,
-                showNotes: showNotes,
-                showRightPane: showRightPane,
-                showDailyInspiration: showDailyInspiration,
-                appearanceModeRaw: appearanceMode.rawValue,
-                adaptImportedDocumentColors: adaptImportedDocumentColors,
-                interfaceLanguageRaw: interfaceLanguage.rawValue,
-                interfaceTextScaleRaw: interfaceTextScale.rawValue
-            )
-            let noteEditorSaveReceipt = makeNoteEditorWorkspaceSaveReceipt(snapshot)
-            do {
-                let data = try JSONEncoder().encode(snapshot)
-                try workspaceSnapshotWriter(data, storageURL)
-                persistedWorkspaceCourseIDs = Set(courses.map(\.id))
-                cleanupPersistedCourseTrashReceipts()
-                courseResumePoints = persistedCourseResumePoints
-                if !oversizedPortableCourseIDs.isEmpty {
-                    reportWorkspaceSaveFailure(ui(
-                        "工作区内容已保存，但有课程的可携带状态超过 32 MB；课程文件夹中的原状态保持不变。请精简课程 Chat 或未写入草稿后重试。",
-                        "The workspace was saved, but a portable course state exceeds 32 MB. The state in the course folder was left unchanged. Reduce course chats or pending drafts, then retry."
-                    ))
-                } else if blockedPortableCourseIDs.isEmpty {
-                    clearWorkspaceSaveError()
-                } else {
-                    reportWorkspaceSaveFailure(ui(
-                        "有课程状态存在冲突或损坏，原文件与本机缓存均已保留；魏碑不会自动覆盖。",
-                        "A course state is conflicted or damaged. Both the original file and local cache were preserved, and WeiBei will not overwrite either automatically."
-                    ))
-                }
-                needsSelectionAskThreadsWorkspaceMigration = false
-                loadedSelectionAskThreadsFromWorkspaceSnapshot = true
-                if shouldRemoveLegacySelectionAskThreadsAfterSave {
-                    selectionAskThreadDefaults.removeObject(
-                        forKey: Self.legacySelectionAskThreadsDefaultsKey
-                    )
-                    shouldRemoveLegacySelectionAskThreadsAfterSave = false
-                }
-                noteEditorDidPersistWorkspace(noteEditorSaveReceipt)
-                return true
-            } catch {
-                do {
-                    try rollbackCoursePortableStateCommit(portableCommit)
-                    reportWorkspaceSaveFailure(ui(
-                        "课程更改尚未写入磁盘：\(error.localizedDescription)",
-                        "Course changes were not saved to disk: \(error.localizedDescription)"
-                    ))
-                } catch {
-                    reportWorkspaceSaveFailure(ui(
-                        "课程状态提交失败且检测到并发变更，魏碑已停止覆盖并保留现场。",
-                        "The course state commit failed during a concurrent change. WeiBei stopped overwriting and preserved the files for recovery."
-                    ))
-                }
-                return false
-            }
-        }
-    }
 
     private static func environmentValue(_ name: String) -> String {
         (ProcessInfo.processInfo.environment[name] ?? "")

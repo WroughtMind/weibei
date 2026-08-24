@@ -31,8 +31,18 @@ public enum WeiBeiWebResearchError: LocalizedError, Equatable, Sendable {
 }
 
 public enum WeiBeiWebResearchURLPolicy {
+    public static func isAvailableInCurrentRun(
+        _ url: String,
+        in userQuestion: String,
+        currentRunSourceURLs: [String]
+    ) -> Bool {
+        guard let requested = canonicalSourceURL(url) else { return false }
+        return isExplicitlyProvided(url, in: userQuestion)
+            || currentRunSourceURLs.contains { canonicalSourceURL($0) == requested }
+    }
+
     public static func isExplicitlyProvided(_ url: String, in userQuestion: String) -> Bool {
-        guard let requested = canonicalAuthorizationURL(url),
+        guard let requested = canonicalSourceURL(url),
               let detector = try? NSDataDetector(
                 types: NSTextCheckingResult.CheckingType.link.rawValue
               ) else {
@@ -54,7 +64,7 @@ public enum WeiBeiWebResearchURLPolicy {
                     candidates.append(String(detected[..<boundary]))
                 }
             }
-            return candidates.contains { canonicalAuthorizationURL($0) == requested }
+            return candidates.contains { canonicalSourceURL($0) == requested }
         }
     }
 
@@ -85,7 +95,7 @@ public enum WeiBeiWebResearchURLPolicy {
         return url
     }
 
-    private static func canonicalAuthorizationURL(_ rawValue: String) -> String? {
+    fileprivate static func canonicalSourceURL(_ rawValue: String) -> String? {
         let trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
         guard trimmed.utf8.count <= 2_048,
               var components = URLComponents(string: trimmed),
@@ -104,6 +114,10 @@ public enum WeiBeiWebResearchURLPolicy {
         }
         if components.percentEncodedPath.isEmpty {
             components.percentEncodedPath = "/"
+        } else if components.percentEncodedPath.count > 1,
+                  components.percentEncodedPath.hasSuffix("/"),
+                  !components.percentEncodedPath.dropLast().hasSuffix("/") {
+            components.percentEncodedPath.removeLast()
         }
         return components.url?.absoluteString
     }
@@ -286,8 +300,24 @@ public enum WeiBeiWebResearchClient {
             url: finalURL.absoluteString,
             title: String(title.prefix(300)),
             text: String(cleaned.prefix(boundedCharacters)),
-            isTruncated: isTruncated
+            isTruncated: isTruncated,
+            links: mimeType == "text/plain" ? [] : linkedHTTPSURLs(in: decoded, relativeTo: finalURL)
         )
+    }
+
+    static func linkedHTTPSURLs(in html: String, relativeTo pageURL: URL) -> [String] {
+        guard let document = try? XMLDocument(
+            data: Data(html.utf8),
+            options: [.documentTidyHTML, .nodeLoadExternalEntitiesNever]
+        ), let anchors = try? document.nodes(forXPath: "//a[@href]") else { return [] }
+        var seen = Set<String>()
+        return anchors.compactMap { node in
+            guard let href = (node as? XMLElement)?.attribute(forName: "href")?.stringValue,
+                  let resolved = URL(string: href, relativeTo: pageURL)?.absoluteURL,
+                  let source = WeiBeiWebResearchURLPolicy.canonicalSourceURL(resolved.absoluteString),
+                  seen.insert(source).inserted else { return nil }
+            return source
+        }.prefix(64).map(\.self)
     }
 
     private static func decodedString(_ data: Data, encodingName: String?) -> String? {

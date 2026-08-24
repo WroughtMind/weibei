@@ -252,7 +252,15 @@ struct CourseManagementSheet: View {
                 )
                 dismiss()
             } catch {
-                errorMessage = error.localizedDescription
+                store.recordCourseLibraryUIFailure(
+                    error,
+                    operation: "move_course_to_trash",
+                    path: store.courseRootURL(for: courseID)
+                )
+                errorMessage = store.ui(
+                    "没有确认移动完成。请先检查课程列表和废纸篓；如果课程仍在魏碑，确认资料库可访问后再重试。",
+                    "The move was not confirmed. Check the course list and Trash first. If the course is still in WeiBei, make sure the library is accessible before trying again."
+                )
                 isWorking = false
             }
         }
@@ -266,7 +274,15 @@ struct CourseManagementSheet: View {
                 try await store.removeCourseFromWeiBei(courseID)
                 dismiss()
             } catch {
-                errorMessage = error.localizedDescription
+                store.recordCourseLibraryUIFailure(
+                    error,
+                    operation: "unregister_course",
+                    path: store.courseRootURL(for: courseID)
+                )
+                errorMessage = store.ui(
+                    "没有从魏碑移除这门课程；课程登记和文件夹内容保持不变。请稍后重试。",
+                    "The course was not removed from WeiBei. Its registration and folder contents remain unchanged. Try again later."
+                )
                 isWorking = false
             }
         }
@@ -382,24 +398,11 @@ struct CourseProjectEntrySheet: View {
     }
 
     private var detail: String {
-        if let rebindProposal {
-            switch rebindProposal.impact {
-            case .unchanged:
-                return store.ui(
-                    "魏碑认出了同一门课程，原文件夹当前无法访问。确认后只把课程连接到所选文件夹；课程 ID、对话、学习记忆、关系和阅读位置都会保留。",
-                    "WeiBei recognized the same course, and its original folder is unavailable. Confirm to reconnect it while preserving its identity and learning state."
-                )
-            case .useNewerCandidate:
-                return store.ui(
-                    "魏碑认出了同一门课程，所选文件夹带有更新的课程状态。确认后会采用其中更新的对话、学习记忆、关系和阅读位置。",
-                    "WeiBei recognized the same course with newer portable state. Confirm to use the newer chats, memory, links, and reading position from this folder."
-                )
-            case .keepsLocalState:
-                return store.ui(
-                    "候选文件夹包含与本机不同的课程进度；确认后以本机进度为准，候选中的差异会以冲突备份保留。",
-                    "The candidate folder has different course progress than this Mac. Confirm to keep local progress; differing files from the candidate will be kept as conflict backups."
-                )
-            }
+        if rebindProposal != nil {
+            return store.ui(
+                "魏碑认出了同一门课程，原文件夹当前无法访问。确认后会重新连接所选文件夹，读取其中的课程状态并扫描实际资料；本机未落盘草稿会保留。",
+                "WeiBei recognized the same course, and its original folder is unavailable. Confirm to reconnect the selected folder, read its course state, and scan its files. Unsaved local drafts will be preserved."
+            )
         }
         if needsLibrary {
             if libraryNeedsReauthorization {
@@ -437,8 +440,10 @@ struct CourseProjectEntrySheet: View {
                     )
                 }
                 Label(
-                    store.courseLibraryUnavailableReason
-                        ?? store.ui("当前无法访问这个资料库。", "This library is currently unavailable."),
+                    store.ui(
+                        "原资料库当前无法访问，课程记录仍保留。请重新选择同一资料库以恢复访问。",
+                        "The original library is currently unavailable, but course records are preserved. Re-select the same library to restore access."
+                    ),
                     systemImage: "exclamationmark.triangle"
                 )
                 .weiBeiText(12)
@@ -645,7 +650,19 @@ struct CourseProjectEntrySheet: View {
         panel.canChooseFiles = false
         panel.canCreateDirectories = true
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        perform {
+        perform(
+            failureMessage: libraryNeedsReauthorization
+                ? store.ui(
+                    "没有重新连接资料库，原课程记录仍保留。请重新选择原来的同一资料库。",
+                    "The library was not reconnected, and existing course records are preserved. Re-select the same original library."
+                )
+                : store.ui(
+                    "资料库没有更改，原课程记录和文件未被移动。请选择可访问的本地文件夹后重试。",
+                    "The library was not changed. Existing course records and files were not moved. Choose an accessible local folder and try again."
+                ),
+            operation: "course_entry_configure_library",
+            path: url
+        ) {
             try await store.confirmAndConfigureCourseLibrary(at: url)
             if store.courseLibraryRootURL != nil {
                 configuredLibraryThisTime = true
@@ -712,7 +729,14 @@ struct CourseProjectEntrySheet: View {
     }
 
     private func createCourse() {
-        perform {
+        perform(
+            failureMessage: store.ui(
+                "课程没有创建完成，魏碑未确认登记；已有课程记录不受影响。请确认资料库可写后重试。",
+                "The course was not created or registered. Existing course records are unaffected. Make sure the library is writable and try again."
+            ),
+            operation: "create_course",
+            path: store.courseLibraryRootURL
+        ) {
             let courseID = try await store.createCourseInLibraryAsync(
                 title: cleanedTitle
             )
@@ -731,7 +755,14 @@ struct CourseProjectEntrySheet: View {
 
     private func adoptCourse() {
         guard let selectedFolder else { return }
-        perform {
+        perform(
+            failureMessage: store.ui(
+                "课程文件夹没有确认纳入魏碑；所选文件夹仍由你保留。请确认文件夹可访问后重试。",
+                "The course folder was not confirmed as added to WeiBei. You still retain the selected folder. Make sure it is accessible and try again."
+            ),
+            operation: "adopt_course_folder",
+            path: selectedFolder
+        ) {
             let outcome = try await store.adoptCourseFolderOrProposeRebindAsync(
                 at: selectedFolder,
                 title: cleanedTitle
@@ -740,24 +771,21 @@ struct CourseProjectEntrySheet: View {
             case .opened(let courseID):
                 openCourse(courseID)
             case .requiresRebind(let proposal):
-                // S6-5：无歧义（原根失联、状态 digest 相等）时单步自动确认；
-                // H2：keepsLocalState / useNewerCandidate 弹一次确认。
-                if proposal.impact == .unchanged {
-                    let courseID = try await store.confirmCourseProjectRebindAsync(
-                        proposal
-                    )
-                    openCourse(courseID)
-                } else {
-                    rebindProposal = proposal
-                    title = proposal.courseTitle
-                }
+                rebindProposal = proposal
+                title = proposal.courseTitle
             }
         }
     }
 
     private func confirmRebind() {
         guard let rebindProposal else { return }
-        perform {
+        perform(
+            failureMessage: store.ui(
+                "课程没有确认重新连接，原课程记录仍保留。请确认所选文件夹可访问后重试。",
+                "The course was not confirmed as reconnected, and its original record remains. Make sure the selected folder is accessible and try again."
+            ),
+            operation: "rebind_course_folder"
+        ) {
             let courseID = try await store.confirmCourseProjectRebindAsync(
                 rebindProposal
             )
@@ -767,6 +795,9 @@ struct CourseProjectEntrySheet: View {
     }
 
     private func perform(
+        failureMessage: String,
+        operation: String,
+        path: URL? = nil,
         _ action: @escaping @MainActor () async throws -> Void
     ) {
         guard !isWorking else { return }
@@ -777,8 +808,13 @@ struct CourseProjectEntrySheet: View {
             do {
                 try await action()
             } catch {
-                errorMessage = error.localizedDescription
-                announceError(error.localizedDescription)
+                store.recordCourseLibraryUIFailure(
+                    error,
+                    operation: operation,
+                    path: path
+                )
+                errorMessage = failureMessage
+                announceError(failureMessage)
             }
             isWorking = false
         }

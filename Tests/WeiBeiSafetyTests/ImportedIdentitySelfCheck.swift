@@ -6,26 +6,123 @@ import WeiBeiCore
 
 enum ImportedIdentitySelfCheck {
     @MainActor
+    private static func renameNotebookNoteAndWait(
+        _ store: WorkspaceStore,
+        itemID: String,
+        to title: String
+    ) throws {
+        let task = store.renameNotebookNote(itemID: itemID, to: title)
+        _ = try store.waitForCourseFileOperation { await task?.value }
+    }
+
+    @MainActor
     static func run() throws {
         try launchAndPrimaryEntriesStartBlank()
+        try editorSelectionWaitsForCommandAndAcceptedSnapshot()
         try paneAndInteractionStateDoNotInvalidateWorkspaceStore()
         try agentFailureMessagesExposeOnlyUserFacingDetails()
         try storageModelsDecodeLegacySnapshotsAndRoundTrip()
-        try legacyPathSnapshotMigratesItsEntireRelationshipGraph()
         try selectionThreadMigrationWaitsForWorkspaceCommit()
         try duplicateIdentityMigrationPreservesConflictingDrafts()
         try duplicateIdentityPreservesConflictingStorageMetadata()
         try offlineLegacyPathMigratesWhenItReturns()
         try legacyChatScopesMigrateOnceAndPersist()
         try failedLearningMemoryMigrationKeepsLegacySnapshotRecoverable()
-        try learningMemoryEditsRejectTruncationAndRetrySave()
+        try learningMemoryEditsPreserveFullTextAndRetrySave()
         try courseResumePointRestoresOneAtomicLearningScene()
     }
 
     @MainActor
+    private static func editorSelectionWaitsForCommandAndAcceptedSnapshot() throws {
+        let fixture = try WorkspaceFixture(name: "durable-editor-selection")
+        defer { fixture.remove() }
+
+        let notes = ["A", "B"].map { name in
+            StudyItem(
+                id: "internal-note-\(name.lowercased())",
+                title: "\(name) 笔记",
+                subtitle: "\(name) 笔记",
+                kind: .text,
+                urlPath: nil,
+                isSample: false,
+                isNotebookNote: true,
+                storage: .common(relativePath: "")
+            )
+        }
+        let noteA = notes[0]
+        let noteB = notes[1]
+        try fixture.write(PersistedWorkspace(
+            importedItems: notes,
+            notesByItemID: [
+                noteA.id: "# A笔记\n\n旧正文",
+                noteB.id: "# B笔记\n\n正文",
+            ],
+            activeNotebookItemID: noteA.id,
+            noteSourceLinksMigrationVersion: 1
+        ))
+
+        var rejectsWorkspaceWrite = false
+        let store = WorkspaceStore(
+            workspaceDirectory: fixture.workspaceDirectory,
+            workspaceSnapshotWriter: { data, url in
+                if rejectsWorkspaceWrite {
+                    throw CocoaError(.fileWriteUnknown)
+                }
+                try data.write(to: url, options: [.atomic])
+            },
+            selectionAskThreadDefaults: fixture.selectionAskThreadDefaults
+        )
+
+        store.noteEditingSession.replaceDocument(with: noteA.id)
+        var requests = [NoteEditorSnapshotRequest]()
+        let bridgeToken = store.noteEditingSession.bindSnapshotRequestHandler {
+            requests.append($0)
+        }
+        try check(store.noteEditingSession.receive(NoteEditorDirtyChangedEvent(
+            documentID: noteA.id,
+            documentGeneration: store.noteEditingSession.documentGeneration,
+            revision: 1,
+            dirty: true
+        )), "A 的脏正文事件没有被编辑会话接收")
+        rejectsWorkspaceWrite = true
+        store.select(itemID: noteB.id)
+        let request = try require(requests.first, "脏正文切换没有请求真实快照")
+        let latestA = "# A笔记\n\n最后一段编辑"
+        try deliverSnapshot(request, markdown: latestA, to: store.noteEditingSession)
+        try waitForCondition("等待写入失败状态超时") {
+            store.canRetryPendingNoteSelection
+        }
+        let snapshotAfterFailure = try fixture.readSnapshot()
+        try check(
+            store.activeNoteItemID == noteA.id
+                && snapshotAfterFailure.notesByItemID[noteA.id] != latestA,
+            "工作区写入失败后离开了 A，或把内存快照误当成安全保存"
+        )
+
+        rejectsWorkspaceWrite = false
+        requests.removeAll()
+        store.retryPendingNoteSelection()
+        let retry = try require(requests.first, "重试没有重新请求真实快照")
+        try deliverSnapshot(retry, markdown: latestA, to: store.noteEditingSession)
+        try waitForCondition("等待恢复写入超时") {
+            store.activeNoteItemID == noteB.id
+        }
+
+        store.select(itemID: noteA.id)
+        let snapshotAfterRetry = try fixture.readSnapshot()
+        try check(
+            store.noteText == latestA
+                && snapshotAfterRetry.notesByItemID[noteA.id] == latestA,
+            "重开 A 后最新正文不完整"
+        )
+        store.noteEditingSession.unbindSnapshotRequestHandler(bridgeToken)
+    }
+
+    @MainActor
     private static func agentFailureMessagesExposeOnlyUserFacingDetails() throws {
-        let internalFailure = PiAgentRuntimeError.protocolFailure(
-            "before_agent_start failed in /private/tmp/AgentResources/extension.ts while running get_state"
+        let internalFailure = NativeLLMFailure(
+            code: "protocol_failure",
+            message: "before_agent_start failed in /private/tmp/AgentResources/extension.ts while running get_state"
         )
         let internalKind = AgentFailureKind.classify(internalFailure)
         let internalMessage = internalKind.userMessage(
@@ -51,8 +148,10 @@ enum ImportedIdentitySelfCheck {
             )
         }
 
-        let authenticationFailure = PiAgentRuntimeError.agentFailed(
-            "HTTP 401 refresh_token_reused provider response"
+        let authenticationFailure = NativeLLMFailure(
+            code: "unauthorized",
+            status: 401,
+            message: "HTTP 401 refresh_token_reused provider response"
         )
         let authenticationKind = AgentFailureKind.classify(
             authenticationFailure
@@ -85,6 +184,24 @@ enum ImportedIdentitySelfCheck {
             throw CheckError.failed(
                 "魏碑生成的可操作 Chat 状态没有进入安全失败气泡"
             )
+        }
+
+        let resourceFailure = NativeAgentResourcesError.missing("system_prompt")
+        let chineseResourceMessage = WorkspaceStore.agentFailureMessage(
+            for: resourceFailure,
+            kind: .generic,
+            language: .chinese
+        )
+        let englishResourceMessage = WorkspaceStore.agentFailureMessage(
+            for: resourceFailure,
+            kind: .generic,
+            language: .english
+        )
+        guard chineseResourceMessage == "Agent 组件不完整，无法启动；请修复或重装魏碑",
+              englishResourceMessage == "Agent components are incomplete, so the Agent cannot start. Repair or reinstall WeiBei.",
+              !englishResourceMessage.contains("组件"),
+              !englishResourceMessage.contains("system.md") else {
+            throw CheckError.failed("Agent 组件错误没有遵循当前界面语言或泄露了资源细节")
         }
     }
 
@@ -341,10 +458,13 @@ enum ImportedIdentitySelfCheck {
                 fixture.selectionAskThreadDefaults
         )
 
-        store?.renameNotebookNote(
-            itemID: note.id,
-            to: "唯一完成的重命名"
-        )
+        if let store {
+            try renameNotebookNoteAndWait(
+                store,
+                itemID: note.id,
+                to: "唯一完成的重命名"
+            )
+        }
         try check(
             moveCount == 1,
             "连续确认启动了多个笔记重命名事务；移动次数=\(moveCount)，错误=\(store?.transientNoteStatus ?? "nil")"
@@ -974,39 +1094,69 @@ enum ImportedIdentitySelfCheck {
             )
         )
 
-        let failedStore = WorkspaceStore(
-            workspaceDirectory: fixture.workspaceDirectory,
-            workspaceSnapshotWriter: { _, _ in
-                throw CheckError.failed("预期中的迁移保存失败")
-            },
-            selectionAskThreadDefaults: fixture.selectionAskThreadDefaults
-        )
-        try check(
-            failedStore.learningMemoryEntries(in: .course(course.id)).map(\.id) == [memory.id],
-            "保存失败时内存中的旧记忆无法继续使用"
-        )
-        let unchangedSnapshot = try fixture.readSnapshot()
-        try check(
-            unchangedSnapshot.learningMemoryEntries?.map(\.id) == [memory.id]
-                && unchangedSnapshot.learningMemoryStates == nil
-                && unchangedSnapshot.learningMemoryScopeMigrationVersion == nil,
-            "迁移保存失败破坏了旧工作区快照"
-        )
+        do {
+            let failedStore = WorkspaceStore(
+                workspaceDirectory: fixture.workspaceDirectory,
+                workspaceSnapshotWriter: { _, _ in
+                    throw CheckError.failed("预期中的迁移保存失败")
+                },
+                selectionAskThreadDefaults: fixture.selectionAskThreadDefaults
+            )
+            try waitForCondition("学习记忆迁移没有触发预期中的保存失败") {
+                failedStore.workspaceSaveError != nil
+            }
+            try check(
+                failedStore.learningMemoryEntries(in: .course(course.id)).map(\.id) == [memory.id],
+                "保存失败时内存中的旧记忆无法继续使用"
+            )
+            let unchangedSnapshot = try fixture.readSnapshot()
+            try check(
+                unchangedSnapshot.learningMemoryEntries?.map(\.id) == [memory.id]
+                    && unchangedSnapshot.learningMemoryStates == nil
+                    && unchangedSnapshot.learningMemoryScopeMigrationVersion == nil,
+                "迁移保存失败破坏了旧工作区快照"
+            )
+        }
 
         let recoveredStore = WorkspaceStore(
             workspaceDirectory: fixture.workspaceDirectory,
             selectionAskThreadDefaults: fixture.selectionAskThreadDefaults
         )
+        try waitForCondition("保存恢复后旧记忆迁移没有完成真实落盘") {
+            guard let snapshot = try? fixture.readSnapshot() else { return false }
+            return snapshot.learningMemoryEntries == nil
+                && snapshot.learningMemoryScopeMigrationVersion == 1
+        }
         try check(
-            recoveredStore.flushPendingWorkspaceSave()
-                && recoveredStore.learningMemoryEntries(in: .course(course.id)).map(\.id) == [memory.id]
+            recoveredStore.learningMemoryEntries(in: .course(course.id)).map(\.id) == [memory.id]
                 && recoveredStore.learningMemoryRevision(in: .course(course.id)) == 1,
             "保存恢复后旧记忆无法安全重试迁移"
         )
     }
 
     @MainActor
-    private static func learningMemoryEditsRejectTruncationAndRetrySave() throws {
+    private static func learningMemoryEditsPreserveFullTextAndRetrySave() throws {
+        final class SaveSwitch: @unchecked Sendable {
+            private let lock = NSLock()
+            private var failsAfterNextWrite = false
+
+            func arm() {
+                lock.withLock { failsAfterNextWrite = true }
+            }
+
+            func write(_ data: Data, to url: URL) throws {
+                let shouldFail = lock.withLock {
+                    defer { failsAfterNextWrite = false }
+                    return failsAfterNextWrite
+                }
+                if shouldFail {
+                    throw CheckError.failed("预期中的学习记忆保存失败")
+                }
+                WorkspaceSnapshotRecovery.rotateBackups(primary: url)
+                try data.write(to: url, options: [.atomic])
+            }
+        }
+
         let fixture = try WorkspaceFixture(name: "learning-memory-edit-save")
         defer { fixture.remove() }
 
@@ -1026,33 +1176,35 @@ enum ImportedIdentitySelfCheck {
                         entries: [memory]
                     ),
                 ],
-                learningMemoryScopeMigrationVersion: 1
+                learningMemoryScopeMigrationVersion: 1,
+                studySessionScopeMigrationVersion: 2
             )
         )
 
-        var shouldFail = true
+        let saveSwitch = SaveSwitch()
         let store = WorkspaceStore(
             workspaceDirectory: fixture.workspaceDirectory,
             workspaceSnapshotWriter: { data, url in
-                if shouldFail {
-                    throw CheckError.failed("预期中的学习记忆保存失败")
-                }
-                try data.write(to: url, options: [.atomic])
+                try saveSwitch.write(data, to: url)
             },
             selectionAskThreadDefaults: fixture.selectionAskThreadDefaults
         )
-        let overlong = String(repeating: "字", count: 501)
+        let fullText = String(repeating: "这段学习记忆需要完整保留。", count: 80)
+        let savedFullText = store.updateLearningMemory(
+            memory.id,
+            in: scope,
+            kind: .progress,
+            text: fullText
+        )
+        let fullTextSnapshot = try fixture.readSnapshot()
         try check(
-            !store.updateLearningMemory(
-                memory.id,
-                in: scope,
-                kind: .progress,
-                text: overlong
-            )
-                && store.learningMemoryEntries(in: scope).first?.text == memory.text,
-            "用户学习记忆超过 500 字时被静默截断"
+            savedFullText
+                && store.learningMemoryEntries(in: scope).first?.text == fullText
+                && fullTextSnapshot.learningMemoryStates?.first?.entries.first?.text == fullText,
+            "用户学习记忆没有完整保存全文"
         )
 
+        saveSwitch.arm()
         let editedText = "已完成第一轮复习"
         try check(
             !store.updateLearningMemory(
@@ -1066,11 +1218,10 @@ enum ImportedIdentitySelfCheck {
         )
         let snapshotAfterFailure = try fixture.readSnapshot()
         try check(
-            snapshotAfterFailure.learningMemoryStates?.first?.entries.first?.text == memory.text,
+            snapshotAfterFailure.learningMemoryStates?.first?.entries.first?.text == fullText,
             "学习记忆保存失败破坏了旧快照"
         )
 
-        shouldFail = false
         try check(
             store.updateLearningMemory(
                 memory.id,
@@ -1078,7 +1229,7 @@ enum ImportedIdentitySelfCheck {
                 kind: .progress,
                 text: editedText
             ),
-            "同内容重试没有重新写入学习记忆"
+            "学习记忆修改没有写入正式工作区快照"
         )
         let snapshotAfterRetry = try fixture.readSnapshot()
         try check(
@@ -1087,6 +1238,25 @@ enum ImportedIdentitySelfCheck {
         )
 
         let revisionBeforeDelete = store.learningMemoryRevision(in: scope)
+        saveSwitch.arm()
+        try check(
+            !store.deleteLearningMemory(memory.id, in: scope)
+                && store.learningMemoryEntries(in: scope).first?.text == editedText
+                && store.learningMemoryRevision(in: scope) == revisionBeforeDelete,
+            "删除学习记忆写盘失败后没有恢复条目和修订号"
+        )
+        let reopenedAfterFailure = WorkspaceStore(
+            workspaceDirectory: fixture.workspaceDirectory,
+            selectionAskThreadDefaults: fixture.selectionAskThreadDefaults,
+            startsCourseFileMaintenance: false
+        )
+        try check(
+            reopenedAfterFailure.learningMemoryEntries(in: scope).first?.text
+                == editedText
+                && reopenedAfterFailure.learningMemoryRevision(in: scope)
+                    == revisionBeforeDelete,
+            "删除失败后的回滚没有经过正式异步写盘，重开后条目或修订丢失"
+        )
         try check(
             store.deleteLearningMemory(memory.id, in: scope),
             "用户无法删除单条学习记忆"
@@ -1328,7 +1498,12 @@ enum ImportedIdentitySelfCheck {
                 },
             "旧记忆迁移复制了稳定 ID，或没有留下迁移历史"
         )
-        try check(store.flushPendingWorkspaceSave(), "旧 Chat 迁移结果无法保存")
+        try waitForCondition("旧 Chat 或旧记忆迁移没有完成真实落盘") {
+            guard let snapshot = try? fixture.readSnapshot() else { return false }
+            return snapshot.studySessionScopeMigrationVersion == 2
+                && snapshot.learningMemoryScopeMigrationVersion == 1
+                && snapshot.learningMemoryEntries == nil
+        }
         let migratedSnapshot = try fixture.readSnapshot()
         try check(
             migratedSnapshot.studySessionScopeMigrationVersion == 2
@@ -1610,197 +1785,6 @@ enum ImportedIdentitySelfCheck {
         try check(conflictingMemberships.values.count == 2, "同一课程入口的冲突元数据被静默丢弃")
     }
 
-    @MainActor
-    private static func legacyPathSnapshotMigratesItsEntireRelationshipGraph() throws {
-        let fixture = try WorkspaceFixture(name: "legacy-graph")
-        defer { fixture.remove() }
-
-        let materialURL = fixture.importsDirectory.appendingPathComponent("第一讲.txt")
-        let noteURL = fixture.importsDirectory.appendingPathComponent("第一讲笔记.md")
-        try Data("遗留资料中的货币乘数".utf8).write(to: materialURL)
-        try Data("# 第一讲笔记\n\n遗留笔记正文".utf8).write(to: noteURL)
-
-        let legacyMaterialID = "file:\(materialURL.path)"
-        let legacyNoteID = "file:\(noteURL.path)"
-        let courseID = UUID()
-        let session = StudySession(
-            title: "第一讲复习",
-            focusItemIDs: [legacyMaterialID, legacyNoteID],
-            materialItemID: legacyMaterialID
-        )
-        let selectionThread = SelectionAskThread(
-            selectionText: "货币乘数",
-            source: .document,
-            ownerTitle: "第一讲",
-            itemID: legacyMaterialID,
-            messageIDs: [UUID(), UUID()]
-        )
-        fixture.selectionAskThreadDefaults.set(
-            try JSONEncoder().encode([selectionThread]),
-            forKey: "weibei.selectionAskThreads.v1"
-        )
-        let snapshot = PersistedWorkspace(
-            importedItems: [
-                StudyItem(
-                    id: legacyMaterialID,
-                    title: "第一讲",
-                    subtitle: materialURL.lastPathComponent,
-                    kind: .text,
-                    urlPath: materialURL.path,
-                    isSample: false
-                ),
-                StudyItem(
-                    id: legacyNoteID,
-                    title: "第一讲笔记",
-                    subtitle: noteURL.lastPathComponent,
-                    kind: .markdown,
-                    urlPath: noteURL.path,
-                    isSample: false,
-                    isNotebookNote: true
-                ),
-            ],
-            notesByItemID: [legacyNoteID: "遗留缓存笔记"],
-            selectedItemID: legacyMaterialID,
-            activeNotebookItemID: legacyNoteID,
-            courses: [Course(id: courseID, title: "旧课程")],
-            courseItemMemberships: [
-                CourseItemMembership(
-                    courseID: courseID,
-                    itemID: legacyMaterialID,
-                    courseRelativePath: "文稿/第一讲.txt",
-                    documentIdentifier: 4_242
-                ),
-            ],
-            activeCourseID: courseID,
-            noteSourceLinks: [
-                NoteSourceLink(noteItemID: legacyNoteID, sourceItemID: legacyMaterialID),
-            ],
-            noteSourceLinksMigrationVersion: 1,
-            studyLocationsByItemID: [
-                legacyMaterialID: StudyLocation(
-                    itemID: legacyMaterialID,
-                    itemTitle: "第一讲",
-                    locationTitle: "上次读到这里",
-                    visitCount: 3
-                ),
-            ],
-            courseResumePoints: [
-                CourseResumePoint(
-                    courseID: courseID,
-                    materialLocation: StudyLocation(
-                        itemID: legacyMaterialID,
-                        itemTitle: "第一讲",
-                        locationTitle: "课程恢复位置",
-                        visitCount: 3
-                    )
-                ),
-            ],
-            studySessions: [session],
-            activeStudySessionID: session.id
-        )
-        try fixture.write(snapshot)
-
-        let store = WorkspaceStore(
-            workspaceDirectory: fixture.workspaceDirectory,
-            selectionAskThreadDefaults: fixture.selectionAskThreadDefaults
-        )
-        let material = try require(
-            store.importedItems.first {
-                $0.id == legacyMaterialID
-                    || $0.subtitle == materialURL.lastPathComponent
-            },
-            "旧快照迁移后找不到资料"
-        )
-        let note = try require(
-            store.importedItems.first {
-                $0.id == legacyNoteID
-                    || $0.subtitle == noteURL.lastPathComponent
-            },
-            "旧快照迁移后找不到笔记"
-        )
-
-        try check(material.storage.relativePath != nil, "资料没有资料库相对路径")
-        try check(note.storage.relativePath != nil, "笔记没有资料库相对路径")
-        try check(store.selectedItemID == material.id, "当前资料没有迁移到新身份")
-        try check(store.activeNotebookItemID == note.id, "当前笔记没有迁移到新身份")
-        try check(store.noteText == "遗留缓存笔记", "升级后没有优先恢复旧版本未写回草稿")
-        try check(store.linkedSourceIDs(for: note.id) == [material.id], "笔记资料关系没有随身份迁移")
-        try check(store.studyLocation(for: material.id)?.itemID == material.id, "阅读位置没有随身份迁移")
-        try check(
-            store.courseResumePoint(for: courseID)?.materialLocation?.itemID == material.id,
-            "课程恢复位置没有随资料身份迁移"
-        )
-        try check(Set(store.activeStudySession?.focusItemIDs ?? []) == Set([material.id, note.id]), "学习会话没有随身份迁移")
-        try check(store.activeStudySession?.materialItemID == material.id, "学习会话主资料没有随身份迁移")
-        try check(store.activeStudySession?.groupingMaterialItemID == material.id, "学习会话分组资料仍指向旧身份")
-        try check(store.selectionAskThreads.first?.itemID == material.id, "选区问答线程仍指向旧资料身份")
-        try check(store.selectionAskThreads.first?.messageIDs == selectionThread.messageIDs, "选区问答线程消息关系在资料 ID 迁移时丢失")
-        try check(store.flushPendingWorkspaceSave(), "资料 ID 迁移后工作区无法保存")
-        let migratedSnapshot = try fixture.readSnapshot()
-        try check(
-            migratedSnapshot.coursePortableStateRevisions?.isEmpty == true
-                && migratedSnapshot.coursePortableStateDigests?.isEmpty == true
-                && migratedSnapshot.dirtyPortableCourseIDs?.isEmpty == true,
-            "没有真实课程根的旧课程被错误升级成可携带课程状态"
-        )
-        let migratedSession = try require(
-            migratedSnapshot.studySessions?.first { $0.id == session.id },
-            "资料 ID 迁移后学习会话没有保存"
-        )
-        try check(migratedSession.materialItemID == material.id, "保存后学习会话主资料仍是旧身份")
-        try check(migratedSession.groupingMaterialItemID == material.id, "保存后学习会话分组资料仍是旧身份")
-        try check(migratedSession.focusItemIDs.contains(material.id), "保存后学习会话焦点丢失")
-        try check(migratedSnapshot.selectionAskThreads?.first?.itemID == material.id, "保存后的同一工作区快照没有包含迁移后的选区问答")
-        try check(
-            migratedSnapshot.courseResumePoints?.first?.materialLocation?.itemID == material.id,
-            "保存后课程恢复位置仍指向旧资料身份"
-        )
-        try check(migratedSnapshot.selectionAskThreads?.first?.messageIDs == selectionThread.messageIDs, "保存后的选区问答消息关系丢失")
-        try check(
-            fixture.selectionAskThreadDefaults.object(forKey: "weibei.selectionAskThreads.v1") == nil,
-            "工作区快照保存成功后没有清理旧选区问答存储"
-        )
-
-        let reopenedMigratedStore = WorkspaceStore(
-            workspaceDirectory: fixture.workspaceDirectory,
-            selectionAskThreadDefaults: fixture.selectionAskThreadDefaults
-        )
-        let reopenedMigratedSession = try require(
-            reopenedMigratedStore.studySessions.first { $0.id == session.id },
-            "重开后找不到迁移的学习会话"
-        )
-        try check(reopenedMigratedSession.materialItemID == material.id, "重开后学习会话主资料迁移丢失")
-        try check(reopenedMigratedSession.groupingMaterialItemID == material.id, "重开后学习会话分组资料迁移丢失")
-        try check(reopenedMigratedStore.selectionAskThreads.first?.itemID == material.id, "重开后选区问答线程身份迁移丢失")
-        try check(reopenedMigratedStore.selectionAskThreads.first?.messageIDs == selectionThread.messageIDs, "重开后选区问答线程消息关系丢失")
-
-        let diskTextBeforeConflict = try String(contentsOf: noteURL, encoding: .utf8)
-        store.select(itemID: "sample-pdf")
-        store.flushPendingNotePersistence()
-        let diskTextAfterConflict = try String(contentsOf: noteURL, encoding: .utf8)
-        let persisted = try fixture.readSnapshot()
-        // S2：身份迁移后草稿会按三件套静默写回；成功则 notes 清空、磁盘为草稿正文。
-        try check(
-            persisted.notesByItemID[note.id] == "遗留缓存笔记"
-                || diskTextAfterConflict == "遗留缓存笔记"
-                || diskTextBeforeConflict == "遗留缓存笔记",
-            "笔记缓存没有随身份迁移（草稿或已写回磁盘）"
-        )
-        try check(
-            diskTextAfterConflict == diskTextBeforeConflict
-                || diskTextAfterConflict == "遗留缓存笔记"
-                || persisted.notesByItemID[note.id] == "遗留缓存笔记",
-            "旧版本草稿迁移后内容既不在磁盘也不在草稿"
-        )
-        try check(persisted.studyLocationsByItemID?[material.id]?.itemID == material.id, "阅读位置没有随资料保存")
-        try check(persisted.studySessions?.contains { $0.materialItemID == material.id } == true, "保存后学习会话主资料丢失")
-        try check(persisted.studySessions?.contains { $0.focusItemIDs.contains(material.id) } == true, "保存后学习会话焦点丢失")
-        try check(persisted.noteSourceLinks?.contains {
-            $0.noteItemID == note.id && $0.sourceItemID == material.id
-        } == true, "保存后资料关系丢失")
-
-        try check(reopenedMigratedStore.selectionAskThreads.first?.itemID == material.id, "重开后的选区问答线程身份后来发生回退")
-    }
 
     @MainActor
     private static func duplicateIdentityMigrationPreservesConflictingDrafts() throws {
@@ -1864,7 +1848,8 @@ enum ImportedIdentitySelfCheck {
         let store = WorkspaceStore(
             workspaceDirectory: fixture.workspaceDirectory,
             importedFileIdentityResolver: { url in url.path == noteURL.path ? identity : nil },
-            selectionAskThreadDefaults: fixture.selectionAskThreadDefaults
+            selectionAskThreadDefaults: fixture.selectionAskThreadDefaults,
+            startsCourseFileMaintenance: false
         )
         let diskBytesBeforeMigration = try Data(contentsOf: noteURL)
         store.flushPendingNotePersistence()
@@ -1896,7 +1881,8 @@ enum ImportedIdentitySelfCheck {
         let reopenedStore = WorkspaceStore(
             workspaceDirectory: fixture.workspaceDirectory,
             importedFileIdentityResolver: { url in url.path == noteURL.path ? identity : nil },
-            selectionAskThreadDefaults: fixture.selectionAskThreadDefaults
+            selectionAskThreadDefaults: fixture.selectionAskThreadDefaults,
+            startsCourseFileMaintenance: false
         )
         reopenedStore.flushPendingNotePersistence()
         let reopenedSnapshot = try fixture.readSnapshot()
@@ -2034,6 +2020,11 @@ enum ImportedIdentitySelfCheck {
                 selectionAskThreadDefaults: fixture.selectionAskThreadDefaults
             )
             try check(store.selectionAskThreads.first?.id == legacyThread.id, "工作区缺失或损坏时没有恢复旧选区问答")
+            try waitForCondition("恢复的旧选区问答没有完成真实落盘") {
+                (try? fixture.readSnapshot().selectionAskThreads?.first?.id)
+                    == legacyThread.id
+                    && fixture.selectionAskThreadDefaults.object(forKey: legacyKey) == nil
+            }
             let migratedSnapshot = try fixture.readSnapshot()
             try check(migratedSnapshot.selectionAskThreads?.first?.id == legacyThread.id, "恢复的旧选区问答没有写入工作区快照")
             try check(fixture.selectionAskThreadDefaults.object(forKey: legacyKey) == nil, "恢复成功后没有清理旧选区问答值")
@@ -2427,7 +2418,13 @@ enum ImportedIdentitySelfCheck {
 
         let finderRenamedNoteURL = fixture.importsDirectory.appendingPathComponent("Finder刚移动的笔记.md")
         try FileManager.default.moveItem(at: movedNoteURL, to: finderRenamedNoteURL)
-        store?.renameNotebookNote(itemID: note.id, to: "第二讲最终笔记")
+        if let store {
+            try renameNotebookNoteAndWait(
+                store,
+                itemID: note.id,
+                to: "第二讲最终笔记"
+            )
+        }
         let appRenamedNote = try require(
             store?.courseNotebookItems.first { $0.id == note.id },
             "应用内重命名后找不到原笔记身份"
@@ -2768,7 +2765,11 @@ enum ImportedIdentitySelfCheck {
         try externalHandle.close()
 
         // S2：重命名前 flush 写回 → last writer wins，不再因冲突阻断重命名。
-        store.renameNotebookNote(itemID: noteA.id, to: "A笔记改名")
+        try renameNotebookNoteAndWait(
+            store,
+            itemID: noteA.id,
+            to: "A笔记改名"
+        )
         store.flushPendingNotePersistence()
         let renamedURL = fixture.importsDirectory.appendingPathComponent("A笔记改名.md")
         let diskAtOriginal = (try? String(contentsOf: noteAURL, encoding: .utf8)) ?? ""
@@ -2826,7 +2827,11 @@ enum ImportedIdentitySelfCheck {
             "身份偷换场景无法导入笔记"
         )
         store.select(itemID: note.id)
-        store.renameNotebookNote(itemID: note.id, to: "不应采用的新身份")
+        try renameNotebookNoteAndWait(
+            store,
+            itemID: note.id,
+            to: "不应采用的新身份"
+        )
 
         let retained = try require(
             store.courseNotebookItems.first { $0.id == note.id },
@@ -2892,7 +2897,11 @@ enum ImportedIdentitySelfCheck {
         )
         store.setLinkedSourceIDs([material.id], for: note.id)
         store.select(itemID: note.id)
-        store.renameNotebookNote(itemID: note.id, to: "不应成功的改名")
+        try renameNotebookNoteAndWait(
+            store,
+            itemID: note.id,
+            to: "不应成功的改名"
+        )
 
         let retained = try require(
             store.courseNotebookItems.first { $0.id == note.id },
@@ -2947,7 +2956,11 @@ enum ImportedIdentitySelfCheck {
         )
         store.setLinkedSourceIDs([material.id], for: note.id)
         store.select(itemID: material.id)
-        store.renameNotebookNote(itemID: note.id, to: "不应移动的笔记")
+        try renameNotebookNoteAndWait(
+            store,
+            itemID: note.id,
+            to: "不应移动的笔记"
+        )
 
         let retained = try require(
             store.courseNotebookItems.first { $0.id == note.id },
@@ -2991,7 +3004,11 @@ enum ImportedIdentitySelfCheck {
             "错误写入场景无法导入笔记"
         )
         store.select(itemID: note.id)
-        store.renameNotebookNote(itemID: note.id, to: "错误写入不应成功")
+        try renameNotebookNoteAndWait(
+            store,
+            itemID: note.id,
+            to: "错误写入不应成功"
+        )
 
         let retained = try require(
             store.courseNotebookItems.first { $0.id == note.id },
@@ -3042,7 +3059,11 @@ enum ImportedIdentitySelfCheck {
             "移动失败场景无法导入笔记"
         )
         store.select(itemID: note.id)
-        store.renameNotebookNote(itemID: note.id, to: "不应存在的新路径")
+        try renameNotebookNoteAndWait(
+            store,
+            itemID: note.id,
+            to: "不应存在的新路径"
+        )
 
         let retained = try require(
             store.courseNotebookItems.first { $0.id == note.id },
@@ -3087,12 +3108,12 @@ enum ImportedIdentitySelfCheck {
         store?.flushPendingNotePersistence()
 
         // S3：无 rename journal；重命名尽力完成，不写恢复记录。
-        store?.renameNotebookNote(itemID: note.id, to: "已恢复改名")
-        // 异步 rename：轮询直到文件出现或超时
-        let deadline = Date().addingTimeInterval(3)
-        while Date() < deadline,
-              !FileManager.default.fileExists(atPath: renamedURL.path) {
-            RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+        if let store {
+            try renameNotebookNoteAndWait(
+                store,
+                itemID: note.id,
+                to: "已恢复改名"
+            )
         }
         try check(
             FileManager.default.fileExists(atPath: renamedURL.path)
@@ -3283,6 +3304,36 @@ enum ImportedIdentitySelfCheck {
     private static func require<T>(_ value: T?, _ message: String) throws -> T {
         guard let value else { throw CheckError.failed(message) }
         return value
+    }
+
+    @MainActor
+    private static func deliverSnapshot(
+        _ request: NoteEditorSnapshotRequest,
+        markdown: String,
+        to session: NoteEditingSession
+    ) throws {
+        try check(session.receive(NoteEditorSnapshotReadyEvent(
+            requestID: request.requestID ?? "",
+            documentID: request.documentID,
+            documentGeneration: request.documentGeneration,
+            revision: 1,
+            markdown: markdown
+        )), "真实快照没有被编辑会话接收")
+    }
+
+    @MainActor
+    private static func waitForCondition(
+        _ timeoutMessage: String,
+        condition: () -> Bool
+    ) throws {
+        let deadline = Date().addingTimeInterval(5)
+        while !condition(), Date() < deadline {
+            RunLoop.main.run(
+                mode: .default,
+                before: Date(timeIntervalSinceNow: 0.01)
+            )
+        }
+        try check(condition(), timeoutMessage)
     }
 
     private static func check(_ condition: @autoclosure () -> Bool, _ message: String) throws {

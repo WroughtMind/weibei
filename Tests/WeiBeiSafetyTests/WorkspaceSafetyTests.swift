@@ -22,13 +22,407 @@ final class WorkspaceSafetyTests: XCTestCase {
     }
 
     @MainActor
+    func testPortableCourseStateRetryUsesFolderTruth() throws {
+        try CourseProjectRootSelfCheck.runPortableCourseStateRetryOnly()
+    }
+
+    @MainActor
     func testBackgroundWorkspacePersistence() throws {
         try CourseProjectRootSelfCheck.runBackgroundWorkspacePersistenceOnly()
     }
 
     @MainActor
+    func testFirstWorkspaceSaveFailureIsVisible() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("WeiBeiWorkspaceFailure-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = WorkspaceStore(
+            workspaceDirectory: root,
+            workspaceSnapshotWriter: { _, _ in
+                throw NSError(
+                    domain: "底层写盘原因",
+                    code: 1,
+                    userInfo: [NSLocalizedDescriptionKey: "/private/secret 写失败"]
+                )
+            },
+            startsAtBlankEntries: true
+        )
+        store.noteText = "尚未写入的正文"
+
+        XCTAssertFalse(store.flushPendingWorkspaceSave())
+        XCTAssertEqual(store.noteText, "尚未写入的正文")
+        let message = try XCTUnwrap(store.workspaceSaveError)
+        XCTAssertTrue(message.contains("尚未安全保存"))
+        XCTAssertTrue(message.contains("重试"))
+        XCTAssertFalse(message.contains("/private/secret"))
+    }
+
+    @MainActor
+    func testNativeAgentRejectsAndRollsBackWhenWorkspaceWriteFails() throws {
+        struct InjectedFailure: Error {}
+        final class SaveSwitch: @unchecked Sendable {
+            private let lock = NSLock()
+            private var failsAfterNextWrite = false
+
+            func arm() {
+                lock.withLock { failsAfterNextWrite = true }
+            }
+
+            func write(_ data: Data, to url: URL) throws {
+                WorkspaceSnapshotRecovery.rotateBackups(primary: url)
+                try data.write(to: url, options: .atomic)
+                let shouldFail = lock.withLock {
+                    defer { failsAfterNextWrite = false }
+                    return failsAfterNextWrite
+                }
+                if shouldFail { throw InjectedFailure() }
+            }
+        }
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("WeiBeiNativePersist-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let saveSwitch = SaveSwitch()
+        let store = WorkspaceStore(
+            workspaceDirectory: root.appendingPathComponent("workspace"),
+            workspaceSnapshotWriter: { data, url in
+                try saveSwitch.write(data, to: url)
+            },
+            startsAtBlankEntries: true,
+            startsCourseFileMaintenance: false
+        )
+        let library = root.appendingPathComponent("资料库")
+        try FileManager.default.createDirectory(at: library, withIntermediateDirectories: true)
+        try store.configureCourseLibrary(at: library)
+        let courseID = try store.createCourseInLibrary(title: "真实回执课")
+        let session = try XCTUnwrap(store.createStudySession(courseID: courseID))
+        _ = try store.appendPortableCourseMessageForSelfCheck(
+            courseID: courseID,
+            text: "回滚前已保存的问题"
+        )
+        let persisted = store.flushPendingWorkspaceSave()
+        XCTAssertTrue(persisted)
+        let target = WorkspaceStore.AgentConversationTarget(
+            sessionID: session.id,
+            workingDirectory: root,
+            courseID: courseID
+        )
+        let learningBefore = store.makeLearningContext(target: target)
+        let profileBefore = store.refreshCourseProfileContext(target: target)
+        saveSwitch.arm()
+
+        let learningReceipt = try store.waitForCourseFileOperation {
+            await store.persistNativeLearningUpdate(
+                StudyAgentLearningUpdate(
+                    contextRevision: "test-context",
+                    memoryRevision: learningBefore.memoryRevision,
+                    entries: [StudyAgentMemoryUpdateEntry(
+                        kind: .confusion,
+                        text: "还不理解费雪方程",
+                        evidence: "[用户：本轮] 我还不理解费雪方程",
+                        origin: .userStatement
+                    )]
+                ),
+                expectedContextRevision: "test-context",
+                expectedUserQuestion: "我还不理解费雪方程",
+                target: target,
+                messageID: UUID()
+            )
+        }
+        saveSwitch.arm()
+        let profileReceipt = try store.waitForCourseFileOperation {
+            await store.persistNativeCourseProfileUpdate(
+                StudyAgentCourseProfileUpdate(
+                    contextRevision: "test-context",
+                    profileRevision: profileBefore.revision,
+                    checkpoint: "userRequested",
+                    entries: [StudyAgentCourseProfileUpdateEntry(
+                        kind: .concept,
+                        text: "用户自述：还没有掌握费雪方程",
+                        sources: []
+                    )]
+                ),
+                expectedContextRevision: "test-context",
+                target: target
+            )
+        }
+
+        XCTAssertFalse(learningReceipt.accepted)
+        XCTAssertFalse(profileReceipt.accepted)
+        XCTAssertEqual(store.makeLearningContext(target: target), learningBefore)
+        XCTAssertEqual(store.refreshCourseProfileContext(target: target), profileBefore)
+        let reopened = WorkspaceStore(
+            workspaceDirectory: root.appendingPathComponent("workspace"),
+            startsCourseFileMaintenance: false
+        )
+        XCTAssertEqual(reopened.makeLearningContext(target: target), learningBefore)
+        XCTAssertEqual(reopened.refreshCourseProfileContext(target: target), profileBefore)
+    }
+
+    @MainActor
     func testSharedConversionRejectsConcurrentPortableState() throws {
         try CourseProjectRootSelfCheck.runSharedConversionConflictOnly()
+    }
+
+    @MainActor
+    func testSharedRemovalCleanupFailureIsTruthful() throws {
+        try CourseProjectRootSelfCheck.runSharedRemovalCleanupFailureOnly()
+    }
+
+    @MainActor
+    func testAgentSelectionPreservesFullText() {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("WeiBeiFullSelection-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = WorkspaceStore(workspaceDirectory: root, startsAtBlankEntries: true)
+        store.interfaceLanguage = .chinese
+        let selection = String(
+            repeating: "作者先交代事实，再比较两种解释，并用反例说明结论成立的边界。",
+            count: 120
+        )
+
+        store.updateSelection(selection, source: .document, ownerTitle: "课堂原文")
+
+        XCTAssertEqual(store.selectionContext?.text, selection)
+        XCTAssertEqual(
+            store.agentSelectionText,
+            """
+            片段 1（来源：课堂原文）：
+            \(selection)
+            """
+        )
+    }
+
+    @MainActor
+    func testAgentSelectionKeepsIndependentFragments() {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("WeiBeiSelectionFragments-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = WorkspaceStore(workspaceDirectory: root, startsAtBlankEntries: true)
+        store.interfaceLanguage = .chinese
+        let selections = (1...12).map { index in
+            SelectionContext(
+                text: "课堂摘录 \(index)",
+                source: .document,
+                ownerTitle: "资料 \(index)"
+            )
+        }
+
+        selections.forEach { store.addSelectionAttachment($0) }
+
+        let expected = selections.enumerated().map { index, selection in
+            """
+            片段 \(index + 1)（来源：\(selection.ownerTitle)）：
+            \(selection.text)
+            """
+        }.joined(separator: "\n\n")
+        XCTAssertEqual(store.agentSelectionText, expected)
+    }
+
+    @MainActor
+    func testSelectionRemarkHistoryKeepsOlderRecordsAndPersistsThem() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("WeiBeiSelectionRemarks-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = WorkspaceStore(workspaceDirectory: root, startsAtBlankEntries: true)
+        let existing = (0..<200).map { index in
+            SelectionRemarkRecord(
+                selectionText: "旧札记原文 \(index)",
+                remarkText: "旧札记 \(index)",
+                source: .document,
+                ownerTitle: "课堂资料"
+            )
+        }
+        store.selectionRemarkRecords = existing
+        store.selectionContext = SelectionContext(
+            text: "新札记原文",
+            source: .document,
+            ownerTitle: "课堂资料"
+        )
+
+        store.saveSelectionRemark("新札记")
+
+        XCTAssertEqual(store.selectionRemarkRecords.count, 201)
+        XCTAssertEqual(store.selectionRemarkRecords.last?.id, existing.last?.id)
+        XCTAssertTrue(selectionRemarkMarksJSON(store.selectionRemarkRecords).contains(existing.last!.id.uuidString))
+        XCTAssertTrue(store.flushPendingWorkspaceSave())
+        let reopened = WorkspaceStore(workspaceDirectory: root, startsCourseFileMaintenance: false)
+        XCTAssertEqual(reopened.selectionRemarkRecords.map(\.id), store.selectionRemarkRecords.map(\.id))
+    }
+
+    @MainActor
+    func testSelectionAskHistoryKeepsOlderThreads() {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("WeiBeiSelectionAsks-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = WorkspaceStore(workspaceDirectory: root, startsAtBlankEntries: true)
+        let existing = (0..<80).map { index in
+            SelectionAskThread(
+                selectionText: "旧问题选区 \(index)",
+                source: .document,
+                ownerTitle: "课堂资料"
+            )
+        }
+        store.selectionAskThreads = existing
+
+        _ = store.beginOrReuseSelectionAskThread(for: SelectionContext(
+            text: "新问题选区",
+            source: .document,
+            ownerTitle: "课堂资料"
+        ))
+
+        XCTAssertEqual(store.selectionAskThreads.count, 81)
+        XCTAssertEqual(store.selectionAskThreads.last?.id, existing.last?.id)
+    }
+
+    @MainActor
+    func testLearningContextIncludesEverySavedMemory() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("WeiBeiLearningContext-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let courseID = UUID()
+        let memories = (0...200).map { index in
+            LearningMemoryEntry(
+                kind: .summary,
+                text: "学习记忆 \(index)",
+                evidence: "[用户：历史] 学习记忆 \(index)",
+                origin: .userStatement
+            )
+        }
+        let snapshot = PersistedWorkspace(
+            courses: [Course(id: courseID, title: "课程")],
+            learningMemoryStates: [
+                ScopedLearningMemoryState(scope: .course(courseID), revision: 1, entries: memories),
+            ],
+            learningMemoryScopeMigrationVersion: 1
+        )
+        try JSONEncoder().encode(snapshot).write(
+            to: root.appendingPathComponent("workspace.json"),
+            options: .atomic
+        )
+        let store = WorkspaceStore(workspaceDirectory: root, startsCourseFileMaintenance: false)
+        let context = store.makeLearningContext(target: WorkspaceStore.AgentConversationTarget(
+            sessionID: UUID(),
+            workingDirectory: root,
+            courseID: courseID
+        ))
+
+        XCTAssertEqual(context.memories.count, memories.count)
+        XCTAssertEqual(Set(context.memories.map(\.id)), Set(memories.map(\.id)))
+    }
+
+    @MainActor
+    func testCourseProfileKeepsFullTextBeyondPreviousEntryBoundary() async throws {
+        // 落盘回执要求课程携带状态真实写入，夹具必须有真实课程根目录。
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("WeiBeiCourseProfile-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let library = root.appendingPathComponent("资料库", isDirectory: true)
+        try FileManager.default.createDirectory(at: library, withIntermediateDirectories: true)
+        let store = WorkspaceStore(
+            workspaceDirectory: root.appendingPathComponent("workspace", isDirectory: true),
+            startsAtBlankEntries: true,
+            startsCourseFileMaintenance: false
+        )
+        try await store.configureCourseLibraryAsync(at: library)
+        let courseID = try await store.createCourseInLibraryAsync(title: "课程")
+        let target = WorkspaceStore.AgentConversationTarget(
+            sessionID: UUID(),
+            workingDirectory: root,
+            courseID: courseID
+        )
+        let seedReceipt = await store.persistNativeCourseProfileUpdate(
+            StudyAgentCourseProfileUpdate(
+                contextRevision: "course-profile-seed",
+                profileRevision: store.refreshCourseProfileContext(target: target).revision,
+                checkpoint: "userRequested",
+                entries: (0..<200).map { index in
+                    StudyAgentCourseProfileUpdateEntry(
+                        kind: .concept,
+                        text: "用户自述：已有认识 \(index)",
+                        sources: []
+                    )
+                }
+            ),
+            expectedContextRevision: "course-profile-seed",
+            target: target
+        )
+        XCTAssertTrue(seedReceipt.accepted, seedReceipt.message)
+        XCTAssertEqual(store.courseKnowledgeProfiles.first?.entries.count, 200)
+
+        let fullText = "用户自述：" + String(repeating: "这段课程认识需要完整保存。", count: 100)
+        let receipt = await store.persistNativeCourseProfileUpdate(
+            StudyAgentCourseProfileUpdate(
+                contextRevision: "course-profile-full-text",
+                profileRevision: store.refreshCourseProfileContext(target: target).revision,
+                checkpoint: "userRequested",
+                entries: [
+                    StudyAgentCourseProfileUpdateEntry(
+                        kind: .concept,
+                        text: fullText,
+                        sources: []
+                    ),
+                ]
+            ),
+            expectedContextRevision: "course-profile-full-text",
+            target: target
+        )
+
+        XCTAssertTrue(receipt.accepted, receipt.message)
+        XCTAssertEqual(store.courseKnowledgeProfiles.first?.entries.count, 201)
+        XCTAssertEqual(store.courseKnowledgeProfiles.first?.entries.last?.text, fullText)
+    }
+
+    @MainActor
+    func testLearningUpdateKeepsFullSessionSummaryAndNextSteps() async throws {
+        // 落盘回执要求课程携带状态真实写入，夹具必须有真实课程根目录。
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("WeiBeiSessionSummary-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let library = root.appendingPathComponent("资料库", isDirectory: true)
+        try FileManager.default.createDirectory(at: library, withIntermediateDirectories: true)
+        let store = WorkspaceStore(
+            workspaceDirectory: root.appendingPathComponent("workspace", isDirectory: true),
+            startsAtBlankEntries: true,
+            startsCourseFileMaintenance: false
+        )
+        try await store.configureCourseLibraryAsync(at: library)
+        let courseID = try await store.createCourseInLibraryAsync(title: "课程")
+        let session = try XCTUnwrap(store.createStudySession(courseID: courseID))
+        let sessionID = session.id
+        let target = WorkspaceStore.AgentConversationTarget(
+            sessionID: sessionID,
+            workingDirectory: root,
+            courseID: courseID
+        )
+        let memoryRevision = store.makeLearningContext(target: target).memoryRevision
+        let summary = String(repeating: "完整会话摘要。", count: 400)
+        let next = (1...5).map { "完整下一步 \($0) " + String(repeating: "内容", count: 180) }
+        let receipt = await store.persistNativeLearningUpdate(
+            StudyAgentLearningUpdate(
+                contextRevision: "session-summary-full-text",
+                memoryRevision: memoryRevision,
+                sessionSummary: summary,
+                suggestedNext: next,
+                entries: [
+                    StudyAgentMemoryUpdateEntry(
+                        kind: .progress,
+                        text: "用户要求记录当前进度",
+                        evidence: "[用户：本轮] 请记录当前进度",
+                        origin: .userStatement
+                    ),
+                ]
+            ),
+            expectedContextRevision: "session-summary-full-text",
+            expectedUserQuestion: "请记录当前进度",
+            target: target,
+            messageID: UUID()
+        )
+
+        XCTAssertTrue(receipt.accepted, receipt.message)
+        let updated = store.studySessions.first { $0.id == sessionID }
+        XCTAssertEqual(updated?.summary, summary)
+        XCTAssertEqual(updated?.flow.suggestedNext, next)
     }
 
     @MainActor
@@ -51,60 +445,66 @@ final class WorkspaceSafetyTests: XCTestCase {
     }
 
     @MainActor
-    func testSemanticSessionTitleOnlyReplacesFirstTurnFallback() {
+    func testManualSessionTitlePersistsAndSurvivesFirstQuestionNaming() async throws {
         let firstQuestion = AgentMessage(
             role: .user,
             text: "请帮我解释利率为什么变化",
             source: nil
         )
-        let secondQuestion = AgentMessage(role: .user, text: "再举个例子", source: nil)
-
-        XCTAssertEqual(
-            WorkspaceStore.semanticSessionTitle(
-                from: "利率变化机制",
-                replacing: firstQuestion.text,
-                messages: [firstQuestion]
-            ),
-            "利率变化机制"
-        )
-        XCTAssertNil(
-            WorkspaceStore.semanticSessionTitle(
-                from: "利率变化机制",
-                replacing: "用户手动命名",
-                messages: [firstQuestion]
-            )
-        )
-        XCTAssertEqual(
-            WorkspaceStore.semanticSessionTitle(
-                from: "利率变化机制",
-                replacing: firstQuestion.text,
-                messages: [firstQuestion, secondQuestion]
-            ),
-            "利率变化机制"
-        )
-        XCTAssertNil(
-            WorkspaceStore.semanticSessionTitle(
-                from: "WeiBei",
-                replacing: firstQuestion.text,
-                messages: [firstQuestion]
-            )
-        )
-
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("WeiBeiSessionTitle-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root) }
         let store = WorkspaceStore(workspaceDirectory: root, startsAtBlankEntries: true)
-        let session = store.createStudySession(courseID: nil)!
+        let session = try XCTUnwrap(store.createStudySession(courseID: nil))
         store.messages = [firstQuestion]
         store.syncActiveStudySession(titleSeed: firstQuestion.text)
-        store.applySemanticSessionTitle("利率变化机制", to: session.id)
-        XCTAssertTrue(store.flushPendingWorkspaceSave())
+        XCTAssertTrue(store.renameStudySession(session.id, title: "我的利率课"))
+        let saved = await store.flushPendingWorkspaceSaveAsync()
+        XCTAssertTrue(saved)
 
         let reopened = WorkspaceStore(workspaceDirectory: root)
-        XCTAssertEqual(
-            reopened.studySessions.first(where: { $0.id == session.id })?.title,
-            "利率变化机制"
+        XCTAssertTrue(reopened.activateStudySession(
+            session.id,
+            expectedCourseID: nil,
+            expectedScopeNeedsReview: false
+        ))
+        reopened.messages = [firstQuestion]
+        reopened.syncActiveStudySession(titleSeed: firstQuestion.text)
+        let reopenedSession = try XCTUnwrap(reopened.activeStudySession)
+        XCTAssertEqual(reopenedSession.title, "我的利率课")
+        XCTAssertTrue(reopenedSession.titleSetByUser)
+    }
+
+    func testStandardTextEditingShortcutsAreNotAppActions() {
+        for key in ["b", "f"] {
+            XCTAssertNil(AppShortcutCatalog.action(
+                matching: AppShortcutChord(key: key, modifiers: .command),
+                overrides: [:]
+            ))
+        }
+    }
+
+    func testStoredShortcutConflictIsPreservedAndNotExecutable() throws {
+        let defaults = UserDefaults.standard
+        let original = defaults.data(forKey: AppShortcutCatalog.defaultsKey)
+        defer {
+            if let original {
+                defaults.set(original, forKey: AppShortcutCatalog.defaultsKey)
+            } else {
+                defaults.removeObject(forKey: AppShortcutCatalog.defaultsKey)
+            }
+        }
+        let conflict = AppShortcutID.threePaneWorkspace.defaultChord
+        defaults.set(
+            try JSONEncoder().encode([AppShortcutID.courseIndex.rawValue: conflict]),
+            forKey: AppShortcutCatalog.defaultsKey
         )
+
+        let loaded = AppShortcutCatalog.loadOverrides()
+        XCTAssertEqual(loaded[.courseIndex], conflict)
+        XCTAssertNil(AppShortcutCatalog.action(matching: conflict, overrides: loaded))
+        XCTAssertNil(AppShortcutCatalog.executableChord(for: .courseIndex, overrides: loaded))
+        XCTAssertNil(AppShortcutCatalog.executableChord(for: .threePaneWorkspace, overrides: loaded))
     }
 
     @MainActor

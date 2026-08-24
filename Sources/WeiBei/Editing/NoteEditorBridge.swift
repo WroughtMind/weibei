@@ -130,6 +130,15 @@ struct NoteEditorSnapshotReadyEvent: Codable, Equatable, Sendable {
     }
 }
 
+struct NoteEditorCommandResultEvent: Codable, Equatable, Sendable {
+    let protocolVersion: Int
+    let commandID: String
+    let documentID: String
+    let documentGeneration: UInt64
+    let revision: UInt64
+    let reason: String?
+}
+
 struct NoteEditorOutlineItem: Codable, Equatable, Identifiable, Sendable {
     let id: String
     let index: Int

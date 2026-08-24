@@ -119,26 +119,6 @@ if [[ "$CHECK_ONLY" != true ]]; then
   fi
 fi
 
-PI_RUNTIME_DIR="$("$ROOT_DIR/script/prepare_pi_runtime.sh")"
-PI_RUNTIME_BINARY="$PI_RUNTIME_DIR/bin/pi"
-PI_RUNTIME_VERSION="$(/usr/bin/plutil -extract piVersion raw -o - "$PI_RUNTIME_DIR/manifest.json")"
-if [[ ! -x "$PI_RUNTIME_BINARY" ]]; then
-  echo "build failed: embedded PI runtime was not prepared" >&2
-  exit 8
-fi
-
-pi_reports_expected_version() {
-  local executable="$1" attempt reported_version
-  for attempt in {1..10}; do
-    reported_version="$("$executable" --version 2>/dev/null || true)"
-    if [[ "$reported_version" == "$PI_RUNTIME_VERSION" ]]; then
-      return 0
-    fi
-    sleep 0.1
-  done
-  return 1
-}
-
 swift build -c "$BUILD_CONFIGURATION"
 
 if [[ "$CHECK_ONLY" != true ]]; then
@@ -186,18 +166,6 @@ if [[ "$CHECK_ONLY" != true ]]; then
     fi
     cp -R "$resource_bundle" "$APP_RESOURCES/"
   done
-  PACKAGED_PI_ROOT="$APP_RESOURCES/PiRuntime"
-  mkdir -p "$PACKAGED_PI_ROOT/bin"
-  cp "$PI_RUNTIME_DIR/bin/pi" "$PACKAGED_PI_ROOT/bin/pi"
-  cp "$PI_RUNTIME_DIR/bin/package.json" "$PACKAGED_PI_ROOT/bin/package.json"
-  cp -R "$PI_RUNTIME_DIR/bin/theme" "$PACKAGED_PI_ROOT/bin/theme"
-  for pi_metadata in manifest.json LICENSE THIRD_PARTY_NOTICES.md BUN_LICENSE.md LGPL-2.0.txt LGPL-2.1.txt RELINK.md artifact.sha256 binary.sha256; do
-    if [[ ! -f "$PI_RUNTIME_DIR/$pi_metadata" ]]; then
-      echo "package failed: embedded PI runtime is missing $pi_metadata" >&2
-      exit 23
-    fi
-    cp "$PI_RUNTIME_DIR/$pi_metadata" "$PACKAGED_PI_ROOT/$pi_metadata"
-  done
   cp "$APP_ICON_SOURCE" "$APP_RESOURCES/AppIcon.icns"
   mkdir -p "$APP_RESOURCES/Legal"
   for legal_source in "${LEGAL_SOURCE_FILES[@]}"; do
@@ -207,29 +175,9 @@ if [[ "$CHECK_ONLY" != true ]]; then
     fi
     cp "$legal_source" "$APP_RESOURCES/Legal/$(basename "$legal_source")"
   done
-  # Clear inherited provenance/quarantine metadata before executing the copied
-  # Bun-based Pi binary. Downloaded DMGs receive a fresh quarantine marker on
-  # the user's Mac; README documents the separate first-launch approval flow.
+  # Clear inherited provenance/quarantine metadata before first launch.
+  # Downloaded DMGs receive a fresh quarantine marker on the user's Mac.
   /usr/bin/xattr -cr "$APP_BUNDLE"
-
-  PACKAGED_PI="$APP_RESOURCES/PiRuntime/bin/pi"
-  # Re-seal the copied executable at its final path. On macOS, a freshly copied
-  # ad-hoc binary can otherwise be killed by policy evaluation on its first launch.
-  /usr/bin/codesign --force --sign - --timestamp=none "$PACKAGED_PI" >/dev/null
-  if [[ ! -x "$PACKAGED_PI" ]] \
-    || [[ ! -f "$APP_RESOURCES/PiRuntime/manifest.json" ]] \
-    || [[ ! -f "$APP_RESOURCES/PiRuntime/LICENSE" ]] \
-    || [[ ! -f "$APP_RESOURCES/PiRuntime/THIRD_PARTY_NOTICES.md" ]] \
-    || [[ ! -f "$APP_RESOURCES/PiRuntime/LGPL-2.0.txt" ]] \
-    || [[ ! -f "$APP_RESOURCES/PiRuntime/LGPL-2.1.txt" ]] \
-    || [[ ! -f "$APP_RESOURCES/PiRuntime/RELINK.md" ]] \
-    || [[ ! -f "$APP_RESOURCES/PiRuntime/binary.sha256" ]] \
-    || ! /usr/bin/codesign --verify --strict "$PACKAGED_PI" >/dev/null 2>&1 \
-    || [[ "$(/usr/bin/shasum -a 256 "$PACKAGED_PI" | /usr/bin/awk '{print $1}')" != "$(<"$APP_RESOURCES/PiRuntime/binary.sha256")" ]] \
-    || ! pi_reports_expected_version "$PACKAGED_PI"; then
-    echo "package failed: embedded PI runtime is incomplete" >&2
-    exit 9
-  fi
 
   cat >"$INFO_PLIST" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -297,8 +245,6 @@ PLIST
     echo "package failed: signed app binary UUID does not match the current Swift build" >&2
     exit 11
   fi
-  WEIBEI_PI_EXECUTABLE="$PACKAGED_PI" WEIBEI_PI_APP_BUNDLE="$APP_BUNDLE" WEIBEI_PI_LIVE_CHECK=0 \
-    "$BUILD_DIR/WeiBeiPiCheck"
   # Mirror a clean copy into repo dist/ for inspection. Launch always uses the
   # staged /tmp bundle (valid signature); Documents copies can re-acquire
   # File Provider xattrs that invalidate codesign verification.
@@ -315,7 +261,6 @@ PLIST
       # Documents may stamp FinderInfo onto the published copy; re-seal in place
       # after stripping attrs so release consumers still get a verifiable dist/.
       /usr/bin/xattr -cr "$FINAL_APP_BUNDLE" 2>/dev/null || true
-      /usr/bin/codesign --force --sign - --timestamp=none "$FINAL_APP_BUNDLE/Contents/Resources/PiRuntime/bin/pi" >/dev/null 2>&1 || true
       /usr/bin/codesign --force --deep --sign - --timestamp=none "$FINAL_APP_BUNDLE/Contents/Frameworks/Sparkle.framework" >/dev/null 2>&1 || true
       /usr/bin/codesign --force --sign - --timestamp=none "$FINAL_APP_BUNDLE/Contents/Helpers/$PDF_TEXT_WORKER_NAME" >/dev/null 2>&1 || true
       /usr/bin/codesign --force --sign - --timestamp=none "$FINAL_APP_BUNDLE" >/dev/null
@@ -355,12 +300,10 @@ open_app() {
 }
 
 run_verifiers() {
-  WEIBEI_PI_EXECUTABLE="$PI_RUNTIME_BINARY" \
-    swift run -c "$BUILD_CONFIGURATION" WeiBeiSelfCheck
+  swift run -c "$BUILD_CONFIGURATION" WeiBeiSelfCheck
   swift test -c "$BUILD_CONFIGURATION" --filter WeiBeiSafetyTests
   swift run -c "$BUILD_CONFIGURATION" WeiBeiWebEditorCheck
-  WEIBEI_PI_EXECUTABLE="$PI_RUNTIME_BINARY" \
-    swift run -c "$BUILD_CONFIGURATION" WeiBeiPiCheck
+  swift run -c "$BUILD_CONFIGURATION" WeiBeiNativeCheck --authentication-status
 }
 
 case "$MODE" in

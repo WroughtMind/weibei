@@ -7,7 +7,6 @@
   "scripts": {
     "build:editor": "node script/build_editor.mjs",
     "typecheck:tools": "tsc --noEmit -p tsconfig.json",
-    "typecheck:agent": "tsc --noEmit -p tsconfig.agent.json",
     "typecheck:editor": "tsc --noEmit -p tsconfig.editor.json",
     "test:editor": "node --import tsx --test Sources/WeiBei/WebEditor/test/*.test.ts"
   },
@@ -20,8 +19,6 @@
     "remark-math": "^6.0.0"
   },
   "devDependencies": {
-    "@earendil-works/pi-ai": "0.82.1",
-    "@earendil-works/pi-coding-agent": "0.82.1",
     "@types/node": "^22.10.0",
     "appdmg": "0.6.6",
     "esbuild": "0.28.1",

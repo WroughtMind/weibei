@@ -1,23 +1,32 @@
 import AppKit
 import Combine
 import Sparkle
+import WeiBeiCore
 
 struct WeiBeiAvailableUpdate: Equatable {
     let version: String
-    let summaryLines: [String]
+    let releaseNotesLines: [String]
     let informationOnly: Bool
     let informationURL: URL?
 
+    var summaryLines: [String] {
+        Self.summaryLines(from: releaseNotesLines)
+    }
+
     var helpText: String {
-        (["魏碑 \(version)"] + summaryLines.prefix(5)).joined(separator: "\n")
+        (["魏碑 \(version)"] + summaryLines).joined(separator: "\n")
     }
 
     static func summaryLines(from rawNotes: String?) -> [String] {
+        summaryLines(from: releaseNotesLines(from: rawNotes))
+    }
+
+    static func releaseNotesLines(from rawNotes: String?) -> [String] {
         guard var text = rawNotes?.trimmingCharacters(in: .whitespacesAndNewlines),
               !text.isEmpty else {
             return []
         }
-        for marker in ["</li>", "</p>", "<br>", "<br/>", "<br />"] {
+        for marker in ["</li>", "</p>", "</h1>", "</h2>", "</h3>", "<br>", "<br/>", "<br />"] {
             text = text.replacingOccurrences(of: marker, with: "\n", options: .caseInsensitive)
         }
         text = text
@@ -35,7 +44,40 @@ struct WeiBeiAvailableUpdate: Equatable {
                     .trimmingCharacters(in: CharacterSet(charactersIn: "-*• "))
             }
             .filter { !$0.isEmpty }
-        return Array(lines.prefix(5))
+        return lines
+    }
+
+    private static func summaryLines(from lines: [String]) -> [String] {
+        let highlights = priorityHighlights(in: lines)
+        let excludedIndexes = Set(highlights.flatMap { [$0.headingIndex, $0.detailIndex] })
+        let fillers = lines.enumerated()
+            .filter { !excludedIndexes.contains($0.offset) }
+            .prefix(max(0, 5 - highlights.count))
+            .map { (index: $0.offset, text: $0.element) }
+        return (fillers + highlights.map { (index: $0.detailIndex, text: $0.text) })
+            .sorted { $0.index < $1.index }
+            .map { $0.text }
+    }
+
+    private static func priorityHighlights(
+        in lines: [String]
+    ) -> [(headingIndex: Int, detailIndex: Int, text: String)] {
+        let titles: Set<String> = [
+            "破坏性变化", "破坏性变更", "迁移", "迁移说明", "已知问题",
+            "Breaking Changes", "Migration", "Known Issues",
+        ]
+        let headings = lines.indices.compactMap { index -> (index: Int, title: String)? in
+            let title = lines[index]
+                .trimmingCharacters(in: CharacterSet(charactersIn: "# "))
+                .trimmingCharacters(in: CharacterSet(charactersIn: "：:"))
+            return titles.contains(title) ? (index, title) : nil
+        }
+        return headings.enumerated().flatMap { offset, heading in
+            let endIndex = offset + 1 < headings.count ? headings[offset + 1].index : lines.endIndex
+            return ((heading.index + 1)..<endIndex).map { detailIndex in
+                (heading.index, detailIndex, "\(heading.title)：\(lines[detailIndex])")
+            }
+        }
     }
 }
 
@@ -49,7 +91,7 @@ final class WeiBeiUpdateService: NSObject, ObservableObject {
         case extracting
         case installing
         case upToDate
-        case failed(String)
+        case failed
     }
 
     @Published private(set) var status: Status = .idle
@@ -88,7 +130,10 @@ final class WeiBeiUpdateService: NSObject, ObservableObject {
         do {
             try updater.start()
         } catch {
-            status = .failed(error.localizedDescription)
+            WeiBeiLog.workspace.error(
+                "code=updater_start_failed underlying=\(WeiBeiLog.code(error), privacy: .public)"
+            )
+            status = .failed
         }
     }
 
@@ -141,7 +186,7 @@ extension WeiBeiUpdateService: SPUUserDriver {
     ) {
         let update = WeiBeiAvailableUpdate(
             version: appcastItem.displayVersionString,
-            summaryLines: Self.summaryLines(for: appcastItem),
+            releaseNotesLines: Self.releaseNotesLines(for: appcastItem),
             informationOnly: appcastItem.isInformationOnlyUpdate,
             informationURL: appcastItem.infoURL
         )
@@ -167,11 +212,11 @@ extension WeiBeiUpdateService: SPUUserDriver {
     func showUpdateReleaseNotes(with downloadData: SPUDownloadData) {
         guard let text = String(data: downloadData.data, encoding: .utf8),
               let update = availableUpdate else { return }
-        let lines = WeiBeiAvailableUpdate.summaryLines(from: text)
+        let lines = WeiBeiAvailableUpdate.releaseNotesLines(from: text)
         guard !lines.isEmpty else { return }
         availableUpdate = WeiBeiAvailableUpdate(
             version: update.version,
-            summaryLines: lines,
+            releaseNotesLines: lines,
             informationOnly: update.informationOnly,
             informationURL: update.informationURL
         )
@@ -189,7 +234,10 @@ extension WeiBeiUpdateService: SPUUserDriver {
     func showUpdaterError(_ error: Error) async {
         retryInstallWhenFound = false
         updateChoiceReply = nil
-        status = .failed(error.localizedDescription)
+        WeiBeiLog.workspace.error(
+            "code=updater_failed underlying=\(WeiBeiLog.code(error), privacy: .public)"
+        )
+        status = .failed
     }
 
     func showDownloadInitiated(cancellation: @escaping () -> Void) {
@@ -234,8 +282,8 @@ extension WeiBeiUpdateService: SPUUserDriver {
         status = availableUpdate == nil ? .idle : .available
     }
 
-    private static func summaryLines(for item: SUAppcastItem) -> [String] {
-        let lines = WeiBeiAvailableUpdate.summaryLines(from: item.itemDescription)
+    private static func releaseNotesLines(for item: SUAppcastItem) -> [String] {
+        let lines = WeiBeiAvailableUpdate.releaseNotesLines(from: item.itemDescription)
         if !lines.isEmpty { return lines }
         if let title = item.title?.trimmingCharacters(in: .whitespacesAndNewlines),
            !title.isEmpty,

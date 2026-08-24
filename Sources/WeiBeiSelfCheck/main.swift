@@ -101,13 +101,6 @@ final class OneShotFileReplacement: @unchecked Sendable {
 }
 
 
-if ProcessInfo.processInfo.environment["WEIBEI_PI_TERMINAL_SELF_CHECK_ONLY"] == "1" {
-    try await runPiTerminalRuntimeSelfChecks()
-    print("WeiBei PI terminal runtime self-check passed")
-    exit(0)
-}
-
-try runPiAgentSelfChecks()
 try runNativeAgentSelfChecks()
 checkCourseLibraryVolatility()
 checkUnavailableCourseUnregister()
@@ -899,7 +892,7 @@ expect(
 let emphasizedSourceReference = SourceReferenceTitle.parse("来源：**Mishkin 教材样例**")
 expect(emphasizedSourceReference.title == "Mishkin 教材样例", "source reference ignores whole-title Markdown emphasis")
 let inlineCodeSourceReference = SourceReferenceTitle.parse("- 相关资料：`来源：Mishkin 教材样例`")
-expect(inlineCodeSourceReference.title == "Mishkin 教材样例", "source reference remains actionable when PI wraps the jump in inline code")
+expect(inlineCodeSourceReference.title == "Mishkin 教材样例", "source reference remains actionable when the Agent wraps the jump in inline code")
 let calloutSourceReference = SourceReferenceTitle.parse("""
 > [!quote] 选区摘录
 > 实际利率
@@ -974,38 +967,6 @@ expect(WorkspaceLayout.documentAgentNotes.label(language: .chinese) == "阅读-�
     && WorkspaceLayout.documentNotesAgent.label(language: .chinese) == "阅读-笔记-对话"
     && WorkspaceLayout.documentNotesAgent.label(language: .english) == "Reader-Notes-Chat", "layout labels use localized task language instead of internal pane names")
 expect(WorkspaceLayout.immersiveConversation.systemImage == "bubble.left.and.text.bubble.right" && WorkspaceLayout.immersiveWriting.systemImage == "square.and.pencil", "immersive layouts expose semantic menu icons")
-func readSource(_ relativePath: String) -> String {
-    let url = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
-        .appendingPathComponent(relativePath)
-    return (try? String(contentsOf: url, encoding: .utf8)) ?? ""
-}
-let agentDataPathsSource = readSource("Sources/WeiBeiCore/WeiBeiAgentDataPaths.swift")
-let workspaceStoreSource = readSource("Sources/WeiBei/Stores/WorkspaceStore.swift")
-let notesPersistenceSource = readSource("Sources/WeiBei/Stores/WorkspaceStore+NotesPersistence.swift")
-let workspaceModelsSource = readSource("Sources/WeiBeiCore/WorkspaceModels.swift")
-let piAgentRuntimeSource = readSource("Sources/WeiBeiCore/PiAgentRuntime.swift")
-let piManagementSource = readSource("Sources/WeiBeiCore/AgentResources/management-extension.ts")
-let piOAuthSource = readSource("Sources/WeiBei/Support/PiOAuthService.swift")
-let credentialProfilesSource = readSource("Sources/WeiBeiCore/AgentCredentialProfiles.swift")
-let readerViewSource = readSource("Sources/WeiBei/Views/ReaderView.swift")
-let notesAgentViewSource = readSource("Sources/WeiBei/Views/NotesAgentView.swift")
-let weiBeiAppSource = readSource("Sources/WeiBei/App/WeiBeiApp.swift")
-let commandPaletteViewSource = readSource("Sources/WeiBei/Views/CommandPaletteView.swift")
-let contentViewSource = readSource("Sources/WeiBei/Views/ContentView.swift")
-expect(
-    !contentViewSource.contains("environmentObject(store).weiBeiMotionScoped()")
-        && !weiBeiAppSource.contains(".environmentObject(updateService)\n                .weiBeiMotionScoped()"),
-    "SAFETY:motion-scope-below-store-injection the store-backed motion scope must sit below the store injection: @EnvironmentObject flows down the view tree, never up, so the reversed order crashes the Settings window on open"
-)
-expect(
-    workspaceStoreSource.contains("if !startsAtBlankEntries,\n           resolvedImportedFileBookmarks"),
-    "SAFETY:blank-launch-no-note-error-banner on a blank-start launch the restored active note must not be evaluated before the reset clears the selection, otherwise a transient degradation raises a sticky banner on a blank page the user never interacted with"
-)
-expect(
-    notesPersistenceSource.contains("func noteFileUnavailableMessage(for item: StudyItem)")
-        && notesPersistenceSource.contains("内容与本机记录不一致"),
-    "SAFETY:note-unavailable-message-matches-facts the degraded-note message must distinguish a genuinely missing file from a present-but-diverged one instead of always claiming the file cannot be located"
-)
 expect(
     NoteTabDisplayTitle.resolve(customTitle: nil, noteTitle: "旧文件名", body: "# 货币银行学\n\n第二章 利率") == "货币银行学",
     "body heading outranks the file name so editing the heading renames the tab live"
@@ -1054,57 +1015,15 @@ expect(
     NoteTabDisplayTitle.resolve(customTitle: "", noteTitle: "利率笔记", body: "正文") == "正文",
     "submitting an empty rename clears the custom name and resumes auto-follow"
 )
-let courseSidebarModelSource = readSource("Sources/WeiBei/Views/CourseSidebarModel.swift")
-let courseSidebarTagSupportSource = readSource("Sources/WeiBei/Views/CourseSidebarTagSupport.swift")
-let sidebarViewSource = readSource("Sources/WeiBei/Views/SidebarView.swift")
 expect(
     NoteTabDisplayTitle.normalizedCustomTitle("  我的速记  ") == "我的速记"
         && NoteTabDisplayTitle.normalizedCustomTitle("   ") == nil
         && NoteTabDisplayTitle.normalizedCustomTitle(nil) == nil,
     "the sidebar can detect a usable custom title synchronously with the same normalization as the tab"
 )
-let courseProjectRootSupportSource = readSource("Sources/WeiBei/Stores/CourseProjectRootSupport.swift")
-expect(
-    !workspaceStoreSource.contains("try? await self?.linkSharedItem(")
-        && !workspaceStoreSource.contains("try? await self.linkSharedItem("),
-    "SAFETY:no-swallowed-link-failure must not swallow link failures"
-)
-expect(
-    workspaceStoreSource.contains("case pendingChangesUnsaved")
-        && workspaceStoreSource.contains("throw ContentSourceRemovalError.pendingChangesUnsaved")
-        && workspaceStoreSource.contains("weibei-save-errors.log"),
-    "SAFETY:pending-unsaved-vs-missing deletion must refuse unsaved changes and persist every workspace save failure to a log"
-)
 expect(
     NoteTabDisplayTitle.resolve(customTitle: "我的速记", noteTitle: "新标题", body: "# 货币银行学") == "我的速记",
     "manual rename still outranks a heading-driven file name"
-)
-expect(
-    piManagementSource.contains(
-        "const { ModelRuntime, readStoredCredential } = await import(PI_PACKAGE)"
-    )
-        && piManagementSource.contains("ModelRuntime.create")
-        && piManagementSource.contains("runtime.registerNativeProvider")
-        && piManagementSource.contains("AZURE_OPENAI_BASE_URL")
-        && piManagementSource.contains("runtime.getProviders()")
-        && piManagementSource.contains("runtime.getModels()")
-        && piManagementSource.contains("runtime.listCredentials()")
-        && piManagementSource.contains("runtime.login(request.providerId, request.authType")
-        && piManagementSource.contains("runtime.logout(request.providerId)")
-        && piOAuthSource.contains("runtime.managementCatalog")
-        && piOAuthSource.contains("runtime.login(")
-        && piOAuthSource.contains("runtime.logout(")
-        && agentDataPathsSource.contains("piAgentDirectory")
-        && !agentDataPathsSource.contains("secretsDirectory")
-        && !agentDataPathsSource.contains("piAuthJSON")
-        && !agentDataPathsSource.contains("migrateHomePiAuthIfNeeded")
-        && piAgentRuntimeSource.contains("WeiBeiAgentDataPaths.piAgentDirectory")
-        && !piAgentRuntimeSource.contains("environment[providerID.environmentAPIKeyName]")
-        && !workspaceModelsSource.contains("ModelListProtocol")
-        && !workspaceStoreSource.contains("AgentModelListService")
-        && !credentialProfilesSource.contains("KeyHelp")
-        && !credentialProfilesSource.contains("environmentAPIKeyName"),
-    "SAFETY:pi-owns-credentials embedded Pi must exclusively own credentials; a second secret store or env-key injection would bypass the native login path"
 )
 // Provider console metadata stays callable and preserves its public values.
 for provider in AgentProviderID.allCases {
@@ -1502,7 +1421,7 @@ let persistentReply = AgentMessage(
     role: .assistant,
     text: "已经生成的安全正文",
     source: "利率",
-    backend: .pi,
+    backend: .native,
     completionState: .interrupted,
     sources: [replySource],
     actions: [replyAction],
@@ -2114,37 +2033,6 @@ do {
     expect(listed.count == 1, "S2 triple retains one backup")
     let restored = try String(contentsOf: listed[0].url, encoding: .utf8)
     expect(restored == original, "S2 triple backup preserves external content")
-}
-
-// MARK: - New notes start blank
-do {
-    expect(
-        !workspaceStoreSource.contains("## \\(ui(\"核心要点\", \"Key Points\"))")
-            && !notesPersistenceSource.contains("## \\(ui(\"核心要点\", \"Key Points\"))")
-            && notesPersistenceSource.contains("func defaultNotebookNote() -> String"),
-        "SAFETY:blank-new-note new notes must start blank so a template cannot overwrite a learner's first save"
-    )
-}
-
-// MARK: - Phase 1 write gate: single writer choke point (source assertions)
-do {
-    let directWriterCalls = notesPersistenceSource
-        .components(separatedBy: "notebookMarkdownWriter(")
-        .count - 1
-    let storeDirectWriterCalls = workspaceStoreSource
-        .components(separatedBy: "notebookMarkdownWriter(")
-        .count - 1
-    expect(
-        directWriterCalls == 1 && storeDirectWriterCalls == 0,
-        "SAFETY:write-gate-single-writer all note disk writes must route through writeNotebookMarkdownThroughGate; direct notebookMarkdownWriter( calls are whitelisted to exactly one inside the gate"
-    )
-    expect(
-        notesPersistenceSource.contains("writeRefusedKeepContent")
-            && notesPersistenceSource.contains("diskChangedAdoptDisk")
-            && notesPersistenceSource.contains("content: Data(markdown.utf8)")
-            && notesPersistenceSource.contains("expectedBaseline"),
-        "SAFETY:write-gate-compare the gate must refuse writes without a trusted baseline or an unreadable disk, back up pending content before adopting external changes, and pass an explicit baseline at every write path"
-    )
 }
 
 // MARK: - Performance Phase 1+2: workspace encode guardrail + off-main hop

@@ -30,8 +30,25 @@ public enum NativeDocumentSandbox {
         guard content.utf8.count <= maximumBytes else {
             throw NativeLLMFailure(code: "invalid_document", message: "文稿超过 \(maximumBytes) 字节")
         }
+        let workspaceRoot = documentsRoot
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        do {
+            try WeiBeiAgentDataPaths.ensureOwnedDirectory(
+                documentsRoot,
+                inside: workspaceRoot
+            )
+        } catch WeiBeiAgentDataPathError.outsideWorkspace {
+            WeiBeiLog.workspace.error(
+                "code=unsafe_agent_documents_directory"
+            )
+            throw NativeLLMFailure(
+                code: "unsafe_agent_directory",
+                message: "Agent 本地目录不安全，未生成文稿"
+            )
+        }
         let folder = documentsRoot.appendingPathComponent(UUID().uuidString.lowercased(), isDirectory: true)
-        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        try WeiBeiAgentDataPaths.ensureOwnedDirectory(folder, inside: workspaceRoot)
         let ext: String
         switch format {
         case .html: ext = "html"

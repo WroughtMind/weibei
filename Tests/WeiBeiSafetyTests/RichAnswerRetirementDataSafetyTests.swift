@@ -40,4 +40,32 @@ final class RichAnswerRetirementDataSafetyTests: XCTestCase {
         XCTAssertNil(object["richAnswer"], "退役后的消息不得再写出 richAnswer 键")
         XCTAssertEqual(object["text"] as? String, "利率是资金使用价格的表达。")
     }
+
+    func testMalformedContentBlockKeepsItsPositionAndRawDataWithoutRevivingRichAnswer() throws {
+        var payload = try XCTUnwrap(
+            try JSONSerialization.jsonObject(with: legacyMessageJSON()) as? [String: Any]
+        )
+        let contentBlocks: [[String: Any]] = [
+            ["text": ["_0": "前文"]],
+            ["futureInteractiveBlock": ["value": 42]],
+            ["text": ["_0": "后文"]],
+        ]
+        payload["contentBlocks"] = contentBlocks
+        let message = try JSONDecoder().decode(
+            AgentMessage.self,
+            from: try JSONSerialization.data(withJSONObject: payload)
+        )
+
+        XCTAssertEqual(message.contentBlocks.count, 3)
+        guard case let .unavailable(type, _) = message.contentBlocks[1] else {
+            return XCTFail("坏内容块没有留在原位")
+        }
+        XCTAssertEqual(type, "futureInteractiveBlock")
+
+        let reencoded = try XCTUnwrap(
+            try JSONSerialization.jsonObject(with: JSONEncoder().encode(message)) as? [String: Any]
+        )
+        let blocks = try XCTUnwrap(reencoded["contentBlocks"] as? [[String: Any]])
+        XCTAssertEqual(blocks as NSArray, contentBlocks as NSArray)
+    }
 }
