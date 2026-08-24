@@ -298,7 +298,7 @@ final class WorkspaceSafetyTests: XCTestCase {
     }
 
     @MainActor
-    func testCourseProfileKeepsFullTextBeyondPreviousEntryBoundary() throws {
+    func testCourseProfileKeepsFullTextBeyondPreviousEntryBoundary() async throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("WeiBeiCourseProfile-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -323,7 +323,7 @@ final class WorkspaceSafetyTests: XCTestCase {
         )
         let store = WorkspaceStore(workspaceDirectory: root, startsCourseFileMaintenance: false)
         let fullText = "用户自述：" + String(repeating: "这段课程认识需要完整保存。", count: 100)
-        let receipt = store.persistNativeCourseProfileUpdate(
+        let receipt = await store.persistNativeCourseProfileUpdate(
             StudyAgentCourseProfileUpdate(
                 contextRevision: "course-profile-full-text",
                 profileRevision: 4,
@@ -350,7 +350,7 @@ final class WorkspaceSafetyTests: XCTestCase {
     }
 
     @MainActor
-    func testLearningUpdateKeepsFullSessionSummaryAndNextSteps() throws {
+    func testLearningUpdateKeepsFullSessionSummaryAndNextSteps() async throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("WeiBeiSessionSummary-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -378,7 +378,7 @@ final class WorkspaceSafetyTests: XCTestCase {
         let memoryRevision = store.makeLearningContext(target: target).memoryRevision
         let summary = String(repeating: "完整会话摘要。", count: 400)
         let next = (1...5).map { "完整下一步 \($0) " + String(repeating: "内容", count: 180) }
-        let receipt = store.persistNativeLearningUpdate(
+        let receipt = await store.persistNativeLearningUpdate(
             StudyAgentLearningUpdate(
                 contextRevision: "session-summary-full-text",
                 memoryRevision: memoryRevision,
