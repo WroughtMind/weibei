@@ -1094,32 +1094,41 @@ enum ImportedIdentitySelfCheck {
             )
         )
 
-        let failedStore = WorkspaceStore(
-            workspaceDirectory: fixture.workspaceDirectory,
-            workspaceSnapshotWriter: { _, _ in
-                throw CheckError.failed("预期中的迁移保存失败")
-            },
-            selectionAskThreadDefaults: fixture.selectionAskThreadDefaults
-        )
-        try check(
-            failedStore.learningMemoryEntries(in: .course(course.id)).map(\.id) == [memory.id],
-            "保存失败时内存中的旧记忆无法继续使用"
-        )
-        let unchangedSnapshot = try fixture.readSnapshot()
-        try check(
-            unchangedSnapshot.learningMemoryEntries?.map(\.id) == [memory.id]
-                && unchangedSnapshot.learningMemoryStates == nil
-                && unchangedSnapshot.learningMemoryScopeMigrationVersion == nil,
-            "迁移保存失败破坏了旧工作区快照"
-        )
+        do {
+            let failedStore = WorkspaceStore(
+                workspaceDirectory: fixture.workspaceDirectory,
+                workspaceSnapshotWriter: { _, _ in
+                    throw CheckError.failed("预期中的迁移保存失败")
+                },
+                selectionAskThreadDefaults: fixture.selectionAskThreadDefaults
+            )
+            try waitForCondition("学习记忆迁移没有触发预期中的保存失败") {
+                failedStore.workspaceSaveError != nil
+            }
+            try check(
+                failedStore.learningMemoryEntries(in: .course(course.id)).map(\.id) == [memory.id],
+                "保存失败时内存中的旧记忆无法继续使用"
+            )
+            let unchangedSnapshot = try fixture.readSnapshot()
+            try check(
+                unchangedSnapshot.learningMemoryEntries?.map(\.id) == [memory.id]
+                    && unchangedSnapshot.learningMemoryStates == nil
+                    && unchangedSnapshot.learningMemoryScopeMigrationVersion == nil,
+                "迁移保存失败破坏了旧工作区快照"
+            )
+        }
 
         let recoveredStore = WorkspaceStore(
             workspaceDirectory: fixture.workspaceDirectory,
             selectionAskThreadDefaults: fixture.selectionAskThreadDefaults
         )
+        try waitForCondition("保存恢复后旧记忆迁移没有完成真实落盘") {
+            guard let snapshot = try? fixture.readSnapshot() else { return false }
+            return snapshot.learningMemoryEntries == nil
+                && snapshot.learningMemoryScopeMigrationVersion == 1
+        }
         try check(
-            recoveredStore.flushPendingWorkspaceSave()
-                && recoveredStore.learningMemoryEntries(in: .course(course.id)).map(\.id) == [memory.id]
+            recoveredStore.learningMemoryEntries(in: .course(course.id)).map(\.id) == [memory.id]
                 && recoveredStore.learningMemoryRevision(in: .course(course.id)) == 1,
             "保存恢复后旧记忆无法安全重试迁移"
         )
@@ -1136,8 +1145,6 @@ enum ImportedIdentitySelfCheck {
             }
 
             func write(_ data: Data, to url: URL) throws {
-                WorkspaceSnapshotRecovery.rotateBackups(primary: url)
-                try data.write(to: url, options: [.atomic])
                 let shouldFail = lock.withLock {
                     defer { failsAfterNextWrite = false }
                     return failsAfterNextWrite
@@ -1145,6 +1152,8 @@ enum ImportedIdentitySelfCheck {
                 if shouldFail {
                     throw CheckError.failed("预期中的学习记忆保存失败")
                 }
+                WorkspaceSnapshotRecovery.rotateBackups(primary: url)
+                try data.write(to: url, options: [.atomic])
             }
         }
 
@@ -1167,7 +1176,8 @@ enum ImportedIdentitySelfCheck {
                         entries: [memory]
                     ),
                 ],
-                learningMemoryScopeMigrationVersion: 1
+                learningMemoryScopeMigrationVersion: 1,
+                studySessionScopeMigrationVersion: 2
             )
         )
 
@@ -1488,7 +1498,12 @@ enum ImportedIdentitySelfCheck {
                 },
             "旧记忆迁移复制了稳定 ID，或没有留下迁移历史"
         )
-        try check(store.flushPendingWorkspaceSave(), "旧 Chat 迁移结果无法保存")
+        try waitForCondition("旧 Chat 或旧记忆迁移没有完成真实落盘") {
+            guard let snapshot = try? fixture.readSnapshot() else { return false }
+            return snapshot.studySessionScopeMigrationVersion == 2
+                && snapshot.learningMemoryScopeMigrationVersion == 1
+                && snapshot.learningMemoryEntries == nil
+        }
         let migratedSnapshot = try fixture.readSnapshot()
         try check(
             migratedSnapshot.studySessionScopeMigrationVersion == 2

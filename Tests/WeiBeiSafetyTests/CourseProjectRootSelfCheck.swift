@@ -3275,6 +3275,10 @@ enum CourseProjectRootSelfCheck {
         )
         injectExternalState = true
         casStore.renameCourse(courseA, title: "本机待保存更新")
+        try check(
+            casStore.flushPendingWorkspaceSave(),
+            "状态 CAS 竞态没有完成真实写盘"
+        )
         let conflictStateURLs = try FileManager.default
             .contentsOfDirectory(
                 at: stateURL.deletingLastPathComponent(),
@@ -3343,6 +3347,10 @@ enum CourseProjectRootSelfCheck {
         swappedUnreadableStore.renameCourse(
             courseA,
             title: "交换后仍需保留的本机候选"
+        )
+        try check(
+            swappedUnreadableStore.flushPendingWorkspaceSave(),
+            "不可读状态竞态没有完成真实写盘"
         )
         let unreadableConflictURLs = try FileManager.default
             .contentsOfDirectory(

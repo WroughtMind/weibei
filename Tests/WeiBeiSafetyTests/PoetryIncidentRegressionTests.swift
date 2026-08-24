@@ -171,7 +171,7 @@ final class PoetryIncidentRegressionTests: XCTestCase {
 
     /// 通道四：降级且磁盘暂不可读时改名。闸门重读失败必须拒写；
     /// 无论回滚到原路径还是滞留新路径，真实正文必须完整找回，草稿必须保留。
-    func testIncidentRenameWithUnreadableFileRefusesAndKeepsBody() throws {
+    func testIncidentRenameWithUnreadableFileRefusesAndKeepsBody() async throws {
         let base = makeTempRoot("weibei-poetry-unreadable")
         defer { try? FileManager.default.removeItem(at: base) }
         let backupRoot = base.appendingPathComponent("backups", isDirectory: true)
@@ -190,9 +190,7 @@ final class PoetryIncidentRegressionTests: XCTestCase {
         store.noteText = degradedDraft
         try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: url.path)
 
-        try? store.waitForCourseFileOperation {
-            await store.renameNotebookNoteInTransaction(itemID: item.id, to: "新标题")
-        }
+        await store.renameNotebookNoteInTransaction(itemID: item.id, to: "新标题")
 
         // 恢复权限后找回正文：旧路径、新路径任一完整即可。
         try? FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: url.path)

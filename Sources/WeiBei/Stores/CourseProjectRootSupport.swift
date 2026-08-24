@@ -409,6 +409,12 @@ actor CourseProjectFileWorker {
 
     func persistWorkspace(
         _ request: WorkspacePersistenceRequest,
+        portableStateWriter: @escaping @Sendable (
+            Data,
+            URL,
+            ImportedFileIdentity,
+            Data?
+        ) throws -> Void,
         workspaceSnapshotWriter: @escaping @Sendable (Data, URL) throws -> Void
     ) async -> WorkspacePersistenceResult {
         let ranOnMainThread = pthread_main_np() != 0
@@ -559,12 +565,11 @@ actor CourseProjectFileWorker {
                     )
                     : nil
                 do {
-                    try Self.writePortableState(
+                    try portableStateWriter(
                         committedData,
-                        to: stateURL,
-                        expectedDirectoryIdentity: directoryIdentity,
-                        expectedPreviousData: previousData,
-                        beforeCommit: {}
+                        stateURL,
+                        directoryIdentity,
+                        previousData
                     )
                     let verified = try Self.readValidatedPortableState(
                         at: stateURL,

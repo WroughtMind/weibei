@@ -21,13 +21,7 @@ final class AgentVisualizationSizingTests: XCTestCase {
     }
 
     @MainActor
-    func testGenUIActionRoundTripShowsHostRejection() async throws {
-        let root = FileManager.default.temporaryDirectory
-            .appendingPathComponent("WeiBeiGenUIAction-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: root) }
-        try Data().write(to: root.appendingPathComponent("AgentRuntime"))
-        let store = WorkspaceStore(workspaceDirectory: root, startsAtBlankEntries: true)
+    func testGenUIActionRoundTripShowsRejection() async throws {
         let messages = WKUserContentController()
         let actionProbe = GenUIActionProbe()
         messages.add(actionProbe, name: "weibeiGenUI")
@@ -44,13 +38,8 @@ final class AgentVisualizationSizingTests: XCTestCase {
         let spec = #"{"items":[{"type":"button","label":"继续解释","action":"explain"}]}"#
         _ = try await webView.evaluateJavaScript("window.WeiBeiGenUIHost.render({spec: \(spec), actionStatus: 'ready'}); document.querySelector('.button').click()")
         let requestID = try XCTUnwrap(actionProbe.requestID)
-        let action = try XCTUnwrap(actionProbe.action)
-        let payload = try XCTUnwrap(actionProbe.payload)
-        let payloadData = try JSONSerialization.data(withJSONObject: payload)
-        let payloadJSON = try XCTUnwrap(String(data: payloadData, encoding: .utf8))
-        let rejection = try XCTUnwrap(
-            store.submitAgentVisualizationAction(action, payloadJSON: payloadJSON)
-        )
+        XCTAssertEqual(actionProbe.action, "explain")
+        let rejection = "当前无法提交这条回答。"
         let resultData = try JSONSerialization.data(withJSONObject: [
             "requestID": requestID,
             "accepted": false,
@@ -63,6 +52,28 @@ final class AgentVisualizationSizingTests: XCTestCase {
         XCTAssertEqual(rejectedDisabled, false)
         XCTAssertTrue(rejectedText?.contains(rejection) == true)
         withExtendedLifetime(navigationProbe) {}
+    }
+
+    @MainActor
+    func testGenUIActionRejectsWhenChatWorkspaceCannotBePrepared() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("WeiBeiGenUIAction-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try Data().write(to: root.appendingPathComponent("AgentRuntime"))
+        let store = WorkspaceStore(
+            workspaceDirectory: root,
+            startsAtBlankEntries: true,
+            startsCourseFileMaintenance: false
+        )
+
+        let rejection = store.submitAgentVisualizationAction(
+            "继续解释",
+            payloadJSON: "{}"
+        )
+
+        XCTAssertTrue(rejection?.contains("Chat") == true)
+        XCTAssertNil(store.agentRequestTask)
     }
 
     @MainActor
@@ -310,7 +321,6 @@ final class AgentVisualizationSizingTests: XCTestCase {
 private final class GenUIActionProbe: NSObject, WKScriptMessageHandler {
     private(set) var requestID: Int?
     private(set) var action: String?
-    private(set) var payload: Any?
 
     func userContentController(
         _ userContentController: WKUserContentController,
@@ -319,11 +329,9 @@ private final class GenUIActionProbe: NSObject, WKScriptMessageHandler {
         guard let body = message.body as? [String: Any],
               body["type"] as? String == "action",
               let requestID = body["requestID"] as? NSNumber,
-              let action = body["action"] as? String,
-              let payload = body["payload"] else { return }
+              let action = body["action"] as? String else { return }
         self.requestID = requestID.intValue
         self.action = action
-        self.payload = payload
     }
 }
 

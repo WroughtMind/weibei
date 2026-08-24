@@ -21536,6 +21536,20 @@ final class WorkspaceStore: ObservableObject {
         )
         let result = await courseProjectFileWorker.persistWorkspace(
             prepared.request,
+            portableStateWriter: {
+                [coursePortableStateWriter, courseProjectMutationHook]
+                data, url, directoryIdentity, previousData in
+                try coursePortableStateWriter(
+                    data,
+                    url,
+                    directoryIdentity,
+                    previousData
+                ) {
+                    try courseProjectMutationHook(
+                        .beforeCoursePortableStateCASPlacement
+                    )
+                }
+            },
             workspaceSnapshotWriter: workspaceSnapshotWriter
         )
         if result.failure == nil,
