@@ -1,5 +1,7 @@
 # Pi / Bun 运行时重新构建验收
 
+> **历史文档(2026-07 Pi 技术调研存档)。** Pi 运行时已于 2026-08-22 整体退役,魏碑唯一 Agent 后端为 NativeAgentRuntime(Sources/WeiBeiCore/NativeAgentRuntime/)。本文结论已过时,仅作决策过程存档,不代表现状。
+
 状态：进行中，不代表法律认证或发布批准。
 
 ## 冻结基线
