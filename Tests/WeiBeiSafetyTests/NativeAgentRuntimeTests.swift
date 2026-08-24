@@ -1,5 +1,5 @@
 import XCTest
-import WeiBeiCore
+@testable import WeiBeiCore
 
 final class NativeAgentRuntimeTests: XCTestCase {
     func testSSEFramingAndToolAssembly() throws {
@@ -487,7 +487,7 @@ private struct ToolRecoveryMockLLMAdapter: NativeLLMAdapter {
         let toolResultCount = request.messages.filter { $0.role == .tool }.count
         return AsyncThrowingStream { continuation in
             if toolResultCount == 0 {
-                toolChunks.forEach(continuation.yield)
+                toolChunks.forEach { continuation.yield($0) }
                 continuation.yield(.finish(reason: .toolCalls, replayState: nil))
             } else if toolResultCount == expectedToolResults {
                 continuation.yield(.textDelta(index: 0, text: "完成"))
