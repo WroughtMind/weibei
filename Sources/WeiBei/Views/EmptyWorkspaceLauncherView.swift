@@ -720,7 +720,15 @@ private struct LibraryPlacementNoticeCard: View {
                     "That location is already a WeiBei library. Choose an empty folder instead."
                 )
             } catch {
-                relocationErrorText = error.localizedDescription
+                store.recordCourseLibraryUIFailure(
+                    error,
+                    operation: "first_run_library_migration",
+                    path: url
+                )
+                relocationErrorText = store.ui(
+                    "迁移没有确认完成；魏碑仍保留原资料库记录，尚未启用所选位置。请先确认原位置内容完整、所选文件夹可写，再重试；也可以稍后在设置中更换。",
+                    "The move was not confirmed. WeiBei still keeps the original library record and has not activated the selected location. Check the original contents and make sure the selected folder is writable before trying again, or change it later in Settings."
+                )
             }
             isRelocating = false
         }

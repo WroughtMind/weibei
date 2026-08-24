@@ -133,7 +133,5 @@
         "weibei_course_read"
       ]
     }
-  ],
-  "note" : "Native 侧为确定性脚本夹具，核对工具序列与提案结构；Pi 夹具是 DeepSeek live 基线。",
-  "piFixture" : "Docs\/audit\/2026-08-22-native-agent-runtime-Pi行为夹具\/summary.json"
+  ]
 }

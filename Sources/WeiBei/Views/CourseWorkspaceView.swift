@@ -240,7 +240,15 @@ struct CourseWorkspaceView: View {
             do {
                 try await store.deleteCourse(course.id)
             } catch {
-                courseDeletionError = error.localizedDescription
+                store.recordCourseLibraryUIFailure(
+                    error,
+                    operation: "delete_course",
+                    path: store.courseRootURL(for: course.id)
+                )
+                courseDeletionError = store.ui(
+                    "没有确认删除完成。请先检查课程列表和废纸篓；如果课程仍在魏碑，确认资料库可访问后再重试。",
+                    "The deletion was not confirmed. Check the course list and Trash first. If the course is still in WeiBei, make sure the library is accessible before trying again."
+                )
             }
         }
     }

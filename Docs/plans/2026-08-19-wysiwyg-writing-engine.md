@@ -257,9 +257,7 @@ v1 不做 Step JSONL：正常切换、失焦与退出目标零损失；WebConten
 | 用户可见技术错误中心 | 0 个 |
 | IME 现有行为 | 不得退化 |
 | 正式文件保存 | 复用现有安全链路 |
-| `WorkspaceStore.swift` 净增长 | ≤ 0（`check_file_growth.sh` 专项规则，CI 强制） |
-| `NotesAgentView.swift` / `ReaderView.swift` / `extension.ts` 净增长 | ≤ 50，目标净删除 |
-| `WorkspaceStore+NotesPersistence.swift` 总行数 | ≤ 2000 |
+| 核心共享文件改动 | 按职责、调用链和所有调用者正常评审，不以机械行数作为完成条件 |
 
 ### 5.2 可调整默认值
 
@@ -301,7 +299,7 @@ v1 不做 Step JSONL：正常切换、失焦与退出目标零损失；WebConten
 
 ### 工作包 B · Bridge V2 与 NoteEditingSession（手感首验）
 
-**推荐分支**：`codex/editor-bridge-v2`；占用：`WorkspaceStore.swift`（净增 ≤0）；`NotesAgentView.swift` 目标净删除
+**推荐分支**：`codex/editor-bridge-v2`；占用：`WorkspaceStore.swift`、`NotesAgentView.swift`，均按职责与完整调用链正常评审
 
 **必做**：
 
@@ -477,9 +475,9 @@ v1 不做 Step JSONL：正常切换、失焦与退出目标零损失；WebConten
 - TS 纯逻辑（工作包 A 建）：`npm run test:editor`（node --test + tsx）、`npm run typecheck:editor`。覆盖 bridge envelope 与 generation、revision/dirty reducer、snapshot 合并、math normalization 与金额规则、round-trip、outline diff、changed-range Decorations、checkpoint metadata 与冲突判断。
 - 真实 WKWebView：`swift run WeiBeiWebEditorCheck`。覆盖 IME、Bridge V2、snapshot 请求、Web 进程重建、Math NodeView、粘贴、Slash 与选区命令、表格键盘流、图片与 Mermaid、主题与资源加载、benchmark 计数。
 - Swift：`swift test --filter WeiBeiSafetyTests`。覆盖 session 状态机、stale generation、save-while-typing、fresh snapshot gate、正式保存复用、recovery checkpoint、三方 digest 冲突、切换/失焦/退出、Agent 读写最新正文。
-- 总闸：`make check`（SelfCheck + SafetyTests + WebEditorCheck + PiCheck）；CI 另有产物零差异（`git diff --exit-code -- Sources/WeiBei/Resources/Editor`）、文件增长门禁、`git diff --check`、工作树干净。
+- 总闸：`make check`（SelfCheck + SafetyTests + WebEditorCheck + PiCheck）；CI 另有产物零差异（`git diff --exit-code -- Sources/WeiBei/Resources/Editor`）、`git diff --check`、工作树干净。
 
-**每个 PR 的最小完成条件**：构建与相关检查通过；editor 生成产物随 PR 提交且与源零差异；冻结文件增长门禁通过；草稿 PR 写清占用、实际改动、未做、验证与真实冒烟；用户可见改动至少一次冒烟——执行 Agent 具备画中画能力时做轻量真实 App 冒烟，不具备则以 `WeiBeiWebEditorCheck` 真实 WKWebView harness 冒烟替代并在 PR 注明。
+**每个 PR 的最小完成条件**：构建与相关检查通过；editor 生成产物随 PR 提交且与源零差异；核心文件改动完成正常代码审查；草稿 PR 写清占用、实际改动、未做、验证与真实冒烟；用户可见改动至少一次冒烟——执行 Agent 具备画中画能力时做轻量真实 App 冒烟，不具备则以 `WeiBeiWebEditorCheck` 真实 WKWebView harness 冒烟替代并在 PR 注明。
 
 ---
 
@@ -487,11 +485,11 @@ v1 不做 Step JSONL：正常切换、失焦与退出目标零损失；WebConten
 
 - 每个实现任务从最新 `origin/main` 建短分支 `codex/<任务名>`，当天推草稿 PR；
 - 共享核心面（`WorkspaceStore.swift`、`WeiBeiApp.swift`、`ContentView.swift`、`StableDocumentWorkspace.swift`、`WeiBeiSelfCheck/main.swift`、`Package.swift`、`script/`、`.github/`、`VERSION`）修改前在草稿 PR 声明占用；发现已占用即停手交主会话协调；
-- `WorkspaceStore.swift` 净增长 ≤ 0；`NotesAgentView.swift`/`ReaderView.swift`/`extension.ts` 净增长 ≤ 50 且目标净删除；`WorkspaceStore+NotesPersistence.swift` ≤ 2000 行；新逻辑优先进 `Sources/WeiBei/Editing/`、`WebEditor/src/bridge/`、`WebEditor/src/nodes/` 等聚焦文件；确需豁免在 PR body 写 `[growth-exempt: 原因]`；
+- 核心文件按实际职责与完整调用链评审；新逻辑优先进 `Sources/WeiBei/Editing/`、`WebEditor/src/bridge/`、`WebEditor/src/nodes/` 等聚焦文件，但不为控制行数外移逻辑；
 - 不绕过自动检查，不用回退实现伪造通过；
 - 旧分支只用于取证，不整体 merge 或批量 cherry-pick。
 
-这些仓库规则是执行环境约束，不应反过来驱动产品设计；合理改动确实需要豁免时按流程说明真实理由，而不是扭曲实现讨好行数。
+这些仓库规则是执行环境约束，不应反过来驱动产品设计；合理改动按正常代码审查说明真实理由，而不是扭曲实现讨好行数。
 
 ---
 
@@ -509,7 +507,6 @@ v1 不做 Step JSONL：正常切换、失焦与退出目标零损失；WebConten
 | 双浮层与焦点冲突 | 唯一选区浮层所有者 | 保留现有原生问 Agent 路径 |
 | dynamic import 不稳 | 工作包 A 预研 | 多个本地静态 bundle |
 | 生产无损检查误报 | 严格检查只在 CI | 生产使用备份 + 保守不变量 |
-| 冻结文件行数 | 逻辑外移，目标净删除 | `[growth-exempt]` 需正当理由 |
 
 ---
 
@@ -567,7 +564,7 @@ v1 不做 Step JSONL：正常切换、失焦与退出目标零损失；WebConten
 12. 不懂 Markdown 的用户可以完成完整常见写作；
 13. 未知语法和旧笔记内容不静默丢失；
 14. Bridge V1、旧全文 Binding、旧公式补丁与死代码已删除而非并存；
-15. 自动检查、CI、冻结文件门禁和真实 App 阶段验收全部通过；
+15. 自动检查、CI、核心文件代码审查和真实 App 阶段验收全部通过；
 16. 从干净 `main` 构建的唯一候选版完成用户闭环。
 
 这份计划约束的是正确的产品结果、数据安全和性能结构，不约束执行 Agent 必须用某个漂亮但多余的架构。执行中持续以"能否更简单、更可靠地满足目标"为判断标准。

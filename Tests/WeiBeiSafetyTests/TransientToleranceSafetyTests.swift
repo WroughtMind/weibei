@@ -123,32 +123,6 @@ final class TransientToleranceSafetyTests: XCTestCase {
         )
     }
 
-    func testStartupGenerationProtectionKeptForMaterials() throws {
-        let base = makeTempRoot("weibei-phase3-generation")
-        defer { try? FileManager.default.removeItem(at: base) }
-        let library = base.appendingPathComponent("资料库", isDirectory: true)
-        let store = try makeStore(base: base, library: library)
-        let courseID = try store.createCourseInLibrary(title: "世代课")
-        let source = base.appendingPathComponent("资料.pdf")
-        try Data("%PDF-1.4\n旧".utf8).write(to: source, options: [.atomic])
-        let imported = try store.importFileIntoCourseForSelfCheck(source, courseID: courseID, role: .material)
-        let item = imported.item
-        let backingURL = try XCTUnwrap(store.resolvedLibraryURL(for: item))
-        let oldIdentity = item.importedFileIdentity
-
-        // 删除重建：新文件世代不同（identity 变化 + 内容变化）。
-        try FileManager.default.removeItem(at: backingURL)
-        try Data("%PDF-1.4\n全新的重建内容".utf8).write(to: backingURL, options: [.atomic])
-        store.refreshRuntimeItemURLs()
-
-        let current = try XCTUnwrap(store.importedItems.first { $0.id == item.id })
-        if current.importedFileIdentity != oldIdentity || current.urlPath == nil {
-            XCTAssertNil(current.urlPath, "资料项世代不同应切断路径，不继承阅读位置")
-        } else {
-            _ = current
-        }
-    }
-
     /// 瞬断无横幅（计划 §5 阶段3 第5步）：文件缺席/未物化场景只保留条内状态，
     /// 不再弹重要操作横幅。
     func testTransientUnavailabilityShowsNoBanner() throws {

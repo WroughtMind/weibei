@@ -243,6 +243,7 @@ public struct StudyFlowState: Codable, Hashable, Sendable {
 public struct StudySession: Identifiable, Codable, Hashable, Sendable {
     public var id: UUID
     public var title: String
+    public var titleSetByUser: Bool
     public var messages: [AgentMessage]
     public var summary: String
     /// Courses this Chat has actually used. Chat itself remains global.
@@ -257,6 +258,7 @@ public struct StudySession: Identifiable, Codable, Hashable, Sendable {
     public init(
         id: UUID = UUID(),
         title: String,
+        titleSetByUser: Bool = false,
         messages: [AgentMessage] = [],
         summary: String = "",
         courseID: UUID? = nil,
@@ -270,6 +272,7 @@ public struct StudySession: Identifiable, Codable, Hashable, Sendable {
     ) {
         self.id = id
         self.title = title
+        self.titleSetByUser = titleSetByUser
         self.messages = messages
         self.summary = summary
         self.relatedCourseIDs = Self.normalizedCourseIDs(
@@ -300,6 +303,7 @@ public struct StudySession: Identifiable, Codable, Hashable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case id
         case title
+        case titleSetByUser
         case messages
         case summary
         case relatedCourseIDs
@@ -316,6 +320,7 @@ public struct StudySession: Identifiable, Codable, Hashable, Sendable {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         id = try values.decode(UUID.self, forKey: .id)
         title = try values.decode(String.self, forKey: .title)
+        titleSetByUser = try values.decodeIfPresent(Bool.self, forKey: .titleSetByUser) ?? false
         messages = try values.decodeIfPresent([AgentMessage].self, forKey: .messages) ?? []
         summary = try values.decodeIfPresent(String.self, forKey: .summary) ?? ""
         let current = try values.decodeIfPresent([UUID].self, forKey: .relatedCourseIDs)
@@ -332,6 +337,7 @@ public struct StudySession: Identifiable, Codable, Hashable, Sendable {
         var values = encoder.container(keyedBy: CodingKeys.self)
         try values.encode(id, forKey: .id)
         try values.encode(title, forKey: .title)
+        try values.encode(titleSetByUser, forKey: .titleSetByUser)
         try values.encode(messages, forKey: .messages)
         try values.encode(summary, forKey: .summary)
         try values.encode(relatedCourseIDs, forKey: .relatedCourseIDs)

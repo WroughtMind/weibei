@@ -44,19 +44,13 @@ jobs:
           PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
           PUSH_BEFORE_SHA: ${{ github.event.before }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
-          PR_BODY: ${{ github.event.pull_request.body || '' }}
-          GROWTH_EXEMPT_LABEL: ${{ contains(github.event.pull_request.labels.*.name, 'growth-exempt') }}
         run: |
           ./script/ci_changed_scopes.sh --self-check
-          ./script/check_file_growth.sh --self-check
           base="$PUSH_BEFORE_SHA"
           if [[ "$EVENT_NAME" == "pull_request" ]]; then
             base="$(git merge-base "$PR_BASE_SHA" "$HEAD_SHA")"
           elif [[ "$EVENT_NAME" == "workflow_dispatch" || "$base" =~ ^0+$ ]] || ! git cat-file -e "$base^{commit}" 2>/dev/null; then
             base="$(git rev-parse "$HEAD_SHA^")"
-          fi
-          if [[ "$EVENT_NAME" == "pull_request" ]]; then
-            ./script/check_file_growth.sh "$base" "$HEAD_SHA"
           fi
           scopes="$(./script/ci_changed_scopes.sh "$base" "$HEAD_SHA")"
           printf '%s\n' "$scopes"
@@ -81,24 +75,13 @@ jobs:
           swift run WeiBeiDev selfcheck-assertions
           swift run WeiBeiDev nslog-scan
 
-      - name: 运行 Pi 终止语义自检
-        if: (github.event_name == 'pull_request' && steps.scope.outputs.pi == 'true') || (github.event_name == 'workflow_dispatch' && inputs.full_suite)
-        run: WEIBEI_PI_TERMINAL_SELF_CHECK_ONLY=1 swift run WeiBeiSelfCheck
-
       - name: 安装 Node 依赖
-        if: (github.event_name == 'pull_request' && (steps.scope.outputs.pi == 'true' || steps.scope.outputs.editor == 'true' || steps.scope.outputs.tools == 'true')) || (github.event_name == 'workflow_dispatch' && inputs.full_suite)
+        if: (github.event_name == 'pull_request' && (steps.scope.outputs.agent == 'true' || steps.scope.outputs.editor == 'true' || steps.scope.outputs.tools == 'true')) || (github.event_name == 'workflow_dispatch' && inputs.full_suite)
         run: npm ci
 
       - name: 运行 Node 工具脚本类型检查
         if: (github.event_name == 'pull_request' && steps.scope.outputs.tools == 'true') || (github.event_name == 'workflow_dispatch' && inputs.full_suite)
         run: npm run typecheck:tools
-
-      - name: 运行 Agent 扩展自检
-        if: (github.event_name == 'pull_request' && steps.scope.outputs.pi == 'true') || (github.event_name == 'workflow_dispatch' && inputs.full_suite)
-        run: |
-          npm run typecheck:agent
-          npx tsx script/check-agent-project-tools.ts
-          node --import tsx script/check_pi_runtime_license_report.ts
 
       - name: 运行编辑器自检
         if: (github.event_name == 'pull_request' && steps.scope.outputs.editor == 'true') || (github.event_name == 'workflow_dispatch' && inputs.full_suite)
@@ -108,8 +91,8 @@ jobs:
           git diff --exit-code -- Sources/WeiBei/Resources/Editor
           swift run WeiBeiWebEditorCheck
 
-      - name: 运行课程目录与数据安全自检
-        if: (github.event_name == 'pull_request' && steps.scope.outputs.data_safety == 'true') || (github.event_name == 'workflow_dispatch' && inputs.full_suite)
+      - name: 运行课程目录、数据与 Agent 安全自检
+        if: (github.event_name == 'pull_request' && (steps.scope.outputs.data_safety == 'true' || steps.scope.outputs.agent == 'true')) || (github.event_name == 'workflow_dispatch' && inputs.full_suite)
         run: stdbuf -oL -eL swift test --filter WeiBeiSafetyTests
 
       - name: 检查空白与生成文件

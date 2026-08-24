@@ -9,42 +9,37 @@ import WeiBeiCore
 
 @MainActor
 enum AgentProviderReadiness {
-    private static var oauth: PiOAuthService { PiOAuthService.shared }
+    private static var oauth: AgentAccountService { AgentAccountService.shared }
 
-    /// 与 SettingsView.activePiProviderID 相同的映射:custom/llamaCpp 的
-    /// provider id 由当前 Base URL 派生,其余直接用 piProviderName。
-    static func activePiProviderID(for store: WorkspaceStore) -> String {
+    /// 与 SettingsView.activeCredentialProviderID 相同的映射:custom/llamaCpp 的
+    /// provider id 由当前 Base URL 派生,其余直接用 credentialProviderID。
+    static func activeCredentialProviderID(for store: WorkspaceStore) -> String {
         guard store.agentProviderID == .custom || store.agentProviderID == .llamaCpp else {
-            return store.agentProviderID.piProviderName
+            return store.agentProviderID.credentialProviderID
         }
         return (try? AgentProviderEndpoint(
             provider: store.agentProviderID,
             baseURL: store.agentBaseURL
-        ).piProviderID) ?? "weibei-invalid-endpoint"
+        ).credentialProviderID) ?? "weibei-invalid-endpoint"
     }
 
-    static func piProviderID(for provider: AgentProviderID, store: WorkspaceStore) -> String {
+    static func credentialProviderID(for provider: AgentProviderID, store: WorkspaceStore) -> String {
         guard provider == .custom || provider == .llamaCpp else {
-            return provider.piProviderName
+            return provider.credentialProviderID
         }
         return (try? AgentProviderEndpoint(
             provider: provider,
             baseURL: store.agentBaseURL
-        ).piProviderID) ?? "weibei-invalid-endpoint"
+        ).credentialProviderID) ?? "weibei-invalid-endpoint"
     }
 
-    static func piAuthTypes(for provider: AgentProviderID, store: WorkspaceStore) -> [PiCredentialType] {
-        if let types = oauth.catalog?.providers.first(where: {
-            $0.id == piProviderID(for: provider, store: store)
-        })?.authTypes, !types.isEmpty {
-            return types
-        }
-        return provider.kind == .subscription ? [.oauth] : [.apiKey]
+    static func authTypes(for provider: AgentProviderID) -> [AgentCredentialType] {
+        oauth.authTypes(for: provider)
     }
 
     /// provider 同时支持两种认证时以用户选择为准;否则只有一种可用。
     static func effectiveAuthMethod(for store: WorkspaceStore) -> AgentAuthMethod {
-        let types = piAuthTypes(for: store.agentProviderID, store: store)
+        let types = authTypes(for: store.agentProviderID)
         if types.contains(.oauth), types.contains(.apiKey) {
             return store.agentAuthMethod
         }
@@ -54,7 +49,7 @@ enum AgentProviderReadiness {
     /// API Key 型:密钥已存;Azure 额外要求密钥绑定到当前服务地址。
     static func hasActiveAPICredential(for store: WorkspaceStore) -> Bool {
         let isStored = oauth.isConfigured(
-            providerID: activePiProviderID(for: store),
+            providerID: activeCredentialProviderID(for: store),
             type: .apiKey
         )
         guard store.agentProviderID == .azureOpenAI else { return isStored }
@@ -63,7 +58,7 @@ enum AgentProviderReadiness {
             baseURL: store.agentBaseURL
         ) else { return false }
         return isStored && oauth.catalog?.credentials.contains(where: {
-            $0.providerId == AgentProviderID.azureOpenAI.piProviderName
+            $0.providerId == AgentProviderID.azureOpenAI.credentialProviderID
                 && $0.type == .apiKey
                 && $0.boundEndpoint == endpoint.baseURL
         }) == true
@@ -71,7 +66,7 @@ enum AgentProviderReadiness {
 
     /// 订阅型:该 provider 支持 OAuth 且已完成链接。
     static func isSubscriptionLinked(for store: WorkspaceStore) -> Bool {
-        guard piAuthTypes(for: store.agentProviderID, store: store).contains(.oauth) else {
+        guard authTypes(for: store.agentProviderID).contains(.oauth) else {
             return false
         }
         return effectiveAuthMethod(for: store) == .subscription
@@ -90,11 +85,11 @@ enum AgentProviderReadiness {
 
 /// 对话为空且模型服务未配置时的一行安静提示,带直达设置的入口。
 /// 放在消息列表顶部,不占常驻空间——配置完成后自动消失。
-/// 显隐条件必须由本视图自己判断:父视图不观察 PiOAuthService,
+/// 显隐条件必须由本视图自己判断:父视图不观察 AgentAccountService,
 /// 条件写在父级时,配置完成后的 catalog 更新不会触发父级重算,提示会残留。
 struct AgentUnconfiguredHint: View {
     @ObservedObject var store: WorkspaceStore
-    @ObservedObject private var oauth = PiOAuthService.shared
+    @ObservedObject private var oauth = AgentAccountService.shared
     @Environment(\.openSettings) private var openSettings
 
     var body: some View {

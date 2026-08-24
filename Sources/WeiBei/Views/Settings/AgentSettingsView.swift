@@ -3,7 +3,7 @@ import WeiBeiCore
 
 // MARK: - 对话服务 card (Settings → 对话)
 //
-// One decision chain: service → embedded-Pi authentication → embedded-Pi model.
+// One decision chain: service → authentication → model.
 
 extension SettingsView {
     /// Entry point — used by `agentSettings` in WeiBeiApp.swift.
@@ -11,7 +11,6 @@ extension SettingsView {
     func agentSettingsContent() -> some View {
         VStack(alignment: .leading, spacing: 16) {
             agentServiceCard
-            nativeBackendDebugCard
         }
         .sheet(isPresented: $showManualModelEntry) {
             agentManualModelSheet
@@ -30,21 +29,21 @@ extension SettingsView {
             settingsRow(title: store.ui("服务", "Service"), detail: "") {
                 compactMenu(store.agentProviderID.label(language: store.interfaceLanguage)) {
                     Section(AgentProviderKind.subscription.label(language: store.interfaceLanguage)) {
-                        ForEach(AgentProviderID.subscriptionProviders) { provider in
+                        ForEach(AgentProviderID.subscriptionProviders.filter(oauthService.isAvailable)) { provider in
                             Button(provider.label(language: store.interfaceLanguage)) {
                                 applyProvider(provider)
                             }
                         }
                     }
                     Section(AgentProviderKind.apiKey.label(language: store.interfaceLanguage)) {
-                        ForEach(AgentProviderID.apiKeyProviders) { provider in
+                        ForEach(AgentProviderID.apiKeyProviders.filter(oauthService.isAvailable)) { provider in
                             Button(provider.label(language: store.interfaceLanguage)) {
                                 applyProvider(provider)
                             }
                         }
                     }
                     Section(AgentProviderKind.localOrCustom.label(language: store.interfaceLanguage)) {
-                        ForEach(AgentProviderID.localOrCustomProviders) { provider in
+                        ForEach(AgentProviderID.localOrCustomProviders.filter(oauthService.isAvailable)) { provider in
                             Button(provider.label(language: store.interfaceLanguage)) {
                                 applyProvider(provider)
                             }
@@ -85,27 +84,6 @@ extension SettingsView {
 
             // Quiet reminder — only when attention is needed.
             agentStatusReminder
-        }
-    }
-
-    private var nativeBackendDebugCard: some View {
-        settingsGroup(store.ui("调试（临时）", "Debug (temporary)")) {
-            settingsRow(
-                title: store.ui("使用 Native 引擎", "Use Native engine"),
-                detail: store.ui(
-                    "只为这次验收。默认仍是 Pi；关掉即回去。删除 Pi 时会去掉这个开关。当前生效：\(NativeAgentBackendSelection.current == .native ? "Native" : "Pi")",
-                    "Temporary acceptance switch. Default stays Pi; turn off to revert. Remove with Pi. Active: \(NativeAgentBackendSelection.current == .native ? "Native" : "Pi")"
-                ),
-                showsBottomDivider: false
-            ) {
-                settingsSwitch(
-                    isOn: Binding(
-                        get: { debugStudyAgentBackendRaw == StudyAgentBackend.native.rawValue },
-                        set: { debugStudyAgentBackendRaw = $0 ? StudyAgentBackend.native.rawValue : "" }
-                    ),
-                    accessibilityLabel: store.ui("使用 Native 引擎", "Use Native engine")
-                )
-            }
         }
     }
 
@@ -199,10 +177,10 @@ extension SettingsView {
     private func applyProvider(_ provider: AgentProviderID) {
         apiKeyDraft = ""
         store.setAgentProviderID(provider)
-        if let firstModel = oauthService.models(providerID: piProviderID(for: provider)).first {
+        if let firstModel = oauthService.models(provider: provider).first {
             store.updateModelName(firstModel)
         }
-        let authTypes = piAuthTypes(for: provider)
+        let authTypes = authTypes(for: provider)
         store.setAgentAuthMethod(
             authTypes.contains(.oauth) && provider.kind == .subscription
                 ? .subscription
@@ -214,7 +192,7 @@ extension SettingsView {
 
     @ViewBuilder
     private var agentAuthRow: some View {
-        if activePiAuthTypes.contains(.oauth), activePiAuthTypes.contains(.apiKey) {
+        if activeAuthTypes.contains(.oauth), activeAuthTypes.contains(.apiKey) {
             settingsRow(title: store.ui("认证方式", "Authentication"), detail: "") {
                 compactMenu(activeAgentAuthMethod.label(language: store.interfaceLanguage)) {
                     Button(AgentAuthMethod.subscription.label(language: store.interfaceLanguage)) {
@@ -234,33 +212,24 @@ extension SettingsView {
         }
     }
 
-    /// Bedrock, Vertex, and Cloudflare need several guided fields rather than a
-    /// single pasted key, so they get their own "设置认证" entry point.
-    private var requiresGuidedAuthentication: Bool {
-        switch store.agentProviderID {
-        case .amazonBedrock,
-             .googleVertex,
-             .cloudflareWorkersAI,
-             .cloudflareAIGateway:
-            return true
-        default:
-            return false
-        }
-    }
-
     @ViewBuilder
     private var agentAPIKeyAuth: some View {
-        if requiresGuidedAuthentication {
-            agentGuidedAuth
-        } else {
+        if oauthService.isAvailable(store.agentProviderID) {
             agentSimpleAPIKeyAuth
+        } else {
+            settingsRow(title: store.ui("认证", "Authentication")) {
+                settingsNote(
+                    store.ui("该服务尚未接入原生运行时。", "This service is not available in the native runtime yet."),
+                    icon: "exclamationmark.triangle"
+                )
+            }
         }
     }
 
     private var agentSimpleAPIKeyAuth: some View {
         settingsRow(title: store.ui("密钥", "API Key")) {
             let hasStoredCredential = oauthService.isConfigured(
-                providerID: activePiProviderID,
+                providerID: activeCredentialProviderID,
                 type: .apiKey
             )
             VStack(alignment: .trailing, spacing: 8) {
@@ -303,67 +272,20 @@ extension SettingsView {
                         .buttonStyle(WeiBeiTextActionButtonStyle())
                     }
                 }
-                piManagementPrompt
                 if let progress = oauthService.statusMessage,
-                    oauthService.isLoggingIn,
-                    oauthService.pendingPrompt == nil {
-                    settingsNote(progress, icon: "arrow.triangle.2.circlepath")
+                    oauthService.isLoggingIn {
+                    settingsNote(
+                        store.ui(progress.chinese, progress.english),
+                        icon: "arrow.triangle.2.circlepath"
+                    )
                 }
                 if let error = oauthService.lastError {
-                    settingsNote(error, icon: "exclamationmark.triangle")
+                    settingsNote(
+                        store.ui(error.chinese, error.english),
+                        icon: "exclamationmark.triangle"
+                    )
                 }
             }
-            .animation(WeiBeiMotion.reveal, value: oauthService.pendingPrompt != nil)
-            .animation(WeiBeiMotion.reveal, value: oauthService.isLoggingIn)
-        }
-    }
-
-    /// Guided providers: no generic key box. The existing step-by-step prompt
-    /// above surfaces one control at a time until the credential is complete.
-    private var agentGuidedAuth: some View {
-        settingsRow(title: store.ui("认证", "Authentication")) {
-            let hasStoredCredential = oauthService.isConfigured(
-                providerID: activePiProviderID,
-                type: .apiKey
-            )
-            VStack(alignment: .trailing, spacing: 8) {
-                piManagementPrompt
-                HStack(spacing: 8) {
-                    if activeAPICredentialIsConfigured {
-                        settingsPill(
-                            title: store.ui("已配置", "Configured"),
-                            icon: "checkmark.seal.fill",
-                            active: true
-                        )
-                    } else if !oauthService.isLoggingIn {
-                        Button(store.ui("设置认证", "Set Up Authentication")) {
-                            oauthService.startAPIKeyLogin(
-                                provider: store.agentProviderID,
-                                baseURL: store.agentBaseURL,
-                                model: store.modelName
-                            )
-                        }
-                        .buttonStyle(WeiBeiTextActionButtonStyle(active: true))
-                    }
-                    if hasStoredCredential {
-                        Button(store.ui("清除", "Clear")) { clearActiveAPICredential() }
-                            .buttonStyle(WeiBeiTextActionButtonStyle())
-                    }
-                    if oauthService.isLoggingIn {
-                        Button(store.ui("取消", "Cancel")) { oauthService.cancelLogin() }
-                            .buttonStyle(WeiBeiTextActionButtonStyle())
-                    }
-                }
-                if let progress = oauthService.statusMessage,
-                    oauthService.isLoggingIn,
-                    oauthService.pendingPrompt == nil {
-                    settingsNote(progress, icon: "arrow.triangle.2.circlepath")
-                }
-                if let error = oauthService.lastError {
-                    settingsNote(error, icon: "exclamationmark.triangle")
-                }
-            }
-            .animation(WeiBeiMotion.reveal, value: oauthService.pendingPrompt != nil)
             .animation(WeiBeiMotion.reveal, value: oauthService.isLoggingIn)
         }
     }
@@ -414,117 +336,55 @@ extension SettingsView {
                             .buttonStyle(WeiBeiTextActionButtonStyle())
                     }
                 }
-                piManagementPrompt
                 if let progress = oauthService.statusMessage,
-                    oauthService.isLoggingIn,
-                    oauthService.pendingPrompt == nil {
-                    settingsNote(progress, icon: "arrow.triangle.2.circlepath")
+                    oauthService.isLoggingIn {
+                    settingsNote(
+                        store.ui(progress.chinese, progress.english),
+                        icon: "arrow.triangle.2.circlepath"
+                    )
                 }
                 if let error = oauthService.lastError {
-                    settingsNote(error, icon: "exclamationmark.triangle")
+                    settingsNote(
+                        store.ui(error.chinese, error.english),
+                        icon: "exclamationmark.triangle"
+                    )
                 }
             }
-            .animation(WeiBeiMotion.reveal, value: oauthService.pendingPrompt != nil)
             .animation(WeiBeiMotion.reveal, value: oauthService.isLoggingIn)
         }
     }
 
     private var currentOAuthProvider: AgentProviderID? {
-        activePiAuthTypes.contains(.oauth) ? store.agentProviderID : nil
+        activeAuthTypes.contains(.oauth) ? store.agentProviderID : nil
     }
 
-    private var activePiAuthTypes: [PiCredentialType] {
-        piAuthTypes(for: store.agentProviderID)
+    private var activeAuthTypes: [AgentCredentialType] {
+        authTypes(for: store.agentProviderID)
     }
 
     private var activeAgentAuthMethod: AgentAuthMethod {
         AgentProviderReadiness.effectiveAuthMethod(for: store)
     }
 
-    private func piAuthTypes(for provider: AgentProviderID) -> [PiCredentialType] {
-        AgentProviderReadiness.piAuthTypes(for: provider, store: store)
+    private func authTypes(for provider: AgentProviderID) -> [AgentCredentialType] {
+        AgentProviderReadiness.authTypes(for: provider)
     }
 
     /// The runtime's step question, styled like a quiet right-aligned field label —
     /// not a warning note — above a control that matches the rest of the card.
-    @ViewBuilder
-    private var piManagementPrompt: some View {
-        if let prompt = oauthService.pendingPrompt {
-            VStack(alignment: .trailing, spacing: 8) {
-                Text(prompt.message)
-                    .weiBeiText(12)
-                    .foregroundStyle(WeiBeiTheme.secondaryInk)
-                    .multilineTextAlignment(.trailing)
-                    .fixedSize(horizontal: false, vertical: true)
-                HStack(spacing: 8) {
-                    if prompt.type == .select {
-                        compactMenu(promptSelectionLabel(prompt)) {
-                            ForEach(prompt.options ?? [], id: \.id) { option in
-                                Button(option.label) { oauthService.promptValue = option.id }
-                            }
-                        }
-                    } else if prompt.type == .secret {
-                        SecureField(
-                            "",
-                            text: $oauthService.promptValue,
-                            prompt: Text(prompt.placeholder ?? "")
-                                                                .foregroundStyle(WeiBeiTheme.placeholderInk)
-                        )
-                        .textFieldStyle(.plain)
-                        .weiBeiText(13)
-                        .foregroundColor(WeiBeiTheme.ink)
-                        .weiBeiText(13)
-                        .weibeiInputSurface(active: true, height: 38)
-                        .frame(width: SettingsView.controlWidth)
-                        .onSubmit { oauthService.submitPrompt() }
-                    } else {
-                        TextField(
-                            "",
-                            text: $oauthService.promptValue,
-                            prompt: Text(prompt.placeholder ?? "")
-                                                                .foregroundStyle(WeiBeiTheme.placeholderInk)
-                        )
-                        .textFieldStyle(.plain)
-                        .weiBeiText(13)
-                        .foregroundColor(WeiBeiTheme.ink)
-                        .weiBeiText(13)
-                        .weibeiInputSurface(active: true, height: 38)
-                        .frame(width: SettingsView.controlWidth)
-                        .onSubmit { oauthService.submitPrompt() }
-                    }
-                    Button(store.ui("继续", "Continue")) { oauthService.submitPrompt() }
-                        .buttonStyle(WeiBeiTextActionButtonStyle(active: !oauthService.promptValue.isEmpty))
-                }
-            }
-            .transition(.opacity)
-        }
-    }
-
-    private func promptSelectionLabel(_ prompt: PiManagementPrompt) -> String {
-        let options = prompt.options ?? []
-        if let selected = options.first(where: { $0.id == oauthService.promptValue }) {
-            return selected.label
-        }
-        return options.first?.label ?? prompt.message
-    }
-
     private func saveActiveAPIKey() {
         let key = apiKeyDraft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !key.isEmpty, !oauthService.isLoggingIn else { return }
         oauthService.startAPIKeyLogin(
             key,
             provider: store.agentProviderID,
-            baseURL: store.agentBaseURL,
-            model: store.modelName
+            baseURL: store.agentBaseURL
         )
     }
 
     private func clearActiveAPICredential() {
         apiKeyDraft = ""
-        oauthService.logoutCredential(
-            providerID: activePiProviderID,
-            displayName: store.agentProviderID.label(language: store.interfaceLanguage)
-        )
+        oauthService.logoutCredential(providerID: activeCredentialProviderID)
     }
 
     // MARK: Status reminder — only when attention is needed
@@ -537,7 +397,6 @@ extension SettingsView {
                   activeAgentAuthMethod != .subscription,
                   !activeAPICredentialIsConfigured,
                   apiKeyDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-                  oauthService.pendingPrompt == nil,
                   !oauthService.isLoggingIn {
             if hasStaleAzureCredential {
                 settingsNote(
@@ -555,9 +414,9 @@ extension SettingsView {
                     ),
                     icon: "exclamationmark.triangle"
                 )
-            } else if requiresGuidedAuthentication {
+            } else if !oauthService.isAvailable(store.agentProviderID) {
                 settingsNote(
-                    store.ui("尚未完成认证，对话将无法连接。", "Authentication not completed — chat won't connect."),
+                    store.ui("该服务尚未接入原生运行时。", "This service is not available in the native runtime yet."),
                     icon: "exclamationmark.triangle"
                 )
             } else {
@@ -574,7 +433,7 @@ extension SettingsView {
             return false
         }
         return oauthService.isConfigured(
-            providerID: store.agentProviderID.piProviderName,
+            providerID: store.agentProviderID.credentialProviderID,
             type: .apiKey
         )
     }
@@ -586,7 +445,7 @@ extension SettingsView {
     private var hasStaleAzureCredential: Bool {
         store.agentProviderID == .azureOpenAI
             && oauthService.isConfigured(
-                providerID: AgentProviderID.azureOpenAI.piProviderName,
+                providerID: AgentProviderID.azureOpenAI.credentialProviderID,
                 type: .apiKey
             )
             && !activeAPICredentialIsConfigured
@@ -618,7 +477,7 @@ extension SettingsView {
                     get: { store.modelName },
                     set: { store.updateModelName($0) }
                 ),
-                prompt: Text(oauthService.models(providerID: activePiProviderID).first ?? "model-id")
+                prompt: Text(oauthService.models(provider: store.agentProviderID).first ?? "model-id")
                     .foregroundStyle(WeiBeiTheme.placeholderInk)
             )
             .textFieldStyle(.plain)

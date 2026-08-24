@@ -3,7 +3,7 @@ import WeiBeiCore
 
 /// 记过标记 JSON:`[{id, text}]`(与 selectionAskMarksJSON 同构,排序稳定防 WebKit IPC 抖动)。
 func selectionRemarkMarksJSON(_ records: [SelectionRemarkRecord]) -> String {
-    let marks = records.prefix(60).map { record -> [String: String] in
+    let marks = records.map { record -> [String: String] in
         [
             "id": record.id.uuidString,
             "text": String(record.selectionText.prefix(240)),

@@ -16,11 +16,9 @@ struct SettingsView: View {
     // (same-target extensions) can bind to them.
     @EnvironmentObject var store: WorkspaceStore
     @EnvironmentObject private var updateService: WeiBeiUpdateService
-    @StateObject var oauthService = PiOAuthService.shared
+    @StateObject var oauthService = AgentAccountService.shared
     @State private var selectedSection: SettingsSection = .agent
     @FocusState var focusedField: Field?
-    // Model picker state (AgentModelPicker extension).
-    @State var spinAngle: Double = 0
     @State var showManualModelEntry = false
     // Profile inline-rename state (AgentSettingsView extension).
     @State var isRenamingActiveProfile = false
@@ -39,21 +37,21 @@ struct SettingsView: View {
     @State private var feedbackBody = ""
     @State private var feedbackBusy = false
     @State private var feedbackStatus: String?
+    @State private var showsFullUpdateNotes = false
     // 资料库位置迁移（计划 §4.1）。
     @State private var pendingMigrationDestination: URL?
     @State private var migrationErrorText: String?
     @State private var migrationSuccessText: String?
     @State private var isMigratingLibrary = false
-    @AppStorage(NativeAgentBackendSelection.debugDefaultsKey) var debugStudyAgentBackendRaw = ""
 
     private var buildInfo: WeiBeiAppBuildInfo { .current() }
 
-    var activePiProviderID: String {
-        AgentProviderReadiness.activePiProviderID(for: store)
+    var activeCredentialProviderID: String {
+        AgentProviderReadiness.activeCredentialProviderID(for: store)
     }
 
-    func piProviderID(for provider: AgentProviderID) -> String {
-        AgentProviderReadiness.piProviderID(for: provider, store: store)
+    func credentialProviderID(for provider: AgentProviderID) -> String {
+        AgentProviderReadiness.credentialProviderID(for: provider, store: store)
     }
 
     /// Max width for long text fields (Base URL, API key) — not for every control.
@@ -80,7 +78,7 @@ struct SettingsView: View {
             selectedSection = .agent
             oauthService.refreshCatalog()
         }
-        .onReceive(NotificationCenter.default.publisher(for: .weiBeiPiOAuthDidSucceed)) { note in
+        .onReceive(NotificationCenter.default.publisher(for: .weiBeiAgentOAuthDidSucceed)) { note in
             guard let raw = note.userInfo?["provider"] as? String,
                   let provider = AgentProviderID(rawValue: raw) else { return }
             store.shutdownAgentRuntime()
@@ -90,23 +88,23 @@ struct SettingsView: View {
                 provider: provider,
                 authMethod: .subscription
             )
-            if let firstModel = oauthService.models(providerID: provider.piProviderName).first {
+            if let firstModel = oauthService.models(provider: provider).first {
                 store.updateModelName(firstModel)
             }
-            oauthService.refreshCatalog(force: true)
+            oauthService.refreshCatalog()
         }
-        .onReceive(NotificationCenter.default.publisher(for: .weiBeiPiCredentialsDidChange)) { note in
+        .onReceive(NotificationCenter.default.publisher(for: .weiBeiAgentCredentialsDidChange)) { note in
             store.shutdownAgentRuntime()
-            guard note.userInfo?["provider"] as? String == activePiProviderID else {
+            guard note.userInfo?["provider"] as? String == activeCredentialProviderID else {
                 return
             }
-            if note.userInfo?["type"] as? String == PiCredentialType.apiKey.rawValue {
+            if note.userInfo?["type"] as? String == AgentCredentialType.apiKey.rawValue {
                 apiKeyDraft = ""
             }
-            oauthService.refreshCatalog(force: true)
+            oauthService.refreshCatalog()
         }
         .onChange(of: oauthService.catalog) { _, _ in
-            let models = oauthService.models(providerID: activePiProviderID)
+            let models = oauthService.models(provider: store.agentProviderID)
             let current = store.modelName.trimmingCharacters(in: .whitespacesAndNewlines)
             if let firstModel = models.first,
                !models.contains(current),
@@ -462,7 +460,15 @@ struct SettingsView: View {
                     "That location is already a WeiBei library. Open it instead, or choose an empty folder."
                 )
             } catch {
-                migrationErrorText = error.localizedDescription
+                store.recordCourseLibraryUIFailure(
+                    error,
+                    operation: "settings_library_migration",
+                    path: destination
+                )
+                migrationErrorText = store.ui(
+                    "迁移没有确认完成；魏碑仍保留原资料库记录，尚未启用目标位置。请先确认原位置内容完整、目标文件夹可写，再重试。",
+                    "The move was not confirmed. WeiBei still keeps the original library record and has not activated the destination. Check the original contents and make sure the destination is writable before trying again."
+                )
             }
             isMigratingLibrary = false
         }
@@ -564,8 +570,8 @@ struct SettingsView: View {
             .foregroundStyle(WeiBeiTheme.tertiaryInk)
             .padding(.horizontal, 2)
 
-            if let shortcutStatusMessage, !shortcutStatusMessage.isEmpty {
-                Text(shortcutStatusMessage)
+            if let message = shortcutStatusMessage ?? storedShortcutWarning, !message.isEmpty {
+                Text(message)
                     .font(SettingsType.detail)
                     .foregroundStyle(WeiBeiTheme.cinnabar.opacity(0.90))
                     .padding(.horizontal, 2)
@@ -594,6 +600,29 @@ struct SettingsView: View {
             .padding(.top, 2)
         }
         .onDisappear { stopShortcutRecording() }
+    }
+
+    private var storedShortcutWarning: String? {
+        for id in AppShortcutID.allCases {
+            guard let chord = store.customShortcutOverrides[id] else { continue }
+            if AppShortcutCatalog.isReservedTextEditingChord(chord) {
+                return store.ui(
+                    "已保留「\(id.title(language: store.interfaceLanguage))」的旧设置，但 \(chord.display) 保留给文本编辑，原组合不执行。",
+                    "The saved setting for “\(id.title(language: store.interfaceLanguage))” is preserved, but \(chord.display) is reserved for text editing and will not run."
+                )
+            }
+            if let conflict = AppShortcutCatalog.conflict(
+                for: chord,
+                excluding: id,
+                overrides: store.customShortcutOverrides
+            ) {
+                return store.ui(
+                    "已保留原设置；「\(id.title(language: store.interfaceLanguage))」与「\(conflict.title(language: store.interfaceLanguage))」冲突，请改其中一项。",
+                    "Saved settings are preserved; “\(id.title(language: store.interfaceLanguage))” conflicts with “\(conflict.title(language: store.interfaceLanguage))”. Rebind one of them."
+                )
+            }
+        }
+        return nil
     }
 
     private func shortcutKeyChip(_ id: AppShortcutID) -> some View {
@@ -628,8 +657,10 @@ struct SettingsView: View {
         .contextMenu {
             Button(store.ui("恢复默认", "Reset to Default")) {
                 stopShortcutRecording()
-                store.resetShortcut(id)
-                shortcutStatusMessage = nil
+                shortcutStatusMessage = store.resetShortcut(id) ? nil : store.ui(
+                    "默认组合正被其他动作使用，请先改掉冲突项。",
+                    "The default chord is used by another action. Rebind that action first."
+                )
             }
         }
     }
@@ -658,16 +689,21 @@ struct SettingsView: View {
 
     private func applyRecordedShortcut(_ id: AppShortcutID, chord: AppShortcutChord) {
         defer { stopShortcutRecording() }
+        guard !AppShortcutCatalog.isReservedTextEditingChord(chord) else {
+            shortcutStatusMessage = store.ui(
+                "⌘B 和 ⌘F 保留给文本编辑，请使用其他组合。",
+                "⌘B and ⌘F are reserved for text editing. Choose another shortcut."
+            )
+            return
+        }
         if let conflict = AppShortcutCatalog.conflict(
             for: chord,
             excluding: id,
             overrides: store.customShortcutOverrides
         ) {
-            // Still apply, but surface the conflict so the user can fix the other binding.
-            store.setShortcut(id, chord: chord)
             shortcutStatusMessage = store.ui(
-                "已改绑；与「\(conflict.title(language: store.interfaceLanguage))」冲突，请再改其中一项。",
-                "Saved; conflicts with “\(conflict.title(language: store.interfaceLanguage))”. Rebind one of them."
+                "未改绑；与「\(conflict.title(language: store.interfaceLanguage))」冲突。",
+                "Not saved; conflicts with “\(conflict.title(language: store.interfaceLanguage))”."
             )
             return
         }
@@ -712,7 +748,18 @@ struct SettingsView: View {
                         detail: userFacingUpdateDetail(availableUpdate),
                         showsBottomDivider: false
                     ) {
-                        EmptyView()
+                        if availableUpdate.releaseNotesLines.count > availableUpdate.summaryLines.count {
+                            Button {
+                                withAnimation(WeiBeiMotion.panel) {
+                                    showsFullUpdateNotes.toggle()
+                                }
+                            } label: {
+                                Text(showsFullUpdateNotes
+                                     ? store.ui("收起", "Collapse")
+                                     : store.ui("展开全文", "Show All"))
+                            }
+                            .buttonStyle(WeiBeiTextActionButtonStyle(active: true))
+                        }
                     }
                 }
             }
@@ -748,8 +795,8 @@ struct SettingsView: View {
                 }
             }
 
-            if case let .failed(message) = updateService.status {
-                Text(store.ui("更新失败：\(message)", "Update failed: \(message)"))
+            if case .failed = updateService.status {
+                Text(store.ui("更新失败，请重试。", "Update failed. Please try again."))
                     .font(SettingsType.detail)
                     .foregroundStyle(WeiBeiTheme.tertiaryInk)
                     .padding(.horizontal, 4)
@@ -1021,9 +1068,10 @@ struct SettingsView: View {
     }
 
     private func userFacingUpdateDetail(_ update: WeiBeiAvailableUpdate) -> String {
-        update.summaryLines.isEmpty
+        let lines = showsFullUpdateNotes ? update.releaseNotesLines : update.summaryLines
+        return lines.isEmpty
             ? store.ui("包含最新改进和修复。", "Includes the latest improvements and fixes.")
-            : update.summaryLines.joined(separator: "\n")
+            : lines.joined(separator: "\n")
     }
 
     private func settingsSidebarButton(_ section: SettingsSection) -> some View {

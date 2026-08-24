@@ -397,6 +397,7 @@ struct NotePaneView: View {
     @State private var noteTabTitleDraft = ""
     @State private var editingNoteTabTitle = false
     @State private var editorRecoveryGeneration = 0
+    @State private var editorRecoveryState = EditorRecoveryState.idle
     @State private var noteOutline: [NoteEditorOutlineItem] = []
     @State private var activeNoteRailID: String?
     var showsPaneHeader = true
@@ -415,12 +416,17 @@ struct NotePaneView: View {
                         noteHeader
                     }
 
-                    if store.noteEditorRecoveryConflict != nil {
+                    if let conflict = store.noteEditorRecoveryConflict {
                         HStack(spacing: 12) {
-                            Text(store.ui(
-                                "这份笔记在应用外也发生了修改。",
-                                "This note was also changed outside WeiBei."
-                            ))
+                            Text(conflict.checkpointIsPersisted
+                                ? store.ui(
+                                    "这份笔记在应用外也发生了修改，未写内容已保存在魏碑中。请选择下一步。",
+                                    "This note was also changed outside WeiBei. Unsaved content is stored in WeiBei. Choose what to do next."
+                                )
+                                : store.ui(
+                                    "这份笔记在应用外也发生了修改。未写内容仍在当前编辑中，但尚未安全保存；请不要关闭并重试。",
+                                    "This note was also changed outside WeiBei. Unsaved content remains in the current editor but is not safely stored yet; do not close it, and retry."
+                                ))
                             Spacer(minLength: 8)
                             Button(store.ui("使用磁盘版本", "Use Disk Version")) {
                                 Task { await store.resolveNoteEditorRecoveryConflict(useDisk: true) }
@@ -475,6 +481,7 @@ struct NotePaneView: View {
         }
         .onChange(of: store.activeNoteItemID) { _, _ in
             editingNoteTabTitle = false
+            editorRecoveryState = .idle
             noteOutline = []
             activeNoteRailID = nil
         }
@@ -510,6 +517,7 @@ struct NotePaneView: View {
                 appearanceMode: store.appearanceMode,
                 reorderRole: reorderRole
             ) {
+                NoteSaveStatusLabel(session: store.noteEditingSession)
                 ContextualContentListButton(kind: .note)
                 newNoteControl
             }
@@ -530,6 +538,7 @@ struct NotePaneView: View {
                 reorderRole: reorderRole,
                 titleRename: noteTabRename
             ) {
+                NoteSaveStatusLabel(session: store.noteEditingSession)
                 ContextualContentListButton(kind: .note)
                 newNoteControl
             }
@@ -638,9 +647,32 @@ struct NotePaneView: View {
                     .accessibilityLabel(Text(store.ui("正在载入笔记", "Loading note")))
             } else {
                 // 笔记固定为所见即所得（rich）写作，源码 / 对照模式入口已全部移除。
-                richEditor
+                if editorRecoveryState == .stopped {
+                    editorRecoveryFailure
+                } else {
+                    richEditor
+                }
             }
         }
+    }
+
+    private var editorRecoveryFailure: some View {
+        VStack(spacing: 12) {
+            Text(store.ui(
+                "编辑器连续恢复失败，已停止自动重建。恢复草稿仍保留，可手动重试。",
+                "The editor repeatedly failed to recover, so automatic rebuilding stopped. The recovery draft is preserved; retry manually."
+            ))
+                .weiBeiText(13, weight: .medium)
+                .foregroundStyle(WeiBeiTheme.ink)
+                .multilineTextAlignment(.center)
+            Button(store.ui("重试编辑器", "Retry Editor")) {
+                editorRecoveryState.retryManually()
+                editorRecoveryGeneration &+= 1
+            }
+            .buttonStyle(.bordered)
+        }
+        .padding(24)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private var noteRailItems: [ContentRailItem] {
@@ -678,7 +710,8 @@ struct NotePaneView: View {
     }
 
     private var richEditor: some View {
-        RichMarkdownEditorView(documentID: store.activeNoteEditorDocumentID, markdown: store.noteText, command: Binding(get: {
+        let recoveryGeneration = editorRecoveryGeneration
+        return RichMarkdownEditorView(documentID: store.activeNoteEditorDocumentID, markdown: store.noteText, command: Binding(get: {
             store.noteEditorCommand
         }, set: { value in
             store.noteEditorCommand = value
@@ -704,25 +737,88 @@ struct NotePaneView: View {
         }, onOutlineChange: { items in
             noteOutline = items
         }, onWikiLink: { title in
-            store.noteEditingSession.requestSnapshot()
             store.openOrCreateWikiNote(title: title)
         }, onSourceReference: { reference in
-            store.noteEditingSession.requestSnapshot()
             store.openSourceReference(reference)
-        }, onAppShortcut: { key, modifiers in
-            if modifiers.contains(.command) {
-                store.noteEditingSession.requestSnapshot()
-            }
-            return store.handleAppShortcut(key: key, modifiers: modifiers)
+        }, onRenderReady: {
+            guard recoveryGeneration == editorRecoveryGeneration else { return }
+            editorRecoveryState.renderBecameReady()
         }, onRenderFailure: {
+            guard recoveryGeneration == editorRecoveryGeneration else { return }
             store.noteEditingSession.invalidateBridgeGeneration()
-            editorRecoveryGeneration &+= 1
             Task { await store.reconcileActiveNoteEditorWithBackingFile() }
+            if editorRecoveryState.renderFailed() {
+                editorRecoveryGeneration &+= 1
+            }
+        }, onContentCommandPending: { documentID, command in
+            store.noteEditorContentCommandPending(command, documentID: documentID)
+        }, onContentCommandApplied: { documentID, command in
+            store.noteEditorContentCommandApplied(command, documentID: documentID)
+        }, onCommandRejected: { documentID, command in
+            store.noteEditorCommandRejected(command, documentID: documentID)
         })
         .id("\(store.activeNoteEditorDocumentID):\(editorRecoveryGeneration)")
         .background(WeiBeiTheme.paper)
     }
 
+}
+
+enum EditorRecoveryState: Equatable {
+    case idle
+    case rebuilding
+    case stopped
+
+    mutating func renderFailed() -> Bool {
+        guard self == .idle else {
+            self = .stopped
+            return false
+        }
+        self = .rebuilding
+        return true
+    }
+
+    mutating func renderBecameReady() {
+        guard self != .stopped else { return }
+        self = .idle
+    }
+
+    mutating func retryManually() {
+        self = .idle
+    }
+}
+
+private struct NoteSaveStatusLabel: View {
+    @EnvironmentObject private var store: WorkspaceStore
+    @ObservedObject var session: NoteEditingSession
+
+    var body: some View {
+        if let title {
+            Text(title)
+                .weiBeiText(10.5, weight: .medium)
+                .foregroundStyle(
+                    store.activeNoteSaveStatus == .failed
+                        || store.activeNoteSaveStatus == .externallyModified
+                        ? WeiBeiTheme.cinnabar
+                        : WeiBeiTheme.secondaryInk
+                )
+                .lineLimit(1)
+                .accessibilityLabel(Text(title))
+        }
+    }
+
+    private var title: String? {
+        guard store.activeNoteSaveStatus.showsStatusLabel else { return nil }
+        switch store.activeNoteSaveStatus {
+        case .saving:
+            return store.ui("保存中", "Saving")
+        case .failed:
+            return store.ui("保存失败", "Save Failed")
+        case .externallyModified:
+            return store.ui("外部修改", "Modified Externally")
+        case .idle, .writtenToFile, .savedInWeiBei:
+            return nil
+        }
+    }
 }
 
 private struct NotebookCreationPanel: View {
@@ -888,7 +984,6 @@ struct MarkdownPreviewView: View {
     var streamsMarkdownUpdates = false
     var onWikiLink: (String) -> Void = { _ in }
     var onSourceReference: (String) -> Void = { _ in }
-    var onAppShortcut: (String, NSEvent.ModifierFlags) -> Bool = { _, _ in false }
     var onRenderReady: () -> Void = {}
     var onFinalizedSnapshotReady: (CGFloat) -> Void = { _ in }
     var onRenderFailure: () -> Void = {}
@@ -1019,7 +1114,6 @@ struct MarkdownPreviewView: View {
             },
             onWikiLink: onWikiLink,
             onSourceReference: onSourceReference,
-            onAppShortcut: onAppShortcut,
             onRenderReady: onRenderReady,
             onFinalizedRenderReady: { height in
                 guard compact && fitsContentHeight,
@@ -1212,6 +1306,8 @@ struct AgentPaneView: View {
     @State private var activeAgentRailID: String?
     @State private var agentFollowsLatest = true
     @State private var sessionPendingDeletion: StudySession?
+    @State private var sessionRenameDraft = ""
+    @State private var isRenamingSession = false
     /// Settled pane width for renderer caches. 0 until first real measurement.
     @State private var measuredPaneWidth: CGFloat = 0
     @State private var paneWidthRelay = AgentPaneWidthRelay()
@@ -1324,7 +1420,7 @@ struct AgentPaneView: View {
                             // Long histories fold behind a reveal button instead — unrendered
                             // rows cost nothing; keep full Markdown rendering for visible ones.
                             VStack(alignment: .leading, spacing: comfy ? 22 : 12) {
-                                // 显隐条件在 AgentUnconfiguredHint 自身判断——它观察 PiOAuthService,
+                                // 显隐条件在 AgentUnconfiguredHint 自身判断——它观察 AgentAccountService,
                                 // 配置完成后能即时消失;这里只看消息是否为空。
                                 if store.messages.isEmpty {
                                     AgentUnconfiguredHint(store: store)
@@ -1526,6 +1622,19 @@ struct AgentPaneView: View {
         }
         .task(id: replySources) {
             await store.validateAgentReplySources(replySources)
+        }
+        .alert(
+            store.ui("重命名会话", "Rename Chat"),
+            isPresented: $isRenamingSession
+        ) {
+            TextField(store.ui("会话名称", "Chat name"), text: $sessionRenameDraft)
+            Button(store.ui("取消", "Cancel"), role: .cancel) {}
+            Button(store.ui("保存", "Save")) {
+                if let sessionID = store.activeStudySessionID {
+                    store.renameStudySession(sessionID, title: sessionRenameDraft)
+                }
+            }
+            .disabled(sessionRenameDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
         }
         .confirmationDialog(
             store.ui("删除这条对话？", "Delete this Chat?"),
@@ -2030,6 +2139,12 @@ struct AgentPaneView: View {
         if let active = store.activeStudySession,
            !active.messages.isEmpty {
             Divider()
+            Button {
+                sessionRenameDraft = active.title
+                isRenamingSession = true
+            } label: {
+                Label(store.ui("重命名当前会话", "Rename Current Chat"), systemImage: "pencil")
+            }
             Button(role: .destructive) {
                 sessionPendingDeletion = active
             } label: {
@@ -3327,8 +3442,8 @@ private struct AgentBubble: View {
             && answerText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         return VStack(alignment: .leading, spacing: 8) {
             if message.contentBlocks.contains(where: {
-                if case .visualization = $0 { return true }
-                return false
+                if case .text = $0 { return false }
+                return true
             }) {
                 visualizedMessageFlow(
                     fallbackText: citationParse.displayText,
@@ -3544,6 +3659,9 @@ private struct AgentBubble: View {
                     visualization: fragment
                 )
                 .padding(.vertical, 4)
+            case let .unavailable(type, rawJSON):
+                UnavailableAgentContentBlockView(type: type, rawJSON: rawJSON)
+                    .padding(.vertical, 4)
             }
         }
     }
@@ -3680,7 +3798,7 @@ private struct AgentReplyMemoryUpdateTag: View {
 
 // MARK: - Agent citation tags (materials / learning / selection)
 
-/// Bracket citations Pi emits in answers, e.g. `[材料：…]`, `[学习记录：上次位置]`.
+/// Bracket citations Agent emits in answers, e.g. `[材料：…]`, `[学习记录：上次位置]`.
 private enum AgentCitationKind: String, Equatable {
     case material
     case note
@@ -4046,7 +4164,7 @@ private final class AgentMessageMarkdownMemo {
 }
 
 private enum AgentCitationParser {
-    /// Matches `[材料：…]` / `[学习记录：上次位置]` style Pi citation labels.
+    /// Matches `[材料：…]` / `[学习记录：上次位置]` style Agent citation labels.
     private static let pattern = #"\[(材料|笔记|选区|学习记录|学习记忆|会话)[：:]\s*([^\]\n]{1,300})\]"#
     private static let regex = try? NSRegularExpression(pattern: pattern)
     private static let collapsedSpaces = try? NSRegularExpression(pattern: #"[ \t]{2,}"#)
@@ -4961,7 +5079,6 @@ private struct AgentMessageMarkdownText: View {
                         }
                         store.openSourceReference(reference)
                     },
-                    onAppShortcut: { key, modifiers in store.handleAppShortcut(key: key, modifiers: modifiers) },
                     onRenderReady: {
                         finalizedRendererFailed = false
                     },

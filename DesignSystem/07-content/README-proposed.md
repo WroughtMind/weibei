@@ -1,5 +1,7 @@
 ![魏碑](DesignSystem/assets/github/readme-hero-1983x793.png)
 
+> 历史提案：本文保留当时的品牌文案，不再描述当前运行时、认证或构建方式；请以仓库根目录的 README 为准。
+
 # 魏碑
 
 本地学习用的 macOS 工作台。
@@ -45,14 +47,9 @@ cd weibei
 ./script/build_and_run.sh
 ```
 
-第一次构建会下载并校验魏碑使用的固定版本 PI 运行体。普通使用不需要另外安装 PI、Node.js 或 Bun；只有修改 Web 编辑器源码时才需要 Node.js。
+第一次构建会获取并校验 Swift 软件包依赖。普通使用不需要另外安装 Node.js；只有修改 Web 编辑器源码时才需要 Node.js。
 
-对话需要可用的 PI 提供方认证。OpenAI Key 可以在设置中填写，也可以使用环境变量：
-
-```bash
-export OPENAI_API_KEY="..."
-export WEIBEI_OPENAI_MODEL="gpt-5.1"
-```
+对话使用 Swift 原生 Agent。在设置中选择模型服务并填写对应凭据后即可使用。
 
 ## 开发
 
@@ -67,7 +64,7 @@ export WEIBEI_OPENAI_MODEL="gpt-5.1"
 - [`DesignReferences/`](DesignReferences/)：界面与视觉参考
 - [`Docs/MarkdownCompatibility.md`](Docs/MarkdownCompatibility.md)：Markdown 编辑兼容情况
 - [`Sources/WeiBeiCore/AgentResources/`](Sources/WeiBeiCore/AgentResources/)：对话的技能、工具与边界
-- [`Vendor/PiRuntime/`](Vendor/PiRuntime/)：内建 PI 运行体的版本、来源和维护说明
+- [`Sources/WeiBeiCore/NativeAgentRuntime/`](Sources/WeiBeiCore/NativeAgentRuntime/)：原生 Agent 的模型协议、工具循环与会话账本
 
 ## 状态
 

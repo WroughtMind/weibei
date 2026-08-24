@@ -80,18 +80,28 @@ public struct NativeToolCallAssembler: Sendable {
         }
     }
 
-    public func completedCalls() throws -> [NativeToolCall] {
-        try calls.keys.sorted().compactMap { index in
+    public func callResults() -> [(call: NativeToolCall, failure: NativeLLMFailure?)] {
+        calls.keys.sorted().compactMap { index -> (call: NativeToolCall, failure: NativeLLMFailure?)? in
             guard var call = calls[index] else { return nil }
             let raw = buffers[index] ?? call.arguments
+            call.arguments = raw
             guard NativeToolCallAssembler.isCompleteJSONObject(raw) else {
-                throw NativeLLMFailure(
-                    code: "incomplete_tool_arguments",
-                    message: "refusing to execute a tool call with incomplete JSON arguments"
+                return (
+                    call,
+                    NativeLLMFailure(
+                        code: "incomplete_tool_arguments",
+                        message: "refusing to execute a tool call with incomplete JSON arguments"
+                    )
                 )
             }
-            call.arguments = raw
-            return call
+            return (call, nil)
+        }
+    }
+
+    public func completedCalls() throws -> [NativeToolCall] {
+        try callResults().map { result in
+            if let failure = result.failure { throw failure }
+            return result.call
         }
     }
 

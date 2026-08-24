@@ -6,6 +6,7 @@ public enum NativeStreamChunk: Codable, Equatable, Sendable {
     case blockStart(index: Int, blockType: NativeContentBlockType)
     case textDelta(index: Int, text: String)
     case reasoningDelta(index: Int, text: String)
+    case webSearchSource(url: String)
     case toolCallDelta(index: Int, id: String, name: String?, argumentsDelta: String)
     case blockEnd(index: Int, block: NativeContentBlock)
     case usage(NativeTokenUsage)
@@ -198,26 +199,4 @@ public struct NativeToolCall: Equatable, Sendable {
         self.name = name
         self.arguments = arguments
     }
-}
-
-public enum NativeEventDispatch: String, Sendable {
-    case emit
-    case bail
-    case serial
-    case parallel
-    case waterfall
-}
-
-public enum NativeMiddlewareDecision<Value: Sendable>: Sendable {
-    case proceed(Value)
-    case deny(String)
-    case ask
-}
-
-public protocol NativeMiddleware: Sendable {
-    associatedtype Payload: Sendable
-    func decide(
-        _ payload: Payload,
-        next: (Payload) async throws -> NativeMiddlewareDecision<Payload>
-    ) async throws -> NativeMiddlewareDecision<Payload>
 }

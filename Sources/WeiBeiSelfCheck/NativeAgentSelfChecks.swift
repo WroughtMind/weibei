@@ -24,7 +24,6 @@ func runNativeAgentSelfChecks() throws {
     try checkRetrievalPrompt()
     try checkBackendSelection()
     try checkContextRevisionEcho()
-    try checkMemoryPreviewWriteContract()
     try checkNativeProductContract()
 }
 
@@ -217,6 +216,38 @@ private func checkResponsesTranslation() throws {
         #"{"type":"response.output_item.added","output_index":1,"item":{"type":"function_call","call_id":"c1","name":"weibei_course_search"}}"#
     )
     try nativeRequire(tool.first == .toolCallDelta(index: 1, id: "c1", name: "weibei_course_search", argumentsDelta: ""), "Responses tool start maps")
+    let searchSources = try OpenAIResponsesProvider.translate(
+        #"{"type":"response.output_item.done","output_index":2,"item":{"type":"web_search_call","action":{"type":"search","sources":[{"type":"url","url":"https://example.com/fresh"}]}}}"#
+    )
+    try nativeRequire(
+        searchSources == [.webSearchSource(url: "https://example.com/fresh")],
+        "Responses search source maps"
+    )
+    let currentRunSourceURLs = ["https://example.com/fresh"]
+    try nativeRequire(
+        WeiBeiWebResearchURLPolicy.isAvailableInCurrentRun(
+            "https://EXAMPLE.com:443/fresh#section",
+            in: "搜索后继续核对",
+            currentRunSourceURLs: currentRunSourceURLs
+        ),
+        "exact searched HTTPS URL is available in the current run"
+    )
+    try nativeRequire(
+        !WeiBeiWebResearchURLPolicy.isAvailableInCurrentRun(
+            "https://example.com/other",
+            in: "搜索后继续核对",
+            currentRunSourceURLs: currentRunSourceURLs
+        ),
+        "same-host different path is rejected"
+    )
+    try nativeRequire(
+        WeiBeiWebResearchURLPolicy.isAvailableInCurrentRun(
+            "https://example.com/fresh",
+            in: "搜索后继续核对",
+            currentRunSourceURLs: currentRunSourceURLs
+        ),
+        "searched URL remains available in the current run"
+    )
 }
 
 private func checkAnthropicTranslation() throws {
@@ -260,13 +291,12 @@ private func checkOAuthLogoutLeavesNoCredential() throws {
 }
 
 private func checkProviderRouting() throws {
-    try nativeRequire(AgentProviderID.allCases.count == 40, "provider catalog stays at 40 unique cases")
     try nativeRequire(NativeProviderRouting.route(.deepseek).family == .openaiChatCompletions, "deepseek is chat completions")
     try nativeRequire(NativeProviderRouting.route(.openai).family == .openaiResponses, "openai API is Responses")
     try nativeRequire(NativeProviderRouting.route(.xai).family == .openaiResponses, "xAI is Responses")
     try nativeRequire(NativeProviderRouting.route(.anthropic).family == .anthropicMessages, "anthropic is Messages")
     try nativeRequire(NativeProviderRouting.route(.google).family == .googleGenerativeAI, "google is Gemini")
-    try nativeRequire(NativeProviderRouting.route(.minimax).family == .anthropicMessages, "minimax follows Pi anthropic baseUrl")
+    try nativeRequire(NativeProviderRouting.route(.minimax).family == .anthropicMessages, "minimax uses the Anthropic-compatible route")
     try nativeRequire(NativeProviderRouting.route(.moonshotaiCN).baseURL?.host == "api.moonshot.cn", "moonshot CN host")
     let uncovered = Set(NativeProviderRouting.uncoveredProviders)
     try nativeRequire(
@@ -284,7 +314,7 @@ private func checkProviderRouting() throws {
 }
 
 private func checkSkillCatalogAndLoad() throws {
-    let root = try PiAgentResources.bundled().skillsURL
+    let root = try AgentResources.bundled().skillsURL
     let registry = try NativeSkillRegistry.load(from: root)
     try nativeRequire(registry.pack(named: "visualize") != nil, "visualize skill pack exists")
     try nativeRequire(registry.pack(named: "socratic-questioning") != nil, "socratic skill pack exists")
@@ -297,6 +327,31 @@ private func checkSkillCatalogAndLoad() throws {
     let toolRegistry = NativeToolRegistry()
     _ = try waitFor { await NativeBuiltinTools.registerAll(into: toolRegistry, skillRoot: root) }
     let tools = try waitFor { await toolRegistry.resolved(scope: .global) }
+    try nativeRequire(tools.contains { $0.name == "load_skill" }, "load_skill is the only registered skill loader")
+    try nativeRequire(!tools.contains { $0.name == "read" }, "retired read alias is not registered")
+    do {
+        _ = try waitFor {
+            try await toolRegistry.execute(
+                NativeToolCallRequest(name: "read", argumentsJSON: "{\"path\":\"skill://visualize\"}", callID: "retired-read"),
+                context: NativeToolExecutionContext(
+                    request: StudyAgentRequest(
+                        purpose: .conversation,
+                        question: "加载技能",
+                        materialTitle: "",
+                        materialText: "",
+                        noteTitle: "",
+                        noteText: "",
+                        contextRevision: "retired-read"
+                    ),
+                    liveStores: NativeLiveStores(skillRegistry: registry)
+                ),
+                scope: .global
+            )
+        }
+        try nativeRequire(false, "retired read alias must be unknown")
+    } catch let failure as NativeLLMFailure {
+        try nativeRequire(failure.code == "unknown_tool", "retired read alias fails as unknown_tool")
+    }
     let search = tools.first { $0.name == "weibei_course_search" }
     try nativeRequire(search?.description.contains("不要先反问") == true, "course_search description forbids clarifying questions")
     try nativeRequire(search?.description.contains("weibei_course_read") == true, "course_search description continues into course_read")
@@ -307,7 +362,7 @@ private func checkSkillCatalogAndLoad() throws {
 }
 
 private func checkLoadSkillIdempotent() throws {
-    let root = try PiAgentResources.bundled().skillsURL
+    let root = try AgentResources.bundled().skillsURL
     let packs = try NativeSkillRegistry.load(from: root)
     let registry = NativeToolRegistry()
     _ = try waitFor { await NativeBuiltinTools.registerAll(into: registry, skillRoot: root) }
@@ -395,15 +450,6 @@ private func checkEvalSetLunaLow() throws {
         (item16?["expect"] as? String)?.contains("不反问") == true,
         "eval item 16 requires course_search then course_read without a clarifying question"
     )
-    let item09 = items.first { $0["id"] as? String == "09" }
-    try nativeRequire(
-        (item09?["question"] as? String)?.contains("记下进度，但先给我看怎么写、不要直接改记忆") == true,
-        "eval item 09 locks the preview-write phrasing"
-    )
-    try nativeRequire(
-        (item09?["expect"] as? String)?.contains("weibei_update_learning_memory") == true,
-        "eval item 09 requires calling the write tool"
-    )
 }
 
 private func checkRetrievalPrompt() throws {
@@ -419,64 +465,15 @@ private func checkRetrievalPrompt() throws {
 }
 
 private func checkBackendSelection() throws {
-    let key = NativeAgentBackendSelection.debugDefaultsKey
-    let previous = UserDefaults.standard.string(forKey: key)
-    defer {
-        if let previous {
-            UserDefaults.standard.set(previous, forKey: key)
-        } else {
-            UserDefaults.standard.removeObject(forKey: key)
-        }
-    }
-    let env = ProcessInfo.processInfo.environment["WEIBEI_AGENT_BACKEND"]?
-        .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-    guard env.isEmpty else { return }
-    NativeAgentBackendSelection.persistedDebugBackend = nil
-    try nativeRequire(NativeAgentBackendSelection.current == .pi, "default backend stays pi")
-    NativeAgentBackendSelection.persistedDebugBackend = .native
-    try nativeRequire(NativeAgentBackendSelection.current == .native, "debug override selects native")
-    NativeAgentBackendSelection.persistedDebugBackend = nil
-    try nativeRequire(NativeAgentBackendSelection.current == .pi, "clearing override returns to pi")
-}
-
-private func checkMemoryPreviewWriteContract() throws {
-    let url = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
-        .appendingPathComponent("Sources/WeiBeiCore/AgentResources/system.md")
-    let system = try String(contentsOf: url, encoding: .utf8)
+    // Pi retired 2026-08: native is the only backend. "pi" must stay
+    // undecodable so legacy archives hit the lossy-decode marker instead.
     try nativeRequire(
-        system.contains("记下进度，但先给我看怎么写、不要直接改记忆"),
-        "system.md keeps the acceptance sentence as a demonstration"
+        StudyAgentBackend(rawValue: "native") != nil,
+        "native backend stays decodable"
     )
     try nativeRequire(
-        system.contains("weibei_update_learning_memory"),
-        "system.md demonstration calls the write tool"
-    )
-    try nativeRequire(
-        !system.contains("`weibei_learning_memory`") && !system.contains("`weibei_learning_update`"),
-        "system.md no longer names the ambiguous learning tool titles"
-    )
-
-    let registry = NativeToolRegistry()
-    _ = try waitFor { await NativeBuiltinTools.registerAll(into: registry, skillRoot: nil) }
-    let tools = try waitFor { await registry.resolved(scope: .global) }
-    let readTool = tools.first { $0.name == "weibei_read_learning_memory" }
-    let writeTool = tools.first { $0.name == "weibei_update_learning_memory" }
-    try nativeRequire(readTool != nil, "read learning memory tool is registered under the verb-first name")
-    try nativeRequire(writeTool != nil, "write learning memory tool is registered under the verb-first name")
-    try nativeRequire(
-        readTool?.description.contains("不要调用本工具") == true
-            && readTool?.description.contains("weibei_update_learning_memory") == true,
-        "read tool tells the model not to use it for recording"
-    )
-    try nativeRequire(
-        system.contains("不要传空字符串") && system.contains("不要自己编 UUID"),
-        "system.md forbids empty and invented memory IDs"
-    )
-    try nativeRequire(
-        writeTool?.description.contains("不要直接改") == true
-            && writeTool?.description.contains("weibei_read_learning_memory") == true
-            && writeTool?.description.contains("不要传空字符串") == true,
-        "write tool says preview-write phrasing still requires calling it and forbids empty IDs"
+        StudyAgentBackend(rawValue: "pi") == nil,
+        "pi backend stays retired"
     )
 }
 

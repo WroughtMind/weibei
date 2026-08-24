@@ -63,23 +63,43 @@ public struct NativeSkillRegistry: Sendable {
 
     public static func load(from root: URL) throws -> NativeSkillRegistry {
         let manager = FileManager.default
-        guard manager.fileExists(atPath: root.path) else { return NativeSkillRegistry() }
-        let children = try manager.contentsOfDirectory(
-            at: root,
-            includingPropertiesForKeys: [.isDirectoryKey],
-            options: [.skipsHiddenFiles]
-        )
+        guard manager.fileExists(atPath: root.path) else {
+            throw NativeAgentResourcesError.incomplete(resource: "skills", cause: "missing")
+        }
+        let children: [URL]
+        do {
+            children = try manager.contentsOfDirectory(
+                at: root,
+                includingPropertiesForKeys: [.isDirectoryKey],
+                options: [.skipsHiddenFiles]
+            )
+        } catch {
+            throw NativeAgentResourcesError.incomplete(
+                resource: "skills",
+                cause: WeiBeiLog.code(error)
+            )
+        }
         var packs: [NativeSkillPack] = []
         for directory in children.sorted(by: { $0.lastPathComponent < $1.lastPathComponent }) {
             var isDirectory: ObjCBool = false
             guard manager.fileExists(atPath: directory.path, isDirectory: &isDirectory), isDirectory.boolValue else {
                 continue
             }
-            if let pack = try? loadPack(at: directory, root: root) {
-                packs.append(pack)
+            do {
+                packs.append(try loadPack(at: directory, root: root))
+            } catch {
+                let resource = "skill:\(directory.lastPathComponent)"
+                throw NativeAgentResourcesError.incomplete(
+                    resource: resource,
+                    cause: WeiBeiLog.code(error)
+                )
             }
         }
-        return NativeSkillRegistry(packs: packs)
+        let loadedIDs = Set(packs.map(\.id))
+        guard let missingID = AgentResources.requiredSkillIDs.first(where: { !loadedIDs.contains($0) }) else {
+            return NativeSkillRegistry(packs: packs)
+        }
+        throw NativeAgentResourcesError.incomplete(resource: "skill:\(missingID)", cause: "missing")
     }
 
     public func catalogSummary() -> String {
@@ -106,7 +126,7 @@ public struct NativeSkillRegistry: Sendable {
     }
 
     public static func isSignedBuiltin(_ id: String) -> Bool {
-        ["visualize", "socratic-questioning"].contains(id)
+        AgentResources.requiredSkillIDs.contains(id)
     }
 
     private static func loadPack(at directory: URL, root: URL) throws -> NativeSkillPack {

@@ -99,7 +99,7 @@ Homebrew cask 在计划中;tap 发布前,请用 DMG 或从源码构建。
 
 ### 从源码构建
 
-要求:macOS 14+、Xcode Command Line Tools(Swift 5.9)、首次构建需联网下载并校验固定的 Pi 运行时、已配置的模型供应商(用于真实 Agent 回复);仅重建 Milkdown 网页编辑器时需要 Node.js。
+要求:macOS 14+、Xcode Command Line Tools(Swift 5.9)、已配置的模型供应商(用于真实 Agent 回复);仅重建 Milkdown 网页编辑器时需要 Node.js。
 
 ```bash
 git clone https://github.com/weibei-app/weibei.git
@@ -111,7 +111,7 @@ cd weibei
 
 ### 技术架构
 
-原生 Swift 5.9 应用:SwiftUI 负责界面,AppKit 承载长驻的阅读、Agent、笔记面板。PDFKit 读 PDF,WebKit 渲染 HTML 与 Milkdown 编辑器,Vision 处理扫描页 OCR,SQLite FTS5 存本地课程索引。固定的 Pi 0.82.1 运行时提供 Agent 循环;魏碑自身掌握资料上下文、引用、学习记忆、笔记写回与界面渲染。
+原生 Swift 5.9 应用:SwiftUI 负责界面,AppKit 承载长驻的阅读、Agent、笔记面板。PDFKit 读 PDF,WebKit 渲染 HTML 与 Milkdown 编辑器,Vision 处理扫描页 OCR,SQLite FTS5 存本地课程索引。Agent 循环、供应商接入、凭据与会话账本由 Swift 原生运行时负责;魏碑自身掌握资料上下文、引用、学习记忆、笔记写回与界面渲染。
 
 每个 Agent 请求只拿到一份有边界的快照——没有文件系统,没有 shell,网页读取仅限用户当轮明确给出的 HTTPS 链接。宿主在展示或落盘之前,校验引用、跳转、学习记忆更新、笔记提案与富答案载荷;`visualize` 片段在无网络、无本地文件访问的沙箱里执行。长 PDF 与扫描件的文本抽取跑在资源受限的辅助进程里,只有无原生文本的页面才动用 Vision OCR;部分索引会如实上报,不会冒充完整。
 
@@ -126,13 +126,11 @@ cd weibei
 | `make check` | `./script/build_and_run.sh check` |
 | `make package` | `./script/build_and_run.sh package` |
 | `make editor-build` | `npm run build:editor` |
-| `make rich-answer-build` | `npm -w Prototypes/RichAnswerWebRuntime run build:embed` |
 | `make genui-math-check` | `npx tsx script/check-genui-math.ts` |
 | `make perf-p95` | `./script/perf_p95.sh $(LOG) $(METRIC)`(用法:`make perf-p95 LOG=<perf日志> METRIC=<指标名>`) |
-| `make pi-prepare` | `./script/prepare_pi_runtime.sh` |
 | `make release-community` | `./script/build_release_dmg.sh --community` |
 | `make release-notarized` | `./script/build_release_dmg.sh --notarized` |
-| `make clean` | `swift package clean && rm -rf dist`(保留 `node_modules` 与 `.build/pi-runtime`——clean 目标会在 `swift package clean` 前后把 `pi-runtime` 挪开再挪回,否则会被删——以及用户数据) |
+| `make clean` | `swift package clean && rm -rf dist`(保留 `node_modules` 与用户数据) |
 
 Node 工具链:仓库只有一个根锁文件(`package-lock.json`),覆盖 `Prototypes/RichAnswerWebRuntime` 工作区,一次 `npm ci` 装齐。`script/`、`DesignSystem/scripts/` 与原型 `scripts/` 下的工具脚本是 TypeScript,用 `tsx` 运行(如 `npx tsx script/check-genui-math.ts`);`npm run typecheck:tools` 做类型检查。
 
@@ -148,8 +146,7 @@ Node 工具链:仓库只有一个根锁文件(`package-lock.json`),覆盖 `Proto
 swift build
 swift run WeiBeiSelfCheck
 swift run WeiBeiWebEditorCheck
-PI_RUNTIME="$(./script/prepare_pi_runtime.sh)"
-WEIBEI_PI_EXECUTABLE="$PI_RUNTIME/bin/pi" swift run WeiBeiPiCheck
+swift run WeiBeiNativeCheck --authentication-status
 ```
 
 真实供应商检查需要本地有效凭据,不会悄悄换成模拟答案。
@@ -159,7 +156,7 @@ WEIBEI_PI_EXECUTABLE="$PI_RUNTIME/bin/pi" swift run WeiBeiPiCheck
 - [Docs/build-week.md](Docs/build-week.md) — OpenAI Build Week 2026 提交记录与评委走查
 - [Docs/note-slash-commands.md](Docs/note-slash-commands.md) — 笔记编辑器斜杠命令、图片插入与代码块行为
 - [Docs/course-library-architecture.md](Docs/course-library-architecture.md) — 课程库与存储架构
-- [Docs/pi-unified-runtime.md](Docs/pi-unified-runtime.md) — 固定的 Pi Agent 运行时
+- [Docs/plans/2026-08-22-native-agent-runtime-实验计划.md](Docs/plans/2026-08-22-native-agent-runtime-实验计划.md) — Swift 原生 Agent 运行时的验证与落地记录
 - [Docs/生成式界面基础与Visualize借鉴.md](Docs/生成式界面基础与Visualize借鉴.md) — 生成式界面基础与 `visualize` 决策
 - [Docs/releases/v1.0.0.md](Docs/releases/v1.0.0.md) — v1.0.0 发布说明与证据
 
@@ -172,4 +169,4 @@ WEIBEI_PI_EXECUTABLE="$PI_RUNTIME/bin/pi" swift run WeiBeiPiCheck
 
 ## 技术栈
 
-Swift · SwiftUI · AppKit · PDFKit · WebKit · Vision OCR · SQLite FTS5 · Milkdown · KaTeX · Mermaid · Pi · OpenAI Codex OAuth
+Swift · SwiftUI · AppKit · PDFKit · WebKit · Vision OCR · SQLite FTS5 · Milkdown · KaTeX · Mermaid · OpenAI Codex OAuth

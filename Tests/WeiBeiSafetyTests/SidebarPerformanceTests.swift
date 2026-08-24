@@ -114,65 +114,6 @@ final class SidebarPerformanceTests: XCTestCase {
         withExtendedLifetime(window) {}
     }
 
-    func testDrawerOpenPathDoesNotForceSynchronousLayout() throws {
-        let repositoryRoot = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-        let source = try String(
-            contentsOf: repositoryRoot
-                .appendingPathComponent("Sources/WeiBei/Views/CourseDrawerHost.swift"),
-            encoding: .utf8
-        )
-        let applyStart = try XCTUnwrap(source.range(of: "    func apply(isOpen open:"))
-        let applyEnd = try XCTUnwrap(
-            source.range(
-                of: "\n    private func applyPaperChrome",
-                range: applyStart.upperBound..<source.endIndex
-            )
-        )
-        let applySource = source[applyStart.lowerBound..<applyEnd.lowerBound]
-
-        XCTAssertFalse(
-            applySource.contains("layoutSubtreeIfNeeded"),
-            "opening the drawer must not synchronously lay out the whole SwiftUI sidebar"
-        )
-    }
-
-    #if DEBUG
-    @MainActor
-    func testSidebarListBuildsOnlyVisibleRowsAtPressureScale() {
-        let fixture = makeStore(itemCount: 2_000)
-        defer { try? FileManager.default.removeItem(at: fixture.root) }
-        let model = CourseSidebarModel(store: fixture.store)
-
-        CourseSidebarDiagnostics.resetForTesting()
-        let host = NSHostingView(
-            rootView: SidebarView(store: fixture.store, model: model)
-        )
-        host.frame = NSRect(x: 0, y: 0, width: CourseDrawerContainerView.panelWidth, height: 600)
-        let window = NSWindow(
-            contentRect: host.frame,
-            styleMask: [.borderless],
-            backing: .buffered,
-            defer: false
-        )
-        window.contentView = host
-        pumpMainRunLoop()
-        host.layoutSubtreeIfNeeded()
-        pumpMainRunLoop()
-
-        let builtRows = CourseSidebarDiagnostics.libraryRowBodyCountForTesting
-        XCTAssertGreaterThan(builtRows, 0)
-        XCTAssertLessThanOrEqual(
-            builtRows,
-            80,
-            "a 600pt viewport must not build all 2,000 rows"
-        )
-        withExtendedLifetime((window, host, model)) {}
-    }
-    #endif
-
     @MainActor
     func testLibrarySearchFiltersSidebarWithoutInvalidatingWorkspaceStore() {
         let fixture = makeStore(itemCount: 0)

@@ -58,8 +58,6 @@ rights. See [`TRADEMARKS.md`](TRADEMARKS.md) for the project identity policy.
 
 Third-party components keep their original licenses:
 
-- `Vendor/PiRuntime/` is licensed under the MIT License documented in that
-  directory.
 - JavaScript dependencies are recorded in the root and prototype
   `package-lock.json` files. Generated bundles retain embedded upstream notices.
 - Noto Sans CJK and Noto Serif CJK web fonts under `website/assets/fonts/` are
@@ -74,10 +72,6 @@ notice and source locations.
 
 Third-party and public-domain reference assets are not relicensed under MIT:
 
-- `Attachments/RichAnswerVerificationAssets/` is governed by its
-  `manifest.json` and `ATTRIBUTION.md`.
-- `Sources/WeiBei/Resources/RichAnswerVerificationAssets/` is governed by its
-  `ATTRIBUTION.md`.
 - `Sources/WeiBei/Resources/Inspiration/` records the source and rights basis in
   `SOURCES.md` and in the associated catalog.
 

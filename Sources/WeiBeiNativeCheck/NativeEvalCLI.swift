@@ -65,12 +65,10 @@ enum NativeEvalCLI {
         print("native-eval backend=\(backend) model=\(model) effort=\(effort) items=\(selected.count)")
         fflush()
         switch backend {
-        case "pi":
-            try await runPi(items: selected, model: model, effort: effort)
         case "native":
             try await runNative(items: selected, model: model)
         default:
-            throw NSError(domain: "WeiBei.NativeEval", code: 2, userInfo: [NSLocalizedDescriptionKey: "backend must be native or pi"])
+            throw NSError(domain: "WeiBei.NativeEval", code: 2, userInfo: [NSLocalizedDescriptionKey: "backend must be native"])
         }
         _ = effort
     }
@@ -94,9 +92,9 @@ enum NativeEvalCLI {
             model: model,
             endpoint: endpoint
         )
-        let skillRoot = try? PiAgentResources.bundled().skillsURL
+        let resources = try AgentResources.bundled()
         let liveStores = NativeLiveStores(
-            skillRegistry: skillRoot.flatMap { try? NativeSkillRegistry.load(from: $0) } ?? NativeSkillRegistry()
+            skillRegistry: try NativeSkillRegistry.load(from: resources.skillsURL)
         )
         var ran = 0
         for item in items {
@@ -113,7 +111,7 @@ enum NativeEvalCLI {
                 model: model,
                 adapter: adapter,
                 ledgerRoot: root,
-                systemPromptText: (try? PiAgentResources.bundled().systemPrompt) ?? "you are webi",
+                systemPromptText: resources.systemPrompt,
                 hostToolHandler: { request in
                     let item = StudyAgentCourseItem(
                         id: "material-rates",
@@ -146,93 +144,6 @@ enum NativeEvalCLI {
             ran += 1
         }
         print("native-eval live-ran=\(ran) model=\(model) effort=low")
-        fflush()
-    }
-
-    private static func runPi(items: [[String: Any]], model: String, effort: String) async throws {
-        let executable: URL
-        let cached = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
-            .appendingPathComponent(".build/pi-runtime/0.82.1/darwin-arm64/PiRuntime/bin/pi")
-        if FileManager.default.isExecutableFile(atPath: cached.path) {
-            executable = cached
-        } else if let located = PiExecutableLocator.locate() {
-            executable = located
-        } else {
-            throw NSError(domain: "WeiBei.NativeEval", code: 3, userInfo: [NSLocalizedDescriptionKey: "embedded PI runtime not found"])
-        }
-        let authSource = URL(fileURLWithPath: NSHomeDirectory())
-            .appendingPathComponent("Library/Application Support/com.changfenhuang.weibei/PiAgent/auth.json")
-        guard FileManager.default.fileExists(atPath: authSource.path) else {
-            throw NSError(domain: "WeiBei.NativeEval", code: 4, userInfo: [NSLocalizedDescriptionKey: "missing Pi auth.json"])
-        }
-        let root = FileManager.default.temporaryDirectory
-            .appendingPathComponent("weibei-pi-eval-\(UUID().uuidString)", isDirectory: true)
-        let piAgent = root.appendingPathComponent("PiAgent", isDirectory: true)
-        let runtimeDir = root.appendingPathComponent("Runtime", isDirectory: true)
-        try FileManager.default.createDirectory(at: piAgent, withIntermediateDirectories: true)
-        try FileManager.default.createDirectory(at: runtimeDir, withIntermediateDirectories: true)
-        let authDest = piAgent.appendingPathComponent("auth.json")
-        try FileManager.default.copyItem(at: authSource, to: authDest)
-        try FileManager.default.setAttributes(
-            [.posixPermissions: NSNumber(value: Int16(0o600))],
-            ofItemAtPath: authDest.path
-        )
-        let runtime = PiAgentRuntime(
-            executableURL: executable,
-            runtimeDirectory: runtimeDir,
-            persistentPiConfigurationDirectory: piAgent
-        )
-        await runtime.configure(
-            PiAgentProviderConfiguration(provider: "openai-codex", model: model, thinkingLevel: effort)
-        )
-        defer {
-            Task { await runtime.shutdown() }
-            try? FileManager.default.removeItem(at: root)
-        }
-        var ran = 0
-        for item in items {
-            let id = item["id"] as? String ?? "?"
-            let scene = item["scene"] as? String ?? ""
-            let question = item["question"] as? String ?? ""
-            if scene == "cancel" || scene == "error" {
-                print("pi-eval \(id) skipped scene=\(scene)")
-                fflush()
-                continue
-            }
-            let sessionID = UUID()
-            let request = evalRequest(id: id, question: question, sessionID: sessionID)
-            do {
-                let reply = try await runtime.respond(
-                    to: request,
-                    sessionID: sessionID,
-                    workingDirectory: runtimeDir,
-                    hostToolHandler: evalHost,
-                    progress: nil
-                )
-                try recordAnswer(
-                    backend: "pi",
-                    id: id,
-                    scene: scene,
-                    question: question,
-                    text: reply.text,
-                    tools: reply.toolTrace
-                )
-                ran += 1
-            } catch {
-                let message = error.localizedDescription.replacingOccurrences(of: "\n", with: " ")
-                try recordAnswer(
-                    backend: "pi",
-                    id: id,
-                    scene: scene,
-                    question: question,
-                    text: "",
-                    tools: [],
-                    error: message
-                )
-            }
-            fflush()
-        }
-        print("pi-eval live-ran=\(ran) model=\(model) effort=\(effort)")
         fflush()
     }
 

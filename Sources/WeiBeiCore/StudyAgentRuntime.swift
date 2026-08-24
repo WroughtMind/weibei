@@ -106,6 +106,11 @@ public struct StudyAgentCourseItem: Codable, Equatable, Sendable {
     public var tags: [String]
     public var searchText: String
     public var isTruncated: Bool
+    public var indexedPageCount: Int?
+    public var totalPageCount: Int?
+    public var uncoveredPageNumbers: [Int]?
+    public var failedPageNumbers: [Int]?
+    public var failedPageReasons: [Int: String]?
 
     public init(
         id: String,
@@ -119,7 +124,12 @@ public struct StudyAgentCourseItem: Codable, Equatable, Sendable {
         headings: [String] = [],
         tags: [String] = [],
         searchText: String = "",
-        isTruncated: Bool = false
+        isTruncated: Bool = false,
+        indexedPageCount: Int? = nil,
+        totalPageCount: Int? = nil,
+        uncoveredPageNumbers: [Int]? = nil,
+        failedPageNumbers: [Int]? = nil,
+        failedPageReasons: [Int: String]? = nil
     ) {
         self.id = id
         self.title = title
@@ -133,6 +143,11 @@ public struct StudyAgentCourseItem: Codable, Equatable, Sendable {
         self.tags = tags
         self.searchText = searchText
         self.isTruncated = isTruncated
+        self.indexedPageCount = indexedPageCount
+        self.totalPageCount = totalPageCount
+        self.uncoveredPageNumbers = uncoveredPageNumbers
+        self.failedPageNumbers = failedPageNumbers
+        self.failedPageReasons = failedPageReasons
     }
 }
 
@@ -313,6 +328,7 @@ public enum StudyAgentHostToolRequest: Equatable, Sendable {
         cursor: String?,
         maximumCharacters: Int
     )
+    case retryFailedPDFPages(itemID: String)
     case webOpen(url: String, maximumCharacters: Int)
 }
 
@@ -321,12 +337,20 @@ public struct StudyAgentWebPage: Codable, Equatable, Sendable {
     public var title: String
     public var text: String
     public var isTruncated: Bool
+    public var links: [String]
 
-    public init(url: String, title: String, text: String, isTruncated: Bool) {
+    public init(
+        url: String,
+        title: String,
+        text: String,
+        isTruncated: Bool,
+        links: [String] = []
+    ) {
         self.url = url
         self.title = title
         self.text = text
         self.isTruncated = isTruncated
+        self.links = links
     }
 }
 
@@ -516,7 +540,6 @@ public struct StudyAgentRequest: Sendable {
     public var courseProfile: StudyAgentCourseProfileContext
     public var language: WeiBeiInterfaceLanguage
     public var contextRevision: String
-    public var interactiveVisualizationsEnabled: Bool
     /// Notes the user already confirmed in this Chat. Native must treat these as persisted.
     public var confirmedNotes: [StudyAgentPersistedNoteRef]
 
@@ -541,7 +564,6 @@ public struct StudyAgentRequest: Sendable {
         courseProfile: StudyAgentCourseProfileContext = .empty,
         language: WeiBeiInterfaceLanguage = .chinese,
         contextRevision: String,
-        interactiveVisualizationsEnabled: Bool = true,
         confirmedNotes: [StudyAgentPersistedNoteRef] = []
     ) {
         self.id = id
@@ -564,7 +586,6 @@ public struct StudyAgentRequest: Sendable {
         self.courseProfile = courseProfile
         self.language = language
         self.contextRevision = contextRevision
-        self.interactiveVisualizationsEnabled = interactiveVisualizationsEnabled
         self.confirmedNotes = confirmedNotes
     }
 
@@ -605,7 +626,7 @@ public struct StudyAgentRelationProposal: Codable, Equatable, Sendable {
 }
 
 public struct StudyAgentMemoryUpdateEntry: Codable, Equatable, Sendable {
-    /// Missing only when PI is proposing a new memory. Existing memories must
+    /// Missing only when Agent is proposing a new memory. Existing memories must
     /// be updated through the stable id returned by the current scope read.
     public var memoryID: String?
     public var kind: LearningMemoryKind
@@ -799,7 +820,7 @@ public enum StudyAgentProgress: Equatable, Sendable {
 public typealias StudyAgentProgressHandler = @Sendable (StudyAgentProgress) async -> Void
 public typealias StudyAgentSessionTitleHandler = @Sendable (String) async -> Void
 
-/// User-facing classification for Pi request failures.
+/// User-facing classification for Agent request failures.
 public enum AgentFailureKind: String, Codable, Equatable, Sendable {
     case offline
     case unauthorized
@@ -855,24 +876,11 @@ public enum AgentFailureKind: String, Codable, Equatable, Sendable {
     }
 
     public static func classify(_ error: Error) -> AgentFailureKind {
+        if let failure = error as? NativeLLMFailure {
+            return failure.asAgentFailureKind
+        }
         if error is CancellationError {
             return .cancelled
-        }
-        if let pi = error as? PiAgentRuntimeError {
-            switch pi {
-            case .cancelled:
-                return .cancelled
-            case .commandTimedOut:
-                return .timedOut
-            case let .agentFailed(message):
-                return classifyMessage(message)
-            case let .inFlightFailed(message):
-                return classifyMessage(message)
-            case let .protocolFailure(message):
-                return classifyMessage(message)
-            case .unavailable, .resourcesMissing, .busy, .launchFailed, .commandRejected:
-                return .generic
-            }
         }
         let ns = error as NSError
         if ns.domain == NSURLErrorDomain {
@@ -964,322 +972,5 @@ public protocol StudyAgentRuntime: Sendable {
 public extension StudyAgentRuntime {
     func respond(to request: StudyAgentRequest) async throws -> StudyAgentReply {
         try await respond(to: request, progress: nil)
-    }
-}
-
-public struct StudyAgentContextEnvelope: Codable, Equatable, Sendable {
-    public struct Source: Codable, Equatable, Sendable {
-        public var title: String
-        public var text: String
-        public var isTruncated: Bool
-
-        public init(title: String, text: String, isTruncated: Bool = false) {
-            self.title = title
-            self.text = text
-            self.isTruncated = isTruncated
-        }
-    }
-
-    public var schemaVersion: Int
-    public var requestID: String
-    public var contextRevision: String
-    public var purpose: String
-    public var answerFormPolicy: String
-    public var language: String
-    public var question: String
-    public var material: Source?
-    public var note: Source
-    public var selection: Source?
-    public var course: StudyAgentCourseContext
-    public var project: StudyAgentProjectScope
-    public var focus: StudyAgentFocus?
-    public var visualAssets: [StudyAgentVisualAsset]
-    public var learning: StudyAgentLearningContext
-    public var courseProfile: StudyAgentCourseProfileContext
-    public var interactiveVisualizationsEnabled: Bool
-
-    public init(request: StudyAgentRequest) {
-        schemaVersion = 2
-        requestID = request.id.uuidString.lowercased()
-        contextRevision = request.contextRevision
-        purpose = request.purpose.rawValue
-        answerFormPolicy = request.answerFormPolicy.rawValue
-        language = request.language.rawValue
-        question = String(request.question.prefix(4_000))
-
-        let materialText = String(request.materialText.prefix(18_000))
-        material = materialText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            ? nil
-            : Source(
-                title: String(request.materialTitle.prefix(300)),
-                text: materialText,
-                isTruncated: request.materialIsTruncated || request.materialText.count > materialText.count
-            )
-
-        let noteText = String(request.noteText.prefix(6_000))
-        note = Source(
-            title: String(request.noteTitle.prefix(300)),
-            text: noteText,
-            isTruncated: request.noteText.count > noteText.count
-        )
-
-        let selectedText = String((request.selectionText ?? "").prefix(2_000))
-        selection = selectedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            ? nil
-            : Source(
-                title: String((request.selectionTitle ?? request.materialTitle).prefix(300)),
-                text: selectedText,
-                isTruncated: (request.selectionText ?? "").count > selectedText.count
-            )
-
-        let boundedCourse = Self.boundedCourseContext(request.courseContext)
-        course = boundedCourse.context
-        project = Self.boundedProjectScope(
-            request.projectScope,
-            itemIDMap: boundedCourse.itemIDMap
-        )
-        focus = request.focus.map { focus in
-            StudyAgentFocus(
-                chatID: String(focus.chatID.prefix(128)),
-                courseID: focus.courseID.map { String($0.prefix(128)) },
-                materialItemID: focus.materialItemID.flatMap { boundedCourse.itemIDMap[$0] },
-                materialTitle: focus.materialTitle.map { String($0.prefix(300)) },
-                pageIndex: focus.pageIndex,
-                sectionTitle: focus.sectionTitle.map { String($0.prefix(300)) },
-                sectionLocationID: focus.sectionLocationID.map { String($0.prefix(300)) },
-                sectionOrdinal: focus.sectionOrdinal,
-                selectionText: focus.selectionText.map { String($0.prefix(2_000)) },
-                actionSource: String(focus.actionSource.prefix(64))
-            )
-        }
-        let currentMaterialIDs = Set(course.catalog.lazy.filter(\.isCurrentMaterial).map(\.id))
-        visualAssets = request.visualAssets.prefix(4).compactMap { asset in
-            guard let boundedID = boundedCourse.itemIDMap[asset.id],
-                  currentMaterialIDs.contains(boundedID),
-                  asset.filePath.utf8.count <= 4_096,
-                  !asset.filePath.contains("\0"),
-                  !asset.filePath.contains("\n"),
-                  !asset.filePath.contains("\r"),
-                  ["image/jpeg", "image/png", "image/webp"].contains(asset.mediaType) else {
-                return nil
-            }
-            return StudyAgentVisualAsset(
-                id: boundedID,
-                filePath: asset.filePath,
-                mediaType: asset.mediaType
-            )
-        }
-        learning = Self.boundedLearningContext(request.learningContext, itemIDMap: boundedCourse.itemIDMap)
-        courseProfile = Self.boundedCourseProfile(
-            request.courseProfile,
-            itemIDMap: boundedCourse.itemIDMap
-        )
-        interactiveVisualizationsEnabled = request.interactiveVisualizationsEnabled
-    }
-
-    private static func boundedProjectScope(
-        _ scope: StudyAgentProjectScope,
-        itemIDMap: [String: String]
-    ) -> StudyAgentProjectScope {
-        let maximumItems = 500
-        let carriesCourseFileAuthorization = scope.kind == .course
-        let items = scope.items.prefix(maximumItems).compactMap { item -> StudyAgentProjectItem? in
-            guard let itemID = itemIDMap[item.itemID] else { return nil }
-            return StudyAgentProjectItem(
-                itemID: itemID,
-                title: String(item.title.prefix(300)),
-                kind: String(item.kind.prefix(64)),
-                role: String(item.role.prefix(64)),
-                relativePath: carriesCourseFileAuthorization
-                    ? String(item.relativePath.prefix(4_096))
-                    : "",
-                resolvedPath: carriesCourseFileAuthorization
-                    ? String(item.resolvedPath.prefix(4_096))
-                    : "",
-                entryIdentity: carriesCourseFileAuthorization
-                    ? item.entryIdentity
-                    : nil,
-                targetIdentity: carriesCourseFileAuthorization
-                    ? item.targetIdentity
-                    : nil,
-                isShared: item.isShared,
-                courseIDs: item.courseIDs.prefix(32).map { String($0.prefix(128)) },
-                courseTitles: item.courseTitles.prefix(32).map { String($0.prefix(300)) },
-                sourceRevision: item.sourceRevision.map { String($0.prefix(500)) }
-            )
-        }
-        return StudyAgentProjectScope(
-            kind: scope.kind,
-            chatID: String(scope.chatID.prefix(128)),
-            courseID: scope.courseID.map { String($0.prefix(128)) },
-            courseTitle: scope.courseTitle.map { String($0.prefix(300)) },
-            rootPath: carriesCourseFileAuthorization
-                ? scope.rootPath.map { String($0.prefix(4_096)) }
-                : nil,
-            rootIdentity: carriesCourseFileAuthorization
-                ? scope.rootIdentity
-                : nil,
-            items: items,
-            isTruncated: scope.isTruncated || scope.items.count > items.count
-        )
-    }
-
-    private static func boundedCourseContext(
-        _ context: StudyAgentCourseContext
-    ) -> (context: StudyAgentCourseContext, itemIDMap: [String: String]) {
-        let maximumCatalogItems = 500
-        let maximumItems = 80
-        let sourceCatalog = Array(context.catalog.prefix(maximumCatalogItems))
-        var itemIDMap: [String: String] = [:]
-        for (index, item) in sourceCatalog.enumerated() where itemIDMap[item.id] == nil {
-            itemIDMap[item.id] = "course-item-\(index + 1)"
-        }
-        let catalog = sourceCatalog.compactMap { item -> StudyAgentCourseCatalogItem? in
-            guard let itemID = itemIDMap[item.id] else { return nil }
-            return StudyAgentCourseCatalogItem(
-                id: itemID,
-                title: String(item.title.prefix(300)),
-                subtitle: String(item.subtitle.prefix(300)),
-                kind: String(item.kind.prefix(64)),
-                role: String(item.role.prefix(64)),
-                isCurrentMaterial: item.isCurrentMaterial,
-                isCurrentNote: item.isCurrentNote,
-                linkedItemIDs: item.linkedItemIDs.prefix(24).compactMap { itemIDMap[$0] },
-                tags: item.tags.prefix(16).map { String($0.prefix(64)) }
-            )
-        }
-        let items = context.items.prefix(maximumItems).compactMap { item -> StudyAgentCourseItem? in
-            guard let itemID = itemIDMap[item.id] else { return nil }
-            let searchText = String(item.searchText.prefix(2_400))
-            return StudyAgentCourseItem(
-                id: itemID,
-                title: String(item.title.prefix(300)),
-                subtitle: String(item.subtitle.prefix(300)),
-                kind: String(item.kind.prefix(64)),
-                role: String(item.role.prefix(64)),
-                isCurrentMaterial: item.isCurrentMaterial,
-                isCurrentNote: item.isCurrentNote,
-                linkedItemIDs: item.linkedItemIDs.prefix(24).compactMap { itemIDMap[$0] },
-                headings: item.headings.prefix(12).map { String($0.prefix(200)) },
-                tags: item.tags.prefix(16).map { String($0.prefix(64)) },
-                searchText: searchText,
-                isTruncated: item.isTruncated || item.searchText.count > searchText.count
-            )
-        }
-        let relations = context.relations
-            .prefix(500)
-            .compactMap { relation -> StudyAgentCourseRelation? in
-                guard let noteItemID = itemIDMap[relation.noteItemID],
-                      let sourceItemID = itemIDMap[relation.sourceItemID] else { return nil }
-                return StudyAgentCourseRelation(noteItemID: noteItemID, sourceItemID: sourceItemID)
-            }
-        return (
-            StudyAgentCourseContext(
-                title: String(context.title.prefix(300)),
-                catalog: catalog,
-                items: items,
-                relations: relations,
-                isTruncated: context.isTruncated
-                    || context.catalog.count > catalog.count
-                    || context.items.count > items.count
-                    || context.relations.count > relations.count
-            ),
-            itemIDMap
-        )
-    }
-
-    private static func boundedLearningContext(
-        _ context: StudyAgentLearningContext,
-        itemIDMap: [String: String]
-    ) -> StudyAgentLearningContext {
-        let orderedMemories = context.memories.sorted {
-            $0.updatedAt > $1.updatedAt
-        }
-        let recentResolved = Array(
-            orderedMemories
-                .lazy
-                .filter { $0.status == .resolved }
-                .prefix(8)
-        )
-        let recentActive = Array(
-            orderedMemories
-                .lazy
-                .filter { $0.status == .active }
-                .prefix(max(48 - recentResolved.count, 0))
-        )
-        let memories = (recentActive + recentResolved)
-            .sorted { $0.updatedAt > $1.updatedAt }
-            .map { memory in
-                LearningMemoryEntry(
-                    id: memory.id,
-                    kind: memory.kind,
-                    text: String(memory.text.prefix(500)),
-                    evidence: String(memory.evidence.prefix(400)),
-                    origin: memory.origin,
-                    status: memory.status,
-                    sessionID: memory.sessionID,
-                    resolvedAt: memory.resolvedAt,
-                    resolutionEvidence: memory.resolutionEvidence.map { String($0.prefix(400)) },
-                    createdAt: memory.createdAt,
-                    updatedAt: memory.updatedAt
-                )
-        }
-        let location = context.lastLocation.flatMap { location -> StudyLocation? in
-            guard let itemID = itemIDMap[location.itemID] else { return nil }
-            return StudyLocation(
-                itemID: itemID,
-                itemTitle: String(location.itemTitle.prefix(300)),
-                locationID: location.locationID.map { String($0.prefix(500)) },
-                locationTitle: location.locationTitle.map { String($0.prefix(300)) },
-                pageIndex: location.pageIndex.map { max($0, 0) + 1 },
-                lastStudiedAt: location.lastStudiedAt,
-                visitCount: location.visitCount
-            )
-        }
-        let session = context.session.map { session in
-            StudyAgentSessionSnapshot(
-                id: String(session.id.prefix(256)),
-                title: String(session.title.prefix(300)),
-                summary: String(session.summary.prefix(2_000)),
-                phase: String(session.phase.prefix(64)),
-                focusItemIDs: session.focusItemIDs.prefix(24).compactMap { itemIDMap[$0] },
-                turnCount: session.turnCount
-            )
-        }
-        return StudyAgentLearningContext(
-            memoryRevision: context.memoryRevision,
-            lastLocation: location,
-            memories: memories,
-            session: session
-        )
-    }
-
-    private static func boundedCourseProfile(
-        _ profile: StudyAgentCourseProfileContext,
-        itemIDMap: [String: String]
-    ) -> StudyAgentCourseProfileContext {
-        StudyAgentCourseProfileContext(
-            revision: profile.revision,
-            overview: String(profile.overview.prefix(2_000)),
-            entries: profile.entries.prefix(200).compactMap { entry in
-                let sources = entry.sources.prefix(8).compactMap {
-                    source -> StudyAgentCourseProfileSource? in
-                    guard let itemID = itemIDMap[source.itemID] else { return nil }
-                    return StudyAgentCourseProfileSource(
-                        itemID: itemID,
-                        role: String(source.role.prefix(16)),
-                        location: source.location.map { String($0.prefix(500)) },
-                        sourceRevision: String(source.sourceRevision.prefix(500))
-                    )
-                }
-                guard !sources.isEmpty else { return nil }
-                return StudyAgentCourseProfileEntry(
-                    id: String(entry.id.prefix(128)),
-                    kind: String(entry.kind.prefix(32)),
-                    text: String(entry.text.prefix(1_200)),
-                    sources: sources
-                )
-            }
-        )
     }
 }

@@ -221,6 +221,7 @@ struct CoursePortableStateSaveInput: Sendable {
 struct WorkspacePersistenceRequest: Sendable {
     var generation: UInt64
     var workspace: PersistedWorkspace
+    var courseItemMemberships: [CourseItemMembership]
     var storageURL: URL
     var portableInputs: [CoursePortableStateSaveInput]
     var requiredPortableCourseIDs: Set<UUID>
@@ -277,8 +278,8 @@ enum CoursePortableExportError: LocalizedError {
         switch self {
         case .unstableCourseState:
             return "这门课程仍有回答、笔记或动作尚未保存。请先等待完成或中断，再继续。"
-        case let .invalidSourceEntry(path, reason):
-            return "课程内容“\(path)”无法安全导出：\(reason)"
+        case let .invalidSourceEntry(path, _):
+            return "课程内容“\(path)”无法导出，未生成导出文件。请确认该文件仍可在 Finder 中打开，然后重试。"
         }
     }
 }
@@ -407,7 +408,14 @@ actor CourseProjectFileWorker {
     }
 
     func persistWorkspace(
-        _ request: WorkspacePersistenceRequest
+        _ request: WorkspacePersistenceRequest,
+        portableStateWriter: @escaping @Sendable (
+            Data,
+            URL,
+            ImportedFileIdentity,
+            Data?
+        ) throws -> Void,
+        workspaceSnapshotWriter: @escaping @Sendable (Data, URL) throws -> Void
     ) async -> WorkspacePersistenceResult {
         let ranOnMainThread = pthread_main_np() != 0
         guard request.generation > highestWorkspaceSaveGeneration else {
@@ -468,7 +476,8 @@ actor CourseProjectFileWorker {
                         courseID: courseID,
                         revision: currentRevision,
                         savedAt: Date(timeIntervalSince1970: 0),
-                        workspace: request.workspace
+                        workspace: request.workspace,
+                        courseItemMemberships: request.courseItemMemberships
                     )
                 } catch {
                     guard stateURL == nil, hasPortableHistory else {
@@ -556,12 +565,11 @@ actor CourseProjectFileWorker {
                     )
                     : nil
                 do {
-                    try Self.writePortableState(
+                    try portableStateWriter(
                         committedData,
-                        to: stateURL,
-                        expectedDirectoryIdentity: directoryIdentity,
-                        expectedPreviousData: previousData,
-                        beforeCommit: {}
+                        stateURL,
+                        directoryIdentity,
+                        previousData
                     )
                     let verified = try Self.readValidatedPortableState(
                         at: stateURL,
@@ -712,10 +720,7 @@ actor CourseProjectFileWorker {
             do {
                 if pthread_main_np() != 0 {
                     try await Task.detached(priority: .utility) {
-                        try data.write(
-                            to: request.storageURL,
-                            options: [.atomic]
-                        )
+                        try workspaceSnapshotWriter(data, request.storageURL)
                         let verified = try Data(
                             contentsOf: request.storageURL
                         )
@@ -725,10 +730,7 @@ actor CourseProjectFileWorker {
                         }
                     }.value
                 } else {
-                    try data.write(
-                        to: request.storageURL,
-                        options: [.atomic]
-                    )
+                    try workspaceSnapshotWriter(data, request.storageURL)
                     let verified = try Data(contentsOf: request.storageURL)
                     guard verified == data else {
                         throw CourseProjectFileWorkerError.verificationFailed
@@ -880,14 +882,15 @@ actor CourseProjectFileWorker {
         courseID: UUID,
         revision: UInt64,
         savedAt: Date,
-        workspace: PersistedWorkspace
+        workspace: PersistedWorkspace,
+        courseItemMemberships: [CourseItemMembership]
     ) throws -> CoursePortableState {
         guard let course = workspace.courses?.first(where: {
             $0.id == courseID
         }) else {
             throw CoursePortableStateError.courseIdentityMismatch
         }
-        var memberships = (workspace.courseItemMemberships ?? [])
+        var memberships = courseItemMemberships
             .filter { $0.courseID == courseID }
         for item in workspace.importedItems {
             guard case .courseOwned(let ownerCourseID, let relativePath)
@@ -1144,7 +1147,7 @@ actor CourseProjectFileWorker {
         }
 
         let membershipsByItemID = Dictionary(
-            grouping: workspace.courseItemMemberships ?? [],
+            grouping: courseItemMemberships,
             by: \.itemID
         )
         let resumePoint = workspace.courseResumePoints?
@@ -1195,7 +1198,7 @@ actor CourseProjectFileWorker {
                 updatedAt: course.updatedAt
             ),
             items: portableItems,
-            studySessions: sessions,
+            studySessions: [],
             learningMemoryState: memoryState,
             courseKnowledgeProfile: courseKnowledgeProfile,
             noteSourceLinks: relations,
@@ -3046,9 +3049,8 @@ actor CourseProjectFileWorker {
 
     nonisolated static func expandedSupportedFiles(
         from urls: [URL],
-        markdownOnly: Bool,
-        maximumCount: Int = 500
-    ) -> [URL]? {
+        markdownOnly: Bool
+    ) -> [URL] {
         let fileManager = FileManager.default
         var seen = Set<String>()
         var result: [URL] = []
@@ -3059,9 +3061,6 @@ actor CourseProjectFileWorker {
             }
             if !isDirectory.boolValue {
                 appendSupported(rawURL, markdownOnly: markdownOnly, seen: &seen, result: &result)
-                if result.count > maximumCount {
-                    return nil
-                }
                 continue
             }
             guard !Self.ignoresImportDirectory(rawURL) else { continue }
@@ -3084,9 +3083,6 @@ actor CourseProjectFileWorker {
                     continue
                 }
                 appendSupported(fileURL, markdownOnly: markdownOnly, seen: &seen, result: &result)
-                if result.count > maximumCount {
-                    return nil
-                }
             }
         }
         return result.sorted { $0.path.localizedStandardCompare($1.path) == .orderedAscending }

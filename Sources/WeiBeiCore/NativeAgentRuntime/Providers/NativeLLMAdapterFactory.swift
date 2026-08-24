@@ -8,6 +8,7 @@ public enum NativeLLMAdapterFactory {
     ) async throws -> NativeLLMAdapter {
         let route = NativeProviderRouting.route(provider)
         let baseURL = NativeProviderRouting.resolvedBaseURL(provider: provider, endpoint: endpoint)
+        let credentialProviderID = endpoint.credentialProviderID
         _ = model
         switch route.family {
         case .openaiCodexResponses:
@@ -22,7 +23,7 @@ public enum NativeLLMAdapterFactory {
                 chatgptBackend: true
             )
         case .openaiResponses:
-            guard let key = try NativeAgentCredentialStore.apiKey(forProviderID: provider.rawValue) else {
+            guard let key = try NativeAgentCredentialStore.apiKey(forProviderID: credentialProviderID) else {
                 throw NativeLLMFailure(code: "unauthorized", status: 401, message: "missing API key")
             }
             guard let baseURL else {
@@ -30,7 +31,7 @@ public enum NativeLLMAdapterFactory {
             }
             return OpenAIResponsesProvider(baseURL: baseURL, accessToken: key)
         case .anthropicMessages:
-            guard let key = try NativeAgentCredentialStore.apiKey(forProviderID: provider.rawValue) else {
+            guard let key = try NativeAgentCredentialStore.apiKey(forProviderID: credentialProviderID) else {
                 throw NativeLLMFailure(
                     code: "unauthorized",
                     status: 401,
@@ -44,7 +45,7 @@ public enum NativeLLMAdapterFactory {
                 ?? URL(string: "https://api.anthropic.com/v1/messages")!
             return AnthropicMessagesProvider(apiKey: key, apiURL: messagesURL)
         case .googleGenerativeAI:
-            guard let key = try NativeAgentCredentialStore.apiKey(forProviderID: provider.rawValue) else {
+            guard let key = try NativeAgentCredentialStore.apiKey(forProviderID: credentialProviderID) else {
                 throw NativeLLMFailure(code: "unauthorized", status: 401, message: "missing API key")
             }
             return GoogleGenerativeAIProvider(
@@ -60,7 +61,7 @@ public enum NativeLLMAdapterFactory {
                         : "provider \(provider.rawValue) is missing a chat-completions base URL"
                 )
             }
-            guard let key = try NativeAgentCredentialStore.apiKey(forProviderID: provider.rawValue) else {
+            guard let key = try NativeAgentCredentialStore.apiKey(forProviderID: credentialProviderID) else {
                 throw NativeLLMFailure(
                     code: "unauthorized",
                     status: 401,

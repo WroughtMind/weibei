@@ -12,10 +12,7 @@ public actor NativeAgentLedger {
         self.fileURL = fileURL
         encoder = JSONEncoder()
         decoder = JSONDecoder()
-        try FileManager.default.createDirectory(
-            at: fileURL.deletingLastPathComponent(),
-            withIntermediateDirectories: true
-        )
+        try Self.ensureSafeParent(for: fileURL)
         if FileManager.default.fileExists(atPath: fileURL.path) {
             let data = try Data(contentsOf: fileURL)
             if !data.isEmpty {
@@ -36,6 +33,28 @@ public actor NativeAgentLedger {
                 events = loaded
                 nextSeq = (loaded.map(\.seq).max() ?? 0) + 1
             }
+        }
+    }
+
+    private static func ensureSafeParent(for fileURL: URL) throws {
+        let sessionDirectory = fileURL.deletingLastPathComponent()
+        let ledgerRoot = sessionDirectory.deletingLastPathComponent()
+        let workspaceRoot = ledgerRoot
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        do {
+            try WeiBeiAgentDataPaths.ensureOwnedDirectory(
+                sessionDirectory,
+                inside: workspaceRoot
+            )
+        } catch WeiBeiAgentDataPathError.outsideWorkspace {
+            WeiBeiLog.workspace.error(
+                "code=unsafe_agent_ledger_directory"
+            )
+            throw NativeLLMFailure(
+                code: "unsafe_agent_directory",
+                message: "Agent 本地目录不安全，未写入运行记录"
+            )
         }
     }
 
@@ -183,10 +202,7 @@ public actor NativeAgentLedger {
                 ? true
                 : eventTurn <= turn && event.type == .turnEnd
         }
-        try FileManager.default.createDirectory(
-            at: url.deletingLastPathComponent(),
-            withIntermediateDirectories: true
-        )
+        try Self.ensureSafeParent(for: url)
         var data = Data()
         for event in events where (event.turn ?? 0) <= turn {
             if event.type == .turnStart, event.turn == turn { break }

@@ -96,6 +96,7 @@ const isCompactPreview = window.weiBeiMarkdownCompactPreview === true;
 let currentDocumentID = window.weiBeiDocumentID || '';
 let currentDocumentGeneration = window.weiBeiDocumentGeneration || 0;
 let revisionState = { revision: 0, dirty: false };
+const appliedCommandIDs = new Set<string>();
 let suppressDirtyTransactions = false;
 let editorReadyPosted = false;
 let fullMarkdownBridgeMessages = 0;
@@ -3326,6 +3327,7 @@ const setDocumentIdentityInternal = (documentID: string, documentGeneration: num
   currentDocumentID = documentID;
   currentDocumentGeneration = documentGeneration;
   if (!changed) return;
+  appliedCommandIDs.clear();
   lastOutlineChangeKey = null;
   currentContentGeneration += 1;
   pendingImagePickers.clear();
@@ -3380,69 +3382,102 @@ const commandPayloadValue = (command: EditorCommand, name: string) => command.pa
 
 const dispatchEditorCommand = (value: unknown) => {
   const command = parseEditorCommand(value);
-  if (!command || !acceptsEditorCommand(command, {
+  if (!command) return false;
+  if (appliedCommandIDs.has(command.commandID)) {
+    post('commandApplied', { commandID: command.commandID });
+    return true;
+  }
+  if (!acceptsEditorCommand(command, {
     documentID: currentDocumentID,
     documentGeneration: currentDocumentGeneration,
     revision: revisionState.revision,
-  })) return false;
+  })) {
+    post('commandRejected', { commandID: command.commandID, reason: 'document or revision mismatch' });
+    return false;
+  }
 
-  switch (command.type) {
+  let applied = false;
+  try {
+    switch (command.type) {
     case 'loadDocument': {
       const markdown = commandPayloadValue(command, 'markdown');
       const initialRevision = commandPayloadValue(command, 'initialRevision');
       if (typeof markdown !== 'string'
-          || (initialRevision !== undefined && !Number.isInteger(initialRevision))) return false;
+          || (initialRevision !== undefined && !Number.isInteger(initialRevision))) break;
       setDocumentIdentityInternal(command.documentID, command.documentGeneration);
       loadMarkdownInternal(markdown, Number(initialRevision ?? 0));
-      return true;
+      applied = true;
+      break;
     }
     case 'requestSnapshot': {
       const markdown = getMarkdownInternal();
       lastMarkdown = markdown;
       post('snapshotReady', { requestID: command.requestID!, markdown });
-      return true;
+      applied = true;
+      break;
     }
     case 'setTheme':
       setThemeInternal(commandPayloadValue(command, 'theme'));
-      return true;
+      applied = true;
+      break;
     case 'setLanguage':
       setLanguageInternal(commandPayloadValue(command, 'language'));
-      return true;
+      applied = true;
+      break;
     case 'setEditable':
       setEditableInternal(commandPayloadValue(command, 'editable'));
-      return true;
+      applied = true;
+      break;
     case 'focus':
-      return focusInternal();
+      applied = focusInternal();
+      break;
     case 'scrollToHeading':
-      return scrollToHeadingInternal(commandPayloadValue(command, 'index'));
+      applied = scrollToHeadingInternal(commandPayloadValue(command, 'index'));
+      break;
     case 'applyMarkdownFragment': {
       const markdown = commandPayloadValue(command, 'markdown');
-      if (typeof markdown !== 'string') return false;
+      if (typeof markdown !== 'string') break;
       appendMarkdownInternal(markdown);
-      return true;
+      applied = true;
+      break;
     }
     case 'replaceSelection': {
       const markdown = commandPayloadValue(command, 'markdown');
-      if (typeof markdown !== 'string') return false;
+      if (typeof markdown !== 'string') break;
       replaceSelectionInternal(markdown);
-      return true;
+      applied = true;
+      break;
     }
     case 'executeSelectionCommand':
-      return executeSelectionCommandInternal(commandPayloadValue(command, 'action'), commandPayloadValue(command, 'value'));
+      applied = executeSelectionCommandInternal(commandPayloadValue(command, 'action'), commandPayloadValue(command, 'value'));
+      break;
     case 'insertStructuredBlock': {
       const markdown = commandPayloadValue(command, 'markdown');
-      if (typeof markdown !== 'string') return false;
+      if (typeof markdown !== 'string') break;
       insertMarkdownInternal(markdown);
-      return true;
+      applied = true;
+      break;
     }
     case 'restoreCheckpoint': {
       const markdown = commandPayloadValue(command, 'markdown');
       const revision = commandPayloadValue(command, 'revision');
-      if (typeof markdown !== 'string' || (revision !== undefined && (!Number.isInteger(revision) || Number(revision) < 0))) return false;
+      if (typeof markdown !== 'string' || (revision !== undefined && (!Number.isInteger(revision) || Number(revision) < 0))) break;
       loadMarkdownInternal(markdown, revision === undefined ? revisionState.revision : Number(revision), true);
-      return true;
+      applied = true;
+      break;
     }
+    }
+  } catch (error) {
+    post('commandRejected', { commandID: command.commandID, reason: String((error as any)?.message || error) });
+    return false;
   }
+  if (!applied) {
+    post('commandRejected', { commandID: command.commandID, reason: 'command could not be applied' });
+    return false;
+  }
+  appliedCommandIDs.add(command.commandID);
+  post('commandApplied', { commandID: command.commandID });
+  return true;
 };
 
 window.WeiBeiEditor = {

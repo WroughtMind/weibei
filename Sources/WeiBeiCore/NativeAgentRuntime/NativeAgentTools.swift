@@ -60,6 +60,7 @@ public struct NativeToolExecutionContext: Sendable {
     public var hostToolHandler: StudyAgentHostToolHandler?
     public var persistentAssetIDsByContextID: [String: String]
     public var searchedItemIDs: [String]
+    public var currentRunSourceURLs: [String]
     public var readSourceRevisions: [String: String]
     public var lastReadMemoryRevision: UInt64?
     public var courseProfileUpdated: Bool
@@ -72,6 +73,7 @@ public struct NativeToolExecutionContext: Sendable {
         hostToolHandler: StudyAgentHostToolHandler? = nil,
         persistentAssetIDsByContextID: [String: String] = [:],
         searchedItemIDs: [String] = [],
+        currentRunSourceURLs: [String] = [],
         readSourceRevisions: [String: String] = [:],
         lastReadMemoryRevision: UInt64? = nil,
         courseProfileUpdated: Bool = false,
@@ -83,6 +85,7 @@ public struct NativeToolExecutionContext: Sendable {
         self.hostToolHandler = hostToolHandler
         self.persistentAssetIDsByContextID = persistentAssetIDsByContextID
         self.searchedItemIDs = searchedItemIDs
+        self.currentRunSourceURLs = currentRunSourceURLs
         self.readSourceRevisions = readSourceRevisions
         self.lastReadMemoryRevision = lastReadMemoryRevision
         self.courseProfileUpdated = courseProfileUpdated
@@ -216,17 +219,14 @@ enum NativeToolGuard {
         arguments: [String: Any],
         context: NativeToolExecutionContext
     ) throws {
-        if name == "read" {
-            let path = (arguments["path"] as? String ?? "")
-            let allowed = path == "skill://visualize" || path.contains("/skills/visualize/SKILL.md")
-            if !allowed {
-                throw NativeLLMFailure(code: "guard_denied", message: "read 只接受魏碑已登记的 skill:// 路径")
-            }
-        }
         if name == "weibei_web_open" {
             let url = arguments["url"] as? String ?? ""
-            guard WeiBeiWebResearchURLPolicy.isExplicitlyProvided(url, in: context.request.question) else {
-                throw NativeLLMFailure(code: "guard_denied", message: "网页工具只能读取用户本轮明确提供的地址")
+            guard WeiBeiWebResearchURLPolicy.isAvailableInCurrentRun(
+                url,
+                in: context.request.question,
+                currentRunSourceURLs: context.currentRunSourceURLs
+            ) else {
+                throw NativeLLMFailure(code: "guard_denied", message: "该网页地址不在本轮可访问来源中")
             }
         }
         if ["weibei_read_learning_memory", "weibei_update_learning_memory", "weibei_course_profile_update", "weibei_relation_proposal"].contains(name) {
@@ -234,9 +234,6 @@ enum NativeToolGuard {
             if courseID.isEmpty {
                 throw NativeLLMFailure(code: "guard_denied", message: "该工具只在课程 Chat 中使用")
             }
-        }
-        if name == "weibei_visualize", context.request.interactiveVisualizationsEnabled == false {
-            throw NativeLLMFailure(code: "guard_denied", message: "用户已关闭新互动界面")
         }
     }
 }
@@ -246,7 +243,6 @@ public enum NativeBuiltinTools {
         into registry: NativeToolRegistry,
         skillRoot: URL?
     ) async {
-        await registry.register(readSkill(skillRoot: skillRoot))
         await registry.register(loadSkill)
         await registry.register(createDocument)
         await registry.register(delegate)
@@ -255,52 +251,13 @@ public enum NativeBuiltinTools {
         await registry.register(courseMap)
         await registry.register(courseSearch)
         await registry.register(courseRead)
+        await registry.register(retryFailedPDFPages)
         await registry.register(webOpen)
         await registry.register(learningMemory)
         await registry.register(learningUpdate)
         await registry.register(courseProfileUpdate)
         await registry.register(noteProposal)
         await registry.register(relationProposal)
-    }
-
-    private static func readSkill(skillRoot: URL?) -> NativeToolDefinition {
-        NativeToolDefinition(
-            name: "read",
-            description: "视觉表达可能明显改善理解、比较或探索时，读取魏碑随 App 打包的 visualize Skill。",
-            permission: .read,
-            schema: NativeJSONSchema([
-                "type": "object",
-                "properties": ["path": ["type": "string"]],
-                "required": ["path"],
-            ]),
-            execute: { arguments, _ in
-                let path = arguments["path"] as? String ?? ""
-                let file: URL
-                if let skillRoot {
-                    file = skillRoot.appendingPathComponent("visualize/SKILL.md")
-                } else if path.hasPrefix("/") {
-                    file = URL(fileURLWithPath: path)
-                } else {
-                    throw NativeLLMFailure(code: "skill_missing", message: "visualize Skill 未打包")
-                }
-                let content = try String(contentsOf: file, encoding: .utf8)
-                let digest = SHA256.hash(data: Data(content.utf8))
-                let sha = digest.map { String(format: "%02x", $0) }.joined()
-                return NativeToolExecutionResult(
-                    text: content,
-                    details: [
-                        "kind": "weibei_skill_read",
-                        "loaded": [
-                            "id": "visualize",
-                            "name": "Visualize",
-                            "relativePath": "skills/visualize/SKILL.md",
-                            "sha256": sha,
-                            "byteCount": content.utf8.count,
-                        ],
-                    ]
-                )
-            }
-        )
     }
 
     private static var loadSkill: NativeToolDefinition {
@@ -536,7 +493,7 @@ public enum NativeBuiltinTools {
     private static var courseSearch: NativeToolDefinition {
         hostTool(
             name: "weibei_course_search",
-            description: "在课程索引中搜索材料与笔记。用户点名课程、教材、章节，或问题可能落在当前课程里时，先用本工具再读正文，不要先反问要查哪一种。搜到命中后应接着 weibei_course_read，itemID 用搜索结果里的 id。确认课程里没有后，可以网页搜索并说明「课程里没有，我上网查了」。闲聊、冷知识、与课程无关的问题不要调用本工具。",
+            description: "在课程索引中搜索材料与笔记。用户点名课程、教材、章节，或问题可能落在当前课程里时，先用本工具再读正文，不要先反问要查哪一种。搜到命中后应接着 weibei_course_read，itemID 用搜索结果里的 id。PDF 结果的 indexedPageCount/totalPageCount 是当前文件版本的索引覆盖率，uncoveredPageNumbers 是未覆盖页，failedPageNumbers/failedPageReasons 是识别失败页及人话原因，失败页可由用户明确要求重试；即使没有正文命中也要报告这些状态，存在未覆盖页时不得声称搜遍全文。确认课程里没有后，可以网页搜索并说明「课程里没有，我上网查了」。闲聊、冷知识、与课程无关的问题不要调用本工具。",
             permission: .read,
             schema: NativeJSONSchema([
                 "type": "object",
@@ -558,7 +515,7 @@ public enum NativeBuiltinTools {
     private static var courseRead: NativeToolDefinition {
         hostTool(
             name: "weibei_course_read",
-            description: "按搜索结果里的 itemID 渐进读取真实正文。课程搜索命中后应读取最相关的一条，不要停下来反问用户。itemID 必须是搜索返回的 id。",
+            description: "按搜索结果里的 itemID 渐进读取真实正文。课程搜索命中后应读取最相关的一条，不要停下来反问用户。itemID 必须是搜索返回的 id。PDF 的 uncoveredPageNumbers 与 failedPageNumbers 不在已读正文覆盖范围内；failedPageReasons 是人话失败原因，失败页可由用户明确要求重试。",
             permission: .read,
             schema: NativeJSONSchema([
                 "type": "object",
@@ -592,7 +549,7 @@ public enum NativeBuiltinTools {
     private static var webOpen: NativeToolDefinition {
         hostTool(
             name: "weibei_web_open",
-            description: "读取用户本轮明确贴出的 HTTPS 网页。",
+            description: "读取用户本轮明确贴出、原生网页搜索返回，或已成功读取页面中真实链接指向的 HTTPS 网页。",
             permission: .read,
             schema: NativeJSONSchema([
                 "type": "object",
@@ -611,10 +568,34 @@ public enum NativeBuiltinTools {
         )
     }
 
+    private static var retryFailedPDFPages: NativeToolDefinition {
+        hostTool(
+            name: "weibei_course_retry_failed_pdf_pages",
+            description: "用户本轮明确要求重试或重新索引 PDF 失败页时使用。itemID 必须来自课程搜索结果。后端仅在当前文件确有失败页时重建这些页的索引，不改原文件；普通搜索和普通问答不得调用。",
+            permission: .read,
+            schema: NativeJSONSchema([
+                "type": "object",
+                "properties": ["itemID": ["type": "string"]],
+                "required": ["itemID"],
+            ]),
+            makeRequest: { arguments, context in
+                let itemID = string(arguments["itemID"])
+                    ?? context.searchedItemIDs.last
+                    ?? ""
+                guard !itemID.isEmpty else {
+                    throw NativeLLMFailure(code: "invalid_arguments", message: "重新索引失败页需要搜索结果里的 itemID")
+                }
+                return .retryFailedPDFPages(
+                    itemID: context.persistentAssetIDsByContextID[itemID] ?? itemID
+                )
+            }
+        )
+    }
+
     private static var learningMemory: NativeToolDefinition {
         NativeToolDefinition(
             name: "weibei_read_learning_memory",
-            description: "只读取本课程学习记忆和上次位置，不会写入或改变任何内容。每条记忆都带 memoryID。更新已有记忆时把这个 memoryID 原样抄到 weibei_update_learning_memory；新建不要自己编 ID。用户要求记下、记住或更新进度时不要调用本工具，改用 weibei_update_learning_memory。返回里的 contextRevision 必须原样回传给写入类工具。",
+            description: "只读取本课程学习记忆和上次位置，不会写入或改变任何内容。每条记忆都带 memoryID。更新已有记忆时把这个 memoryID 原样抄到 weibei_update_learning_memory；新建不要自己编 ID。用户明确要求先看拟写内容或不要修改记忆时，不得调用写入工具；其余明确要求记下、记住或更新进度时改用 weibei_update_learning_memory。返回里的 contextRevision 必须原样回传给写入类工具。",
             permission: .read,
             schema: NativeJSONSchema(["type": "object", "properties": [:]]),
             execute: { _, context in
@@ -648,7 +629,7 @@ public enum NativeBuiltinTools {
     private static var learningUpdate: NativeToolDefinition {
         NativeToolDefinition(
             name: "weibei_update_learning_memory",
-            description: "记录或更新本课程学习记忆的唯一入口。读取请用 weibei_read_learning_memory。memoryID 只从读取结果或上次写成功回执抄写，不要自己编，不要传空字符串；新建省略该字段，魏碑会分配 id 并在回执里返回。用户要求记下/记住/更新进度或掌握情况时必须调用；即使用户说先看看怎么写、不要直接改，也仍要调用，写入后在回答里逐条展示内容。contextRevision 必须原样回传。userStatement 的 evidence 必须以「[用户：本轮]」开头并带上用户原话。",
+            description: "记录或更新本课程学习记忆的唯一入口。读取请用 weibei_read_learning_memory。memoryID 只从读取结果或上次写成功回执抄写，不要自己编，不要传空字符串；新建省略该字段，魏碑会分配 id 并在回执里返回。用户明确要求先看拟写内容、不要直接修改或等待确认时不得调用；只展示建议，确认后再写入。其余明确要求记下/记住/更新进度或掌握情况时调用。contextRevision 必须原样回传。userStatement 的 evidence 必须以「[用户：本轮]」开头并带上用户原话。",
             permission: .writeConfirm,
             schema: NativeJSONSchema([
                 "type": "object",
@@ -830,11 +811,17 @@ public enum NativeBuiltinTools {
                     expected: context.request.courseProfile.revision,
                     message: "课程知识档案版本已变化；当前 profileRevision 为 \(context.request.courseProfile.revision)，请原样回传"
                 )
+                guard let checkpoint = arguments["checkpoint"] as? String else {
+                    throw NativeLLMFailure(
+                        code: "invalid_arguments",
+                        message: "缺少参数 checkpoint"
+                    )
+                }
                 var details: [String: Any] = [
                     "kind": "course_profile_update",
                     "contextRevision": context.request.contextRevision,
                     "profileRevision": NSNumber(value: context.request.courseProfile.revision),
-                    "checkpoint": arguments["checkpoint"] as? String ?? "userRequested",
+                    "checkpoint": checkpoint,
                     "entries": omittingBlankIDs(in: arguments["entries"] as? [Any] ?? [], key: "entryID"),
                     "removedEntryIDs": arguments["removedEntryIDs"] as? [String]
                         ?? (arguments["removedEntryIDs"] as? [Any])?.compactMap { $0 as? String }

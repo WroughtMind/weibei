@@ -1,5 +1,6 @@
 import Foundation
 import XCTest
+@testable import WeiBei
 import WeiBeiCore
 
 final class AgentEndpointSecurityTests: XCTestCase {
@@ -18,18 +19,18 @@ final class AgentEndpointSecurityTests: XCTestCase {
         )
 
         XCTAssertEqual(first.baseURL, "https://api.example.com/v1")
-        XCTAssertEqual(first.piProviderID, sameService.piProviderID)
-        XCTAssertNotEqual(first.piProviderID, otherService.piProviderID)
-        XCTAssertTrue(first.piProviderID.hasPrefix("weibei-custom-"))
+        XCTAssertEqual(first.credentialProviderID, sameService.credentialProviderID)
+        XCTAssertNotEqual(first.credentialProviderID, otherService.credentialProviderID)
+        XCTAssertTrue(first.credentialProviderID.hasPrefix("weibei-custom-"))
     }
 
-    func testAzureKeepsPiProviderIDWhileRequiringItsServiceAddress() throws {
+    func testAzureKeepsStableProviderIDWhileRequiringItsServiceAddress() throws {
         let endpoint = try AgentProviderEndpoint(
             provider: .azureOpenAI,
             baseURL: "HTTPS://Example.openai.azure.com:443/"
         )
 
-        XCTAssertEqual(endpoint.piProviderID, "azure-openai-responses")
+        XCTAssertEqual(endpoint.credentialProviderID, "azure-openai-responses")
         XCTAssertEqual(endpoint.baseURL, "https://example.openai.azure.com")
         XCTAssertThrowsError(
             try AgentProviderEndpoint(provider: .azureOpenAI, baseURL: "")
@@ -70,93 +71,112 @@ final class AgentEndpointSecurityTests: XCTestCase {
         }
     }
 
-    func testCustomModelsUseEndpointBoundProviderID() async throws {
+    func testCredentialStoreKeepsEndpointBinding() throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("WeiBeiEndpointTest-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root) }
-        let runtime = PiAgentRuntime(
-            executableURL: root.appendingPathComponent("unused-pi"),
-            runtimeDirectory: root.appendingPathComponent("runtime", isDirectory: true),
-            persistentPiConfigurationDirectory: root.appendingPathComponent("pi", isDirectory: true)
-        )
         let endpoint = try AgentProviderEndpoint(
             provider: .custom,
             baseURL: "https://api.example.com/v1"
         )
+        let store = NativeAgentCredentialStore(fileURL: root.appendingPathComponent("credentials.json"))
 
-        try await runtime.writeCustomModelsJSONIfNeeded(
-            providerID: .custom,
-            baseURL: "https://api.example.com/v1",
-            model: "test-model"
-        )
+        try store.upsert(NativeAgentCredentialRecord(
+            provider: endpoint.credentialProviderID,
+            apiKey: "secret",
+            boundEndpoint: endpoint.baseURL
+        ))
 
-        let modelsURL = root.appendingPathComponent("pi/models.json")
-        let object = try JSONSerialization.jsonObject(with: Data(contentsOf: modelsURL))
-        let providers = try XCTUnwrap(
-            (object as? [String: Any])?["providers"] as? [String: Any]
-        )
-        XCTAssertEqual(Set(providers.keys), [endpoint.piProviderID])
-        XCTAssertNil(providers["weibei-custom"])
+        let record = try XCTUnwrap(store.load()[endpoint.credentialProviderID])
+        XCTAssertEqual(record.boundEndpoint, endpoint.baseURL)
+        XCTAssertNil(try store.load()[AgentProviderID.custom.credentialProviderID])
     }
 
-    func testWebOpenRequiresAnExplicitPublicHTTPSURL() throws {
-        XCTAssertTrue(
-            WeiBeiWebResearchURLPolicy.isExplicitlyProvided(
-                "https://93.184.216.34/guide",
-                in: "请读 https://93.184.216.34/guide 并总结"
-            )
-        )
-        XCTAssertFalse(
-            WeiBeiWebResearchURLPolicy.isExplicitlyProvided(
-                "https://93.184.216.34/other",
-                in: "请读 https://93.184.216.34/guide 并总结"
-            )
-        )
-        XCTAssertFalse(
-            WeiBeiWebResearchURLPolicy.isExplicitlyProvided(
-                "https://example.com/",
-                in: "请读 https://example.com.evil/guide 并总结"
-            )
-        )
-        XCTAssertTrue(
-            WeiBeiWebResearchURLPolicy.isExplicitlyProvided(
-                "https://example.com/guide",
-                in: "请读【https://EXAMPLE.com:443/guide#section】，并总结"
-            )
-        )
-        XCTAssertTrue(
-            WeiBeiWebResearchURLPolicy.isExplicitlyProvided(
-                "https://example.com/",
-                in: "请先实际读取 https://example.com/，用一句中文说明正文用途；再用 Mermaid 画流程图"
-            )
-        )
-        for question in [
-            "请读[https://example.com/guide]并总结",
-            "请读 `https://example.com/guide` 并总结",
-        ] {
-            XCTAssertTrue(
-                WeiBeiWebResearchURLPolicy.isExplicitlyProvided(
-                    "https://example.com/guide",
-                    in: question
-                )
-            )
+    @MainActor
+    func testAgentOwnedRootsRejectSymlinksOutsideWorkspace() throws {
+        enum OwnedRoot: String {
+            case chats = "AgentRuntime/Chats"
+            case ledgers = "NativeAgent/Ledgers"
+            case documents = "NativeAgent/Documents"
         }
-        for (requested, question) in [
-            ("https://example.com/guide?version=2", "请读 https://example.com/guide?version=1"),
-            ("https://example.com/guide", "请读 https://user@example.com/guide"),
-            ("https://example.com/guide", "请读 https://example.com.evil/guide"),
-            ("https://example.com/guide", "请读 https://example.com/guide]different"),
-            ("https://example.com/guide", "请读 https://example.com/guide`different"),
-            ("https://example.com/guide?token=abc", "请读 https://example.com/guide?token=abc]different"),
-            ("https://example.com/guide?token=abc", "请读 https://example.com/guide?token=abc`different"),
-        ] {
-            XCTAssertFalse(
-                WeiBeiWebResearchURLPolicy.isExplicitlyProvided(
-                    requested,
-                    in: question
-                )
+
+        let fixture = FileManager.default.temporaryDirectory
+            .appendingPathComponent("WeiBeiAgentRoot-\(UUID().uuidString)", isDirectory: true)
+        let workspace = fixture.appendingPathComponent("workspace", isDirectory: true)
+        let outside = fixture.appendingPathComponent("outside", isDirectory: true)
+        let sentinel = outside.appendingPathComponent("sentinel.txt")
+        defer { try? FileManager.default.removeItem(at: fixture) }
+
+        try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: outside, withIntermediateDirectories: true)
+        try Data("保留".utf8).write(to: sentinel)
+
+        for ownedRoot in [OwnedRoot.chats, .ledgers, .documents] {
+            let linkedRoot = workspace.appendingPathComponent(ownedRoot.rawValue, isDirectory: true)
+            try FileManager.default.createDirectory(
+                at: linkedRoot.deletingLastPathComponent(),
+                withIntermediateDirectories: true
             )
+            try FileManager.default.createSymbolicLink(at: linkedRoot, withDestinationURL: outside)
+
+            switch ownedRoot {
+            case .chats:
+                let store = WorkspaceStore(
+                    workspaceDirectory: workspace,
+                    startsAtBlankEntries: true,
+                    startsCourseFileMaintenance: false
+                )
+                XCTAssertNotNil(store.createStudySession(courseID: nil))
+                let rejection = store.askAgent(questionOverride: "解释这段材料")
+                store.cancelAgentRequest()
+                XCTAssertNotNil(rejection, "聊天目录指向资料库外时必须拒绝发送")
+            case .ledgers:
+                let ledgerURL = linkedRoot
+                    .appendingPathComponent(UUID().uuidString, isDirectory: true)
+                    .appendingPathComponent("ledger.jsonl")
+                XCTAssertThrowsError(try NativeAgentLedger(fileURL: ledgerURL))
+            case .documents:
+                XCTAssertThrowsError(
+                    try NativeDocumentSandbox.write(
+                        title: "说明",
+                        format: .markdown,
+                        content: "正文",
+                        documentsRoot: linkedRoot
+                    )
+                )
+            }
         }
+
+        XCTAssertEqual(try Data(contentsOf: sentinel), Data("保留".utf8))
+        XCTAssertEqual(
+            try FileManager.default.contentsOfDirectory(atPath: outside.path).sorted(),
+            [sentinel.lastPathComponent],
+            "Agent 本地目录异常时不得改动资料库外内容"
+        )
+    }
+
+    func testEquivalentCurrentRunSourceURLsMatch() {
+        XCTAssertTrue(WeiBeiWebResearchURLPolicy.isAvailableInCurrentRun(
+            "https://example.com/guide",
+            in: "",
+            currentRunSourceURLs: ["HTTPS://EXAMPLE.COM:443/guide/#section"]
+        ))
+        XCTAssertFalse(WeiBeiWebResearchURLPolicy.isAvailableInCurrentRun(
+            "https://example.com/guide//",
+            in: "",
+            currentRunSourceURLs: ["https://example.com/guide"]
+        ))
+    }
+
+    func testPrivateQueryAddedToCurrentRunSourceIsRejected() {
+        XCTAssertFalse(WeiBeiWebResearchURLPolicy.isAvailableInCurrentRun(
+            "https://example.com/guide?topic=public&note=private-course-text",
+            in: "",
+            currentRunSourceURLs: ["https://example.com/guide?topic=public"]
+        ))
+    }
+
+    func testWebOpenRequiresPublicHTTPSURL() throws {
         XCTAssertEqual(
             try WeiBeiWebResearchURLPolicy.validatedPublicHTTPSURL(
                 "https://93.184.216.34/guide#section"
