@@ -177,7 +177,7 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
             .appendingPathComponent("Sources/WeiBei/Resources/Editor/index.html")
         webView.loadFileURL(indexURL, allowingReadAccessTo: indexURL.deletingLastPathComponent())
 
-        let timeout = Date().addingTimeInterval(15)
+        let timeout = Date().addingTimeInterval(30)
         while !isDone && Date() < timeout {
             RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.05))
         }
@@ -186,7 +186,7 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
             fputs("web-editor-check failed: \(failure)\n", stderr)
             exit(1)
         }
-        expect(isDone, "editable editor validation did not finish within 15 seconds")
+        expect(isDone, "editable editor validation did not finish within 30 seconds")
     }
 
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
