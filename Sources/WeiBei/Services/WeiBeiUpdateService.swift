@@ -1,6 +1,7 @@
 import AppKit
 import Combine
 import Sparkle
+import WeiBeiCore
 
 struct WeiBeiAvailableUpdate: Equatable {
     let version: String
