@@ -524,7 +524,7 @@ private struct LongToolRunMockLLMAdapter: NativeLLMAdapter {
             ]
         }
         return AsyncThrowingStream { continuation in
-            chunks.forEach(continuation.yield)
+            chunks.forEach { continuation.yield($0) }
             continuation.finish()
         }
     }
