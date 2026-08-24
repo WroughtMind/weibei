@@ -14,6 +14,7 @@ import {
   streamingPluginKey,
 } from '@milkdown/plugin-streaming';
 import { streamingAppearancePlugin } from './streaming-appearance';
+import { createSyntaxMarksPlugin } from './syntax-marks';
 import { SlashProvider, slashFactory } from '@milkdown/kit/plugin/slash';
 import { readImageAsBase64, upload, uploadConfig } from '@milkdown/kit/plugin/upload';
 import { exitCode, lift, setBlockType, toggleMark, wrapIn } from '@milkdown/kit/prose/commands';
@@ -22,7 +23,7 @@ import { nodeRule } from '@milkdown/kit/prose';
 import { Fragment } from '@milkdown/kit/prose/model';
 import { NodeSelection, Plugin, Selection, TextSelection } from '@milkdown/kit/prose/state';
 import { liftListItem } from '@milkdown/kit/prose/schema-list';
-import { addColumnAfter, addRowAfter, deleteColumn, deleteRow, goToNextCell, isInTable, selectedRect } from '@milkdown/kit/prose/tables';
+import { addColumnAfter, addRowAfter, columnResizing, deleteColumn, deleteRow, goToNextCell, isInTable, selectedRect } from '@milkdown/kit/prose/tables';
 import { Decoration, DecorationSet } from '@milkdown/kit/prose/view';
 import { getMarkdown as readMarkdown, insert, replaceAll, replaceRange, $inputRule, $prose } from '@milkdown/kit/utils';
 import {
@@ -109,10 +110,20 @@ let mermaidPreviewGeneration = 0;
 const pendingAttachments = new Map();
 const pendingImagePickers = new Map();
 const weiBeiSlash = WEIBEI_EDITOR_RUNTIME ? slashFactory('WEIBEI_BLOCK_COMMAND') : null as any;
+let mathTypedLandingPosition: number | null = null;
 const weiBeiMathInlineInputRule = WEIBEI_EDITOR_RUNTIME ? $inputRule((ctx) => nodeRule(
   inlineMathInputPattern,
   mathInlineSchema.type(ctx),
-  { beforeDispatch: ({ tr, match, start }) => tr.insertText(match[1] || '', start + 1) },
+  {
+    updateCaptured: (captured: any) => ({ group: String(captured.group || '').trim() }),
+    beforeDispatch: ({ tr, match, start }: any) => {
+      const content = String(match[1] || '').trim();
+      if (content) tr.insertText(content, start + 1);
+      const landing = start + content.length + 2;
+      tr.setSelection(TextSelection.create(tr.doc, landing));
+      mathTypedLandingPosition = landing;
+    },
+  },
 )) : null;
 const weiBeiMath = [
   remarkMathPlugin,
@@ -2663,6 +2674,14 @@ const weiBeiDialectPlugin = $prose(() => new Plugin({
       if (WEIBEI_EDITOR_RUNTIME) {
         if (appendTableRowFromLastCell(view, event)) { event.preventDefault(); return true; }
         if (handleSlashMenuKeyDown(view, event)) return true;
+        if ((event.metaKey || event.ctrlKey) && !event.altKey && (event.key === 'k' || event.key === 'K')) {
+          const selection = view.state.selection;
+          if (isEditable && !selection.empty) {
+            post('linkEditorRequested', {});
+            event.preventDefault();
+            return true;
+          }
+        }
         if (event.key === 'Enter' && view.state.selection instanceof NodeSelection) {
           const selected = view.state.selection.node;
           if (selected.type.name === 'math_inline' || selected.type.name === 'math_block') {
@@ -2769,7 +2788,7 @@ const reportSelection = () => {
   const details = text && editor ? editor.action((ctx) => {
     const { state } = ctx.get(editorViewCtx);
     const { selection } = state;
-    const markNames = ['strong', 'emphasis', 'highlight', 'link', 'inlineCode'];
+    const markNames = ['strong', 'emphasis', 'strike_through', 'highlight', 'link', 'inlineCode'];
     const activeMarks = markNames.filter((name) => state.schema.marks[name] && state.doc.rangeHasMark(selection.from, selection.to, state.schema.marks[name]));
     const writingFont = state.schema.marks.writing_font;
     let selectedFont: string | undefined;
@@ -2839,6 +2858,7 @@ const executeSelectionCommandInternal = (action: unknown, value: unknown = '') =
     switch (action) {
       case 'bold': applied = toggle('strong'); break;
       case 'italic': applied = toggle('emphasis'); break;
+      case 'strike': applied = toggle('strike_through'); break;
       case 'highlight': applied = toggle('highlight'); break;
       case 'inlineCode': applied = toggle('inlineCode'); break;
       case 'font': {
@@ -3777,6 +3797,13 @@ editorBuilder = editorBuilder
 
 if (WEIBEI_EDITOR_RUNTIME) {
   editorBuilder = editorBuilder
+    .use($prose(() => createSyntaxMarksPlugin({
+      isEditable: () => isEditable,
+      isStreaming: () => streamingMarkdownBuffer !== null,
+      mathLanding: () => mathTypedLandingPosition,
+      clearMathLanding: () => { mathTypedLandingPosition = null; },
+    })))
+    .use($prose(() => columnResizing()))
     .use(weiBeiSlash)
     .use(history)
     .use(clipboard)

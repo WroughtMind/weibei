@@ -139,6 +139,7 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
     private var failure: String?
     private var activatedWikiTitle: String?
     private var attachmentRequests = 0
+    private var linkEditorRequests = 0
     private var imagePickerRequests = 0
     private var activatedSelectionAskThreadID: String?
     private var editorFailures = 0
@@ -166,7 +167,7 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
         configuration.userContentController = controller
         webView = WKWebView(frame: CGRect(x: 0, y: 0, width: 960, height: 720), configuration: configuration)
         super.init()
-        for name in ["editorReady", "dirtyChanged", "snapshotReady", "outlineChanged", "selectionChanged", "askAgentWithSelection", "wikiLinkActivated", "imageAttachmentRequested", "imagePickerRequested", "selectionAskMark", "editorFailure"] {
+        for name in ["editorReady", "dirtyChanged", "snapshotReady", "outlineChanged", "selectionChanged", "askAgentWithSelection", "linkEditorRequested", "wikiLinkActivated", "imageAttachmentRequested", "imagePickerRequested", "selectionAskMark", "editorFailure"] {
             controller.add(self, name: name)
         }
     }
@@ -176,7 +177,7 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
             .appendingPathComponent("Sources/WeiBei/Resources/Editor/index.html")
         webView.loadFileURL(indexURL, allowingReadAccessTo: indexURL.deletingLastPathComponent())
 
-        let timeout = Date().addingTimeInterval(15)
+        let timeout = Date().addingTimeInterval(30)
         while !isDone && Date() < timeout {
             RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.05))
         }
@@ -185,7 +186,7 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
             fputs("web-editor-check failed: \(failure)\n", stderr)
             exit(1)
         }
-        expect(isDone, "editable editor validation did not finish within 15 seconds")
+        expect(isDone, "editable editor validation did not finish within 30 seconds")
     }
 
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
@@ -230,6 +231,8 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
             activatedWikiTitle = (message.body as? [String: Any])?["title"] as? String
         case "imageAttachmentRequested":
             attachmentRequests += 1
+        case "linkEditorRequested":
+            linkEditorRequests += 1
         case "imagePickerRequested":
             imagePickerRequests += 1
         case "selectionAskMark":
@@ -1416,7 +1419,8 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
           const editor = window.WeiBeiEditor;
           const fail = (message) => { throw new Error(message); };
           const key = (element, name, options = {}) => element.dispatchEvent(new KeyboardEvent('keydown', { key: name, bubbles: true, cancelable: true, ...options }));
-          const sourceHidden = (node) => getComputedStyle(node.querySelector('.weibei-math-source')).display === 'none';
+          const sourceHidden = (node) => node.classList.contains('weibei-math-adjacent')
+            || getComputedStyle(node.querySelector('.weibei-math-source')).display === 'none';
           const visible = (node) => { const style = getComputedStyle(node); const rect = node.getBoundingClientRect(); return style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0' && rect.width > 0 && rect.height > 0; };
 
           editor.setDocumentID('math-node-interactions');
@@ -1467,6 +1471,7 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
 
           editor.setDocumentID('math-typed'); editor.setMarkdown(''); editor.insertMarkdown(\(json("\n\n{{WEIBEI_CURSOR}}")));
           if (!editor.typeTextForCheck('$A^*$') || !editor.getMarkdown().includes('$A^*$') || !document.querySelector('.weibei-math-inline[data-value="A^*"]')) fail('typed inline formula did not become a formula node');
+          if (!editor.typeTextForCheck('后') || !editor.getMarkdown().includes('$A^*$后')) fail('typing after an inline formula did not continue to its right');
 
           editor.setDocumentID('math-slash-inline'); editor.setMarkdown('/'); editor.openSlashMenuForCheck(); editor.executeSlashCommandForCheck('inlineMath');
           if (!document.querySelector('.weibei-math-inline[data-value="x"]') || !editor.getMarkdown().includes('$x$')) fail('Slash inline formula command did not insert a formula');
@@ -1479,6 +1484,34 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
             guard let self else { return }
             guard error == nil, value as? Bool == true else {
                 self.fail("formula NodeView interaction check failed: \(String(describing: error)); \(String(describing: value))")
+                return
+            }
+            self.validateWritingExperience()
+        }
+    }
+
+    private func validateWritingExperience() {
+        let script = """
+        (() => {
+          const editor = window.WeiBeiEditor;
+          editor.setDocumentID('writing-experience');
+          editor.setMarkdown('删除线目标 链接目标');
+          editor.selectFirstTextForCheck('删除线目标');
+          const strike = editor.executeSelectionCommand('strike')
+            && editor.getMarkdown().includes('~~删除线目标~~');
+          editor.selectFirstTextForCheck('链接目标');
+          const linkShortcut = editor.pressKeyForCheck('k', { metaKey: true });
+          return { strike, linkShortcut };
+        })();
+        """
+        webView.evaluateJavaScript(script) { [weak self] value, error in
+            guard let self else { return }
+            guard error == nil,
+                  let result = value as? [String: Any],
+                  result["strike"] as? Bool == true,
+                  result["linkShortcut"] as? Bool == true,
+                  self.linkEditorRequests == 1 else {
+                self.fail("writing experience check failed: \(String(describing: error)); \(String(describing: value))")
                 return
             }
             self.validateWorkPackageEStructures()
