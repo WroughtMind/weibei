@@ -1609,7 +1609,7 @@ final class WorkspaceStore: ObservableObject {
         courseLibraryRootBookmarkData = bookmark
         courseLibraryRootURL = resolvedRoot
         courseLibraryUnavailableReason = nil
-        _ = restoreCourseReferencesInsideLibrary()
+        _ = await restoreCourseReferencesInsideLibraryAsync()
         _ = await migrateLegacySharedMaterials(in: resolvedRoot)
         for course in courses where resolvedCourseRootURLs[course.id] != nil {
             _ = resolveCourseOwnedItems(for: course.id)
@@ -6186,6 +6186,12 @@ final class WorkspaceStore: ObservableObject {
 
     @discardableResult
     private func restoreCourseReferencesInsideLibrary() -> Bool {
+        (try? waitForCourseFileOperation {
+            await self.restoreCourseReferencesInsideLibraryAsync()
+        }) ?? false
+    }
+
+    private func restoreCourseReferencesInsideLibraryAsync() async -> Bool {
         guard let libraryRoot = courseLibraryRootURL else {
             for course in courses where course.sourceRootRelativePath != nil {
                 courseRootUnavailableReasons[course.id] = courseLibraryUnavailableReason
@@ -6220,7 +6226,7 @@ final class WorkspaceStore: ObservableObject {
             }
             let courseID = courses[index].id
             do {
-                try validateRestoredCourseRoot(
+                try await validateRestoredCourseRootAsync(
                     resolvedURL,
                     course: courses[index],
                     mustBeInsideLibrary: true
@@ -6331,20 +6337,6 @@ final class WorkspaceStore: ObservableObject {
             try? FileManager.default.createDirectory(
                 at: root.appendingPathComponent(name, isDirectory: true),
                 withIntermediateDirectories: true
-            )
-        }
-    }
-
-    private func validateRestoredCourseRoot(
-        _ root: URL,
-        course: Course,
-        mustBeInsideLibrary: Bool
-    ) throws {
-        try waitForCourseFileOperation {
-            try await self.validateRestoredCourseRootAsync(
-                root,
-                course: course,
-                mustBeInsideLibrary: mustBeInsideLibrary
             )
         }
     }
@@ -21696,6 +21688,11 @@ final class WorkspaceStore: ObservableObject {
             reportWorkspaceSaveFailure(ui(
                 "工作区内容已保存，但有课程的可携带状态超过 32 MB；课程文件夹中的原状态保持不变。请精简课程 Chat 或未写入草稿后重试。",
                 "The workspace was saved, but a portable course state exceeds 32 MB. The state in the course folder was left unchanged. Reduce course chats or pending drafts, then retry."
+            ))
+        } else if !blockedPortableCourseIDs.isEmpty {
+            reportWorkspaceSaveFailure(ui(
+                "工作区内容已保存，但课程文件夹中的课程状态无法安全更新；原状态已保留。请处理冲突或损坏后重试。",
+                "The workspace was saved, but the course state in the course folder could not be updated safely. The original state was preserved. Resolve the conflict or damage, then retry."
             ))
         } else {
             clearWorkspaceSaveError()

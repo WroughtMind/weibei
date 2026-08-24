@@ -5195,6 +5195,10 @@ enum CourseProjectRootSelfCheck {
         try FileManager.default.moveItem(at: movedRoot, to: courseRoot)
 
         store = makeStore(fixture: fixture)
+        try check(
+            store?.flushPendingWorkspaceSave() == true,
+            "根恢复后的课程状态没有完成修订仲裁"
+        )
         let recoveredState = try JSONDecoder().decode(
             CoursePortableState.self,
             from: Data(contentsOf: stateURL)
@@ -5222,10 +5226,6 @@ enum CourseProjectRootSelfCheck {
             store?.course(withID: courseID)?.title
                 == "离线期间更新的课程",
             "根恢复后的运行态没有保留离线更新"
-        )
-        try check(
-            store?.flushPendingWorkspaceSave() == true,
-            "根恢复后的课程状态没有完成修订仲裁"
         )
         store = nil
 
