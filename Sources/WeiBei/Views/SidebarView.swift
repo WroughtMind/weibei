@@ -167,9 +167,7 @@ struct CourseSidebarList: View {
                 if model.courses.isEmpty {
                     if store.courses.isEmpty {
                         SidebarEmptyRow(
-                            title: ui("还没有课程", "No courses yet"),
-                            actionTitle: ui("新建课程…", "Create course…"),
-                            action: { store.presentCourseWorkspace(.hub) }
+                            title: ui("还没有课程", "No courses yet")
                         )
                     } else {
                         SidebarEmptyRow(title: ui("还没有匹配课程", "No matching courses"))
