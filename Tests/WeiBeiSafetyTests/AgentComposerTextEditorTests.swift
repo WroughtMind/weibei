@@ -1,44 +1,26 @@
 import AppKit
-import SwiftUI
 import XCTest
 @testable import WeiBei
 
 final class AgentComposerTextEditorTests: XCTestCase {
     @MainActor
-    func testBlankComposerSurfaceRequestsFocus() throws {
-        var focusRequests = 0
-        let host = NSHostingView(rootView:
-            Color.clear
-                .frame(width: 200, height: 52)
-                .background {
-                    AgentComposerFocusSurface { focusRequests += 1 }
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                }
+    func testComposerFocusRequestFocusesTheNativeTextEditor() {
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 200, height: 88),
+            styleMask: .borderless,
+            backing: .buffered,
+            defer: false
         )
-        host.frame = NSRect(x: 0, y: 0, width: 200, height: 52)
-        host.layoutSubtreeIfNeeded()
+        let scrollView = AgentComposerNativeScrollView(
+            frame: NSRect(x: 16, y: 58, width: 168, height: 18)
+        )
+        let textView = NSTextView()
+        scrollView.documentView = textView
+        window.contentView?.addSubview(scrollView)
 
-        func focusSurface(in view: NSView) -> AgentComposerFocusNSView? {
-            if let surface = view as? AgentComposerFocusNSView { return surface }
-            return view.subviews.lazy.compactMap(focusSurface).first
-        }
-        let view = try XCTUnwrap(focusSurface(in: host))
-        let event = try XCTUnwrap(NSEvent.mouseEvent(
-            with: .leftMouseDown,
-            location: .zero,
-            modifierFlags: [],
-            timestamp: 0,
-            windowNumber: 0,
-            context: nil,
-            eventNumber: 0,
-            clickCount: 1,
-            pressure: 0
-        ))
+        scrollView.applyFocusRequest(1)
 
-        view.mouseDown(with: event)
-
-        XCTAssertEqual(view.convert(view.bounds, to: host).size, host.bounds.size)
-        XCTAssertEqual(focusRequests, 1)
+        XCTAssertTrue(window.firstResponder === textView)
     }
 
     @MainActor

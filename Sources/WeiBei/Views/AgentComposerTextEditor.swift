@@ -1,32 +1,14 @@
 import AppKit
 import SwiftUI
 
-struct AgentComposerFocusSurface: NSViewRepresentable {
-    var focus: () -> Void
+final class AgentComposerNativeScrollView: NSScrollView {
+    private var appliedFocusRequest = 0
 
-    func makeNSView(context: Context) -> AgentComposerFocusNSView {
-        AgentComposerFocusNSView(focus: focus)
-    }
-
-    func updateNSView(_ view: AgentComposerFocusNSView, context: Context) {
-        view.focus = focus
-    }
-}
-
-final class AgentComposerFocusNSView: NSView {
-    var focus: () -> Void
-
-    init(focus: @escaping () -> Void) {
-        self.focus = focus
-        super.init(frame: .zero)
-    }
-
-    required init?(coder: NSCoder) {
-        fatalError("init(coder:) has not been implemented")
-    }
-
-    override func mouseDown(with event: NSEvent) {
-        focus()
+    func applyFocusRequest(_ request: Int) {
+        guard request != appliedFocusRequest else { return }
+        appliedFocusRequest = request
+        guard let textView = documentView as? NSTextView else { return }
+        window?.makeFirstResponder(textView)
     }
 }
 
@@ -40,6 +22,7 @@ struct AgentComposerTextEditor: NSViewRepresentable {
     var focused: FocusState<Bool>.Binding
     var fontSize: CGFloat
     var lineLimit: ClosedRange<Int>
+    var focusRequest: Int
     var appearanceMode: WeiBeiAppearanceMode
     var accessibilityLabel: String
     var submit: () -> Void
@@ -48,8 +31,8 @@ struct AgentComposerTextEditor: NSViewRepresentable {
         Coordinator(self)
     }
 
-    func makeNSView(context: Context) -> NSScrollView {
-        let scrollView = NSScrollView()
+    func makeNSView(context: Context) -> AgentComposerNativeScrollView {
+        let scrollView = AgentComposerNativeScrollView()
         scrollView.borderType = .noBorder
         scrollView.drawsBackground = false
         scrollView.hasHorizontalScroller = false
@@ -86,9 +69,10 @@ struct AgentComposerTextEditor: NSViewRepresentable {
         return scrollView
     }
 
-    func updateNSView(_ scrollView: NSScrollView, context: Context) {
+    func updateNSView(_ scrollView: AgentComposerNativeScrollView, context: Context) {
         guard let textView = scrollView.documentView as? NSTextView else { return }
         context.coordinator.parent = self
+        scrollView.applyFocusRequest(focusRequest)
         applyPresentation(to: textView)
         if textView.string != text {
             textView.string = text
@@ -98,7 +82,7 @@ struct AgentComposerTextEditor: NSViewRepresentable {
 
     func sizeThatFits(
         _ proposal: ProposedViewSize,
-        nsView scrollView: NSScrollView,
+        nsView scrollView: AgentComposerNativeScrollView,
         context: Context
     ) -> CGSize? {
         guard let textView = scrollView.documentView as? NSTextView else { return nil }
