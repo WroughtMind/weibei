@@ -381,7 +381,9 @@ extension WorkspaceStore {
             guard let fileURL = item(withID: documentID)?.url else { return }
             let fileName = fileURL.lastPathComponent
             setNoteDraft(conflict.checkpoint.markdown, for: documentID)
-            let draftPersisted = flushPendingWorkspaceSave()
+            // MainActor async 上下文禁止 flushPendingWorkspaceSave()：
+            // RunLoop 自旋等待另一个 MainActor Task 会死锁（见 cancelAgentReplyAction）。
+            let draftPersisted = await flushPendingWorkspaceSaveAsync()
             var recoveryPersisted = conflict.checkpointIsPersisted
             do {
                 let diskData = try Data(contentsOf: fileURL)

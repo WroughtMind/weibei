@@ -109,6 +109,8 @@ final class FileModelPhase0BaselineTests: XCTestCase {
             ),
             markdown: userVersion
         )
+        // 冲突按文档隔离后以活跃笔记为键读取，须先把条目设为活跃。
+        store.activeNotebookItemID = item.id
         store.noteEditorRecoveryConflict = NoteEditorRecoveryConflict(
             diskMarkdown: "磁盘版本",
             checkpoint: checkpoint

@@ -2893,11 +2893,16 @@ enum CourseProjectRootSelfCheck {
             }
         }
         try check(
-            state.schemaVersion == CoursePortableState.currentSchemaVersion
-                && state.studySessions.isEmpty
-                && state.items.map(\.itemID).sorted()
-                    == [material.id, noteID].sorted(),
-            "课程携带文件没有使用 v2，或仍复制完整 Chat/跨课资料"
+            state.schemaVersion == CoursePortableState.currentSchemaVersion,
+            "课程携带文件没有使用 v2：schemaVersion=\(state.schemaVersion)"
+        )
+        try check(
+            state.studySessions.isEmpty,
+            "课程携带文件仍复制完整 Chat：\(state.studySessions.count) 个会话（IDs=\(state.studySessions.map(\.id)))"
+        )
+        try check(
+            state.items.map(\.itemID).sorted() == [material.id, noteID].sorted(),
+            "课程携带条目不符：实际=\(state.items.map(\.itemID).sorted()) 期望=\([material.id, noteID].sorted())"
         )
         try check(
             state.learningMemoryState?.entries.map(\.id) == [fixtureState.memoryID]

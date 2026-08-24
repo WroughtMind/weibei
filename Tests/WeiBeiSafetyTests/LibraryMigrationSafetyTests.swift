@@ -10,7 +10,14 @@ final class LibraryMigrationSafetyTests: XCTestCase {
         setenv("WEIBEI_SAFETY_TEST_MODE", "1", 1)
     }
 
-    private func makeStore(workspace: URL, library: URL) throws -> WorkspaceStore {
+    private func makeStore(
+        workspace: URL,
+        library: URL,
+        workspaceSnapshotWriter: @escaping @Sendable (Data, URL) throws -> Void = { data, url in
+            WorkspaceSnapshotRecovery.rotateBackups(primary: url)
+            try data.write(to: url, options: .atomic)
+        }
+    ) throws -> WorkspaceStore {
         try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
         try FileManager.default.createDirectory(at: library, withIntermediateDirectories: true)
         let store = WorkspaceStore(
@@ -25,6 +32,7 @@ final class LibraryMigrationSafetyTests: XCTestCase {
             },
             courseSecurityScopeStarter: { _ in true },
             courseSecurityScopeStopper: { _ in },
+            workspaceSnapshotWriter: workspaceSnapshotWriter,
             startsAtBlankEntries: true,
             startsCourseFileMaintenance: false
         )
@@ -202,6 +210,60 @@ final class LibraryMigrationSafetyTests: XCTestCase {
         XCTAssertEqual(store.courseManifestCourseID(at: courseRoot), courseID)
         XCTAssertEqual(store.courseLibraryRootURL?.standardizedFileURL, library.standardizedFileURL)
         XCTAssertTrue(FileManager.default.fileExists(atPath: courseRoot.appendingPathComponent(".weibei/course.json").path))
+    }
+
+    func testMigrateLibrarySaveFailureRestoresOriginal() throws {
+        struct InjectedFailure: Error {}
+
+        let base = makeTempRoot("weibei-migration-save-failure")
+        defer { try? FileManager.default.removeItem(at: base) }
+        let library = base.appendingPathComponent("资料库", isDirectory: true)
+        let destination = base.appendingPathComponent("目标", isDirectory: true)
+        let workspace = base.appendingPathComponent("workspace", isDirectory: true)
+        let store = try makeStore(
+            workspace: workspace,
+            library: library,
+            workspaceSnapshotWriter: { data, url in
+                let snapshot = try JSONDecoder().decode(PersistedWorkspace.self, from: data)
+                if snapshot.courseLibraryRootPath == destination.path {
+                    throw InjectedFailure()
+                }
+                WorkspaceSnapshotRecovery.rotateBackups(primary: url)
+                try data.write(to: url, options: .atomic)
+            }
+        )
+        let courseID = try store.createCourseInLibrary(title: "保留课")
+
+        do {
+            _ = try migrate(store, to: destination)
+            XCTFail("新绑定保存失败时迁移不应返回成功")
+        } catch let error as CourseProjectRootError {
+            guard case .workspaceSaveFailed = error else {
+                return XCTFail("期望 workspaceSaveFailed，实际 \(error)")
+            }
+        }
+
+        XCTAssertEqual(store.courseLibraryRootURL?.standardizedFileURL, library.standardizedFileURL)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: destination.path))
+        let courseRoot = try XCTUnwrap(store.courseRootURL(for: courseID))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: courseRoot.appendingPathComponent(".weibei/course.json").path))
+        let reopened = WorkspaceStore(
+            workspaceDirectory: workspace,
+            courseRootBookmarkResolver: { data in
+                String(data: data, encoding: .utf8).map {
+                    CourseProjectResolvedBookmark(
+                        url: URL(fileURLWithPath: $0),
+                        isStale: false
+                    )
+                }
+            },
+            courseSecurityScopeStarter: { _ in true },
+            courseSecurityScopeStopper: { _ in },
+            startsCourseFileMaintenance: false
+        )
+        XCTAssertEqual(reopened.courseLibraryRootURL?.standardizedFileURL, library.standardizedFileURL)
+        let reopenedCourseRoot = try XCTUnwrap(reopened.courseRootURL(for: courseID))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: reopenedCourseRoot.appendingPathComponent(".weibei/course.json").path))
     }
 
     func testMigrateLibrarySuspendsAndResumesServices() throws {

@@ -87,10 +87,12 @@ final class WorkspaceSafetyTests: XCTestCase {
         )
         let library = root.appendingPathComponent("资料库")
         try FileManager.default.createDirectory(at: library, withIntermediateDirectories: true)
-        try store.configureCourseLibrary(at: library)
-        let courseID = try store.createCourseInLibrary(title: "真实回执课")
+        // async 测试运行在 MainActor 任务里，同步桥会死锁，必须走异步入口。
+        try await store.configureCourseLibraryAsync(at: library)
+        let courseID = try await store.createCourseInLibraryAsync(title: "真实回执课")
         let session = try XCTUnwrap(store.createStudySession(courseID: courseID))
-        XCTAssertTrue(store.flushPendingWorkspaceSave())
+        let persisted = await store.flushPendingWorkspaceSaveAsync()
+        XCTAssertTrue(persisted)
         let target = WorkspaceStore.AgentConversationTarget(
             sessionID: session.id,
             workingDirectory: root,
@@ -299,34 +301,48 @@ final class WorkspaceSafetyTests: XCTestCase {
 
     @MainActor
     func testCourseProfileKeepsFullTextBeyondPreviousEntryBoundary() async throws {
+        // 落盘回执要求课程携带状态真实写入，夹具必须有真实课程根目录。
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("WeiBeiCourseProfile-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root) }
-        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        let courseID = UUID()
-        let existing = (0..<200).map { index in
-            CourseKnowledgeProfileEntry(
-                kind: .concept,
-                text: "用户自述：已有认识 \(index)",
-                sources: []
-            )
-        }
-        let snapshot = PersistedWorkspace(
-            courses: [Course(id: courseID, title: "课程")],
-            courseKnowledgeProfiles: [
-                CourseKnowledgeProfile(courseID: courseID, revision: 4, entries: existing),
-            ]
+        let library = root.appendingPathComponent("资料库", isDirectory: true)
+        try FileManager.default.createDirectory(at: library, withIntermediateDirectories: true)
+        let store = WorkspaceStore(
+            workspaceDirectory: root.appendingPathComponent("workspace", isDirectory: true),
+            startsAtBlankEntries: true,
+            startsCourseFileMaintenance: false
         )
-        try JSONEncoder().encode(snapshot).write(
-            to: root.appendingPathComponent("workspace.json"),
-            options: .atomic
+        try await store.configureCourseLibraryAsync(at: library)
+        let courseID = try await store.createCourseInLibraryAsync(title: "课程")
+        let target = WorkspaceStore.AgentConversationTarget(
+            sessionID: UUID(),
+            workingDirectory: root,
+            courseID: courseID
         )
-        let store = WorkspaceStore(workspaceDirectory: root, startsCourseFileMaintenance: false)
+        let seedReceipt = await store.persistNativeCourseProfileUpdate(
+            StudyAgentCourseProfileUpdate(
+                contextRevision: "course-profile-seed",
+                profileRevision: store.refreshCourseProfileContext(target: target).revision,
+                checkpoint: "userRequested",
+                entries: (0..<200).map { index in
+                    StudyAgentCourseProfileUpdateEntry(
+                        kind: .concept,
+                        text: "用户自述：已有认识 \(index)",
+                        sources: []
+                    )
+                }
+            ),
+            expectedContextRevision: "course-profile-seed",
+            target: target
+        )
+        XCTAssertTrue(seedReceipt.accepted, seedReceipt.message)
+        XCTAssertEqual(store.courseKnowledgeProfiles.first?.entries.count, 200)
+
         let fullText = "用户自述：" + String(repeating: "这段课程认识需要完整保存。", count: 100)
         let receipt = await store.persistNativeCourseProfileUpdate(
             StudyAgentCourseProfileUpdate(
                 contextRevision: "course-profile-full-text",
-                profileRevision: 4,
+                profileRevision: store.refreshCourseProfileContext(target: target).revision,
                 checkpoint: "userRequested",
                 entries: [
                     StudyAgentCourseProfileUpdateEntry(
@@ -337,39 +353,31 @@ final class WorkspaceSafetyTests: XCTestCase {
                 ]
             ),
             expectedContextRevision: "course-profile-full-text",
-            target: WorkspaceStore.AgentConversationTarget(
-                sessionID: UUID(),
-                workingDirectory: root,
-                courseID: courseID
-            )
+            target: target
         )
 
-        XCTAssertTrue(receipt.accepted)
+        XCTAssertTrue(receipt.accepted, receipt.message)
         XCTAssertEqual(store.courseKnowledgeProfiles.first?.entries.count, 201)
         XCTAssertEqual(store.courseKnowledgeProfiles.first?.entries.last?.text, fullText)
     }
 
     @MainActor
     func testLearningUpdateKeepsFullSessionSummaryAndNextSteps() async throws {
+        // 落盘回执要求课程携带状态真实写入，夹具必须有真实课程根目录。
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("WeiBeiSessionSummary-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root) }
-        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        let sessionID = UUID()
-        let courseID = UUID()
-        let snapshot = PersistedWorkspace(
-            courses: [Course(id: courseID, title: "课程")],
-            learningMemoryStates: [ScopedLearningMemoryState(scope: .course(courseID))],
-            learningMemoryScopeMigrationVersion: 1,
-            studySessions: [StudySession(id: sessionID, title: "学习会话", courseID: courseID)],
-            studySessionScopeMigrationVersion: 1,
-            activeStudySessionID: sessionID
+        let library = root.appendingPathComponent("资料库", isDirectory: true)
+        try FileManager.default.createDirectory(at: library, withIntermediateDirectories: true)
+        let store = WorkspaceStore(
+            workspaceDirectory: root.appendingPathComponent("workspace", isDirectory: true),
+            startsAtBlankEntries: true,
+            startsCourseFileMaintenance: false
         )
-        try JSONEncoder().encode(snapshot).write(
-            to: root.appendingPathComponent("workspace.json"),
-            options: .atomic
-        )
-        let store = WorkspaceStore(workspaceDirectory: root, startsCourseFileMaintenance: false)
+        try await store.configureCourseLibraryAsync(at: library)
+        let courseID = try await store.createCourseInLibraryAsync(title: "课程")
+        let session = try XCTUnwrap(store.createStudySession(courseID: courseID))
+        let sessionID = session.id
         let target = WorkspaceStore.AgentConversationTarget(
             sessionID: sessionID,
             workingDirectory: root,
@@ -399,9 +407,10 @@ final class WorkspaceSafetyTests: XCTestCase {
             messageID: UUID()
         )
 
-        XCTAssertTrue(receipt.accepted)
-        XCTAssertEqual(store.studySessions.first?.summary, summary)
-        XCTAssertEqual(store.studySessions.first?.flow.suggestedNext, next)
+        XCTAssertTrue(receipt.accepted, receipt.message)
+        let updated = store.studySessions.first { $0.id == sessionID }
+        XCTAssertEqual(updated?.summary, summary)
+        XCTAssertEqual(updated?.flow.suggestedNext, next)
     }
 
     @MainActor

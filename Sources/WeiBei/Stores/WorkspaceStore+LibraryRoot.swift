@@ -312,7 +312,12 @@ extension WorkspaceStore {
             )
         }
 
-        flushPendingNotePersistence()
+        // MainActor async 上下文禁止默认重载（内部会 flushPendingWorkspaceSave()
+        // RunLoop 自旋，等待另一个 MainActor Task 会死锁）；改用异步落盘。
+        flushPendingNotePersistence(flushWorkspace: false)
+        guard await persistWorkspaceNow() else {
+            throw CourseProjectRootError.workspaceSaveFailed
+        }
         libraryMigrationInFlight = true
         defer { libraryMigrationInFlight = false }
 
@@ -358,9 +363,19 @@ extension WorkspaceStore {
             throw CourseProjectRootError.migrationFailed(error.localizedDescription)
         }
 
+        let previousPath = courseLibraryRootPath
+        let previousIdentity = courseLibraryRootIdentity
+        let previousBookmark = courseLibraryRootBookmarkData
+        let previousURL = courseLibraryRootURL
+        let previousUnavailableReason = courseLibraryUnavailableReason
+
         guard let identity = importedFileIdentityResolver(canonicalDestination),
               let bookmark = courseRootBookmarkMaker(canonicalDestination) else {
-            applyBoundLibraryRoot(libraryRoot, identity: courseLibraryRootIdentity, bookmark: courseLibraryRootBookmarkData)
+            applyBoundLibraryRoot(
+                libraryRoot,
+                identity: previousIdentity,
+                bookmark: previousBookmark
+            )
             throw CourseProjectRootError.rootIdentityUnavailable
         }
         applyBoundLibraryRoot(canonicalDestination, identity: identity, bookmark: bookmark)
@@ -393,7 +408,45 @@ extension WorkspaceStore {
         invalidateAgentContext()
         libraryMigrationInFlight = false
         flushPendingNotePersistence(flushWorkspace: false)
-        _ = await persistWorkspaceNow()
+        guard await persistWorkspaceNow() else {
+            if sameVolume {
+                try fileManager.moveItem(at: canonicalDestination, to: libraryRoot)
+            } else {
+                let entries = try fileManager.contentsOfDirectory(
+                    at: canonicalDestination,
+                    includingPropertiesForKeys: nil
+                )
+                for entry in entries {
+                    try fileManager.moveItem(
+                        at: entry,
+                        to: libraryRoot.appendingPathComponent(entry.lastPathComponent)
+                    )
+                }
+                try fileManager.removeItem(at: canonicalDestination)
+            }
+            courseLibraryRootPath = previousPath
+            courseLibraryRootIdentity = previousIdentity
+            courseLibraryRootBookmarkData = previousBookmark
+            courseLibraryRootURL = previousURL
+            courseLibraryUnavailableReason = previousUnavailableReason
+            for course in courses {
+                guard let relativePath = course.sourceRootRelativePath,
+                      let folder = CourseProjectPathPolicy.resolvedRelativePath(
+                          relativePath,
+                          inside: libraryRoot
+                      ) else { continue }
+                resolvedCourseRootURLs[course.id] = folder
+                _ = resolveCourseOwnedItems(for: course.id)
+            }
+            refreshRuntimeItemURLs()
+            courseDocumentSearchIndex.synchronize(allItems)
+            invalidateAgentContext()
+            let rollbackPersisted = await persistWorkspaceNow()
+            WeiBeiLog.workspace.error(
+                "code=library_migration_save_failed rollback_persisted=\(rollbackPersisted, privacy: .public)"
+            )
+            throw CourseProjectRootError.workspaceSaveFailed
+        }
         WeiBeiLog.workspace.notice("library_migration_completed")
         return LibraryMigrationResult(
             destination: canonicalDestination,

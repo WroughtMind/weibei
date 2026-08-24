@@ -45,6 +45,21 @@ public enum WeiBeiAgentDataPaths {
             throw WeiBeiAgentDataPathError.outsideWorkspace
         }
 
+        // resolvingSymlinksInPath 解析不了尚不存在的路径段：若中间某级是指向
+        // 工作区外的符号链接，直接 createDirectory 会先把目录建到外面。
+        // 因此创建前先校验「最深已存在祖先」的真实位置。
+        var existingAncestor = declaredDirectory
+        while !FileManager.default.fileExists(atPath: existingAncestor.path),
+              existingAncestor.pathComponents.count > declaredRoot.pathComponents.count {
+            existingAncestor = existingAncestor.deletingLastPathComponent()
+        }
+        let resolvedAncestor = existingAncestor
+            .resolvingSymlinksInPath().standardizedFileURL
+        guard resolvedAncestor == resolvedRoot
+            || contains(resolvedAncestor, inside: resolvedRoot) else {
+            throw WeiBeiAgentDataPathError.outsideWorkspace
+        }
+
         try FileManager.default.createDirectory(
             at: declaredDirectory,
             withIntermediateDirectories: true

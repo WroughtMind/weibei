@@ -1896,7 +1896,10 @@ enum ImportedIdentitySelfCheck {
         try check(store.activeStudySession?.groupingMaterialItemID == material.id, "学习会话分组资料仍指向旧身份")
         try check(store.selectionAskThreads.first?.itemID == material.id, "选区问答线程仍指向旧资料身份")
         try check(store.selectionAskThreads.first?.messageIDs == selectionThread.messageIDs, "选区问答线程消息关系在资料 ID 迁移时丢失")
-        try check(store.flushPendingWorkspaceSave(), "资料 ID 迁移后工作区无法保存")
+        try check(
+            store.flushPendingWorkspaceSave(),
+            "资料 ID 迁移后工作区无法保存：\(store.workspaceSaveError ?? "无失败原因（疑似落盘等待超时）")"
+        )
         let migratedSnapshot = try fixture.readSnapshot()
         try check(
             migratedSnapshot.coursePortableStateRevisions?.isEmpty == true
