@@ -1,3 +1,4 @@
+import Observation
 import XCTest
 @testable import WeiBei
 
@@ -41,5 +42,40 @@ final class AppearanceThemeTests: XCTestCase {
                     .isEqual(WeiBeiNativePalette.paper(for: mode))
             )
         }
+    }
+
+    func testThemeTokensTrackRuntimeModeChanges() {
+        assertThemeObservation(from: .paper, to: .xuan) {
+            _ = WeiBeiTheme.ink
+        }
+        assertThemeObservation(from: .inkstone, to: .stele) {
+            _ = WeiBeiTheme.paper
+        }
+        assertThemeObservation(from: .paper, to: .inkstone) {
+            _ = WeiBeiTheme.secondaryInk
+        }
+    }
+
+    private func assertThemeObservation(
+        from source: WeiBeiAppearanceMode,
+        to target: WeiBeiAppearanceMode,
+        readThemeToken: () -> Void
+    ) {
+        let originalMode = WeiBeiThemeRuntime.mode
+        defer { WeiBeiThemeRuntime.mode = originalMode }
+
+        WeiBeiThemeRuntime.mode = source
+        var didObserveChange = false
+        withObservationTracking {
+            readThemeToken()
+        } onChange: {
+            didObserveChange = true
+        }
+
+        WeiBeiThemeRuntime.mode = target
+        XCTAssertTrue(
+            didObserveChange,
+            "Expected theme token observation for \(source.rawValue) -> \(target.rawValue)"
+        )
     }
 }
