@@ -72,10 +72,6 @@ notice and source locations.
 
 Third-party and public-domain reference assets are not relicensed under MIT:
 
-- `Attachments/RichAnswerVerificationAssets/` is governed by its
-  `manifest.json` and `ATTRIBUTION.md`.
-- `Sources/WeiBei/Resources/RichAnswerVerificationAssets/` is governed by its
-  `ATTRIBUTION.md`.
 - `Sources/WeiBei/Resources/Inspiration/` records the source and rights basis in
   `SOURCES.md` and in the associated catalog.
 

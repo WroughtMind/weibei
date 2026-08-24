@@ -34,9 +34,6 @@ and complete license text are preserved in
 Image and text reference sources, rights bases, and required credits are
 documented in:
 
-- [`Attachments/RichAnswerVerificationAssets/ATTRIBUTION.md`](Attachments/RichAnswerVerificationAssets/ATTRIBUTION.md)
-- [`Attachments/RichAnswerVerificationAssets/manifest.json`](Attachments/RichAnswerVerificationAssets/manifest.json)
-- [`Sources/WeiBei/Resources/RichAnswerVerificationAssets/ATTRIBUTION.md`](Sources/WeiBei/Resources/RichAnswerVerificationAssets/ATTRIBUTION.md)
 - [`Sources/WeiBei/Resources/Inspiration/SOURCES.md`](Sources/WeiBei/Resources/Inspiration/SOURCES.md)
 
 Redistributors must review and preserve the terms that apply to each asset.

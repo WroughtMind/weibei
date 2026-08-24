@@ -18,6 +18,4 @@ Logo、App 图标、纸纹、宣传图和社交分享图仍是保留权利的品
 
 ## 应用内容资产
 
-- 空工作台中的古典原文、公式与《兰亭集序》书法透明图，来源和权利依据见应用资源包中的 `Inspiration/SOURCES.md`；
-- 富回答验证图像的来源与署名见应用资源包中的 `RichAnswerVerificationAssets/ATTRIBUTION.md`；
-- 这些验证资产不表示来源机构对魏碑背书。
+- 空工作台中的古典原文、公式与《兰亭集序》书法透明图，来源和权利依据见应用资源包中的 `Inspiration/SOURCES.md`。
