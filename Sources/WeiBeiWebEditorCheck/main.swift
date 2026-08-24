@@ -2466,7 +2466,7 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
                 self.fail("loadDocument did not publish a clean V2 session")
                 return
             }
-            self.requestSnapshot { snapshot in
+                self.requestSnapshot { snapshot in
                 guard snapshot.documentID == documentID,
                       snapshot.documentGeneration == generation,
                       snapshot.markdown.trimmingCharacters(in: .newlines)
@@ -2474,7 +2474,53 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
                     self.fail("loadDocument snapshot did not match the switched document: \(snapshot.markdown.debugDescription)")
                     return
                 }
-                self.isDone = true
+                self.validateIdempotentContentCommandRetry()
+            }
+        }
+    }
+
+    /// Same commandID already applied in the page, receipt lost, retry must not insert again.
+    private func validateIdempotentContentCommandRetry() {
+        let marker = "幂等插入标记"
+        let command: [String: Any] = [
+            "protocolVersion": 2,
+            "commandID": "web-editor-check-idempotent-insert",
+            "documentID": currentDocumentID,
+            "documentGeneration": currentDocumentGeneration,
+            "type": "insertStructuredBlock",
+            "payload": ["markdown": "\n\n\(marker)\n"],
+        ]
+        guard let data = try? JSONSerialization.data(withJSONObject: command),
+              let encoded = String(data: data, encoding: .utf8) else {
+            fail("could not encode idempotent insert command")
+            return
+        }
+        webView.evaluateJavaScript("window.WeiBeiEditor.dispatchCommand(\(encoded))") { [weak self] value, error in
+            guard let self else { return }
+            guard error == nil, value as? Bool == true else {
+                self.fail("idempotent insert command was rejected: \(String(describing: error))")
+                return
+            }
+            self.requestSnapshot { first in
+                let firstCount = first.markdown.components(separatedBy: marker).count - 1
+                guard firstCount == 1 else {
+                    self.fail("idempotent insert did not land once: \(first.markdown.debugDescription)")
+                    return
+                }
+                self.webView.evaluateJavaScript("window.WeiBeiEditor.dispatchCommand(\(encoded))") { value, error in
+                    guard error == nil, value as? Bool == true else {
+                        self.fail("idempotent retry was rejected: \(String(describing: error))")
+                        return
+                    }
+                    self.requestSnapshot { second in
+                        let secondCount = second.markdown.components(separatedBy: marker).count - 1
+                        guard secondCount == 1 else {
+                            self.fail("lost-receipt retry duplicated inserted body: \(second.markdown.debugDescription)")
+                            return
+                        }
+                        self.isDone = true
+                    }
+                }
             }
         }
     }
