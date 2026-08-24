@@ -1,6 +1,35 @@
 import AppKit
 import SwiftUI
 
+struct AgentComposerFocusSurface: NSViewRepresentable {
+    var focus: () -> Void
+
+    func makeNSView(context: Context) -> AgentComposerFocusNSView {
+        AgentComposerFocusNSView(focus: focus)
+    }
+
+    func updateNSView(_ view: AgentComposerFocusNSView, context: Context) {
+        view.focus = focus
+    }
+}
+
+final class AgentComposerFocusNSView: NSView {
+    var focus: () -> Void
+
+    init(focus: @escaping () -> Void) {
+        self.focus = focus
+        super.init(frame: .zero)
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        focus()
+    }
+}
+
 struct AgentComposerTextEditor: NSViewRepresentable {
     /// App-wide text tier multiplier — the native input must track the same
     /// tier as the weiBeiText-scaled placeholder drawn above it.

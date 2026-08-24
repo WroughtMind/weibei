@@ -312,6 +312,12 @@ private struct AgentComposerField: View {
             alignment: .topLeading
         )
         .fixedSize(horizontal: false, vertical: true)
+        .background {
+            AgentComposerFocusSurface {
+                focused.wrappedValue = true
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
         // Etched paper card: graded fill + inner light/shade + hairline frame
         // + two-layer shadow (see weibeiComposerCard), same shape as before.
         .weibeiComposerCard(
@@ -319,10 +325,6 @@ private struct AgentComposerField: View {
             focused: focused.wrappedValue,
             showsChrome: showsChrome
         )
-        .contentShape(Rectangle())
-        .onTapGesture {
-            focused.wrappedValue = true
-        }
         .onChange(of: store.agentDraft) { _, _ in
             guard focused.wrappedValue else { return }
             guard let span = WeiBeiPerf.begin(
