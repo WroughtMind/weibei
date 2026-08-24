@@ -171,12 +171,14 @@ export const createSyntaxMarksPlugin = (deps: SyntaxMarksDeps): Plugin => {
       if (trs.some((tr: any) => tr.getMeta(mathCompletionKey))) return null;
       const navigated = trs.some((tr: any) => !tr.docChanged && tr.selectionSet);
       const edited = trs.some((tr: any) => tr.docChanged);
-      const escapeTr = navigated && !edited ? boundaryEscapeTransaction(newState) : null;
+      if (!navigated || edited) return null;
+      const escapeTr = boundaryEscapeTransaction(newState);
       const { $from } = newState.selection;
       const block = $from.parent;
-      const spans = (block.type.spec.code || !newState.schema.nodes.math_inline)
+      const blockText = block.textBetween(0, block.content.size, '\n', '\n');
+      const spans = (block.type.spec.code || !newState.schema.nodes.math_inline || !blockText.includes('$'))
         ? []
-        : findCompleteInlineMathSpans(block.textBetween(0, block.content.size, '\n', '\n')).filter((span) => {
+        : findCompleteInlineMathSpans(blockText).filter((span) => {
           const from = $from.start($from.depth) + span.from;
           const to = $from.start($from.depth) + span.to;
           return newState.selection.from < from || newState.selection.from >= to;
