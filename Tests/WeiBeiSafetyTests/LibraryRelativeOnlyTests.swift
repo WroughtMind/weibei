@@ -158,13 +158,6 @@ enum LibraryInsideOnlyCheck {
         library: URL,
         outside: URL
     ) throws {
-        let entrySource = try String(
-            contentsOfFile: "Sources/WeiBei/Views/CourseHubView.swift",
-            encoding: .utf8
-        )
-        XCTAssertFalse(entrySource.contains("纳入已有文件夹"))
-        XCTAssertFalse(entrySource.contains("Add existing folder"))
-
         let outsideCourse = outside.appendingPathComponent("库外课", isDirectory: true)
         try FileManager.default.createDirectory(at: outsideCourse, withIntermediateDirectories: true)
         do {

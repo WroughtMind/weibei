@@ -95,6 +95,7 @@ final class FileModelPhase0BaselineTests: XCTestCase {
         try "磁盘版本".write(to: source, atomically: true, encoding: .utf8)
         let imported = try store.importFileIntoCourseForSelfCheck(source, courseID: courseID, role: .material)
         let item = imported.item
+        let backingURL = try XCTUnwrap(store.resolvedLibraryURL(for: item))
 
         let userVersion = "用户的本地修改版本"
         let checkpoint = NoteRecoveryCheckpoint(
@@ -108,6 +109,8 @@ final class FileModelPhase0BaselineTests: XCTestCase {
             ),
             markdown: userVersion
         )
+        // 冲突按文档隔离后以活跃笔记为键读取，须先把条目设为活跃。
+        store.activeNotebookItemID = item.id
         store.noteEditorRecoveryConflict = NoteEditorRecoveryConflict(
             diskMarkdown: "磁盘版本",
             checkpoint: checkpoint
@@ -122,6 +125,14 @@ final class FileModelPhase0BaselineTests: XCTestCase {
             recovered.contains(userVersion),
             "冲突选「使用磁盘版本」后用户版本应已存入备份环；实际备份内容：\(recovered)"
         )
+        XCTAssertNil(store.noteEditorRecoveryConflict)
+        XCTAssertEqual(store.noteText, "磁盘版本")
+        XCTAssertNotNil(store.transientNoteStatus)
+
+        store.scheduleNotePersistence("采用磁盘后的新编辑", for: item)
+        store.flushPendingNotePersistence(for: item.id)
+        XCTAssertEqual(try String(contentsOf: backingURL, encoding: .utf8), "采用磁盘后的新编辑")
+        XCTAssertNil(store.noteEditorRecoveryConflict)
     }
 
     func testGoneItemGraysAndReclaims() throws {

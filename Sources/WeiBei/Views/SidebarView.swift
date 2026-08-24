@@ -167,9 +167,7 @@ struct CourseSidebarList: View {
                 if model.courses.isEmpty {
                     if store.courses.isEmpty {
                         SidebarEmptyRow(
-                            title: ui("还没有课程", "No courses yet"),
-                            actionTitle: ui("新建课程…", "Create course…"),
-                            action: { store.presentCourseWorkspace(.hub) }
+                            title: ui("还没有课程", "No courses yet")
                         )
                     } else {
                         SidebarEmptyRow(title: ui("还没有匹配课程", "No matching courses"))
@@ -820,8 +818,7 @@ private struct LibraryRow: View {
     @State private var hovering = false
 
     var body: some View {
-        CourseSidebarDiagnostics.recordLibraryRowBodyForTesting()
-        return HStack(spacing: compact ? 7 : 10) {
+        HStack(spacing: compact ? 7 : 10) {
             Image(systemName: item.kind.systemImage)
                 .foregroundStyle(iconColor)
                 .frame(width: compact ? 15 : 18)
@@ -887,24 +884,6 @@ private struct LibraryRow: View {
         return item.kind == .pdf ? WeiBeiTheme.link : WeiBeiTheme.tertiaryInk
     }
 }
-
-#if DEBUG
-enum CourseSidebarDiagnostics {
-    private(set) static var libraryRowBodyCountForTesting = 0
-
-    static func resetForTesting() {
-        libraryRowBodyCountForTesting = 0
-    }
-
-    static func recordLibraryRowBodyForTesting() {
-        libraryRowBodyCountForTesting &+= 1
-    }
-}
-#else
-enum CourseSidebarDiagnostics {
-    static func recordLibraryRowBodyForTesting() {}
-}
-#endif
 
 private func sidebarCourseAccent(colorIndex: Int) -> Color {
     switch ((colorIndex % 4) + 4) % 4 {

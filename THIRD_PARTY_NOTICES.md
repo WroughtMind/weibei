@@ -4,14 +4,6 @@ WeiBei includes and builds upon third-party open-source software. Those
 components remain under their original licenses; the project's MIT License
 does not replace them.
 
-## Pi coding agent (Bun-compiled standalone)
-
-WeiBei embeds a pinned upstream **standalone Pi** binary built with Bun
-`build --compile`. Pi application source is MIT; Bun’s license and LGPL
-static-link disclosures ship in the package. See
-[`Vendor/PiRuntime/`](Vendor/PiRuntime/) (`THIRD_PARTY_NOTICES.md`,
-`BUN_LICENSE.md`, `manifest.json`).
-
 ## JavaScript components
 
 The Milkdown editor and rich-answer runtime use packages including Milkdown,
@@ -42,9 +34,6 @@ and complete license text are preserved in
 Image and text reference sources, rights bases, and required credits are
 documented in:
 
-- [`Attachments/RichAnswerVerificationAssets/ATTRIBUTION.md`](Attachments/RichAnswerVerificationAssets/ATTRIBUTION.md)
-- [`Attachments/RichAnswerVerificationAssets/manifest.json`](Attachments/RichAnswerVerificationAssets/manifest.json)
-- [`Sources/WeiBei/Resources/RichAnswerVerificationAssets/ATTRIBUTION.md`](Sources/WeiBei/Resources/RichAnswerVerificationAssets/ATTRIBUTION.md)
 - [`Sources/WeiBei/Resources/Inspiration/SOURCES.md`](Sources/WeiBei/Resources/Inspiration/SOURCES.md)
 
 Redistributors must review and preserve the terms that apply to each asset.

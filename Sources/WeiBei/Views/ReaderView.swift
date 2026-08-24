@@ -406,7 +406,6 @@ struct ReaderView: View {
 
     private func selectionAskMarksJSON(for itemID: String) -> String {
         let marks = store.selectionAskThreads(forItemID: itemID)
-            .prefix(40)
             .map { thread -> [String: String] in
                 [
                     "id": thread.id.uuidString,
@@ -707,7 +706,7 @@ struct ReaderView: View {
         let threads = store.selectionAskThreads(forItemID: store.selectedMaterialItem?.id)
         if !threads.isEmpty {
             Menu {
-                ForEach(threads.prefix(12)) { thread in
+                ForEach(threads) { thread in
                     Button {
                         store.openSelectionAskThread(thread.id, jumpToConversation: false)
                     } label: {
@@ -1036,7 +1035,6 @@ struct ReaderView: View {
                         selectionRemarkMarks: selectionRemarkMarksJSON(store.selectionRemarkRecords(forItemID: item.id)),
                         onContentRailChange: applyHTMLContentRailSections,
                         onContentRailActiveChange: applyHTMLContentRailActiveID,
-                        onAppShortcut: { key, modifiers in store.handleAppShortcut(key: key, modifiers: modifiers) },
                         onSelectionAskMark: { threadID in
                             if let uuid = UUID(uuidString: threadID) {
                                 store.openSelectionAskThread(uuid, jumpToConversation: false)
@@ -1125,7 +1123,6 @@ struct ReaderView: View {
             ),
             onWikiLink: { title in store.openOrCreateWikiNote(title: title) },
             onSourceReference: { reference in store.openSourceReference(reference) },
-            onAppShortcut: { key, modifiers in store.handleAppShortcut(key: key, modifiers: modifiers) },
             onSelectionAskMark: { threadID in
                 if let uuid = UUID(uuidString: threadID) {
                     store.openSelectionAskThread(uuid, jumpToConversation: false)
@@ -2367,7 +2364,6 @@ struct WebReaderRepresentable: NSViewRepresentable {
     var selectionAskMarks: String = "[]"
     var onContentRailChange: ([WebReaderContentRailSection]) -> Void
     var onContentRailActiveChange: (WebReaderContentRailActiveChange) -> Void
-    var onAppShortcut: (String, NSEvent.ModifierFlags) -> Bool
     var onSelectionChange: (String, CGPoint?) -> Void
     var onSelectionAskMark: (String) -> Void = { _ in }
     var selectionRemarkMarks: String = "[]"
@@ -2377,7 +2373,6 @@ struct WebReaderRepresentable: NSViewRepresentable {
         "selection",
         "selectionAskMark",
         "remarkMark",
-        "appShortcut",
         "contentRailSections",
         "contentRailActive"
     ]
@@ -2392,7 +2387,6 @@ struct WebReaderRepresentable: NSViewRepresentable {
         selectionRemarkMarks: String = "[]",
         onContentRailChange: @escaping ([WebReaderContentRailSection]) -> Void = { _ in },
         onContentRailActiveChange: @escaping (WebReaderContentRailActiveChange) -> Void = { _ in },
-        onAppShortcut: @escaping (String, NSEvent.ModifierFlags) -> Bool = { _, _ in false },
         onSelectionAskMark: @escaping (String) -> Void = { _ in },
         onSelectionRemarkMark: @escaping (String) -> Void = { _ in },
         onSelectionChange: @escaping (String, CGPoint?) -> Void
@@ -2407,7 +2401,6 @@ struct WebReaderRepresentable: NSViewRepresentable {
         self.selectionRemarkMarks = selectionRemarkMarks
         self.onContentRailChange = onContentRailChange
         self.onContentRailActiveChange = onContentRailActiveChange
-        self.onAppShortcut = onAppShortcut
         self.onSelectionAskMark = onSelectionAskMark
         self.onSelectionRemarkMark = onSelectionRemarkMark
         self.onSelectionChange = onSelectionChange
@@ -2423,7 +2416,6 @@ struct WebReaderRepresentable: NSViewRepresentable {
         selectionRemarkMarks: String = "[]",
         onContentRailChange: @escaping ([WebReaderContentRailSection]) -> Void = { _ in },
         onContentRailActiveChange: @escaping (WebReaderContentRailActiveChange) -> Void = { _ in },
-        onAppShortcut: @escaping (String, NSEvent.ModifierFlags) -> Bool = { _, _ in false },
         onSelectionAskMark: @escaping (String) -> Void = { _ in },
         onSelectionRemarkMark: @escaping (String) -> Void = { _ in },
         onSelectionChange: @escaping (String, CGPoint?) -> Void
@@ -2438,7 +2430,6 @@ struct WebReaderRepresentable: NSViewRepresentable {
         self.selectionRemarkMarks = selectionRemarkMarks
         self.onContentRailChange = onContentRailChange
         self.onContentRailActiveChange = onContentRailActiveChange
-        self.onAppShortcut = onAppShortcut
         self.onSelectionAskMark = onSelectionAskMark
         self.onSelectionRemarkMark = onSelectionRemarkMark
         self.onSelectionChange = onSelectionChange
@@ -2451,7 +2442,6 @@ struct WebReaderRepresentable: NSViewRepresentable {
             contentRailTarget: contentRailTarget,
             onContentRailChange: onContentRailChange,
             onContentRailActiveChange: onContentRailActiveChange,
-            onAppShortcut: onAppShortcut,
             onSelectionChange: onSelectionChange,
             onSelectionAskMark: onSelectionAskMark
         )
@@ -2463,11 +2453,6 @@ struct WebReaderRepresentable: NSViewRepresentable {
         for name in Self.scriptMessageNames {
             controller.add(context.coordinator, name: name)
         }
-        controller.addUserScript(WKUserScript(
-            source: Self.appShortcutScript,
-            injectionTime: .atDocumentStart,
-            forMainFrameOnly: true
-        ))
         controller.addUserScript(WKUserScript(
             source: Self.selectionScript + Self.readerRemarkMarksScript,
             injectionTime: .atDocumentEnd,
@@ -2510,7 +2495,6 @@ struct WebReaderRepresentable: NSViewRepresentable {
 
     func updateNSView(_ view: WKWebView, context: Context) {
         context.coordinator.searchQuery = searchQuery
-        context.coordinator.onAppShortcut = onAppShortcut
         context.coordinator.onContentRailChange = onContentRailChange
         context.coordinator.onContentRailActiveChange = onContentRailActiveChange
         context.coordinator.onSelectionAskMark = onSelectionAskMark
@@ -2560,39 +2544,6 @@ struct WebReaderRepresentable: NSViewRepresentable {
             controller.removeScriptMessageHandler(forName: name)
         }
     }
-
-    static let appShortcutScript = """
-    (() => {
-      const keyName = (event) => {
-        if (/^Digit[0-9]$/.test(event.code)) return event.code.slice(5);
-        if (/^Key[A-Z]$/.test(event.code)) return event.code.slice(3).toLowerCase();
-        return String(event.key || "").toLowerCase();
-      };
-      const isWeiBeiShortcut = (key, event) => {
-        const command = event.metaKey;
-        const option = event.altKey;
-        const control = event.ctrlKey;
-        const shift = event.shiftKey;
-        if (command && option && !control && !shift) return ["1", "2", "3", "a", "n", "r", "t"].includes(key);
-        if (command && !option && !control && !shift) return ["1", "2", "3", "4", "[", "]", "b", "j", "k", "f"].includes(key);
-        if (control && option && !command && !shift) return ["0", "1", "2", "3", "4"].includes(key);
-        return false;
-      };
-      window.addEventListener("keydown", (event) => {
-        const key = keyName(event);
-        if (!isWeiBeiShortcut(key, event)) return;
-        event.preventDefault();
-        event.stopPropagation();
-        window.webkit.messageHandlers.appShortcut.postMessage({
-          key,
-          command: event.metaKey,
-          option: event.altKey,
-          control: event.ctrlKey,
-          shift: event.shiftKey
-        });
-      }, true);
-    })();
-    """
 
     static let selectionScript = """
     (() => {
@@ -3062,7 +3013,6 @@ struct WebReaderRepresentable: NSViewRepresentable {
     final class Coordinator: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
         var onSelectionChange: (String, CGPoint?) -> Void
         var onSelectionAskMark: (String) -> Void
-        var onAppShortcut: (String, NSEvent.ModifierFlags) -> Bool
         var onContentRailChange: ([WebReaderContentRailSection]) -> Void
         var onContentRailActiveChange: (WebReaderContentRailActiveChange) -> Void
         var contentRailTarget: WebReaderContentRailTarget?
@@ -3090,7 +3040,6 @@ struct WebReaderRepresentable: NSViewRepresentable {
             contentRailTarget: WebReaderContentRailTarget?,
             onContentRailChange: @escaping ([WebReaderContentRailSection]) -> Void,
             onContentRailActiveChange: @escaping (WebReaderContentRailActiveChange) -> Void,
-            onAppShortcut: @escaping (String, NSEvent.ModifierFlags) -> Bool,
             onSelectionChange: @escaping (String, CGPoint?) -> Void,
             onSelectionAskMark: @escaping (String) -> Void
         ) {
@@ -3099,7 +3048,6 @@ struct WebReaderRepresentable: NSViewRepresentable {
             self.contentRailTarget = contentRailTarget
             self.onContentRailChange = onContentRailChange
             self.onContentRailActiveChange = onContentRailActiveChange
-            self.onAppShortcut = onAppShortcut
             self.onSelectionChange = onSelectionChange
             self.onSelectionAskMark = onSelectionAskMark
         }
@@ -3191,13 +3139,6 @@ struct WebReaderRepresentable: NSViewRepresentable {
         }
 
         func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
-            if message.name == "appShortcut" {
-                guard let body = message.body as? [String: Any],
-                      let key = body["key"] as? String else { return }
-                _ = onAppShortcut(key, Self.modifiers(from: body))
-                return
-            }
-
             if message.name == "selectionAskMark" {
                 let threadID: String
                 if let body = message.body as? [String: Any] {
@@ -3259,23 +3200,6 @@ struct WebReaderRepresentable: NSViewRepresentable {
             Task { @MainActor in
                 self.onSelectionChange(text, anchor)
             }
-        }
-
-        private static func modifiers(from body: [String: Any]) -> NSEvent.ModifierFlags {
-            var modifiers: NSEvent.ModifierFlags = []
-            if body["command"] as? Bool == true {
-                modifiers.insert(.command)
-            }
-            if body["option"] as? Bool == true {
-                modifiers.insert(.option)
-            }
-            if body["control"] as? Bool == true {
-                modifiers.insert(.control)
-            }
-            if body["shift"] as? Bool == true {
-                modifiers.insert(.shift)
-            }
-            return modifiers
         }
 
         private static func contentRailSection(from body: [String: Any]) -> WebReaderContentRailSection? {
@@ -3362,7 +3286,6 @@ private struct MarkdownDocumentReaderView: View {
     var selectionRemarkMarks: String = "[]"
     var onWikiLink: (String) -> Void = { _ in }
     var onSourceReference: (String) -> Void = { _ in }
-    var onAppShortcut: (String, NSEvent.ModifierFlags) -> Bool = { _, _ in false }
     var onSelectionAskMark: (String) -> Void = { _ in }
     var onSelectionRemarkMark: (String) -> Void = { _ in }
     var onSelectionChange: (String, CGPoint?) -> Void
@@ -3381,7 +3304,6 @@ private struct MarkdownDocumentReaderView: View {
             onAskAgentWithSelection: onSelectionChange,
             onWikiLink: onWikiLink,
             onSourceReference: onSourceReference,
-            onAppShortcut: onAppShortcut,
             onSearchResult: { _, _ in },
             selectionAskMarks: selectionAskMarks,
             onSelectionAskMark: onSelectionAskMark,
@@ -3475,13 +3397,6 @@ struct ContextualContentPicker: View {
     init(kind: ContextualContentKind) {
         self.kind = kind
     }
-
-#if DEBUG
-    init(kind: ContextualContentKind, initialLevelForTesting: Level) {
-        self.kind = kind
-        _level = State(initialValue: initialLevelForTesting)
-    }
-#endif
 
     var body: some View {
         GeometryReader { geometry in
@@ -3659,8 +3574,7 @@ struct ContextualContentPicker: View {
     }
 
     private func rowButton(_ row: PickerRow) -> some View {
-        ContextualContentPickerDiagnostics.recordRowBodyForTesting()
-        return Button {
+        Button {
             switch row {
             case .course(let course, _):
                 level = .course(course.id)
@@ -3789,24 +3703,6 @@ struct ContextualContentPicker: View {
         }
     }
 }
-
-#if DEBUG
-enum ContextualContentPickerDiagnostics {
-    private(set) static var rowBodyCountForTesting = 0
-
-    static func resetForTesting() {
-        rowBodyCountForTesting = 0
-    }
-
-    static func recordRowBodyForTesting() {
-        rowBodyCountForTesting &+= 1
-    }
-}
-#else
-enum ContextualContentPickerDiagnostics {
-    static func recordRowBodyForTesting() {}
-}
-#endif
 
 struct ContextualContentListButton: View {
     @EnvironmentObject private var store: WorkspaceStore

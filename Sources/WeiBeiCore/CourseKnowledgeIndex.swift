@@ -8,6 +8,11 @@ public struct CourseKnowledgeSource: Sendable {
     public var role: String
     public var text: String
     public var isTruncated: Bool
+    public var indexedPageCount: Int?
+    public var totalPageCount: Int?
+    public var uncoveredPageNumbers: [Int]?
+    public var failedPageNumbers: [Int]?
+    public var failedPageReasons: [Int: String]?
 
     public init(
         id: String,
@@ -16,7 +21,12 @@ public struct CourseKnowledgeSource: Sendable {
         kind: String,
         role: String,
         text: String,
-        isTruncated: Bool = false
+        isTruncated: Bool = false,
+        indexedPageCount: Int? = nil,
+        totalPageCount: Int? = nil,
+        uncoveredPageNumbers: [Int]? = nil,
+        failedPageNumbers: [Int]? = nil,
+        failedPageReasons: [Int: String]? = nil
     ) {
         self.id = id
         self.title = title
@@ -25,6 +35,11 @@ public struct CourseKnowledgeSource: Sendable {
         self.role = role
         self.text = text
         self.isTruncated = isTruncated
+        self.indexedPageCount = indexedPageCount
+        self.totalPageCount = totalPageCount
+        self.uncoveredPageNumbers = uncoveredPageNumbers
+        self.failedPageNumbers = failedPageNumbers
+        self.failedPageReasons = failedPageReasons
     }
 }
 
@@ -103,7 +118,12 @@ public enum CourseKnowledgeIndex {
                 headings: headings(in: source.text),
                 tags: source.role == "note" ? MarkdownTagSearch.tags(in: source.text) : [],
                 searchText: excerpt.text,
-                isTruncated: source.isTruncated || excerpt.isTruncated
+                isTruncated: source.isTruncated || excerpt.isTruncated,
+                indexedPageCount: source.indexedPageCount,
+                totalPageCount: source.totalPageCount,
+                uncoveredPageNumbers: source.uncoveredPageNumbers,
+                failedPageNumbers: source.failedPageNumbers,
+                failedPageReasons: source.failedPageReasons?.mapValues(userFacingPDFReason)
             )
         }
         let relations = validLinks.prefix(maximumRelations).map {
@@ -118,6 +138,15 @@ public enum CourseKnowledgeIndex {
                 || validLinks.count > relations.count
                 || includedSources.contains { $0.isTruncated }
         )
+    }
+
+    private static func userFacingPDFReason(_ reason: String) -> String {
+        switch PDFOCRFailureReason(rawValue: reason) {
+        case .invalidPage: "页面无效，可重试"
+        case .rendering: "页面无法显示，可重试"
+        case .recognition: "文字识别失败，可重试"
+        case nil: "页面处理失败，可重试"
+        }
     }
 
     private static func relevanceScore(

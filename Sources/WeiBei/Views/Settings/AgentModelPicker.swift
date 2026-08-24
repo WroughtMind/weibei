@@ -3,49 +3,14 @@ import WeiBeiCore
 
 // MARK: - Model picker (Settings → 对话服务 → 模型)
 //
-// Reads the catalog from WeiBei's embedded Pi runtime and keeps manual model entry.
+// Reads the native provider catalog and keeps manual model entry.
 
 extension SettingsView {
-    func requestModelListRefresh(force: Bool = false) {
-        if force {
-            store.shutdownAgentRuntime()
-        }
-        oauthService.refreshCatalog(force: force)
-    }
-
     /// The dropdown + status + manual-entry control for the model id.
     @ViewBuilder
     func agentModelPicker() -> some View {
-        VStack(alignment: .trailing, spacing: 8) {
-            HStack(spacing: 8) {
-                if oauthService.isRefreshingCatalog {
-                    Image(systemName: "arrow.triangle.2.circlepath")
-                        .weiBeiText(11, weight: .semibold)
-                        .foregroundStyle(WeiBeiTheme.tertiaryInk)
-                        // Continuous spin while loading: drive via a monotonically increasing
-                        // angle that animates itself each cycle.
-                        .rotationEffect(.degrees(spinAngle))
-                        .onAppear {
-                            withAnimation(.linear(duration: 0.9).repeatForever(autoreverses: false)) {
-                                spinAngle += 360
-                            }
-                        }
-                }
-                compactMenu(displayedModelName) {
-                    modelMenuContent
-                }
-                Button {
-                    requestModelListRefresh(force: true)
-                } label: {
-                    Image(systemName: "arrow.clockwise")
-                        .weiBeiText(11, weight: .semibold)
-                }
-                .buttonStyle(WeiBeiTextActionButtonStyle(active: !oauthService.isRefreshingCatalog))
-                .help(store.ui("重新获取模型列表", "Refresh model list"))
-            }
-
-            // Inline status line under the control.
-            modelStatusLine
+        compactMenu(displayedModelName) {
+            modelMenuContent
         }
     }
 
@@ -77,36 +42,15 @@ extension SettingsView {
     }
 
     private var headerText: String {
-        if oauthService.catalogError != nil {
-            return store.ui("模型（读取失败）", "Models (load failed)")
-        }
-        return oauthService.catalog == nil
-            ? store.ui("模型", "Models")
-            : store.ui("可用模型", "Available models")
+        store.ui("可用模型", "Available models")
     }
 
     private var effectiveModelEntries: [String] {
-        if oauthService.isRefreshingCatalog, oauthService.catalog == nil { return [] }
         let current = store.modelName.trimmingCharacters(in: .whitespacesAndNewlines)
-        var entries = oauthService.models(providerID: activePiProviderID)
+        var entries = oauthService.models(provider: store.agentProviderID)
         if !current.isEmpty, !entries.contains(current) {
             entries.insert(current, at: 0)
         }
         return entries
-    }
-
-    @ViewBuilder
-    private var modelStatusLine: some View {
-        if oauthService.isRefreshingCatalog {
-            Text(store.ui("正在获取模型…", "Fetching models…"))
-                .weiBeiText(11)
-                .foregroundStyle(WeiBeiTheme.tertiaryInk)
-        } else if let message = oauthService.catalogError {
-            Text(message)
-                .weiBeiText(11)
-                .foregroundStyle(WeiBeiTheme.tertiaryInk)
-                .frame(maxWidth: 260, alignment: .trailing)
-                .lineLimit(2)
-        }
     }
 }

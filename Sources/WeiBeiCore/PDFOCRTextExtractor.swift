@@ -30,7 +30,13 @@ public struct PDFOCRPage: Equatable {
 public enum PDFOCRPageOutcome: Equatable {
     case text(PDFOCRPage)
     case empty(pageIndex: Int)
-    case failed(pageIndex: Int)
+    case failed(pageIndex: Int, reason: PDFOCRFailureReason)
+}
+
+public enum PDFOCRFailureReason: String, Equatable, Sendable {
+    case invalidPage = "invalid-page"
+    case rendering
+    case recognition
 }
 
 public enum PDFOCRTextExtractor {
@@ -65,10 +71,14 @@ public enum PDFOCRTextExtractor {
     public static func pageOutcome(from document: PDFDocument, pageIndex: Int) -> PDFOCRPageOutcome {
         guard pageIndex >= 0,
               pageIndex < document.pageCount,
-              let page = document.page(at: pageIndex),
-              let image = cgImage(for: page),
-              let lines = recognizeLines(in: image) else {
-            return .failed(pageIndex: pageIndex)
+              let page = document.page(at: pageIndex) else {
+            return .failed(pageIndex: pageIndex, reason: .invalidPage)
+        }
+        guard let image = cgImage(for: page) else {
+            return .failed(pageIndex: pageIndex, reason: .rendering)
+        }
+        guard let lines = recognizeLines(in: image) else {
+            return .failed(pageIndex: pageIndex, reason: .recognition)
         }
         guard !lines.isEmpty else { return .empty(pageIndex: pageIndex) }
         return .text(PDFOCRPage(pageIndex: pageIndex, lines: lines))

@@ -1,6 +1,6 @@
 import Foundation
 
-/// Shared proposal-details decoders used by Pi RPC and Native applySideEffects.
+/// Shared proposal-details decoders used by Agent side effects.
 /// Shape only — no mechanical limits.
 public enum StudyAgentProposalDecoding {
     public static func noteProposal(from details: [String: Any]) -> StudyAgentNoteProposal? {

@@ -45,9 +45,6 @@ extension WorkspaceStore {
                 at: 0
             )
         }
-        if selectionRemarkRecords.count > 200 {
-            selectionRemarkRecords = Array(selectionRemarkRecords.prefix(200))
-        }
         save()
     }
 

@@ -1,7 +1,6 @@
 import Foundation
 
 public actor NativeAgentLoop {
-    public var maximumSteps = 12
     private var cancelled = false
 
     public init() {}
@@ -27,9 +26,22 @@ public actor NativeAgentLoop {
         progress: StudyAgentProgressHandler?
     ) async throws -> NativeLoopResult {
         await progress?(.preparing)
-        let turn = 1
+        let turn = ((await ledger.allEvents()).compactMap(\.turn).max() ?? 0) + 1
         _ = try await ledger.append { seq, time in
             NativeSessionEvent(type: .turnStart, seq: seq, timeMS: time, turn: turn)
+        }
+        let userMessage: String
+        if let selection = request.selectionText,
+           !selection.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            let title = request.selectionTitle?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let selectionTitle = title.flatMap { $0.isEmpty ? nil : $0 }
+                ?? request.language.text("当前选区", "Current selection")
+            userMessage = request.language.text(
+                "[选中文字：\(selectionTitle)]\n\(selection)\n\n[问题]\n\(request.question)",
+                "[Selected text: \(selectionTitle)]\n\(selection)\n\n[Question]\n\(request.question)"
+            )
+        } else {
+            userMessage = request.question
         }
         _ = try await ledger.append { seq, time in
             NativeSessionEvent(
@@ -37,7 +49,7 @@ public actor NativeAgentLoop {
                 seq: seq,
                 timeMS: time,
                 turn: turn,
-                text: request.question
+                text: userMessage
             )
         }
 
@@ -51,11 +63,7 @@ public actor NativeAgentLoop {
             liveStores: liveStores
         )
         let scope = NativeToolScope.session(request.id.uuidString)
-        var tools = await registry.resolved(scope: scope)
-        if !request.interactiveVisualizationsEnabled {
-            await registry.hide("weibei_visualize", scope: scope)
-            tools = await registry.resolved(scope: scope)
-        }
+        let tools = await registry.resolved(scope: scope)
 
         var collectedText = ""
         var toolTrace: [String] = []
@@ -72,7 +80,9 @@ public actor NativeAgentLoop {
         var pendingUnstarted: [NativeToolCall] = []
 
         do {
-            for step in 1...maximumSteps {
+            var step = 0
+            while true {
+                step += 1
                 try checkCancelled()
                 _ = try await ledger.append { seq, time in
                     NativeSessionEvent(type: .stepStart, seq: seq, timeMS: time, turn: turn, step: step)
@@ -88,7 +98,7 @@ public actor NativeAgentLoop {
                     llmRequest.reasoningEffort = "low"
                 }
                 var assembler = NativeToolCallAssembler()
-                var finish: NativeFinishReason = .stop
+                var finish: NativeFinishReason?
                 var stepText = ""
                 for try await chunk in adapter.stream(llmRequest) {
                     try checkCancelled()
@@ -108,6 +118,10 @@ public actor NativeAgentLoop {
                         stepText += text
                         collectedText += text
                         await progress?(.text(collectedText, []))
+                    case let .webSearchSource(url):
+                        if !context.currentRunSourceURLs.contains(url) {
+                            context.currentRunSourceURLs.append(url)
+                        }
                     case let .toolCallDelta(_, _, name, _):
                         if let name {
                             await progress?(.usingTool(name, nil))
@@ -131,15 +145,18 @@ public actor NativeAgentLoop {
                     }
                 }
 
-                let calls: [NativeToolCall]
-                do {
-                    calls = (finish == .toolCalls || finish == .stop) ? (try assembler.completedCalls()) : []
-                } catch {
-                    throw error
-                }
+                let callResults = (finish == .toolCalls || finish == .stop) ? assembler.callResults() : []
+                let calls = callResults.map { $0.call }
                 if calls.isEmpty {
                     _ = try await ledger.append { seq, time in
                         NativeSessionEvent(type: .stepEnd, seq: seq, timeMS: time, turn: turn, step: step)
+                    }
+                    guard finish == .stop else {
+                        try await ledger.closeTurn(turn: turn, reason: .error)
+                        throw NativeLLMFailure(
+                            code: finish?.rawValue ?? "incomplete",
+                            message: "模型回答未正常结束，请继续。"
+                        )
                     }
                     break
                 }
@@ -159,18 +176,23 @@ public actor NativeAgentLoop {
                         )
                     }
                 }
-                for call in calls {
+                for callResult in callResults {
+                    let call = callResult.call
                     try checkCancelled()
                     pendingUnstarted.removeAll { $0.id == call.id }
                     let result: NativeToolExecutionResult
-                    do {
-                        result = try await registry.execute(
-                            NativeToolCallRequest(name: call.name, argumentsJSON: call.arguments, callID: call.id),
-                            context: context,
-                            scope: scope
-                        )
-                    } catch {
-                        result = NativeToolExecutionResult(text: error.localizedDescription, isError: true)
+                    if let failure = callResult.failure {
+                        result = NativeToolExecutionResult(text: failure.localizedDescription, isError: true)
+                    } else {
+                        do {
+                            result = try await registry.execute(
+                                NativeToolCallRequest(name: call.name, argumentsJSON: call.arguments, callID: call.id),
+                                context: context,
+                                scope: scope
+                            )
+                        } catch {
+                            result = NativeToolExecutionResult(text: error.localizedDescription, isError: true)
+                        }
                     }
                     applySideEffects(
                         name: call.name,
@@ -311,6 +333,15 @@ public actor NativeAgentLoop {
                 }
             }
         }
+        if name == "weibei_web_open",
+           let pages = (try? JSONDecoder().decode(
+            StudyAgentHostToolResult.self,
+            from: Data(result.text.utf8)
+           ))?.webPages {
+            for link in pages.flatMap(\.links) where !context.currentRunSourceURLs.contains(link) {
+                context.currentRunSourceURLs.append(link)
+            }
+        }
         if name == "weibei_note_proposal" {
             noteProposal = StudyAgentProposalDecoding.noteProposal(from: details)
         }
@@ -339,7 +370,7 @@ public actor NativeAgentLoop {
            let specJSON = String(data: specData, encoding: .utf8) {
             contentBlocks.append(.visualization(AgentVisualization(id: id, specJSON: specJSON)))
         }
-        if name == "load_skill" || name == "read" {
+        if name == "load_skill" {
             if let loaded = details["loaded"] as? [String: Any],
                let id = loaded["id"] as? String,
                let skillName = loaded["name"] as? String,

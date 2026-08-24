@@ -2,7 +2,7 @@
 set -euo pipefail
 
 code=false
-pi=false
+agent=false
 editor=false
 data_safety=false
 release=false
@@ -12,14 +12,14 @@ classify_path() {
   local path="$1"
 
   case "$path" in
-    Sources/*|Tests/*|Package.swift|Package.resolved|package.json|package-lock.json|script/*|.github/workflows/*|VERSION|DesignSystem/*|Config/*|Vendor/PiRuntime/manifest.json)
+    Sources/*|Tests/*|Package.swift|Package.resolved|package.json|package-lock.json|script/*|.github/workflows/*|VERSION|DesignSystem/*|Config/*)
       code=true
       ;;
   esac
 
   case "$path" in
-    Sources/*Pi*|Sources/WeiBeiCore/AgentResources/*|Sources/WeiBeiCore/StudyAgentRuntime.swift|Sources/WeiBeiCore/Agent*|Sources/WeiBei/Views/NotesAgentView.swift|script/check-agent-project-tools.ts|script/prepare_pi_runtime.sh|script/prepare_pi_runtime_relink_bundle.sh|Config/PiRuntime.entitlements|Vendor/PiRuntime/manifest.json|Vendor/PiRuntime/BUN_LICENSE.md|Vendor/PiRuntime/LGPL-*.txt|Vendor/PiRuntime/RELINK.md|Vendor/PiRuntime/THIRD_PARTY_NOTICES.md|Vendor/PiRuntime/license-review-inputs.json|Vendor/PiRuntime/relink-bundle.lock.json|tsconfig.agent.json|package.json|package-lock.json)
-      pi=true
+    Sources/WeiBeiCore/AgentResources/*|Sources/WeiBeiCore/NativeAgentRuntime/*|Sources/WeiBeiCore/StudyAgentRuntime.swift|Sources/WeiBeiCore/Agent*|Sources/WeiBei/Views/NotesAgentView.swift|Sources/WeiBeiNativeCheck/*|package.json|package-lock.json)
+      agent=true
       ;;
   esac
 
@@ -38,14 +38,14 @@ classify_path() {
   # Shared roots cannot be classified safely from the path alone.
   case "$path" in
     Sources/WeiBei/Stores/WorkspaceStore.swift|Sources/WeiBei/App/WeiBeiApp.swift|Sources/WeiBei/Views/ContentView.swift|Sources/WeiBei/Views/StableDocumentWorkspace.swift|Sources/WeiBeiSelfCheck/main.swift|Package.swift|Package.resolved|.github/workflows/*|script/ci_changed_scopes.sh)
-      pi=true
+      agent=true
       editor=true
       data_safety=true
       ;;
   esac
 
   case "$path" in
-    VERSION|Package.swift|Package.resolved|package.json|package-lock.json|.github/workflows/*|script/build_and_run.sh|script/build_release_dmg.sh|script/dmg/*|script/homebrew/*|script/prepare_pi_runtime.sh|script/prepare_pi_runtime_relink_bundle.sh|Sources/WeiBeiDev/*|Docs/releases/*|LICENSE|PRIVACY.md|THIRD_PARTY_NOTICES.md|ASSET_ATTRIBUTIONS.md|DesignSystem/assets/app-icon/*|Config/*|Vendor/PiRuntime/manifest.json|Vendor/PiRuntime/LICENSE|Vendor/PiRuntime/BUN_LICENSE.md|Vendor/PiRuntime/LGPL-*.txt|Vendor/PiRuntime/RELINK.md|Vendor/PiRuntime/THIRD_PARTY_NOTICES.md|Vendor/PiRuntime/license-review-inputs.json|Vendor/PiRuntime/relink-bundle.lock.json|*.entitlements|*/Info.plist)
+    VERSION|Package.swift|Package.resolved|package.json|package-lock.json|.github/workflows/*|script/build_and_run.sh|script/build_release_dmg.sh|script/dmg/*|script/homebrew/*|Sources/WeiBeiDev/*|Docs/releases/*|LICENSE|PRIVACY.md|THIRD_PARTY_NOTICES.md|ASSET_ATTRIBUTIONS.md|DesignSystem/assets/app-icon/*|Config/*|*.entitlements|*/Info.plist)
       release=true
       ;;
   esac
@@ -61,13 +61,13 @@ classify_path() {
 }
 
 emit_scopes() {
-  printf 'code=%s\npi=%s\neditor=%s\ndata_safety=%s\nrelease=%s\ntools=%s\n' \
-    "$code" "$pi" "$editor" "$data_safety" "$release" "$tools"
+  printf 'code=%s\nagent=%s\neditor=%s\ndata_safety=%s\nrelease=%s\ntools=%s\n' \
+    "$code" "$agent" "$editor" "$data_safety" "$release" "$tools"
 }
 
 reset_scopes() {
   code=false
-  pi=false
+  agent=false
   editor=false
   data_safety=false
   release=false
@@ -92,68 +92,52 @@ expect_scopes() {
 
 if [[ "${1:-}" == "--self-check" ]]; then
   expect_scopes \
-    "code=false pi=false editor=false data_safety=false release=false tools=false " \
+    "code=false agent=false editor=false data_safety=false release=false tools=false " \
     "Docs/plans/example.md"
   expect_scopes \
-    "code=true pi=true editor=true data_safety=true release=false tools=false " \
+    "code=true agent=true editor=true data_safety=true release=false tools=false " \
     "Sources/WeiBei/Stores/WorkspaceStore.swift"
   expect_scopes \
-    "code=true pi=false editor=true data_safety=false release=false tools=false " \
+    "code=true agent=false editor=true data_safety=false release=false tools=false " \
     "Sources/WeiBei/WebEditor/src/editor.ts"
   expect_scopes \
-    "code=true pi=false editor=true data_safety=false release=false tools=false " \
+    "code=true agent=false editor=true data_safety=false release=false tools=false " \
     "Sources/WeiBeiCore/MarkdownAttachmentStore.swift"
   expect_scopes \
-    "code=true pi=false editor=false data_safety=true release=false tools=false " \
+    "code=true agent=false editor=false data_safety=true release=false tools=false " \
     "Tests/WeiBeiSafetyTests/CourseProjectRootSelfCheck.swift"
   expect_scopes \
-    "code=true pi=false editor=false data_safety=true release=false tools=false " \
+    "code=true agent=false editor=false data_safety=true release=false tools=false " \
     "Sources/WeiBei/Views/SidebarView.swift" \
     "Sources/WeiBei/Views/CourseDrawerHost.swift"
   expect_scopes \
-    "code=true pi=false editor=false data_safety=true release=false tools=false " \
+    "code=true agent=false editor=false data_safety=true release=false tools=false " \
     "Sources/WeiBeiCore/LearningModels.swift" \
     "Sources/WeiBeiCore/CourseDocumentSearchIndex.swift" \
     "Sources/WeiBeiCore/NoteSourceRelations.swift"
   expect_scopes \
-    "code=true pi=true editor=true data_safety=true release=true tools=false " \
+    "code=true agent=true editor=true data_safety=true release=true tools=false " \
     ".github/workflows/pr-checks.yml"
   expect_scopes \
-    "code=true pi=true editor=false data_safety=false release=true tools=false " \
-    "Vendor/PiRuntime/manifest.json"
+    "code=true agent=true editor=false data_safety=false release=false tools=false " \
+    "Sources/WeiBeiCore/NativeAgentRuntime/NativeAgentLoop.swift"
   expect_scopes \
-    "code=false pi=false editor=false data_safety=false release=true tools=false " \
+    "code=false agent=false editor=false data_safety=false release=true tools=false " \
     "LICENSE"
   expect_scopes \
-    "code=false pi=false editor=false data_safety=false release=true tools=false " \
-    "Vendor/PiRuntime/LICENSE"
-  expect_scopes \
-    "code=false pi=true editor=false data_safety=false release=true tools=false " \
-    "Vendor/PiRuntime/THIRD_PARTY_NOTICES.md"
-  expect_scopes \
-    "code=false pi=true editor=false data_safety=false release=true tools=false " \
-    "Vendor/PiRuntime/RELINK.md"
-  expect_scopes \
-    "code=false pi=false editor=false data_safety=false release=false tools=false " \
-    "Vendor/PiRuntime/README.md"
-  expect_scopes \
-    "code=false pi=true editor=false data_safety=false release=false tools=false " \
-    "tsconfig.agent.json"
-  expect_scopes \
-    "code=false pi=false editor=true data_safety=false release=false tools=false " \
+    "code=false agent=false editor=true data_safety=false release=false tools=false " \
     "tsconfig.editor.json"
   expect_scopes \
-    "code=true pi=false editor=false data_safety=false release=false tools=true " \
+    "code=true agent=false editor=false data_safety=false release=false tools=true " \
     "script/check-genui-math.ts" \
     "DesignSystem/scripts/build-icns.ts" \
     "tsconfig.json"
-  # 依赖清单变化影响 Pi 类型（pi-ai/pi-coding-agent）、编辑器与富回答产物解析，
-  # 以及 typescript/@types/node 版本与 typecheck:tools 本身 → 全部触发。
+  # 依赖清单变化影响 Agent、编辑器与 TypeScript 工具链 → 全部触发。
   expect_scopes \
-    "code=true pi=true editor=true data_safety=false release=true tools=true " \
+    "code=true agent=true editor=true data_safety=false release=true tools=true " \
     "package.json"
   expect_scopes \
-    "code=true pi=true editor=true data_safety=false release=true tools=true " \
+    "code=true agent=true editor=true data_safety=false release=true tools=true " \
     "package-lock.json"
   echo "CI scope self-check passed"
   exit 0

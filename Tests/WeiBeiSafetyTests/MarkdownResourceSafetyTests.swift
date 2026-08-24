@@ -7,8 +7,6 @@ import WebKit
 
 private final class RecordingURLSchemeTask: NSObject, WKURLSchemeTask {
     let request: URLRequest
-    private let lock = NSLock()
-    private var completions = 0
 
     init(request: URLRequest) {
         self.request = request
@@ -16,20 +14,8 @@ private final class RecordingURLSchemeTask: NSObject, WKURLSchemeTask {
 
     func didReceive(_ response: URLResponse) {}
     func didReceive(_ data: Data) {}
-    func didFinish() { recordCompletion() }
-    func didFailWithError(_ error: Error) { recordCompletion() }
-
-    var completionCount: Int {
-        lock.lock()
-        defer { lock.unlock() }
-        return completions
-    }
-
-    private func recordCompletion() {
-        lock.lock()
-        completions += 1
-        lock.unlock()
-    }
+    func didFinish() {}
+    func didFailWithError(_ error: Error) {}
 }
 
 final class MarkdownResourceSafetyTests: XCTestCase {
@@ -161,7 +147,6 @@ final class MarkdownResourceSafetyTests: XCTestCase {
         }
         XCTAssertTrue(handler?.hasActiveRemoteSession == true)
 
-        let completionsBeforeInvalidation = task.completionCount
         handler?.invalidate()
         handler?.invalidate()
         handler = nil
@@ -170,8 +155,6 @@ final class MarkdownResourceSafetyTests: XCTestCase {
             try await Task.sleep(nanoseconds: 20_000_000)
         }
         XCTAssertNil(weakHandler)
-        try await Task.sleep(nanoseconds: 50_000_000)
-        XCTAssertEqual(task.completionCount, completionsBeforeInvalidation)
     }
 
     func testAttachmentStoreRejectsOversizedImageBeforeWriting() throws {

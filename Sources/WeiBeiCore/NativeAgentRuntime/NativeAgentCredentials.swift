@@ -9,6 +9,7 @@ public struct NativeAgentCredentialRecord: Codable, Equatable, Sendable {
     public var refreshToken: String?
     public var expiresAt: Date?
     public var accountID: String?
+    public var boundEndpoint: String?
 
     public init(
         provider: String,
@@ -16,7 +17,8 @@ public struct NativeAgentCredentialRecord: Codable, Equatable, Sendable {
         accessToken: String? = nil,
         refreshToken: String? = nil,
         expiresAt: Date? = nil,
-        accountID: String? = nil
+        accountID: String? = nil,
+        boundEndpoint: String? = nil
     ) {
         self.provider = provider
         self.apiKey = apiKey
@@ -24,6 +26,7 @@ public struct NativeAgentCredentialRecord: Codable, Equatable, Sendable {
         self.refreshToken = refreshToken
         self.expiresAt = expiresAt
         self.accountID = accountID
+        self.boundEndpoint = boundEndpoint
     }
 }
 
@@ -35,14 +38,7 @@ public struct NativeAgentCredentialStore: Sendable {
     }
 
     public static func defaultStore() throws -> NativeAgentCredentialStore {
-        let directory = try WeiBeiAgentDataPaths.ensurePiAgentDirectory()
-            .deletingLastPathComponent()
-            .appendingPathComponent("NativeAgent", isDirectory: true)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        try FileManager.default.setAttributes(
-            [.posixPermissions: 0o700],
-            ofItemAtPath: directory.path
-        )
+        let directory = try WeiBeiAgentDataPaths.ensureNativeAgentDirectory()
         return NativeAgentCredentialStore(
             fileURL: directory.appendingPathComponent("credentials.json")
         )
@@ -131,17 +127,8 @@ public struct NativeAgentCredentialStore: Sendable {
     }
 
     public static func apiKey(forProviderID id: String) throws -> String? {
-        if let owned = try defaultStore().load()[id]?.apiKey, !owned.isEmpty {
-            return owned
-        }
-        let url = WeiBeiAgentDataPaths.piAgentDirectory.appendingPathComponent("auth.json")
-        guard FileManager.default.fileExists(atPath: url.path) else { return nil }
-        let object = try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any]
-        let section = object?[id] as? [String: Any]
-        if let key = section?["key"] as? String, !key.isEmpty {
-            return key
-        }
-        return nil
+        let key = try defaultStore().load()[id]?.apiKey
+        return key?.isEmpty == false ? key : nil
     }
 
     public func posixPermissions() throws -> Int {

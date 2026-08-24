@@ -4,7 +4,7 @@ import PDFKit
 
 /// Content-rail hover preview for PDF pages: thumbnail + first text lines, rendered
 /// off the main thread through a latest-first serial queue. Split out of
-/// ReaderView.swift so the reader view stays within its frozen size budget.
+/// ReaderView.swift so PDF preview remains its own focused responsibility.
 struct PDFContentRailPreview {
     var image: NSImage
     var title: String

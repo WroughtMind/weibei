@@ -141,6 +141,14 @@ public struct OpenAIResponsesProvider: NativeLLMAdapter {
             let id = (item["call_id"] as? String) ?? (item["id"] as? String) ?? ""
             let name = item["name"] as? String
             return [.toolCallDelta(index: index, id: id, name: name, argumentsDelta: "")]
+        case "response.output_item.done":
+            guard let item = object["item"] as? [String: Any],
+                  item["type"] as? String == "web_search_call",
+                  let action = item["action"] as? [String: Any],
+                  let sources = action["sources"] as? [[String: Any]] else { return [] }
+            return sources.compactMap { source in
+                (source["url"] as? String).map(NativeStreamChunk.webSearchSource(url:))
+            }
         case "response.function_call_arguments.delta":
             let delta = object["delta"] as? String ?? ""
             let id = object["call_id"] as? String ?? ""

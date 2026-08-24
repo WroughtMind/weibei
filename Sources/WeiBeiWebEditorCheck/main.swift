@@ -613,7 +613,14 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
           const firstBlock = root?.firstElementChild;
           window.__weiBeiStreamingFirstBlockForCheck = firstBlock;
           window.WeiBeiEditor.updateStreamingMarkdown("第一段落完整内容。\\n\\n第二段带 **加");
+          const unfinishedText = root?.textContent || '';
+          const hiddenUnfinishedSyntax = Array.from(
+            root?.querySelectorAll('[data-weibei-streaming-syntax-hidden="true"]') || []
+          ).map((node) => node.textContent || '').join('');
           window.WeiBeiEditor.updateStreamingMarkdown("第一段落完整内容。\\n\\n第二段带 **加粗** 与 $a+b$ 内容。");
+          const closedSyntaxStillHidden = Boolean(
+            root?.querySelector('[data-weibei-streaming-syntax-hidden="true"]')
+          );
           window.WeiBeiEditor.updateStreamingMarkdown("第一段落完整内容。\\n\\n第二段带 **加粗** 与 $a+b$ 内容。\\n\\n- 列表甲");
           window.WeiBeiEditor.updateStreamingMarkdown("第一段落完整内容。\\n\\n第二段带 **加粗** 与 $a+b$ 内容。\\n\\n- 列表甲\\n- 列表乙");
           const finalMarkdown = "第一段落完整内容。\\n\\n第二段带 **加粗** 与 $a+b$ 内容。\\n\\n- 列表甲\\n- 列表乙\\n\\n收尾一段。";
@@ -622,6 +629,9 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
           return JSON.stringify({
             blockCount: blocks.length,
             firstBlockPreserved: firstBlock === root?.firstElementChild,
+            unfinishedBodyVisible: unfinishedText.includes('加'),
+            hiddenUnfinishedSyntax,
+            closedSyntaxStillHidden,
             text: (root?.textContent || '').replace(/\\s+/g, ''),
             markdown: window.WeiBeiEditor.getMarkdown()
           });
@@ -648,6 +658,15 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
             }
             guard result["firstBlockPreserved"] as? Bool == true else {
                 self.fail("streaming snapshots replaced an unchanged leading DOM block")
+                return
+            }
+            guard result["unfinishedBodyVisible"] as? Bool == true,
+                  result["hiddenUnfinishedSyntax"] as? String == "**" else {
+                self.fail("streaming snapshots hid unfinished body text or exposed its marker: \(result)")
+                return
+            }
+            guard result["closedSyntaxStillHidden"] as? Bool == false else {
+                self.fail("streaming snapshots kept hiding a closed emphasis marker")
                 return
             }
             guard text.contains("第二段带") else {
@@ -2447,7 +2466,7 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
                 self.fail("loadDocument did not publish a clean V2 session")
                 return
             }
-            self.requestSnapshot { snapshot in
+                self.requestSnapshot { snapshot in
                 guard snapshot.documentID == documentID,
                       snapshot.documentGeneration == generation,
                       snapshot.markdown.trimmingCharacters(in: .newlines)
@@ -2455,7 +2474,53 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
                     self.fail("loadDocument snapshot did not match the switched document: \(snapshot.markdown.debugDescription)")
                     return
                 }
-                self.isDone = true
+                self.validateIdempotentContentCommandRetry()
+            }
+        }
+    }
+
+    /// Same commandID already applied in the page, receipt lost, retry must not insert again.
+    private func validateIdempotentContentCommandRetry() {
+        let marker = "幂等插入标记"
+        let command: [String: Any] = [
+            "protocolVersion": 2,
+            "commandID": "web-editor-check-idempotent-insert",
+            "documentID": currentDocumentID,
+            "documentGeneration": currentDocumentGeneration,
+            "type": "insertStructuredBlock",
+            "payload": ["markdown": "\n\n\(marker)\n"],
+        ]
+        guard let data = try? JSONSerialization.data(withJSONObject: command),
+              let encoded = String(data: data, encoding: .utf8) else {
+            fail("could not encode idempotent insert command")
+            return
+        }
+        webView.evaluateJavaScript("window.WeiBeiEditor.dispatchCommand(\(encoded))") { [weak self] value, error in
+            guard let self else { return }
+            guard error == nil, value as? Bool == true else {
+                self.fail("idempotent insert command was rejected: \(String(describing: error))")
+                return
+            }
+            self.requestSnapshot { first in
+                let firstCount = first.markdown.components(separatedBy: marker).count - 1
+                guard firstCount == 1 else {
+                    self.fail("idempotent insert did not land once: \(first.markdown.debugDescription)")
+                    return
+                }
+                self.webView.evaluateJavaScript("window.WeiBeiEditor.dispatchCommand(\(encoded))") { value, error in
+                    guard error == nil, value as? Bool == true else {
+                        self.fail("idempotent retry was rejected: \(String(describing: error))")
+                        return
+                    }
+                    self.requestSnapshot { second in
+                        let secondCount = second.markdown.components(separatedBy: marker).count - 1
+                        guard secondCount == 1 else {
+                            self.fail("lost-receipt retry duplicated inserted body: \(second.markdown.debugDescription)")
+                            return
+                        }
+                        self.isDone = true
+                    }
+                }
             }
         }
     }
@@ -2616,7 +2681,7 @@ private final class FinalizedAgentMarkdownHarness: NSObject, WKScriptMessageHand
         webView = WKWebView(frame: CGRect(x: 0, y: 0, width: 680, height: 720), configuration: configuration)
         super.init()
         webView.navigationDelegate = self
-        for name in ["editorReady", "contentHeightChanged", "editorFailure"] {
+        for name in ["editorReady", "contentHeightChanged", "finalizedStreaming", "editorFailure"] {
             controller.add(self, name: name)
         }
     }
@@ -2694,6 +2759,15 @@ private final class FinalizedAgentMarkdownHarness: NSObject, WKScriptMessageHand
                 finalizedStreamHeightReports += 1
             }
             handleMeasurement(height: height, width: Double(webView.frame.width))
+        case "finalizedStreaming":
+            guard didStartFinalizedStream,
+                  let height = (message.body as? [String: Any])?["height"] as? Double,
+                  height > 0 else {
+                fail("finalized Agent Markdown reported no finalized height")
+                return
+            }
+            finishReportedHeight = height
+            validateDOM(until: Date().addingTimeInterval(14))
         case "editorFailure":
             fail("finalized agent Markdown renderer failed: \(message.body)")
         default:
@@ -2780,20 +2854,17 @@ private final class FinalizedAgentMarkdownHarness: NSObject, WKScriptMessageHand
     private func finishFinalizedMarkdownStream() {
         webView.evaluateJavaScript("""
         (() => {
-          window.WeiBeiEditor.finishStreamingMarkdown(\(json(finalizedAgentMarkdown)));
-          return Number(window.WeiBeiCompactPreviewHeight || 1);
+          return window.WeiBeiEditor.finishStreamingMarkdown(\(json(finalizedAgentMarkdown))) === true;
         })();
         """) { [weak self] value, error in
             guard let self else { return }
             guard error == nil,
-                  let height = (value as? NSNumber)?.doubleValue,
-                  height > 0 else {
+                  value as? Bool == true else {
                 self.fail("finalized Agent Markdown stream could not finish")
                 return
             }
-            self.finishReportedHeight = height
-            // 收尾尾巴按流式节奏逐字补完(大尾巴可达十余秒),验证窗口须覆盖补完后的最终态
-            self.validateDOM(until: Date().addingTimeInterval(14))
+            // `finalizedStreaming` arrives only after the final body and the
+            // authoritative final height have landed.
         }
     }
 
@@ -2882,7 +2953,7 @@ private final class FinalizedAgentMarkdownHarness: NSObject, WKScriptMessageHand
             }
             guard let reportedHeight = (result["reportedHeight"] as? NSNumber)?.doubleValue,
                   let actualHeight = (result["height"] as? NSNumber)?.doubleValue,
-                  reportedHeight > self.finishReportedHeight,
+                  reportedHeight + 1 >= self.finishReportedHeight,
                   reportedHeight + 1 >= actualHeight else {
                 if Date() < deadline {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
@@ -2890,7 +2961,7 @@ private final class FinalizedAgentMarkdownHarness: NSObject, WKScriptMessageHand
                     }
                     return
                 }
-                self.fail("finalized Agent Mermaid growth was not reported: finish=\(self.finishReportedHeight), result=\(result)")
+                self.fail("finalized Agent Markdown height clipped content: finish=\(self.finishReportedHeight), result=\(result)")
                 return
             }
             guard self.finalizedStreamHeightReports <= 20 else {
@@ -3037,9 +3108,13 @@ private func verifyAgentChatMarkdownSourceContract() {
     let richMarkdownPath = root.appendingPathComponent(
         "Sources/WeiBei/Views/RichMarkdownEditorView.swift"
     )
+    let webEditorPath = root.appendingPathComponent(
+        "Sources/WeiBei/WebEditor/src/editor.ts"
+    )
     guard let classifier = try? String(contentsOf: classifierPath, encoding: .utf8),
           let chat = try? String(contentsOf: chatPath, encoding: .utf8),
-          let richMarkdown = try? String(contentsOf: richMarkdownPath, encoding: .utf8) else {
+          let richMarkdown = try? String(contentsOf: richMarkdownPath, encoding: .utf8),
+          let webEditor = try? String(contentsOf: webEditorPath, encoding: .utf8) else {
         expect(false, "could not read finalized Agent Markdown source contract")
         return
     }
@@ -3081,6 +3156,14 @@ private func verifyAgentChatMarkdownSourceContract() {
             && richMarkdown.contains("NSWorkspace.shared.open(targetURL)")
             && richMarkdown.contains("decisionHandler(.cancel)"),
         "Markdown external links must open natively without replacing the current editor/answer"
+    )
+    expect(
+        !richMarkdown.contains("{ paced: true }")
+            && !webEditor.contains("pacedTailTimer")
+            && !webEditor.contains("PACED_TAIL_")
+            && !webEditor.contains("options?.paced")
+            && webEditor.contains("if (document.hidden || isEditorReduceMotion())"),
+        "Agent Markdown must not reintroduce a second web content pacer"
     )
 }
 

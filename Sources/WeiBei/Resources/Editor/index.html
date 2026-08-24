@@ -1278,7 +1278,7 @@
        dissolve simultaneously at typical Chinese output rates, bridging the
        33ms arrival gaps into a continuous flow. Opacity-only = cheap. */
     .wb-stream-in {
-      animation: wb-stream-in 260ms cubic-bezier(0.2, 0.7, 0.3, 1) both;
+      animation: wb-stream-in 200ms cubic-bezier(0.2, 0.7, 0.3, 1) both;
     }
 
     @keyframes wb-stream-in {
@@ -1287,6 +1287,7 @@
     }
 
     .wb-stream-caret {
+      position: absolute;
       display: inline-block;
       width: 2px;
       height: 1.05em;
@@ -1296,6 +1297,12 @@
       background: currentColor;
       opacity: 0.7;
       animation: wb-stream-caret-blink 1.06s ease-in-out infinite;
+      pointer-events: none;
+    }
+
+    .wb-stream-caret.is-finalized {
+      animation: none;
+      opacity: 0;
     }
 
     @keyframes wb-stream-caret-blink {

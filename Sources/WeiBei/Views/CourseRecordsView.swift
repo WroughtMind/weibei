@@ -287,8 +287,9 @@ struct LearningMemoryListSection: View {
             presenting: memoryPendingDeletion
         ) { memory in
             Button(store.ui("删除记忆", "Delete Memory"), role: .destructive) {
-                _ = store.deleteLearningMemory(memory.id, in: scope)
-                memoryPendingDeletion = nil
+                if store.deleteLearningMemory(memory.id, in: scope) {
+                    memoryPendingDeletion = nil
+                }
             }
             Button(store.ui("取消", "Cancel"), role: .cancel) {
                 memoryPendingDeletion = nil
@@ -405,14 +406,6 @@ private struct LearningMemoryEditSheet: View {
                         .stroke(WeiBeiTheme.hairline, lineWidth: 1)
                 }
 
-            Text(store.ui(
-                "\(text.count) / 500 字",
-                "\(text.count) / 500 characters"
-            ))
-            .weiBeiText(10.5)
-            .foregroundStyle(text.count > 500 ? WeiBeiTheme.cinnabar : WeiBeiTheme.tertiaryInk)
-            .frame(maxWidth: .infinity, alignment: .trailing)
-
             HStack {
                 Spacer()
                 Button(store.ui("取消", "Cancel")) {
@@ -425,10 +418,7 @@ private struct LearningMemoryEditSheet: View {
                     }
                 }
                 .buttonStyle(WeiBeiDialogButtonStyle(prominence: .primary))
-                .disabled(
-                    text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                        || text.trimmingCharacters(in: .whitespacesAndNewlines).count > 500
-                )
+                .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
         }
         .padding(22)

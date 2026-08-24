@@ -41,7 +41,7 @@ enum NativeEngineSmoke {
             let token = arguments.dropFirst(index + 1).first ?? ""
             do {
                 if token.isEmpty || token.hasPrefix("--") {
-                    print("usage: WeiBeiPiCheck --native-live <provider-id>|available")
+                    print("usage: WeiBeiNativeCheck --native-live <provider-id>|available")
                     return true
                 }
                 if token == "available" {
@@ -342,80 +342,6 @@ enum NativeEngineSmoke {
         try await runLiveCourseTool(adapter: adapter, model: model, label: "native-perf native")
         print("native-perf native maxrss=\(maxRSSBytes())B after-tool-call")
 
-        try await runPiDeepSeekPerf(model: model)
-    }
-
-    private static func runPiDeepSeekPerf(model: String) async throws {
-        let executable: URL
-        let cached = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
-            .appendingPathComponent(".build/pi-runtime/0.82.1/darwin-arm64/PiRuntime/bin/pi")
-        if FileManager.default.isExecutableFile(atPath: cached.path) {
-            executable = cached
-        } else if let located = PiExecutableLocator.locate() {
-            executable = located
-        } else {
-            print("native-perf pi skipped: embedded PI runtime not found")
-            return
-        }
-        let authSource = URL(fileURLWithPath: NSHomeDirectory())
-            .appendingPathComponent("Library/Application Support/com.changfenhuang.weibei/PiAgent/auth.json")
-        guard FileManager.default.fileExists(atPath: authSource.path) else {
-            print("native-perf pi skipped: missing Pi auth.json")
-            return
-        }
-        let root = FileManager.default.temporaryDirectory
-            .appendingPathComponent("weibei-native-perf-\(UUID().uuidString)", isDirectory: true)
-        let piAgent = root.appendingPathComponent("PiAgent", isDirectory: true)
-        let runtimeDir = root.appendingPathComponent("Runtime", isDirectory: true)
-        try FileManager.default.createDirectory(at: piAgent, withIntermediateDirectories: true)
-        try FileManager.default.createDirectory(at: runtimeDir, withIntermediateDirectories: true)
-        let authDest = piAgent.appendingPathComponent("auth.json")
-        try FileManager.default.copyItem(at: authSource, to: authDest)
-        try FileManager.default.setAttributes(
-            [.posixPermissions: NSNumber(value: Int16(0o600))],
-            ofItemAtPath: authDest.path
-        )
-        let runtime = PiAgentRuntime(
-            executableURL: executable,
-            runtimeDirectory: runtimeDir,
-            persistentPiConfigurationDirectory: piAgent
-        )
-        await runtime.configure(
-            PiAgentProviderConfiguration(provider: "deepseek", model: model, thinkingLevel: "low")
-        )
-        defer {
-            Task { await runtime.shutdown() }
-            try? FileManager.default.removeItem(at: root)
-        }
-        var walls: [Double] = []
-        var ttfts: [Double] = []
-        for index in 1...5 {
-            let first = FirstTokenBox()
-            let started = Date()
-            let reply = try await runtime.respond(
-                to: StudyAgentRequest(
-                    purpose: .conversation,
-                    question: "2+2 等于几？只回答一个数字。",
-                    materialTitle: "",
-                    materialText: "",
-                    noteTitle: "",
-                    noteText: "",
-                    contextRevision: "perf-pi-\(index)"
-                ),
-                progress: { progress in
-                    if case .text = progress { await first.mark(since: started) }
-                }
-            )
-            let wall = Date().timeIntervalSince(started)
-            let ttft = await first.seconds
-            walls.append(wall)
-            if let ttft { ttfts.append(ttft) }
-            print("native-perf pi \(index) wall=\(fmt(wall))s ttft=\(fmt(ttft))s chars=\(reply.text.count)")
-        }
-        print("native-perf pi children \(samplePiChildren())")
-        print(
-            "native-perf pi wall-median=\(fmt(median(walls)))s ttft-median=\(fmt(median(ttfts)))s n=5 model=\(model)"
-        )
     }
 
     private static func timedRespond(
@@ -457,40 +383,9 @@ enum NativeEngineSmoke {
         return Int(usage.ru_maxrss)
     }
 
-    private static func samplePiChildren() -> String {
-        let task = Process()
-        task.executableURL = URL(fileURLWithPath: "/bin/ps")
-        task.arguments = ["-axo", "rss=,comm="]
-        let pipe = Pipe()
-        task.standardOutput = pipe
-        do {
-            try task.run()
-            task.waitUntilExit()
-        } catch {
-            return "ps-failed"
-        }
-        let text = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
-        var hits: [String] = []
-        for line in text.split(separator: "\n") {
-            let parts = line.split(whereSeparator: \.isWhitespace)
-            guard parts.count >= 2, let rss = Int(parts[0]) else { continue }
-            let comm = parts.dropFirst().joined(separator: " ")
-            if comm.hasSuffix("/pi") || comm.hasSuffix("/bun") || comm == "pi" || comm == "bun" {
-                hits.append("\(comm)=\(rss)KiB")
-            }
-        }
-        return hits.isEmpty ? "none" : hits.joined(separator: ",")
-    }
-
     private static func deepSeekKey() throws -> String {
-        let authURL = URL(fileURLWithPath: NSHomeDirectory())
-            .appendingPathComponent("Library/Application Support/com.changfenhuang.weibei/PiAgent/auth.json")
-        let data = try Data(contentsOf: authURL)
-        guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let deepseek = object["deepseek"] as? [String: Any],
-              let apiKey = deepseek["key"] as? String,
-              !apiKey.isEmpty else {
-            throw NSError(domain: "WeiBei.NativeSmoke", code: 5, userInfo: [NSLocalizedDescriptionKey: "DeepSeek key not found in Pi auth.json"])
+        guard let apiKey = try NativeAgentCredentialStore.apiKey(forProviderID: AgentProviderID.deepseek.credentialProviderID) else {
+            throw NSError(domain: "WeiBei.NativeSmoke", code: 5, userInfo: [NSLocalizedDescriptionKey: "DeepSeek key not found in native credential store"])
         }
         return apiKey
     }

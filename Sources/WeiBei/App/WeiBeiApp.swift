@@ -9,7 +9,6 @@ import WeiBeiCore
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    private var shortcutMonitor: Any?
     private var resignFlushTask: Task<Void, Never>?
     private var terminationSaveInFlight = false
     private var terminationApproved = false
@@ -19,9 +18,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         WeiBeiTypography.registerBundledFonts()
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
-        shortcutMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
-            sharedWorkspaceStore.handleAppShortcut(event) ? nil : event
-        }
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
@@ -83,9 +79,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         sharedWorkspaceStore.shutdownAgentRuntime()
         resignFlushTask?.cancel()
         resignFlushTask = nil
-        if let shortcutMonitor {
-            NSEvent.removeMonitor(shortcutMonitor)
-        }
     }
 
     func applicationDidResignActive(_ notification: Notification) {
@@ -159,54 +152,54 @@ struct WeiBeiApp: App {
                 Divider()
 
                 Button(store.ui("聚焦课程目录", "Focus Course Index")) { animateLayout { store.focus(.library) } }
-                    .keyboardShortcut("1")
+                    .weiBeiKeyboardShortcut(store.executableChord(for: .focusLibrary))
                 Button(store.ui("聚焦阅读", "Focus Reader")) { animateLayout { store.focus(.reader) } }
-                    .keyboardShortcut("2")
+                    .weiBeiKeyboardShortcut(store.executableChord(for: .focusReader))
                 Button(store.ui("聚焦笔记", "Focus Notes")) { animateLayout { store.focus(.notes) } }
-                    .keyboardShortcut("3")
+                    .weiBeiKeyboardShortcut(store.executableChord(for: .focusNotes))
                 Button(store.ui("聚焦对话", "Focus Chat")) { animateLayout { store.focus(.agent) } }
-                    .keyboardShortcut("4")
+                    .weiBeiKeyboardShortcut(store.executableChord(for: .focusChat))
 
                 Divider()
 
                 Button(store.ui("上一份资料", "Previous Material")) { animateLayout { store.selectAdjacentItem(step: -1) } }
-                    .keyboardShortcut(.upArrow, modifiers: [.command, .option])
+                    .weiBeiKeyboardShortcut(store.executableChord(for: .previousMaterial))
                 Button(store.ui("下一份资料", "Next Material")) { animateLayout { store.selectAdjacentItem(step: 1) } }
-                    .keyboardShortcut(.downArrow, modifiers: [.command, .option])
+                    .weiBeiKeyboardShortcut(store.executableChord(for: .nextMaterial))
 
                 Divider()
 
                 Button(store.showLibrary ? store.ui("收起课程目录", "Hide Course Index") : store.ui("打开课程目录", "Show Course Index")) {
                     store.toggleLibrary()
                 }
-                    .keyboardShortcut("b")
+                    .weiBeiKeyboardShortcut(store.executableChord(for: .courseIndex))
                 if store.layout.hasCollapsibleRightPane {
                     Button(store.showRightPane ? store.ui("收起辅助栏", "Hide Assistant Pane") : store.ui("展开辅助栏", "Show Assistant Pane")) {
                         animateLayout {
                             store.toggleRightPane()
                         }
                     }
-                    .keyboardShortcut("j")
+                    .weiBeiKeyboardShortcut(store.executableChord(for: .toggleRightPane))
                 }
 
                 Divider()
 
                 Button(store.ui("三栏工作台", "Three-Pane Workspace")) { setLayout(.documentAgentNotes) }
-                    .keyboardShortcut("1", modifiers: [.command, .option])
+                    .weiBeiKeyboardShortcut(store.executableChord(for: .threePaneWorkspace))
                 if store.layout.isDocumentThreePane {
                     Button(store.ui("交换笔记与对话", "Swap Notes and Chat")) {
                         animateLayout {
                             store.swapThreePaneSecondaryPanes()
                         }
                     }
-                    .keyboardShortcut("s", modifiers: [.command, .option])
+                    .weiBeiKeyboardShortcut(store.executableChord(for: .swapThreePaneSecondaryPanes))
                 }
                 Button(WorkspaceLayout.immersiveReading.label(language: store.interfaceLanguage)) { setLayout(.immersiveReading) }
-                    .keyboardShortcut("r", modifiers: [.command, .option])
+                    .weiBeiKeyboardShortcut(store.executableChord(for: .immersiveReading))
                 Button(WorkspaceLayout.immersiveConversation.label(language: store.interfaceLanguage)) { setLayout(.immersiveConversation) }
-                    .keyboardShortcut("a", modifiers: [.command, .option])
+                    .weiBeiKeyboardShortcut(store.executableChord(for: .immersiveChat))
                 Button(WorkspaceLayout.immersiveWriting.label(language: store.interfaceLanguage)) { setLayout(.immersiveWriting) }
-                    .keyboardShortcut("n", modifiers: [.command, .option])
+                    .weiBeiKeyboardShortcut(store.executableChord(for: .immersiveWriting))
 
                 Divider()
 
@@ -215,7 +208,7 @@ struct WeiBeiApp: App {
                         store.toggleAppearanceMode()
                     }
                 }
-                    .keyboardShortcut("t", modifiers: [.command, .option])
+                    .weiBeiKeyboardShortcut(store.executableChord(for: .toggleAppearance))
 
                 Button(store.ui("放大文字", "Zoom Text In")) {
                     if let larger = store.interfaceTextScale.nextLarger {
@@ -241,22 +234,22 @@ struct WeiBeiApp: App {
 
                 if store.canUseSelectionAgentSurface {
                     Button(AgentSurface.selectionFloat.actionLabel(language: store.interfaceLanguage)) { setAgentSurface(.selectionFloat) }
-                        .keyboardShortcut("3", modifiers: [.control, .option])
+                        .weiBeiKeyboardShortcut(store.executableChord(for: .selectionPrompt))
                 }
                 Button(AgentSurface.hidden.actionLabel(language: store.interfaceLanguage)) { setAgentSurface(.hidden) }
-                    .keyboardShortcut("0", modifiers: [.control, .option])
+                    .weiBeiKeyboardShortcut(store.executableChord(for: .hideChatOverlay))
 
                 if store.canApplyAgentAnswer {
                     Divider()
 
                     Button(store.ui("写入回答到笔记", "Write Answer to Note")) { animatePanel { store.applyLastAgentAnswerToNote() } }
-                        .keyboardShortcut("a", modifiers: [.command, .shift])
+                        .weiBeiKeyboardShortcut(store.executableChord(for: .applyAgentAnswerToNote))
                     if store.canReplaceNoteSelection {
                         Button(store.ui("替换笔记选区", "Replace Note Selection")) { animatePanel { store.replaceSelectionWithLastAgentAnswer() } }
-                            .keyboardShortcut("r", modifiers: [.command, .shift])
+                            .weiBeiKeyboardShortcut(store.executableChord(for: .replaceNoteSelection))
                     }
                     Button(store.ui("追加整理建议", "Append Organization Suggestion")) { animatePanel { store.applyAgentPatchToEditor() } }
-                        .keyboardShortcut("e", modifiers: [.command, .shift])
+                        .weiBeiKeyboardShortcut(store.executableChord(for: .applyAgentPatchToEditor))
                 }
 
                 Divider()
@@ -264,13 +257,13 @@ struct WeiBeiApp: App {
                 Button(store.ui("命令面板", "Command Palette")) {
                     store.commandPalettePresented.toggle()
                 }
-                    .keyboardShortcut("k")
+                    .weiBeiKeyboardShortcut(store.executableChord(for: .commandPalette))
 
                 Divider()
 
                 if store.canCopyReference {
                     Button(store.copyReferenceActionTitle) { store.copyCurrentReference() }
-                        .keyboardShortcut("c", modifiers: [.command, .shift])
+                        .weiBeiKeyboardShortcut(store.executableChord(for: .copyCurrentReference))
                 }
                 if store.hasSelectedMaterial {
                     Button(store.ui("打开资料内搜索", "Search in Material")) {
@@ -278,13 +271,13 @@ struct WeiBeiApp: App {
                             store.revealReaderSearch()
                         }
                     }
-                    .keyboardShortcut("f")
+                    .weiBeiKeyboardShortcut(store.executableChord(for: .searchInMaterial))
                 }
                 if store.isAgentRunningInActiveChat || !store.agentDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     Button(store.sendAgentActionTitle) {
                         store.submitAgentDraft()
                     }
-                        .keyboardShortcut(.return, modifiers: [.command])
+                        .weiBeiKeyboardShortcut(store.executableChord(for: .submitAgentDraft))
                 }
             }
         }
@@ -324,6 +317,39 @@ struct WeiBeiApp: App {
         animatePanel {
             store.setAgentSurface(surface)
         }
+    }
+}
+
+extension View {
+    @ViewBuilder
+    func weiBeiKeyboardShortcut(_ chord: AppShortcutChord?) -> some View {
+        if let chord {
+            keyboardShortcut(chord.swiftUIKeyEquivalent, modifiers: chord.swiftUIModifiers)
+        } else {
+            self
+        }
+    }
+}
+
+private extension AppShortcutChord {
+    var swiftUIKeyEquivalent: KeyEquivalent {
+        switch key {
+        case "return": .return
+        case "up": .upArrow
+        case "down": .downArrow
+        case "left": .leftArrow
+        case "right": .rightArrow
+        default: KeyEquivalent(Character(key))
+        }
+    }
+
+    var swiftUIModifiers: EventModifiers {
+        var result: EventModifiers = []
+        if modifiers.contains(.command) { result.insert(.command) }
+        if modifiers.contains(.option) { result.insert(.option) }
+        if modifiers.contains(.control) { result.insert(.control) }
+        if modifiers.contains(.shift) { result.insert(.shift) }
+        return result
     }
 }
 
@@ -383,29 +409,38 @@ struct WeiBeiAppearanceTransition: ViewModifier {
 private struct WindowChromeConfigurator: NSViewRepresentable {
     var appearanceMode: WeiBeiAppearanceMode
 
+    func makeCoordinator() -> Coordinator {
+        Coordinator()
+    }
+
     func makeNSView(context: Context) -> NSView {
         let view = NSView()
-        if let window = view.window {
-            configure(window)
-        } else {
-            DispatchQueue.main.async {
-                configure(view.window)
-            }
-        }
+        context.coordinator.attach(to: view)
+        configureWhenWindowIsReady(view)
         return view
     }
 
     func updateNSView(_ view: NSView, context: Context) {
+        context.coordinator.attach(to: view)
+        configureWhenWindowIsReady(view)
+    }
+
+    static func dismantleNSView(_ nsView: NSView, coordinator: Coordinator) {
+        coordinator.stopObserving()
+    }
+
+    private func configureWhenWindowIsReady(_ view: NSView) {
         if let window = view.window {
-            configure(window)
+            Self.configure(window, appearanceMode: appearanceMode)
         } else {
+            let mode = appearanceMode
             DispatchQueue.main.async {
-                configure(view.window)
+                Self.configure(view.window, appearanceMode: mode)
             }
         }
     }
 
-    private func configure(_ window: NSWindow?) {
+    private static func configure(_ window: NSWindow?, appearanceMode: WeiBeiAppearanceMode) {
         guard let window else { return }
         window.titleVisibility = .hidden
         window.title = ""
@@ -423,6 +458,38 @@ private struct WindowChromeConfigurator: NSViewRepresentable {
         window.contentView?.wantsLayer = appearanceMode.isGlass
         window.contentView?.layer?.backgroundColor = appearanceMode.isGlass ? NSColor.clear.cgColor : nil
         window.isMovableByWindowBackground = true
+    }
+
+    @MainActor
+    final class Coordinator {
+        private weak var view: NSView?
+        private var themeObserver: NSObjectProtocol?
+
+        func attach(to view: NSView) {
+            self.view = view
+            guard themeObserver == nil else { return }
+            themeObserver = NotificationCenter.default.addObserver(
+                forName: WeiBeiThemeRuntime.didChangeNotification,
+                object: nil,
+                queue: .main
+            ) { [weak self] notification in
+                guard let mode = notification.object as? WeiBeiAppearanceMode else { return }
+                Task { @MainActor [weak self] in
+                    WindowChromeConfigurator.configure(
+                        self?.view?.window,
+                        appearanceMode: mode
+                    )
+                }
+            }
+        }
+
+        func stopObserving() {
+            if let themeObserver {
+                NotificationCenter.default.removeObserver(themeObserver)
+            }
+            themeObserver = nil
+            view = nil
+        }
     }
 }
 

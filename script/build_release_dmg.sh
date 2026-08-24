@@ -33,14 +33,10 @@ APP_NAME="魏碑.app"
 BASE_APP="$ROOT_DIR/dist/$APP_NAME"
 RELEASE_DIR="$ROOT_DIR/dist/release"
 RELEASE_APP="$RELEASE_DIR/$APP_NAME"
-PI_EXECUTABLE="$RELEASE_APP/Contents/Resources/PiRuntime/bin/pi"
-PI_HASH="$RELEASE_APP/Contents/Resources/PiRuntime/binary.sha256"
-RELINK_BUNDLE="${WEIBEI_PI_RELINK_BUNDLE:-}"
 PDF_HELPER="$RELEASE_APP/Contents/Helpers/WeiBeiPDFTextWorker"
 SPARKLE_FRAMEWORK="$RELEASE_APP/Contents/Frameworks/Sparkle.framework"
 BACKGROUND="$ROOT_DIR/DesignSystem/assets/dmg/dmg-background.png"
 BACKGROUND_2X="$ROOT_DIR/DesignSystem/assets/dmg/dmg-background@2x.png"
-PI_ENTITLEMENTS="$ROOT_DIR/Config/PiRuntime.entitlements"
 NOTARY_RESULT="$RELEASE_DIR/notary-result.json"
 APPCAST_PATH="$RELEASE_DIR/appcast.xml"
 APPCAST_INPUT_DIR="$RELEASE_DIR/appcast-input"
@@ -58,6 +54,7 @@ if [[ ! "$APP_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
   echo "release failed: VERSION must use numeric major.minor.patch" >&2
   exit 4
 fi
+UPDATE_SUMMARY_SOURCE="${WEIBEI_UPDATE_SUMMARY_FILE:-$ROOT_DIR/Docs/update-summaries/v$APP_VERSION.md}"
 if [[ "$(uname -m)" != "arm64" ]]; then
   echo "release failed: the current package is intentionally Apple Silicon only" >&2
   exit 5
@@ -67,12 +64,6 @@ if [[ "$PACKAGE_VERSION" != "$APP_VERSION" ]]; then
   echo "release failed: package.json version $PACKAGE_VERSION does not match VERSION $APP_VERSION" >&2
   exit 16
 fi
-# Community and notarized packages both redistribute the bundled Pi/Bun runtime.
-# G0.4 review must be recorded before either release route can package.
-if [[ "${WEIBEI_PI_REDISTRIBUTION_REVIEWED:-}" != "1" ]]; then
-  echo "release failed: Pi/Bun redistribution review is not recorded" >&2
-  exit 11
-fi
 if [[ -n "$(git -C "$ROOT_DIR" status --porcelain=v1 --untracked-files=normal)" ]]; then
   echo "release failed: package must come from a clean worktree" >&2
   exit 6
@@ -81,12 +72,6 @@ if [[ ! -x "$ROOT_DIR/node_modules/.bin/appdmg" ]]; then
   echo "release failed: run npm ci before building the DMG" >&2
   exit 7
 fi
-if [[ -z "$RELINK_BUNDLE" ]]; then
-  echo "release failed: WEIBEI_PI_RELINK_BUNDLE must point to the frozen LGPL relink bundle" >&2
-  exit 22
-fi
-(cd "$ROOT_DIR" && node --import tsx script/check_pi_runtime_license_report.ts >/dev/null)
-VERIFIED_RELINK_BUNDLE="$("$ROOT_DIR/script/prepare_pi_runtime_relink_bundle.sh" --verify "$RELINK_BUNDLE")"
 if [[ -n "$SPARKLE_PRIVATE_KEY_FILE" && -z "$SPARKLE_PUBLIC_KEY" ]]; then
   echo "release failed: WEIBEI_SPARKLE_PUBLIC_KEY is required when generating appcast.xml" >&2
   exit 18
@@ -98,6 +83,46 @@ fi
 if [[ "$MODE" == "notarized" ]]; then
   SIGN_IDENTITY="${WEIBEI_CODESIGN_IDENTITY:-}"
   NOTARY_PROFILE="${WEIBEI_NOTARY_KEYCHAIN_PROFILE:-}"
+  if [[ "$(/usr/bin/printf '%s' "$SPARKLE_PUBLIC_KEY" | /usr/bin/base64 -D 2>/dev/null | /usr/bin/wc -c | /usr/bin/tr -d ' ')" != "32" ]]; then
+    echo "release failed: notarized publication requires a 32-byte base64 WEIBEI_SPARKLE_PUBLIC_KEY" >&2
+    exit 18
+  fi
+  if [[ ! -s "$SPARKLE_PRIVATE_KEY_FILE" ]]; then
+    echo "release failed: notarized publication requires WEIBEI_SPARKLE_PRIVATE_KEY_FILE" >&2
+    exit 21
+  fi
+  if [[ ! -x "$SPARKLE_GENERATE_APPCAST" || ! -x "$SPARKLE_SIGN_UPDATE" ]]; then
+    echo "release failed: Sparkle generate_appcast and sign_update tools are missing" >&2
+    exit 23
+  fi
+  SPARKLE_PUBLIC_VERIFIER="$(mktemp "${TMPDIR:-/tmp}/weibei-sparkle-public-key.XXXXXX")"
+  trap '/bin/rm -f "$SPARKLE_PUBLIC_VERIFIER"' EXIT
+  {
+    /bin/dd if=/dev/zero bs=64 count=1 2>/dev/null
+    /usr/bin/printf '%s' "$SPARKLE_PUBLIC_KEY" | /usr/bin/base64 -D
+  } | /usr/bin/base64 -b 0 -o "$SPARKLE_PUBLIC_VERIFIER"
+  if [[ "$(/usr/bin/base64 -D -i "$SPARKLE_PUBLIC_VERIFIER" | /usr/bin/wc -c | /usr/bin/tr -d ' ')" != "96" ]]; then
+    /bin/rm -f "$SPARKLE_PUBLIC_VERIFIER"
+    trap - EXIT
+    echo "release failed: could not prepare the Sparkle public-key verifier" >&2
+    exit 25
+  fi
+  if ! SPARKLE_PREFLIGHT_SIGNATURE="$(
+    "$SPARKLE_SIGN_UPDATE" -p --ed-key-file "$SPARKLE_PRIVATE_KEY_FILE" \
+      "$VERSION_FILE" 2>/dev/null
+  )" || ! "$SPARKLE_SIGN_UPDATE" --verify --ed-key-file "$SPARKLE_PUBLIC_VERIFIER" \
+    "$VERSION_FILE" "$SPARKLE_PREFLIGHT_SIGNATURE" >/dev/null 2>&1; then
+    /bin/rm -f "$SPARKLE_PUBLIC_VERIFIER"
+    trap - EXIT
+    echo "release failed: WEIBEI_SPARKLE_PUBLIC_KEY does not match the Sparkle private key" >&2
+    exit 25
+  fi
+  /bin/rm -f "$SPARKLE_PUBLIC_VERIFIER"
+  trap - EXIT
+  if [[ ! -s "$UPDATE_SUMMARY_SOURCE" ]]; then
+    echo "release failed: notarized publication requires an in-app update summary" >&2
+    exit 24
+  fi
   if [[ -z "$SIGN_IDENTITY" ]] \
     || ! /usr/bin/security find-identity -v -p codesigning | /usr/bin/grep -Fq "\"$SIGN_IDENTITY\""; then
     echo "release failed: WEIBEI_CODESIGN_IDENTITY must name an installed Developer ID Application identity" >&2
@@ -123,9 +148,6 @@ DMG_PATH="$RELEASE_DIR/$DMG_NAME"
 DMG_SHA_PATH="$DMG_PATH.sha256"
 CASK_PATH="$RELEASE_DIR/homebrew-tap/Casks/weibei.rb"
 
-# Packaging never spends model quota or reads a live provider response.
-export WEIBEI_PI_LIVE_CHECK=0
-
 "$ROOT_DIR/DesignSystem/scripts/verify-assets.sh"
 npm --prefix "$ROOT_DIR" ls --all >/dev/null
 
@@ -139,19 +161,15 @@ fi
 (cd "$ROOT_DIR" && swift run WeiBeiDev verify-release-metadata --require-clean "$BASE_APP")
 
 mkdir -p "$RELEASE_DIR"
-cp "$VERIFIED_RELINK_BUNDLE" "$RELEASE_DIR/$(basename "$VERIFIED_RELINK_BUNDLE")"
 rm -rf "$RELEASE_APP"
 /usr/bin/ditto --norsrc --noextattr "$BASE_APP" "$RELEASE_APP"
 /usr/bin/xattr -cr "$RELEASE_APP"
 
-if [[ ! -x "$PI_EXECUTABLE" || ! -x "$PDF_HELPER" || ! -d "$SPARKLE_FRAMEWORK" || ! -f "$PI_ENTITLEMENTS" ]]; then
-  echo "release failed: packaged executables, Sparkle, or Pi entitlements are missing" >&2
+if [[ ! -x "$PDF_HELPER" || ! -d "$SPARKLE_FRAMEWORK" ]]; then
+  echo "release failed: packaged helper or Sparkle framework is missing" >&2
   exit 12
 fi
 
-/usr/bin/codesign --force --options runtime "${TIMESTAMP_ARGUMENT[@]}" \
-  --entitlements "$PI_ENTITLEMENTS" --sign "$SIGN_IDENTITY" "$PI_EXECUTABLE"
-/usr/bin/shasum -a 256 "$PI_EXECUTABLE" | /usr/bin/awk '{print $1}' | /usr/bin/tee "$PI_HASH" >/dev/null
 /usr/bin/codesign --force --options runtime "${TIMESTAMP_ARGUMENT[@]}" \
   --sign "$SIGN_IDENTITY" "$PDF_HELPER"
 /usr/bin/codesign --force --deep --options runtime "${TIMESTAMP_ARGUMENT[@]}" \
@@ -159,18 +177,11 @@ fi
 /usr/bin/codesign --force --options runtime "${TIMESTAMP_ARGUMENT[@]}" \
   --sign "$SIGN_IDENTITY" "$RELEASE_APP"
 
-/usr/bin/codesign --verify --strict --verbose=2 "$PI_EXECUTABLE"
 /usr/bin/codesign --verify --strict --verbose=2 "$PDF_HELPER"
 /usr/bin/codesign --verify --deep --strict --verbose=2 "$SPARKLE_FRAMEWORK"
 /usr/bin/codesign --verify --deep --strict --verbose=2 "$RELEASE_APP"
 (cd "$ROOT_DIR" && swift run WeiBeiDev verify-release-metadata --require-clean "$RELEASE_APP")
 (cd "$ROOT_DIR" && swift run WeiBeiDev verify-production-hygiene "$RELEASE_APP")
-
-BUILD_DIR="$(swift build -c release --show-bin-path)"
-WEIBEI_PI_EXECUTABLE="$PI_EXECUTABLE" \
-WEIBEI_PI_APP_BUNDLE="$RELEASE_APP" \
-WEIBEI_PI_LIVE_CHECK=0 \
-  "$BUILD_DIR/WeiBeiPiCheck"
 
 npx tsx "$ROOT_DIR/script/dmg/build_dmg.ts" "$ROOT_DIR" "$RELEASE_APP" "$DMG_PATH" "$APP_VERSION"
 
@@ -223,18 +234,11 @@ if [[ ! -d "$MOUNT_DIR/$APP_NAME" || ! -L "$MOUNT_DIR/应用程序" ]]; then
 fi
 /usr/bin/codesign --verify --deep --strict "$MOUNT_DIR/$APP_NAME"
 MOUNTED_APP_BINARY="$MOUNT_DIR/$APP_NAME/Contents/MacOS/WeiBei"
-MOUNTED_PI="$MOUNT_DIR/$APP_NAME/Contents/Resources/PiRuntime/bin/pi"
-MOUNTED_PI_HASH="$MOUNT_DIR/$APP_NAME/Contents/Resources/PiRuntime/binary.sha256"
 if ! /usr/bin/cmp -s \
   "$RELEASE_APP/Contents/MacOS/WeiBei" \
   "$MOUNTED_APP_BINARY"; then
   echo "release failed: mounted DMG app differs from the release app" >&2
   exit 15
-fi
-if [[ "$(/usr/bin/shasum -a 256 "$MOUNTED_PI" | /usr/bin/awk '{print $1}')" != "$(<"$MOUNTED_PI_HASH")" ]] \
-  || [[ "$("$MOUNTED_PI" --version 2>/dev/null)" != "$(/usr/bin/plutil -extract piVersion raw -o - "$MOUNT_DIR/$APP_NAME/Contents/Resources/PiRuntime/manifest.json")" ]]; then
-  echo "release failed: mounted DMG Pi runtime failed its hash or version check" >&2
-  exit 17
 fi
 detach_release_mount
 
@@ -243,9 +247,8 @@ DMG_SHA256="$(/usr/bin/shasum -a 256 "$DMG_PATH" | /usr/bin/awk '{print $1}')"
 npx tsx "$ROOT_DIR/script/homebrew/generate_cask.ts" "$APP_VERSION" "$DMG_SHA256" "$CASK_PATH"
 /usr/bin/ruby -c "$CASK_PATH" >/dev/null
 
-UPDATE_SUMMARY_SOURCE="${WEIBEI_UPDATE_SUMMARY_FILE:-$ROOT_DIR/Docs/update-summaries/v$APP_VERSION.md}"
 APPCAST_RESULT="not-generated"
-if [[ -n "$SPARKLE_PRIVATE_KEY_FILE" ]]; then
+if [[ "$MODE" == "notarized" || -n "$SPARKLE_PRIVATE_KEY_FILE" ]]; then
   if [[ ! -f "$SPARKLE_PRIVATE_KEY_FILE" || ! -s "$UPDATE_SUMMARY_SOURCE" ]]; then
     echo "release failed: Sparkle private key or in-app update summary is missing" >&2
     exit 21
@@ -271,7 +274,6 @@ echo "release_app=$RELEASE_APP"
 echo "release_dmg=$DMG_PATH"
 echo "release_sha256=$DMG_SHA256"
 echo "release_homebrew_cask=$CASK_PATH"
-echo "release_relink_bundle=$RELEASE_DIR/$(basename "$VERIFIED_RELINK_BUNDLE")"
 echo "release_appcast=$APPCAST_RESULT"
 if [[ "$MODE" == "notarized" ]]; then
   echo "release_trust=notarized-developer-id"

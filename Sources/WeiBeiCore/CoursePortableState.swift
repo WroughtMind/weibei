@@ -250,7 +250,6 @@ public enum CoursePortableStateError: LocalizedError, Equatable {
     case invalidStudyLocation
     case invalidResumePoint
     case invalidNoteDraft
-    case stateConflict
     case writeVerificationFailed
 
     public var errorDescription: String? {
@@ -289,8 +288,6 @@ public enum CoursePortableStateError: LocalizedError, Equatable {
             return "课程状态包含无效的继续学习位置。"
         case .invalidNoteDraft:
             return "课程状态包含无效的笔记草稿。"
-        case .stateConflict:
-            return "课程文件夹与本机缓存中的课程状态发生冲突，已保留两边内容并停止覆盖。"
         case .writeVerificationFailed:
             return "课程状态写入后无法通过完整性校验，已停止提交。"
         }
@@ -453,13 +450,10 @@ public struct CoursePortableState: Codable, Equatable, Sendable {
         if let courseKnowledgeProfile {
             let entryIDs = Set(courseKnowledgeProfile.entries.map(\.id))
             guard courseKnowledgeProfile.courseID == courseID,
-                  courseKnowledgeProfile.overview.count <= 2_000,
-                  courseKnowledgeProfile.entries.count <= 200,
                   entryIDs.count == courseKnowledgeProfile.entries.count,
                   courseKnowledgeProfile.entries.allSatisfy({ entry in
                       !entry.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                          && entry.text.count <= 1_200
-                          && !entry.sources.isEmpty
+                          && (!entry.sources.isEmpty || entry.text.hasPrefix("用户自述："))
                           && entry.sources.count <= 8
                           && entry.sources.allSatisfy { source in
                               itemIDs.contains(source.itemID)
