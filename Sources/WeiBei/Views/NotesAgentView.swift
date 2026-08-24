@@ -728,6 +728,8 @@ struct NotePaneView: View {
             store.updateSelection(text, source: .note, anchor: anchor)
         }, onSelectionFormattingChange: { formatting in
             store.interaction.noteSelectionFormatting = formatting
+        }, onLinkEditorRequest: {
+            store.interaction.noteLinkEditorRequest &+= 1
         }, onAskAgentWithSelection: { text, anchor in
             store.noteEditingSession.requestSnapshot()
             store.updateSelection(text, source: .note, anchor: anchor)
@@ -2581,6 +2583,7 @@ struct FloatingSelectionAgentView: View {
         HStack(spacing: 2) {
             formattingButton("bold", icon: "bold", label: store.ui("加粗", "Bold"))
             formattingButton("italic", icon: "italic", label: store.ui("斜体", "Italic"))
+            formattingButton("strike", icon: "strikethrough", label: store.ui("删除线", "Strikethrough"))
             formattingButton("highlight", icon: "highlighter", label: store.ui("高亮", "Highlight"))
             Button {
                 linkDraft = interaction.noteSelectionFormatting?.linkTarget ?? ""
@@ -2594,6 +2597,12 @@ struct FloatingSelectionAgentView: View {
             .accessibilityLabel(Text(store.ui("链接", "Link")))
             .popover(isPresented: $showsLinkEditor, arrowEdge: .bottom) {
                 linkEditor
+            }
+            .onChange(of: interaction.noteLinkEditorRequest) { _, _ in
+                guard interaction.noteSelectionFormatting != nil else { return }
+                linkDraft = interaction.noteSelectionFormatting?.linkTarget ?? ""
+                showsLinkEditor = true
+                DispatchQueue.main.async { linkFocused = true }
             }
 
             formattingButton("inlineCode", icon: "chevron.left.forwardslash.chevron.right", label: store.ui("行内代码", "Inline code"))
@@ -2687,7 +2696,10 @@ struct FloatingSelectionAgentView: View {
     }
 
     private func isFormattingActive(_ action: String) -> Bool {
-        let mark = action == "bold" ? "strong" : action == "italic" ? "emphasis" : action
+        let mark = action == "bold" ? "strong"
+            : action == "italic" ? "emphasis"
+            : action == "strike" ? "strike_through"
+            : action
         return interaction.noteSelectionFormatting?.activeMarks.contains(mark) == true
     }
 
