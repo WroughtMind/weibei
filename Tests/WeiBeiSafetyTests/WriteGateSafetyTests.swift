@@ -321,16 +321,16 @@ final class WriteGateSafetyTests: XCTestCase {
         XCTAssertTrue(message.contains("重试"))
     }
 
-    func testRestoreWeiBeiContentWritesCheckpointAndClearsConflict() async throws {
+    func testRestoreWeiBeiContentWritesCheckpointAndClearsConflict() throws {
         let base = makeTempRoot("weibei-restore-conflict")
         defer { try? FileManager.default.removeItem(at: base) }
-        let store = try await makeStoreAsync(
+        let store = try makeStore(
             base: base,
             library: base.appendingPathComponent("资料库"),
             backupRoot: base.appendingPathComponent("backups")
         )
-        let courseID = try await store.createCourseInLibraryAsync(title: "恢复课")
-        let note = try await importNoteAsync(
+        let courseID = try store.createCourseInLibrary(title: "恢复课")
+        let note = try importNote(
             store, base: base, courseID: courseID, content: "磁盘版本"
         )
         store.activeNotebookItemID = note.item.id
@@ -340,7 +340,9 @@ final class WriteGateSafetyTests: XCTestCase {
             pending: "魏碑待写正文"
         )
 
-        await store.resolveNoteEditorRecoveryConflict(useDisk: false)
+        try store.waitForCourseFileOperation {
+            await store.resolveNoteEditorRecoveryConflict(useDisk: false)
+        }
 
         XCTAssertEqual(try String(contentsOf: note.url, encoding: .utf8), "魏碑待写正文")
         XCTAssertNil(store.noteEditorRecoveryConflict)

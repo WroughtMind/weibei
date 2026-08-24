@@ -221,6 +221,7 @@ struct CoursePortableStateSaveInput: Sendable {
 struct WorkspacePersistenceRequest: Sendable {
     var generation: UInt64
     var workspace: PersistedWorkspace
+    var courseItemMemberships: [CourseItemMembership]
     var storageURL: URL
     var portableInputs: [CoursePortableStateSaveInput]
     var requiredPortableCourseIDs: Set<UUID>
@@ -469,7 +470,8 @@ actor CourseProjectFileWorker {
                         courseID: courseID,
                         revision: currentRevision,
                         savedAt: Date(timeIntervalSince1970: 0),
-                        workspace: request.workspace
+                        workspace: request.workspace,
+                        courseItemMemberships: request.courseItemMemberships
                     )
                 } catch {
                     guard stateURL == nil, hasPortableHistory else {
@@ -875,14 +877,15 @@ actor CourseProjectFileWorker {
         courseID: UUID,
         revision: UInt64,
         savedAt: Date,
-        workspace: PersistedWorkspace
+        workspace: PersistedWorkspace,
+        courseItemMemberships: [CourseItemMembership]
     ) throws -> CoursePortableState {
         guard let course = workspace.courses?.first(where: {
             $0.id == courseID
         }) else {
             throw CoursePortableStateError.courseIdentityMismatch
         }
-        var memberships = (workspace.courseItemMemberships ?? [])
+        var memberships = courseItemMemberships
             .filter { $0.courseID == courseID }
         for item in workspace.importedItems {
             guard case .courseOwned(let ownerCourseID, let relativePath)
@@ -1139,7 +1142,7 @@ actor CourseProjectFileWorker {
         }
 
         let membershipsByItemID = Dictionary(
-            grouping: workspace.courseItemMemberships ?? [],
+            grouping: courseItemMemberships,
             by: \.itemID
         )
         let resumePoint = workspace.courseResumePoints?

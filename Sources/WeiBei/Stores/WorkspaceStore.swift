@@ -21332,6 +21332,7 @@ final class WorkspaceStore: ObservableObject {
             WorkspacePersistenceRequest(
                 generation: generation,
                 workspace: persisted.snapshot,
+                courseItemMemberships: courseItemMemberships,
                 storageURL: storageURL,
                 portableInputs: inputs,
                 requiredPortableCourseIDs:

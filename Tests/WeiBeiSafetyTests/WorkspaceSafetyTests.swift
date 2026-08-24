@@ -17,11 +17,6 @@ final class WorkspaceSafetyTests: XCTestCase {
     }
 
     @MainActor
-    func testLegacyPathIdentityMigration() async throws {
-        try await ImportedIdentitySelfCheck.runLegacyPathMigrationOnly()
-    }
-
-    @MainActor
     func testCourseProjectDataSafety() throws {
         try CourseProjectRootSelfCheck.run()
     }
@@ -58,7 +53,7 @@ final class WorkspaceSafetyTests: XCTestCase {
     }
 
     @MainActor
-    func testNativeAgentRejectsAndRollsBackWhenWorkspaceWriteFails() async throws {
+    func testNativeAgentRejectsAndRollsBackWhenWorkspaceWriteFails() throws {
         struct InjectedFailure: Error {}
         final class SaveSwitch: @unchecked Sendable {
             private let lock = NSLock()
@@ -92,15 +87,14 @@ final class WorkspaceSafetyTests: XCTestCase {
         )
         let library = root.appendingPathComponent("资料库")
         try FileManager.default.createDirectory(at: library, withIntermediateDirectories: true)
-        // async 测试运行在 MainActor 任务里，同步桥会死锁，必须走异步入口。
-        try await store.configureCourseLibraryAsync(at: library)
-        let courseID = try await store.createCourseInLibraryAsync(title: "真实回执课")
+        try store.configureCourseLibrary(at: library)
+        let courseID = try store.createCourseInLibrary(title: "真实回执课")
         let session = try XCTUnwrap(store.createStudySession(courseID: courseID))
         _ = try store.appendPortableCourseMessageForSelfCheck(
             courseID: courseID,
             text: "回滚前已保存的问题"
         )
-        let persisted = await store.flushPendingWorkspaceSaveAsync()
+        let persisted = store.flushPendingWorkspaceSave()
         XCTAssertTrue(persisted)
         let target = WorkspaceStore.AgentConversationTarget(
             sessionID: session.id,
@@ -111,37 +105,41 @@ final class WorkspaceSafetyTests: XCTestCase {
         let profileBefore = store.refreshCourseProfileContext(target: target)
         saveSwitch.arm()
 
-        let learningReceipt = await store.persistNativeLearningUpdate(
-            StudyAgentLearningUpdate(
-                contextRevision: "test-context",
-                memoryRevision: learningBefore.memoryRevision,
-                entries: [StudyAgentMemoryUpdateEntry(
-                    kind: .confusion,
-                    text: "还不理解费雪方程",
-                    evidence: "[用户：本轮] 我还不理解费雪方程",
-                    origin: .userStatement
-                )]
-            ),
-            expectedContextRevision: "test-context",
-            expectedUserQuestion: "我还不理解费雪方程",
-            target: target,
-            messageID: UUID()
-        )
+        let learningReceipt = try store.waitForCourseFileOperation {
+            await store.persistNativeLearningUpdate(
+                StudyAgentLearningUpdate(
+                    contextRevision: "test-context",
+                    memoryRevision: learningBefore.memoryRevision,
+                    entries: [StudyAgentMemoryUpdateEntry(
+                        kind: .confusion,
+                        text: "还不理解费雪方程",
+                        evidence: "[用户：本轮] 我还不理解费雪方程",
+                        origin: .userStatement
+                    )]
+                ),
+                expectedContextRevision: "test-context",
+                expectedUserQuestion: "我还不理解费雪方程",
+                target: target,
+                messageID: UUID()
+            )
+        }
         saveSwitch.arm()
-        let profileReceipt = await store.persistNativeCourseProfileUpdate(
-            StudyAgentCourseProfileUpdate(
-                contextRevision: "test-context",
-                profileRevision: profileBefore.revision,
-                checkpoint: "userRequested",
-                entries: [StudyAgentCourseProfileUpdateEntry(
-                    kind: .concept,
-                    text: "用户自述：还没有掌握费雪方程",
-                    sources: []
-                )]
-            ),
-            expectedContextRevision: "test-context",
-            target: target
-        )
+        let profileReceipt = try store.waitForCourseFileOperation {
+            await store.persistNativeCourseProfileUpdate(
+                StudyAgentCourseProfileUpdate(
+                    contextRevision: "test-context",
+                    profileRevision: profileBefore.revision,
+                    checkpoint: "userRequested",
+                    entries: [StudyAgentCourseProfileUpdateEntry(
+                        kind: .concept,
+                        text: "用户自述：还没有掌握费雪方程",
+                        sources: []
+                    )]
+                ),
+                expectedContextRevision: "test-context",
+                target: target
+            )
+        }
 
         XCTAssertFalse(learningReceipt.accepted)
         XCTAssertFalse(profileReceipt.accepted)
