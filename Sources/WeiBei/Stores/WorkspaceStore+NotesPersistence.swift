@@ -112,6 +112,20 @@ extension WorkspaceStore {
         guard let initialIndex = importedItems.firstIndex(where: { $0.id == itemID && $0.isNotebookNote }) else { return }
         let oldTitle = displayTitle(for: importedItems[initialIndex])
 
+        if noteOperationErrorsByItemID[itemID] != nil {
+            cancelPendingNotePersistence(for: itemID)
+            let pending = pendingNotePersistenceByItemID.removeValue(
+                forKey: itemID
+            )
+            if activeNoteItemID == itemID {
+                setNoteDraft(noteText, for: itemID)
+            } else if let pending {
+                setNoteDraft(pending.markdown, for: itemID)
+            }
+            _ = await persistWorkspaceNow()
+            return
+        }
+
         flushPendingNotePersistence(for: itemID)
         persistCurrentNote()
         guard let index = importedItems.firstIndex(where: { $0.id == itemID && $0.isNotebookNote }) else { return }

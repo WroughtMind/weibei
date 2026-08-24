@@ -3417,6 +3417,10 @@ enum CourseProjectRootSelfCheck {
             courseA,
             title: "首次创建的本机候选"
         )
+        try check(
+            !firstCreateRollbackStore.flushPendingWorkspaceSave(),
+            "测试注入的工作区保存失败却返回成功"
+        )
         let rollbackConflictURLs = try FileManager.default
             .contentsOfDirectory(
                 at: stateURL.deletingLastPathComponent(),
@@ -3479,6 +3483,10 @@ enum CourseProjectRootSelfCheck {
         existingRollbackStore.renameCourse(
             courseA,
             title: "已有状态回滚的本机候选"
+        )
+        try check(
+            !existingRollbackStore.flushPendingWorkspaceSave(),
+            "测试注入的已有状态保存失败却返回成功"
         )
         let existingRollbackArtifacts = try FileManager.default
             .contentsOfDirectory(
@@ -3571,6 +3579,10 @@ enum CourseProjectRootSelfCheck {
         unreadableRollbackStore.renameCourse(
             courseA,
             title: "不可读回滚的本机候选"
+        )
+        try check(
+            !unreadableRollbackStore.flushPendingWorkspaceSave(),
+            "测试注入的不可读状态保存失败却返回成功"
         )
         let unreadableRollbackArtifacts = try FileManager.default
             .contentsOfDirectory(
