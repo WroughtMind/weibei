@@ -676,6 +676,7 @@ enum CourseProjectRootSelfCheck {
         )
         store = nil
         let reopened = makeStore(fixture: fixture)
+        _ = reopened.flushPendingWorkspaceSave()
         let retainedChatCount = reopened.studySessions.filter {
             !$0.relatedCourseIDs.contains(courseA)
                 && $0.messages.contains { $0.text == chatToken }
