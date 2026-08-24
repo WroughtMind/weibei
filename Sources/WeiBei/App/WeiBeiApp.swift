@@ -409,29 +409,38 @@ struct WeiBeiAppearanceTransition: ViewModifier {
 private struct WindowChromeConfigurator: NSViewRepresentable {
     var appearanceMode: WeiBeiAppearanceMode
 
+    func makeCoordinator() -> Coordinator {
+        Coordinator()
+    }
+
     func makeNSView(context: Context) -> NSView {
         let view = NSView()
-        if let window = view.window {
-            configure(window)
-        } else {
-            DispatchQueue.main.async {
-                configure(view.window)
-            }
-        }
+        context.coordinator.attach(to: view)
+        configureWhenWindowIsReady(view)
         return view
     }
 
     func updateNSView(_ view: NSView, context: Context) {
+        context.coordinator.attach(to: view)
+        configureWhenWindowIsReady(view)
+    }
+
+    static func dismantleNSView(_ nsView: NSView, coordinator: Coordinator) {
+        coordinator.stopObserving()
+    }
+
+    private func configureWhenWindowIsReady(_ view: NSView) {
         if let window = view.window {
-            configure(window)
+            Self.configure(window, appearanceMode: appearanceMode)
         } else {
+            let mode = appearanceMode
             DispatchQueue.main.async {
-                configure(view.window)
+                Self.configure(view.window, appearanceMode: mode)
             }
         }
     }
 
-    private func configure(_ window: NSWindow?) {
+    private static func configure(_ window: NSWindow?, appearanceMode: WeiBeiAppearanceMode) {
         guard let window else { return }
         window.titleVisibility = .hidden
         window.title = ""
@@ -449,6 +458,38 @@ private struct WindowChromeConfigurator: NSViewRepresentable {
         window.contentView?.wantsLayer = appearanceMode.isGlass
         window.contentView?.layer?.backgroundColor = appearanceMode.isGlass ? NSColor.clear.cgColor : nil
         window.isMovableByWindowBackground = true
+    }
+
+    @MainActor
+    final class Coordinator {
+        private weak var view: NSView?
+        private var themeObserver: NSObjectProtocol?
+
+        func attach(to view: NSView) {
+            self.view = view
+            guard themeObserver == nil else { return }
+            themeObserver = NotificationCenter.default.addObserver(
+                forName: WeiBeiThemeRuntime.didChangeNotification,
+                object: nil,
+                queue: .main
+            ) { [weak self] notification in
+                guard let mode = notification.object as? WeiBeiAppearanceMode else { return }
+                Task { @MainActor [weak self] in
+                    WindowChromeConfigurator.configure(
+                        self?.view?.window,
+                        appearanceMode: mode
+                    )
+                }
+            }
+        }
+
+        func stopObserving() {
+            if let themeObserver {
+                NotificationCenter.default.removeObserver(themeObserver)
+            }
+            themeObserver = nil
+            view = nil
+        }
     }
 }
 

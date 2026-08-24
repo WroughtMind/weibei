@@ -1,5 +1,6 @@
 import AppKit
 import CoreText
+import Observation
 import SwiftUI
 import WeiBeiCore
 
@@ -150,10 +151,24 @@ enum WeiBeiAppearanceMode: String, CaseIterable, Identifiable {
     }
 }
 
+/// Observation-backed storage for the live theme mode. SwiftUI views that
+/// resolve `WeiBeiTheme.*` inside an Observation tracking scope automatically
+/// register a dependency on `mode`, including same-color-scheme theme switches.
+@Observable
+private final class WeiBeiThemeObservationState {
+    var mode: WeiBeiAppearanceMode = .paper
+}
+
 /// Live appearance used by theme colors. Always update **before** publishing
 /// `appearanceMode` so SwiftUI bodies that re-read `WeiBeiTheme.*` see the new palette.
 enum WeiBeiThemeRuntime {
-    static var mode: WeiBeiAppearanceMode = .paper
+    private static let observationState = WeiBeiThemeObservationState()
+
+    static var mode: WeiBeiAppearanceMode {
+        get { observationState.mode }
+        set { observationState.mode = newValue }
+    }
+
     /// Glass theme translucency 0–1, driven by the Settings slider; persisted in defaults.
     static var glassIntensity: Double = 1.0 {
         didSet {
@@ -350,7 +365,7 @@ enum WeiBeiTheme {
     // Computed colors — resolved from the current mode on every access.
     // Static `Color(nsColor:)` only re-queries on system appearance change, so
     // paper↔xuan / inkstone↔stele switches would otherwise look "stuck".
-    // Call sites re-evaluate when `@Published appearanceMode` changes.
+    // Observation-backed runtime mode invalidates SwiftUI call sites that resolve these tokens.
 
     static var paper: Color { Color(nsColor: WeiBeiNativePalette.paper()) }
     static var paperRaised: Color { Color(nsColor: WeiBeiNativePalette.paperRaised()) }
