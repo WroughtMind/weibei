@@ -22,6 +22,11 @@ final class WorkspaceSafetyTests: XCTestCase {
     }
 
     @MainActor
+    func testPortableCourseStateRetryUsesFolderTruth() throws {
+        try CourseProjectRootSelfCheck.runPortableCourseStateRetryOnly()
+    }
+
+    @MainActor
     func testBackgroundWorkspacePersistence() throws {
         try CourseProjectRootSelfCheck.runBackgroundWorkspacePersistenceOnly()
     }

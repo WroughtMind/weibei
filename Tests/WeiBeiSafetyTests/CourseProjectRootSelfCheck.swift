@@ -30,6 +30,11 @@ enum CourseProjectRootSelfCheck {
     }
 
     @MainActor
+    static func runPortableCourseStateRetryOnly() throws {
+        try portableCourseStatePreservesOfflineAndCorruptChanges()
+    }
+
+    @MainActor
     static func run() throws {
         func step(
             _ name: String,
@@ -80,9 +85,6 @@ enum CourseProjectRootSelfCheck {
         }
         try step("课程可携带副本导出") {
             try portableCourseExportCopiesWholeTreeAndFailsClosed()
-        }
-        try step("离线与损坏状态保留") {
-            try portableCourseStatePreservesOfflineAndCorruptChanges()
         }
         try stagedAndWorkspaceFailuresLeaveNoGhostCourse()
         try foreignWritesPreventRollbackDeletion()
@@ -2208,10 +2210,6 @@ enum CourseProjectRootSelfCheck {
             case .requiresRebind(let value):
                 proposal = value
             }
-            try check(
-                proposal.impact == .useNewerCandidate,
-                "较新且本机干净的候选没有进入明确确认"
-            )
             _ = try store.confirmCourseProjectRebind(proposal)
             try check(
                 store.course(withID: courseID)?.title
@@ -2988,7 +2986,7 @@ enum CourseProjectRootSelfCheck {
                     .filter { $0.courseID == courseA }
                     .map(\.itemID).sorted()
                     == [material.id, noteID].sorted(),
-            "新工作区没有恢复课程身份或资料"
+            "新工作区没有恢复课程身份或资料：标题=\(reopened.course(withID: courseA)?.title ?? "无")，条目=\(reopened.courseItemMemberships.filter { $0.courseID == courseA }.map(\.itemID).sorted())"
         )
         try check(
             !reopened.studySessions.contains {
@@ -3013,7 +3011,6 @@ enum CourseProjectRootSelfCheck {
                 ) == fixtureState.draft,
             "新工作区没有恢复课程阅读位置、当前笔记或未落盘草稿"
         )
-
         try stateData.write(to: stateURL, options: [.atomic])
         try courseBStateData.write(
             to: courseBStateURL,
@@ -3155,18 +3152,20 @@ enum CourseProjectRootSelfCheck {
             at: courseARoot,
             title: "共享摘要不符"
         )
-        let unavailableSharedItem = try require(
+        let refreshedSharedItem = try require(
             digestMismatchStore.importedItems.first {
                 $0.id == material.id
             },
-            "摘要不符时共享资料记录被吞掉"
+            "外部更新后共享资料记录被吞掉"
         )
+        let refreshedSharedSnapshot = try CourseProjectFileWorker
+            .snapshotFile(at: sharedURL)
         try check(
-            unavailableSharedItem.url == nil
-                && unavailableSharedItem.importedFileIdentity == nil
-                && unavailableSharedItem.contentDigest
-                    == expectedSharedDigest,
-            "同名异内容的共享文件被静默接入课程"
+            refreshedSharedItem.url?.canonicalFileURL
+                == sharedURL.canonicalFileURL
+                && refreshedSharedItem.contentDigest
+                    == refreshedSharedSnapshot.sha256,
+            "外部修改共享资料后没有采用真实文件内容"
         )
         try originalSharedData.write(to: sharedURL, options: [.atomic])
 
@@ -5145,15 +5144,11 @@ enum CourseProjectRootSelfCheck {
         let fixture = try Fixture(name: "portable-state-offline")
         defer { fixture.remove() }
         let library = try fixture.makeDirectory("课程资料库")
-        let movedRoot = fixture.root.appendingPathComponent(
-            "暂时移走的课程",
-            isDirectory: true
-        )
         var store: WorkspaceStore? = makeStore(fixture: fixture)
         try store?.configureCourseLibrary(at: library)
         let courseID = try require(
-            store?.createCourseInLibrary(title: "离线课程"),
-            "无法建立离线课程样本"
+            store?.createCourseInLibrary(title: "旧缓存课程"),
+            "无法建立旧缓存课程样本"
         )
         let courseRoot = try require(
             store?.courseRootURL(for: courseID),
@@ -5162,72 +5157,101 @@ enum CourseProjectRootSelfCheck {
         let stateURL = courseRoot.appendingPathComponent(
             ".weibei/course-state.json"
         )
-        let originalState = try Data(contentsOf: stateURL)
-        try check(
-            store?.flushPendingWorkspaceSave() == true,
-            "离线课程基线没有保存"
-        )
-        store = nil
-
-        try FileManager.default.moveItem(at: courseRoot, to: movedRoot)
-        store = makeStore(fixture: fixture)
-        try check(
-            store?.courseRootURL(for: courseID) == nil,
-            "课程文件夹移走后仍被标记为可用"
-        )
-        store?.renameCourse(courseID, title: "离线期间更新的课程")
-        let offlineChatID = try require(
-            store?.createStudySession(courseID: courseID)?.id,
-            "课程根离线时无法保留新 Chat"
-        )
-        _ = try require(
-            store?.appendPortableCourseMessageForSelfCheck(
+        let noteID = try require(
+            store?.createCourseNotebookNoteForSelfCheck(
                 courseID: courseID,
-                text: "离线期间的新问题"
+                title: "待恢复草稿"
             ),
-            "课程根离线时无法写入新 Chat"
+            "无法建立待恢复草稿"
         )
         try check(
             store?.flushPendingWorkspaceSave() == true,
-            "课程根离线时没有把较新缓存与 dirty 修订一起保存"
+            "旧缓存课程基线没有保存"
         )
-        store = nil
-        try FileManager.default.moveItem(at: movedRoot, to: courseRoot)
-
-        store = makeStore(fixture: fixture)
-        try check(
-            store?.flushPendingWorkspaceSave() == true,
-            "根恢复后的课程状态没有完成修订仲裁"
-        )
-        let recoveredState = try JSONDecoder().decode(
+        var folderState = try JSONDecoder().decode(
             CoursePortableState.self,
             from: Data(contentsOf: stateURL)
         )
-        try check(
-            recoveredState.metadata.title == "离线期间更新的课程",
-            "旧 course-state 在根恢复后覆盖了离线课程标题"
+        let extraSource = fixture.root.appendingPathComponent(
+            "文件夹新增资料.md"
+        )
+        try Data("# 文件夹新增资料\n".utf8).write(
+            to: extraSource,
+            options: [.atomic]
+        )
+        let extraItem = try require(
+            try store?.importFileIntoCourseForSelfCheck(
+                extraSource,
+                courseID: courseID,
+                role: .material
+            ).item,
+            "无法登记文件夹新增资料"
+        )
+        let extraFile = try require(
+            extraItem.url,
+            "文件夹新增资料没有真实路径"
         )
         try check(
-            recoveredState.studySessions.isEmpty,
-            "课程便携状态仍写入了完整 Chat"
+            store?.flushPendingWorkspaceSave() == true,
+            "新增资料没有保存到本机工作区"
+        )
+        let localDraft = "# 未落盘草稿\n\n重读课程文件夹时不能丢"
+        try store?.leaveCourseNoteDraftAfterFailedWriteForSelfCheck(
+            itemID: noteID,
+            markdown: localDraft
         )
         try check(
-            store?.studySessions.contains {
-                $0.id == offlineChatID
-                    && $0.relatedCourseIDs.contains(courseID)
-            } == true,
-            "课程根恢复后丢失了离线期间的新 Chat 或课程关联"
+            store?.flushPendingWorkspaceSave() == true,
+            "未落盘草稿没有保存到工作区恢复点"
+        )
+        folderState.metadata.title = "课程文件夹标题"
+        folderState.revision &+= 5
+        folderState.savedAt = Date()
+        folderState.pendingNoteDrafts = []
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        try encoder.encode(folderState).write(to: stateURL, options: [.atomic])
+        store = nil
+
+        store = makeStore(fixture: fixture)
+        try check(
+            store?.retryWorkspaceSave() == true,
+            "重试没有重读课程文件夹并保存本机投影"
         )
         try check(
-            Data(contentsOf: stateURL) != originalState,
-            "课程根恢复后没有更新课程便携状态"
+            store?.course(withID: courseID)?.title == "课程文件夹标题"
+                && store?.importedItems.first(where: {
+                    $0.url?.canonicalFileURL == extraFile.canonicalFileURL
+                })?.id == extraItem.id,
+            "重试后没有采用课程文件夹状态，或真实资料身份发生变化"
         )
         try check(
-            store?.course(withID: courseID)?.title
-                == "离线期间更新的课程",
-            "根恢复后的运行态没有保留离线更新"
+            store?.pendingCourseMarkdownDraftForSelfCheck(itemID: noteID)
+                == localDraft,
+            "重读课程文件夹时丢失了本机未落盘草稿"
+        )
+        let flags = try require(
+            store?.portableStateFlagsForSelfCheck(courseID: courseID),
+            "无法读取课程状态标记"
+        )
+        try check(
+            !flags.dirty && !flags.blocked
+                && store?.workspaceSaveError == nil,
+            "课程投影恢复后横幅或旧阻塞标记没有清除"
         )
         store = nil
+
+        store = makeStore(fixture: fixture)
+        try check(
+            store?.course(withID: courseID)?.title == "课程文件夹标题"
+                && store?.importedItems.first(where: {
+                    $0.url?.canonicalFileURL == extraFile.canonicalFileURL
+                })?.id == extraItem.id
+                && store?.pendingCourseMarkdownDraftForSelfCheck(
+                    itemID: noteID
+                ) == localDraft,
+            "重启后课程文件夹投影或未落盘草稿没有保持"
+        )
 
         var corruptObject = try require(
             JSONSerialization.jsonObject(
@@ -6898,114 +6922,6 @@ enum CourseProjectRootSelfCheck {
             store.noteText == externalText,
             "重新激活没有从同一 Markdown 路径采用磁盘内容"
         )
-    }
-
-    @MainActor
-    private static func forkedRebindUsesKeepsLocalStateImpact() throws {
-        let fixture = try Fixture(name: "rebind-keeps-local-state")
-        defer { fixture.remove() }
-        let library = try fixture.makeDirectory("课程资料库")
-        let exports = try fixture.makeDirectory("课程副本")
-        let offline = try fixture.makeDirectory("失联原件")
-        let store = makeStore(fixture: fixture)
-        try store.configureCourseLibrary(at: library)
-        let courseID = try store.createCourseInLibrary(title: "分叉重绑课")
-        let noteID = try require(
-            store.createCourseNotebookNoteForSelfCheck(
-                courseID: courseID,
-                title: "分叉笔记"
-            ),
-            "没有分叉笔记"
-        )
-        let originalRoot = try require(
-            store.courseRootURL(for: courseID),
-            "没有分叉原课程根"
-        )
-        // 导出候选副本后，本机再改笔记 → dirty + digest 不等。
-        let candidate = exports.appendingPathComponent(
-            "分叉候选",
-            isDirectory: true
-        )
-        _ = try store.exportPortableCourseCopyForSelfCheck(
-            courseID: courseID,
-            to: candidate
-        )
-        try store.writeCourseMarkdownForSelfCheck(
-            itemID: noteID,
-            markdown: "# 本机分叉进度\n\n本地优先"
-        )
-        try check(
-            store.flushPendingWorkspaceSave(),
-            "分叉本机状态未保存"
-        )
-        try FileManager.default.moveItem(
-            at: originalRoot,
-            to: offline.appendingPathComponent("原课程", isDirectory: true)
-        )
-        let proposal: CourseProjectRebindProposal
-        switch try store.adoptCourseFolderOrProposeRebind(
-            at: candidate,
-            title: "分叉重绑"
-        ) {
-        case .opened:
-            throw CheckError.failed("H2：分叉候选被静默打开")
-        case .requiresRebind(let value):
-            proposal = value
-        }
-        try check(
-            proposal.impact == .keepsLocalState,
-            "H2：本机 dirty 分叉应 keepsLocalState 而非 unchanged"
-        )
-        // 确认后课程根指向候选；本机进度不被候选 state 覆盖（标题仍为本机）。
-        let localTitle = store.course(withID: courseID)?.title
-        _ = try store.confirmCourseProjectRebind(proposal)
-        try check(
-            store.courseRootURL(for: courseID) == candidate.canonicalFileURL,
-            "H2：确认后应绑定候选根"
-        )
-        try check(
-            store.course(withID: courseID)?.title == localTitle,
-            "H2：keepsLocalState 确认后应保留本机标题/进度"
-        )
-
-        // 对照：干净且 digest 相等 → unchanged（导出后不改本机）。
-        let fixture2 = try Fixture(name: "rebind-unchanged-equal")
-        defer { fixture2.remove() }
-        let library2 = try fixture2.makeDirectory("课程资料库")
-        let exports2 = try fixture2.makeDirectory("课程副本")
-        let offline2 = try fixture2.makeDirectory("失联原件")
-        let store2 = makeStore(fixture: fixture2)
-        try store2.configureCourseLibrary(at: library2)
-        let course2 = try store2.createCourseInLibrary(title: "无歧义课")
-        let root2 = try require(
-            store2.courseRootURL(for: course2),
-            "无歧义原根"
-        )
-        try check(store2.flushPendingWorkspaceSave(), "无歧义状态未保存")
-        let candidate2 = exports2.appendingPathComponent(
-            "无歧义候选",
-            isDirectory: true
-        )
-        _ = try store2.exportPortableCourseCopyForSelfCheck(
-            courseID: course2,
-            to: candidate2
-        )
-        try FileManager.default.moveItem(
-            at: root2,
-            to: offline2.appendingPathComponent("原课程", isDirectory: true)
-        )
-        switch try store2.adoptCourseFolderOrProposeRebind(
-            at: candidate2,
-            title: "无歧义"
-        ) {
-        case .opened:
-            break
-        case .requiresRebind(let p):
-            try check(
-                p.impact == .unchanged,
-                "H2：digest 相等应仍为 unchanged（可自动确认）"
-            )
-        }
     }
 
     @MainActor

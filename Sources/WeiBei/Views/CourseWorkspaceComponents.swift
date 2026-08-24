@@ -398,24 +398,11 @@ struct CourseProjectEntrySheet: View {
     }
 
     private var detail: String {
-        if let rebindProposal {
-            switch rebindProposal.impact {
-            case .unchanged:
-                return store.ui(
-                    "魏碑认出了同一门课程，原文件夹当前无法访问。确认后只把课程连接到所选文件夹；课程 ID、对话、学习记忆、关系和阅读位置都会保留。",
-                    "WeiBei recognized the same course, and its original folder is unavailable. Confirm to reconnect it while preserving its identity and learning state."
-                )
-            case .useNewerCandidate:
-                return store.ui(
-                    "魏碑认出了同一门课程，所选文件夹带有更新的课程状态。确认后会采用其中更新的对话、学习记忆、关系和阅读位置。",
-                    "WeiBei recognized the same course with newer portable state. Confirm to use the newer chats, memory, links, and reading position from this folder."
-                )
-            case .keepsLocalState:
-                return store.ui(
-                    "候选文件夹包含与本机不同的课程进度；确认后以本机进度为准，候选中的差异会以冲突备份保留。",
-                    "The candidate folder has different course progress than this Mac. Confirm to keep local progress; differing files from the candidate will be kept as conflict backups."
-                )
-            }
+        if rebindProposal != nil {
+            return store.ui(
+                "魏碑认出了同一门课程，原文件夹当前无法访问。确认后会重新连接所选文件夹，读取其中的课程状态并扫描实际资料；本机未落盘草稿会保留。",
+                "WeiBei recognized the same course, and its original folder is unavailable. Confirm to reconnect the selected folder, read its course state, and scan its files. Unsaved local drafts will be preserved."
+            )
         }
         if needsLibrary {
             if libraryNeedsReauthorization {
@@ -784,17 +771,8 @@ struct CourseProjectEntrySheet: View {
             case .opened(let courseID):
                 openCourse(courseID)
             case .requiresRebind(let proposal):
-                // S6-5：无歧义（原根失联、状态 digest 相等）时单步自动确认；
-                // H2：keepsLocalState / useNewerCandidate 弹一次确认。
-                if proposal.impact == .unchanged {
-                    let courseID = try await store.confirmCourseProjectRebindAsync(
-                        proposal
-                    )
-                    openCourse(courseID)
-                } else {
-                    rebindProposal = proposal
-                    title = proposal.courseTitle
-                }
+                rebindProposal = proposal
+                title = proposal.courseTitle
             }
         }
     }

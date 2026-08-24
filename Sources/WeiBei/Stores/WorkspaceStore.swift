@@ -68,24 +68,15 @@ struct CourseHomeSearchOutcome: Sendable {
     let availability: CourseDocumentIndexAvailability
 }
 
-enum CourseProjectRebindImpact: Equatable {
-    /// 候选与本机 digest 相等，无歧义。
-    case unchanged
-    /// 候选更新且本机干净，可采用候选状态。
-    case useNewerCandidate
-    /// 候选与本机不同且本机 dirty / 不可比：保留本机进度，需用户确认一次。
-    case keepsLocalState
-}
-
 struct CourseProjectRebindProposal {
     let courseID: UUID
     let courseTitle: String
     let candidateRoot: URL
     let candidateRootIdentity: ImportedFileIdentity
     let expectedCourse: Course
+    /// 只阻止确认期间的本机修改，不参与课程状态选边。
     let expectedLocalPayloadDigest: String
     let snapshot: CoursePortableAdoptionSnapshot
-    let impact: CourseProjectRebindImpact
 }
 
 enum CourseFolderAdoptionOutcome {
@@ -1614,7 +1605,10 @@ final class WorkspaceStore: ObservableObject {
         for course in courses where resolvedCourseRootURLs[course.id] != nil {
             _ = resolveCourseOwnedItems(for: course.id)
         }
-        guard await persistWorkspaceNow() else {
+        // 这里只登记资料库绑定；课程状态要在读完文件夹后再按真实内容写回。
+        guard await persistWorkspaceNow(
+            skippingPortableCourseIDs: Set(courses.map(\.id))
+        ) else {
             courseSecurityScopeStopper(scopedURL)
             if let previousScope {
                 activeCourseSecurityScopes[ownerKey] = previousScope
@@ -1643,6 +1637,8 @@ final class WorkspaceStore: ObservableObject {
                 "Organized \(legacyOrganization.migrated) legacy item(s). \(legacyOrganization.errors.count) remain, and their original content is preserved. Make sure the library is writable, then try again."
             ))
         }
+        _ = restorePortableCourseStates()
+        await reconcileCourseFilesNow()
         courseDocumentSearchIndex.synchronize(allItems)
         invalidateAgentContext()
         if let previousScope {
@@ -2430,7 +2426,10 @@ final class WorkspaceStore: ObservableObject {
         }
         _ = resolveCourseOwnedItems(for: existing.id)
 
-        guard await persistWorkspaceNow() else {
+        // 先保存重新连接信息；课程状态要在读盘和扫描完成后再写回。
+        guard await persistWorkspaceNow(
+            skippingPortableCourseIDs: Set(courses.map(\.id))
+        ) else {
             courses[courseIndex] = previousCourse
             if let previousResolvedRoot {
                 resolvedCourseRootURLs[existing.id] = previousResolvedRoot
@@ -2454,6 +2453,9 @@ final class WorkspaceStore: ObservableObject {
             throw CourseProjectRootError.workspaceSaveFailed
         }
 
+        _ = restorePortableCourseStates()
+        await reconcileCourseFilesNow(courseID: existing.id)
+
         if let previousScope {
             let stopScope = courseSecurityScopeStopper
             if !cancelAgentRequestIfRunning(
@@ -2467,11 +2469,6 @@ final class WorkspaceStore: ObservableObject {
         }
         courseDocumentSearchIndex.synchronize(allItems)
         invalidateAgentContext()
-        if !WeiBeiSafetyTestMode.isEnabled {
-            Task { @MainActor [weak self] in
-                await self?.reconcileCourseFilesNow(courseID: existing.id)
-            }
-        }
         return existing.id
     }
 
@@ -2492,9 +2489,14 @@ final class WorkspaceStore: ObservableObject {
               !courseHasUnstableState(existing.id) else {
             throw CourseProjectRebindError.proposalChanged
         }
-        let evaluation = try evaluatedCourseRebindState(
+        _ = try evaluatedCourseRebindState(
             existing: existing,
             snapshot: snapshot
+        )
+        let localState = try makeCoursePortableState(
+            courseID: existing.id,
+            revision: coursePortableStateRevisions[existing.id] ?? 0,
+            savedAt: Date(timeIntervalSince1970: 0)
         )
         return CourseProjectRebindProposal(
             courseID: existing.id,
@@ -2502,9 +2504,9 @@ final class WorkspaceStore: ObservableObject {
             candidateRoot: candidateRoot,
             candidateRootIdentity: candidateRootIdentity,
             expectedCourse: existing,
-            expectedLocalPayloadDigest: evaluation.localPayloadDigest,
-            snapshot: snapshot,
-            impact: evaluation.impact
+            expectedLocalPayloadDigest:
+                try coursePortableStatePayloadDigest(localState),
+            snapshot: snapshot
         )
     }
 
@@ -2576,9 +2578,7 @@ final class WorkspaceStore: ObservableObject {
         snapshot: CoursePortableAdoptionSnapshot
     ) throws -> (
         state: CoursePortableState,
-        statePayloadDigest: String,
-        localPayloadDigest: String,
-        impact: CourseProjectRebindImpact
+        statePayloadDigest: String
     ) {
         guard snapshot.manifest.courseID == existing.id,
               let portableStateData = snapshot.portableStateData else {
@@ -2591,56 +2591,8 @@ final class WorkspaceStore: ObservableObject {
             state,
             courseID: existing.id
         )
-        let localState = try makeCoursePortableState(
-            courseID: existing.id,
-            revision: coursePortableStateRevisions[existing.id] ?? 0,
-            savedAt: Date(timeIntervalSince1970: 0)
-        )
-        let localPayloadDigest = try coursePortableStatePayloadDigest(
-            localState
-        )
-        let comparableLocalState = try localStateByMaterializingSharedItems(
-            localState,
-            using: snapshot.manifest
-        )
-        let comparableLocalDigest = try coursePortableStatePayloadDigest(
-            comparableLocalState
-        )
         let statePayloadDigest = try coursePortableStatePayloadDigest(state)
-        // 真正 digest 相等：无歧义，S6-5 可自动确认。
-        if statePayloadDigest == comparableLocalDigest {
-            return (
-                state,
-                statePayloadDigest,
-                localPayloadDigest,
-                .unchanged
-            )
-        }
-
-        let knownRevision = coursePortableStateRevisions[existing.id]
-        let knownDigest = coursePortableStateDigests[existing.id]
-        let localIsClean = knownDigest == localPayloadDigest
-            && !dirtyPortableCourseIDs.contains(existing.id)
-            && !blockedPortableCourseIDs.contains(existing.id)
-            && !oversizedPortableCourseIDs.contains(existing.id)
-        // H2：分叉 / 本机 dirty / revision 不可比 → keepsLocalState（需确认一次）；
-        // 仅当本机干净且候选 revision 更新时才 useNewerCandidate。
-        guard localIsClean,
-              let knownRevision,
-              state.revision > knownRevision else {
-            return (
-                state,
-                statePayloadDigest,
-                localPayloadDigest,
-                .keepsLocalState
-            )
-        }
-        return (
-            state,
-            statePayloadDigest,
-            localPayloadDigest,
-            .useNewerCandidate
-        )
+        return (state, statePayloadDigest)
     }
 
     private func validateCourseRebindStorage(
@@ -2684,38 +2636,6 @@ final class WorkspaceStore: ObservableObject {
             WeiBeiSafetyTestMode.isEnabled
         )
         try validateCourseRebindStorage(state, courseID: courseID)
-    }
-
-    private func localStateByMaterializingSharedItems(
-        _ rawState: CoursePortableState,
-        using manifest: CourseProjectManifest
-    ) throws -> CoursePortableState {
-        guard let portableExport = manifest.portableExport else {
-            return rawState
-        }
-        var state = rawState
-        for provenance in portableExport.materializedSharedItems {
-            guard let index = state.items.firstIndex(where: {
-                $0.itemID == provenance.itemID
-                    && $0.courseRelativePath
-                        == provenance.courseRelativePath
-            }) else {
-                // S3：无法物化的共享项静默跳过。
-                continue
-            }
-            guard case let .sharedReference(
-                sharedRelativePath,
-                expectedContentDigest
-            ) = state.items[index].storage,
-            sharedRelativePath == provenance.sharedRelativePath,
-            expectedContentDigest == provenance.sourceContentDigest,
-            state.items[index].contentDigest
-                == provenance.sourceContentDigest else {
-                continue
-            }
-            state.items[index].storage = .courseOwned
-        }
-        return try state.validated(expectedCourseID: rawState.courseID)
     }
 
     private func registeredCourseRootIsAvailable(
@@ -2919,9 +2839,14 @@ final class WorkspaceStore: ObservableObject {
                 existing: currentCourse,
                 snapshot: confirmedSnapshot
             )
-            guard evaluation.localPayloadDigest
-                    == proposal.expectedLocalPayloadDigest,
-                  evaluation.impact == proposal.impact else {
+            let currentLocalState = try makeCoursePortableState(
+                courseID: currentCourse.id,
+                revision:
+                    coursePortableStateRevisions[currentCourse.id] ?? 0,
+                savedAt: Date(timeIntervalSince1970: 0)
+            )
+            guard try coursePortableStatePayloadDigest(currentLocalState)
+                    == proposal.expectedLocalPayloadDigest else {
                 throw CourseProjectRebindError.proposalChanged
             }
             guard let courseIndex = courses.firstIndex(where: {
@@ -3033,51 +2958,23 @@ final class WorkspaceStore: ObservableObject {
                         forKey: itemID
                     )
                 }
-                switch evaluation.impact {
-                case .keepsLocalState:
-                    // H2：以本机进度为准，不覆盖；候选 portable 状态 best-effort 冲突备份。
-                    if let candidateData = proposal.snapshot.portableStateData {
-                        let weibei = resolvedRoot.appendingPathComponent(
-                            ".weibei",
-                            isDirectory: true
-                        )
-                        try? FileManager.default.createDirectory(
-                            at: weibei,
-                            withIntermediateDirectories: true
-                        )
-                        let stamp = ISO8601DateFormatter().string(from: Date())
-                            .replacingOccurrences(of: ":", with: "-")
-                        let backupURL = weibei.appendingPathComponent(
-                            "rebind-candidate-conflict-\(stamp).json",
-                            isDirectory: false
-                        )
-                        try? candidateData.write(
-                            to: backupURL,
-                            options: [.atomic]
-                        )
-                    }
-                    dirtyPortableCourseIDs.insert(proposal.courseID)
-                    needsPortableCourseStateBootstrap = true
-                case .unchanged, .useNewerCandidate:
-                    try applyCoursePortableState(
-                        evaluation.state,
-                        courseID: proposal.courseID
-                    )
-                    if let activeNotebookItemID,
-                       reboundNoteItemIDs.contains(activeNotebookItemID) {
-                        noteText =
-                            notesByItemID[activeNotebookItemID] ?? ""
-                    }
-                    coursePortableStateRevisions[proposal.courseID] =
-                        evaluation.state.revision
-                    coursePortableStateDigests[proposal.courseID] =
-                        evaluation.statePayloadDigest
-                    dirtyPortableCourseIDs.remove(proposal.courseID)
-                    blockedPortableCourseIDs.remove(proposal.courseID)
-                    oversizedPortableCourseIDs.remove(proposal.courseID)
-                    needsPortableCourseStateBootstrap =
-                        !dirtyPortableCourseIDs.isEmpty
+                try applyCoursePortableState(
+                    evaluation.state,
+                    courseID: proposal.courseID
+                )
+                if let activeNotebookItemID,
+                   reboundNoteItemIDs.contains(activeNotebookItemID) {
+                    noteText = notesByItemID[activeNotebookItemID] ?? ""
                 }
+                coursePortableStateRevisions[proposal.courseID] =
+                    evaluation.state.revision
+                coursePortableStateDigests[proposal.courseID] =
+                    evaluation.statePayloadDigest
+                dirtyPortableCourseIDs.remove(proposal.courseID)
+                blockedPortableCourseIDs.remove(proposal.courseID)
+                oversizedPortableCourseIDs.remove(proposal.courseID)
+                needsPortableCourseStateBootstrap =
+                    !dirtyPortableCourseIDs.isEmpty
                 guard await persistWorkspaceNow(
                     skippingPortableCourseIDs: [proposal.courseID]
                 ) else {
@@ -3233,6 +3130,12 @@ final class WorkspaceStore: ObservableObject {
                 }
             }
 
+            guard await reconcileCourseFilesNow(
+                courseID: proposal.courseID
+            ) else {
+                throw CourseProjectRootError.workspaceSaveFailed
+            }
+
             stopPreviousScopeIfNeeded()
             if activeCourseSecurityScopeOwnerTokens[scopeKey]
                     == rebindToken {
@@ -3242,13 +3145,6 @@ final class WorkspaceStore: ObservableObject {
             }
             courseDocumentSearchIndex.synchronize(allItems)
             invalidateAgentContext()
-            if !WeiBeiSafetyTestMode.isEnabled {
-                Task { @MainActor [weak self] in
-                    await self?.reconcileCourseFilesNow(
-                        courseID: proposal.courseID
-                    )
-                }
-            }
             shouldStopNewScopeOnFailure = false
             return proposal.courseID
         } catch {
@@ -12767,7 +12663,18 @@ final class WorkspaceStore: ObservableObject {
 
     @discardableResult
     func retryWorkspaceSave() -> Bool {
-        flushPendingWorkspaceSave()
+        (try? waitForCourseFileOperation {
+            _ = self.restorePortableCourseStates()
+            guard self.blockedPortableCourseIDs.isEmpty else {
+                return false
+            }
+            guard await self.reconcileCourseFilesNow(
+                persistsChanges: false
+            ) else {
+                return false
+            }
+            return await self.persistWorkspaceNow()
+        }) ?? false
     }
 
     func importCourseMaterialsFromPanel() {
@@ -17861,24 +17768,33 @@ final class WorkspaceStore: ObservableObject {
         return changed
     }
 
-    func reconcileCourseFilesNow(courseID requestedCourseID: UUID? = nil) async {
-        guard !courseReconciliationInFlight else { return }
-        guard !libraryMigrationInFlight else { return }
+    @discardableResult
+    func reconcileCourseFilesNow(
+        courseID requestedCourseID: UUID? = nil,
+        persistsChanges: Bool = true
+    ) async -> Bool {
+        guard !courseReconciliationInFlight else { return false }
+        guard !libraryMigrationInFlight else { return false }
         courseReconciliationInFlight = true
         defer { courseReconciliationInFlight = false }
+        var succeeded = true
         if let libraryRoot = courseLibraryRootURL {
             try? await ensureCommonContentDirectories(at: libraryRoot)
             discoverTopLevelCourseFolders()
         }
         if await reconcileSharedFilesNow() {
-            _ = await persistWorkspaceNow()
+            if persistsChanges, !(await persistWorkspaceNow()) {
+                succeeded = false
+            }
             courseDocumentSearchIndex.synchronize(allItems)
             invalidateAgentContext()
         }
         let courseIDs = requestedCourseID.map { [$0] } ?? courses.map(\.id)
         for courseID in courseIDs {
             guard activeCourseRemovalTokens[courseID] == nil,
+                  courses.contains(where: { $0.id == courseID }),
                   let root = courseRootURL(for: courseID) else {
+                succeeded = false
                 continue
             }
             do {
@@ -17886,6 +17802,7 @@ final class WorkspaceStore: ObservableObject {
                 guard activeCourseRemovalTokens[courseID] == nil,
                       courses.contains(where: { $0.id == courseID }),
                       courseRootURL(for: courseID) == root else {
+                    succeeded = false
                     continue
                 }
                 var changed = await applyCourseFileObservations(
@@ -17921,11 +17838,14 @@ final class WorkspaceStore: ObservableObject {
                     }
                 }
                 if changed {
-                    _ = await persistWorkspaceNow()
+                    if persistsChanges, !(await persistWorkspaceNow()) {
+                        succeeded = false
+                    }
                     courseDocumentSearchIndex.synchronize(allItems)
                     invalidateAgentContext()
                 }
             } catch {
+                succeeded = false
                 recordCourseLibraryUIFailure(
                     error,
                     operation: "reconcile_course_folder",
@@ -17941,12 +17861,13 @@ final class WorkspaceStore: ObservableObject {
                 }
             }
         }
+        return succeeded
     }
 
     func reconcileCourseFilesForSelfCheck(courseID: UUID? = nil) throws {
         precondition(WeiBeiSafetyTestMode.isEnabled)
         try waitForCourseFileOperation {
-            await self.reconcileCourseFilesNow(courseID: courseID)
+            _ = await self.reconcileCourseFilesNow(courseID: courseID)
         }
     }
 
@@ -19935,18 +19856,7 @@ final class WorkspaceStore: ObservableObject {
     private func restorePortableCourseStates() -> Bool {
         var changed = false
         for courseID in courses.map(\.id) {
-            let cachedState = try? makeCoursePortableState(
-                courseID: courseID,
-                revision: coursePortableStateRevisions[courseID] ?? 0,
-                savedAt: Date(timeIntervalSince1970: 0)
-            )
-            let cachedDigest = cachedState.flatMap {
-                try? coursePortableStatePayloadDigest($0)
-            }
             guard let stateURL = coursePortableStateURL(for: courseID) else {
-                if cachedDigest != coursePortableStateDigests[courseID] {
-                    dirtyPortableCourseIDs.insert(courseID)
-                }
                 continue
             }
             guard FileManager.default.fileExists(atPath: stateURL.path) else {
@@ -19962,85 +19872,24 @@ final class WorkspaceStore: ObservableObject {
                     expectedCourseID: courseID
                 )
                 let diskDigest = try coursePortableStatePayloadDigest(state)
-                let knownRevision = coursePortableStateRevisions[courseID]
-                let localItemIDs = portableItemIDs(
-                    for: courseID, memberships: courseItemMemberships, items: importedItems
-                )
-                if knownRevision != nil,
-                   !localItemIDs.isEmpty,
-                   !localItemIDs.isSubset(of: Set(state.items.map(\.itemID))) {
-                    dirtyPortableCourseIDs.insert(courseID)
-                    blockedPortableCourseIDs.remove(courseID)
-                    changed = true
-                    continue
-                }
-                let knownDigest = coursePortableStateDigests[courseID]
-                if knownRevision == nil || knownDigest == nil {
-                    let canEstablishLegacyBaseline =
-                        knownRevision == nil
-                        && knownDigest == nil
-                        && !dirtyPortableCourseIDs.contains(courseID)
-                        && cachedDigest == diskDigest
-                    guard canEstablishLegacyBaseline else {
-                        dirtyPortableCourseIDs.insert(courseID)
-                        blockedPortableCourseIDs.insert(courseID)
-                        needsPortableCourseStateBootstrap = true
-                        reportWorkspaceSaveFailure(ui(
-                            "“\(course(withID: courseID)?.title ?? "课程")”的本机内容与课程文件夹首次建立可携带基线时不一致，两边均已保留。请先选择要保留的版本，再重试。",
-                            "Local content did not match the course folder while establishing the first portable baseline. Both versions are preserved. Choose which version to keep, then retry."
-                        ))
-                        changed = true
-                        continue
-                    }
-                    // Legacy workspaces are the local source of truth on first upgrade;
-                    // an equal payload just baselines without replaying the disk snapshot.
-                    coursePortableStateRevisions[courseID] = state.revision
-                    coursePortableStateDigests[courseID] = diskDigest
-                    changed = true
-                    continue
-                }
-                guard let knownRevision, let knownDigest else {
-                    // S3：无基线时静默标记脏，不抛冲突。
-                    dirtyPortableCourseIDs.insert(courseID)
-                    blockedPortableCourseIDs.insert(courseID)
-                    needsPortableCourseStateBootstrap = true
-                    changed = true
-                    continue
-                }
-                if dirtyPortableCourseIDs.contains(courseID) {
-                    guard state.revision == knownRevision,
-                          knownDigest == diskDigest else {
-                        blockedPortableCourseIDs.insert(courseID)
-                        // S3：不写常驻 workspaceSaveError 横幅。
-                        continue
-                    }
-                    coursePortableStateRevisions[courseID] =
-                        max(knownRevision, state.revision)
-                    needsPortableCourseStateBootstrap = true
-                    continue
-                }
-                guard state.revision >= knownRevision else {
-                    // 磁盘更旧：保留本机，静默。
-                    continue
-                }
-                if state.revision == knownRevision,
-                   knownDigest != diskDigest {
-                    // 同 revision 不同 digest：标记阻塞，不自动覆盖。
-                    blockedPortableCourseIDs.insert(courseID)
-                    dirtyPortableCourseIDs.insert(courseID)
-                    needsPortableCourseStateBootstrap = true
-                    changed = true
-                    continue
-                }
                 try applyCoursePortableState(state, courseID: courseID)
                 coursePortableStateRevisions[courseID] = state.revision
                 coursePortableStateDigests[courseID] = diskDigest
+                dirtyPortableCourseIDs.remove(courseID)
+                blockedPortableCourseIDs.remove(courseID)
+                oversizedPortableCourseIDs.remove(courseID)
                 changed = true
             } catch {
-                // S3：读取失败静默阻塞，不写常驻错误横幅。
                 blockedPortableCourseIDs.insert(courseID)
                 dirtyPortableCourseIDs.insert(courseID)
                 needsPortableCourseStateBootstrap = true
+                reportWorkspaceSaveFailure(
+                    ui(
+                        "“\(course(withID: courseID)?.title ?? "课程")”的课程状态无法读取；课程文件没有被覆盖。请恢复该课程的状态文件或重新连接原课程文件夹后重试。",
+                        "The course state for “\(course(withID: courseID)?.title ?? "Course")” could not be read. Course files were not overwritten. Restore that course's state file or reconnect its original folder, then retry."
+                    ),
+                    reason: error.localizedDescription
+                )
                 changed = true
             }
         }
@@ -20237,13 +20086,6 @@ final class WorkspaceStore: ObservableObject {
         courseID: UUID
     ) throws {
         let state = try rawState.validated(expectedCourseID: courseID)
-        let localItemIDs = portableItemIDs(
-            for: courseID, memberships: courseItemMemberships, items: importedItems
-        )
-        if !localItemIDs.isEmpty, !localItemIDs.isSubset(of: Set(state.items.map(\.itemID))) {
-            dirtyPortableCourseIDs.insert(courseID)
-            return
-        }
         guard let courseIndex = courses.firstIndex(where: {
             $0.id == courseID
         }),
@@ -20261,10 +20103,45 @@ final class WorkspaceStore: ObservableObject {
             $0.courseRelativePath == nil
         }
         let pathlessItemIDs = Set(pathlessMemberships.map(\.itemID))
+        let stateItemIDs = Set(state.items.map(\.itemID))
+        let unlistedOwnedMemberships = previousMemberships.filter {
+            membership in
+            guard let relativePath = membership.courseRelativePath,
+                  !stateItemIDs.contains(membership.itemID),
+                  let item = importedItems.first(where: {
+                      $0.id == membership.itemID
+                  }),
+                  case .courseOwned(let ownerCourseID, _) = item.storage else {
+                return false
+            }
+            guard ownerCourseID == courseID else { return false }
+            if notesByItemID[membership.itemID] != nil
+                || pendingNoteWritesByItemID[membership.itemID] != nil {
+                return true
+            }
+            guard let url = rawCourseItemURL(
+                relativePath: relativePath,
+                inside: root
+            ) else {
+                return false
+            }
+            switch CourseProjectFileWorker.entryPresence(at: url) {
+            case .present, .presentUnmaterialized, .inaccessible:
+                return true
+            case .absent:
+                return false
+            }
+        }
+        let retainedLocalItemIDs = pathlessItemIDs.union(
+            unlistedOwnedMemberships.map(\.itemID)
+        )
         let previousNoteIDs = Set(
             importedItems.lazy.filter {
                 previousItemIDs.contains($0.id) && $0.isNotebookNote
             }.map(\.id)
+        )
+        let retainedLocalNoteIDs = previousNoteIDs.intersection(
+            retainedLocalItemIDs
         )
         let otherCourseItemIDs = Set(
             courseItemMemberships.lazy.filter {
@@ -20273,7 +20150,8 @@ final class WorkspaceStore: ObservableObject {
         )
         let previousRelationIDs = Set(
             noteSourceLinks.lazy.filter {
-                previousNoteIDs.contains($0.noteItemID)
+                previousItemIDs.contains($0.noteItemID)
+                    && previousItemIDs.contains($0.sourceItemID)
             }.map(\.id)
         )
         let retainedRelationIDs = Set(
@@ -20449,7 +20327,7 @@ final class WorkspaceStore: ObservableObject {
         importedItems.removeAll { item in
             previousItemIDs.contains(item.id)
                 && !otherCourseItemIDs.contains(item.id)
-                && !pathlessItemIDs.contains(item.id)
+                && !retainedLocalItemIDs.contains(item.id)
         }
         for item in restoredItemsByID.values.sorted(by: {
             $0.id < $1.id
@@ -20464,7 +20342,7 @@ final class WorkspaceStore: ObservableObject {
         }
         courseItemMemberships.removeAll { $0.courseID == courseID }
         courseItemMemberships.append(contentsOf: restoredMemberships)
-        for membership in pathlessMemberships
+        for membership in pathlessMemberships + unlistedOwnedMemberships
         where !restoredMemberships.contains(where: {
             $0.itemID == membership.itemID
         }) {
@@ -20524,14 +20402,13 @@ final class WorkspaceStore: ObservableObject {
         )
 
         noteSourceLinks.removeAll {
-            previousNoteIDs.contains($0.noteItemID)
-                && !pathlessItemIDs.contains($0.noteItemID)
+            previousRelationIDs.contains($0.id)
         }
         noteSourceLinks.append(contentsOf: state.noteSourceLinks)
         studyLocationsByCourseID[courseID.uuidString] =
             state.studyLocationsByItemID
-        courseResumePoints.removeAll { $0.courseID == courseID }
-        if let resumePoint = state.resumePoint {
+        if !courseResumePoints.contains(where: { $0.courseID == courseID }),
+           let resumePoint = state.resumePoint {
             courseResumePoints.append(resumePoint)
         }
 
@@ -20540,7 +20417,8 @@ final class WorkspaceStore: ObservableObject {
         )
         // C2：本地有草稿的条目一律保留——未落盘输入永远优先于快照重放。
         for itemID in previousNoteIDs.union(restoredNoteIDs) {
-            if notesByItemID[itemID] != nil {
+            if notesByItemID[itemID] != nil
+                || retainedLocalNoteIDs.contains(itemID) {
                 continue
             }
             setNoteDraft(nil, for: itemID)
@@ -20813,7 +20691,7 @@ final class WorkspaceStore: ObservableObject {
                 blockedPortableCourseIDs.formUnion(conflictedCourseIDs)
                 needsPortableCourseStateBootstrap = true
             }
-            // S3：可携带写回失败静默降级，不抛 stateConflict 拒绝整次保存。
+            // 写回失败时保留磁盘状态与本机候选，不覆盖任一边。
             if !conflictedCourseIDs.isEmpty {
                 needsPortableCourseStateBootstrap = true
             }
