@@ -11,6 +11,7 @@ final class WorkspacePaneState: ObservableObject {
     private var showReaderValue = true
     private var showAgentValue = true
     private var showNotesValue = true
+    private(set) var centersInitialAgentComposer = false
 
     var showReader: Bool {
         get { showReaderValue }
@@ -18,6 +19,7 @@ final class WorkspacePaneState: ObservableObject {
             guard showReaderValue != newValue else { return }
             if !suppressPublish { objectWillChange.send() }
             showReaderValue = newValue
+            if newValue { centersInitialAgentComposer = false }
         }
     }
 
@@ -25,8 +27,11 @@ final class WorkspacePaneState: ObservableObject {
         get { showAgentValue }
         set {
             guard showAgentValue != newValue else { return }
+            let opensFromEmptyWorkspace = newValue
+                && !showReaderValue && !showAgentValue && !showNotesValue
             if !suppressPublish { objectWillChange.send() }
             showAgentValue = newValue
+            centersInitialAgentComposer = opensFromEmptyWorkspace
         }
     }
 
@@ -36,6 +41,7 @@ final class WorkspacePaneState: ObservableObject {
             guard showNotesValue != newValue else { return }
             if !suppressPublish { objectWillChange.send() }
             showNotesValue = newValue
+            if newValue { centersInitialAgentComposer = false }
         }
     }
 
@@ -51,6 +57,7 @@ final class WorkspacePaneState: ObservableObject {
         showNotesValue = visible
         showAgentValue = visible
         suppressPublish = false
+        centersInitialAgentComposer = false
     }
 
     /// Apply multi-pane visibility with a single publish.
@@ -58,12 +65,21 @@ final class WorkspacePaneState: ObservableObject {
         guard showReaderValue != reader
             || showAgentValue != agent
             || showNotesValue != notes else { return }
+        let opensFromEmptyWorkspace = agent && !reader && !notes
+            && !showReaderValue && !showAgentValue && !showNotesValue
         objectWillChange.send()
         suppressPublish = true
         showReaderValue = reader
         showAgentValue = agent
         showNotesValue = notes
         suppressPublish = false
+        centersInitialAgentComposer = opensFromEmptyWorkspace
+    }
+
+    func dockInitialAgentComposer() {
+        guard centersInitialAgentComposer else { return }
+        objectWillChange.send()
+        centersInitialAgentComposer = false
     }
 }
 

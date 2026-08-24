@@ -1485,6 +1485,15 @@ struct AgentPaneView: View {
 
                         agentInputTray(wide: wide)
                             .zIndex(1)
+                            .offset(y: initialComposerOffset(
+                                paneHeight: paneGeometry.size.height,
+                                headerHeight: headerHeight,
+                                wide: wide
+                            ))
+                            .animation(
+                                reduceMotion ? nil : .smooth(duration: 0.42),
+                                value: paneState.centersInitialAgentComposer
+                            )
                             .animation(WeiBeiMotion.panel, value: store.layout)
                             .animation(WeiBeiMotion.panel, value: wide)
                     }
@@ -1549,6 +1558,9 @@ struct AgentPaneView: View {
                     }
                 }
                 .onChange(of: store.messages.map(\.id)) { oldIDs, newIDs in
+                    if oldIDs.isEmpty, !newIDs.isEmpty {
+                        paneState.dockInitialAgentComposer()
+                    }
                     // Only a true append to this conversation widens the mounted window.
                     // Initial restore used to look like a 0 -> N append and mounted the
                     // entire rich history, defeating paging and stalling pane toggles.
@@ -2030,7 +2042,7 @@ struct AgentPaneView: View {
                     verticalPadding: wide ? 12 : 8,
                     showsModelFooter: wide
                 ) {
-                    store.submitAgentDraft()
+                    submitAgentDraft()
                 }
             }
             .weiBeiText(fontSize)
@@ -2041,6 +2053,25 @@ struct AgentPaneView: View {
             .accessibilityIdentifier(wide ? "agent-input-tray-wide" : "agent-input-tray-compact")
         }
         .background(WeiBeiTheme.paper)
+    }
+
+    private func initialComposerOffset(
+        paneHeight: CGFloat,
+        headerHeight: CGFloat,
+        wide: Bool
+    ) -> CGFloat {
+        guard paneState.centersInitialAgentComposer, store.messages.isEmpty else { return 0 }
+        let trayHeight = AgentChatLayoutMetrics.composerHeight(wide: wide) + (wide ? 22 : 16)
+        let availableHeight = max(paneHeight - headerHeight, trayHeight)
+        return -(availableHeight - trayHeight) * 0.45
+    }
+
+    private func submitAgentDraft() {
+        let hasPrompt = !store.agentDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        if hasPrompt {
+            paneState.dockInitialAgentComposer()
+        }
+        store.submitAgentDraft()
     }
 
     private var agentInputMaxWidth: CGFloat? {
