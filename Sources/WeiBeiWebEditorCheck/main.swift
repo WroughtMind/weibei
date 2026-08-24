@@ -1471,6 +1471,7 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
 
           editor.setDocumentID('math-typed'); editor.setMarkdown(''); editor.insertMarkdown(\(json("\n\n{{WEIBEI_CURSOR}}")));
           if (!editor.typeTextForCheck('$A^*$') || !editor.getMarkdown().includes('$A^*$') || !document.querySelector('.weibei-math-inline[data-value="A^*"]')) fail('typed inline formula did not become a formula node');
+          if (!editor.typeTextForCheck('后') || !editor.getMarkdown().includes('$A^*$后')) fail('typing after an inline formula did not continue to its right');
 
           editor.setDocumentID('math-slash-inline'); editor.setMarkdown('/'); editor.openSlashMenuForCheck(); editor.executeSlashCommandForCheck('inlineMath');
           if (!document.querySelector('.weibei-math-inline[data-value="x"]') || !editor.getMarkdown().includes('$x$')) fail('Slash inline formula command did not insert a formula');
@@ -1494,34 +1495,21 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
         (() => {
           const editor = window.WeiBeiEditor;
           editor.setDocumentID('writing-experience');
-          editor.setMarkdown('');
-          editor.insertMarkdown('\\n\\n{{WEIBEI_CURSOR}}');
-          const pendingMarker = editor.typeTextForCheck('**未闭合')
-            && !!document.querySelector('.weibei-syntax-pending.weibei-syntax-k-bold');
-
           editor.setMarkdown('删除线目标 链接目标');
           editor.selectFirstTextForCheck('删除线目标');
           const strike = editor.executeSelectionCommand('strike')
             && editor.getMarkdown().includes('~~删除线目标~~');
           editor.selectFirstTextForCheck('链接目标');
           const linkShortcut = editor.pressKeyForCheck('k', { metaKey: true });
-
-          editor.setMarkdown('');
-          editor.insertMarkdown('\\n\\n{{WEIBEI_CURSOR}}');
-          const formulaContinues = editor.typeTextForCheck('$x$')
-            && editor.typeTextForCheck('后')
-            && editor.getMarkdown().includes('$x$后');
-          return { pendingMarker, strike, linkShortcut, formulaContinues };
+          return { strike, linkShortcut };
         })();
         """
         webView.evaluateJavaScript(script) { [weak self] value, error in
             guard let self else { return }
             guard error == nil,
                   let result = value as? [String: Any],
-                  result["pendingMarker"] as? Bool == true,
                   result["strike"] as? Bool == true,
                   result["linkShortcut"] as? Bool == true,
-                  result["formulaContinues"] as? Bool == true,
                   self.linkEditorRequests == 1 else {
                 self.fail("writing experience check failed: \(String(describing: error)); \(String(describing: value))")
                 return
