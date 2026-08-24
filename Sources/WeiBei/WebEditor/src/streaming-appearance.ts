@@ -21,7 +21,7 @@ const HIDDEN_SYNTAX_SPEC = {
 };
 
 /** Match the CSS animation duration of .wb-stream-in in index.html. */
-const FADE_MILLISECONDS = 200;
+const FADE_MILLISECONDS = 480;
 /** Retire the caret shortly after inserts stop flowing. */
 const CARET_IDLE_MILLISECONDS = 400;
 /** Only animate typing-like inserts; wholesale block rewrites skip the fade.

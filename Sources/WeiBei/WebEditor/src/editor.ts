@@ -3055,7 +3055,11 @@ const appendStreamingMarkdownInternal = (suffix: any) => {
  * The final body is already in the document, so the session can outlive the
  * last push by one fade window and end with every animation completed. */
 let finalizeDelayTimer: number | null = null;
-const FINALIZE_FADE_SETTLE_MILLISECONDS = 220;
+// Must exceed the CSS blur-in window (FADE_MILLISECONDS in
+// streaming-appearance.ts) with headroom: finalizing earlier would unwrap
+// decoration spans while the last characters are still materializing, which
+// reads as the tail flashing once.
+const FINALIZE_FADE_SETTLE_MILLISECONDS = 560;
 const cancelFinalizeDelay = () => {
   if (finalizeDelayTimer == null) return;
   window.clearTimeout(finalizeDelayTimer);
