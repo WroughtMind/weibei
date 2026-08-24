@@ -3341,7 +3341,10 @@ private struct AgentBubble: View {
         .overlay(alignment: .bottomLeading) {
             if !isUser {
                 messageActionBar
-                    .offset(x: 16, y: 16)
+                    // Snug under the last rendered line: the WebView carries its
+                    // own bottom padding, so a large y-offset read as a detached
+                    // floating toolbar (user feedback 2026-08-25).
+                    .offset(x: 16, y: 2)
             }
         }
         .onHover { hovering in
