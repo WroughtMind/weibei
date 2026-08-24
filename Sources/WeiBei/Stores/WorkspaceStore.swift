@@ -2454,7 +2454,13 @@ final class WorkspaceStore: ObservableObject {
         }
 
         _ = restorePortableCourseStates()
+        guard !blockedPortableCourseIDs.contains(existing.id) else {
+            throw CourseProjectRootError.metadataConflict
+        }
         await reconcileCourseFilesNow(courseID: existing.id)
+        guard await persistWorkspaceNow() else {
+            throw CourseProjectRootError.workspaceSaveFailed
+        }
 
         if let previousScope {
             let stopScope = courseSecurityScopeStopper
@@ -6166,6 +6172,7 @@ final class WorkspaceStore: ObservableObject {
         let reserved: Set<String> = [
             CourseLibraryLayout.commonMaterialsDirectoryName,
             CourseLibraryLayout.commonNotesDirectoryName,
+            "共享文稿",
         ]
         let children = (try? FileManager.default.contentsOfDirectory(
             at: libraryRoot,
@@ -6183,16 +6190,44 @@ final class WorkspaceStore: ObservableObject {
                 ensureCourseScaffold(at: child)
                 continue
             }
-            let manifestURL = child
-                .appendingPathComponent(".weibei", isDirectory: true)
-                .appendingPathComponent("course.json")
-            let existingID: UUID?
-            if let data = try? Data(contentsOf: manifestURL),
-               let manifest = try? JSONDecoder().decode(CourseProjectManifest.self, from: data) {
-                existingID = manifest.courseID
+            let metadataURL = child.appendingPathComponent(
+                ".weibei",
+                isDirectory: true
+            )
+            let manifestURL = metadataURL.appendingPathComponent(
+                "course.json"
+            )
+            let existingManifest: CourseProjectManifest?
+            if FileManager.default.fileExists(atPath: metadataURL.path) {
+                let values = try? metadataURL.resourceValues(forKeys: [
+                    .isDirectoryKey,
+                    .isSymbolicLinkKey,
+                    .isAliasFileKey,
+                ])
+                guard values?.isDirectory == true,
+                      values?.isSymbolicLink != true,
+                      values?.isAliasFile != true,
+                      !CourseProjectFileWorker.isSymbolicLink(
+                          at: metadataURL
+                      ),
+                      CourseProjectPathPolicy.isSame(
+                          metadataURL,
+                          metadataURL.resolvingSymlinksInPath()
+                      ),
+                      let data = try? Data(contentsOf: manifestURL),
+                      let manifest = try? JSONDecoder().decode(
+                          CourseProjectManifest.self,
+                          from: data
+                      ) else {
+                    continue
+                }
+                existingManifest = manifest
             } else {
-                existingID = nil
+                existingManifest = nil
             }
+            // 可携带副本必须走完整接管事务，不能被普通目录扫描提前消费封印。
+            guard existingManifest?.portableExport == nil else { continue }
+            let existingID = existingManifest?.courseID
             if let existingID, let index = courses.firstIndex(where: { $0.id == existingID }) {
                 courses[index].title = name
                 courses[index].sourceRootRelativePath = name
@@ -20104,10 +20139,12 @@ final class WorkspaceStore: ObservableObject {
         }
         let pathlessItemIDs = Set(pathlessMemberships.map(\.itemID))
         let stateItemIDs = Set(state.items.map(\.itemID))
+        let stateRelativePaths = Set(state.items.map(\.courseRelativePath))
         let unlistedOwnedMemberships = previousMemberships.filter {
             membership in
             guard let relativePath = membership.courseRelativePath,
                   !stateItemIDs.contains(membership.itemID),
+                  !stateRelativePaths.contains(relativePath),
                   let item = importedItems.first(where: {
                       $0.id == membership.itemID
                   }),
