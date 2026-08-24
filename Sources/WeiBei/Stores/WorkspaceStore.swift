@@ -6755,7 +6755,9 @@ final class WorkspaceStore: ObservableObject {
             self.removeCourseLocalRegistration(courseID)
             removalSucceeded = true
             self.usesBackgroundWorkspacePersistenceForSelfCheck = false
-            guard self.flushPendingWorkspaceSave() else { return false }
+            guard await self.flushPendingWorkspaceSaveAsync() else {
+                return false
+            }
 
             let compensated = try JSONDecoder().decode(
                 PersistedWorkspace.self,
