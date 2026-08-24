@@ -5,18 +5,6 @@ import Foundation
 import WeiBeiCore
 
 enum ImportedIdentitySelfCheck {
-    // TEMP: Remove after CI identifies the slow top-level check.
-    @MainActor
-    private static func timed(_ label: StaticString, _ check: @autoclosure () throws -> Void) rethrows {
-        let start = ProcessInfo.processInfo.systemUptime
-        print("[TEMP ImportedIdentitySelfCheck] START \(label) monotonic=\(start)")
-        defer {
-            let end = ProcessInfo.processInfo.systemUptime
-            print("[TEMP ImportedIdentitySelfCheck] END \(label) monotonic=\(end) elapsed=\(end - start)")
-        }
-        try check()
-    }
-
     @MainActor
     private static func renameNotebookNoteAndWait(
         _ store: WorkspaceStore,
@@ -29,19 +17,19 @@ enum ImportedIdentitySelfCheck {
 
     @MainActor
     static func run() throws {
-        try timed("launchAndPrimaryEntriesStartBlank", launchAndPrimaryEntriesStartBlank())
-        try timed("editorSelectionWaitsForCommandAndAcceptedSnapshot", editorSelectionWaitsForCommandAndAcceptedSnapshot())
-        try timed("paneAndInteractionStateDoNotInvalidateWorkspaceStore", paneAndInteractionStateDoNotInvalidateWorkspaceStore())
-        try timed("agentFailureMessagesExposeOnlyUserFacingDetails", agentFailureMessagesExposeOnlyUserFacingDetails())
-        try timed("storageModelsDecodeLegacySnapshotsAndRoundTrip", storageModelsDecodeLegacySnapshotsAndRoundTrip())
-        try timed("selectionThreadMigrationWaitsForWorkspaceCommit", selectionThreadMigrationWaitsForWorkspaceCommit())
-        try timed("duplicateIdentityMigrationPreservesConflictingDrafts", duplicateIdentityMigrationPreservesConflictingDrafts())
-        try timed("duplicateIdentityPreservesConflictingStorageMetadata", duplicateIdentityPreservesConflictingStorageMetadata())
-        try timed("offlineLegacyPathMigratesWhenItReturns", offlineLegacyPathMigratesWhenItReturns())
-        try timed("legacyChatScopesMigrateOnceAndPersist", legacyChatScopesMigrateOnceAndPersist())
-        try timed("failedLearningMemoryMigrationKeepsLegacySnapshotRecoverable", failedLearningMemoryMigrationKeepsLegacySnapshotRecoverable())
-        try timed("learningMemoryEditsPreserveFullTextAndRetrySave", learningMemoryEditsPreserveFullTextAndRetrySave())
-        try timed("courseResumePointRestoresOneAtomicLearningScene", courseResumePointRestoresOneAtomicLearningScene())
+        try launchAndPrimaryEntriesStartBlank()
+        try editorSelectionWaitsForCommandAndAcceptedSnapshot()
+        try paneAndInteractionStateDoNotInvalidateWorkspaceStore()
+        try agentFailureMessagesExposeOnlyUserFacingDetails()
+        try storageModelsDecodeLegacySnapshotsAndRoundTrip()
+        try selectionThreadMigrationWaitsForWorkspaceCommit()
+        try duplicateIdentityMigrationPreservesConflictingDrafts()
+        try duplicateIdentityPreservesConflictingStorageMetadata()
+        try offlineLegacyPathMigratesWhenItReturns()
+        try legacyChatScopesMigrateOnceAndPersist()
+        try failedLearningMemoryMigrationKeepsLegacySnapshotRecoverable()
+        try learningMemoryEditsPreserveFullTextAndRetrySave()
+        try courseResumePointRestoresOneAtomicLearningScene()
     }
 
     @MainActor
@@ -1860,7 +1848,8 @@ enum ImportedIdentitySelfCheck {
         let store = WorkspaceStore(
             workspaceDirectory: fixture.workspaceDirectory,
             importedFileIdentityResolver: { url in url.path == noteURL.path ? identity : nil },
-            selectionAskThreadDefaults: fixture.selectionAskThreadDefaults
+            selectionAskThreadDefaults: fixture.selectionAskThreadDefaults,
+            startsCourseFileMaintenance: false
         )
         let diskBytesBeforeMigration = try Data(contentsOf: noteURL)
         store.flushPendingNotePersistence()
@@ -1892,7 +1881,8 @@ enum ImportedIdentitySelfCheck {
         let reopenedStore = WorkspaceStore(
             workspaceDirectory: fixture.workspaceDirectory,
             importedFileIdentityResolver: { url in url.path == noteURL.path ? identity : nil },
-            selectionAskThreadDefaults: fixture.selectionAskThreadDefaults
+            selectionAskThreadDefaults: fixture.selectionAskThreadDefaults,
+            startsCourseFileMaintenance: false
         )
         reopenedStore.flushPendingNotePersistence()
         let reopenedSnapshot = try fixture.readSnapshot()
