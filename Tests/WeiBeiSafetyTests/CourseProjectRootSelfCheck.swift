@@ -2825,14 +2825,6 @@ enum CourseProjectRootSelfCheck {
         let courseBStateURL = courseBRoot.appendingPathComponent(
             ".weibei/course-state.json"
         )
-        func tracePortableState(_ label: String) {
-            print(
-                "[TEMP CoursePortable] \(label)"
-                    + " courseA=\(stateURL.exists)"
-                    + " courseB=\(courseBStateURL.exists)"
-            )
-        }
-        tracePortableState("initial")
         let stateData = try Data(contentsOf: stateURL)
         let courseBStateData = try Data(contentsOf: courseBStateURL)
         let state = try JSONDecoder().decode(
@@ -2965,7 +2957,6 @@ enum CourseProjectRootSelfCheck {
             to: baselineWorkspace.appendingPathComponent("workspace.json"),
             options: [.atomic]
         )
-        tracePortableState("baseline")
         let baselineDiskState = try Data(contentsOf: stateURL)
         let baselineConflictStore = makeStore(
             fixture: fixture,
@@ -3032,7 +3023,6 @@ enum CourseProjectRootSelfCheck {
             withCourseID: courseB
         )
         try check(store.flushPendingWorkspaceSave(), "共享资料状态没有写入")
-        tracePortableState("shared")
         let sharedStateData = try Data(contentsOf: stateURL)
         let sharedState = try JSONDecoder().decode(
             CoursePortableState.self,
@@ -3289,7 +3279,6 @@ enum CourseProjectRootSelfCheck {
             casStore.flushPendingWorkspaceSave(),
             "状态 CAS 竞态没有完成真实写盘"
         )
-        tracePortableState("cas")
         let conflictStateURLs = try FileManager.default
             .contentsOfDirectory(
                 at: stateURL.deletingLastPathComponent(),
@@ -3363,7 +3352,6 @@ enum CourseProjectRootSelfCheck {
             swappedUnreadableStore.flushPendingWorkspaceSave(),
             "不可读状态竞态没有完成真实写盘"
         )
-        tracePortableState("swapped-unreadable")
         let unreadableConflictURLs = try FileManager.default
             .contentsOfDirectory(
                 at: stateURL.deletingLastPathComponent(),
@@ -3433,7 +3421,6 @@ enum CourseProjectRootSelfCheck {
             !firstCreateRollbackStore.flushPendingWorkspaceSave(),
             "测试注入的工作区保存失败却返回成功"
         )
-        tracePortableState("first-create-rollback")
         let rollbackConflictURLs = try FileManager.default
             .contentsOfDirectory(
                 at: stateURL.deletingLastPathComponent(),
@@ -3491,7 +3478,6 @@ enum CourseProjectRootSelfCheck {
             at: courseARoot,
             title: "已有状态回滚并发"
         )
-        tracePortableState("existing-rollback-baseline")
         let existingRollbackBaseline = try Data(contentsOf: stateURL)
         injectExistingRollbackFailure = true
         existingRollbackStore.renameCourse(
@@ -3502,7 +3488,6 @@ enum CourseProjectRootSelfCheck {
             !existingRollbackStore.flushPendingWorkspaceSave(),
             "测试注入的已有状态保存失败却返回成功"
         )
-        tracePortableState("existing-rollback")
         let existingRollbackArtifacts = try FileManager.default
             .contentsOfDirectory(
                 at: stateURL.deletingLastPathComponent(),
@@ -3589,7 +3574,6 @@ enum CourseProjectRootSelfCheck {
             at: courseARoot,
             title: "已有状态不可读回滚"
         )
-        tracePortableState("unreadable-rollback-baseline")
         let unreadableRollbackBaseline = try Data(contentsOf: stateURL)
         injectUnreadableRollbackFailure = true
         unreadableRollbackStore.renameCourse(
@@ -3600,7 +3584,6 @@ enum CourseProjectRootSelfCheck {
             !unreadableRollbackStore.flushPendingWorkspaceSave(),
             "测试注入的不可读状态保存失败却返回成功"
         )
-        tracePortableState("unreadable-rollback")
         let unreadableRollbackArtifacts = try FileManager.default
             .contentsOfDirectory(
                 at: stateURL.deletingLastPathComponent(),
@@ -3735,6 +3718,7 @@ enum CourseProjectRootSelfCheck {
             title: "写入失败课程"
         )
         failingStore.renameCourse(courseA, title: "不应落盘的名称")
+        _ = failingStore.flushPendingWorkspaceSave()
         // S3：可携带写失败静默降级；磁盘已提交状态不得被半截覆盖，错误可不写常驻横幅。
         try check(
             Data(contentsOf: stateURL) == beforeFailedWrite,
@@ -3800,6 +3784,7 @@ enum CourseProjectRootSelfCheck {
             courseA,
             title: "不得写入替换目录"
         )
+        _ = directoryRaceStore?.flushPendingWorkspaceSave()
         let replacementStateURL = metadataDirectory
             .appendingPathComponent("course-state.json")
         let movedStateURL = movedMetadataDirectory
