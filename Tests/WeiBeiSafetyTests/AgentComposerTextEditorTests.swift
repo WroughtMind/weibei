@@ -4,6 +4,26 @@ import XCTest
 
 final class AgentComposerTextEditorTests: XCTestCase {
     @MainActor
+    func testComposerFocusRequestFocusesTheNativeTextEditor() {
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 200, height: 88),
+            styleMask: .borderless,
+            backing: .buffered,
+            defer: false
+        )
+        let scrollView = AgentComposerNativeScrollView(
+            frame: NSRect(x: 16, y: 58, width: 168, height: 18)
+        )
+        let textView = NSTextView()
+        scrollView.documentView = textView
+        window.contentView?.addSubview(scrollView)
+
+        scrollView.applyFocusRequest(1)
+
+        XCTAssertTrue(window.firstResponder === textView)
+    }
+
+    @MainActor
     func testSoftWrappedTextGrowsUntilTheLineLimit() {
         let textView = NSTextView()
         textView.font = .systemFont(ofSize: 16.5)

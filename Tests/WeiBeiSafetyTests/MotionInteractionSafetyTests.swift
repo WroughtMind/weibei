@@ -60,6 +60,26 @@ final class MotionInteractionSafetyTests: XCTestCase {
         XCTAssertEqual(store.transientNoteStatus, "临时提示")
     }
 
+    @MainActor
+    func testInitialChatComposerCentersOnlyWhenChatOpensFromEmptyWorkspace() {
+        let paneState = WorkspacePaneState()
+
+        paneState.setDocumentPanes(reader: false, agent: false, notes: false)
+        paneState.showAgent = true
+        XCTAssertTrue(paneState.centersInitialAgentComposer)
+
+        paneState.dockInitialAgentComposer()
+        XCTAssertFalse(paneState.centersInitialAgentComposer)
+
+        paneState.setDocumentPanes(reader: true, agent: true, notes: true)
+        paneState.showReader = false
+        paneState.showNotes = false
+        XCTAssertFalse(
+            paneState.centersInitialAgentComposer,
+            "closing other panes around an already-open chat must not re-center its composer"
+        )
+    }
+
     /// Recovery retracts the banner: when a note's file error clears and the
     /// banner still shows that exact message (with no other item failing on the
     /// same message), the banner is dismissed instead of lingering as a false alarm.

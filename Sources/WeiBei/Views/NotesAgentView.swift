@@ -205,8 +205,10 @@ struct PaneHeaderReorderModifier: ViewModifier {
 
 private struct AgentComposerField: View {
     @EnvironmentObject private var store: WorkspaceStore
+    @Environment(\.weiBeiTextScale) private var textScale
     @State private var editorHeight: CGFloat = 0
     @State private var editorActive = false
+    @State private var focusRequest = 0
     var prompt: String
     var focused: FocusState<Bool>.Binding
     var fontSize: CGFloat
@@ -242,8 +244,10 @@ private struct AgentComposerField: View {
     var body: some View {
         // Soft-wrapped text grows the whole surface until the configured cap.
         let corner: CGFloat = isWideComposer ? 24 : WeiBeiMetric.controlRadius
+        let textHeight = max(editorHeight, fontSize + 3)
+        let reservedControlHeight = sendButtonSize * textScale + verticalPadding * 2
         VStack(alignment: .leading, spacing: 0) {
-            ZStack(alignment: isWideComposer ? .leading : .topLeading) {
+            ZStack(alignment: .topLeading) {
                 AgentComposerTextEditor(
                     text: $store.agentDraft,
                     measuredHeight: $editorHeight,
@@ -251,12 +255,13 @@ private struct AgentComposerField: View {
                     focused: focused,
                     fontSize: fontSize,
                     lineLimit: lineLimit,
+                    focusRequest: focusRequest,
                     appearanceMode: store.appearanceMode,
                     accessibilityLabel: prompt,
                     submit: submit
                 )
                 .frame(maxWidth: .infinity)
-                .frame(height: max(editorHeight, fontSize + 3))
+                .frame(height: textHeight)
 
                 if store.agentDraft.isEmpty && !editorActive {
                     Text(prompt)
@@ -268,23 +273,25 @@ private struct AgentComposerField: View {
             }
             .padding(.top, verticalPadding)
             .padding(.bottom, showsModelFooter ? 6 : verticalPadding)
-            .padding(.trailing, showsModelFooter ? 0 : (showsControl ? trailingPadding : 0))
+            .padding(.trailing, showsModelFooter ? 0 : trailingPadding)
             .padding(.horizontal, horizontalPadding)
             .frame(
                 maxWidth: .infinity,
                 minHeight: isWideComposer
                     ? nil
-                    : CGFloat(SelectionFloatingAgentPlacement.composerControlHostMinimumHeight(
-                        composerMinimumHeight: Double(height)
-                    )),
+                    : max(
+                        CGFloat(SelectionFloatingAgentPlacement.composerControlHostMinimumHeight(
+                            composerMinimumHeight: Double(height)
+                        )),
+                        reservedControlHeight
+                    ),
                 maxHeight: isWideComposer ? .infinity : nil,
-                alignment: isWideComposer ? .leading : .topLeading
+                alignment: .leading
             )
-            .overlay(alignment: .bottomTrailing) {
+            .overlay(alignment: .trailing) {
                 if showsControl && !showsModelFooter {
                     sendButton
                         .padding(.trailing, sendTrailing)
-                        .padding(.bottom, sendBottom)
                 }
             }
 
@@ -295,8 +302,15 @@ private struct AgentComposerField: View {
                         .foregroundStyle(WeiBeiTheme.tertiaryInk)
                         .lineLimit(1)
                     Spacer(minLength: 8)
-                    if showsControl {
-                        sendButton
+                    ZStack {
+                        Color.clear
+                            .frame(
+                                width: sendButtonSize * textScale,
+                                height: sendButtonSize * textScale
+                            )
+                        if showsControl {
+                            sendButton
+                        }
                     }
                 }
                 .padding(.leading, horizontalPadding)
@@ -319,9 +333,9 @@ private struct AgentComposerField: View {
             focused: focused.wrappedValue,
             showsChrome: showsChrome
         )
-        .contentShape(Rectangle())
+        .contentShape(RoundedRectangle(cornerRadius: corner))
         .onTapGesture {
-            focused.wrappedValue = true
+            focusRequest &+= 1
         }
         .onChange(of: store.agentDraft) { _, _ in
             guard focused.wrappedValue else { return }
@@ -1485,6 +1499,15 @@ struct AgentPaneView: View {
 
                         agentInputTray(wide: wide)
                             .zIndex(1)
+                            .offset(y: initialComposerOffset(
+                                paneHeight: paneGeometry.size.height,
+                                headerHeight: headerHeight,
+                                wide: wide
+                            ))
+                            .animation(
+                                reduceMotion ? nil : .smooth(duration: 0.42),
+                                value: paneState.centersInitialAgentComposer
+                            )
                             .animation(WeiBeiMotion.panel, value: store.layout)
                             .animation(WeiBeiMotion.panel, value: wide)
                     }
@@ -1549,6 +1572,9 @@ struct AgentPaneView: View {
                     }
                 }
                 .onChange(of: store.messages.map(\.id)) { oldIDs, newIDs in
+                    if oldIDs.isEmpty, !newIDs.isEmpty {
+                        paneState.dockInitialAgentComposer()
+                    }
                     // Only a true append to this conversation widens the mounted window.
                     // Initial restore used to look like a 0 -> N append and mounted the
                     // entire rich history, defeating paging and stalling pane toggles.
@@ -2030,7 +2056,7 @@ struct AgentPaneView: View {
                     verticalPadding: wide ? 12 : 8,
                     showsModelFooter: wide
                 ) {
-                    store.submitAgentDraft()
+                    submitAgentDraft()
                 }
             }
             .weiBeiText(fontSize)
@@ -2041,6 +2067,25 @@ struct AgentPaneView: View {
             .accessibilityIdentifier(wide ? "agent-input-tray-wide" : "agent-input-tray-compact")
         }
         .background(WeiBeiTheme.paper)
+    }
+
+    private func initialComposerOffset(
+        paneHeight: CGFloat,
+        headerHeight: CGFloat,
+        wide: Bool
+    ) -> CGFloat {
+        guard paneState.centersInitialAgentComposer, store.messages.isEmpty else { return 0 }
+        let trayHeight = AgentChatLayoutMetrics.composerHeight(wide: wide) + (wide ? 22 : 16)
+        let availableHeight = max(paneHeight - headerHeight, trayHeight)
+        return -(availableHeight - trayHeight) * 0.45
+    }
+
+    private func submitAgentDraft() {
+        let hasPrompt = !store.agentDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        if hasPrompt {
+            paneState.dockInitialAgentComposer()
+        }
+        store.submitAgentDraft()
     }
 
     private var agentInputMaxWidth: CGFloat? {
