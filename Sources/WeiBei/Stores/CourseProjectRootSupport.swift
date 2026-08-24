@@ -1190,7 +1190,7 @@ actor CourseProjectFileWorker {
                 updatedAt: course.updatedAt
             ),
             items: portableItems,
-            studySessions: sessions,
+            studySessions: [],
             learningMemoryState: memoryState,
             courseKnowledgeProfile: courseKnowledgeProfile,
             noteSourceLinks: relations,

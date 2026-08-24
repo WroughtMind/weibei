@@ -17,6 +17,11 @@ final class WorkspaceSafetyTests: XCTestCase {
     }
 
     @MainActor
+    func testLegacyPathIdentityMigration() async throws {
+        try await ImportedIdentitySelfCheck.runLegacyPathMigrationOnly()
+    }
+
+    @MainActor
     func testCourseProjectDataSafety() throws {
         try CourseProjectRootSelfCheck.run()
     }
@@ -91,6 +96,10 @@ final class WorkspaceSafetyTests: XCTestCase {
         try await store.configureCourseLibraryAsync(at: library)
         let courseID = try await store.createCourseInLibraryAsync(title: "真实回执课")
         let session = try XCTUnwrap(store.createStudySession(courseID: courseID))
+        _ = try store.appendPortableCourseMessageForSelfCheck(
+            courseID: courseID,
+            text: "回滚前已保存的问题"
+        )
         let persisted = await store.flushPendingWorkspaceSaveAsync()
         XCTAssertTrue(persisted)
         let target = WorkspaceStore.AgentConversationTarget(

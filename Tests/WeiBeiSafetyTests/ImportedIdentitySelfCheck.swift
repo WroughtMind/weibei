@@ -22,7 +22,6 @@ enum ImportedIdentitySelfCheck {
         try paneAndInteractionStateDoNotInvalidateWorkspaceStore()
         try agentFailureMessagesExposeOnlyUserFacingDetails()
         try storageModelsDecodeLegacySnapshotsAndRoundTrip()
-        try legacyPathSnapshotMigratesItsEntireRelationshipGraph()
         try selectionThreadMigrationWaitsForWorkspaceCommit()
         try duplicateIdentityMigrationPreservesConflictingDrafts()
         try duplicateIdentityPreservesConflictingStorageMetadata()
@@ -1772,7 +1771,7 @@ enum ImportedIdentitySelfCheck {
     }
 
     @MainActor
-    private static func legacyPathSnapshotMigratesItsEntireRelationshipGraph() throws {
+    static func runLegacyPathMigrationOnly() async throws {
         let fixture = try WorkspaceFixture(name: "legacy-graph")
         defer { fixture.remove() }
 
@@ -1896,8 +1895,9 @@ enum ImportedIdentitySelfCheck {
         try check(store.activeStudySession?.groupingMaterialItemID == material.id, "学习会话分组资料仍指向旧身份")
         try check(store.selectionAskThreads.first?.itemID == material.id, "选区问答线程仍指向旧资料身份")
         try check(store.selectionAskThreads.first?.messageIDs == selectionThread.messageIDs, "选区问答线程消息关系在资料 ID 迁移时丢失")
+        let migratedWorkspaceSaved = await store.flushPendingWorkspaceSaveAsync()
         try check(
-            store.flushPendingWorkspaceSave(),
+            migratedWorkspaceSaved,
             "资料 ID 迁移后工作区无法保存：\(store.workspaceSaveError ?? "无失败原因（疑似落盘等待超时）")"
         )
         let migratedSnapshot = try fixture.readSnapshot()
@@ -1940,7 +1940,12 @@ enum ImportedIdentitySelfCheck {
 
         let diskTextBeforeConflict = try String(contentsOf: noteURL, encoding: .utf8)
         store.select(itemID: "sample-pdf")
-        store.flushPendingNotePersistence()
+        store.flushPendingNotePersistence(flushWorkspace: false)
+        let migratedNoteStateSaved = await store.flushPendingWorkspaceSaveAsync()
+        try check(
+            migratedNoteStateSaved,
+            "资料 ID 迁移后的笔记状态无法保存"
+        )
         let diskTextAfterConflict = try String(contentsOf: noteURL, encoding: .utf8)
         let persisted = try fixture.readSnapshot()
         // S2：身份迁移后草稿会按三件套静默写回；成功则 notes 清空、磁盘为草稿正文。

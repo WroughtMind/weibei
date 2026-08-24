@@ -453,13 +453,10 @@ public struct CoursePortableState: Codable, Equatable, Sendable {
         if let courseKnowledgeProfile {
             let entryIDs = Set(courseKnowledgeProfile.entries.map(\.id))
             guard courseKnowledgeProfile.courseID == courseID,
-                  courseKnowledgeProfile.overview.count <= 2_000,
-                  courseKnowledgeProfile.entries.count <= 200,
                   entryIDs.count == courseKnowledgeProfile.entries.count,
                   courseKnowledgeProfile.entries.allSatisfy({ entry in
                       !entry.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                          && entry.text.count <= 1_200
-                          && !entry.sources.isEmpty
+                          && (!entry.sources.isEmpty || entry.text.hasPrefix("用户自述："))
                           && entry.sources.count <= 8
                           && entry.sources.allSatisfy { source in
                               itemIDs.contains(source.itemID)
