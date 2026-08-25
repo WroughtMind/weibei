@@ -62,7 +62,7 @@ struct AgentVisualizationView: View {
                         )
                     },
                     onAction: { action, payloadJSON in
-                        store.submitAgentVisualizationAction(action, payloadJSON: payloadJSON)
+                        store.submitAgentVisualizationAction(action, payloadJSON: payloadJSON)?.message(store.ui)
                     },
                     onFailure: handleFailure
                 )

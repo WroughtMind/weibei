@@ -55,10 +55,18 @@ extension WorkspaceStore {
     }
 
     func showImportantOperationError(_ message: String) {
+        importantOperationNotice = nil
+        importantOperationError = message
+    }
+
+    /// 带 notice 的重载:横幅文案照旧由失败现场生成,同时记录类型化身份供按语义断言。
+    func showImportantOperationError(_ notice: ImportantOperationNotice, message: String) {
+        importantOperationNotice = notice
         importantOperationError = message
     }
 
     func dismissImportantOperationError() {
+        importantOperationNotice = nil
         importantOperationError = nil
     }
 }

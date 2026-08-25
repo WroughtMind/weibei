@@ -72,7 +72,10 @@ final class AgentVisualizationSizingTests: XCTestCase {
             payloadJSON: "{}"
         )
 
-        XCTAssertTrue(rejection?.contains("Chat") == true)
+        guard case .agentRefused = rejection else {
+            XCTFail("expected an askAgent refusal, got \(String(describing: rejection))")
+            return
+        }
         XCTAssertNil(store.agentRequestTask)
     }
 
@@ -84,7 +87,7 @@ final class AgentVisualizationSizingTests: XCTestCase {
         )
         let action = String(repeating: "动作", count: 101)
         let rejection = store.submitAgentVisualizationAction(action, payloadJSON: "{}")
-        XCTAssertTrue(rejection?.contains("过长") == true)
+        XCTAssertEqual(rejection, .actionNameTooLong)
     }
 
     @MainActor

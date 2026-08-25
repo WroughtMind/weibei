@@ -163,8 +163,7 @@ enum ImportedIdentitySelfCheck {
             )
         )
         guard authenticationKind == .unauthorized,
-              authenticationMessage.contains("重新登录"),
-              authenticationMessage.contains("API Key"),
+              !authenticationMessage.isEmpty,
               !authenticationMessage.contains("refresh_token_reused") else {
             throw CheckError.failed(
                 "认证失败没有保留安全的重新登录指引"

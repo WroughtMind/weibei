@@ -318,7 +318,7 @@ extension WorkspaceStore {
                 WeiBeiLog.noteRepair.error(
                     "code=note_conflict_backup_failed path=\(fileURL?.path ?? documentID, privacy: .private) reason=\(error.localizedDescription, privacy: .private)"
                 )
-                showImportantOperationError(conflict.checkpointIsPersisted
+                showImportantOperationError(.noteWriteSafetyHold(fileName: fileName), message: conflict.checkpointIsPersisted
                     ? ui(
                         "暂时无法采用“\(fileName)”的磁盘版本。未写内容已保存在魏碑中，请重试。",
                         "Could not use the disk version of \(fileName). Unsaved content is stored in WeiBei; please retry."
@@ -411,7 +411,7 @@ extension WorkspaceStore {
                 WeiBeiLog.noteRepair.error(
                     "code=note_conflict_restore_failed path=\(fileURL.path, privacy: .private) reason=\(error.localizedDescription, privacy: .private)"
                 )
-                showImportantOperationError(draftPersisted || recoveryPersisted
+                showImportantOperationError(.noteWriteSafetyHold(fileName: fileName), message: draftPersisted || recoveryPersisted
                     ? ui(
                         "暂时无法恢复“\(fileName)”中的魏碑内容。待写内容和冲突已保存在魏碑中，请重试。",
                         "Could not restore WeiBei content to \(fileName). The unsaved content and conflict are stored in WeiBei; please retry."

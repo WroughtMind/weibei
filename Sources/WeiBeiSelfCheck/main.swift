@@ -119,11 +119,13 @@ expect(EmptyWorkspaceDayPeriod(hour: 5) == .morning
     && EmptyWorkspaceDayPeriod(hour: 22) == .evening
     && EmptyWorkspaceDayPeriod(hour: 23) == .lateNight
     && EmptyWorkspaceDayPeriod(hour: 4) == .lateNight, "empty workspace greeting follows morning, midday, evening, and late-night boundaries")
-expect(EmptyWorkspaceDayPeriod.morning.greeting(language: .chinese).contains("早安")
-    && EmptyWorkspaceDayPeriod.midday.greeting(language: .chinese).contains("午安")
-    && EmptyWorkspaceDayPeriod.evening.greeting(language: .chinese).contains("晚安")
-    && EmptyWorkspaceDayPeriod.lateNight.greeting(language: .chinese).contains("夜深")
-    && !EmptyWorkspaceDayPeriod.morning.greeting(language: .english).isEmpty, "empty workspace greetings stay localized and non-empty")
+expect(EmptyWorkspaceDayPeriod.allCases.allSatisfy { period in
+        let chinese = period.greeting(language: .chinese)
+        let english = period.greeting(language: .english)
+        return !chinese.isEmpty && !english.isEmpty && chinese != english
+    }
+    && Set(EmptyWorkspaceDayPeriod.allCases.map { $0.greeting(language: .chinese) }).count == EmptyWorkspaceDayPeriod.allCases.count,
+    "empty workspace greetings stay localized and distinct per period")
 expect(!AgentHistoryRevealPolicy.shouldRevealEarlierPage(
         distanceFromTop: 0,
         isUserScrolling: false,

@@ -51,10 +51,8 @@ final class WorkspaceSafetyTests: XCTestCase {
 
         XCTAssertFalse(store.flushPendingWorkspaceSave())
         XCTAssertEqual(store.noteText, "尚未写入的正文")
-        let message = try XCTUnwrap(store.workspaceSaveError)
-        XCTAssertTrue(message.contains("尚未安全保存"))
-        XCTAssertTrue(message.contains("重试"))
-        XCTAssertFalse(message.contains("/private/secret"))
+        XCTAssertEqual(store.workspaceSaveFailure?.kind, .workspaceChangesUnwritten)
+        XCTAssertFalse(store.workspaceSaveError?.contains("/private/secret") == true)
     }
 
     @MainActor

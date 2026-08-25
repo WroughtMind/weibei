@@ -178,7 +178,7 @@ extension WorkspaceStore {
                 WeiBeiLog.noteRepair.error(
                     "code=note_rename_backup_failed path=\(oldURL.path, privacy: .private) reason=\(error.localizedDescription, privacy: .private)"
                 )
-                showImportantOperationError(draftPersisted
+                showImportantOperationError(.noteWriteSafetyHold(fileName: oldURL.lastPathComponent), message: draftPersisted
                     ? ui(
                         "无法安全备份“\(oldURL.lastPathComponent)”，魏碑没有重命名或改写文件。最新正文已保存在魏碑中，请重试。",
                         "Could not safely back up \(oldURL.lastPathComponent), so WeiBei did not rename or rewrite it. The latest text is stored in WeiBei; please retry."
@@ -517,6 +517,7 @@ extension WorkspaceStore {
             if let cleared,
                importantOperationError == cleared,
                !noteOperationErrorsByItemID.values.contains(cleared) {
+                importantOperationNotice = nil
                 importantOperationError = nil
             }
         }
@@ -636,7 +637,7 @@ extension WorkspaceStore {
                 WeiBeiLog.noteRepair.error(
                     "code=note_backup_failed path=\(url.path, privacy: .private) reason=\(error.localizedDescription, privacy: .private)"
                 )
-                showImportantOperationError(draftPersisted
+                showImportantOperationError(.noteWriteSafetyHold(fileName: url.lastPathComponent), message: draftPersisted
                     ? ui(
                         "无法安全备份“\(url.lastPathComponent)”的外部版本，魏碑已停止覆盖。待写内容已保存在魏碑中，请重试。",
                         "Could not safely back up the external version of \(url.lastPathComponent), so WeiBei stopped overwriting it. Unsaved content is stored in WeiBei; please retry."
@@ -677,7 +678,7 @@ extension WorkspaceStore {
             WeiBeiLog.noteRepair.error(
                 "code=note_write_failed path=\(url.path, privacy: .private) reason=\(error.localizedDescription, privacy: .private)"
             )
-            showImportantOperationError(draftPersisted
+            showImportantOperationError(.noteWriteSafetyHold(fileName: url.lastPathComponent), message: draftPersisted
                 ? ui(
                     "无法写入“\(url.lastPathComponent)”。待写内容已保存在魏碑中，请重试。",
                     "Could not write \(url.lastPathComponent). Unsaved content is kept in WeiBei; please retry."
@@ -722,7 +723,7 @@ extension WorkspaceStore {
                     "Could not reread \(url.lastPathComponent). Unsaved content remains in this session but is not safely stored yet; do not close it, and retry."
                 )
             setNoteFileError(message, for: itemID)
-            showImportantOperationError(message)
+            showImportantOperationError(.noteWriteSafetyHold(fileName: url.lastPathComponent), message: message)
             return
         }
         let baseDigest = noteBackingContentDigestsByItemID[itemID]
@@ -841,12 +842,12 @@ extension WorkspaceStore {
                 "无法确认“\(fileName)”的磁盘内容，已暂停写入。待写内容已保存在魏碑中，请重试。",
                 "Could not verify the disk content of \(fileName), so writing was paused. Unsaved content is stored in WeiBei; please retry."
             )
-            : ui(
-                "无法确认“\(fileName)”的磁盘内容，已暂停写入。待写内容仍在本次会话中，但尚未安全保存；请不要关闭并重试。",
-                "Could not verify the disk content of \(fileName), so writing was paused. Unsaved content remains in this session but is not safely stored yet; do not close it, and retry."
-            )
+                : ui(
+                    "无法确认“\(fileName)”的磁盘内容，已暂停写入。待写内容仍在本次会话中，但尚未安全保存；请不要关闭并重试。",
+                    "Could not verify the disk content of \(fileName), so writing was paused. Unsaved content remains in this session but is not safely stored yet; do not close it, and retry."
+                )
         setNoteFileError(message, for: itemID)
-        showImportantOperationError(message)
+        showImportantOperationError(.noteWriteSafetyHold(fileName: fileName), message: message)
     }
 
     func persistNote(_ markdown: String, for item: StudyItem) {
