@@ -3520,6 +3520,20 @@ private struct AgentBubble: View {
             .contentShape(Rectangle())
     }
 
+    private var hasVisualBlocks: Bool {
+        message.contentBlocks.contains { block in
+            if case .text = block { return false }
+            return true
+        }
+    }
+
+    private var visualBlockCount: Int {
+        message.contentBlocks.count { block in
+            if case .text = block { return false }
+            return true
+        }
+    }
+
     private var regularMessageContent: some View {
         let answerText = liveStreamingText ?? store.agentDisplayText(for: message)
         let citationParse = AgentCitationParser.parse(answerText)
@@ -3539,10 +3553,11 @@ private struct AgentBubble: View {
         let isAwaitingFirstToken = message.completionState == .generating
             && answerText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         return VStack(alignment: .leading, spacing: 8) {
-            if message.contentBlocks.contains(where: {
-                if case .text = $0 { return false }
-                return true
-            }) {
+            // 流式期间 viz 块只以骨架占位,整篇回答保持单一渲染表面:
+            // 中途切到逐块布局会为每个文本块冷挂载一个新 WebView,
+            // 整篇从头重排(流式中肉眼可见的"刷新一下")。结构切换
+            // 推迟到定稿,与高度收敛同时发生。
+            if hasVisualBlocks, !isStreaming {
                 visualizedMessageFlow(
                     fallbackText: citationParse.displayText,
                     visibleText: answerText
@@ -3570,6 +3585,9 @@ private struct AgentBubble: View {
                     }
                 }
                 .onAppear { WeiBeiPerf.event("agent.mdrow", extra: "where=bubblePlain msg=\(message.id.uuidString.prefix(8)) streaming=\(isStreaming ? 1 : 0) textlen=\(citationParse.displayText.count) blocks=\(message.contentBlocks.count)") }
+                if hasVisualBlocks, isStreaming {
+                    AgentStreamingVisualizationScaffold(count: visualBlockCount)
+                }
             }
             if !availableSources.isEmpty {
                 AgentReplySourceTagRow(sources: availableSources) { source in
