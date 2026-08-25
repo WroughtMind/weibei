@@ -22,8 +22,6 @@ const HIDDEN_SYNTAX_SPEC = {
 
 /** Match the CSS animation duration of .wb-stream-in in index.html. */
 const FADE_MILLISECONDS = 480;
-/** Retire the caret shortly after inserts stop flowing. */
-const CARET_IDLE_MILLISECONDS = 400;
 /** Only animate typing-like inserts; wholesale block rewrites skip the fade.
  * Raised with the faster reveal cadence so pacing chunks still fade. */
 const MAXIMUM_FADE_CHARACTERS = 32;
@@ -37,7 +35,6 @@ interface FadeEntry {
 interface AppearanceState {
   fades: FadeEntry[];
   caretPosition: number | null;
-  caretExpiresAt: number;
   set: DecorationSet;
 }
 
@@ -113,7 +110,6 @@ export function streamingAppearancePlugin(streamingMarkdown: () => string | null
       init: (): AppearanceState => ({
         fades: [],
         caretPosition: null,
-        caretExpiresAt: 0,
         set: DecorationSet.empty,
       }),
       apply(tr, previous): AppearanceState {
@@ -132,7 +128,6 @@ export function streamingAppearancePlugin(streamingMarkdown: () => string | null
         let caretPosition = previous.caretPosition === null
           ? null
           : Math.min(tr.mapping.map(previous.caretPosition), docSize);
-        let caretExpiresAt = previous.caretExpiresAt;
 
         const activeMarkdown = streamingMarkdown();
         if (tr.docChanged && activeMarkdown !== null) {
@@ -142,19 +137,23 @@ export function streamingAppearancePlugin(streamingMarkdown: () => string | null
               if (toB <= fromB) return;
               const from = laterMaps.map(fromB);
               const to = laterMaps.map(toB);
+              // The caret tracks every insert — including withheld formula
+              // blocks released wholesale and new paragraphs — so it never
+              // lags a tick behind the text. A widget position between block
+              // nodes is legal; the caret renders after that block, reading
+              // as "waiting for the next characters". The gates below still
+              // bound the fade spans only: those are inline decorations.
+              caretPosition = Math.min(Math.max(to, 0), docSize);
               if (to - from > MAXIMUM_FADE_CHARACTERS) return;
               const parentFrom = tr.doc.resolve(from);
               if (parentFrom.parent !== tr.doc.resolve(to).parent) return;
-              // Inline decorations and the caret must live inside a textblock;
+              // Inline fade decorations must live inside a textblock;
               // top-level inserts (new paragraphs) render on their next tick.
               if (!parentFrom.parent.isTextblock) return;
               fades.push({ from, to, expiresAt: now + FADE_MILLISECONDS });
-              caretPosition = to;
-              caretExpiresAt = now + CARET_IDLE_MILLISECONDS;
             });
           });
         }
-        if (caretPosition !== null && now >= caretExpiresAt) caretPosition = null;
 
         const decorations = fades.map((entry) => Decoration.inline(entry.from, entry.to, FADE_SPEC));
         if (caretPosition !== null) {
@@ -169,7 +168,6 @@ export function streamingAppearancePlugin(streamingMarkdown: () => string | null
         return {
           fades,
           caretPosition,
-          caretExpiresAt,
           set: DecorationSet.create(tr.doc, decorations),
         };
       },
