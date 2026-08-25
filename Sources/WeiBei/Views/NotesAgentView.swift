@@ -1063,8 +1063,10 @@ struct MarkdownPreviewView: View {
                 if streamsMarkdownUpdates {
                     hasAcceptedStreamingHeight = true
                 }
+                StreamFinalizeProbe.log("height-report measured=\(measuredHeight) current=\(contentHeight) streaming=\(streamsMarkdownUpdates) floor=\(preservesFinalizedHeightFloor) frozen=\(heightFrozen)")
                 if preservesFinalizedHeightFloor,
                    nextFrameHeight < contentHeight {
+                    StreamFinalizeProbe.log("height-REJECTED-by-floor proposed=\(nextFrameHeight) kept=\(contentHeight)")
                     onMeasuredHeight(contentHeight)
                     return
                 }
@@ -1108,6 +1110,7 @@ struct MarkdownPreviewView: View {
                 // line mid-flight. Growth now arrives in streaming-sized steps
                 // (the web side types the completion tail out), so there is no
                 // large snap left to smooth.
+                StreamFinalizeProbe.log("height-ACCEPTED \(contentHeight) -> \(nextFrameHeight)")
                 contentHeight = nextFrameHeight
                 // Do NOT freeze on a fresh accept: KaTeX displayMode re-layout
                 // and font loading can still grow the content. Freeze happens
@@ -1149,6 +1152,7 @@ struct MarkdownPreviewView: View {
                     preservesCurrentFloor: preservesFinalizedHeightFloor
                 )
                 let didChangeHeight = settledHeight != contentHeight
+                StreamFinalizeProbe.log("FINALIZED-RECEIPT measured=\(measuredHeight) current=\(contentHeight) settled=\(settledHeight) floor=\(preservesFinalizedHeightFloor) changed=\(didChangeHeight)")
                 heightFrozen = false
                 acceptedMeasureCount = 0
                 contentHeight = settledHeight
@@ -1208,12 +1212,14 @@ struct MarkdownPreviewView: View {
         }
         .onChange(of: markdown) { _, nextMarkdown in
             guard compact && fitsContentHeight else { return }
+            StreamFinalizeProbe.log("markdown-changed len=\(nextMarkdown.count) tail=\(String(nextMarkdown.suffix(14))) streaming=\(streamsMarkdownUpdates) preserves=\(preservesHeightAcrossMarkdownChanges)")
             if !streamsMarkdownUpdates {
                 if hasAcceptedStreamingHeight,
                    finalizedStreamingMarkdown == nil {
                     finalizedStreamingMarkdown = nextMarkdown
                     preservesFinalizedHeightFloor = preservesHeightAcrossMarkdownChanges
                 } else if finalizedStreamingMarkdown != nextMarkdown {
+                    StreamFinalizeProbe.log("markdown-changed-FLOOR-CLEARED")
                     hasAcceptedStreamingHeight = false
                     preservesFinalizedHeightFloor = false
                     finalizedStreamingMarkdown = nil
@@ -1223,10 +1229,12 @@ struct MarkdownPreviewView: View {
             acceptedMeasureCount = 0
             maxObservedMeasuredHeight = 0
             if preservesHeightAcrossMarkdownChanges { return }
+            StreamFinalizeProbe.log("markdown-changed-RESET-to-44")
             contentHeight = Self.compactPreviewLoadingHeight
             onContentHeightChange()
         }
         .onChange(of: streamsMarkdownUpdates) { wasStreaming, isStreaming in
+            StreamFinalizeProbe.log("STREAMING-FLIP \(wasStreaming) -> \(isStreaming) hasAcceptedHeight=\(hasAcceptedStreamingHeight)")
             if isStreaming {
                 hasAcceptedStreamingHeight = false
                 preservesFinalizedHeightFloor = false
@@ -1234,6 +1242,17 @@ struct MarkdownPreviewView: View {
             } else if wasStreaming, hasAcceptedStreamingHeight {
                 finalizedStreamingMarkdown = markdown
                 preservesFinalizedHeightFloor = preservesHeightAcrossMarkdownChanges
+            }
+        }
+        .background {
+            GeometryReader { proxy in
+                Color.clear.preference(
+                    key: StreamFinalizeProbeFrameKey.self,
+                    value: proxy.frame(in: .global)
+                )
+            }
+            .onPreferenceChange(StreamFinalizeProbeFrameKey.self) { frame in
+                StreamFinalizeProbe.log("row-frame-global minY=\(String(format: "%.1f", frame.minY)) h=\(String(format: "%.1f", frame.height))")
             }
         }
     }
@@ -4206,16 +4225,22 @@ private final class AgentMessageMarkdownMemo {
     func outputs(
         text: String,
         sources: [AgentReplySource],
-        language: WeiBeiInterfaceLanguage
+        language: WeiBeiInterfaceLanguage,
+        streaming: Bool
     ) -> (display: String, finalized: String) {
-        let nextKey = "\(language.rawValue)|\(sources.map(\.id.uuidString).joined(separator: ","))|\(text)"
+        let nextKey = "\(streaming ? 1 : 0)|\(language.rawValue)|\(sources.map(\.id.uuidString).joined(separator: ","))|\(text)"
         if nextKey != key {
             let presentation = AgentReplySourceInlinePresentation(
                 text: text,
                 sources: sources,
                 language: language
             )
-            display = AgentCitationParser.parse(presentation.markdown).displayText
+            // While streaming, hold back the tail whose prepared form is not
+            // decidable yet, so parse/prepare never rewrite shown characters.
+            let source = streaming
+                ? AgentChatKaTeXMarkdown.withholdUndecidableStreamingTail(presentation.markdown)
+                : presentation.markdown
+            display = AgentCitationParser.parse(source).displayText
             finalized = AgentChatKaTeXMarkdown.prepare(display)
             key = nextKey
         }
@@ -4229,22 +4254,60 @@ private enum AgentCitationParser {
     private static let regex = try? NSRegularExpression(pattern: pattern)
     private static let collapsedSpaces = try? NSRegularExpression(pattern: #"[ \t]{2,}"#)
     private static let collapsedBlankLines = try? NSRegularExpression(pattern: #"\n{3,}"#)
+    /// Tail of an unterminated citation label (`[材料：书法笔` mid-stream). The
+    /// kind tokens are listed with every proper prefix so the tail is withheld
+    /// from the very first character that can only belong to a citation. The
+    /// whole group is optional so a lone trailing `[` is withheld too — it is
+    /// either the start of a citation (kept hidden) or an ordinary bracket
+    /// (reappears with the next character, one pump tick later). Ordinary
+    /// brackets with non-citation content (`[x`, `[1`) never match.
+    private static let trailingOpenCitation = try? NSRegularExpression(
+        pattern: #"\[(?:(?:材|材料|笔|笔记|选|选区|学|学习|学习记|学习记录|学习记忆|会|会话)[：:]?[^\]\n]*)?$"#
+    )
+    private static let trailingBlankLines = try? NSRegularExpression(pattern: #"\n{3,}$"#)
+    private static let trailingSpaces = try? NSRegularExpression(pattern: #"[ \t]{2,}$"#)
 
     static func parse(_ text: String) -> (displayText: String, citations: [AgentCitation]) {
         guard let regex else {
             return (text, [])
         }
-        let nsRange = NSRange(text.startIndex..<text.endIndex, in: text)
+        // Prefix-stability for streaming: the markdown WebView extends its
+        // streaming session by suffix, so the display text must only ever
+        // grow by appends. A citation label is therefore withheld while it is
+        // still unterminated (it sits at the tail then), and stripped whole
+        // once it closes — the visible text never sees it, and stripping it
+        // removes nothing that was already shown. Trailing blank-line/space
+        // runs are likewise clamped at the tail so the whole-document
+        // collapse below never rewrites already-shown characters. Without
+        // this, every closing citation rewrote the middle of the buffer and
+        // forced a whole-document re-parse (the visible completion flash).
+        var working = text
+        if let trailingOpenCitation,
+           let match = trailingOpenCitation.firstMatch(in: working, range: fullNSRange(working)),
+           let range = Range(match.range, in: working) {
+            working = String(working[..<range.lowerBound])
+        }
+        if let trailingBlankLines,
+           let match = trailingBlankLines.firstMatch(in: working, range: fullNSRange(working)),
+           let range = Range(match.range, in: working) {
+            working.replaceSubrange(range, with: "\n\n")
+        }
+        if let trailingSpaces,
+           let match = trailingSpaces.firstMatch(in: working, range: fullNSRange(working)),
+           let range = Range(match.range, in: working) {
+            working.replaceSubrange(range, with: " ")
+        }
+        let nsRange = fullNSRange(working)
         var citations: [AgentCitation] = []
         var seen = Set<String>()
-        regex.enumerateMatches(in: text, options: [], range: nsRange) { match, _, _ in
+        regex.enumerateMatches(in: working, options: [], range: nsRange) { match, _, _ in
             guard let match,
-                  let fullRange = Range(match.range, in: text),
-                  let kindRange = Range(match.range(at: 1), in: text),
-                  let valueRange = Range(match.range(at: 2), in: text) else { return }
-            let kindToken = String(text[kindRange])
-            let value = String(text[valueRange]).trimmingCharacters(in: .whitespacesAndNewlines)
-            let raw = String(text[fullRange])
+                  let fullRange = Range(match.range, in: working),
+                  let kindRange = Range(match.range(at: 1), in: working),
+                  let valueRange = Range(match.range(at: 2), in: working) else { return }
+            let kindToken = String(working[kindRange])
+            let value = String(working[valueRange]).trimmingCharacters(in: .whitespacesAndNewlines)
+            let raw = String(working[fullRange])
             guard let kind = kind(from: kindToken) else { return }
             let key = "\(kind.rawValue)|\(value)"
             guard seen.insert(key).inserted else { return }
@@ -4257,7 +4320,7 @@ private enum AgentCitationParser {
                 )
             )
         }
-        var cleaned = regex.stringByReplacingMatches(in: text, options: [], range: nsRange, withTemplate: "")
+        var cleaned = regex.stringByReplacingMatches(in: working, options: [], range: nsRange, withTemplate: "")
         if let collapsedSpaces {
             cleaned = collapsedSpaces.stringByReplacingMatches(
                 in: cleaned, options: [], range: fullNSRange(cleaned), withTemplate: " ")
@@ -4266,7 +4329,7 @@ private enum AgentCitationParser {
             cleaned = collapsedBlankLines.stringByReplacingMatches(
                 in: cleaned, options: [], range: fullNSRange(cleaned), withTemplate: "\n\n")
         }
-        return (cleaned.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? text : cleaned, citations)
+        return (cleaned.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? working : cleaned, citations)
     }
 
     private static func fullNSRange(_ text: String) -> NSRange {
@@ -4954,7 +5017,8 @@ private struct AgentMessageMarkdownText: View {
         markdownMemo.outputs(
             text: text,
             sources: sources,
-            language: store.interfaceLanguage
+            language: store.interfaceLanguage,
+            streaming: isStreaming
         ).finalized
     }
 
@@ -4962,7 +5026,8 @@ private struct AgentMessageMarkdownText: View {
         markdownMemo.outputs(
             text: text,
             sources: sources,
-            language: store.interfaceLanguage
+            language: store.interfaceLanguage,
+            streaming: isStreaming
         ).display
     }
 

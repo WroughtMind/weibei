@@ -934,7 +934,8 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         "activeHeadingChanged",
         "compactPreviewWheel",
         "selectionAskMark",
-        "remarkMark"
+        "remarkMark",
+        "streamDebug"
     ]
 
     /// CSS + apply helper for cinnabar underlines on asked selections (read-only markdown).
@@ -1304,6 +1305,9 @@ struct RichMarkdownEditorView: NSViewRepresentable {
                 guard messageMatchesDocument(message.body) else { return }
             }
             switch message.name {
+            case "streamDebug":
+                // TEMPORARY: streaming-completion probe channel from editor.ts.
+                StreamFinalizeProbe.log("JS \(String(describing: message.body))")
             case "editorReady":
                 hasReportedRenderFailure = false
                 isReady = true
@@ -1510,6 +1514,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         }
 
         func finishStreamingMarkdown(_ text: String) {
+            StreamFinalizeProbe.log("BRIDGE finishStreamingMarkdown len=\(text.count)")
             finalizedRenderGeneration &+= 1
             let generation = finalizedRenderGeneration
             let finalizedDocumentID = documentID

@@ -19,6 +19,39 @@ enum AgentChatKaTeXMarkdown {
     private static let hatSpacedArgument = try? NSRegularExpression(pattern: #"\\hat\s+([A-Za-z\\]+)"#)
     private static let hatGluedArgument = try? NSRegularExpression(pattern: #"\\hat(?!\{)(\\[A-Za-z]+|[A-Za-z])"#)
 
+    /// Streaming tails whose prepared form depends on characters not yet
+    /// received (`\hat \b` vs `\hat \beta`, an unclosed `$$`, `[`, `<`, `\`).
+    /// Withheld while streaming so every prepared prefix stays a strict prefix
+    /// of the next one — otherwise prepare rewrites already-shown characters
+    /// and the WebView does a full re-parse (the visible flash).
+    private static let undecidableStreamingTail = try? NSRegularExpression(
+        pattern: #"(?:\$\$[^$\n]+\$\$[^\n]{0,7}|\$\$[^$\n]*\$?|\$+|\\h(?:a(?:t[\s\\]*[A-Za-z]*)?)?|\\\[[^\]\n]*(?:\\\][^\]\n]{0,7})?|\\\([^)\n]*(?:\\\)[^)\n]{0,7})?|<\/?[A-Za-z][^>\n]*|<|\\)$"#
+    )
+    private static let undecidableStreamingMathLine = try? NSRegularExpression(
+        pattern: #"(?:^|\n)[ \t]*\[[^\]\n]*(?:\][ \t]*\n?)?$"#
+    )
+    private static let undecidableStreamingMultilineBracket = try? NSRegularExpression(
+        pattern: #"(?:^|\n)[ \t]*\[[ \t]*\n(?:(?!\n[ \t]*\])[\s\S])*$"#
+    )
+
+    static func withholdUndecidableStreamingTail(_ text: String) -> String {
+        let nsRange = NSRange(text.startIndex..<text.endIndex, in: text)
+        var cut = text.endIndex
+        if let match = undecidableStreamingTail?.firstMatch(in: text, range: nsRange),
+           let range = Range(match.range, in: text) {
+            cut = range.lowerBound
+        }
+        for pattern in [undecidableStreamingMathLine, undecidableStreamingMultilineBracket] {
+            guard let match = pattern?.firstMatch(in: text, range: nsRange),
+                  let range = Range(match.range, in: text) else { continue }
+            let start = text[range.lowerBound] == "\n"
+                ? text.index(after: range.lowerBound)
+                : range.lowerBound
+            if start < cut { cut = start }
+        }
+        return cut < text.endIndex ? String(text[..<cut]) : text
+    }
+
     static func prepare(_ raw: String) -> String {
         var text = raw
         text = convertBracketDisplayMath(in: text)

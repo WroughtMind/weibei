@@ -2997,6 +2997,39 @@ const stopStreamingMarkdown = (keep = true) => {
   streamingFullTextBase = null;
 };
 
+/** Streaming tails whose NEXT character changes how already-received
+ * characters normalize: a trailing `$` may become `\$5` (currency guard),
+ * `\[`/`\(` may become `$$`/`$` delimiters, `\hat x` becomes `\hat{x}`, and
+ * `<br>` becomes a hard break. Normalizing before the deciding character
+ * arrives rewrites the buffered prefix, which forces a whole-document
+ * streaming restart (the visible completion flash). Withhold the undecidable
+ * tail instead: nothing is lost — the withheld text re-enters with the next
+ * chunk, and the buffer only ever grows by appends. One-line `$$…$$` stays
+ * withheld for a short window after closing because normalizeAgentMath
+ * expands it to a multi-line block once following text lands; likewise
+ * `\[…\]`/`\(...\)` right after their closer. A lone trailing backslash is
+ * held so a partial `\h`/`\ha`/`\hat` (or `\[`…) never enters the buffer
+ * before the guard can recognize it. */
+const UNDECIDABLE_STREAMING_TAIL = /(?:\$\$[^$\n]+\$\$[^\n]{0,7}|\$\$[^$\n]*\$?|\$+|\\h(?:a(?:t[\s\\]*[A-Za-z]*)?)?|\\\[[^\]\n]*(?:\\\][^\]\n]{0,7})?|\\\([^)\n]*(?:\\\)[^)\n]{0,7})?|<\/?[A-Za-z][^>\n]*|<|\\)$/;
+/** Line-initial `[…` while unterminated (or just closed): normalizeAgentMath
+ * rewrites such a line to a `$$` block when it turns out to be math, so hold
+ * the line back until more of the line (or the next one) has arrived. Plain
+ * links/lists reappear one tick after `]` lands; citation brackets are
+ * already withheld natively by AgentCitationParser. */
+const UNDECIDABLE_STREAMING_MATH_LINE = /(?:^|\n)[ \t]*\[[^\]\n]*(?:\][ \t]*\n?)?$/;
+
+const withholdUndecidableStreamingTail = (rawBody: string): string => {
+  let cut = rawBody.length;
+  const tail = UNDECIDABLE_STREAMING_TAIL.exec(rawBody);
+  if (tail) cut = tail.index;
+  const mathLine = UNDECIDABLE_STREAMING_MATH_LINE.exec(rawBody);
+  if (mathLine) {
+    const index = mathLine.index + (mathLine[0].startsWith('\n') ? 1 : 0);
+    if (index < cut) cut = index;
+  }
+  return cut < rawBody.length ? rawBody.slice(0, cut) : rawBody;
+};
+
 const updateStreamingMarkdownInternal = (markdown: any) => {
   ensureEditor();
   cancelFinalizeDelay();
@@ -3010,7 +3043,7 @@ const updateStreamingMarkdownInternal = (markdown: any) => {
   // appended tail is verbatim-clean for those rules, splice it onto the raw
   // anchor instead; any tail containing rule triggers falls back to the full
   // passes, and the finished render always normalizes once, fully.
-  const rawBody = document.body;
+  const rawBody = withholdUndecidableStreamingTail(document.body);
   const rawTail = streamingRawBody !== null && streamingMarkdownBuffer === streamingRawBody && rawBody.startsWith(streamingRawBody)
     ? rawBody.slice(streamingRawBody.length)
     : null;
@@ -3028,6 +3061,17 @@ const updateStreamingMarkdownInternal = (markdown: any) => {
     commands.call(startStreamingCmd.key);
     streamingMarkdownBuffer = '';
   } else if (!body.startsWith(streamingMarkdownBuffer)) {
+    // TEMPORARY probe: prefix-break forces a whole-document streaming restart.
+    let divergeAt = 0;
+    while (divergeAt < Math.min(body.length, streamingMarkdownBuffer.length)
+      && body[divergeAt] === streamingMarkdownBuffer[divergeAt]) divergeAt += 1;
+    post('streamDebug', {
+      event: 'prefix-break', where: 'update', divergeAt,
+      bufferLen: streamingMarkdownBuffer.length, bodyLen: body.length,
+      bufferAround: streamingMarkdownBuffer.slice(Math.max(0, divergeAt - 12), divergeAt + 24),
+      bodyAround: body.slice(Math.max(0, divergeAt - 12), divergeAt + 24),
+      bufferTail: streamingMarkdownBuffer.slice(-40), bodyHead: body.slice(0, 40),
+    });
     commands.call(endStreamingCmd.key, { diffReview: false });
     commands.call(startStreamingCmd.key);
     streamingMarkdownBuffer = '';
@@ -3088,10 +3132,23 @@ const scheduleFinalizeAfterFades = () => {
  * updateStreamingMarkdownInternal's session bookkeeping. */
 const pushStreamingBodyForFinish = (body: string) => {
   const commands = streamingCommands();
+  // TEMPORARY probe: report the finalize path's buffer relation.
+  post('streamDebug', {
+    event: 'finish-enter',
+    bufferLen: streamingMarkdownBuffer === null ? -1 : streamingMarkdownBuffer.length,
+    bodyLen: body.length,
+    prefixMatch: streamingMarkdownBuffer === null ? null : body.startsWith(streamingMarkdownBuffer),
+  });
   if (streamingMarkdownBuffer === null) {
     commands.call(startStreamingCmd.key);
     streamingMarkdownBuffer = '';
   } else if (!body.startsWith(streamingMarkdownBuffer)) {
+    // TEMPORARY probe: prefix-break at finalize = whole-document re-parse.
+    post('streamDebug', {
+      event: 'prefix-break', where: 'finish',
+      bufferLen: streamingMarkdownBuffer.length, bodyLen: body.length,
+      bufferTail: streamingMarkdownBuffer.slice(-40), bodyHead: body.slice(0, 40),
+    });
     commands.call(endStreamingCmd.key, { diffReview: false });
     commands.call(startStreamingCmd.key);
     streamingMarkdownBuffer = '';

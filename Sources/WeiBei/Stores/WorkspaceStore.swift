@@ -8884,7 +8884,7 @@ final class WorkspaceStore: ObservableObject {
         selectionAttachments = []
     }
 
-    private func appendAgentMessage(_ message: AgentMessage) {
+    func appendAgentMessage(_ message: AgentMessage) {
         if freshlyCreatedEmptyStudySessionID == activeStudySessionID {
             freshlyCreatedEmptyStudySessionID = nil
         }
@@ -8894,7 +8894,7 @@ final class WorkspaceStore: ObservableObject {
     }
 
     @discardableResult
-    private func updateAgentMessage(
+    func updateAgentMessage(
         _ messageID: UUID,
         in chatID: UUID,
         _ update: (inout AgentMessage) -> Void
@@ -17197,6 +17197,7 @@ final class WorkspaceStore: ObservableObject {
                     $0.retryQuestion = nil
                     $0.toolTrace = reply.toolTrace
                 }
+                StreamFinalizeProbe.log("STORE reply persisted len=\(reply.text.count) sources=\(sources.count) actions=\(actions.count) memory=\(memoryUpdate != nil) profile=\(profileUpdate != nil) displaying=\(agentStreaming.isDisplaying(messageID))")
                 if agentStreaming.isDisplaying(messageID) {
                     if agentStreamingUsesReducedMotion
                         || !isAgentStreamingSurfaceVisible
