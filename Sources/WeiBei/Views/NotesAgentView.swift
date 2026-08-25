@@ -1023,6 +1023,10 @@ struct MarkdownPreviewView: View {
     @State private var acceptedMeasureCount = 0
     @State private var maxObservedMeasuredHeight: CGFloat = 0
     @State private var hasAcceptedStreamingHeight = false
+    /// Post-completion height floor: once this row has shown streamed text, a
+    /// later shrink (caret row unwrap, tail blank settling after finalize)
+    /// never re-anchors the reader. Width-bucket and typography resets clear it.
+    @State private var everStreamedHeight = false
     @State private var preservesFinalizedHeightFloor = false
     @State private var finalizedStreamingMarkdown: String?
     @State private var lastLayoutWidthKey = 0
@@ -1062,6 +1066,7 @@ struct MarkdownPreviewView: View {
                 let nextFrameHeight = max(measuredHeight, Self.compactPreviewLoadingHeight)
                 if streamsMarkdownUpdates {
                     hasAcceptedStreamingHeight = true
+                    everStreamedHeight = true
                 }
                 StreamFinalizeProbe.log("height-report measured=\(measuredHeight) current=\(contentHeight) streaming=\(streamsMarkdownUpdates) floor=\(preservesFinalizedHeightFloor) frozen=\(heightFrozen)")
                 // Mid-stream markdown converges downward too: loose paragraphs
@@ -1069,14 +1074,18 @@ struct MarkdownPreviewView: View {
                 // withheld formulas land as blocks. Accepting the shrink yanks a
                 // bottom-anchored reader upward mid-stream; real convergence is
                 // settled by the finalized receipt and the width-bucket resets.
-                if preservesFinalizedHeightFloor || streamsMarkdownUpdates,
+                // everStreamedHeight extends the floor past completion: the caret
+                // decoration row unwraps and tail blanks settle up to ~600ms
+                // AFTER the finalized receipt, when the floor flags above have
+                // already been cleared by markdown-changed bookkeeping.
+                if preservesFinalizedHeightFloor || streamsMarkdownUpdates || everStreamedHeight,
                    nextFrameHeight < contentHeight {
                     StreamFinalizeProbe.log("height-REJECTED-by-floor proposed=\(nextFrameHeight) kept=\(contentHeight)")
                     WeiBeiPerf.event(
                         "webview.markdown_height_ignored",
                         extra: preservesFinalizedHeightFloor
                             ? "reason=finalized-floor"
-                            : "reason=streaming-floor"
+                            : (streamsMarkdownUpdates ? "reason=streaming-floor" : "reason=poststream-floor")
                     )
                     onMeasuredHeight(contentHeight)
                     return
@@ -1205,6 +1214,7 @@ struct MarkdownPreviewView: View {
             lastLayoutWidthKey = widthKey
             guard previousBucket != nextBucket else { return }
             hasAcceptedStreamingHeight = false
+            everStreamedHeight = false
             preservesFinalizedHeightFloor = false
             finalizedStreamingMarkdown = nil
             heightFrozen = false
@@ -1215,6 +1225,7 @@ struct MarkdownPreviewView: View {
             guard wideTypography != lastChatWideTypography else { return }
             lastChatWideTypography = wideTypography
             hasAcceptedStreamingHeight = false
+            everStreamedHeight = false
             preservesFinalizedHeightFloor = false
             finalizedStreamingMarkdown = nil
             heightFrozen = false
