@@ -15,12 +15,14 @@ final class AppearancePreferenceTests: XCTestCase {
         UserDefaults.standard.removeObject(forKey: "weibei.appearancePreference")
         UserDefaults.standard.removeObject(forKey: "weibei.appearanceStyle")
         UserDefaults.standard.removeObject(forKey: "weibei.glassIntensity")
+        WeiBeiThemeRuntime.glassIntensity = 1.0
     }
 
     override func tearDown() {
         UserDefaults.standard.removeObject(forKey: "weibei.appearancePreference")
         UserDefaults.standard.removeObject(forKey: "weibei.appearanceStyle")
         UserDefaults.standard.removeObject(forKey: "weibei.glassIntensity")
+        WeiBeiThemeRuntime.glassIntensity = 1.0
         super.tearDown()
     }
 
@@ -95,13 +97,28 @@ final class AppearancePreferenceTests: XCTestCase {
         let store = try makeStore()
         store.glassIntensity = 1.7
         XCTAssertEqual(store.glassIntensity, 1.0, accuracy: 0.0001)
+        XCTAssertNil(
+            UserDefaults.standard.object(forKey: "weibei.glassIntensity"),
+            "拖动玻璃浓度只改当前窗口，不能在松手前写入偏好。"
+        )
+
         store.glassIntensity = 0.25
-        // 拖动中只写运行时;松手(persistGlassIntensity)才落盘。
+        XCTAssertEqual(store.glassIntensity, 0.25, accuracy: 0.0001)
+        XCTAssertNil(
+            UserDefaults.standard.object(forKey: "weibei.glassIntensity"),
+            "拖动中途改浓度不能落盘；否则松手前的中间值会污染下次打开。"
+        )
+
+        // 松手才落盘，下次打开仍是这个浓度。
         store.persistGlassIntensity()
         XCTAssertEqual(
             UserDefaults.standard.object(forKey: "weibei.glassIntensity") as? Double ?? -1,
             0.25,
             accuracy: 0.0001
         )
+
+        WeiBeiThemeRuntime.glassIntensity = 1.0
+        WorkspaceStore.loadPersistedGlassIntensity()
+        XCTAssertEqual(store.glassIntensity, 0.25, accuracy: 0.0001)
     }
 }

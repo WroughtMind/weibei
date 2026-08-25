@@ -18,7 +18,12 @@ final class AppearanceThemeTests: XCTestCase {
             .glassSlate,
         ] {
             XCTAssertTrue(mode.isGlass)
-            XCTAssertLessThan(WeiBeiNativePalette.paper(for: mode).alphaComponent, 1)
+            // 玻璃窗口底纸全透明:整窗玻璃片才负责可读性,不能再叠一层底色。
+            XCTAssertEqual(
+                WeiBeiNativePalette.paper(for: mode).alphaComponent,
+                0,
+                accuracy: 0.001
+            )
             XCTAssertGreaterThan(WeiBeiNativePalette.drawerSurface(for: mode).alphaComponent, 0)
             XCTAssertLessThan(WeiBeiNativePalette.drawerSurface(for: mode).alphaComponent, 1)
             // 玻璃模式前景面有意全透明:整窗玻璃片唯一负责可读性,
