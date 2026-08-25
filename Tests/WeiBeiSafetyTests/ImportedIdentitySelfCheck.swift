@@ -653,7 +653,12 @@ enum ImportedIdentitySelfCheck {
                 courseSecurityScopeStarter: { _ in true },
                 courseSecurityScopeStopper: { _ in },
                 workspaceSnapshotWriter: workspaceSnapshotWriter,
-                selectionAskThreadDefaults: fixture.selectionAskThreadDefaults
+                selectionAskThreadDefaults: fixture.selectionAskThreadDefaults,
+                // 多个 store 实例共享同一 workspace.json：后台对账任务会以
+                // 旧实例的内存全量覆盖磁盘，回写掉其他实例刚落盘的新状态
+                // （身份断言时序抖动的根源）。对账在本用例末尾经
+                // reconcileCourseFilesForSelfCheck 显式覆盖，不依赖后台任务。
+                startsCourseFileMaintenance: false
             )
         }
 
