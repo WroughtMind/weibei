@@ -628,7 +628,7 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
           window.WeiBeiEditor.updateStreamingMarkdown("第一段落完整内容。\\n\\n第二段带 **加粗** 与 $a+b$ 内容。\\n\\n- 列表甲\\n- 列表乙");
           const finalMarkdown = "第一段落完整内容。\\n\\n第二段带 **加粗** 与 $a+b$ 内容。\\n\\n- 列表甲\\n- 列表乙\\n\\n收尾一段。";
           window.WeiBeiEditor.finishStreamingMarkdown(finalMarkdown);
-          const blocks = root ? Array.from(root.children).filter((node) => !node.classList.contains('ProseMirror-trailingBreak')) : [];
+          const blocks = root ? Array.from(root.children).filter((node) => !node.classList.contains('ProseMirror-trailingBreak') && !node.classList.contains('wb-stream-caret')) : [];
           return JSON.stringify({
             blockCount: blocks.length,
             firstBlockPreserved: firstBlock === root?.firstElementChild,
@@ -686,7 +686,7 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
                 self.webView.evaluateJavaScript("""
                 (() => {
                   const root = document.querySelector('.ProseMirror');
-                  const blocks = root ? Array.from(root.children).filter((node) => !node.classList.contains('ProseMirror-trailingBreak')) : [];
+                  const blocks = root ? Array.from(root.children).filter((node) => !node.classList.contains('ProseMirror-trailingBreak') && !node.classList.contains('wb-stream-caret')) : [];
                   const preserved = Boolean(root
                     && window.__weiBeiStreamingFirstBlockForCheck === root.firstElementChild
                     && blocks.length === 4
