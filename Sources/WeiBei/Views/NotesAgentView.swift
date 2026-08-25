@@ -1064,9 +1064,20 @@ struct MarkdownPreviewView: View {
                     hasAcceptedStreamingHeight = true
                 }
                 StreamFinalizeProbe.log("height-report measured=\(measuredHeight) current=\(contentHeight) streaming=\(streamsMarkdownUpdates) floor=\(preservesFinalizedHeightFloor) frozen=\(heightFrozen)")
-                if preservesFinalizedHeightFloor,
+                // Mid-stream markdown converges downward too: loose paragraphs
+                // become tight lists once markers arrive, trailing blanks collapse,
+                // withheld formulas land as blocks. Accepting the shrink yanks a
+                // bottom-anchored reader upward mid-stream; real convergence is
+                // settled by the finalized receipt and the width-bucket resets.
+                if preservesFinalizedHeightFloor || streamsMarkdownUpdates,
                    nextFrameHeight < contentHeight {
                     StreamFinalizeProbe.log("height-REJECTED-by-floor proposed=\(nextFrameHeight) kept=\(contentHeight)")
+                    WeiBeiPerf.event(
+                        "webview.markdown_height_ignored",
+                        extra: preservesFinalizedHeightFloor
+                            ? "reason=finalized-floor"
+                            : "reason=streaming-floor"
+                    )
                     onMeasuredHeight(contentHeight)
                     return
                 }
@@ -2260,6 +2271,14 @@ struct AgentPaneView: View {
             withAnimation(WeiBeiMotion.panel) {
                 proxy.scrollTo(agentBottomAnchorID, anchor: .bottom)
             }
+        }
+        // WebView rows publish height on a ~100ms cadence, so the animated
+        // pass targets a bottom anchor that is already stale once the next
+        // measurement lands — the viewport then gets shoved again. A silent
+        // re-anchor after the reporting window keeps the follow settled.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [agentFollowsLatest] in
+            guard agentFollowsLatest else { return }
+            proxy.scrollTo(agentBottomAnchorID, anchor: .bottom)
         }
     }
 
