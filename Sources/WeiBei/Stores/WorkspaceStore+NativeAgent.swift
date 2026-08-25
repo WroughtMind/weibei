@@ -87,6 +87,7 @@ extension WorkspaceStore {
     }
 
     func finishAgentStreamingDisplay() {
+        StreamFinalizeProbe.log("STORE finishAgentStreamingDisplay (pump drained -> isStreaming flips false)")
         agentStreaming.finishDisplaying()
         latestAgentStreamingText = ""
     }
