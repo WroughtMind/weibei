@@ -96,6 +96,8 @@ final class AppearancePreferenceTests: XCTestCase {
         store.glassIntensity = 1.7
         XCTAssertEqual(store.glassIntensity, 1.0, accuracy: 0.0001)
         store.glassIntensity = 0.25
+        // 拖动中只写运行时;松手(persistGlassIntensity)才落盘。
+        store.persistGlassIntensity()
         XCTAssertEqual(
             UserDefaults.standard.object(forKey: "weibei.glassIntensity") as? Double ?? -1,
             0.25,

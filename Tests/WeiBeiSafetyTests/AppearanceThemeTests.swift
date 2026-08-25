@@ -21,8 +21,13 @@ final class AppearanceThemeTests: XCTestCase {
             XCTAssertLessThan(WeiBeiNativePalette.paper(for: mode).alphaComponent, 1)
             XCTAssertGreaterThan(WeiBeiNativePalette.drawerSurface(for: mode).alphaComponent, 0)
             XCTAssertLessThan(WeiBeiNativePalette.drawerSurface(for: mode).alphaComponent, 1)
-            XCTAssertGreaterThan(WeiBeiNativePalette.foregroundWorkspaceSurface(for: mode).alphaComponent, 0)
-            XCTAssertLessThan(WeiBeiNativePalette.foregroundWorkspaceSurface(for: mode).alphaComponent, 1)
+            // 玻璃模式前景面有意全透明:整窗玻璃片唯一负责可读性,
+            // 第二层面会叠深玻璃(材质分工定案)。
+            XCTAssertEqual(
+                WeiBeiNativePalette.foregroundWorkspaceSurface(for: mode).alphaComponent,
+                0,
+                accuracy: 0.001
+            )
         }
 
         for mode in [
