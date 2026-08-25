@@ -3336,7 +3336,7 @@ private struct AgentMessageBubble: View {
 
 private struct AgentBubble: View {
     @EnvironmentObject private var store: WorkspaceStore
-    @Environment(\.openSettings) private var openSettings
+    @Environment(\.openWindow) private var openSettingsWindow
     @Environment(\.weibeiReduceMotion) private var reduceMotion
     var message: AgentMessage
     var liveStreamingText: String? = nil
@@ -3632,7 +3632,7 @@ private struct AgentBubble: View {
                     if message.failureKind == .unauthorized
                         || !AgentProviderReadiness.isConfigured(for: store) {
                         Button(store.ui("去设置", "Open Settings")) {
-                            openSettings()
+                            openSettingsWindow(id: "weibei-settings")
                         }
                         .buttonStyle(WeiBeiTextActionButtonStyle())
                     }

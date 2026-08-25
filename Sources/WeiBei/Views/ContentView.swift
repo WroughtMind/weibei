@@ -17,6 +17,14 @@ struct ContentView: View {
             ZStack {
                 WorkspaceChromeBackdrop(isFullScreen: windowIsFullScreen)
 
+                // Glass: ONE full-window foreground sheet above the backdrop and
+                // below every surface (top bar, panes, course space). Each region
+                // gets exactly one wash — per-surface painting stacked twice and
+                // made the bar drift from the content below it.
+                if store.appearanceMode.isGlass {
+                    WeiBeiGlassForegroundSheet(mode: store.appearanceMode)
+                }
+
                 VStack(spacing: 0) {
                     UnifiedTopBarView(
                         isImmersiveLayout: isImmersiveLayout,
@@ -558,7 +566,7 @@ private struct UnifiedTopBarView: View {
     @EnvironmentObject private var libraryDrawer: LibraryDrawerState
     @EnvironmentObject private var paneState: WorkspacePaneState
     @EnvironmentObject private var interaction: WorkspaceInteractionState
-    @Environment(\.openSettings) private var openSettings
+    @Environment(\.openWindow) private var openSettingsWindow
     @Environment(\.weiBeiTextScale) private var textScale
     let isImmersiveLayout: Bool
     let isFullScreen: Bool
@@ -605,14 +613,19 @@ private struct UnifiedTopBarView: View {
 
             // Copy-reference is not top-bar chrome: use its configured shortcut, menu, or command palette when needed.
 
-            topIconButton("command", help: store.ui("命令面板", "Command palette")) {
-                store.commandPalettePresented.toggle()
+            // Light/dark quick toggle — keeps the active style pair, flips the
+            // preference. Command palette stays reachable on ⌘K.
+            topIconButton(
+                store.appearanceMode.isDark ? "sun.max" : "moon.stars",
+                help: store.ui("切换深浅外观", "Toggle Light / Dark")
+            ) {
+                store.appearancePreference = store.appearanceMode.isDark ? .light : .dark
             }
+            .animation(WeiBeiMotion.micro, value: store.appearanceMode.isDark)
 
-            // Theme lives only in Settings → Appearance (and ⌥⌘T). Top bar stays task chrome.
             // Full Settings window (agent keys, appearance, data) — not the old mini menu.
-            topIconButton("slider.horizontal.3", help: store.ui("打开设置", "Open Settings")) {
-                openSettings()
+            topIconButton("gearshape", help: store.ui("打开设置", "Open Settings")) {
+                openSettingsWindow(id: "weibei-settings")
             }
 
             Spacer()
@@ -632,6 +645,11 @@ private struct UnifiedTopBarView: View {
             withAnimation(WeiBeiMotion.reveal) {
                 appeared = true
             }
+        }
+        // ⌘, bridge: Commands cannot reach the openWindow environment action,
+        // so the menu item posts a notification and the live top bar opens it.
+        .onReceive(NotificationCenter.default.publisher(for: .weibeiOpenSettings)) { _ in
+            openSettingsWindow(id: "weibei-settings")
         }
         .animation(WeiBeiMotion.panel, value: paneState.showReaderSearch)
         .animation(WeiBeiMotion.layout, value: isImmersiveLayout)
@@ -688,6 +706,8 @@ private struct UnifiedTopBarView: View {
         // leave a second strip above NOTE / READ / CHAT.
         return Group {
             if empty || store.appearanceMode.isGlass {
+                // Glass legibility comes from the single full-window sheet at the
+                // ZStack root — the bar itself must not paint a second layer.
                 Color.clear
             } else {
                 Color(nsColor: WeiBeiNativePalette.paper(for: store.appearanceMode))

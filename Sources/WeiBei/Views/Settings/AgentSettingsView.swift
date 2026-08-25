@@ -20,7 +20,7 @@ extension SettingsView {
     // MARK: ①②③④ — the main card
 
     private var agentServiceCard: some View {
-        settingsGroup(store.ui("对话服务", "Chat Service")) {
+        settingsGroup("") {
             // Profile — top-level container. Selecting one swaps the service/key/model
             // below. Always shown (per feedback: hiding it behind "Advanced" was worse).
             agentProfileRow

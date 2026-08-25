@@ -94,6 +94,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
 }
 
+extension Notification.Name {
+    /// 菜单 ⌘, → 主窗口里的 openWindow 桥(Commands 拿不到环境 action)。
+    static let weibeiOpenSettings = Notification.Name("WeiBeiOpenSettings")
+}
+
 @main
 struct WeiBeiApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
@@ -137,6 +142,13 @@ struct WeiBeiApp: App {
         .windowResizability(.contentMinSize)
         .windowStyle(.hiddenTitleBar)
         .commands {
+            CommandGroup(replacing: .appSettings) {
+                Button(store.ui("设置…", "Settings…")) {
+                    NotificationCenter.default.post(name: .weibeiOpenSettings, object: nil)
+                }
+                .keyboardShortcut(",", modifiers: .command)
+            }
+
             CommandMenu(store.appDisplayName) {
                 Button(store.ui("打开课程空间", "Open Course Space")) { store.presentCourseWorkspace(.hub) }
                     .keyboardShortcut("0")
@@ -287,12 +299,18 @@ struct WeiBeiApp: App {
             }
         }
 
-        Settings {
+        // Settings scene cannot take .windowStyle(.hiddenTitleBar) and reasserts
+        // its own titlebar chrome — a plain WindowGroup shares the main window's
+        // borderless glass look instead.
+        WindowGroup("设置", id: "weibei-settings") {
             SettingsView()
                 .weiBeiMotionScoped()
                 .environmentObject(store)
                 .environmentObject(updateService)
         }
+        .defaultSize(width: 900, height: 640)
+        .windowResizability(.contentMinSize)
+        .windowStyle(.hiddenTitleBar)
     }
 
     private func animateLayout(_ action: () -> Void) {
@@ -457,9 +475,13 @@ private struct WindowChromeConfigurator: NSViewRepresentable {
         window.backgroundColor = appearanceMode.isGlass
             ? .clear
             : appearanceMode.windowBackground
-        window.appearance = NSAppearance(
-            named: appearanceMode.isDark ? .darkAqua : .aqua
-        )
+        // Flip through nil on light↔dark — assigning a same-name appearance
+        // directly leaves system titlebar material stuck on the old tint.
+        let targetName: NSAppearance.Name = appearanceMode.isDark ? .darkAqua : .aqua
+        if window.appearance?.name != targetName {
+            window.appearance = nil
+            window.appearance = NSAppearance(named: targetName)
+        }
         window.contentView?.wantsLayer = appearanceMode.isGlass
         window.contentView?.layer?.backgroundColor = appearanceMode.isGlass ? NSColor.clear.cgColor : nil
         window.isMovableByWindowBackground = true

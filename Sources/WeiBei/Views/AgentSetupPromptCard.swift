@@ -10,7 +10,7 @@ import WeiBeiCore
 struct AgentSetupPromptCard: View {
     @EnvironmentObject private var store: WorkspaceStore
     @ObservedObject private var oauth = AgentAccountService.shared
-    @Environment(\.openSettings) private var openSettings
+    @Environment(\.openWindow) private var openSettingsWindow
 
     /// 叉掉过一次就不再出现;偏好走 UserDefaults,不进冻结的 WorkspaceStore。
     @AppStorage("weibei.agentSetupPromptDismissed") private var dismissed = false
@@ -49,7 +49,7 @@ struct AgentSetupPromptCard: View {
                 .buttonStyle(WeiBeiDialogButtonStyle(prominence: .secondary))
 
                 Button(store.ui("现在配置", "Set Up Now")) {
-                    openSettings()
+                    openSettingsWindow(id: "weibei-settings")
                 }
                 .buttonStyle(WeiBeiDialogButtonStyle(prominence: .primary))
             }
