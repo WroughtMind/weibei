@@ -32,6 +32,7 @@ struct SettingsView: View {
     @State private var shortcutStatusMessage: String?
     // In-app feedback sheet.
     @State private var showFeedbackSheet = false
+    @State private var feedbackDragOffset: CGSize = .zero
     @State private var feedbackTitle = ""
     @State private var feedbackBody = ""
     @State private var feedbackBusy = false
@@ -66,6 +67,40 @@ struct SettingsView: View {
         // fullSizeContentView: the traffic lights float over this top inset.
         .padding(.top, 30)
         .frame(minWidth: 860, minHeight: 610)
+        .overlay {
+            if showFeedbackSheet {
+                ZStack {
+                    // 遮罩与命令面板同语言:压暗 + 微磨砂;顶部让出红绿灯/
+                    // 拖动条 30pt,反馈打开时窗口仍可拖动。
+                    ZStack {
+                        WeiBeiTheme.chrome.opacity(0.18)
+                        Rectangle()
+                            .fill(.thinMaterial)
+                            .opacity(0.08)
+                    }
+                    .padding(.top, 30)
+                    .onTapGesture {
+                        withAnimation(WeiBeiMotion.panel) { showFeedbackSheet = false }
+                    }
+
+                    feedbackSheet
+                        .offset(feedbackDragOffset)
+                        .transition(WeiBeiTransition.floating)
+                        .onDisappear { feedbackDragOffset = .zero }
+                        .gesture(
+                            DragGesture(minimumDistance: 5)
+                                .onChanged { value in
+                                    feedbackDragOffset = value.translation
+                                }
+                        )
+                }
+                .transition(.opacity)
+                .onExitCommand {
+                    withAnimation(WeiBeiMotion.panel) { showFeedbackSheet = false }
+                }
+            }
+        }
+        .animation(WeiBeiMotion.panel, value: showFeedbackSheet)
         .background {
             // Same foreground sheet as the main window — Settings is the most
             // text-dense glass surface and needs the shared legibility wash.
@@ -760,9 +795,6 @@ struct SettingsView: View {
                     .padding(.horizontal, 4)
             }
         }
-        .sheet(isPresented: $showFeedbackSheet) {
-            feedbackSheet
-        }
     }
 
     private var updateActionLabel: String {
@@ -863,7 +895,10 @@ struct SettingsView: View {
         }
         .padding(20)
         .frame(width: 440)
-        .background(WeiBeiTheme.paper)
+        .contentShape(Rectangle())
+        // 主界面浮层同款卡片语言(paperRaised + ultraThinMaterial + 描边阴影),
+        // 直接坐在设置窗的玻璃上——与主界面天然同步。
+        .weibeiFloatingPanel(cornerRadius: 12, shadowOpacity: 0.16)
         .preferredColorScheme(store.appearanceMode.colorScheme)
     }
 
