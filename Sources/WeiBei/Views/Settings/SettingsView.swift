@@ -32,7 +32,6 @@ struct SettingsView: View {
     @State private var shortcutStatusMessage: String?
     // In-app feedback sheet.
     @State private var showFeedbackSheet = false
-    @State private var showInspirationSourcesSheet = false
     @State private var feedbackTitle = ""
     @State private var feedbackBody = ""
     @State private var feedbackBusy = false
@@ -64,7 +63,15 @@ struct SettingsView: View {
                 .overlay(WeiBeiTheme.hairline.opacity(0.55))
             settingsDetail
         }
+        // fullSizeContentView: the traffic lights float over this top inset.
+        .padding(.top, 30)
         .frame(minWidth: 860, minHeight: 610)
+        .background {
+            // Same foreground sheet as the main window — Settings is the most
+            // text-dense glass surface and needs the shared legibility wash.
+            WeiBeiGlassForegroundSheet(mode: store.appearanceMode)
+                .ignoresSafeArea()
+        }
         .background {
             WeiBeiThemeBackdrop(mode: store.appearanceMode)
                 .ignoresSafeArea()
@@ -149,19 +156,16 @@ struct SettingsView: View {
     }
 
     private var settingsSidebar: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text(store.ui("设置", "Settings"))
-                .weiBeiBrandFont(language: store.interfaceLanguage, size: 22, weight: .semibold)
-                .foregroundStyle(WeiBeiTheme.ink)
-                .padding(.horizontal, 22)
-                .padding(.top, 22)
-
-            VStack(spacing: 3) {
+        VStack(alignment: .leading, spacing: 0) {
+            // No big "设置" masthead: the window is the settings window; the
+            // tabs start right below the floating traffic lights.
+            VStack(spacing: 2) {
                 ForEach(SettingsSection.allCases) { section in
                     settingsSidebarButton(section)
                 }
             }
             .padding(.horizontal, 12)
+            .padding(.top, 10)
 
             Spacer()
         }
@@ -170,54 +174,33 @@ struct SettingsView: View {
     }
 
     private var settingsDetail: some View {
-        VStack(spacing: 0) {
-            settingsHeader
-            ScrollView(showsIndicators: false) {
-                VStack(alignment: .leading, spacing: 14) {
-                    switch selectedSection {
-                    case .agent:
-                        agentSettings
-                    case .interface:
-                        interfaceSettings
-                    case .shortcuts:
-                        shortcutSettings
-                    case .about:
-                        aboutSettings
-                    }
+        ScrollView(showsIndicators: false) {
+            VStack(alignment: .leading, spacing: 14) {
+                switch selectedSection {
+                case .agent:
+                    agentSettings
+                case .interface:
+                    interfaceSettings
+                case .shortcuts:
+                    shortcutSettings
+                case .about:
+                    aboutSettings
                 }
-                .padding(.horizontal, 28)
-                .padding(.top, 20)
-                .padding(.bottom, 32)
             }
-            .id(selectedSection)
+            .padding(.horizontal, 28)
+            .padding(.top, 28)
+            .padding(.bottom, 32)
         }
+        .id(selectedSection)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(WeiBeiTheme.paper)
-    }
-
-    private var settingsHeader: some View {
-        HStack(alignment: .center) {
-            Text(selectedSection.title(store))
-                .weiBeiBrandFont(language: store.interfaceLanguage, size: 18, weight: .semibold)
-                .foregroundStyle(WeiBeiTheme.ink)
-            Spacer()
-        }
-        .padding(.horizontal, 28)
-        .padding(.top, 18)
-        .padding(.bottom, 14)
-        .background(WeiBeiTheme.paper)
-        .overlay(alignment: .bottom) {
-            Rectangle()
-                .fill(WeiBeiTheme.hairline.opacity(0.35))
-                .frame(height: 1)
-        }
     }
 
     // MARK: - Interface (language / theme / reading tint / workspace)
 
     private var interfaceSettings: some View {
         VStack(alignment: .leading, spacing: 14) {
-            settingsGroup(store.ui("语言", "Language")) {
+            settingsGroup("") {
                 settingsRow(title: store.ui("语言", "Language"), showsBottomDivider: false) {
                     compactMenu(store.interfaceLanguage.nativeName) {
                         ForEach(WeiBeiInterfaceLanguage.allCases) { language in
@@ -233,13 +216,7 @@ struct SettingsView: View {
 
             // AionUI-style gallery: each card is a miniature workspace, not a flat chip.
             settingsGroup(store.ui("主题", "Theme")) {
-                settingsRow(
-                    title: store.ui("外观", "Appearance"),
-                    detail: store.ui(
-                        "跟随系统时，深浅切换自动换到同对主题",
-                        "With Match System, appearance switches pick the paired theme"
-                    )
-                ) {
+                settingsRow(title: store.ui("外观", "Appearance")) {
                     compactMenu(store.appearancePreference.label(ui: store.ui)) {
                         ForEach(WeiBeiAppearancePreference.allCases) { preference in
                             Button(preference.label(ui: store.ui)) {
@@ -256,16 +233,15 @@ struct SettingsView: View {
                 if store.appearanceMode.isGlass {
                     settingsRow(
                         title: store.ui("玻璃浓度", "Glass intensity"),
-                        detail: store.ui(
-                            "无级调节玻璃主题的透明浓度",
-                            "Continuously adjust glass translucency"
-                        ),
                         showsBottomDivider: false
                     ) {
                         Slider(value: Binding(
                             get: { store.glassIntensity },
                             set: { store.glassIntensity = $0 }
-                        ), in: 0...1)
+                        ), in: 0...1, onEditingChanged: { editing in
+                            if !editing { store.persistGlassIntensity() }
+                        })
+                        .tint(WeiBeiTheme.cinnabar)
                         .frame(width: 170)
                     }
                 }
@@ -273,7 +249,7 @@ struct SettingsView: View {
 
             settingsGroup(store.ui("动态效果", "Motion")) {
                 settingsRow(
-                    title: store.ui("动态效果", "Motion"),
+                    title: store.ui("模式", "Mode"),
                     detail: store.ui(
                         "完整动态效果会覆盖系统的减少动态设置",
                         "Full motion overrides the system reduce-motion switch"
@@ -294,8 +270,8 @@ struct SettingsView: View {
                 settingsRow(
                     title: store.ui("界面文字大小", "Interface Text Size"),
                     detail: store.ui(
-                        "调整整个界面的文字大小，笔记正文同步缩放",
-                        "Scales text across the interface; note content follows"
+                        "笔记正文同步缩放",
+                        "Note content follows"
                     ),
                     showsBottomDivider: false
                 ) {
@@ -349,7 +325,7 @@ struct SettingsView: View {
     private var libraryLocationSettings: some View {
         settingsGroup(store.ui("资料库", "Library")) {
             settingsRow(
-                title: store.ui("资料库位置", "Library location"),
+                title: store.ui("位置", "Location"),
                 detail: store.courseLibraryRootPath ?? CourseLibraryLayout.defaultRootURL().path,
                 showsBottomDivider: false
             ) {
@@ -483,69 +459,67 @@ struct SettingsView: View {
         return cloudNames.contains { path.contains($0) }
     }
 
-    /// Theme gallery modeled on AionUI `ThemeLayoutPreview` cards:
-    /// mini app chrome (top bar + panes) so you can see how the theme feels.
+    /// Theme picker: 2×2 grid, one card per style pair — real mini-chrome
+    /// previews split light/dark side by side. Tap picks the pair; the
+    /// light/dark resolution comes from the 外观 preference above.
     private var themePicker: some View {
-        ScrollView(.horizontal) {
-            LazyHStack(spacing: 10) {
-                ForEach(WeiBeiAppearanceStyle.allCases) { style in
-                    stylePreviewCard(style)
-                        .frame(width: 226)
-                }
+        LazyVGrid(
+            columns: [GridItem(.fixed(208), spacing: 12), GridItem(.fixed(208), spacing: 12)],
+            alignment: .leading,
+            spacing: 12
+        ) {
+            ForEach(WeiBeiAppearanceStyle.allCases) { style in
+                stylePreviewCard(style)
             }
-            .padding(.bottom, 6)
         }
-        .scrollIndicators(.visible)
+        // Eight full mini-chrome previews repainting every scroll frame over a
+        // transparent glass window janks hard — rasterize the whole grid once.
+        .drawingGroup()
     }
 
-    /// 四组风格卡：左浅右深两个实景预览并排；点卡选风格，
-    /// 具体浅/深由上方“外观”偏好（跟随系统/浅色/深色）解析，卡上标注当前生效主题。
+    /// 风格对卡：左浅右深两个迷你实景并排（紧凑 2×2 版），选中态只有描边加勾。
     private func stylePreviewCard(_ style: WeiBeiAppearanceStyle) -> some View {
         let selected = style == store.appearanceStyle
         return Button {
             store.appearanceStyle = style
         } label: {
-            VStack(alignment: .leading, spacing: 7) {
+            VStack(alignment: .center, spacing: 5) {
                 ZStack(alignment: .topTrailing) {
-                    HStack(spacing: 0) {
+                    // One full mini workspace, split at the midline: the left
+                    // half renders the light mode, the right half the dark.
+                    ZStack {
                         WeiBeiThemeLayoutPreview(mode: style.lightMode)
+                            .mask { HStack(spacing: 0) { Color.white; Color.clear } }
                         WeiBeiThemeLayoutPreview(mode: style.darkMode)
+                            .mask { HStack(spacing: 0) { Color.clear; Color.white } }
                     }
+                    .frame(width: 208, height: 130)
                     .frame(maxWidth: .infinity)
-                    .frame(height: 96)
-                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                     .overlay {
-                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
                             .stroke(
                                 selected
                                     ? WeiBeiTheme.cinnabar.opacity(0.90)
                                     : WeiBeiTheme.hairline.opacity(0.42),
-                                lineWidth: selected ? 2 : 1
+                                lineWidth: selected ? 1.5 : 1
                             )
                     }
 
                     if selected {
                         Image(systemName: "checkmark.circle.fill")
-                            .weiBeiText(15, weight: .semibold)
+                            .weiBeiText(11, weight: .semibold)
                             .foregroundStyle(WeiBeiTheme.cinnabar)
-                            .padding(7)
+                            .padding(4)
                     }
                 }
 
                 Text(style.label(ui: store.ui))
-                    .weiBeiText(12, weight: selected ? .semibold : .medium)
+                    .weiBeiText(11.5, weight: selected ? .semibold : .medium)
                     .foregroundStyle(selected ? WeiBeiTheme.ink : WeiBeiTheme.secondaryInk)
                     .lineLimit(1)
-
-                Text(
-                    store.ui("当前生效", "Active") + " · "
-                        + store.appearanceMode.label(language: store.interfaceLanguage)
-                )
-                .weiBeiText(10.5)
-                .foregroundStyle(WeiBeiTheme.tertiaryInk)
-                .lineLimit(1)
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .frame(maxWidth: .infinity)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -779,88 +753,16 @@ struct SettingsView: View {
                 }
             }
 
-            settingsGroup(store.ui("灵感句", "Daily Line")) {
-                settingsRow(
-                    title: store.ui("来源与权利台账", "Sources & rights ledger"),
-                    detail: store.ui(
-                        "50 条灵感句的原文出处与版权依据。底纹模式不内联展示署名,以此台账为准。",
-                        "Source and rights basis for all 50 daily lines. The watermark mode shows no inline credit; this ledger is authoritative."
-                    ),
-                    showsBottomDivider: false
-                ) {
-                    Button(store.ui("查看台账…", "View…")) {
-                        showInspirationSourcesSheet = true
-                    }
-                    .buttonStyle(WeiBeiTextActionButtonStyle(active: true))
-                }
-            }
-
             if case .failed = updateService.status {
                 Text(store.ui("更新失败，请重试。", "Update failed. Please try again."))
                     .font(SettingsType.detail)
                     .foregroundStyle(WeiBeiTheme.tertiaryInk)
                     .padding(.horizontal, 4)
             }
-
-            Text(store.ui(
-                "密钥与对话凭证仅保存在本机魏碑数据目录，不上传。",
-                "Keys and chat credentials stay in the local WeiBei data folder and are never uploaded."
-            ))
-            .font(SettingsType.detail)
-            .foregroundStyle(WeiBeiTheme.tertiaryInk)
-            .padding(.horizontal, 4)
         }
         .sheet(isPresented: $showFeedbackSheet) {
             feedbackSheet
         }
-        .sheet(isPresented: $showInspirationSourcesSheet) {
-            inspirationSourcesSheet
-        }
-    }
-
-    /// Plain-text rendering of the bundled SOURCES.md ledger — the attribution
-    /// record for daily lines when the watermark mode shows no inline credit.
-    private var inspirationSourcesSheet: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text(store.ui("灵感句来源与权利", "Daily line sources & rights"))
-                .weiBeiText(15, weight: .semibold)
-                .foregroundStyle(WeiBeiTheme.ink)
-
-            ScrollView {
-                Text(inspirationSourcesLedgerText)
-                    .weiBeiText(10.5, design: .monospaced)
-                    .foregroundStyle(WeiBeiTheme.secondaryInk)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(12)
-            }
-            .frame(minHeight: 260, maxHeight: 420)
-            .weibeiEtchedBackground(
-                fill: WeiBeiTheme.paperRaised.opacity(0.52),
-                stroke: WeiBeiTheme.hairline.opacity(0.3),
-                cornerRadius: 8
-            )
-
-            Button(store.ui("关闭", "Close")) {
-                showInspirationSourcesSheet = false
-            }
-            .buttonStyle(WeiBeiTextActionButtonStyle(active: true))
-            .frame(maxWidth: .infinity, alignment: .trailing)
-        }
-        .padding(20)
-        .frame(width: 620)
-    }
-
-    private var inspirationSourcesLedgerText: String {
-        let bundle = WeiBeiResources.bundle
-        let url = bundle.url(forResource: "SOURCES", withExtension: "md", subdirectory: "Inspiration")
-            ?? bundle.url(forResource: "SOURCES", withExtension: "md")
-        guard let url, let text = try? String(contentsOf: url, encoding: .utf8), !text.isEmpty else {
-            return store.ui(
-                "台账文件缺失。完整台账见仓库 Sources/WeiBei/Resources/Inspiration/SOURCES.md。",
-                "Ledger file missing. Full ledger: Sources/WeiBei/Resources/Inspiration/SOURCES.md in the repository."
-            )
-        }
-        return text
     }
 
     private var updateActionLabel: String {
@@ -1114,10 +1016,14 @@ struct SettingsView: View {
     }
 
     /// Shared Settings group: title + rows on the same paper, no raised card.
+    /// An empty title collapses the header — for sections whose page name
+    /// already says what the group is.
     func settingsGroup<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
         VStack(alignment: .leading, spacing: 0) {
-            sectionTitle(title)
-                .padding(.bottom, 6)
+            if !title.isEmpty {
+                sectionTitle(title)
+                    .padding(.bottom, 6)
+            }
             VStack(spacing: 0) {
                 content()
             }
@@ -1248,8 +1154,11 @@ private enum SettingsType {
 private struct SettingsWindowPaper: NSViewRepresentable {
     var appearanceMode: WeiBeiAppearanceMode
 
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
     func makeNSView(context: Context) -> NSView {
         let view = NSView()
+        context.coordinator.observe(view)
         DispatchQueue.main.async { configure(view.window) }
         return view
     }
@@ -1258,17 +1167,59 @@ private struct SettingsWindowPaper: NSViewRepresentable {
         configure(view.window)
     }
 
+    func dismantleNSView(_ view: NSView, coordinator: Coordinator) {
+        coordinator.stop()
+    }
+
+    /// SwiftUI reasserts its own titlebar chrome whenever the Settings window
+    /// is activated — a one-shot styleMask insert gets silently reverted. Re-
+    /// insert full-size content on every activation so the glass sheet reaches
+    /// the very top of the window.
+    @MainActor
+    final class Coordinator {
+        private var observer: NSObjectProtocol?
+
+        func observe(_ view: NSView) {
+            guard observer == nil else { return }
+            observer = NotificationCenter.default.addObserver(
+                forName: NSWindow.didBecomeKeyNotification,
+                object: nil,
+                queue: .main
+            ) { [weak view] note in
+                guard let window = note.object as? NSWindow,
+                      window === view?.window,
+                      !window.styleMask.contains(.fullSizeContentView) else { return }
+                window.styleMask.insert(.fullSizeContentView)
+            }
+        }
+
+        func stop() {
+            if let observer {
+                NotificationCenter.default.removeObserver(observer)
+            }
+            observer = nil
+        }
+    }
+
     private func configure(_ window: NSWindow?) {
         guard let window else { return }
+        // Keep the window title ("设置") for the Window menu — the borderless
+        // chrome comes from .windowStyle(.hiddenTitleBar) on the scene.
         window.titlebarAppearsTransparent = true
         window.titlebarSeparatorStyle = .none
+        window.styleMask.insert(.fullSizeContentView)
+        window.toolbar = nil
         window.isOpaque = !appearanceMode.isGlass
         window.backgroundColor = appearanceMode.isGlass
             ? .clear
             : appearanceMode.windowBackground
-        window.appearance = NSAppearance(
-            named: appearanceMode.isDark ? .darkAqua : .aqua
-        )
+        // Flip through nil on light↔dark — assigning a same-name appearance
+        // directly leaves the system titlebar material stuck on the old tint.
+        let targetName: NSAppearance.Name = appearanceMode.isDark ? .darkAqua : .aqua
+        if window.appearance?.name != targetName {
+            window.appearance = nil
+            window.appearance = NSAppearance(named: targetName)
+        }
         window.contentView?.wantsLayer = appearanceMode.isGlass
         window.contentView?.layer?.backgroundColor = appearanceMode.isGlass ? NSColor.clear.cgColor : nil
     }

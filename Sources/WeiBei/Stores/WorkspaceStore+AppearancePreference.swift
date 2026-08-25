@@ -122,13 +122,17 @@ extension WorkspaceStore {
         }
     }
 
-    /// 玻璃主题浓度 0–1；写运行时（通知所有窗后材质即时重放）并持久化。
+    /// 玻璃主题浓度 0–1；拖动中只写运行时（通知所有窗后材质即时重放）。
     var glassIntensity: Double {
         get { WeiBeiThemeRuntime.glassIntensity }
         set {
             WeiBeiThemeRuntime.glassIntensity = min(1, max(0, newValue))
-            UserDefaults.standard.set(WeiBeiThemeRuntime.glassIntensity, forKey: Self.glassIntensityKey)
         }
+    }
+
+    /// 滑杆松手时落盘——拖动过程中不重复写 UserDefaults。
+    func persistGlassIntensity() {
+        UserDefaults.standard.set(WeiBeiThemeRuntime.glassIntensity, forKey: Self.glassIntensityKey)
     }
 
     /// 启动时恢复持久化的玻璃浓度。

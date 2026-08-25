@@ -157,6 +157,7 @@ enum WeiBeiAppearanceMode: String, CaseIterable, Identifiable {
 @Observable
 private final class WeiBeiThemeObservationState {
     var mode: WeiBeiAppearanceMode = .paper
+    var glassIntensity: Double = 1.0
 }
 
 /// Live appearance used by theme colors. Always update **before** publishing
@@ -169,12 +170,25 @@ enum WeiBeiThemeRuntime {
         set { observationState.mode = newValue }
     }
 
-    /// Glass theme translucency 0–1, driven by the Settings slider; persisted in defaults.
-    static var glassIntensity: Double = 1.0 {
-        didSet {
-            guard oldValue != glassIntensity else { return }
+    /// Glass theme translucency 0–1, driven by the Settings slider; persisted in
+    /// defaults. Observable so SwiftUI sheets re-render, plus a notification so
+    /// AppKit material views can replay without a SwiftUI pass.
+    static var glassIntensity: Double {
+        get { observationState.glassIntensity }
+        set {
+            guard observationState.glassIntensity != newValue else { return }
+            observationState.glassIntensity = newValue
             NotificationCenter.default.post(name: glassIntensityDidChangeNotification, object: nil)
         }
+    }
+
+    /// Never let the glass fully vanish. macOS routes clicks on fully
+    /// transparent pixels of a non-opaque window straight through to whatever
+    /// is below, and alphas below 1/255 round to zero when composited — so the
+    /// floor must keep the weakest glass layer (0.30 × floor) above that step.
+    /// 2% lands at ~1.5/255: clicks stay in the window, invisible to the eye.
+    static var appliedGlassIntensity: CGFloat {
+        max(0.02, CGFloat(glassIntensity))
     }
     /// Posted after mode changes so AppKit views (PDF mask, splitters) can redraw.
     static let didChangeNotification = Notification.Name("WeiBeiThemeRuntimeDidChange")
@@ -387,6 +401,42 @@ enum WeiBeiTheme {
     static var stone: Color { secondaryInk }
 }
 
+/// The single glass foreground sheet (ContentView ZStack root). Frosted pairs
+/// paint an even veil; clear pairs fade from a legible top-bar band into
+/// near-bare translucency so the desktop keeps showing through the body.
+struct WeiBeiGlassForegroundSheet: View {
+    let mode: WeiBeiAppearanceMode
+
+    var body: some View {
+        Group {
+            switch mode {
+            case .glassMist, .glassSlate:
+                Color(nsColor: WeiBeiNativePalette.paperRaised(for: mode))
+            case .glassLight, .glassDark:
+                clearPairGradient
+            default:
+                Color.clear
+            }
+        }
+        // The slider owns the whole sheet (6% floor — see appliedGlassIntensity).
+        .opacity(WeiBeiThemeRuntime.appliedGlassIntensity)
+        .allowsHitTesting(false)
+    }
+
+    /// Clear pairs: legible band behind the top bar fading to near-bare glass.
+    private var clearPairGradient: some View {
+        // Strip the palette alpha — the gradient owns opacity here.
+        let base = Color(nsColor: WeiBeiNativePalette.paperRaised(for: mode).withAlphaComponent(1))
+        let head: Double = mode == .glassLight ? 0.32 : 0.22
+        let body: Double = mode == .glassLight ? 0.18 : 0.13
+        return LinearGradient(
+            colors: [base.opacity(head), base.opacity(body)],
+            startPoint: .top,
+            endPoint: UnitPoint(x: 0.5, y: 0.12)
+        )
+    }
+}
+
 /// One native behind-window material layer for each glass window.
 struct WeiBeiThemeBackdrop: View {
     let mode: WeiBeiAppearanceMode
@@ -400,7 +450,11 @@ struct WeiBeiThemeBackdrop: View {
                     mode: mode,
                     isFullScreen: isFullScreen
                 )
+                // The slider owns blur + surfaces, but the tint keeps a 35%
+                // floor: at minimum glass, dark pairs stay faintly inked and
+                // light pairs run near-bare — the two ends never converge.
                 Color(nsColor: WeiBeiNativePalette.glassBaseTint(for: mode))
+                    .opacity(max(0.35, WeiBeiThemeRuntime.appliedGlassIntensity))
             }
         } else {
             Color(nsColor: WeiBeiNativePalette.paper(for: mode))
@@ -455,14 +509,25 @@ private struct WeiBeiBehindWindowMaterial: NSViewRepresentable {
 
     /// 捕获当前 mode / isFullScreen 与实时玻璃浓度的应用闭包；滑杆变化时由
     /// Coordinator 重放，SwiftUI 不重渲染主窗口也能生效。
+    /// 材质分工：透亮对（晴璃/夜璃）轻糊薄染求"透"；磨砂对（雾璃/玄璃）
+    /// 用系统最重的 behindWindow 模糊档求"砂"。
     private func applyClosure(for view: NSVisualEffectView?) -> () -> Void {
         { [weak view] in
             guard let view else { return }
-            view.material = mode.isDark
-                ? .hudWindow
-                : isFullScreen ? .windowBackground : .underWindowBackground
-            let baseAlpha: CGFloat = mode.isDark ? 0.68 : isFullScreen ? 0.88 : 0.36
-            view.alphaValue = baseAlpha * CGFloat(WeiBeiThemeRuntime.glassIntensity)
+            switch mode {
+            case .glassLight:
+                view.material = isFullScreen ? .windowBackground : .underWindowBackground
+                view.alphaValue = (isFullScreen ? 0.88 : 0.38) * WeiBeiThemeRuntime.appliedGlassIntensity
+            case .glassDark:
+                view.material = .hudWindow
+                view.alphaValue = 0.58 * WeiBeiThemeRuntime.appliedGlassIntensity
+            case .glassMist, .glassSlate:
+                view.material = .underPageBackground
+                view.alphaValue = 0.72 * WeiBeiThemeRuntime.appliedGlassIntensity
+            default:
+                view.material = .hudWindow
+                view.alphaValue = 0
+            }
         }
     }
 
@@ -503,13 +568,13 @@ enum WeiBeiNativePalette {
         case .stele:
             return NSColor(calibratedRed: 0.118, green: 0.133, blue: 0.157, alpha: 1.0)
         case .glassLight:
-            return NSColor(calibratedRed: 0.965, green: 0.980, blue: 1.000, alpha: 0.18)
+            return NSColor(calibratedRed: 0.965, green: 0.980, blue: 1.000, alpha: 0.30)
         case .glassDark:
-            return NSColor(calibratedRed: 0.105, green: 0.135, blue: 0.185, alpha: 0.22)
+            return NSColor(calibratedRed: 0.105, green: 0.135, blue: 0.185, alpha: 0.16)
         case .glassMist:
-            return NSColor(calibratedRed: 0.957, green: 0.976, blue: 1.000, alpha: 0.72)
+            return NSColor(calibratedRed: 0.957, green: 0.976, blue: 1.000, alpha: 0.55)
         case .glassSlate:
-            return NSColor(calibratedRed: 0.106, green: 0.129, blue: 0.169, alpha: 0.66)
+            return NSColor(calibratedRed: 0.106, green: 0.129, blue: 0.169, alpha: 0.55)
         }
     }
 
@@ -524,7 +589,7 @@ enum WeiBeiNativePalette {
         case .stele:
             return NSColor(calibratedRed: 0.145, green: 0.165, blue: 0.196, alpha: 1.0)
         case .glassLight:
-            return NSColor(calibratedRed: 0.700, green: 0.760, blue: 0.830, alpha: 0.13)
+            return NSColor(calibratedRed: 0.700, green: 0.760, blue: 0.830, alpha: 0.24)
         case .glassDark:
             return NSColor(calibratedRed: 0.180, green: 0.230, blue: 0.310, alpha: 0.16)
         case .glassMist:
@@ -539,11 +604,11 @@ enum WeiBeiNativePalette {
         case .glassLight:
             return NSColor(calibratedRed: 0.94, green: 0.98, blue: 1.00, alpha: 0.02)
         case .glassDark:
-            return NSColor(calibratedRed: 0.025, green: 0.040, blue: 0.065, alpha: 0.46)
+            return NSColor(calibratedRed: 0.025, green: 0.040, blue: 0.065, alpha: 0.28)
         case .glassMist:
-            return NSColor(calibratedRed: 0.957, green: 0.976, blue: 1.000, alpha: 0.22)
+            return NSColor(calibratedRed: 0.957, green: 0.976, blue: 1.000, alpha: 0.26)
         case .glassSlate:
-            return NSColor(calibratedRed: 0.106, green: 0.129, blue: 0.169, alpha: 0.46)
+            return NSColor(calibratedRed: 0.106, green: 0.129, blue: 0.169, alpha: 0.42)
         default:
             return .clear
         }
@@ -554,33 +619,23 @@ enum WeiBeiNativePalette {
     static func drawerSurface(for mode: WeiBeiAppearanceMode = current) -> NSColor {
         switch mode {
         case .glassLight:
-            return NSColor(calibratedRed: 0.94, green: 0.97, blue: 1.00, alpha: 0.20)
+            return NSColor(calibratedRed: 0.94, green: 0.97, blue: 1.00, alpha: 0.30)
         case .glassDark:
-            return NSColor(calibratedRed: 0.055, green: 0.075, blue: 0.105, alpha: 0.28)
+            return NSColor(calibratedRed: 0.055, green: 0.075, blue: 0.105, alpha: 0.22)
         case .glassMist:
-            return NSColor(calibratedRed: 0.957, green: 0.976, blue: 1.000, alpha: 0.36)
+            return NSColor(calibratedRed: 0.957, green: 0.976, blue: 1.000, alpha: 0.42)
         case .glassSlate:
-            return NSColor(calibratedRed: 0.106, green: 0.129, blue: 0.169, alpha: 0.46)
+            return NSColor(calibratedRed: 0.106, green: 0.129, blue: 0.169, alpha: 0.44)
         default:
             return paper(for: mode)
         }
     }
 
-    /// Full-window foreground workspace surface. It must hide any open drawer
-    /// below it while remaining visibly translucent to the desktop material.
+    /// Full-window foreground workspace surface. Glass paints nothing here —
+    /// the single full-window sheet at the ContentView ZStack root owns glass
+    /// legibility; a second sheet would double-stack the tint.
     static func foregroundWorkspaceSurface(for mode: WeiBeiAppearanceMode = current) -> NSColor {
-        switch mode {
-        case .glassLight:
-            return NSColor(calibratedRed: 0.94, green: 0.97, blue: 1.00, alpha: 0.12)
-        case .glassDark:
-            return NSColor(calibratedRed: 0.040, green: 0.055, blue: 0.080, alpha: 0.22)
-        case .glassMist:
-            return NSColor(calibratedRed: 0.957, green: 0.976, blue: 1.000, alpha: 0.28)
-        case .glassSlate:
-            return NSColor(calibratedRed: 0.106, green: 0.129, blue: 0.169, alpha: 0.38)
-        default:
-            return paper(for: mode)
-        }
+        mode.isGlass ? .clear : paper(for: mode)
     }
 
     static func ink(for mode: WeiBeiAppearanceMode = current) -> NSColor {
@@ -972,13 +1027,13 @@ enum WeiBeiNativePalette {
         case .stele:
             return ("#16181c", "#1e2228", "#d2d6dc", "rgba(154,161,171,.88)", "#b04034", "#b8c4d0", "rgba(176,64,52,.32)")
         case .glassLight:
-            return ("rgba(230,240,250,.42)", "rgba(248,251,255,.62)", "#171d26", "rgba(62,74,90,.78)", "#9c281d", "#1f5a89", "rgba(156,40,29,.20)")
+            return ("rgba(230,240,250,.52)", "rgba(248,251,255,.60)", "#171d26", "rgba(62,74,90,.78)", "#9c281d", "#1f5a89", "rgba(156,40,29,.20)")
         case .glassDark:
-            return ("rgba(12,16,24,.52)", "rgba(27,35,48,.56)", "#e8eef9", "rgba(174,186,204,.88)", "#eb5746", "#7dbeF5", "rgba(235,87,70,.34)")
+            return ("rgba(12,16,24,.36)", "rgba(27,35,48,.40)", "#e8eef9", "rgba(174,186,204,.88)", "#eb5746", "#7dbeF5", "rgba(235,87,70,.34)")
         case .glassMist:
-            return ("rgba(244,249,255,.72)", "rgba(244,249,255,.72)", "#25231f", "rgba(90,86,78,.74)", "#8a2f24", "#335266", "rgba(138,47,36,.16)")
+            return ("rgba(244,249,255,.38)", "rgba(244,249,255,.55)", "#25231f", "rgba(90,86,78,.74)", "#8a2f24", "#335266", "rgba(138,47,36,.16)")
         case .glassSlate:
-            return ("rgba(27,33,43,.66)", "rgba(27,33,43,.66)", "#d2d6dc", "rgba(154,161,171,.88)", "#b04034", "#b8c4d0", "rgba(176,64,52,.32)")
+            return ("rgba(27,33,43,.40)", "rgba(27,33,43,.55)", "#d2d6dc", "rgba(154,161,171,.88)", "#b04034", "#b8c4d0", "rgba(176,64,52,.32)")
         }
     }
 }
@@ -1071,63 +1126,7 @@ extension View {
     }
 }
 
-/// Top-bar / settings theme control: compact surface swatches instead of a menu.
-private struct AppearanceThemePalettePopover: View {
-    @EnvironmentObject private var store: WorkspaceStore
-    @Binding var isPresented: Bool
-
-    var body: some View {
-        HStack(spacing: 10) {
-            ForEach(WeiBeiAppearanceMode.allCases) { mode in
-                Button {
-                    // Store owns a single appearance transaction — do not wrap again.
-                    store.setAppearanceMode(mode)
-                    isPresented = false
-                } label: {
-                    VStack(spacing: 6) {
-                        ZStack {
-                            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                .fill(Color(nsColor: previewSurface(for: mode)))
-                                .frame(width: 52, height: 36)
-                            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                .stroke(
-                                    mode == store.appearanceMode
-                                        ? WeiBeiTheme.cinnabar.opacity(0.90)
-                                        : WeiBeiTheme.hairline.opacity(0.70),
-                                    lineWidth: mode == store.appearanceMode ? 1.5 : 1
-                                )
-                                .frame(width: 52, height: 36)
-                            // Ink sample line so the swatch reads as paper + text, not a flat chip.
-                            Capsule()
-                                .fill(Color(nsColor: WeiBeiNativePalette.ink(for: mode)).opacity(0.55))
-                                .frame(width: 22, height: 2)
-                        }
-                        Text(mode.label(language: store.interfaceLanguage))
-                            .weiBeiText(11, weight: mode == store.appearanceMode ? .semibold : .medium)
-                            .foregroundStyle(
-                                mode == store.appearanceMode ? WeiBeiTheme.ink : WeiBeiTheme.secondaryInk
-                            )
-                            .lineLimit(1)
-                    }
-                    .frame(width: 56)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel(Text(mode.label(language: store.interfaceLanguage)))
-                .accessibilityAddTraits(mode == store.appearanceMode ? .isSelected : [])
-            }
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 12)
-        .background(WeiBeiTheme.paperRaised)
-    }
-}
-
 // MARK: - Theme layout preview (real WeiBei chrome, not a chat-shell mock)
-//
-// Matches the live default workspace: full-width UnifiedTopBar + document
-// three-pane (阅读 | 对话 | 笔记). Library is a drawer, not a permanent column.
-
 struct WeiBeiThemeLayoutPreview: View {
     let mode: WeiBeiAppearanceMode
 
@@ -1243,8 +1242,7 @@ struct WeiBeiThemeLayoutPreview: View {
         }
         .padding(.horizontal, 4)
         .padding(.vertical, 5)
-        .frame(maxHeight: .infinity, alignment: .topLeading)
-        .frame(width: 36)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(raised.opacity(0.55))
     }
 
@@ -1262,8 +1260,7 @@ struct WeiBeiThemeLayoutPreview: View {
         }
         .padding(.horizontal, 4)
         .padding(.vertical, 5)
-        .frame(maxHeight: .infinity, alignment: .topLeading)
-        .frame(width: 32)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(raised.opacity(0.40))
     }
 
@@ -1387,6 +1384,8 @@ struct WeiBeiGlassHeaderBackground: View {
     var body: some View {
         ZStack {
             if appearanceMode.isGlass {
+                // Glass legibility is owned by the single full-window sheet at
+                // the ContentView root — headers must not paint a second layer.
                 Color.clear
             } else if isDark {
                 // Match the page/window paper exactly — no paperRaised wash, no warm

@@ -90,7 +90,7 @@ enum AgentProviderReadiness {
 struct AgentUnconfiguredHint: View {
     @ObservedObject var store: WorkspaceStore
     @ObservedObject private var oauth = AgentAccountService.shared
-    @Environment(\.openSettings) private var openSettings
+    @Environment(\.openWindow) private var openSettingsWindow
 
     var body: some View {
         if !AgentProviderReadiness.isConfigured(for: store) {
@@ -108,7 +108,7 @@ struct AgentUnconfiguredHint: View {
                 .font(.caption)
                 .foregroundStyle(WeiBeiTheme.secondaryInk)
             Button(store.ui("去设置", "Open Settings")) {
-                openSettings()
+                openSettingsWindow(id: "weibei-settings")
             }
             .buttonStyle(WeiBeiTextActionButtonStyle())
         }
