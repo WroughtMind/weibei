@@ -26,6 +26,8 @@ func checkUnavailableCourseUnregister() {
 
     let chinese = UnavailableCourseUnregister.confirmationMessage(chinese: true)
     let english = UnavailableCourseUnregister.confirmationMessage(chinese: false)
+    // 产品安全契约,不是普通锁字断言:卸载确认必须向用户担保「不移动、不删除」,
+    // 且不得出现「废纸篓」字眼;修改此措辞须经产品评审(2026-08-25 测试审计定案)。
     expect(
         chinese.contains("不移动") && chinese.contains("不删除"),
         "Chinese confirmation must say files are not moved or deleted"

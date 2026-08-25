@@ -122,7 +122,7 @@ final class SnapshotRecoveryTests: XCTestCase {
         )
 
         XCTAssertEqual(store.agentBaseURL, "https://recovery.example")
-        XCTAssertTrue(store.importantOperationError?.contains("备份") == true)
+        XCTAssertEqual(store.importantOperationNotice, .snapshotRecovered)
         let names = try FileManager.default.contentsOfDirectory(atPath: dir.path)
         XCTAssertTrue(names.contains { $0.hasPrefix("workspace.corrupt-") })
     }

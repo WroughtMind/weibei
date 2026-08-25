@@ -109,10 +109,6 @@ func checkLibraryRelativeStorage() throws {
         contentsOfFile: "Sources/WeiBei/Stores/WorkspaceStore.swift",
         encoding: .utf8
     )
-    let libraryRootSource = try String(
-        contentsOfFile: "Sources/WeiBei/Stores/WorkspaceStore+LibraryRoot.swift",
-        encoding: .utf8
-    )
     let modelsSource = try String(
         contentsOfFile: "Sources/WeiBeiCore/WorkspaceModels.swift",
         encoding: .utf8
@@ -121,6 +117,8 @@ func checkLibraryRelativeStorage() throws {
         contentsOfFile: "Sources/WeiBei/Stores/WorkspaceStore+GoneImportedItems.swift",
         encoding: .utf8
     )
+    // 源码文本只做「不得出现」式墓碑检查,防止已删模型复活;
+    // 禁止「必须包含某标识符」式形状锁:不验证行为,重构改名即误报(2026-08-25 测试审计定案)。
     expect(
         !modelsSource.contains("legacyExternal")
             && !modelsSource.contains("importedFileLastKnownPath")
@@ -130,27 +128,16 @@ func checkLibraryRelativeStorage() throws {
     )
     expect(
         !goneSource.contains("ImportedFileRecovery")
-            && goneSource.contains("resolvedLibraryURL")
-            && goneSource.contains("CourseProjectPathPolicy.resolvedRelativePath")
             && !goneSource.contains("legacyFileURL"),
-        "SAFETY:library-relative-gone gone-item handling uses library-relative paths instead of recovery"
+        "SAFETY:library-relative-gone gone-item handling stays off the old recovery and legacy-file paths"
     )
+    let flattenedStoreSource = storeSource
+        .components(separatedBy: .whitespacesAndNewlines)
+        .filter { !$0.isEmpty }
+        .joined(separator: " ")
     expect(
-        storeSource.contains("case .blank:")
-            && storeSource.contains("targetCourseID = courseWorkspaceCourseID")
-            && !storeSource.contains("?? activeCourseID\n            ?? sourceItem")
-            && storeSource.contains("return resolveCourseOwnedFile("),
-        "SAFETY:library-relative-notes blank notes ignore sidebar-active course; opening heals course-owned identity"
-    )
-    expect(
-        (storeSource.contains("copyExternalFileIntoLibrary")
-            || libraryRootSource.contains("copyExternalFileIntoLibrary"))
-            && libraryRootSource.contains("copyExternalFileIntoCourse")
-            && storeSource.contains("discoverTopLevelCourseFolders")
-            && storeSource.contains("courseItemMemberships: nil")
-            && storeSource.contains("isTopLevelLibraryCourseFolder")
-            && storeSource.contains("rootOutsideLibrary"),
-        "SAFETY:library-relative-import import, discovery, and persist follow the single-library model"
+        !flattenedStoreSource.contains("?? activeCourseID ?? sourceItem"),
+        "SAFETY:library-relative-notes blank notes no longer inherit the sidebar-active course through a fallback chain"
     )
     let hubSource = try String(
         contentsOfFile: "Sources/WeiBei/Views/CourseHubView.swift",

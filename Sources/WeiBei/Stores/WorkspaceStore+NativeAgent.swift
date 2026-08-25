@@ -1,31 +1,59 @@
 import Foundation
 import WeiBeiCore
 
+/// 互动操作被拒的类型化身份:测试按 case 断言;message 只负责展示。
+/// agentRefused 的载荷是 askAgent 现场生成的完整说明文案。
+enum AgentVisualizationActionRejection: Equatable {
+    case emptyAction
+    case actionNameTooLong
+    case payloadTooLarge
+    case payloadUnreadable
+    case agentBusy(activeChat: Bool)
+    case agentRefused(String)
+
+    func message(_ ui: (String, String) -> String) -> String {
+        switch self {
+        case .emptyAction:
+            return ui("这个按钮没有可执行的回答操作。", "This button has no executable response action.")
+        case .actionNameTooLong:
+            return ui("这个互动操作名称过长，未提交回答。", "This interactive action name is too long, so nothing was submitted.")
+        case .payloadTooLarge:
+            return ui("互动数据过大，无法提交回答。", "The interactive data is too large to submit.")
+        case .payloadUnreadable:
+            return ui("互动数据无法读取，未提交回答。", "The interactive data could not be read, so nothing was submitted.")
+        case .agentBusy(activeChat: true):
+            return ui("这个互动操作正在处理中。", "This interactive action is being processed.")
+        case .agentBusy(activeChat: false):
+            return ui("另一条回答正在处理，请稍候。", "Another response is being processed. Please wait.")
+        case .agentRefused(let detail):
+            return detail
+        }
+    }
+}
+
 @MainActor
 extension WorkspaceStore {
-    func submitAgentVisualizationAction(_ action: String, payloadJSON: String) -> String? {
+    func submitAgentVisualizationAction(_ action: String, payloadJSON: String) -> AgentVisualizationActionRejection? {
         let action = action.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !action.isEmpty else {
-            return ui("这个按钮没有可执行的回答操作。", "This button has no executable response action.")
+            return .emptyAction
         }
         guard action.count <= 200 else {
-            return ui("这个互动操作名称过长，未提交回答。", "This interactive action name is too long, so nothing was submitted.")
+            return .actionNameTooLong
         }
         guard payloadJSON.utf8.count <= 65_536 else {
-            return ui("互动数据过大，无法提交回答。", "The interactive data is too large to submit.")
+            return .payloadTooLarge
         }
         guard (try? JSONSerialization.jsonObject(
             with: Data(payloadJSON.utf8),
             options: .fragmentsAllowed
         )) != nil else {
-            return ui("互动数据无法读取，未提交回答。", "The interactive data could not be read, so nothing was submitted.")
+            return .payloadUnreadable
         }
         guard agentRequestTask == nil, !isAskingAgent, !isStoppingAgent else {
-            return isAgentRunningInActiveChat
-                ? ui("这个互动操作正在处理中。", "This interactive action is being processed.")
-                : ui("另一条回答正在处理，请稍候。", "Another response is being processed. Please wait.")
+            return .agentBusy(activeChat: isAgentRunningInActiveChat)
         }
-        return askAgent(
+        guard let refusal = askAgent(
             replayingSelections: [],
             visibleQuestionOverride: ui(
                 "互动操作：\(action)",
@@ -35,7 +63,8 @@ extension WorkspaceStore {
                 "我在互动界面中执行了「\(action)」。当前界面数据：\(payloadJSON)",
                 "I used “\(action)” in the interactive view. Current view data: \(payloadJSON)"
             )
-        )
+        ) else { return nil }
+        return .agentRefused(refusal)
     }
 
     var canCopyReference: Bool {

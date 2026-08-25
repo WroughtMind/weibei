@@ -611,14 +611,32 @@ final class WorkspaceStore: ObservableObject {
     /// Success / info banner for note create/switch — separate from errors so it auto-dismisses cleanly.
     @Published var transientNoteStatus: String?
     @Published private var noteSelectionTransitionState = NoteSelectionTransitionState.idle
+    /// 卡死逃生:切换等待若长时间停在 .saving(如编辑器命令未回执、快照循环不收敛),
+    /// 降级为失败态,让底部状态条的重试入口与新的切换恢复可用。只改状态,不动数据。
+    private var noteSelectionWatchdogTask: Task<Void, Never>?
+    /// 看门狗时长(秒),测试可调短。
+    var noteSelectionWatchdogSeconds: TimeInterval = 8
+    /// 契约3:内部故障静默自愈——被拒命令与失败切换在后台自动重试;
+    /// 超过次数仍失败(基本等于真写不进盘)才升级为用户可见的"请重试"。
+    private static let selfHealAttemptLimit = 3
+    private var rejectedCommandSelfHealTask: Task<Void, Never>?
+    private var rejectedCommandSelfHealAttempts = 0
+    private var pendingSelectionSelfHealTask: Task<Void, Never>?
+    private var pendingSelectionSelfHealAttempts = 0
+    /// 自愈重试的基础间隔(秒),测试可调短。
+    var noteSelectionSelfHealDelaySeconds: TimeInterval = 0.8
     private var pendingNoteSelection: PendingNoteSelection?
     /// Serious data-operation failures (note read/write/rename/restore/identity,
     /// security scope, course file move & rollback). Never auto-dismisses — only a
     /// user close or a newer important error replaces it.
     @Published var importantOperationError: String?
+    /// 横幅的类型化身份,与 importantOperationError 并行记录,测试按语义断言而非比对文案。
+    @Published var importantOperationNotice: ImportantOperationNotice?
     var transientNoteStatusGeneration = 0
     var transientNoteStatusTask: Task<Void, Never>?
-    @Published private(set) var workspaceSaveError: String?
+    @Published private(set) var workspaceSaveFailure: WorkspaceSaveFailure?
+    /// 展示兼容:界面与对话框仍按字符串消费保存失败文案。
+    var workspaceSaveError: String? { workspaceSaveFailure?.message }
     @Published private(set) var courseFileOperationProgress: CourseFileOperationProgress?
     @Published var notebookCreationDraft: NotebookCreationDraft?
     @Published var notebookRenameDraft: NotebookRenameDraft?
@@ -1397,7 +1415,7 @@ final class WorkspaceStore: ObservableObject {
             // The first commit registers the new course in workspace.json.
             // Only then may the next generation include its portable state.
             if !(await persistWorkspaceNow()) {
-                reportWorkspaceSaveFailure(ui(
+                reportWorkspaceSaveFailure(.coursePortableStateUnwritten, ui(
                     "课程已创建，但可携带状态尚未写入；本机内容已保留。请重试。",
                     "The course was created, but its portable state was not written. Local content is preserved; please retry."
                 ))
@@ -2328,7 +2346,7 @@ final class WorkspaceStore: ObservableObject {
             }
         }
         if !(await persistWorkspaceNow()) {
-            reportWorkspaceSaveFailure(ui(
+            reportWorkspaceSaveFailure(.coursePortableStateUnwritten, ui(
                 "课程已登记，但可携带状态尚未写入；本机内容已保留。请重试。",
                 "The course was registered, but its portable state was not written. Local content is preserved; please retry."
             ))
@@ -8542,66 +8560,6 @@ final class WorkspaceStore: ObservableObject {
         save()
     }
 
-    func prepareNoteForOpening() {
-        guard let material = selectedMaterialItem else { return }
-        if let noteID = materialNotePairings[material.id],
-           item(withID: noteID)?.isNotebookNote == true {
-            openContextualItem(noteID, kind: .note)
-            return
-        }
-        let linked = linkedNoteIDs(for: material.id).filter {
-            item(withID: $0)?.isNotebookNote == true
-        }
-        if linked.count == 1, let noteID = linked.first {
-            openContextualItem(noteID, kind: .note)
-        } else if linked.isEmpty {
-            beginBlankNoteDraft(for: material.id)
-        } else {
-            requestNoteSelectionTransition(to: nil) { [weak self] in
-                self?.blankNoteDraftMaterialID = nil
-                self?.activeNotebookItemID = nil
-                self?.noteText = ""
-            }
-        }
-    }
-
-    func prepareMaterialForOpening() {
-        guard let note = activeNoteItem else { return }
-        if let materialID = noteMaterialPairings[note.id],
-           item(withID: materialID)?.isCourseMaterial == true {
-            openContextualItem(materialID, kind: .material)
-            return
-        }
-        let linked = linkedSourceIDs(for: note.id).filter {
-            item(withID: $0)?.isCourseMaterial == true
-        }
-        let candidates = linked.isEmpty
-            ? courseMembershipIndex.courseIDs(for: note.id).flatMap { courseID in
-                courseMaterials(in: courseID).map(\.id)
-            }
-            : linked
-        let uniqueCandidates = Array(Set(candidates))
-        if uniqueCandidates.count == 1, let materialID = uniqueCandidates.first {
-            openContextualItem(materialID, kind: .material)
-        } else {
-            selectedItemID = nil
-        }
-    }
-
-    private func beginBlankNoteDraft(for materialID: String) {
-        guard item(withID: materialID)?.isNotebookNote == false else { return }
-        requestNoteSelectionTransition(to: "draft:\(materialID)") { [weak self] in
-            guard let self else { return }
-            blankNoteMaterializationTask?.cancel()
-            blankNoteMaterializationTask = nil
-            blankNoteDraftMaterialID = materialID
-            pendingBlankNoteText = ""
-            activeNotebookItemID = nil
-            noteText = ""
-            focus(.notes)
-        }
-    }
-
     var filteredItems: [StudyItem] {
         let query = librarySearch.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !query.isEmpty else { return allItems }
@@ -9808,12 +9766,13 @@ final class WorkspaceStore: ObservableObject {
     }
 
     var activeNoteItem: StudyItem? {
+        // 笔记窗格只跟随笔记主键;选中条目本身是笔记(在文稿区打开)时不再牵引
+        // 笔记窗格——文稿区/笔记区各管各的(2026-08-26 定案解耦)。
         if let activeNotebookItemID,
            let item = allItems.first(where: { $0.id == activeNotebookItemID && $0.isNotebookNote }) {
             return item
         }
-        guard selectedItem?.isNotebookNote == true else { return nil }
-        return selectedItem
+        return nil
     }
 
     var activeNoteItemID: String? {
@@ -10238,7 +10197,13 @@ final class WorkspaceStore: ObservableObject {
     }
 
     var noteSelectionStatusMessage: String? {
-        switch noteSelectionTransitionState {
+        // 自愈期内只报中性的"正在保存",失败文案与手动重试在重试额度耗尽后才出现。
+        if pendingNoteSelection != nil,
+           pendingSelectionSelfHealAttempts < Self.selfHealAttemptLimit,
+           noteSelectionTransitionState != .idle {
+            return ui("正在保存当前笔记…", "Saving the current note…")
+        }
+        return switch noteSelectionTransitionState {
         case .idle:
             nil
         case .saving:
@@ -10268,6 +10233,10 @@ final class WorkspaceStore: ObservableObject {
 
     var noteEditorCommandFailureMessage: String? {
         guard let rejected = firstRetryableContentCommand else { return nil }
+        // 自愈期内静默:内容已保留、后台自动重发,不给用户看内部术语。
+        if rejectedCommandSelfHealAttempts < Self.selfHealAttemptLimit {
+            return nil
+        }
         if rejected.documentID != activeNoteEditorDocumentID {
             return ui(
                 "未应用的内容已保留。返回原笔记后可重试。",
@@ -10293,12 +10262,17 @@ final class WorkspaceStore: ObservableObject {
         if pendingNoteSelection != nil,
            noteEditingSession.documentID == documentID {
             noteSelectionTransitionState = .saving
+            armNoteSelectionWatchdog()
         }
     }
 
     func noteEditorContentCommandApplied(_ command: NoteEditorCommand, documentID: String) {
         guard trackedContentCommand(id: command.id)?.documentID == documentID else { return }
         removeTrackedContentCommand(id: command.id)
+        if unresolvedContentCommands.isEmpty {
+            rejectedCommandSelfHealAttempts = 0
+            rejectedCommandSelfHealTask?.cancel()
+        }
         resumePendingNoteSelection(afterResolvingCommandFor: documentID)
     }
 
@@ -10308,6 +10282,7 @@ final class WorkspaceStore: ObservableObject {
             ?? TrackedNoteEditorCommand(documentID: documentID, command: command)
         tracked.isCoordinatorOwned = false
         upsertTrackedContentCommand(tracked)
+        scheduleRejectedCommandSelfHeal()
     }
 
     func retryRejectedNoteEditorCommand() {
@@ -10319,6 +10294,7 @@ final class WorkspaceStore: ObservableObject {
         noteEditorCommand = command
         if pendingNoteSelection != nil {
             noteSelectionTransitionState = .saving
+            armNoteSelectionWatchdog()
         }
     }
 
@@ -10352,6 +10328,7 @@ final class WorkspaceStore: ObservableObject {
         pendingNoteSelection = PendingNoteSelection(apply: apply)
         if hasUnresolvedContentCommand(for: sourceDocumentID) {
             noteSelectionTransitionState = .saving
+            armNoteSelectionWatchdog()
             return
         }
         guard noteSelectionTransitionState != .saving else { return }
@@ -10397,6 +10374,7 @@ final class WorkspaceStore: ObservableObject {
     private func requestPendingNoteSelectionSnapshot() {
         guard pendingNoteSelection != nil else { return }
         noteSelectionTransitionState = .saving
+        armNoteSelectionWatchdog()
         let sourceDocumentID = noteEditingSession.documentID
         _ = noteEditingSession.requestSnapshot { [weak self] result in
             self?.finishPendingNoteSelectionSnapshot(
@@ -10406,12 +10384,61 @@ final class WorkspaceStore: ObservableObject {
         }
     }
 
+    private func armNoteSelectionWatchdog() {
+        noteSelectionWatchdogTask?.cancel()
+        let seconds = max(noteSelectionWatchdogSeconds, 0.05)
+        noteSelectionWatchdogTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+            guard let self, !Task.isCancelled else { return }
+            guard self.pendingNoteSelection != nil,
+                  self.noteSelectionTransitionState == .saving else { return }
+            self.failPendingNoteSelection(.snapshotTimedOut)
+        }
+    }
+
+    private func disarmNoteSelectionWatchdog() {
+        noteSelectionWatchdogTask?.cancel()
+        noteSelectionWatchdogTask = nil
+    }
+
+    /// 被拒命令静默重发:内容已保留,后台自动重试,不打扰用户。
+    private func scheduleRejectedCommandSelfHeal() {
+        rejectedCommandSelfHealTask?.cancel()
+        guard rejectedCommandSelfHealAttempts < Self.selfHealAttemptLimit,
+              firstRetryableContentCommand != nil else { return }
+        rejectedCommandSelfHealAttempts += 1
+        let delay = max(noteSelectionSelfHealDelaySeconds, 0.02)
+        rejectedCommandSelfHealTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+            guard let self, !Task.isCancelled else { return }
+            self.retryRejectedNoteEditorCommand()
+            if self.firstRetryableContentCommand != nil {
+                self.scheduleRejectedCommandSelfHeal()
+            }
+        }
+    }
+
+    /// 失败切换静默重试:到期自动重发快照请求,不打扰用户。
+    private func schedulePendingSelectionSelfHeal() {
+        pendingSelectionSelfHealTask?.cancel()
+        guard pendingSelectionSelfHealAttempts < Self.selfHealAttemptLimit,
+              pendingNoteSelection != nil else { return }
+        pendingSelectionSelfHealAttempts += 1
+        let delay = max(noteSelectionSelfHealDelaySeconds, 0.02)
+        pendingSelectionSelfHealTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+            guard let self, !Task.isCancelled else { return }
+            self.retryPendingNoteSelection()
+        }
+    }
+
     private func finishPendingNoteSelectionSnapshot(
         _ result: Result<NoteEditorSnapshotReadyEvent, NoteEditingSessionError>,
         sourceDocumentID: String
     ) {
         guard pendingNoteSelection != nil else {
             noteSelectionTransitionState = .idle
+            disarmNoteSelectionWatchdog()
             return
         }
         switch result {
@@ -10460,6 +10487,7 @@ final class WorkspaceStore: ObservableObject {
         let persisted = await persistWorkspaceNow()
         guard pendingNoteSelection != nil else {
             noteSelectionTransitionState = .idle
+            disarmNoteSelectionWatchdog()
             return
         }
         guard noteEditingSession.documentID == snapshot.documentID else {
@@ -10468,6 +10496,7 @@ final class WorkspaceStore: ObservableObject {
         }
         guard !hasUnresolvedContentCommand(for: snapshot.documentID) else {
             noteSelectionTransitionState = .saving
+            armNoteSelectionWatchdog()
             return
         }
         guard noteEditingSession.currentRevision == snapshot.revision,
@@ -10504,6 +10533,9 @@ final class WorkspaceStore: ObservableObject {
         let apply = pendingNoteSelection?.apply
         pendingNoteSelection = nil
         noteSelectionTransitionState = .idle
+        pendingSelectionSelfHealAttempts = 0
+        pendingSelectionSelfHealTask?.cancel()
+        disarmNoteSelectionWatchdog()
         apply?()
     }
 
@@ -10511,14 +10543,18 @@ final class WorkspaceStore: ObservableObject {
         WeiBeiLog.noteRepair.error(
             "note selection snapshot failed: \(String(describing: error), privacy: .private)"
         )
+        disarmNoteSelectionWatchdog()
         noteSelectionTransitionState = .failed(error)
+        schedulePendingSelectionSelfHeal()
     }
 
     private func failPendingNoteSelectionPersistence() {
         WeiBeiLog.noteRepair.error(
             "note selection stopped because the accepted snapshot was not durably persisted"
         )
+        disarmNoteSelectionWatchdog()
         noteSelectionTransitionState = .persistenceFailed
+        schedulePendingSelectionSelfHeal()
     }
 
     func selectMeasured(itemID: String?, opensNotebook: Bool?) {
@@ -11531,7 +11567,6 @@ final class WorkspaceStore: ObservableObject {
         let isOpening = !isPaneToggleActive(.reader)
         toggleDocumentPane(.reader)
         if isOpening {
-            prepareMaterialForOpening()
             save()
         }
     }
@@ -11551,7 +11586,6 @@ final class WorkspaceStore: ObservableObject {
         let isOpening = !isPaneToggleActive(.notes)
         toggleDocumentPane(.notes)
         if isOpening {
-            prepareNoteForOpening()
             save()
         }
     }
@@ -19116,21 +19150,15 @@ final class WorkspaceStore: ObservableObject {
     }
 
     private func clearWorkspaceSaveError() {
-        if workspaceSaveError != nil {
-            workspaceSaveError = nil
-        }
+        workspaceSaveFailure = nil
     }
 
-    @discardableResult
-    private func reportWorkspaceSaveFailure(
-        _ userMessage: String,
-        reason: String? = nil
-    ) -> String {
+    @discardableResult private func reportWorkspaceSaveFailure(_ kind: WorkspaceSaveFailure.Kind, _ userMessage: String, reason: String? = nil) -> String {
         WeiBeiLog.workspace.error(
             "code=workspace_save_failed path=\(self.storageURL.path, privacy: .private) reason=\(reason ?? userMessage, privacy: .private)"
         )
         appendWorkspaceSaveFailureLog(userMessage)
-        workspaceSaveError = userMessage
+        workspaceSaveFailure = WorkspaceSaveFailure(kind: kind, message: userMessage)
         return userMessage
     }
 
@@ -19919,13 +19947,10 @@ final class WorkspaceStore: ObservableObject {
                 blockedPortableCourseIDs.insert(courseID)
                 dirtyPortableCourseIDs.insert(courseID)
                 needsPortableCourseStateBootstrap = true
-                reportWorkspaceSaveFailure(
-                    ui(
-                        "“\(course(withID: courseID)?.title ?? "课程")”的课程状态无法读取；课程文件没有被覆盖。请恢复该课程的状态文件或重新连接原课程文件夹后重试。",
-                        "The course state for “\(course(withID: courseID)?.title ?? "Course")” could not be read. Course files were not overwritten. Restore that course's state file or reconnect its original folder, then retry."
-                    ),
-                    reason: error.localizedDescription
-                )
+                reportWorkspaceSaveFailure(.courseStateUnreadable, ui(
+                    "“\(course(withID: courseID)?.title ?? "课程")”的课程状态无法读取；课程文件没有被覆盖。请恢复该课程的状态文件或重新连接原课程文件夹后重试。",
+                    "The course state for “\(course(withID: courseID)?.title ?? "Course")” could not be read. Course files were not overwritten. Restore that course's state file or reconnect its original folder, then retry."
+                ), reason: error.localizedDescription)
                 changed = true
             }
         }
@@ -21435,7 +21460,7 @@ final class WorkspaceStore: ObservableObject {
                 snapshotSpan,
                 extra: "outcome=failed generation=\(generation)"
             )
-            noteEditorWorkspaceSaveFailed(reportWorkspaceSaveFailure(ui(
+            noteEditorWorkspaceSaveFailed(reportWorkspaceSaveFailure(.coursePortableStateUnsaved, ui(
                 "课程可携带状态没有成功保存。本次修改仍在当前会话中，但尚未安全保存；请不要关闭并重试。",
                 "Portable course state was not saved. This change remains in the current session but is not safely stored yet; do not close it, and retry."
             ), reason: error.localizedDescription))
@@ -21575,17 +21600,17 @@ final class WorkspaceStore: ObservableObject {
         if let failure = result.failure {
             switch failure {
             case .portableState(let detail):
-                noteEditorWorkspaceSaveFailed(reportWorkspaceSaveFailure(ui(
+                noteEditorWorkspaceSaveFailed(reportWorkspaceSaveFailure(.coursePortableStateUnsaved, ui(
                     "课程可携带状态没有成功保存。本次修改仍在当前会话中，但尚未安全保存；请不要关闭并重试。",
                     "Portable course state was not saved. This change remains in the current session but is not safely stored yet; do not close it, and retry."
                 ), reason: detail))
             case .workspace(let detail):
-                noteEditorWorkspaceSaveFailed(reportWorkspaceSaveFailure(ui(
+                noteEditorWorkspaceSaveFailed(reportWorkspaceSaveFailure(.workspaceChangesUnwritten, ui(
                     "课程更改尚未写入磁盘。本次修改仍在当前会话中，但尚未安全保存；请不要关闭并重试。",
                     "Course changes were not saved to disk. This change remains in the current session but is not safely stored yet; do not close it, and retry."
                 ), reason: detail))
             case .rollbackConflict:
-                noteEditorWorkspaceSaveFailed(reportWorkspaceSaveFailure(ui(
+                noteEditorWorkspaceSaveFailed(reportWorkspaceSaveFailure(.courseStateConcurrentConflict, ui(
                     "课程状态提交时检测到并发变更，魏碑已停止覆盖。本次修改仍在当前会话中；请先处理冲突，再重试。",
                     "A concurrent change was detected while committing course state, so WeiBei stopped overwriting. This change remains in the current session; resolve the conflict, then retry."
                 )))
@@ -21601,12 +21626,12 @@ final class WorkspaceStore: ObservableObject {
         }
         courseResumePoints = prepared.resumePoints
         if !oversizedPortableCourseIDs.isEmpty {
-            reportWorkspaceSaveFailure(ui(
+            reportWorkspaceSaveFailure(.coursePortableStateOversized, ui(
                 "工作区内容已保存，但有课程的可携带状态超过 32 MB；课程文件夹中的原状态保持不变。请精简课程 Chat 或未写入草稿后重试。",
                 "The workspace was saved, but a portable course state exceeds 32 MB. The state in the course folder was left unchanged. Reduce course chats or pending drafts, then retry."
             ))
         } else if !blockedPortableCourseIDs.isEmpty {
-            reportWorkspaceSaveFailure(ui(
+            reportWorkspaceSaveFailure(.coursePortableStateBlocked, ui(
                 "工作区内容已保存，但课程文件夹中的课程状态无法安全更新；原状态已保留。请处理冲突或损坏后重试。",
                 "The workspace was saved, but the course state in the course folder could not be updated safely. The original state was preserved. Resolve the conflict or damage, then retry."
             ))
@@ -21636,7 +21661,7 @@ final class WorkspaceStore: ObservableObject {
         )
         return try waitForCourseFileOperation {
             var observedRealFailure = false
-            let failureObservation = self.$workspaceSaveError.sink {
+            let failureObservation = self.$workspaceSaveFailure.sink {
                 if $0 != nil { observedRealFailure = true }
             }
             defer { withExtendedLifetime(failureObservation) {} }

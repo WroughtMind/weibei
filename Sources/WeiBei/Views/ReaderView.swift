@@ -3387,6 +3387,9 @@ struct ContextualContentPicker: View {
     let kind: ContextualContentKind
     @State private var level: Level = .root
     @State private var showsAll = false
+    /// 契约(两区各管各的):根级列表是否用「相关」子集,在列表出现那一刻定死;
+    /// 另一窗格的选中变化不得实时改写用户正在看的列表。
+    @State private var settledRootPreferred: Bool?
 
     enum Level: Hashable {
         case root
@@ -3423,8 +3426,7 @@ struct ContextualContentPicker: View {
                         }
                     }
 
-                    if !showsAll, level == .root,
-                       !store.contextualPreferredItems(kind).isEmpty {
+                    if !showsAll, level == .root, rootUsesPreferred {
                         Button(allTitle) {
                             showsAll = true
                         }
@@ -3452,6 +3454,12 @@ struct ContextualContentPicker: View {
             }
         }
         .background(WeiBeiTheme.paper)
+        .onAppear {
+            if settledRootPreferred == nil {
+                settledRootPreferred = !store.contextualPreferredItems(kind).isEmpty
+                    || !store.contextualPreferredCourses(kind).isEmpty
+            }
+        }
         .accessibilityIdentifier(
             kind == .note
                 ? "contextual-note-picker"
@@ -3462,7 +3470,7 @@ struct ContextualContentPicker: View {
     private var title: String {
         switch level {
         case .root:
-            if !showsAll, hasPreferredContext {
+            if !showsAll, rootUsesPreferred {
                 return kind == .note
                     ? store.ui("相关笔记", "Related Notes")
                     : store.ui("相关资料", "Related Materials")
@@ -3512,8 +3520,14 @@ struct ContextualContentPicker: View {
         }
     }
 
+    private var rootUsesPreferred: Bool {
+        if let settled = settledRootPreferred { return settled }
+        return !store.contextualPreferredItems(kind).isEmpty
+            || !store.contextualPreferredCourses(kind).isEmpty
+    }
+
     private var rows: [PickerRow] {
-        if level == .root, !showsAll {
+        if level == .root, !showsAll, rootUsesPreferred {
             let preferred = store.contextualPreferredItems(kind)
             if !preferred.isEmpty {
                 return preferred.map(PickerRow.item)
@@ -3547,11 +3561,6 @@ struct ContextualContentPicker: View {
                 courseID: nil
             ).map(PickerRow.item)
         }
-    }
-
-    private var hasPreferredContext: Bool {
-        !store.contextualPreferredItems(kind).isEmpty
-            || !store.contextualPreferredCourses(kind).isEmpty
     }
 
     private func topPadding(in height: CGFloat, rowCount: Int) -> CGFloat {

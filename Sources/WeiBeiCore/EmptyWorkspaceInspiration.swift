@@ -26,7 +26,7 @@ public enum EmptyWorkspaceDayPeriod: String, CaseIterable, Sendable {
         case .midday:
             return language.text("午安，慢慢读。", "Good afternoon. Read unhurriedly.")
         case .evening:
-            return language.text("晚安，灯下可写。", "Good evening. Leave a line in the lamplight.")
+            return language.text("晚上好，灯下可写。", "Good evening. Leave a line in the lamplight.")
         case .lateNight:
             return language.text("夜深了，留一页清醒。", "It is late. Keep one clear page.")
         }

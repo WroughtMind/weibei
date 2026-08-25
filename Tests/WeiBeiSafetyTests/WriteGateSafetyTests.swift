@@ -315,10 +315,11 @@ final class WriteGateSafetyTests: XCTestCase {
         XCTAssertEqual(store.noteEditingSession.saveStatus, .failed)
         XCTAssertEqual(store.noteBackingContentDigestsByItemID[item.id], Self.digest(of: "第一版"))
         XCTAssertNil(store.lastSelfWrittenNoteDigestsByItemID[item.id])
-        let message = try XCTUnwrap(store.importantOperationError)
-        XCTAssertTrue(message.contains(url.lastPathComponent))
-        XCTAssertTrue(message.contains("已保存在魏碑中"))
-        XCTAssertTrue(message.contains("重试"))
+        XCTAssertEqual(
+            store.importantOperationNotice,
+            .noteWriteSafetyHold(fileName: url.lastPathComponent)
+        )
+        XCTAssertTrue(store.importantOperationError?.contains(url.lastPathComponent) == true)
     }
 
     func testRestoreWeiBeiContentWritesCheckpointAndClearsConflict() throws {
