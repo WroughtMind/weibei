@@ -92,12 +92,13 @@
 **问题**：输入框直绑 `$store.agentDraft`（`NotesAgentView.swift:252`；@Published 在 `WorkspaceStore.swift:345`），每敲一字整棵 AgentPaneView（含每条消息一枚 WKWebView）参与更新；`onChange` 探针在 `:340`。长对话打字掉帧。
 
 **步骤**：
-- [ ] 输入区抽成独立 ComposerView（**新文件**），内部 `@State` 持草稿，仅发送/切换会话时回写 store；消灭每键全树更新。
-- [ ] 会话切换时 seed 本地草稿，防丢已输入内容。
-- [ ] 卫生⑭：删除 `StreamFinalizeProbe`（`StreamFinalizeProbe.swift:5-8`，流式闪动已修复，探针还挂主路径）及其接线。
-- [ ] 卫生⑮：`AgentFinalizedMarkdownHeightCache`（`NotesAgentView.swift:4697-4716`）无界字典加 LRU 上限（此缓存 3.2 要复用作占位高度，本刀先把地基打牢）。
+- [x] 输入区抽成独立 ComposerView（**新文件**），内部 `@State` 持草稿，仅发送/切换会话时回写 store；消灭每键全树更新。
+- [x] 会话切换时 seed 本地草稿，防丢已输入内容。
+- [x] 卫生⑭：删除 `StreamFinalizeProbe` 及其接线。
+- [x] 卫生⑮：`AgentFinalizedMarkdownHeightCache` 无界字典加 LRU 上限 256。
+- [x] 卫生⑯：`SystemAppearanceObserver` 补 onDisappear 注销（本刀因拆除探针 harness 触碰 `WeiBeiApp.swift`）。
 - [ ] 验证：探针 `input.agent_to_next_main_queue_proxy` 前后对比；50+ 条消息长会话打字帧率实测；`make check`。
-- [ ] NotesAgentView 净变化 ≤ +50（拆出 ComposerView 应为负）。
+- [x] NotesAgentView 净变化 ≤ +50（拆出 ComposerView 与高度缓存后为负）。
 
 **风险**：草稿丢失时机（切换/崩溃）——seed 逻辑要有测试。
 **占用**：WorkspaceStore.swift 仅触 :345 附近，与 1.1 错峰先后即可。
@@ -216,9 +217,9 @@
 
 | # | 事项 | 时机 | 做法 |
 |---|---|---|---|
-| ⑭ | StreamFinalizeProbe 清理 | **D3 随 1.3** | 删探针及接线 |
-| ⑮ | 高度缓存 LRU | **D3 随 1.3** | 无界字典加上限（3.2 复用） |
-| ⑯ | SystemAppearanceObserver 对称移除 | 搭任意触碰 `WeiBeiApp.swift` 的 PR | 补 onDisappear 注销（`WeiBeiApp.swift:502-520`） |
+| ⑭ | StreamFinalizeProbe 清理 | **D3 随 1.3** | 已删 |
+| ⑮ | 高度缓存 LRU | **D3 随 1.3** | 上限 256 |
+| ⑯ | SystemAppearanceObserver 对称移除 | **D3 随 1.3** | 补 onDisappear 注销 |
 | ⑰ | 图片孤儿回收 | **D27 上午** | 按 markdown 引用安全 GC（`MarkdownAttachmentStore.swift:19-82`）：只删「全库无引用且超过宽限期」的附件；换图/删段落触发；必须有防误删测试（在用图片不收） |
 
 ---

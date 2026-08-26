@@ -731,6 +731,7 @@ final class WorkspaceStore: ObservableObject {
     private var pendingAgentSwitchTargetID: UUID?
     private var pendingAgentSwitchCourseID: UUID?
     private var agentDraftsBySessionID: [UUID: String] = [:]
+    var pendingComposerDraft: String?
     /// Session-local identity of the one reusable, newly created empty Chat.
     /// Deliberately not persisted: reopening the App starts with a fresh empty Chat.
     private var freshlyCreatedEmptyStudySessionID: UUID?
@@ -8642,7 +8643,7 @@ final class WorkspaceStore: ObservableObject {
            }) {
             activeStudySessionID = session.id
             messages = []
-            agentDraft = ""
+            agentDraft = ""; pendingComposerDraft = nil
             agentDraftsBySessionID[session.id] = ""
             return session
         }
@@ -8656,7 +8657,7 @@ final class WorkspaceStore: ObservableObject {
         activeStudySessionID = session.id
         freshlyCreatedEmptyStudySessionID = session.id
         messages = []
-        agentDraft = ""
+        agentDraft = ""; pendingComposerDraft = nil
         restoreAgentReplyState(from: session)
         lastAgentReplyContextRevision = nil
         invalidateAgentContext()
@@ -8826,7 +8827,7 @@ final class WorkspaceStore: ObservableObject {
         activeCourseID = nil
         noteText = ""
         messages = []
-        agentDraft = ""
+        agentDraft = ""; pendingComposerDraft = nil
         blankNoteDraftMaterialID = nil
         pendingBlankNoteText = ""
         showLibrary = false
@@ -8912,11 +8913,11 @@ final class WorkspaceStore: ObservableObject {
 
     private func saveActiveAgentDraft() {
         guard let activeStudySessionID else { return }
-        agentDraftsBySessionID[activeStudySessionID] = agentDraft
+        agentDraftsBySessionID[activeStudySessionID] = pendingComposerDraft ?? agentDraft
     }
 
     private func restoreAgentDraft(for sessionID: UUID) {
-        agentDraft = agentDraftsBySessionID[sessionID] ?? ""
+        agentDraft = agentDraftsBySessionID[sessionID] ?? ""; pendingComposerDraft = agentDraft.isEmpty ? nil : agentDraft
     }
 
     private static func noteProposal(from action: AgentReplyAction) -> StudyAgentNoteProposal? {
@@ -11086,7 +11087,7 @@ final class WorkspaceStore: ObservableObject {
 
         freshlyCreatedEmptyStudySessionID = nil
         activeCourseID = courseID
-        agentDraft = question
+        agentDraft = question; pendingComposerDraft = question
         agentDraftsBySessionID[session.id] = question
         openConversationInWorkspace(courseID: courseID)
         submitAgentDraft(targetCourseID: courseID)
@@ -16529,7 +16530,7 @@ final class WorkspaceStore: ObservableObject {
             cancelAgentRequest()
             return
         }
-        let question = agentDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        let question = (pendingComposerDraft ?? agentDraft).trimmingCharacters(in: .whitespacesAndNewlines)
         guard !question.isEmpty, !isStoppingAgent else { return }
         if isAskingAgent {
             pendingAgentSwitchTargetID = activeStudySessionID
@@ -16550,14 +16551,14 @@ final class WorkspaceStore: ObservableObject {
         guard isAgentSwitchConfirmationPresented,
               let targetID = pendingAgentSwitchTargetID,
               activeStudySessionID == targetID,
-              !agentDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+              !(pendingComposerDraft ?? agentDraft).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         let targetCourseID = pendingAgentSwitchCourseID
         dismissAgentSwitchConfirmation()
         stopAgent(restoreDraft: false) { [weak self] in
             guard let self,
                   self.activeStudySessionID == targetID,
                   self.studySessions.contains(where: { $0.id == targetID }),
-                  !self.agentDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+                  !(self.pendingComposerDraft ?? self.agentDraft).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
             self.askAgent(targetCourseID: targetCourseID)
         }
     }
@@ -16570,7 +16571,7 @@ final class WorkspaceStore: ObservableObject {
         visibleQuestionOverride: String? = nil,
         questionOverride: String? = nil
     ) -> String? {
-        let question = (questionOverride ?? agentDraft)
+        let question = (questionOverride ?? pendingComposerDraft ?? agentDraft)
             .trimmingCharacters(in: .whitespacesAndNewlines)
         guard agentRequestTask == nil,
               !isStoppingAgent,
@@ -17067,7 +17068,7 @@ final class WorkspaceStore: ObservableObject {
             }
 
             if questionOverride == nil {
-                agentDraft = ""
+                agentDraft = ""; pendingComposerDraft = nil
                 agentDraftsBySessionID[target.sessionID] = ""
             }
             lastFailedAgentQuestion = nil
@@ -17231,7 +17232,6 @@ final class WorkspaceStore: ObservableObject {
                     $0.retryQuestion = nil
                     $0.toolTrace = reply.toolTrace
                 }
-                StreamFinalizeProbe.log("STORE reply persisted len=\(reply.text.count) sources=\(sources.count) actions=\(actions.count) memory=\(memoryUpdate != nil) profile=\(profileUpdate != nil) displaying=\(agentStreaming.isDisplaying(messageID))")
                 if agentStreaming.isDisplaying(messageID) {
                     if agentStreamingUsesReducedMotion
                         || !isAgentStreamingSurfaceVisible

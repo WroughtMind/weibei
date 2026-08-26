@@ -203,178 +203,6 @@ struct PaneHeaderReorderModifier: ViewModifier {
     }
 }
 
-private struct AgentComposerField: View {
-    @EnvironmentObject private var store: WorkspaceStore
-    @Environment(\.weiBeiTextScale) private var textScale
-    @State private var editorHeight: CGFloat = 0
-    @State private var editorActive = false
-    @State private var focusRequest = 0
-    var prompt: String
-    var focused: FocusState<Bool>.Binding
-    var fontSize: CGFloat
-    var lineLimit: ClosedRange<Int>
-    var height: CGFloat
-    /// Cap for immersive grow; nil means fixed compact height.
-    var maxHeight: CGFloat? = nil
-    /// Optional safety cap for a compact composer hosted inside a floating surface.
-    var compactMaxHeight: CGFloat? = nil
-    var sendButtonSize: CGFloat
-    var trailingPadding: CGFloat
-    var sendTrailing: CGFloat
-    var sendBottom: CGFloat
-    var horizontalPadding: CGFloat = 10
-    var verticalPadding: CGFloat = 0
-    /// Codex-style footer: model chip on the left, send on the right inside the card.
-    var showsModelFooter: Bool = false
-    /// Floating paper surfaces already provide their own chrome.
-    var showsChrome = true
-    var submit: () -> Void
-
-    private var canSend: Bool {
-        !store.isStoppingAgent
-            && !store.agentDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-    }
-
-    private var showsControl: Bool {
-        store.isAgentRunningInActiveChat || canSend
-    }
-
-    private var isWideComposer: Bool { maxHeight != nil || showsModelFooter }
-
-    var body: some View {
-        // Soft-wrapped text grows the whole surface until the configured cap.
-        let corner: CGFloat = isWideComposer ? 24 : WeiBeiMetric.controlRadius
-        let textHeight = max(editorHeight, fontSize + 3)
-        let reservedControlHeight = sendButtonSize * textScale + verticalPadding * 2
-        VStack(alignment: .leading, spacing: 0) {
-            ZStack(alignment: .topLeading) {
-                AgentComposerTextEditor(
-                    text: $store.agentDraft,
-                    measuredHeight: $editorHeight,
-                    active: $editorActive,
-                    focused: focused,
-                    fontSize: fontSize,
-                    lineLimit: lineLimit,
-                    focusRequest: focusRequest,
-                    appearanceMode: store.appearanceMode,
-                    accessibilityLabel: prompt,
-                    submit: submit
-                )
-                .frame(maxWidth: .infinity)
-                .frame(height: textHeight)
-
-                if store.agentDraft.isEmpty && !editorActive {
-                    Text(prompt)
-                        .weiBeiText(fontSize)
-                        .foregroundStyle(WeiBeiTheme.placeholderInk)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .allowsHitTesting(false)
-                }
-            }
-            .padding(.top, verticalPadding)
-            .padding(.bottom, showsModelFooter ? 6 : verticalPadding)
-            .padding(.trailing, showsModelFooter ? 0 : trailingPadding)
-            .padding(.horizontal, horizontalPadding)
-            .frame(
-                maxWidth: .infinity,
-                minHeight: isWideComposer
-                    ? nil
-                    : max(
-                        CGFloat(SelectionFloatingAgentPlacement.composerControlHostMinimumHeight(
-                            composerMinimumHeight: Double(height)
-                        )),
-                        reservedControlHeight
-                    ),
-                maxHeight: isWideComposer ? .infinity : nil,
-                alignment: .leading
-            )
-            .overlay(alignment: .trailing) {
-                if showsControl && !showsModelFooter {
-                    sendButton
-                        .padding(.trailing, sendTrailing)
-                }
-            }
-
-            if showsModelFooter {
-                HStack(spacing: 10) {
-                    Text(store.modelName.isEmpty ? store.ui("模型", "Model") : store.modelName)
-                        .weiBeiText(12, weight: .medium)
-                        .foregroundStyle(WeiBeiTheme.tertiaryInk)
-                        .lineLimit(1)
-                    Spacer(minLength: 8)
-                    ZStack {
-                        Color.clear
-                            .frame(
-                                width: sendButtonSize * textScale,
-                                height: sendButtonSize * textScale
-                            )
-                        if showsControl {
-                            sendButton
-                        }
-                    }
-                }
-                .padding(.leading, horizontalPadding)
-                .padding(.trailing, sendTrailing)
-                .padding(.bottom, sendBottom)
-                .padding(.top, 2)
-            }
-        }
-        .frame(
-            maxWidth: .infinity,
-            minHeight: height,
-            maxHeight: isWideComposer ? maxHeight : compactMaxHeight,
-            alignment: .topLeading
-        )
-        .fixedSize(horizontal: false, vertical: true)
-        // Etched paper card: graded fill + inner light/shade + hairline frame
-        // + two-layer shadow (see weibeiComposerCard), same shape as before.
-        .weibeiComposerCard(
-            cornerRadius: corner,
-            focused: focused.wrappedValue,
-            showsChrome: showsChrome
-        )
-        .contentShape(RoundedRectangle(cornerRadius: corner))
-        .onTapGesture {
-            focusRequest &+= 1
-        }
-        .onChange(of: store.agentDraft) { _, _ in
-            guard focused.wrappedValue else { return }
-            guard let span = WeiBeiPerf.begin(
-                "input.agent_to_next_main_queue_proxy"
-            ) else {
-                return
-            }
-            DispatchQueue.main.async {
-                WeiBeiPerf.end(
-                    span,
-                    extra:
-                        "outcome=completed endpoint=next_main_queue_proxy"
-                )
-            }
-        }
-        .animation(WeiBeiMotion.micro, value: showsControl)
-        .accessibilityIdentifier(isWideComposer ? "agent-composer-codex" : "agent-composer-compact")
-    }
-
-    private var sendButton: some View {
-        Button {
-            store.isAgentRunningInActiveChat ? store.cancelAgentRequest() : submit()
-        } label: {
-            Image(systemName: store.isAgentRunningInActiveChat ? "stop.fill" : "paperplane.fill")
-        }
-        .buttonStyle(WeiBeiIconButtonStyle(
-            size: sendButtonSize,
-            prominence: store.isAgentRunningInActiveChat ? .neutral : .primary,
-            cornerRadius: sendButtonSize / 2
-        ))
-        .accessibilityLabel(Text(store.isAgentRunningInActiveChat ? store.ui("停止回答", "Stop response") : store.ui("发送", "Send")))
-        .help(store.isAgentRunningInActiveChat ? store.ui("停止回答", "Stop response") : store.ui("发送", "Send"))
-        .keyboardShortcut(.return, modifiers: [.command])
-        .transition(WeiBeiTransition.floating)
-        .animation(WeiBeiMotion.micro, value: showsControl)
-    }
-}
-
 private struct AccessibilityFrameProbe: NSViewRepresentable {
     let identifier: String
 
@@ -1068,7 +896,6 @@ struct MarkdownPreviewView: View {
                     hasAcceptedStreamingHeight = true
                     everStreamedHeight = true
                 }
-                StreamFinalizeProbe.log("height-report measured=\(measuredHeight) current=\(contentHeight) streaming=\(streamsMarkdownUpdates) floor=\(preservesFinalizedHeightFloor) frozen=\(heightFrozen)")
                 // Mid-stream markdown converges downward too: loose paragraphs
                 // become tight lists once markers arrive, trailing blanks collapse,
                 // withheld formulas land as blocks. Accepting the shrink yanks a
@@ -1080,7 +907,6 @@ struct MarkdownPreviewView: View {
                 // already been cleared by markdown-changed bookkeeping.
                 if preservesFinalizedHeightFloor || streamsMarkdownUpdates || everStreamedHeight,
                    nextFrameHeight < contentHeight {
-                    StreamFinalizeProbe.log("height-REJECTED-by-floor proposed=\(nextFrameHeight) kept=\(contentHeight)")
                     WeiBeiPerf.event(
                         "webview.markdown_height_ignored",
                         extra: preservesFinalizedHeightFloor
@@ -1130,7 +956,6 @@ struct MarkdownPreviewView: View {
                 // line mid-flight. Growth now arrives in streaming-sized steps
                 // (the web side types the completion tail out), so there is no
                 // large snap left to smooth.
-                StreamFinalizeProbe.log("height-ACCEPTED \(contentHeight) -> \(nextFrameHeight)")
                 contentHeight = nextFrameHeight
                 // Do NOT freeze on a fresh accept: KaTeX displayMode re-layout
                 // and font loading can still grow the content. Freeze happens
@@ -1172,7 +997,6 @@ struct MarkdownPreviewView: View {
                     preservesCurrentFloor: preservesFinalizedHeightFloor
                 )
                 let didChangeHeight = settledHeight != contentHeight
-                StreamFinalizeProbe.log("FINALIZED-RECEIPT measured=\(measuredHeight) current=\(contentHeight) settled=\(settledHeight) floor=\(preservesFinalizedHeightFloor) changed=\(didChangeHeight)")
                 heightFrozen = false
                 acceptedMeasureCount = 0
                 contentHeight = settledHeight
@@ -1234,14 +1058,12 @@ struct MarkdownPreviewView: View {
         }
         .onChange(of: markdown) { _, nextMarkdown in
             guard compact && fitsContentHeight else { return }
-            StreamFinalizeProbe.log("markdown-changed len=\(nextMarkdown.count) tail=\(String(nextMarkdown.suffix(14))) streaming=\(streamsMarkdownUpdates) preserves=\(preservesHeightAcrossMarkdownChanges)")
             if !streamsMarkdownUpdates {
                 if hasAcceptedStreamingHeight,
                    finalizedStreamingMarkdown == nil {
                     finalizedStreamingMarkdown = nextMarkdown
                     preservesFinalizedHeightFloor = preservesHeightAcrossMarkdownChanges
                 } else if finalizedStreamingMarkdown != nextMarkdown {
-                    StreamFinalizeProbe.log("markdown-changed-FLOOR-CLEARED")
                     hasAcceptedStreamingHeight = false
                     preservesFinalizedHeightFloor = false
                     finalizedStreamingMarkdown = nil
@@ -1251,12 +1073,10 @@ struct MarkdownPreviewView: View {
             acceptedMeasureCount = 0
             maxObservedMeasuredHeight = 0
             if preservesHeightAcrossMarkdownChanges { return }
-            StreamFinalizeProbe.log("markdown-changed-RESET-to-44")
             contentHeight = Self.compactPreviewLoadingHeight
             onContentHeightChange()
         }
         .onChange(of: streamsMarkdownUpdates) { wasStreaming, isStreaming in
-            StreamFinalizeProbe.log("STREAMING-FLIP \(wasStreaming) -> \(isStreaming) hasAcceptedHeight=\(hasAcceptedStreamingHeight)")
             if isStreaming {
                 hasAcceptedStreamingHeight = false
                 preservesFinalizedHeightFloor = false
@@ -1264,17 +1084,6 @@ struct MarkdownPreviewView: View {
             } else if wasStreaming, hasAcceptedStreamingHeight {
                 finalizedStreamingMarkdown = markdown
                 preservesFinalizedHeightFloor = preservesHeightAcrossMarkdownChanges
-            }
-        }
-        .background {
-            GeometryReader { proxy in
-                Color.clear.preference(
-                    key: StreamFinalizeProbeFrameKey.self,
-                    value: proxy.frame(in: .global)
-                )
-            }
-            .onPreferenceChange(StreamFinalizeProbeFrameKey.self) { frame in
-                StreamFinalizeProbe.log("row-frame-global minY=\(String(format: "%.1f", frame.minY)) h=\(String(format: "%.1f", frame.height))")
             }
         }
     }
@@ -2082,7 +1891,7 @@ struct AgentPaneView: View {
                         .transition(WeiBeiTransition.floating)
                 }
 
-                AgentComposerField(
+                ComposerView(
                     prompt: agentPrompt,
                     focused: $draftFocused,
                     fontSize: fontSize,
@@ -2936,7 +2745,7 @@ struct FloatingSelectionAgentView: View {
             .padding(.horizontal, 14)
             .padding(.bottom, 5)
         } else {
-            AgentComposerField(
+            ComposerView(
                 prompt: showsFloatingFeed
                     ? store.ui("再问一点…", "Ask a follow-up…")
                     : store.ui("问点什么…", "Ask anything…"),
@@ -4739,39 +4548,6 @@ private struct AgentCitationTag: View {
         case .learningRecord, .learningMemory, .session:
             return WeiBeiTheme.hairline.opacity(hovering ? 0.55 : 0.36)
         }
-    }
-}
-
-/// Session-scoped first-frame height seeds for finalized agent Markdown rows.
-/// The bucket never proves measurement success at the current exact width.
-private enum AgentFinalizedMarkdownHeightCache {
-    private static let lock = NSLock()
-    private static var values: [String: CGFloat] = [:]
-
-    static func height(for key: String) -> CGFloat? {
-        lock.lock(); defer { lock.unlock() }
-        return values[key]
-    }
-
-    static func store(_ height: CGFloat, for key: String) {
-        // Called only from a real WebKit contentHeightChanged event. Store the
-        // raw measured value, including legitimate <=44pt short block content;
-        // the synthetic 44pt SwiftUI loading frame never reaches this method.
-        guard height.isFinite, height > 0 else { return }
-        lock.lock(); defer { lock.unlock() }
-        if let existing = values[key], abs(existing - height) < 2 { return }
-        values[key] = height
-    }
-
-    static func cacheKey(messageID: UUID?, text: String, widthBucket: Int, wideTypography: Bool) -> String {
-        let id = messageID?.uuidString ?? "anon"
-        let prefix = text.prefix(64)
-        let tier = wideTypography ? "wide" : "compact"
-        return "\(id):\(text.count):\(prefix):w\(widthBucket):\(tier)"
-    }
-
-    static func widthBucket(_ width: CGFloat) -> Int {
-        max(Int((width / 24.0).rounded(.down)) * 24, 0)
     }
 }
 

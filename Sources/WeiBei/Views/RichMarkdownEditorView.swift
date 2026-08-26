@@ -1306,8 +1306,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             }
             switch message.name {
             case "streamDebug":
-                // TEMPORARY: streaming-completion probe channel from editor.ts.
-                StreamFinalizeProbe.log("JS \(String(describing: message.body))")
+                break
             case "editorReady":
                 hasReportedRenderFailure = false
                 isReady = true
@@ -1514,7 +1513,6 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         }
 
         func finishStreamingMarkdown(_ text: String) {
-            StreamFinalizeProbe.log("BRIDGE finishStreamingMarkdown len=\(text.count)")
             finalizedRenderGeneration &+= 1
             let generation = finalizedRenderGeneration
             let finalizedDocumentID = documentID
