@@ -34,6 +34,40 @@ final class ComposerDraftIsolationTests: XCTestCase {
         XCTAssertEqual(store.pendingComposerDraft, "还没发出去的问题")
     }
 
+    @MainActor
+    func testEmptyChatDraftDoesNotShadowProgrammaticAgentDraft() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("WeiBeiComposerDraftEmpty-\(UUID().uuidString)", isDirectory: true)
+        let store = WorkspaceStore(workspaceDirectory: root, startsAtBlankEntries: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let first = try XCTUnwrap(store.createStudySession(courseID: nil))
+        store.appendAgentMessage(AgentMessage(role: .user, text: "第一段", source: nil))
+        let second = try XCTUnwrap(store.createStudySession(courseID: nil))
+        store.appendAgentMessage(AgentMessage(role: .user, text: "第二段", source: nil))
+        XCTAssertTrue(
+            store.activateStudySession(
+                first.id,
+                expectedCourseID: nil,
+                expectedScopeNeedsReview: false
+            )
+        )
+        XCTAssertTrue(
+            store.activateStudySession(
+                second.id,
+                expectedCourseID: nil,
+                expectedScopeNeedsReview: false
+            )
+        )
+        XCTAssertEqual(store.agentDraft, "")
+        XCTAssertNil(store.pendingComposerDraft)
+        store.agentDraft = "从课程首页继续当前全局 Chat"
+        XCTAssertEqual(
+            store.pendingComposerDraft ?? store.agentDraft,
+            "从课程首页继续当前全局 Chat"
+        )
+    }
+
     func testFinalizedMarkdownHeightCacheEvictsLeastRecentlyUsed() {
         AgentFinalizedMarkdownHeightCache.resetForTesting()
         defer { AgentFinalizedMarkdownHeightCache.resetForTesting() }

@@ -8917,7 +8917,7 @@ final class WorkspaceStore: ObservableObject {
     }
 
     private func restoreAgentDraft(for sessionID: UUID) {
-        agentDraft = agentDraftsBySessionID[sessionID] ?? ""; pendingComposerDraft = agentDraft
+        agentDraft = agentDraftsBySessionID[sessionID] ?? ""; pendingComposerDraft = agentDraft.isEmpty ? nil : agentDraft
     }
 
     private static func noteProposal(from action: AgentReplyAction) -> StudyAgentNoteProposal? {
@@ -11087,7 +11087,7 @@ final class WorkspaceStore: ObservableObject {
 
         freshlyCreatedEmptyStudySessionID = nil
         activeCourseID = courseID
-        agentDraft = question
+        agentDraft = question; pendingComposerDraft = question
         agentDraftsBySessionID[session.id] = question
         openConversationInWorkspace(courseID: courseID)
         submitAgentDraft(targetCourseID: courseID)
