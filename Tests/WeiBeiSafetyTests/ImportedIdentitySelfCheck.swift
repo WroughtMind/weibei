@@ -1,5 +1,6 @@
 import Combine
 import CoreGraphics
+import Darwin
 import Foundation
 @testable import WeiBei
 import WeiBeiCore
@@ -30,6 +31,21 @@ enum ImportedIdentitySelfCheck {
         try failedLearningMemoryMigrationKeepsLegacySnapshotRecoverable()
         try learningMemoryEditsPreserveFullTextAndRetrySave()
         try courseResumePointRestoresOneAtomicLearningScene()
+        do {
+            try renameUsesLiveFileIdentityAndKeepsAffiliations()
+        } catch {
+            throw CheckError.failed("改名后沿用当前文件身份并保留归属：\(error.localizedDescription)")
+        }
+        do {
+            try renameDoesNotKeepOriginalIdentityWhenNewPathHasNone()
+        } catch {
+            throw CheckError.failed("新路径无身份时不沿用旧 identity：\(error.localizedDescription)")
+        }
+        do {
+            try renameRollbackDoesNotFillOriginalIdentityWhenResolverMisses()
+        } catch {
+            throw CheckError.failed("回滚解析失败时不回填旧 identity：\(error.localizedDescription)")
+        }
     }
 
     @MainActor
@@ -3303,6 +3319,221 @@ enum ImportedIdentitySelfCheck {
         )
         try check(duplicate.id == crossVolumeCopy.id, "重复导入同一文件产生了新身份")
         try check(store?.importedItems.count == countBeforeDuplicateImport, "重复导入同一文件产生了重复资料")
+    }
+
+    private static func pathKey(_ url: URL) -> String {
+        url.resolvingSymlinksInPath().standardizedFileURL.path
+    }
+
+    private static func liveFileIdentity(at url: URL) -> ImportedFileIdentity? {
+        var fileStat = Darwin.stat()
+        guard url.withUnsafeFileSystemRepresentation({ path in
+            guard let path else { return false }
+            return Darwin.lstat(path, &fileStat) == 0
+        }) else {
+            return nil
+        }
+        return ImportedFileIdentity(
+            volumeID: UInt64(fileStat.st_dev),
+            fileID: UInt64(fileStat.st_ino),
+            birthTimeSeconds: Int64(fileStat.st_birthtimespec.tv_sec),
+            birthTimeNanoseconds: Int64(fileStat.st_birthtimespec.tv_nsec)
+        )
+    }
+
+    @MainActor
+    private static func makeCourseCapableStore(
+        workspace: URL,
+        importedFileIdentityResolver: @escaping (URL) -> ImportedFileIdentity? = {
+            liveFileIdentity(at: $0)
+        },
+        notebookMarkdownWriter: @escaping (String, URL) throws -> Void = {
+            try $0.write(to: $1, atomically: true, encoding: .utf8)
+        },
+        notebookFileMover: @escaping (URL, URL) throws -> Void = {
+            try FileManager.default.moveItem(at: $0, to: $1)
+        }
+    ) -> WorkspaceStore {
+        WorkspaceStore(
+            workspaceDirectory: workspace,
+            importedFileIdentityResolver: importedFileIdentityResolver,
+            courseRootBookmarkMaker: {
+                Data($0.resolvingSymlinksInPath().standardizedFileURL.path.utf8)
+            },
+            courseRootBookmarkResolver: { data in
+                guard let path = String(data: data, encoding: .utf8) else { return nil }
+                return CourseProjectResolvedBookmark(
+                    url: URL(fileURLWithPath: path)
+                        .resolvingSymlinksInPath()
+                        .standardizedFileURL,
+                    isStale: false
+                )
+            },
+            courseSecurityScopeStarter: { _ in true },
+            courseSecurityScopeStopper: { _ in },
+            notebookMarkdownWriter: notebookMarkdownWriter,
+            notebookFileMover: notebookFileMover,
+            startsAtBlankEntries: true,
+            startsCourseFileMaintenance: false
+        )
+    }
+
+    @MainActor
+    private static func renameUsesLiveFileIdentityAndKeepsAffiliations() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("weibei-rename-live-identity-\(UUID().uuidString)", isDirectory: true)
+        let workspace = root.appendingPathComponent("workspace", isDirectory: true)
+        let library = root.appendingPathComponent("资料库", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: library, withIntermediateDirectories: true)
+        let store = makeCourseCapableStore(workspace: workspace)
+        try store.configureCourseLibrary(at: library)
+        let courseID = try store.createCourseInLibrary(title: "归属课")
+        store.activateCourse(courseID)
+        let noteID = try require(
+            store.createCourseNotebookNoteForSelfCheck(courseID: courseID, title: "归属笔记"),
+            "改名归属场景无法建立课内笔记"
+        )
+        let materialSource = root.appendingPathComponent("关联资料.txt")
+        try Data("关联资料正文".utf8).write(to: materialSource)
+        let material = try store.importFileIntoCourseForSelfCheck(
+            materialSource,
+            courseID: courseID,
+            role: .material
+        ).item
+        store.setLinkedSourceIDs([material.id], for: noteID)
+        store.setNoteCustomDisplayTitle("我的速记", for: noteID)
+        store.select(itemID: noteID)
+        try renameNotebookNoteAndWait(store, itemID: noteID, to: "改名后的归属笔记")
+
+        let renamed = try require(
+            store.courseNotebookItems.first { $0.id == noteID },
+            "改名后原笔记条目丢失"
+        )
+        try check(
+            renamed.urlPath?.hasSuffix("改名后的归属笔记.md") == true,
+            "改名后没有落到新文件名"
+        )
+        try check(
+            store.courseIDs(for: renamed.id).contains(courseID),
+            "改名后课程归属丢失"
+        )
+        try check(
+            store.linkedSourceIDs(for: renamed.id) == [material.id],
+            "改名后关联资料丢失"
+        )
+        try check(
+            renamed.customDisplayTitle == "我的速记",
+            "改名后自定义显示名丢失"
+        )
+        try check(
+            renamed.importedFileIdentity != nil,
+            "改名后当前文件身份为空"
+        )
+    }
+
+    @MainActor
+    private static func renameDoesNotKeepOriginalIdentityWhenNewPathHasNone() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("weibei-rename-nil-new-identity-\(UUID().uuidString)", isDirectory: true)
+        let workspace = root.appendingPathComponent("workspace", isDirectory: true)
+        let library = root.appendingPathComponent("资料库", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: library, withIntermediateDirectories: true)
+        var originalPath: String?
+        let store = makeCourseCapableStore(
+            workspace: workspace,
+            importedFileIdentityResolver: { url in
+                if let originalPath {
+                    return pathKey(url) == originalPath ? liveFileIdentity(at: url) : nil
+                }
+                return liveFileIdentity(at: url)
+            }
+        )
+        try store.configureCourseLibrary(at: library)
+        let courseID = try store.createCourseInLibrary(title: "无身份课")
+        store.activateCourse(courseID)
+        let noteID = try require(
+            store.createCourseNotebookNoteForSelfCheck(courseID: courseID, title: "原身份笔记"),
+            "新路径无身份场景无法建立课内笔记"
+        )
+        let note = try require(
+            store.courseNotebookItems.first { $0.id == noteID },
+            "新路径无身份场景找不到笔记"
+        )
+        originalPath = try require(
+            store.resolvedLibraryURL(for: note).map(pathKey),
+            "新路径无身份场景没有真实文件路径"
+        )
+        store.select(itemID: noteID)
+        try renameNotebookNoteAndWait(store, itemID: noteID, to: "无身份新路径")
+
+        let renamed = try require(
+            store.courseNotebookItems.first { $0.id == noteID },
+            "新路径无身份时改名后原条目丢失"
+        )
+        try check(
+            renamed.urlPath?.hasSuffix("无身份新路径.md") == true,
+            "新路径无身份时改名没有落到新文件"
+        )
+        try check(
+            renamed.importedFileIdentity == nil,
+            "新路径解析不到身份时仍沿用了旧文件身份"
+        )
+    }
+
+    @MainActor
+    private static func renameRollbackDoesNotFillOriginalIdentityWhenResolverMisses() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("weibei-rename-rollback-nil-identity-\(UUID().uuidString)", isDirectory: true)
+        let workspace = root.appendingPathComponent("workspace", isDirectory: true)
+        let library = root.appendingPathComponent("资料库", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: library, withIntermediateDirectories: true)
+        var resolverEnabled = true
+        let store = makeCourseCapableStore(
+            workspace: workspace,
+            importedFileIdentityResolver: { url in
+                guard resolverEnabled else { return nil }
+                return liveFileIdentity(at: url)
+            },
+            notebookFileMover: { source, destination in
+                if destination.lastPathComponent == "不应留下的改名.md" {
+                    throw NSError(
+                        domain: "WeiBei.ImportedIdentitySelfCheck",
+                        code: 74,
+                        userInfo: [NSLocalizedDescriptionKey: "injected rename move failure"]
+                    )
+                }
+                try FileManager.default.moveItem(at: source, to: destination)
+            }
+        )
+        try store.configureCourseLibrary(at: library)
+        let courseID = try store.createCourseInLibrary(title: "回滚课")
+        store.activateCourse(courseID)
+        let noteID = try require(
+            store.createCourseNotebookNoteForSelfCheck(courseID: courseID, title: "回滚笔记"),
+            "回滚无身份场景无法建立课内笔记"
+        )
+        store.select(itemID: noteID)
+        resolverEnabled = false
+        try renameNotebookNoteAndWait(store, itemID: noteID, to: "不应留下的改名")
+
+        let retained = try require(
+            store.courseNotebookItems.first { $0.id == noteID },
+            "回滚后原笔记条目丢失"
+        )
+        try check(
+            retained.urlPath?.hasSuffix("回滚笔记.md") == true,
+            "写失败回滚后没有回到原路径"
+        )
+        try check(
+            retained.importedFileIdentity == nil,
+            "回滚时解析失败仍回填了旧文件身份"
+        )
     }
 
     private static func require<T>(_ value: T?, _ message: String) throws -> T {
