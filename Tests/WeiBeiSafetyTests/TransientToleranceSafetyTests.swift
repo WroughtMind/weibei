@@ -123,6 +123,54 @@ final class TransientToleranceSafetyTests: XCTestCase {
         )
     }
 
+    func testStartupDigestMismatchDoesNotUnlinkMaterials() throws {
+        let base = makeTempRoot("weibei-material-unlink")
+        defer { try? FileManager.default.removeItem(at: base) }
+        let library = base.appendingPathComponent("资料库", isDirectory: true)
+        let store = try makeStore(base: base, library: library)
+        let courseID = try store.createCourseInLibrary(title: "资料断链课")
+        let source = base.appendingPathComponent("讲义.txt")
+        try "原始讲义".write(to: source, atomically: true, encoding: .utf8)
+        let imported = try store.importFileIntoCourseForSelfCheck(source, courseID: courseID, role: .material)
+        let item = imported.item
+        XCTAssertFalse(item.isNotebookNote, "前提：必须走资料路径，不能被当成笔记")
+        XCTAssertNotNil(item.contentDigest, "前提：资料须带 digest，才能覆盖旧启动哈希路径")
+        let backingURL = try XCTUnwrap(store.resolvedLibraryURL(for: item))
+
+        try "外部改过的讲义".write(to: backingURL, atomically: true, encoding: .utf8)
+        store.refreshRuntimeItemURLs()
+
+        XCTAssertNotNil(
+            store.importedItems.first { $0.id == item.id }?.urlPath,
+            "资料 digest 不符不得启动断链，路径必须保留（文件即真相）"
+        )
+    }
+
+    func testReconciliationAdoptsExternalMaterialContentAndRefreshesDigest() throws {
+        let base = makeTempRoot("weibei-material-reconcile-digest")
+        defer { try? FileManager.default.removeItem(at: base) }
+        let library = base.appendingPathComponent("资料库", isDirectory: true)
+        let store = try makeStore(base: base, library: library)
+        let courseID = try store.createCourseInLibrary(title: "资料对账课")
+        let source = base.appendingPathComponent("讲义.txt")
+        try "原始讲义".write(to: source, atomically: true, encoding: .utf8)
+        let imported = try store.importFileIntoCourseForSelfCheck(source, courseID: courseID, role: .material)
+        let item = imported.item
+        XCTAssertFalse(item.isNotebookNote, "前提：必须走资料路径")
+        let originalDigest = try XCTUnwrap(item.contentDigest)
+        let backingURL = try XCTUnwrap(store.resolvedLibraryURL(for: item))
+
+        try "外部改过的讲义，对账应采用".write(to: backingURL, atomically: true, encoding: .utf8)
+        store.refreshRuntimeItemURLs()
+        try reconcile(store)
+
+        let refreshed = try XCTUnwrap(store.importedItems.first { $0.id == item.id })
+        let adopted = try CourseProjectFileWorker.snapshotFile(at: backingURL)
+        XCTAssertNotNil(refreshed.urlPath, "对账后资料仍可打开")
+        XCTAssertEqual(refreshed.contentDigest, adopted.sha256, "对账须采用外部新内容并刷新 digest")
+        XCTAssertNotEqual(refreshed.contentDigest, originalDigest, "外部改动后 digest 必须变化")
+    }
+
     /// 瞬断无横幅（计划 §5 阶段3 第5步）：文件缺席/未物化场景只保留条内状态，
     /// 不再弹重要操作横幅。
     func testTransientUnavailabilityShowsNoBanner() throws {
