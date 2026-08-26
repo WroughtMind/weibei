@@ -745,7 +745,7 @@ public enum NativeBuiltinTools {
     private static var courseProfileUpdate: NativeToolDefinition {
         NativeToolDefinition(
             name: "weibei_course_profile_update",
-            description: "把课程认识或用户自述掌握状态写入课程知识档案。用户明确要求时必须提交。entryID 只从当前档案已有条目的 id 抄写；新建省略，不要传空字符串，不要自己编。自述掌握用 kind=concept、text 以「用户自述：」开头、sources 可空，checkpoint 用 userRequested。不要把学习记忆的 origin userStatement 当成档案 kind。材料认识仍须带来源。contextRevision 必须原样回传本轮字符串。",
+            description: "把课程认识或用户自述掌握状态写入课程知识档案。用户明确要求提交时调用；其余时机自行判断。entryID 只从当前档案已有条目的 id 抄写；新建省略，不要传空字符串，不要自己编。自述掌握用 kind=concept、text 以「用户自述：」开头、sources 可空，checkpoint 用 userRequested。不要把学习记忆的 origin userStatement 当成档案 kind。材料认识仍须带来源。contextRevision 必须原样回传本轮字符串。",
             permission: .writeConfirm,
             schema: NativeJSONSchema([
                 "type": "object",

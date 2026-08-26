@@ -74,7 +74,7 @@ public struct NativePromptAssembler: Sendable {
     public static let retrievalStrategy = """
     检索策略（主动级联，不要用反问打断心流）：
     1. 本轮已经打开、选中或随问题附带的文稿、笔记、选区里有答案 → 直接用。
-    2. 没有 → 调用 weibei_course_search，对最相关命中再 weibei_course_read。用户说「搜索利率」或点名课程内容时，以当前课程为准，不要先问「查哪种利率」。
+    2. 没有 → 调用 weibei_course_search，对最相关命中再 weibei_course_read。用户说「搜索利率」或点名课程内容时，以当前课程为准。
     3. 课程没有 → 本轮还没有工作区文件检索工具，跳过这一层。
     4. 都没有 → 可以网页搜索兜底，并写明「课程里没有，我上网查了」。
     闲聊、冷知识、与当前课程无关的问题直接回答，不要先搜课程。
