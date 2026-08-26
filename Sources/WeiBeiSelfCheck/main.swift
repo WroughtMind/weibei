@@ -110,6 +110,7 @@ try checkLibraryRelativeStorage()
 try checkImportCopySemantics()
 try checkInterfaceTextScalePersistence()
 try checkWorkspaceSafetyScenes()
+try checkCourseDocumentSearchReadiness()
 
 expect(EmptyWorkspaceDayPeriod(hour: 5) == .morning
     && EmptyWorkspaceDayPeriod(hour: 10) == .morning
