@@ -108,8 +108,8 @@
 **问题**：`Sources/WeiBei/Views/CourseSidebarModel.swift:163-176` 订阅 `store.$noteText`，打字每 120ms `transientNoteMeta.removeAll()` + 全量 `rebuild()`（扫全部 importedItems 建投影），仅为刷新「标题取自正文」的条目。
 
 **步骤**：
-- [ ] 订阅源从 `$noteText` 换成「标题相关签名」：仅当受影响条目的标题源（首行等）变化才触发重建；或 rebuild 改为只更新受影响条目的增量路径（保守二选一，先做签名法）。
-- [ ] 验证：`projectionBuildCountForTesting`（现成钩子）打字 10 秒内重建次数前后对比留档；侧栏标题随正文更新的行为不回退（补一条行为测试）。
+- [x] 订阅源从 `$noteText` 换成「标题相关签名」：仅当 `NoteTabDisplayTitle.bodyTitleLine` 变化才 bump `activeDraftToken` 并全量 `rebuild()`；正文其余改动忽略。
+- [x] 验证：`testNoteBodyEditsDoNotRebuildSidebarUntilTitleLineChanges` 锁定正文改不动重建次数、首行变才重建且标题跟随。
 
 **占用**：无核心面。
 **终验口径**：写笔记时左侧列表安静，标题该更新的照样更新。
