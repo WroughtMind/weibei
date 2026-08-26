@@ -85,6 +85,7 @@ final class CourseSidebarModel: ObservableObject {
     private var subscriptions: Set<AnyCancellable> = []
     private var rebuildTask: Task<Void, Never>?
     private var activeDraftToken = UUID()
+    private var activeNoteTitleSignature: String?
     private var transientNoteMeta: [CourseSidebarTagRequest: CourseSidebarNoteMeta] = [:]
 
     private(set) var projectionBuildCountForTesting = 0
@@ -120,6 +121,7 @@ final class CourseSidebarModel: ObservableObject {
         activeNotebookItemID = store.activeNotebookItemID
         activeCourseID = store.activeCourseID
         notebookRenameDraft = store.notebookRenameDraft
+        activeNoteTitleSignature = NoteTabDisplayTitle.bodyTitleLine(from: store.noteText)
         rebuild()
 
         store.$importedItems.dropFirst().sink { [weak self] items in
@@ -162,9 +164,12 @@ final class CourseSidebarModel: ObservableObject {
         }.store(in: &subscriptions)
         store.$noteText
             .dropFirst()
-            .debounce(for: .milliseconds(120), scheduler: RunLoop.main)
-            .sink { [weak self] _ in
+            .debounce(for: .milliseconds(120), scheduler: DispatchQueue.main)
+            .sink { [weak self] text in
                 guard let self else { return }
+                let signature = NoteTabDisplayTitle.bodyTitleLine(from: text)
+                guard signature != self.activeNoteTitleSignature else { return }
+                self.activeNoteTitleSignature = signature
                 self.activeDraftToken = UUID()
                 self.transientNoteMeta.removeAll()
                 self.tagInputGeneration &+= 1

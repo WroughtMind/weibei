@@ -241,6 +241,59 @@ final class SidebarPerformanceTests: XCTestCase {
     }
 
     @MainActor
+    func testNoteBodyEditsDoNotRebuildSidebarUntilTitleLineChanges() async throws {
+        let fixture = makeStore(itemCount: 0)
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let note = StudyItem(
+            id: "sidebar-title-signature-note",
+            title: "草稿.md",
+            subtitle: "draft.md",
+            kind: .markdown,
+            urlPath: nil,
+            isSample: false,
+            isNotebookNote: true
+        )
+        fixture.store.importedItems = [note]
+        fixture.store.activeNotebookItemID = note.id
+        fixture.store.noteText = "# 货币银行学\n\n第一章"
+        let model = CourseSidebarModel(store: fixture.store)
+        try await Task.sleep(nanoseconds: 250_000_000)
+
+        let buildsAfterOpen = model.projectionBuildCountForTesting
+        fixture.store.noteText = "# 货币银行学\n\n第一章 正文改了，标题没变"
+        try await Task.sleep(nanoseconds: 250_000_000)
+        XCTAssertEqual(
+            model.projectionBuildCountForTesting,
+            buildsAfterOpen,
+            "editing below the title line must not rebuild the course directory"
+        )
+
+        fixture.store.noteText = "# 利率原理\n\n第一章 正文改了，标题没变"
+        try await Task.sleep(nanoseconds: 250_000_000)
+        XCTAssertGreaterThan(
+            model.projectionBuildCountForTesting,
+            buildsAfterOpen,
+            "changing the title line must rebuild so the sidebar name can follow"
+        )
+
+        let expectedTitle = NoteTabDisplayTitle.bodyTitleLine(from: fixture.store.noteText)
+        XCTAssertEqual(expectedTitle, "利率原理")
+        let row = try XCTUnwrap(model.unassignedNotes.first)
+        let request = try XCTUnwrap(row.tagRequest)
+        model.acceptLoadedNoteMeta([(
+            request,
+            CourseSidebarNoteMeta(tags: [], resolvedTitle: expectedTitle)
+        )])
+        try await Task.sleep(nanoseconds: 50_000_000)
+        XCTAssertEqual(
+            model.unassignedNotes.first?.resolvedTitle,
+            expectedTitle,
+            "sidebar display name must follow the new title line"
+        )
+        withExtendedLifetime(model) {}
+    }
+
+    @MainActor
     func testDraftChangesInvalidateCachedTags() {
         let state = CourseSidebarTagState()
         let note = StudyItem(
