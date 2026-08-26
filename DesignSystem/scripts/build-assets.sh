@@ -22,7 +22,8 @@ command -v convert >/dev/null || { echo "ImageMagick 'convert' is required" >&2;
 
 mkdir -p "$TMP" "$LOGO/exports/paper" "$LOGO/exports/transparent" \
   "$LOGO/exports/monochrome" "$LOGO/exports/reversed" \
-  "$ICON/AppIcon.iconset" "$ICON/AppIcon.appiconset" "$ICON/previews" \
+  "$ICON/AppIcon.iconset" "$ICON/AppIcon.appiconset" \
+  "$ICON/AppIcon.icon/Assets" "$ICON/previews" \
   "$WEB" "$GITHUB" "$SOCIAL" "$ROOT/assets/swatches" "$ROOT/assets/examples"
 trap 'rm -rf "$TMP"' EXIT
 
@@ -82,11 +83,25 @@ convert -size 1940x620 xc:none "$TMP/lockup-mark.png" -geometry +24+50 -composit
   "$TMP/lockup-tagline.png" -geometry +690+430 -composite \
   "$LOGO/exports/wordmark/weibei-lockup-en.png"
 
+# Locked paper texture for brand surfaces and the Icon Composer artwork.
+convert "$REFERENCE" -crop 180x150+0+0 +repage \
+  \( +clone -flop \) +append \( +clone -flip \) -append "$TMP/paper-tile.png"
+convert -size 2048x2048 tile:"$TMP/paper-tile.png" -strip "$LOGO/source/paper-texture-2048.png"
+
 # Build a textured macOS icon master with transparent outer corners.
 convert "$REFERENCE" -filter Lanczos -resize 920x920! "$TMP/icon-content.png"
 convert -size 920x920 xc:none -fill white -draw 'roundrectangle 0,0 919,919 184,184' "$TMP/icon-mask.png"
 convert "$TMP/icon-content.png" "$TMP/icon-mask.png" -alpha on -channel A -fx 'v' +channel \
   -bordercolor none -border 52 -strip "$ICON/weibei-app-icon-1024.png"
+
+# Preserve the approved paper and rubbing as one opaque artwork layer. macOS
+# applies Liquid Glass only to the outer icon shell, not to each ink void.
+convert "$LOGO/source/paper-texture-2048.png" -filter Lanczos -resize 1024x1024! \
+  "$TMP/icon-composer-paper.png"
+convert "$TMP/weibei-mark-textured-transparent.png" -filter Lanczos -resize 920x920 \
+  -background none -gravity center -extent 1024x1024 "$TMP/icon-composer-mark.png"
+convert "$TMP/icon-composer-paper.png" "$TMP/icon-composer-mark.png" -compose over -composite \
+  -strip "$ICON/AppIcon.icon/Assets/01-Artwork.png"
 
 # Small-size optical master: flat ink, calmer paper, deliberately enlarged cinnabar anchor.
 convert -size 1254x1254 xc:none -fill '#231F1C' -draw "path '$MARK_PATH'" \
@@ -130,11 +145,6 @@ convert "$LOGO/exports/transparent/weibei-mark-textured-transparent.png" -filter
   "$GITHUB/readme-logo-256.png"
 convert "$LOGO/exports/transparent/weibei-mark-textured-transparent.png" -filter Lanczos -resize 512x512 \
   "$GITHUB/readme-logo-512.png"
-
-# Locked paper texture for brand surfaces only; mirrored tiling prevents hard seams.
-convert "$REFERENCE" -crop 180x150+0+0 +repage \
-  \( +clone -flop \) +append \( +clone -flip \) -append "$TMP/paper-tile.png"
-convert -size 2048x2048 tile:"$TMP/paper-tile.png" -strip "$LOGO/source/paper-texture-2048.png"
 
 # Preserve the approved hero composition while replacing the generated Latin wordmark
 # with the real WeiBeiStele font from the repository.

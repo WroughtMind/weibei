@@ -41,7 +41,9 @@ APP_MACOS="$APP_CONTENTS/MacOS"
 APP_FRAMEWORKS="$APP_CONTENTS/Frameworks"
 APP_HELPERS="$APP_CONTENTS/Helpers"
 APP_RESOURCES="$APP_CONTENTS/Resources"
-APP_ICON_SOURCE="$ROOT_DIR/DesignSystem/assets/app-icon/AppIcon.icns"
+APP_ICON_SOURCE="$ROOT_DIR/DesignSystem/assets/app-icon/AppIcon.icon"
+APP_ICON_BUILD_DIR="$DIST_DIR/app-icon-resources"
+APP_ICON_PARTIAL_PLIST="$APP_ICON_BUILD_DIR/partial.plist"
 # Current pre-release packages ship only active legal notices. Future release
 # plans such as Docs/releases/v1.0.0.md stay in the repo and are not packaged.
 LEGAL_SOURCE_FILES=(
@@ -131,8 +133,25 @@ if [[ "$CHECK_ONLY" != true ]]; then
 
   rm -rf "$APP_BUNDLE"
   mkdir -p "$APP_MACOS" "$APP_FRAMEWORKS" "$APP_HELPERS" "$APP_RESOURCES"
-  if [[ ! -f "$APP_ICON_SOURCE" ]]; then
+  if [[ ! -d "$APP_ICON_SOURCE" ]]; then
     echo "package failed: missing App Icon at $APP_ICON_SOURCE" >&2
+    exit 22
+  fi
+  rm -rf "$APP_ICON_BUILD_DIR"
+  mkdir -p "$APP_ICON_BUILD_DIR"
+  xcrun actool \
+    --compile "$APP_ICON_BUILD_DIR" \
+    --platform macosx \
+    --minimum-deployment-target "$MIN_SYSTEM_VERSION" \
+    --target-device mac \
+    --app-icon AppIcon \
+    --output-partial-info-plist "$APP_ICON_PARTIAL_PLIST" \
+    --standalone-icon-behavior all \
+    "$APP_ICON_SOURCE" >/dev/null
+  if [[ "$(head -c 8 "$APP_ICON_BUILD_DIR/Assets.car")" != "BOMStore" ]] || \
+     [[ "$(head -c 4 "$APP_ICON_BUILD_DIR/AppIcon.icns")" != "icns" ]] || \
+     [[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIconName' "$APP_ICON_PARTIAL_PLIST")" != "AppIcon" ]]; then
+    echo "package failed: Xcode did not compile the macOS 27 App Icon resources" >&2
     exit 22
   fi
   cp "$BUILD_BINARY" "$APP_BINARY"
@@ -166,7 +185,8 @@ if [[ "$CHECK_ONLY" != true ]]; then
     fi
     cp -R "$resource_bundle" "$APP_RESOURCES/"
   done
-  cp "$APP_ICON_SOURCE" "$APP_RESOURCES/AppIcon.icns"
+  cp "$APP_ICON_BUILD_DIR/Assets.car" "$APP_RESOURCES/Assets.car"
+  cp "$APP_ICON_BUILD_DIR/AppIcon.icns" "$APP_RESOURCES/AppIcon.icns"
   mkdir -p "$APP_RESOURCES/Legal"
   for legal_source in "${LEGAL_SOURCE_FILES[@]}"; do
     if [[ ! -f "$legal_source" ]]; then
@@ -193,7 +213,9 @@ if [[ "$CHECK_ONLY" != true ]]; then
   <key>CFBundleDisplayName</key>
   <string>$APP_DISPLAY_NAME</string>
   <key>CFBundleIconFile</key>
-  <string>AppIcon.icns</string>
+  <string>AppIcon</string>
+  <key>CFBundleIconName</key>
+  <string>AppIcon</string>
   <key>CFBundlePackageType</key>
   <string>APPL</string>
   <key>CFBundleShortVersionString</key>

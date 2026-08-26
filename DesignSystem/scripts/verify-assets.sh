@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ICON="$ROOT/assets/app-icon/AppIcon.iconset"
+ICON_COMPOSER="$ROOT/assets/app-icon/AppIcon.icon"
 
 [[ -s "$ROOT/assets/fonts/WeiBeiStele.ttf" ]]
 [[ -s "$ROOT/assets/fonts/WeiBeiSteleMono.ttf" ]]
@@ -49,6 +50,24 @@ check_size "$ICON/icon_256x256.png" 256
 check_size "$ICON/icon_256x256@2x.png" 512
 check_size "$ICON/icon_512x512.png" 512
 check_size "$ICON/icon_512x512@2x.png" 1024
+check_size "$ICON_COMPOSER/Assets/01-Artwork.png" 1024
+
+jq empty "$ICON_COMPOSER/icon.json"
+
+COMPILED_ICON="$(mktemp -d "${TMPDIR:-/tmp}/weibei-icon-verify.XXXXXX")"
+trap 'rm -rf "$COMPILED_ICON"' EXIT
+xcrun actool \
+  --compile "$COMPILED_ICON" \
+  --platform macosx \
+  --minimum-deployment-target 14.0 \
+  --target-device mac \
+  --app-icon AppIcon \
+  --output-partial-info-plist "$COMPILED_ICON/partial.plist" \
+  --standalone-icon-behavior all \
+  "$ICON_COMPOSER" >/dev/null
+[[ "$(head -c 8 "$COMPILED_ICON/Assets.car")" == "BOMStore" ]]
+[[ "$(head -c 4 "$COMPILED_ICON/AppIcon.icns")" == "icns" ]]
+[[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIconName' "$COMPILED_ICON/partial.plist")" == "AppIcon" ]]
 
 [[ "$(head -c 4 "$ROOT/assets/app-icon/AppIcon.icns")" == "icns" ]] || {
   echo "invalid ICNS header" >&2

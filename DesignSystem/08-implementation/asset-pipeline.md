@@ -3,13 +3,14 @@
 ## 输入
 
 - `assets/logo/reference/approved-textured-mark-1254.png`：宣传图样式的视觉参考；
+- `assets/app-icon/AppIcon.icon/icon.json`：macOS 27 外壳材质与平台配置；
 - `assets/logo/source/weibei-mark-master.svg`：固定生产轮廓；
 - `assets/fonts/WeiBeiStele.ttf` 与 `WeiBeiSteleMono.ttf`：仓库自有品牌字体；
 - `assets/github/readme-hero-original-1983x793.png`：README 宣传图原始构图。
 
 ## 输出
 
-`scripts/build-assets.sh` 生成透明、单色、反白、真实字体英文组合标、App Icon、Web、GitHub、Social 和预览图。它会保留原 hero 构图，但用 `WeiBeiStele` 替换生成图中的英文名称。`scripts/build-icns.ts` 把标准 PNG 槽位封装成现代 ICNS；`scripts/build-manifest.ts` 记录路径、体积与 SHA-256。
+`scripts/build-assets.sh` 生成透明、单色、反白、真实字体英文组合标、App Icon、Web、GitHub、Social 和预览图。它同时把批准的米纸与拓印生成为 `AppIcon.icon` 的保真画面；应用打包时再由 Xcode 编译动态资源与传统 ICNS。`scripts/build-manifest.ts` 记录路径、体积与 SHA-256。
 
 ## 重建
 
@@ -30,7 +31,16 @@ DesignSystem/scripts/verify-assets.sh
 
 ## macOS 原生重建
 
-在 macOS 上也可以使用系统工具重建：
+应用打包使用 Xcode 资源编译器：
+
+```bash
+xcrun actool --compile /tmp/weibei-icon \
+  --platform macosx --minimum-deployment-target 14.0 --target-device mac \
+  --app-icon AppIcon --standalone-icon-behavior all \
+  DesignSystem/assets/app-icon/AppIcon.icon
+```
+
+传统 ICNS 仍可单独重建：
 
 ```bash
 iconutil -c icns DesignSystem/assets/app-icon/AppIcon.iconset \

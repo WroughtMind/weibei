@@ -12,7 +12,7 @@
 
 - 宣传图观感一致的拓印纹理 Logo 母版；
 - 固定轮廓的 SVG 生产版、透明版、单色版和反白版；
-- macOS 十槽 `.iconset`、Xcode `AppIcon.appiconset` 和可直接复制的 `AppIcon.icns`；
+- macOS 27 `AppIcon.icon`、十槽 `.iconset`、Xcode `AppIcon.appiconset` 和传统 `AppIcon.icns`；
 - 16–64 px 小尺寸光学版、favicon、GitHub 头像、Social Preview 和 Open Graph 图；
 - 从仓库同步的 `WeiBeiStele` / `WeiBeiSteleMono` 与使用真实字体导出的英文组合标；
 - 产品视觉、交互、文案、动效、无障碍、SwiftUI 映射和 QA 文档；
@@ -44,6 +44,7 @@
 | 视觉批准参考 | `assets/logo/reference/approved-textured-mark-1254.png` |
 | 标准矢量母版 | `assets/logo/source/weibei-mark-master.svg` |
 | App 图标 1024 | `assets/app-icon/weibei-app-icon-1024.png` |
+| macOS 27 动态图标源 | `assets/app-icon/AppIcon.icon/` |
 | 手工打包用图标 | `assets/app-icon/AppIcon.icns` |
 | Xcode 资产目录 | `assets/app-icon/AppIcon.appiconset/` |
 | GitHub 首页宣传图 | `assets/github/readme-hero-1983x793.png` |
@@ -70,4 +71,4 @@ DesignSystem/scripts/verify-assets.sh
 
 ## 当前接入状态
 
-`AppIcon.icns` 已接入仓库的手工打包脚本；构建时会检查并复制图标，同时写入 `CFBundleIconFile`。
+`AppIcon.icon` 已接入手工打包脚本。构建时由 Xcode 编译出 macOS 27 使用的 `Assets.car` 和 macOS 14–26 使用的 `AppIcon.icns`，两者来自同一份纹理保真画面。
