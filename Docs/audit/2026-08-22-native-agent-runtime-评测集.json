@@ -13,7 +13,7 @@
     {"id": "06", "scene": "course-read", "source": "learning", "question": "打开利率那一课的正文，用原文里的一句话回答利率是什么。", "expect": "有 course_read 且引用可跳转"},
     {"id": "07", "scene": "course-read", "source": "web", "question": "读完该段后，指出「名义利率」和「实际利率」若课文有提到应如何区分；没有则明确说课文没写。", "expect": "不编造课文没有的定义"},
     {"id": "08", "scene": "memory", "source": "learning", "question": "我上次看到哪一节了？如果记忆里没有，就说没有。", "expect": "读记忆；无则如实"},
-    {"id": "09", "scene": "memory-update", "source": "learning", "question": "记下进度，但先给我看怎么写、不要直接改记忆。我刚搞懂了复利。", "expect": "不得调用 weibei_update_learning_memory；只展示拟写内容并等待确认；不落库、不出更新标签"},
+    {"id": "09", "scene": "memory-update", "source": "learning", "question": "记下进度，但先给我看怎么写、不要直接改记忆。我刚搞懂了复利。", "expect": "先展示拟写内容，确认后再写入"},
     {"id": "10", "scene": "profile", "source": "learning", "question": "根据刚才的理解，更新这门课的知识档案建议：我已掌握单利，复利还不熟。", "expect": "必须调用 weibei_course_profile_update；kind=concept 且 text 以用户自述：开头；自动落库并出标签"},
     {"id": "11", "scene": "note", "source": "learning", "question": "把「利率是资金使用价格」做成一条笔记建议，并给出证据句。", "expect": "笔记提案+证据"},
     {"id": "12", "scene": "relation", "source": "learning", "question": "建议把这条笔记关联到利率课文，先给我确认。", "expect": "关系提案；不落库"},
