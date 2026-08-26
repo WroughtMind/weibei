@@ -148,8 +148,8 @@
 ### 2.4 init 同步瀑布拆分｜D6–D7｜前置：1.1 已合
 
 **步骤**：
-- [ ] `WorkspaceStore.swift` init（约 :1022-1096，以符号定位）：首帧前只留最小可渲染状态；迁移/对账类工作挪后台。
-- [ ] 顺带合并 :1040/:1043 两次 `refreshRuntimeItemURLs()` 调用（1.1 刻意留下的可选项，此处同区域一次收掉）。
+- [x] `WorkspaceStore.swift` init（约 :1022-1096，以符号定位）：首帧前只留最小可渲染状态；迁移/对账类工作挪后台。
+- [x] 顺带合并 :1040/:1043 两次 `refreshRuntimeItemURLs()` 调用（1.1 刻意留下的可选项，此处同区域一次收掉）。
 - [ ] 验证：`WEIBEI_PERF=1` `beginLaunch→finishLaunch` 与 1.1 的数据叠加对比留档；冷启动后立即操作资料/笔记无回退；`make check`。
 - **占用**：`WorkspaceStore.swift`（核心面）。
 - **风险**：后台化后时序敏感——瞬断容忍与灰态测试必须全绿再交付。
