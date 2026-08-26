@@ -6,24 +6,31 @@ English | **[中文](README.md)**
 
 # WeiBei / 魏碑
 
-WeiBei is a place for reading and keeping notes. We believe that long-form reading, excerpting, and note-taking by hand are meaningful in themselves — even with the AI taken out entirely.
+WeiBei is a place for reading and keeping notes.
+
+> Long-form reading, excerpting, and note-taking by hand are meaningful in themselves — even with the AI taken out entirely.
 
 So the core is fully local: importing a course, reading, full-text search, notes, and source relationships all work without any model. Connect one when you want AI — it answers on top of your own material, with citations that jump back to the source, and note updates that wait for your approval. Don't connect one, and WeiBei is still a calm, complete reader and notebook — no more juggling a PDF, an AI chat page, and a notes app on revision night.
 
-**[⬇︎ Download WeiBei 1.0.0](https://github.com/weibei-app/weibei/releases/download/v1.0.0/WeiBei-1.0.0-macOS-arm64.dmg)** — macOS 14 or later, Apple silicon. Checksums are published in [Releases](https://github.com/weibei-app/weibei/releases).
+<p align="center">
+  <a href="https://github.com/weibei-app/weibei/releases/download/v1.0.0/WeiBei-1.0.0-macOS-arm64.dmg">⬇ <strong>Download WeiBei 1.0.0</strong></a>
+  · macOS 14 or later · Apple silicon · Checksums in <a href="https://github.com/weibei-app/weibei/releases">Releases</a>
+</p>
 
-[![Release](https://img.shields.io/github/v/release/weibei-app/weibei)](https://github.com/weibei-app/weibei/releases)
-![Platform](https://img.shields.io/badge/platform-macOS%2014%2B-lightgrey)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
-![Swift](https://img.shields.io/badge/Swift-5.9-F05138)
+<p align="center">
+  <a href="https://github.com/weibei-app/weibei/releases"><img alt="Release" src="https://img.shields.io/github/v/release/weibei-app/weibei"></a>
+  <img alt="Platform" src="https://img.shields.io/badge/platform-macOS%2014%2B-lightgrey">
+  <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-blue"></a>
+  <img alt="Swift" src="https://img.shields.io/badge/Swift-5.9-F05138">
+</p>
 
-## What a revision night usually looks like
+## ▍What a revision night usually looks like
 
 A lecture PDF and an HTML page open in your browser, an AI chat in another window, a notes app in a third. Every jump breaks the context you had just built: answers drift away from the pages they came from, notes forget which question produced them, and "where did I read that?" becomes the evening's refrain.
 
 WeiBei keeps the material, the question, its evidence, and the resulting note as one connected object. I built it during my own final-exam revision — the night the window-juggling finally became unbearable.
 
-## Compared with "an AI chat page + a notes app"
+## ▍Compared with "an AI chat page + a notes app"
 
 | | Chat window + notes app | WeiBei |
 |---|---|---|
@@ -34,7 +41,7 @@ WeiBei keeps the material, the question, its evidence, and the resulting note as
 | Without AI | close the chat page and nothing is left | reading, search, notes, and relationships keep working |
 | Your data | split across services | local-first, on your Mac only |
 
-## One window, three steps: read → ask → keep
+## ▍One window, three steps: read → ask → keep
 
 Read and keep work fully offline, with no model required; ask is optional — without a provider connected, WeiBei is still a complete study workspace.
 
@@ -56,7 +63,7 @@ Read and keep work fully offline, with no model required; ask is optional — wi
 </p>
 <!-- WEIBEI_VISUAL:course-relations:END -->
 
-## Privacy is structure, not a setting
+## ▍Privacy is structure, not a setting
 
 - Your library and full-text index stay on your Mac.
 - The Agent only reads through a fixed set of host-mediated tools. No shell, no open file system; each request sees a bounded snapshot of the current material.
@@ -64,7 +71,7 @@ Read and keep work fully offline, with no model required; ask is optional — wi
 - Web pages and materials are treated strictly as data, never as instructions — a page telling the Agent to do something can't change its behavior. Search queries carry only the public topic of your question, never your course text, notes, or local paths.
 - Choose your own model: dozens of built-in profiles (OpenAI, Anthropic, Google, DeepSeek, Kimi, OpenRouter, and more), OAuth subscriptions, a local llama.cpp, or any OpenAI-compatible endpoint.
 
-## Five minutes to get started
+## ▍Five minutes to get started
 
 1. Launch WeiBei and import a folder of your own material as a course. No sample data ships in the app; nothing is bundled that you didn't bring.
 2. (Optional) Connect a model provider in Settings. WeiBei is fully usable without one — reading, search, and notes are unaffected; this step only enables 3 and 5 below.
@@ -81,11 +88,11 @@ This allows WeiBei only — don't disable Gatekeeper globally. WeiBei checks for
 
 A Homebrew cask is planned; until the tap is published, use the DMG or build from source.
 
-## Made for long nights
+## ▍Made for long nights
 
 WeiBei is named after the stele inscription style, and it leans into that: paper, xuan, inkstone, and stele themes alongside four frosted-glass variants; app-wide text scaling (⌘+ / ⌘−) for 3 a.m. eyes; quiet skeleton states instead of blank flashes while long documents load; and a daily calligraphy line from the stele tradition as a background watermark — every one of the 50 lines carries its source and rights basis in a ledger you can open in Settings.
 
-## Current limits
+## ▍Current limits
 
 - macOS 14 or later; packaged builds target Apple silicon. Windows and web versions are future work.
 - Course files and indexes are fully local. Reading and note-taking need no network — only AI responses do.
@@ -93,7 +100,9 @@ WeiBei is named after the stele inscription style, and it leans into that: paper
 - Large or difficult source files may be reported as partially indexed — honestly, never passed off as complete.
 - The community build is not Apple-notarized; the first launch needs a manual allow.
 
-## For developers
+---
+
+## ▍For developers
 
 Everything below is for people building WeiBei itself. WeiBei was born in the Education track of OpenAI Build Week 2026 and has been developed as an ongoing product since; the submission record lives in [Docs/build-week.md](Docs/build-week.md).
 
@@ -160,13 +169,15 @@ Live-provider checks require valid local credentials and are never silently repl
 - [Docs/生成式界面基础与Visualize借鉴.md](Docs/生成式界面基础与Visualize借鉴.md) — generative UI foundations and the `visualize` decision
 - [Docs/releases/v1.0.0.md](Docs/releases/v1.0.0.md) — v1.0.0 release notes and evidence
 
-## Licensing
+---
+
+## ▍Licensing
 
 - WeiBei-authored source code and developer documentation: [MIT License](LICENSE).
 - `WeiBeiStele` and `WeiBeiSteleMono` fonts: [SIL Open Font License 1.1](Sources/WeiBei/Resources/Fonts/OFL.txt). Modified fonts must use different names unless the project grants written permission to retain the reserved names.
 - The WeiBei / 魏碑 names, logos, visual identity, screenshots, and release media are not licensed under MIT or OFL. Third-party software and reference assets retain their original terms.
 - Read [`LICENSING.md`](LICENSING.md) before redistributing a fork or packaged app. Contributions follow [`CONTRIBUTING.md`](CONTRIBUTING.md); security issues follow [`SECURITY.md`](SECURITY.md).
 
-## Technology
+## ▍Technology
 
-Swift · SwiftUI · AppKit · PDFKit · WebKit · Vision OCR · SQLite FTS5 · Milkdown · KaTeX · Mermaid · OpenAI Codex OAuth
+`Swift` · `SwiftUI` · `AppKit` · `PDFKit` · `WebKit` · `Vision OCR` · `SQLite FTS5` · `Milkdown` · `KaTeX` · `Mermaid` · `OpenAI Codex OAuth`
