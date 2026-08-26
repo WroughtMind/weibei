@@ -65,6 +65,16 @@
       "sha256": "ff7ca603e3ef24b77b570d2823757e14a8dd25a72f1f02e4e49456743beb638f"
     },
     {
+      "path": "assets/app-icon/AppIcon.icon/Assets/01-Artwork.png",
+      "bytes": 1268156,
+      "sha256": "9abaa3856034dae37a6e5985614597b381550053bf75ef8e5cc32d2c067a2f28"
+    },
+    {
+      "path": "assets/app-icon/AppIcon.icon/icon.json",
+      "bytes": 451,
+      "sha256": "4897a0076865ee96ad03ef3e347c3821c9b4bfeda3febcc4011575e60648c8bc"
+    },
+    {
       "path": "assets/app-icon/AppIcon.iconset/icon_128x128.png",
       "bytes": 21588,
       "sha256": "f573455061f4466d7bc7da93ccfb572ed03ca570733b6fedec29cb6f1452bf4a"
