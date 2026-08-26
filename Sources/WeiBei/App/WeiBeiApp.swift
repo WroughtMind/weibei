@@ -112,10 +112,6 @@ struct WeiBeiApp: App {
 
     var body: some Scene {
         WindowGroup("魏碑", id: "main") {
-            // TEMPORARY: streaming-completion probe harness (WEIBEI_STREAM_PROBE_SCENARIO).
-            if ProcessInfo.processInfo.environment["WEIBEI_STREAM_PROBE_SCENARIO"] != nil {
-                StreamFinalizeHarnessView()
-            } else {
             ContentView()
                 .environmentObject(store)
                 .environmentObject(updateService)
@@ -136,7 +132,6 @@ struct WeiBeiApp: App {
                 // 拖近屏幕边缘时给出贴边分屏吸附区；窄窗下窗格收 28pt 细轨。
                 .frame(minWidth: 520, minHeight: 720)
                 .ignoresSafeArea(.container, edges: .top)
-            }
         }
         .defaultSize(width: 1240, height: 760)
         .windowResizability(.contentMinSize)
@@ -526,7 +521,8 @@ private struct SystemAppearanceObserver: ViewModifier {
     @State private var distributedObserver: NSObjectProtocol?
 
     func body(content: Content) -> some View {
-        content.onAppear {
+        content
+            .onAppear {
             store.refreshAppearanceForSystemChange()
             guard distributedObserver == nil else { return }
             distributedObserver = DistributedNotificationCenter.default().addObserver(
@@ -538,6 +534,12 @@ private struct SystemAppearanceObserver: ViewModifier {
                     store?.refreshAppearanceForSystemChange()
                 }
             }
-        }
+            }
+            .onDisappear {
+                if let distributedObserver {
+                    DistributedNotificationCenter.default().removeObserver(distributedObserver)
+                }
+                distributedObserver = nil
+            }
     }
 }
