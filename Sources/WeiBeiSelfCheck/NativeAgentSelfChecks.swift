@@ -458,7 +458,7 @@ private func checkRetrievalPrompt() throws {
         tools: []
     )
     try nativeRequire(prompt.contains("检索策略"), "native system prompt includes retrieval strategy")
-    try nativeRequire(prompt.contains("不要先问"), "retrieval strategy forbids asking which rate first")
+    try nativeRequire(prompt.contains("不要用反问打断心流"), "retrieval strategy forbids interrupting with a clarifying question")
     try nativeRequire(prompt.contains("weibei_course_search"), "retrieval strategy names course_search")
     try nativeRequire(prompt.contains("闲聊"), "retrieval strategy skips unrelated chat")
     try nativeRequire(prompt.contains("工作区文件检索"), "retrieval strategy notes missing workspace search")
