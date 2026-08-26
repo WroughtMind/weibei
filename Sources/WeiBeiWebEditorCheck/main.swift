@@ -3138,6 +3138,9 @@ private func verifyAgentChatMarkdownSourceContract() {
         "Sources/WeiBei/Support/AgentChatKaTeXMarkdown.swift"
     )
     let chatPath = root.appendingPathComponent("Sources/WeiBei/Views/NotesAgentView.swift")
+    let cachePath = root.appendingPathComponent(
+        "Sources/WeiBei/Views/AgentFinalizedMarkdownHeightCache.swift"
+    )
     let richMarkdownPath = root.appendingPathComponent(
         "Sources/WeiBei/Views/RichMarkdownEditorView.swift"
     )
@@ -3146,6 +3149,7 @@ private func verifyAgentChatMarkdownSourceContract() {
     )
     guard let classifier = try? String(contentsOf: classifierPath, encoding: .utf8),
           let chat = try? String(contentsOf: chatPath, encoding: .utf8),
+          let cache = try? String(contentsOf: cachePath, encoding: .utf8),
           let richMarkdown = try? String(contentsOf: richMarkdownPath, encoding: .utf8),
           let webEditor = try? String(contentsOf: webEditorPath, encoding: .utf8) else {
         expect(false, "could not read finalized Agent Markdown source contract")
@@ -3169,7 +3173,7 @@ private func verifyAgentChatMarkdownSourceContract() {
     expect(
         chat.contains("onMeasuredHeight(measuredHeight)")
             && chat.contains("let nextFrameHeight = max(measuredHeight, Self.compactPreviewLoadingHeight)")
-            && chat.contains("guard height.isFinite, height > 0 else { return }")
+            && cache.contains("guard height.isFinite, height > 0 else { return }")
             && chat.contains("abs(contentHeight - nextFrameHeight) < 2")
             && !chat.contains("if freezeHeightAfterMeasure, heightFrozen { return }"),
         "real short-block measurement must be independent from the 44pt minimum frame"
