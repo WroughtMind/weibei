@@ -122,8 +122,8 @@
 ### 2.1 重命名 identity `?? original` 兜底｜D4
 
 **步骤**：
-- [ ] `Sources/WeiBei/Stores/WorkspaceStore+NotesPersistence.swift:272,317` 的 `?? original` 兜底改为确定来源，消除改名/移动后偶发对账与身份自愈异常（诗歌事故同类残留）。
-- [ ] 回归测试：改名 → 移动 → 对账 → 身份与课程归属不变；删除线/标签等附属信息不丢。
+- [x] `Sources/WeiBei/Stores/WorkspaceStore+NotesPersistence.swift:272,317` 的 `?? original` 兜底改为确定来源，消除改名/移动后偶发对账与身份自愈异常（诗歌事故同类残留）。
+- [x] 回归测试：改名 → 移动 → 对账 → 身份与课程归属不变；删除线/标签等附属信息不丢。
 - **占用**：WorkspaceStore 侧扩展文件（非核心面）。
 - **终验口径**：随便改名、挪笔记，都不会认错或丢东西。
 

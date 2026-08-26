@@ -269,7 +269,8 @@ extension WorkspaceStore {
             renamedItem.title = newTitle
             renamedItem.subtitle = newURL.lastPathComponent
             renamedItem.urlPath = newURL.path
-            renamedItem.importedFileIdentity = coordinatedIdentity ?? originalIdentity
+            // 身份只认当前真实文件；解析失败不得沿用旧 identity 污染对账。
+            renamedItem.importedFileIdentity = coordinatedIdentity
             importedItems[index] = renamedItem
             replaceItemIDEverywhere(oldID, with: replacementItemID)
             if wasActiveNotebook {
@@ -314,7 +315,6 @@ extension WorkspaceStore {
                     rolled.urlPath = oldURL.path
                     rolled.importedFileIdentity =
                         importedFileIdentityResolver(oldURL)
-                        ?? originalIdentity
                     noteBackingContentDigestsByItemID[oldID] = diskDigest
                 } else {
                     // 磁盘上是陌生内容或路径未恢复：切断路径关系，保留正文草稿。
