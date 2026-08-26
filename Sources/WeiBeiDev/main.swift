@@ -132,11 +132,13 @@ func runVerifyReleaseMetadata(arguments: [String]) {
     let infoPlist = appBundle.appendingPathComponent("Contents/Info.plist")
     let appBinary = appBundle.appendingPathComponent("Contents/MacOS/WeiBei")
     let appIcon = appBundle.appendingPathComponent("Contents/Resources/AppIcon.icns")
+    let appIconAssets = appBundle.appendingPathComponent("Contents/Resources/Assets.car")
     let legalDirectory = appBundle.appendingPathComponent("Contents/Resources/Legal")
     let fileManager = FileManager.default
     guard fileManager.fileExists(atPath: infoPlist.path),
           fileManager.isExecutableFile(atPath: appBinary.path),
-          fileManager.fileExists(atPath: appIcon.path) else {
+          fileManager.fileExists(atPath: appIcon.path),
+          fileManager.fileExists(atPath: appIconAssets.path) else {
         fail("incomplete app bundle at \(appBundle.path)", exitCode: 4)
     }
     for legalFile in ["PRIVACY.md", "THIRD_PARTY_NOTICES.md", "ASSET_ATTRIBUTIONS.md"] {
@@ -186,6 +188,7 @@ func runVerifyReleaseMetadata(arguments: [String]) {
     let actualDirty = actualDirtyBool ? "true" : "false"
     let actualBundleID = plistString("CFBundleIdentifier")
     let actualIcon = plistString("CFBundleIconFile")
+    let actualIconName = plistString("CFBundleIconName")
     let actualMinSystem = plistString("LSMinimumSystemVersion")
     let requiresSignedFeed = plistDictionary["SURequireSignedFeed"] as? Bool ?? false
     let verifiesUpdateBeforeExtraction = plistDictionary["SUVerifyUpdateBeforeExtraction"] as? Bool ?? false
@@ -200,7 +203,8 @@ func runVerifyReleaseMetadata(arguments: [String]) {
     assertEqual("commit", expectedCommit, actualCommit)
     assertEqual("source dirty state", expectedDirty ? "true" : "false", actualDirty)
     assertEqual("bundle identifier", "com.changfenhuang.weibei", actualBundleID)
-    assertEqual("app icon", "AppIcon.icns", actualIcon)
+    assertEqual("app icon file", "AppIcon", actualIcon)
+    assertEqual("app icon name", "AppIcon", actualIconName)
     assertEqual("minimum system version", "14.0", actualMinSystem)
     guard requiresSignedFeed, verifiesUpdateBeforeExtraction else {
         fail(
@@ -213,6 +217,10 @@ func runVerifyReleaseMetadata(arguments: [String]) {
           String(data: iconHeader, encoding: .ascii) == "icns" else {
         fail("AppIcon.icns has an invalid header", exitCode: 9)
     }
+    guard let assetHeader = try? Data(contentsOf: appIconAssets).prefix(8),
+          String(data: assetHeader, encoding: .ascii) == "BOMStore" else {
+        fail("Assets.car has an invalid header", exitCode: 9)
+    }
 
     print("release_metadata_version=\(actualVersion)")
     print("release_metadata_build=\(actualBuild)")
@@ -220,6 +228,7 @@ func runVerifyReleaseMetadata(arguments: [String]) {
     print("release_metadata_source_dirty=\(actualDirty)")
     print("release_metadata_bundle_id=\(actualBundleID)")
     print("release_metadata_icon=\(actualIcon)")
+    print("release_metadata_icon_assets=enabled")
     print("release_metadata_min_system=\(actualMinSystem)")
     print("release_metadata_sparkle_validation=enabled")
     print("release_metadata_notices=packaged")

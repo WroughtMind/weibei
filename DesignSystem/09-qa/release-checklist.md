@@ -15,8 +15,9 @@
 - [ ] 16、32、64 px 的两个负形没有粘连
 - [ ] 朱砂在 16 / 32 px 不像随机坏点
 - [ ] 1024 图标外框透明，纸面内部不透明
+- [ ] `魏碑.app/Contents/Resources/Assets.car` 存在且包含 `AppIcon`
 - [ ] `魏碑.app/Contents/Resources/AppIcon.icns` 存在
-- [ ] Info.plist 的 `CFBundleIconFile` 指向它
+- [ ] Info.plist 的 `CFBundleIconName` 与 `CFBundleIconFile` 均为 `AppIcon`
 - [ ] Dock、Finder、Spotlight、About、通知和设置都显示新图标
 - [ ] 浅色与深色桌面上都清楚
 - [ ] 与 Notes、Safari、Obsidian 等并排时视觉尺寸不过满
