@@ -269,17 +269,8 @@ extension WorkspaceStore {
                 // iCloud 占位符：保留路径供点开时触发系统下载（计划 §5 阶段3）。
                 importedItems[index].urlPath = url.path
             case .present:
-                // 阶段3 拆除启动指纹断链（笔记部分）：digest 不符不再切断路径，
-                // 交给对账以文件为准；资料项（非笔记）世代保护保留。
-                let isNote = importedItems[index].isNotebookNote
-                if !isNote,
-                   let expectedDigest = importedItems[index].contentDigest,
-                   let actual = try? CourseProjectFileWorker.snapshotFile(at: url),
-                   actual.sha256 != expectedDigest {
-                    importedItems[index].urlPath = nil
-                    importedItems[index].importedFileIdentity = nil
-                    continue
-                }
+                // 文件在场即保留路径（笔记与资料同待遇）。digest 只用于对账刷新，
+                // 永不用于启动断链（「文件即真相」）。
                 importedItems[index].urlPath = url.path
             }
         }
