@@ -5440,10 +5440,15 @@ extension WorkspaceStore {
         guard itemIDs.isDisjoint(with: activeItemFileMutationIDs) else {
             throw CourseOwnedFileError.itemBusy
         }
+        let wasIdle = activeCourseFileMutationCounts.isEmpty
+            && activeItemFileMutationIDs.isEmpty
         for courseID in courseIDs {
             activeCourseFileMutationCounts[courseID, default: 0] += 1
         }
         activeItemFileMutationIDs.formUnion(itemIDs)
+        if wasIdle {
+            pauseCourseFileWatchingForMutation()
+        }
     }
 
     private func finishCourseFileMutation(
@@ -5464,6 +5469,10 @@ extension WorkspaceStore {
             }
         }
         activeItemFileMutationIDs.subtract(itemIDs)
+        if activeCourseFileMutationCounts.isEmpty
+            && activeItemFileMutationIDs.isEmpty {
+            resumeCourseFileWatchingForMutation()
+        }
     }
 
 
